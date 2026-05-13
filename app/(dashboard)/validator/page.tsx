@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Upload, CheckCircle, AlertTriangle, FileSpreadsheet, Play, Percent } from "lucide-react";
 
 export default function ValidatorPage() {
+    const API_BASE = process.env.NEXT_PUBLIC_FASTAPI_BASE_URL || "http://localhost:8000";
     const [salesFile, setSalesFile] = useState<File | null>(null);
     const [promoFile, setPromoFile] = useState<File | null>(null);
     const [channelFile, setChannelFile] = useState<File | null>(null);
@@ -32,7 +33,7 @@ export default function ValidatorPage() {
         }
 
         try {
-            const res = await fetch("http://localhost:8000/validate_json", {
+            const res = await fetch(`${API_BASE}/validate_json`, {
                 method: "POST",
                 body: fd,
             });
@@ -45,7 +46,7 @@ export default function ValidatorPage() {
             }
         } catch (err: any) {
             console.error(err);
-            setErrorMsg("Gagal menghubungi server Python FastAPI (localhost:8000). Pastikan backend Anda menyala.");
+            setErrorMsg("Gagal menghubungi server Python FastAPI. Pastikan backend Anda menyala dan NEXT_PUBLIC_FASTAPI_BASE_URL benar.");
         } finally {
             setIsProcessing(false);
         }
@@ -53,7 +54,7 @@ export default function ValidatorPage() {
 
     const handleDownload = () => {
         if (!jsonResult?.download_url) return;
-        const fullUrl = `http://localhost:8000${jsonResult.download_url}`;
+        const fullUrl = `${API_BASE}${jsonResult.download_url}`;
         window.open(fullUrl, "_blank");
     };
 

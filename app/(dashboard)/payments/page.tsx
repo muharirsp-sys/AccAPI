@@ -42,7 +42,7 @@ interface PaymentRecord {
 
 type PaymentApiRecord = PaymentRecord & { id?: string; ajukan?: boolean };
 
-const API_BASE = typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:8000` : "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_FASTAPI_BASE_URL || (typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:8000` : "http://localhost:8000");
 const api = {
     get: async (url: string) => {
         const fetchUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;

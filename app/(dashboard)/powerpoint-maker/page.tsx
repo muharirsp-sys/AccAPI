@@ -11,6 +11,7 @@ interface ProgramItem {
 }
 
 export default function PowerPointMakerPage() {
+    const API_BASE = process.env.NEXT_PUBLIC_FASTAPI_BASE_URL || "http://localhost:8000";
     const [title, setTitle] = useState("Marketing Update 2026");
     const [subtitle, setSubtitle] = useState("Sales & Promotion Strategy");
     const [promoGroup, setPromoGroup] = useState("GT / MT");
@@ -54,7 +55,7 @@ export default function PowerPointMakerPage() {
         try {
             const payload = { title, subtitle, promoGroup, periode, designTemplate, programs };
 
-            const req = await fetch("http://localhost:8000/api/powerpoint/generate", {
+            const req = await fetch(`${API_BASE}/api/powerpoint/generate`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload)
@@ -93,7 +94,7 @@ export default function PowerPointMakerPage() {
                             </div>
                         </div>
                         <a
-                            href={`http://localhost:8000/api/powerpoint/download/${downloadId}`}
+                            href={`${API_BASE}/api/powerpoint/download/${downloadId}`}
                             target="_blank" rel="noreferrer"
                             className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition-all w-full md:w-auto justify-center"
                         >

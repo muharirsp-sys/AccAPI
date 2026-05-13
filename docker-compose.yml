@@ -1,0 +1,62 @@
+services:
+  accapi-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: accapi-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: ${APP_DEBUG:-0}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-1}
+      AUTH_USERS_JSON: /app/python_backend/data/users.json
+      AUDIT_LOG_PATH: /app/python_backend/data/audit_log.jsonl
+      ERROR_LOG_PATH: /app/python_backend/data/error_log.jsonl
+      PAYMENTS_DB_PATH: /app/python_backend/data/payments.json
+      PAYMENTS_FILES_DIR: /app/python_backend/output/payments
+      PAYMENTS_PROOFS_DIR: /app/python_backend/output/payments/proofs
+      SPPD_TEMPLATE_PATH: /app/python_backend/SPPD TGL 24 FEBRUARI 2026.docx
+    volumes:
+      - accapi_backend_data:/app/python_backend/data
+      - accapi_backend_output:/app/python_backend/output
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+
+  accapi-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+        NEXT_PUBLIC_FASTAPI_BASE_URL: ${NEXT_PUBLIC_FASTAPI_BASE_URL:-http://localhost:8000}
+        NEXT_PUBLIC_ACCURATE_CLIENT_ID: ${NEXT_PUBLIC_ACCURATE_CLIENT_ID:-}
+        NEXT_PUBLIC_ACCURATE_REDIRECT_URI: ${NEXT_PUBLIC_ACCURATE_REDIRECT_URI:-http://localhost:3000/api/auth/callback}
+        BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+        BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-this-better-auth-secret}
+        DATABASE_URL: ${DATABASE_URL:-file:/app/data/sqlite.db}
+    container_name: accapi-frontend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:-file:/app/data/sqlite.db}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-this-better-auth-secret}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      NEXT_PUBLIC_FASTAPI_BASE_URL: ${NEXT_PUBLIC_FASTAPI_BASE_URL:-http://localhost:8000}
+      NEXT_PUBLIC_ACCURATE_CLIENT_ID: ${NEXT_PUBLIC_ACCURATE_CLIENT_ID:-}
+      NEXT_PUBLIC_ACCURATE_REDIRECT_URI: ${NEXT_PUBLIC_ACCURATE_REDIRECT_URI:-http://localhost:3000/api/auth/callback}
+    volumes:
+      - accapi_frontend_data:/app/data
+    depends_on:
+      - accapi-backend
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+
+volumes:
+  accapi_backend_data:
+  accapi_backend_output:
+  accapi_frontend_data:
