@@ -43,6 +43,17 @@ interface PaymentRecord {
 type PaymentApiRecord = PaymentRecord & { id?: string; ajukan?: boolean };
 
 const API_BASE = process.env.NEXT_PUBLIC_FASTAPI_BASE_URL || (typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:8000` : "http://localhost:8000");
+let cachedCsrfToken = "";
+
+async function getBackendCsrfToken(forceRefresh = false): Promise<string> {
+    if (cachedCsrfToken && !forceRefresh) return cachedCsrfToken;
+    const res = await fetch(`${API_BASE}/api/me`, { credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.csrf_token) throw new Error("CSRF token backend tidak tersedia.");
+    cachedCsrfToken = String(data.csrf_token);
+    return cachedCsrfToken;
+}
+
 const api = {
     get: async (url: string) => {
         const fetchUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
@@ -53,12 +64,18 @@ const api = {
     post: async (url: string, data?: unknown) => {
         const fetchUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
         const isFormData = data instanceof FormData;
-        const res = await fetch(fetchUrl, {
+        const csrfToken = await getBackendCsrfToken();
+        const requestInit = (token: string): RequestInit => ({
             method: "POST",
             credentials: "include",
             body: isFormData ? data : JSON.stringify(data),
-            headers: isFormData ? {} : { "Content-Type": "application/json" }
+            headers: isFormData ? { "X-CSRF-Token": token } : { "Content-Type": "application/json", "X-CSRF-Token": token }
         });
+        let res = await fetch(fetchUrl, requestInit(csrfToken));
+        if (res.status === 403) {
+            const retryToken = await getBackendCsrfToken(true);
+            res = await fetch(fetchUrl, requestInit(retryToken));
+        }
         return { data: await res.json(), status: res.status, ok: res.ok };
     }
 };

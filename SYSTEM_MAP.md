@@ -54,7 +54,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
 - `UI(LoginPage) -> authClient.signIn.email()/signIn.social() -> app/api/auth/[...all]/route.ts[GET|POST] -> lib/auth[betterAuth] -> Drizzle adapter -> SQLite(user, session, account, verification)`
 - `UI(ForgotPasswordPage) -> checkUserStatus() -> app/(auth)/actions.ts -> Drizzle(user) -> authClient.requestPasswordReset() -> Better Auth email flow -> lib/email[sendEmail] -> SMTP`
 - `UI(Dashboard/*) -> app/(dashboard)/layout.tsx -> auth.api.getSession() -> Better Auth session lookup -> redirect('/login') bila tidak ada session`
-- `UI(Dashboard payments/finance) -> browser fetch FastAPI dengan Better Auth cookie -> python_backend/main.py[get_current_user] -> validasi session di BETTER_AUTH_DB_PATH -> role admin/manager/staff/viewer -> user_has_permission() -> endpoint payments/finance`
+- `UI(Dashboard payments/finance) -> browser GET FastAPI /api/me untuk csrf_token -> POST/upload kirim X-CSRF-Token + Better Auth cookie -> python_backend/main.py[get_current_user] -> validasi session di BETTER_AUTH_DB_PATH -> role admin/manager/staff/viewer -> user_has_permission() -> endpoint payments/finance`
 - `UI(API Wrapper) -> handleLoginAccurate() -> Accurate OAuth authorize -> app/api/auth/callback/route.ts[GET] -> Accurate OAuth token exchange -> redirect hash access_token -> UI`
 - `UI(API Wrapper) -> fetchDatabases()/handleOpenDatabase() -> app/api/auth/db-list|open-db/route.ts -> Accurate account API -> sessionStorage(host, session, token)`
 - `UI(API Wrapper) -> accurateFetch() -> app/api/proxy/route.ts[POST] -> proxy/flatten payload -> Accurate REST API`

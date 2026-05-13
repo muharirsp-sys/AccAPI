@@ -74,6 +74,16 @@ interface PurchasePaymentPayload {
 }
 
 const API_BASE = process.env.NEXT_PUBLIC_FASTAPI_BASE_URL || (typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:8000` : "http://localhost:8000");
+let cachedCsrfToken = "";
+
+async function getBackendCsrfToken(forceRefresh = false): Promise<string> {
+    if (cachedCsrfToken && !forceRefresh) return cachedCsrfToken;
+    const res = await fetch(`${API_BASE}/api/me`, { credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.csrf_token) throw new Error("CSRF token backend tidak tersedia.");
+    cachedCsrfToken = String(data.csrf_token);
+    return cachedCsrfToken;
+}
 
 const api = {
     get: async (url: string) => {
@@ -84,22 +94,35 @@ const api = {
     },
     postJson: async (url: string, body: unknown) => {
         const fetchUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
-        const res = await fetch(fetchUrl, {
+        const csrfToken = await getBackendCsrfToken();
+        const requestInit = (token: string): RequestInit => ({
             method: "POST",
             credentials: "include",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
             body: JSON.stringify(body),
         });
+        let res = await fetch(fetchUrl, requestInit(csrfToken));
+        if (res.status === 403) {
+            const retryToken = await getBackendCsrfToken(true);
+            res = await fetch(fetchUrl, requestInit(retryToken));
+        }
         const data = await res.json();
         return { data, status: res.status, ok: res.ok };
     },
     postForm: async (url: string, body: FormData) => {
         const fetchUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
-        const res = await fetch(fetchUrl, {
+        const csrfToken = await getBackendCsrfToken();
+        const requestInit = (token: string): RequestInit => ({
             method: "POST",
             credentials: "include",
+            headers: { "X-CSRF-Token": token },
             body,
         });
+        let res = await fetch(fetchUrl, requestInit(csrfToken));
+        if (res.status === 403) {
+            const retryToken = await getBackendCsrfToken(true);
+            res = await fetch(fetchUrl, requestInit(retryToken));
+        }
         const data = await res.json();
         return { data, status: res.status, ok: res.ok };
     },
