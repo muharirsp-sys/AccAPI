@@ -101,7 +101,7 @@ export default function PaymentsPage() {
                 toast.error(res.data.error || "Gagal memuat data pembayaran.");
             }
         } catch {
-            toast.error("Koneksi ke server Python (localhost:8000) terputus.");
+            toast.error("Koneksi ke server Python terputus. Pastikan backend FastAPI aktif.");
         } finally {
             setLoading(false);
         }
@@ -271,13 +271,13 @@ export default function PaymentsPage() {
                     <div className="absolute top-0 right-0 w-48 h-48 bg-blue-500/10 rounded-full blur-3xl -mr-16 -mt-16 group-hover:bg-blue-500/20 transition-colors"></div>
                     <div className="relative">
                         <h2 className="text-xl font-bold text-white flex items-center gap-2 mb-1">
-                            <FileSpreadsheet size={20} className="text-blue-400" /> Unggah Dataset LPB
+                            <FileSpreadsheet size={20} className="text-blue-400" /> Unggah LPB / Restore Backup
                         </h2>
-                        <p className="text-sm text-slate-400 mb-6">Parsing data mentah dari sistem menggunakan template format khusus.</p>
+                        <p className="text-sm text-slate-400 mb-6">Terima template LPB lama atau backup export PAYMENTS untuk restore data tanpa input ulang.</p>
 
                         <div className="flex items-center gap-4">
                             <button onClick={handleTemplate} className="flex-1 bg-white/5 border border-white/10 text-slate-300 px-4 py-3 rounded-xl font-bold text-sm hover:bg-white/10 transition-colors">
-                                Unduh Format Template
+                                Unduh Template LPB
                             </button>
                             <form onSubmit={handleUpload} className="flex-[2] flex bg-black/40 border border-white/10 rounded-xl overflow-hidden focus-within:ring-1 focus-within:ring-blue-500/50 transition-colors">
                                 <input type="file" accept=".xlsx,.xls" onChange={e => setUploadFile(e.target.files?.[0] || null)} className="flex-1 text-sm text-slate-300 py-3 block file:hidden px-4" />
