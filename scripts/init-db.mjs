@@ -18,6 +18,10 @@ const statements = [
     email TEXT NOT NULL UNIQUE,
     emailVerified INTEGER NOT NULL,
     image TEXT,
+    role TEXT DEFAULT 'viewer',
+    banned INTEGER DEFAULT 0,
+    banReason TEXT,
+    banExpires INTEGER,
     createdAt INTEGER NOT NULL,
     updatedAt INTEGER NOT NULL
   );`,
@@ -30,6 +34,7 @@ const statements = [
     ipAddress TEXT,
     userAgent TEXT,
     userId TEXT NOT NULL,
+    impersonatedBy TEXT,
     FOREIGN KEY (userId) REFERENCES user(id)
   );`,
   `CREATE TABLE IF NOT EXISTS account (
@@ -97,5 +102,25 @@ const statements = [
 for (const sql of statements) {
   await db.execute(sql);
 }
+
+const migrations = [
+  `ALTER TABLE user ADD COLUMN role TEXT DEFAULT 'viewer';`,
+  `ALTER TABLE user ADD COLUMN banned INTEGER DEFAULT 0;`,
+  `ALTER TABLE user ADD COLUMN banReason TEXT;`,
+  `ALTER TABLE user ADD COLUMN banExpires INTEGER;`,
+  `ALTER TABLE session ADD COLUMN impersonatedBy TEXT;`,
+];
+
+for (const sql of migrations) {
+  try {
+    await db.execute(sql);
+  } catch (error) {
+    if (!String(error?.message || error).includes('duplicate column name')) {
+      throw error;
+    }
+  }
+}
+
+await db.execute(`UPDATE user SET role = 'viewer' WHERE role IS NULL OR role = '';`);
 
 console.log('SQLite tables are ready');

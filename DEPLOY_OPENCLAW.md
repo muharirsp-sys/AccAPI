@@ -36,12 +36,14 @@ AUTH_USERS=admin:password-kuat
 BETTER_AUTH_URL=http://DOMAIN-ATAU-IP:3000
 BETTER_AUTH_SECRET=isi-random-panjang-lainnya
 DATABASE_URL=file:/app/data/sqlite.db
+ADMIN_SETUP_TOKEN=isi-random-untuk-bootstrap-admin-pertama
 ```
 
-Generate `AUTH_SECRET` dan `BETTER_AUTH_SECRET`:
+Generate `AUTH_SECRET`, `BETTER_AUTH_SECRET`, dan `ADMIN_SETUP_TOKEN`:
 
 ```bash
 openssl rand -hex 32
+openssl rand -hex 24
 ```
 
 Jika sudah pakai HTTPS, set:
@@ -101,6 +103,19 @@ Buka:
 Frontend: http://DOMAIN-ATAU-IP:3000
 Backend docs: http://DOMAIN-ATAU-IP:8000/docs
 ```
+
+## Bootstrap admin pertama
+
+Public register dinonaktifkan. Setelah deploy pertama, buat admin awal dengan setup token:
+
+```bash
+curl -X POST http://DOMAIN-ATAU-IP:3000/api/admin/bootstrap \
+  -H 'Content-Type: application/json' \
+  -H "x-admin-setup-token: $ADMIN_SETUP_TOKEN" \
+  -d '{"name":"Admin","email":"admin@example.com","password":"ganti-password-kuat","role":"admin"}'
+```
+
+Endpoint ini hanya bisa dipakai saat tabel `user` masih kosong. Setelah admin pertama dibuat, user berikutnya dikelola dari menu **User & RBAC** di dashboard.
 
 ## Deploy via OpenClaw UI
 

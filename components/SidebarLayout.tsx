@@ -6,13 +6,15 @@
 "use client";
 
 import { useState } from "react";
-import { Menu, Home, Users, ShoppingCart, ShoppingBag, Settings, Database, Server, Box, GitBranch, ArrowLeftRight, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Presentation, Settings2, FileVideo, FileText } from "lucide-react";
+import { Menu, Home, Users, ShoppingCart, ShoppingBag, Settings, Database, Server, Box, GitBranch, ArrowLeftRight, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Presentation, Settings2, FileVideo, FileText, Shield } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 
 export default function SidebarLayout({ children }: { children: React.ReactNode }) {
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const router = useRouter();
+    const { data: session } = authClient.useSession();
+    const userRole = session?.user?.role;
 
     const handleSignOut = async () => {
         await authClient.signOut({
@@ -44,6 +46,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
         { name: "Penerimaan Penjualan", icon: ShoppingBag, href: "/sales/receipt" },
         { name: "Retur Penjualan", icon: ArrowLeftRight, href: "/sales/return" },
         { name: "Pengaturan API", icon: Settings, href: "/settings" },
+        ...(userRole === "admin" ? [{ name: "User & RBAC", icon: Shield, href: "/admin/users" }] : []),
     ];
 
     return (

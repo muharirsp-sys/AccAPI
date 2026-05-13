@@ -1,28 +1,41 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { db } from "./db";
+import { admin } from "better-auth/plugins";
+import { drizzle } from "drizzle-orm/libsql";
+import { createClient } from "@libsql/client";
+import { mkdirSync } from "node:fs";
 import * as schema from "../db/schema";
 
 import { sendEmail } from "./email";
+import { defaultRole, roleAccess } from "./rbac";
+
+const databaseUrl = process.env.DATABASE_URL || "file:sqlite.db";
+const databaseFile = databaseUrl.startsWith("file:") ? databaseUrl.slice("file:".length) : null;
+if (databaseFile?.startsWith("/")) {
+    mkdirSync(databaseFile.replace(/\/[^/]*$/, ""), { recursive: true });
+}
+const authDb = drizzle(createClient({ url: databaseUrl }), { schema });
 
 export const auth = betterAuth({
-    database: drizzleAdapter(db, {
+    database: drizzleAdapter(authDb, {
         provider: "sqlite",
         schema: {
             ...schema
         }
     }),
-    socialProviders: {
-        google: {
-            clientId: process.env.GOOGLE_CLIENT_ID as string,
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
-        }
-    },
+    plugins: [
+        admin({
+            defaultRole,
+            adminRoles: ["admin"],
+            roles: roleAccess,
+        }),
+    ],
     emailAndPassword: {
         enabled: true,
+        disableSignUp: true,
         requireEmailVerification: true,
         minPasswordLength: 6,
-        sendResetPassword: async ({ user, url, token }) => {
+        sendResetPassword: async ({ user, url }) => {
             void sendEmail({
                 to: user.email,
                 subject: "Reset Password Akses ERP Anda",
@@ -37,7 +50,7 @@ export const auth = betterAuth({
         },
     },
     emailVerification: {
-        sendVerificationEmail: async ({ user, url, token }) => {
+        sendVerificationEmail: async ({ user, url }) => {
             void sendEmail({
                 to: user.email,
                 subject: "Verifikasi Pendaftaran Akun ERP ERP CV. Surya Perkasa",
