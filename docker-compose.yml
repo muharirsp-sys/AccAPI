@@ -1,3 +1,9 @@
+# Tujuan: Orkestrasi Docker Compose untuk AccAPI frontend Next.js dan backend FastAPI.
+# Caller: Docker Compose, OpenClaw deploy workflow, dan operator VPS.
+# Dependensi: Dockerfile.frontend, Dockerfile.backend, .env, volume data backend/frontend.
+# Main Functions: Menjalankan accapi-frontend, accapi-backend, port publish, dan persistent volume.
+# Side Effects: Membuat container, network, volume SQLite/auth, data payments, output SPPD, dan proof transfer.
+
 services:
   accapi-backend:
     build:
@@ -18,9 +24,11 @@ services:
       PAYMENTS_FILES_DIR: /app/python_backend/output/payments
       PAYMENTS_PROOFS_DIR: /app/python_backend/output/payments/proofs
       SPPD_TEMPLATE_PATH: /app/python_backend/SPPD TGL 24 FEBRUARI 2026.docx
+      BETTER_AUTH_DB_PATH: /app/data/sqlite.db
     volumes:
       - accapi_backend_data:/app/python_backend/data
       - accapi_backend_output:/app/python_backend/output
+      - accapi_frontend_data:/app/data:ro
     ports:
       - "${BACKEND_PORT:-8000}:8000"
 

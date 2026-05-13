@@ -1,7 +1,7 @@
 # main.py (PATCH v12) — Channel lookup uploader + Internal dataset optional + Required-file guard UI/API
 # Tujuan: FastAPI backend untuk validator, payments restore/SPPD, finance approval, proof upload, dan helper export.
 # Caller: Next.js dashboard routes, browser uploads, dan service local AccAPI.
-# Dependensi: FastAPI, pandas/openpyxl, payments.py, template DOCX SPPD, filesystem JSON/output, auth utilities.
+# Dependensi: FastAPI, pandas/openpyxl, payments.py, template DOCX SPPD, Better Auth SQLite DB, filesystem JSON/output, auth utilities.
 # Main Functions: render_sppd_docx, payments_upload, payments_sppd_settings_get/save, payments_finance_data, payments_finance_proof, payments_finance_update.
 # Side Effects: HTTP response/download, file upload/read/write, payments.json mutation, DOCX/XLSX generation, audit logging.
 # =======================================================================================================
@@ -34,7 +34,7 @@ load_dotenv(override=True)
 import traceback
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Tuple, Optional, Set, Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 from auth import (
     LoginRateLimiter,
     build_security_headers,
@@ -81,6 +81,7 @@ AUTH_TTL_SECONDS = int(os.getenv("AUTH_TTL_SECONDS", "43200"))  # 12 hours
 AUTH_COOKIE_SECURE = str(os.getenv("AUTH_COOKIE_SECURE", "1")).strip().lower() in ["1", "true", "yes", "y"]
 AUTH_COOKIE_SAMESITE = str(os.getenv("AUTH_COOKIE_SAMESITE", "strict")).strip().lower()
 AUTH_PASSWORD_SCHEME = str(os.getenv("AUTH_PASSWORD_SCHEME", "auto")).strip().lower()
+BETTER_AUTH_DB_PATH = str(os.getenv("BETTER_AUTH_DB_PATH", os.path.join(BASE_DIR, "..", "sqlite.db"))).strip()
 AUTH_PBKDF2_ITERATIONS = int(os.getenv("AUTH_PBKDF2_ITERATIONS", "260000"))
 AUTH_BCRYPT_ROUNDS = int(os.getenv("AUTH_BCRYPT_ROUNDS", "12"))
 CSRF_COOKIE = str(os.getenv("CSRF_COOKIE", "dv_csrf")).strip()
@@ -939,6 +940,12 @@ def get_user_role(username: str) -> str:
     username = s(username)
     if not username:
         return "user"
+    if username.startswith("betterauth|"):
+        parts = username.split("|", 2)
+        role = s(parts[1] if len(parts) > 1 else "").lower()
+        if role in {"admin", "manager", "staff", "viewer"}:
+            return role
+        return "viewer"
     rec = get_auth_user_records().get(username)
     if rec:
         role = s(rec.get("role", ""))
@@ -1202,10 +1209,10 @@ def get_current_user(request: Request) -> Optional[str]:
         for chunk in raw_cookie.split(";"):
             chunk = chunk.strip()
             if chunk.startswith("better-auth.session_token="):
-                ba_token = chunk.split("=", 1)[1].split(".")[0]
+                ba_token = unquote(chunk.split("=", 1)[1]).split(".")[0]
                 break
             elif chunk.startswith("__Secure-better-auth.session_token="):
-                ba_token = chunk.split("=", 1)[1].split(".")[0]
+                ba_token = unquote(chunk.split("=", 1)[1]).split(".")[0]
                 break
     
     # print(f"[DEBUG AUTH] Manual ba_token: {ba_token}")
@@ -1213,12 +1220,12 @@ def get_current_user(request: Request) -> Optional[str]:
     if ba_token:
         try:
             import sqlite3
-            db_path = os.path.join(BASE_DIR, "..", "sqlite.db")
+            db_path = BETTER_AUTH_DB_PATH
             if os.path.exists(db_path):
                 conn = sqlite3.connect(db_path)
                 c = conn.cursor()
                 c.execute('''
-                    SELECT user.email, user.name, session.expiresAt 
+                    SELECT user.email, user.name, COALESCE(user.role, 'viewer'), session.expiresAt
                     FROM session 
                     JOIN user ON session.userId = user.id 
                     WHERE session.token = ?
@@ -1226,16 +1233,15 @@ def get_current_user(request: Request) -> Optional[str]:
                 row = c.fetchone()
                 conn.close()
                 if row:
-                    email, name, expiresAt = row
+                    email, name, role, expiresAt = row
                     import time
                     now = time.time()
                     exp = expiresAt / 1000.0 if expiresAt > 20000000000 else expiresAt
                     if exp > now:
-                        # Auto-grant admin for initial transition if email matches or we just return it
-                        # For enterprise seamless dev testing, if no AUTH_ADMINS are strictly maintained, 
-                        # we return 'admin' to pass is_admin_user check, avoiding 403 Forbidden.
-                        # Wait, let's return 'admin' specifically to prevent 403 blocks for now.
-                        return "admin"
+                        role = s(role).lower() or "viewer"
+                        if role not in {"admin", "manager", "staff", "viewer"}:
+                            role = "viewer"
+                        return f"betterauth|{role}|{s(email).lower() or s(name)}"
         except Exception as e:
             print(f"Error checking Better-Auth session: {e}")
 
@@ -1270,6 +1276,29 @@ def user_has_permission(username: Optional[str], module: str, action: str) -> bo
         return True
     module = s(module).lower()
     action = s(action).lower()
+    role = get_user_role(username)
+    next_role_permissions = {
+        "manager": {
+            "validator": {"view", "edit", "update"},
+            "summary": {"view", "edit", "update"},
+            "payments": {"view", "edit", "update", "delete"},
+            "finance": {"view", "edit", "update"},
+        },
+        "staff": {
+            "validator": {"view", "edit"},
+            "summary": {"view", "edit"},
+            "payments": {"view", "edit", "update"},
+            "finance": {"view"},
+        },
+        "viewer": {
+            "validator": {"view"},
+            "summary": {"view"},
+            "payments": {"view"},
+            "finance": set(),
+        },
+    }
+    if role in next_role_permissions:
+        return action in next_role_permissions.get(role, {}).get(module, set())
     perms, defined = get_user_permissions_info(username)
     if defined:
         allowed = perms.get(module, set())

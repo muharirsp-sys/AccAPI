@@ -1,3 +1,11 @@
+<!--
+Tujuan: Panduan deploy AccAPI di OpenClaw/Docker dengan frontend Next.js dan backend FastAPI.
+Caller: Operator VPS/OpenClaw dan agent deployment saat setup production.
+Dependensi: GitHub repo, Docker Compose, `.env`, volume persistent, Better Auth SQLite, FastAPI.
+Main Functions: Menjelaskan environment, volume, build, bootstrap admin, dan verifikasi service.
+Side Effects: Tidak ada; dokumentasi operasional.
+-->
+
 # Deploy AccAPI di OpenClaw / Docker
 
 AccAPI terdiri dari 2 service:
@@ -36,6 +44,7 @@ AUTH_USERS=admin:password-kuat
 BETTER_AUTH_URL=http://DOMAIN-ATAU-IP:3000
 BETTER_AUTH_SECRET=isi-random-panjang-lainnya
 DATABASE_URL=file:/app/data/sqlite.db
+BETTER_AUTH_DB_PATH=/app/data/sqlite.db
 ADMIN_SETUP_TOKEN=isi-random-untuk-bootstrap-admin-pertama
 ```
 
@@ -71,6 +80,8 @@ accapi_backend_output -> /app/python_backend/output
 accapi_frontend_data  -> /app/data
 ```
 
+Backend juga membaca volume `accapi_frontend_data` secara read-only dari `/app/data`, sehingga FastAPI bisa memvalidasi session Better Auth yang dibuat frontend. Dengan ini user cukup login satu kali di frontend Next.js.
+
 Path penting backend:
 
 ```env
@@ -81,6 +92,7 @@ PAYMENTS_DB_PATH=/app/python_backend/data/payments.json
 PAYMENTS_FILES_DIR=/app/python_backend/output/payments
 PAYMENTS_PROOFS_DIR=/app/python_backend/output/payments/proofs
 SPPD_TEMPLATE_PATH=/app/python_backend/SPPD TGL 24 FEBRUARI 2026.docx
+BETTER_AUTH_DB_PATH=/app/data/sqlite.db
 ```
 
 ## Jalankan dengan Docker Compose

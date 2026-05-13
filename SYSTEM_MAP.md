@@ -31,7 +31,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
     - JSON store `python_backend/data/payments.json` untuk state pembayaran
   - integrasi penting:
     - Accurate OAuth + Accurate REST API
-    - Better Auth + Google OAuth
+    - Better Auth email/password internal + RBAC role admin/manager/staff/viewer
     - SMTP email via Nodemailer
     - SumoPod / OpenAI-compatible API di FastAPI summary AI
     - BytePlus ModelArk Seedance 2.0 untuk generator video asynchronous
@@ -46,7 +46,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - Next UI -> `authClient` / `fetch` / `accurateFetch`
   - `accurateFetch` -> `app/api/proxy/route.ts` -> Accurate API
   - Next UI -> `app/api/*` route handler -> Drizzle -> `sqlite.db`
-  - Next UI -> FastAPI (`http://<host>:8000/...`) untuk validator, summary, payments, finance, principle, PPT
+  - Next UI -> FastAPI (`http://<host>:8000/...`) untuk validator, summary, payments, finance, principle, PPT; FastAPI membaca cookie Better Auth dari SQLite frontend shared volume saat Docker/OpenClaw agar user tidak login dua kali
   - FastAPI -> helper function internal di `main.py` / `validator_engine.py` / `payments.py`
   - FastAPI -> file I/O, JSON store, SQLite Python side, OCR/PDF libs, external HTTP API
 
@@ -54,6 +54,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
 - `UI(LoginPage) -> authClient.signIn.email()/signIn.social() -> app/api/auth/[...all]/route.ts[GET|POST] -> lib/auth[betterAuth] -> Drizzle adapter -> SQLite(user, session, account, verification)`
 - `UI(ForgotPasswordPage) -> checkUserStatus() -> app/(auth)/actions.ts -> Drizzle(user) -> authClient.requestPasswordReset() -> Better Auth email flow -> lib/email[sendEmail] -> SMTP`
 - `UI(Dashboard/*) -> app/(dashboard)/layout.tsx -> auth.api.getSession() -> Better Auth session lookup -> redirect('/login') bila tidak ada session`
+- `UI(Dashboard payments/finance) -> browser fetch FastAPI dengan Better Auth cookie -> python_backend/main.py[get_current_user] -> validasi session di BETTER_AUTH_DB_PATH -> role admin/manager/staff/viewer -> user_has_permission() -> endpoint payments/finance`
 - `UI(API Wrapper) -> handleLoginAccurate() -> Accurate OAuth authorize -> app/api/auth/callback/route.ts[GET] -> Accurate OAuth token exchange -> redirect hash access_token -> UI`
 - `UI(API Wrapper) -> fetchDatabases()/handleOpenDatabase() -> app/api/auth/db-list|open-db/route.ts -> Accurate account API -> sessionStorage(host, session, token)`
 - `UI(API Wrapper) -> accurateFetch() -> app/api/proxy/route.ts[POST] -> proxy/flatten payload -> Accurate REST API`
@@ -85,12 +86,12 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
 - `UI(Summary) -> POST /summary/manual/parse_pdf_regex|parse_pdf_ai -> extract_pdf_text_safe()/AI extraction -> rows draft`
 - `UI(Summary) -> POST /summary/manual/generate -> summary_manual_generate() -> matching master items/customer -> output summary_manual(form+dataset) -> /summary/manual/download/{file_id}/{kind}`
 - `UI(Summary) -> POST /summary/manual/email -> summary_manual_email() -> background email sender -> SMTP server`
-- `UI(Payments) -> GET /payments/data -> load_payments_db() -> payments.json`
-- `UI(Payments) -> POST /payments/upload|manual/add|update|delete -> FastAPI endpoint terkait -> auto-detect template LPB atau backup PAYMENTS export -> load/save payments.json`
+- `UI(Payments) -> GET /payments/data -> FastAPI validasi Better Auth SQLite session + RBAC -> load_payments_db() -> payments.json`
+- `UI(Payments) -> POST /payments/upload|manual/add|update|delete -> FastAPI validasi Better Auth SQLite session + RBAC -> auto-detect template LPB atau backup PAYMENTS export -> load/save payments.json`
 - `UI(Payments) -> POST /payments/cart/create -> payments_cart_create() -> selected LPB -> draft -> payments.json`
 - `UI(Payments SPPD Settings) -> GET/POST /payments/sppd/settings -> payments_sppd_settings_get/save() -> simpan `sppd_settings` dan nomor surat terakhir di payments.json`
 - `UI(Payments Cart) -> POST /payments/cart/submit -> payments_cart_submit() -> next_sppd_number() + render_sppd_docx() hapus highlight template, isi field variable, jatuh tempo 6 bulan, preserve template DOCX/namespace/page break -> output/payments + update payments.json`
-- `UI(Finance) -> GET /payments/finance/data -> payments_finance_data() -> aggregate submitted records dari payments.json`
+- `UI(Finance) -> GET /payments/finance/data -> FastAPI validasi Better Auth SQLite session + RBAC -> payments_finance_data() -> aggregate submitted records dari payments.json`
 - `UI(Finance) -> GET /payments/finance/export -> payments_finance_export() -> Excel response`
 - `UI(Finance) -> POST /payments/finance/mapping -> payments_finance_mapping_save() -> simpan mapping principle ke vendorNo/bankNo Accurate di payments.json`
 - `UI(Finance) -> POST /payments/finance/proof -> payments_finance_proof_upload() -> simpan bukti transfer PDF/JPG/PNG ke output/payments/proofs + metadata hash di payments.json`
@@ -252,10 +253,10 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - Server Action untuk cek eksistensi/verifikasi user langsung ke SQLite via Drizzle.
 - `app/(auth)/login/page.tsx`
   - `LoginPage`
-  - Form login Better Auth email/password dan Google OAuth.
+  - Form login Better Auth email/password internal; Google OAuth dinonaktifkan.
 - `app/(auth)/register/page.tsx`
   - `RegisterPage`
-  - Form registrasi Better Auth email/password dan Google OAuth.
+  - Public register dinonaktifkan; user dibuat dari admin RBAC.
 - `app/(auth)/forgot-password/page.tsx`
   - `ForgotPasswordPage`
   - Alur reset password yang memvalidasi user lebih dulu lewat server action.
@@ -288,7 +289,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - Inisialisasi Drizzle + `@libsql/client` ke `sqlite.db`.
 - `lib/auth.ts`
   - `auth`
-  - Konfigurasi Better Auth, adapter Drizzle, email verification, reset password, Google OAuth.
+  - Konfigurasi Better Auth, adapter Drizzle, email verification, reset password, dan RBAC internal tanpa Google OAuth.
 - `lib/auth-client.ts`
   - `authClient`
   - Client Better Auth untuk dipakai di React client pages.
@@ -607,10 +608,10 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - Tujuan: list/save transaksi dan master Accurate.
 - Better Auth
   - Pemanggil: `lib/auth.ts`, `lib/auth-client.ts`, `app/api/auth/[...all]/route.ts`
-  - Tujuan: auth web, session, email verification, reset password.
+  - Tujuan: auth web internal, session, RBAC role, email verification, reset password.
 - Google OAuth
-  - Pemanggil: `lib/auth.ts`, `app/(auth)/login/page.tsx`, `app/(auth)/register/page.tsx`
-  - Tujuan: social login user portal.
+  - Pemanggil: Not found pada flow aktif.
+  - Tujuan: Dinonaktifkan; auth internal memakai Better Auth email/password + RBAC.
 - SMTP Email dari Next
   - Pemanggil: `lib/email.ts`, `lib/auth.ts`
   - Tujuan: verifikasi email dan reset password Better Auth.
