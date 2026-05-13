@@ -1,0 +1,10 @@
+{
+  "data": [
+    {
+      "name": "string_value",
+      "defaultCategory": false,
+      "id": 0,
+      "parentName": "string_value"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "data": [
+    {
+      "detailItem": [
+        {
+          "itemNo": "string_value",
+          "quantity": 0,
+          "_status": "string_value",
+          "id": 0
+        }
+      ],
+      "orderNumber": "string_value",
+      "transDate": "string_value",
+      "branchId": 0,
+      "branchName": "string_value",
+      "description": "string_value",
+      "id": 0,
+      "number": "string_value",
+      "typeAutoNumber": 0
+    }
+  ]
+}

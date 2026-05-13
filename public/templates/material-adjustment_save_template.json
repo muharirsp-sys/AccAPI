@@ -1,0 +1,45 @@
+{
+  "detailItem": [
+    {
+      "itemNo": "string_value",
+      "_status": "string_value",
+      "dataClassification10Name": "string_value",
+      "dataClassification1Name": "string_value",
+      "dataClassification2Name": "string_value",
+      "dataClassification3Name": "string_value",
+      "dataClassification4Name": "string_value",
+      "dataClassification5Name": "string_value",
+      "dataClassification6Name": "string_value",
+      "dataClassification7Name": "string_value",
+      "dataClassification8Name": "string_value",
+      "dataClassification9Name": "string_value",
+      "departmentName": "string_value",
+      "detailName": "string_value",
+      "detailNotes": "string_value",
+      "detailSerialNumber": [
+        {
+          "_status": "string_value",
+          "expiredDate": "string_value",
+          "id": 0,
+          "quantity": 0,
+          "serialNumberNo": "string_value"
+        }
+      ],
+      "id": 0,
+      "itemUnitName": "string_value",
+      "projectNo": "string_value",
+      "quantity": 0,
+      "warehouseName": "string_value"
+    }
+  ],
+  "jobOrderNumber": "string_value",
+  "materialAdjustmentAccountNo": "string_value",
+  "materialAdjustmentType": "string_value",
+  "transDate": "string_value",
+  "branchId": 0,
+  "branchName": "string_value",
+  "description": "string_value",
+  "id": 0,
+  "number": "string_value",
+  "typeAutoNumber": 0
+}

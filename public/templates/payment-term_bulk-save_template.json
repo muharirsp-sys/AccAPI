@@ -1,0 +1,13 @@
+{
+  "data": [
+    {
+      "discDays": 0,
+      "discPC": 0,
+      "name": "string_value",
+      "netDays": 0,
+      "defaultTerm": false,
+      "id": 0,
+      "memo": "string_value"
+    }
+  ]
+}

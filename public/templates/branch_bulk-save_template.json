@@ -1,0 +1,13 @@
+{
+  "data": [
+    {
+      "name": "string_value",
+      "city": "string_value",
+      "country": "string_value",
+      "id": 0,
+      "province": "string_value",
+      "street": "string_value",
+      "zipCode": "string_value"
+    }
+  ]
+}

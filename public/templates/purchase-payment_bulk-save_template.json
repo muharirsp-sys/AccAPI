@@ -1,0 +1,42 @@
+{
+  "data": [
+    {
+      "bankNo": "string_value",
+      "chequeAmount": 0,
+      "detailInvoice": [
+        {
+          "invoiceNo": "string_value",
+          "paymentAmount": 0,
+          "_status": "string_value",
+          "detailDiscount": [
+            {
+              "accountNo": "string_value",
+              "amount": 0,
+              "_status": "string_value",
+              "departmentName": "string_value",
+              "discountNotes": "string_value",
+              "id": 0,
+              "projectNo": "string_value"
+            }
+          ],
+          "id": 0,
+          "paidPph": false,
+          "pphNumber": "string_value"
+        }
+      ],
+      "transDate": "string_value",
+      "vendorNo": "string_value",
+      "branchId": 0,
+      "branchName": "string_value",
+      "chequeDate": "string_value",
+      "chequeNo": "string_value",
+      "currencyCode": "string_value",
+      "description": "string_value",
+      "id": 0,
+      "number": "string_value",
+      "paymentMethod": "string_value",
+      "rate": 0,
+      "typeAutoNumber": 0
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "data": [
+    {
+      "purchaseTaxGlAccountNo": "string_value",
+      "salesTaxGlAccountNo": "string_value",
+      "description": "string_value",
+      "id": 0,
+      "pph22Type": "string_value",
+      "pph23Type": "string_value",
+      "rate": 0,
+      "taxType": "string_value"
+    }
+  ]
+}

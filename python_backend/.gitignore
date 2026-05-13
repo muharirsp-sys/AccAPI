@@ -1,0 +1,15 @@
+# Tujuan: Aturan ignore khusus backend Python untuk cache, virtualenv, secret, log, dan database lokal.
+# Caller: Git saat staging file di folder `python_backend`.
+# Dependensi: Runtime FastAPI/Uvicorn lokal dan penyimpanan SQLite backend.
+# Main Functions: Mengecualikan pycache, virtualenv, `.env`, log, SQLite, dan database lokal.
+# Side Effects: File runtime backend tidak otomatis masuk staging Git.
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.log
+.vscode/
+*.sqlite
+*.db

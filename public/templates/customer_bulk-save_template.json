@@ -1,0 +1,113 @@
+{
+  "data": [
+    {
+      "name": "string_value",
+      "transDate": "string_value",
+      "billCity": "string_value",
+      "billCountry": "string_value",
+      "billProvince": "string_value",
+      "billStreet": "string_value",
+      "billZipCode": "string_value",
+      "branchId": 0,
+      "branchName": "string_value",
+      "categoryName": "string_value",
+      "consignmentStore": false,
+      "costOfGoodsSoldAccountNo": "string_value",
+      "currencyCode": "string_value",
+      "customerDownPaymentAccountListNo": [
+        "string_value"
+      ],
+      "customerLimitAge": false,
+      "customerLimitAgeValue": 0,
+      "customerLimitAmount": false,
+      "customerLimitAmountValue": 0,
+      "customerNo": "string_value",
+      "customerReceivableAccountListNo": [
+        "string_value"
+      ],
+      "customerTaxType": "string_value",
+      "defaultIncTax": false,
+      "defaultSalesDisc": "string_value",
+      "description": "string_value",
+      "detailContact": [
+        {
+          "bbmPin": "string_value",
+          "email": "string_value",
+          "fax": "string_value",
+          "homePhone": "string_value",
+          "id": 0,
+          "mobilePhone": "string_value",
+          "name": "string_value",
+          "notes": "string_value",
+          "position": "string_value",
+          "salutation": "string_value",
+          "website": "string_value",
+          "workPhone": "string_value"
+        }
+      ],
+      "detailOpenBalance": [
+        {
+          "_status": "string_value",
+          "amount": 0,
+          "asOf": "string_value",
+          "currencyCode": "string_value",
+          "description": "string_value",
+          "id": 0,
+          "number": "string_value",
+          "paymentTermName": "string_value",
+          "rate": 0,
+          "typeAutoNumber": 0
+        }
+      ],
+      "detailShipAddress": [
+        {
+          "_status": "string_value",
+          "city": "string_value",
+          "country": "string_value",
+          "id": 0,
+          "province": "string_value",
+          "street": "string_value",
+          "zipCode": "string_value"
+        }
+      ],
+      "discountCategoryName": "string_value",
+      "email": "string_value",
+      "fax": "string_value",
+      "id": 0,
+      "itemDiscountAccountNo": "string_value",
+      "mobilePhone": "string_value",
+      "nitku": "string_value",
+      "notes": "string_value",
+      "npwpNo": "string_value",
+      "number": "string_value",
+      "pkpNo": "string_value",
+      "priceCategoryName": "string_value",
+      "salesAccountNo": "string_value",
+      "salesDiscountAccountNo": "string_value",
+      "salesReturnAccountNo": "string_value",
+      "salesmanListNumber": [
+        "string_value"
+      ],
+      "salesmanNumber": "string_value",
+      "shipCity": "string_value",
+      "shipCountry": "string_value",
+      "shipProvince": "string_value",
+      "shipSameAsBill": false,
+      "shipStreet": "string_value",
+      "shipZipCode": "string_value",
+      "taxCity": "string_value",
+      "taxCountry": "string_value",
+      "taxProvince": "string_value",
+      "taxSameAsBill": false,
+      "taxStreet": "string_value",
+      "taxZipCode": "string_value",
+      "termName": "string_value",
+      "typeAutoNumber": 0,
+      "website": "string_value",
+      "workPhone": "string_value",
+      "wpName": "string_value",
+      "wpNumber": "string_value",
+      "wpType": "string_value"
+    }
+  ]
+}

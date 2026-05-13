@@ -1,0 +1,13 @@
+{
+  "name": "string_value",
+  "city": "string_value",
+  "country": "string_value",
+  "description": "string_value",
+  "id": 0,
+  "pic": "string_value",
+  "province": "string_value",
+  "scrapWarehouse": false,
+  "street": "string_value",
+  "suspended": false,
+  "zipCode": "string_value"
+}

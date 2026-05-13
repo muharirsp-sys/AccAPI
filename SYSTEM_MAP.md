@@ -1,0 +1,643 @@
+<!--
+Tujuan: Peta sistem ringkas untuk orientasi arsitektur, entry point, dan lokasi logika utama.
+Caller: Semua sesi analisis/implementasi agent di root repo `D:\AccAPI`.
+Dependensi: Struktur folder aktual, route Next.js, backend Python, dan integrasi Accurate.
+Main Functions: Menjadi kompas awal tracing flow dan titik ubah modul.
+Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
+-->
+# Project Summary
+- Tujuan aplikasi:
+  Portal ERP internal untuk mengakses dan mengotomasi operasi Accurate Online, ditambah modul pemrosesan dokumen/data berat di Python untuk validator diskon, summary promo, pembayaran/SPPD, finance, dan generator PowerPoint.
+- Susunan app:
+  - `frontend Next.js`: UI utama, auth web, dashboard, route handler BFF/proxy, local cache reader/writer ke SQLite.
+  - `backend FastAPI`: service pendamping untuk workflow Excel/PDF/OCR, summary manual/AI, payments/finance, principle management, PPTX generation, dan proxy Seedance 2.0.
+  - `shared modules`: `lib/*`, `components/*`, `config/accurateRoutes.js`, `db/schema.ts`.
+- Tech stack utama:
+  - runtime:
+    - Frontend: Node.js untuk Next.js
+    - Backend: Python untuk FastAPI/Uvicorn
+  - framework:
+    - Next.js 16 App Router + React 19 + TypeScript
+    - FastAPI
+  - styling:
+    - Tailwind CSS 4 via `@import "tailwindcss"` di `app/globals.css`
+    - UI icons: `lucide-react`
+    - toast: `sonner`
+  - ORM:
+    - Drizzle ORM untuk app Next
+  - database:
+    - SQLite `sqlite.db` untuk Better Auth, sync cache, idempotency
+    - SQLite `python_backend/database.sqlite` untuk metadata principle / data Python side tertentu
+    - JSON store `python_backend/data/payments.json` untuk state pembayaran
+  - integrasi penting:
+    - Accurate OAuth + Accurate REST API
+    - Better Auth + Google OAuth
+    - SMTP email via Nodemailer
+    - SumoPod / OpenAI-compatible API di FastAPI summary AI
+    - BytePlus ModelArk Seedance 2.0 untuk generator video asynchronous
+    - OCR lokal via Tesseract + PyMuPDF/PyPDF
+- Pola arsitektur singkat:
+  - Next.js memakai App Router, bukan Pages Router.
+  - Route handler Next berperan sebagai BFF/proxy ke Accurate dan akses langsung ke Drizzle/SQLite.
+  - Tidak ada layer repository terpisah di sisi Next; query Drizzle dilakukan langsung dari route handler / action / auth wiring.
+  - FastAPI bukan app modular per-router; sebagian besar logic terkonsentrasi di `python_backend/main.py`.
+  - Sebagian flow bisnis Next terhubung langsung ke FastAPI pada port `8000`, bukan melalui route handler Next.
+- Cara komunikasi antarlayer:
+  - Next UI -> `authClient` / `fetch` / `accurateFetch`
+  - `accurateFetch` -> `app/api/proxy/route.ts` -> Accurate API
+  - Next UI -> `app/api/*` route handler -> Drizzle -> `sqlite.db`
+  - Next UI -> FastAPI (`http://<host>:8000/...`) untuk validator, summary, payments, finance, principle, PPT
+  - FastAPI -> helper function internal di `main.py` / `validator_engine.py` / `payments.py`
+  - FastAPI -> file I/O, JSON store, SQLite Python side, OCR/PDF libs, external HTTP API
+
+# Core Logic Flow (Function-Level Flowchart)
+- `UI(LoginPage) -> authClient.signIn.email()/signIn.social() -> app/api/auth/[...all]/route.ts[GET|POST] -> lib/auth[betterAuth] -> Drizzle adapter -> SQLite(user, session, account, verification)`
+- `UI(ForgotPasswordPage) -> checkUserStatus() -> app/(auth)/actions.ts -> Drizzle(user) -> authClient.requestPasswordReset() -> Better Auth email flow -> lib/email[sendEmail] -> SMTP`
+- `UI(Dashboard/*) -> app/(dashboard)/layout.tsx -> auth.api.getSession() -> Better Auth session lookup -> redirect('/login') bila tidak ada session`
+- `UI(API Wrapper) -> handleLoginAccurate() -> Accurate OAuth authorize -> app/api/auth/callback/route.ts[GET] -> Accurate OAuth token exchange -> redirect hash access_token -> UI`
+- `UI(API Wrapper) -> fetchDatabases()/handleOpenDatabase() -> app/api/auth/db-list|open-db/route.ts -> Accurate account API -> sessionStorage(host, session, token)`
+- `UI(API Wrapper) -> accurateFetch() -> app/api/proxy/route.ts[POST] -> proxy/flatten payload -> Accurate REST API`
+- `UI(API Wrapper bulk sales receipt) -> handleExecute() -> app/api/idempotency/lock/route.ts[POST] -> Drizzle(idempotency_log) -> preview duplicate + histori sales-receipt Accurate -> app/api/proxy/route.ts -> Accurate bulk-save -> bila error konfirmasi histori sales-receipt Accurate -> app/api/idempotency/complete/route.ts[POST] -> Drizzle(idempotency_log)`
+- `UI(API Wrapper parser pelunasan) -> ekstrak No. Nota + No. Retur(SRB/RJS/Ket. Pot) -> accurateFetch('/api/sales-invoice/list.do') exact by number + accurateFetch('/api/sales-return/list.do') exact by number/reference -> ambil branch + primeOwing/outstanding -> alokasi paymentAmount/debug -> payload sales-receipt + file laporan manual retur/pot.lain yang dilewati`
+- `UI(API Wrapper purchase return bulk) -> upload workbook multi-sheet -> parser route-specific [purchaseReturnBulkSave] -> prioritas format sederhana (Kode Barang/Harga/Qty/BranchId/BranchName/VendorNo) atau fallback layout lama via item/list.do|item/detail.do -> preflight stok gudang GD0BS via item/list-stock.do + fallback item/get-stock.do untuk item miss -> revisi qty ke stok tersedia -> payload purchase-return/bulk-save.do`
+- `UI(Subapp Return Heinz) -> pilih mode Heinz + open DB Accurate -> main.js fetch employee/list.do dan employee/detail.do jika branch belum terbaca, lalu cache id/name/branch -> 5 file mapping/header/detail + tanggal H-1 -> Electron renderer.js -> IPC process:return -> strategies/heinzStrategy -> mapping sales lama tetap menjadi source -> renderer resolve sales source ke satu employee Accurate branch HEINZ, blok upload jika tidak match/ambigu, taxable dari Batal/(MTR) atau daftar customer taxable tanpa suffix principle -> renderer finalisasi salesmanListId valid ke detailItem -> payload sales-return/bulk-save.do -> IPC process:upload -> Accurate bulk upload`
+- `UI(Subapp Return Godrej) -> pilih mode Godrej + open DB Accurate -> main.js fetch employee/list.do dan employee/detail.do jika branch belum terbaca, lalu cache id/name/branch -> file sales return format terbaru + sku-mapping.csv + tanggal transaksi JSON -> IPC process:return -> strategies/godrejStrategy -> grouping per Sale Return No. + extract CUSTOMER C-/CA- atau saved popup mapping + nama toko source + sales dari User + Skunit -> Abbrivation -> master barang GDI + harga Unit Price/1.11 + warehouse dari Reason + metadata reviewItems source bila nama item tersedia -> main.js blok draft yang sudah ada di upload history -> review remarks bebas + checkbox draft upload + override kode customer Accurate bila principle perlu diarahkan ke outlet berbeda + dropdown Sales Accurate hanya dari branch Godrej + filter tabel + auto-hide panel input dengan tombol tampilkan lagi + detail item source via modal -> suffix dengan tanggal proses otomatis -> renderer set customer efektif dari override atau mapping, salesmanListId dari sales Accurate terpilih, taxable dari kata Batal atau daftar customer taxable tanpa suffix principle -> IPC process:upload -> recheck/upload Accurate + simpan nomor sukses ke upload history`
+- `UI(Subapp Return Reckitt) -> pilih mode Reckitt + open DB Accurate -> main.js fetch employee/list.do dan employee/detail.do jika branch belum terbaca, lalu cache id/name/branch -> file sales return RBI + mapping customer + tanggal transaksi JSON -> IPC process:return -> strategies/reckittStrategy -> grouping per Credit Note No + customer dari Customer Code lalu suffix -RB + nama toko/source item source untuk review -> sales source dari Route Code -> Product Code ke master barang Reckitt + harga UOM List Price tanpa bagi 1.11 + konversi UOM kemasan ke PCS memakai `Smallest UOM Quantity / Prd Qty` untuk qty/harga, dengan fallback CAR lama (8021803/8021804 divider 24, lainnya 12) + warehouse GOOD_WHS/BAD_WHS -> main.js blok draft yang sudah ada di upload history -> review remarks bebas + checkbox draft upload + override kode customer Accurate bila principle perlu diarahkan ke outlet berbeda + dropdown Sales Accurate hanya dari branch Reckitt + filter tabel + auto-hide panel input dengan tombol tampilkan lagi + detail item source via modal -> suffix dengan tanggal proses otomatis -> renderer set customer efektif dari override atau mapping, salesmanListId dari sales Accurate terpilih, taxable dari kata Batal atau daftar customer taxable tanpa suffix principle -> IPC process:upload -> recheck/upload Accurate + simpan nomor sukses ke upload history`
+- `UI(Subapp Return Cussons) -> pilih mode Cussons + open DB Accurate -> main.js fetch employee/list.do dan employee/detail.do jika branch belum terbaca, lalu cache id/name/branch -> file sales return Cussons + mapping customer + tanggal transaksi JSON -> IPC process:return -> strategies/cussonsStrategy -> grouping per Credit Note No + customer dari Customer Code dengan suffix -CS + nama toko/source item source untuk review -> sales source dari Route Code -> Product Code ke master barang Cussons + qty Original Quantity + harga Product List price + warehouse *_SP1 -> main.js blok draft yang sudah ada di upload history -> review remarks bebas + checkbox draft upload + override kode customer Accurate bila principle perlu diarahkan ke outlet berbeda + dropdown Sales Accurate hanya dari branch Cussons + filter tabel + auto-hide panel input dengan tombol tampilkan lagi + detail item source via modal -> suffix dengan tanggal proses otomatis -> renderer set customer efektif dari override atau mapping, salesmanListId dari sales Accurate terpilih, taxable dari kata Batal atau daftar customer taxable tanpa suffix principle -> IPC process:upload -> recheck/upload Accurate + simpan nomor sukses ke upload history`
+- `UI(Subapp Return Kino) -> pilih mode Kino + open DB Accurate -> main.js fetch employee/list.do dan employee/detail.do jika branch belum terbaca, lalu cache id/name/branch -> file sales detail Kino + mapping item + mapping customer + tanggal transaksi JSON + gudang pilihan user sebagai default/fallback -> IPC process:return -> strategies/kinoStrategy -> grouping per INVOICE_NO + customer dari CUSTCODE1 via mapping lalu suffix -KN + nama toko/source item source untuk review -> sales source dari SALESMAN_ID -> PRODUCT_CODE ke mapping item Kino + qty/harga PCS dari INVOICE_QTY/PRD_UNIT_PRICE dengan konversi karton memakai ISI mapping -> main.js blok draft yang sudah ada di upload history -> review remarks bebas + checkbox draft upload + override kode customer Accurate bila principle perlu diarahkan ke outlet berbeda + dropdown Sales Accurate hanya dari branch Kino + filter tabel + auto-hide panel input dengan tombol tampilkan lagi + modal Detail Item terpadu untuk melihat nama item source dan memecah qty item ke GD01/GD0BS dengan validasi total qty -> suffix dengan tanggal proses otomatis -> renderer set customer efektif dari override atau mapping, salesmanListId dari sales Accurate terpilih, taxable dari kata Batal atau daftar customer taxable tanpa suffix principle -> IPC process:upload -> recheck/upload Accurate + simpan nomor sukses ke upload history`
+- `UI(Subapp Return Shinzui) -> pilih mode Shinzui + open DB Accurate -> main.js fetch employee/list.do dan employee/detail.do jika branch belum terbaca, lalu cache id/name/branch -> file PenjualanInvoice + tanggal transaksi JSON -> IPC process:return -> strategies/shinzuiStrategy -> promote header laporan + filter baris Tipe Penjualan RETUR atau fallback Qty Trx-Inv negatif jika tipe kosong -> grouping per INV Num + customer dari Id Pelanggan Lama lalu suffix -SZ + Nama Pelanggan + nama item source untuk review -> sales source dari Id Sales -> Id Produk ke master barang Shinzui hardcode + qty absolut Qty Trx-Inv + harga Harga + satuan KRT jika Uom Trx-Inv Ctn selain itu mapping item + warehouse GD01/mapping sebagai default -> main.js blok draft yang sudah ada di upload history -> review remarks bebas + checkbox draft upload + override kode customer Accurate bila principle perlu diarahkan ke outlet berbeda + dropdown Sales Accurate hanya dari branch Shinzui + filter tabel + auto-hide panel input dengan tombol tampilkan lagi + modal Detail Item terpadu untuk melihat nama item source dan memecah qty item ke GD01/GD0BS dengan validasi total qty -> suffix dengan tanggal proses otomatis -> renderer set customer efektif dari override atau mapping, salesmanListId dari sales Accurate terpilih, taxable dari kata Batal atau daftar customer taxable tanpa suffix principle -> IPC process:upload -> recheck/upload Accurate + simpan nomor sukses ke upload history`
+- `UI(Subapp Return opsi gabung CN) -> user centang "Gabungkan CN yang remarks-nya sama" di mode review -> parser tetap menampilkan draft per CN -> user isi remarks bebas/suffix yang sama untuk CN yang harus jadi satu retur Accurate -> renderer.js saat upload group draft terpilih berdasarkan base remarks `{teks bebas}_input{tanggal proses}_{suffix}` -> validasi group harus customer efektif (override bila diisi, selain itu mapping)/tanggal/branch/type sama, gudang boleh berbeda -> detail item digabung dan sales dari tiap draft ditempel ke detailItem.salesmanListId agar tidak lagi di header, CN pertama menjadi returnNo Accurate, semua CN source masuk description dan sourceReturnNosByReturnNo -> process:upload mengirim satu payload per remarks group dan main.js mencatat semua CN source sebagai alias sukses di upload history agar upload berikutnya tetap diblokir`
+- `UI(Subapp Return export/history/audit) -> tombol Export Review / Export Hasil Upload / Data Sudah Pernah Upload + audit otomatis setelah upload -> renderer.js -> IPC export:excel, audit:write, atau upload-history:list -> main.js -> xlsx workbook lokal, folder audit runtime, atau uploadHistory JSON runtime -> panel/export Excel untuk audit user`
+- `UI(Subapp Purchase Order) -> login Accurate + pilih DB + pilih mode Godrej/Kino/Reckitt/Heinz/Forisa GT/Forisa MT + tanggal transaksi + warehouse GD01/GDDR/GDSD + mapping item sesuai mode + opsi skip unmapped -> subapp_purchase_order_godrej/renderer.js -> IPC process:parse -> parser.js dispatch strategi -> Godrej: strategies/godrejPoStrategy.js group per Bill_No + Sku_Code -> sku-mapping -> master barang GDI + qty Quantity_in_Cases + harga ((Amount_Uploaded / Quantity_in_Cases / 1.11) - 6.5%) + vendor S-GCPI + branchId 1350/branchName GODREJ; Kino: strategies/kinoPoStrategy.js group per No. Order + No. Item -> MappingItemKinoAcc.xlsx + qty Order/ISI menjadi KRT + harga Price*ISI dikurangi 9% + vendor S-KNO + branchId 1051/branchName KINO NON FOOD + description hanya No. SJ/No. Order; Reckitt: strategies/reckittPoStrategy.js group per Invoice No + Product Code -> master barang Reckitt hardcode + qty Received Product Quantity + satuan KRT + harga Product List Price x 91.5% + vendor S-RBK + branchId 1100/branchName RECKITT + description hanya Invoice No; Heinz: strategies/heinzPoStrategy.js extract invoice PDF text -> group satu draft per No. Faktur + kode S4 PDF -> master barang Heinz hardcode + qty QTY ORDER CTN + satuan KRT + harga CTN setelah base discount 6% + sisa Disc Harga masuk `itemDiscPercent` + vendor S-HNZ + branchId 401/branchName HEINZ + description No. Faktur - No. Surat Jalan; Forisa: strategies/forisaPoStrategy.js group satu draft per file + Product Code -> mapping Forisa GT/MT upload user + qty Qty (CB) + satuan KRT + harga Price/Harga tetap sesuai file + Discount masuk `itemDiscPercent` sebagai 0.2 atau 0.2 + tambahan + vendor S-FS + branchId 350/FORISA atau 850/FORISA - MT + remarks/description wajib diisi manual di review -> detail item Accurate hanya mengirim kode barang, bukan nama barang dari file principle; nama barang source disimpan di reviewItems untuk modal detail -> main.js blok PO yang sudah ada di upload history -> item belum mapping bisa dilewati sebagai warning bila PO masih punya detail valid -> review checkbox draft + panel ringkasan + filter tabel + auto-hide panel input dengan tombol tampilkan lagi + detail item source via modal + panel History PO/Pending Mapping -> jika warning minta konfirmasi user -> IPC process:upload -> Accurate purchase-order/bulk-save.do -> main.js recheck history, simpan sukses ke purchase-order-upload-history.json, export pending_unmapped_*.xlsx/store JSON hanya untuk skipped item dari PO yang sukses upload, dan audit workbook otomatis`
+- `UI(Subapp Sales Receipt) -> login Accurate + pilih DB + pilih workbook Format Pelunasan + isi mapping bank/autonumber -> IPC process:parse -> subapp_sales_receipt/parser.js -> lookup sales-invoice/list.do by No. Nota untuk customerNo/branch/primeOwing dengan concurrency terbatas + retry/backoff 429 + sales-return/list.do + fallback sales-invoice/detail.do bila customerNo tidak muncul di list -> snap selisih <= 100 ke primeOwing/outstanding -> payload sales-receipt/bulk-save.do + laporan manual retur/pot.lain -> IPC process:upload -> Accurate bulk upload + retry auto-heal jika gagal "melebihi nilai piutang" dengan selisih <= 100`
+- `UI(Settings) -> /api/sync/trigger[POST] -> lib/sync[syncModule] -> AccuratePaginator() -> Drizzle(sync_state, item/customer) -> SQLite(sqlite.db)`
+- `UI(Settings) -> /api/sync/status[GET] -> Drizzle(sync_state) -> SQLite`
+- `UI(Master Item Baru) -> accurateFetch('/api/item/save.do') -> app/api/proxy/route.ts -> Accurate item/save.do -> /api/local/items/sync-single[POST] -> Accurate detail/list -> Drizzle(item) -> SQLite`
+- `UI(Master Customer Baru) -> accurateFetch('/api/customer/save.do') -> app/api/proxy/route.ts -> Accurate customer/save.do -> /api/local/customers/sync-single[POST] -> Accurate detail/list -> Drizzle(customer) -> SQLite`
+- `UI(Master Item/Pelanggan List) -> /api/local/items|customers[GET] -> Drizzle(item/customer) -> SQLite(sqlite.db)`
+- `UI(Master Branch/Gudang, Sales Invoice/Receipt/Return List) -> accurateFetch('/api/*/list.do') -> app/api/proxy/route.ts -> Accurate list endpoint`
+- `UI(Sales Invoice Baru) -> useForm/react-hook-form -> accurateFetch('/api/sales-invoice/save.do') -> app/api/proxy/route.ts -> Accurate sales-invoice/save.do`
+- `UI(Sales Receipt Baru) -> pilih customer -> accurateFetch('/api/sales-invoice/list.do') -> pilih invoice outstanding -> accurateFetch('/api/sales-receipt/save.do') -> app/api/proxy/route.ts -> Accurate sales-receipt/save.do`
+- `UI(Sales Return Baru) -> useForm/react-hook-form -> accurateFetch('/api/sales-return/save.do') -> app/api/proxy/route.ts -> Accurate sales-return/save.do`
+- `UI(Validator) -> fetch('http://localhost:8000/validate_json') -> FastAPI validate_json() -> validator_engine.read_upload_file_limited() -> run_engine() -> pandas business rules -> write_excel() -> /download/{file_id}`
+- `UI(Summary) -> GET /api/principles -> FastAPI get_principles() -> SQLite(database.sqlite, principles)`
+- `UI(Summary) -> POST /api/summary/manual/master/load_principle/{pid} atau /summary/manual/master/upload -> _load_principles() / _parse_master_barang_xlsx() -> MANUAL_MASTER_CACHE`
+- `UI(Summary) -> POST /summary/manual/parse_pdf_regex|parse_pdf_ai -> extract_pdf_text_safe()/AI extraction -> rows draft`
+- `UI(Summary) -> POST /summary/manual/generate -> summary_manual_generate() -> matching master items/customer -> output summary_manual(form+dataset) -> /summary/manual/download/{file_id}/{kind}`
+- `UI(Summary) -> POST /summary/manual/email -> summary_manual_email() -> background email sender -> SMTP server`
+- `UI(Payments) -> GET /payments/data -> load_payments_db() -> payments.json`
+- `UI(Payments) -> POST /payments/upload|manual/add|update|delete -> FastAPI endpoint terkait -> auto-detect template LPB atau backup PAYMENTS export -> load/save payments.json`
+- `UI(Payments) -> POST /payments/cart/create -> payments_cart_create() -> selected LPB -> draft -> payments.json`
+- `UI(Payments SPPD Settings) -> GET/POST /payments/sppd/settings -> payments_sppd_settings_get/save() -> simpan `sppd_settings` dan nomor surat terakhir di payments.json`
+- `UI(Payments Cart) -> POST /payments/cart/submit -> payments_cart_submit() -> next_sppd_number() + render_sppd_docx() hapus highlight template, isi field variable, jatuh tempo 6 bulan, preserve template DOCX/namespace/page break -> output/payments + update payments.json`
+- `UI(Finance) -> GET /payments/finance/data -> payments_finance_data() -> aggregate submitted records dari payments.json`
+- `UI(Finance) -> GET /payments/finance/export -> payments_finance_export() -> Excel response`
+- `UI(Finance) -> POST /payments/finance/mapping -> payments_finance_mapping_save() -> simpan mapping principle ke vendorNo/bankNo Accurate di payments.json`
+- `UI(Finance) -> POST /payments/finance/proof -> payments_finance_proof_upload() -> simpan bukti transfer PDF/JPG/PNG ke output/payments/proofs + metadata hash di payments.json`
+- `UI(Finance) -> accurateFetch('/api/purchase-payment/bulk-save.do') -> app/api/proxy/route.ts -> Accurate purchase-payment bulk-save setelah status Sudah Transfer, tanggal transfer, bukti, vendorNo, bankNo, dan invoice valid`
+- `UI(Finance) -> POST /payments/finance/update -> payments_finance_update() -> update status pembayaran, proof metadata, dan hasil post Accurate di payments.json`
+- `UI(Principles) -> POST /api/principles/add|{pid}/delete -> file master Excel di data/masters + metadata principles di SQLite(database.sqlite)`
+- `UI(PowerPoint Maker) -> POST /api/powerpoint/generate -> generate_powerpoint_api() -> background_tasks[generate_powerpoint_background] -> output/powerpoint -> /api/powerpoint/download/{file_id}`
+- `UI(Seedance 2.0) -> prompt + URL/reference upload browser FileReader(data URL) -> POST http://localhost:8000/api/seedance/tasks -> python_backend/seedance_api.create_seedance_task() -> BytePlus ModelArk /contents/generations/tasks -> task id -> GET /api/seedance/tasks/{task_id} -> video_url/last_frame_url`
+- `Accurate Webhook -> app/api/webhook/accurate/route.ts[POST] -> whitelist/log payload -> append webhook_events.log`
+
+# Clean Tree
+- `frontend`
+  - `app/layout.tsx`
+  - `app/globals.css`
+  - `app/manifest.ts`
+  - `app/(auth)/actions.ts`
+  - `app/(auth)/login/page.tsx`
+  - `app/(auth)/register/page.tsx`
+  - `app/(auth)/forgot-password/page.tsx`
+  - `app/(auth)/reset-password/page.tsx`
+  - `app/(dashboard)/layout.tsx`
+  - `app/(dashboard)/page.tsx`
+  - `app/(dashboard)/api-wrapper/page.tsx`
+  - `app/(dashboard)/validator/page.tsx`
+  - `app/(dashboard)/summary/page.tsx`
+  - `app/(dashboard)/payments/page.tsx`
+  - `app/(dashboard)/payments/sppd/page.tsx`
+  - `app/(dashboard)/finance/page.tsx`
+  - `app/(dashboard)/principles/page.tsx`
+  - `app/(dashboard)/powerpoint-maker/page.tsx`
+  - `app/(dashboard)/seedance/page.tsx`
+  - `app/(dashboard)/settings/page.tsx`
+  - `app/(dashboard)/master/page.tsx`
+  - `app/(dashboard)/master/branch/page.tsx`
+  - `app/(dashboard)/master/branch/new/page.tsx`
+  - `app/(dashboard)/master/customer/page.tsx`
+  - `app/(dashboard)/master/customer/new/page.tsx`
+  - `app/(dashboard)/master/item/page.tsx`
+  - `app/(dashboard)/master/item/new/page.tsx`
+  - `app/(dashboard)/master/warehouse/page.tsx`
+  - `app/(dashboard)/master/warehouse/new/page.tsx`
+  - `app/(dashboard)/sales/page.tsx`
+  - `app/(dashboard)/sales/invoice/page.tsx`
+  - `app/(dashboard)/sales/invoice/new/page.tsx`
+  - `app/(dashboard)/sales/receipt/page.tsx`
+  - `app/(dashboard)/sales/receipt/new/page.tsx`
+  - `app/(dashboard)/sales/return/page.tsx`
+  - `app/(dashboard)/sales/return/new/page.tsx`
+- `frontend route handlers`
+  - `app/api/auth/callback/route.ts`
+  - `app/api/auth/db-list/route.ts`
+  - `app/api/auth/open-db/route.ts`
+  - `app/api/auth/[...all]/route.ts`
+  - `app/api/proxy/route.ts`
+  - `app/api/sync/trigger/route.ts`
+  - `app/api/sync/status/route.ts`
+  - `app/api/local/items/route.ts`
+  - `app/api/local/items/sync-single/route.ts`
+  - `app/api/local/customers/route.ts`
+  - `app/api/local/customers/sync-single/route.ts`
+  - `app/api/idempotency/lock/route.ts`
+  - `app/api/idempotency/complete/route.ts`
+  - `app/api/webhook/accurate/route.ts`
+- `frontend shared`
+  - `components/SidebarLayout.tsx`
+  - `components/DataTable.tsx`
+  - `components/ui/AsyncSearchSelect.tsx`
+  - `components/ui/Input.tsx`
+  - `components/ui/Select.tsx`
+  - `lib/auth.ts`
+  - `lib/auth-client.ts`
+  - `lib/db.ts`
+  - `lib/apiFetcher.ts`
+  - `lib/sync.ts`
+  - `lib/email.ts`
+  - `config/accurateRoutes.js`
+  - `db/schema.ts`
+  - `app/(dashboard)/api-wrapper/parsers/index.ts`
+  - `app/(dashboard)/api-wrapper/parsers/types.ts`
+  - `app/(dashboard)/api-wrapper/parsers/purchaseReturnBulkSave.ts`
+- `backend FastAPI`
+  - `python_backend/main.py`
+  - `python_backend/seedance_api.py`
+  - `python_backend/auth.py`
+  - `python_backend/validator_engine.py`
+  - `python_backend/payments.py`
+  - `python_backend/migrate_db.py`
+  - `python_backend/requirements.txt`
+  - `python_backend/.env`
+  - `python_backend/.env.example`
+- `backend runtime/storage`
+  - `python_backend/data/`
+  - `python_backend/output/`
+  - `python_backend/database.sqlite`
+  - `sqlite.db`
+- `desktop uploader`
+  - `subapp_return/index.html`
+  - `subapp_return/assets/app-icon.ico`
+  - `subapp_return/renderer.js`
+  - `subapp_return/main.js`
+  - `subapp_return/parser.js`
+  - `subapp_return/uploadHistory.js`
+  - `subapp_return/taxableRules.js`
+  - `subapp_return/scripts/clean-dist.ps1`
+  - `subapp_return/strategies/shared.js`
+  - `subapp_return/strategies/heinzStrategy.js`
+  - `subapp_return/strategies/godrejStrategy.js`
+  - `subapp_return/strategies/reckittStrategy.js`
+  - `subapp_return/strategies/cussonsStrategy.js`
+  - `subapp_return/strategies/kinoStrategy.js`
+  - `subapp_return/strategies/shinzuiStrategy.js`
+  - `subapp_purchase_order_godrej/index.html`
+  - `subapp_purchase_order_godrej/assets/app-icon.ico`
+  - `subapp_purchase_order_godrej/renderer.js`
+  - `subapp_purchase_order_godrej/main.js`
+  - `subapp_purchase_order_godrej/parser.js`
+  - `subapp_purchase_order_godrej/pendingUnmapped.js`
+  - `subapp_purchase_order_godrej/uploadHistory.js`
+  - `subapp_purchase_order_godrej/scripts/build-manual.ps1`
+  - `subapp_purchase_order_godrej/strategies/shared.js`
+  - `subapp_purchase_order_godrej/strategies/godrejPoStrategy.js`
+  - `subapp_purchase_order_godrej/strategies/kinoPoStrategy.js`
+  - `subapp_purchase_order_godrej/strategies/reckittPoStrategy.js`
+  - `subapp_purchase_order_godrej/strategies/heinzPoStrategy.js`
+  - `subapp_purchase_order_godrej/strategies/forisaPoStrategy.js`
+  - `subapp_sales_receipt/index.html`
+  - `subapp_sales_receipt/assets/app-icon.ico`
+  - `subapp_sales_receipt/renderer.js`
+  - `subapp_sales_receipt/main.js`
+  - `subapp_sales_receipt/parser.js`
+
+# Module Map (The Chapters)
+- `package.json`
+  - `scripts`, dependency registry
+  - Mendefinisikan stack frontend utama: Next 16, React 19, Tailwind 4, Better Auth, Drizzle, libSQL, react-hook-form, xlsx.
+- `tsconfig.json`
+  - `compilerOptions`, alias `@/*`
+  - Mengaktifkan TypeScript strict mode dan `allowJs`, sehingga `config/accurateRoutes.js` bisa diimpor dari code TS.
+- `next.config.ts`
+  - `nextConfig`
+  - Konfigurasi Next minimal; tidak ada wiring custom di level framework.
+- `postcss.config.mjs`
+  - plugin `@tailwindcss/postcss`
+  - Wiring PostCSS untuk Tailwind CSS 4.
+- `drizzle.config.ts`
+  - `defineConfig`
+  - Menetapkan Drizzle ke SQLite `file:sqlite.db` dengan schema di `db/schema.ts`.
+- `app/layout.tsx`
+  - `RootLayout`
+  - Shell global UI, font, background theme, dan toaster aplikasi.
+- `app/globals.css`
+  - theme root + `@import "tailwindcss"`
+  - Basis styling global; Tailwind 4 dipakai model CSS-first.
+- `app/manifest.ts`
+  - `manifest`
+  - Metadata PWA dasar untuk app Next.
+- `app/(auth)/actions.ts`
+  - `checkUserStatus`
+  - Server Action untuk cek eksistensi/verifikasi user langsung ke SQLite via Drizzle.
+- `app/(auth)/login/page.tsx`
+  - `LoginPage`
+  - Form login Better Auth email/password dan Google OAuth.
+- `app/(auth)/register/page.tsx`
+  - `RegisterPage`
+  - Form registrasi Better Auth email/password dan Google OAuth.
+- `app/(auth)/forgot-password/page.tsx`
+  - `ForgotPasswordPage`
+  - Alur reset password yang memvalidasi user lebih dulu lewat server action.
+- `app/(auth)/reset-password/page.tsx`
+  - `ResetPasswordPage`, `ResetPasswordForm`
+  - Form reset password berbasis token query param Better Auth.
+- `app/(dashboard)/layout.tsx`
+  - `DashboardLayout`
+  - Guard auth untuk seluruh dashboard dan wrapper `SidebarLayout`.
+- `components/SidebarLayout.tsx`
+  - `SidebarLayout`
+  - Navigasi utama modul, termasuk Format SPPD, Seedance 2.0, dan tombol sign-out Better Auth.
+- `app/(dashboard)/page.tsx`
+  - `DashboardLanding`
+  - Landing dashboard yang mengarahkan ke modul bisnis utama, termasuk akses Seedance 2.0.
+- `components/DataTable.tsx`
+  - `DataTable`
+  - Tabel reusable berbasis TanStack Table untuk list master/transaksi.
+- `components/ui/AsyncSearchSelect.tsx`
+  - `AsyncSearchSelect`
+  - Select async reusable yang mencari data langsung ke Accurate melalui `accurateFetch`.
+- `components/ui/Input.tsx`
+  - `Input`
+  - Wrapper input UI reusable untuk form dashboard.
+- `components/ui/Select.tsx`
+  - `Select`
+  - Wrapper select UI reusable.
+- `lib/db.ts`
+  - `db`
+  - Inisialisasi Drizzle + `@libsql/client` ke `sqlite.db`.
+- `lib/auth.ts`
+  - `auth`
+  - Konfigurasi Better Auth, adapter Drizzle, email verification, reset password, Google OAuth.
+- `lib/auth-client.ts`
+  - `authClient`
+  - Client Better Auth untuk dipakai di React client pages.
+- `lib/email.ts`
+  - `sendEmail`
+  - Pengiriman email SMTP untuk flow verifikasi/reset password.
+- `lib/apiFetcher.ts`
+  - `AccurateError`, `accurateFetch`
+  - Wrapper client-side ke `/api/proxy` dengan kredensial Accurate dari `sessionStorage`.
+- `lib/sync.ts`
+  - `AccuratePaginator`, `syncModule`
+  - Engine sinkronisasi background dari Accurate ke cache SQLite lokal.
+- `db/schema.ts`
+  - `user`, `session`, `account`, `verification`, `syncState`, `item`, `customer`, `idempotencyLog`
+  - Sumber definisi schema Drizzle untuk auth, cache lokal, dan idempotency.
+- `config/accurateRoutes.js`
+  - `accurateRoutes`
+  - Registry endpoint Accurate, sample payload, dan template header yang dipakai terutama oleh API Wrapper.
+- `app/api/auth/[...all]/route.ts`
+  - `GET`, `POST`
+  - Adapter Better Auth ke route handler Next.
+- `app/api/auth/callback/route.ts`
+  - `GET`
+  - Menukar authorization code Accurate menjadi access token lalu redirect kembali ke UI.
+- `app/api/auth/db-list/route.ts`
+  - `GET`
+  - Mengambil daftar database Accurate berdasarkan access token.
+- `app/api/auth/open-db/route.ts`
+  - `GET`
+  - Membuka database Accurate dan mengembalikan `host` + `session`.
+- `app/api/proxy/route.ts`
+  - `POST`
+  - Proxy generik ke Accurate API, termasuk flatten payload bulk-save.
+- `app/api/sync/trigger/route.ts`
+  - `POST`
+  - Memicu sinkronisasi background item/customer ke SQLite lokal.
+- `app/api/sync/status/route.ts`
+  - `GET`
+  - Membaca status sinkronisasi dari tabel `sync_state`.
+- `app/api/local/items/route.ts`
+  - `GET`
+  - Menyediakan list item dari cache SQLite untuk UI cepat.
+- `app/api/local/items/sync-single/route.ts`
+  - `POST`
+  - Menarik satu item dari Accurate lalu upsert ke SQLite setelah create/update.
+- `app/api/local/customers/route.ts`
+  - `GET`
+  - Menyediakan list customer dari cache SQLite.
+- `app/api/local/customers/sync-single/route.ts`
+  - `POST`
+  - Menarik satu customer dari Accurate lalu upsert ke SQLite.
+- `app/api/idempotency/lock/route.ts`
+  - `POST`
+  - Preview dan lock fingerprint semantic batch pembayaran agar bulk-submit bisa me-review kandidat duplikat dulu sebelum memproses data ganda.
+- `app/api/idempotency/complete/route.ts`
+  - `POST`
+  - Menandai status proses idempotency setelah submit Accurate selesai.
+- `app/api/webhook/accurate/route.ts`
+  - `POST`
+  - Endpoint penerima webhook Accurate dengan IP filtering dan file logging.
+- `app/(dashboard)/api-wrapper/page.tsx`
+  - `Home`, `handleLoginAccurate`, `fetchDatabases`, `handleOpenDatabase`, `handleDownloadTemplate`, `handleExecute`
+  - Modul paling kompleks untuk OAuth Accurate, pilih endpoint, dispatch parser workbook per-route, generate template Excel, eksekusi payload manual/bulk ke Accurate, parser `Format Pelunasan`, parser purchase return multi-sheet dengan preflight stok `item/list-stock.do` + fallback `item/get-stock.do`, semantic idempotency untuk sales receipt berdasarkan isi `detailInvoice`, cek histori `sales-receipt/list.do/detail.do`, dan popup review kandidat pembayaran ganda sebelum submit.
+- `app/(dashboard)/api-wrapper/parsers/index.ts`
+  - `workbookRouteParsers`
+  - Registry parser workbook khusus per route bulk-save agar strategi parsing tidak tercampur dalam page utama.
+- `app/(dashboard)/api-wrapper/parsers/types.ts`
+  - `AccurateFetchLike`, `WorkbookParseResult`, `WorkbookRouteParser`
+  - Kontrak parser workbook client-side untuk endpoint bulk-save.
+- `app/(dashboard)/api-wrapper/parsers/purchaseReturnBulkSave.ts`
+  - `parsePurchaseReturnBulkSaveWorkbook`
+  - Parser workbook multi-sheet purchase return yang memprioritaskan format sederhana dengan branch/vendor eksplisit per row, fallback ke layout lama yang membaca qty final dari kolom QTY final paling kanan dan resolve branch/vendor dari item pertama sheet, lalu cek gudang GD0BS, preflight stok massal via `item/list-stock.do` dengan fallback `item/get-stock.do` untuk item yang tidak muncul, revisi qty ke stok tersedia, dan membentuk report shortage per sheet.
+- `app/(dashboard)/settings/page.tsx`
+  - `SettingsPage`, `fetchSyncStatus`, `triggerSync`
+  - Halaman pengaturan sinkronisasi cache lokal item/customer dari Accurate ke SQLite.
+- `app/(dashboard)/master/page.tsx`
+  - `MasterDashboard`
+  - Placeholder dashboard domain master.
+- `app/(dashboard)/master/item/page.tsx`
+  - `ItemList`
+  - Menampilkan item dari cache SQLite via `/api/local/items`.
+- `app/(dashboard)/master/item/new/page.tsx`
+  - `NewItem`, `onSubmit`
+  - Form create item ke Accurate lalu dual-write sync ke cache SQLite.
+- `app/(dashboard)/master/customer/page.tsx`
+  - `CustomerList`
+  - Menampilkan customer dari cache SQLite via `/api/local/customers`.
+- `app/(dashboard)/master/customer/new/page.tsx`
+  - `NewCustomer`, `onSubmit`
+  - Form create customer ke Accurate lalu dual-write sync ke cache SQLite.
+- `app/(dashboard)/master/branch/page.tsx`
+  - `BranchList`
+  - List cabang langsung dari Accurate API.
+- `app/(dashboard)/master/branch/new/page.tsx`
+  - `NewBranch`, `onSubmit`
+  - Form create cabang ke Accurate.
+- `app/(dashboard)/master/warehouse/page.tsx`
+  - `WarehouseList`
+  - List gudang langsung dari Accurate API.
+- `app/(dashboard)/master/warehouse/new/page.tsx`
+  - `NewWarehouse`, `onSubmit`
+  - Form create gudang ke Accurate.
+- `app/(dashboard)/sales/page.tsx`
+  - `SalesDashboard`
+  - Placeholder dashboard domain penjualan.
+- `app/(dashboard)/sales/invoice/page.tsx`
+  - `SalesInvoiceList`
+  - List faktur penjualan langsung dari Accurate API.
+- `app/(dashboard)/sales/invoice/new/page.tsx`
+  - `NewSalesInvoice`, `onSubmit`
+  - Form faktur penjualan dengan detail item dinamis.
+- `app/(dashboard)/sales/receipt/page.tsx`
+  - `SalesReceiptList`
+  - List penerimaan penjualan langsung dari Accurate API.
+- `app/(dashboard)/sales/receipt/new/page.tsx`
+  - `NewSalesReceipt`, `onSubmit`
+  - Form penerimaan penjualan yang lebih dulu memuat faktur outstanding customer.
+- `app/(dashboard)/sales/return/page.tsx`
+  - `SalesReturnList`
+  - List retur penjualan langsung dari Accurate API.
+- `app/(dashboard)/sales/return/new/page.tsx`
+  - `NewSalesReturn`, `onSubmit`
+  - Form retur penjualan dengan detail item dinamis.
+- `subapp_return/main.js`
+  - `createWindow`, `summarizeAccurateSaveResult`, IPC `app:config`, `accurate:login`, `accurate:openDb`, `godrej:saveCustomerMappings`, `process:return`, `process:upload`, `export:excel`, `audit:write`, `upload-history:list`
+  - Shell Electron uploader retur terpisah yang menangani login Accurate dengan scope `sales_return_save sales_return_view employee_view`, memasang `assets/app-icon.ico` untuk window/auth dialog, parse strategy Heinz/Godrej/Reckitt/Cussons/Kino/Shinzui, simpan/merge mapping customer Godrej ke shared JSON `\\192.168.1.249\gdg$\Bersama_7\Integrasi Retur\Godrej\godrej-customer-map.json` dengan lock file `.lock`, validasi history anti-duplikat sebelum review/upload termasuk alias CN hasil gabung, chunked upload ke `sales-return/bulk-save.do`, simpan nomor sukses dan CN source gabungan ke history upload, export workbook Excel review/upload/history, tulis audit workbook otomatis ke folder runtime `audit`, panel history, dan normalisasi respons per dokumen dari Accurate.
+- `subapp_return/package.json`
+  - `scripts start`, `clean:dist`, `prepack`, `pack`, `predist`, `dist`
+  - Konfigurasi Electron Builder untuk Sales Return Uploader dengan `win.icon = assets/app-icon.ico`; `prepack/predist` menjalankan cleanup build agar `dist\win-unpacked\resources\app.asar` tidak terkunci oleh proses hasil build lama.
+- `subapp_return/scripts/clean-dist.ps1`
+  - PowerShell cleanup build
+  - Menghentikan proses yang executable path-nya berada di `dist\win-unpacked` atau locker aman yang terdeteksi Windows Restart Manager untuk `app.asar`, memverifikasi target hapus tetap di dalam folder `dist`, lalu menghapus `dist\win-unpacked` dengan retry sebelum Electron Builder packaging.
+- `subapp_return/uploadHistory.js`
+  - `createUploadHistoryStore`, `getPayloadReturnNo`, `normalizeMode`, `listRecords`
+  - Store JSON `sales-return-upload-history.json` di folder aplikasi berjalan, memakai lock file `.lock` untuk merge aman antar-PC, dipakai main.js untuk blok nomor retur/CN yang sudah sukses upload, mencatat nomor sukses baru, dan membaca daftar history untuk panel/export.
+- `subapp_return/taxableRules.js`
+  - `isTaxableFromRemarks`, `isTaxableFromCustomer`, `isTaxableSalesReturn`, `normalizeCustomerBaseCode`
+  - Rule taxable bersama untuk seluruh flow sales return: remarks `Batal` atau customer dalam daftar taxable setelah suffix principle `-GD/-RB/-CS/-KN/-SZ/-HZ` diabaikan.
+- `subapp_return/parser.js`
+  - `parseDataAndBuildPayload`
+  - Dispatcher parser berdasarkan mode uploader agar flow Heinz, Godrej, Reckitt, Cussons, Kino, dan Shinzui tidak saling mencampur aturan bisnis; mode review tetap menghasilkan satu draft per CN/source return agar gabung bisa dikontrol dari remarks user di renderer.js.
+- `subapp_return/strategies/heinzStrategy.js`
+  - `parseHeinzPayload`
+  - Menjaga parser legacy Heinz dengan 5 file input, remark source bawaan file, branch `HEINZ`, pembagian harga `1.11`, taxable dari `Batal/(MTR)` atau customer taxable bersama, dan upload-ready payload.
+- `subapp_return/strategies/godrejStrategy.js`
+  - `parseGodrejDrafts`, `GODREJ_ITEM_MAP_PATH`, `normalizeGodrejCustomerKey`
+  - Parser Godrej khusus format terbaru (`Sale Return No.`, `CUSTOMER`, `User`, `Skunit`, `Quantity(Units)`, `Unit Price`, `Reason`) dengan lookup header trim/case-insensitive, mengekstrak customer code `C-`/`CA-` atau memakai saved popup mapping, mengisi nama toko source dari `CUSTOMER`, memakai tanggal transaksi pilihan UI sebagai `transDate` JSON dengan fallback ke kolom `Date`, mengisi cabang payload `branchNo: 1350`, `branchName: GODREJ`, `typeAutoNumber: 1853`, memetakan item dari `Skucode` ke `Abbrivation` melalui file `sku-mapping.csv`, lookup ke workbook item GDI hardcode, membentuk detail dengan qty dari `Quantity(Units)`, harga DPP `Unit Price / 1.11`, dan gudang `GD0BS` bila `Reason` mengandung `BAD_STOCK` selain itu `GD01`.
+- `subapp_return/strategies/reckittStrategy.js`
+  - `parseReckittDrafts`, `RECKITT_ITEM_MAP_PATH`
+  - Parser Reckitt/RBI khusus template `Credit Note` flat table yang group per `Credit Note No`, lookup customer dari file mapping upload memakai `Customer Code` via kolom `Kode Pcpl -> Code Customer` dan otomatis suffix `-RB`, mengisi nama toko source jika kolom nama tersedia, memakai sales langsung dari `Route Code`, lookup item `Product Code` ke workbook item Reckitt hardcode, memakai `UOM List Price` tanpa pembagian pajak dengan normalisasi UOM kemasan ke PCS berdasarkan `Smallest UOM Quantity / Prd Qty` untuk qty dan harga, fallback CAR lama (`8021803/8021804` divider 24, lainnya 12) jika smallest quantity tidak tersedia, special item `3315034/3315035` qty dibagi 30 dan harga dikali 30, mengisi `itemDiscPercent` dari Disc 1 (`Promo Discount / Gross Amount * 100`) dan Disc 2 (`Customer Discount / Amount After SKU Disc * 100`), gudang `GOOD_WHS -> GD01` dan `BAD_WHS -> GD0BS`, serta payload cabang `branchNo: 1100`, `branchName: RECKITT`, `typeAutoNumber: 1651`.
+- `subapp_return/strategies/cussonsStrategy.js`
+  - `parseCussonsDrafts`, `CUSSONS_ITEM_MAP_PATH`
+  - Parser Cussons khusus template `Credit Note` flat table yang group per `Credit Note No`, memakai tanggal transaksi pilihan UI karena file tidak selalu punya `Credit Note Date`, lookup customer dari file mapping upload memakai `Customer Code` via kolom `CODE DMS -> CODEINTERNAL` lalu suffix `-CS`, mengisi nama toko source jika kolom nama tersedia, memakai sales langsung dari `Route Code`, lookup item `Product Code` ke workbook item Cussons hardcode, memakai qty `Original Quantity`, harga `Product List price`, mengisi `itemDiscPercent` dari Disc 1/2 seperti Reckitt, gudang `GOOD_WHS_SP1 -> GD01` dan `BAD_WHS_SP1 -> GD0BS`, serta payload cabang `branchNo: 1250`, `branchName: CUSSONS`, `typeAutoNumber: 1752`.
+- `subapp_return/strategies/kinoStrategy.js`
+  - `parseKinoDrafts`
+  - Parser Kino khusus template `SALES_DETAIL` yang group per `INVOICE_NO`, lookup customer dari file mapping upload `Code Kino -> Code Internal` memakai `CUSTCODE1` lalu otomatis suffix `-KN`, mengisi nama toko source jika kolom nama tersedia, lookup item dari file mapping upload `Kode Alias -> KODE ITEM`, memakai sales langsung dari `SALESMAN_ID`, qty absolut `INVOICE_QTY`, harga `PRD_UNIT_PRICE`, `itemDiscPercent` dari nominal `DISC_1..DISC_8` yang dikonversi bertingkat terhadap sisa nilai setelah diskon sebelumnya, warehouse dari pilihan user, serta payload cabang `branchNo: 1051`, `branchName: KINO NON FOOD`, `typeAutoNumber: 1857`.
+- `subapp_return/strategies/shinzuiStrategy.js`
+  - `parseShinzuiDrafts`, `SHINZUI_ITEM_MAP_PATH`
+  - Parser Shinzui khusus laporan `PenjualanInvoice` yang mencari/promote header di tengah sheet, memproses hanya baris `Tipe Penjualan = RETUR` atau fallback `Qty Trx-Inv` negatif jika tipe kosong, group per `INV Num`, customer dari `Id Pelanggan Lama` dengan suffix `-SZ`, nama toko dari `Nama Pelanggan`, sales langsung dari `Id Sales`, lookup item `Id Produk` ke workbook Shinzui hardcode, qty absolut `Qty Trx-Inv`, harga `Harga`, satuan `KRT` jika `Uom Trx-Inv = Ctn` selain itu satuan mapping, diskon nominal invoice dikonversi ke `itemDiscPercent`, warehouse `GD01`/mapping, serta payload cabang `branchNo: 552`, `branchName: SHINZUI`, `typeAutoNumber: 1901`.
+- `subapp_return/renderer.js`
+  - `buildReviewRemarksBase`, `buildReviewRemarksPreview`, `renderReviewStats`, `applyRemarksPreset`, `mergeSelectedDraftsByRemarks`, `normalizeSalesReturnPayloadArray`, `openWarehouseSplitModal`, `applyWarehouseSplitsToDetailItems`, `showValidationPopover`, `logUploadResults`, `renderReview`, `uploadReviewFlow`, `writeSalesReturnAudit`, `exportCurrentReview`, `exportLatestUpload`, `openUploadHistoryPanel`
+  - UI runtime Electron yang memilih tanggal transaksi mode review untuk `transDate`, menampilkan kode dan nama toko source jika tersedia, menyediakan checkbox per draft agar user hanya upload dokumen yang dipilih, menampilkan panel ringkasan `Siap Upload/Butuh Mapping/Warning/Sudah Pernah Upload/Pending`, menyediakan preset remarks massal ke draft terpilih/valid, membuat remarks dari kolom teks bebas dan suffix menjadi `{teks bebas}_input{tanggal proses}_{suffix} - {nomor retur/source CN}`, menggabungkan draft terpilih yang base remarks-nya sama saat upload bila opsi aktif, menyalin sales legacy `salesmanListNumber`/`salesmanListId`/`salesmanListName` ke level `detailItem` sebagai `salesmanListId` atau `salesmanListName` sesuai kontrak Accurate, menyediakan modal split gudang khusus Kino/Shinzui untuk memecah qty detail item ke `GD01` dan `GD0BS` sebelum payload dikirim, menampilkan detail error validasi via popover tanpa mengubah layout tabel, set `taxable` memakai taxableRules, export review/hasil upload/history ke Excel, menulis audit workbook otomatis setelah upload, membuka panel data sudah pernah upload, dan menampilkan ringkasan respons upload Accurate/history anti-duplikat.
+- `subapp_return/strategies/shared.js`
+  - `ensureFileAccessible`, `readFirstSheetJson`, `readNamedSheetJson`, `excelDateToDdMmYyyy`, `parseNumber`
+  - Helper baca workbook/CSV dan normalisasi data bersama untuk parser desktop uploader.
+- `subapp_purchase_order_godrej/main.js`
+  - `createWindow`, IPC `app:config`, `dialog:openFile`, `accurate:login`, `accurate:openDb`, `process:parse`, `process:upload`, `upload-history:list`, `pending:list`, `audit:write`
+  - Shell Electron PO Godrej/Kino/Reckitt/Heinz/Forisa yang memasang `assets/app-icon.ico` untuk window/auth dialog, mengelola OAuth Accurate scope purchase order dengan `.env` lokal atau fallback `subapp_return/.env`, sesi database, parse draft PO dari file mode terpilih termasuk PDF Heinz, validasi history anti-duplikat berdasarkan mode+vendor+documentNo saat parse dan upload, upload chunked ke `purchase-order/bulk-save.do`, simpan sukses ke history JSON, export pending unmapped Excel/store JSON hanya dari draft yang sukses upload, membuka panel history/pending via IPC, dan menulis audit workbook otomatis.
+- `subapp_purchase_order_godrej/package.json`
+  - `scripts start`, `pack`, `dist`, `build:manual`
+  - Konfigurasi Electron Builder untuk Purchase Order Uploader mode Godrej/Kino/Reckitt/Heinz/Forisa dengan `win.icon = assets/app-icon.ico` dan dependency `pdf-parse` untuk invoice Heinz PDF; build manual tetap memakai `scripts/build-manual.ps1` untuk publish release lama secara clean.
+- `subapp_purchase_order_godrej/parser.js`
+  - `parseDataAndBuildPayload`
+  - Dispatcher kecil async untuk meneruskan input UI ke strategi parser PO Godrej, Kino, Reckitt, Heinz PDF, atau Forisa GT/MT.
+- `subapp_purchase_order_godrej/pendingUnmapped.js`
+  - `getPendingOutputDir`, `writePendingUnmappedWorkbook`, `listPendingUnmappedRecords`
+  - Helper export pending unmapped PO ke `pending-unmapped/pending_unmapped_*.xlsx` dan store JSON `pending-unmapped-store.json` dengan status `Pending Mapping`, path file transaksi/mapping asal, dan unique key berbasis vendor/ref dokumen/kode item/qty/harga agar item susulan punya jejak audit dan bisa ditampilkan di panel Pending Mapping.
+- `subapp_purchase_order_godrej/uploadHistory.js`
+  - `createPurchaseOrderHistoryStore`, `makePurchaseOrderKey`, `normalizeMode`
+  - Store JSON `purchase-order-upload-history.json` di folder aplikasi berjalan, memakai lock file `.lock` untuk merge aman antar-PC, dipakai main.js untuk blok PO yang sudah sukses upload dan membaca daftar history ke panel History PO.
+- `subapp_purchase_order_godrej/scripts/build-manual.ps1`
+  - `Assert-ReleaseUnlocked`, `Invoke-ElectronBuilder`, `Publish-Release`
+  - Script build manual untuk membuat build temporary, validasi EXE/app.asar, memastikan release lama tidak sedang mengunci `app.asar`, backup release lama, lalu replace ke `subapp_purchase_order_godrej_build` secara clean tanpa launcher fallback.
+- `subapp_purchase_order_godrej/strategies/godrejPoStrategy.js`
+  - `parseGodrejPurchaseOrderDrafts`, `GODREJ_ITEM_MAP_PATH`
+  - Parser PO Godrej untuk file GRN status DMS dengan kolom `Received_Date`, `Bill_No`, `Amount_Uploaded`, `Quantity_in_Cases`, `Sku_Name`, `Sku_Code`, group per `Bill_No`, item lookup `Sku_Code -> sku-mapping.csv -> master barang GDI`, qty dari `Quantity_in_Cases`, unit `KRT`, harga `((Amount_Uploaded / Quantity_in_Cases / 1.11) - 6.5%)`, warning similarity nama file vs nama mapping bila terlalu jauh, opsi skip item belum mapping sebagai pending bila masih ada detail valid, warehouse pilihan UI `GD01/GDDR/GDSD`, payload `vendorNo: S-GCPI`, `branchId: 1350`, `branchName: GODREJ`, autonumber default Accurate, `toAddress: "-"`, dan `taxable: true`.
+- `subapp_purchase_order_godrej/strategies/kinoPoStrategy.js`
+  - `parseKinoPurchaseOrderDrafts`
+  - Parser PO Kino untuk workbook `purchase order kino.xlsx` dengan header dinamis `No. Order`, `No. SJ`, `No. Item`, `Nama Item`, `Order`, `Price`, group per `No. Order`, item lookup `No. Item -> MappingItemKinoAcc.xlsx(Kode Alias)`, qty KRT dari `Order / ISI`, harga KRT dari `Price * ISI * 91%`, warehouse pilihan UI `GD01/GDDR/GDSD`, payload `vendorNo: S-KNO`, `branchId: 1051`, `branchName: KINO NON FOOD`, description hanya `No. SJ` dan `No. Order`, detail item hanya mengirim `itemNo` tanpa `detailName` source principle, opsi skip item belum mapping sebagai warning bila masih ada detail valid, autonumber default Accurate, `toAddress: "-"`, dan `taxable: true`.
+- `subapp_purchase_order_godrej/strategies/reckittPoStrategy.js`
+  - `parseReckittPurchaseOrderDrafts`, `RECKITT_ITEM_MAP_PATH`
+  - Parser PO Reckitt untuk workbook `Pembelian Reckitt.xlsx` dengan kolom `Invoice No`, `Product Code`, `Product Description`, `Received Product Quantity`, `Product List Price`, group per `Invoice No`, item lookup `Product Code -> master barang Reckitt hardcode`, qty dari `Received Product Quantity`, satuan detail selalu `KRT`, harga KRT dari `Product List Price x 91.5%`, warehouse pilihan UI `GD01/GDDR/GDSD`, payload `vendorNo: S-RBK`, `branchId: 1100`, `branchName: RECKITT`, description hanya `Invoice No`, detail item hanya mengirim `itemNo` tanpa `detailName` source principle, opsi skip item belum mapping sebagai warning bila masih ada detail valid, autonumber default Accurate, `toAddress: "-"`, dan `taxable: true`.
+- `subapp_purchase_order_godrej/strategies/heinzPoStrategy.js`
+  - `parseHeinzPurchaseOrderDrafts`, `HEINZ_ITEM_MAP_PATH`
+  - Parser PO Heinz untuk invoice PDF text-based dengan ekstraksi `No. Faktur`, `Tgl. Faktur`, `No. Surat Jalan`, detail item tabel PDF, dan `Disc Harga`; item lookup kode S4 PDF ke sheet `Form Fix` master barang Heinz hardcode, qty dari `QTY ORDER CTN`, satuan detail selalu `KRT`, harga KRT dari `HARGA PER CTNS x 94%`, sisa diskon invoice setelah base 6% masuk `itemDiscPercent`, warehouse pilihan UI `GD01/GDDR/GDSD`, payload `vendorNo: S-HNZ`, `branchId: 401`, `branchName: HEINZ`, description `No. Faktur - No. Surat Jalan`, detail item hanya mengirim `itemNo` tanpa `detailName` source principle, opsi skip item belum mapping sebagai warning bila masih ada detail valid, autonumber default Accurate, `toAddress: "-"`, dan `taxable: true`.
+- `subapp_purchase_order_godrej/strategies/forisaPoStrategy.js`
+  - `parseForisaPurchaseOrderDrafts`
+  - Parser PO Forisa untuk workbook flat `Pembelian Forisa.xlsx` dengan kolom `Product Code`, `Product Name`, `Qty (CB)`, `Price/Harga`, `Amount`, `Discount`, group satu draft per file karena source tidak punya nomor dokumen, item lookup `Product Code -> mapping Forisa GT/MT` yang dipilih user, qty dari `Qty (CB)`, satuan detail selalu `KRT`, harga KRT tetap dari `Price/Harga` file, diskon dari kolom `Discount` masuk `itemDiscPercent` sebagai `0.2` atau `0.2 + tambahan`, warehouse pilihan UI `GD01/GDDR/GDSD`, payload `vendorNo: S-FS`, `branchId: 350`, `branchName: FORISA` untuk GT atau `branchId: 850`, `branchName: FORISA - MT` untuk MT, description kosong dari parser dan wajib diisi user sebagai remarks manual saat review, detail item hanya mengirim `itemNo` tanpa `detailName` source principle, opsi skip item belum mapping sebagai warning bila masih ada detail valid, autonumber default Accurate, `toAddress: "-"`, dan `taxable: true`.
+- `subapp_purchase_order_godrej/renderer.js`
+  - `setMode`, `browseFile`, `checkReady`, `isMappingRequired`, `renderReviewStats`, `renderReview`, `openUploadHistoryPanel`, `openPendingMappingPanel`, `writeUploadAudit`, `updateUploadButton`, `confirmNameWarnings`, `uploadSelectedDrafts`
+  - Controller UI Electron PO Godrej/Kino/Reckitt/Heinz/Forisa untuk login, pilih mode/database/file/tanggal/warehouse/opsi skip unmapped, menyembunyikan input mapping untuk mode Reckitt/Heinz karena item map hardcode, meminta mapping upload untuk Godrej/Kino/Forisa, review draft dengan checkbox per PO dan input remarks wajib untuk Forisa, menampilkan panel ringkasan `Siap Upload/Butuh Mapping/Warning/Sudah Pernah Upload/Pending Item`, menampilkan jumlah warning/item dilewati/kode belum mapping/folder pending, membuka panel History PO dan Pending Mapping, meminta konfirmasi sebelum upload bila warning terpilih, upload hanya draft valid/terpilih/remarks lengkap, menulis audit workbook otomatis setelah upload, dan menampilkan lokasi file pending unmapped hasil upload.
+- `subapp_purchase_order_godrej/strategies/shared.js`
+  - `ensureFileAccessible`, `readFirstSheetJson`, `readNamedSheetJson`, `getField`, `parseNumber`, `selectedDateToDdMmYyyy`
+  - Helper baca workbook/CSV dan normalisasi data khusus app PO Godrej/Kino/Reckitt/Heinz/Forisa.
+- `subapp_sales_receipt/main.js`
+  - `createWindow`, `accurate:login`, `accurate:openDb`, `process:parse`, `process:upload`
+  - Shell Electron khusus sales receipt yang memasang `assets/app-icon.ico` untuk window/auth dialog, mengelola OAuth Accurate, sesi database, parse workbook pelunasan, upload `sales-receipt/bulk-save.do`, dan retry auto-heal bila Accurate menolak karena selisih piutang kecil.
+- `subapp_sales_receipt/package.json`
+  - `scripts start`, `pack`, `dist`
+  - Konfigurasi Electron Builder untuk Sales Receipt Uploader dengan `win.icon = assets/app-icon.ico` dan output installer ke `release`.
+- `subapp_sales_receipt/parser.js`
+  - `parseSalesReceiptWorkbook`, `fetchInvoiceMetaWithRetry`, `mapWithConcurrency`, `DEFAULT_MAPPING`
+  - Parser desktop `Format Pelunasan` yang memindahkan flow stabil dari web ke Electron: lookup invoice exact untuk mengambil `customerNo`/branch/primeOwing dari No. Nota dengan concurrency terbatas dan retry/backoff 429, fallback invoice detail bila customer tidak muncul di list, lookup retur/pot.lain, ayat silang jika reference ketemu, snap selisih <= 100 ke primeOwing/outstanding Accurate, dan export laporan manual follow-up.
+- `subapp_sales_receipt/renderer.js`
+  - `handleLogin`, `handleOpenDb`, `handleParse`, `handleUpload`
+  - Controller UI Electron untuk memilih workbook, mengisi mapping bank/autonumber, preview payload JSON, dan menampilkan log upload sales receipt.
+- `app/(dashboard)/validator/page.tsx`
+  - `ValidatorPage`, `handleValidate`
+  - UI upload 3-4 file untuk memanggil engine validator FastAPI.
+- `app/(dashboard)/summary/page.tsx`
+  - `SummaryManualPage`, `handleUsePrinciple`, `handleMasterUpload`, `handlePdfExtract`, `handleGenerate`, `handleSendEmail`
+  - UI utama summary promo manual/AI yang bergantung pada FastAPI.
+- `app/(dashboard)/payments/page.tsx`
+  - `PaymentsPage`, `fetchData`, `handleUpload`, `handleManualAdd`, `handleSubmitCart`, `handleSaveBulk`, `handleDelete`
+  - UI master pembayaran/SPPD yang mengelola JSON store FastAPI dan dapat upload template LPB atau restore backup export PAYMENTS.
+- `app/(dashboard)/payments/sppd/page.tsx`
+  - `PaymentsSppdSettingsPage`, `fetchSettings`, `handleSave`, `getCsrfToken`
+  - UI konfigurasi nomor surat terakhir, format nomor SPPD, tanggal fixed Jaminan, jatuh tempo, dan jumlah transfer per halaman.
+- `app/(dashboard)/finance/page.tsx`
+  - `FinancePage`, `fetchData`, `handleExport`, `handleSaveMapping`, `handleMarkStatus`, `handleApproveTransfer`
+  - UI finance untuk mapping vendor/bank Accurate, upload bukti transfer, posting `purchase-payment/bulk-save.do`, dan update status pembayaran.
+- `app/(dashboard)/principles/page.tsx`
+  - `PrincipleManagementPage`, `fetchPrinciples`, `handleUpload`, `handleDelete`
+  - UI CRUD master principle berbasis file Excel yang disimpan di backend Python.
+- `app/(dashboard)/powerpoint-maker/page.tsx`
+  - `PowerPointMakerPage`, `handleGenerate`
+  - UI generator slide PPTX yang memanggil FastAPI background job.
+- `app/(dashboard)/seedance/page.tsx`
+  - `SeedancePage`, `handleSubmit`, `handlePoll`, `addReference`
+  - UI creator/poller video Seedance 2.0 yang mengirim prompt dan reference asset ke FastAPI `/api/seedance/tasks`; reference bisa URL manual atau upload file yang dibaca browser sebagai data URL/base64, lalu status task dipolling hingga `video_url` tersedia.
+- `python_backend/requirements.txt`
+  - dependency list
+  - Mendefinisikan stack backend Python: FastAPI, pandas/openpyxl, PDF/OCR, requests/httpx, OpenAI client.
+- `python_backend/auth.py`
+  - `LoginRateLimiter`, `build_security_headers`, helper auth env/IP
+  - Utilitas auth, rate limit login, dan header keamanan FastAPI.
+- `python_backend/validator_engine.py`
+  - `read_upload_file_limited`, `extract_pdf_text_safe`
+  - Helper validasi upload dan ekstraksi PDF/OCR untuk endpoint FastAPI.
+- `python_backend/payments.py`
+  - `lpb_upload_template_rows`, `validator_sales_template_rows`, `validator_promo_template_rows`, `validator_channel_template_rows`
+  - Penyedia template contoh untuk download/upload workflow pembayaran dan validator.
+- `python_backend/migrate_db.py`
+  - `migrate`
+  - Script migrasi legacy JSON ke SQLite Python-side untuk users/principles/master items.
+- `python_backend/main.py`
+  - `app = FastAPI(...)`, `app.include_router(seedance_router)`, ratusan helper + endpoint
+  - Pusat backend Python: auth bridge, validator, summary, payments, finance, principle management, PPT, file output, HTML legacy pages, dan mounting router Seedance.
+- `python_backend/seedance_api.py`
+  - `create_seedance_task`, `get_seedance_task`, `seedance_health`
+  - Router FastAPI kecil untuk proxy BytePlus ModelArk Seedance 2.0; membaca API key dari env server, menerima reference URL/data URL dari frontend, dan tidak mengekspos key ke browser.
+
+# Data & Config
+- Lokasi `.env*` / config utama:
+  - Root Next: `.env.local`
+  - FastAPI: `python_backend/.env`, `python_backend/.env.example`
+  - Package/runtime config: `package.json`, `tsconfig.json`, `next.config.ts`, `postcss.config.mjs`, `drizzle.config.ts`, `python_backend/requirements.txt`
+- Konfigurasi penting:
+  - `next.config.ts`: ada, minimal, tanpa custom runtime config.
+  - `tailwind.config.*`: Not found
+  - `postcss.config.mjs`: ada, memakai `@tailwindcss/postcss`.
+  - `drizzle.config.ts`: schema `./db/schema.ts`, output migration `./db/migrations`, DB `file:sqlite.db`.
+  - `pyproject.toml`: Not found
+  - `requirements.txt`: ada di `python_backend/requirements.txt`
+  - `alembic.ini`: Not found
+- Skema data singkat:
+  - Drizzle / `sqlite.db`:
+    - `user`, `session`, `account`, `verification`: tabel Better Auth.
+    - `sync_state`: checkpoint/status sinkronisasi item/customer.
+    - `item`, `customer`: cache lokal hasil mirror dari Accurate.
+    - `idempotency_log`: guard submit pembayaran bulk.
+  - Python / `python_backend/database.sqlite`:
+    - `principles`: metadata master principle yang dibaca/tulis oleh `_load_principles()` dan `_save_principles()`.
+    - `users`, `master_items`: terlihat dari `migrate_db.py`; pemakaian runtime langsung di `main.py` untuk `users` tidak tampak eksplisit pada trace ini.
+  - JSON/file store:
+    - `python_backend/data/payments.json`: state LPB, submissions, drafts, SPPD settings/nomor terakhir, finance mappings, proof metadata, dan hasil post Accurate.
+    - `python_backend/data/error_log.jsonl`, `python_backend/data/audit_log.jsonl`: log runtime.
+  - Sumber definisi schema:
+    - Drizzle: `db/schema.ts`
+    - Python SQLite: implicit/manual via `main.py` + `migrate_db.py`
+    - Payments store: raw JSON, bukan ORM
+- Lokasi migration/seed:
+  - Drizzle migrations: dikonfigurasi ke `db/migrations`, folder aktual `db/migrations` Not found
+  - Alembic / migration FastAPI side: Not found
+  - Migration script Python side: `python_backend/migrate_db.py`
+  - Seed script khusus: Not found
+- Folder output/runtime artifacts:
+  - Upload/master principle files: `python_backend/data/masters`
+  - Output validator/summary/ppt/payments: `python_backend/output`
+  - Output pembayaran/SPPD: `python_backend/output/payments`
+  - Bukti transfer finance: `python_backend/output/payments/proofs`
+  - Output summary manual: `python_backend/output/summary_manual`
+  - Output PowerPoint: `python_backend/output/powerpoint`
+  - Cache runtime summary: `MANUAL_MASTER_CACHE` di memory FastAPI
+  - Webhook log: `webhook_events.log` di root project
+
+# External Integrations
+- Accurate OAuth
+  - Pemanggil: `app/(dashboard)/api-wrapper/page.tsx`, `app/api/auth/callback/route.ts`
+  - Tujuan: login ke Accurate dan mendapatkan access token.
+- Accurate Account API (`db-list.do`, `open-db.do`)
+  - Pemanggil: `app/api/auth/db-list/route.ts`, `app/api/auth/open-db/route.ts`
+  - Tujuan: memilih database Accurate dan membuka sesi database.
+- Accurate REST API
+  - Pemanggil: `lib/apiFetcher.ts`, `app/api/proxy/route.ts`, `lib/sync.ts`, hampir semua page master/sales/api-wrapper
+  - Tujuan: list/save transaksi dan master Accurate.
+- Better Auth
+  - Pemanggil: `lib/auth.ts`, `lib/auth-client.ts`, `app/api/auth/[...all]/route.ts`
+  - Tujuan: auth web, session, email verification, reset password.
+- Google OAuth
+  - Pemanggil: `lib/auth.ts`, `app/(auth)/login/page.tsx`, `app/(auth)/register/page.tsx`
+  - Tujuan: social login user portal.
+- SMTP Email dari Next
+  - Pemanggil: `lib/email.ts`, `lib/auth.ts`
+  - Tujuan: verifikasi email dan reset password Better Auth.
+- SMTP Email dari FastAPI
+  - Pemanggil: `python_backend/main.py` endpoint `/summary/manual/email`
+  - Tujuan: mengirim hasil summary manual ke email target.
+- SumoPod / OpenAI-compatible API
+  - Pemanggil: `python_backend/main.py` fungsi `sumopod_chat_completion`, `ai_extract_summary_rows`
+  - Tujuan: ekstraksi AI untuk summary promo.
+- BytePlus ModelArk Seedance 2.0
+  - Pemanggil: `app/(dashboard)/seedance/page.tsx` -> `python_backend/seedance_api.py`
+  - Tujuan: membuat task video asynchronous via `/contents/generations/tasks` dan polling task untuk mendapatkan `video_url`/`last_frame_url`.
+- Accurate Webhook
+  - Pemanggil: `app/api/webhook/accurate/route.ts`
+  - Tujuan: menerima event webhook dan menyimpannya ke file log.
+
+# Risks / Blind Spots
+- `python_backend/main.py` bersifat monolitik; tidak ada pemisahan router/service/repository formal. Batas antar-layer di backend Python diturunkan dari fungsi helper, bukan struktur folder.
+- Komunikasi Next.js <-> FastAPI tidak dipusatkan di satu wrapper typed client. Ada beberapa page yang memanggil FastAPI langsung dengan pola berbeda-beda.
+- `app/(dashboard)/validator/page.tsx`, `app/(dashboard)/powerpoint-maker/page.tsx`, dan `app/(dashboard)/seedance/page.tsx` memanggil FastAPI cross-port. Seedance memakai env `NEXT_PUBLIC_FASTAPI_BASE_URL` dengan fallback `http://localhost:8000`, sedangkan validator/powerpoint masih hardcoded; pola ini belum dipusatkan dalam typed client.
+- `app/(dashboard)/summary/page.tsx`, `payments/page.tsx`, `finance/page.tsx`, dan `principles/page.tsx` memang memakai `credentials: "include"` ke FastAPI cross-port, tetapi tidak ada wrapper CSRF eksplisit; mereka bergantung pada fallback same-origin logic di FastAPI.
+- `app/(dashboard)/powerpoint-maker/page.tsx` mengharapkan `file_id` dari endpoint generate, sedangkan `python_backend/main.py` endpoint `/api/powerpoint/generate` mengembalikan `job_id`. Endpoint `/api/job_status/{job_id}` ada di FastAPI, tetapi tidak terlihat dipakai di frontend Next. Ini menunjukkan mismatch flow.
+- `config/accurateRoutes.js` sangat besar dan berfungsi sebagai registry endpoint/sample payload. File ini tampak lebih seperti registry/generated asset daripada core business logic file-by-file; tidak semua route di dalamnya pasti aktif dipakai UI.
+- `drizzle.config.ts` menunjuk ke `db/migrations`, tetapi folder migration aktual tidak ditemukan pada workspace ini.
+- FastAPI memakai lebih dari satu storage backend:
+  - `sqlite.db` milik Next/Drizzle untuk membaca session Better Auth
+  - `python_backend/database.sqlite` untuk principles metadata
+  - `python_backend/data/payments.json` untuk payments
+  Sinkronisasi antar-storage tidak dijaga oleh satu abstraction layer tunggal.
+- App Router dipakai; `middleware.ts`, `pages/**`, `src/app/**`, dan `src/pages/**` tidak ditemukan pada trace ini.

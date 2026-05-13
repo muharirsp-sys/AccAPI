@@ -1,0 +1,20 @@
+{
+  "transDate": "string_value",
+  "branchId": 0,
+  "branchName": "string_value",
+  "currencyCode": "string_value",
+  "description": "string_value",
+  "detailItem": [
+    {
+      "_status": "string_value",
+      "id": 0,
+      "itemNo": "string_value",
+      "itemUnitName": "string_value",
+      "price": 0
+    }
+  ],
+  "id": 0,
+  "number": "string_value",
+  "typeAutoNumber": 0,
+  "vendorNo": "string_value"
+}

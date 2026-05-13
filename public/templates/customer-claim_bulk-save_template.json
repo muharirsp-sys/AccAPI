@@ -1,0 +1,39 @@
+{
+  "data": [
+    {
+      "customerClaimType": "string_value",
+      "customerNo": "string_value",
+      "detailItem": [
+        {
+          "itemNo": "string_value",
+          "_status": "string_value",
+          "detailName": "string_value",
+          "detailNotes": "string_value",
+          "detailSerialNumber": [
+            {
+              "_status": "string_value",
+              "expiredDate": "string_value",
+              "id": 0,
+              "quantity": 0,
+              "serialNumberNo": "string_value"
+            }
+          ],
+          "id": 0,
+          "itemUnitName": "string_value",
+          "quantity": 0,
+          "warehouseName": "string_value"
+        }
+      ],
+      "transDate": "string_value",
+      "branchId": 0,
+      "branchName": "string_value",
+      "description": "string_value",
+      "fromCustomerClaimNo": "string_value",
+      "id": 0,
+      "number": "string_value",
+      "saveAsStatusType": "string_value",
+      "toAddress": "string_value",
+      "typeAutoNumber": 0
+    }
+  ]
+}

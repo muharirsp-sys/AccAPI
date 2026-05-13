@@ -1,0 +1,23 @@
+{
+  "itemCategoryListName": [
+    "string_value"
+  ],
+  "number": "string_value",
+  "personCharged": "string_value",
+  "userListAccount": [
+    "string_value"
+  ],
+  "warehouseName": "string_value",
+  "branchId": 0,
+  "branchName": "string_value",
+  "departmentId": 0,
+  "departmentName": "string_value",
+  "description": "string_value",
+  "id": 0,
+  "startDate": "string_value",
+  "transDate": "string_value",
+  "typeAutoNumber": 0,
+  "vendorListNo": [
+    "string_value"
+  ]
+}
