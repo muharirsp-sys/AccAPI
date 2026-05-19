@@ -2846,7 +2846,6 @@ function OverviewTab() {
 
 export default function OffProgramControlPage() {
     const [activeTab, setActiveTab] = useState<TabKey>("overview");
-    const [devPreviewRole, setDevPreviewRole] = useState<OffRole | "">("");
     const { data: session } = authClient.useSession();
     const sessionUser = session?.user as ({
         name?: string | null;
@@ -2865,8 +2864,7 @@ export default function OffProgramControlPage() {
         department: sessionUser?.department,
         email: sessionUser?.email,
     });
-    const isDevelopment = process.env.NODE_ENV === "development";
-    const offRole = isDevelopment && devPreviewRole ? devPreviewRole : roleInfo.role;
+    const offRole = roleInfo.role;
     const accessibleTabKeys = getOffAccessibleTabs(offRole);
     const accessibleTabs = tabs.filter((tab) => accessibleTabKeys.includes(tab.key));
     const effectiveActiveTab = accessibleTabKeys.includes(activeTab) ? activeTab : accessibleTabs[0]?.key;
@@ -2891,27 +2889,9 @@ export default function OffProgramControlPage() {
                             Logged in as: <b className="text-slate-100">{sessionUser?.name || sessionUser?.email || "Unknown User"}</b>
                         </span>
                         <span className="rounded-lg border border-teal-500/20 bg-teal-500/10 px-3 py-1.5 text-teal-200">
-                            OFF Role: <b>{offRole}{isDevelopment && devPreviewRole ? " (dev preview)" : roleInfo.source === "email" ? " (from email domain)" : roleInfo.isFallback ? " (fallback dev)" : ""}</b>
+                            OFF Role: <b>{offRole}{roleInfo.source === "email" ? " (from email domain)" : roleInfo.isFallback ? " (fallback dev)" : ""}</b>
                         </span>
-                        {isDevelopment && (
-                            <label className="inline-flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-amber-100">
-                                <span className="font-bold">Dev Role Preview</span>
-                                <select
-                                    value={devPreviewRole}
-                                    onChange={(event) => setDevPreviewRole(event.target.value as OffRole | "")}
-                                    className="rounded-md border border-white/10 bg-black/40 px-2 py-1 text-xs text-slate-100 outline-none"
-                                >
-                                    <option value="">Session/fallback</option>
-                                    <option value="admin">admin</option>
-                                    <option value="supervisor">supervisor</option>
-                                    <option value="sales_manager">sales_manager</option>
-                                    <option value="claim">claim</option>
-                                    <option value="operational_manager">operational_manager</option>
-                                    <option value="finance">finance</option>
-                                    <option value="sales">sales</option>
-                                </select>
-                            </label>
-                        )}
+
                     </div>
                 </div>
                 <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-[#1a1c23]/60 px-4 py-3">
