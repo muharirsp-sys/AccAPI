@@ -56,6 +56,7 @@ python_backend/output/
 python_backend/output/payments/
 python_backend/output/payments/proofs/
 runtime_logs/
+runtime/
 scratch/
 *.log
 
@@ -74,3 +75,6 @@ scratch/
 next-env.d.ts
 
 *.docx
+
+# local backup files
+*.bak

@@ -92,3 +92,108 @@ export const idempotencyLog = sqliteTable("idempotency_log", {
     createdAt: integer('createdAt', { mode: 'timestamp' }),
     updatedAt: integer('updatedAt', { mode: 'timestamp' })
 });
+
+export const offBatch = sqliteTable("off_batch", {
+    id: text("id").primaryKey(),
+    noPengajuan: text("no_pengajuan").notNull().unique(),
+    gelombang: text("gelombang").notNull(),
+    principleCode: text("principle_code").notNull(),
+    principleName: text("principle_name").notNull(),
+    bulan: text("bulan").notNull(),
+    tahun: text("tahun").notNull(),
+    supervisorName: text("supervisor_name").notNull(),
+    status: text("status").notNull().default("Draft"),
+    smStatus: text("sm_status").notNull().default("Waiting"),
+    claimStatus: text("claim_status").notNull().default("Not Started"),
+    omStatus: text("om_status").notNull().default("Not Started"),
+    financeStatus: text("finance_status").notNull().default("Not Started"),
+    finalStatus: text("final_status").notNull().default("Not Started"),
+    locked: integer("locked", { mode: "boolean" }).notNull().default(false),
+    smNote: text("sm_note"),
+    claimNote: text("claim_note"),
+    omNote: text("om_note"),
+    financeNote: text("finance_note"),
+    finalClaimNote: text("final_claim_note"),
+    noClaim: text("no_claim"),
+    claimSubmittedDate: text("claim_submitted_date"),
+    claimDeadline: text("claim_deadline"),
+    paymentDate: text("payment_date"),
+    paidAmount: real("paid_amount"),
+    verifiedAmount: real("verified_amount"),
+    pdfPath: text("pdf_path"),
+    pdfStatus: text("pdf_status").notNull().default("pending"),
+    pdfGeneratedAt: integer("pdf_generated_at", { mode: "timestamp" }),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
+});
+
+export const offBatchItem = sqliteTable("off_batch_item", {
+    id: text("id").primaryKey(),
+    batchId: text("batch_id").notNull().references(() => offBatch.id),
+    itemNo: integer("item_no").notNull(),
+    rowNo: integer("row_no").notNull(),
+    noSurat: text("no_surat"),
+    namaProgram: text("nama_program").notNull(),
+    periode: text("periode"),
+    toko: text("toko"),
+    barang: text("barang"),
+    nominal: real("nominal").notNull().default(0),
+    caraBayar: text("cara_bayar"),
+    type: text("type"),
+    deadline: text("deadline"),
+    kwt: integer("kwt", { mode: "boolean" }).notNull().default(false),
+    skp: integer("skp", { mode: "boolean" }).notNull().default(false),
+    fp: integer("fp", { mode: "boolean" }).notNull().default(false),
+    pc: integer("pc", { mode: "boolean" }).notNull().default(false),
+    foto: integer("foto", { mode: "boolean" }).notNull().default(false),
+    rekap: integer("rekap", { mode: "boolean" }).notNull().default(false),
+    others: integer("others", { mode: "boolean" }).notNull().default(false),
+    othersText: text("others_text"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
+});
+
+export const offPayment = sqliteTable("off_payment", {
+    id: text("id").primaryKey(),
+    batchId: text("batch_id").notNull().references(() => offBatch.id),
+    paymentNo: integer("payment_no").notNull(),
+    paymentDate: text("payment_date").notNull(),
+    paymentMethod: text("payment_method").notNull(),
+    paidAmount: real("paid_amount").notNull().default(0),
+    senderBank: text("sender_bank"),
+    paymentProofName: text("payment_proof_name").notNull(),
+    paymentProofPath: text("payment_proof_path"),
+    paymentProofMime: text("payment_proof_mime"),
+    paymentProofSize: integer("payment_proof_size"),
+    note: text("note"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
+});
+
+export const offNotification = sqliteTable("off_notification", {
+    id: text("id").primaryKey(),
+    batchId: text("batch_id").notNull().references(() => offBatch.id),
+    type: text("type").notNull(),
+    to: text("to").notNull(),
+    subject: text("subject").notNull(),
+    message: text("message").notNull(),
+    status: text("status").notNull().default("created"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+});
+
+export const offAuditLog = sqliteTable("off_audit_log", {
+    id: text("id").primaryKey(),
+    batchId: text("batch_id").notNull().references(() => offBatch.id),
+    itemId: text("item_id"),
+    actorId: text("actor_id"),
+    actorName: text("actor_name"),
+    actorRole: text("actor_role"),
+    action: text("action").notNull(),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status"),
+    note: text("note"),
+    metadata: text("metadata", { mode: "json" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+});

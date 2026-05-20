@@ -6,7 +6,7 @@
 "use client";
 
 import { useState } from "react";
-import { Menu, Home, Users, ShoppingCart, ShoppingBag, Settings, Database, Server, Box, GitBranch, ArrowLeftRight, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Presentation, Settings2, FileVideo, FileText, Shield } from "lucide-react";
+import { Menu, Home, Users, ShoppingCart, ShoppingBag, Settings, Database, Server, Box, GitBranch, ArrowLeftRight, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Presentation, Settings2, FileVideo, FileText, Shield, ClipboardCheck } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 
@@ -33,6 +33,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
         { name: "Validator Diskon", icon: Percent, href: "/validator" },
         { name: "Summary Promo", icon: CalendarCheck2, href: "/summary" },
         { name: "Tarikan Finance", icon: DollarSign, href: "/finance" },
+        { name: "OFF Program Control", icon: ClipboardCheck, href: "/off-program-control" },
         { name: "Pembayaran / SPPD", icon: Wallet, href: "/payments" },
         { name: "Format SPPD", icon: FileText, href: "/payments/sppd" },
         { name: "PowerPoint Maker", icon: Presentation, href: "/powerpoint-maker" },

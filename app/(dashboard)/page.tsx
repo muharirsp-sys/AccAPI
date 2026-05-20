@@ -5,7 +5,7 @@
 // Side Effects: Navigasi client via link; tidak melakukan DB/HTTP/file I/O.
 "use client";
 
-import { Percent, CalendarCheck2, DollarSign, Wallet, Presentation, Database, ArrowRight, Settings2, ShieldCheck, Cpu, FileVideo } from "lucide-react";
+import { Percent, CalendarCheck2, DollarSign, Wallet, Presentation, Database, ArrowRight, Settings2, ShieldCheck, Cpu, FileVideo, ClipboardCheck } from "lucide-react";
 import Link from "next/link";
 
 const MODULES = [
@@ -44,6 +44,15 @@ const MODULES = [
         color: "from-purple-500/20 to-purple-600/5",
         iconColor: "text-purple-400",
         border: "border-purple-500/20 hover:border-purple-400/50"
+    },
+    {
+        title: "OFF Program Control",
+        desc: "Kontrol pengajuan OFF, approval, pembayaran, claim, dan audit trail.",
+        icon: ClipboardCheck,
+        href: "/off-program-control",
+        color: "from-teal-500/20 to-teal-600/5",
+        iconColor: "text-teal-300",
+        border: "border-teal-500/20 hover:border-teal-400/50"
     },
     {
         title: "Pembayaran & SPPD",
