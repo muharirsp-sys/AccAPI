@@ -3,10 +3,17 @@ import fs from "node:fs";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offPayment } from "@/db/schema";
+import { canActorAccessOffData, requireOffSession } from "@/lib/off-program-control";
 
 type Context = { params: Promise<{ paymentId: string }> };
 
 export async function GET(_request: Request, context: Context) {
+    const actor = await requireOffSession();
+    if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (!canActorAccessOffData(actor)) {
+        return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses OFF Program Control." }, { status: 403 });
+    }
+
     try {
         const { paymentId } = await context.params;
         const [payment] = await db.select().from(offPayment).where(eq(offPayment.id, paymentId));

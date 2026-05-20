@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem } from "@/db/schema";
-import { buildNoPengajuan, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, getPrincipleByCode, getPrincipleByName, getBatchWithItems, parseCurrency, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { buildNoPengajuan, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, getPrincipleByCode, getPrincipleByName, getBatchWithItems, parseCurrency, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -40,6 +40,12 @@ function batchSummary(items: Array<typeof offBatchItem.$inferSelect>) {
 }
 
 export async function GET(_request: Request, context: Context) {
+    const actor = await requireOffSession();
+    if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (!canActorAccessOffData(actor)) {
+        return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses OFF Program Control." }, { status: 403 });
+    }
+
     try {
         const { id } = await context.params;
         const data = await getBatchWithItems(id);

@@ -1,10 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
-import { getBatchWithItems } from "@/lib/off-program-control";
+import { canActorAccessOffData, getBatchWithItems, requireOffSession } from "@/lib/off-program-control";
 
 type Context = { params: Promise<{ id: string }> };
 
 export async function GET(_request: Request, context: Context) {
+    const actor = await requireOffSession();
+    if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (!canActorAccessOffData(actor)) {
+        return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses OFF Program Control." }, { status: 403 });
+    }
+
     const { id } = await context.params;
     const data = await getBatchWithItems(id);
     if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });

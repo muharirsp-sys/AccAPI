@@ -35,6 +35,10 @@ export function canActorPerformOffAction(actor: OffActor | null, action: OffActi
     return Boolean(actor && canPerformOffAction(actor.role, action));
 }
 
+export function canActorAccessOffData(actor: OffActor | null) {
+    return Boolean(actor && actor.role !== "unknown" && actor.role !== "sales");
+}
+
 export async function getBatchWithItems(batchId: string) {
     const [batch] = await db.select().from(offBatch).where(eq(offBatch.id, batchId));
     if (!batch) return null;

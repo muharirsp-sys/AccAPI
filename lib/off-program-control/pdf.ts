@@ -203,7 +203,8 @@ function setCell(ws: XLSX.WorkSheet, address: string, value: string | number) {
 async function generatePrintWorkbook(batch: OffBatchRow, items: OffItemRow[]) {
     const templatePath = path.join(process.cwd(), "templates", "off-print-template.xlsx");
     if (!fs.existsSync(templatePath)) {
-        throw new Error(`OFF print template not found: ${templatePath}`);
+        console.warn(`[OFF PDF WARNING] OFF print template not found, using manual fallback PDF: ${templatePath}`);
+        return null;
     }
     const buffer = fs.readFileSync(templatePath);
     const workbook = XLSX.read(buffer, { type: "buffer", cellStyles: true });
@@ -300,8 +301,10 @@ export async function generateOffBatchPdf(batchId: string) {
     if (!data) throw new Error("Batch not found");
     if (data.items.length === 0) throw new Error("Cannot generate PDF: batch has no items");
     const workbookPath = await generatePrintWorkbook(data.batch, data.items);
-    const convertedPdfPath = await tryConvertWorkbookToPdf(workbookPath);
-    if (convertedPdfPath) return convertedPdfPath;
+    if (workbookPath) {
+        const convertedPdfPath = await tryConvertWorkbookToPdf(workbookPath);
+        if (convertedPdfPath) return convertedPdfPath;
+    }
 
     const filePath = await uniquePdfPath(data.batch.noPengajuan);
     const pdf = await buildPdf(data.batch, data.items);
