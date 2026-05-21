@@ -4392,6 +4392,13 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                   />
                 </label>
               </div>
+
+              {claimMessage && (
+                <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+                  {claimMessage}
+                </div>
+              )}
+
               {canFinalClaim ? (
                 <div className="mt-5 flex flex-wrap gap-3">
                   <button
