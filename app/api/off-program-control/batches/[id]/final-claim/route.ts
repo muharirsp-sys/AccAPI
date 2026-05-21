@@ -1,84 +1,262 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { offBatch } from "@/db/schema";
-import { canActorPerformOffAction, canOpenFinalClaim, computeOffFinancePaymentSummary, computeOffPaymentSummary, getBatchWithItems, paymentsHaveProofs, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { offBatch, offBatchItem } from "@/db/schema";
+import {
+  canActorPerformOffAction,
+  canOpenFinalClaim,
+  computeOffFinancePaymentSummary,
+  computeOffPaymentSummary,
+  getBatchWithItems,
+  paymentsHaveProofs,
+  publicBatch,
+  requireOffSession,
+  writeOffAudit,
+} from "@/lib/off-program-control";
 
 type Context = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, context: Context) {
-    try {
-        const actor = await requireOffSession();
-        if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-        if (!canActorPerformOffAction(actor, "claim_final")) return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses final Claim." }, { status: 403 });
-        const { id } = await context.params;
-        const data = await getBatchWithItems(id);
-        if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
-        const itemSummary = computeOffPaymentSummary(data.items);
-        const paymentSummary = computeOffFinancePaymentSummary(itemSummary.total, data.payments);
-        if (!canOpenFinalClaim(data.batch)) {
-            return NextResponse.json({ ok: false, error: "Batch belum dibayar Keuangan." }, { status: 409 });
-        }
-        if (!paymentSummary.isFullyPaid) {
-            return NextResponse.json({ ok: false, error: "Pembayaran belum lunas, belum bisa di-approve Claim." }, { status: 409 });
-        }
-
-        const body = await request.json().catch(() => ({}));
-        const action = String(body.action || body.decision || "complete");
-        const note = String(body.note || body.finalClaimNote || "").trim();
-        const now = new Date();
-
-        if (action === "return_to_finance") {
-            if (!note) return NextResponse.json({ ok: false, error: "Catatan wajib diisi untuk return ke Keuangan." }, { status: 400 });
-            await db.update(offBatch).set({
-                status: "Returned to Finance",
-                finalStatus: "Need Correction from Finance",
-                financeStatus: "Need Correction",
-                finalClaimNote: note,
-                updatedAt: now,
-            }).where(eq(offBatch.id, id));
-            await writeOffAudit({ batchId: id, actor, action: "final_return", fromStatus: data.batch.finalStatus, toStatus: "Need Correction from Finance", note, metadata: { totalPaid: paymentSummary.totalPaid, totalNominal: paymentSummary.totalNominal } });
-            const updated = await getBatchWithItems(id);
-            return NextResponse.json({ ok: true, message: "Pengajuan dikembalikan ke Keuangan untuk koreksi.", batch: updated ? publicBatch(updated.batch) : null });
-        }
-
-        if (action === "reject_incomplete_documents") {
-            if (!note) return NextResponse.json({ ok: false, error: "Catatan Final Claim wajib diisi untuk menolak karena kelengkapan belum lengkap." }, { status: 400 });
-            await db.update(offBatch).set({
-                status: "Paid",
-                financeStatus: "Paid",
-                finalStatus: "Incomplete Documents",
-                finalClaimNote: note,
-                locked: true,
-                updatedAt: now,
-            }).where(eq(offBatch.id, id));
-            await writeOffAudit({ batchId: id, actor, action: "final_reject_incomplete_documents", fromStatus: data.batch.finalStatus, toStatus: "Incomplete Documents", note, metadata: { totalPaid: paymentSummary.totalPaid, totalNominal: paymentSummary.totalNominal } });
-            const updated = await getBatchWithItems(id);
-            return NextResponse.json({ ok: true, message: "Pengajuan ditandai belum lengkap dan tetap menunggu final Claim.", batch: updated ? publicBatch(updated.batch) : null });
-        }
-
-        if (action !== "complete") return NextResponse.json({ ok: false, error: "Action Final Claim tidak valid." }, { status: 400 });
-        if (data.payments.length === 0) return NextResponse.json({ ok: false, error: "Pembayaran belum lunas, belum bisa di-approve Claim." }, { status: 409 });
-        if (!paymentsHaveProofs(data.payments)) {
-            return NextResponse.json({ ok: false, error: "Semua pembayaran wajib memiliki bukti pembayaran." }, { status: 400 });
-        }
-        if (paymentSummary.totalPaid !== paymentSummary.totalNominal) {
-            return NextResponse.json({ ok: false, error: "Pembayaran belum lunas, belum bisa di-approve Claim." }, { status: 409 });
-        }
-
-        await db.update(offBatch).set({
-            status: "Completed",
-            finalStatus: "Completed",
-            verifiedAmount: paymentSummary.totalPaid,
-            finalClaimNote: note,
-            locked: true,
-            updatedAt: now,
-        }).where(eq(offBatch.id, id));
-        await writeOffAudit({ batchId: id, actor, action: "complete", fromStatus: data.batch.finalStatus, toStatus: "Completed", note, metadata: { totalPaid: paymentSummary.totalPaid, paymentCount: data.payments.length } });
-        const updated = await getBatchWithItems(id);
-        return NextResponse.json({ ok: true, message: "Pengajuan selesai dan status menjadi Completed.", batch: updated ? publicBatch(updated.batch) : null });
-    } catch (error) {
-        console.error("[OFF FINAL CLAIM ERROR]", error);
-        return NextResponse.json({ ok: false, error: "Gagal memproses final verification Claim." }, { status: 500 });
+  try {
+    const actor = await requireOffSession();
+    if (!actor)
+      return NextResponse.json(
+        { ok: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    if (!canActorPerformOffAction(actor, "claim_final"))
+      return NextResponse.json(
+        { ok: false, error: "Role Anda tidak memiliki akses final Claim." },
+        { status: 403 },
+      );
+    const { id } = await context.params;
+    const data = await getBatchWithItems(id);
+    if (!data)
+      return NextResponse.json(
+        { ok: false, error: "Batch not found" },
+        { status: 404 },
+      );
+    const itemSummary = computeOffPaymentSummary(data.items);
+    const paymentSummary = computeOffFinancePaymentSummary(
+      itemSummary.total,
+      data.payments,
+    );
+    if (!canOpenFinalClaim(data.batch)) {
+      return NextResponse.json(
+        { ok: false, error: "Batch belum dibayar Keuangan." },
+        { status: 409 },
+      );
     }
+    if (!paymentSummary.isFullyPaid) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Pembayaran belum lunas, belum bisa di-approve Claim.",
+        },
+        { status: 409 },
+      );
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const action = String(body.action || body.decision || "complete");
+    const note = String(body.note || body.finalClaimNote || "").trim();
+    const claimRefs = Array.isArray(body.claimRefs) ? body.claimRefs : [];
+    const now = new Date();
+
+    if (action === "return_to_finance") {
+      if (!note)
+        return NextResponse.json(
+          { ok: false, error: "Catatan wajib diisi untuk return ke Keuangan." },
+          { status: 400 },
+        );
+      await db
+        .update(offBatch)
+        .set({
+          status: "Returned to Finance",
+          finalStatus: "Need Correction from Finance",
+          financeStatus: "Need Correction",
+          finalClaimNote: note,
+          updatedAt: now,
+        })
+        .where(eq(offBatch.id, id));
+      await writeOffAudit({
+        batchId: id,
+        actor,
+        action: "final_return",
+        fromStatus: data.batch.finalStatus,
+        toStatus: "Need Correction from Finance",
+        note,
+        metadata: {
+          totalPaid: paymentSummary.totalPaid,
+          totalNominal: paymentSummary.totalNominal,
+        },
+      });
+      const updated = await getBatchWithItems(id);
+      return NextResponse.json({
+        ok: true,
+        message: "Pengajuan dikembalikan ke Keuangan untuk koreksi.",
+        batch: updated ? publicBatch(updated.batch) : null,
+      });
+    }
+
+    if (action === "reject_incomplete_documents") {
+      if (!note)
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Catatan Final Claim wajib diisi untuk menolak karena kelengkapan belum lengkap.",
+          },
+          { status: 400 },
+        );
+      await db
+        .update(offBatch)
+        .set({
+          status: "Paid",
+          financeStatus: "Paid",
+          finalStatus: "Incomplete Documents",
+          finalClaimNote: note,
+          locked: true,
+          updatedAt: now,
+        })
+        .where(eq(offBatch.id, id));
+      await writeOffAudit({
+        batchId: id,
+        actor,
+        action: "final_reject_incomplete_documents",
+        fromStatus: data.batch.finalStatus,
+        toStatus: "Incomplete Documents",
+        note,
+        metadata: {
+          totalPaid: paymentSummary.totalPaid,
+          totalNominal: paymentSummary.totalNominal,
+        },
+      });
+      const updated = await getBatchWithItems(id);
+      return NextResponse.json({
+        ok: true,
+        message:
+          "Pengajuan ditandai belum lengkap dan tetap menunggu final Claim.",
+        batch: updated ? publicBatch(updated.batch) : null,
+      });
+    }
+
+    if (action !== "complete")
+      return NextResponse.json(
+        { ok: false, error: "Action Final Claim tidak valid." },
+        { status: 400 },
+      );
+    if (data.payments.length === 0)
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Pembayaran belum lunas, belum bisa di-approve Claim.",
+        },
+        { status: 409 },
+      );
+    if (!paymentsHaveProofs(data.payments)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Semua pembayaran wajib memiliki bukti pembayaran.",
+        },
+        { status: 400 },
+      );
+    }
+    if (paymentSummary.totalPaid !== paymentSummary.totalNominal) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Pembayaran belum lunas, belum bisa di-approve Claim.",
+        },
+        { status: 409 },
+      );
+    }
+
+    type ClaimRef = {
+      itemId: string;
+      noSurat: string;
+      noClaim: string;
+    };
+
+    const sanitizedClaimRefs: ClaimRef[] = claimRefs.map(
+      (ref: Record<string, unknown>) => ({
+        itemId: String(ref.itemId || "").trim(),
+        noSurat: String(ref.noSurat || "").trim(),
+        noClaim: String(ref.noClaim || "").trim(),
+      }),
+    );
+
+    const claimRefMap = new Map<string, ClaimRef>(
+      sanitizedClaimRefs.map((ref): [string, ClaimRef] => [ref.itemId, ref]),
+    );
+
+    const missingNoClaim = data.items
+      .filter((item) => String(item.noSurat || "").trim())
+      .filter((item) => !claimRefMap.get(item.id)?.noClaim)
+      .map((item) => String(item.noSurat || "").trim());
+
+    if (missingNoClaim.length > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `No Claim wajib diisi untuk No Surat: ${missingNoClaim.join(", ")}`,
+        },
+        { status: 400 },
+      );
+    }
+
+    await Promise.all(
+      data.items.map((item) => {
+        const ref = claimRefMap.get(item.id);
+        if (!ref) return Promise.resolve();
+
+        return db
+          .update(offBatchItem)
+          .set({
+            noClaim: ref.noClaim,
+            updatedAt: now,
+          })
+          .where(eq(offBatchItem.id, item.id));
+      }),
+    );
+
+    await db
+      .update(offBatch)
+      .set({
+        status: "Completed",
+        finalStatus: "Completed",
+        verifiedAmount: paymentSummary.totalPaid,
+        finalClaimNote: note,
+        locked: true,
+        updatedAt: now,
+      })
+      .where(eq(offBatch.id, id));
+
+    await writeOffAudit({
+      batchId: id,
+      actor,
+      action: "complete",
+      fromStatus: data.batch.finalStatus,
+      toStatus: "Completed",
+      note,
+      metadata: {
+        totalPaid: paymentSummary.totalPaid,
+        paymentCount: data.payments.length,
+        claimRefs: sanitizedClaimRefs,
+      },
+    });
+    const updated = await getBatchWithItems(id);
+    return NextResponse.json({
+      ok: true,
+      message: "Pengajuan selesai dan status menjadi Completed.",
+      batch: updated ? publicBatch(updated.batch) : null,
+    });
+  } catch (error) {
+    console.error("[OFF FINAL CLAIM ERROR]", error);
+    return NextResponse.json(
+      { ok: false, error: "Gagal memproses final verification Claim." },
+      { status: 500 },
+    );
+  }
 }

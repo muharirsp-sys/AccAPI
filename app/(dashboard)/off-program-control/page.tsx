@@ -3039,6 +3039,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
   const [completenessStatus, setCompletenessStatus] = useState("Aman");
   const [claimNote, setClaimNote] = useState("");
   const [finalClaimNote, setFinalClaimNote] = useState("");
+  const [finalClaimRefs, setFinalClaimRefs] = useState<Record<string, string>>(
+    {},
+  );
   const totalNominal = selectedItems.reduce(
     (total, item) => total + Number(item.nominal || 0),
     0,
@@ -3140,6 +3143,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
     };
     setSelectedFinalBatch(batchWithPaymentSummary);
     setSelectedFinalItems(items);
+    setFinalClaimRefs(
+      Object.fromEntries(items.map((item) => [item.id, item.noClaim || ""])),
+    );
     setSelectedFinalPayments(payments);
     setFinalClaimNote(detailBatch?.finalClaimNote || "");
   };
@@ -3186,6 +3192,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
         await loadFinalDetail(nextFinalBatch);
       } else {
         setSelectedFinalItems([]);
+        setFinalClaimRefs({});
         setSelectedFinalPayments([]);
         setFinalClaimNote("");
       }
@@ -3416,6 +3423,28 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       setClaimMessage("Pembayaran belum lunas, belum bisa disetujui Claim.");
       return;
     }
+
+    const missingNoClaim = selectedFinalItems
+      .filter((item) => item.noSurat)
+      .filter((item) => !String(finalClaimRefs[item.id] || "").trim());
+
+    if (missingNoClaim.length > 0) {
+      setClaimMessage(
+        `No Claim wajib diisi untuk No Surat: ${missingNoClaim
+          .map((item) => item.noSurat)
+          .join(", ")}`,
+      );
+      return;
+    }
+
+    const claimRefs = selectedFinalItems
+      .filter((item) => item.noSurat)
+      .map((item) => ({
+        itemId: item.id,
+        noSurat: item.noSurat,
+        noClaim: String(finalClaimRefs[item.id] || "").trim(),
+      }));
+
     setIsActionLoading(true);
     setClaimMessage("");
     try {
@@ -3425,7 +3454,11 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "complete", note: finalClaimNote }),
+          body: JSON.stringify({
+            action: "complete",
+            note: finalClaimNote,
+            claimRefs,
+          }),
         },
       );
       const data = await parseJsonResponse(response);
@@ -3478,8 +3511,8 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
               Validasi Setelah SM
             </h3>
             <p className="mt-2 text-sm leading-6 text-slate-400">
-              Cek data batch yang sudah disetujui Sales Manager, input No Claim,
-              tanggal diajukan, deadline claim, dan validasi kelengkapan.
+              Cek data batch yang sudah disetujui Sales Manager dan validasi
+              kelengkapan awal sebelum diteruskan ke OM.
             </p>
             <button
               onClick={() => setClaimView("after-sm")}
@@ -3626,11 +3659,6 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                         <b className="text-sky-300">
                           {displayStatusLabel(batch.claimStatus)}
                         </b>
-                      </span>
-
-                      <span>
-                        No Claim:{" "}
-                        <b className="text-slate-200">{batch.noClaim || "-"}</b>
                       </span>
 
                       <span>
@@ -3943,7 +3971,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
               <MonitoringSearch
                 value={finalClaimSearch}
                 onChange={setFinalClaimSearch}
-                placeholder="Cari No Pengajuan, principle, kode, no claim, atau status pembayaran..."
+                placeholder="Cari No Pengajuan, principle, kode, status pembayaran, atau No Surat..."
               />
             </div>
             <div className="space-y-3">
@@ -4240,6 +4268,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                       {[
                         "No",
                         "No Surat",
+                        "No Claim",
                         "Nama Program",
                         "Periode Awal",
                         "Periode Akhir",
@@ -4269,6 +4298,19 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                           </td>
                           <td className="px-3 py-3 font-mono text-slate-200">
                             {item.noSurat || "-"}
+                          </td>
+                          <td className="px-3 py-3">
+                            <input
+                              value={finalClaimRefs[item.id] || ""}
+                              onChange={(event) =>
+                                setFinalClaimRefs((current) => ({
+                                  ...current,
+                                  [item.id]: event.target.value,
+                                }))
+                              }
+                              placeholder="Isi No Claim"
+                              className="w-full min-w-[160px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm font-mono text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                            />
                           </td>
                           <td className="px-3 py-3 min-w-[180px] text-slate-200">
                             {item.namaProgram || "-"}
