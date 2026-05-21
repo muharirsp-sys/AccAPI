@@ -42,6 +42,21 @@ export async function POST(request: Request, context: Context) {
             return NextResponse.json({ ok: true, message: "Pengajuan dikembalikan ke Keuangan untuk koreksi.", batch: updated ? publicBatch(updated.batch) : null });
         }
 
+        if (action === "reject_incomplete_documents") {
+            if (!note) return NextResponse.json({ ok: false, error: "Catatan Final Claim wajib diisi untuk menolak karena kelengkapan belum lengkap." }, { status: 400 });
+            await db.update(offBatch).set({
+                status: "Paid",
+                financeStatus: "Paid",
+                finalStatus: "Incomplete Documents",
+                finalClaimNote: note,
+                locked: true,
+                updatedAt: now,
+            }).where(eq(offBatch.id, id));
+            await writeOffAudit({ batchId: id, actor, action: "final_reject_incomplete_documents", fromStatus: data.batch.finalStatus, toStatus: "Incomplete Documents", note, metadata: { totalPaid: paymentSummary.totalPaid, totalNominal: paymentSummary.totalNominal } });
+            const updated = await getBatchWithItems(id);
+            return NextResponse.json({ ok: true, message: "Pengajuan ditandai belum lengkap dan tetap menunggu final Claim.", batch: updated ? publicBatch(updated.batch) : null });
+        }
+
         if (action !== "complete") return NextResponse.json({ ok: false, error: "Action Final Claim tidak valid." }, { status: 400 });
         if (data.payments.length === 0) return NextResponse.json({ ok: false, error: "Pembayaran belum lunas, belum bisa di-approve Claim." }, { status: 409 });
         if (!paymentsHaveProofs(data.payments)) {

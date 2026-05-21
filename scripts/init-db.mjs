@@ -1,12 +1,14 @@
 // Initialize SQLite tables used by Better Auth and local cache when the runtime volume is empty.
 // Safe to run repeatedly because all statements use IF NOT EXISTS.
-import { createClient } from '@libsql/client';
-import { mkdirSync } from 'node:fs';
+import { createClient } from "@libsql/client";
+import { mkdirSync } from "node:fs";
 
-const databaseUrl = process.env.DATABASE_URL || 'file:/app/data/sqlite.db';
-const filePath = databaseUrl.startsWith('file:') ? databaseUrl.slice('file:'.length) : null;
-if (filePath?.startsWith('/')) {
-  mkdirSync(filePath.replace(/\/[^/]*$/, ''), { recursive: true });
+const databaseUrl = process.env.DATABASE_URL || "file:/app/data/sqlite.db";
+const filePath = databaseUrl.startsWith("file:")
+  ? databaseUrl.slice("file:".length)
+  : null;
+if (filePath?.startsWith("/")) {
+  mkdirSync(filePath.replace(/\/[^/]*$/, ""), { recursive: true });
 }
 
 const db = createClient({ url: databaseUrl });
@@ -137,6 +139,7 @@ const statements = [
     item_no INTEGER NOT NULL,
     row_no INTEGER NOT NULL,
     no_surat TEXT,
+    no_claim TEXT,
     nama_program TEXT NOT NULL,
     periode TEXT,
     toko TEXT,
@@ -200,7 +203,7 @@ const statements = [
     metadata TEXT,
     created_at INTEGER NOT NULL,
     FOREIGN KEY (batch_id) REFERENCES off_batch(id)
-  );`
+  );`,
 ];
 
 for (const sql of statements) {
@@ -213,6 +216,7 @@ const migrations = [
   `ALTER TABLE user ADD COLUMN banReason TEXT;`,
   `ALTER TABLE user ADD COLUMN banExpires INTEGER;`,
   `ALTER TABLE session ADD COLUMN impersonatedBy TEXT;`,
+  `ALTER TABLE off_batch_item ADD COLUMN no_claim TEXT;`,
   `ALTER TABLE off_payment ADD COLUMN payment_proof_path TEXT;`,
   `ALTER TABLE off_payment ADD COLUMN payment_proof_mime TEXT;`,
   `ALTER TABLE off_payment ADD COLUMN payment_proof_size INTEGER;`,
@@ -222,12 +226,14 @@ for (const sql of migrations) {
   try {
     await db.execute(sql);
   } catch (error) {
-    if (!String(error?.message || error).includes('duplicate column name')) {
+    if (!String(error?.message || error).includes("duplicate column name")) {
       throw error;
     }
   }
 }
 
-await db.execute(`UPDATE user SET role = 'viewer' WHERE role IS NULL OR role = '';`);
+await db.execute(
+  `UPDATE user SET role = 'viewer' WHERE role IS NULL OR role = '';`,
+);
 
-console.log('SQLite tables are ready');
+console.log("SQLite tables are ready");

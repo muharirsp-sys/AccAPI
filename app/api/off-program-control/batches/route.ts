@@ -164,7 +164,7 @@ export async function POST(request: Request) {
             tahun,
             supervisorName: String(body.supervisorName || actor.name || "Supervisor"),
             status: "Draft",
-            smStatus: "Waiting",
+            smStatus: "Not Started",
             claimStatus: "Not Started",
             omStatus: "Not Started",
             financeStatus: "Not Started",

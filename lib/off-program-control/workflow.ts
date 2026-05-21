@@ -15,8 +15,8 @@ export function canProcessFinancePayment(batch: OffBatchRow) {
 
 export function canOpenFinalClaim(batch: OffBatchRow) {
     return batch.financeStatus === offFinanceStatuses.paid
-        && batch.finalStatus === "Waiting Claim Final Verification"
-        && batch.status === "Finance Paid";
+        && ["Waiting Claim Final Verification", "Incomplete Documents"].includes(batch.finalStatus)
+        && batch.status === "Paid";
 }
 
 export function paymentsHaveProofs(payments: OffPaymentRow[]) {

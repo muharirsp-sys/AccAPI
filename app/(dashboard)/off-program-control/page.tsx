@@ -57,146 +57,23 @@ type Principle = (typeof offPrinciples)[number];
 const PRINCIPLE_OPTIONS: Principle[] = offPrinciples;
 
 const tabs: Array<{ key: TabKey; label: string }> = [
-  { key: "overview", label: "Overview" },
+  { key: "overview", label: "Ringkasan" },
   { key: "supervisor", label: "Supervisor" },
   { key: "sales", label: "Sales Manager" },
   { key: "claim", label: "Claim" },
   { key: "om", label: "Operational Manager" },
   { key: "finance", label: "Keuangan" },
-  { key: "audit", label: "Audit Log" },
-];
-
-const metrics = [
-  {
-    label: "Total Batch",
-    value: "24",
-    tone: "text-sky-300",
-    icon: ClipboardCheck,
-  },
-  {
-    label: "Waiting SM Review",
-    value: "7",
-    tone: "text-amber-300",
-    icon: Clock3,
-  },
-  {
-    label: "Waiting OM Approval",
-    value: "4",
-    tone: "text-purple-300",
-    icon: ShieldCheck,
-  },
-  {
-    label: "Completed",
-    value: "9",
-    tone: "text-emerald-300",
-    icon: CheckCircle2,
-  },
+  { key: "audit", label: "Log Audit" },
 ];
 
 const workflowSteps = [
-  "Supervisor Bulk Input",
-  "Sales Manager Data Review",
-  "Claim Validation",
-  "Operational Manager Approval",
-  "Keuangan Payment",
-  "Claim Payment Final Check",
-  "Completed",
-];
-
-const queueSummary = [
-  {
-    title: "Supervisor Draft/Returned",
-    count: 6,
-    desc: "Batch masih bisa diedit Supervisor.",
-    icon: FileText,
-  },
-  {
-    title: "Waiting SM Review",
-    count: 7,
-    desc: "Menunggu validasi benar/salah data batch.",
-    icon: Send,
-  },
-  {
-    title: "Waiting Claim Validation",
-    count: 5,
-    desc: "Claim cek data dan syarat manual.",
-    icon: FileCheck2,
-  },
-  {
-    title: "Waiting OM Approval",
-    count: 4,
-    desc: "Batch approved SM, menunggu OM.",
-    icon: ShieldCheck,
-  },
-  {
-    title: "Waiting Finance Payment",
-    count: 3,
-    desc: "Sudah approved OM, menunggu bayar.",
-    icon: Wallet,
-  },
-  {
-    title: "Waiting Claim Final Verification",
-    count: 2,
-    desc: "Sudah dibayar, verifikasi final claim.",
-    icon: ListChecks,
-  },
-  {
-    title: "Completed",
-    count: 9,
-    desc: "Workflow batch sudah selesai.",
-    icon: CheckCircle2,
-  },
-];
-
-const overviewRows = [
-  {
-    no: "001/RB/05/2026",
-    batch: "Gelombang 001",
-    principle: "RECKITT BENCKISER, PT",
-    code: "RB",
-    rows: "3",
-    total: "Rp 12.500.000",
-    sm: "Approved by SM",
-    claim: "Claim Approved",
-    om: "Ready",
-    status: "Waiting OM",
-  },
-  {
-    no: "002/FKS/05/2026",
-    batch: "Gelombang 002",
-    principle: "FKS FOOD SEJAHTERA, PT",
-    code: "FKS",
-    rows: "2",
-    total: "Rp 8.200.000",
-    sm: "Waiting Review",
-    claim: "-",
-    om: "-",
-    status: "Waiting SM",
-  },
-  {
-    no: "003/KINO/05/2026",
-    batch: "Gelombang 003",
-    principle: "KINO INDONESIA. TBK, PT",
-    code: "KINO",
-    rows: "4",
-    total: "Rp 18.750.000",
-    sm: "Approved by SM",
-    claim: "Perlu Revisi",
-    om: "Hold",
-    status: "Waiting Claim",
-  },
-  {
-    no: "004/UNIBIS/05/2026",
-    batch: "Gelombang 004",
-    principle: "UNIVERSAL INDOFOOD PRODUCT, PT",
-    code: "UNIBIS",
-    rows: "1",
-    total: "Rp 5.500.000",
-    sm: "Approved by SM",
-    claim: "Final Verified",
-    om: "Approved",
-    status: "Completed",
-  },
+  "Input Massal Supervisor",
+  "Review Data Sales Manager",
+  "Validasi Claim",
+  "Persetujuan Operational Manager",
+  "Pembayaran Keuangan",
+  "Verifikasi Final Pembayaran Claim",
+  "Selesai",
 ];
 
 type SupervisorBulkRow = {
@@ -249,6 +126,8 @@ type OffApiBatch = {
   finalClaimNote?: string | null;
   locked: boolean;
   pdfUrl?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
   summary?: BatchQueueSummary;
   paymentSummary?: OffPaymentSummary;
   payments?: OffApiPayment[];
@@ -280,6 +159,7 @@ type OffApiItem = {
   id: string;
   itemNo: number;
   noSurat: string;
+  noClaim?: string | null;
   namaProgram: string;
   periode: string | null;
   toko: string;
@@ -311,6 +191,13 @@ type BatchQueueSummary = {
   totalRows?: number;
   transfer?: number;
   tunai?: number;
+};
+
+type MetricItem = {
+  label: string;
+  value: string;
+  tone: string;
+  icon: ElementType;
 };
 
 const initialBulkRows: SupervisorBulkRow[] = [
@@ -379,60 +266,42 @@ const initialBulkRows: SupervisorBulkRow[] = [
   },
 ];
 
-const supervisorStatuses = [
-  { no: "001/RB/05/2026", status: "Draft", note: "Editable" },
-  {
-    no: "002/FKS/05/2026",
-    status: "Submitted to SM",
-    note: "Editable until approved",
-  },
-  {
-    no: "003/KINO/05/2026",
-    status: "Returned by SM",
-    note: "Editable with correction",
-  },
-  {
-    no: "004/UNIBIS/05/2026",
-    status: "Approved by SM - Locked",
-    note: "Batch and rows are locked",
-  },
-];
-
 const documentChecks = ["KWT", "SKP", "FP", "PC", "Foto", "Rekap", "Others"];
 
 const auditLogs = [
   {
-    title: "Supervisor submit",
-    detail: "Supervisor submit batch 001/RB/05/2026 ke Sales Manager",
+    title: "Supervisor mengirim pengajuan",
+    detail: "Supervisor mengirim batch 001/RB/05/2026 ke Sales Manager",
     time: "16 May 2026 09:15",
   },
   {
-    title: "Sales Manager approve",
+    title: "Sales Manager menyetujui",
     detail:
-      "SM approve batch, status Approved by SM, Notify OM, Locked for Supervisor",
+      "SM menyetujui batch, memberi notifikasi OM, dan mengunci data untuk Supervisor",
     time: "16 May 2026 10:05",
   },
   {
     title: "Claim input No Claim",
     detail:
-      "Claim verifikasi syarat, Others, dan input nomor claim untuk batch",
+      "Claim memverifikasi syarat, dokumen lainnya, dan menginput nomor claim untuk batch",
     time: "16 May 2026 11:20",
   },
   {
-    title: "OM approve",
+    title: "OM menyetujui",
     detail:
-      "Operational Manager approve batch setelah melihat status SM dan Claim",
+      "Operational Manager menyetujui batch setelah melihat status SM dan Claim",
     time: "16 May 2026 13:40",
   },
   {
     title: "Keuangan upload bukti bayar",
     detail:
-      "Keuangan membayar dan mengirim batch kembali ke Claim untuk final verification",
+      "Keuangan membayar dan mengirim batch kembali ke Claim untuk verifikasi final",
     time: "16 May 2026 15:10",
   },
   {
-    title: "Claim final check completed",
-    detail: "Claim verifikasi bukti bayar dan jumlah, lalu complete claim",
+    title: "Verifikasi final Claim selesai",
+    detail:
+      "Claim memverifikasi bukti bayar dan jumlah, lalu menyelesaikan pengajuan",
     time: "16 May 2026 16:25",
   },
 ];
@@ -530,6 +399,43 @@ function formatDateDisplay(value: string | null | undefined) {
   return `${day}/${month}/${year}`;
 }
 
+const statusLabelMap: Record<string, string> = {
+  Draft: "Draf",
+  "Submitted to SM": "Dikirim ke Sales Manager",
+  "Waiting Review": "Menunggu Review",
+  "Returned by SM": "Dikembalikan oleh Sales Manager",
+  "Returned by Claim": "Dikembalikan oleh Claim",
+  Returned: "Dikembalikan",
+  "Approved by SM": "Disetujui Sales Manager",
+  "Approved by SM - Locked": "Disetujui Sales Manager - Terkunci",
+  "Waiting Claim": "Menunggu Claim",
+  "Claim Approved": "Disetujui Claim",
+  "Waiting Approval": "Menunggu Persetujuan",
+  "Ready for OM": "Siap Diproses OM",
+  "Waiting OM": "Menunggu OM",
+  "OM Approved": "Disetujui OM",
+  "Cancelled by OM": "Dibatalkan OM",
+  "Waiting Payment": "Menunggu Pembayaran",
+  "Partial Paid": "Dibayar Sebagian",
+  "Need Correction": "Perlu Koreksi",
+  Paid: "Sudah Dibayar",
+  "Waiting Claim Final Verification": "Menunggu Verifikasi Final Claim",
+  "Incomplete Documents": "Kelengkapan Belum Lengkap",
+  Completed: "Selesai",
+  "Not Started": "Belum Dimulai",
+  Approved: "Disetujui",
+  Cancelled: "Dibatalkan",
+  Ready: "Siap",
+  Aman: "Aman",
+  Kurang: "Kurang",
+  "Perlu Revisi": "Perlu Revisi",
+};
+
+function displayStatusLabel(status: string | null | undefined) {
+  if (!status) return "-";
+  return statusLabelMap[status] || status;
+}
+
 function itemDocsSummary(item: OffApiItem) {
   const docs = [
     item.kwt ? "KWT" : "",
@@ -538,7 +444,7 @@ function itemDocsSummary(item: OffApiItem) {
     item.pc ? "PC" : "",
     item.foto ? "Foto" : "",
     item.rekap ? "Rekap" : "",
-    item.others ? "Others" : "",
+    item.others ? "Lainnya" : "",
   ].filter(Boolean);
   return docs.length ? docs.join(", ") : "-";
 }
@@ -600,6 +506,465 @@ function statusClass(status: string) {
   )
     return "bg-rose-500/10 text-rose-300 border-rose-500/30";
   return "bg-amber-500/10 text-amber-300 border-amber-500/30";
+}
+
+function batchSearchText(batch: OffApiBatch) {
+  return [
+    batch.noPengajuan,
+    batch.principleName,
+    batch.principleCode,
+    batch.status,
+    batch.smStatus,
+    batch.claimStatus,
+    batch.omStatus,
+    batch.financeStatus,
+    batch.finalStatus,
+    batch.noClaim,
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function filterBatchesBySearch(batches: OffApiBatch[], query: string) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return batches;
+  return batches.filter((batch) => batchSearchText(batch).includes(normalized));
+}
+
+function getBatchStatusOptions(batches: OffApiBatch[]) {
+  return Array.from(
+    new Set(
+      batches
+        .map((batch) => batch.status)
+        .filter((status): status is string => Boolean(status)),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+}
+
+function filterBatchesByMainStatus(
+  batches: OffApiBatch[],
+  statusFilter: string,
+) {
+  if (!statusFilter) return batches;
+  return batches.filter((batch) => batch.status === statusFilter);
+}
+
+function isSupervisorEditableBatch(batch: OffApiBatch) {
+  return (
+    !batch.locked &&
+    (batch.status === "Draft" ||
+      batch.status === "Returned by SM" ||
+      batch.status === "Returned by Claim" ||
+      batch.smStatus === "Returned" ||
+      batch.claimStatus === "Returned")
+  );
+}
+
+function isSmActionableBatch(batch: OffApiBatch | null) {
+  return Boolean(
+    batch &&
+    batch.status === "Submitted to SM" &&
+    batch.smStatus === "Waiting Review",
+  );
+}
+
+function isOmActionableBatch(batch: OffApiBatch | null) {
+  return Boolean(
+    batch &&
+    batch.claimStatus === "Approved" &&
+    batch.omStatus === "Waiting Approval" &&
+    ["Claim Approved", "Ready for OM", "Waiting OM"].includes(batch.status),
+  );
+}
+
+function isFinanceActionableBatch(batch: OffApiBatch | null) {
+  return Boolean(
+    batch &&
+    batch.omStatus === "Approved" &&
+    ["Waiting Payment", "Partial Paid", "Need Correction"].includes(
+      batch.financeStatus,
+    ),
+  );
+}
+
+function isFinanceMonitoringBatch(batch: OffApiBatch) {
+  const hasPayments =
+    Number(batch.paidAmount || 0) > 0 ||
+    Boolean(batch.paymentSummary && batch.paymentSummary.totalPaid > 0) ||
+    Boolean(batch.payments?.length);
+  return (
+    ["Waiting Payment", "Partial Paid", "Need Correction", "Paid"].includes(
+      batch.financeStatus,
+    ) ||
+    batch.status === "Paid" ||
+    batch.status === "Partial Paid" ||
+    ((batch.status === "Completed" || batch.finalStatus === "Completed") &&
+      hasPayments)
+  );
+}
+
+function financeActionLabel(batch: OffApiBatch) {
+  if (isFinanceActionableBatch(batch)) return "Input Pembayaran";
+  if (
+    batch.financeStatus === "Paid" ||
+    batch.status === "Paid" ||
+    batch.status === "Completed" ||
+    batch.finalStatus === "Completed"
+  )
+    return "Lihat Pembayaran";
+  return "Lihat Detail";
+}
+
+function filterFinanceBatchesByStatus(batches: OffApiBatch[], status: string) {
+  if (!status) return batches;
+  return batches.filter(
+    (batch) =>
+      batch.status === status ||
+      batch.financeStatus === status ||
+      batch.finalStatus === status,
+  );
+}
+
+function MonitoringSearch({
+  value,
+  onChange,
+  placeholder = "Cari No Pengajuan, principle, kode, atau status...",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <input
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder={placeholder}
+      className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+    />
+  );
+}
+
+function StatusFilterSelect({
+  value,
+  onChange,
+  options,
+  label = "Filter Status",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<string | { value: string; label: string }>;
+  label?: string;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-semibold text-slate-500">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+      >
+        <option value="" className="bg-[#1a1c23]">
+          Semua Status
+        </option>
+        {options.map((option) => {
+          const value = typeof option === "string" ? option : option.value;
+          const label =
+            typeof option === "string"
+              ? displayStatusLabel(option)
+              : option.label;
+
+          return (
+            <option key={value} value={value} className="bg-[#1a1c23]">
+              {label}
+            </option>
+          );
+        })}
+      </select>
+    </label>
+  );
+}
+
+function BatchMonitoringTable({
+  batches,
+  selectedBatchId,
+  onSelect,
+  actionLabel,
+  emptyText = "Belum ada batch yang cocok.",
+  stickyAction = false,
+}: {
+  batches: OffApiBatch[];
+  selectedBatchId?: string | null;
+  onSelect: (batch: OffApiBatch) => void;
+  actionLabel: (batch: OffApiBatch) => string;
+  emptyText?: string;
+  stickyAction?: boolean;
+}) {
+  const headers = [
+    "No Pengajuan",
+    "Principle",
+    "Kode Principle",
+    "Total",
+    "Status",
+    "Status SM",
+    "Status Claim",
+    "Status OM",
+    "Status Keuangan",
+    "Status Final",
+    "Dibuat/Diperbarui",
+    "Aksi",
+  ];
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-white/10">
+      <table className="w-full min-w-[1650px] text-left text-sm">
+        <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+          <tr>
+            {headers.map((header) => {
+              const isActionColumn = header === "Aksi";
+
+              return (
+                <th
+                  key={header}
+                  className={`px-3 py-3 font-bold ${
+                    stickyAction && isActionColumn
+                      ? "sticky right-0 z-30 min-w-[150px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                      : ""
+                  }`}
+                >
+                  {header}
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+
+        <tbody className="divide-y divide-white/5">
+          {batches.map((batch) => (
+            <tr
+              key={batch.id}
+              className={`${
+                selectedBatchId === batch.id
+                  ? "bg-teal-500/10"
+                  : "hover:bg-white/[0.03]"
+              }`}
+            >
+              <td className="min-w-[180px] whitespace-nowrap px-3 py-3 font-mono font-bold text-white">
+                {batch.noPengajuan}
+              </td>
+
+              <td className="min-w-[260px] px-3 py-3 text-slate-300">
+                {batch.principleName}
+              </td>
+
+              <td className="px-3 py-3 font-mono text-teal-300">
+                {batch.principleCode}
+              </td>
+
+              <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                Rp{" "}
+                {Number(batch.summary?.totalNominal || 0).toLocaleString(
+                  "id-ID",
+                )}
+              </td>
+
+              <td className="px-3 py-3">
+                <span
+                  className={`inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(batch.status)}`}
+                >
+                  {displayStatusLabel(batch.status)}
+                </span>
+              </td>
+
+              <td className="px-3 py-3 text-slate-300">
+                {displayStatusLabel(batch.smStatus)}
+              </td>
+
+              <td className="px-3 py-3 text-slate-300">
+                {displayStatusLabel(batch.claimStatus)}
+              </td>
+
+              <td className="px-3 py-3 text-slate-300">
+                {displayStatusLabel(batch.omStatus)}
+              </td>
+
+              <td className="px-3 py-3 text-slate-300">
+                {displayStatusLabel(batch.financeStatus)}
+              </td>
+
+              <td className="px-3 py-3 text-slate-300">
+                {displayStatusLabel(batch.finalStatus)}
+              </td>
+
+              <td className="min-w-[180px] px-3 py-3 text-xs text-slate-400">
+                <div>Dibuat: {formatDateDisplay(batch.createdAt)}</div>
+                <div>Diperbarui: {formatDateDisplay(batch.updatedAt)}</div>
+              </td>
+
+              <td
+                className={`px-3 py-3 ${
+                  stickyAction
+                    ? "sticky right-0 z-20 min-w-[150px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                    : ""
+                }`}
+              >
+                <button
+                  onClick={() => onSelect(batch)}
+                  className="w-full rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                >
+                  {actionLabel(batch)}
+                </button>
+              </td>
+            </tr>
+          ))}
+
+          {batches.length === 0 && (
+            <tr>
+              <td colSpan={12} className="px-3 py-6 text-center text-slate-500">
+                {emptyText}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FinanceMonitoringTable({
+  batches,
+  selectedBatchId,
+  onSelect,
+}: {
+  batches: OffApiBatch[];
+  selectedBatchId?: string | null;
+  onSelect: (batch: OffApiBatch) => void;
+}) {
+  const headers = [
+    "No Pengajuan",
+    "Batch",
+    "Principle",
+    "Kode Principle",
+    "Jumlah Baris",
+    "Total Nominal",
+    "Status Keuangan",
+    "Status Final",
+    "Total Dibayar",
+    "Sisa Pembayaran",
+    "Status",
+    "Aksi",
+  ];
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-white/10">
+      <table className="w-full min-w-[1650px] text-left text-sm">
+        <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+          <tr>
+            {headers.map((header) => (
+              <th
+                key={header}
+                className={`px-3 py-3 font-bold ${
+                  header === "Aksi"
+                    ? "sticky right-0 z-30 min-w-[160px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                    : ""
+                }`}
+              >
+                {header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-white/5">
+          {batches.map((batch) => {
+            const summary = batch.summary || {
+              totalRows: 0,
+              rowCount: 0,
+              totalNominal: 0,
+            };
+            const paymentSummary = batch.paymentSummary || {
+              totalPaid: Number(batch.paidAmount || 0),
+              remainingAmount: Math.max(
+                0,
+                Number(summary.totalNominal || 0) -
+                  Number(batch.paidAmount || 0),
+              ),
+            };
+
+            return (
+              <tr
+                key={batch.id}
+                className={
+                  selectedBatchId === batch.id
+                    ? "bg-teal-500/10"
+                    : "hover:bg-white/[0.03]"
+                }
+              >
+                <td className="min-w-[180px] whitespace-nowrap px-3 py-3 font-mono font-bold text-white">
+                  {batch.noPengajuan}
+                </td>
+                <td className="px-3 py-3 text-slate-300">
+                  Gelombang {batch.gelombang || "-"}
+                </td>
+                <td className="min-w-[260px] px-3 py-3 text-slate-300">
+                  {batch.principleName}
+                </td>
+                <td className="px-3 py-3 font-mono text-teal-300">
+                  {batch.principleCode}
+                </td>
+                <td className="px-3 py-3 text-center text-slate-300">
+                  {summary.totalRows || summary.rowCount || 0}
+                </td>
+                <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                  Rp {Number(summary.totalNominal || 0).toLocaleString("id-ID")}
+                </td>
+                <td className="px-3 py-3 text-slate-300">
+                  {displayStatusLabel(batch.financeStatus)}
+                </td>
+                <td className="px-3 py-3 text-slate-300">
+                  {displayStatusLabel(batch.finalStatus)}
+                </td>
+                <td className="px-3 py-3 text-right font-mono text-sky-300">
+                  Rp{" "}
+                  {Number(paymentSummary.totalPaid || 0).toLocaleString(
+                    "id-ID",
+                  )}
+                </td>
+                <td className="px-3 py-3 text-right font-mono text-amber-300">
+                  Rp{" "}
+                  {Number(paymentSummary.remainingAmount || 0).toLocaleString(
+                    "id-ID",
+                  )}
+                </td>
+                <td className="px-3 py-3">
+                  <span
+                    className={`inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(batch.status)}`}
+                  >
+                    {displayStatusLabel(batch.status)}
+                  </span>
+                </td>
+                <td className="sticky right-0 z-20 min-w-[160px] bg-[#0f1115] px-3 py-3 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]">
+                  <button
+                    onClick={() => onSelect(batch)}
+                    className="w-full rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                  >
+                    {financeActionLabel(batch)}
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+          {batches.length === 0 && (
+            <tr>
+              <td colSpan={12} className="px-3 py-6 text-center text-slate-500">
+                Belum ada batch pembayaran yang cocok.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function Field({ label, value = "" }: { label: string; value?: string }) {
@@ -724,28 +1089,6 @@ function Panel({
   );
 }
 
-function ActionButton({
-  children,
-  tone = "default",
-}: {
-  children: ReactNode;
-  tone?: "default" | "danger" | "success";
-}) {
-  const className =
-    tone === "danger"
-      ? "bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20"
-      : tone === "success"
-        ? "bg-emerald-600 text-white border-emerald-500 hover:bg-emerald-500"
-        : "bg-white/5 border-white/10 text-slate-200 hover:bg-white/10";
-  return (
-    <button
-      className={`inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors ${className}`}
-    >
-      {children}
-    </button>
-  );
-}
-
 function ReadOnlyPresenceBadge({ value }: { value: boolean }) {
   return value ? (
     <span className="inline-flex rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs font-bold text-emerald-300">
@@ -765,7 +1108,7 @@ function InfoNote({ children }: { children: ReactNode }) {
   );
 }
 
-function MetricsGrid() {
+function MetricsGrid({ metrics }: { metrics: MetricItem[] }) {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
       {metrics.map((metric) => {
@@ -798,13 +1141,14 @@ function WorkflowStepper() {
     <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
       <div className="flex items-center justify-between gap-4 mb-5">
         <div>
-          <h2 className="text-lg font-bold text-white">Workflow Approval</h2>
+          <h2 className="text-lg font-bold text-white">Alur Persetujuan</h2>
           <p className="text-sm text-slate-400">
-            Flow batch dari bulk input sampai claim payment final check.
+            Alur batch dari input massal sampai verifikasi final pembayaran
+            Claim.
           </p>
         </div>
         <span className="hidden sm:inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-teal-300">
-          <ArrowRight size={14} /> Batch Flow
+          <ArrowRight size={14} /> Alur Batch
         </span>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-3">
@@ -832,18 +1176,29 @@ function WorkflowStepper() {
   );
 }
 
-function MonitoringTable() {
+function OverviewMonitoringTable({
+  batches,
+  selectedBatchId,
+  onSelect,
+}: {
+  batches: OffApiBatch[];
+  selectedBatchId?: string | null;
+  onSelect: (batch: OffApiBatch) => void;
+}) {
   const headers = [
     "No Pengajuan",
     "Batch",
     "Principle",
     "Kode Principle",
-    "Jumlah Row",
+    "Jumlah Baris",
     "Total Nominal",
     "Status SM",
     "Status Claim",
     "Status OM",
+    "Status Keuangan",
+    "Status Final",
     "Status",
+    "Aksi",
   ];
   return (
     <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 overflow-hidden shadow-xl">
@@ -853,54 +1208,108 @@ function MonitoringTable() {
           Pengajuan
         </h2>
         <p className="text-sm text-slate-400 mt-1">
-          Sample data memakai principle mapping dari sheet DUMMY.
+          Pilih batch untuk melihat detail baca-saja.
         </p>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1450px] text-sm text-left">
+        <table className="w-full min-w-[1750px] text-sm text-left">
           <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
             <tr>
-              {headers.map((col) => (
-                <th
-                  key={col}
-                  className={`px-4 py-3 font-bold ${col === "No Pengajuan" ? "min-w-[180px]" : ""}`}
-                >
-                  {col}
-                </th>
-              ))}
+              {headers.map((col) => {
+                const isActionColumn = col === "Aksi";
+                return (
+                  <th
+                    key={col}
+                    className={`px-4 py-3 font-bold ${col === "No Pengajuan" ? "min-w-[180px]" : ""} ${
+                      isActionColumn
+                        ? "sticky right-0 z-30 min-w-[150px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                        : ""
+                    }`}
+                  >
+                    {col}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
-            {overviewRows.map((row) => (
-              <tr key={row.no} className="hover:bg-white/[0.03]">
-                <td className="px-4 py-4 min-w-[180px] whitespace-nowrap font-mono font-bold text-white">
-                  {row.no}
-                </td>
-                <td className="px-4 py-4 text-slate-300">{row.batch}</td>
-                <td className="px-4 py-4 text-slate-300 min-w-[260px]">
-                  {row.principle}
-                </td>
-                <td className="px-4 py-4 font-mono text-teal-300">
-                  {row.code}
-                </td>
-                <td className="px-4 py-4 text-center text-slate-300">
-                  {row.rows}
-                </td>
-                <td className="px-4 py-4 text-right font-mono text-emerald-300">
-                  {row.total}
-                </td>
-                <td className="px-4 py-4 text-slate-300">{row.sm}</td>
-                <td className="px-4 py-4 text-slate-300">{row.claim}</td>
-                <td className="px-4 py-4 text-slate-300">{row.om}</td>
-                <td className="px-4 py-4">
-                  <span
-                    className={`inline-flex px-2.5 py-1 rounded-md border text-xs font-bold ${statusClass(row.status)}`}
-                  >
-                    {row.status}
-                  </span>
+            {batches.map((batch) => {
+              const summary = batch.summary || {
+                totalRows: 0,
+                rowCount: 0,
+                totalNominal: 0,
+              };
+              return (
+                <tr
+                  key={batch.id}
+                  className={
+                    selectedBatchId === batch.id
+                      ? "bg-teal-500/10"
+                      : "hover:bg-white/[0.03]"
+                  }
+                >
+                  <td className="px-4 py-4 min-w-[180px] whitespace-nowrap font-mono font-bold text-white">
+                    {batch.noPengajuan}
+                  </td>
+                  <td className="px-4 py-4 text-slate-300">
+                    Gelombang {batch.gelombang || "-"}
+                  </td>
+                  <td className="px-4 py-4 text-slate-300 min-w-[260px]">
+                    {batch.principleName}
+                  </td>
+                  <td className="px-4 py-4 font-mono text-teal-300">
+                    {batch.principleCode}
+                  </td>
+                  <td className="px-4 py-4 text-center text-slate-300">
+                    {summary.totalRows || summary.rowCount || 0}
+                  </td>
+                  <td className="px-4 py-4 text-right font-mono text-emerald-300">
+                    Rp{" "}
+                    {Number(summary.totalNominal || 0).toLocaleString("id-ID")}
+                  </td>
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.smStatus)}
+                  </td>
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.claimStatus)}
+                  </td>
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.omStatus)}
+                  </td>
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.financeStatus)}
+                  </td>
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.finalStatus)}
+                  </td>
+                  <td className="px-4 py-4">
+                    <span
+                      className={`inline-flex px-2.5 py-1 rounded-md border text-xs font-bold ${statusClass(batch.status)}`}
+                    >
+                      {displayStatusLabel(batch.status)}
+                    </span>
+                  </td>
+                  <td className="sticky right-0 z-20 min-w-[150px] bg-[#0f1115] px-4 py-4 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]">
+                    <button
+                      onClick={() => onSelect(batch)}
+                      className="w-full rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                    >
+                      Lihat Detail
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {batches.length === 0 && (
+              <tr>
+                <td
+                  colSpan={13}
+                  className="px-4 py-6 text-center text-sm text-slate-500"
+                >
+                  Belum ada batch OFF Program Control.
                 </td>
               </tr>
-            ))}
+            )}
           </tbody>
         </table>
       </div>
@@ -908,36 +1317,167 @@ function MonitoringTable() {
   );
 }
 
-function QueueSummaryPanel() {
+function BatchOverviewActionTable({
+  batches,
+  selectedBatchId,
+  onSelect,
+  actionLabel,
+  emptyText = "Belum ada batch pengajuan.",
+}: {
+  batches: OffApiBatch[];
+  selectedBatchId?: string | null;
+  onSelect: (batch: OffApiBatch) => void;
+  actionLabel: (batch: OffApiBatch) => string;
+  emptyText?: string;
+}) {
+  const headers = [
+    "No Pengajuan",
+    "Batch",
+    "Principle",
+    "Kode Principle",
+    "Jumlah Baris",
+    "Total Nominal",
+    "Status SM",
+    "Status Claim",
+    "Status OM",
+    "Status",
+    "Aksi",
+  ];
+
   return (
-    <Panel title="Queue Summary Per Divisi" icon={ListChecks}>
-      <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-7 gap-3">
-        {queueSummary.map((queue) => {
-          const Icon = queue.icon;
-          return (
-            <div
-              key={queue.title}
-              className="rounded-xl border border-white/10 bg-black/30 p-4"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <Icon className="text-teal-300 shrink-0" size={20} />
-                <span className="font-mono text-xl font-black text-white">
-                  {queue.count}
-                </span>
-              </div>
-              <p className="text-sm font-bold text-white mt-3">{queue.title}</p>
-              <p className="text-xs text-slate-500 mt-1">{queue.desc}</p>
-            </div>
-          );
-        })}
+    <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 overflow-hidden shadow-xl">
+      <div className="p-5 border-b border-white/10 bg-black/30">
+        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+          <ReceiptText className="text-teal-300" size={20} /> Monitoring Batch
+          Pengajuan
+        </h2>
+        <p className="text-sm text-slate-400 mt-1">
+          Pilih batch untuk membuka detail review.
+        </p>
       </div>
-    </Panel>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[1550px] text-sm text-left">
+          <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
+            <tr>
+              {headers.map((col) => {
+                const isActionColumn = col === "Aksi";
+
+                return (
+                  <th
+                    key={col}
+                    className={`px-4 py-3 font-bold ${
+                      col === "No Pengajuan" ? "min-w-[180px]" : ""
+                    } ${
+                      isActionColumn
+                        ? "sticky right-0 z-30 min-w-[150px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                        : ""
+                    }`}
+                  >
+                    {col}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+
+          <tbody className="divide-y divide-white/5">
+            {batches.map((batch) => {
+              const summary = batch.summary || {
+                totalRows: 0,
+                rowCount: 0,
+                totalNominal: 0,
+              };
+
+              return (
+                <tr
+                  key={batch.id}
+                  className={`${
+                    selectedBatchId === batch.id
+                      ? "bg-teal-500/10"
+                      : "hover:bg-white/[0.03]"
+                  }`}
+                >
+                  <td className="px-4 py-4 min-w-[180px] whitespace-nowrap font-mono font-bold text-white">
+                    {batch.noPengajuan}
+                  </td>
+
+                  <td className="px-4 py-4 text-slate-300">
+                    Gelombang {batch.gelombang || "-"}
+                  </td>
+
+                  <td className="px-4 py-4 text-slate-300 min-w-[260px]">
+                    {batch.principleName}
+                  </td>
+
+                  <td className="px-4 py-4 font-mono text-teal-300">
+                    {batch.principleCode}
+                  </td>
+
+                  <td className="px-4 py-4 text-center text-slate-300">
+                    {summary.totalRows || summary.rowCount || 0}
+                  </td>
+
+                  <td className="px-4 py-4 text-right font-mono text-emerald-300">
+                    Rp{" "}
+                    {Number(summary.totalNominal || 0).toLocaleString("id-ID")}
+                  </td>
+
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.smStatus)}
+                  </td>
+
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.claimStatus)}
+                  </td>
+
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.omStatus)}
+                  </td>
+
+                  <td className="px-4 py-4">
+                    <span
+                      className={`inline-flex px-2.5 py-1 rounded-md border text-xs font-bold ${statusClass(batch.status)}`}
+                    >
+                      {displayStatusLabel(batch.status)}
+                    </span>
+                  </td>
+
+                  <td className="sticky right-0 z-20 min-w-[150px] bg-[#0f1115] px-4 py-4 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]">
+                    <button
+                      onClick={() => onSelect(batch)}
+                      className="w-full rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                    >
+                      {actionLabel(batch)}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+
+            {batches.length === 0 && (
+              <tr>
+                <td
+                  colSpan={11}
+                  className="px-4 py-6 text-center text-sm text-slate-500"
+                >
+                  {emptyText}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
 function SupervisorDashboard({ offRole }: OffDashboardProps) {
   const canSubmitSupervisor = canPerformOffAction(offRole, "submit_batch");
   const canEditSupervisor = canPerformOffAction(offRole, "edit_returned_batch");
+  const [supervisorMenu, setSupervisorMenu] = useState<
+    "pengajuan" | "monitoring"
+  >("pengajuan");
   const [supervisorName, setSupervisorName] = useState("Supervisor Area 1");
   const [batchPrinciple, setBatchPrinciple] = useState("RECKITT BENCKISER, PT");
   const [gelombangInput, setGelombangInput] = useState("001");
@@ -956,6 +1496,11 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
   const [pdfUrl, setPdfUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [rows, setRows] = useState<SupervisorBulkRow[]>(initialBulkRows);
+  const [allSupervisorBatches, setAllSupervisorBatches] = useState<
+    OffApiBatch[]
+  >([]);
+  const [monitoringSearch, setMonitoringSearch] = useState("");
+  const [monitoringStatusFilter, setMonitoringStatusFilter] = useState("");
   const [returnedBatches, setReturnedBatches] = useState<OffApiBatch[]>([]);
   const [returnedSummaries, setReturnedSummaries] = useState<
     Record<string, BatchQueueSummary>
@@ -978,13 +1523,15 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
       const data = await parseJsonResponse(response);
       if (!response.ok || !data.ok)
         throw new Error(
-          String(data.error || "Gagal mengambil batch returned."),
+          String(data.error || "Gagal mengambil batch yang dikembalikan."),
         );
       const allBatches = Array.isArray(data.batches)
         ? (data.batches as OffApiBatch[])
         : [];
+      setAllSupervisorBatches(allBatches);
       const returned = allBatches.filter(
         (batch) =>
+          batch.status === "Draft" ||
           batch.status === "Returned by SM" ||
           batch.smStatus === "Returned" ||
           batch.status === "Returned by Claim" ||
@@ -1023,7 +1570,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
       setReturnedStatus(
         error instanceof Error
           ? error.message
-          : "Gagal mengambil batch returned.",
+          : "Gagal mengambil batch yang dikembalikan.",
       );
     }
   };
@@ -1049,16 +1596,14 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
       const data = await parseJsonResponse(response);
       if (!response.ok || !data.ok)
         throw new Error(
-          String(data.error || "Gagal membuka detail batch returned."),
+          String(data.error || "Gagal membuka detail batch yang dikembalikan."),
         );
       const detailBatch = data.batch as OffApiBatch;
       const detailItems = Array.isArray(data.items)
         ? (data.items as OffApiItem[])
         : [];
       setEditingBatchId(detailBatch.id);
-      setEditingLocked(
-        Boolean(detailBatch.locked) || detailBatch.status === "Approved by SM",
-      );
+      setEditingLocked(!isSupervisorEditableBatch(detailBatch));
       setReturnNote(detailBatch.claimNote || detailBatch.smNote || "");
       setSupervisorName(detailBatch.supervisorName || "Supervisor Area 1");
       setGelombangInput(detailBatch.gelombang || "001");
@@ -1071,15 +1616,18 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
           : [createEmptyBulkRow(1)],
       );
       setReturnedStatus(
-        detailBatch.locked || detailBatch.status === "Approved by SM"
-          ? "Batch sudah approved oleh SM dan terkunci untuk Supervisor."
-          : `Batch ${detailBatch.noPengajuan} siap direvisi.`,
+        !isSupervisorEditableBatch(detailBatch)
+          ? "Batch ini baca-saja karena sudah dikirim/disetujui atau terkunci."
+          : detailBatch.status === "Draft"
+            ? `Draf ${detailBatch.noPengajuan} siap diedit.`
+            : `Batch ${detailBatch.noPengajuan} siap direvisi.`,
       );
+      setSupervisorMenu("pengajuan");
     } catch (error) {
       setReturnedStatus(
         error instanceof Error
           ? error.message
-          : "Gagal membuka batch returned.",
+          : "Gagal membuka batch yang dikembalikan.",
       );
     }
   };
@@ -1114,43 +1662,96 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
     );
   };
 
+  const buildSupervisorItems = () =>
+    rows.map((row) => ({
+      noSurat: row.noSurat,
+      namaProgram: row.namaProgram,
+      periodeAwal: row.periodeAwal,
+      periodeAkhir: row.periodeAkhir,
+      periode: buildPeriodString(row.periodeAwal, row.periodeAkhir),
+      toko: row.toko,
+      barang: row.barang,
+      nominal: row.nominal,
+      caraBayar: row.caraBayar,
+      type: row.type,
+      deadline: row.deadline,
+      kwt: row.kwt,
+      skp: row.skp,
+      fp: row.fp,
+      pc: row.pc,
+      foto: row.foto,
+      rekap: row.rekap,
+      others: row.others,
+      othersText: row.othersText,
+    }));
+
+  const saveDraft = async () => {
+    if (editingLocked) {
+      setSubmitStatus("Batch baca-saja dan tidak bisa disimpan sebagai draf.");
+      return;
+    }
+    setIsSubmitting(true);
+    setSubmitStatus("Menyimpan draf massal...");
+    setSubmitResult(null);
+    try {
+      const items = buildSupervisorItems();
+      const response = await fetch(
+        editingBatchId
+          ? `/api/off-program-control/batches/${editingBatchId}`
+          : "/api/off-program-control/batches",
+        {
+          method: editingBatchId ? "PATCH" : "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            supervisorName,
+            gelombang,
+            principleCode: batchCode,
+            principleName: batchPrinciple,
+            bulan,
+            tahun,
+            items,
+          }),
+        },
+      );
+      const data = await parseJsonResponse(response);
+      if (!response.ok || !data.ok)
+        throw new Error(
+          String(data.message || data.error || "Gagal menyimpan draf."),
+        );
+      const savedBatchId = editingBatchId || String(data.batchId || "");
+      setEditingBatchId(savedBatchId);
+      setEditingLocked(false);
+      setSubmitStatus(
+        `Draf ${data.noPengajuan || generatedNo} berhasil disimpan.`,
+      );
+      await loadReturnedBatches();
+    } catch (error) {
+      setSubmitStatus(
+        error instanceof Error ? error.message : "Gagal menyimpan draf.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSubmitBatch = async () => {
     if (editingLocked) {
       setSubmitStatus(
-        "Batch sudah approved oleh SM dan terkunci untuk Supervisor.",
+        "Batch sudah disetujui oleh SM dan terkunci untuk Supervisor.",
       );
       return;
     }
     setIsSubmitting(true);
     setSubmitStatus(
       editingBatchId
-        ? "Menyimpan revisi dan resubmit ke Sales Manager..."
+        ? "Menyimpan revisi dan mengirim ulang ke Sales Manager..."
         : "Menyimpan batch dan membuat PDF...",
     );
     setPdfUrl("");
     setSubmitResult(null);
     try {
-      const items = rows.map((row) => ({
-        noSurat: row.noSurat,
-        namaProgram: row.namaProgram,
-        periodeAwal: row.periodeAwal,
-        periodeAkhir: row.periodeAkhir,
-        periode: buildPeriodString(row.periodeAwal, row.periodeAkhir),
-        toko: row.toko,
-        barang: row.barang,
-        nominal: row.nominal,
-        caraBayar: row.caraBayar,
-        type: row.type,
-        deadline: row.deadline,
-        kwt: row.kwt,
-        skp: row.skp,
-        fp: row.fp,
-        pc: row.pc,
-        foto: row.foto,
-        rekap: row.rekap,
-        others: row.others,
-        othersText: row.othersText,
-      }));
+      const items = buildSupervisorItems();
       const localSummary = computeUiPaymentSummary(items);
       const saveRes = await fetch(
         editingBatchId
@@ -1185,7 +1786,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
           pdfUrl: existingPdfUrl,
         });
         setSubmitStatus(
-          "Pengajuan ini sudah pernah disubmit. Silakan cek PDF atau lanjutkan flow approval.",
+          "Pengajuan ini sudah pernah dikirim. Silakan cek PDF atau lanjutkan alur persetujuan.",
         );
         return;
       }
@@ -1204,7 +1805,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
       );
       const submitData = await parseJsonResponse(submitRes);
       if (!submitRes.ok || !submitData.ok)
-        throw new Error(String(submitData.error || "Gagal submit batch"));
+        throw new Error(String(submitData.error || "Gagal mengirim batch"));
 
       setPdfUrl(String(submitData.pdfUrl || ""));
       setSubmitResult({
@@ -1226,7 +1827,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
         pdfUrl: String(submitData.pdfUrl || ""),
       });
       setSubmitStatus(
-        `Batch ${submitData.noPengajuan} submitted. PDF berhasil dibuat.`,
+        `Batch ${submitData.noPengajuan} berhasil dikirim. PDF berhasil dibuat.`,
       );
       setEditingBatchId("");
       setReturnNote("");
@@ -1234,519 +1835,573 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
       if (submitData.pdfUrl) window.open(String(submitData.pdfUrl), "_blank");
     } catch (error) {
       setSubmitStatus(
-        error instanceof Error ? error.message : "Gagal submit batch.",
+        error instanceof Error ? error.message : "Gagal mengirim batch.",
       );
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const supervisorMonitoringStatusOptions =
+    getBatchStatusOptions(allSupervisorBatches);
+
+  const filteredSupervisorMonitoringBatches = filterBatchesByMainStatus(
+    filterBatchesBySearch(allSupervisorBatches, monitoringSearch),
+    monitoringStatusFilter,
+  );
+
   return (
     <div className="space-y-6">
-      <Panel title="Batch Setup" icon={ClipboardCheck}>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3">
-          <EditableField
-            label="Supervisor Name"
-            value={supervisorName}
-            onChange={(value) => !editingLocked && setSupervisorName(value)}
-          />
-          <EditableField
-            label="Gelombang Input"
-            value={gelombangInput}
-            onChange={(value) => !editingLocked && setGelombangInput(value)}
-          />
-          <PrincipleSelect
-            label="Principle"
-            value={batchPrinciple}
-            onChange={(value) => !editingLocked && updateBatchPrinciple(value)}
-          />
-          <Field label="Kode Principle" value={batchCode} />
-          <EditableField
-            label="Bulan"
-            value={bulanInput}
-            onChange={(value) => !editingLocked && setBulanInput(value)}
-          />
-          <EditableField
-            label="Tahun"
-            value={tahunInput}
-            onChange={(value) => !editingLocked && setTahunInput(value)}
-          />
-        </div>
-        <div className="mt-4 rounded-xl border border-teal-500/20 bg-teal-500/10 px-4 py-3">
-          <p className="text-xs uppercase tracking-wider text-teal-300 font-bold">
-            Generated No Pengajuan
-          </p>
-          <p className="mt-1 font-mono text-2xl font-black text-white">
-            {generatedNo}
-          </p>
-        </div>
-        {editingBatchId && (
-          <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-            Mode revisi batch returned.{" "}
-            {editingLocked
-              ? "Batch sudah approved oleh SM dan terkunci untuk Supervisor."
-              : "Supervisor dapat mengubah data lalu resubmit ke Sales Manager."}
-          </div>
-        )}
-      </Panel>
+      <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2">
+        {[
+          ["pengajuan", "Pengajuan"],
+          ["monitoring", "Monitoring Semua Status"],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setSupervisorMenu(key as "pengajuan" | "monitoring")}
+            className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
+              supervisorMenu === key
+                ? "border border-teal-500/30 bg-teal-500/20 text-teal-200"
+                : "border border-transparent text-slate-400 hover:bg-white/5 hover:text-white"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
-      <Panel title="Returned by SM / Perlu Revisi" icon={AlertTriangle}>
-        {returnedStatus && (
-          <div className="mb-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
-            {returnedStatus}
+      {supervisorMenu === "monitoring" && (
+        <Panel title="Monitoring Semua Status" icon={ReceiptText}>
+          <div className="mb-4 grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
+            <MonitoringSearch
+              value={monitoringSearch}
+              onChange={setMonitoringSearch}
+            />
+
+            <StatusFilterSelect
+              value={monitoringStatusFilter}
+              onChange={setMonitoringStatusFilter}
+              options={supervisorMonitoringStatusOptions}
+            />
           </div>
-        )}
-        {returnNote && (
-          <div className="mb-4 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-            <span className="font-bold">Catatan SM:</span> {returnNote}
-          </div>
-        )}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-          {returnedBatches.map((batch) => {
-            const summary = returnedSummaries[batch.id] || {
-              rowCount: 0,
-              totalNominal: 0,
-            };
-            return (
-              <div
-                key={batch.id}
-                className="rounded-xl border border-white/10 bg-black/30 p-4"
-              >
-                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div>
-                    <p className="font-mono text-sm font-bold text-white">
-                      {batch.noPengajuan}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-300">
-                      {batch.principleName}{" "}
-                      <span className="font-mono text-teal-300">
-                        ({batch.principleCode})
-                      </span>
-                    </p>
-                    <p className="mt-2 text-xs text-slate-500">
-                      Row: {summary.rowCount} | Total: Rp{" "}
-                      {summary.totalNominal.toLocaleString("id-ID")}
-                    </p>
-                    <p className="mt-2 text-sm text-rose-200">
-                      {batch.claimNote ||
-                        batch.smNote ||
-                        "Tidak ada catatan return."}
-                    </p>
-                    <span
-                      className={`mt-3 inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(batch.status)}`}
-                    >
-                      {batch.status}
-                    </span>
-                  </div>
-                  {canEditSupervisor && (
-                    <button
-                      onClick={() => openReturnedBatch(batch)}
-                      className="inline-flex items-center justify-center rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
-                    >
-                      Buka Revisi
-                    </button>
-                  )}
-                </div>
+
+          <BatchMonitoringTable
+            batches={filteredSupervisorMonitoringBatches}
+            selectedBatchId={editingBatchId}
+            stickyAction
+            onSelect={openReturnedBatch}
+            actionLabel={(batch) =>
+              batch.status === "Draft"
+                ? "Buka Draf"
+                : isSupervisorEditableBatch(batch)
+                  ? "Buka Revisi"
+                  : "Lihat Detail"
+            }
+          />
+        </Panel>
+      )}
+
+      {supervisorMenu === "pengajuan" && (
+        <>
+          <Panel
+            title="Draf / Dikembalikan / Perlu Revisi"
+            icon={AlertTriangle}
+          >
+            {returnedStatus && (
+              <div className="mb-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+                {returnedStatus}
               </div>
-            );
-          })}
-          {returnedBatches.length === 0 && (
-            <p className="text-sm text-slate-400">
-              Belum ada batch returned dari Sales Manager.
-            </p>
-          )}
-        </div>
-      </Panel>
-
-      <InfoNote>
-        Satu batch hanya boleh memakai satu Principle. Semua row dalam batch ini
-        memakai Principle dan Kode Principle dari Batch Setup.
-      </InfoNote>
-
-      <Panel title="Bulk Input Pengajuan Supervisor" icon={FileText}>
-        <div className="mb-4 rounded-xl border border-teal-500/20 bg-teal-500/10 px-4 py-3 text-sm text-teal-100">
-          Semua row dalam batch ini memakai Principle{" "}
-          <span className="font-bold">{batchPrinciple}</span> dan Kode Principle{" "}
-          <span className="font-mono font-bold">{batchCode}</span> dari Batch
-          Setup.
-        </div>
-        <div className="overflow-x-auto rounded-xl border border-white/10">
-          <table className="w-full min-w-[1980px] text-sm text-left">
-            <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
-              <tr>
-                {[
-                  "No Pengajuan",
-                  "Principle",
-                  "Kode Principle",
-                  "No Surat",
-                  "Nama Program",
-                  "Periode Awal",
-                  "Periode Akhir",
-                  "Toko",
-                  "Barang",
-                  "Nominal",
-                  "Cara Bayar",
-                  "Type",
-                  "Deadline",
-                  "Kelengkapan",
-                  "Others",
-                  "Aksi",
-                ].map((header) => (
-                  <th key={header} className="px-3 py-3 font-bold">
-                    {header}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {rows.map((row) => (
-                <tr key={row.id} className="hover:bg-white/[0.03] align-top">
-                  <td className="px-3 py-3">
-                    <input
-                      readOnly
-                      value={generatedNo}
-                      className="w-full min-w-[170px] rounded-lg border border-white/10 bg-slate-900/80 px-3 py-2 text-sm font-mono font-bold text-white outline-none"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <input
-                      readOnly
-                      value={batchPrinciple}
-                      className="w-full min-w-[250px] rounded-lg border border-white/10 bg-slate-900/80 px-3 py-2 text-sm text-slate-200 outline-none"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <input
-                      readOnly
-                      value={batchCode}
-                      className="w-full min-w-[100px] rounded-lg border border-white/10 bg-slate-900/80 px-3 py-2 text-sm font-mono font-bold text-teal-300 outline-none"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <input
-                      readOnly={editingLocked}
-                      value={row.noSurat}
-                      onChange={(event) =>
-                        updateRow(row.id, "noSurat", event.target.value)
-                      }
-                      className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <input
-                      readOnly={editingLocked}
-                      value={row.namaProgram}
-                      onChange={(event) =>
-                        updateRow(row.id, "namaProgram", event.target.value)
-                      }
-                      className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <input
-                      type="date"
-                      readOnly={editingLocked}
-                      value={row.periodeAwal}
-                      onChange={(event) =>
-                        updateRow(row.id, "periodeAwal", event.target.value)
-                      }
-                      className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <input
-                      type="date"
-                      readOnly={editingLocked}
-                      value={row.periodeAkhir}
-                      onChange={(event) =>
-                        updateRow(row.id, "periodeAkhir", event.target.value)
-                      }
-                      className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <input
-                      readOnly={editingLocked}
-                      value={row.toko}
-                      onChange={(event) =>
-                        updateRow(row.id, "toko", event.target.value)
-                      }
-                      className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <input
-                      readOnly={editingLocked}
-                      value={row.barang}
-                      onChange={(event) =>
-                        updateRow(row.id, "barang", event.target.value)
-                      }
-                      className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <input
-                      readOnly={editingLocked}
-                      value={row.nominal}
-                      onChange={(event) =>
-                        updateRow(row.id, "nominal", event.target.value)
-                      }
-                      placeholder="Rp 0"
-                      className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <select
-                      disabled={editingLocked}
-                      value={row.caraBayar}
-                      onChange={(event) =>
-                        updateRow(row.id, "caraBayar", event.target.value)
-                      }
-                      className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50 disabled:opacity-70"
-                    >
-                      {offPaymentMethods.map((method) => (
-                        <option
-                          key={method}
-                          className="bg-[#1a1c23]"
-                          value={method}
+            )}
+            {returnNote && (
+              <div className="mb-4 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+                <span className="font-bold">Catatan SM:</span> {returnNote}
+              </div>
+            )}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {returnedBatches.map((batch) => {
+                const summary = returnedSummaries[batch.id] || {
+                  rowCount: 0,
+                  totalNominal: 0,
+                };
+                return (
+                  <div
+                    key={batch.id}
+                    className="rounded-xl border border-white/10 bg-black/30 p-4"
+                  >
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <p className="font-mono text-sm font-bold text-white">
+                          {batch.noPengajuan}
+                        </p>
+                        <p className="mt-1 text-sm text-slate-300">
+                          {batch.principleName}{" "}
+                          <span className="font-mono text-teal-300">
+                            ({batch.principleCode})
+                          </span>
+                        </p>
+                        <p className="mt-2 text-xs text-slate-500">
+                          Baris: {summary.rowCount} | Total: Rp{" "}
+                          {summary.totalNominal.toLocaleString("id-ID")}
+                        </p>
+                        <p className="mt-2 text-sm text-rose-200">
+                          {batch.claimNote ||
+                            batch.smNote ||
+                            "Tidak ada catatan pengembalian."}
+                        </p>
+                        <span
+                          className={`mt-3 inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(batch.status)}`}
                         >
-                          {method}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-3 py-3">
-                    <input
-                      readOnly={editingLocked}
-                      value={row.type}
-                      onChange={(event) =>
-                        updateRow(row.id, "type", event.target.value)
-                      }
-                      className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <input
-                      type="date"
-                      readOnly={editingLocked}
-                      value={row.deadline}
-                      onChange={(event) =>
-                        updateRow(row.id, "deadline", event.target.value)
-                      }
-                      className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <div className="grid min-w-[260px] grid-cols-2 gap-2">
-                      {documentChecks
-                        .filter((item) => item !== "Others")
-                        .map((item) => (
-                          <label
-                            key={item}
-                            className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-slate-300"
-                          >
+                          {displayStatusLabel(batch.status)}
+                        </span>
+                      </div>
+                      {canEditSupervisor && (
+                        <button
+                          onClick={() => openReturnedBatch(batch)}
+                          className="inline-flex items-center justify-center rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
+                        >
+                          Buka Revisi
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {returnedBatches.length === 0 && (
+                <p className="text-sm text-slate-400">
+                  Belum ada draf atau batch yang dikembalikan/perlu revisi.
+                </p>
+              )}
+            </div>
+          </Panel>
+          <Panel title="Setup Batch" icon={ClipboardCheck}>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3">
+              <EditableField
+                label="Nama Supervisor"
+                value={supervisorName}
+                onChange={(value) => !editingLocked && setSupervisorName(value)}
+              />
+              <EditableField
+                label="Gelombang Input"
+                value={gelombangInput}
+                onChange={(value) => !editingLocked && setGelombangInput(value)}
+              />
+              <PrincipleSelect
+                label="Principle"
+                value={batchPrinciple}
+                onChange={(value) =>
+                  !editingLocked && updateBatchPrinciple(value)
+                }
+              />
+              <Field label="Kode Principle" value={batchCode} />
+              <EditableField
+                label="Bulan"
+                value={bulanInput}
+                onChange={(value) => !editingLocked && setBulanInput(value)}
+              />
+              <EditableField
+                label="Tahun"
+                value={tahunInput}
+                onChange={(value) => !editingLocked && setTahunInput(value)}
+              />
+            </div>
+            <div className="mt-4 rounded-xl border border-teal-500/20 bg-teal-500/10 px-4 py-3">
+              <p className="text-xs uppercase tracking-wider text-teal-300 font-bold">
+                No Pengajuan Otomatis
+              </p>
+              <p className="mt-1 font-mono text-2xl font-black text-white">
+                {generatedNo}
+              </p>
+            </div>
+            {editingBatchId && (
+              <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                Mode revisi batch yang dikembalikan.{" "}
+                {editingLocked
+                  ? "Batch sudah disetujui oleh SM dan terkunci untuk Supervisor."
+                  : "Supervisor dapat mengubah data lalu mengirim ulang ke Sales Manager."}
+              </div>
+            )}
+          </Panel>
+
+          <Panel title="Input Massal Pengajuan Supervisor" icon={FileText}>
+            <div className="overflow-x-auto rounded-xl border border-white/10">
+              <table className="w-full min-w-[1980px] text-sm text-left">
+                <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
+                  <tr>
+                    {[
+                      "No Pengajuan",
+                      "Principle",
+                      "Kode Principle",
+                      "No Surat",
+                      "Nama Program",
+                      "Periode Awal",
+                      "Periode Akhir",
+                      "Toko",
+                      "Barang",
+                      "Nominal",
+                      "Cara Bayar",
+                      "Tipe",
+                      "Deadline",
+                      "Kelengkapan",
+                      "Lainnya",
+                      "Aksi",
+                    ].map((header) => (
+                      <th key={header} className="px-3 py-3 font-bold">
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {rows.map((row) => (
+                    <tr
+                      key={row.id}
+                      className="hover:bg-white/[0.03] align-top"
+                    >
+                      <td className="px-3 py-3">
+                        <input
+                          readOnly
+                          value={generatedNo}
+                          className="w-full min-w-[170px] rounded-lg border border-white/10 bg-slate-900/80 px-3 py-2 text-sm font-mono font-bold text-white outline-none"
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <input
+                          readOnly
+                          value={batchPrinciple}
+                          className="w-full min-w-[250px] rounded-lg border border-white/10 bg-slate-900/80 px-3 py-2 text-sm text-slate-200 outline-none"
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <input
+                          readOnly
+                          value={batchCode}
+                          className="w-full min-w-[100px] rounded-lg border border-white/10 bg-slate-900/80 px-3 py-2 text-sm font-mono font-bold text-teal-300 outline-none"
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <input
+                          readOnly={editingLocked}
+                          value={row.noSurat}
+                          onChange={(event) =>
+                            updateRow(row.id, "noSurat", event.target.value)
+                          }
+                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <input
+                          readOnly={editingLocked}
+                          value={row.namaProgram}
+                          onChange={(event) =>
+                            updateRow(row.id, "namaProgram", event.target.value)
+                          }
+                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <input
+                          type="date"
+                          readOnly={editingLocked}
+                          value={row.periodeAwal}
+                          onChange={(event) =>
+                            updateRow(row.id, "periodeAwal", event.target.value)
+                          }
+                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <input
+                          type="date"
+                          readOnly={editingLocked}
+                          value={row.periodeAkhir}
+                          onChange={(event) =>
+                            updateRow(
+                              row.id,
+                              "periodeAkhir",
+                              event.target.value,
+                            )
+                          }
+                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <input
+                          readOnly={editingLocked}
+                          value={row.toko}
+                          onChange={(event) =>
+                            updateRow(row.id, "toko", event.target.value)
+                          }
+                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <input
+                          readOnly={editingLocked}
+                          value={row.barang}
+                          onChange={(event) =>
+                            updateRow(row.id, "barang", event.target.value)
+                          }
+                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <input
+                          readOnly={editingLocked}
+                          value={row.nominal}
+                          onChange={(event) =>
+                            updateRow(row.id, "nominal", event.target.value)
+                          }
+                          placeholder="Rp 0"
+                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <select
+                          disabled={editingLocked}
+                          value={row.caraBayar}
+                          onChange={(event) =>
+                            updateRow(row.id, "caraBayar", event.target.value)
+                          }
+                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50 disabled:opacity-70"
+                        >
+                          {offPaymentMethods.map((method) => (
+                            <option
+                              key={method}
+                              className="bg-[#1a1c23]"
+                              value={method}
+                            >
+                              {method}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-3">
+                        <input
+                          readOnly={editingLocked}
+                          value={row.type}
+                          onChange={(event) =>
+                            updateRow(row.id, "type", event.target.value)
+                          }
+                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <input
+                          type="date"
+                          readOnly={editingLocked}
+                          value={row.deadline}
+                          onChange={(event) =>
+                            updateRow(row.id, "deadline", event.target.value)
+                          }
+                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="grid min-w-[260px] grid-cols-2 gap-2">
+                          {documentChecks
+                            .filter((item) => item !== "Others")
+                            .map((item) => (
+                              <label
+                                key={item}
+                                className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-slate-300"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(
+                                    row[
+                                      item.toLowerCase() as keyof SupervisorBulkRow
+                                    ],
+                                  )}
+                                  onChange={(event) =>
+                                    updateRow(
+                                      row.id,
+                                      item.toLowerCase() as keyof SupervisorBulkRow,
+                                      event.target.checked,
+                                    )
+                                  }
+                                  disabled={editingLocked}
+                                  className="rounded bg-black/50 border-white/10 text-teal-500"
+                                />
+                                {item === "Others" ? "Lainnya" : item}
+                              </label>
+                            ))}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="min-w-[220px] space-y-2">
+                          <label className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-slate-300">
                             <input
                               type="checkbox"
-                              checked={Boolean(
-                                row[
-                                  item.toLowerCase() as keyof SupervisorBulkRow
-                                ],
-                              )}
+                              checked={row.others}
                               onChange={(event) =>
                                 updateRow(
                                   row.id,
-                                  item.toLowerCase() as keyof SupervisorBulkRow,
+                                  "others",
                                   event.target.checked,
                                 )
                               }
                               disabled={editingLocked}
                               className="rounded bg-black/50 border-white/10 text-teal-500"
                             />
-                            {item}
+                            Lainnya
                           </label>
-                        ))}
-                    </div>
-                  </td>
-                  <td className="px-3 py-3">
-                    <div className="min-w-[220px] space-y-2">
-                      <label className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-slate-300">
-                        <input
-                          type="checkbox"
-                          checked={row.others}
-                          onChange={(event) =>
-                            updateRow(row.id, "others", event.target.checked)
-                          }
-                          disabled={editingLocked}
-                          className="rounded bg-black/50 border-white/10 text-teal-500"
-                        />
-                        Others
-                      </label>
-                      <input
-                        readOnly={editingLocked}
-                        value={row.othersText}
-                        onChange={(event) =>
-                          updateRow(row.id, "othersText", event.target.value)
-                        }
-                        placeholder="Sebutkan dokumen lainnya"
-                        className="w-full rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
-                      />
-                    </div>
-                  </td>
-                  <td className="px-3 py-3">
-                    <button
-                      onClick={() => deleteRow(row.id)}
-                      disabled={editingLocked || rows.length === 1}
-                      className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-bold text-rose-300 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Hapus
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="mt-5 flex flex-wrap gap-3">
-          <button
-            onClick={addRow}
-            disabled={editingLocked}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Plus size={16} /> Tambah Baris
-          </button>
-          <ActionButton>Simpan Draft Massal</ActionButton>
-          {canSubmitSupervisor ? (
-            <button
-              onClick={handleSubmitBatch}
-              disabled={isSubmitting || editingLocked}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
-            >
-              {isSubmitting
-                ? "Submitting..."
-                : editingBatchId
-                  ? "Resubmit ke Sales Manager"
-                  : "Submit Semua ke Sales Manager"}
-            </button>
-          ) : (
-            <span className="rounded-xl border border-white/10 bg-black/30 px-4 py-2.5 text-sm text-slate-400">
-              Readonly: role ini tidak bisa submit Supervisor.
-            </span>
-          )}
-        </div>
-        {submitStatus && (
-          <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
-            {submitStatus}
-          </div>
-        )}
-        {pdfUrl && (
-          <a
-            href={pdfUrl}
-            target="_blank"
-            className="mt-3 inline-flex rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
-          >
-            Download PDF Surat
-          </a>
-        )}
-        {submitResult && (
-          <div className="mt-4 rounded-xl border border-white/10 bg-[#0f1115]/80 p-4 text-xs text-slate-400">
-            <p className="mb-2 font-bold uppercase tracking-wider text-slate-300">
-              Submit Result
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
-              <p>
-                Batch ID:{" "}
-                <span className="font-mono text-slate-200">
-                  {submitResult.batchId}
-                </span>
-              </p>
-              <p>
-                No Pengajuan:{" "}
-                <span className="font-mono text-slate-200">
-                  {submitResult.noPengajuan}
-                </span>
-              </p>
-              <p>
-                Jumlah row terkirim:{" "}
-                <span className="font-mono text-slate-200">
-                  {submitResult.rowCount}
-                </span>
-              </p>
-              <p>
-                Total Nominal:{" "}
-                <span className="font-mono text-slate-200">
-                  Rp {submitResult.total.toLocaleString("id-ID")}
-                </span>
-              </p>
-              <p>
-                Transfer:{" "}
-                <span className="font-mono text-slate-200">
-                  Rp {submitResult.transfer.toLocaleString("id-ID")}
-                </span>
-              </p>
-              <p>
-                Tunai:{" "}
-                <span className="font-mono text-slate-200">
-                  Rp {submitResult.tunai.toLocaleString("id-ID")}
-                </span>
-              </p>
-              <p>
-                PDF URL:{" "}
-                <span className="font-mono text-slate-200 break-all">
-                  {submitResult.pdfUrl}
-                </span>
-              </p>
+                          <input
+                            readOnly={editingLocked}
+                            value={row.othersText}
+                            onChange={(event) =>
+                              updateRow(
+                                row.id,
+                                "othersText",
+                                event.target.value,
+                              )
+                            }
+                            placeholder="Sebutkan dokumen lainnya"
+                            className="w-full rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                          />
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <button
+                          onClick={() => deleteRow(row.id)}
+                          disabled={editingLocked || rows.length === 1}
+                          className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-bold text-rose-300 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Hapus
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </div>
-        )}
-        <p className="mt-4 text-sm text-slate-400">
-          Kelengkapan yang diisi Supervisor adalah informasi awal. Validasi
-          aman/tidaknya tetap ditentukan oleh Claim.
-        </p>
-      </Panel>
-
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_0.9fr] gap-6">
-        <Panel title="Status Batch Supervisor" icon={ClipboardCheck}>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {supervisorStatuses.map((item) => (
-              <div
-                key={item.no}
-                className="rounded-xl border border-white/10 bg-black/30 p-4"
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                onClick={addRow}
+                disabled={editingLocked}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <p className="font-mono text-sm font-bold text-white">
-                  {item.no}
-                </p>
-                <span
-                  className={`mt-3 inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(item.status)}`}
+                <Plus size={16} /> Tambah Baris
+              </button>
+              <button
+                onClick={saveDraft}
+                disabled={isSubmitting || editingLocked}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Simpan Draf Massal
+              </button>
+              {canSubmitSupervisor ? (
+                <button
+                  onClick={handleSubmitBatch}
+                  disabled={isSubmitting || editingLocked}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
                 >
-                  {item.status}
+                  {isSubmitting
+                    ? "Mengirim..."
+                    : editingBatchId
+                      ? "Kirim Ulang ke Sales Manager"
+                      : "Kirim Semua ke Sales Manager"}
+                </button>
+              ) : (
+                <span className="rounded-xl border border-white/10 bg-black/30 px-4 py-2.5 text-sm text-slate-400">
+                  Baca-saja: role ini tidak bisa mengirim pengajuan Supervisor.
                 </span>
-                <p className="text-xs text-slate-500 mt-2">{item.note}</p>
+              )}
+            </div>
+            {submitStatus && (
+              <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+                {submitStatus}
               </div>
-            ))}
-          </div>
-        </Panel>
-        <Panel title="Status Lock" icon={ShieldCheck}>
-          <div className="space-y-3">
-            {[
-              "Draft",
-              "Submitted to SM",
-              "Returned by SM",
-              "Approved by SM - Locked",
-            ].map((item) => (
-              <span
-                key={item}
-                className={`inline-flex mr-2 rounded-md border px-2.5 py-1 text-xs font-bold ${statusClass(item)}`}
+            )}
+            {pdfUrl && (
+              <a
+                href={pdfUrl}
+                target="_blank"
+                className="mt-3 inline-flex rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
               >
-                {item}
-              </span>
-            ))}
-          </div>
-          <p className="mt-4 text-sm text-slate-400">
-            Supervisor masih bisa edit saat Draft, Submitted, atau Returned.
-            Setelah Approved by SM, seluruh batch dan row di dalamnya terkunci.
-          </p>
-        </Panel>
-      </div>
+                Unduh PDF Surat
+              </a>
+            )}
+            {submitResult && (
+              <div className="mt-4 rounded-xl border border-white/10 bg-[#0f1115]/80 p-4 text-xs text-slate-400">
+                <p className="mb-2 font-bold uppercase tracking-wider text-slate-300">
+                  Hasil Pengiriman
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+                  <p>
+                    Batch ID:{" "}
+                    <span className="font-mono text-slate-200">
+                      {submitResult.batchId}
+                    </span>
+                  </p>
+                  <p>
+                    No Pengajuan:{" "}
+                    <span className="font-mono text-slate-200">
+                      {submitResult.noPengajuan}
+                    </span>
+                  </p>
+                  <p>
+                    Jumlah baris terkirim:{" "}
+                    <span className="font-mono text-slate-200">
+                      {submitResult.rowCount}
+                    </span>
+                  </p>
+                  <p>
+                    Total Nominal:{" "}
+                    <span className="font-mono text-slate-200">
+                      Rp {submitResult.total.toLocaleString("id-ID")}
+                    </span>
+                  </p>
+                  <p>
+                    Transfer:{" "}
+                    <span className="font-mono text-slate-200">
+                      Rp {submitResult.transfer.toLocaleString("id-ID")}
+                    </span>
+                  </p>
+                  <p>
+                    Tunai:{" "}
+                    <span className="font-mono text-slate-200">
+                      Rp {submitResult.tunai.toLocaleString("id-ID")}
+                    </span>
+                  </p>
+                  <p>
+                    PDF URL:{" "}
+                    <span className="font-mono text-slate-200 break-all">
+                      {submitResult.pdfUrl}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            )}
+            <p className="mt-4 text-sm text-slate-400">
+              Kelengkapan yang diisi Supervisor adalah informasi awal. Validasi
+              aman/tidaknya tetap ditentukan oleh Claim.
+            </p>
+          </Panel>
+
+          <Panel title="Status Kunci" icon={ShieldCheck}>
+            <div className="space-y-3">
+              {[
+                "Draft",
+                "Submitted to SM",
+                "Returned by SM",
+                "Approved by SM - Locked",
+              ].map((item) => (
+                <span
+                  key={item}
+                  className={`inline-flex mr-2 rounded-md border px-2.5 py-1 text-xs font-bold ${statusClass(item)}`}
+                >
+                  {displayStatusLabel(item)}
+                </span>
+              ))}
+            </div>
+            <p className="mt-4 text-sm text-slate-400">
+              Supervisor masih bisa edit saat Draf atau Dikembalikan. Batch yang
+              sudah dikirim ke SM atau disetujui/terkunci bersifat baca-saja.
+            </p>
+          </Panel>
+        </>
+      )}
     </div>
   );
 }
@@ -1755,11 +2410,10 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
   const canReviewSm =
     canPerformOffAction(offRole, "sm_approve") ||
     canPerformOffAction(offRole, "sm_return");
+  const [smMenu, setSmMenu] = useState<"monitoring" | "review">("monitoring");
   const [batches, setBatches] = useState<OffApiBatch[]>([]);
-  const [smHistory, setSmHistory] = useState<OffApiBatch[]>([]);
-  const [batchSummaries, setBatchSummaries] = useState<
-    Record<string, BatchQueueSummary>
-  >({});
+  const [smSearch, setSmSearch] = useState("");
+  const [smStatusFilter, setSmStatusFilter] = useState("");
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
   const [selectedItems, setSelectedItems] = useState<OffApiItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -1791,37 +2445,6 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
     );
   };
 
-  const loadQueueSummaries = async (rows: OffApiBatch[]) => {
-    const entries = await Promise.all(
-      rows.map(async (row) => {
-        try {
-          const response = await fetch(
-            `/api/off-program-control/batches/${row.id}`,
-            { credentials: "include" },
-          );
-          const data = await parseJsonResponse(response);
-          const items =
-            response.ok && data.ok && Array.isArray(data.items)
-              ? (data.items as OffApiItem[])
-              : [];
-          return [
-            row.id,
-            {
-              rowCount: items.length,
-              totalNominal: items.reduce(
-                (total, item) => total + Number(item.nominal || 0),
-                0,
-              ),
-            },
-          ] as const;
-        } catch {
-          return [row.id, { rowCount: 0, totalNominal: 0 }] as const;
-        }
-      }),
-    );
-    setBatchSummaries(Object.fromEntries(entries));
-  };
-
   const loadSalesBatches = async (preferredBatchId?: string) => {
     setIsLoading(true);
     setLoadError("");
@@ -1837,21 +2460,10 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
       const rows = Array.isArray(listData.batches)
         ? (listData.batches as OffApiBatch[])
         : [];
-      const waitingRows = rows.filter(
-        (row) =>
-          row.status === "Submitted to SM" && row.smStatus === "Waiting Review",
-      );
-      setSmHistory(
-        rows.filter(
-          (row) =>
-            row.smStatus === "Approved by SM" || row.smStatus === "Returned",
-        ),
-      );
-      setBatches(waitingRows);
-      await loadQueueSummaries(waitingRows);
+      setBatches(rows);
       const nextBatch =
-        waitingRows.find((row) => row.id === preferredBatchId) ||
-        waitingRows[0] ||
+        rows.find((row) => row.id === preferredBatchId) ||
+        selectedBatch ||
         null;
       setSelectedBatch(nextBatch);
 
@@ -1891,21 +2503,9 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
         const rows = Array.isArray(listData.batches)
           ? (listData.batches as OffApiBatch[])
           : [];
-        const waitingRows = rows.filter(
-          (row) =>
-            row.status === "Submitted to SM" &&
-            row.smStatus === "Waiting Review",
-        );
-        const nextBatch = waitingRows[0] || null;
+        const nextBatch = rows[0] || null;
         if (!isActive) return;
-        setSmHistory(
-          rows.filter(
-            (row) =>
-              row.smStatus === "Approved by SM" || row.smStatus === "Returned",
-          ),
-        );
-        setBatches(waitingRows);
-        await loadQueueSummaries(waitingRows);
+        setBatches(rows);
         setSelectedBatch(nextBatch);
 
         if (!nextBatch) {
@@ -1951,6 +2551,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
 
   const selectBatch = async (batch: OffApiBatch) => {
     setSelectedBatch(batch);
+    setSmMenu("review");
     setSelectedItems([]);
     setActionMessage("");
     setNotificationPreview(null);
@@ -1969,7 +2570,9 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
     if (!selectedBatch) return;
     const note = smNote.trim();
     if (!note) {
-      setActionMessage("Catatan Sales Manager wajib diisi sebelum return.");
+      setActionMessage(
+        "Catatan Sales Manager wajib diisi sebelum dikembalikan.",
+      );
       return;
     }
     setIsActionLoading(true);
@@ -1988,7 +2591,9 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
       if (!response.ok || !data.ok)
         throw new Error(
           String(
-            data.error || data.message || "Gagal return batch ke Supervisor.",
+            data.error ||
+              data.message ||
+              "Gagal mengembalikan batch ke Supervisor.",
           ),
         );
       setActionMessage(
@@ -2001,7 +2606,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
       setActionMessage(
         error instanceof Error
           ? error.message
-          : "Gagal return batch ke Supervisor.",
+          : "Gagal mengembalikan batch ke Supervisor.",
       );
     } finally {
       setIsActionLoading(false);
@@ -2025,7 +2630,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
       const data = await parseJsonResponse(response);
       if (!response.ok || !data.ok)
         throw new Error(
-          String(data.error || data.message || "Gagal approve batch."),
+          String(data.error || data.message || "Gagal menyetujui batch."),
         );
       setActionMessage(
         String(
@@ -2040,376 +2645,367 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
       await loadSalesBatches();
     } catch (error) {
       setActionMessage(
-        error instanceof Error ? error.message : "Gagal approve batch.",
+        error instanceof Error ? error.message : "Gagal menyetujui batch.",
       );
     } finally {
       setIsActionLoading(false);
     }
   };
 
+  const smStatusOptions = getBatchStatusOptions(batches);
+
+  const filteredSmBatches = filterBatchesByMainStatus(
+    filterBatchesBySearch(batches, smSearch),
+    smStatusFilter,
+  );
+
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-[0.75fr_1.25fr] gap-6">
-      <Panel title="Queue Waiting SM Batch Review" icon={Clock3}>
-        <div className="space-y-3">
+    <div className="space-y-6">
+      <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2">
+        {[
+          ["monitoring", "Monitoring Batch Pengajuan"],
+          ["review", "Review Batch Sales Manager"],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setSmMenu(key as "monitoring" | "review")}
+            className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
+              smMenu === key
+                ? "border border-teal-500/30 bg-teal-500/20 text-teal-200"
+                : "border border-transparent text-slate-400 hover:bg-white/5 hover:text-white"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {smMenu === "monitoring" && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
+            <MonitoringSearch value={smSearch} onChange={setSmSearch} />
+
+            <StatusFilterSelect
+              value={smStatusFilter}
+              onChange={setSmStatusFilter}
+              options={smStatusOptions}
+            />
+          </div>
+
           {isLoading && (
             <p className="text-sm text-slate-400">
-              Memuat batch Sales Manager...
+              Memuat data Sales Manager...
             </p>
           )}
-          {!isLoading && batches.length === 0 && (
-            <p className="text-sm text-slate-400">
-              Belum ada batch submitted untuk direview.
-            </p>
-          )}
-          {batches.slice(0, 5).map((row) => {
-            const summary = batchSummaries[row.id] || {
-              rowCount: 0,
-              totalNominal: 0,
-            };
-            return (
-              <button
-                key={row.id}
-                onClick={() => selectBatch(row)}
-                className={`w-full rounded-xl border p-4 text-left transition-colors ${selectedBatch?.id === row.id ? "border-teal-500/40 bg-teal-500/10" : "border-white/10 bg-black/30 hover:bg-white/[0.04]"}`}
-              >
-                <p className="font-mono text-sm font-bold text-white">
-                  {row.noPengajuan}
-                </p>
-                <p className="mt-1 text-sm text-slate-300">
-                  {row.principleName}{" "}
-                  <span className="font-mono text-teal-300">
-                    ({row.principleCode})
-                  </span>
-                </p>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
-                  <span>
-                    Row: <b className="text-slate-200">{summary.rowCount}</b>
-                  </span>
-                  <span>
-                    Total:{" "}
-                    <b className="text-emerald-300">
-                      Rp {summary.totalNominal.toLocaleString("id-ID")}
-                    </b>
-                  </span>
-                </div>
-                <span
-                  className={`mt-3 inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(row.smStatus || row.status)}`}
-                >
-                  {row.smStatus || row.status}
-                </span>
-              </button>
-            );
-          })}
+
+          <BatchOverviewActionTable
+            batches={filteredSmBatches}
+            selectedBatchId={selectedBatch?.id}
+            onSelect={selectBatch}
+            actionLabel={(batch) =>
+              isSmActionableBatch(batch) ? "Review Batch" : "Lihat Detail"
+            }
+          />
         </div>
-        <div className="mt-6 border-t border-white/10 pt-5">
-          <p className="mb-3 text-sm font-bold text-white">Riwayat Review SM</p>
-          <div className="space-y-2">
-            {smHistory.slice(0, 5).map((row) => (
-              <div
-                key={row.id}
-                className="rounded-lg border border-white/10 bg-black/20 p-3"
-              >
-                <p className="font-mono text-xs font-bold text-slate-200">
-                  {row.noPengajuan}
-                </p>
-                <p className="mt-1 text-xs text-slate-500">
-                  {row.principleCode} - {row.principleName}
-                </p>
-                <span
-                  className={`mt-2 inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(row.smStatus)}`}
-                >
-                  {row.smStatus}
-                </span>
-              </div>
-            ))}
-            {smHistory.length === 0 && (
-              <p className="text-sm text-slate-500">
-                Belum ada history approve/return SM.
-              </p>
-            )}
-          </div>
-        </div>
-      </Panel>
-      <div className="space-y-6">
-        <InfoNote>
-          Sales Manager mengecek benar/salah data batch. Kelengkapan syarat
-          claim ditentukan oleh divisi Claim, bukan SM.
-        </InfoNote>
-        <Panel title="Sales Manager Batch Review" icon={ShieldCheck}>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            <Field
-              label="No Pengajuan Batch"
-              value={selectedBatch?.noPengajuan || "-"}
-            />
-            <Field label="Gelombang" value={selectedBatch?.gelombang || "-"} />
-            <Field
-              label="Principle"
-              value={selectedBatch?.principleName || "-"}
-            />
-            <Field
-              label="Kode Principle"
-              value={selectedBatch?.principleCode || "-"}
-            />
-            <Field
-              label="Bulan/Tahun"
-              value={
-                selectedBatch
-                  ? `${selectedBatch.bulan}/${selectedBatch.tahun}`
-                  : "-"
-              }
-            />
-            <Field
-              label="Supervisor"
-              value={selectedBatch?.supervisorName || "-"}
-            />
-            <Field
-              label="Jumlah Row dalam Batch"
-              value={String(selectedItems.length || 0)}
-            />
-            <Field
-              label="Total Nominal Batch"
-              value={`Rp ${totalNominal.toLocaleString("id-ID")}`}
-            />
-            <Field label="Status" value={selectedBatch?.status || "-"} />
-            <Field label="Status SM" value={selectedBatch?.smStatus || "-"} />
-          </div>
-          <div className="mt-5 overflow-x-auto rounded-xl border border-white/10">
-            <table className="w-full min-w-[1150px] text-left text-sm">
-              <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
-                <tr>
-                  {[
-                    "No",
-                    "No Surat",
-                    "Nama Program",
-                    "Periode",
-                    "Toko",
-                    "Barang",
-                    "Nominal",
-                    "Cara Bayar",
-                    "Type",
-                    "Deadline",
-                  ].map((header) => (
-                    <th key={header} className="px-3 py-3 font-bold">
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {selectedItems.map((item, index) => (
-                  <tr
-                    key={item.id || `${item.noSurat}-${index}`}
-                    className="hover:bg-white/[0.03]"
-                  >
-                    <td className="px-3 py-3 font-mono text-slate-300">
-                      {item.itemNo || index + 1}
-                    </td>
-                    <td className="px-3 py-3 font-mono text-slate-200">
-                      {item.noSurat || "-"}
-                    </td>
-                    <td className="px-3 py-3 min-w-[180px] text-slate-200">
-                      {item.namaProgram || "-"}
-                    </td>
-                    <td className="px-3 py-3 text-slate-300">
-                      {item.periode || "-"}
-                    </td>
-                    <td className="px-3 py-3 min-w-[140px] text-slate-300">
-                      {item.toko || "-"}
-                    </td>
-                    <td className="px-3 py-3 text-slate-300">
-                      {item.barang || "-"}
-                    </td>
-                    <td className="px-3 py-3 text-right font-mono text-emerald-300">
-                      Rp {Number(item.nominal || 0).toLocaleString("id-ID")}
-                    </td>
-                    <td className="px-3 py-3 text-slate-300">
-                      {item.caraBayar || "-"}
-                    </td>
-                    <td className="px-3 py-3 text-slate-300">
-                      {item.type || "-"}
-                    </td>
-                    <td className="px-3 py-3 text-slate-300">
-                      {item.deadline || "-"}
-                    </td>
-                  </tr>
-                ))}
-                {!isLoading && selectedItems.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={10}
-                      className="px-3 py-6 text-center text-sm text-slate-500"
-                    >
-                      Pilih batch untuk melihat item.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <div className="mt-4">
-            <label className="block">
-              <span className="text-xs text-slate-500 font-semibold">
-                Catatan Sales Manager
-              </span>
-              <textarea
-                value={smNote}
-                onChange={(event) => setSmNote(event.target.value)}
-                placeholder="Isi catatan jika return. Catatan approve boleh dikosongkan."
-                rows={4}
-                className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+      )}
+
+      {smMenu === "review" && (
+        <div className="space-y-6">
+          <Panel title="Review Batch Sales Manager" icon={ShieldCheck}>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              <Field
+                label="No Pengajuan Batch"
+                value={selectedBatch?.noPengajuan || "-"}
               />
-            </label>
-          </div>
-          {actionMessage && (
-            <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
-              {actionMessage}
+              <Field
+                label="Gelombang"
+                value={selectedBatch?.gelombang || "-"}
+              />
+              <Field
+                label="Principle"
+                value={selectedBatch?.principleName || "-"}
+              />
+              <Field
+                label="Kode Principle"
+                value={selectedBatch?.principleCode || "-"}
+              />
+              <Field
+                label="Bulan/Tahun"
+                value={
+                  selectedBatch
+                    ? `${selectedBatch.bulan}/${selectedBatch.tahun}`
+                    : "-"
+                }
+              />
+              <Field
+                label="Supervisor"
+                value={selectedBatch?.supervisorName || "-"}
+              />
+              <Field
+                label="Jumlah Baris dalam Batch"
+                value={String(selectedItems.length || 0)}
+              />
+              <Field
+                label="Total Nominal Batch"
+                value={`Rp ${totalNominal.toLocaleString("id-ID")}`}
+              />
+              <Field
+                label="Status"
+                value={displayStatusLabel(selectedBatch?.status)}
+              />
+              <Field
+                label="Status SM"
+                value={displayStatusLabel(selectedBatch?.smStatus)}
+              />
             </div>
-          )}
-          {canReviewSm ? (
-            <div className="mt-5 flex flex-wrap gap-3">
-              <button
-                onClick={returnToSupervisor}
-                disabled={!selectedBatch || isActionLoading}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm font-bold text-rose-300 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Reject / Return to Supervisor
-              </button>
-              <button
-                onClick={approveBatch}
-                disabled={!selectedBatch || isActionLoading}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Bell size={16} /> Approve Data & Notify OM
-              </button>
-            </div>
-          ) : (
-            <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
-              Readonly: role ini tidak bisa approve/return Sales Manager.
-            </div>
-          )}
-        </Panel>
-        <Panel title="Kelengkapan Awal dari Supervisor" icon={ListChecks}>
-          <p className="mb-4 text-sm text-slate-400">
-            Kelengkapan ini adalah informasi awal dari Supervisor. Validasi
-            kelengkapan tetap dilakukan oleh Claim.
-          </p>
-          {loadError && (
-            <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-              {loadError}
-            </div>
-          )}
-          <div className="overflow-x-auto rounded-xl border border-white/10">
-            <table className="w-full min-w-[1200px] text-left text-sm">
-              <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
-                <tr>
-                  {[
-                    "No",
-                    "No Surat",
-                    "Nama Program",
-                    "Toko",
-                    "KWT",
-                    "SKP",
-                    "FP",
-                    "PC",
-                    "Foto",
-                    "Rekap",
-                    "Others",
-                    "Keterangan Others",
-                  ].map((header) => (
-                    <th key={header} className="px-3 py-3 font-bold">
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {selectedItems.map((item, index) => (
-                  <tr
-                    key={item.id || `${item.noSurat}-${index}`}
-                    className="hover:bg-white/[0.03]"
-                  >
-                    <td className="px-3 py-3 font-mono text-slate-300">
-                      {item.itemNo || index + 1}
-                    </td>
-                    <td className="px-3 py-3 font-mono text-slate-200">
-                      {item.noSurat || "-"}
-                    </td>
-                    <td className="px-3 py-3 min-w-[180px] text-slate-200">
-                      {item.namaProgram || "-"}
-                    </td>
-                    <td className="px-3 py-3 min-w-[140px] text-slate-300">
-                      {item.toko || "-"}
-                    </td>
-                    <td className="px-3 py-3">
-                      <ReadOnlyPresenceBadge value={item.kwt} />
-                    </td>
-                    <td className="px-3 py-3">
-                      <ReadOnlyPresenceBadge value={item.skp} />
-                    </td>
-                    <td className="px-3 py-3">
-                      <ReadOnlyPresenceBadge value={item.fp} />
-                    </td>
-                    <td className="px-3 py-3">
-                      <ReadOnlyPresenceBadge value={item.pc} />
-                    </td>
-                    <td className="px-3 py-3">
-                      <ReadOnlyPresenceBadge value={item.foto} />
-                    </td>
-                    <td className="px-3 py-3">
-                      <ReadOnlyPresenceBadge value={item.rekap} />
-                    </td>
-                    <td className="px-3 py-3">
-                      <ReadOnlyPresenceBadge value={item.others} />
-                    </td>
-                    <td className="px-3 py-3 min-w-[180px] text-slate-300">
-                      {item.othersText || "-"}
-                    </td>
-                  </tr>
-                ))}
-                {!isLoading && selectedItems.length === 0 && (
+            <div className="mt-5 overflow-x-auto rounded-xl border border-white/10">
+              <table className="w-full min-w-[1150px] text-left text-sm">
+                <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
                   <tr>
-                    <td
-                      colSpan={12}
-                      className="px-3 py-6 text-center text-sm text-slate-500"
-                    >
-                      Belum ada item batch yang bisa ditampilkan.
-                    </td>
+                    {[
+                      "No",
+                      "No Surat",
+                      "Nama Program",
+                      "Periode",
+                      "Toko",
+                      "Barang",
+                      "Nominal",
+                      "Cara Bayar",
+                      "Tipe",
+                      "Deadline",
+                    ].map((header) => (
+                      <th key={header} className="px-3 py-3 font-bold">
+                        {header}
+                      </th>
+                    ))}
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
-        <Panel title="Notification Preview" icon={Mail}>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Field
-              label="Email To"
-              value={
-                notificationPreview?.to || "operational.manager@company.local"
-              }
-            />
-            <Field
-              label="Subject"
-              value={
-                notificationPreview?.subject || "Pengajuan OFF Approved by SM"
-              }
-            />
-            <Field
-              label="Status"
-              value={notificationPreview?.status || "Preview mock"}
-            />
-          </div>
-          <div className="mt-4">
-            <TextArea
-              label="Message"
-              value={
-                notificationPreview?.message ||
-                "Ada batch pengajuan OFF yang sudah disetujui Sales Manager dan siap ditinjau OM."
-              }
-            />
-          </div>
-        </Panel>
-      </div>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {selectedItems.map((item, index) => (
+                    <tr
+                      key={item.id || `${item.noSurat}-${index}`}
+                      className="hover:bg-white/[0.03]"
+                    >
+                      <td className="px-3 py-3 font-mono text-slate-300">
+                        {item.itemNo || index + 1}
+                      </td>
+                      <td className="px-3 py-3 font-mono text-slate-200">
+                        {item.noSurat || "-"}
+                      </td>
+                      <td className="px-3 py-3 min-w-[180px] text-slate-200">
+                        {item.namaProgram || "-"}
+                      </td>
+                      <td className="px-3 py-3 text-slate-300">
+                        {item.periode || "-"}
+                      </td>
+                      <td className="px-3 py-3 min-w-[140px] text-slate-300">
+                        {item.toko || "-"}
+                      </td>
+                      <td className="px-3 py-3 text-slate-300">
+                        {item.barang || "-"}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                        Rp {Number(item.nominal || 0).toLocaleString("id-ID")}
+                      </td>
+                      <td className="px-3 py-3 text-slate-300">
+                        {item.caraBayar || "-"}
+                      </td>
+                      <td className="px-3 py-3 text-slate-300">
+                        {item.type || "-"}
+                      </td>
+                      <td className="px-3 py-3 text-slate-300">
+                        {item.deadline || "-"}
+                      </td>
+                    </tr>
+                  ))}
+                  {!isLoading && selectedItems.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={10}
+                        className="px-3 py-6 text-center text-sm text-slate-500"
+                      >
+                        Pilih batch untuk melihat item.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-4">
+              <label className="block">
+                <span className="text-xs text-slate-500 font-semibold">
+                  Catatan Sales Manager
+                </span>
+                <textarea
+                  value={smNote}
+                  onChange={(event) => setSmNote(event.target.value)}
+                  placeholder="Isi catatan jika dikembalikan. Catatan persetujuan boleh dikosongkan."
+                  rows={4}
+                  className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                />
+              </label>
+            </div>
+            {actionMessage && (
+              <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+                {actionMessage}
+              </div>
+            )}
+            {canReviewSm ? (
+              <div className="mt-5 flex flex-wrap gap-3">
+                <button
+                  onClick={returnToSupervisor}
+                  disabled={
+                    !selectedBatch ||
+                    !isSmActionableBatch(selectedBatch) ||
+                    isActionLoading
+                  }
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm font-bold text-rose-300 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Tolak / Kembalikan ke Supervisor
+                </button>
+                <button
+                  onClick={approveBatch}
+                  disabled={
+                    !selectedBatch ||
+                    !isSmActionableBatch(selectedBatch) ||
+                    isActionLoading
+                  }
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Bell size={16} /> Setujui Data & Beri Notifikasi OM
+                </button>
+              </div>
+            ) : (
+              <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
+                Baca-saja: role ini tidak bisa menyetujui/mengembalikan data
+                Sales Manager.
+              </div>
+            )}
+          </Panel>
+          <Panel title="Kelengkapan Awal dari Supervisor" icon={ListChecks}>
+            <p className="mb-4 text-sm text-slate-400">
+              Kelengkapan ini adalah informasi awal dari Supervisor. Validasi
+              kelengkapan tetap dilakukan oleh Claim.
+            </p>
+            {loadError && (
+              <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                {loadError}
+              </div>
+            )}
+            <div className="overflow-x-auto rounded-xl border border-white/10">
+              <table className="w-full min-w-[1200px] text-left text-sm">
+                <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+                  <tr>
+                    {[
+                      "No",
+                      "No Surat",
+                      "Nama Program",
+                      "Toko",
+                      "KWT",
+                      "SKP",
+                      "FP",
+                      "PC",
+                      "Foto",
+                      "Rekap",
+                      "Lainnya",
+                      "Keterangan Lainnya",
+                    ].map((header) => (
+                      <th key={header} className="px-3 py-3 font-bold">
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {selectedItems.map((item, index) => (
+                    <tr
+                      key={item.id || `${item.noSurat}-${index}`}
+                      className="hover:bg-white/[0.03]"
+                    >
+                      <td className="px-3 py-3 font-mono text-slate-300">
+                        {item.itemNo || index + 1}
+                      </td>
+                      <td className="px-3 py-3 font-mono text-slate-200">
+                        {item.noSurat || "-"}
+                      </td>
+                      <td className="px-3 py-3 min-w-[180px] text-slate-200">
+                        {item.namaProgram || "-"}
+                      </td>
+                      <td className="px-3 py-3 min-w-[140px] text-slate-300">
+                        {item.toko || "-"}
+                      </td>
+                      <td className="px-3 py-3">
+                        <ReadOnlyPresenceBadge value={item.kwt} />
+                      </td>
+                      <td className="px-3 py-3">
+                        <ReadOnlyPresenceBadge value={item.skp} />
+                      </td>
+                      <td className="px-3 py-3">
+                        <ReadOnlyPresenceBadge value={item.fp} />
+                      </td>
+                      <td className="px-3 py-3">
+                        <ReadOnlyPresenceBadge value={item.pc} />
+                      </td>
+                      <td className="px-3 py-3">
+                        <ReadOnlyPresenceBadge value={item.foto} />
+                      </td>
+                      <td className="px-3 py-3">
+                        <ReadOnlyPresenceBadge value={item.rekap} />
+                      </td>
+                      <td className="px-3 py-3">
+                        <ReadOnlyPresenceBadge value={item.others} />
+                      </td>
+                      <td className="px-3 py-3 min-w-[180px] text-slate-300">
+                        {item.othersText || "-"}
+                      </td>
+                    </tr>
+                  ))}
+                  {!isLoading && selectedItems.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={12}
+                        className="px-3 py-6 text-center text-sm text-slate-500"
+                      >
+                        Belum ada item batch yang bisa ditampilkan.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+          <Panel title="Pratinjau Notifikasi" icon={Mail}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <Field
+                label="Email Tujuan"
+                value={
+                  notificationPreview?.to || "operational.manager@company.local"
+                }
+              />
+              <Field
+                label="Subjek"
+                value={
+                  notificationPreview?.subject ||
+                  "Pengajuan OFF Disetujui Sales Manager"
+                }
+              />
+              <Field
+                label="Status"
+                value={notificationPreview?.status || "Pratinjau"}
+              />
+            </div>
+            <div className="mt-4">
+              <TextArea
+                label="Pesan"
+                value={
+                  notificationPreview?.message ||
+                  "Ada batch pengajuan OFF yang sudah disetujui Sales Manager dan siap ditinjau OM."
+                }
+              />
+            </div>
+          </Panel>
+        </div>
+      )}
     </div>
   );
 }
@@ -2421,8 +3017,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
     "hub" | "after-sm" | "after-finance"
   >("hub");
   const [claimBatches, setClaimBatches] = useState<OffApiBatch[]>([]);
-  const [claimHistory, setClaimHistory] = useState<OffApiBatch[]>([]);
+  const [claimSearch, setClaimSearch] = useState("");
   const [finalBatches, setFinalBatches] = useState<OffApiBatch[]>([]);
+  const [finalClaimSearch, setFinalClaimSearch] = useState("");
   const [finalHistory, setFinalHistory] = useState<OffApiBatch[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
   const [selectedItems, setSelectedItems] = useState<OffApiItem[]>([]);
@@ -2437,7 +3034,6 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [claimMessage, setClaimMessage] = useState("");
-  const [noClaim, setNoClaim] = useState("");
   const [claimSubmittedDate, setClaimSubmittedDate] = useState("");
   const [claimDeadline, setClaimDeadline] = useState("");
   const [completenessStatus, setCompletenessStatus] = useState("Aman");
@@ -2498,8 +3094,10 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
 
   const isFinalQueueBatch = (batch: OffApiBatch) =>
     batch.financeStatus === "Paid" &&
-    batch.finalStatus === "Waiting Claim Final Verification" &&
-    batch.status === "Finance Paid" &&
+    ["Waiting Claim Final Verification", "Incomplete Documents"].includes(
+      batch.finalStatus,
+    ) &&
+    batch.status === "Paid" &&
     batch.paymentSummary?.isFullyPaid === true;
 
   const loadClaimDetail = async (batch: OffApiBatch) => {
@@ -2514,7 +3112,6 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
     const items = Array.isArray(data.items) ? (data.items as OffApiItem[]) : [];
     setSelectedBatch(detailBatch || batch);
     setSelectedItems(items);
-    setNoClaim(detailBatch?.noClaim || "");
     setClaimSubmittedDate(detailBatch?.claimSubmittedDate || "");
     setClaimDeadline(detailBatch?.claimDeadline || "");
     setClaimNote(detailBatch?.claimNote || "");
@@ -2556,20 +3153,13 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       });
       const data = await parseJsonResponse(response);
       if (!response.ok || !data.ok)
-        throw new Error(String(data.error || "Gagal mengambil queue Claim."));
+        throw new Error(String(data.error || "Gagal mengambil antrean Claim."));
       const rows = Array.isArray(data.batches)
         ? (data.batches as OffApiBatch[])
         : [];
       const queue = rows.filter(isClaimQueueBatch);
       const finalQueue = rows.filter(isFinalQueueBatch);
       setClaimBatches(queue);
-      setClaimHistory(
-        rows.filter(
-          (batch) =>
-            batch.claimStatus === "Approved" ||
-            batch.claimStatus === "Returned",
-        ),
-      );
       setFinalBatches(finalQueue);
       setFinalHistory(
         rows.filter(
@@ -2588,7 +3178,6 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
         await loadClaimDetail(nextBatch);
       } else {
         setSelectedItems([]);
-        setNoClaim("");
         setClaimSubmittedDate("");
         setClaimDeadline("");
         setClaimNote("");
@@ -2602,7 +3191,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       }
     } catch (error) {
       setClaimMessage(
-        error instanceof Error ? error.message : "Gagal mengambil queue Claim.",
+        error instanceof Error
+          ? error.message
+          : "Gagal mengambil antrean Claim.",
       );
       setSelectedItems([]);
     } finally {
@@ -2650,7 +3241,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
   const returnByClaim = async () => {
     if (!selectedBatch) return;
     if (!claimNote.trim()) {
-      setClaimMessage("Catatan Claim wajib diisi untuk return.");
+      setClaimMessage("Catatan Claim wajib diisi untuk pengembalian.");
       return;
     }
     setIsActionLoading(true);
@@ -2672,7 +3263,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       const data = await parseJsonResponse(response);
       if (!response.ok || !data.ok)
         throw new Error(
-          String(data.error || data.message || "Gagal return dari Claim."),
+          String(
+            data.error || data.message || "Gagal mengembalikan dari Claim.",
+          ),
         );
       setClaimMessage(
         String(
@@ -2682,7 +3275,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       await loadClaimBatches();
     } catch (error) {
       setClaimMessage(
-        error instanceof Error ? error.message : "Gagal return dari Claim.",
+        error instanceof Error
+          ? error.message
+          : "Gagal mengembalikan dari Claim.",
       );
     } finally {
       setIsActionLoading(false);
@@ -2702,7 +3297,6 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "approve",
-            noClaim,
             claimSubmittedDate,
             claimDeadline,
             completenessStatus,
@@ -2713,7 +3307,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       const data = await parseJsonResponse(response);
       if (!response.ok || !data.ok)
         throw new Error(
-          String(data.error || data.message || "Gagal approve Claim."),
+          String(data.error || data.message || "Gagal menyetujui Claim."),
         );
       setClaimMessage(
         String(
@@ -2723,7 +3317,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       await loadClaimBatches();
     } catch (error) {
       setClaimMessage(
-        error instanceof Error ? error.message : "Gagal approve Claim.",
+        error instanceof Error ? error.message : "Gagal menyetujui Claim.",
       );
     } finally {
       setIsActionLoading(false);
@@ -2733,7 +3327,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
   const returnToFinance = async () => {
     if (!selectedFinalBatch) return;
     if (!finalClaimNote.trim()) {
-      setClaimMessage("Catatan wajib diisi untuk return ke Keuangan.");
+      setClaimMessage("Catatan wajib diisi untuk mengembalikan ke Keuangan.");
       return;
     }
     setIsActionLoading(true);
@@ -2754,7 +3348,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       const data = await parseJsonResponse(response);
       if (!response.ok || !data.ok)
         throw new Error(
-          String(data.error || data.message || "Gagal return ke Keuangan."),
+          String(
+            data.error || data.message || "Gagal mengembalikan ke Keuangan.",
+          ),
         );
       setClaimMessage(
         String(
@@ -2764,7 +3360,50 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       await loadClaimBatches();
     } catch (error) {
       setClaimMessage(
-        error instanceof Error ? error.message : "Gagal return ke Keuangan.",
+        error instanceof Error
+          ? error.message
+          : "Gagal mengembalikan ke Keuangan.",
+      );
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const rejectIncompleteDocuments = async () => {
+    if (!selectedFinalBatch) return;
+    if (!finalClaimNote.trim()) {
+      setClaimMessage(
+        "Catatan Final Claim wajib diisi untuk kelengkapan belum lengkap.",
+      );
+      return;
+    }
+    setIsActionLoading(true);
+    setClaimMessage("");
+    try {
+      const response = await fetch(
+        `/api/off-program-control/batches/${selectedFinalBatch.id}/final-claim`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "reject_incomplete_documents",
+            note: finalClaimNote,
+          }),
+        },
+      );
+      const data = await parseJsonResponse(response);
+      if (!response.ok || !data.ok)
+        throw new Error(
+          String(data.error || data.message || "Gagal menolak kelengkapan."),
+        );
+      setClaimMessage(
+        String(data.message || "Pengajuan ditandai belum lengkap."),
+      );
+      await loadClaimBatches();
+    } catch (error) {
+      setClaimMessage(
+        error instanceof Error ? error.message : "Gagal menolak kelengkapan.",
       );
     } finally {
       setIsActionLoading(false);
@@ -2774,7 +3413,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
   const completeFinalClaim = async () => {
     if (!selectedFinalBatch) return;
     if (remainingFinalAmount > 0) {
-      setClaimMessage("Pembayaran belum lunas, belum bisa di-approve Claim.");
+      setClaimMessage("Pembayaran belum lunas, belum bisa disetujui Claim.");
       return;
     }
     setIsActionLoading(true);
@@ -2792,28 +3431,35 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       const data = await parseJsonResponse(response);
       if (!response.ok || !data.ok)
         throw new Error(
-          String(data.error || data.message || "Gagal complete final Claim."),
+          String(
+            data.error || data.message || "Gagal menyelesaikan final Claim.",
+          ),
         );
-      setClaimMessage(
-        String(
-          data.message || "Pengajuan selesai dan status menjadi Completed.",
-        ),
-      );
+      setClaimMessage(String(data.message || "Pengajuan selesai."));
       await loadClaimBatches();
     } catch (error) {
       setClaimMessage(
-        error instanceof Error ? error.message : "Gagal complete final Claim.",
+        error instanceof Error
+          ? error.message
+          : "Gagal menyelesaikan final Claim.",
       );
     } finally {
       setIsActionLoading(false);
     }
   };
 
+  const filteredClaimBatches = filterBatchesBySearch(claimBatches, claimSearch);
+
+  const filteredFinalBatches = filterBatchesBySearch(
+    finalBatches,
+    finalClaimSearch,
+  );
+
   if (claimView === "hub") {
     return (
       <div className="space-y-6">
         <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-6 shadow-xl">
-          <h2 className="text-2xl font-black text-white">Claim Dashboard</h2>
+          <h2 className="text-2xl font-black text-white">Dashboard Claim</h2>
           <p className="mt-2 text-sm text-slate-400">
             Pilih jenis validasi Claim yang ingin diproses.
           </p>
@@ -2856,7 +3502,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
             </h3>
             <p className="mt-2 text-sm leading-6 text-slate-400">
               Cek data yang sudah dibayar Keuangan, verifikasi bukti bayar dan
-              jumlah pembayaran, lalu complete atau return ke Keuangan.
+              jumlah pembayaran, lalu selesaikan atau kembalikan ke Keuangan.
             </p>
             <button
               onClick={() => setClaimView("after-finance")}
@@ -2881,7 +3527,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
         onClick={() => setClaimView("hub")}
         className="inline-flex rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 hover:bg-white/10"
       >
-        Kembali ke Claim Dashboard
+        Kembali ke Dashboard Claim
       </button>
       <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
         <h2 className="text-xl font-black text-white">
@@ -2892,52 +3538,72 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
         <p className="mt-1 text-sm text-slate-400">
           {claimView === "after-sm"
             ? "Cek batch yang sudah disetujui Sales Manager dan lakukan validasi Claim awal."
-            : "Cek pembayaran Keuangan, verifikasi bukti bayar, lalu complete atau return ke Keuangan."}
+            : "Cek pembayaran Keuangan, verifikasi bukti bayar, lalu selesaikan atau kembalikan ke Keuangan."}
         </p>
       </div>
       <InfoNote>
-        Checklist Supervisor bukan approval. Claim wajib verifikasi real-life
-        sebelum approve.
+        Checklist Supervisor bukan persetujuan. Claim wajib melakukan verifikasi
+        nyata sebelum menyetujui.
       </InfoNote>
       {claimView === "after-sm" && (
         <div className="grid grid-cols-1 xl:grid-cols-[0.75fr_1.25fr] gap-6">
           <Panel title="Menunggu Validasi Claim" icon={FileCheck2}>
+            <div className="mb-4">
+              <MonitoringSearch
+                value={claimSearch}
+                onChange={setClaimSearch}
+                placeholder="Cari No Pengajuan, principle, kode, atau status Claim..."
+              />
+            </div>
+
             <div className="space-y-3">
               {isLoading && (
-                <p className="text-sm text-slate-400">Memuat queue Claim...</p>
-              )}
-              {!isLoading && claimBatches.length === 0 && (
                 <p className="text-sm text-slate-400">
-                  Belum ada batch approved SM yang menunggu Claim.
+                  Memuat antrean Claim...
                 </p>
               )}
-              {claimBatches.map((batch) => {
+
+              {!isLoading && filteredClaimBatches.length === 0 && (
+                <p className="text-sm text-slate-400">
+                  Belum ada batch yang disetujui SM dan menunggu Claim.
+                </p>
+              )}
+
+              {filteredClaimBatches.map((batch) => {
                 const summary = batch.summary || {
                   totalRows: 0,
                   totalNominal: 0,
                 };
+
                 return (
                   <button
                     key={batch.id}
                     onClick={() => selectClaimBatch(batch)}
-                    className={`w-full rounded-xl border p-4 text-left transition-colors ${selectedBatch?.id === batch.id ? "border-teal-500/40 bg-teal-500/10" : "border-white/10 bg-black/30 hover:bg-white/[0.04]"}`}
+                    className={`w-full rounded-xl border p-4 text-left transition-colors ${
+                      selectedBatch?.id === batch.id
+                        ? "border-teal-500/40 bg-teal-500/10"
+                        : "border-white/10 bg-black/30 hover:bg-white/[0.04]"
+                    }`}
                   >
                     <p className="font-mono text-sm font-bold text-white">
                       {batch.noPengajuan}
                     </p>
+
                     <p className="mt-1 text-sm text-slate-300">
                       {batch.principleName}{" "}
                       <span className="font-mono text-teal-300">
                         ({batch.principleCode})
                       </span>
                     </p>
+
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
                       <span>
-                        Row:{" "}
+                        Baris:{" "}
                         <b className="text-slate-200">
                           {summary.totalRows || summary.rowCount || 0}
                         </b>
                       </span>
+
                       <span>
                         Total:{" "}
                         <b className="text-emerald-300">
@@ -2947,19 +3613,26 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                           )}
                         </b>
                       </span>
+
                       <span>
-                        SM: <b className="text-emerald-300">{batch.smStatus}</b>
+                        SM:{" "}
+                        <b className="text-emerald-300">
+                          {displayStatusLabel(batch.smStatus)}
+                        </b>
                       </span>
+
                       <span>
                         Claim:{" "}
                         <b className="text-sky-300">
-                          {batch.claimStatus || "-"}
+                          {displayStatusLabel(batch.claimStatus)}
                         </b>
                       </span>
+
                       <span>
                         No Claim:{" "}
                         <b className="text-slate-200">{batch.noClaim || "-"}</b>
                       </span>
+
                       <span>
                         Deadline:{" "}
                         <b className="text-slate-200">
@@ -2970,36 +3643,6 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                   </button>
                 );
               })}
-            </div>
-            <div className="mt-6 border-t border-white/10 pt-5">
-              <p className="mb-3 text-sm font-bold text-white">
-                Riwayat Validasi Claim
-              </p>
-              <div className="space-y-2">
-                {claimHistory.slice(0, 5).map((batch) => (
-                  <div
-                    key={batch.id}
-                    className="rounded-lg border border-white/10 bg-black/20 p-3"
-                  >
-                    <p className="font-mono text-xs font-bold text-slate-200">
-                      {batch.noPengajuan}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {batch.principleCode} - {batch.principleName}
-                    </p>
-                    <span
-                      className={`mt-2 inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(batch.claimStatus)}`}
-                    >
-                      {batch.claimStatus}
-                    </span>
-                  </div>
-                ))}
-                {claimHistory.length === 0 && (
-                  <p className="text-sm text-slate-500">
-                    Belum ada history Claim.
-                  </p>
-                )}
-              </div>
             </div>
           </Panel>
 
@@ -3040,11 +3683,11 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                 />
                 <Field
                   label="Status SM"
-                  value={selectedBatch?.smStatus || "-"}
+                  value={displayStatusLabel(selectedBatch?.smStatus)}
                 />
                 <Field
                   label="Status Claim"
-                  value={selectedBatch?.claimStatus || "-"}
+                  value={displayStatusLabel(selectedBatch?.claimStatus)}
                 />
               </div>
               <div className="mt-5 overflow-x-auto rounded-xl border border-white/10">
@@ -3060,7 +3703,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                         "Barang",
                         "Nominal",
                         "Cara Bayar",
-                        "Type",
+                        "Tipe",
                         "Deadline",
                       ].map((header) => (
                         <th key={header} className="px-3 py-3 font-bold">
@@ -3125,7 +3768,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
             <Panel title="Kelengkapan Awal dari Supervisor" icon={ListChecks}>
               <p className="mb-4 text-sm text-slate-400">
                 Kelengkapan dari Supervisor adalah informasi awal. Claim wajib
-                verifikasi real-life sebelum approve.
+                melakukan verifikasi nyata sebelum menyetujui.
               </p>
               <div className="overflow-x-auto rounded-xl border border-white/10">
                 <table className="w-full min-w-[1200px] text-left text-sm">
@@ -3142,8 +3785,8 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                         "PC",
                         "Foto",
                         "Rekap",
-                        "Others",
-                        "Keterangan Others",
+                        "Lainnya",
+                        "Keterangan Lainnya",
                       ].map((header) => (
                         <th key={header} className="px-3 py-3 font-bold">
                           {header}
@@ -3212,11 +3855,6 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
 
             <Panel title="Form Validasi Claim" icon={ClipboardCheck}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <EditableField
-                  label="No Claim"
-                  value={noClaim}
-                  onChange={setNoClaim}
-                />
                 <DateField
                   label="Tanggal Diajukan"
                   value={claimSubmittedDate}
@@ -3275,19 +3913,19 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     disabled={!selectedBatch || isActionLoading}
                     className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm font-bold text-rose-300 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Return for Correction
+                    Kembalikan untuk Koreksi
                   </button>
                   <button
                     onClick={approveByClaim}
                     disabled={!selectedBatch || isActionLoading}
                     className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Claim Approved
+                    Setujui Claim
                   </button>
                 </div>
               ) : (
                 <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
-                  Readonly: role ini tidak bisa memproses Claim.
+                  Baca-saja: role ini tidak bisa memproses Claim.
                 </div>
               )}
             </Panel>
@@ -3298,21 +3936,28 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       {claimView === "after-finance" && (
         <div className="grid grid-cols-1 xl:grid-cols-[0.75fr_1.25fr] gap-6">
           <Panel
-            title="Menunggu Final Verification Setelah Pembayaran"
+            title="Menunggu Verifikasi Final Setelah Pembayaran"
             icon={Wallet}
           >
+            <div className="mb-4">
+              <MonitoringSearch
+                value={finalClaimSearch}
+                onChange={setFinalClaimSearch}
+                placeholder="Cari No Pengajuan, principle, kode, no claim, atau status pembayaran..."
+              />
+            </div>
             <div className="space-y-3">
               {isLoading && (
                 <p className="text-sm text-slate-400">
-                  Memuat queue final Claim...
+                  Memuat antrean final Claim...
                 </p>
               )}
-              {!isLoading && finalBatches.length === 0 && (
+              {!isLoading && filteredFinalBatches.length === 0 && (
                 <p className="text-sm text-slate-400">
-                  Belum ada batch Finance Paid yang menunggu final verification.
+                  Belum ada batch sudah dibayar yang menunggu verifikasi final.
                 </p>
               )}
-              {finalBatches.map((batch) => {
+              {filteredFinalBatches.map((batch) => {
                 const batchSummary = batch.summary || { totalNominal: 0 };
                 const batchPaymentSummary = batch.paymentSummary || {
                   totalPaid: Number(batch.paidAmount || 0),
@@ -3376,12 +4021,16 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                         </b>
                       </span>
                       <span>
-                        Finance:{" "}
-                        <b className="text-sky-300">{batch.financeStatus}</b>
+                        Keuangan:{" "}
+                        <b className="text-sky-300">
+                          {displayStatusLabel(batch.financeStatus)}
+                        </b>
                       </span>
                       <span>
                         Final:{" "}
-                        <b className="text-purple-300">{batch.finalStatus}</b>
+                        <b className="text-purple-300">
+                          {displayStatusLabel(batch.finalStatus)}
+                        </b>
                       </span>
                     </div>
                   </button>
@@ -3407,13 +4056,13 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     <span
                       className={`mt-2 inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(batch.finalStatus)}`}
                     >
-                      {batch.finalStatus}
+                      {displayStatusLabel(batch.finalStatus)}
                     </span>
                   </div>
                 ))}
                 {finalHistory.length === 0 && (
                   <p className="text-sm text-slate-500">
-                    Belum ada history final Claim.
+                    Belum ada riwayat final Claim.
                   </p>
                 )}
               </div>
@@ -3455,23 +4104,23 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                 />
                 <Field
                   label="Status SM"
-                  value={selectedFinalBatch?.smStatus || "-"}
+                  value={displayStatusLabel(selectedFinalBatch?.smStatus)}
                 />
                 <Field
                   label="Status Claim"
-                  value={selectedFinalBatch?.claimStatus || "-"}
+                  value={displayStatusLabel(selectedFinalBatch?.claimStatus)}
                 />
                 <Field
                   label="Status OM"
-                  value={selectedFinalBatch?.omStatus || "-"}
+                  value={displayStatusLabel(selectedFinalBatch?.omStatus)}
                 />
                 <Field
-                  label="Status Finance"
-                  value={selectedFinalBatch?.financeStatus || "-"}
+                  label="Status Keuangan"
+                  value={displayStatusLabel(selectedFinalBatch?.financeStatus)}
                 />
                 <Field
                   label="Status Final"
-                  value={selectedFinalBatch?.finalStatus || "-"}
+                  value={displayStatusLabel(selectedFinalBatch?.finalStatus)}
                 />
               </div>
             </Panel>
@@ -3510,7 +4159,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                   <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
                     <tr>
                       {[
-                        "Payment No",
+                        "No Pembayaran",
                         "Tanggal Bayar",
                         "Metode",
                         "Jumlah",
@@ -3583,7 +4232,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
               </div>
             </Panel>
 
-            <Panel title="Item Batch Final Verification" icon={ReceiptText}>
+            <Panel title="Item Batch Verifikasi Final" icon={ReceiptText}>
               <div className="overflow-x-auto rounded-xl border border-white/10">
                 <table className="w-full min-w-[1250px] text-sm text-left">
                   <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
@@ -3598,7 +4247,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                         "Barang",
                         "Nominal",
                         "Cara Bayar",
-                        "Type",
+                        "Tipe",
                         "Deadline",
                       ].map((header) => (
                         <th key={header} className="px-3 py-3 font-bold">
@@ -3657,7 +4306,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
               </div>
             </Panel>
 
-            <Panel title="Summary Pembayaran Final" icon={ReceiptText}>
+            <Panel title="Ringkasan Pembayaran Final" icon={ReceiptText}>
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
                 <Field
                   label="Total Nominal"
@@ -3682,11 +4331,11 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
               </div>
             </Panel>
 
-            <Panel title="Claim Final Verification Form" icon={ClipboardCheck}>
+            <Panel title="Form Verifikasi Final Claim" icon={ClipboardCheck}>
               <InfoNote>
                 Claim hanya perlu mengecek bukti pembayaran dan kesesuaian total
-                pembayaran. Jika ada masalah, return ke Keuangan. Jika sesuai,
-                approve completed.
+                pembayaran. Jika ada masalah, kembalikan ke Keuangan. Jika
+                sesuai, selesaikan pengajuan.
               </InfoNote>
               <div className="mt-4">
                 <label className="block">
@@ -3708,19 +4357,26 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     disabled={!selectedFinalBatch || isActionLoading}
                     className="inline-flex items-center justify-center rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm font-bold text-rose-300 hover:bg-rose-500/20 disabled:opacity-50"
                   >
-                    Return to Finance
+                    Kembalikan ke Keuangan
+                  </button>
+                  <button
+                    onClick={rejectIncompleteDocuments}
+                    disabled={!selectedFinalBatch || isActionLoading}
+                    className="inline-flex items-center justify-center rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm font-bold text-amber-300 hover:bg-amber-500/20 disabled:opacity-50"
+                  >
+                    Tolak karena kelengkapan belum lengkap
                   </button>
                   <button
                     onClick={completeFinalClaim}
                     disabled={!selectedFinalBatch || isActionLoading}
                     className="inline-flex items-center justify-center rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50"
                   >
-                    Complete / Completed
+                    Selesaikan
                   </button>
                 </div>
               ) : (
                 <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
-                  Readonly: role ini tidak bisa memproses final Claim.
+                  Baca-saja: role ini tidak bisa memproses final Claim.
                 </div>
               )}
             </Panel>
@@ -3731,12 +4387,112 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
   );
 }
 
+function LiveQueueSummaryPanel({ batches }: { batches: OffApiBatch[] }) {
+  const queues = [
+    {
+      title: "Draf/Dikembalikan Supervisor",
+      count: batches.filter(
+        (batch) =>
+          batch.status === "Draft" ||
+          batch.status === "Returned by SM" ||
+          batch.status === "Returned by Claim" ||
+          batch.smStatus === "Returned" ||
+          batch.claimStatus === "Returned",
+      ).length,
+      desc: "Batch masih bisa diedit Supervisor.",
+      icon: FileText,
+    },
+    {
+      title: "Menunggu Review SM",
+      count: batches.filter((batch) => isSmActionableBatch(batch)).length,
+      desc: "Menunggu validasi benar/salah data batch.",
+      icon: Send,
+    },
+    {
+      title: "Menunggu Validasi Claim",
+      count: batches.filter(
+        (batch) =>
+          batch.smStatus === "Approved by SM" &&
+          !["Approved", "Returned"].includes(batch.claimStatus) &&
+          ![
+            "Cancelled",
+            "Completed",
+            "Claim Approved",
+            "Returned by Claim",
+          ].includes(batch.status),
+      ).length,
+      desc: "Claim mengecek data dan syarat secara manual.",
+      icon: FileCheck2,
+    },
+    {
+      title: "Menunggu Persetujuan OM",
+      count: batches.filter((batch) => isOmActionableBatch(batch)).length,
+      desc: "Batch disetujui Claim, menunggu OM.",
+      icon: ShieldCheck,
+    },
+    {
+      title: "Menunggu Pembayaran Keuangan",
+      count: batches.filter((batch) => isFinanceActionableBatch(batch)).length,
+      desc: "Sudah disetujui OM, menunggu pembayaran.",
+      icon: Wallet,
+    },
+    {
+      title: "Menunggu Verifikasi Final Claim",
+      count: batches.filter(
+        (batch) =>
+          batch.status === "Paid" &&
+          batch.financeStatus === "Paid" &&
+          batch.finalStatus !== "Completed",
+      ).length,
+      desc: "Sudah dibayar, verifikasi final claim.",
+      icon: ListChecks,
+    },
+    {
+      title: "Selesai",
+      count: batches.filter(
+        (batch) =>
+          batch.status === "Completed" || batch.finalStatus === "Completed",
+      ).length,
+      desc: "Alur batch sudah selesai.",
+      icon: CheckCircle2,
+    },
+  ];
+
+  return (
+    <Panel title="Ringkasan Antrean Per Divisi" icon={ListChecks}>
+      <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-7 gap-3">
+        {queues.map((queue) => {
+          const Icon = queue.icon;
+
+          return (
+            <div
+              key={queue.title}
+              className="rounded-xl border border-white/10 bg-black/30 p-4"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <Icon className="text-teal-300 shrink-0" size={20} />
+                <span className="font-mono text-xl font-black text-white">
+                  {queue.count}
+                </span>
+              </div>
+              <p className="text-sm font-bold text-white mt-3">{queue.title}</p>
+              <p className="text-xs text-slate-500 mt-1">{queue.desc}</p>
+            </div>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+
 function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
   const canDecideOm =
     canPerformOffAction(offRole, "om_approve") ||
     canPerformOffAction(offRole, "om_cancel");
   const [omBatches, setOmBatches] = useState<OffApiBatch[]>([]);
-  const [omHistory, setOmHistory] = useState<OffApiBatch[]>([]);
+  const [omMenu, setOmMenu] = useState<"monitoring" | "approval">("monitoring");
+  const [omSearch, setOmSearch] = useState("");
+  const [omStatusFilter, setOmStatusFilter] = useState("");
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
   const [selectedItems, setSelectedItems] = useState<OffApiItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -3803,19 +4559,12 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
       });
       const data = await parseJsonResponse(response);
       if (!response.ok || !data.ok)
-        throw new Error(String(data.error || "Gagal mengambil queue OM."));
+        throw new Error(String(data.error || "Gagal mengambil antrean OM."));
       const rows = Array.isArray(data.batches)
         ? (data.batches as OffApiBatch[])
         : [];
-      const queue = rows.filter(isOmQueueBatch);
-      setOmBatches(queue);
-      setOmHistory(
-        rows.filter(
-          (batch) =>
-            batch.omStatus === "Approved" || batch.omStatus === "Cancelled",
-        ),
-      );
-      const nextBatch = queue[0] || null;
+      setOmBatches(rows);
+      const nextBatch = rows.find(isOmQueueBatch) || rows[0] || null;
       setSelectedBatch(nextBatch);
       if (nextBatch) {
         await loadOmDetail(nextBatch);
@@ -3825,7 +4574,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
       }
     } catch (error) {
       setOmMessage(
-        error instanceof Error ? error.message : "Gagal mengambil queue OM.",
+        error instanceof Error ? error.message : "Gagal mengambil antrean OM.",
       );
       setSelectedItems([]);
     } finally {
@@ -3841,6 +4590,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
 
   const selectOmBatch = async (batch: OffApiBatch) => {
     setSelectedBatch(batch);
+    setOmMenu("approval");
     setSelectedItems([]);
     setOmMessage("");
     try {
@@ -3889,150 +4639,72 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
     }
   };
 
+  const omStatusOptions = getBatchStatusOptions(omBatches);
+
+  const filteredOmBatches = filterBatchesByMainStatus(
+    filterBatchesBySearch(omBatches, omSearch),
+    omStatusFilter,
+  );
+
   return (
     <div className="space-y-6">
-      <InfoNote>
-        OM dapat melihat data yang sudah approved oleh SM. Approval final OM
-        idealnya dilakukan setelah validasi Claim sesuai.
-      </InfoNote>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2">
         {[
-          [
-            "Approved by SM",
-            String(
-              omBatches.filter((batch) => batch.smStatus === "Approved by SM")
-                .length,
-            ),
-          ],
-          [
-            "Claim Approved",
-            String(
-              omBatches.filter((batch) => batch.claimStatus === "Approved")
-                .length,
-            ),
-          ],
-          ["Ready for OM Approval", String(omBatches.length)],
-          [
-            "Cancelled",
-            String(
-              omHistory.filter((batch) => batch.omStatus === "Cancelled")
-                .length,
-            ),
-          ],
-        ].map(([label, value]) => (
-          <div
-            key={label}
-            className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl"
+          ["monitoring", "Monitoring Batch Pengajuan"],
+          ["approval", "Persetujuan OM"],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setOmMenu(key as "monitoring" | "approval")}
+            className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
+              omMenu === key
+                ? "border border-teal-500/30 bg-teal-500/20 text-teal-200"
+                : "border border-transparent text-slate-400 hover:bg-white/5 hover:text-white"
+            }`}
           >
-            <p className="text-sm text-slate-400">{label}</p>
-            <p className="mt-2 text-3xl font-black text-white">{value}</p>
-          </div>
+            {label}
+          </button>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[0.75fr_1.25fr] gap-6">
-        <Panel title="Menunggu Approval OM" icon={ShieldCheck}>
-          <div className="space-y-3">
-            {isLoading && (
-              <p className="text-sm text-slate-400">Memuat queue OM...</p>
-            )}
-            {!isLoading && omBatches.length === 0 && (
-              <p className="text-sm text-slate-400">
-                Belum ada batch Claim Approved yang menunggu OM.
-              </p>
-            )}
-            {omBatches.map((batch) => {
-              const batchSummary = batch.summary || {
-                totalRows: 0,
-                totalNominal: 0,
-              };
-              return (
-                <button
-                  key={batch.id}
-                  onClick={() => selectOmBatch(batch)}
-                  className={`w-full rounded-xl border p-4 text-left transition-colors ${selectedBatch?.id === batch.id ? "border-teal-500/40 bg-teal-500/10" : "border-white/10 bg-black/30 hover:bg-white/[0.04]"}`}
-                >
-                  <p className="font-mono text-sm font-bold text-white">
-                    {batch.noPengajuan}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-300">
-                    {batch.principleName}{" "}
-                    <span className="font-mono text-teal-300">
-                      ({batch.principleCode})
-                    </span>
-                  </p>
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
-                    <span>
-                      No Claim:{" "}
-                      <b className="text-slate-200">{batch.noClaim || "-"}</b>
-                    </span>
-                    <span>
-                      Row:{" "}
-                      <b className="text-slate-200">
-                        {batchSummary.totalRows || batchSummary.rowCount || 0}
-                      </b>
-                    </span>
-                    <span>
-                      Total:{" "}
-                      <b className="text-emerald-300">
-                        Rp{" "}
-                        {Number(batchSummary.totalNominal || 0).toLocaleString(
-                          "id-ID",
-                        )}
-                      </b>
-                    </span>
-                    <span>
-                      Deadline:{" "}
-                      <b className="text-slate-200">
-                        {formatDateDisplay(batch.claimDeadline)}
-                      </b>
-                    </span>
-                    <span>
-                      SM: <b className="text-emerald-300">{batch.smStatus}</b>
-                    </span>
-                    <span>
-                      Claim: <b className="text-sky-300">{batch.claimStatus}</b>
-                    </span>
-                    <span>
-                      OM: <b className="text-purple-300">{batch.omStatus}</b>
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-          <div className="mt-6 border-t border-white/10 pt-5">
-            <p className="mb-3 text-sm font-bold text-white">
-              Riwayat Approval OM
-            </p>
-            <div className="space-y-2">
-              {omHistory.slice(0, 5).map((batch) => (
-                <div
-                  key={batch.id}
-                  className="rounded-lg border border-white/10 bg-black/20 p-3"
-                >
-                  <p className="font-mono text-xs font-bold text-slate-200">
-                    {batch.noPengajuan}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {batch.principleCode} - {batch.principleName}
-                  </p>
-                  <span
-                    className={`mt-2 inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(batch.omStatus)}`}
-                  >
-                    {batch.omStatus}
-                  </span>
-                </div>
-              ))}
-              {omHistory.length === 0 && (
-                <p className="text-sm text-slate-500">Belum ada history OM.</p>
-              )}
-            </div>
-          </div>
-        </Panel>
-
+      {omMenu === "monitoring" && (
         <div className="space-y-6">
-          <Panel title="Detail Approval OM" icon={ClipboardCheck}>
+          <LiveQueueSummaryPanel batches={omBatches} />
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
+              <MonitoringSearch
+                value={omSearch}
+                onChange={setOmSearch}
+                placeholder="Cari No Pengajuan, principle, kode, atau status OM..."
+              />
+
+              <StatusFilterSelect
+                value={omStatusFilter}
+                onChange={setOmStatusFilter}
+                options={omStatusOptions}
+              />
+            </div>
+
+            {isLoading && (
+              <p className="text-sm text-slate-400">Memuat data OM...</p>
+            )}
+
+            <BatchOverviewActionTable
+              batches={filteredOmBatches}
+              selectedBatchId={selectedBatch?.id}
+              onSelect={selectOmBatch}
+              actionLabel={(batch) =>
+                isOmActionableBatch(batch) ? "Review OM" : "Lihat Detail"
+              }
+            />
+          </div>
+        </div>
+      )}
+
+      {omMenu === "approval" && (
+        <div className="space-y-6">
+          <Panel title="Detail Persetujuan OM" icon={ClipboardCheck}>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               <Field
                 label="No Pengajuan"
@@ -4075,34 +4747,43 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                 label="Total Nominal"
                 value={`Rp ${totalNominal.toLocaleString("id-ID")}`}
               />
-              <Field label="Status SM" value={selectedBatch?.smStatus || "-"} />
+              <Field
+                label="Status SM"
+                value={displayStatusLabel(selectedBatch?.smStatus)}
+              />
               <Field
                 label="Status Claim"
-                value={selectedBatch?.claimStatus || "-"}
+                value={displayStatusLabel(selectedBatch?.claimStatus)}
               />
-              <Field label="Status OM" value={selectedBatch?.omStatus || "-"} />
+              <Field
+                label="Status OM"
+                value={displayStatusLabel(selectedBatch?.omStatus)}
+              />
             </div>
           </Panel>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-              <h3 className="font-bold text-white mb-3">Data Approved by SM</h3>
+              <h3 className="font-bold text-white mb-3">Data Disetujui SM</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field
                   label="Status SM"
-                  value={selectedBatch?.smStatus || "-"}
+                  value={displayStatusLabel(selectedBatch?.smStatus)}
                 />
                 <Field
-                  label="Locked Supervisor"
+                  label="Supervisor Terkunci"
                   value={selectedBatch?.locked ? "Ya" : "Tidak"}
                 />
-                <Field label="Audit SM Approve" value="Tercatat di audit log" />
                 <Field
-                  label="Mock Notification OM"
+                  label="Audit Persetujuan SM"
+                  value="Tercatat di log audit"
+                />
+                <Field
+                  label="Pratinjau Notifikasi OM"
                   value={
                     selectedBatch?.omStatus === "Waiting Approval"
                       ? "Claim meneruskan ke OM"
-                      : selectedBatch?.omStatus || "-"
+                      : displayStatusLabel(selectedBatch?.omStatus)
                   }
                 />
               </div>
@@ -4118,7 +4799,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field
                   label="Status Claim"
-                  value={selectedBatch?.claimStatus || "-"}
+                  value={displayStatusLabel(selectedBatch?.claimStatus)}
                 />
                 <Field label="No Claim" value={selectedBatch?.noClaim || "-"} />
                 <Field
@@ -4140,7 +4821,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
             </div>
           </div>
 
-          <Panel title="Item Batch untuk Approval OM" icon={ReceiptText}>
+          <Panel title="Item Batch untuk Persetujuan OM" icon={ReceiptText}>
             <div className="overflow-x-auto rounded-xl border border-white/10">
               <table className="w-full min-w-[1350px] text-sm text-left">
                 <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
@@ -4155,7 +4836,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                       "Barang",
                       "Nominal",
                       "Cara Bayar",
-                      "Type",
+                      "Tipe",
                       "Deadline",
                       "Kelengkapan",
                     ].map((header) => (
@@ -4245,7 +4926,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
             {hasMixedPaymentTypes && (
               <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
                 Batch ini memiliki lebih dari satu jenis pembayaran. Pastikan
-                pembayaran sesuai rincian row.
+                pembayaran sesuai rincian baris.
               </div>
             )}
           </Panel>
@@ -4258,7 +4939,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
               <textarea
                 value={omNote}
                 onChange={(event) => setOmNote(event.target.value)}
-                placeholder="Catatan wajib untuk cancel. Catatan approve boleh dikosongkan."
+                placeholder="Catatan wajib diisi untuk pembatalan. Catatan persetujuan boleh dikosongkan."
                 rows={4}
                 className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
               />
@@ -4272,35 +4953,47 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   onClick={() => decideOm("cancel")}
-                  disabled={!selectedBatch || isActionLoading}
+                  disabled={
+                    !selectedBatch ||
+                    !isOmActionableBatch(selectedBatch) ||
+                    isActionLoading
+                  }
                   className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm font-bold text-rose-300 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <XCircle size={16} /> Cancel
+                  <XCircle size={16} /> Batalkan
                 </button>
                 <button
                   onClick={() => decideOm("approve")}
-                  disabled={!selectedBatch || isActionLoading}
+                  disabled={
+                    !selectedBatch ||
+                    !isOmActionableBatch(selectedBatch) ||
+                    isActionLoading
+                  }
                   className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <CheckCircle2 size={16} /> Approve
+                  <CheckCircle2 size={16} /> Setujui
                 </button>
               </div>
             ) : (
               <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
-                Readonly: role ini tidak bisa mengambil keputusan OM.
+                Baca-saja: role ini tidak bisa mengambil keputusan OM.
               </div>
             )}
           </Panel>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
 function FinanceDashboard({ offRole }: OffDashboardProps) {
   const canPayFinance = canPerformOffAction(offRole, "finance_payment");
+  const [financeMenu, setFinanceMenu] = useState<"monitoring" | "payment">(
+    "monitoring",
+  );
   const [financeBatches, setFinanceBatches] = useState<OffApiBatch[]>([]);
-  const [financeHistory, setFinanceHistory] = useState<OffApiBatch[]>([]);
+  const [financeSearch, setFinanceSearch] = useState("");
+  const [financeStatusFilter, setFinanceStatusFilter] = useState("");
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
   const [selectedFinanceBatchId, setSelectedFinanceBatchId] = useState<
     string | null
@@ -4372,7 +5065,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
     ["Waiting Payment", "Partial Paid", "Need Correction"].includes(
       batch.financeStatus,
     ) &&
-    !["Cancelled by OM", "Finance Paid", "Completed", "Cancelled"].includes(
+    !["Cancelled by OM", "Paid", "Completed", "Cancelled"].includes(
       batch.status,
     );
 
@@ -4415,21 +5108,14 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
       const data = await parseJsonResponse(response);
       if (!response.ok || !data.ok)
         throw new Error(
-          String(data.error || "Gagal mengambil queue Keuangan."),
+          String(data.error || "Gagal mengambil antrean Keuangan."),
         );
       const rows = Array.isArray(data.batches)
         ? (data.batches as OffApiBatch[])
         : [];
+      const monitoringRows = rows.filter(isFinanceMonitoringBatch);
       const queue = rows.filter(isFinanceQueueBatch);
-      setFinanceBatches(queue);
-      setFinanceHistory(
-        rows.filter(
-          (batch) =>
-            batch.financeStatus === "Paid" ||
-            batch.finalStatus === "Waiting Claim Final Verification" ||
-            batch.status === "Finance Paid",
-        ),
-      );
+      setFinanceBatches(monitoringRows);
       const preservedId = options?.preserveSelectedId || selectedFinanceBatchId;
       const preservedBatch = preservedId
         ? queue.find((batch) => batch.id === preservedId) || null
@@ -4462,7 +5148,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
       setFinanceMessage(
         error instanceof Error
           ? error.message
-          : "Gagal mengambil queue Keuangan.",
+          : "Gagal mengambil antrean Keuangan.",
       );
       setSelectedItems([]);
       setSelectedPayments([]);
@@ -4472,7 +5158,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
   };
 
   useEffect(() => {
-    loadFinanceBatches();
+    loadFinanceBatches({ autoSelectFirst: false });
     // Finance queue should load once when this tab component mounts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -4485,6 +5171,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
     setFinanceMessage("");
     setPaymentResult(null);
     setPaymentProofFile(null);
+    setFinanceMenu("payment");
     try {
       await loadFinanceDetail(batch);
     } catch (error) {
@@ -4535,14 +5222,14 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
       const data = await parseJsonResponse(response);
       if (!response.ok || !data.ok)
         throw new Error(
-          String(data.error || data.message || "Gagal submit pembayaran."),
+          String(data.error || data.message || "Gagal mengirim pembayaran."),
         );
       const nextPaymentSummary = data.paymentSummary as
         | OffPaymentSummary
         | undefined;
       setFinanceMessage(
         nextPaymentSummary?.isFullyPaid
-          ? "Pembayaran lunas. Pengajuan dikirim ke Claim Final Verification."
+          ? "Pembayaran lunas. Pengajuan dikirim ke Verifikasi Final Claim."
           : String(data.message || "Pembayaran berhasil dicatat."),
       );
       const payment = data.payment as OffApiPayment | undefined;
@@ -4565,534 +5252,511 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
       });
     } catch (error) {
       setFinanceMessage(
-        error instanceof Error ? error.message : "Gagal submit pembayaran.",
+        error instanceof Error ? error.message : "Gagal mengirim pembayaran.",
       );
     } finally {
       setIsActionLoading(false);
     }
   };
 
+  const financeStatusOptions = [
+    "Waiting Payment",
+    "Partial Paid",
+    "Need Correction",
+    "Paid",
+    "Waiting Claim Final Verification",
+    "Incomplete Documents",
+    "Completed",
+  ].map((status) => ({
+    value: status,
+    label: displayStatusLabel(status),
+  }));
+
+  const filteredFinanceBatches = filterFinanceBatchesByStatus(
+    filterBatchesBySearch(financeBatches, financeSearch),
+    financeStatusFilter,
+  );
+
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-[0.75fr_1.25fr] gap-6">
-      <Panel title="Menunggu Pembayaran Keuangan" icon={Clock3}>
-        <div className="space-y-3">
+    <div className="space-y-6">
+      <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2">
+        {[
+          ["monitoring", "Monitoring Batch Pembayaran"],
+          ["payment", "Pembayaran"],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setFinanceMenu(key as "monitoring" | "payment")}
+            className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
+              financeMenu === key
+                ? "border border-teal-500/30 bg-teal-500/20 text-teal-200"
+                : "border border-transparent text-slate-400 hover:bg-white/5 hover:text-white"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {financeMenu === "monitoring" && (
+        <Panel title="Monitoring Batch Pembayaran" icon={Wallet}>
+          <div className="mb-4 grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
+            <MonitoringSearch
+              value={financeSearch}
+              onChange={setFinanceSearch}
+              placeholder="Cari No Pengajuan, principle, kode, status, atau No Claim..."
+            />
+            <StatusFilterSelect
+              value={financeStatusFilter}
+              onChange={setFinanceStatusFilter}
+              options={financeStatusOptions}
+            />
+          </div>
           {isLoading && (
-            <p className="text-sm text-slate-400">Memuat queue Keuangan...</p>
-          )}
-          {!isLoading && financeBatches.length === 0 && (
-            <p className="text-sm text-slate-400">
-              Belum ada batch OM Approved yang menunggu pembayaran.
+            <p className="mb-4 text-sm text-slate-400">
+              Memuat data Keuangan...
             </p>
           )}
-          {financeBatches.map((batch) => {
-            const batchSummary = batch.summary || {
-              totalRows: 0,
-              totalNominal: 0,
-              transfer: 0,
-              tunai: 0,
-            };
-            const batchPaymentSummary = batch.paymentSummary || {
-              totalPaid: Number(batch.paidAmount || 0),
-              remainingAmount: Math.max(
-                0,
-                Number(batchSummary.totalNominal || 0) -
-                  Number(batch.paidAmount || 0),
-              ),
-            };
-            return (
-              <button
-                key={batch.id}
-                onClick={() => selectFinanceBatch(batch)}
-                className={`w-full rounded-xl border p-4 text-left transition-colors ${selectedBatch?.id === batch.id ? "border-teal-500/40 bg-teal-500/10" : "border-white/10 bg-black/30 hover:bg-white/[0.04]"}`}
-              >
-                <p className="font-mono text-sm font-bold text-white">
-                  {batch.noPengajuan}
-                </p>
-                <p className="mt-1 text-sm text-slate-300">
-                  {batch.principleName}{" "}
-                  <span className="font-mono text-teal-300">
-                    ({batch.principleCode})
-                  </span>
-                </p>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
-                  <span>
-                    No Claim:{" "}
-                    <b className="text-slate-200">{batch.noClaim || "-"}</b>
-                  </span>
-                  <span>
-                    Row:{" "}
-                    <b className="text-slate-200">
-                      {batchSummary.totalRows || batchSummary.rowCount || 0}
-                    </b>
-                  </span>
-                  <span>
-                    Total:{" "}
-                    <b className="text-emerald-300">
-                      Rp{" "}
-                      {Number(batchSummary.totalNominal || 0).toLocaleString(
-                        "id-ID",
-                      )}
-                    </b>
-                  </span>
-                  <span>
-                    Sudah Dibayar:{" "}
-                    <b className="text-sky-300">
-                      Rp{" "}
-                      {Number(
-                        batchPaymentSummary.totalPaid || 0,
-                      ).toLocaleString("id-ID")}
-                    </b>
-                  </span>
-                  <span>
-                    Sisa:{" "}
-                    <b className="text-amber-300">
-                      Rp{" "}
-                      {Number(
-                        batchPaymentSummary.remainingAmount || 0,
-                      ).toLocaleString("id-ID")}
-                    </b>
-                  </span>
-                  <span>
-                    Finance:{" "}
-                    <b className="text-sky-300">{batch.financeStatus}</b>
-                  </span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-        <div className="mt-6 border-t border-white/10 pt-5">
-          <p className="mb-3 text-sm font-bold text-white">
-            Riwayat Pembayaran Keuangan
+          <FinanceMonitoringTable
+            batches={filteredFinanceBatches}
+            selectedBatchId={selectedBatch?.id}
+            onSelect={selectFinanceBatch}
+          />
+        </Panel>
+      )}
+
+      {financeMenu === "payment" && !selectedBatch && (
+        <Panel title="Pembayaran" icon={Wallet}>
+          <p className="text-sm text-slate-400">
+            Pilih batch dari Monitoring Batch Pembayaran untuk melihat detail
+            pembayaran.
           </p>
-          <div className="space-y-2">
-            {financeHistory.slice(0, 5).map((batch) => (
-              <div
-                key={batch.id}
-                className="rounded-lg border border-white/10 bg-black/20 p-3"
-              >
-                <p className="font-mono text-xs font-bold text-slate-200">
-                  {batch.noPengajuan}
-                </p>
-                <p className="mt-1 text-xs text-slate-500">
-                  {batch.principleCode} - {batch.principleName}
-                </p>
-                <span
-                  className={`mt-2 inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(batch.financeStatus)}`}
-                >
-                  {batch.financeStatus}
-                </span>
-              </div>
-            ))}
-            {financeHistory.length === 0 && (
-              <p className="text-sm text-slate-500">
-                Belum ada history pembayaran.
-              </p>
-            )}
-          </div>
-        </div>
-      </Panel>
-
-      <div className="space-y-6">
-        <Panel title="Detail Pembayaran Keuangan" icon={Wallet}>
-          <InfoNote>
-            Keuangan menerima data setelah OM approve. Setelah bayar, data masuk
-            kembali ke Claim untuk final payment verification.
-          </InfoNote>
-          <div className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            <Field
-              label="No Pengajuan"
-              value={selectedBatch?.noPengajuan || "-"}
-            />
-            <Field
-              label="Principle"
-              value={selectedBatch?.principleName || "-"}
-            />
-            <Field
-              label="Kode Principle"
-              value={selectedBatch?.principleCode || "-"}
-            />
-            <Field
-              label="Bulan/Tahun"
-              value={
-                selectedBatch
-                  ? `${selectedBatch.bulan}/${selectedBatch.tahun}`
-                  : "-"
-              }
-            />
-            <Field
-              label="Supervisor"
-              value={selectedBatch?.supervisorName || "-"}
-            />
-            <Field label="No Claim" value={selectedBatch?.noClaim || "-"} />
-            <Field
-              label="Tanggal Diajukan Claim"
-              value={formatDateDisplay(selectedBatch?.claimSubmittedDate)}
-            />
-            <Field
-              label="Deadline Claim"
-              value={formatDateDisplay(selectedBatch?.claimDeadline)}
-            />
-            <Field
-              label="Total Nominal"
-              value={`Rp ${totalNominal.toLocaleString("id-ID")}`}
-            />
-            <Field label="Status SM" value={selectedBatch?.smStatus || "-"} />
-            <Field
-              label="Status Claim"
-              value={selectedBatch?.claimStatus || "-"}
-            />
-            <Field label="Status OM" value={selectedBatch?.omStatus || "-"} />
-            <Field
-              label="Status Finance"
-              value={selectedBatch?.financeStatus || "-"}
-            />
-          </div>
         </Panel>
+      )}
 
-        <Panel title="Ringkasan Pembayaran Approved" icon={ReceiptText}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-            <Field
-              label="Total Pengajuan"
-              value={`Rp ${totalNominal.toLocaleString("id-ID")}`}
-            />
-            <Field
-              label="Total Sudah Dibayar"
-              value={`Rp ${totalPaid.toLocaleString("id-ID")}`}
-            />
-            <Field
-              label="Sisa Pembayaran"
-              value={`Rp ${remainingAmount.toLocaleString("id-ID")}`}
-            />
-            <Field label="Status" value={selectedBatch?.financeStatus || "-"} />
-            <Field
-              label="Total Transfer Row"
-              value={`Rp ${transfer.toLocaleString("id-ID")}`}
-            />
-            <Field
-              label="Total Tunai Row"
-              value={`Rp ${tunai.toLocaleString("id-ID")}`}
-            />
-          </div>
-          {hasMixedItemPayments && (
-            <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-              Batch ini memiliki lebih dari satu jenis pembayaran. Pastikan
-              pembayaran sesuai rincian row.
+      {financeMenu === "payment" && selectedBatch && (
+        <div className="space-y-6">
+          <Panel title="Detail Pembayaran Keuangan" icon={Wallet}>
+            <InfoNote>
+              Keuangan menerima data setelah OM menyetujui. Setelah bayar, data
+              masuk kembali ke Claim untuk verifikasi final pembayaran.
+            </InfoNote>
+            <div className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              <Field
+                label="No Pengajuan"
+                value={selectedBatch?.noPengajuan || "-"}
+              />
+              <Field
+                label="Principle"
+                value={selectedBatch?.principleName || "-"}
+              />
+              <Field
+                label="Kode Principle"
+                value={selectedBatch?.principleCode || "-"}
+              />
+              <Field
+                label="Bulan/Tahun"
+                value={
+                  selectedBatch
+                    ? `${selectedBatch.bulan}/${selectedBatch.tahun}`
+                    : "-"
+                }
+              />
+              <Field
+                label="Supervisor"
+                value={selectedBatch?.supervisorName || "-"}
+              />
+              <Field label="No Claim" value={selectedBatch?.noClaim || "-"} />
+              <Field
+                label="Tanggal Diajukan Claim"
+                value={formatDateDisplay(selectedBatch?.claimSubmittedDate)}
+              />
+              <Field
+                label="Deadline Claim"
+                value={formatDateDisplay(selectedBatch?.claimDeadline)}
+              />
+              <Field
+                label="Total Nominal"
+                value={`Rp ${totalNominal.toLocaleString("id-ID")}`}
+              />
+              <Field
+                label="Status SM"
+                value={displayStatusLabel(selectedBatch?.smStatus)}
+              />
+              <Field
+                label="Status Claim"
+                value={displayStatusLabel(selectedBatch?.claimStatus)}
+              />
+              <Field
+                label="Status OM"
+                value={displayStatusLabel(selectedBatch?.omStatus)}
+              />
+              <Field
+                label="Status Keuangan"
+                value={displayStatusLabel(selectedBatch?.financeStatus)}
+              />
             </div>
-          )}
-        </Panel>
+          </Panel>
 
-        <Panel title="Item Batch untuk Pembayaran" icon={ListChecks}>
-          <div className="overflow-x-auto rounded-xl border border-white/10">
-            <table className="w-full min-w-[1250px] text-sm text-left">
-              <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
-                <tr>
-                  {[
-                    "No",
-                    "No Surat",
-                    "Nama Program",
-                    "Periode Awal",
-                    "Periode Akhir",
-                    "Toko",
-                    "Barang",
-                    "Nominal",
-                    "Cara Bayar",
-                    "Type",
-                    "Deadline",
-                  ].map((header) => (
-                    <th key={header} className="px-3 py-3 font-bold">
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {selectedItems.map((item, index) => {
-                  const period = splitPeriodDates(item.periode);
-                  return (
-                    <tr
-                      key={item.id || `${item.noSurat}-${index}`}
-                      className="hover:bg-white/[0.03]"
-                    >
-                      <td className="px-3 py-3 font-mono text-slate-300">
-                        {item.itemNo || index + 1}
-                      </td>
-                      <td className="px-3 py-3 font-mono text-slate-200">
-                        {item.noSurat || "-"}
-                      </td>
-                      <td className="px-3 py-3 min-w-[180px] text-slate-200">
-                        {item.namaProgram || "-"}
-                      </td>
-                      <td className="px-3 py-3 text-slate-300">
-                        {formatDateDisplay(period.periodeAwal)}
-                      </td>
-                      <td className="px-3 py-3 text-slate-300">
-                        {formatDateDisplay(period.periodeAkhir)}
-                      </td>
-                      <td className="px-3 py-3 min-w-[140px] text-slate-300">
-                        {item.toko || "-"}
-                      </td>
-                      <td className="px-3 py-3 text-slate-300">
-                        {item.barang || "-"}
-                      </td>
-                      <td className="px-3 py-3 text-right font-mono text-emerald-300">
-                        Rp {Number(item.nominal || 0).toLocaleString("id-ID")}
-                      </td>
-                      <td className="px-3 py-3 text-slate-300">
-                        {item.caraBayar || "-"}
-                      </td>
-                      <td className="px-3 py-3 text-slate-300">
-                        {item.type || "-"}
-                      </td>
-                      <td className="px-3 py-3 text-slate-300">
-                        {formatDateDisplay(item.deadline)}
+          <Panel title="Ringkasan Pembayaran Disetujui" icon={ReceiptText}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              <Field
+                label="Total Pengajuan"
+                value={`Rp ${totalNominal.toLocaleString("id-ID")}`}
+              />
+              <Field
+                label="Total Sudah Dibayar"
+                value={`Rp ${totalPaid.toLocaleString("id-ID")}`}
+              />
+              <Field
+                label="Sisa Pembayaran"
+                value={`Rp ${remainingAmount.toLocaleString("id-ID")}`}
+              />
+              <Field
+                label="Status"
+                value={displayStatusLabel(selectedBatch?.financeStatus)}
+              />
+              <Field
+                label="Total Transfer Baris"
+                value={`Rp ${transfer.toLocaleString("id-ID")}`}
+              />
+              <Field
+                label="Total Tunai Baris"
+                value={`Rp ${tunai.toLocaleString("id-ID")}`}
+              />
+            </div>
+            {hasMixedItemPayments && (
+              <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                Batch ini memiliki lebih dari satu jenis pembayaran. Pastikan
+                pembayaran sesuai rincian baris.
+              </div>
+            )}
+          </Panel>
+
+          <Panel title="Item Batch untuk Pembayaran" icon={ListChecks}>
+            <div className="overflow-x-auto rounded-xl border border-white/10">
+              <table className="w-full min-w-[1250px] text-sm text-left">
+                <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
+                  <tr>
+                    {[
+                      "No",
+                      "No Surat",
+                      "Nama Program",
+                      "Periode Awal",
+                      "Periode Akhir",
+                      "Toko",
+                      "Barang",
+                      "Nominal",
+                      "Cara Bayar",
+                      "Tipe",
+                      "Deadline",
+                    ].map((header) => (
+                      <th key={header} className="px-3 py-3 font-bold">
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {selectedItems.map((item, index) => {
+                    const period = splitPeriodDates(item.periode);
+                    return (
+                      <tr
+                        key={item.id || `${item.noSurat}-${index}`}
+                        className="hover:bg-white/[0.03]"
+                      >
+                        <td className="px-3 py-3 font-mono text-slate-300">
+                          {item.itemNo || index + 1}
+                        </td>
+                        <td className="px-3 py-3 font-mono text-slate-200">
+                          {item.noSurat || "-"}
+                        </td>
+                        <td className="px-3 py-3 min-w-[180px] text-slate-200">
+                          {item.namaProgram || "-"}
+                        </td>
+                        <td className="px-3 py-3 text-slate-300">
+                          {formatDateDisplay(period.periodeAwal)}
+                        </td>
+                        <td className="px-3 py-3 text-slate-300">
+                          {formatDateDisplay(period.periodeAkhir)}
+                        </td>
+                        <td className="px-3 py-3 min-w-[140px] text-slate-300">
+                          {item.toko || "-"}
+                        </td>
+                        <td className="px-3 py-3 text-slate-300">
+                          {item.barang || "-"}
+                        </td>
+                        <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                          Rp {Number(item.nominal || 0).toLocaleString("id-ID")}
+                        </td>
+                        <td className="px-3 py-3 text-slate-300">
+                          {item.caraBayar || "-"}
+                        </td>
+                        <td className="px-3 py-3 text-slate-300">
+                          {item.type || "-"}
+                        </td>
+                        <td className="px-3 py-3 text-slate-300">
+                          {formatDateDisplay(item.deadline)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!isLoading && selectedItems.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={11}
+                        className="px-3 py-6 text-center text-sm text-slate-500"
+                      >
+                        Pilih batch untuk melihat item.
                       </td>
                     </tr>
-                  );
-                })}
-                {!isLoading && selectedItems.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={11}
-                      className="px-3 py-6 text-center text-sm text-slate-500"
-                    >
-                      Pilih batch untuk melihat item.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
 
-        <Panel title="Riwayat Pembayaran" icon={ReceiptText}>
-          <div className="overflow-x-auto rounded-xl border border-white/10">
-            <table className="w-full min-w-[900px] text-sm text-left">
-              <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
-                <tr>
-                  {[
-                    "Payment No",
-                    "Tanggal Bayar",
-                    "Metode",
-                    "Jumlah",
-                    "Bank Pengirim",
-                    "Bukti Pembayaran",
-                    "Catatan",
-                  ].map((header) => (
-                    <th key={header} className="px-3 py-3 font-bold">
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {selectedPayments.map((payment) => (
-                  <tr key={payment.id} className="hover:bg-white/[0.03]">
-                    <td className="px-3 py-3 font-mono text-slate-300">
-                      {payment.paymentNo}
-                    </td>
-                    <td className="px-3 py-3 text-slate-300">
-                      {formatDateDisplay(payment.paymentDate)}
-                    </td>
-                    <td className="px-3 py-3 text-slate-300">
-                      {payment.paymentMethod}
-                    </td>
-                    <td className="px-3 py-3 text-right font-mono text-emerald-300">
-                      Rp{" "}
-                      {Number(payment.paidAmount || 0).toLocaleString("id-ID")}
-                    </td>
-                    <td className="px-3 py-3 text-slate-300">
-                      {payment.senderBank || "-"}
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="min-w-[180px] space-y-2">
-                        <p className="font-mono text-xs text-slate-300">
-                          {payment.paymentProofName || "-"}
-                        </p>
-                        {payment.proofUrl && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              window.open(payment.proofUrl || "", "_blank")
-                            }
-                            className="rounded-lg border border-teal-500/30 bg-teal-500/10 px-2 py-1 text-xs font-bold text-teal-300 hover:bg-teal-500/20"
-                          >
-                            Lihat Bukti
-                          </button>
+          <Panel title="Riwayat Pembayaran" icon={ReceiptText}>
+            <div className="overflow-x-auto rounded-xl border border-white/10">
+              <table className="w-full min-w-[900px] text-sm text-left">
+                <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
+                  <tr>
+                    {[
+                      "No Pembayaran",
+                      "Tanggal Bayar",
+                      "Metode",
+                      "Jumlah",
+                      "Bank Pengirim",
+                      "Bukti Pembayaran",
+                      "Catatan",
+                    ].map((header) => (
+                      <th key={header} className="px-3 py-3 font-bold">
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {selectedPayments.map((payment) => (
+                    <tr key={payment.id} className="hover:bg-white/[0.03]">
+                      <td className="px-3 py-3 font-mono text-slate-300">
+                        {payment.paymentNo}
+                      </td>
+                      <td className="px-3 py-3 text-slate-300">
+                        {formatDateDisplay(payment.paymentDate)}
+                      </td>
+                      <td className="px-3 py-3 text-slate-300">
+                        {payment.paymentMethod}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                        Rp{" "}
+                        {Number(payment.paidAmount || 0).toLocaleString(
+                          "id-ID",
                         )}
-                      </div>
-                    </td>
-                    <td className="px-3 py-3 text-slate-300">
-                      {payment.note || "-"}
-                    </td>
-                  </tr>
-                ))}
-                {!isLoading && selectedPayments.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={7}
-                      className="px-3 py-6 text-center text-sm text-slate-500"
-                    >
-                      Belum ada pembayaran untuk batch ini.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
+                      </td>
+                      <td className="px-3 py-3 text-slate-300">
+                        {payment.senderBank || "-"}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="min-w-[180px] space-y-2">
+                          <p className="font-mono text-xs text-slate-300">
+                            {payment.paymentProofName || "-"}
+                          </p>
+                          {payment.proofUrl && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                window.open(payment.proofUrl || "", "_blank")
+                              }
+                              className="rounded-lg border border-teal-500/30 bg-teal-500/10 px-2 py-1 text-xs font-bold text-teal-300 hover:bg-teal-500/20"
+                            >
+                              Lihat Bukti
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-slate-300">
+                        {payment.note || "-"}
+                      </td>
+                    </tr>
+                  ))}
+                  {!isLoading && selectedPayments.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="px-3 py-6 text-center text-sm text-slate-500"
+                      >
+                        Belum ada pembayaran untuk batch ini.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
 
-        <Panel title="Form Pembayaran Keuangan" icon={Wallet}>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            <DateField
-              label="Tanggal Bayar"
-              value={paymentDate}
-              onChange={setPaymentDate}
-            />
-            <EditableField
-              label="Jumlah Dibayar oleh Keuangan"
-              value={paidAmount}
-              onChange={setPaidAmount}
-            />
-            <label className="block">
-              <span className="text-xs text-slate-500 font-semibold">
-                Metode Pembayaran
-              </span>
-              <select
-                value={paymentMethod}
-                onChange={(event) => setPaymentMethod(event.target.value)}
-                className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
-              >
-                {offPaymentMethods.map((method) => (
-                  <option key={method} className="bg-[#1a1c23]" value={method}>
-                    {method}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <EditableField
-              label="Bank Pengirim"
-              value={senderBank}
-              onChange={setSenderBank}
-            />
-            <label className="block">
-              <span className="text-xs text-slate-500 font-semibold">
-                Bukti Pembayaran
-              </span>
-              <input
-                type="file"
-                accept="application/pdf,image/png,image/jpeg"
-                onChange={(event) => {
-                  const file = event.target.files?.[0] || null;
-                  setPaymentProofFile(file);
-                }}
-                className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-teal-600 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white outline-none focus:border-teal-500/50"
+          <Panel title="Form Pembayaran Keuangan" icon={Wallet}>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              <DateField
+                label="Tanggal Bayar"
+                value={paymentDate}
+                onChange={setPaymentDate}
               />
-              <p className="mt-1 text-[11px] text-slate-500">
-                PDF, PNG, JPG, atau JPEG. Maksimal 5MB.
-              </p>
-            </label>
-          </div>
-          <div className="mt-4">
-            <label className="block">
-              <span className="text-xs text-slate-500 font-semibold">
-                Catatan Keuangan
-              </span>
-              <textarea
-                value={financeNote}
-                onChange={(event) => setFinanceNote(event.target.value)}
-                rows={4}
-                className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+              <EditableField
+                label="Jumlah Dibayar oleh Keuangan"
+                value={paidAmount}
+                onChange={setPaidAmount}
               />
-            </label>
-          </div>
-          {financeMessage && (
-            <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
-              {financeMessage}
+              <label className="block">
+                <span className="text-xs text-slate-500 font-semibold">
+                  Metode Pembayaran
+                </span>
+                <select
+                  value={paymentMethod}
+                  onChange={(event) => setPaymentMethod(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                >
+                  {offPaymentMethods.map((method) => (
+                    <option
+                      key={method}
+                      className="bg-[#1a1c23]"
+                      value={method}
+                    >
+                      {method}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <EditableField
+                label="Bank Pengirim"
+                value={senderBank}
+                onChange={setSenderBank}
+              />
+              <label className="block">
+                <span className="text-xs text-slate-500 font-semibold">
+                  Bukti Pembayaran
+                </span>
+                <input
+                  type="file"
+                  accept="application/pdf,image/png,image/jpeg"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] || null;
+                    setPaymentProofFile(file);
+                  }}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-teal-600 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white outline-none focus:border-teal-500/50"
+                />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  PDF, PNG, JPG, atau JPEG. Maksimal 5MB.
+                </p>
+              </label>
             </div>
-          )}
-          {paymentResult && (
-            <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-xs text-emerald-100">
-              <p className="mb-2 font-bold uppercase tracking-wider">
-                Payment Result
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <p>
-                  Tanggal Bayar:{" "}
-                  <span className="font-mono">
-                    {formatDateDisplay(paymentResult.paymentDate)}
-                  </span>
-                </p>
-                <p>
-                  Jumlah Dibayar:{" "}
-                  <span className="font-mono">{paymentResult.paidAmount}</span>
-                </p>
-                <p>
-                  Metode Pembayaran:{" "}
-                  <span className="font-mono">
-                    {paymentResult.paymentMethod}
-                  </span>
-                </p>
-                <p>
-                  Bank Pengirim:{" "}
-                  <span className="font-mono">
-                    {paymentResult.senderBank || "-"}
-                  </span>
-                </p>
-                <p>
-                  Bukti Pembayaran:{" "}
-                  <span className="font-mono">
-                    {paymentResult.paymentProofName}
-                  </span>
-                </p>
-                <p>
-                  Payment No:{" "}
-                  <span className="font-mono">
-                    {paymentResult.paymentNo || "-"}
-                  </span>
-                </p>
-                <p>
-                  Sisa Pembayaran:{" "}
-                  <span className="font-mono">
-                    Rp{" "}
-                    {Number(paymentResult.remainingAmount || 0).toLocaleString(
-                      "id-ID",
-                    )}
-                  </span>
-                </p>
-                <p>
-                  Status Lunas:{" "}
-                  <span className="font-mono">
-                    {paymentResult.isFullyPaid ? "Lunas" : "Belum Lunas"}
-                  </span>
-                </p>
+            <div className="mt-4">
+              <label className="block">
+                <span className="text-xs text-slate-500 font-semibold">
+                  Catatan Keuangan
+                </span>
+                <textarea
+                  value={financeNote}
+                  onChange={(event) => setFinanceNote(event.target.value)}
+                  rows={4}
+                  className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                />
+              </label>
+            </div>
+            {financeMessage && (
+              <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+                {financeMessage}
               </div>
-            </div>
-          )}
-          {canPayFinance ? (
-            <div className="mt-5 flex flex-wrap gap-3">
-              <button
-                onClick={submitFinancePayment}
-                disabled={!selectedBatch || isActionLoading}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Tambah Pembayaran
-              </button>
-            </div>
-          ) : (
-            <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
-              Readonly: role ini tidak bisa menambah pembayaran Keuangan.
-            </div>
-          )}
-        </Panel>
-      </div>
+            )}
+            {paymentResult && (
+              <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-xs text-emerald-100">
+                <p className="mb-2 font-bold uppercase tracking-wider">
+                  Hasil Pembayaran
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <p>
+                    Tanggal Bayar:{" "}
+                    <span className="font-mono">
+                      {formatDateDisplay(paymentResult.paymentDate)}
+                    </span>
+                  </p>
+                  <p>
+                    Jumlah Dibayar:{" "}
+                    <span className="font-mono">
+                      {paymentResult.paidAmount}
+                    </span>
+                  </p>
+                  <p>
+                    Metode Pembayaran:{" "}
+                    <span className="font-mono">
+                      {paymentResult.paymentMethod}
+                    </span>
+                  </p>
+                  <p>
+                    Bank Pengirim:{" "}
+                    <span className="font-mono">
+                      {paymentResult.senderBank || "-"}
+                    </span>
+                  </p>
+                  <p>
+                    Bukti Pembayaran:{" "}
+                    <span className="font-mono">
+                      {paymentResult.paymentProofName}
+                    </span>
+                  </p>
+                  <p>
+                    No Pembayaran:{" "}
+                    <span className="font-mono">
+                      {paymentResult.paymentNo || "-"}
+                    </span>
+                  </p>
+                  <p>
+                    Sisa Pembayaran:{" "}
+                    <span className="font-mono">
+                      Rp{" "}
+                      {Number(
+                        paymentResult.remainingAmount || 0,
+                      ).toLocaleString("id-ID")}
+                    </span>
+                  </p>
+                  <p>
+                    Status Lunas:{" "}
+                    <span className="font-mono">
+                      {paymentResult.isFullyPaid ? "Lunas" : "Belum Lunas"}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            )}
+            {canPayFinance ? (
+              <div className="mt-5 flex flex-wrap gap-3">
+                <button
+                  onClick={submitFinancePayment}
+                  disabled={
+                    !selectedBatch ||
+                    !isFinanceActionableBatch(selectedBatch) ||
+                    isActionLoading
+                  }
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Tambah Pembayaran
+                </button>
+              </div>
+            ) : (
+              <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
+                Baca-saja: role ini tidak bisa menambah pembayaran Keuangan.
+              </div>
+            )}
+          </Panel>
+        </div>
+      )}
     </div>
   );
 }
 
 function AuditTimeline() {
   return (
-    <Panel title="Timeline Audit Log" icon={ScrollText}>
+    <Panel title="Linimasa Log Audit" icon={ScrollText}>
       <div className="space-y-4">
         {auditLogs.map((log, index) => (
           <div key={log.title} className="grid grid-cols-[auto_1fr] gap-4">
@@ -5118,19 +5782,438 @@ function AuditTimeline() {
   );
 }
 
-function OverviewTab() {
+function OverviewReadOnlyDetail({
+  batch,
+  items,
+  payments,
+  paymentSummary,
+}: {
+  batch: OffApiBatch;
+  items: OffApiItem[];
+  payments: OffApiPayment[];
+  paymentSummary?: OffPaymentSummary;
+}) {
+  const totalNominal = Number(
+    batch.summary?.totalNominal ||
+      items.reduce((total, item) => total + Number(item.nominal || 0), 0),
+  );
+  const totalPaid = Number(paymentSummary?.totalPaid ?? batch.paidAmount ?? 0);
+  const remainingAmount = Number(
+    paymentSummary?.remainingAmount ?? Math.max(0, totalNominal - totalPaid),
+  );
+
   return (
     <div className="space-y-6">
-      <MetricsGrid />
+      <Panel title="Detail Batch Ringkasan" icon={ClipboardCheck}>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <Field label="No Pengajuan" value={batch.noPengajuan || "-"} />
+          <Field label="Gelombang" value={batch.gelombang || "-"} />
+          <Field label="Principle" value={batch.principleName || "-"} />
+          <Field label="Kode Principle" value={batch.principleCode || "-"} />
+          <Field label="Supervisor" value={batch.supervisorName || "-"} />
+          <Field
+            label="Bulan/Tahun"
+            value={
+              batch.bulan && batch.tahun ? `${batch.bulan}/${batch.tahun}` : "-"
+            }
+          />
+          <Field
+            label="Status Utama"
+            value={displayStatusLabel(batch.status)}
+          />
+          <Field label="Status SM" value={displayStatusLabel(batch.smStatus)} />
+          <Field
+            label="Status Claim"
+            value={displayStatusLabel(batch.claimStatus)}
+          />
+          <Field label="Status OM" value={displayStatusLabel(batch.omStatus)} />
+          <Field
+            label="Status Keuangan"
+            value={displayStatusLabel(batch.financeStatus)}
+          />
+          <Field
+            label="Status Final"
+            value={displayStatusLabel(batch.finalStatus)}
+          />
+          <Field label="No Claim" value={batch.noClaim || "-"} />
+          <Field
+            label="Tanggal Diajukan Claim"
+            value={formatDateDisplay(batch.claimSubmittedDate)}
+          />
+          <Field
+            label="Deadline Claim"
+            value={formatDateDisplay(batch.claimDeadline)}
+          />
+          <Field
+            label="Total Nominal"
+            value={`Rp ${totalNominal.toLocaleString("id-ID")}`}
+          />
+          <Field
+            label="Total Dibayar"
+            value={`Rp ${totalPaid.toLocaleString("id-ID")}`}
+          />
+          <Field
+            label="Sisa Pembayaran"
+            value={`Rp ${remainingAmount.toLocaleString("id-ID")}`}
+          />
+        </div>
+        {batch.pdfUrl && (
+          <a
+            href={batch.pdfUrl}
+            target="_blank"
+            className="mt-4 inline-flex rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
+          >
+            Lihat PDF
+          </a>
+        )}
+      </Panel>
+
+      <Panel title="Item Batch" icon={ReceiptText}>
+        <div className="overflow-x-auto rounded-xl border border-white/10">
+          <table className="w-full min-w-[1250px] text-left text-sm">
+            <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+              <tr>
+                {[
+                  "No",
+                  "No Surat",
+                  "Nama Program",
+                  "Periode",
+                  "Toko",
+                  "Barang",
+                  "Nominal",
+                  "Cara Bayar",
+                  "Tipe",
+                  "Deadline",
+                  "Kelengkapan",
+                ].map((header) => (
+                  <th key={header} className="px-3 py-3 font-bold">
+                    {header}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {items.map((item, index) => (
+                <tr
+                  key={item.id || `${item.noSurat}-${index}`}
+                  className="hover:bg-white/[0.03]"
+                >
+                  <td className="px-3 py-3 font-mono text-slate-300">
+                    {item.itemNo || index + 1}
+                  </td>
+                  <td className="px-3 py-3 font-mono text-slate-200">
+                    {item.noSurat || "-"}
+                  </td>
+                  <td className="min-w-[180px] px-3 py-3 text-slate-200">
+                    {item.namaProgram || "-"}
+                  </td>
+                  <td className="px-3 py-3 text-slate-300">
+                    {item.periode || "-"}
+                  </td>
+                  <td className="min-w-[140px] px-3 py-3 text-slate-300">
+                    {item.toko || "-"}
+                  </td>
+                  <td className="px-3 py-3 text-slate-300">
+                    {item.barang || "-"}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                    Rp {Number(item.nominal || 0).toLocaleString("id-ID")}
+                  </td>
+                  <td className="px-3 py-3 text-slate-300">
+                    {item.caraBayar || "-"}
+                  </td>
+                  <td className="px-3 py-3 text-slate-300">
+                    {item.type || "-"}
+                  </td>
+                  <td className="px-3 py-3 text-slate-300">
+                    {formatDateDisplay(item.deadline)}
+                  </td>
+                  <td className="min-w-[180px] px-3 py-3 text-slate-300">
+                    {itemDocsSummary(item)}
+                  </td>
+                </tr>
+              ))}
+              {items.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={11}
+                    className="px-3 py-6 text-center text-sm text-slate-500"
+                  >
+                    Tidak ada item batch.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      {payments.length > 0 && (
+        <Panel title="Riwayat Pembayaran" icon={Wallet}>
+          <div className="overflow-x-auto rounded-xl border border-white/10">
+            <table className="w-full min-w-[900px] text-left text-sm">
+              <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+                <tr>
+                  {[
+                    "No Pembayaran",
+                    "Tanggal Bayar",
+                    "Metode",
+                    "Jumlah",
+                    "Bank Pengirim",
+                    "Bukti Pembayaran",
+                    "Catatan",
+                  ].map((header) => (
+                    <th key={header} className="px-3 py-3 font-bold">
+                      {header}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {payments.map((payment) => (
+                  <tr key={payment.id} className="hover:bg-white/[0.03]">
+                    <td className="px-3 py-3 font-mono text-slate-300">
+                      {payment.paymentNo}
+                    </td>
+                    <td className="px-3 py-3 text-slate-300">
+                      {formatDateDisplay(payment.paymentDate)}
+                    </td>
+                    <td className="px-3 py-3 text-slate-300">
+                      {payment.paymentMethod}
+                    </td>
+                    <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                      Rp{" "}
+                      {Number(payment.paidAmount || 0).toLocaleString("id-ID")}
+                    </td>
+                    <td className="px-3 py-3 text-slate-300">
+                      {payment.senderBank || "-"}
+                    </td>
+                    <td className="px-3 py-3">
+                      {payment.proofUrl ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            window.open(payment.proofUrl || "", "_blank")
+                          }
+                          className="rounded-lg border border-teal-500/30 bg-teal-500/10 px-2 py-1 text-xs font-bold text-teal-300 hover:bg-teal-500/20"
+                        >
+                          {payment.paymentProofName || "Lihat Bukti"}
+                        </button>
+                      ) : (
+                        <span className="text-slate-500">-</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-slate-300">
+                      {payment.note || "-"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function OverviewTab() {
+  const [overviewBatches, setOverviewBatches] = useState<OffApiBatch[]>([]);
+  const [overviewSearch, setOverviewSearch] = useState("");
+  const [overviewStatusFilter, setOverviewStatusFilter] = useState("");
+  const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
+  const [selectedItems, setSelectedItems] = useState<OffApiItem[]>([]);
+  const [selectedPayments, setSelectedPayments] = useState<OffApiPayment[]>([]);
+  const [selectedPaymentSummary, setSelectedPaymentSummary] = useState<
+    OffPaymentSummary | undefined
+  >(undefined);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadOverview = async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/off-program-control/batches", {
+        credentials: "include",
+      });
+      const data = await parseJsonResponse(response);
+      if (!response.ok || !data.ok)
+        throw new Error(
+          String(data.error || "Gagal mengambil data ringkasan."),
+        );
+      setOverviewBatches(
+        Array.isArray(data.batches) ? (data.batches as OffApiBatch[]) : [],
+      );
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Gagal mengambil data ringkasan.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadOverview();
+  }, []);
+
+  const openOverviewDetail = async (batch: OffApiBatch) => {
+    setIsDetailLoading(true);
+    setError("");
+    setSelectedBatch(batch);
+    setSelectedItems([]);
+    setSelectedPayments([]);
+    setSelectedPaymentSummary(undefined);
+    try {
+      const response = await fetch(
+        `/api/off-program-control/batches/${batch.id}`,
+        { credentials: "include" },
+      );
+      const data = await parseJsonResponse(response);
+      if (!response.ok || !data.ok)
+        throw new Error(
+          String(data.error || "Gagal mengambil detail ringkasan."),
+        );
+      const detailBatch = (data.batch as OffApiBatch) || batch;
+      setSelectedBatch({
+        ...detailBatch,
+        summary: data.summary as BatchQueueSummary | undefined,
+        paymentSummary: data.paymentSummary as OffPaymentSummary | undefined,
+      });
+      setSelectedItems(
+        Array.isArray(data.items) ? (data.items as OffApiItem[]) : [],
+      );
+      setSelectedPayments(
+        Array.isArray(data.payments) ? (data.payments as OffApiPayment[]) : [],
+      );
+      setSelectedPaymentSummary(
+        data.paymentSummary as OffPaymentSummary | undefined,
+      );
+    } catch (detailError) {
+      setError(
+        detailError instanceof Error
+          ? detailError.message
+          : "Gagal mengambil detail ringkasan.",
+      );
+    } finally {
+      setIsDetailLoading(false);
+    }
+  };
+
+  const metrics: MetricItem[] = [
+    {
+      label: "Total Batch",
+      value: String(overviewBatches.length),
+      tone: "text-sky-300",
+      icon: ClipboardCheck,
+    },
+    {
+      label: "Menunggu Review SM",
+      value: String(overviewBatches.filter(isSmActionableBatch).length),
+      tone: "text-amber-300",
+      icon: Clock3,
+    },
+    {
+      label: "Menunggu Persetujuan OM",
+      value: String(overviewBatches.filter(isOmActionableBatch).length),
+      tone: "text-purple-300",
+      icon: ShieldCheck,
+    },
+    {
+      label: "Selesai",
+      value: String(
+        overviewBatches.filter(
+          (batch) =>
+            batch.status === "Completed" || batch.finalStatus === "Completed",
+        ).length,
+      ),
+      tone: "text-emerald-300",
+      icon: CheckCircle2,
+    },
+    {
+      label: "Sudah Dibayar Belum Lengkap",
+      value: String(
+        overviewBatches.filter(
+          (batch) =>
+            batch.status === "Paid" && batch.finalStatus !== "Completed",
+        ).length,
+      ),
+      tone: "text-rose-300",
+      icon: AlertTriangle,
+    },
+  ];
+  const statusOptions = getBatchStatusOptions(overviewBatches).map(
+    (status) => ({
+      value: status,
+      label: displayStatusLabel(status),
+    }),
+  );
+  const filteredBatches = filterBatchesByMainStatus(
+    filterBatchesBySearch(overviewBatches, overviewSearch),
+    overviewStatusFilter,
+  );
+
+  return (
+    <div className="space-y-6">
+      {isLoading && (
+        <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+          Memuat data ringkasan...
+        </div>
+      )}
+      {error && (
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          {error}
+        </div>
+      )}
+      {!isLoading && overviewBatches.length === 0 && !error && (
+        <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
+          Belum ada batch OFF Program Control.
+        </div>
+      )}
+      <MetricsGrid metrics={metrics} />
       <WorkflowStepper />
-      <MonitoringTable />
-      <QueueSummaryPanel />
+      <LiveQueueSummaryPanel batches={overviewBatches} />
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
+        <MonitoringSearch
+          value={overviewSearch}
+          onChange={setOverviewSearch}
+          placeholder="Cari No Pengajuan, principle, kode, status, atau No Claim..."
+        />
+        <StatusFilterSelect
+          value={overviewStatusFilter}
+          onChange={setOverviewStatusFilter}
+          options={statusOptions}
+        />
+      </div>
+      <OverviewMonitoringTable
+        batches={filteredBatches}
+        selectedBatchId={selectedBatch?.id}
+        onSelect={openOverviewDetail}
+      />
+      {isDetailLoading && (
+        <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+          Memuat detail ringkasan...
+        </div>
+      )}
+      {selectedBatch && !isDetailLoading && (
+        <OverviewReadOnlyDetail
+          batch={selectedBatch}
+          items={selectedItems}
+          payments={selectedPayments}
+          paymentSummary={selectedPaymentSummary}
+        />
+      )}
     </div>
   );
 }
 
 export default function OffProgramControlPage() {
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
+  const [paidIncompleteCount, setPaidIncompleteCount] = useState(0);
   const { data: session } = authClient.useSession();
   const sessionUser = session?.user as
     | {
@@ -5160,39 +6243,78 @@ export default function OffProgramControlPage() {
     ? activeTab
     : accessibleTabs[0]?.key;
   const mappingSummary = useMemo(
-    () => `${PRINCIPLE_OPTIONS.length} principle mappings loaded`,
+    () => `${PRINCIPLE_OPTIONS.length} mapping principle dimuat`,
     [],
   );
+  const shouldShowPaidNotification =
+    offRole === "sales_manager" || offRole === "admin";
+
+  useEffect(() => {
+    if (!shouldShowPaidNotification) {
+      return;
+    }
+
+    let isActive = true;
+    const loadPaidIncomplete = async () => {
+      try {
+        const response = await fetch("/api/off-program-control/batches", {
+          credentials: "include",
+        });
+        const data = await parseJsonResponse(response);
+        if (!response.ok || !data.ok) return;
+        const rows = Array.isArray(data.batches)
+          ? (data.batches as OffApiBatch[])
+          : [];
+        const count = rows.filter(
+          (batch) =>
+            batch.status === "Paid" && batch.finalStatus !== "Completed",
+        ).length;
+        if (isActive) setPaidIncompleteCount(count);
+      } catch {
+        if (isActive) setPaidIncompleteCount(0);
+      }
+    };
+
+    loadPaidIncomplete();
+    const interval = window.setInterval(loadPaidIncomplete, 60000);
+    return () => {
+      isActive = false;
+      window.clearInterval(interval);
+    };
+  }, [shouldShowPaidNotification]);
 
   return (
     <div className="max-w-[1800px] mx-auto pb-12">
       <div className="mb-6 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-teal-500/30 bg-teal-500/10 text-teal-300 text-xs font-bold uppercase tracking-widest mb-4">
-            <ClipboardCheck size={14} /> OFF Workflow
+            <ClipboardCheck size={14} /> Alur OFF
           </div>
           <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
             OFF Program Control
           </h1>
           <p className="text-slate-400 mt-2 text-lg">
-            Corporate Finance Dashboard for OFF Program / Faktur Beban Principle
+            Dashboard Keuangan Korporat untuk OFF Program / Faktur Beban
+            Principle
           </p>
           <p className="text-xs text-slate-500 mt-2">{mappingSummary}</p>
           <div className="mt-3 flex flex-wrap gap-2 text-xs">
             <span className="rounded-lg border border-white/10 bg-black/30 px-3 py-1.5 text-slate-300">
-              Logged in as:{" "}
+              Login sebagai:{" "}
               <b className="text-slate-100">
-                {sessionUser?.name || sessionUser?.email || "Unknown User"}
+                {sessionUser?.name ||
+                  sessionUser?.email ||
+                  "User Tidak Dikenal"}
               </b>
             </span>
             <span className="rounded-lg border border-teal-500/20 bg-teal-500/10 px-3 py-1.5 text-teal-200">
-              OFF Role:{" "}
+              Role OFF:{" "}
               <b>
                 {offRole}
                 {roleInfo.source === "email"
-                  ? " (from email domain)"
+                  ? " (dari domain email)"
                   : roleInfo.isFallback
-                    ? " (fallback dev)"
+                    ? " (fallback pengembangan)"
                     : ""}
               </b>
             </span>
@@ -5202,10 +6324,10 @@ export default function OffProgramControlPage() {
           <CalendarClock className="text-teal-300" size={20} />
           <div>
             <p className="text-xs uppercase tracking-wider text-slate-500 font-bold">
-              Cycle
+              Siklus
             </p>
             <p className="text-sm text-slate-200 font-semibold">
-              May 2026 Monitoring
+              Monitoring Mei 2026
             </p>
           </div>
         </div>
@@ -5229,6 +6351,13 @@ export default function OffProgramControlPage() {
 
       {accessibleTabs.length > 0 && (
         <>
+          {shouldShowPaidNotification && paidIncompleteCount > 0 && (
+            <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 text-sm font-semibold text-amber-100">
+              Ada {paidIncompleteCount} Pengajuan Sudah Dibayar yang belum
+              lengkap datanya, mohon segera ditindaklanjuti.
+            </div>
+          )}
+
           <div className="mb-6 overflow-x-auto rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2 shadow-xl">
             <div className="flex min-w-max gap-2">
               {accessibleTabs.map((tab) => (

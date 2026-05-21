@@ -21,6 +21,9 @@ export async function POST(_request: Request, context: Context) {
         const data = await getBatchWithItems(id);
         if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
         if (data.batch.locked) return NextResponse.json({ ok: false, error: "Batch is locked" }, { status: 409 });
+        if (!["Draft", "Returned by SM", "Returned by Claim"].includes(data.batch.status) && !["Returned"].includes(data.batch.smStatus) && !["Returned"].includes(data.batch.claimStatus)) {
+            return NextResponse.json({ ok: false, error: "Batch hanya bisa disubmit saat Draft atau Returned/Rejected dan belum terkunci." }, { status: 409 });
+        }
         if (data.items.length === 0) return NextResponse.json({ ok: false, error: "Cannot generate PDF: batch has no items" }, { status: 400 });
         const summary = computeOffPaymentSummary(data.items);
 
@@ -28,6 +31,10 @@ export async function POST(_request: Request, context: Context) {
         await db.update(offBatch).set({
             status: "Submitted to SM",
             smStatus: "Waiting Review",
+            claimStatus: "Not Started",
+            omStatus: "Not Started",
+            financeStatus: "Not Started",
+            finalStatus: "Not Started",
             locked: false,
             updatedAt: now,
         }).where(eq(offBatch.id, id));

@@ -19,14 +19,10 @@ export type OffTab =
   | "overview"
   | "supervisor"
   | "sales"
-  | "sales_manager"
   | "claim"
   | "om"
-  | "operational_manager"
   | "finance"
-  | "keuangan"
-  | "audit"
-  | "audit_log";
+  | "audit";
 
 export type OffAction =
   | "create_batch"
@@ -220,30 +216,26 @@ export function getOffAccessibleTabs(roleInput: OffRole | string): OffTab[] {
         "overview",
         "supervisor",
         "sales",
-        "sales_manager",
         "claim",
         "om",
-        "operational_manager",
         "finance",
-        "keuangan",
         "audit",
-        "audit_log",
       ];
 
     case "supervisor":
       return ["supervisor"];
 
     case "sales_manager":
-      return ["overview", "sales", "sales_manager"];
+      return ["overview", "sales"];
 
     case "claim":
       return ["claim"];
 
     case "operational_manager":
-      return ["overview", "om", "operational_manager"];
+      return ["overview", "om"];
 
     case "finance":
-      return ["finance", "keuangan"];
+      return ["finance"];
 
     case "sales":
       return [];

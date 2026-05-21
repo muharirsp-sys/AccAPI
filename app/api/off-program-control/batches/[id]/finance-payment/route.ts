@@ -93,7 +93,7 @@ export async function POST(request: Request, context: Context) {
             updatedAt: now,
         }).returning();
         await db.update(offBatch).set({
-            status: isFullyPaid ? "Finance Paid" : "Partial Paid",
+            status: isFullyPaid ? "Paid" : "Partial Paid",
             financeStatus: isFullyPaid ? "Paid" : "Partial Paid",
             finalStatus: isFullyPaid ? "Waiting Claim Final Verification" : "Not Started",
             financeNote: note,

@@ -36,7 +36,7 @@ export const offStatuses = {
     claimApproved: "Claim Approved",
     omApproved: "OM Approved",
     partialPaid: "Partial Paid",
-    financePaid: "Finance Paid",
+    paid: "Paid",
     returnedToFinance: "Returned to Finance",
     completed: "Completed",
 } as const;
