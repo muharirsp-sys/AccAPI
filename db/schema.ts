@@ -159,6 +159,22 @@ export const offBatchItem = sqliteTable("off_batch_item", {
   rekap: integer("rekap", { mode: "boolean" }).notNull().default(false),
   others: integer("others", { mode: "boolean" }).notNull().default(false),
   othersText: text("others_text"),
+  // --- Final Claim checklist (diisi oleh Claim setelah Finance bayar) ---
+  finalKwt: integer("final_kwt", { mode: "boolean" }).notNull().default(false),
+  finalSkp: integer("final_skp", { mode: "boolean" }).notNull().default(false),
+  finalFp: integer("final_fp", { mode: "boolean" }).notNull().default(false),
+  finalPc: integer("final_pc", { mode: "boolean" }).notNull().default(false),
+  finalFoto: integer("final_foto", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  finalRekap: integer("final_rekap", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  finalOthers: integer("final_others", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  finalOthersText: text("final_others_text"),
+  finalCompletenessNote: text("final_completeness_note"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });

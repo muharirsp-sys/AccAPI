@@ -8,6 +8,7 @@ import {
   computeOffFinancePaymentSummary,
   computeOffPaymentSummary,
   getBatchWithItems,
+  hasMinimalFinalChecklist,
   paymentsHaveProofs,
   publicBatch,
   requireOffSession,
@@ -141,6 +142,15 @@ export async function POST(request: Request, context: Context) {
       itemId: string;
       noSurat: string;
       noClaim: string;
+      finalKwt: boolean;
+      finalSkp: boolean;
+      finalFp: boolean;
+      finalPc: boolean;
+      finalFoto: boolean;
+      finalRekap: boolean;
+      finalOthers: boolean;
+      finalOthersText: string;
+      finalCompletenessNote: string;
     };
 
     const sanitizedClaimRefs: ClaimRef[] = claimRefs.map(
@@ -148,6 +158,15 @@ export async function POST(request: Request, context: Context) {
         itemId: String(ref.itemId || "").trim(),
         noSurat: String(ref.noSurat || "").trim(),
         noClaim: String(ref.noClaim || "").trim(),
+        finalKwt: ref.finalKwt === true || ref.finalKwt === "true",
+        finalSkp: ref.finalSkp === true || ref.finalSkp === "true",
+        finalFp: ref.finalFp === true || ref.finalFp === "true",
+        finalPc: ref.finalPc === true || ref.finalPc === "true",
+        finalFoto: ref.finalFoto === true || ref.finalFoto === "true",
+        finalRekap: ref.finalRekap === true || ref.finalRekap === "true",
+        finalOthers: ref.finalOthers === true || ref.finalOthers === "true",
+        finalOthersText: String(ref.finalOthersText || "").trim(),
+        finalCompletenessNote: String(ref.finalCompletenessNote || "").trim(),
       }),
     );
 
@@ -155,6 +174,7 @@ export async function POST(request: Request, context: Context) {
       sanitizedClaimRefs.map((ref): [string, ClaimRef] => [ref.itemId, ref]),
     );
 
+    // Validasi: setiap item yang punya noSurat wajib punya noClaim
     const missingNoClaim = data.items
       .filter((item) => String(item.noSurat || "").trim())
       .filter((item) => !claimRefMap.get(item.id)?.noClaim)
@@ -170,6 +190,34 @@ export async function POST(request: Request, context: Context) {
       );
     }
 
+    // Validasi: setiap item minimal harus punya checklist final yang dianggap cukup
+    const missingChecklist = data.items
+      .filter((item) => String(item.noSurat || "").trim())
+      .filter((item) => {
+        const ref = claimRefMap.get(item.id);
+        if (!ref) return true;
+        return !(
+          ref.finalKwt ||
+          ref.finalSkp ||
+          ref.finalFp ||
+          ref.finalPc ||
+          ref.finalFoto ||
+          ref.finalRekap ||
+          ref.finalOthers
+        );
+      })
+      .map((item) => String(item.noSurat || "").trim());
+
+    if (missingChecklist.length > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Checklist kelengkapan final wajib diisi minimal satu untuk No Surat: ${missingChecklist.join(", ")}`,
+        },
+        { status: 400 },
+      );
+    }
+
     await Promise.all(
       data.items.map((item) => {
         const ref = claimRefMap.get(item.id);
@@ -179,6 +227,15 @@ export async function POST(request: Request, context: Context) {
           .update(offBatchItem)
           .set({
             noClaim: ref.noClaim,
+            finalKwt: ref.finalKwt,
+            finalSkp: ref.finalSkp,
+            finalFp: ref.finalFp,
+            finalPc: ref.finalPc,
+            finalFoto: ref.finalFoto,
+            finalRekap: ref.finalRekap,
+            finalOthers: ref.finalOthers,
+            finalOthersText: ref.finalOthersText || null,
+            finalCompletenessNote: ref.finalCompletenessNote || null,
             updatedAt: now,
           })
           .where(eq(offBatchItem.id, item.id));

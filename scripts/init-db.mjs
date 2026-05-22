@@ -220,6 +220,16 @@ const migrations = [
   `ALTER TABLE off_payment ADD COLUMN payment_proof_path TEXT;`,
   `ALTER TABLE off_payment ADD COLUMN payment_proof_mime TEXT;`,
   `ALTER TABLE off_payment ADD COLUMN payment_proof_size INTEGER;`,
+  // Final Claim checklist columns
+  `ALTER TABLE off_batch_item ADD COLUMN final_kwt INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_skp INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_fp INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_pc INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_foto INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_rekap INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_others INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_others_text TEXT;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_completeness_note TEXT;`,
 ];
 
 for (const sql of migrations) {

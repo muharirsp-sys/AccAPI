@@ -492,6 +492,77 @@ async function parseJsonResponse(response: Response) {
   }
 }
 
+function computeUiBatchProgress(batch: OffApiBatch): number {
+  const status = batch.status;
+  const financeStatus = batch.financeStatus;
+  const finalStatus = batch.finalStatus;
+
+  if (status === "Cancelled" || status === "Cancelled by OM") return 0;
+  if (finalStatus === "Completed" || status === "Completed") return 100;
+  if (finalStatus === "Incomplete Documents") return 90;
+  if (finalStatus === "Waiting Claim Final Verification" || status === "Paid")
+    return 85;
+  if (financeStatus === "Partial Paid" || status === "Partial Paid") return 75;
+  if (
+    batch.omStatus === "Approved" &&
+    ["Waiting Payment", "Not Started"].includes(financeStatus)
+  )
+    return 65;
+  if (
+    batch.claimStatus === "Approved" ||
+    status === "Claim Approved" ||
+    status === "Ready for OM" ||
+    status === "Waiting OM"
+  )
+    return 50;
+  if (batch.smStatus === "Approved by SM" || status === "Approved by SM")
+    return 35;
+  if (status === "Submitted to SM" || batch.smStatus === "Waiting Review")
+    return 20;
+  if (
+    status === "Draft" ||
+    status === "Returned by SM" ||
+    status === "Returned by Claim"
+  )
+    return 10;
+  return 10;
+}
+
+function ProgressBar({
+  value,
+  showLabel = true,
+}: {
+  value: number;
+  showLabel?: boolean;
+}) {
+  const color =
+    value === 0
+      ? "bg-slate-500"
+      : value === 100
+        ? "bg-emerald-500"
+        : value >= 75
+          ? "bg-sky-500"
+          : value >= 50
+            ? "bg-purple-500"
+            : "bg-amber-500";
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-2 flex-1 rounded-full bg-white/10 overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${color}`}
+          style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+        />
+      </div>
+      {showLabel && (
+        <span className="text-xs font-mono font-bold text-slate-300 min-w-[36px] text-right">
+          {value}%
+        </span>
+      )}
+    </div>
+  );
+}
+
 function statusClass(status: string) {
   if (
     status.includes("Completed") ||
@@ -712,6 +783,7 @@ function BatchMonitoringTable({
     "Principle",
     "Kode Principle",
     "Total",
+    "Progress",
     "Status",
     "Status SM",
     "Status Claim",
@@ -724,7 +796,7 @@ function BatchMonitoringTable({
 
   return (
     <div className="overflow-x-auto rounded-xl border border-white/10">
-      <table className="w-full min-w-[1650px] text-left text-sm">
+      <table className="w-full min-w-[1800px] text-left text-sm">
         <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
           <tr>
             {headers.map((header) => {
@@ -773,6 +845,10 @@ function BatchMonitoringTable({
                 {Number(batch.summary?.totalNominal || 0).toLocaleString(
                   "id-ID",
                 )}
+              </td>
+
+              <td className="px-3 py-3 min-w-[120px]">
+                <ProgressBar value={computeUiBatchProgress(batch)} />
               </td>
 
               <td className="px-3 py-3">
@@ -827,7 +903,7 @@ function BatchMonitoringTable({
 
           {batches.length === 0 && (
             <tr>
-              <td colSpan={12} className="px-3 py-6 text-center text-slate-500">
+              <td colSpan={13} className="px-3 py-6 text-center text-slate-500">
                 {emptyText}
               </td>
             </tr>
@@ -1198,6 +1274,7 @@ function OverviewMonitoringTable({
     "Kode Principle",
     "Jumlah Baris",
     "Total Nominal",
+    "Progress",
     "Status SM",
     "Status Claim",
     "Status OM",
@@ -1273,6 +1350,9 @@ function OverviewMonitoringTable({
                     Rp{" "}
                     {Number(summary.totalNominal || 0).toLocaleString("id-ID")}
                   </td>
+                  <td className="px-4 py-4 min-w-[120px]">
+                    <ProgressBar value={computeUiBatchProgress(batch)} />
+                  </td>
                   <td className="px-4 py-4 text-slate-300">
                     {displayStatusLabel(batch.smStatus)}
                   </td>
@@ -1309,7 +1389,7 @@ function OverviewMonitoringTable({
             {batches.length === 0 && (
               <tr>
                 <td
-                  colSpan={13}
+                  colSpan={14}
                   className="px-4 py-6 text-center text-sm text-slate-500"
                 >
                   Belum ada batch OFF Program Control.
@@ -1343,6 +1423,7 @@ function BatchOverviewActionTable({
     "Kode Principle",
     "Jumlah Baris",
     "Total Nominal",
+    "Progress",
     "Status SM",
     "Status Claim",
     "Status OM",
@@ -1429,6 +1510,10 @@ function BatchOverviewActionTable({
                     {Number(summary.totalNominal || 0).toLocaleString("id-ID")}
                   </td>
 
+                  <td className="px-4 py-4 min-w-[120px]">
+                    <ProgressBar value={computeUiBatchProgress(batch)} />
+                  </td>
+
                   <td className="px-4 py-4 text-slate-300">
                     {displayStatusLabel(batch.smStatus)}
                   </td>
@@ -1464,7 +1549,7 @@ function BatchOverviewActionTable({
             {batches.length === 0 && (
               <tr>
                 <td
-                  colSpan={11}
+                  colSpan={12}
                   className="px-4 py-6 text-center text-sm text-slate-500"
                 >
                   {emptyText}
@@ -3092,9 +3177,16 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
 function ClaimDashboard({ offRole }: OffDashboardProps) {
   const canReviewClaim = canPerformOffAction(offRole, "claim_review");
   const canFinalClaim = canPerformOffAction(offRole, "claim_final");
+  const [claimMenu, setClaimMenu] = useState<"pengecekan" | "monitoring">(
+    "pengecekan",
+  );
   const [claimView, setClaimView] = useState<
     "hub" | "after-sm" | "after-finance"
   >("hub");
+  const [allClaimBatches, setAllClaimBatches] = useState<OffApiBatch[]>([]);
+  const [monitoringClaimSearch, setMonitoringClaimSearch] = useState("");
+  const [monitoringClaimStatusFilter, setMonitoringClaimStatusFilter] =
+    useState("");
   const [claimBatches, setClaimBatches] = useState<OffApiBatch[]>([]);
   const [claimSearch, setClaimSearch] = useState("");
   const [finalBatches, setFinalBatches] = useState<OffApiBatch[]>([]);
@@ -3121,6 +3213,22 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
   const [finalClaimRefs, setFinalClaimRefs] = useState<Record<string, string>>(
     {},
   );
+  const [finalChecklist, setFinalChecklist] = useState<
+    Record<
+      string,
+      {
+        finalKwt: boolean;
+        finalSkp: boolean;
+        finalFp: boolean;
+        finalPc: boolean;
+        finalFoto: boolean;
+        finalRekap: boolean;
+        finalOthers: boolean;
+        finalOthersText: string;
+        finalCompletenessNote: string;
+      }
+    >
+  >({});
   const totalNominal = selectedItems.reduce(
     (total, item) => total + Number(item.nominal || 0),
     0,
@@ -3225,6 +3333,28 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
     setFinalClaimRefs(
       Object.fromEntries(items.map((item) => [item.id, item.noClaim || ""])),
     );
+    setFinalChecklist(
+      Object.fromEntries(
+        items.map((item) => [
+          item.id,
+          {
+            finalKwt: Boolean((item as Record<string, unknown>).finalKwt),
+            finalSkp: Boolean((item as Record<string, unknown>).finalSkp),
+            finalFp: Boolean((item as Record<string, unknown>).finalFp),
+            finalPc: Boolean((item as Record<string, unknown>).finalPc),
+            finalFoto: Boolean((item as Record<string, unknown>).finalFoto),
+            finalRekap: Boolean((item as Record<string, unknown>).finalRekap),
+            finalOthers: Boolean((item as Record<string, unknown>).finalOthers),
+            finalOthersText: String(
+              (item as Record<string, unknown>).finalOthersText || "",
+            ),
+            finalCompletenessNote: String(
+              (item as Record<string, unknown>).finalCompletenessNote || "",
+            ),
+          },
+        ]),
+      ),
+    );
     setSelectedFinalPayments(payments);
     setFinalClaimNote(detailBatch?.finalClaimNote || "");
   };
@@ -3242,6 +3372,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       const rows = Array.isArray(data.batches)
         ? (data.batches as OffApiBatch[])
         : [];
+      setAllClaimBatches(rows);
       const queue = rows.filter(isClaimQueueBatch);
       const finalQueue = rows.filter(isFinalQueueBatch);
       setClaimBatches(queue);
@@ -3480,13 +3611,50 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       return;
     }
 
+    const missingChecklist = selectedFinalItems
+      .filter((item) => item.noSurat)
+      .filter((item) => {
+        const cl = finalChecklist[item.id];
+        if (!cl) return true;
+        return !(
+          cl.finalKwt ||
+          cl.finalSkp ||
+          cl.finalFp ||
+          cl.finalPc ||
+          cl.finalFoto ||
+          cl.finalRekap ||
+          cl.finalOthers
+        );
+      });
+
+    if (missingChecklist.length > 0) {
+      setClaimMessage(
+        `Checklist kelengkapan final wajib diisi minimal satu untuk No Surat: ${missingChecklist
+          .map((item) => item.noSurat)
+          .join(", ")}`,
+      );
+      return;
+    }
+
     const claimRefs = selectedFinalItems
       .filter((item) => item.noSurat)
-      .map((item) => ({
-        itemId: item.id,
-        noSurat: item.noSurat,
-        noClaim: String(finalClaimRefs[item.id] || "").trim(),
-      }));
+      .map((item) => {
+        const cl = finalChecklist[item.id] || {};
+        return {
+          itemId: item.id,
+          noSurat: item.noSurat,
+          noClaim: String(finalClaimRefs[item.id] || "").trim(),
+          finalKwt: cl.finalKwt || false,
+          finalSkp: cl.finalSkp || false,
+          finalFp: cl.finalFp || false,
+          finalPc: cl.finalPc || false,
+          finalFoto: cl.finalFoto || false,
+          finalRekap: cl.finalRekap || false,
+          finalOthers: cl.finalOthers || false,
+          finalOthersText: cl.finalOthersText || "",
+          finalCompletenessNote: cl.finalCompletenessNote || "",
+        };
+      });
 
     setIsActionLoading(true);
     setClaimMessage("");
