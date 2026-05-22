@@ -281,9 +281,9 @@ const auditLogs = [
     time: "16 May 2026 10:05",
   },
   {
-    title: "Claim input No Claim",
+    title: "Claim validasi kelengkapan awal",
     detail:
-      "Claim memverifikasi syarat, dokumen lainnya, dan menginput nomor claim untuk batch",
+      "Claim memverifikasi syarat dan dokumen awal sebelum diteruskan ke OM",
     time: "16 May 2026 11:20",
   },
   {
@@ -299,9 +299,15 @@ const auditLogs = [
     time: "16 May 2026 15:10",
   },
   {
+    title: "Claim input No Claim final",
+    detail:
+      "Claim mengisi No Claim per No Surat setelah pembayaran Keuangan selesai",
+    time: "16 May 2026 15:45",
+  },
+  {
     title: "Verifikasi final Claim selesai",
     detail:
-      "Claim memverifikasi bukti bayar dan jumlah, lalu menyelesaikan pengajuan",
+      "Claim memverifikasi bukti bayar, jumlah, dan kelengkapan No Claim, lalu menyelesaikan pengajuan",
     time: "16 May 2026 16:25",
   },
 ];
@@ -3571,8 +3577,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
               Validasi Setelah Keuangan
             </h3>
             <p className="mt-2 text-sm leading-6 text-slate-400">
-              Cek data yang sudah dibayar Keuangan, verifikasi bukti bayar dan
-              jumlah pembayaran, lalu selesaikan atau kembalikan ke Keuangan.
+              Cek data yang sudah dibayar Keuangan, input No Claim per No Surat,
+              verifikasi bukti bayar dan jumlah pembayaran. Jika kelengkapan
+              belum lengkap, gunakan pengingat web untuk SM & SPV.
             </p>
             <button
               onClick={() => setClaimView("after-finance")}
@@ -3608,7 +3615,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
         <p className="mt-1 text-sm text-slate-400">
           {claimView === "after-sm"
             ? "Cek batch yang sudah disetujui Sales Manager dan lakukan validasi Claim awal."
-            : "Cek pembayaran Keuangan, verifikasi bukti bayar, lalu selesaikan atau kembalikan ke Keuangan."}
+            : "Cek pembayaran Keuangan, input No Claim per No Surat, verifikasi bukti bayar dan jumlah. Jika kelengkapan belum lengkap, gunakan pengingat web."}
         </p>
       </div>
       <InfoNote>
@@ -4412,9 +4419,10 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
 
             <Panel title="Form Verifikasi Final Claim" icon={ClipboardCheck}>
               <InfoNote>
-                Claim hanya perlu mengecek bukti pembayaran dan kesesuaian total
-                pembayaran. Jika ada masalah, kembalikan ke Keuangan. Jika
-                sesuai, selesaikan pengajuan.
+                Claim mengecek bukti pembayaran, kesesuaian total pembayaran,
+                dan mengisi No Claim per No Surat. Jika kelengkapan belum
+                lengkap, gunakan pengingat web untuk SM & SPV. Jika sesuai,
+                selesaikan pengajuan.
               </InfoNote>
               <div className="mt-4">
                 <label className="block">
