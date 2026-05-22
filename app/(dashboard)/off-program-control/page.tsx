@@ -1472,6 +1472,75 @@ function BatchOverviewActionTable({
   );
 }
 
+function IncompleteDocumentsReminderPanel({
+  batches,
+}: {
+  batches: OffApiBatch[];
+}) {
+  const reminders = batches.filter(
+    (batch) => batch.finalStatus === "Incomplete Documents",
+  );
+
+  if (reminders.length === 0) return null;
+
+  return (
+    <Panel title="Pengingat Kelengkapan Belum Lengkap" icon={AlertTriangle}>
+      <p className="mb-4 text-sm text-amber-100">
+        Claim menandai kelengkapan belum lengkap dan meminta koordinasi
+        real-life dengan Claim. Panel ini hanya pengingat web, bukan email.
+      </p>
+      <div className="overflow-x-auto rounded-xl border border-white/10">
+        <table className="w-full min-w-[1050px] text-left text-sm">
+          <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+            <tr>
+              {[
+                "No Pengajuan",
+                "Principle",
+                "Kode Principle",
+                "Catatan Claim",
+                "Status Final",
+                "Diperbarui",
+              ].map((header) => (
+                <th key={header} className="px-3 py-3 font-bold">
+                  {header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {reminders.map((batch) => (
+              <tr key={batch.id} className="hover:bg-white/[0.03]">
+                <td className="whitespace-nowrap px-3 py-3 font-mono font-bold text-white">
+                  {batch.noPengajuan}
+                </td>
+                <td className="min-w-[240px] px-3 py-3 text-slate-300">
+                  {batch.principleName}
+                </td>
+                <td className="px-3 py-3 font-mono text-teal-300">
+                  {batch.principleCode}
+                </td>
+                <td className="min-w-[280px] px-3 py-3 text-amber-100">
+                  {batch.finalClaimNote || "-"}
+                </td>
+                <td className="px-3 py-3">
+                  <span
+                    className={`inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(batch.finalStatus)}`}
+                  >
+                    {displayStatusLabel(batch.finalStatus)}
+                  </span>
+                </td>
+                <td className="px-3 py-3 text-slate-400">
+                  {formatDateDisplay(batch.updatedAt)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
 function SupervisorDashboard({ offRole }: OffDashboardProps) {
   const canSubmitSupervisor = canPerformOffAction(offRole, "submit_batch");
   const canEditSupervisor = canPerformOffAction(offRole, "edit_returned_batch");
@@ -1870,6 +1939,8 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
           </button>
         ))}
       </div>
+
+      <IncompleteDocumentsReminderPanel batches={allSupervisorBatches} />
 
       {supervisorMenu === "monitoring" && (
         <Panel title="Monitoring Semua Status" icon={ReceiptText}>
@@ -2680,6 +2751,8 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
         ))}
       </div>
 
+      <IncompleteDocumentsReminderPanel batches={batches} />
+
       {smMenu === "monitoring" && (
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
@@ -3376,7 +3449,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
     }
   };
 
-  const rejectIncompleteDocuments = async () => {
+  const remindIncompleteDocuments = async () => {
     if (!selectedFinalBatch) return;
     if (!finalClaimNote.trim()) {
       setClaimMessage(
@@ -3394,7 +3467,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            action: "reject_incomplete_documents",
+            action: "remind_incomplete_documents",
             note: finalClaimNote,
           }),
         },
@@ -3402,15 +3475,24 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       const data = await parseJsonResponse(response);
       if (!response.ok || !data.ok)
         throw new Error(
-          String(data.error || data.message || "Gagal menolak kelengkapan."),
+          String(
+            data.error ||
+              data.message ||
+              "Gagal mengirim pengingat kelengkapan.",
+          ),
         );
       setClaimMessage(
-        String(data.message || "Pengajuan ditandai belum lengkap."),
+        String(
+          data.message ||
+            "Pengingat kelengkapan berhasil ditampilkan untuk SM dan Supervisor.",
+        ),
       );
       await loadClaimBatches();
     } catch (error) {
       setClaimMessage(
-        error instanceof Error ? error.message : "Gagal menolak kelengkapan.",
+        error instanceof Error
+          ? error.message
+          : "Gagal mengirim pengingat kelengkapan.",
       );
     } finally {
       setIsActionLoading(false);
@@ -4409,11 +4491,11 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     Kembalikan ke Keuangan
                   </button>
                   <button
-                    onClick={rejectIncompleteDocuments}
+                    onClick={remindIncompleteDocuments}
                     disabled={!selectedFinalBatch || isActionLoading}
                     className="inline-flex items-center justify-center rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm font-bold text-amber-300 hover:bg-amber-500/20 disabled:opacity-50"
                   >
-                    Tolak karena kelengkapan belum lengkap
+                    Ingatkan SM & SPV kelengkapan belum lengkap
                   </button>
                   <button
                     onClick={completeFinalClaim}

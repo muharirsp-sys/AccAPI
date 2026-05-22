@@ -99,13 +99,13 @@ export async function POST(request: Request, context: Context) {
       });
     }
 
-    if (action === "reject_incomplete_documents") {
+    if (action === "remind_incomplete_documents") {
       if (!note)
         return NextResponse.json(
           {
             ok: false,
             error:
-              "Catatan Final Claim wajib diisi untuk menolak karena kelengkapan belum lengkap.",
+              "Catatan Final Claim wajib diisi untuk mengirim pengingat kelengkapan belum lengkap.",
           },
           { status: 400 },
         );
@@ -123,7 +123,7 @@ export async function POST(request: Request, context: Context) {
       await writeOffAudit({
         batchId: id,
         actor,
-        action: "final_reject_incomplete_documents",
+        action: "final_remind_incomplete_documents",
         fromStatus: data.batch.finalStatus,
         toStatus: "Incomplete Documents",
         note,
@@ -136,7 +136,7 @@ export async function POST(request: Request, context: Context) {
       return NextResponse.json({
         ok: true,
         message:
-          "Pengajuan ditandai belum lengkap dan tetap menunggu final Claim.",
+          "Pengingat kelengkapan ditampilkan di web untuk Sales Manager dan Supervisor/SPV. Batch tetap menunggu final Claim.",
         batch: updated ? publicBatch(updated.batch) : null,
       });
     }
