@@ -63,42 +63,6 @@ export async function POST(request: Request, context: Context) {
     const claimRefs = Array.isArray(body.claimRefs) ? body.claimRefs : [];
     const now = new Date();
 
-    if (action === "return_to_finance") {
-      if (!note)
-        return NextResponse.json(
-          { ok: false, error: "Catatan wajib diisi untuk return ke Keuangan." },
-          { status: 400 },
-        );
-      await db
-        .update(offBatch)
-        .set({
-          status: "Returned to Finance",
-          finalStatus: "Need Correction from Finance",
-          financeStatus: "Need Correction",
-          finalClaimNote: note,
-          updatedAt: now,
-        })
-        .where(eq(offBatch.id, id));
-      await writeOffAudit({
-        batchId: id,
-        actor,
-        action: "final_return",
-        fromStatus: data.batch.finalStatus,
-        toStatus: "Need Correction from Finance",
-        note,
-        metadata: {
-          totalPaid: paymentSummary.totalPaid,
-          totalNominal: paymentSummary.totalNominal,
-        },
-      });
-      const updated = await getBatchWithItems(id);
-      return NextResponse.json({
-        ok: true,
-        message: "Pengajuan dikembalikan ke Keuangan untuk koreksi.",
-        batch: updated ? publicBatch(updated.batch) : null,
-      });
-    }
-
     if (action === "remind_incomplete_documents") {
       if (!note)
         return NextResponse.json(

@@ -3404,51 +3404,6 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
     }
   };
 
-  const returnToFinance = async () => {
-    if (!selectedFinalBatch) return;
-    if (!finalClaimNote.trim()) {
-      setClaimMessage("Catatan wajib diisi untuk mengembalikan ke Keuangan.");
-      return;
-    }
-    setIsActionLoading(true);
-    setClaimMessage("");
-    try {
-      const response = await fetch(
-        `/api/off-program-control/batches/${selectedFinalBatch.id}/final-claim`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "return_to_finance",
-            note: finalClaimNote,
-          }),
-        },
-      );
-      const data = await parseJsonResponse(response);
-      if (!response.ok || !data.ok)
-        throw new Error(
-          String(
-            data.error || data.message || "Gagal mengembalikan ke Keuangan.",
-          ),
-        );
-      setClaimMessage(
-        String(
-          data.message || "Pengajuan dikembalikan ke Keuangan untuk koreksi.",
-        ),
-      );
-      await loadClaimBatches();
-    } catch (error) {
-      setClaimMessage(
-        error instanceof Error
-          ? error.message
-          : "Gagal mengembalikan ke Keuangan.",
-      );
-    } finally {
-      setIsActionLoading(false);
-    }
-  };
-
   const remindIncompleteDocuments = async () => {
     if (!selectedFinalBatch) return;
     if (!finalClaimNote.trim()) {
@@ -4483,13 +4438,6 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
 
               {canFinalClaim ? (
                 <div className="mt-5 flex flex-wrap gap-3">
-                  <button
-                    onClick={returnToFinance}
-                    disabled={!selectedFinalBatch || isActionLoading}
-                    className="inline-flex items-center justify-center rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm font-bold text-rose-300 hover:bg-rose-500/20 disabled:opacity-50"
-                  >
-                    Kembalikan ke Keuangan
-                  </button>
                   <button
                     onClick={remindIncompleteDocuments}
                     disabled={!selectedFinalBatch || isActionLoading}
@@ -5733,11 +5681,61 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                 value={paymentDate}
                 onChange={setPaymentDate}
               />
-              <EditableField
-                label="Jumlah Dibayar oleh Keuangan"
-                value={paidAmount}
-                onChange={setPaidAmount}
-              />
+              <div className="space-y-2">
+                <EditableField
+                  label="Jumlah Dibayar oleh Keuangan"
+                  value={paidAmount}
+                  onChange={setPaidAmount}
+                />
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPaidAmount(
+                        `Rp ${remainingAmount.toLocaleString("id-ID")}`,
+                      )
+                    }
+                    className="rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-1.5 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                  >
+                    Bayar Sisa
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPaidAmount(
+                        `Rp ${Math.min(transfer, remainingAmount).toLocaleString("id-ID")}`,
+                      )
+                    }
+                    disabled={transfer <= 0}
+                    className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-bold text-sky-200 hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Bayar Transfer
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPaidAmount(
+                        `Rp ${Math.min(tunai, remainingAmount).toLocaleString("id-ID")}`,
+                      )
+                    }
+                    disabled={tunai <= 0}
+                    className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Bayar Tunai
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPaidAmount("")}
+                    className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold text-slate-300 hover:bg-white/10"
+                  >
+                    Kosongkan
+                  </button>
+                </div>
+              </div>
               <label className="block">
                 <span className="text-xs text-slate-500 font-semibold">
                   Metode Pembayaran
