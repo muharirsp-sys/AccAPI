@@ -41,7 +41,10 @@ export default function SidebarLayout({
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const router = useRouter();
   const { data: session } = authClient.useSession();
-  const userRole = session?.user?.role;
+  const sessionUser = session?.user as
+    | (NonNullable<typeof session>["user"] & { role?: string | null })
+    | undefined;
+  const userRole = sessionUser?.role || "user";
 
   const handleSignOut = async () => {
     try {

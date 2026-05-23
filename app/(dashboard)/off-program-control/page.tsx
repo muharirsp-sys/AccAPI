@@ -3,6 +3,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ElementType,
   type ReactNode,
@@ -578,7 +579,6 @@ function batchSearchText(batch: OffApiBatch) {
     batch.omStatus,
     batch.financeStatus,
     batch.finalStatus,
-    batch.noClaim,
   ]
     .join(" ")
     .toLowerCase();
@@ -624,6 +624,18 @@ function isSmActionableBatch(batch: OffApiBatch | null) {
     batch &&
     batch.status === "Submitted to SM" &&
     batch.smStatus === "Waiting Review",
+  );
+}
+
+function hasPassedSalesManager(batch: OffApiBatch) {
+  return (
+    batch.smStatus !== "Not Started" ||
+    [
+      "Submitted to SM",
+      "Waiting Review",
+      "Approved by SM",
+      "Returned by SM",
+    ].includes(batch.status)
   );
 }
 
@@ -1400,16 +1412,16 @@ function BatchOverviewActionTable({
 }) {
   const headers = [
     "No Pengajuan",
-    "Batch",
     "Principle",
     "Kode Principle",
-    "Jumlah Baris",
     "Total Nominal",
-    "Progress",
     "Status SM",
     "Status Claim",
     "Status OM",
-    "Status",
+    "Status Finance",
+    "Status Final",
+    "Progress %",
+    "Updated At",
     "Aksi",
   ];
 
@@ -1471,10 +1483,6 @@ function BatchOverviewActionTable({
                     {batch.noPengajuan}
                   </td>
 
-                  <td className="px-4 py-4 text-slate-300">
-                    Gelombang {batch.gelombang || "-"}
-                  </td>
-
                   <td className="px-4 py-4 text-slate-300 min-w-[260px]">
                     {batch.principleName}
                   </td>
@@ -1483,17 +1491,9 @@ function BatchOverviewActionTable({
                     {batch.principleCode}
                   </td>
 
-                  <td className="px-4 py-4 text-center text-slate-300">
-                    {summary.totalRows || summary.rowCount || 0}
-                  </td>
-
                   <td className="px-4 py-4 text-right font-mono text-emerald-300">
                     Rp{" "}
                     {Number(summary.totalNominal || 0).toLocaleString("id-ID")}
-                  </td>
-
-                  <td className="px-4 py-4 min-w-[120px]">
-                    <ProgressBar value={computeUiBatchProgress(batch)} />
                   </td>
 
                   <td className="px-4 py-4 text-slate-300">
@@ -1508,12 +1508,22 @@ function BatchOverviewActionTable({
                     {displayStatusLabel(batch.omStatus)}
                   </td>
 
-                  <td className="px-4 py-4">
-                    <span
-                      className={`inline-flex px-2.5 py-1 rounded-md border text-xs font-bold ${statusClass(batch.status)}`}
-                    >
-                      {displayStatusLabel(batch.status)}
-                    </span>
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.financeStatus)}
+                  </td>
+
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.finalStatus)}
+                  </td>
+
+                  <td className="px-4 py-4 min-w-[120px]">
+                    <ProgressBar value={computeUiBatchProgress(batch)} />
+                  </td>
+
+                  <td className="px-4 py-4 whitespace-nowrap text-slate-300">
+                    {batch.updatedAt
+                      ? new Date(batch.updatedAt).toLocaleString("id-ID")
+                      : "-"}
                   </td>
 
                   <td className="sticky right-0 z-20 min-w-[150px] bg-[#0f1115] px-4 py-4 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]">
@@ -2554,7 +2564,6 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
   const canReviewSm =
     canPerformOffAction(offRole, "sm_approve") ||
     canPerformOffAction(offRole, "sm_return");
-  const [smMenu, setSmMenu] = useState<"monitoring" | "review">("monitoring");
   const [batches, setBatches] = useState<OffApiBatch[]>([]);
   const [smSearch, setSmSearch] = useState("");
   const [smStatusFilter, setSmStatusFilter] = useState("");
@@ -2567,6 +2576,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
   const [smNote, setSmNote] = useState("");
   const [notificationPreview, setNotificationPreview] =
     useState<OffNotificationPreview | null>(null);
+  const smReviewDetailRef = useRef<HTMLDivElement | null>(null);
   const totalNominal = selectedItems.reduce(
     (total, item) => total + Number(item.nominal || 0),
     0,
@@ -2602,13 +2612,14 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
           String(listData.error || "Gagal mengambil data batch."),
         );
       const rows = Array.isArray(listData.batches)
-        ? (listData.batches as OffApiBatch[])
+        ? (listData.batches as OffApiBatch[]).filter(hasPassedSalesManager)
         : [];
       setBatches(rows);
-      const nextBatch =
-        rows.find((row) => row.id === preferredBatchId) ||
-        selectedBatch ||
-        null;
+      const nextBatch = preferredBatchId
+        ? rows.find((row) => row.id === preferredBatchId) || null
+        : selectedBatch
+          ? rows.find((row) => row.id === selectedBatch.id) || null
+          : null;
       setSelectedBatch(nextBatch);
 
       if (!nextBatch) {
@@ -2645,34 +2656,12 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
             String(listData.error || "Gagal mengambil data batch."),
           );
         const rows = Array.isArray(listData.batches)
-          ? (listData.batches as OffApiBatch[])
+          ? (listData.batches as OffApiBatch[]).filter(hasPassedSalesManager)
           : [];
-        const nextBatch = rows[0] || null;
         if (!isActive) return;
         setBatches(rows);
-        setSelectedBatch(nextBatch);
-
-        if (!nextBatch) {
-          setSelectedItems([]);
-          return;
-        }
-
-        const detailRes = await fetch(
-          `/api/off-program-control/batches/${nextBatch.id}`,
-          { credentials: "include" },
-        );
-        const detailData = await parseJsonResponse(detailRes);
-        if (!detailRes.ok || !detailData.ok)
-          throw new Error(
-            String(detailData.error || "Gagal mengambil detail batch."),
-          );
-        if (!isActive) return;
-        setSelectedBatch((detailData.batch as OffApiBatch) || nextBatch);
-        setSelectedItems(
-          Array.isArray(detailData.items)
-            ? (detailData.items as OffApiItem[])
-            : [],
-        );
+        setSelectedBatch(null);
+        setSelectedItems([]);
       } catch (error) {
         if (!isActive) return;
         setLoadError(
@@ -2695,7 +2684,6 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
 
   const selectBatch = async (batch: OffApiBatch) => {
     setSelectedBatch(batch);
-    setSmMenu("review");
     setSelectedItems([]);
     setActionMessage("");
     setNotificationPreview(null);
@@ -2707,6 +2695,13 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
           ? error.message
           : "Gagal mengambil detail batch.",
       );
+    } finally {
+      setTimeout(() => {
+        smReviewDetailRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 50);
     }
   };
 
@@ -2796,6 +2791,14 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
     }
   };
 
+  const closeDetail = () => {
+    setSelectedBatch(null);
+    setSelectedItems([]);
+    setSmNote("");
+    setActionMessage("");
+    setNotificationPreview(null);
+  };
+
   const smStatusOptions = getBatchStatusOptions(batches);
 
   const filteredSmBatches = filterBatchesByMainStatus(
@@ -2803,61 +2806,89 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
     smStatusFilter,
   );
 
+  const smMetrics: MetricItem[] = [
+    {
+      label: "Total Batch",
+      value: String(batches.length),
+      tone: "text-sky-300",
+      icon: ClipboardCheck,
+    },
+    {
+      label: "Menunggu Review SM",
+      value: String(batches.filter(isSmActionableBatch).length),
+      tone: "text-amber-300",
+      icon: Clock3,
+    },
+    {
+      label: "Disetujui SM",
+      value: String(
+        batches.filter((batch) => batch.smStatus === "Approved by SM").length,
+      ),
+      tone: "text-emerald-300",
+      icon: CheckCircle2,
+    },
+    {
+      label: "Dikembalikan SM",
+      value: String(
+        batches.filter((batch) => batch.smStatus === "Returned").length,
+      ),
+      tone: "text-rose-300",
+      icon: XCircle,
+    },
+  ];
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2">
-        {[
-          ["monitoring", "Monitoring Batch Pengajuan"],
-          ["review", "Review Batch Sales Manager"],
-        ].map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setSmMenu(key as "monitoring" | "review")}
-            className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
-              smMenu === key
-                ? "border border-teal-500/30 bg-teal-500/20 text-teal-200"
-                : "border border-transparent text-slate-400 hover:bg-white/5 hover:text-white"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
+      <div>
+        <h2 className="text-2xl font-black text-white">
+          Monitoring Batch Pengajuan
+        </h2>
+        <p className="mt-1 text-sm text-slate-400">
+          Monitoring-first: pilih batch pada tabel untuk membuka detail review
+          Sales Manager di bawah tabel.
+        </p>
       </div>
+
+      <MetricsGrid metrics={smMetrics} />
 
       <IncompleteDocumentsReminderPanel batches={batches} />
 
-      {smMenu === "monitoring" && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
-            <MonitoringSearch value={smSearch} onChange={setSmSearch} />
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
+          <MonitoringSearch value={smSearch} onChange={setSmSearch} />
 
-            <StatusFilterSelect
-              value={smStatusFilter}
-              onChange={setSmStatusFilter}
-              options={smStatusOptions}
-            />
-          </div>
-
-          {isLoading && (
-            <p className="text-sm text-slate-400">
-              Memuat data Sales Manager...
-            </p>
-          )}
-
-          <BatchOverviewActionTable
-            batches={filteredSmBatches}
-            selectedBatchId={selectedBatch?.id}
-            onSelect={selectBatch}
-            actionLabel={(batch) =>
-              isSmActionableBatch(batch) ? "Review Batch" : "Lihat Detail"
-            }
+          <StatusFilterSelect
+            value={smStatusFilter}
+            onChange={setSmStatusFilter}
+            options={smStatusOptions}
           />
         </div>
-      )}
 
-      {smMenu === "review" && (
-        <div className="space-y-6">
+        {isLoading && (
+          <p className="text-sm text-slate-400">Memuat data Sales Manager...</p>
+        )}
+
+        <BatchOverviewActionTable
+          batches={filteredSmBatches}
+          selectedBatchId={selectedBatch?.id}
+          onSelect={selectBatch}
+          actionLabel={(batch) =>
+            isSmActionableBatch(batch) ? "Proses Review" : "Lihat"
+          }
+        />
+      </div>
+
+      {selectedBatch && (
+        <div ref={smReviewDetailRef} className="space-y-6 scroll-mt-6">
           <Panel title="Review Batch Sales Manager" icon={ShieldCheck}>
+            <div className="mb-4 flex justify-end">
+              <button
+                onClick={closeDetail}
+                className="rounded-xl border border-white/10 bg-black/30 px-4 py-2 text-sm font-bold text-slate-300 hover:bg-white/5 hover:text-white"
+              >
+                Tutup Detail
+              </button>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               <Field
                 label="No Pengajuan Batch"
@@ -2996,7 +3027,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
                 {actionMessage}
               </div>
             )}
-            {canReviewSm ? (
+            {canReviewSm && isSmActionableBatch(selectedBatch) ? (
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   onClick={returnToSupervisor}
@@ -3023,8 +3054,9 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
               </div>
             ) : (
               <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
-                Baca-saja: role ini tidak bisa menyetujui/mengembalikan data
-                Sales Manager.
+                {isSmActionableBatch(selectedBatch)
+                  ? "Baca-saja: role ini tidak bisa menyetujui/mengembalikan data Sales Manager."
+                  : "Batch sudah diproses Sales Manager. Detail ditampilkan dalam mode baca-saja."}
               </div>
             )}
           </Panel>
@@ -3112,7 +3144,9 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
                         colSpan={12}
                         className="px-3 py-6 text-center text-sm text-slate-500"
                       >
-                        Belum ada item batch yang bisa ditampilkan.
+                        {selectedBatch
+                          ? "Belum ada item batch yang bisa ditampilkan."
+                          : "Pilih batch dari Monitoring Batch Pengajuan untuk melihat item."}
                       </td>
                     </tr>
                   )}
@@ -6502,7 +6536,10 @@ export default function OffProgramControlPage() {
     email: sessionUser?.email,
   });
   const offRole = roleInfo.role;
-  const accessibleTabKeys = getOffAccessibleTabs(offRole);
+  const accessibleTabKeys =
+    offRole === "sales_manager"
+      ? getOffAccessibleTabs(offRole).filter((key) => key === "sales")
+      : getOffAccessibleTabs(offRole);
   const accessibleTabs = tabs.filter((tab) =>
     accessibleTabKeys.includes(tab.key),
   );
@@ -6665,5 +6702,3 @@ export default function OffProgramControlPage() {
     </div>
   );
 }
-
-
