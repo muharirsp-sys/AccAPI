@@ -30,6 +30,7 @@ export const appModules = [
     "powerpoint",
     "master_data",
     "sales",
+    "off_program_control",
     "settings",
     "users",
 ] as const;
@@ -47,6 +48,7 @@ export const moduleLabels: Record<AppModule, string> = {
     powerpoint: "PowerPoint Maker",
     master_data: "Master Data",
     sales: "Sales",
+    off_program_control: "OFF Program Control",
     settings: "Settings",
     users: "Users & RBAC",
 };
@@ -124,6 +126,7 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     powerpoint: ["view", "generate", "download"],
     master_data: ["view", "create", "edit", "delete", "sync"],
     sales: ["view", "create", "edit", "delete", "export"],
+    off_program_control: ["view", "create", "update", "approve", "export"],
     settings: ["view", "sync", "manage"],
     users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission"],
 };
@@ -202,6 +205,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("powerpoint", ["view", "download"]),
         pick("master_data", ["view"]),
         pick("sales", ["view", "export"]),
+        pick("off_program_control", ["view", "update", "approve", "export"]),
         pick("settings", ["view"])
     ),
     finance: mergePermissionMaps(
@@ -209,6 +213,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("payments", ["view", "export"]),
         pick("sppd", ["view", "download"]),
         pick("finance", ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"]),
+        pick("off_program_control", ["view", "update"]),
         pick("principles", ["view"])
     ),
     staff: mergePermissionMaps(
@@ -217,13 +222,15 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("sppd", ["view", "generate", "download"]),
         pick("principles", ["view"]),
         pick("summary", ["view", "upload", "generate", "export", "edit", "update"]),
-        pick("validator", ["view", "upload", "run", "download", "edit"])
+        pick("validator", ["view", "upload", "run", "download", "edit"]),
+        pick("off_program_control", ["view", "create", "update"])
     ),
     viewer: mergePermissionMaps(
         pick("dashboard", ["view"]),
         pick("payments", ["view"]),
         pick("sppd", ["view"]),
         pick("finance", ["view"]),
+        pick("off_program_control", ["view"]),
         pick("summary", ["view"]),
         pick("validator", ["view"])
     ),
@@ -241,6 +248,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/api-wrapper", module: "api_wrapper", action: "view" },
     { prefix: "/master", module: "master_data", action: "view" },
     { prefix: "/sales", module: "sales", action: "view" },
+    { prefix: "/off-program-control", module: "off_program_control", action: "view" },
     { prefix: "/settings", module: "settings", action: "view" },
     { prefix: "/", module: "dashboard", action: "view" },
 ];

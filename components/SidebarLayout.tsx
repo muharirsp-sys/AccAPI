@@ -6,7 +6,7 @@
 "use client";
 
 import { useState } from "react";
-import { Menu, Home, Users, ShoppingCart, ShoppingBag, Settings, Database, Server, Box, GitBranch, ArrowLeftRight, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Presentation, Settings2, FileText, Shield } from "lucide-react";
+import { Menu, Home, Users, ShoppingCart, ShoppingBag, Settings, Database, Server, Box, GitBranch, ArrowLeftRight, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Presentation, Settings2, FileText, Shield, ClipboardCheck } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 import { canAccessPath, normalizeRole } from "@/lib/rbac";
@@ -35,6 +35,7 @@ export default function SidebarLayout({ children, role, permissions }: { childre
         { name: "Tarikan Finance", icon: DollarSign, href: "/finance" },
         { name: "Pembayaran / SPPD", icon: Wallet, href: "/payments" },
         { name: "Format SPPD", icon: FileText, href: "/payments/sppd" },
+        { name: "OFF Program Control", icon: ClipboardCheck, href: "/off-program-control" },
         { name: "PowerPoint Maker", icon: Presentation, href: "/powerpoint-maker" },
         { name: "Master Principle", icon: Database, href: "/principles" },
         { name: "Cabang", icon: GitBranch, href: "/master/branch" },

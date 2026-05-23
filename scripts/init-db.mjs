@@ -3,13 +3,15 @@
 // Dependensi: @libsql/client dan filesystem volume DATABASE_URL.
 // Main Functions: create table IF NOT EXISTS, migration ALTER TABLE, role/permission default update.
 // Side Effects: Membuat folder DB dan menjalankan DDL/DML SQLite.
-import { createClient } from '@libsql/client';
-import { mkdirSync } from 'node:fs';
+import { createClient } from "@libsql/client";
+import { mkdirSync } from "node:fs";
 
-const databaseUrl = process.env.DATABASE_URL || 'file:/app/data/sqlite.db';
-const filePath = databaseUrl.startsWith('file:') ? databaseUrl.slice('file:'.length) : null;
-if (filePath?.startsWith('/')) {
-  mkdirSync(filePath.replace(/\/[^/]*$/, ''), { recursive: true });
+const databaseUrl = process.env.DATABASE_URL || "file:/app/data/sqlite.db";
+const filePath = databaseUrl.startsWith("file:")
+  ? databaseUrl.slice("file:".length)
+  : null;
+if (filePath?.startsWith("/")) {
+  mkdirSync(filePath.replace(/\/[^/]*$/, ""), { recursive: true });
 }
 
 const db = createClient({ url: databaseUrl });
@@ -100,7 +102,146 @@ const statements = [
     source TEXT,
     createdAt INTEGER,
     updatedAt INTEGER
-  );`
+  );`,
+  `CREATE TABLE IF NOT EXISTS off_batch (
+    id TEXT PRIMARY KEY,
+    no_pengajuan TEXT NOT NULL UNIQUE,
+    gelombang TEXT NOT NULL,
+    principle_code TEXT NOT NULL,
+    principle_name TEXT NOT NULL,
+    bulan TEXT NOT NULL,
+    tahun TEXT NOT NULL,
+    supervisor_name TEXT NOT NULL,
+    total_nominal REAL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'Draft',
+    sm_status TEXT NOT NULL DEFAULT 'Not Started',
+    claim_status TEXT NOT NULL DEFAULT 'Not Started',
+    om_status TEXT NOT NULL DEFAULT 'Not Started',
+    finance_status TEXT NOT NULL DEFAULT 'Not Started',
+    final_status TEXT NOT NULL DEFAULT 'Not Started',
+    locked INTEGER DEFAULT 0,
+    created_by TEXT,
+    submitted_by TEXT,
+    submitted_at INTEGER,
+    sm_approved_by TEXT,
+    sm_approved_at INTEGER,
+    sm_note TEXT,
+    returned_by TEXT,
+    returned_at INTEGER,
+    return_note TEXT,
+    claim_reviewed_by TEXT,
+    claim_reviewed_at INTEGER,
+    claim_submitted_date TEXT,
+    claim_deadline TEXT,
+    no_claim TEXT,
+    claim_note TEXT,
+    completeness_status TEXT,
+    om_approved_by TEXT,
+    om_approved_at INTEGER,
+    om_note TEXT,
+    cancelled_by TEXT,
+    cancelled_at INTEGER,
+    cancel_note TEXT,
+    paid_by TEXT,
+    paid_at INTEGER,
+    payment_date TEXT,
+    paid_amount REAL DEFAULT 0,
+    payment_proof_path TEXT,
+    payment_proof_name TEXT,
+    payment_proof_mime TEXT,
+    payment_proof_size INTEGER,
+    payment_method TEXT,
+    payment_sender_bank TEXT,
+    finance_note TEXT,
+    verified_amount REAL DEFAULT 0,
+    final_claim_note TEXT,
+    pdf_path TEXT,
+    pdf_generated_at INTEGER,
+    pdf_status TEXT DEFAULT 'pending',
+    updated_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS off_batch_item (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL,
+    item_no INTEGER NOT NULL,
+    row_no INTEGER,
+    no_surat TEXT,
+    no_claim TEXT,
+    nama_program TEXT,
+    periode TEXT,
+    toko TEXT,
+    barang TEXT,
+    nominal REAL DEFAULT 0,
+    cara_bayar TEXT,
+    type TEXT,
+    deadline TEXT,
+    kwt INTEGER DEFAULT 0,
+    skp INTEGER DEFAULT 0,
+    fp INTEGER DEFAULT 0,
+    pc INTEGER DEFAULT 0,
+    foto INTEGER DEFAULT 0,
+    rekap INTEGER DEFAULT 0,
+    others INTEGER DEFAULT 0,
+    others_text TEXT,
+    final_kwt INTEGER NOT NULL DEFAULT 0,
+    final_skp INTEGER NOT NULL DEFAULT 0,
+    final_fp INTEGER NOT NULL DEFAULT 0,
+    final_pc INTEGER NOT NULL DEFAULT 0,
+    final_foto INTEGER NOT NULL DEFAULT 0,
+    final_rekap INTEGER NOT NULL DEFAULT 0,
+    final_others INTEGER NOT NULL DEFAULT 0,
+    final_others_text TEXT,
+    final_completeness_note TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (batch_id) REFERENCES off_batch(id)
+  );`,
+  `CREATE TABLE IF NOT EXISTS off_payment (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL,
+    payment_no INTEGER NOT NULL,
+    payment_date TEXT NOT NULL,
+    paid_amount REAL NOT NULL DEFAULT 0,
+    payment_method TEXT,
+    payment_sender_bank TEXT,
+    sender_bank TEXT,
+    payment_proof_path TEXT,
+    payment_proof_name TEXT,
+    payment_proof_mime TEXT,
+    payment_proof_size INTEGER,
+    note TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (batch_id) REFERENCES off_batch(id)
+  );`,
+  `CREATE TABLE IF NOT EXISTS off_notification (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    "to" TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'created',
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (batch_id) REFERENCES off_batch(id)
+  );`,
+  `CREATE TABLE IF NOT EXISTS off_audit_log (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL,
+    item_id TEXT,
+    actor_id TEXT,
+    actor_name TEXT,
+    actor_role TEXT,
+    action TEXT NOT NULL,
+    from_status TEXT,
+    to_status TEXT,
+    note TEXT,
+    metadata TEXT,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (batch_id) REFERENCES off_batch(id)
+  );`,
 ];
 
 for (const sql of statements) {
@@ -114,19 +255,82 @@ const migrations = [
   `ALTER TABLE user ADD COLUMN banReason TEXT;`,
   `ALTER TABLE user ADD COLUMN banExpires INTEGER;`,
   `ALTER TABLE session ADD COLUMN impersonatedBy TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN gelombang TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN bulan TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN tahun TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN supervisor_name TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN total_nominal REAL DEFAULT 0;`,
+  `ALTER TABLE off_batch ADD COLUMN submitted_by TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN submitted_at INTEGER;`,
+  `ALTER TABLE off_batch ADD COLUMN sm_approved_by TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN sm_approved_at INTEGER;`,
+  `ALTER TABLE off_batch ADD COLUMN returned_by TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN returned_at INTEGER;`,
+  `ALTER TABLE off_batch ADD COLUMN return_note TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN claim_reviewed_by TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN claim_reviewed_at INTEGER;`,
+  `ALTER TABLE off_batch ADD COLUMN no_claim TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN claim_submitted_date TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN claim_deadline TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN completeness_status TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN om_approved_by TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN om_approved_at INTEGER;`,
+  `ALTER TABLE off_batch ADD COLUMN cancelled_by TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN cancelled_at INTEGER;`,
+  `ALTER TABLE off_batch ADD COLUMN cancel_note TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN paid_by TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN paid_at INTEGER;`,
+  `ALTER TABLE off_batch ADD COLUMN payment_date TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN paid_amount REAL DEFAULT 0;`,
+  `ALTER TABLE off_batch ADD COLUMN payment_proof_path TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN payment_proof_name TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN payment_proof_mime TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN payment_proof_size INTEGER;`,
+  `ALTER TABLE off_batch ADD COLUMN payment_method TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN payment_sender_bank TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN finance_note TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN verified_amount REAL DEFAULT 0;`,
+  `ALTER TABLE off_batch ADD COLUMN final_claim_note TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN pdf_path TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN pdf_generated_at INTEGER;`,
+  `ALTER TABLE off_batch ADD COLUMN pdf_status TEXT DEFAULT 'pending';`,
+  `ALTER TABLE off_batch_item ADD COLUMN no_claim TEXT;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_kwt INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_skp INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_fp INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_pc INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_foto INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_rekap INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_others INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_others_text TEXT;`,
+  `ALTER TABLE off_batch_item ADD COLUMN final_completeness_note TEXT;`,
+  `ALTER TABLE off_payment ADD COLUMN payment_sender_bank TEXT;`,
+  `ALTER TABLE off_payment ADD COLUMN sender_bank TEXT;`,
+  `ALTER TABLE off_payment ADD COLUMN payment_proof_path TEXT;`,
+  `ALTER TABLE off_payment ADD COLUMN payment_proof_name TEXT;`,
+  `ALTER TABLE off_payment ADD COLUMN payment_proof_mime TEXT;`,
+  `ALTER TABLE off_payment ADD COLUMN payment_proof_size INTEGER;`,
+  `ALTER TABLE off_payment ADD COLUMN note TEXT;`,
+  `ALTER TABLE off_payment ADD COLUMN created_by TEXT;`,
+  `ALTER TABLE off_payment ADD COLUMN updated_at INTEGER;`,
+  `ALTER TABLE off_audit_log ADD COLUMN item_id TEXT;`,
 ];
 
 for (const sql of migrations) {
   try {
     await db.execute(sql);
   } catch (error) {
-    if (!String(error?.message || error).includes('duplicate column name')) {
+    if (!String(error?.message || error).includes("duplicate column name")) {
       throw error;
     }
   }
 }
 
-await db.execute(`UPDATE user SET role = 'viewer' WHERE role IS NULL OR role = '';`);
-await db.execute(`UPDATE user SET permissions = '{}' WHERE permissions IS NULL OR permissions = '';`);
+await db.execute(
+  `UPDATE user SET role = 'viewer' WHERE role IS NULL OR role = '';`,
+);
+await db.execute(
+  `UPDATE user SET permissions = '{}' WHERE permissions IS NULL OR permissions = '';`,
+);
 
-console.log('SQLite tables are ready');
+console.log("SQLite tables are ready");
