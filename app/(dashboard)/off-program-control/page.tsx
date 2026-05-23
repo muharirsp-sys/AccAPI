@@ -3247,7 +3247,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
     const status = String(batch.status || "");
     return (
       batch.smStatus === "Approved by SM" &&
-      !["Approved", "Returned"].includes(claimStatus) &&
+      !["Approved", "Returned", "Returned by Claim"].includes(claimStatus) &&
       ![
         "Cancelled",
         "Completed",
@@ -3255,6 +3255,19 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
         "Returned by Claim",
       ].includes(status)
     );
+  };
+
+  const isClaimInitialProcessableBatch = (batch: OffApiBatch) =>
+    isClaimQueueBatch(batch);
+
+  const isClaimInitialMonitoringBatch = (batch: OffApiBatch) => {
+    const claimStatus = String(batch.claimStatus || "");
+    const status = String(batch.status || "");
+    const wasProcessedByClaim =
+      ["Approved", "Returned", "Returned by Claim"].includes(claimStatus) ||
+      ["Claim Approved", "Returned by Claim", "Completed"].includes(status);
+
+    return isClaimInitialProcessableBatch(batch) || wasProcessedByClaim;
   };
 
   const isFinalQueueBatch = (batch: OffApiBatch) =>
@@ -3652,16 +3665,11 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
     }
   };
 
-  const claimInitialMonitoringBatches = allClaimBatches.filter((batch) => {
-    const claimStatus = String(batch.claimStatus || "");
-    const status = String(batch.status || "");
-    const isRelevant =
-      (batch.smStatus === "Approved by SM" || claimStatus !== "Not Started") &&
-      ["Waiting Review", "Approved", "Returned", "Returned by Claim"].some(
-        (value) => claimStatus === value || status === value,
-      );
-    return isRelevant && filterBatchesBySearch([batch], claimSearch).length > 0;
-  });
+  const claimInitialMonitoringBatches = allClaimBatches.filter(
+    (batch) =>
+      isClaimInitialMonitoringBatch(batch) &&
+      filterBatchesBySearch([batch], claimSearch).length > 0,
+  );
 
   const isFinalClaimProcessable = (batch: OffApiBatch) =>
     batch.financeStatus === "Paid" &&
@@ -3821,7 +3829,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {claimInitialMonitoringBatches.map((batch) => {
-                    const canProcess = isClaimQueueBatch(batch);
+                    const canProcess = isClaimInitialProcessableBatch(batch);
                     return (
                       <tr key={batch.id} className="hover:bg-white/[0.03]">
                         <td className="px-3 py-3 font-mono text-slate-200">
@@ -6657,3 +6665,5 @@ export default function OffProgramControlPage() {
     </div>
   );
 }
+
+
