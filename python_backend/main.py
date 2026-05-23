@@ -2,7 +2,7 @@
 # Tujuan: FastAPI backend untuk validator, payments restore/SPPD, finance approval, RBAC, proof upload, dan helper export.
 # Caller: Next.js dashboard routes, browser uploads, dan service local AccAPI.
 # Dependensi: FastAPI, pandas/openpyxl, payments.py, template DOCX SPPD, Better Auth SQLite DB, filesystem JSON/output, auth utilities.
-# Main Functions: render_sppd_docx, payments_upload, payments_clear, payments_sppd_settings_get/save/upload, payments_finance_data, payments_finance_proof, payments_finance_update.
+# Main Functions: render_sppd_docx, payments_upload, payments_clear, parse_lpb_upload, payments_sppd_settings_get/save/upload, payments_finance_data, payments_finance_proof, payments_finance_update.
 # Side Effects: HTTP response/download, file upload/read/write, payments.json backup/mutation, DOCX/XLSX generation, audit logging.
 # =======================================================================================================
 # You requested:
@@ -1596,14 +1596,26 @@ def parse_lpb_upload(content: bytes) -> List[Dict[str, Any]]:
         no_lpb = s(r[cols["NO. LPB"]])
         if not no_lpb:
             continue
+        nilai_win = parse_number_id(r[cols["NILAI WIN"]])
+        nilai_invoice = parse_number_id(_row_value(r, cols, "Nilai Invoice", "NILAI INVOICE", default=0))
         out.append({
             "no_lpb": no_lpb,
             "tgl_setor": to_date_str(r[cols["TGL. SETOR"]]),
             "tgl_win": to_date_str(r[cols["TGL. WIN"]]),
             "tgl_jtempo_win": to_date_str(r[cols["TGL. J. TEMPO WIN"]]),
             "principle": s(r[cols["PRINCIPLE"]]),
-            "nilai_win": parse_number_id(r[cols["NILAI WIN"]]),
+            "nilai_win": nilai_win,
             "tgl_terima_barang": to_date_str(r[cols["TGL TERIMA BARANG"]]),
+            "tgl_invoice": to_date_str(_row_value(r, cols, "Tgl Invoice", "TGL INVOICE", "TGL. INVOICE")),
+            "invoice_no": s(_row_value(r, cols, "No Invoice", "NO INVOICE", "NO. INVOICE")),
+            "nilai_invoice": nilai_invoice if nilai_invoice > 0 else "",
+            "jt_invoice": to_date_str(_row_value(r, cols, "J.T Invoice", "J.T INVOICE", "JT INVOICE", "JATUH TEMPO INVOICE")),
+            "actual_date": to_date_str(_row_value(r, cols, "Actual Date", "ACTUAL DATE")),
+            "tgl_pembayaran": to_date_str(_row_value(r, cols, "Tgl Pembayaran", "TGL PEMBAYARAN")),
+            "gap_nilai": (nilai_win - nilai_invoice) if nilai_invoice > 0 else 0.0,
+            "jenis_dokumen": s(_row_value(r, cols, "Jenis Dokumen", "JENIS DOKUMEN")),
+            "nomor_dokumen": s(_row_value(r, cols, "Nomor Dokumen", "NOMOR DOKUMEN")),
+            "keterangan": s(_row_value(r, cols, "Keterangan", "KETERANGAN")),
         })
     return out
 
@@ -5686,17 +5698,19 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
         now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
         for r in rows:
             key = normalize_lpb_no(r["no_lpb"])
+            nilai_invoice = parse_number_id(r.get("nilai_invoice", 0))
+            gap_nilai = parse_number_id(r.get("gap_nilai", 0))
             db["lpb"][key] = {
                 **r,
                 "record_id": key,
                 "tipe_pengajuan": "LPB",
-                "tgl_invoice": "",
-                "jt_invoice": "",
-                "tgl_pembayaran": "",
-                "actual_date": "",
-                "nilai_invoice": "",
-                "gap_nilai": 0.0,
-                "invoice_no": "",
+                "tgl_invoice": s(r.get("tgl_invoice", "")),
+                "jt_invoice": s(r.get("jt_invoice", "")),
+                "tgl_pembayaran": s(r.get("tgl_pembayaran", "")),
+                "actual_date": s(r.get("actual_date", "")),
+                "nilai_invoice": nilai_invoice if nilai_invoice > 0 else "",
+                "gap_nilai": gap_nilai,
+                "invoice_no": s(r.get("invoice_no", "")),
                 "status_pembayaran": "",
                 "payment_method": "",
                 "submitted_at": "",
@@ -5706,8 +5720,9 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
                 "potongan": 0.0,
                 "nilai_pembayaran": 0.0,
                 "target_payment_date": "",
-                "jenis_dokumen": "",
-                "nomor_dokumen": "",
+                "jenis_dokumen": s(r.get("jenis_dokumen", "")),
+                "nomor_dokumen": s(r.get("nomor_dokumen", "")),
+                "keterangan": s(r.get("keterangan", "")),
                 "created_at": now,
                 "created_by": user,
             }
