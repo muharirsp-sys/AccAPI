@@ -1,3 +1,11 @@
+/*
+ * Tujuan: Resolver role dan permission tahap untuk halaman OFF Program Control.
+ * Caller: app/(dashboard)/off-program-control/page.tsx.
+ * Dependensi: Field role/session Better Auth dan inferensi domain email internal.
+ * Main Functions: normalizeOffRole, resolveOffRole, getOffAccessibleTabs, canPerformOffAction.
+ * Side Effects: Tidak ada; hanya normalisasi role in-memory.
+ */
+
 export type OffRole =
   | "admin"
   | "supervisor"
@@ -70,7 +78,7 @@ export function normalizeOffRole(value?: unknown): OffRole {
     .replace(/\s+/g, "_")
     .replace(/-/g, "_");
 
-  if (role === "admin") return "admin";
+  if (role === "admin" || role === "manager") return "admin";
 
   if (role === "spv" || role === "supervisor") {
     return "supervisor";

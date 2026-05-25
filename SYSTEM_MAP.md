@@ -54,6 +54,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
 - `UI(ForgotPasswordPage) -> checkUserStatus() -> app/(auth)/actions.ts -> Drizzle(user) -> authClient.requestPasswordReset() -> Better Auth email flow -> lib/email[sendEmail] -> SMTP`
 - `UI(Dashboard/*) -> proxy.ts set x-current-path -> app/(dashboard)/layout.tsx -> auth.api.getSession() -> Drizzle user(role, permissions) -> lib/rbac.canAccessPath() -> redirect('/login' atau '/') bila session/permission tidak valid`
 - `UI(Admin Users & RBAC) -> app/(dashboard)/admin/users/UserManagement.tsx -> /api/admin/users/permissions[GET|POST] -> Drizzle user.permissions JSON -> Sidebar/layout/FastAPI memakai permission module/action yang sama`
+- `UI(OFF Program Control) -> app/(dashboard)/layout.tsx guard RBAC module off_program_control:view -> app/(dashboard)/off-program-control/page.tsx -> authClient.useSession() -> lib/off-program-control/access.resolveOffRole() -> role Better Auth manager dipetakan ke OFF admin agar izin RBAC manager tidak diblokir lagi oleh guard tab internal`
 - `UI(Dashboard payments/finance/SPPD) -> browser GET FastAPI /api/me untuk csrf_token -> POST/upload kirim X-CSRF-Token + Better Auth cookie -> python_backend/main.py[get_current_user] -> validasi session di BETTER_AUTH_DB_PATH -> role admin/manager/finance/staff/viewer + user.permissions -> user_has_permission() -> endpoint payments/finance/sppd`
 - `UI(API Wrapper) -> handleLoginAccurate() -> Accurate OAuth authorize -> app/api/auth/callback/route.ts[GET] -> Accurate OAuth token exchange -> redirect hash access_token -> UI`
 - `UI(API Wrapper) -> fetchDatabases()/handleOpenDatabase() -> app/api/auth/db-list|open-db/route.ts -> Accurate account API -> sessionStorage(host, session, token)`
@@ -109,6 +110,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - `app/(dashboard)/api-wrapper/page.tsx`
   - `app/(dashboard)/validator/page.tsx`
   - `app/(dashboard)/summary/page.tsx`
+  - `app/(dashboard)/off-program-control/page.tsx`
   - `app/(dashboard)/payments/page.tsx`
   - `app/(dashboard)/payments/sppd/page.tsx`
   - `app/(dashboard)/finance/page.tsx`
@@ -136,6 +138,9 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - `lib/auth.ts`
   - `lib/auth-client.ts`
   - `lib/rbac.ts`
+  - `lib/off-program-control/access.ts`
+  - `lib/off-program-control/constants.ts`
+  - `lib/off-program-control/workflow.ts`
   - `lib/db.ts`
   - `lib/apiFetcher.ts`
   - `lib/sync.ts`
