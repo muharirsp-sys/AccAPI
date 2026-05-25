@@ -158,6 +158,9 @@ export const offBatch = sqliteTable("off_batch", {
     pdfPath: text("pdf_path"),
     pdfGeneratedAt: integer("pdf_generated_at", { mode: "timestamp" }),
     pdfStatus: text("pdf_status").notNull().default("pending"),
+    receiptPdfPath: text("receipt_pdf_path"),
+    receiptPdfGeneratedAt: integer("receipt_pdf_generated_at", { mode: "timestamp" }),
+    receiptPdfStatus: text("receipt_pdf_status").notNull().default("pending"),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 });

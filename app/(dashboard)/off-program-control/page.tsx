@@ -131,6 +131,7 @@ type OffApiBatch = {
   finalClaimNote?: string | null;
   locked: boolean;
   pdfUrl?: string | null;
+  receiptPdfUrl?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
   summary?: BatchQueueSummary;
@@ -761,6 +762,8 @@ function BatchMonitoringTable({
   batches,
   selectedBatchId,
   onSelect,
+  onPrintReceipt,
+  printingReceiptBatchId,
   actionLabel,
   emptyText = "Belum ada batch yang cocok.",
   stickyAction = false,
@@ -768,6 +771,8 @@ function BatchMonitoringTable({
   batches: OffApiBatch[];
   selectedBatchId?: string | null;
   onSelect: (batch: OffApiBatch) => void;
+  onPrintReceipt?: (batch: OffApiBatch) => void;
+  printingReceiptBatchId?: string;
   actionLabel: (batch: OffApiBatch) => string;
   emptyText?: string;
   stickyAction?: boolean;
@@ -881,7 +886,7 @@ function BatchMonitoringTable({
               <td
                 className={`px-3 py-3 ${
                   stickyAction
-                    ? "sticky right-0 z-20 min-w-[150px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                    ? "sticky right-0 z-20 min-w-[170px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
                     : ""
                 }`}
               >
@@ -891,6 +896,17 @@ function BatchMonitoringTable({
                 >
                   {actionLabel(batch)}
                 </button>
+                {onPrintReceipt && (
+                  <button
+                    onClick={() => onPrintReceipt(batch)}
+                    disabled={printingReceiptBatchId === batch.id}
+                    className="mt-2 w-full rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-bold text-indigo-200 hover:bg-indigo-500/20 disabled:cursor-wait disabled:opacity-50"
+                  >
+                    {printingReceiptBatchId === batch.id
+                      ? "Membuat..."
+                      : "Print Kwitansi"}
+                  </button>
+                )}
               </td>
             </tr>
           ))}
@@ -1636,6 +1652,8 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
   const [bulanInput, setBulanInput] = useState("05");
   const [tahunInput, setTahunInput] = useState("2026");
   const [submitStatus, setSubmitStatus] = useState("");
+  const [receiptStatus, setReceiptStatus] = useState("");
+  const [printingReceiptBatchId, setPrintingReceiptBatchId] = useState("");
   const [submitResult, setSubmitResult] = useState<{
     batchId: string;
     noPengajuan: string;
@@ -1994,6 +2012,41 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
     }
   };
 
+  const handlePrintKwitansi = async (batch: OffApiBatch) => {
+    setPrintingReceiptBatchId(batch.id);
+    setReceiptStatus(`Membuat PDF kwitansi ${batch.noPengajuan}...`);
+    try {
+      const response = await fetch(
+        `/api/off-program-control/batches/${batch.id}/kwitansi`,
+        {
+          method: "POST",
+          credentials: "include",
+        },
+      );
+      if (!response.ok) {
+        const data = await parseJsonResponse(response);
+        throw new Error(String(data.error || "Gagal membuat PDF kwitansi."));
+      }
+      if (!response.headers.get("content-type")?.includes("application/pdf")) {
+        throw new Error("Response kwitansi bukan dokumen PDF.");
+      }
+      const pdfBlob = await response.blob();
+      const blobUrl = URL.createObjectURL(pdfBlob);
+      window.open(blobUrl, "_blank");
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+      setReceiptStatus(`PDF kwitansi ${batch.noPengajuan} berhasil dibuat.`);
+      await loadReturnedBatches();
+    } catch (error) {
+      setReceiptStatus(
+        error instanceof Error
+          ? error.message
+          : "Gagal membuat PDF kwitansi.",
+      );
+    } finally {
+      setPrintingReceiptBatchId("");
+    }
+  };
+
   const supervisorMonitoringStatusOptions =
     getBatchStatusOptions(allSupervisorBatches);
 
@@ -2025,6 +2078,12 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
 
       <IncompleteDocumentsReminderPanel batches={allSupervisorBatches} />
 
+      {receiptStatus && (
+        <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
+          {receiptStatus}
+        </div>
+      )}
+
       {supervisorMenu === "monitoring" && (
         <Panel title="Monitoring Semua Status" icon={ReceiptText}>
           <div className="mb-4 grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
@@ -2045,6 +2104,8 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
             selectedBatchId={editingBatchId}
             stickyAction
             onSelect={openReturnedBatch}
+            onPrintReceipt={handlePrintKwitansi}
+            printingReceiptBatchId={printingReceiptBatchId}
             actionLabel={(batch) =>
               batch.status === "Draft"
                 ? "Buka Draf"
@@ -2109,14 +2170,25 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           {displayStatusLabel(batch.status)}
                         </span>
                       </div>
-                      {canEditSupervisor && (
+                      <div className="flex flex-col gap-2">
+                        {canEditSupervisor && (
+                          <button
+                            onClick={() => openReturnedBatch(batch)}
+                            className="inline-flex items-center justify-center rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
+                          >
+                            Buka Revisi
+                          </button>
+                        )}
                         <button
-                          onClick={() => openReturnedBatch(batch)}
-                          className="inline-flex items-center justify-center rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
+                          onClick={() => handlePrintKwitansi(batch)}
+                          disabled={printingReceiptBatchId === batch.id}
+                          className="inline-flex items-center justify-center rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-2 text-sm font-bold text-indigo-200 hover:bg-indigo-500/20 disabled:cursor-wait disabled:opacity-50"
                         >
-                          Buka Revisi
+                          {printingReceiptBatchId === batch.id
+                            ? "Membuat..."
+                            : "Print Kwitansi"}
                         </button>
-                      )}
+                      </div>
                     </div>
                   </div>
                 );

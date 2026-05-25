@@ -43,6 +43,41 @@ export function money(value: number | null | undefined) {
     return `Rp ${Number(value || 0).toLocaleString("id-ID")}`;
 }
 
+function terbilang(value: number): string {
+    const units = ["", "Satu", "Dua", "Tiga", "Empat", "Lima", "Enam", "Tujuh", "Delapan", "Sembilan", "Sepuluh", "Sebelas"];
+    if (value < 12) return units[value];
+    if (value < 20) return `${terbilang(value - 10)} Belas`;
+    if (value < 100) return `${terbilang(Math.floor(value / 10))} Puluh ${terbilang(value % 10)}`.trim();
+    if (value < 200) return `Seratus ${terbilang(value - 100)}`.trim();
+    if (value < 1000) return `${terbilang(Math.floor(value / 100))} Ratus ${terbilang(value % 100)}`.trim();
+    if (value < 2000) return `Seribu ${terbilang(value - 1000)}`.trim();
+    if (value < 1000000) return `${terbilang(Math.floor(value / 1000))} Ribu ${terbilang(value % 1000)}`.trim();
+    if (value < 1000000000) return `${terbilang(Math.floor(value / 1000000))} Juta ${terbilang(value % 1000000)}`.trim();
+    if (value < 1000000000000) return `${terbilang(Math.floor(value / 1000000000))} Miliar ${terbilang(value % 1000000000)}`.trim();
+    return `${terbilang(Math.floor(value / 1000000000000))} Triliun ${terbilang(value % 1000000000000)}`.trim();
+}
+
+export function terbilangRupiah(value: number | null | undefined) {
+    const amount = Math.floor(Number(value || 0));
+    if (amount <= 0) return "Nol Rupiah";
+    return `${terbilang(amount)} Rupiah`.replace(/\s+/g, " ").trim();
+}
+
+export function indonesianMonthName(value: string | number) {
+    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+    const index = Number(value) - 1;
+    return months[index] || String(value);
+}
+
+export function formatIndonesianLongDate(value: Date = new Date()) {
+    return new Intl.DateTimeFormat("id-ID", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "Asia/Makassar",
+    }).format(value);
+}
+
 export function docsLabel(item: OffItemRow) {
     const docs = [
         item.kwt ? "KWT" : "",
@@ -84,6 +119,7 @@ export function publicBatch(batch: OffBatchRow) {
     return {
         ...batch,
         pdfUrl: batch.pdfPath ? `/api/off-program-control/batches/${batch.id}/pdf` : null,
+        receiptPdfUrl: batch.receiptPdfPath ? `/api/off-program-control/batches/${batch.id}/kwitansi` : null,
     };
 }
 
