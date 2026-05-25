@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem } from "@/db/schema";
-import { buildNoPengajuan, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, getPrincipleByCode, getPrincipleByName, getBatchWithItems, parseCurrency, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { buildNoPengajuan, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, findDuplicateNoSuratWithinPayload, findOffNoSuratConflicts, getPrincipleByCode, getPrincipleByName, getBatchWithItems, parseCurrency, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -113,13 +113,48 @@ export async function PATCH(request: Request, context: Context) {
         await db.update(offBatch).set(patch).where(eq(offBatch.id, id));
 
         if (Array.isArray(body.items)) {
+            // Validasi duplikat No Surat (per principle, kecuali batch yang sudah Cancelled by OM).
+            const force = body.forceDuplicateNoSurat === true || body.forceDuplicateNoSurat === "true";
+            const candidateNoSurats = (body.items as Array<Record<string, unknown>>)
+                .map((item) => String(item.noSurat || "").trim())
+                .filter((value) => value.length > 0);
+
+            const intraDuplicates = findDuplicateNoSuratWithinPayload(candidateNoSurats);
+            if (intraDuplicates.length > 0) {
+                return NextResponse.json({
+                    ok: false,
+                    code: "DUPLICATE_NO_SURAT_IN_PAYLOAD",
+                    message: `No Surat tidak boleh sama dalam satu batch: ${intraDuplicates.join(", ")}`,
+                    duplicates: intraDuplicates,
+                }, { status: 409 });
+            }
+
+            if (!force && candidateNoSurats.length > 0) {
+                const conflictMap = await findOffNoSuratConflicts({
+                    principleCode: nextPrinciple.code,
+                    noSurats: candidateNoSurats,
+                    excludeBatchId: id,
+                });
+                if (conflictMap.size > 0) {
+                    const conflicts = Array.from(conflictMap.values()).flat();
+                    return NextResponse.json({
+                        ok: false,
+                        code: "DUPLICATE_NO_SURAT",
+                        message: `No Surat berikut sudah pernah dipakai pada principle ${nextPrinciple.name}: ${Array.from(conflictMap.keys()).join(", ")}. Konfirmasi ulang jika ingin tetap melanjutkan.`,
+                        principleCode: nextPrinciple.code,
+                        principleName: nextPrinciple.name,
+                        conflicts,
+                    }, { status: 409 });
+                }
+            }
+
             await db.delete(offBatchItem).where(eq(offBatchItem.batchId, id));
             await db.insert(offBatchItem).values(body.items.map((item: Record<string, unknown>, index: number) => ({
                 id: randomUUID(),
                 batchId: id,
                 itemNo: index + 1,
                 rowNo: index + 1,
-                noSurat: String(item.noSurat || ""),
+                noSurat: String(item.noSurat || "").trim(),
                 namaProgram: String(item.namaProgram || item.program || `Program ${index + 1}`),
                 periode: periodText(item),
                 toko: String(item.toko || ""),

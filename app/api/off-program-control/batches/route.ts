@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem, offPayment } from "@/db/schema";
-import { buildNoPengajuan, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, getPrincipleByCode, getPrincipleByName, parseCurrency, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { buildNoPengajuan, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, findDuplicateNoSuratWithinPayload, findOffNoSuratConflicts, getPrincipleByCode, getPrincipleByName, parseCurrency, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
 
 function asNumber(value: unknown) {
     return parseCurrency(value);
@@ -35,7 +35,7 @@ function normalizeItems(items: unknown[]) {
             id: randomUUID(),
             itemNo: index + 1,
             rowNo: index + 1,
-            noSurat: String(row.noSurat || ""),
+            noSurat: String(row.noSurat || "").trim(),
             namaProgram: String(row.namaProgram || row.program || `Program ${index + 1}`),
             periode: periodText(row),
             toko: String(row.toko || ""),
@@ -137,6 +137,40 @@ export async function POST(request: Request) {
 
         const items = normalizeItems(Array.isArray(body.items) ? body.items : []);
         if (items.length === 0) return NextResponse.json({ ok: false, error: "At least one item is required" }, { status: 400 });
+
+        // Validasi duplikat No Surat (per principle, kecuali batch yang sudah Cancelled by OM).
+        const force = body.forceDuplicateNoSurat === true || body.forceDuplicateNoSurat === "true";
+        const candidateNoSurats = items
+            .map((item) => String(item.noSurat || "").trim())
+            .filter((value) => value.length > 0);
+
+        const intraDuplicates = findDuplicateNoSuratWithinPayload(candidateNoSurats);
+        if (intraDuplicates.length > 0) {
+            return NextResponse.json({
+                ok: false,
+                code: "DUPLICATE_NO_SURAT_IN_PAYLOAD",
+                message: `No Surat tidak boleh sama dalam satu batch: ${intraDuplicates.join(", ")}`,
+                duplicates: intraDuplicates,
+            }, { status: 409 });
+        }
+
+        if (!force && candidateNoSurats.length > 0) {
+            const conflictMap = await findOffNoSuratConflicts({
+                principleCode: principle.code,
+                noSurats: candidateNoSurats,
+            });
+            if (conflictMap.size > 0) {
+                const conflicts = Array.from(conflictMap.values()).flat();
+                return NextResponse.json({
+                    ok: false,
+                    code: "DUPLICATE_NO_SURAT",
+                    message: `No Surat berikut sudah pernah dipakai pada principle ${principle.name}: ${Array.from(conflictMap.keys()).join(", ")}. Konfirmasi ulang jika ingin tetap melanjutkan.`,
+                    principleCode: principle.code,
+                    principleName: principle.name,
+                    conflicts,
+                }, { status: 409 });
+            }
+        }
 
         const now = new Date();
         const batchId = randomUUID();

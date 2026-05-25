@@ -200,6 +200,21 @@ type OffNotificationPreview = {
   status?: string;
 };
 
+type OffNoSuratConflict = {
+  noSurat: string;
+  batchId: string;
+  noPengajuan: string;
+  principleCode: string;
+  principleName: string;
+  status: string;
+};
+
+type SupervisorDuplicatePrompt = {
+  mode: "draft" | "submit";
+  principleName: string;
+  conflicts: OffNoSuratConflict[];
+};
+
 type BatchQueueSummary = {
   rowCount?: number;
   totalNominal: number;
@@ -1640,6 +1655,106 @@ function IncompleteDocumentsReminderPanel({
   );
 }
 
+function DuplicateNoSuratPrompt({
+  prompt,
+  isSubmitting,
+  onCancel,
+  onConfirm,
+}: {
+  prompt: SupervisorDuplicatePrompt;
+  isSubmitting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const conflictsByNoSurat = prompt.conflicts.reduce<
+    Record<string, OffNoSuratConflict[]>
+  >((acc, conflict) => {
+    const key = conflict.noSurat;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(conflict);
+    return acc;
+  }, {});
+  const noSuratList = Object.keys(conflictsByNoSurat);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div className="w-full max-w-3xl rounded-2xl border border-amber-400/20 bg-[#15161f] shadow-2xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-white/10 bg-amber-500/10 flex items-start gap-3">
+          <AlertTriangle className="text-amber-300 mt-0.5" size={22} />
+          <div>
+            <h3 className="text-lg font-semibold text-white">
+              No Surat Sudah Pernah Dipakai
+            </h3>
+            <p className="text-sm text-amber-100/80 mt-1">
+              Pada principle {prompt.principleName}, beberapa No Surat di batch ini sudah
+              tercatat di pengajuan lain. Pastikan ini bukan pengajuan ganda.
+            </p>
+          </div>
+        </div>
+        <div className="max-h-[55vh] overflow-auto">
+          <table className="w-full text-left text-sm text-slate-200">
+            <thead className="sticky top-0 bg-[#1b1c26] border-b border-white/10 text-xs uppercase tracking-wider text-white/70">
+              <tr>
+                <th className="px-4 py-3">No Surat</th>
+                <th className="px-4 py-3">Dipakai di Batch</th>
+                <th className="px-4 py-3">Status Batch</th>
+              </tr>
+            </thead>
+            <tbody>
+              {noSuratList.map((noSurat) => {
+                const items = conflictsByNoSurat[noSurat] || [];
+                return items.map((conflict, index) => (
+                  <tr
+                    key={`${noSurat}-${conflict.batchId}-${index}`}
+                    className="border-b border-white/5"
+                  >
+                    {index === 0 ? (
+                      <td
+                        className="px-4 py-3 align-top font-mono font-bold text-white"
+                        rowSpan={items.length}
+                      >
+                        {noSurat}
+                      </td>
+                    ) : null}
+                    <td className="px-4 py-3 font-mono text-teal-200">
+                      {conflict.noPengajuan}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(conflict.status)}`}
+                      >
+                        {displayStatusLabel(conflict.status)}
+                      </span>
+                    </td>
+                  </tr>
+                ));
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="px-6 py-4 border-t border-white/10 bg-black/30 flex flex-col gap-3 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isSubmitting}
+            className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Batalkan dan Cek Ulang
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isSubmitting}
+            className="rounded-xl border border-amber-500 bg-amber-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isSubmitting ? "Memproses..." : "Saya Yakin, Lanjutkan"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SupervisorDashboard({ offRole }: OffDashboardProps) {
   const canSubmitSupervisor = canPerformOffAction(offRole, "submit_batch");
   const canEditSupervisor = canPerformOffAction(offRole, "edit_returned_batch");
@@ -1679,6 +1794,8 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
   const [editingLocked, setEditingLocked] = useState(false);
   const [returnNote, setReturnNote] = useState("");
   const [returnedStatus, setReturnedStatus] = useState("");
+  const [duplicatePrompt, setDuplicatePrompt] =
+    useState<SupervisorDuplicatePrompt | null>(null);
   const gelombang = gelombangInput.padStart(3, "0");
   const bulan = bulanInput.padStart(2, "0");
   const tahun = tahunInput;
@@ -1855,7 +1972,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
       othersText: row.othersText,
     }));
 
-  const saveDraft = async () => {
+  const saveDraft = async (options?: { forceDuplicateNoSurat?: boolean }) => {
     if (editingLocked) {
       setSubmitStatus("Batch baca-saja dan tidak bisa disimpan sebagai draf.");
       return;
@@ -1881,10 +1998,29 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
             bulan,
             tahun,
             items,
+            forceDuplicateNoSurat: options?.forceDuplicateNoSurat === true,
           }),
         },
       );
       const data = await parseJsonResponse(response);
+      if (
+        response.status === 409 &&
+        data.code === "DUPLICATE_NO_SURAT" &&
+        Array.isArray((data as { conflicts?: unknown }).conflicts)
+      ) {
+        setDuplicatePrompt({
+          mode: "draft",
+          principleName: String(
+            (data as { principleName?: string }).principleName || batchPrinciple,
+          ),
+          conflicts: ((data as { conflicts?: unknown }).conflicts ||
+            []) as OffNoSuratConflict[],
+        });
+        setSubmitStatus(
+          "Beberapa No Surat sudah pernah dipakai pada principle yang sama. Mohon konfirmasi.",
+        );
+        return;
+      }
       if (!response.ok || !data.ok)
         throw new Error(
           String(data.message || data.error || "Gagal menyimpan draf."),
@@ -1905,7 +2041,9 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
     }
   };
 
-  const handleSubmitBatch = async () => {
+  const handleSubmitBatch = async (options?: {
+    forceDuplicateNoSurat?: boolean;
+  }) => {
     if (editingLocked) {
       setSubmitStatus(
         "Batch sudah disetujui oleh SM dan terkunci untuk Supervisor.",
@@ -1939,10 +2077,30 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
             bulan,
             tahun,
             items,
+            forceDuplicateNoSurat: options?.forceDuplicateNoSurat === true,
           }),
         },
       );
       const saveData = await parseJsonResponse(saveRes);
+      if (
+        saveRes.status === 409 &&
+        saveData.code === "DUPLICATE_NO_SURAT" &&
+        Array.isArray((saveData as { conflicts?: unknown }).conflicts)
+      ) {
+        setDuplicatePrompt({
+          mode: "submit",
+          principleName: String(
+            (saveData as { principleName?: string }).principleName ||
+              batchPrinciple,
+          ),
+          conflicts: ((saveData as { conflicts?: unknown }).conflicts ||
+            []) as OffNoSuratConflict[],
+        });
+        setSubmitStatus(
+          "Beberapa No Surat sudah pernah dipakai pada principle yang sama. Mohon konfirmasi sebelum dikirim ke SM.",
+        );
+        return;
+      }
       if (saveData.code === "ALREADY_SUBMITTED") {
         const existingPdfUrl = String(saveData.pdfUrl || "");
         setPdfUrl(existingPdfUrl);
@@ -2510,7 +2668,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                 <Plus size={16} /> Tambah Baris
               </button>
               <button
-                onClick={saveDraft}
+                onClick={() => saveDraft()}
                 disabled={isSubmitting || editingLocked}
                 className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -2518,7 +2676,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
               </button>
               {canSubmitSupervisor ? (
                 <button
-                  onClick={handleSubmitBatch}
+                  onClick={() => handleSubmitBatch()}
                   disabled={isSubmitting || editingLocked}
                   className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
                 >
@@ -2627,6 +2785,31 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
             </p>
           </Panel>
         </>
+      )}
+
+      {duplicatePrompt && (
+        <DuplicateNoSuratPrompt
+          prompt={duplicatePrompt}
+          isSubmitting={isSubmitting}
+          onCancel={() => {
+            const mode = duplicatePrompt.mode;
+            setDuplicatePrompt(null);
+            setSubmitStatus(
+              mode === "submit"
+                ? "Pengiriman dibatalkan oleh Supervisor."
+                : "Penyimpanan draf dibatalkan oleh Supervisor.",
+            );
+          }}
+          onConfirm={() => {
+            const mode = duplicatePrompt.mode;
+            setDuplicatePrompt(null);
+            if (mode === "submit") {
+              void handleSubmitBatch({ forceDuplicateNoSurat: true });
+            } else {
+              void saveDraft({ forceDuplicateNoSurat: true });
+            }
+          }}
+        />
       )}
     </div>
   );
