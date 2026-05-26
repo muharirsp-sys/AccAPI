@@ -93,7 +93,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
 - `UI(Finance) -> POST /payments/finance/proof -> payments_finance_proof_upload() -> simpan bukti transfer PDF/JPG/PNG ke output/payments/proofs + metadata hash di payments.json`
 - `UI(Finance) -> accurateFetch('/api/purchase-payment/bulk-save.do') -> app/api/proxy/route.ts -> Accurate purchase-payment bulk-save setelah status Sudah Transfer, tanggal transfer, bukti, vendorNo, bankNo, dan invoice valid`
 - `UI(Finance) -> POST /payments/finance/update -> payments_finance_update() -> update status pembayaran, proof metadata, dan hasil post Accurate di payments.json`
-- `UI(Date fields) -> DatePickerField read-only -> lib/date/indonesiaHolidays formatDateForDisplay/formatDateForApi/isHoliday/isSunday/getHolidayName -> payload tetap YYYY-MM-DD, display Indonesia, tanggal merah/cuti bersama/hari Minggu ditandai di calendar`
+- `UI(Date fields) -> DatePickerField read-only custom day renderer -> lib/date/indonesiaHolidays formatDateForDisplay/formatDateForApi/isHoliday/isSunday/isRedDate/getHolidayName -> payload tetap YYYY-MM-DD, display Indonesia, tanggal merah/cuti bersama/hari Minggu ditandai di calendar termasuk selected/today/focus state`
 - `UI(Principles) -> POST /api/principles/add|{pid}/delete -> file master Excel di data/masters + metadata principles di SQLite(database.sqlite)`
 - `Accurate Webhook -> app/api/webhook/accurate/route.ts[POST] -> whitelist/log payload -> append webhook_events.log`
 
@@ -452,7 +452,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - `DatePickerField`
   - Input tanggal read-only berbasis calendar picker, memblok manual typing/paste, dan menandai tanggal merah Indonesia/hari Minggu via helper reusable.
 - `lib/date/indonesiaHolidays.ts`
-  - `formatDateForDisplay`, `formatDateForApi`, `isHoliday`, `isSunday`, `getHolidayName`
+  - `formatDateForDisplay`, `formatDateForApi`, `isHoliday`, `isSunday`, `isRedDate`, `getHolidayName`
   - Helper reusable pemisah format display vs payload API dan data libur nasional/cuti bersama Indonesia.
 - `app/(dashboard)/principles/page.tsx`
   - `PrincipleManagementPage`, `fetchPrinciples`, `handleUpload`, `handleDelete`

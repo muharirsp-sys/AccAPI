@@ -2,7 +2,7 @@
  * Tujuan: Helper format tanggal API/display dan penanda tanggal merah Indonesia.
  * Caller: DatePickerField dan halaman dashboard yang memakai input tanggal.
  * Dependensi: date-fns untuk formatting kalender lokal.
- * Main Functions: formatDateForDisplay, formatDateForApi, isHoliday, isSunday, getHolidayName.
+ * Main Functions: formatDateForDisplay, formatDateForApi, isHoliday, isSunday, isRedDate, getHolidayName.
  * Side Effects: Tidak ada; data libur nasional/cuti bersama disimpan in-memory.
  */
 
@@ -91,6 +91,10 @@ export function getHoliday(value?: string | Date | null): IndonesiaHoliday | und
 
 export function isHoliday(value?: string | Date | null): boolean {
     return Boolean(getHoliday(value));
+}
+
+export function isRedDate(value?: string | Date | null): boolean {
+    return isHoliday(value) || isSunday(value);
 }
 
 export function getHolidayName(value?: string | Date | null): string {

@@ -1,19 +1,19 @@
 "use client";
 
 /*
- * Tujuan: Input tanggal read-only dengan calendar picker dan penanda tanggal merah Indonesia.
+ * Tujuan: Input tanggal read-only dengan calendar picker dan custom day renderer penanda tanggal merah Indonesia.
  * Caller: Halaman dashboard yang membutuhkan tanggal konsisten tanpa manual typing/paste.
  * Dependensi: date-fns, lucide-react, helper lib/date/indonesiaHolidays.
  * Main Functions: DatePickerField.
  * Side Effects: Render portal dropdown calendar ke document.body saat picker dibuka.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { addMonths, eachDayOfInterval, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, startOfMonth, startOfWeek, subMonths } from "date-fns";
 import { id as idLocale } from "date-fns/locale";
 import { Calendar, ChevronLeft, ChevronRight, X } from "lucide-react";
-import { formatDateForApi, formatDateForDisplay, getHolidayName, isHoliday, isSunday, parseApiDate } from "@/lib/date/indonesiaHolidays";
+import { formatDateForApi, formatDateForDisplay, getHolidayName, isHoliday, isRedDate, isSunday, parseApiDate } from "@/lib/date/indonesiaHolidays";
 
 type DatePickerFieldProps = {
     value?: string;
@@ -47,17 +47,13 @@ export default function DatePickerField({
     const [month, setMonth] = useState(() => startOfMonth(selectedDate || new Date()));
     const [panelPosition, setPanelPosition] = useState({ top: 0, left: 0, width: 308 });
 
-    useEffect(() => {
-        if (selectedDate) setMonth(startOfMonth(selectedDate));
-    }, [value]);
-
     const days = useMemo(() => {
         const start = startOfWeek(startOfMonth(month), { weekStartsOn: 1 });
         const end = endOfWeek(endOfMonth(month), { weekStartsOn: 1 });
         return eachDayOfInterval({ start, end });
     }, [month]);
 
-    const updatePanelPosition = () => {
+    const updatePanelPosition = useCallback(() => {
         const rect = anchorRef.current?.getBoundingClientRect();
         if (!rect) return;
         const width = 308;
@@ -67,17 +63,18 @@ export default function DatePickerField({
             left,
             width,
         });
-    };
+    }, []);
 
     const openPicker = () => {
         if (disabled) return;
+        setMonth(startOfMonth(selectedDate || new Date()));
         setOpen(true);
         window.setTimeout(updatePanelPosition, 0);
     };
 
     useEffect(() => {
         if (!open) return;
-        updatePanelPosition();
+        const initialFrame = window.requestAnimationFrame(updatePanelPosition);
 
         const handlePointerDown = (event: MouseEvent) => {
             const target = event.target as Node;
@@ -90,16 +87,18 @@ export default function DatePickerField({
         window.addEventListener("resize", handleReposition);
         window.addEventListener("scroll", handleReposition, true);
         return () => {
+            window.cancelAnimationFrame(initialFrame);
             document.removeEventListener("mousedown", handlePointerDown);
             window.removeEventListener("resize", handleReposition);
             window.removeEventListener("scroll", handleReposition, true);
         };
-    }, [open]);
+    }, [open, updatePanelPosition]);
 
     const calendar = open && typeof document !== "undefined"
         ? createPortal(
             <div
                 ref={panelRef}
+                data-accapi-date-picker-calendar="true"
                 className="fixed z-[9999] rounded-xl border border-white/10 bg-[#11141b] p-3 shadow-2xl shadow-black/40"
                 style={{ top: panelPosition.top, left: panelPosition.left, width: panelPosition.width }}
             >
@@ -134,13 +133,22 @@ export default function DatePickerField({
                         const dayValue = formatDateForApi(day);
                         const selected = selectedDate ? isSameDay(day, selectedDate) : false;
                         const outside = !isSameMonth(day, month);
-                        const redDate = isHoliday(day) || isSunday(day);
+                        const today = isSameDay(day, new Date());
+                        const holiday = isHoliday(day);
+                        const sunday = isSunday(day);
+                        const redDate = isRedDate(day);
                         const holidayName = getHolidayName(day);
 
                         return (
                             <button
                                 key={dayValue}
                                 type="button"
+                                data-date={dayValue}
+                                data-red-date={redDate ? "true" : "false"}
+                                data-holiday={holiday ? "true" : "false"}
+                                data-sunday={sunday ? "true" : "false"}
+                                data-today={today ? "true" : "false"}
+                                data-selected={selected ? "true" : "false"}
                                 title={holidayName || formatDateForDisplay(day)}
                                 aria-label={`${formatDateForDisplay(day)}${holidayName ? `, ${holidayName}` : ""}`}
                                 onClick={() => {
@@ -148,17 +156,36 @@ export default function DatePickerField({
                                     setOpen(false);
                                 }}
                                 className={cn(
-                                    "relative flex h-9 items-center justify-center rounded-lg border text-sm transition-colors",
-                                    outside ? "border-transparent text-slate-700" : "border-white/5 text-slate-200",
-                                    redDate && !selected && "border-red-500/20 bg-red-500/10 text-red-300",
-                                    isSunday(day) && !selected && "font-bold",
-                                    selected && "border-emerald-400 bg-emerald-500 text-white shadow-lg shadow-emerald-500/20",
-                                    !selected && "hover:border-white/20 hover:bg-white/10"
+                                    "relative flex h-9 items-center justify-center rounded-lg border text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-45",
+                                    outside && !redDate && "border-transparent text-slate-700",
+                                    outside && redDate && "border-red-500/20 bg-red-500/5 text-red-400/70",
+                                    !outside && !redDate && !selected && "border-white/5 text-slate-200 hover:border-white/20 hover:bg-white/10",
+                                    redDate && !selected && "border-red-500/50 bg-red-500/10 text-red-300 hover:border-red-300 hover:bg-red-500/20 hover:text-red-100 focus-visible:ring-red-400/70",
+                                    redDate && "font-bold",
+                                    selected && !redDate && "border-emerald-400 bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 focus-visible:ring-emerald-300/70",
+                                    selected && redDate && "border-red-200 bg-red-600 text-white shadow-lg shadow-red-500/25 ring-2 ring-red-300/80 focus-visible:ring-red-100",
+                                    today && !selected && !redDate && "ring-1 ring-sky-400/60",
+                                    today && !selected && redDate && "ring-2 ring-red-300/70"
                                 )}
                             >
                                 {format(day, "d")}
-                                {isHoliday(day) && (
-                                    <span className={cn("absolute bottom-1 h-1 w-1 rounded-full", selected ? "bg-white" : "bg-red-300")} />
+                                {redDate && (
+                                    <span
+                                        aria-hidden="true"
+                                        className={cn(
+                                            "absolute bottom-1 h-1.5 w-1.5 rounded-full",
+                                            selected ? "bg-white" : holiday ? "bg-red-200" : "bg-red-400"
+                                        )}
+                                    />
+                                )}
+                                {holiday && (
+                                    <span
+                                        aria-hidden="true"
+                                        className={cn(
+                                            "absolute right-1 top-1 h-1.5 w-1.5 rounded-full",
+                                            selected ? "bg-red-100" : "bg-red-300"
+                                        )}
+                                    />
                                 )}
                             </button>
                         );
@@ -173,18 +200,21 @@ export default function DatePickerField({
         : null;
 
     return (
-        <div ref={anchorRef} className="relative">
+        <div ref={anchorRef} data-accapi-date-picker="true" className="relative">
             <Calendar size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
                 type="text"
                 readOnly
+                inputMode="none"
                 aria-label={ariaLabel}
                 value={formatDateForDisplay(value)}
                 placeholder={placeholder}
                 disabled={disabled}
                 onClick={openPicker}
                 onFocus={openPicker}
+                onBeforeInput={(event) => event.preventDefault()}
                 onPaste={(event) => event.preventDefault()}
+                onDrop={(event) => event.preventDefault()}
                 onKeyDown={(event) => {
                     if (["Tab", "Shift", "Escape"].includes(event.key)) {
                         if (event.key === "Escape") setOpen(false);

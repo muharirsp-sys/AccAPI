@@ -299,7 +299,9 @@ export default function PaymentsPage() {
                     return;
                 }
                 if (skippedCount > 0) {
-                    const updatedIds = new Set((res.data.updated_ids || []).map((value: unknown) => String(value)));
+                    const updatedIds = new Set<string>(
+                        (Array.isArray(res.data.updated_ids) ? res.data.updated_ids : []).map((value: unknown) => String(value))
+                    );
                     setPendingChanges(prev => {
                         const next = { ...prev };
                         updatedIds.forEach((id) => delete next[id]);
