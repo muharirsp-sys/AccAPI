@@ -80,6 +80,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
 - `UI(Summary) -> POST /summary/manual/generate -> summary_manual_generate() -> matching master items/customer -> output summary_manual(form+dataset) -> /summary/manual/download/{file_id}/{kind}`
 - `UI(Summary) -> POST /summary/manual/email -> summary_manual_email() -> background email sender -> SMTP server`
 - `UI(Payments) -> GET /payments/data -> FastAPI validasi Better Auth SQLite session + RBAC -> load_payments_db() -> payments.json -> client-side filter + pagination + format semua nilai decimal US 2 digit agar grid besar tidak merender semua input sekaligus dan input invoice tidak kehilangan sen`
+- `UI(Payments bulk edit) -> local pendingChanges hanya field yang berubah -> POST /payments/update dengan id + patch field dirty -> FastAPI resolve record_id/id/no_lpb -> update hanya key yang hadir dan preserve field lain -> fetchData refresh sukses baru clear pendingChanges`
 - `UI(Payments) -> POST /payments/upload|manual/add|update|delete -> FastAPI validasi Better Auth SQLite session + RBAC -> auto-detect template LPB lengkap atau backup PAYMENTS export -> simpan LPB plus optional invoice/dokumen/keterangan ke payments.json`
 - `UI(Payments Admin Clear) -> POST /payments/clear -> FastAPI admin-only + CSRF -> backup payments.json -> kosongkan lpb/submissions/drafts/proofs sambil preserve finance_mappings/sppd_settings/sppd_seq`
 - `UI(Payments) -> POST /payments/cart/create -> payments_cart_create() -> selected LPB -> draft -> payments.json`
@@ -92,6 +93,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
 - `UI(Finance) -> POST /payments/finance/proof -> payments_finance_proof_upload() -> simpan bukti transfer PDF/JPG/PNG ke output/payments/proofs + metadata hash di payments.json`
 - `UI(Finance) -> accurateFetch('/api/purchase-payment/bulk-save.do') -> app/api/proxy/route.ts -> Accurate purchase-payment bulk-save setelah status Sudah Transfer, tanggal transfer, bukti, vendorNo, bankNo, dan invoice valid`
 - `UI(Finance) -> POST /payments/finance/update -> payments_finance_update() -> update status pembayaran, proof metadata, dan hasil post Accurate di payments.json`
+- `UI(Date fields) -> DatePickerField read-only -> lib/date/indonesiaHolidays formatDateForDisplay/formatDateForApi/isHoliday/isSunday/getHolidayName -> payload tetap YYYY-MM-DD, display Indonesia, tanggal merah/cuti bersama/hari Minggu ditandai di calendar`
 - `UI(Principles) -> POST /api/principles/add|{pid}/delete -> file master Excel di data/masters + metadata principles di SQLite(database.sqlite)`
 - `Accurate Webhook -> app/api/webhook/accurate/route.ts[POST] -> whitelist/log payload -> append webhook_events.log`
 
@@ -133,8 +135,10 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - `components/SidebarLayout.tsx`
   - `components/DataTable.tsx`
   - `components/ui/AsyncSearchSelect.tsx`
+  - `components/ui/DatePickerField.tsx`
   - `components/ui/Input.tsx`
   - `components/ui/Select.tsx`
+  - `lib/date/indonesiaHolidays.ts`
   - `lib/auth.ts`
   - `lib/auth-client.ts`
   - `lib/rbac.ts`
@@ -436,14 +440,20 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - `SummaryManualPage`, `handleUsePrinciple`, `handleMasterUpload`, `handlePdfExtract`, `handleGenerate`, `handleSendEmail`
   - UI utama summary promo manual/AI yang bergantung pada FastAPI.
 - `app/(dashboard)/payments/page.tsx`
-  - `PaymentsPage`, `fetchData`, `handleUpload`, `handleManualAdd`, `handleSubmitCart`, `handleSaveBulk`, `handleDelete`, `handleClearAll`
-  - UI master pembayaran/SPPD yang mengelola JSON store FastAPI, upload template LPB atau restore backup export PAYMENTS, render grid dengan pagination client-side, format nilai invoice manual sebagai decimal 2 digit seperti `103,248.22`, dan clear seluruh data payments untuk admin dengan backup otomatis.
+  - `PaymentsPage`, `fetchData`, `handleUpload`, `handleManualAdd`, `handleSubmitCart`, `handleSaveBulk`, `handleInputChange`, `handleDelete`, `handleClearAll`
+  - UI master pembayaran/SPPD yang mengelola JSON store FastAPI, upload template LPB atau restore backup export PAYMENTS, render grid dengan pagination client-side, format nilai invoice manual sebagai decimal 2 digit seperti `103,248.22`, simpan bulk edit sebagai patch field dirty agar data input tidak hilang saat refresh, dan clear seluruh data payments untuk admin dengan backup otomatis.
 - `app/(dashboard)/payments/sppd/page.tsx`
   - `PaymentsSppdSettingsPage`, `fetchSettings`, `handleSave`, `handleUpload`, `getCsrfToken`
   - UI konfigurasi nomor surat terakhir, format nomor SPPD, tanggal fixed Jaminan, jatuh tempo, jumlah transfer per halaman, dan upload Excel data SPPD.
 - `app/(dashboard)/finance/page.tsx`
   - `FinancePage`, `fetchData`, `handleExport`, `handleSaveMapping`, `handleMarkStatus`, `handleApproveTransfer`
   - UI finance untuk mapping vendor/bank Accurate, upload bukti transfer, posting `purchase-payment/bulk-save.do`, dan update status pembayaran.
+- `components/ui/DatePickerField.tsx`
+  - `DatePickerField`
+  - Input tanggal read-only berbasis calendar picker, memblok manual typing/paste, dan menandai tanggal merah Indonesia/hari Minggu via helper reusable.
+- `lib/date/indonesiaHolidays.ts`
+  - `formatDateForDisplay`, `formatDateForApi`, `isHoliday`, `isSunday`, `getHolidayName`
+  - Helper reusable pemisah format display vs payload API dan data libur nasional/cuti bersama Indonesia.
 - `app/(dashboard)/principles/page.tsx`
   - `PrincipleManagementPage`, `fetchPrinciples`, `handleUpload`, `handleDelete`
   - UI CRUD master principle berbasis file Excel yang disimpan di backend Python.

@@ -1,5 +1,13 @@
 "use client";
 
+/*
+ * Tujuan: Dashboard OFF Program Control untuk input, review, approval, pembayaran, dan audit program off invoice.
+ * Caller: App Router dashboard `app/(dashboard)/off-program-control/page.tsx`.
+ * Dependensi: `authClient`, helper akses OFF, workflow OFF, constants OFF, `DatePickerField`, route API OFF Program Control.
+ * Main Functions: `OffProgramControlPage`, `OffDashboard`, `DateField`, form/table workflow per role.
+ * Side Effects: HTTP read/write ke API OFF Program Control, baca session Better Auth, mutasi state workflow dan filter UI.
+ */
+
 import {
   useEffect,
   useMemo,
@@ -43,6 +51,7 @@ import {
   resolveOffRole,
   type OffRole,
 } from "@/lib/off-program-control/access";
+import DatePickerField from "@/components/ui/DatePickerField";
 
 type TabKey =
   | "overview"
@@ -1121,10 +1130,10 @@ function DateField({
   return (
     <label className="block">
       <span className="text-xs text-slate-500 font-semibold">{label}</span>
-      <input
-        type="date"
+      <DatePickerField
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={onChange}
+        ariaLabel={label}
         className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
       />
     </label>
@@ -2484,28 +2493,20 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                         />
                       </td>
                       <td className="px-3 py-3">
-                        <input
-                          type="date"
-                          readOnly={editingLocked}
+                        <DatePickerField
+                          disabled={editingLocked}
                           value={row.periodeAwal}
-                          onChange={(event) =>
-                            updateRow(row.id, "periodeAwal", event.target.value)
-                          }
+                          onChange={(value) => updateRow(row.id, "periodeAwal", value)}
+                          ariaLabel="Periode awal"
                           className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
                         />
                       </td>
                       <td className="px-3 py-3">
-                        <input
-                          type="date"
-                          readOnly={editingLocked}
+                        <DatePickerField
+                          disabled={editingLocked}
                           value={row.periodeAkhir}
-                          onChange={(event) =>
-                            updateRow(
-                              row.id,
-                              "periodeAkhir",
-                              event.target.value,
-                            )
-                          }
+                          onChange={(value) => updateRow(row.id, "periodeAkhir", value)}
+                          ariaLabel="Periode akhir"
                           className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
                         />
                       </td>
@@ -2571,13 +2572,11 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                         />
                       </td>
                       <td className="px-3 py-3">
-                        <input
-                          type="date"
-                          readOnly={editingLocked}
+                        <DatePickerField
+                          disabled={editingLocked}
                           value={row.deadline}
-                          onChange={(event) =>
-                            updateRow(row.id, "deadline", event.target.value)
-                          }
+                          onChange={(value) => updateRow(row.id, "deadline", value)}
+                          ariaLabel="Deadline"
                           className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
                         />
                       </td>

@@ -3,15 +3,16 @@
 /*
  * Tujuan: Halaman Finance untuk review, mapping Accurate, upload bukti transfer, format nilai decimal, dan posting purchase-payment.
  * Caller: Next.js App Router route `/finance`.
- * Dependensi: FastAPI payments finance endpoints, accurateFetch Accurate proxy, lucide-react, sonner.
+ * Dependensi: FastAPI payments finance endpoints, accurateFetch Accurate proxy, DatePickerField, lucide-react, sonner.
  * Main Functions: FinancePage, fetchData, formatMoneyDisplay, handleSaveMapping, handleMarkStatus, handleApproveTransfer.
  * Side Effects: HTTP call ke FastAPI, upload bukti transfer, post Accurate purchase-payment/bulk-save.do, update payments.json.
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Calendar, CheckCircle2, DollarSign, Download, FileUp, RefreshCcw, Save, Search, Send, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, DollarSign, Download, FileUp, RefreshCcw, Save, Search, Send, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { accurateFetch } from "@/lib/apiFetcher";
+import DatePickerField from "@/components/ui/DatePickerField";
 
 interface FinanceMapping {
     principle?: string;
@@ -288,10 +289,9 @@ export default function FinancePage() {
         );
     }, [records, search]);
 
-    const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = e.target.value;
-        setDateFilter(val);
-        fetchData(val);
+    const handleDateChange = (value: string) => {
+        setDateFilter(value);
+        fetchData(value);
     };
 
     const handleExport = () => {
@@ -474,10 +474,7 @@ export default function FinancePage() {
                     <p className="text-slate-400 mt-1 text-sm">Approve transfer, simpan bukti server, lalu post purchase-payment Accurate.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
-                    <div className="relative flex items-center">
-                        <Calendar className="absolute left-3 text-slate-400" size={16} />
-                        <input type="date" value={dateFilter} onChange={handleDateChange} className="pl-9 pr-4 py-2.5 text-sm border border-white/10 rounded-lg outline-none bg-black/40 text-slate-300" />
-                    </div>
+                    <DatePickerField value={dateFilter} onChange={handleDateChange} className="w-[170px] py-2.5" ariaLabel="Filter tanggal finance" />
                     <div className="relative flex items-center">
                         <Search className="absolute left-3 text-slate-400" size={16} />
                         <input type="text" placeholder="Cari principle, draft, invoice, SPPD..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 pr-4 py-2.5 text-sm border border-white/10 rounded-lg outline-none bg-black/40 text-slate-300 w-80" />
@@ -564,7 +561,7 @@ export default function FinancePage() {
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div className="flex flex-col gap-2 w-[260px]">
-                                                    <input type="date" value={transferDates[key] || ""} onChange={(e) => setTransferDates((prev) => ({ ...prev, [key]: e.target.value }))} className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-slate-200 outline-none focus:border-emerald-500" />
+                                                    <DatePickerField value={transferDates[key] || ""} onChange={(value) => setTransferDates((prev) => ({ ...prev, [key]: value }))} className="py-1.5 text-xs focus:border-emerald-500" ariaLabel="Tanggal transfer" />
                                                     <label className="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded px-2 py-1.5 text-slate-300 cursor-pointer hover:bg-white/10">
                                                         <FileUp size={14} />
                                                         <span className="truncate">{proofFiles[key]?.name || record.transfer_proof?.original_filename || "Upload bukti"}</span>

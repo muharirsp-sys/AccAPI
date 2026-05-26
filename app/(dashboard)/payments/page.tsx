@@ -3,8 +3,8 @@
 /*
  * Tujuan: Halaman manajemen payments/SPPD untuk upload LPB/backup, entry manual, edit grid terpaginasikan dengan format nilai decimal 2 digit, clear data, dan submit cart.
  * Caller: Next.js App Router route `/payments`.
- * Dependensi: FastAPI payments endpoints, Better Auth client, lucide-react, sonner.
- * Main Functions: PaymentsPage, fetchData, handleUpload, handleManualAdd, handleSubmitCart, handleSaveBulk, handleDelete, handleClearAll.
+ * Dependensi: FastAPI payments endpoints, Better Auth client, DatePickerField, lucide-react, sonner.
+ * Main Functions: PaymentsPage, fetchData, handleUpload, handleManualAdd, handleSubmitCart, handleSaveBulk, handleInputChange, handleDelete, handleClearAll.
  * Side Effects: HTTP call ke FastAPI, upload file Excel, update/delete/clear payments.json melalui backend.
  */
 
@@ -12,6 +12,7 @@ import { useEffect, useState, useMemo } from "react";
 import { Wallet, Upload, FileSpreadsheet, Send, Plus, Search, Save, Trash2, DownloadCloud, Landmark, FileText, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
+import DatePickerField from "@/components/ui/DatePickerField";
 
 interface PaymentRecord {
     id?: string;
@@ -44,6 +45,7 @@ interface PaymentRecord {
 }
 
 type PaymentApiRecord = PaymentRecord & { id?: string; ajukan?: boolean };
+type PaymentRecordPatch = Partial<Pick<PaymentRecord, "ajukan" | "tgl_invoice" | "invoice_no" | "jenis_dokumen" | "nomor_dokumen" | "nilai_invoice" | "jt_invoice" | "actual_date" | "tgl_pembayaran">>;
 
 const API_BASE = process.env.NEXT_PUBLIC_FASTAPI_BASE_URL || (typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:8000` : "http://localhost:8000");
 const PAGE_SIZE_OPTIONS = [50, 100, 200];
@@ -103,6 +105,20 @@ function formatInvoiceAmountInput(value: string): string {
     return hasDot ? `${formattedWhole}.${fraction}` : formattedWhole;
 }
 
+function normalizePaymentRecord(r: PaymentApiRecord): PaymentRecord {
+    return {
+        ...r,
+        record_id: r.id || r.record_id,
+        ajukan: !!r.ajukan,
+        nilai_win_display: formatInvoiceAmountDisplay(r.nilai_win_display || r.nilai_sistem || r.nilai_win),
+        nilai_invoice: formatInvoiceAmountDisplay(r.nilai_invoice)
+    };
+}
+
+function hasOwnField<T extends object>(source: T, field: keyof T): boolean {
+    return Object.prototype.hasOwnProperty.call(source, field);
+}
+
 async function getBackendCsrfToken(forceRefresh = false): Promise<string> {
     if (cachedCsrfToken && !forceRefresh) return cachedCsrfToken;
     const res = await fetch(`${API_BASE}/api/me`, { credentials: "include" });
@@ -143,6 +159,7 @@ export default function PaymentsPage() {
     const isAdmin = (session?.user as { role?: string } | undefined)?.role === "admin";
     const [loading, setLoading] = useState(true);
     const [records, setRecords] = useState<PaymentRecord[]>([]);
+    const [pendingChanges, setPendingChanges] = useState<Record<string, PaymentRecordPatch>>({});
     
     // Upload & Manual
     const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -168,27 +185,24 @@ export default function PaymentsPage() {
         fetchData();
     }, []);
 
-    const fetchData = async () => {
+    const fetchData = async (options: { showLoading?: boolean } = {}) => {
+        const showLoading = options.showLoading !== false;
         try {
-            setLoading(true);
+            if (showLoading) setLoading(true);
             const res = await api.get("/payments/data");
             if (res.data.ok) {
-                const data = res.data.data.map((r: PaymentApiRecord) => ({
-                    ...r,
-                    record_id: r.id || r.record_id,
-                    ajukan: !!r.ajukan,
-                    nilai_win_display: formatInvoiceAmountDisplay(r.nilai_win_display || r.nilai_sistem || r.nilai_win),
-                    nilai_invoice: formatInvoiceAmountDisplay(r.nilai_invoice)
-                }));
+                const data = (res.data.data || []).map((r: PaymentApiRecord) => normalizePaymentRecord(r));
                 setRecords(data);
+                return true;
             } else {
                 toast.error(res.data.error || "Gagal memuat data pembayaran.");
             }
         } catch {
             toast.error("Koneksi ke server Python terputus. Pastikan backend FastAPI aktif.");
         } finally {
-            setLoading(false);
+            if (showLoading) setLoading(false);
         }
+        return false;
     };
 
     const handleUpload = async (e: React.FormEvent) => {
@@ -251,24 +265,57 @@ export default function PaymentsPage() {
     };
 
     const handleSaveBulk = async () => {
+        const dirtyIds = Object.keys(pendingChanges);
+        if (dirtyIds.length === 0) {
+            toast.info("Tidak ada perubahan baru untuk disimpan.");
+            return;
+        }
         setIsSaving(true);
         try {
-            const items = records.map(r => ({
-                id: r.record_id || r.id,
-                ajukan: r.ajukan,
-                tgl_invoice: r.tgl_invoice,
-                invoice_no: r.invoice_no || r.invoice,
-                jenis_dokumen: r.jenis_dokumen,
-                nomor_dokumen: r.nomor_dokumen,
-                nilai_invoice: parseInvoiceAmount(r.nilai_invoice),
-                jt_invoice: r.jt_invoice,
-                actual_date: r.actual_date,
-                tgl_pembayaran: r.tgl_pembayaran
-            }));
+            const byId = new Map(records.map((r) => [String(r.record_id || r.id), r]));
+            const items = dirtyIds.map((id) => {
+                const record = byId.get(id);
+                const changes = pendingChanges[id] || {};
+                const item: Record<string, unknown> = { id };
+
+                if (hasOwnField(changes, "ajukan")) item.ajukan = record?.ajukan ?? changes.ajukan;
+                if (hasOwnField(changes, "tgl_invoice")) item.tgl_invoice = record?.tgl_invoice ?? "";
+                if (hasOwnField(changes, "invoice_no")) item.invoice_no = record?.invoice_no ?? "";
+                if (hasOwnField(changes, "jenis_dokumen")) item.jenis_dokumen = record?.jenis_dokumen ?? "";
+                if (hasOwnField(changes, "nomor_dokumen")) item.nomor_dokumen = record?.nomor_dokumen ?? "";
+                if (hasOwnField(changes, "nilai_invoice")) item.nilai_invoice = parseInvoiceAmount(record?.nilai_invoice);
+                if (hasOwnField(changes, "jt_invoice")) item.jt_invoice = record?.jt_invoice ?? "";
+                if (hasOwnField(changes, "actual_date")) item.actual_date = record?.actual_date ?? "";
+                if (hasOwnField(changes, "tgl_pembayaran")) item.tgl_pembayaran = record?.tgl_pembayaran ?? "";
+
+                return item;
+            });
             const res = await api.post("/payments/update", { items });
             if (res.data.ok) {
-                toast.success("Perubahan pada master tabel berhasil disimpan.");
-                fetchData();
+                const updatedCount = Number(res.data.updated ?? items.length);
+                const skippedCount = Number(res.data.skipped ?? 0);
+                if (updatedCount === 0) {
+                    toast.warning("Tidak ada baris yang berubah di server. Data lokal tetap dipertahankan.");
+                    return;
+                }
+                if (skippedCount > 0) {
+                    const updatedIds = new Set((res.data.updated_ids || []).map((value: unknown) => String(value)));
+                    setPendingChanges(prev => {
+                        const next = { ...prev };
+                        updatedIds.forEach((id) => delete next[id]);
+                        return next;
+                    });
+                    toast.warning(`${updatedCount} baris tersimpan, ${skippedCount} baris gagal ditemukan. Input lokal yang belum tersimpan tetap dipertahankan.`);
+                    return;
+                }
+
+                toast.success(`Perubahan berhasil disimpan untuk ${updatedCount} baris.`);
+                const refreshed = await fetchData({ showLoading: false });
+                if (refreshed) {
+                    setPendingChanges({});
+                } else {
+                    toast.warning("Data tersimpan, tetapi refresh gagal. Tampilan lokal tetap dipertahankan.");
+                }
             } else toast.error(res.data.error || "Gagal menyimpan perubahan tabel.");
         } catch { toast.error("Kesalahan jaringan saat sinkronisasi grid massal."); } 
         finally { setIsSaving(false); }
@@ -324,8 +371,16 @@ export default function PaymentsPage() {
     const handleExport = () => window.open(`${API_BASE}/payments/export`, '_blank');
     const handleTemplate = () => window.open(`${API_BASE}/payments/template`, '_blank');
 
-    const handleInputChange = (id: string, field: keyof PaymentRecord, value: PaymentRecord[keyof PaymentRecord] | boolean) => {
-        setRecords(prev => prev.map(r => r.record_id === id ? { ...r, [field]: value } : r));
+    const handleInputChange = (id: string, field: keyof PaymentRecordPatch, value: PaymentRecord[keyof PaymentRecord] | boolean) => {
+        const key = String(id);
+        setRecords(prev => prev.map(r => String(r.record_id || r.id) === key ? { ...r, [field]: value } : r));
+        setPendingChanges(prev => ({
+            ...prev,
+            [key]: {
+                ...(prev[key] || {}),
+                [field]: value,
+            },
+        }));
     };
 
     const handleFilterChange = (key: string, value: string) => {
@@ -367,6 +422,7 @@ export default function PaymentsPage() {
     const activePage = Math.min(page, pageCount);
     const pageStart = filteredRecords.length === 0 ? 0 : (activePage - 1) * pageSize + 1;
     const pageEnd = Math.min(activePage * pageSize, filteredRecords.length);
+    const pendingChangeCount = Object.keys(pendingChanges).length;
 
     const paginatedRecords = useMemo(() => {
         const start = (activePage - 1) * pageSize;
@@ -516,8 +572,8 @@ export default function PaymentsPage() {
                         <button onClick={handleDelete} disabled={isDeleting} className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/20 text-rose-400 font-bold px-4 py-2.5 rounded-xl hover:bg-rose-500/20 transition-colors disabled:opacity-50">
                             <Trash2 size={16} /> Hapus Ceklis
                         </button>
-                        <button onClick={handleSaveBulk} disabled={isSaving} className="flex items-center gap-2 bg-emerald-600 text-white font-bold px-5 py-2.5 rounded-xl hover:bg-emerald-500 shadow-lg shadow-emerald-500/20 transition-all disabled:opacity-50">
-                            <Save size={16} /> Update Semua (Massal)
+                        <button onClick={handleSaveBulk} disabled={isSaving || pendingChangeCount === 0} className="flex items-center gap-2 bg-emerald-600 text-white font-bold px-5 py-2.5 rounded-xl hover:bg-emerald-500 shadow-lg shadow-emerald-500/20 transition-all disabled:opacity-50">
+                            <Save size={16} /> {isSaving ? "Menyimpan..." : `Update Semua${pendingChangeCount ? ` (${pendingChangeCount})` : ""}`}
                         </button>
                     </div>
                 </div>
@@ -585,15 +641,15 @@ export default function PaymentsPage() {
                                         <td className="px-3 py-1.5 font-mono text-slate-500">{r.tgl_terima_barang || "-"}</td>
                                         
                                         {/* Editable Columns Start */}
-                                        <td className="px-1 py-1"><input type="date" value={r.tgl_invoice || ""} onChange={e => handleInputChange(r.record_id, 'tgl_invoice', e.target.value)} className="w-[120px] rounded border border-white/10 bg-black/40 text-slate-300 px-2 py-1 outline-none focus:border-blue-500/50" /></td>
+                                        <td className="px-1 py-1"><DatePickerField value={r.tgl_invoice || ""} onChange={value => handleInputChange(r.record_id, 'tgl_invoice', value)} className="w-[145px] py-1 pl-8 pr-7 text-xs focus:border-blue-500/50" ariaLabel="Tanggal invoice" /></td>
                                         <td className="px-1 py-1"><input type="text" value={r.invoice_no || r.invoice || ""} onChange={e => handleInputChange(r.record_id, 'invoice_no', e.target.value)} className="w-[120px] rounded border border-white/10 bg-black/40 text-slate-300 px-2 py-1 outline-none focus:border-blue-500/50" /></td>
                                         <td className="px-1 py-1"><input type="text" value={r.jenis_dokumen || ""} onChange={e => handleInputChange(r.record_id, 'jenis_dokumen', e.target.value)} className="w-[90px] rounded border border-white/10 bg-black/40 text-slate-300 px-2 py-1 outline-none focus:border-blue-500/50 placeholder:text-slate-600" placeholder="-" /></td>
                                         <td className="px-1 py-1"><input type="text" value={r.nomor_dokumen || ""} onChange={e => handleInputChange(r.record_id, 'nomor_dokumen', e.target.value)} className="w-[120px] rounded border border-white/10 bg-black/40 text-slate-300 px-2 py-1 outline-none focus:border-blue-500/50 placeholder:text-slate-600" placeholder="-" /></td>
                                         <td className="px-1 py-1"><input type="text" inputMode="decimal" value={r.nilai_invoice || ""} onChange={e => handleInputChange(r.record_id, 'nilai_invoice', formatInvoiceAmountInput(e.target.value))} onBlur={() => handleInputChange(r.record_id, 'nilai_invoice', formatInvoiceAmountDisplay(r.nilai_invoice))} className="w-[120px] text-indigo-400 font-bold text-right rounded border border-indigo-500/30 bg-indigo-500/5 px-2 py-1 outline-none focus:border-indigo-500" /></td>
-                                        <td className="px-1 py-1"><input type="date" value={r.jt_invoice || ""} onChange={e => handleInputChange(r.record_id, 'jt_invoice', e.target.value)} className="w-[120px] rounded border border-white/10 bg-black/40 text-slate-300 px-2 py-1 outline-none focus:border-blue-500/50" /></td>
+                                        <td className="px-1 py-1"><DatePickerField value={r.jt_invoice || ""} onChange={value => handleInputChange(r.record_id, 'jt_invoice', value)} className="w-[145px] py-1 pl-8 pr-7 text-xs focus:border-blue-500/50" ariaLabel="Jatuh tempo invoice" /></td>
                                         <td className="px-3 py-1.5 text-right font-mono text-red-400 text-xs">{formatInvoiceAmountDisplay(r.gap_nilai_display || r.gap_nilai || 0)}</td>
-                                        <td className="px-1 py-1"><input type="date" value={r.actual_date || ""} onChange={e => handleInputChange(r.record_id, 'actual_date', e.target.value)} className="w-[120px] rounded border border-white/10 bg-black/40 text-slate-300 px-2 py-1 outline-none focus:border-blue-500/50" /></td>
-                                        <td className="px-1 py-1"><input type="date" value={r.tgl_pembayaran || ""} onChange={e => handleInputChange(r.record_id, 'tgl_pembayaran', e.target.value)} className="w-[120px] rounded border border-emerald-500/30 bg-emerald-500/5 text-emerald-400 font-semibold px-2 py-1 outline-none focus:border-emerald-500" /></td>
+                                        <td className="px-1 py-1"><DatePickerField value={r.actual_date || ""} onChange={value => handleInputChange(r.record_id, 'actual_date', value)} className="w-[145px] py-1 pl-8 pr-7 text-xs focus:border-blue-500/50" ariaLabel="Actual date" /></td>
+                                        <td className="px-1 py-1"><DatePickerField value={r.tgl_pembayaran || ""} onChange={value => handleInputChange(r.record_id, 'tgl_pembayaran', value)} className="w-[145px] border-emerald-500/30 bg-emerald-500/5 py-1 pl-8 pr-7 text-xs font-semibold text-emerald-400 focus:border-emerald-500" ariaLabel="Tanggal pembayaran pusat" /></td>
                                         <td className="px-3 py-1.5">
                                             <span className="inline-block px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider bg-white/5 border border-white/10 text-slate-400">
                                                 {(r.tipe_pengajuan || "LPB")} | {(r.status_pembayaran || "Draft")}

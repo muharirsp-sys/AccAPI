@@ -3,7 +3,7 @@
 /*
  * Tujuan: Halaman konfigurasi format SPPD dan upload Excel update data pembayaran/SPPD.
  * Caller: Next.js App Router route `/payments/sppd`.
- * Dependensi: FastAPI `/payments/sppd/settings`, `/payments/sppd/upload`, lucide-react, sonner.
+ * Dependensi: FastAPI `/payments/sppd/settings`, `/payments/sppd/upload`, DatePickerField, lucide-react, sonner.
  * Main Functions: PaymentsSppdSettingsPage, fetchSettings, handleSave, handleUpload, getCsrfToken.
  * Side Effects: HTTP read/write ke FastAPI dan update `payments.json`.
  */
@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, FileText, RefreshCcw, Save, Settings2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import DatePickerField from "@/components/ui/DatePickerField";
 
 interface SppdSettings {
     last_sequence: number;
@@ -218,7 +219,9 @@ export default function PaymentsSppdSettingsPage() {
                         </label>
                         <label className="block">
                             <span className="text-xs uppercase tracking-wide text-slate-500">Tanggal Jaminan</span>
-                            <input type="date" value={settings.fixed_jaminan_date} onChange={(e) => updateSetting("fixed_jaminan_date", e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white outline-none focus:border-emerald-500" />
+                            <div className="mt-2">
+                                <DatePickerField value={settings.fixed_jaminan_date} onChange={(value) => updateSetting("fixed_jaminan_date", value)} className="text-white focus:border-emerald-500" ariaLabel="Tanggal jaminan" />
+                            </div>
                         </label>
                         <label className="block md:col-span-2">
                             <span className="text-xs uppercase tracking-wide text-slate-500">Format Nomor</span>
@@ -243,7 +246,9 @@ export default function PaymentsSppdSettingsPage() {
                     <div className="space-y-3 text-sm">
                         <label className="block">
                             <span className="text-xs uppercase tracking-wide text-slate-500">Tanggal Makassar</span>
-                            <input type="date" value={previewDate} onChange={(e) => setPreviewDate(e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white outline-none focus:border-emerald-500" />
+                            <div className="mt-2">
+                                <DatePickerField value={previewDate} onChange={setPreviewDate} className="text-white focus:border-emerald-500" ariaLabel="Tanggal Makassar" />
+                            </div>
                         </label>
                         <div className="rounded-lg border border-white/10 bg-black/40 p-4 text-slate-300">
                             <div className="text-xs uppercase tracking-wide text-slate-500">Nomor Berikutnya</div>

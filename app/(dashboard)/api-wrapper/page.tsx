@@ -1,7 +1,7 @@
 /**
  * Tujuan: UI API Wrapper Accurate termasuk parser Excel bulk yang membentuk payload transaksi manual/bulk-save.
  * Caller: App Router dashboard `app/(dashboard)/api-wrapper/page.tsx` dan interaksi user di halaman API Wrapper.
- * Dependensi: `accurateRoutes`, `accurateFetch`, parser workbook per-route, Accurate OAuth/session dari browser, parser `xlsx`, toast `sonner`, route idempotency Next.
+ * Dependensi: `accurateRoutes`, `accurateFetch`, parser workbook per-route, Accurate OAuth/session dari browser, parser `xlsx`, toast `sonner`, route idempotency Next, `DatePickerField`.
  * Main Functions: `Home`, `handleLoginAccurate`, `fetchDatabases`, `handleOpenDatabase`, `handleDownloadTemplate`, `handleExecute`.
  * Side Effects: HTTP call ke Accurate route handler/proxy, baca file Excel lokal, dispatch parser workbook khusus per route, deteksi format pelunasan walau `Total.Trx` kosong, normalisasi lookup invoice/retur termasuk variasi SRB tanpa spasi, susun payload bulk-save, keluarkan laporan manual follow-up untuk retur/pot.lain yang gagal diproses, preview/lock idempotency SQLite, cek histori sales receipt Accurate, konfirmasi hasil error ke histori Accurate, tampilkan review duplicate, logging debug ke response UI.
  */
@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { accurateRoutes } from "@/config/accurateRoutes";
 import { accurateFetch, AccurateError } from "@/lib/apiFetcher";
+import DatePickerField from "@/components/ui/DatePickerField";
 import { workbookRouteParsers } from "./parsers";
 
 type RouteKey = keyof typeof accurateRoutes;
@@ -2644,11 +2645,11 @@ export default function Home() {
                        <p className="text-xs text-white/50 mt-1">Tanggal H-1 secara default. Akan disuntikkan ke seluruh tagihan dari Excel.</p>
                      </div>
                      <div className="sm:ml-auto">
-                        <input 
-                           type="date" 
-                           value={trxDate} 
-                           onChange={e => setTrxDate(e.target.value)} 
-                           className="px-4 py-2 bg-black/40 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        <DatePickerField
+                           value={trxDate}
+                           onChange={setTrxDate}
+                           ariaLabel="Tanggal transaksi default"
+                           className="w-[180px] py-2 text-white focus:border-indigo-500"
                         />
                      </div>
                   </div>

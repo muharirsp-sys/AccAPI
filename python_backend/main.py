@@ -2,7 +2,7 @@
 # Tujuan: FastAPI backend untuk validator, payments restore/SPPD, finance approval, RBAC, proof upload, dan helper export berformat.
 # Caller: Next.js dashboard routes, browser uploads, dan service local AccAPI.
 # Dependensi: FastAPI, pandas/openpyxl, payments.py, template DOCX SPPD, Better Auth SQLite DB, filesystem JSON/output, auth utilities.
-# Main Functions: render_sppd_docx, payments_upload, payments_clear, parse_lpb_upload, payments_template_download, payments_sppd_settings_get/save/upload, payments_finance_data, payments_finance_proof, payments_finance_update.
+# Main Functions: render_sppd_docx, payments_upload, payments_update, payments_clear, parse_lpb_upload, payments_template_download, payments_sppd_settings_get/save/upload, payments_finance_data, payments_finance_proof, payments_finance_update.
 # Side Effects: HTTP response/download, file upload/read/write, payments.json backup/mutation, DOCX/XLSX generation with number/date formatting, audit logging.
 # =======================================================================================================
 # You requested:
@@ -5856,10 +5856,15 @@ async def payments_update(request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "error": "Format data tidak valid."})
     db = load_payments_db()
     updated = []
+    skipped = []
     for item in items:
-        row_id = s(item.get("record_id", "")) or s(item.get("no_lpb", ""))
+        if not isinstance(item, dict):
+            skipped.append("")
+            continue
+        row_id = s(item.get("record_id", "")) or s(item.get("id", "")) or s(item.get("no_lpb", ""))
         key = resolve_payment_record_key(db, row_id)
         if not key or key not in db.get("lpb", {}):
+            skipped.append(row_id)
             continue
         rec = db["lpb"][key]
         tipe = normalize_pengajuan_type(item.get("tipe_pengajuan", rec.get("tipe_pengajuan", "LPB")))
@@ -5876,26 +5881,53 @@ async def payments_update(request: Request):
             if dup_key:
                 return JSONResponse(status_code=400, content={"ok": False, "error": f"No. LPB {no_lpb} sudah dipakai record lain."})
 
+        changed = False
         rec["record_id"] = key
-        rec["tipe_pengajuan"] = tipe
-        rec["no_lpb"] = no_lpb
-        rec["jenis_dokumen"] = jenis_dokumen
-        rec["nomor_dokumen"] = nomor_dokumen
-        rec["tgl_invoice"] = s(item.get("tgl_invoice", ""))
-        rec["jt_invoice"] = s(item.get("jt_invoice", ""))
-        rec["tgl_pembayaran"] = s(item.get("tgl_pembayaran", ""))
-        rec["actual_date"] = s(item.get("actual_date", ""))
-        rec["nilai_invoice"] = parse_number_id(item.get("nilai_invoice", 0))
-        rec["invoice_no"] = s(item.get("invoice_no", ""))
-        rec["principle"] = s(item.get("principle", rec.get("principle", "")))
+        if "tipe_pengajuan" in item:
+            rec["tipe_pengajuan"] = tipe
+            changed = True
+        if "no_lpb" in item:
+            rec["no_lpb"] = no_lpb
+            changed = True
+        if "jenis_dokumen" in item:
+            rec["jenis_dokumen"] = jenis_dokumen
+            changed = True
+        if "nomor_dokumen" in item:
+            rec["nomor_dokumen"] = nomor_dokumen
+            changed = True
+        if "tgl_invoice" in item:
+            rec["tgl_invoice"] = s(item.get("tgl_invoice", ""))
+            changed = True
+        if "jt_invoice" in item:
+            rec["jt_invoice"] = s(item.get("jt_invoice", ""))
+            changed = True
+        if "tgl_pembayaran" in item:
+            rec["tgl_pembayaran"] = s(item.get("tgl_pembayaran", ""))
+            changed = True
+        if "actual_date" in item:
+            rec["actual_date"] = s(item.get("actual_date", ""))
+            changed = True
+        if "nilai_invoice" in item:
+            rec["nilai_invoice"] = parse_number_id(item.get("nilai_invoice", 0))
+            changed = True
+        if "invoice_no" in item:
+            rec["invoice_no"] = s(item.get("invoice_no", ""))
+            changed = True
+        if "principle" in item:
+            rec["principle"] = s(item.get("principle", rec.get("principle", "")))
+            changed = True
+        if "ajukan" in item:
+            rec["ajukan"] = bool(item.get("ajukan"))
+            changed = True
         try:
             rec["gap_nilai"] = float(rec.get("nilai_win", 0) or 0.0) - float(rec.get("nilai_invoice", 0) or 0.0)
         except Exception:
             rec["gap_nilai"] = 0.0
-        updated.append(key)
+        if changed:
+            updated.append(key)
     save_payments_db(db)
-    append_audit_log(user, "payments_update", "lpb", {"count": len(updated), "samples": updated[:10]})
-    return JSONResponse({"ok": True})
+    append_audit_log(user, "payments_update", "lpb", {"count": len(updated), "samples": updated[:10], "skipped": skipped[:10]})
+    return JSONResponse({"ok": True, "updated": len(updated), "updated_ids": updated, "skipped": len(skipped)})
 
 SPPD_EXCEL_FORBIDDEN_FIELDS = {
     "ajukan",
