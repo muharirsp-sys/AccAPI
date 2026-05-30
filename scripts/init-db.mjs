@@ -242,8 +242,46 @@ const statements = [
     to_status TEXT,
     note TEXT,
     metadata TEXT,
+    corrected_by TEXT,
+    corrected_at INTEGER,
+    correction_reason TEXT,
+    previous_value TEXT,
+    new_value TEXT,
+    parent_audit_log_id TEXT,
     created_at INTEGER NOT NULL,
     FOREIGN KEY (batch_id) REFERENCES off_batch(id)
+  );`,
+  `CREATE TABLE IF NOT EXISTS off_discount_submission (
+    id TEXT PRIMARY KEY,
+    toko TEXT NOT NULL,
+    principle_code TEXT,
+    principle_name TEXT,
+    program TEXT,
+    nominal REAL NOT NULL DEFAULT 0,
+    alasan TEXT,
+    tanggal TEXT,
+    status TEXT NOT NULL DEFAULT 'Tercatat',
+    catatan TEXT,
+    document_path TEXT,
+    document_name TEXT,
+    document_mime TEXT,
+    document_size INTEGER,
+    created_by_id TEXT,
+    created_by_name TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS off_discount_audit_log (
+    id TEXT PRIMARY KEY,
+    submission_id TEXT NOT NULL,
+    actor_id TEXT,
+    actor_name TEXT,
+    actor_role TEXT,
+    action TEXT NOT NULL,
+    note TEXT,
+    metadata TEXT,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (submission_id) REFERENCES off_discount_submission(id)
   );`,
 ];
 
@@ -320,6 +358,21 @@ const migrations = [
   `ALTER TABLE off_payment ADD COLUMN created_by TEXT;`,
   `ALTER TABLE off_payment ADD COLUMN updated_at INTEGER;`,
   `ALTER TABLE off_audit_log ADD COLUMN item_id TEXT;`,
+  // Tipe Program revisi (legacy-safe)
+  `ALTER TABLE off_batch_item ADD COLUMN original_type TEXT;`,
+  `ALTER TABLE off_batch_item ADD COLUMN normalized_type TEXT;`,
+  `ALTER TABLE off_batch_item ADD COLUMN type_is_legacy INTEGER NOT NULL DEFAULT 0;`,
+  // PPh level item/toko (HOLD, nullable)
+  `ALTER TABLE off_batch_item ADD COLUMN pph_exempt INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE off_batch_item ADD COLUMN pph_amount REAL;`,
+  `ALTER TABLE off_batch_item ADD COLUMN adjustment_pph REAL;`,
+  // Audit log correction (non-destruktif) untuk Claim
+  `ALTER TABLE off_audit_log ADD COLUMN corrected_by TEXT;`,
+  `ALTER TABLE off_audit_log ADD COLUMN corrected_at INTEGER;`,
+  `ALTER TABLE off_audit_log ADD COLUMN correction_reason TEXT;`,
+  `ALTER TABLE off_audit_log ADD COLUMN previous_value TEXT;`,
+  `ALTER TABLE off_audit_log ADD COLUMN new_value TEXT;`,
+  `ALTER TABLE off_audit_log ADD COLUMN parent_audit_log_id TEXT;`,
 ];
 
 for (const sql of migrations) {
@@ -327,6 +380,55 @@ for (const sql of migrations) {
     await db.execute(sql);
   } catch (error) {
     if (!String(error?.message || error).includes("duplicate column name")) {
+      throw error;
+    }
+  }
+}
+
+// --- Backfill metadata legacy tipe program (revisi A / Prioritas 5) ---
+// Data lama (pre-dropdown) tidak punya metadata legacy. Backfill ini:
+//  1) Menandai data lama sebagai legacy (type_is_legacy=1) -> badge "Data Lama".
+//  2) Menyimpan jejak nilai tipe asli ke original_type (tidak menghapus type).
+//  3) Mengisi normalized_type dari hasil normalisasi (exact/alias) atau fallback Sample.
+// Heuristik "data lama": baris dengan normalized_type masih NULL (input baru selalu
+// mengisi normalized_type). Semua statement idempotent: setelah terisi, WHERE tidak
+// lagi cocok pada run berikutnya.
+const legacyKey = "LOWER(TRIM(COALESCE(type, '')))";
+const legacyBackfill = [
+  // 1) Tandai data lama sebagai legacy SEBELUM normalized_type diisi.
+  //    Termasuk data yang exact match dropdown (tetap "Data Lama").
+  `UPDATE off_batch_item
+     SET type_is_legacy = 1
+   WHERE normalized_type IS NULL
+     AND (type_is_legacy = 0 OR type_is_legacy IS NULL);`,
+  // 2) Simpan jejak nilai tipe asli (jangan hapus type tanpa menyimpan original_type).
+  `UPDATE off_batch_item
+     SET original_type = type
+   WHERE (original_type IS NULL OR original_type = '')
+     AND type IS NOT NULL
+     AND type <> '';`,
+  // 3) Isi normalized_type: exact + alias umum -> dropdown final, selain itu Sample.
+  //    Mirror dari EXPLICIT_ALIASES di lib/off-program-control/program-type.ts.
+  //    Catatan: typo berat / nilai tak dikenal aman jatuh ke fallback "Sample".
+  `UPDATE off_batch_item
+     SET normalized_type = CASE
+       WHEN ${legacyKey} IN ('display','off display','off-display','endcap','endcap support') THEN 'Display'
+       WHEN ${legacyKey} IN ('visibility','visibilty','visibilyty','visibilityy','visiblity','visibiliti','visibilitas','area visibility') THEN 'Visibility'
+       WHEN ${legacyKey} IN ('promo on store','promo onstore','promo on-store','promo instore','promo in store') THEN 'Promo On Store'
+       WHEN ${legacyKey} IN ('event','off event') THEN 'Event'
+       WHEN ${legacyKey} IN ('sample','sampling','sampling area','sampel') THEN 'Sample'
+       ELSE 'Sample'
+     END
+   WHERE normalized_type IS NULL;`,
+];
+
+for (const sql of legacyBackfill) {
+  try {
+    await db.execute(sql);
+  } catch (error) {
+    // Toleransi bila kolom belum ada di skema sangat lama; jangan gagalkan init.
+    const message = String(error?.message || error);
+    if (!/no such column|no such table/i.test(message)) {
       throw error;
     }
   }

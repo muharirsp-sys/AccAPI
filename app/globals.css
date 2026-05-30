@@ -5,6 +5,40 @@
   --foreground: #e2e8f0;
 }
 
+/*
+ * Tema calming (revisi G).
+ * Disimpan di localStorage (key: off-theme), tidak di database.
+ * Tiga opsi: Focus Dark (default), Office Calm, Finance Soft Blue.
+ * Pendekatan: CSS variables surface/border yang dipetakan ke kelas warna literal
+ * yang dipakai existing UI, sehingga retint berlaku app-wide (monitor, form,
+ * table, button, badge, modal) tanpa menulis ulang komponen.
+ * Semua tema dijaga pada sisi gelap/medium agar kontras teks & badge tetap aman.
+ */
+:root,
+html[data-theme="focus-dark"] {
+  --app-bg: #0f1015;
+  --surface: #1a1c23;
+  --surface-2: #0f1115;
+  --border-strong: rgba(255, 255, 255, 0.1);
+  --border-soft: rgba(255, 255, 255, 0.05);
+}
+
+html[data-theme="office-calm"] {
+  --app-bg: #19211f;
+  --surface: #232c2a;
+  --surface-2: #1b2423;
+  --border-strong: rgba(190, 220, 210, 0.14);
+  --border-soft: rgba(190, 220, 210, 0.08);
+}
+
+html[data-theme="finance-blue"] {
+  --app-bg: #0e1730;
+  --surface: #16234a;
+  --surface-2: #111c3b;
+  --border-strong: rgba(160, 190, 255, 0.16);
+  --border-soft: rgba(160, 190, 255, 0.08);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -13,7 +47,31 @@
 }
 
 body {
-  background: var(--background);
+  background: var(--app-bg);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Pemetaan kelas warna literal existing -> variabel tema. */
+.bg-\[\#0f1015\] {
+  background-color: var(--app-bg);
+}
+
+.bg-\[\#0f1115\] {
+  background-color: var(--surface-2);
+}
+
+.bg-\[\#1a1c23\],
+.bg-\[\#1a1c23\]\/50,
+.bg-\[\#1a1c23\]\/80,
+.bg-\[\#1a1c23\]\/90 {
+  background-color: var(--surface);
+}
+
+.border-white\/10 {
+  border-color: var(--border-strong);
+}
+
+.border-white\/5 {
+  border-color: var(--border-soft);
 }

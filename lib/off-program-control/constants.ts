@@ -47,3 +47,12 @@ export const offFinanceStatuses = {
     paid: "Paid",
     needCorrection: "Need Correction",
 } as const;
+
+// --- Kwitansi (HOLD sementara) ---
+// NOTE: Kwitansi dinonaktifkan sementara karena format/nilai kwitansi dapat
+// berubah setelah pembayaran dari Keuangan (nominal bayar, PPh, no claim,
+// tanggal bayar, toko, no surat, metode bayar).
+// Tombol tetap tampil di UI namun disabled. Endpoint generate ditahan agar
+// tidak menghasilkan kwitansi aktif. Kode lama tidak dihapus.
+export const OFF_KWITANSI_DISABLED = true;
+export const OFF_KWITANSI_DISABLED_MESSAGE = "Kwitansi Sementara Nonaktif";

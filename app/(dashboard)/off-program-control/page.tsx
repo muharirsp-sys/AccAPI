@@ -28,6 +28,7 @@ import {
   FileText,
   ListChecks,
   Mail,
+  Percent,
   Plus,
   ReceiptText,
   ScrollText,
@@ -40,6 +41,18 @@ import {
   offPaymentMethods,
   offPrinciples,
 } from "@/lib/off-program-control/constants";
+import {
+  OFF_KWITANSI_DISABLED,
+  OFF_KWITANSI_DISABLED_MESSAGE,
+} from "@/lib/off-program-control/constants";
+import {
+  OFF_PROGRAM_TYPES,
+  resolveProgramType,
+} from "@/lib/off-program-control/program-type";
+import {
+  normalizeSearchText,
+  matchesSearch,
+} from "@/lib/off-program-control/search";
 import {
   computeBatchProgress,
   hasMinimalFinalChecklist,
@@ -101,6 +114,9 @@ type SupervisorBulkRow = {
   nominal: string;
   caraBayar: string;
   type: string;
+  originalType: string;
+  typeIsLegacy: boolean;
+  pphExempt: boolean;
   deadline: string;
   kwt: boolean;
   skp: boolean;
@@ -146,6 +162,15 @@ type OffApiBatch = {
   summary?: BatchQueueSummary;
   paymentSummary?: OffPaymentSummary;
   payments?: OffApiPayment[];
+  // Revisi D: haystack pencarian precomputed (termasuk item/toko nested).
+  searchText?: string | null;
+  // Revisi C: tanggal per jenis untuk filter periode konsisten.
+  periodDates?: {
+    program?: string[];
+    pengajuan?: string[];
+    claim?: string[];
+    bayar?: string[];
+  } | null;
 };
 
 type OffApiPayment = {
@@ -156,7 +181,7 @@ type OffApiPayment = {
   paymentMethod: string;
   paidAmount: number;
   senderBank?: string | null;
-  paymentProofName: string;
+  paymentProofName?: string | null;
   paymentProofMime?: string | null;
   paymentProofSize?: number | null;
   proofUrl?: string | null;
@@ -182,6 +207,12 @@ type OffApiItem = {
   nominal: number;
   caraBayar: string | null;
   type: string | null;
+  normalizedType?: string | null;
+  originalType?: string | null;
+  typeIsLegacy?: boolean | null;
+  pphExempt?: boolean | null;
+  pphAmount?: number | null;
+  adjustmentPph?: number | null;
   deadline: string | null;
   kwt: boolean;
   skp: boolean;
@@ -250,7 +281,10 @@ const initialBulkRows: SupervisorBulkRow[] = [
     barang: "Dettol",
     nominal: "Rp 4.400.000",
     caraBayar: "Transfer",
-    type: "OFF Display",
+    type: "Display",
+    originalType: "Display",
+    typeIsLegacy: false,
+    pphExempt: false,
     deadline: "2026-05-30",
     kwt: true,
     skp: false,
@@ -272,6 +306,9 @@ const initialBulkRows: SupervisorBulkRow[] = [
     nominal: "Rp 3.750.000",
     caraBayar: "Tunai",
     type: "Visibility",
+    originalType: "Visibility",
+    typeIsLegacy: false,
+    pphExempt: false,
     deadline: "2026-06-03",
     kwt: false,
     skp: true,
@@ -292,7 +329,10 @@ const initialBulkRows: SupervisorBulkRow[] = [
     barang: "Vanish",
     nominal: "Rp 4.350.000",
     caraBayar: "Tunai",
-    type: "Sampling",
+    type: "Sample",
+    originalType: "Sampling",
+    typeIsLegacy: true,
+    pphExempt: false,
     deadline: "2026-06-05",
     kwt: true,
     skp: false,
@@ -306,50 +346,6 @@ const initialBulkRows: SupervisorBulkRow[] = [
 ];
 
 const documentChecks = ["KWT", "SKP", "FP", "PC", "Foto", "Rekap", "Others"];
-
-const auditLogs = [
-  {
-    title: "Supervisor mengirim pengajuan",
-    detail: "Supervisor mengirim batch 001/RB/05/2026 ke Sales Manager",
-    time: "16 May 2026 09:15",
-  },
-  {
-    title: "Sales Manager menyetujui",
-    detail:
-      "SM menyetujui batch, memberi notifikasi OM, dan mengunci data untuk Supervisor",
-    time: "16 May 2026 10:05",
-  },
-  {
-    title: "Claim validasi kelengkapan awal",
-    detail:
-      "Claim memverifikasi syarat dan dokumen awal sebelum diteruskan ke OM",
-    time: "16 May 2026 11:20",
-  },
-  {
-    title: "OM menyetujui",
-    detail:
-      "Operational Manager menyetujui batch setelah melihat status SM dan Claim",
-    time: "16 May 2026 13:40",
-  },
-  {
-    title: "Keuangan upload bukti bayar",
-    detail:
-      "Keuangan membayar dan mengirim batch kembali ke Claim untuk verifikasi final",
-    time: "16 May 2026 15:10",
-  },
-  {
-    title: "Claim input No Claim final",
-    detail:
-      "Claim mengisi No Claim per No Surat setelah pembayaran Keuangan selesai",
-    time: "16 May 2026 15:45",
-  },
-  {
-    title: "Verifikasi final Claim selesai",
-    detail:
-      "Claim memverifikasi bukti bayar, jumlah, dan kelengkapan No Claim, lalu menyelesaikan pengajuan",
-    time: "16 May 2026 16:25",
-  },
-];
 
 function getPrincipleCode(name: string) {
   return PRINCIPLE_OPTIONS.find((item) => item.name === name)?.code || "";
@@ -413,6 +409,9 @@ function createEmptyBulkRow(index: number): SupervisorBulkRow {
     nominal: "",
     caraBayar: "Transfer",
     type: "",
+    originalType: "",
+    typeIsLegacy: false,
+    pphExempt: false,
     deadline: "",
     kwt: false,
     skp: false,
@@ -442,6 +441,25 @@ function formatDateDisplay(value: string | null | undefined) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   const [year, month, day] = value.split("-");
   return `${day}/${month}/${year}`;
+}
+
+function indonesianMonthLabel(month: number | string) {
+  const names = [
+    "Januari",
+    "Februari",
+    "Maret",
+    "April",
+    "Mei",
+    "Juni",
+    "Juli",
+    "Agustus",
+    "September",
+    "Oktober",
+    "November",
+    "Desember",
+  ];
+  const index = Number(month) - 1;
+  return names[index] || String(month);
 }
 
 const statusLabelMap: Record<string, string> = {
@@ -496,6 +514,11 @@ function itemDocsSummary(item: OffApiItem) {
 
 function apiItemToBulkRow(item: OffApiItem, index: number): SupervisorBulkRow {
   const period = splitPeriodDates(item.periode);
+  // Revisi A: normalisasi tipe lama saat dimuat ke editor Supervisor.
+  // Data lama yang tidak cocok dropdown otomatis dipetakan (forced ke Sample).
+  const resolved = resolveProgramType(
+    item.normalizedType ?? item.type ?? item.originalType,
+  );
   return {
     id: item.id || `returned-row-${index + 1}`,
     noSurat: item.noSurat || "",
@@ -508,7 +531,11 @@ function apiItemToBulkRow(item: OffApiItem, index: number): SupervisorBulkRow {
       ? `Rp ${Number(item.nominal).toLocaleString("id-ID")}`
       : "",
     caraBayar: item.caraBayar || "Transfer",
-    type: item.type || "",
+    // Bila forcedToFallback, biarkan kosong agar Supervisor wajib memilih ulang.
+    type: resolved.forcedToFallback ? "" : resolved.normalizedType,
+    originalType: item.originalType || String(item.type || ""),
+    typeIsLegacy: Boolean(item.typeIsLegacy) || resolved.typeIsLegacy,
+    pphExempt: Boolean(item.pphExempt),
     deadline: item.deadline || "",
     kwt: Boolean(item.kwt),
     skp: Boolean(item.skp),
@@ -594,25 +621,33 @@ function statusClass(status: string) {
 }
 
 function batchSearchText(batch: OffApiBatch) {
-  return [
-    batch.noPengajuan,
-    batch.principleName,
-    batch.principleCode,
-    batch.status,
-    batch.smStatus,
-    batch.claimStatus,
-    batch.omStatus,
-    batch.financeStatus,
-    batch.finalStatus,
-  ]
-    .join(" ")
-    .toLowerCase();
+  // Gunakan haystack precomputed dari backend (termasuk item/toko nested) bila
+  // tersedia; fallback ke field batch level untuk kompatibilitas.
+  if (batch.searchText) return batch.searchText;
+  return normalizeSearchText(
+    [
+      batch.noPengajuan,
+      batch.principleName,
+      batch.principleCode,
+      batch.supervisorName,
+      batch.status,
+      batch.smStatus,
+      batch.claimStatus,
+      batch.omStatus,
+      batch.financeStatus,
+      batch.finalStatus,
+      batch.noClaim,
+    ].join(" "),
+  );
 }
 
 function filterBatchesBySearch(batches: OffApiBatch[], query: string) {
-  const normalized = query.trim().toLowerCase();
+  const normalized = normalizeSearchText(query);
   if (!normalized) return batches;
-  return batches.filter((batch) => batchSearchText(batch).includes(normalized));
+  // matchesSearch mendukung sebagian kata + typo ringan Visibility/Visibilty.
+  return batches.filter((batch) =>
+    matchesSearch(batchSearchText(batch), normalized),
+  );
 }
 
 function getBatchStatusOptions(batches: OffApiBatch[]) {
@@ -724,19 +759,251 @@ function filterFinanceBatchesByStatus(batches: OffApiBatch[], status: string) {
 function MonitoringSearch({
   value,
   onChange,
-  placeholder = "Cari No Pengajuan, principle, kode, atau status...",
+  placeholder = "Cari No Pengajuan, principle, toko, no surat, no claim, user, atau status...",
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
 }) {
+  // Revisi D: debounce agar hasil berubah setelah user berhenti mengetik ~300ms.
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  useEffect(() => {
+    if (draft === value) return;
+    const timer = setTimeout(() => onChange(draft), 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft]);
+
   return (
     <input
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
       placeholder={placeholder}
       className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
     />
+  );
+}
+
+// --- Filter periode (revisi C) ---
+type OffPeriodFilterValue = {
+  periodType: "program" | "pengajuan" | "claim" | "bayar";
+  mode: "month" | "range";
+  month: string;
+  year: string;
+  dateFrom: string;
+  dateTo: string;
+};
+
+function createEmptyPeriodFilter(): OffPeriodFilterValue {
+  return {
+    periodType: "pengajuan",
+    mode: "month",
+    month: "",
+    year: "",
+    dateFrom: "",
+    dateTo: "",
+  };
+}
+
+const periodTypeLabels: Record<OffPeriodFilterValue["periodType"], string> = {
+  program: "Periode Program",
+  pengajuan: "Tanggal Pengajuan",
+  claim: "Tanggal Diajukan Claim",
+  bayar: "Tanggal Bayar",
+};
+
+function isPeriodFilterActive(filter: OffPeriodFilterValue): boolean {
+  if (filter.mode === "month") return Boolean(filter.month || filter.year);
+  return Boolean(filter.dateFrom || filter.dateTo);
+}
+
+function dateWithinPeriodWindow(
+  date: string,
+  filter: OffPeriodFilterValue,
+): boolean {
+  if (filter.mode === "range") {
+    if (filter.dateFrom && date < filter.dateFrom) return false;
+    if (filter.dateTo && date > filter.dateTo) return false;
+    return true;
+  }
+  const [yy, mm] = date.split("-");
+  if (filter.year && yy !== filter.year) return false;
+  if (filter.month && mm !== String(filter.month).padStart(2, "0")) return false;
+  return true;
+}
+
+// Default tidak aktif: kembalikan semua batch (tidak mengosongkan data tiba-tiba).
+function filterBatchesByPeriod(
+  batches: OffApiBatch[],
+  filter: OffPeriodFilterValue,
+): OffApiBatch[] {
+  if (!isPeriodFilterActive(filter)) return batches;
+  return batches.filter((batch) => {
+    const dates = batch.periodDates?.[filter.periodType] || [];
+    if (dates.length === 0) return false;
+    return dates.some((date) => dateWithinPeriodWindow(date, filter));
+  });
+}
+
+function PeriodFilter({
+  value,
+  onChange,
+}: {
+  value: OffPeriodFilterValue;
+  onChange: (value: OffPeriodFilterValue) => void;
+}) {
+  const months = [
+    { value: "", label: "Semua Bulan" },
+    ...Array.from({ length: 12 }, (_, index) => ({
+      value: String(index + 1).padStart(2, "0"),
+      label: indonesianMonthLabel(index + 1),
+    })),
+  ];
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-semibold text-slate-400">
+          Filter Periode
+        </span>
+        {isPeriodFilterActive(value) && (
+          <button
+            type="button"
+            onClick={() => onChange(createEmptyPeriodFilter())}
+            className="rounded-md border border-white/10 px-2 py-0.5 text-[11px] text-slate-400 hover:bg-white/5"
+          >
+            Reset
+          </button>
+        )}
+      </div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <label className="block">
+          <span className="mb-1 block text-[11px] font-semibold text-slate-500">
+            Jenis Tanggal
+          </span>
+          <select
+            value={value.periodType}
+            onChange={(event) =>
+              onChange({
+                ...value,
+                periodType: event.target
+                  .value as OffPeriodFilterValue["periodType"],
+              })
+            }
+            className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+          >
+            {(
+              Object.keys(periodTypeLabels) as Array<
+                OffPeriodFilterValue["periodType"]
+              >
+            ).map((key) => (
+              <option key={key} value={key} className="bg-[#1a1c23]">
+                {periodTypeLabels[key]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-[11px] font-semibold text-slate-500">
+            Mode
+          </span>
+          <select
+            value={value.mode}
+            onChange={(event) =>
+              onChange({
+                ...value,
+                mode: event.target.value as OffPeriodFilterValue["mode"],
+              })
+            }
+            className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+          >
+            <option value="month" className="bg-[#1a1c23]">
+              Bulan-Tahun
+            </option>
+            <option value="range" className="bg-[#1a1c23]">
+              Rentang Tanggal
+            </option>
+          </select>
+        </label>
+
+        {value.mode === "month" ? (
+          <>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-semibold text-slate-500">
+                Bulan
+              </span>
+              <select
+                value={value.month}
+                onChange={(event) =>
+                  onChange({ ...value, month: event.target.value })
+                }
+                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+              >
+                {months.map((month) => (
+                  <option
+                    key={month.value}
+                    value={month.value}
+                    className="bg-[#1a1c23]"
+                  >
+                    {month.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-semibold text-slate-500">
+                Tahun
+              </span>
+              <input
+                value={value.year}
+                onChange={(event) =>
+                  onChange({
+                    ...value,
+                    year: event.target.value.replace(/[^\d]/g, "").slice(0, 4),
+                  })
+                }
+                placeholder="cth: 2026"
+                inputMode="numeric"
+                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+              />
+            </label>
+          </>
+        ) : (
+          <>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-semibold text-slate-500">
+                Dari Tanggal
+              </span>
+              <input
+                type="date"
+                value={value.dateFrom}
+                onChange={(event) =>
+                  onChange({ ...value, dateFrom: event.target.value })
+                }
+                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-semibold text-slate-500">
+                Sampai Tanggal
+              </span>
+              <input
+                type="date"
+                value={value.dateTo}
+                onChange={(event) =>
+                  onChange({ ...value, dateTo: event.target.value })
+                }
+                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+              />
+            </label>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -922,13 +1189,25 @@ function BatchMonitoringTable({
                 </button>
                 {onPrintReceipt && (
                   <button
-                    onClick={() => onPrintReceipt(batch)}
-                    disabled={printingReceiptBatchId === batch.id}
-                    className="mt-2 w-full rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-bold text-indigo-200 hover:bg-indigo-500/20 disabled:cursor-wait disabled:opacity-50"
+                    onClick={() =>
+                      OFF_KWITANSI_DISABLED ? undefined : onPrintReceipt(batch)
+                    }
+                    disabled={
+                      OFF_KWITANSI_DISABLED ||
+                      printingReceiptBatchId === batch.id
+                    }
+                    title={
+                      OFF_KWITANSI_DISABLED
+                        ? OFF_KWITANSI_DISABLED_MESSAGE
+                        : undefined
+                    }
+                    className="mt-2 w-full rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-bold text-indigo-200 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {printingReceiptBatchId === batch.id
-                      ? "Membuat..."
-                      : "Print Kwitansi"}
+                    {OFF_KWITANSI_DISABLED
+                      ? OFF_KWITANSI_DISABLED_MESSAGE
+                      : printingReceiptBatchId === batch.id
+                        ? "Membuat..."
+                        : "Print Kwitansi"}
                   </button>
                 )}
               </td>
@@ -1768,7 +2047,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
   const canSubmitSupervisor = canPerformOffAction(offRole, "submit_batch");
   const canEditSupervisor = canPerformOffAction(offRole, "edit_returned_batch");
   const [supervisorMenu, setSupervisorMenu] = useState<
-    "pengajuan" | "monitoring"
+    "pengajuan" | "monitoring" | "diskon"
   >("pengajuan");
   const [supervisorName, setSupervisorName] = useState("Supervisor Area 1");
   const [batchPrinciple, setBatchPrinciple] = useState("RECKITT BENCKISER, PT");
@@ -1795,6 +2074,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
   >([]);
   const [monitoringSearch, setMonitoringSearch] = useState("");
   const [monitoringStatusFilter, setMonitoringStatusFilter] = useState("");
+  const [monitoringPeriod, setMonitoringPeriod] = useState(createEmptyPeriodFilter());
   const [returnedBatches, setReturnedBatches] = useState<OffApiBatch[]>([]);
   const [returnedSummaries, setReturnedSummaries] = useState<
     Record<string, BatchQueueSummary>
@@ -1958,6 +2238,30 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
     );
   };
 
+  // Revisi A: pilih tipe baru saat memilih dropdown. Begitu Supervisor memilih
+  // tipe valid, penanda legacy "Data Lama" dilepas agar data dianggap diperbaiki.
+  const updateRowType = (rowId: string, value: string) => {
+    if (editingLocked) return;
+    setRows((currentRows) =>
+      currentRows.map((row) =>
+        row.id === rowId
+          ? {
+              ...row,
+              type: value,
+              typeIsLegacy: false,
+            }
+          : row,
+      ),
+    );
+  };
+
+  // Mengembalikan nomor baris pertama (1-based) yang tipenya belum valid, atau 0.
+  const findInvalidTypeRowNumber = () => {
+    const validTypes = OFF_PROGRAM_TYPES as readonly string[];
+    const index = rows.findIndex((row) => !validTypes.includes(row.type));
+    return index === -1 ? 0 : index + 1;
+  };
+
   const buildSupervisorItems = () =>
     rows.map((row) => ({
       noSurat: row.noSurat,
@@ -1970,6 +2274,10 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
       nominal: row.nominal,
       caraBayar: row.caraBayar,
       type: row.type,
+      // Audit legacy: kirim nilai asli agar backend menyimpan originalType.
+      originalType: row.originalType || row.type,
+      // PPh masih HOLD; hanya kirim penanda exempt. Tidak memblokir submit.
+      pphExempt: row.pphExempt,
       deadline: row.deadline,
       kwt: row.kwt,
       skp: row.skp,
@@ -1984,6 +2292,14 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
   const saveDraft = async (options?: { forceDuplicateNoSurat?: boolean }) => {
     if (editingLocked) {
       setSubmitStatus("Batch baca-saja dan tidak bisa disimpan sebagai draf.");
+      return;
+    }
+    // Revisi A.6: wajib pilih tipe valid (termasuk data lama yang dipaksa perbaiki).
+    const invalidTypeRow = findInvalidTypeRowNumber();
+    if (invalidTypeRow) {
+      setSubmitStatus(
+        `Tipe program pada baris ${invalidTypeRow} wajib dipilih dari dropdown (Display/Visibility/Promo On Store/Event/Sample) sebelum disimpan.`,
+      );
       return;
     }
     setIsSubmitting(true);
@@ -2056,6 +2372,14 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
     if (editingLocked) {
       setSubmitStatus(
         "Batch sudah disetujui oleh SM dan terkunci untuk Supervisor.",
+      );
+      return;
+    }
+    // Revisi A.6: wajib pilih tipe valid sebelum kirim ke SM.
+    const invalidTypeRow = findInvalidTypeRowNumber();
+    if (invalidTypeRow) {
+      setSubmitStatus(
+        `Tipe program pada baris ${invalidTypeRow} wajib dipilih dari dropdown (Display/Visibility/Promo On Store/Event/Sample) sebelum dikirim ke Sales Manager.`,
       );
       return;
     }
@@ -2218,7 +2542,10 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
     getBatchStatusOptions(allSupervisorBatches);
 
   const filteredSupervisorMonitoringBatches = filterBatchesByMainStatus(
-    filterBatchesBySearch(allSupervisorBatches, monitoringSearch),
+    filterBatchesByPeriod(
+      filterBatchesBySearch(allSupervisorBatches, monitoringSearch),
+      monitoringPeriod,
+    ),
     monitoringStatusFilter,
   );
 
@@ -2228,10 +2555,13 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
         {[
           ["pengajuan", "Pengajuan"],
           ["monitoring", "Monitoring Semua Status"],
+          ["diskon", "Dashboard Diskon SPV"],
         ].map(([key, label]) => (
           <button
             key={key}
-            onClick={() => setSupervisorMenu(key as "pengajuan" | "monitoring")}
+            onClick={() =>
+              setSupervisorMenu(key as "pengajuan" | "monitoring" | "diskon")
+            }
             className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
               supervisorMenu === key
                 ? "border border-teal-500/30 bg-teal-500/20 text-teal-200"
@@ -2251,6 +2581,10 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
         </div>
       )}
 
+      {supervisorMenu === "diskon" && (
+        <DiscountDashboard offRole={offRole} />
+      )}
+
       {supervisorMenu === "monitoring" && (
         <Panel title="Monitoring Semua Status" icon={ReceiptText}>
           <div className="mb-4 grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
@@ -2264,6 +2598,10 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
               onChange={setMonitoringStatusFilter}
               options={supervisorMonitoringStatusOptions}
             />
+          </div>
+
+          <div className="mb-4">
+            <PeriodFilter value={monitoringPeriod} onChange={setMonitoringPeriod} />
           </div>
 
           <BatchMonitoringTable
@@ -2347,13 +2685,27 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           </button>
                         )}
                         <button
-                          onClick={() => handlePrintKwitansi(batch)}
-                          disabled={printingReceiptBatchId === batch.id}
-                          className="inline-flex items-center justify-center rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-2 text-sm font-bold text-indigo-200 hover:bg-indigo-500/20 disabled:cursor-wait disabled:opacity-50"
+                          onClick={() =>
+                            OFF_KWITANSI_DISABLED
+                              ? undefined
+                              : handlePrintKwitansi(batch)
+                          }
+                          disabled={
+                            OFF_KWITANSI_DISABLED ||
+                            printingReceiptBatchId === batch.id
+                          }
+                          title={
+                            OFF_KWITANSI_DISABLED
+                              ? OFF_KWITANSI_DISABLED_MESSAGE
+                              : undefined
+                          }
+                          className="inline-flex items-center justify-center rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-2 text-sm font-bold text-indigo-200 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          {printingReceiptBatchId === batch.id
-                            ? "Membuat..."
-                            : "Print Kwitansi"}
+                          {OFF_KWITANSI_DISABLED
+                            ? OFF_KWITANSI_DISABLED_MESSAGE
+                            : printingReceiptBatchId === batch.id
+                              ? "Membuat..."
+                              : "Print Kwitansi"}
                         </button>
                       </div>
                     </div>
@@ -2434,6 +2786,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                       "Nominal",
                       "Cara Bayar",
                       "Tipe",
+                      "PPh",
                       "Deadline",
                       "Kelengkapan",
                       "Lainnya",
@@ -2562,14 +2915,68 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                         </select>
                       </td>
                       <td className="px-3 py-3">
-                        <input
-                          readOnly={editingLocked}
-                          value={row.type}
-                          onChange={(event) =>
-                            updateRow(row.id, "type", event.target.value)
-                          }
-                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
-                        />
+                        <div className="min-w-[180px] space-y-1.5">
+                          <select
+                            disabled={editingLocked}
+                            value={row.type}
+                            onChange={(event) =>
+                              updateRowType(row.id, event.target.value)
+                            }
+                            className={`w-full rounded-lg border bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50 disabled:opacity-70 ${
+                              row.type
+                                ? "border-white/10"
+                                : "border-amber-500/60"
+                            }`}
+                          >
+                            <option value="" className="bg-[#1a1c23]">
+                              Pilih tipe...
+                            </option>
+                            {OFF_PROGRAM_TYPES.map((type) => (
+                              <option
+                                key={type}
+                                className="bg-[#1a1c23]"
+                                value={type}
+                              >
+                                {type}
+                              </option>
+                            ))}
+                          </select>
+                          {row.typeIsLegacy && row.type ? (
+                            <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                              Data Lama
+                              {row.originalType
+                                ? ` (${row.originalType})`
+                                : ""}
+                            </span>
+                          ) : null}
+                          {!row.type && row.originalType ? (
+                            <span className="block text-[10px] font-semibold text-amber-300">
+                              Tipe lama &quot;{row.originalType}&quot; perlu
+                              dipilih ulang.
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        {/* NOTE: PPh disiapkan nullable di level item/toko, tetapi
+                            perhitungan final ditahan karena masih terkait format
+                            kwitansi setelah pembayaran. */}
+                        <label className="flex min-w-[150px] items-center gap-2 rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={row.pphExempt}
+                            onChange={(event) =>
+                              updateRow(
+                                row.id,
+                                "pphExempt",
+                                event.target.checked,
+                              )
+                            }
+                            disabled={editingLocked}
+                            className="rounded border-white/10 bg-black/50 text-teal-500"
+                          />
+                          Tidak kena PPh
+                        </label>
                       </td>
                       <td className="px-3 py-3">
                         <DatePickerField
@@ -2821,6 +3228,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
   const [batches, setBatches] = useState<OffApiBatch[]>([]);
   const [smSearch, setSmSearch] = useState("");
   const [smStatusFilter, setSmStatusFilter] = useState("");
+  const [smPeriod, setSmPeriod] = useState(createEmptyPeriodFilter());
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
   const [selectedItems, setSelectedItems] = useState<OffApiItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -3056,7 +3464,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
   const smStatusOptions = getBatchStatusOptions(batches);
 
   const filteredSmBatches = filterBatchesByMainStatus(
-    filterBatchesBySearch(batches, smSearch),
+    filterBatchesByPeriod(filterBatchesBySearch(batches, smSearch), smPeriod),
     smStatusFilter,
   );
 
@@ -3117,6 +3525,8 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
             options={smStatusOptions}
           />
         </div>
+
+        <PeriodFilter value={smPeriod} onChange={setSmPeriod} />
 
         {isLoading && (
           <p className="text-sm text-slate-400">Memuat data Sales Manager...</p>
@@ -3453,8 +3863,10 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
   const [allClaimBatches, setAllClaimBatches] = useState<OffApiBatch[]>([]);
   const [claimBatches, setClaimBatches] = useState<OffApiBatch[]>([]);
   const [claimSearch, setClaimSearch] = useState("");
+  const [claimPeriod, setClaimPeriod] = useState(createEmptyPeriodFilter());
   const [finalBatches, setFinalBatches] = useState<OffApiBatch[]>([]);
   const [finalClaimSearch, setFinalClaimSearch] = useState("");
+  const [finalClaimPeriod, setFinalClaimPeriod] = useState(createEmptyPeriodFilter());
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
   const [selectedItems, setSelectedItems] = useState<OffApiItem[]>([]);
   const [selectedFinalBatch, setSelectedFinalBatch] =
@@ -3953,10 +4365,13 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
     }
   };
 
-  const claimInitialMonitoringBatches = allClaimBatches.filter(
-    (batch) =>
-      isClaimInitialMonitoringBatch(batch) &&
-      filterBatchesBySearch([batch], claimSearch).length > 0,
+  const claimInitialMonitoringBatches = filterBatchesByPeriod(
+    allClaimBatches.filter(
+      (batch) =>
+        isClaimInitialMonitoringBatch(batch) &&
+        filterBatchesBySearch([batch], claimSearch).length > 0,
+    ),
+    claimPeriod,
   );
 
   const isFinalClaimProcessable = (batch: OffApiBatch) =>
@@ -3965,16 +4380,19 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       batch.finalStatus,
     );
 
-  const finalClaimMonitoringBatches = allClaimBatches.filter((batch) => {
-    const isRelevant =
-      (batch.financeStatus === "Paid" &&
-        batch.finalStatus === "Waiting Claim Final Verification") ||
-      batch.finalStatus === "Incomplete Documents" ||
-      batch.finalStatus === "Completed";
-    return (
-      isRelevant && filterBatchesBySearch([batch], finalClaimSearch).length > 0
-    );
-  });
+  const finalClaimMonitoringBatches = filterBatchesByPeriod(
+    allClaimBatches.filter((batch) => {
+      const isRelevant =
+        (batch.financeStatus === "Paid" &&
+          batch.finalStatus === "Waiting Claim Final Verification") ||
+        batch.finalStatus === "Incomplete Documents" ||
+        batch.finalStatus === "Completed";
+      return (
+        isRelevant && filterBatchesBySearch([batch], finalClaimSearch).length > 0
+      );
+    }),
+    finalClaimPeriod,
+  );
 
   if (claimView === "hub") {
     return (
@@ -4090,6 +4508,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                 onChange={setClaimSearch}
                 placeholder="Cari No Pengajuan, principle, kode, atau status Claim..."
               />
+            </div>
+            <div className="mb-4">
+              <PeriodFilter value={claimPeriod} onChange={setClaimPeriod} />
             </div>
             <div className="overflow-x-auto rounded-xl border border-white/10">
               <table className="w-full min-w-[1300px] text-left text-sm">
@@ -4361,6 +4782,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                 onChange={setFinalClaimSearch}
                 placeholder="Cari No Pengajuan, principle, kode, status pembayaran, atau No Surat..."
               />
+            </div>
+            <div className="mb-4">
+              <PeriodFilter value={finalClaimPeriod} onChange={setFinalClaimPeriod} />
             </div>
             <div className="overflow-x-auto rounded-xl border border-white/10">
               <table className="w-full min-w-[1200px] text-left text-sm">
@@ -4648,8 +5072,8 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                           "Barang",
                           "Nominal",
                           "Cara Bayar",
-                          "Tipe",
-                          "Deadline",
+                      "Tipe",
+                      "Deadline",
                         ].map((header) => (
                           <th key={header} className="px-3 py-3 font-bold">
                             {header}
@@ -4998,6 +5422,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
   const [omMenu, setOmMenu] = useState<"monitoring" | "approval">("monitoring");
   const [omSearch, setOmSearch] = useState("");
   const [omStatusFilter, setOmStatusFilter] = useState("");
+  const [omPeriod, setOmPeriod] = useState(createEmptyPeriodFilter());
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
   const [selectedItems, setSelectedItems] = useState<OffApiItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -5147,7 +5572,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
   const omStatusOptions = getBatchStatusOptions(omBatches);
 
   const filteredOmBatches = filterBatchesByMainStatus(
-    filterBatchesBySearch(omBatches, omSearch),
+    filterBatchesByPeriod(filterBatchesBySearch(omBatches, omSearch), omPeriod),
     omStatusFilter,
   );
 
@@ -5190,6 +5615,8 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                 options={omStatusOptions}
               />
             </div>
+
+            <PeriodFilter value={omPeriod} onChange={setOmPeriod} />
 
             {isLoading && (
               <p className="text-sm text-slate-400">Memuat data OM...</p>
@@ -5499,6 +5926,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
   const [financeBatches, setFinanceBatches] = useState<OffApiBatch[]>([]);
   const [financeSearch, setFinanceSearch] = useState("");
   const [financeStatusFilter, setFinanceStatusFilter] = useState("");
+  const [financePeriod, setFinancePeriod] = useState(createEmptyPeriodFilter());
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
   const [selectedFinanceBatchId, setSelectedFinanceBatchId] = useState<
     string | null
@@ -5693,21 +6121,25 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
     setIsActionLoading(true);
     setFinanceMessage("");
     try {
-      if (!paymentProofFile) {
-        setFinanceMessage("Bukti pembayaran wajib diupload.");
+      // Revisi B: bukti pembayaran tidak wajib untuk Tunai. Untuk Transfer tetap wajib.
+      const isTunai = normalizeUiPaymentMethod(paymentMethod) === "Tunai";
+      if (!isTunai && !paymentProofFile) {
+        setFinanceMessage("Bukti pembayaran wajib diupload untuk pembayaran Transfer.");
         return;
       }
-      if (
-        !["application/pdf", "image/png", "image/jpeg"].includes(
-          paymentProofFile.type,
-        )
-      ) {
-        setFinanceMessage("File bukti pembayaran harus PDF/PNG/JPG/JPEG.");
-        return;
-      }
-      if (paymentProofFile.size > 5 * 1024 * 1024) {
-        setFinanceMessage("Ukuran file maksimal 5MB.");
-        return;
+      if (paymentProofFile) {
+        if (
+          !["application/pdf", "image/png", "image/jpeg"].includes(
+            paymentProofFile.type,
+          )
+        ) {
+          setFinanceMessage("File bukti pembayaran harus PDF/PNG/JPG/JPEG.");
+          return;
+        }
+        if (paymentProofFile.size > 5 * 1024 * 1024) {
+          setFinanceMessage("Ukuran file maksimal 5MB.");
+          return;
+        }
       }
       const formData = new FormData();
       formData.append("paymentDate", paymentDate);
@@ -5715,7 +6147,9 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
       formData.append("paymentMethod", paymentMethod);
       formData.append("senderBank", senderBank);
       formData.append("note", financeNote);
-      formData.append("paymentProof", paymentProofFile);
+      if (paymentProofFile) {
+        formData.append("paymentProof", paymentProofFile);
+      }
       const response = await fetch(
         `/api/off-program-control/batches/${selectedBatch.id}/finance-payment`,
         {
@@ -5744,7 +6178,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
         paidAmount,
         paymentMethod,
         senderBank,
-        paymentProofName: paymentProofFile.name,
+        paymentProofName: paymentProofFile?.name || "",
         remainingAmount: nextPaymentSummary?.remainingAmount,
         isFullyPaid: nextPaymentSummary?.isFullyPaid,
       });
@@ -5778,7 +6212,10 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
   }));
 
   const filteredFinanceBatches = filterFinanceBatchesByStatus(
-    filterBatchesBySearch(financeBatches, financeSearch),
+    filterBatchesByPeriod(
+      filterBatchesBySearch(financeBatches, financeSearch),
+      financePeriod,
+    ),
     financeStatusFilter,
   );
 
@@ -5816,6 +6253,9 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
               onChange={setFinanceStatusFilter}
               options={financeStatusOptions}
             />
+          </div>
+          <div className="mb-4">
+            <PeriodFilter value={financePeriod} onChange={setFinancePeriod} />
           </div>
           {isLoading && (
             <p className="mb-4 text-sm text-slate-400">
@@ -6190,6 +6630,15 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
               <label className="block">
                 <span className="text-xs text-slate-500 font-semibold">
                   Bukti Pembayaran
+                  {normalizeUiPaymentMethod(paymentMethod) === "Tunai" ? (
+                    <span className="ml-1 font-normal text-emerald-300">
+                      (opsional untuk Tunai)
+                    </span>
+                  ) : (
+                    <span className="ml-1 font-normal text-slate-500">
+                      (wajib untuk Transfer)
+                    </span>
+                  )}
                 </span>
                 <input
                   type="file"
@@ -6201,7 +6650,9 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                   className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-teal-600 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white outline-none focus:border-teal-500/50"
                 />
                 <p className="mt-1 text-[11px] text-slate-500">
-                  PDF, PNG, JPG, atau JPEG. Maksimal 5MB.
+                  {normalizeUiPaymentMethod(paymentMethod) === "Tunai"
+                    ? "Pembayaran Tunai boleh tanpa bukti. Bukti tetap boleh diupload bila ada. PDF/PNG/JPG/JPEG, maks 5MB."
+                    : "PDF, PNG, JPG, atau JPEG. Maksimal 5MB."}
                 </p>
               </label>
             </div>
@@ -6309,30 +6760,736 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
   );
 }
 
-function AuditTimeline() {
+type OffDiscountSubmissionRow = {
+  id: string;
+  toko: string;
+  principleCode?: string | null;
+  principleName?: string | null;
+  program?: string | null;
+  nominal: number;
+  alasan?: string | null;
+  tanggal?: string | null;
+  status: string;
+  catatan?: string | null;
+  documentUrl?: string | null;
+  documentName?: string | null;
+  createdByName?: string | null;
+  createdAt?: number | string | null;
+};
+
+// Revisi I: Dashboard Diskon SPV — jejak digital, BELUM approval resmi.
+function DiscountDashboard({ offRole }: OffDashboardProps) {
+  // Hanya Supervisor yang dapat membuat pengajuan (selaras backend). Admin
+  // read-only + note, walau admin superuser di action lain.
+  const canManage = offRole === "supervisor";
+  const isAdmin = offRole === "admin";
+
+  const [submissions, setSubmissions] = useState<OffDiscountSubmissionRow[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [search, setSearch] = useState("");
+  const [period, setPeriod] = useState(createEmptyPeriodFilter());
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Form pengajuan diskon
+  const [toko, setToko] = useState("");
+  const [principleName, setPrincipleName] = useState("");
+  const [program, setProgram] = useState("");
+  const [nominal, setNominal] = useState("");
+  const [alasan, setAlasan] = useState("");
+  const [tanggal, setTanggal] = useState("");
+  const [catatan, setCatatan] = useState("");
+  const [docFile, setDocFile] = useState<File | null>(null);
+
+  const loadSubmissions = async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const params = new URLSearchParams();
+      if (search.trim()) params.set("search", search.trim());
+      if (period.mode === "range") {
+        if (period.dateFrom) params.set("dateFrom", period.dateFrom);
+        if (period.dateTo) params.set("dateTo", period.dateTo);
+      } else if (period.year || period.month) {
+        const year = period.year || String(new Date().getFullYear());
+        const month = period.month || "01";
+        const lastDay = new Date(Number(year), Number(month), 0).getDate();
+        params.set("dateFrom", `${year}-${month}-01`);
+        params.set(
+          "dateTo",
+          `${year}-${month}-${String(lastDay).padStart(2, "0")}`,
+        );
+      }
+      const query = params.toString();
+      const response = await fetch(
+        `/api/off-program-control/discount${query ? `?${query}` : ""}`,
+        { credentials: "include" },
+      );
+      const data = await parseJsonResponse(response);
+      if (!response.ok || !data.ok)
+        throw new Error(String(data.error || "Gagal memuat pengajuan diskon."));
+      setSubmissions(
+        Array.isArray(data.submissions)
+          ? (data.submissions as OffDiscountSubmissionRow[])
+          : [],
+      );
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Gagal memuat pengajuan diskon.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadSubmissions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, period]);
+
+  const resetForm = () => {
+    setToko("");
+    setPrincipleName("");
+    setProgram("");
+    setNominal("");
+    setAlasan("");
+    setTanggal("");
+    setCatatan("");
+    setDocFile(null);
+  };
+
+  const submitDiscount = async () => {
+    if (!toko.trim()) {
+      setMessage("Toko/customer wajib diisi.");
+      return;
+    }
+    if (!nominal.trim()) {
+      setMessage("Nominal diskon wajib diisi.");
+      return;
+    }
+    setIsSubmitting(true);
+    setMessage("");
+    try {
+      const formData = new FormData();
+      formData.append("toko", toko.trim());
+      formData.append("principleName", principleName);
+      formData.append("principleCode", getPrincipleCode(principleName));
+      formData.append("program", program);
+      formData.append("nominal", nominal);
+      formData.append("alasan", alasan);
+      formData.append("tanggal", tanggal);
+      formData.append("catatan", catatan);
+      if (docFile) formData.append("document", docFile);
+      const response = await fetch("/api/off-program-control/discount", {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      const data = await parseJsonResponse(response);
+      if (!response.ok || !data.ok)
+        throw new Error(String(data.error || "Gagal menyimpan pengajuan diskon."));
+      setMessage("Pengajuan diskon tercatat sebagai jejak digital.");
+      resetForm();
+      await loadSubmissions();
+    } catch (submitError) {
+      setMessage(
+        submitError instanceof Error
+          ? submitError.message
+          : "Gagal menyimpan pengajuan diskon.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
-    <Panel title="Linimasa Log Audit" icon={ScrollText}>
-      <div className="space-y-4">
-        {auditLogs.map((log, index) => (
-          <div key={log.title} className="grid grid-cols-[auto_1fr] gap-4">
-            <div className="flex flex-col items-center">
-              <span className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-sm font-black flex items-center justify-center">
-                {index + 1}
+    <div className="space-y-6">
+      <InfoNote>
+        {isAdmin
+          ? "Halaman ini adalah jejak digital pengajuan diskon SPV dan belum menjadi workflow approval resmi."
+          : "Modul ini hanya jejak digital pengajuan diskon. Workflow approval belum aktif dan data tidak memengaruhi alur OFF Program Control."}
+      </InfoNote>
+
+      {canManage && (
+        <Panel title="Buat Pengajuan Diskon" icon={Percent}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-slate-500">
+                Toko / Customer
               </span>
-              {index < auditLogs.length - 1 && (
-                <span className="w-px flex-1 bg-white/10 my-2" />
-              )}
+              <input
+                value={toko}
+                onChange={(event) => setToko(event.target.value)}
+                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-slate-500">
+                Principle
+              </span>
+              <select
+                value={principleName}
+                onChange={(event) => setPrincipleName(event.target.value)}
+                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+              >
+                <option value="" className="bg-[#1a1c23]">
+                  Pilih principle...
+                </option>
+                {PRINCIPLE_OPTIONS.map((principle) => (
+                  <option
+                    key={principle.code}
+                    value={principle.name}
+                    className="bg-[#1a1c23]"
+                  >
+                    {principle.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-slate-500">
+                Program
+              </span>
+              <input
+                value={program}
+                onChange={(event) => setProgram(event.target.value)}
+                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-slate-500">
+                Nominal Diskon
+              </span>
+              <input
+                value={nominal}
+                onChange={(event) => setNominal(event.target.value)}
+                placeholder="Rp 0"
+                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-slate-500">
+                Tanggal
+              </span>
+              <DatePickerField
+                value={tanggal}
+                onChange={setTanggal}
+                ariaLabel="Tanggal pengajuan diskon"
+                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-slate-500">
+                Dokumen Pendukung (opsional)
+              </span>
+              <input
+                type="file"
+                accept="application/pdf,image/png,image/jpeg"
+                onChange={(event) => setDocFile(event.target.files?.[0] || null)}
+                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-teal-600 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white outline-none focus:border-teal-500/50"
+              />
+            </label>
+          </div>
+          <label className="mt-3 block">
+            <span className="mb-1 block text-xs font-semibold text-slate-500">
+              Alasan
+            </span>
+            <textarea
+              value={alasan}
+              onChange={(event) => setAlasan(event.target.value)}
+              rows={2}
+              className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+            />
+          </label>
+          <label className="mt-3 block">
+            <span className="mb-1 block text-xs font-semibold text-slate-500">
+              Catatan
+            </span>
+            <textarea
+              value={catatan}
+              onChange={(event) => setCatatan(event.target.value)}
+              rows={2}
+              className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+            />
+          </label>
+          {message && (
+            <div className="mt-3 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-200">
+              {message}
             </div>
-            <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
-                <p className="font-bold text-white">{log.title}</p>
-                <p className="text-xs font-mono text-slate-500">{log.time}</p>
+          )}
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              onClick={submitDiscount}
+              disabled={isSubmitting}
+              className="rounded-xl border border-teal-500/30 bg-teal-500/20 px-5 py-2.5 text-sm font-bold text-teal-100 hover:bg-teal-500/30 disabled:opacity-50"
+            >
+              {isSubmitting ? "Menyimpan..." : "Catat Pengajuan Diskon"}
+            </button>
+          </div>
+        </Panel>
+      )}
+
+      <Panel title="Daftar Pengajuan Diskon" icon={ListChecks}>
+        <div className="mb-4">
+          <MonitoringSearch
+            value={search}
+            onChange={setSearch}
+            placeholder="Cari toko, principle, program, atau alasan diskon..."
+          />
+        </div>
+        <div className="mb-4">
+          <PeriodFilter value={period} onChange={setPeriod} />
+        </div>
+        {error && (
+          <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+            {error}
+          </div>
+        )}
+        {isLoading && (
+          <p className="mb-3 text-sm text-slate-400">Memuat pengajuan diskon...</p>
+        )}
+        <div className="overflow-x-auto rounded-xl border border-white/10">
+          <table className="w-full min-w-[1000px] text-left text-sm">
+            <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+              <tr>
+                {[
+                  "Tanggal",
+                  "Toko/Customer",
+                  "Principle",
+                  "Program",
+                  "Nominal",
+                  "Alasan",
+                  "Status",
+                  "User",
+                  "Dokumen",
+                ].map((header) => (
+                  <th key={header} className="px-3 py-3 font-bold">
+                    {header}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {submissions.map((row) => (
+                <tr key={row.id} className="hover:bg-white/[0.03]">
+                  <td className="whitespace-nowrap px-3 py-3 text-slate-400">
+                    {formatDateDisplay(row.tanggal) === "-"
+                      ? formatAuditTimestamp(row.createdAt)
+                      : formatDateDisplay(row.tanggal)}
+                  </td>
+                  <td className="px-3 py-3 font-semibold text-white">
+                    {row.toko}
+                  </td>
+                  <td className="px-3 py-3 text-slate-300">
+                    {row.principleName || "-"}
+                  </td>
+                  <td className="px-3 py-3 text-slate-300">
+                    {row.program || "-"}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                    Rp {Number(row.nominal || 0).toLocaleString("id-ID")}
+                  </td>
+                  <td className="px-3 py-3 text-slate-400">{row.alasan || "-"}</td>
+                  <td className="px-3 py-3">
+                    <span className="inline-flex rounded-md border border-slate-500/30 bg-slate-500/10 px-2 py-1 text-xs font-bold text-slate-300">
+                      {row.status}
+                    </span>
+                  </td>
+                  <td className="px-3 py-3 text-slate-400">
+                    {row.createdByName || "-"}
+                  </td>
+                  <td className="px-3 py-3">
+                    {row.documentUrl ? (
+                      <a
+                        href={row.documentUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-teal-300 underline hover:text-teal-200"
+                      >
+                        {row.documentName || "Lihat"}
+                      </a>
+                    ) : (
+                      <span className="text-xs text-slate-600">-</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {submissions.length === 0 && !isLoading && (
+                <tr>
+                  <td
+                    colSpan={9}
+                    className="px-3 py-6 text-center text-slate-500"
+                  >
+                    Belum ada pengajuan diskon.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+type OffAuditLogRow = {
+  id: string;
+  batchId: string;
+  noPengajuan?: string | null;
+  principleName?: string | null;
+  itemId?: string | null;
+  actorName?: string | null;
+  actorRole?: string | null;
+  action: string;
+  fromStatus?: string | null;
+  toStatus?: string | null;
+  note?: string | null;
+  correctionReason?: string | null;
+  parentAuditLogId?: string | null;
+  createdAt?: number | string | null;
+};
+
+function formatAuditTimestamp(value: number | string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Makassar",
+  }).format(date);
+}
+
+const AUDIT_CORRECTION_WARNING =
+  "PERINGATAN: Perubahan pada audit log akan tercatat sebagai riwayat koreksi. Pastikan perubahan hanya dilakukan untuk memperbaiki kesalahan pencatatan, bukan menghapus jejak aktivitas.";
+
+function AuditTimeline({ offRole }: OffDashboardProps) {
+  const canCorrect = canPerformOffAction(offRole, "audit_correct");
+  const canExport = canPerformOffAction(offRole, "audit_export");
+  const isAdmin = offRole === "admin";
+
+  const [logs, setLogs] = useState<OffAuditLogRow[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [period, setPeriod] = useState(createEmptyPeriodFilter());
+  const [correctionTarget, setCorrectionTarget] = useState<OffAuditLogRow | null>(
+    null,
+  );
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [correctionNote, setCorrectionNote] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const loadLogs = async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const params = new URLSearchParams();
+      if (search.trim()) params.set("search", search.trim());
+      // Audit memakai mode rentang tanggal untuk filter periode createdAt.
+      if (period.mode === "range") {
+        if (period.dateFrom) params.set("dateFrom", period.dateFrom);
+        if (period.dateTo) params.set("dateTo", period.dateTo);
+      } else if (period.year || period.month) {
+        const year = period.year || String(new Date().getFullYear());
+        const month = period.month || "01";
+        const lastDay = new Date(Number(year), Number(month), 0).getDate();
+        params.set("dateFrom", `${year}-${month}-01`);
+        params.set("dateTo", `${year}-${month}-${String(lastDay).padStart(2, "0")}`);
+      }
+      const query = params.toString();
+      const response = await fetch(
+        `/api/off-program-control/audit${query ? `?${query}` : ""}`,
+        { credentials: "include" },
+      );
+      const data = await parseJsonResponse(response);
+      if (!response.ok || !data.ok)
+        throw new Error(String(data.error || "Gagal memuat audit log."));
+      setLogs(Array.isArray(data.audit) ? (data.audit as OffAuditLogRow[]) : []);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error ? loadError.message : "Gagal memuat audit log.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, period]);
+
+  const handleExport = () => {
+    const params = new URLSearchParams();
+    params.set("format", "csv");
+    if (search.trim()) params.set("search", search.trim());
+    if (period.mode === "range") {
+      if (period.dateFrom) params.set("dateFrom", period.dateFrom);
+      if (period.dateTo) params.set("dateTo", period.dateTo);
+    }
+    window.open(`/api/off-program-control/audit?${params.toString()}`, "_blank");
+  };
+
+  const openCorrection = (log: OffAuditLogRow) => {
+    setCorrectionTarget(log);
+    setCorrectionReason("");
+    setCorrectionNote(log.note || "");
+    setMessage("");
+  };
+
+  const submitCorrection = async () => {
+    if (!correctionTarget) return;
+    if (!correctionReason.trim()) {
+      setMessage("Alasan koreksi wajib diisi.");
+      return;
+    }
+    setIsSubmitting(true);
+    setMessage("");
+    try {
+      const response = await fetch(
+        `/api/off-program-control/audit/${correctionTarget.id}/correction`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            correctionReason: correctionReason.trim(),
+            note: correctionNote,
+          }),
+        },
+      );
+      const data = await parseJsonResponse(response);
+      if (!response.ok || !data.ok)
+        throw new Error(String(data.error || "Gagal menyimpan koreksi."));
+      setMessage(
+        "Koreksi tercatat sebagai riwayat baru tanpa menghapus jejak lama.",
+      );
+      setCorrectionTarget(null);
+      await loadLogs();
+    } catch (correctionError) {
+      setMessage(
+        correctionError instanceof Error
+          ? correctionError.message
+          : "Gagal menyimpan koreksi.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Panel title="Log Audit OFF Program Control" icon={ScrollText}>
+      <InfoNote>
+        Claim dapat membaca, mengekspor, dan mengoreksi audit log. Koreksi bersifat
+        non-destruktif: jejak lama tidak dihapus dan setiap koreksi tercatat sebagai
+        riwayat baru. {isAdmin ? "Admin dapat melihat histori sebelum dan sesudah perubahan." : ""}
+      </InfoNote>
+
+      <div className="mb-4 grid grid-cols-1 gap-3 xl:grid-cols-[1fr_auto]">
+        <MonitoringSearch
+          value={search}
+          onChange={setSearch}
+          placeholder="Cari No Pengajuan, principle, user, aksi, atau catatan..."
+        />
+        {canExport && (
+          <button
+            type="button"
+            onClick={handleExport}
+            className="rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2.5 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
+          >
+            Export CSV
+          </button>
+        )}
+      </div>
+
+      <div className="mb-4">
+        <PeriodFilter value={period} onChange={setPeriod} />
+      </div>
+
+      {message && (
+        <div className="mb-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-200">
+          {message}
+        </div>
+      )}
+      {error && (
+        <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          {error}
+        </div>
+      )}
+      {isLoading && (
+        <p className="mb-3 text-sm text-slate-400">Memuat audit log...</p>
+      )}
+
+      <div className="overflow-x-auto rounded-xl border border-white/10">
+        <table className="w-full min-w-[1100px] text-left text-sm">
+          <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+            <tr>
+              {[
+                "Waktu",
+                "No Pengajuan",
+                "Aksi",
+                "Dari",
+                "Ke",
+                "User",
+                "Role",
+                "Catatan",
+                "Koreksi",
+              ].map((header) => (
+                <th key={header} className="px-3 py-3 font-bold">
+                  {header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {logs.map((log) => {
+              const isCorrection = Boolean(log.parentAuditLogId);
+              return (
+                <tr
+                  key={log.id}
+                  className={isCorrection ? "bg-amber-500/[0.06]" : "hover:bg-white/[0.03]"}
+                >
+                  <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-slate-400">
+                    {formatAuditTimestamp(log.createdAt)}
+                  </td>
+                  <td className="px-3 py-3 font-mono text-xs text-white">
+                    {log.noPengajuan || "-"}
+                  </td>
+                  <td className="px-3 py-3 text-slate-200">
+                    {log.action}
+                    {isCorrection && (
+                      <span className="ml-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                        Koreksi
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-3 text-slate-400">
+                    {displayStatusLabel(log.fromStatus) || "-"}
+                  </td>
+                  <td className="px-3 py-3 text-slate-400">
+                    {displayStatusLabel(log.toStatus) || "-"}
+                  </td>
+                  <td className="px-3 py-3 text-slate-300">
+                    {log.actorName || "-"}
+                  </td>
+                  <td className="px-3 py-3 text-slate-400">
+                    {log.actorRole || "-"}
+                  </td>
+                  <td className="px-3 py-3 text-slate-400">
+                    {log.correctionReason ? (
+                      <span>
+                        <span className="font-semibold text-amber-300">
+                          Alasan koreksi:
+                        </span>{" "}
+                        {log.correctionReason}
+                        {log.note ? ` — ${log.note}` : ""}
+                      </span>
+                    ) : (
+                      log.note || "-"
+                    )}
+                  </td>
+                  <td className="px-3 py-3">
+                    {canCorrect && !isCorrection ? (
+                      <button
+                        type="button"
+                        onClick={() => openCorrection(log)}
+                        className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/20"
+                      >
+                        Koreksi
+                      </button>
+                    ) : (
+                      <span className="text-xs text-slate-600">-</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            {logs.length === 0 && !isLoading && (
+              <tr>
+                <td colSpan={9} className="px-3 py-6 text-center text-slate-500">
+                  Belum ada audit log yang cocok.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {correctionTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#1a1c23] p-6 shadow-2xl">
+            <h3 className="text-lg font-black text-white">Koreksi Audit Log</h3>
+            <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+              {AUDIT_CORRECTION_WARNING}
+            </div>
+            <div className="mt-4 space-y-3">
+              <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-400">
+                <div>
+                  Aksi asal:{" "}
+                  <span className="font-mono text-slate-200">
+                    {correctionTarget.action}
+                  </span>
+                </div>
+                <div>
+                  No Pengajuan:{" "}
+                  <span className="font-mono text-slate-200">
+                    {correctionTarget.noPengajuan || "-"}
+                  </span>
+                </div>
               </div>
-              <p className="text-sm text-slate-400 mt-2">{log.detail}</p>
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold text-slate-500">
+                  Alasan Koreksi (wajib)
+                </span>
+                <textarea
+                  value={correctionReason}
+                  onChange={(event) => setCorrectionReason(event.target.value)}
+                  rows={3}
+                  className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-amber-500/50"
+                  placeholder="Jelaskan kesalahan pencatatan yang diperbaiki..."
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold text-slate-500">
+                  Catatan Baru (opsional)
+                </span>
+                <textarea
+                  value={correctionNote}
+                  onChange={(event) => setCorrectionNote(event.target.value)}
+                  rows={2}
+                  className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                />
+              </label>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCorrectionTarget(null)}
+                className="rounded-lg border border-white/10 px-4 py-2 text-sm font-bold text-slate-300 hover:bg-white/5"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={submitCorrection}
+                disabled={isSubmitting}
+                className="rounded-lg border border-amber-500/30 bg-amber-500/20 px-4 py-2 text-sm font-bold text-amber-100 hover:bg-amber-500/30 disabled:opacity-50"
+              >
+                {isSubmitting ? "Menyimpan..." : "Simpan Koreksi"}
+              </button>
             </div>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
     </Panel>
   );
 }
@@ -6576,6 +7733,7 @@ function OverviewTab() {
   const [overviewBatches, setOverviewBatches] = useState<OffApiBatch[]>([]);
   const [overviewSearch, setOverviewSearch] = useState("");
   const [overviewStatusFilter, setOverviewStatusFilter] = useState("");
+  const [overviewPeriod, setOverviewPeriod] = useState(createEmptyPeriodFilter());
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
   const [selectedItems, setSelectedItems] = useState<OffApiItem[]>([]);
   const [selectedPayments, setSelectedPayments] = useState<OffApiPayment[]>([]);
@@ -6708,7 +7866,10 @@ function OverviewTab() {
     }),
   );
   const filteredBatches = filterBatchesByMainStatus(
-    filterBatchesBySearch(overviewBatches, overviewSearch),
+    filterBatchesByPeriod(
+      filterBatchesBySearch(overviewBatches, overviewSearch),
+      overviewPeriod,
+    ),
     overviewStatusFilter,
   );
 
@@ -6744,6 +7905,7 @@ function OverviewTab() {
           options={statusOptions}
         />
       </div>
+      <PeriodFilter value={overviewPeriod} onChange={setOverviewPeriod} />
       <OverviewMonitoringTable
         batches={filteredBatches}
         selectedBatchId={selectedBatch?.id}
@@ -6950,7 +8112,7 @@ export default function OffProgramControlPage() {
           {effectiveActiveTab === "finance" && (
             <FinanceDashboard offRole={offRole} />
           )}
-          {effectiveActiveTab === "audit" && <AuditTimeline />}
+          {effectiveActiveTab === "audit" && <AuditTimeline offRole={offRole} />}
         </>
       )}
     </div>

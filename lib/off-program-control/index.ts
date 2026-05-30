@@ -6,3 +6,5 @@ export * from "./workflow";
 export * from "./pdf";
 export * from "./data";
 export * from "./access";
+export * from "./program-type";
+export * from "./search";

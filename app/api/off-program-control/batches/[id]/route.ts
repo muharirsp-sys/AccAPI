@@ -3,12 +3,20 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem } from "@/db/schema";
-import { buildNoPengajuan, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, findDuplicateNoSuratWithinPayload, findOffNoSuratConflicts, getPrincipleByCode, getPrincipleByName, getBatchWithItems, parseCurrency, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { buildNoPengajuan, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, findDuplicateNoSuratWithinPayload, findOffNoSuratConflicts, getPrincipleByCode, getPrincipleByName, getBatchWithItems, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, writeOffAudit } from "@/lib/off-program-control";
 
 type Context = { params: Promise<{ id: string }> };
 
 function asNumber(value: unknown) {
     return parseCurrency(value);
+}
+
+// PPh masih HOLD. NOTE: PPh disiapkan nullable di level item/toko, tetapi
+// perhitungan final ditahan karena masih terkait format kwitansi setelah pembayaran.
+function nullableNumber(value: unknown) {
+    if (value === undefined || value === null || value === "") return null;
+    const parsed = parseCurrency(value);
+    return Number.isFinite(parsed) ? parsed : null;
 }
 
 function bool(value: unknown) {
@@ -149,31 +157,65 @@ export async function PATCH(request: Request, context: Context) {
             }
 
             await db.delete(offBatchItem).where(eq(offBatchItem.batchId, id));
-            await db.insert(offBatchItem).values(body.items.map((item: Record<string, unknown>, index: number) => ({
-                id: randomUUID(),
-                batchId: id,
-                itemNo: index + 1,
-                rowNo: index + 1,
-                noSurat: String(item.noSurat || "").trim(),
-                namaProgram: String(item.namaProgram || item.program || `Program ${index + 1}`),
-                periode: periodText(item),
-                toko: String(item.toko || ""),
-                barang: String(item.barang || ""),
-                nominal: asNumber(item.nominal),
-                caraBayar: normalizeCaraBayar(item.caraBayar),
-                type: String(item.type || ""),
-                deadline: String(item.deadline || ""),
-                kwt: bool(item.kwt),
-                skp: bool(item.skp),
-                fp: bool(item.fp),
-                pc: bool(item.pc),
-                foto: bool(item.foto),
-                rekap: bool(item.rekap),
-                others: bool(item.others),
-                othersText: String(item.othersText || ""),
-                createdAt: now,
-                updatedAt: now,
-            })));
+            const legacyMigrations: Array<{ rowNo: number; originalType: string; normalizedType: string; forced: boolean }> = [];
+            const itemValues = (body.items as Array<Record<string, unknown>>).map((item, index) => {
+                const resolvedType = resolveProgramTypeForSave(
+                    item.type ?? item.normalizedType,
+                    item.originalType,
+                );
+                if (resolvedType.typeIsLegacy) {
+                    legacyMigrations.push({
+                        rowNo: index + 1,
+                        originalType: resolvedType.originalType,
+                        normalizedType: resolvedType.normalizedType,
+                        forced: resolvedType.forcedToFallback,
+                    });
+                }
+                return {
+                    id: randomUUID(),
+                    batchId: id,
+                    itemNo: index + 1,
+                    rowNo: index + 1,
+                    noSurat: String(item.noSurat || "").trim(),
+                    namaProgram: String(item.namaProgram || item.program || `Program ${index + 1}`),
+                    periode: periodText(item),
+                    toko: String(item.toko || ""),
+                    barang: String(item.barang || ""),
+                    nominal: asNumber(item.nominal),
+                    caraBayar: normalizeCaraBayar(item.caraBayar),
+                    type: resolvedType.normalizedType,
+                    normalizedType: resolvedType.normalizedType,
+                    originalType: resolvedType.originalType || resolvedType.normalizedType,
+                    typeIsLegacy: resolvedType.typeIsLegacy,
+                    // PPh HOLD: nullable, tidak memblokir submit.
+                    pphExempt: bool(item.pphExempt),
+                    pphAmount: nullableNumber(item.pphAmount),
+                    adjustmentPph: nullableNumber(item.adjustmentPph),
+                    deadline: String(item.deadline || ""),
+                    kwt: bool(item.kwt),
+                    skp: bool(item.skp),
+                    fp: bool(item.fp),
+                    pc: bool(item.pc),
+                    foto: bool(item.foto),
+                    rekap: bool(item.rekap),
+                    others: bool(item.others),
+                    othersText: String(item.othersText || ""),
+                    createdAt: now,
+                    updatedAt: now,
+                };
+            });
+            await db.insert(offBatchItem).values(itemValues);
+            if (legacyMigrations.length > 0) {
+                await writeOffAudit({
+                    batchId: id,
+                    actor,
+                    action: "legacy_type_migrated",
+                    fromStatus: data.batch.status,
+                    toStatus: data.batch.status,
+                    note: `Migrasi tipe legacy otomatis untuk ${legacyMigrations.length} item.`,
+                    metadata: { migrations: legacyMigrations },
+                });
+            }
         }
 
         await writeOffAudit({ batchId: id, actor, action: "update_batch", fromStatus: data.batch.status, toStatus: data.batch.status });

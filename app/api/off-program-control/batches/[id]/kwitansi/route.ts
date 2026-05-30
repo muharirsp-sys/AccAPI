@@ -8,9 +8,16 @@ import {
     canActorPerformOffAction,
     generateOffBatchReceiptPdf,
     getBatchWithItems,
+    OFF_KWITANSI_DISABLED,
+    OFF_KWITANSI_DISABLED_MESSAGE,
     requireOffSession,
     writeOffAudit,
 } from "@/lib/off-program-control";
+
+// NOTE: Kwitansi dinonaktifkan sementara karena format/nilai kwitansi dapat
+// berubah setelah pembayaran dari Keuangan. Kode lama dipertahankan agar dapat
+// diaktifkan kembali; saat OFF_KWITANSI_DISABLED true, endpoint generate menolak
+// dengan pesan nonaktif sementara dan tidak menghasilkan kwitansi aktif.
 
 export const runtime = "nodejs";
 
@@ -44,6 +51,15 @@ export async function POST(_request: Request, context: Context) {
         if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
         if (!canActorPerformOffAction(actor, "submit_batch")) {
             return NextResponse.json({ ok: false, error: "Hanya Supervisor atau Admin yang dapat membuat kwitansi OFF." }, { status: 403 });
+        }
+
+        // Kwitansi HOLD sementara: jangan menghasilkan kwitansi aktif.
+        if (OFF_KWITANSI_DISABLED) {
+            return NextResponse.json({
+                ok: false,
+                code: "KWITANSI_DISABLED",
+                error: `${OFF_KWITANSI_DISABLED_MESSAGE}. Fitur kwitansi ditahan karena format/nilai dapat berubah setelah pembayaran dari Keuangan.`,
+            }, { status: 503 });
         }
 
         const { id } = await context.params;

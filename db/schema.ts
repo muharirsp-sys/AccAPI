@@ -179,6 +179,19 @@ export const offBatchItem = sqliteTable("off_batch_item", {
     nominal: real("nominal").notNull().default(0),
     caraBayar: text("cara_bayar"),
     type: text("type"),
+    // --- Tipe Program (revisi dropdown + legacy) ---
+    // originalType menyimpan nilai tipe asli sebelum normalisasi (audit legacy).
+    // normalizedType menyimpan hasil normalisasi ke dropdown final.
+    // typeIsLegacy menandai data lama (badge "Data Lama").
+    originalType: text("original_type"),
+    normalizedType: text("normalized_type"),
+    typeIsLegacy: integer("type_is_legacy", { mode: "boolean" }).notNull().default(false),
+    // --- PPh level item/toko (HOLD) ---
+    // NOTE: PPh disiapkan nullable di level item/toko, tetapi perhitungan final
+    // ditahan karena masih terkait format kwitansi setelah pembayaran.
+    pphExempt: integer("pph_exempt", { mode: "boolean" }).notNull().default(false),
+    pphAmount: real("pph_amount"),
+    adjustmentPph: real("adjustment_pph"),
     deadline: text("deadline"),
     kwt: integer("kwt", { mode: "boolean" }).notNull().default(false),
     skp: integer("skp", { mode: "boolean" }).notNull().default(false),
@@ -241,6 +254,52 @@ export const offAuditLog = sqliteTable("off_audit_log", {
     action: text("action").notNull(),
     fromStatus: text("from_status"),
     toStatus: text("to_status"),
+    note: text("note"),
+    metadata: text("metadata", { mode: "json" }),
+    // --- Correction (non-destructive) untuk akses Claim ---
+    // Koreksi audit log TIDAK menghapus jejak lama. Setiap koreksi membuat baris
+    // baru yang merujuk parentAuditLogId dan menyimpan snapshot previousValue/newValue.
+    correctedBy: text("corrected_by"),
+    correctedAt: integer("corrected_at", { mode: "timestamp" }),
+    correctionReason: text("correction_reason"),
+    previousValue: text("previous_value", { mode: "json" }),
+    newValue: text("new_value", { mode: "json" }),
+    parentAuditLogId: text("parent_audit_log_id"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+});
+
+// --- OFF Discount (Dashboard Diskon SPV) --- //
+// Modul jejak digital pengajuan diskon SPV. BELUM menjadi workflow approval resmi.
+// Field status disiapkan untuk kebutuhan masa depan, namun approval belum aktif.
+export const offDiscountSubmission = sqliteTable("off_discount_submission", {
+    id: text("id").primaryKey(),
+    toko: text("toko").notNull(),
+    principleCode: text("principle_code"),
+    principleName: text("principle_name"),
+    program: text("program"),
+    nominal: real("nominal").notNull().default(0),
+    alasan: text("alasan"),
+    tanggal: text("tanggal"),
+    // status hanya disiapkan untuk masa depan; default "Tercatat" (belum approval resmi).
+    status: text("status").notNull().default("Tercatat"),
+    catatan: text("catatan"),
+    documentPath: text("document_path"),
+    documentName: text("document_name"),
+    documentMime: text("document_mime"),
+    documentSize: integer("document_size"),
+    createdById: text("created_by_id"),
+    createdByName: text("created_by_name"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
+});
+
+export const offDiscountAuditLog = sqliteTable("off_discount_audit_log", {
+    id: text("id").primaryKey(),
+    submissionId: text("submission_id").notNull().references(() => offDiscountSubmission.id),
+    actorId: text("actor_id"),
+    actorName: text("actor_name"),
+    actorRole: text("actor_role"),
+    action: text("action").notNull(),
     note: text("note"),
     metadata: text("metadata", { mode: "json" }),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull()

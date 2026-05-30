@@ -42,7 +42,12 @@ export type OffAction =
   | "claim_final"
   | "om_approve"
   | "om_cancel"
-  | "finance_payment";
+  | "finance_payment"
+  | "audit_read"
+  | "audit_export"
+  | "audit_correct"
+  | "discount_view"
+  | "discount_manage";
 
 export type OffRoleResolution = {
   role: OffRole;
@@ -237,7 +242,7 @@ export function getOffAccessibleTabs(roleInput: OffRole | string): OffTab[] {
       return ["overview", "sales"];
 
     case "claim":
-      return ["claim"];
+      return ["claim", "audit"];
 
     case "operational_manager":
       return ["overview", "om"];
@@ -270,9 +275,9 @@ export function canPerformOffAction(
 
   const allowedActions: Record<OffRole, OffAction[]> = {
     admin: [],
-    supervisor: ["create_batch", "edit_returned_batch", "submit_batch"],
+    supervisor: ["create_batch", "edit_returned_batch", "submit_batch", "discount_view", "discount_manage"],
     sales_manager: ["sm_approve", "sm_return"],
-    claim: ["claim_review", "claim_final"],
+    claim: ["claim_review", "claim_final", "audit_read", "audit_export", "audit_correct"],
     operational_manager: ["om_approve", "om_cancel"],
     finance: ["finance_payment"],
     sales: [],

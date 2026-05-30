@@ -26,11 +26,15 @@ export function canOpenFinalClaim(batch: OffBatchRow) {
 }
 
 export function paymentsHaveProofs(payments: OffPaymentRow[]) {
+  // Revisi B: bukti pembayaran tidak wajib untuk metode Tunai.
+  // Untuk Transfer/non-tunai bukti tetap wajib.
   return (
     payments.length > 0 &&
-    payments.every(
-      (payment) => payment.paymentProofPath && payment.paymentProofName,
-    )
+    payments.every((payment) => {
+      const method = String(payment.paymentMethod || "").trim().toLowerCase();
+      if (method === "tunai") return true;
+      return payment.paymentProofPath && payment.paymentProofName;
+    })
   );
 }
 
