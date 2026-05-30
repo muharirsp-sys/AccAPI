@@ -22,6 +22,7 @@ import {
   Bell,
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
   ClipboardCheck,
   Clock3,
   FileCheck2,
@@ -857,6 +858,9 @@ function PeriodFilter({
   value: OffPeriodFilterValue;
   onChange: (value: OffPeriodFilterValue) => void;
 }) {
+  // Filter periode tersembunyi secara default; muncul ke bawah saat header diklik.
+  const [open, setOpen] = useState(false);
+  const isActive = isPeriodFilterActive(value);
   const months = [
     { value: "", label: "Semua Bulan" },
     ...Array.from({ length: 12 }, (_, index) => ({
@@ -865,12 +869,28 @@ function PeriodFilter({
     })),
   ];
   return (
-    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs font-semibold text-slate-400">
+    <div className="rounded-xl border border-white/10 bg-black/30">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          aria-expanded={open}
+          className="flex items-center gap-2 text-xs font-semibold text-slate-300 hover:text-white"
+        >
+          <ChevronDown
+            size={16}
+            className={`text-slate-400 transition-transform duration-200 ${
+              open ? "rotate-180" : ""
+            }`}
+          />
           Filter Periode
-        </span>
-        {isPeriodFilterActive(value) && (
+          {isActive && (
+            <span className="rounded-full bg-teal-500/20 px-2 py-0.5 text-[10px] font-bold text-teal-300">
+              Aktif
+            </span>
+          )}
+        </button>
+        {isActive && (
           <button
             type="button"
             onClick={() => onChange(createEmptyPeriodFilter())}
@@ -880,7 +900,8 @@ function PeriodFilter({
           </button>
         )}
       </div>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      {open && (
+      <div className="grid grid-cols-1 gap-2 border-t border-white/10 p-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="block">
           <span className="mb-1 block text-[11px] font-semibold text-slate-500">
             Jenis Tanggal
@@ -1003,6 +1024,7 @@ function PeriodFilter({
           </>
         )}
       </div>
+      )}
     </div>
   );
 }
