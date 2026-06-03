@@ -4,7 +4,17 @@
 // Main Functions: `DashboardLanding`, `MODULES`.
 // Side Effects: DB read user permissions dan navigasi via link.
 
-import { Percent, CalendarCheck2, DollarSign, Wallet, Database, ArrowRight, Settings2, ShieldCheck, Cpu } from "lucide-react";
+import {
+  Percent,
+  CalendarCheck2,
+  DollarSign,
+  Wallet,
+  Database,
+  ArrowRight,
+  Settings2,
+  ShieldCheck,
+  Cpu,
+} from "lucide-react";
 import Link from "next/link";
 import { headers } from "next/headers";
 import { eq } from "drizzle-orm";
@@ -14,139 +24,155 @@ import { user } from "@/db/schema";
 import { canAccessPath, normalizeRole } from "@/lib/rbac";
 
 const MODULES = [
-    {
-        title: "AOL Form Engine",
-        desc: "API Injector ke Accurate Online massal. Bypass web forms.",
-        icon: Settings2,
-        href: "/api-wrapper",
-        color: "from-indigo-500/20 to-indigo-600/5",
-        iconColor: "text-indigo-400",
-        border: "border-indigo-500/20 hover:border-indigo-400/50"
-    },
-    {
-        title: "Validator Diskon",
-        desc: "Lakukan validasi data potongan diskon manual secara bulk.",
-        icon: Percent,
-        href: "/validator",
-        color: "from-emerald-500/20 to-emerald-600/5",
-        iconColor: "text-emerald-400",
-        border: "border-emerald-500/20 hover:border-emerald-400/50"
-    },
-    {
-        title: "Summary Promo",
-        desc: "Ekstraksi PDF otomatis dengan regex AI dan kompilasi SPT.",
-        icon: CalendarCheck2,
-        href: "/summary",
-        color: "from-sky-500/20 to-sky-600/5",
-        iconColor: "text-sky-400",
-        border: "border-sky-500/20 hover:border-sky-400/50"
-    },
-    {
-        title: "Finance",
-        desc: "Review transfer, bukti pembayaran, dan posting purchase-payment.",
-        icon: DollarSign,
-        href: "/finance",
-        color: "from-purple-500/20 to-purple-600/5",
-        iconColor: "text-purple-400",
-        border: "border-purple-500/20 hover:border-purple-400/50"
-    },
-    {
-        title: "Pembayaran & SPPD",
-        desc: "Manajemen LPB / CBD dan auto-generate draft cart SPPD.",
-        icon: Wallet,
-        href: "/payments",
-        color: "from-rose-500/20 to-rose-600/5",
-        iconColor: "text-rose-400",
-        border: "border-rose-500/20 hover:border-rose-400/50"
-    },
-    {
-        title: "Master Principle",
-        desc: "Konfigurasi kamus data principle untuk PDF Extraction AI.",
-        icon: Database,
-        href: "/principles",
-        color: "from-cyan-500/20 to-cyan-600/5",
-        iconColor: "text-cyan-400",
-        border: "border-cyan-500/20 hover:border-cyan-400/50"
-    }
+  {
+    title: "AOL Form Engine",
+    desc: "API Injector ke Accurate Online massal. Bypass web forms.",
+    icon: Settings2,
+    href: "/api-wrapper",
+    iconWrap: "bg-brand-50 text-brand-500 dark:bg-brand-500/15 dark:text-brand-400",
+    border: "border-brand-200 hover:border-brand-300 dark:border-brand-500/30",
+  },
+  {
+    title: "Validator Diskon",
+    desc: "Lakukan validasi data potongan diskon manual secara bulk.",
+    icon: Percent,
+    href: "/validator",
+    iconWrap:
+      "bg-success-50 text-success-500 dark:bg-success-500/15 dark:text-success-500",
+    border: "border-success-200 hover:border-success-300 dark:border-success-500/30",
+  },
+  {
+    title: "Summary Promo",
+    desc: "Ekstraksi PDF otomatis dengan regex AI dan kompilasi SPT.",
+    icon: CalendarCheck2,
+    href: "/summary",
+    iconWrap:
+      "bg-blue-light-50 text-blue-light-500 dark:bg-blue-light-500/15 dark:text-blue-light-400",
+    border:
+      "border-blue-light-200 hover:border-blue-light-300 dark:border-blue-light-500/30",
+  },
+  {
+    title: "Finance",
+    desc: "Review transfer, bukti pembayaran, dan posting purchase-payment.",
+    icon: DollarSign,
+    href: "/finance",
+    iconWrap: "bg-warning-50 text-warning-500 dark:bg-warning-500/15 dark:text-warning-400",
+    border: "border-warning-200 hover:border-warning-300 dark:border-warning-500/30",
+  },
+  {
+    title: "Pembayaran & SPPD",
+    desc: "Manajemen LPB / CBD dan auto-generate draft cart SPPD.",
+    icon: Wallet,
+    href: "/payments",
+    iconWrap: "bg-error-50 text-error-500 dark:bg-error-500/15 dark:text-error-400",
+    border: "border-error-200 hover:border-error-300 dark:border-error-500/30",
+  },
+  {
+    title: "Master Principle",
+    desc: "Konfigurasi kamus data principle untuk PDF Extraction AI.",
+    icon: Database,
+    href: "/principles",
+    iconWrap: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
+    border: "border-gray-200 hover:border-gray-300 dark:border-gray-700",
+  },
 ];
 
 export default async function DashboardLanding() {
-    const session = await auth.api.getSession({ headers: await headers() });
-    const userId = String(session?.user?.id || "");
-    const [dbUser] = userId
-        ? await db.select({ role: user.role, permissions: user.permissions }).from(user).where(eq(user.id, userId)).limit(1)
-        : [];
-    const role = normalizeRole(dbUser?.role || session?.user?.role);
-    const permissions = dbUser?.permissions || "{}";
-    const visibleModules = MODULES.filter((mod) => canAccessPath(mod.href, role, permissions));
+  const session = await auth.api.getSession({ headers: await headers() });
+  const userId = String(session?.user?.id || "");
+  const [dbUser] = userId
+    ? await db
+        .select({ role: user.role, permissions: user.permissions })
+        .from(user)
+        .where(eq(user.id, userId))
+        .limit(1)
+    : [];
+  const role = normalizeRole(dbUser?.role || session?.user?.role);
+  const permissions = dbUser?.permissions || "{}";
+  const visibleModules = MODULES.filter((mod) =>
+    canAccessPath(mod.href, role, permissions),
+  );
 
-    return (
-        <div className="max-w-7xl mx-auto pb-12 pt-4 selection:bg-indigo-500/30">
-            {/* Hero Section */}
-            <div className="relative rounded-3xl overflow-hidden bg-gradient-to-br from-[#1a1c23] to-[#0f1115] border border-white/10 p-8 md:p-14 mb-10 shadow-2xl">
-                <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[100px] -mr-48 -mt-48 pointer-events-none"></div>
-                <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-emerald-500/5 rounded-full blur-[80px] -ml-32 -mb-32 pointer-events-none"></div>
-                
-                <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-10">
-                    <div className="flex-1 space-y-6">
-                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-xs font-bold tracking-widest uppercase">
-                            <ShieldCheck size={14} /> ERP Sistem Terpusat
-                        </div>
-                        <h1 className="text-4xl md:text-5xl font-black text-white tracking-tight leading-tight">
-                            Portal Internal <br className="hidden md:block"/>
-                            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-emerald-400">
-                                CV. Surya Perkasa
-                            </span>
-                        </h1>
-                        <p className="text-lg text-slate-400 max-w-xl leading-relaxed">
-                            Akses modul operasional, finansial, validator, summary, dan satu pintu injeksi Accurate dalam dashboard terpadu.
-                        </p>
-                    </div>
-                    
-                    <div className="hidden lg:flex shrink-0 w-64 h-64 bg-black/40 border border-white/10 rounded-2xl shadow-xl items-center justify-center relative overflow-hidden group">
-                        <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                        <Cpu size={80} className="text-indigo-500/40 group-hover:text-indigo-400 transition-colors duration-500 group-hover:scale-110" />
-                    </div>
-                </div>
-            </div>
+  return (
+    <div className="mx-auto max-w-7xl pb-12 pt-2">
+      <div className="relative mb-10 overflow-hidden rounded-2xl border border-gray-200 bg-white p-8 shadow-theme-md md:p-12 dark:border-gray-800 dark:bg-white/[0.03]">
+        <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-brand-500/10 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-16 -left-16 h-48 w-48 rounded-full bg-success-500/10 blur-3xl" />
 
-            {/* Modules Grid */}
-            <div className="mb-4">
-                <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2 mb-6 px-2">
-                    <span className="w-1.5 h-6 rounded-full bg-indigo-500 block"></span> Modul Operasional
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {visibleModules.map((mod, i) => {
-                        const Icon = mod.icon;
-                        return (
-                            <Link 
-                                href={mod.href} 
-                                key={i}
-                                className={`group flex flex-col justify-between p-6 rounded-2xl bg-[#1a1c23] bg-gradient-to-br ${mod.color} border ${mod.border} backdrop-blur-xl transition-all duration-300 hover:shadow-xl hover:-translate-y-1`}
-                                style={{ boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.05)' }}
-                            >
-                                <div>
-                                    <div className={`w-12 h-12 rounded-xl bg-black/40 flex items-center justify-center mb-5 border border-white/5 group-hover:scale-110 transition-transform`}>
-                                        <Icon className={`${mod.iconColor}`} size={24} />
-                                    </div>
-                                    <h3 className="text-lg font-bold text-white mb-2">{mod.title}</h3>
-                                    <p className="text-sm text-slate-400 leading-relaxed mb-6 line-clamp-2">
-                                        {mod.desc}
-                                    </p>
-                                </div>
-                                <div className="mt-auto flex items-center justify-between border-t border-white/5 pt-4">
-                                    <span className={`text-[11px] font-bold uppercase tracking-wider ${mod.iconColor}`}>Akses Modul</span>
-                                    <ArrowRight size={16} className={`${mod.iconColor} opacity-50 group-hover:opacity-100 group-hover:translate-x-1 transition-all`} />
-                                </div>
-                            </Link>
-                        );
-                    })}
-                </div>
+        <div className="relative z-10 flex flex-col items-center justify-between gap-10 md:flex-row">
+          <div className="flex-1 space-y-5">
+            <div className="inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-bold uppercase tracking-widest text-brand-600 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300">
+              <ShieldCheck size={14} /> ERP Sistem Terpusat
             </div>
-            
-            <div className="text-center mt-12 py-6 border-t border-white/5">
-                <p className="text-sm text-slate-500">V1.0.0 &copy; 2026 Core ERP Infrastructure - PT. Surya Perkasa</p>
-            </div>
+            <h1 className="text-3xl font-bold tracking-tight text-gray-900 md:text-4xl dark:text-white/90">
+              Portal Internal
+              <br className="hidden md:block" />
+              <span className="text-brand-500 dark:text-brand-400">
+                CV. Surya Perkasa
+              </span>
+            </h1>
+            <p className="max-w-xl text-base leading-relaxed text-gray-500 dark:text-gray-400">
+              Akses modul operasional, finansial, validator, summary, dan satu
+              pintu injeksi Accurate dalam dashboard terpadu.
+            </p>
+          </div>
+
+          <div className="relative hidden h-52 w-52 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 lg:flex dark:border-gray-700 dark:bg-gray-800">
+            <Cpu
+              size={72}
+              className="text-brand-500/40 transition-transform duration-500 hover:scale-105 dark:text-brand-400/50"
+            />
+          </div>
         </div>
-    );
+      </div>
+
+      <div className="mb-4">
+        <h2 className="mb-6 flex items-center gap-2 px-1 text-lg font-semibold text-gray-800 dark:text-white/90">
+          <span className="block h-6 w-1.5 rounded-full bg-brand-500" />
+          Modul Operasional
+        </h2>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {visibleModules.map((mod) => {
+            const Icon = mod.icon;
+            return (
+              <Link
+                href={mod.href}
+                key={mod.href}
+                className={`group flex flex-col justify-between rounded-2xl border bg-white p-6 shadow-theme-xs transition hover:-translate-y-0.5 hover:shadow-theme-md dark:bg-white/[0.03] ${mod.border}`}
+              >
+                <div>
+                  <div
+                    className={`mb-5 flex h-12 w-12 items-center justify-center rounded-xl border border-gray-100 transition-transform group-hover:scale-105 dark:border-gray-800 ${mod.iconWrap}`}
+                  >
+                    <Icon size={24} />
+                  </div>
+                  <h3 className="mb-2 text-lg font-semibold text-gray-800 dark:text-white/90">
+                    {mod.title}
+                  </h3>
+                  <p className="mb-6 line-clamp-2 text-sm leading-relaxed text-gray-500 dark:text-gray-400">
+                    {mod.desc}
+                  </p>
+                </div>
+                <div className="mt-auto flex items-center justify-between border-t border-gray-100 pt-4 dark:border-gray-800">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-brand-500 dark:text-brand-400">
+                    Akses Modul
+                  </span>
+                  <ArrowRight
+                    size={16}
+                    className="text-gray-400 transition group-hover:translate-x-1 group-hover:text-brand-500 dark:group-hover:text-brand-400"
+                  />
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-12 border-t border-gray-200 py-6 text-center dark:border-gray-800">
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          V1.0.0 &copy; 2026 Core ERP Infrastructure - PT. Surya Perkasa
+        </p>
+      </div>
+    </div>
+  );
 }

@@ -66,6 +66,21 @@ import {
   type OffRole,
 } from "@/lib/off-program-control/access";
 import DatePickerField from "@/components/ui/DatePickerField";
+import AppCard from "@/components/ui/AppCard";
+import {
+  OFF_FILE_INPUT,
+  OFF_INPUT,
+  OFF_INPUT_DATE,
+  OFF_INPUT_READONLY,
+  OFF_MSG,
+  OFF_SEARCH,
+  OFF_SELECT,
+  OFF_TAB_ACTIVE,
+  OFF_TAB_INACTIVE,
+  OFF_TAB_SHELL,
+  OFF_TEXTAREA,
+} from "@/lib/ui/off-theme";
+import { statusBadgeClass } from "@/lib/ui/status-badge";
 
 type TabKey =
   | "overview"
@@ -573,25 +588,25 @@ function ProgressBar({
 }) {
   const color =
     value === 0
-      ? "bg-slate-500"
+      ? "bg-gray-400"
       : value === 100
-        ? "bg-emerald-500"
+        ? "bg-success-500"
         : value >= 75
-          ? "bg-sky-500"
+          ? "bg-blue-light-500"
           : value >= 50
-            ? "bg-purple-500"
-            : "bg-amber-500";
+            ? "bg-brand-500"
+            : "bg-warning-400";
 
   return (
     <div className="flex items-center gap-2">
-      <div className="h-2 flex-1 rounded-full bg-white/10 overflow-hidden">
+      <div className="h-2 flex-1 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${color}`}
           style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
         />
       </div>
       {showLabel && (
-        <span className="text-xs font-mono font-bold text-slate-300 min-w-[36px] text-right">
+        <span className="text-xs font-mono font-bold text-gray-500 dark:text-gray-400 min-w-[36px] text-right">
           {value}%
         </span>
       )}
@@ -600,25 +615,7 @@ function ProgressBar({
 }
 
 function statusClass(status: string) {
-  if (
-    status.includes("Completed") ||
-    status.includes("Approved") ||
-    status.includes("Aman")
-  )
-    return "bg-emerald-500/10 text-emerald-300 border-emerald-500/30";
-  if (status.includes("OM") || status.includes("Ready"))
-    return "bg-purple-500/10 text-purple-300 border-purple-500/30";
-  if (status.includes("Claim"))
-    return "bg-sky-500/10 text-sky-300 border-sky-500/30";
-  if (status.includes("Locked"))
-    return "bg-slate-500/10 text-slate-300 border-slate-500/30";
-  if (
-    status.includes("Returned") ||
-    status.includes("Kurang") ||
-    status.includes("Revisi")
-  )
-    return "bg-rose-500/10 text-rose-300 border-rose-500/30";
-  return "bg-amber-500/10 text-amber-300 border-amber-500/30";
+  return statusBadgeClass(status);
 }
 
 function batchSearchText(batch: OffApiBatch) {
@@ -785,7 +782,7 @@ function MonitoringSearch({
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
       placeholder={placeholder}
-      className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+      className={OFF_SEARCH}
     />
   );
 }
@@ -869,23 +866,23 @@ function PeriodFilter({
     })),
   ];
   return (
-    <div className="rounded-xl border border-white/10 bg-black/30">
+    <div className="rounded-xl border border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-800/50">
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
         <button
           type="button"
           onClick={() => setOpen((prev) => !prev)}
           aria-expanded={open}
-          className="flex items-center gap-2 text-xs font-semibold text-slate-300 hover:text-white"
+          className="flex items-center gap-2 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:text-white/90"
         >
           <ChevronDown
             size={16}
-            className={`text-slate-400 transition-transform duration-200 ${
+            className={`text-gray-500 dark:text-gray-400 transition-transform duration-200 ${
               open ? "rotate-180" : ""
             }`}
           />
           Filter Periode
           {isActive && (
-            <span className="rounded-full bg-teal-500/20 px-2 py-0.5 text-[10px] font-bold text-teal-300">
+            <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-bold text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">
               Aktif
             </span>
           )}
@@ -894,16 +891,16 @@ function PeriodFilter({
           <button
             type="button"
             onClick={() => onChange(createEmptyPeriodFilter())}
-            className="rounded-md border border-white/10 px-2 py-0.5 text-[11px] text-slate-400 hover:bg-white/5"
+            className="rounded-md border border-gray-300 px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-white/5"
           >
             Reset
           </button>
         )}
       </div>
       {open && (
-      <div className="grid grid-cols-1 gap-2 border-t border-white/10 p-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-2 border-t border-gray-200 p-3 sm:grid-cols-2 lg:grid-cols-4 dark:border-gray-700">
         <label className="block">
-          <span className="mb-1 block text-[11px] font-semibold text-slate-500">
+          <span className="mb-1 block text-[11px] font-semibold text-gray-500 dark:text-gray-400">
             Jenis Tanggal
           </span>
           <select
@@ -915,21 +912,21 @@ function PeriodFilter({
                   .value as OffPeriodFilterValue["periodType"],
               })
             }
-            className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+            className={`w-full ${OFF_INPUT}`}
           >
             {(
               Object.keys(periodTypeLabels) as Array<
                 OffPeriodFilterValue["periodType"]
               >
             ).map((key) => (
-              <option key={key} value={key} className="bg-[#1a1c23]">
+              <option key={key} value={key}>
                 {periodTypeLabels[key]}
               </option>
             ))}
           </select>
         </label>
         <label className="block">
-          <span className="mb-1 block text-[11px] font-semibold text-slate-500">
+          <span className="mb-1 block text-[11px] font-semibold text-gray-500 dark:text-gray-400">
             Mode
           </span>
           <select
@@ -940,12 +937,12 @@ function PeriodFilter({
                 mode: event.target.value as OffPeriodFilterValue["mode"],
               })
             }
-            className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+            className={`w-full ${OFF_INPUT}`}
           >
-            <option value="month" className="bg-[#1a1c23]">
+            <option value="month">
               Bulan-Tahun
             </option>
-            <option value="range" className="bg-[#1a1c23]">
+            <option value="range">
               Rentang Tanggal
             </option>
           </select>
@@ -954,7 +951,7 @@ function PeriodFilter({
         {value.mode === "month" ? (
           <>
             <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-slate-500">
+              <span className="mb-1 block text-[11px] font-semibold text-gray-500 dark:text-gray-400">
                 Bulan
               </span>
               <select
@@ -962,13 +959,13 @@ function PeriodFilter({
                 onChange={(event) =>
                   onChange({ ...value, month: event.target.value })
                 }
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                className={`w-full ${OFF_INPUT}`}
               >
                 {months.map((month) => (
                   <option
                     key={month.value}
                     value={month.value}
-                    className="bg-[#1a1c23]"
+                   
                   >
                     {month.label}
                   </option>
@@ -976,7 +973,7 @@ function PeriodFilter({
               </select>
             </label>
             <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-slate-500">
+              <span className="mb-1 block text-[11px] font-semibold text-gray-500 dark:text-gray-400">
                 Tahun
               </span>
               <input
@@ -989,14 +986,14 @@ function PeriodFilter({
                 }
                 placeholder="cth: 2026"
                 inputMode="numeric"
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                className={`w-full ${OFF_INPUT}`}
               />
             </label>
           </>
         ) : (
           <>
             <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-slate-500">
+              <span className="mb-1 block text-[11px] font-semibold text-gray-500 dark:text-gray-400">
                 Dari Tanggal
               </span>
               <input
@@ -1005,11 +1002,11 @@ function PeriodFilter({
                 onChange={(event) =>
                   onChange({ ...value, dateFrom: event.target.value })
                 }
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+                className={`w-full ${OFF_INPUT_DATE}`}
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-slate-500">
+              <span className="mb-1 block text-[11px] font-semibold text-gray-500 dark:text-gray-400">
                 Sampai Tanggal
               </span>
               <input
@@ -1018,7 +1015,7 @@ function PeriodFilter({
                 onChange={(event) =>
                   onChange({ ...value, dateTo: event.target.value })
                 }
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+                className={`w-full ${OFF_INPUT_DATE}`}
               />
             </label>
           </>
@@ -1042,15 +1039,15 @@ function StatusFilterSelect({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-semibold text-slate-500">
+      <span className="mb-1 block text-xs font-semibold text-gray-500 dark:text-gray-400">
         {label}
       </span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+        className={OFF_SELECT}
       >
-        <option value="" className="bg-[#1a1c23]">
+        <option value="">
           Semua Status
         </option>
         {options.map((option) => {
@@ -1061,7 +1058,7 @@ function StatusFilterSelect({
               : option.label;
 
           return (
-            <option key={value} value={value} className="bg-[#1a1c23]">
+            <option key={value} value={value}>
               {label}
             </option>
           );
@@ -1107,9 +1104,9 @@ function BatchMonitoringTable({
   ];
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-white/10">
+    <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
       <table className="w-full min-w-[1800px] text-left text-sm">
-        <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+        <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
           <tr>
             {headers.map((header) => {
               const isActionColumn = header === "Aksi";
@@ -1119,7 +1116,7 @@ function BatchMonitoringTable({
                   key={header}
                   className={`px-3 py-3 font-bold ${
                     stickyAction && isActionColumn
-                      ? "sticky right-0 z-30 min-w-[150px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                      ? "sticky right-0 z-30 min-w-[150px] bg-white dark:bg-gray-900 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
                       : ""
                   }`}
                 >
@@ -1130,29 +1127,29 @@ function BatchMonitoringTable({
           </tr>
         </thead>
 
-        <tbody className="divide-y divide-white/5">
+        <tbody className="divide-gray-100 dark:divide-gray-800">
           {batches.map((batch) => (
             <tr
               key={batch.id}
               className={`${
                 selectedBatchId === batch.id
-                  ? "bg-teal-500/10"
-                  : "hover:bg-white/[0.03]"
+                  ? "bg-brand-50 dark:bg-brand-500/[0.08]"
+                  : "hover:bg-gray-50 dark:hover:bg-white/[0.03]"
               }`}
             >
-              <td className="min-w-[180px] whitespace-nowrap px-3 py-3 font-mono font-bold text-white">
+              <td className="min-w-[180px] whitespace-nowrap px-3 py-3 font-mono font-bold text-gray-900 dark:text-white/90">
                 {batch.noPengajuan}
               </td>
 
-              <td className="min-w-[260px] px-3 py-3 text-slate-300">
+              <td className="min-w-[260px] px-3 py-3 text-gray-700 dark:text-gray-300">
                 {batch.principleName}
               </td>
 
-              <td className="px-3 py-3 font-mono text-teal-300">
+              <td className="px-3 py-3 font-mono text-brand-500 dark:text-brand-300">
                 {batch.principleCode}
               </td>
 
-              <td className="px-3 py-3 text-right font-mono text-emerald-300">
+              <td className="px-3 py-3 text-right font-mono text-success-500">
                 Rp{" "}
                 {Number(batch.summary?.totalNominal || 0).toLocaleString(
                   "id-ID",
@@ -1171,27 +1168,27 @@ function BatchMonitoringTable({
                 </span>
               </td>
 
-              <td className="px-3 py-3 text-slate-300">
+              <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                 {displayStatusLabel(batch.smStatus)}
               </td>
 
-              <td className="px-3 py-3 text-slate-300">
+              <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                 {displayStatusLabel(batch.claimStatus)}
               </td>
 
-              <td className="px-3 py-3 text-slate-300">
+              <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                 {displayStatusLabel(batch.omStatus)}
               </td>
 
-              <td className="px-3 py-3 text-slate-300">
+              <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                 {displayStatusLabel(batch.financeStatus)}
               </td>
 
-              <td className="px-3 py-3 text-slate-300">
+              <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                 {displayStatusLabel(batch.finalStatus)}
               </td>
 
-              <td className="min-w-[180px] px-3 py-3 text-xs text-slate-400">
+              <td className="min-w-[180px] px-3 py-3 text-xs text-gray-500 dark:text-gray-400">
                 <div>Dibuat: {formatDateDisplay(batch.createdAt)}</div>
                 <div>Diperbarui: {formatDateDisplay(batch.updatedAt)}</div>
               </td>
@@ -1199,13 +1196,13 @@ function BatchMonitoringTable({
               <td
                 className={`px-3 py-3 ${
                   stickyAction
-                    ? "sticky right-0 z-20 min-w-[170px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                    ? "sticky right-0 z-20 min-w-[170px] bg-white dark:bg-gray-900 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
                     : ""
                 }`}
               >
                 <button
                   onClick={() => onSelect(batch)}
-                  className="w-full rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-brand-400 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
                 >
                   {actionLabel(batch)}
                 </button>
@@ -1223,7 +1220,7 @@ function BatchMonitoringTable({
                         ? OFF_KWITANSI_DISABLED_MESSAGE
                         : undefined
                     }
-                    className="mt-2 w-full rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-bold text-indigo-200 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="mt-2 w-full rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-bold text-blue-light-600 dark:text-blue-light-400 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {OFF_KWITANSI_DISABLED
                       ? OFF_KWITANSI_DISABLED_MESSAGE
@@ -1238,7 +1235,7 @@ function BatchMonitoringTable({
 
           {batches.length === 0 && (
             <tr>
-              <td colSpan={13} className="px-3 py-6 text-center text-slate-500">
+              <td colSpan={13} className="px-3 py-6 text-center text-gray-500 dark:text-gray-400">
                 {emptyText}
               </td>
             </tr>
@@ -1274,16 +1271,16 @@ function FinanceMonitoringTable({
   ];
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-white/10">
+    <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
       <table className="w-full min-w-[1650px] text-left text-sm">
-        <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+        <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
           <tr>
             {headers.map((header) => (
               <th
                 key={header}
                 className={`px-3 py-3 font-bold ${
                   header === "Aksi"
-                    ? "sticky right-0 z-30 min-w-[160px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                    ? "sticky right-0 z-30 min-w-[160px] bg-white dark:bg-gray-900 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
                     : ""
                 }`}
               >
@@ -1292,7 +1289,7 @@ function FinanceMonitoringTable({
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-white/5">
+        <tbody className="divide-gray-100 dark:divide-gray-800">
           {batches.map((batch) => {
             const summary = batch.summary || {
               totalRows: 0,
@@ -1313,41 +1310,41 @@ function FinanceMonitoringTable({
                 key={batch.id}
                 className={
                   selectedBatchId === batch.id
-                    ? "bg-teal-500/10"
+                    ? "bg-brand-50 dark:bg-brand-500/[0.08]"
                     : "hover:bg-white/[0.03]"
                 }
               >
-                <td className="min-w-[180px] whitespace-nowrap px-3 py-3 font-mono font-bold text-white">
+                <td className="min-w-[180px] whitespace-nowrap px-3 py-3 font-mono font-bold text-gray-900 dark:text-white/90">
                   {batch.noPengajuan}
                 </td>
-                <td className="px-3 py-3 text-slate-300">
+                <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                   Gelombang {batch.gelombang || "-"}
                 </td>
-                <td className="min-w-[260px] px-3 py-3 text-slate-300">
+                <td className="min-w-[260px] px-3 py-3 text-gray-700 dark:text-gray-300">
                   {batch.principleName}
                 </td>
-                <td className="px-3 py-3 font-mono text-teal-300">
+                <td className="px-3 py-3 font-mono text-brand-500 dark:text-brand-300">
                   {batch.principleCode}
                 </td>
-                <td className="px-3 py-3 text-center text-slate-300">
+                <td className="px-3 py-3 text-center text-gray-700 dark:text-gray-300">
                   {summary.totalRows || summary.rowCount || 0}
                 </td>
-                <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                <td className="px-3 py-3 text-right font-mono text-success-500">
                   Rp {Number(summary.totalNominal || 0).toLocaleString("id-ID")}
                 </td>
-                <td className="px-3 py-3 text-slate-300">
+                <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                   {displayStatusLabel(batch.financeStatus)}
                 </td>
-                <td className="px-3 py-3 text-slate-300">
+                <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                   {displayStatusLabel(batch.finalStatus)}
                 </td>
-                <td className="px-3 py-3 text-right font-mono text-sky-300">
+                <td className="px-3 py-3 text-right font-mono text-blue-light-500">
                   Rp{" "}
                   {Number(paymentSummary.totalPaid || 0).toLocaleString(
                     "id-ID",
                   )}
                 </td>
-                <td className="px-3 py-3 text-right font-mono text-amber-300">
+                <td className="px-3 py-3 text-right font-mono text-warning-500">
                   Rp{" "}
                   {Number(paymentSummary.remainingAmount || 0).toLocaleString(
                     "id-ID",
@@ -1360,10 +1357,10 @@ function FinanceMonitoringTable({
                     {displayStatusLabel(batch.status)}
                   </span>
                 </td>
-                <td className="sticky right-0 z-20 min-w-[160px] bg-[#0f1115] px-3 py-3 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]">
+                <td className="sticky right-0 z-20 min-w-[160px] bg-white dark:bg-gray-900 px-3 py-3 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]">
                   <button
                     onClick={() => onSelect(batch)}
-                    className="w-full rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                    className="w-full rounded-lg border border-gray-300 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-brand-400 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
                   >
                     {financeActionLabel(batch)}
                   </button>
@@ -1373,7 +1370,7 @@ function FinanceMonitoringTable({
           })}
           {batches.length === 0 && (
             <tr>
-              <td colSpan={12} className="px-3 py-6 text-center text-slate-500">
+              <td colSpan={12} className="px-3 py-6 text-center text-gray-500 dark:text-gray-400">
                 Belum ada batch pembayaran yang cocok.
               </td>
             </tr>
@@ -1387,12 +1384,12 @@ function FinanceMonitoringTable({
 function Field({ label, value = "" }: { label: string; value?: string }) {
   return (
     <label className="block">
-      <span className="text-xs text-slate-500 font-semibold">{label}</span>
+      <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">{label}</span>
       <input
         readOnly
         value={value}
         placeholder={label}
-        className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-300 outline-none placeholder:text-slate-600"
+        className="mt-1 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-800 outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-900 dark:text-white/90"
       />
     </label>
   );
@@ -1409,11 +1406,11 @@ function EditableField({
 }) {
   return (
     <label className="block">
-      <span className="text-xs text-slate-500 font-semibold">{label}</span>
+      <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">{label}</span>
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+        className="mt-1 w-full rounded-lg border border-gray-300 bg-transparent px-3 py-2.5 text-sm text-gray-800 shadow-theme-xs outline-none focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-900 dark:text-white/90 dark:focus:border-brand-300"
       />
     </label>
   );
@@ -1430,12 +1427,12 @@ function DateField({
 }) {
   return (
     <label className="block">
-      <span className="text-xs text-slate-500 font-semibold">{label}</span>
+      <span className="text-xs text-gray-500 dark:text-gray-400 font-semibold">{label}</span>
       <DatePickerField
         value={value}
         onChange={onChange}
         ariaLabel={label}
-        className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+        className={`mt-1 w-full ${OFF_INPUT_DATE}`}
       />
     </label>
   );
@@ -1455,15 +1452,15 @@ function PrincipleSelect({
   return (
     <label className="block">
       {label && (
-        <span className="text-xs text-slate-500 font-semibold">{label}</span>
+        <span className="text-xs text-gray-500 dark:text-gray-400 font-semibold">{label}</span>
       )}
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className={`${label ? "mt-1" : ""} w-full rounded-lg border border-white/10 bg-black/40 px-3 ${compact ? "py-2 min-w-[250px]" : "py-2.5"} text-sm text-slate-200 outline-none focus:border-teal-500/50`}
+        className={`${label ? "mt-1" : ""} w-full ${OFF_INPUT} ${compact ? "py-2 min-w-[250px]" : "py-2.5"}`}
       >
         {PRINCIPLE_OPTIONS.map((item) => (
-          <option key={item.code} value={item.name} className="bg-[#1a1c23]">
+          <option key={item.code} value={item.name}>
             {item.name}
           </option>
         ))}
@@ -1475,13 +1472,13 @@ function PrincipleSelect({
 function TextArea({ label, value = "" }: { label: string; value?: string }) {
   return (
     <label className="block">
-      <span className="text-xs text-slate-500 font-semibold">{label}</span>
+      <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">{label}</span>
       <textarea
         readOnly
         value={value}
         placeholder={label}
         rows={4}
-        className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-300 outline-none placeholder:text-slate-600"
+        className="mt-1 w-full resize-none rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-800 outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-900 dark:text-white/90"
       />
     </label>
   );
@@ -1497,28 +1494,25 @@ function Panel({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
-      <h2 className="text-lg font-bold text-white flex items-center gap-2 mb-5">
-        <Icon className="text-teal-300" size={20} /> {title}
-      </h2>
+    <AppCard title={title} icon={Icon}>
       {children}
-    </section>
+    </AppCard>
   );
 }
 
 function ReadOnlyPresenceBadge({ value }: { value: boolean }) {
   return value ? (
-    <span className="inline-flex rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs font-bold text-emerald-300">
+    <span className="inline-flex rounded-full border border-success-200 bg-success-50 px-2 py-0.5 text-[10px] font-semibold text-success-600 dark:border-success-500/30 dark:bg-success-500/15 dark:text-success-500">
       Ada
     </span>
   ) : (
-    <span className="text-xs font-bold text-slate-600">-</span>
+    <span className="text-xs font-bold text-gray-400 dark:text-gray-600">-</span>
   );
 }
 
 function InfoNote({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200 flex items-start gap-2">
+    <div className="rounded-lg border border-warning-300 bg-warning-50 px-4 py-3 text-sm text-warning-700 flex items-start gap-2 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-400">
       <AlertTriangle size={18} className="shrink-0 mt-0.5" />
       <p>{children}</p>
     </div>
@@ -1533,16 +1527,16 @@ function MetricsGrid({ metrics }: { metrics: MetricItem[] }) {
         return (
           <div
             key={metric.label}
-            className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl"
+            className="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03] p-5 shadow-theme-xs"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-sm text-slate-400">{metric.label}</p>
-                <p className="mt-2 text-3xl font-black text-white">
+                <p className="text-sm text-gray-500 dark:text-gray-400">{metric.label}</p>
+                <p className="mt-2 text-3xl font-bold text-gray-900 dark:text-gray-900 dark:text-white/90">
                   {metric.value}
                 </p>
               </div>
-              <div className="w-11 h-11 rounded-xl bg-black/40 border border-white/10 flex items-center justify-center">
+              <div className="w-11 h-11 rounded-xl bg-gray-50 border border-gray-200 dark:bg-gray-800 dark:border-gray-700 flex items-center justify-center">
                 <Icon className={metric.tone} size={22} />
               </div>
             </div>
@@ -1555,16 +1549,16 @@ function MetricsGrid({ metrics }: { metrics: MetricItem[] }) {
 
 function WorkflowStepper() {
   return (
-    <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
+    <div className="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03] p-5 shadow-theme-xs">
       <div className="flex items-center justify-between gap-4 mb-5">
         <div>
-          <h2 className="text-lg font-bold text-white">Alur Persetujuan</h2>
-          <p className="text-sm text-slate-400">
+          <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-900 dark:text-white/90">Alur Persetujuan</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
             Alur batch dari input massal sampai verifikasi final pembayaran
             Claim.
           </p>
         </div>
-        <span className="hidden sm:inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-teal-300">
+        <span className="hidden sm:inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-brand-500 dark:text-brand-400">
           <ArrowRight size={14} /> Alur Batch
         </span>
       </div>
@@ -1572,20 +1566,20 @@ function WorkflowStepper() {
         {workflowSteps.map((step, index) => (
           <div
             key={step}
-            className="relative rounded-xl border border-white/10 bg-black/30 p-4 min-h-28"
+            className="relative rounded-xl border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800 p-4 min-h-28"
           >
             <div className="flex items-center justify-between mb-4">
-              <span className="w-8 h-8 rounded-lg bg-teal-500/10 border border-teal-500/30 text-teal-300 flex items-center justify-center text-sm font-black">
+              <span className="w-8 h-8 rounded-lg bg-brand-50 text-brand-500 border border-brand-200 dark:bg-brand-500/10 dark:border-brand-500/30 dark:text-brand-400 flex items-center justify-center text-sm font-bold">
                 {index + 1}
               </span>
               {index < workflowSteps.length - 1 && (
                 <ArrowRight
-                  className="hidden xl:block text-slate-600"
+                  className="hidden xl:block text-gray-400 dark:text-gray-600"
                   size={16}
                 />
               )}
             </div>
-            <p className="text-sm font-bold text-white leading-snug">{step}</p>
+            <p className="text-sm font-semibold text-gray-800 dark:text-gray-900 dark:text-white/90 leading-snug">{step}</p>
           </div>
         ))}
       </div>
@@ -1619,19 +1613,19 @@ function OverviewMonitoringTable({
     "Aksi",
   ];
   return (
-    <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 overflow-hidden shadow-xl">
-      <div className="p-5 border-b border-white/10 bg-black/30">
-        <h2 className="text-lg font-bold text-white flex items-center gap-2">
-          <ReceiptText className="text-teal-300" size={20} /> Monitoring Batch
+    <div className="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03] overflow-hidden shadow-xl">
+      <div className="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+        <h2 className="text-lg font-bold text-gray-900 dark:text-white/90 flex items-center gap-2">
+          <ReceiptText className="text-brand-500 dark:text-brand-300" size={20} /> Monitoring Batch
           Pengajuan
         </h2>
-        <p className="text-sm text-slate-400 mt-1">
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
           Pilih batch untuk melihat detail baca-saja.
         </p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1750px] text-sm text-left">
-          <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
+          <thead className="bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 border-b border-gray-200 dark:border-gray-700">
             <tr>
               {headers.map((col) => {
                 const isActionColumn = col === "Aksi";
@@ -1640,7 +1634,7 @@ function OverviewMonitoringTable({
                     key={col}
                     className={`px-4 py-3 font-bold ${col === "No Pengajuan" ? "min-w-[180px]" : ""} ${
                       isActionColumn
-                        ? "sticky right-0 z-30 min-w-[150px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                        ? "sticky right-0 z-30 min-w-[150px] bg-white dark:bg-gray-900 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
                         : ""
                     }`}
                   >
@@ -1650,7 +1644,7 @@ function OverviewMonitoringTable({
               })}
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5">
+          <tbody className="divide-gray-100 dark:divide-gray-800">
             {batches.map((batch) => {
               const summary = batch.summary || {
                 totalRows: 0,
@@ -1662,45 +1656,45 @@ function OverviewMonitoringTable({
                   key={batch.id}
                   className={
                     selectedBatchId === batch.id
-                      ? "bg-teal-500/10"
+                      ? "bg-brand-50 dark:bg-brand-500/[0.08]"
                       : "hover:bg-white/[0.03]"
                   }
                 >
-                  <td className="px-4 py-4 min-w-[180px] whitespace-nowrap font-mono font-bold text-white">
+                  <td className="px-4 py-4 min-w-[180px] whitespace-nowrap font-mono font-bold text-gray-900 dark:text-white/90">
                     {batch.noPengajuan}
                   </td>
-                  <td className="px-4 py-4 text-slate-300">
+                  <td className="px-4 py-4 text-gray-700 dark:text-gray-300">
                     Gelombang {batch.gelombang || "-"}
                   </td>
-                  <td className="px-4 py-4 text-slate-300 min-w-[260px]">
+                  <td className="px-4 py-4 text-gray-700 dark:text-gray-300 min-w-[260px]">
                     {batch.principleName}
                   </td>
-                  <td className="px-4 py-4 font-mono text-teal-300">
+                  <td className="px-4 py-4 font-mono text-brand-500 dark:text-brand-300">
                     {batch.principleCode}
                   </td>
-                  <td className="px-4 py-4 text-center text-slate-300">
+                  <td className="px-4 py-4 text-center text-gray-700 dark:text-gray-300">
                     {summary.totalRows || summary.rowCount || 0}
                   </td>
-                  <td className="px-4 py-4 text-right font-mono text-emerald-300">
+                  <td className="px-4 py-4 text-right font-mono text-success-500">
                     Rp{" "}
                     {Number(summary.totalNominal || 0).toLocaleString("id-ID")}
                   </td>
                   <td className="px-4 py-4 min-w-[120px]">
                     <ProgressBar value={computeUiBatchProgress(batch)} />
                   </td>
-                  <td className="px-4 py-4 text-slate-300">
+                  <td className="px-4 py-4 text-gray-700 dark:text-gray-300">
                     {displayStatusLabel(batch.smStatus)}
                   </td>
-                  <td className="px-4 py-4 text-slate-300">
+                  <td className="px-4 py-4 text-gray-700 dark:text-gray-300">
                     {displayStatusLabel(batch.claimStatus)}
                   </td>
-                  <td className="px-4 py-4 text-slate-300">
+                  <td className="px-4 py-4 text-gray-700 dark:text-gray-300">
                     {displayStatusLabel(batch.omStatus)}
                   </td>
-                  <td className="px-4 py-4 text-slate-300">
+                  <td className="px-4 py-4 text-gray-700 dark:text-gray-300">
                     {displayStatusLabel(batch.financeStatus)}
                   </td>
-                  <td className="px-4 py-4 text-slate-300">
+                  <td className="px-4 py-4 text-gray-700 dark:text-gray-300">
                     {displayStatusLabel(batch.finalStatus)}
                   </td>
                   <td className="px-4 py-4">
@@ -1710,10 +1704,10 @@ function OverviewMonitoringTable({
                       {displayStatusLabel(batch.status)}
                     </span>
                   </td>
-                  <td className="sticky right-0 z-20 min-w-[150px] bg-[#0f1115] px-4 py-4 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]">
+                  <td className="sticky right-0 z-20 min-w-[150px] bg-white dark:bg-gray-900 px-4 py-4 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]">
                     <button
                       onClick={() => onSelect(batch)}
-                      className="w-full rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                      className="w-full rounded-lg border border-gray-300 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-brand-400 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
                     >
                       Lihat Detail
                     </button>
@@ -1725,7 +1719,7 @@ function OverviewMonitoringTable({
               <tr>
                 <td
                   colSpan={14}
-                  className="px-4 py-6 text-center text-sm text-slate-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   Belum ada batch OFF Program Control.
                 </td>
@@ -1767,20 +1761,20 @@ function BatchOverviewActionTable({
   ];
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 overflow-hidden shadow-xl">
-      <div className="p-5 border-b border-white/10 bg-black/30">
-        <h2 className="text-lg font-bold text-white flex items-center gap-2">
-          <ReceiptText className="text-teal-300" size={20} /> Monitoring Batch
+    <div className="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03] overflow-hidden shadow-xl">
+      <div className="p-5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+        <h2 className="text-lg font-bold text-gray-900 dark:text-white/90 flex items-center gap-2">
+          <ReceiptText className="text-brand-500 dark:text-brand-300" size={20} /> Monitoring Batch
           Pengajuan
         </h2>
-        <p className="text-sm text-slate-400 mt-1">
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
           Pilih batch untuk membuka detail review.
         </p>
       </div>
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1550px] text-sm text-left">
-          <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
+          <thead className="bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 border-b border-gray-200 dark:border-gray-700">
             <tr>
               {headers.map((col) => {
                 const isActionColumn = col === "Aksi";
@@ -1792,7 +1786,7 @@ function BatchOverviewActionTable({
                       col === "No Pengajuan" ? "min-w-[180px]" : ""
                     } ${
                       isActionColumn
-                        ? "sticky right-0 z-30 min-w-[150px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                        ? "sticky right-0 z-30 min-w-[150px] bg-white dark:bg-gray-900 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
                         : ""
                     }`}
                   >
@@ -1803,7 +1797,7 @@ function BatchOverviewActionTable({
             </tr>
           </thead>
 
-          <tbody className="divide-y divide-white/5">
+          <tbody className="divide-gray-100 dark:divide-gray-800">
             {batches.map((batch) => {
               const summary = batch.summary || {
                 totalRows: 0,
@@ -1816,44 +1810,44 @@ function BatchOverviewActionTable({
                   key={batch.id}
                   className={`${
                     selectedBatchId === batch.id
-                      ? "bg-teal-500/10"
+                      ? "bg-brand-50 dark:bg-brand-500/[0.08]"
                       : "hover:bg-white/[0.03]"
                   }`}
                 >
-                  <td className="px-4 py-4 min-w-[180px] whitespace-nowrap font-mono font-bold text-white">
+                  <td className="px-4 py-4 min-w-[180px] whitespace-nowrap font-mono font-bold text-gray-900 dark:text-white/90">
                     {batch.noPengajuan}
                   </td>
 
-                  <td className="px-4 py-4 text-slate-300 min-w-[260px]">
+                  <td className="px-4 py-4 text-gray-700 dark:text-gray-300 min-w-[260px]">
                     {batch.principleName}
                   </td>
 
-                  <td className="px-4 py-4 font-mono text-teal-300">
+                  <td className="px-4 py-4 font-mono text-brand-500 dark:text-brand-300">
                     {batch.principleCode}
                   </td>
 
-                  <td className="px-4 py-4 text-right font-mono text-emerald-300">
+                  <td className="px-4 py-4 text-right font-mono text-success-500">
                     Rp{" "}
                     {Number(summary.totalNominal || 0).toLocaleString("id-ID")}
                   </td>
 
-                  <td className="px-4 py-4 text-slate-300">
+                  <td className="px-4 py-4 text-gray-700 dark:text-gray-300">
                     {displayStatusLabel(batch.smStatus)}
                   </td>
 
-                  <td className="px-4 py-4 text-slate-300">
+                  <td className="px-4 py-4 text-gray-700 dark:text-gray-300">
                     {displayStatusLabel(batch.claimStatus)}
                   </td>
 
-                  <td className="px-4 py-4 text-slate-300">
+                  <td className="px-4 py-4 text-gray-700 dark:text-gray-300">
                     {displayStatusLabel(batch.omStatus)}
                   </td>
 
-                  <td className="px-4 py-4 text-slate-300">
+                  <td className="px-4 py-4 text-gray-700 dark:text-gray-300">
                     {displayStatusLabel(batch.financeStatus)}
                   </td>
 
-                  <td className="px-4 py-4 text-slate-300">
+                  <td className="px-4 py-4 text-gray-700 dark:text-gray-300">
                     {displayStatusLabel(batch.finalStatus)}
                   </td>
 
@@ -1861,16 +1855,16 @@ function BatchOverviewActionTable({
                     <ProgressBar value={computeUiBatchProgress(batch)} />
                   </td>
 
-                  <td className="px-4 py-4 whitespace-nowrap text-slate-300">
+                  <td className="px-4 py-4 whitespace-nowrap text-gray-700 dark:text-gray-300">
                     {batch.updatedAt
                       ? new Date(batch.updatedAt).toLocaleString("id-ID")
                       : "-"}
                   </td>
 
-                  <td className="sticky right-0 z-20 min-w-[150px] bg-[#0f1115] px-4 py-4 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]">
+                  <td className="sticky right-0 z-20 min-w-[150px] bg-white dark:bg-gray-900 px-4 py-4 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]">
                     <button
                       onClick={() => onSelect(batch)}
-                      className="w-full rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                      className="w-full rounded-lg border border-gray-300 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-brand-400 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
                     >
                       {actionLabel(batch)}
                     </button>
@@ -1883,7 +1877,7 @@ function BatchOverviewActionTable({
               <tr>
                 <td
                   colSpan={12}
-                  className="px-4 py-6 text-center text-sm text-slate-500"
+                  className="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                 >
                   {emptyText}
                 </td>
@@ -1909,13 +1903,13 @@ function IncompleteDocumentsReminderPanel({
 
   return (
     <Panel title="Pengingat Kelengkapan Belum Lengkap" icon={AlertTriangle}>
-      <p className="mb-4 text-sm text-amber-100">
+      <p className="mb-4 text-sm text-warning-700 dark:text-warning-400">
         Claim menandai kelengkapan belum lengkap dan meminta koordinasi
         real-life dengan Claim. Panel ini hanya pengingat web, bukan email.
       </p>
-      <div className="overflow-x-auto rounded-xl border border-white/10">
+      <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
         <table className="w-full min-w-[1050px] text-left text-sm">
-          <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+          <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
             <tr>
               {[
                 "No Pengajuan",
@@ -1931,19 +1925,19 @@ function IncompleteDocumentsReminderPanel({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5">
+          <tbody className="divide-gray-100 dark:divide-gray-800">
             {reminders.map((batch) => (
               <tr key={batch.id} className="hover:bg-white/[0.03]">
-                <td className="whitespace-nowrap px-3 py-3 font-mono font-bold text-white">
+                <td className="whitespace-nowrap px-3 py-3 font-mono font-bold text-gray-900 dark:text-white/90">
                   {batch.noPengajuan}
                 </td>
-                <td className="min-w-[240px] px-3 py-3 text-slate-300">
+                <td className="min-w-[240px] px-3 py-3 text-gray-700 dark:text-gray-300">
                   {batch.principleName}
                 </td>
-                <td className="px-3 py-3 font-mono text-teal-300">
+                <td className="px-3 py-3 font-mono text-brand-500 dark:text-brand-300">
                   {batch.principleCode}
                 </td>
-                <td className="min-w-[280px] px-3 py-3 text-amber-100">
+                <td className="min-w-[280px] px-3 py-3 text-warning-700 dark:text-warning-400">
                   {batch.finalClaimNote || "-"}
                 </td>
                 <td className="px-3 py-3">
@@ -1953,7 +1947,7 @@ function IncompleteDocumentsReminderPanel({
                     {displayStatusLabel(batch.finalStatus)}
                   </span>
                 </td>
-                <td className="px-3 py-3 text-slate-400">
+                <td className="px-3 py-3 text-gray-500 dark:text-gray-400">
                   {formatDateDisplay(batch.updatedAt)}
                 </td>
               </tr>
@@ -1987,23 +1981,23 @@ function DuplicateNoSuratPrompt({
   const noSuratList = Object.keys(conflictsByNoSurat);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-3xl rounded-2xl border border-amber-400/20 bg-[#15161f] shadow-2xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-white/10 bg-amber-500/10 flex items-start gap-3">
-          <AlertTriangle className="text-amber-300 mt-0.5" size={22} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-3xl rounded-2xl border border-warning-200 bg-white shadow-theme-lg dark:border-warning-500/30 dark:bg-gray-900 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-amber-500/10 flex items-start gap-3">
+          <AlertTriangle className="text-warning-500 mt-0.5" size={22} />
           <div>
-            <h3 className="text-lg font-semibold text-white">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white/90">
               No Surat Sudah Pernah Dipakai
             </h3>
-            <p className="text-sm text-amber-100/80 mt-1">
+            <p className="text-sm text-warning-700 dark:text-warning-400/80 mt-1">
               Pada principle {prompt.principleName}, beberapa No Surat di batch ini sudah
               tercatat di pengajuan lain. Pastikan ini bukan pengajuan ganda.
             </p>
           </div>
         </div>
         <div className="max-h-[55vh] overflow-auto">
-          <table className="w-full text-left text-sm text-slate-200">
-            <thead className="sticky top-0 bg-[#1b1c26] border-b border-white/10 text-xs uppercase tracking-wider text-white/70">
+          <table className="w-full text-left text-sm text-gray-800 dark:text-gray-200">
+            <thead className="sticky top-0 border-b border-gray-200 dark:border-gray-700 text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">
               <tr>
                 <th className="px-4 py-3">No Surat</th>
                 <th className="px-4 py-3">Dipakai di Batch</th>
@@ -2016,17 +2010,17 @@ function DuplicateNoSuratPrompt({
                 return items.map((conflict, index) => (
                   <tr
                     key={`${noSurat}-${conflict.batchId}-${index}`}
-                    className="border-b border-white/5"
+                    className="border-b border-gray-100 dark:border-gray-800"
                   >
                     {index === 0 ? (
                       <td
-                        className="px-4 py-3 align-top font-mono font-bold text-white"
+                        className="px-4 py-3 align-top font-mono font-bold text-gray-900 dark:text-white/90"
                         rowSpan={items.length}
                       >
                         {noSurat}
                       </td>
                     ) : null}
-                    <td className="px-4 py-3 font-mono text-teal-200">
+                    <td className="px-4 py-3 font-mono text-brand-600 dark:text-brand-300">
                       {conflict.noPengajuan}
                     </td>
                     <td className="px-4 py-3">
@@ -2042,12 +2036,12 @@ function DuplicateNoSuratPrompt({
             </tbody>
           </table>
         </div>
-        <div className="px-6 py-4 border-t border-white/10 bg-black/30 flex flex-col gap-3 sm:flex-row sm:justify-end">
+        <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50 flex flex-col gap-3 sm:flex-row sm:justify-end">
           <button
             type="button"
             onClick={onCancel}
             disabled={isSubmitting}
-            className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+            className="border border-gray-200 dark:border-gray-800 rounded-xl bg-white/5 px-4 py-2.5 text-sm font-bold text-gray-800 dark:text-gray-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Batalkan dan Cek Ulang
           </button>
@@ -2055,7 +2049,7 @@ function DuplicateNoSuratPrompt({
             type="button"
             onClick={onConfirm}
             disabled={isSubmitting}
-            className="rounded-xl border border-amber-500 bg-amber-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-xl border border-amber-500 bg-amber-600 px-4 py-2.5 text-sm font-bold text-gray-900 dark:text-white/90 transition-colors hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isSubmitting ? "Memproses..." : "Saya Yakin, Lanjutkan"}
           </button>
@@ -2573,7 +2567,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2">
+      <div className={OFF_TAB_SHELL}>
         {[
           ["pengajuan", "Pengajuan"],
           ["monitoring", "Monitoring Semua Status"],
@@ -2585,9 +2579,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
               setSupervisorMenu(key as "pengajuan" | "monitoring" | "diskon")
             }
             className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
-              supervisorMenu === key
-                ? "border border-teal-500/30 bg-teal-500/20 text-teal-200"
-                : "border border-transparent text-slate-400 hover:bg-white/5 hover:text-white"
+              supervisorMenu === key ? OFF_TAB_ACTIVE : OFF_TAB_INACTIVE
             }`}
           >
             {label}
@@ -2598,7 +2590,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
       <IncompleteDocumentsReminderPanel batches={allSupervisorBatches} />
 
       {receiptStatus && (
-        <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
+        <div className="rounded-xl border border-blue-light-200 bg-blue-light-50 dark:border-blue-light-500/30 dark:bg-blue-light-500/10 px-4 py-3 text-sm text-blue-light-700 dark:text-blue-light-400">
           {receiptStatus}
         </div>
       )}
@@ -2651,12 +2643,12 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
             icon={AlertTriangle}
           >
             {returnedStatus && (
-              <div className="mb-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+              <div className="mb-4 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                 {returnedStatus}
               </div>
             )}
             {returnNote && (
-              <div className="mb-4 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+              <div className="mb-4 rounded-xl border border-error-200 bg-error-50 dark:border-error-500/30 dark:bg-error-500/10 px-4 py-3 text-sm text-error-700 dark:text-error-400">
                 <span className="font-bold">Catatan SM:</span> {returnNote}
               </div>
             )}
@@ -2669,24 +2661,24 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                 return (
                   <div
                     key={batch.id}
-                    className="rounded-xl border border-white/10 bg-black/30 p-4"
+                    className="border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 p-4"
                   >
                     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                       <div>
-                        <p className="font-mono text-sm font-bold text-white">
+                        <p className="font-mono text-sm font-bold text-gray-900 dark:text-white/90">
                           {batch.noPengajuan}
                         </p>
-                        <p className="mt-1 text-sm text-slate-300">
+                        <p className="mt-1 text-sm text-gray-700 dark:text-gray-300">
                           {batch.principleName}{" "}
-                          <span className="font-mono text-teal-300">
+                          <span className="font-mono text-brand-500 dark:text-brand-300">
                             ({batch.principleCode})
                           </span>
                         </p>
-                        <p className="mt-2 text-xs text-slate-500">
+                        <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                           Baris: {summary.rowCount} | Total: Rp{" "}
                           {summary.totalNominal.toLocaleString("id-ID")}
                         </p>
-                        <p className="mt-2 text-sm text-rose-200">
+                        <p className="mt-2 text-sm text-error-600 dark:text-error-400">
                           {batch.claimNote ||
                             batch.smNote ||
                             "Tidak ada catatan pengembalian."}
@@ -2701,7 +2693,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                         {canEditSupervisor && (
                           <button
                             onClick={() => openReturnedBatch(batch)}
-                            className="inline-flex items-center justify-center rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
+                            className="inline-flex items-center justify-center rounded-xl border border-gray-300 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-brand-400 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
                           >
                             Buka Revisi
                           </button>
@@ -2721,7 +2713,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                               ? OFF_KWITANSI_DISABLED_MESSAGE
                               : undefined
                           }
-                          className="inline-flex items-center justify-center rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-2 text-sm font-bold text-indigo-200 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="inline-flex items-center justify-center rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-2 text-sm font-bold text-blue-light-600 dark:text-blue-light-400 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {OFF_KWITANSI_DISABLED
                             ? OFF_KWITANSI_DISABLED_MESSAGE
@@ -2735,7 +2727,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                 );
               })}
               {returnedBatches.length === 0 && (
-                <p className="text-sm text-slate-400">
+                <p className="text-sm text-gray-500 dark:text-gray-400">
                   Belum ada draf atau batch yang dikembalikan/perlu revisi.
                 </p>
               )}
@@ -2772,16 +2764,16 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                 onChange={(value) => !editingLocked && setTahunInput(value)}
               />
             </div>
-            <div className="mt-4 rounded-xl border border-teal-500/20 bg-teal-500/10 px-4 py-3">
-              <p className="text-xs uppercase tracking-wider text-teal-300 font-bold">
+            <div className="mt-4 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 dark:border-brand-500/30 dark:bg-brand-500/10">
+              <p className="text-xs uppercase tracking-wider text-brand-500 dark:text-brand-300 font-bold">
                 No Pengajuan Otomatis
               </p>
-              <p className="mt-1 font-mono text-2xl font-black text-white">
+              <p className="mt-1 font-mono text-2xl font-black text-gray-900 dark:text-white/90">
                 {generatedNo}
               </p>
             </div>
             {editingBatchId && (
-              <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-warning-700 dark:text-warning-400">
                 Mode revisi batch yang dikembalikan.{" "}
                 {editingLocked
                   ? "Batch sudah disetujui oleh SM dan terkunci untuk Supervisor."
@@ -2791,9 +2783,9 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
           </Panel>
 
           <Panel title="Input Massal Pengajuan Supervisor" icon={FileText}>
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
               <table className="w-full min-w-[1980px] text-sm text-left">
-                <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
+                <thead className="bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 border-b border-gray-200 dark:border-gray-700">
                   <tr>
                     {[
                       "No Pengajuan",
@@ -2820,7 +2812,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-gray-100 dark:divide-gray-800">
                   {rows.map((row) => (
                     <tr
                       key={row.id}
@@ -2830,21 +2822,21 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                         <input
                           readOnly
                           value={generatedNo}
-                          className="w-full min-w-[170px] rounded-lg border border-white/10 bg-slate-900/80 px-3 py-2 text-sm font-mono font-bold text-white outline-none"
+                          className="w-full min-w-[170px] rounded-lg border border-gray-300 bg-gray-50 dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm font-mono font-bold text-gray-900 dark:text-white/90 outline-none"
                         />
                       </td>
                       <td className="px-3 py-3">
                         <input
                           readOnly
                           value={batchPrinciple}
-                          className="w-full min-w-[250px] rounded-lg border border-white/10 bg-slate-900/80 px-3 py-2 text-sm text-slate-200 outline-none"
+                          className="w-full min-w-[250px] rounded-lg border border-gray-300 bg-gray-50 dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none"
                         />
                       </td>
                       <td className="px-3 py-3">
                         <input
                           readOnly
                           value={batchCode}
-                          className="w-full min-w-[100px] rounded-lg border border-white/10 bg-slate-900/80 px-3 py-2 text-sm font-mono font-bold text-teal-300 outline-none"
+                          className="w-full min-w-[100px] rounded-lg border border-gray-300 bg-gray-50 dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm font-mono font-bold text-brand-500 dark:text-brand-300 outline-none"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -2854,7 +2846,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           onChange={(event) =>
                             updateRow(row.id, "noSurat", event.target.value)
                           }
-                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                          className="w-full min-w-[130px] rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -2864,7 +2856,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           onChange={(event) =>
                             updateRow(row.id, "namaProgram", event.target.value)
                           }
-                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                          className="w-full min-w-[150px] rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -2873,7 +2865,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           value={row.periodeAwal}
                           onChange={(value) => updateRow(row.id, "periodeAwal", value)}
                           ariaLabel="Periode awal"
-                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+                          className="w-full min-w-[150px] rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none [color-scheme:dark] focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -2882,7 +2874,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           value={row.periodeAkhir}
                           onChange={(value) => updateRow(row.id, "periodeAkhir", value)}
                           ariaLabel="Periode akhir"
-                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+                          className="w-full min-w-[150px] rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none [color-scheme:dark] focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -2892,7 +2884,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           onChange={(event) =>
                             updateRow(row.id, "toko", event.target.value)
                           }
-                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                          className="w-full min-w-[130px] rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -2902,7 +2894,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           onChange={(event) =>
                             updateRow(row.id, "barang", event.target.value)
                           }
-                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                          className="w-full min-w-[130px] rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -2913,7 +2905,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                             updateRow(row.id, "nominal", event.target.value)
                           }
                           placeholder="Rp 0"
-                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                          className="w-full min-w-[130px] rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -2923,12 +2915,12 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           onChange={(event) =>
                             updateRow(row.id, "caraBayar", event.target.value)
                           }
-                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50 disabled:opacity-70"
+                          className="w-full min-w-[150px] rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10 disabled:opacity-70"
                         >
                           {offPaymentMethods.map((method) => (
                             <option
                               key={method}
-                              className="bg-[#1a1c23]"
+                             
                               value={method}
                             >
                               {method}
@@ -2944,19 +2936,19 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                             onChange={(event) =>
                               updateRowType(row.id, event.target.value)
                             }
-                            className={`w-full rounded-lg border bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50 disabled:opacity-70 ${
+                            className={`w-full rounded-lg border bg-transparent dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10 disabled:opacity-70 ${
                               row.type
-                                ? "border-white/10"
-                                : "border-amber-500/60"
+                                ? "border-gray-300 dark:border-gray-700"
+                                : "border-warning-400 dark:border-warning-500/60"
                             }`}
                           >
-                            <option value="" className="bg-[#1a1c23]">
+                            <option value="">
                               Pilih tipe...
                             </option>
                             {OFF_PROGRAM_TYPES.map((type) => (
                               <option
                                 key={type}
-                                className="bg-[#1a1c23]"
+                               
                                 value={type}
                               >
                                 {type}
@@ -2964,7 +2956,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                             ))}
                           </select>
                           {row.typeIsLegacy && row.type ? (
-                            <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                            <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-warning-500">
                               Data Lama
                               {row.originalType
                                 ? ` (${row.originalType})`
@@ -2972,7 +2964,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                             </span>
                           ) : null}
                           {!row.type && row.originalType ? (
-                            <span className="block text-[10px] font-semibold text-amber-300">
+                            <span className="block text-[10px] font-semibold text-warning-500">
                               Tipe lama &quot;{row.originalType}&quot; perlu
                               dipilih ulang.
                             </span>
@@ -2983,7 +2975,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                         {/* NOTE: PPh disiapkan nullable di level item/toko, tetapi
                             perhitungan final ditahan karena masih terkait format
                             kwitansi setelah pembayaran. */}
-                        <label className="flex min-w-[150px] items-center gap-2 rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-slate-300">
+                        <label className="flex min-w-[150px] items-center gap-2 rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-2 py-2 text-xs text-gray-700 dark:text-gray-300">
                           <input
                             type="checkbox"
                             checked={row.pphExempt}
@@ -2995,7 +2987,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                               )
                             }
                             disabled={editingLocked}
-                            className="rounded border-white/10 bg-black/50 text-teal-500"
+                            className="rounded border-gray-300 text-brand-500 dark:border-gray-600 dark:bg-gray-900"
                           />
                           Tidak kena PPh
                         </label>
@@ -3006,7 +2998,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           value={row.deadline}
                           onChange={(value) => updateRow(row.id, "deadline", value)}
                           ariaLabel="Deadline"
-                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+                          className="w-full min-w-[150px] rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none [color-scheme:dark] focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -3016,7 +3008,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                             .map((item) => (
                               <label
                                 key={item}
-                                className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-slate-300"
+                                className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300"
                               >
                                 <input
                                   type="checkbox"
@@ -3033,7 +3025,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                                     )
                                   }
                                   disabled={editingLocked}
-                                  className="rounded bg-black/50 border-white/10 text-teal-500"
+                                  className="rounded border-gray-300 text-brand-500 dark:border-gray-600 dark:bg-gray-900"
                                 />
                                 {item === "Others" ? "Lainnya" : item}
                               </label>
@@ -3042,7 +3034,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                       </td>
                       <td className="px-3 py-3">
                         <div className="min-w-[220px] space-y-2">
-                          <label className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-slate-300">
+                          <label className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300">
                             <input
                               type="checkbox"
                               checked={row.others}
@@ -3054,7 +3046,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                                 )
                               }
                               disabled={editingLocked}
-                              className="rounded bg-black/50 border-white/10 text-teal-500"
+                              className="rounded border-gray-300 text-brand-500 dark:border-gray-600 dark:bg-gray-900"
                             />
                             Lainnya
                           </label>
@@ -3069,7 +3061,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                               )
                             }
                             placeholder="Sebutkan dokumen lainnya"
-                            className="w-full rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                            className="w-full rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-2 py-1.5 text-xs text-gray-800 dark:text-gray-200 outline-none placeholder:text-gray-400 dark:text-gray-500 focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10"
                           />
                         </div>
                       </td>
@@ -3077,7 +3069,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                         <button
                           onClick={() => deleteRow(row.id)}
                           disabled={editingLocked || rows.length === 1}
-                          className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-bold text-rose-300 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                          className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-bold text-error-500 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Hapus
                         </button>
@@ -3091,14 +3083,14 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
               <button
                 onClick={addRow}
                 disabled={editingLocked}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-2 border border-gray-200 dark:border-gray-800 rounded-xl bg-white/5 px-4 py-2.5 text-sm font-bold text-gray-800 dark:text-gray-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Plus size={16} /> Tambah Baris
               </button>
               <button
                 onClick={() => saveDraft()}
                 disabled={isSubmitting || editingLocked}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-2 border border-gray-200 dark:border-gray-800 rounded-xl bg-white/5 px-4 py-2.5 text-sm font-bold text-gray-800 dark:text-gray-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Simpan Draf Massal
               </button>
@@ -3106,7 +3098,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                 <button
                   onClick={() => handleSubmitBatch()}
                   disabled={isSubmitting || editingLocked}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-success-500 px-4 py-2.5 text-sm font-semibold text-white shadow-theme-xs transition-colors hover:bg-success-600 disabled:opacity-50"
                 >
                   {isSubmitting
                     ? "Mengirim..."
@@ -3115,13 +3107,13 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                       : "Kirim Semua ke Sales Manager"}
                 </button>
               ) : (
-                <span className="rounded-xl border border-white/10 bg-black/30 px-4 py-2.5 text-sm text-slate-400">
+                <span className="border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-2.5 text-sm text-gray-500 dark:text-gray-400">
                   Baca-saja: role ini tidak bisa mengirim pengajuan Supervisor.
                 </span>
               )}
             </div>
             {submitStatus && (
-              <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+              <div className="mt-4 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                 {submitStatus}
               </div>
             )}
@@ -3129,63 +3121,63 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
               <a
                 href={pdfUrl}
                 target="_blank"
-                className="mt-3 inline-flex rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
+                className="mt-3 inline-flex rounded-xl border border-gray-300 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-brand-400 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
               >
                 Unduh PDF Surat
               </a>
             )}
             {submitResult && (
-              <div className="mt-4 rounded-xl border border-white/10 bg-[#0f1115]/80 p-4 text-xs text-slate-400">
-                <p className="mb-2 font-bold uppercase tracking-wider text-slate-300">
+              <div className="mt-4 border border-gray-200 dark:border-gray-800 rounded-xl bg-white dark:bg-gray-900/80 p-4 text-xs text-gray-500 dark:text-gray-400">
+                <p className="mb-2 font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300">
                   Hasil Pengiriman
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
                   <p>
                     Batch ID:{" "}
-                    <span className="font-mono text-slate-200">
+                    <span className="font-mono text-gray-800 dark:text-gray-200">
                       {submitResult.batchId}
                     </span>
                   </p>
                   <p>
                     No Pengajuan:{" "}
-                    <span className="font-mono text-slate-200">
+                    <span className="font-mono text-gray-800 dark:text-gray-200">
                       {submitResult.noPengajuan}
                     </span>
                   </p>
                   <p>
                     Jumlah baris terkirim:{" "}
-                    <span className="font-mono text-slate-200">
+                    <span className="font-mono text-gray-800 dark:text-gray-200">
                       {submitResult.rowCount}
                     </span>
                   </p>
                   <p>
                     Total Nominal:{" "}
-                    <span className="font-mono text-slate-200">
+                    <span className="font-mono text-gray-800 dark:text-gray-200">
                       Rp {submitResult.total.toLocaleString("id-ID")}
                     </span>
                   </p>
                   <p>
                     Transfer:{" "}
-                    <span className="font-mono text-slate-200">
+                    <span className="font-mono text-gray-800 dark:text-gray-200">
                       Rp {submitResult.transfer.toLocaleString("id-ID")}
                     </span>
                   </p>
                   <p>
                     Tunai:{" "}
-                    <span className="font-mono text-slate-200">
+                    <span className="font-mono text-gray-800 dark:text-gray-200">
                       Rp {submitResult.tunai.toLocaleString("id-ID")}
                     </span>
                   </p>
                   <p>
                     PDF URL:{" "}
-                    <span className="font-mono text-slate-200 break-all">
+                    <span className="font-mono text-gray-800 dark:text-gray-200 break-all">
                       {submitResult.pdfUrl}
                     </span>
                   </p>
                 </div>
               </div>
             )}
-            <p className="mt-4 text-sm text-slate-400">
+            <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
               Kelengkapan yang diisi Supervisor adalah informasi awal. Validasi
               aman/tidaknya tetap ditentukan oleh Claim.
             </p>
@@ -3207,7 +3199,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                 </span>
               ))}
             </div>
-            <p className="mt-4 text-sm text-slate-400">
+            <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
               Supervisor masih bisa edit saat Draf atau Dikembalikan. Batch yang
               sudah dikirim ke SM atau disetujui/terkunci bersifat baca-saja.
             </p>
@@ -3494,13 +3486,13 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
     {
       label: "Total Batch",
       value: String(batches.length),
-      tone: "text-sky-300",
+      tone: "text-blue-light-500",
       icon: ClipboardCheck,
     },
     {
       label: "Menunggu Review SM",
       value: String(batches.filter(isSmActionableBatch).length),
-      tone: "text-amber-300",
+      tone: "text-warning-500",
       icon: Clock3,
     },
     {
@@ -3508,7 +3500,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
       value: String(
         batches.filter((batch) => batch.smStatus === "Approved by SM").length,
       ),
-      tone: "text-emerald-300",
+      tone: "text-success-500",
       icon: CheckCircle2,
     },
     {
@@ -3516,7 +3508,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
       value: String(
         batches.filter((batch) => batch.smStatus === "Returned").length,
       ),
-      tone: "text-rose-300",
+      tone: "text-error-500",
       icon: XCircle,
     },
   ];
@@ -3524,10 +3516,10 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-black text-white">
+        <h2 className="text-2xl font-black text-gray-900 dark:text-white/90">
           Monitoring Batch Pengajuan
         </h2>
-        <p className="mt-1 text-sm text-slate-400">
+        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           Monitoring-first: pilih batch pada tabel untuk membuka detail review
           Sales Manager di bawah tabel.
         </p>
@@ -3551,7 +3543,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
         <PeriodFilter value={smPeriod} onChange={setSmPeriod} />
 
         {isLoading && (
-          <p className="text-sm text-slate-400">Memuat data Sales Manager...</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Memuat data Sales Manager...</p>
         )}
 
         <BatchOverviewActionTable
@@ -3570,7 +3562,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
             <div className="mb-4 flex justify-end">
               <button
                 onClick={closeDetail}
-                className="rounded-xl border border-white/10 bg-black/30 px-4 py-2 text-sm font-bold text-slate-300 hover:bg-white/5 hover:text-white"
+                className="border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-2 text-sm font-bold text-gray-700 dark:text-gray-300 hover:bg-white/5 hover:text-gray-900 dark:text-white/90"
               >
                 Tutup Detail
               </button>
@@ -3621,9 +3613,9 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
                 value={displayStatusLabel(selectedBatch?.smStatus)}
               />
             </div>
-            <div className="mt-5 overflow-x-auto rounded-xl border border-white/10">
+            <div className="mt-5 overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
               <table className="w-full min-w-[1150px] text-left text-sm">
-                <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+                <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
                   <tr>
                     {[
                       "No",
@@ -3643,40 +3635,40 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-gray-100 dark:divide-gray-800">
                   {selectedItems.map((item, index) => (
                     <tr
                       key={item.id || `${item.noSurat}-${index}`}
                       className="hover:bg-white/[0.03]"
                     >
-                      <td className="px-3 py-3 font-mono text-slate-300">
+                      <td className="px-3 py-3 font-mono text-gray-700 dark:text-gray-300">
                         {item.itemNo || index + 1}
                       </td>
-                      <td className="px-3 py-3 font-mono text-slate-200">
+                      <td className="px-3 py-3 font-mono text-gray-800 dark:text-gray-200">
                         {item.noSurat || "-"}
                       </td>
-                      <td className="px-3 py-3 min-w-[180px] text-slate-200">
+                      <td className="px-3 py-3 min-w-[180px] text-gray-800 dark:text-gray-200">
                         {item.namaProgram || "-"}
                       </td>
-                      <td className="px-3 py-3 text-slate-300">
+                      <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                         {item.periode || "-"}
                       </td>
-                      <td className="px-3 py-3 min-w-[140px] text-slate-300">
+                      <td className="px-3 py-3 min-w-[140px] text-gray-700 dark:text-gray-300">
                         {item.toko || "-"}
                       </td>
-                      <td className="px-3 py-3 text-slate-300">
+                      <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                         {item.barang || "-"}
                       </td>
-                      <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                      <td className="px-3 py-3 text-right font-mono text-success-500">
                         Rp {Number(item.nominal || 0).toLocaleString("id-ID")}
                       </td>
-                      <td className="px-3 py-3 text-slate-300">
+                      <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                         {item.caraBayar || "-"}
                       </td>
-                      <td className="px-3 py-3 text-slate-300">
+                      <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                         {item.type || "-"}
                       </td>
-                      <td className="px-3 py-3 text-slate-300">
+                      <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                         {item.deadline || "-"}
                       </td>
                     </tr>
@@ -3685,7 +3677,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
                     <tr>
                       <td
                         colSpan={10}
-                        className="px-3 py-6 text-center text-sm text-slate-500"
+                        className="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                       >
                         Pilih batch untuk melihat item.
                       </td>
@@ -3696,7 +3688,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
             </div>
             <div className="mt-4">
               <label className="block">
-                <span className="text-xs text-slate-500 font-semibold">
+                <span className="text-xs text-gray-500 dark:text-gray-400 font-semibold">
                   Catatan Sales Manager
                 </span>
                 <textarea
@@ -3704,12 +3696,12 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
                   onChange={(event) => setSmNote(event.target.value)}
                   placeholder="Isi catatan jika dikembalikan. Catatan persetujuan boleh dikosongkan."
                   rows={4}
-                  className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                  className={`mt-1 w-full ${OFF_TEXTAREA}`}
                 />
               </label>
             </div>
             {actionMessage && (
-              <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+              <div className="mt-4 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                 {actionMessage}
               </div>
             )}
@@ -3722,7 +3714,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
                     !isSmActionableBatch(selectedBatch) ||
                     isActionLoading
                   }
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm font-bold text-rose-300 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm font-bold text-error-500 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Tolak / Kembalikan ke Supervisor
                 </button>
@@ -3733,13 +3725,13 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
                     !isSmActionableBatch(selectedBatch) ||
                     isActionLoading
                   }
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-success-500 px-4 py-2.5 text-sm font-semibold text-white shadow-theme-xs transition-colors hover:bg-success-600 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Bell size={16} /> Setujui Data & Beri Notifikasi OM
                 </button>
               </div>
             ) : (
-              <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
+              <div className="mt-5 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                 {isSmActionableBatch(selectedBatch)
                   ? "Baca-saja: role ini tidak bisa menyetujui/mengembalikan data Sales Manager."
                   : "Batch sudah diproses Sales Manager. Detail ditampilkan dalam mode baca-saja."}
@@ -3747,18 +3739,18 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
             )}
           </Panel>
           <Panel title="Kelengkapan Awal dari Supervisor" icon={ListChecks}>
-            <p className="mb-4 text-sm text-slate-400">
+            <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
               Kelengkapan ini adalah informasi awal dari Supervisor. Validasi
               kelengkapan tetap dilakukan oleh Claim.
             </p>
             {loadError && (
-              <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+              <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-error-600 dark:text-error-400">
                 {loadError}
               </div>
             )}
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
               <table className="w-full min-w-[1200px] text-left text-sm">
-                <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+                <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
                   <tr>
                     {[
                       "No",
@@ -3780,22 +3772,22 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-gray-100 dark:divide-gray-800">
                   {selectedItems.map((item, index) => (
                     <tr
                       key={item.id || `${item.noSurat}-${index}`}
                       className="hover:bg-white/[0.03]"
                     >
-                      <td className="px-3 py-3 font-mono text-slate-300">
+                      <td className="px-3 py-3 font-mono text-gray-700 dark:text-gray-300">
                         {item.itemNo || index + 1}
                       </td>
-                      <td className="px-3 py-3 font-mono text-slate-200">
+                      <td className="px-3 py-3 font-mono text-gray-800 dark:text-gray-200">
                         {item.noSurat || "-"}
                       </td>
-                      <td className="px-3 py-3 min-w-[180px] text-slate-200">
+                      <td className="px-3 py-3 min-w-[180px] text-gray-800 dark:text-gray-200">
                         {item.namaProgram || "-"}
                       </td>
-                      <td className="px-3 py-3 min-w-[140px] text-slate-300">
+                      <td className="px-3 py-3 min-w-[140px] text-gray-700 dark:text-gray-300">
                         {item.toko || "-"}
                       </td>
                       <td className="px-3 py-3">
@@ -3819,7 +3811,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
                       <td className="px-3 py-3">
                         <ReadOnlyPresenceBadge value={item.others} />
                       </td>
-                      <td className="px-3 py-3 min-w-[180px] text-slate-300">
+                      <td className="px-3 py-3 min-w-[180px] text-gray-700 dark:text-gray-300">
                         {item.othersText || "-"}
                       </td>
                     </tr>
@@ -3828,7 +3820,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
                     <tr>
                       <td
                         colSpan={12}
-                        className="px-3 py-6 text-center text-sm text-slate-500"
+                        className="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                       >
                         {selectedBatch
                           ? "Belum ada item batch yang bisa ditampilkan."
@@ -4419,63 +4411,63 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
   if (claimView === "hub") {
     return (
       <div className="space-y-6">
-        <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-6 shadow-xl">
-          <h2 className="text-2xl font-black text-white">Dashboard Claim</h2>
-          <p className="mt-2 text-sm text-slate-400">
+        <div className="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03] p-6 shadow-xl">
+          <h2 className="text-2xl font-black text-gray-900 dark:text-white/90">Dashboard Claim</h2>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
             Pilih jenis validasi Claim yang ingin diproses.
           </p>
         </div>
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-6 shadow-xl">
+          <section className="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03] p-6 shadow-xl">
             <div className="flex items-start justify-between gap-4">
               <div className="w-12 h-12 rounded-xl border border-sky-500/30 bg-sky-500/10 flex items-center justify-center">
-                <FileCheck2 className="text-sky-300" size={24} />
+                <FileCheck2 className="text-blue-light-500" size={24} />
               </div>
-              <span className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1 text-xs font-bold text-sky-300">
+              <span className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1 text-xs font-bold text-blue-light-500">
                 {claimBatches.length} menunggu
               </span>
             </div>
-            <h3 className="mt-5 text-xl font-black text-white">
+            <h3 className="mt-5 text-xl font-black text-gray-900 dark:text-white/90">
               Validasi Setelah SM
             </h3>
-            <p className="mt-2 text-sm leading-6 text-slate-400">
+            <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">
               Cek data batch yang sudah disetujui Sales Manager dan validasi
               kelengkapan awal sebelum diteruskan ke OM.
             </p>
             <button
               onClick={() => setClaimView("after-sm")}
-              className="mt-6 inline-flex rounded-xl border border-teal-500 bg-teal-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-teal-500"
+              className="mt-6 inline-flex rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-theme-xs hover:bg-brand-600"
             >
               Buka Validasi Setelah SM
             </button>
           </section>
-          <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-6 shadow-xl">
+          <section className="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03] p-6 shadow-xl">
             <div className="flex items-start justify-between gap-4">
               <div className="w-12 h-12 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-center">
-                <Wallet className="text-emerald-300" size={24} />
+                <Wallet className="text-success-500" size={24} />
               </div>
-              <span className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-bold text-emerald-300">
+              <span className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-bold text-success-500">
                 {finalBatches.length} menunggu
               </span>
             </div>
-            <h3 className="mt-5 text-xl font-black text-white">
+            <h3 className="mt-5 text-xl font-black text-gray-900 dark:text-white/90">
               Validasi Setelah Keuangan
             </h3>
-            <p className="mt-2 text-sm leading-6 text-slate-400">
+            <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">
               Cek data yang sudah dibayar Keuangan, input No Claim per No Surat,
               verifikasi bukti bayar dan jumlah pembayaran. Jika kelengkapan
               belum lengkap, gunakan pengingat web untuk SM & SPV.
             </p>
             <button
               onClick={() => setClaimView("after-finance")}
-              className="mt-6 inline-flex rounded-xl border border-teal-500 bg-teal-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-teal-500"
+              className="mt-6 inline-flex rounded-xl bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white shadow-theme-xs hover:bg-brand-600"
             >
               Buka Validasi Setelah Keuangan
             </button>
           </section>
         </div>
         {claimMessage && (
-          <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+          <div className="border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
             {claimMessage}
           </div>
         )}
@@ -4488,30 +4480,30 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       <div className="flex flex-wrap gap-3">
         <button
           onClick={() => setClaimView("hub")}
-          className="inline-flex rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 hover:bg-white/10"
+          className="inline-flex border border-gray-200 dark:border-gray-800 rounded-xl bg-white/5 px-4 py-2.5 text-sm font-bold text-gray-800 dark:text-gray-200 hover:bg-white/10"
         >
           Kembali ke Dashboard Claim
         </button>
         <button
           onClick={() => setClaimView("after-sm")}
-          className={`rounded-xl border px-4 py-2.5 text-sm font-bold ${claimView === "after-sm" ? "border-teal-500 bg-teal-600 text-white" : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"}`}
+          className={`rounded-xl border px-4 py-2.5 text-sm font-bold ${claimView === "after-sm" ? "bg-brand-500 text-white" : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]"}`}
         >
           Validasi Setelah SM
         </button>
         <button
           onClick={() => setClaimView("after-finance")}
-          className={`rounded-xl border px-4 py-2.5 text-sm font-bold ${claimView === "after-finance" ? "border-teal-500 bg-teal-600 text-white" : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"}`}
+          className={`rounded-xl border px-4 py-2.5 text-sm font-bold ${claimView === "after-finance" ? "bg-brand-500 text-white" : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]"}`}
         >
           Validasi Setelah Keuangan
         </button>
       </div>
-      <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
-        <h2 className="text-xl font-black text-white">
+      <div className="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03] p-5 shadow-xl">
+        <h2 className="text-xl font-black text-gray-900 dark:text-white/90">
           {claimView === "after-sm"
             ? "Validasi Setelah SM"
             : "Validasi Setelah Keuangan"}
         </h2>
-        <p className="mt-1 text-sm text-slate-400">
+        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           {claimView === "after-sm"
             ? "Cek batch yang sudah disetujui Sales Manager dan lakukan validasi Claim awal."
             : "Cek pembayaran Keuangan, input No Claim per No Surat, verifikasi bukti bayar dan jumlah. Jika kelengkapan belum lengkap, gunakan pengingat web."}
@@ -4534,9 +4526,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
             <div className="mb-4">
               <PeriodFilter value={claimPeriod} onChange={setClaimPeriod} />
             </div>
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
               <table className="w-full min-w-[1300px] text-left text-sm">
-                <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+                <thead className="bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
                   <tr>
                     {[
                       "No Pengajuan",
@@ -4558,51 +4550,51 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-gray-100 dark:divide-gray-800">
                   {claimInitialMonitoringBatches.map((batch) => {
                     const canProcess = isClaimInitialProcessableBatch(batch);
                     return (
                       <tr key={batch.id} className="hover:bg-white/[0.03]">
-                        <td className="px-3 py-3 font-mono text-slate-200">
+                        <td className="px-3 py-3 font-mono text-gray-800 dark:text-gray-200">
                           {batch.noPengajuan}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {batch.principleName}
                         </td>
-                        <td className="px-3 py-3 font-mono text-teal-300">
+                        <td className="px-3 py-3 font-mono text-brand-500 dark:text-brand-300">
                           {batch.principleCode}
                         </td>
-                        <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                        <td className="px-3 py-3 text-right font-mono text-success-500">
                           Rp{" "}
                           {Number(
                             batch.summary?.totalNominal || 0,
                           ).toLocaleString("id-ID")}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {displayStatusLabel(batch.claimStatus)}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {displayStatusLabel(batch.omStatus)}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {displayStatusLabel(batch.financeStatus)}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {displayStatusLabel(batch.finalStatus)}
                         </td>
                         <td className="px-3 py-3 min-w-[130px]">
                           <ProgressBar value={computeUiBatchProgress(batch)} />
                         </td>
-                        <td className="px-3 py-3 text-slate-400">
+                        <td className="px-3 py-3 text-gray-500 dark:text-gray-400">
                           {batch.claimNote || "-"}
                         </td>
-                        <td className="px-3 py-3 text-slate-400">
+                        <td className="px-3 py-3 text-gray-500 dark:text-gray-400">
                           {formatDateDisplay(batch.updatedAt)}
                         </td>
                         <td className="px-3 py-3">
                           <button
                             onClick={() => selectClaimBatch(batch)}
-                            className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${canProcess ? "border-teal-500 bg-teal-600 text-white hover:bg-teal-500" : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"}`}
+                            className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${canProcess ? "bg-brand-500 text-white hover:bg-brand-600" : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]"}`}
                           >
                             {canProcess ? "Proses" : "Lihat"}
                           </button>
@@ -4614,7 +4606,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     <tr>
                       <td
                         colSpan={12}
-                        className="px-3 py-6 text-center text-sm text-slate-500"
+                        className="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                       >
                         Belum ada data validasi Claim awal untuk ditampilkan.
                       </td>
@@ -4636,7 +4628,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     setClaimDeadline("");
                     setClaimNote("");
                   }}
-                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-white/10"
+                  className="border border-gray-200 dark:border-gray-800 rounded-xl bg-white/5 px-4 py-2 text-sm font-bold text-gray-800 dark:text-gray-200 hover:bg-white/10"
                 >
                   Tutup Detail
                 </button>
@@ -4664,9 +4656,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     value={`Rp ${totalNominal.toLocaleString("id-ID")}`}
                   />
                 </div>
-                <div className="mt-5 overflow-x-auto rounded-xl border border-white/10">
+                <div className="mt-5 overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
                   <table className="w-full min-w-[900px] text-left text-sm">
-                    <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+                    <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
                       <tr>
                         {[
                           "No",
@@ -4682,26 +4674,26 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                         ))}
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-gray-100 dark:divide-gray-800">
                       {selectedItems.map((item, index) => (
                         <tr key={item.id} className="hover:bg-white/[0.03]">
-                          <td className="px-3 py-3 font-mono text-slate-300">
+                          <td className="px-3 py-3 font-mono text-gray-700 dark:text-gray-300">
                             {item.itemNo || index + 1}
                           </td>
-                          <td className="px-3 py-3 font-mono text-slate-200">
+                          <td className="px-3 py-3 font-mono text-gray-800 dark:text-gray-200">
                             {item.noSurat || "-"}
                           </td>
-                          <td className="px-3 py-3 text-slate-200">
+                          <td className="px-3 py-3 text-gray-800 dark:text-gray-200">
                             {item.namaProgram || "-"}
                           </td>
-                          <td className="px-3 py-3 text-slate-300">
+                          <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                             {item.toko || "-"}
                           </td>
-                          <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                          <td className="px-3 py-3 text-right font-mono text-success-500">
                             Rp{" "}
                             {Number(item.nominal || 0).toLocaleString("id-ID")}
                           </td>
-                          <td className="px-3 py-3 text-slate-300">
+                          <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                             {item.deadline || "-"}
                           </td>
                         </tr>
@@ -4723,7 +4715,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     onChange={setClaimDeadline}
                   />
                   <label className="block">
-                    <span className="text-xs text-slate-500 font-semibold">
+                    <span className="text-xs text-gray-500 dark:text-gray-400 font-semibold">
                       Status Kelengkapan Claim
                     </span>
                     <select
@@ -4731,15 +4723,15 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                       onChange={(event) =>
                         setCompletenessStatus(event.target.value)
                       }
-                      className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                      className={`mt-1 w-full ${OFF_INPUT}`}
                     >
-                      <option className="bg-[#1a1c23]" value="Aman">
+                      <option value="Aman">
                         Aman
                       </option>
-                      <option className="bg-[#1a1c23]" value="Kurang">
+                      <option value="Kurang">
                         Kurang
                       </option>
-                      <option className="bg-[#1a1c23]" value="Perlu Revisi">
+                      <option value="Perlu Revisi">
                         Perlu Revisi
                       </option>
                     </select>
@@ -4747,19 +4739,19 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                 </div>
                 <div className="mt-4">
                   <label className="block">
-                    <span className="text-xs text-slate-500 font-semibold">
+                    <span className="text-xs text-gray-500 dark:text-gray-400 font-semibold">
                       Catatan Claim
                     </span>
                     <textarea
                       value={claimNote}
                       onChange={(event) => setClaimNote(event.target.value)}
                       rows={4}
-                      className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                      className={`mt-1 w-full ${OFF_TEXTAREA}`}
                     />
                   </label>
                 </div>
                 {claimMessage && (
-                  <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+                  <div className="mt-4 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                     {claimMessage}
                   </div>
                 )}
@@ -4768,20 +4760,20 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     <button
                       onClick={returnByClaim}
                       disabled={isActionLoading}
-                      className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm font-bold text-rose-300 disabled:opacity-50"
+                      className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm font-bold text-error-500 disabled:opacity-50"
                     >
                       Kembalikan untuk Koreksi
                     </button>
                     <button
                       onClick={approveByClaim}
                       disabled={isActionLoading}
-                      className="rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"
+                      className="rounded-xl bg-success-500 px-4 py-2.5 text-sm font-semibold text-white shadow-theme-xs disabled:opacity-50"
                     >
                       Setujui Claim
                     </button>
                   </div>
                 ) : (
-                  <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
+                  <div className="mt-5 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                     Baca-saja atau batch sudah diproses.
                   </div>
                 )}
@@ -4794,7 +4786,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       {claimView === "after-finance" && (
         <>
           <Panel title="Monitoring Final Claim" icon={Wallet}>
-            <p className="mb-4 text-sm text-slate-400">
+            <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
               Lihat data yang menunggu verifikasi final dan data yang sudah
               diproses Claim Final.
             </p>
@@ -4808,9 +4800,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
             <div className="mb-4">
               <PeriodFilter value={finalClaimPeriod} onChange={setFinalClaimPeriod} />
             </div>
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
               <table className="w-full min-w-[1200px] text-left text-sm">
-                <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+                <thead className="bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
                   <tr>
                     {[
                       "No Pengajuan",
@@ -4830,45 +4822,45 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-gray-100 dark:divide-gray-800">
                   {finalClaimMonitoringBatches.map((batch) => {
                     const canProcessFinal = isFinalClaimProcessable(batch);
                     return (
                       <tr key={batch.id} className="hover:bg-white/[0.03]">
-                        <td className="px-3 py-3 font-mono text-slate-200">
+                        <td className="px-3 py-3 font-mono text-gray-800 dark:text-gray-200">
                           {batch.noPengajuan}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {batch.principleName}
                         </td>
-                        <td className="px-3 py-3 font-mono text-teal-300">
+                        <td className="px-3 py-3 font-mono text-brand-500 dark:text-brand-300">
                           {batch.principleCode}
                         </td>
-                        <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                        <td className="px-3 py-3 text-right font-mono text-success-500">
                           Rp{" "}
                           {Number(
                             batch.summary?.totalNominal || 0,
                           ).toLocaleString("id-ID")}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {displayStatusLabel(batch.financeStatus)}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {displayStatusLabel(batch.finalStatus)}
                         </td>
                         <td className="px-3 py-3 min-w-[130px]">
                           <ProgressBar value={computeUiBatchProgress(batch)} />
                         </td>
-                        <td className="px-3 py-3 text-slate-400">
+                        <td className="px-3 py-3 text-gray-500 dark:text-gray-400">
                           {batch.finalClaimNote || "-"}
                         </td>
-                        <td className="px-3 py-3 text-slate-400">
+                        <td className="px-3 py-3 text-gray-500 dark:text-gray-400">
                           {formatDateDisplay(batch.updatedAt)}
                         </td>
                         <td className="px-3 py-3">
                           <button
                             onClick={() => selectFinalBatch(batch)}
-                            className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${canProcessFinal ? "border-teal-500 bg-teal-600 text-white hover:bg-teal-500" : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"}`}
+                            className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${canProcessFinal ? "bg-brand-500 text-white hover:bg-brand-600" : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]"}`}
                           >
                             {canProcessFinal ? "Proses Final" : "Lihat"}
                           </button>
@@ -4880,7 +4872,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     <tr>
                       <td
                         colSpan={10}
-                        className="px-3 py-6 text-center text-sm text-slate-500"
+                        className="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                       >
                         Belum ada data final Claim untuk ditampilkan.
                       </td>
@@ -4903,7 +4895,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     setFinalChecklist({});
                     setFinalClaimNote("");
                   }}
-                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-white/10"
+                  className="border border-gray-200 dark:border-gray-800 rounded-xl bg-white/5 px-4 py-2 text-sm font-bold text-gray-800 dark:text-gray-200 hover:bg-white/10"
                 >
                   Tutup Detail
                 </button>
@@ -4994,9 +4986,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     value={selectedFinalBatch?.financeNote || "-"}
                   />
                 </div>
-                <div className="mt-5 overflow-x-auto rounded-xl border border-white/10">
+                <div className="mt-5 overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
                   <table className="w-full min-w-[900px] text-left text-sm">
-                    <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+                    <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
                       <tr>
                         {[
                           "No Pembayaran",
@@ -5013,30 +5005,30 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                         ))}
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-gray-100 dark:divide-gray-800">
                       {selectedFinalPayments.map((payment) => (
                         <tr key={payment.id} className="hover:bg-white/[0.03]">
-                          <td className="px-3 py-3 font-mono text-slate-300">
+                          <td className="px-3 py-3 font-mono text-gray-700 dark:text-gray-300">
                             {payment.paymentNo}
                           </td>
-                          <td className="px-3 py-3 text-slate-300">
+                          <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                             {formatDateDisplay(payment.paymentDate)}
                           </td>
-                          <td className="px-3 py-3 text-slate-300">
+                          <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                             {payment.paymentMethod}
                           </td>
-                          <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                          <td className="px-3 py-3 text-right font-mono text-success-500">
                             Rp{" "}
                             {Number(payment.paidAmount || 0).toLocaleString(
                               "id-ID",
                             )}
                           </td>
-                          <td className="px-3 py-3 text-slate-300">
+                          <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                             {payment.senderBank || "-"}
                           </td>
                           <td className="px-3 py-3">
                             <div className="min-w-[180px] space-y-2">
-                              <p className="font-mono text-xs text-slate-300">
+                              <p className="font-mono text-xs text-gray-700 dark:text-gray-300">
                                 {payment.paymentProofName || "-"}
                               </p>
                               {payment.proofUrl && (
@@ -5048,14 +5040,14 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                                       "_blank",
                                     )
                                   }
-                                  className="rounded-lg border border-teal-500/30 bg-teal-500/10 px-2 py-1 text-xs font-bold text-teal-300 hover:bg-teal-500/20"
+                                  className="rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-800 px-2 py-1 text-xs font-bold text-gray-700 dark:text-brand-400 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
                                 >
                                   Lihat Bukti
                                 </button>
                               )}
                             </div>
                           </td>
-                          <td className="px-3 py-3 text-slate-300">
+                          <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                             {payment.note || "-"}
                           </td>
                         </tr>
@@ -5064,7 +5056,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                         <tr>
                           <td
                             colSpan={7}
-                            className="px-3 py-6 text-center text-sm text-slate-500"
+                            className="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                           >
                             Belum ada riwayat pembayaran.
                           </td>
@@ -5076,9 +5068,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
               </Panel>
 
               <Panel title="Item Batch Verifikasi Final" icon={ReceiptText}>
-                <div className="overflow-x-auto rounded-xl border border-white/10">
+                <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
                   <table className="w-full min-w-[1900px] text-sm text-left">
-                    <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
+                    <thead className="bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 border-b border-gray-200 dark:border-gray-700">
                       <tr>
                         {[
                           "No",
@@ -5103,7 +5095,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                         ))}
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-gray-100 dark:divide-gray-800">
                       {selectedFinalItems.map((item, index) => {
                         const period = splitPeriodDates(item.periode);
                         const checklist = finalChecklist[item.id] || {
@@ -5134,10 +5126,10 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                             key={item.id || `${item.noSurat}-${index}`}
                             className="hover:bg-white/[0.03]"
                           >
-                            <td className="px-3 py-3 font-mono text-slate-300">
+                            <td className="px-3 py-3 font-mono text-gray-700 dark:text-gray-300">
                               {item.itemNo || index + 1}
                             </td>
-                            <td className="px-3 py-3 font-mono text-slate-200">
+                            <td className="px-3 py-3 font-mono text-gray-800 dark:text-gray-200">
                               {item.noSurat || "-"}
                             </td>
                             <td className="px-3 py-3">
@@ -5150,11 +5142,11 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                                   }))
                                 }
                                 placeholder="Isi No Claim"
-                                className="w-full min-w-[160px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm font-mono text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                                className="w-full min-w-[160px] rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm font-mono text-gray-800 dark:text-gray-200 outline-none placeholder:text-gray-400 dark:text-gray-500 focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10"
                               />
                             </td>
                             <td className="px-3 py-3 min-w-[300px]">
-                              <div className="grid grid-cols-4 gap-2 text-xs text-slate-300">
+                              <div className="grid grid-cols-4 gap-2 text-xs text-gray-700 dark:text-gray-300">
                                 {[
                                   ["finalKwt", "KWT"],
                                   ["finalSkp", "SKP"],
@@ -5180,7 +5172,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                                           [key]: event.target.checked,
                                         } as Partial<typeof checklist>)
                                       }
-                                      className="h-4 w-4 rounded border-white/20 bg-black/40 accent-teal-500"
+                                      className="h-4 w-4 rounded border-gray-300 bg-white text-brand-500 dark:border-gray-600 dark:bg-gray-900"
                                     />
                                     {label}
                                   </label>
@@ -5197,7 +5189,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                                 }
                                 disabled={!checklist.finalOthers}
                                 placeholder="Jika Others dicentang"
-                                className="w-full min-w-[180px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50 disabled:opacity-50"
+                                className="w-full min-w-[180px] rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none placeholder:text-gray-400 dark:text-gray-500 focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10 disabled:opacity-50"
                               />
                             </td>
                             <td className="px-3 py-3">
@@ -5210,37 +5202,37 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                                 }
                                 rows={2}
                                 placeholder="Catatan per item"
-                                className="w-full min-w-[220px] resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                                className="w-full min-w-[220px] resize-none rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none placeholder:text-gray-400 dark:text-gray-500 focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10"
                               />
                             </td>
-                            <td className="px-3 py-3 min-w-[180px] text-slate-200">
+                            <td className="px-3 py-3 min-w-[180px] text-gray-800 dark:text-gray-200">
                               {item.namaProgram || "-"}
                             </td>
-                            <td className="px-3 py-3 text-slate-300">
+                            <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                               {formatDateDisplay(period.periodeAwal)}
                             </td>
-                            <td className="px-3 py-3 text-slate-300">
+                            <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                               {formatDateDisplay(period.periodeAkhir)}
                             </td>
-                            <td className="px-3 py-3 min-w-[140px] text-slate-300">
+                            <td className="px-3 py-3 min-w-[140px] text-gray-700 dark:text-gray-300">
                               {item.toko || "-"}
                             </td>
-                            <td className="px-3 py-3 text-slate-300">
+                            <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                               {item.barang || "-"}
                             </td>
-                            <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                            <td className="px-3 py-3 text-right font-mono text-success-500">
                               Rp{" "}
                               {Number(item.nominal || 0).toLocaleString(
                                 "id-ID",
                               )}
                             </td>
-                            <td className="px-3 py-3 text-slate-300">
+                            <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                               {item.caraBayar || "-"}
                             </td>
-                            <td className="px-3 py-3 text-slate-300">
+                            <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                               {item.type || "-"}
                             </td>
-                            <td className="px-3 py-3 text-slate-300">
+                            <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                               {formatDateDisplay(item.deadline)}
                             </td>
                           </tr>
@@ -5285,7 +5277,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                 </InfoNote>
                 <div className="mt-4">
                   <label className="block">
-                    <span className="text-xs text-slate-500 font-semibold">
+                    <span className="text-xs text-gray-500 dark:text-gray-400 font-semibold">
                       Catatan Final Claim
                     </span>
                     <textarea
@@ -5294,13 +5286,13 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                         setFinalClaimNote(event.target.value)
                       }
                       rows={4}
-                      className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                      className={`mt-1 w-full ${OFF_TEXTAREA}`}
                     />
                   </label>
                 </div>
 
                 {claimMessage && (
-                  <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+                  <div className="mt-4 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                     {claimMessage}
                   </div>
                 )}
@@ -5312,20 +5304,20 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     <button
                       onClick={remindIncompleteDocuments}
                       disabled={!selectedFinalBatch || isActionLoading}
-                      className="inline-flex items-center justify-center rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm font-bold text-amber-300 hover:bg-amber-500/20 disabled:opacity-50"
+                      className="inline-flex items-center justify-center rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm font-bold text-warning-500 hover:bg-amber-500/20 disabled:opacity-50"
                     >
                       Ingatkan SM & SPV kelengkapan belum lengkap
                     </button>
                     <button
                       onClick={completeFinalClaim}
                       disabled={!selectedFinalBatch || isActionLoading}
-                      className="inline-flex items-center justify-center rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50"
+                      className="inline-flex items-center justify-center rounded-xl bg-success-500 px-4 py-2.5 text-sm font-semibold text-white shadow-theme-xs hover:bg-success-600 disabled:opacity-50"
                     >
                       Selesaikan
                     </button>
                   </div>
                 ) : (
-                  <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
+                  <div className="mt-5 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                     Baca-saja: role ini tidak bisa memproses final Claim.
                   </div>
                 )}
@@ -5418,16 +5410,16 @@ function LiveQueueSummaryPanel({ batches }: { batches: OffApiBatch[] }) {
           return (
             <div
               key={queue.title}
-              className="rounded-xl border border-white/10 bg-black/30 p-4"
+              className="border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 p-4"
             >
               <div className="flex items-start justify-between gap-3">
-                <Icon className="text-teal-300 shrink-0" size={20} />
-                <span className="font-mono text-xl font-black text-white">
+                <Icon className="text-brand-500 dark:text-brand-300 shrink-0" size={20} />
+                <span className="font-mono text-xl font-black text-gray-900 dark:text-white/90">
                   {queue.count}
                 </span>
               </div>
-              <p className="text-sm font-bold text-white mt-3">{queue.title}</p>
-              <p className="text-xs text-slate-500 mt-1">{queue.desc}</p>
+              <p className="text-sm font-bold text-gray-900 dark:text-white/90 mt-3">{queue.title}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{queue.desc}</p>
             </div>
           );
         })}
@@ -5600,7 +5592,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2">
+      <div className={OFF_TAB_SHELL}>
         {[
           ["monitoring", "Monitoring Batch Pengajuan"],
           ["approval", "Persetujuan OM"],
@@ -5609,9 +5601,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
             key={key}
             onClick={() => setOmMenu(key as "monitoring" | "approval")}
             className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
-              omMenu === key
-                ? "border border-teal-500/30 bg-teal-500/20 text-teal-200"
-                : "border border-transparent text-slate-400 hover:bg-white/5 hover:text-white"
+              omMenu === key ? OFF_TAB_ACTIVE : OFF_TAB_INACTIVE
             }`}
           >
             {label}
@@ -5641,7 +5631,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
             <PeriodFilter value={omPeriod} onChange={setOmPeriod} />
 
             {isLoading && (
-              <p className="text-sm text-slate-400">Memuat data OM...</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Memuat data OM...</p>
             )}
 
             <BatchOverviewActionTable
@@ -5717,8 +5707,8 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
           </Panel>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-              <h3 className="font-bold text-white mb-3">Data Disetujui SM</h3>
+            <div className="border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 p-4">
+              <h3 className="font-bold text-gray-900 dark:text-white/90 mb-3">Data Disetujui SM</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field
                   label="Status SM"
@@ -5748,8 +5738,8 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                 />
               </div>
             </div>
-            <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-              <h3 className="font-bold text-white mb-3">Validasi Claim</h3>
+            <div className="border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 p-4">
+              <h3 className="font-bold text-gray-900 dark:text-white/90 mb-3">Validasi Claim</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field
                   label="Status Claim"
@@ -5776,9 +5766,9 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
           </div>
 
           <Panel title="Item Batch untuk Persetujuan OM" icon={ReceiptText}>
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
               <table className="w-full min-w-[1350px] text-sm text-left">
-                <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
+                <thead className="bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 border-b border-gray-200 dark:border-gray-700">
                   <tr>
                     {[
                       "No",
@@ -5800,7 +5790,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-gray-100 dark:divide-gray-800">
                   {selectedItems.map((item, index) => {
                     const period = splitPeriodDates(item.periode);
                     return (
@@ -5808,40 +5798,40 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                         key={item.id || `${item.noSurat}-${index}`}
                         className="hover:bg-white/[0.03]"
                       >
-                        <td className="px-3 py-3 font-mono text-slate-300">
+                        <td className="px-3 py-3 font-mono text-gray-700 dark:text-gray-300">
                           {item.itemNo || index + 1}
                         </td>
-                        <td className="px-3 py-3 font-mono text-slate-200">
+                        <td className="px-3 py-3 font-mono text-gray-800 dark:text-gray-200">
                           {item.noSurat || "-"}
                         </td>
-                        <td className="px-3 py-3 min-w-[180px] text-slate-200">
+                        <td className="px-3 py-3 min-w-[180px] text-gray-800 dark:text-gray-200">
                           {item.namaProgram || "-"}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {formatDateDisplay(period.periodeAwal)}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {formatDateDisplay(period.periodeAkhir)}
                         </td>
-                        <td className="px-3 py-3 min-w-[140px] text-slate-300">
+                        <td className="px-3 py-3 min-w-[140px] text-gray-700 dark:text-gray-300">
                           {item.toko || "-"}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {item.barang || "-"}
                         </td>
-                        <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                        <td className="px-3 py-3 text-right font-mono text-success-500">
                           Rp {Number(item.nominal || 0).toLocaleString("id-ID")}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {item.caraBayar || "-"}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {item.type || "-"}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {formatDateDisplay(item.deadline)}
                         </td>
-                        <td className="px-3 py-3 min-w-[180px] text-slate-300">
+                        <td className="px-3 py-3 min-w-[180px] text-gray-700 dark:text-gray-300">
                           {itemDocsSummary(item)}
                         </td>
                       </tr>
@@ -5851,7 +5841,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                     <tr>
                       <td
                         colSpan={12}
-                        className="px-3 py-6 text-center text-sm text-slate-500"
+                        className="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                       >
                         Pilih batch untuk melihat item.
                       </td>
@@ -5878,7 +5868,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
               />
             </div>
             {hasMixedPaymentTypes && (
-              <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-warning-700 dark:text-warning-400">
                 Batch ini memiliki lebih dari satu jenis pembayaran. Pastikan
                 pembayaran sesuai rincian baris.
               </div>
@@ -5887,7 +5877,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
 
           <Panel title="Keputusan Operational Manager" icon={ShieldCheck}>
             <label className="block">
-              <span className="text-xs text-slate-500 font-semibold">
+              <span className="text-xs text-gray-500 dark:text-gray-400 font-semibold">
                 Catatan OM
               </span>
               <textarea
@@ -5895,11 +5885,11 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                 onChange={(event) => setOmNote(event.target.value)}
                 placeholder="Catatan wajib diisi untuk pembatalan. Catatan persetujuan boleh dikosongkan."
                 rows={4}
-                className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                className={`mt-1 w-full ${OFF_TEXTAREA}`}
               />
             </label>
             {omMessage && (
-              <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+              <div className="mt-4 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                 {omMessage}
               </div>
             )}
@@ -5912,7 +5902,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                     !isOmActionableBatch(selectedBatch) ||
                     isActionLoading
                   }
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm font-bold text-rose-300 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm font-bold text-error-500 transition-colors hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <XCircle size={16} /> Batalkan
                 </button>
@@ -5923,13 +5913,13 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                     !isOmActionableBatch(selectedBatch) ||
                     isActionLoading
                   }
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-success-500 px-4 py-2.5 text-sm font-semibold text-white shadow-theme-xs transition-colors hover:bg-success-600 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <CheckCircle2 size={16} /> Setujui
                 </button>
               </div>
             ) : (
-              <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
+              <div className="mt-5 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                 Baca-saja: role ini tidak bisa mengambil keputusan OM.
               </div>
             )}
@@ -6243,7 +6233,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2">
+      <div className={OFF_TAB_SHELL}>
         {[
           ["monitoring", "Monitoring Batch Pembayaran"],
           ["payment", "Pembayaran"],
@@ -6252,9 +6242,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
             key={key}
             onClick={() => setFinanceMenu(key as "monitoring" | "payment")}
             className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
-              financeMenu === key
-                ? "border border-teal-500/30 bg-teal-500/20 text-teal-200"
-                : "border border-transparent text-slate-400 hover:bg-white/5 hover:text-white"
+              financeMenu === key ? OFF_TAB_ACTIVE : OFF_TAB_INACTIVE
             }`}
           >
             {label}
@@ -6280,7 +6268,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
             <PeriodFilter value={financePeriod} onChange={setFinancePeriod} />
           </div>
           {isLoading && (
-            <p className="mb-4 text-sm text-slate-400">
+            <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
               Memuat data Keuangan...
             </p>
           )}
@@ -6294,7 +6282,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
 
       {financeMenu === "payment" && !selectedBatch && (
         <Panel title="Pembayaran" icon={Wallet}>
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-gray-500 dark:text-gray-400">
             Pilih batch dari Monitoring Batch Pembayaran untuk melihat detail
             pembayaran.
           </p>
@@ -6393,7 +6381,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
               />
             </div>
             {hasMixedItemPayments && (
-              <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-warning-700 dark:text-warning-400">
                 Batch ini memiliki lebih dari satu jenis pembayaran. Pastikan
                 pembayaran sesuai rincian baris.
               </div>
@@ -6401,9 +6389,9 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
           </Panel>
 
           <Panel title="Item Batch untuk Pembayaran" icon={ListChecks}>
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
               <table className="w-full min-w-[1250px] text-sm text-left">
-                <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
+                <thead className="bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 border-b border-gray-200 dark:border-gray-700">
                   <tr>
                     {[
                       "No",
@@ -6424,7 +6412,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-gray-100 dark:divide-gray-800">
                   {selectedItems.map((item, index) => {
                     const period = splitPeriodDates(item.periode);
                     return (
@@ -6432,37 +6420,37 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                         key={item.id || `${item.noSurat}-${index}`}
                         className="hover:bg-white/[0.03]"
                       >
-                        <td className="px-3 py-3 font-mono text-slate-300">
+                        <td className="px-3 py-3 font-mono text-gray-700 dark:text-gray-300">
                           {item.itemNo || index + 1}
                         </td>
-                        <td className="px-3 py-3 font-mono text-slate-200">
+                        <td className="px-3 py-3 font-mono text-gray-800 dark:text-gray-200">
                           {item.noSurat || "-"}
                         </td>
-                        <td className="px-3 py-3 min-w-[180px] text-slate-200">
+                        <td className="px-3 py-3 min-w-[180px] text-gray-800 dark:text-gray-200">
                           {item.namaProgram || "-"}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {formatDateDisplay(period.periodeAwal)}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {formatDateDisplay(period.periodeAkhir)}
                         </td>
-                        <td className="px-3 py-3 min-w-[140px] text-slate-300">
+                        <td className="px-3 py-3 min-w-[140px] text-gray-700 dark:text-gray-300">
                           {item.toko || "-"}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {item.barang || "-"}
                         </td>
-                        <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                        <td className="px-3 py-3 text-right font-mono text-success-500">
                           Rp {Number(item.nominal || 0).toLocaleString("id-ID")}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {item.caraBayar || "-"}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {item.type || "-"}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                           {formatDateDisplay(item.deadline)}
                         </td>
                       </tr>
@@ -6472,7 +6460,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                     <tr>
                       <td
                         colSpan={11}
-                        className="px-3 py-6 text-center text-sm text-slate-500"
+                        className="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                       >
                         Pilih batch untuk melihat item.
                       </td>
@@ -6484,9 +6472,9 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
           </Panel>
 
           <Panel title="Riwayat Pembayaran" icon={ReceiptText}>
-            <div className="overflow-x-auto rounded-xl border border-white/10">
+            <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
               <table className="w-full min-w-[900px] text-sm text-left">
-                <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
+                <thead className="bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 border-b border-gray-200 dark:border-gray-700">
                   <tr>
                     {[
                       "No Pembayaran",
@@ -6503,30 +6491,30 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-gray-100 dark:divide-gray-800">
                   {selectedPayments.map((payment) => (
                     <tr key={payment.id} className="hover:bg-white/[0.03]">
-                      <td className="px-3 py-3 font-mono text-slate-300">
+                      <td className="px-3 py-3 font-mono text-gray-700 dark:text-gray-300">
                         {payment.paymentNo}
                       </td>
-                      <td className="px-3 py-3 text-slate-300">
+                      <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                         {formatDateDisplay(payment.paymentDate)}
                       </td>
-                      <td className="px-3 py-3 text-slate-300">
+                      <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                         {payment.paymentMethod}
                       </td>
-                      <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                      <td className="px-3 py-3 text-right font-mono text-success-500">
                         Rp{" "}
                         {Number(payment.paidAmount || 0).toLocaleString(
                           "id-ID",
                         )}
                       </td>
-                      <td className="px-3 py-3 text-slate-300">
+                      <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                         {payment.senderBank || "-"}
                       </td>
                       <td className="px-3 py-3">
                         <div className="min-w-[180px] space-y-2">
-                          <p className="font-mono text-xs text-slate-300">
+                          <p className="font-mono text-xs text-gray-700 dark:text-gray-300">
                             {payment.paymentProofName || "-"}
                           </p>
                           {payment.proofUrl && (
@@ -6535,14 +6523,14 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                               onClick={() =>
                                 window.open(payment.proofUrl || "", "_blank")
                               }
-                              className="rounded-lg border border-teal-500/30 bg-teal-500/10 px-2 py-1 text-xs font-bold text-teal-300 hover:bg-teal-500/20"
+                              className="rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-800 px-2 py-1 text-xs font-bold text-gray-700 dark:text-brand-400 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
                             >
                               Lihat Bukti
                             </button>
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-3 text-slate-300">
+                      <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                         {payment.note || "-"}
                       </td>
                     </tr>
@@ -6551,7 +6539,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                     <tr>
                       <td
                         colSpan={7}
-                        className="px-3 py-6 text-center text-sm text-slate-500"
+                        className="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                       >
                         Belum ada pembayaran untuk batch ini.
                       </td>
@@ -6584,7 +6572,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                         `Rp ${remainingAmount.toLocaleString("id-ID")}`,
                       )
                     }
-                    className="rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-1.5 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                    className="rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-800 px-3 py-1.5 text-xs font-bold text-gray-700 dark:text-brand-400 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
                   >
                     Bayar Sisa
                   </button>
@@ -6597,7 +6585,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                       )
                     }
                     disabled={transfer <= 0}
-                    className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-bold text-sky-200 hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="rounded-lg border border-blue-light-300 bg-blue-light-50 px-3 py-1.5 text-xs font-semibold text-blue-light-700 dark:border-blue-light-500/30 dark:bg-blue-light-500/10 dark:text-blue-light-500 hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Bayar Transfer
                   </button>
@@ -6610,7 +6598,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                       )
                     }
                     disabled={tunai <= 0}
-                    className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-warning-600 dark:text-warning-400 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Bayar Tunai
                   </button>
@@ -6618,25 +6606,25 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                   <button
                     type="button"
                     onClick={() => setPaidAmount("")}
-                    className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold text-slate-300 hover:bg-white/10"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]"
                   >
                     Kosongkan
                   </button>
                 </div>
               </div>
               <label className="block">
-                <span className="text-xs text-slate-500 font-semibold">
+                <span className="text-xs text-gray-500 dark:text-gray-400 font-semibold">
                   Metode Pembayaran
                 </span>
                 <select
                   value={paymentMethod}
                   onChange={(event) => setPaymentMethod(event.target.value)}
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                  className={`mt-1 w-full ${OFF_INPUT}`}
                 >
                   {offPaymentMethods.map((method) => (
                     <option
                       key={method}
-                      className="bg-[#1a1c23]"
+                     
                       value={method}
                     >
                       {method}
@@ -6650,14 +6638,14 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                 onChange={setSenderBank}
               />
               <label className="block">
-                <span className="text-xs text-slate-500 font-semibold">
+                <span className="text-xs text-gray-500 dark:text-gray-400 font-semibold">
                   Bukti Pembayaran
                   {normalizeUiPaymentMethod(paymentMethod) === "Tunai" ? (
-                    <span className="ml-1 font-normal text-emerald-300">
+                    <span className="ml-1 font-normal text-success-500">
                       (opsional untuk Tunai)
                     </span>
                   ) : (
-                    <span className="ml-1 font-normal text-slate-500">
+                    <span className="ml-1 font-normal text-gray-500 dark:text-gray-400">
                       (wajib untuk Transfer)
                     </span>
                   )}
@@ -6669,9 +6657,9 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                     const file = event.target.files?.[0] || null;
                     setPaymentProofFile(file);
                   }}
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-teal-600 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white outline-none focus:border-teal-500/50"
+                  className={`mt-1 w-full ${OFF_FILE_INPUT}`}
                 />
-                <p className="mt-1 text-[11px] text-slate-500">
+                <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
                   {normalizeUiPaymentMethod(paymentMethod) === "Tunai"
                     ? "Pembayaran Tunai boleh tanpa bukti. Bukti tetap boleh diupload bila ada. PDF/PNG/JPG/JPEG, maks 5MB."
                     : "PDF, PNG, JPG, atau JPEG. Maksimal 5MB."}
@@ -6680,24 +6668,24 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
             </div>
             <div className="mt-4">
               <label className="block">
-                <span className="text-xs text-slate-500 font-semibold">
+                <span className="text-xs text-gray-500 dark:text-gray-400 font-semibold">
                   Catatan Keuangan
                 </span>
                 <textarea
                   value={financeNote}
                   onChange={(event) => setFinanceNote(event.target.value)}
                   rows={4}
-                  className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                  className={`mt-1 w-full ${OFF_TEXTAREA}`}
                 />
               </label>
             </div>
             {financeMessage && (
-              <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+              <div className="mt-4 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                 {financeMessage}
               </div>
             )}
             {paymentResult && (
-              <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-xs text-emerald-100">
+              <div className="mt-4 rounded-xl border border-success-200 bg-success-50 dark:border-success-500/30 dark:bg-success-500/10 p-4 text-xs text-success-700 dark:text-success-400">
                 <p className="mb-2 font-bold uppercase tracking-wider">
                   Hasil Pembayaran
                 </p>
@@ -6765,13 +6753,13 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                     !isFinanceActionableBatch(selectedBatch) ||
                     isActionLoading
                   }
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-success-500 px-4 py-2.5 text-sm font-semibold text-white shadow-theme-xs transition-colors hover:bg-success-600 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Tambah Pembayaran
                 </button>
               </div>
             ) : (
-              <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
+              <div className="mt-5 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                 Baca-saja: role ini tidak bisa menambah pembayaran Keuangan.
               </div>
             )}
@@ -6939,32 +6927,32 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
         <Panel title="Buat Pengajuan Diskon" icon={Percent}>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-slate-500">
+              <span className="mb-1 block text-xs font-semibold text-gray-500 dark:text-gray-400">
                 Toko / Customer
               </span>
               <input
                 value={toko}
                 onChange={(event) => setToko(event.target.value)}
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                className={`w-full ${OFF_INPUT}`}
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-slate-500">
+              <span className="mb-1 block text-xs font-semibold text-gray-500 dark:text-gray-400">
                 Principle
               </span>
               <select
                 value={principleName}
                 onChange={(event) => setPrincipleName(event.target.value)}
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                className={`w-full ${OFF_INPUT}`}
               >
-                <option value="" className="bg-[#1a1c23]">
+                <option value="">
                   Pilih principle...
                 </option>
                 {PRINCIPLE_OPTIONS.map((principle) => (
                   <option
                     key={principle.code}
                     value={principle.name}
-                    className="bg-[#1a1c23]"
+                   
                   >
                     {principle.name}
                   </option>
@@ -6972,73 +6960,73 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
               </select>
             </label>
             <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-slate-500">
+              <span className="mb-1 block text-xs font-semibold text-gray-500 dark:text-gray-400">
                 Program
               </span>
               <input
                 value={program}
                 onChange={(event) => setProgram(event.target.value)}
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                className={`w-full ${OFF_INPUT}`}
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-slate-500">
+              <span className="mb-1 block text-xs font-semibold text-gray-500 dark:text-gray-400">
                 Nominal Diskon
               </span>
               <input
                 value={nominal}
                 onChange={(event) => setNominal(event.target.value)}
                 placeholder="Rp 0"
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                className={`w-full ${OFF_INPUT}`}
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-slate-500">
+              <span className="mb-1 block text-xs font-semibold text-gray-500 dark:text-gray-400">
                 Tanggal
               </span>
               <DatePickerField
                 value={tanggal}
                 onChange={setTanggal}
                 ariaLabel="Tanggal pengajuan diskon"
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+                className={`w-full ${OFF_INPUT_DATE}`}
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-slate-500">
+              <span className="mb-1 block text-xs font-semibold text-gray-500 dark:text-gray-400">
                 Dokumen Pendukung (opsional)
               </span>
               <input
                 type="file"
                 accept="application/pdf,image/png,image/jpeg"
                 onChange={(event) => setDocFile(event.target.files?.[0] || null)}
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-teal-600 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white outline-none focus:border-teal-500/50"
+                className="w-full rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 file:mr-3 file:rounded-md file:border-0 file:bg-brand-500 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-gray-900 dark:text-white/90 outline-none focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10"
               />
             </label>
           </div>
           <label className="mt-3 block">
-            <span className="mb-1 block text-xs font-semibold text-slate-500">
+            <span className="mb-1 block text-xs font-semibold text-gray-500 dark:text-gray-400">
               Alasan
             </span>
             <textarea
               value={alasan}
               onChange={(event) => setAlasan(event.target.value)}
               rows={2}
-              className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+              className={`w-full ${OFF_TEXTAREA}`}
             />
           </label>
           <label className="mt-3 block">
-            <span className="mb-1 block text-xs font-semibold text-slate-500">
+            <span className="mb-1 block text-xs font-semibold text-gray-500 dark:text-gray-400">
               Catatan
             </span>
             <textarea
               value={catatan}
               onChange={(event) => setCatatan(event.target.value)}
               rows={2}
-              className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+              className={`w-full ${OFF_TEXTAREA}`}
             />
           </label>
           {message && (
-            <div className="mt-3 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-200">
+            <div className="mt-3 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-800 dark:text-gray-200">
               {message}
             </div>
           )}
@@ -7047,7 +7035,7 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
               type="button"
               onClick={submitDiscount}
               disabled={isSubmitting}
-              className="rounded-xl border border-teal-500/30 bg-teal-500/20 px-5 py-2.5 text-sm font-bold text-teal-100 hover:bg-teal-500/30 disabled:opacity-50"
+              className="rounded-xl bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white shadow-theme-xs hover:bg-brand-600 disabled:opacity-50"
             >
               {isSubmitting ? "Menyimpan..." : "Catat Pengajuan Diskon"}
             </button>
@@ -7067,16 +7055,16 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
           <PeriodFilter value={period} onChange={setPeriod} />
         </div>
         {error && (
-          <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-error-600 dark:text-error-400">
             {error}
           </div>
         )}
         {isLoading && (
-          <p className="mb-3 text-sm text-slate-400">Memuat pengajuan diskon...</p>
+          <p className="mb-3 text-sm text-gray-500 dark:text-gray-400">Memuat pengajuan diskon...</p>
         )}
-        <div className="overflow-x-auto rounded-xl border border-white/10">
+        <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
           <table className="w-full min-w-[1000px] text-left text-sm">
-            <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+            <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
               <tr>
                 {[
                   "Tanggal",
@@ -7095,33 +7083,33 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
+            <tbody className="divide-gray-100 dark:divide-gray-800">
               {submissions.map((row) => (
                 <tr key={row.id} className="hover:bg-white/[0.03]">
-                  <td className="whitespace-nowrap px-3 py-3 text-slate-400">
+                  <td className="whitespace-nowrap px-3 py-3 text-gray-500 dark:text-gray-400">
                     {formatDateDisplay(row.tanggal) === "-"
                       ? formatAuditTimestamp(row.createdAt)
                       : formatDateDisplay(row.tanggal)}
                   </td>
-                  <td className="px-3 py-3 font-semibold text-white">
+                  <td className="px-3 py-3 font-semibold text-gray-900 dark:text-white/90">
                     {row.toko}
                   </td>
-                  <td className="px-3 py-3 text-slate-300">
+                  <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                     {row.principleName || "-"}
                   </td>
-                  <td className="px-3 py-3 text-slate-300">
+                  <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                     {row.program || "-"}
                   </td>
-                  <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                  <td className="px-3 py-3 text-right font-mono text-success-500">
                     Rp {Number(row.nominal || 0).toLocaleString("id-ID")}
                   </td>
-                  <td className="px-3 py-3 text-slate-400">{row.alasan || "-"}</td>
+                  <td className="px-3 py-3 text-gray-500 dark:text-gray-400">{row.alasan || "-"}</td>
                   <td className="px-3 py-3">
-                    <span className="inline-flex rounded-md border border-slate-500/30 bg-slate-500/10 px-2 py-1 text-xs font-bold text-slate-300">
+                    <span className="inline-flex rounded-md border border-slate-500/30 bg-slate-500/10 px-2 py-1 text-xs font-bold text-gray-700 dark:text-gray-300">
                       {row.status}
                     </span>
                   </td>
-                  <td className="px-3 py-3 text-slate-400">
+                  <td className="px-3 py-3 text-gray-500 dark:text-gray-400">
                     {row.createdByName || "-"}
                   </td>
                   <td className="px-3 py-3">
@@ -7130,12 +7118,12 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
                         href={row.documentUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-teal-300 underline hover:text-teal-200"
+                        className="text-brand-500 dark:text-brand-300 underline hover:text-brand-600 dark:text-brand-300"
                       >
                         {row.documentName || "Lihat"}
                       </a>
                     ) : (
-                      <span className="text-xs text-slate-600">-</span>
+                      <span className="text-xs text-gray-400 dark:text-gray-500">-</span>
                     )}
                   </td>
                 </tr>
@@ -7144,7 +7132,7 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
                 <tr>
                   <td
                     colSpan={9}
-                    className="px-3 py-6 text-center text-slate-500"
+                    className="px-3 py-6 text-center text-gray-500 dark:text-gray-400"
                   >
                     Belum ada pengajuan diskon.
                   </td>
@@ -7326,7 +7314,7 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
           <button
             type="button"
             onClick={handleExport}
-            className="rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2.5 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
+            className="rounded-xl border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-800 px-4 py-2.5 text-sm font-bold text-gray-700 dark:text-brand-400 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
           >
             Export CSV
           </button>
@@ -7338,22 +7326,22 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
       </div>
 
       {message && (
-        <div className="mb-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-200">
+        <div className="mb-4 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-800 dark:text-gray-200">
           {message}
         </div>
       )}
       {error && (
-        <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-error-600 dark:text-error-400">
           {error}
         </div>
       )}
       {isLoading && (
-        <p className="mb-3 text-sm text-slate-400">Memuat audit log...</p>
+        <p className="mb-3 text-sm text-gray-500 dark:text-gray-400">Memuat audit log...</p>
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-white/10">
+      <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
         <table className="w-full min-w-[1100px] text-left text-sm">
-          <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+          <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
             <tr>
               {[
                 "Waktu",
@@ -7372,44 +7360,44 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5">
+          <tbody className="divide-gray-100 dark:divide-gray-800">
             {logs.map((log) => {
               const isCorrection = Boolean(log.parentAuditLogId);
               return (
                 <tr
                   key={log.id}
-                  className={isCorrection ? "bg-amber-500/[0.06]" : "hover:bg-white/[0.03]"}
+                  className={isCorrection ? "bg-warning-50/80 dark:bg-warning-500/[0.08]" : "hover:bg-white/[0.03]"}
                 >
-                  <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-slate-400">
+                  <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-gray-500 dark:text-gray-400">
                     {formatAuditTimestamp(log.createdAt)}
                   </td>
-                  <td className="px-3 py-3 font-mono text-xs text-white">
+                  <td className="px-3 py-3 font-mono text-xs text-gray-900 dark:text-white/90">
                     {log.noPengajuan || "-"}
                   </td>
-                  <td className="px-3 py-3 text-slate-200">
+                  <td className="px-3 py-3 text-gray-800 dark:text-gray-200">
                     {log.action}
                     {isCorrection && (
-                      <span className="ml-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                      <span className="ml-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-warning-500">
                         Koreksi
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-3 text-slate-400">
+                  <td className="px-3 py-3 text-gray-500 dark:text-gray-400">
                     {displayStatusLabel(log.fromStatus) || "-"}
                   </td>
-                  <td className="px-3 py-3 text-slate-400">
+                  <td className="px-3 py-3 text-gray-500 dark:text-gray-400">
                     {displayStatusLabel(log.toStatus) || "-"}
                   </td>
-                  <td className="px-3 py-3 text-slate-300">
+                  <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                     {log.actorName || "-"}
                   </td>
-                  <td className="px-3 py-3 text-slate-400">
+                  <td className="px-3 py-3 text-gray-500 dark:text-gray-400">
                     {log.actorRole || "-"}
                   </td>
-                  <td className="px-3 py-3 text-slate-400">
+                  <td className="px-3 py-3 text-gray-500 dark:text-gray-400">
                     {log.correctionReason ? (
                       <span>
-                        <span className="font-semibold text-amber-300">
+                        <span className="font-semibold text-warning-500">
                           Alasan koreksi:
                         </span>{" "}
                         {log.correctionReason}
@@ -7424,12 +7412,12 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
                       <button
                         type="button"
                         onClick={() => openCorrection(log)}
-                        className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/20"
+                        className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-warning-600 dark:text-warning-400 hover:bg-amber-500/20"
                       >
                         Koreksi
                       </button>
                     ) : (
-                      <span className="text-xs text-slate-600">-</span>
+                      <span className="text-xs text-gray-400 dark:text-gray-500">-</span>
                     )}
                   </td>
                 </tr>
@@ -7437,7 +7425,7 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
             })}
             {logs.length === 0 && !isLoading && (
               <tr>
-                <td colSpan={9} className="px-3 py-6 text-center text-slate-500">
+                <td colSpan={9} className="px-3 py-6 text-center text-gray-500 dark:text-gray-400">
                   Belum ada audit log yang cocok.
                 </td>
               </tr>
@@ -7447,48 +7435,48 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
       </div>
 
       {correctionTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#1a1c23] p-6 shadow-2xl">
-            <h3 className="text-lg font-black text-white">Koreksi Audit Log</h3>
-            <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-gray-200 bg-white p-6 shadow-theme-lg dark:border-gray-800 dark:bg-gray-900">
+            <h3 className="text-lg font-black text-gray-900 dark:text-white/90">Koreksi Audit Log</h3>
+            <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-warning-600 dark:text-warning-400">
               {AUDIT_CORRECTION_WARNING}
             </div>
             <div className="mt-4 space-y-3">
-              <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-400">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-400">
                 <div>
                   Aksi asal:{" "}
-                  <span className="font-mono text-slate-200">
+                  <span className="font-mono text-gray-800 dark:text-gray-200">
                     {correctionTarget.action}
                   </span>
                 </div>
                 <div>
                   No Pengajuan:{" "}
-                  <span className="font-mono text-slate-200">
+                  <span className="font-mono text-gray-800 dark:text-gray-200">
                     {correctionTarget.noPengajuan || "-"}
                   </span>
                 </div>
               </div>
               <label className="block">
-                <span className="mb-1 block text-xs font-semibold text-slate-500">
+                <span className="mb-1 block text-xs font-semibold text-gray-500 dark:text-gray-400">
                   Alasan Koreksi (wajib)
                 </span>
                 <textarea
                   value={correctionReason}
                   onChange={(event) => setCorrectionReason(event.target.value)}
                   rows={3}
-                  className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-amber-500/50"
+                  className="w-full resize-none rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 outline-none focus:border-warning-400 focus:ring-3 focus:ring-warning-500/10"
                   placeholder="Jelaskan kesalahan pencatatan yang diperbaiki..."
                 />
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs font-semibold text-slate-500">
+                <span className="mb-1 block text-xs font-semibold text-gray-500 dark:text-gray-400">
                   Catatan Baru (opsional)
                 </span>
                 <textarea
                   value={correctionNote}
                   onChange={(event) => setCorrectionNote(event.target.value)}
                   rows={2}
-                  className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                  className={`w-full ${OFF_TEXTAREA}`}
                 />
               </label>
             </div>
@@ -7496,7 +7484,7 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
               <button
                 type="button"
                 onClick={() => setCorrectionTarget(null)}
-                className="rounded-lg border border-white/10 px-4 py-2 text-sm font-bold text-slate-300 hover:bg-white/5"
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.03]"
               >
                 Batal
               </button>
@@ -7504,7 +7492,7 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
                 type="button"
                 onClick={submitCorrection}
                 disabled={isSubmitting}
-                className="rounded-lg border border-amber-500/30 bg-amber-500/20 px-4 py-2 text-sm font-bold text-amber-100 hover:bg-amber-500/30 disabled:opacity-50"
+                className="rounded-lg border border-amber-500/30 bg-amber-500/20 px-4 py-2 text-sm font-bold text-warning-700 dark:text-warning-400 hover:bg-amber-500/30 disabled:opacity-50"
               >
                 {isSubmitting ? "Menyimpan..." : "Simpan Koreksi"}
               </button>
@@ -7595,7 +7583,7 @@ function OverviewReadOnlyDetail({
           <a
             href={batch.pdfUrl}
             target="_blank"
-            className="mt-4 inline-flex rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
+            className="mt-4 inline-flex rounded-xl border border-gray-300 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-brand-400 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
           >
             Lihat PDF
           </a>
@@ -7603,9 +7591,9 @@ function OverviewReadOnlyDetail({
       </Panel>
 
       <Panel title="Item Batch" icon={ReceiptText}>
-        <div className="overflow-x-auto rounded-xl border border-white/10">
+        <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
           <table className="w-full min-w-[1250px] text-left text-sm">
-            <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+            <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
               <tr>
                 {[
                   "No",
@@ -7626,43 +7614,43 @@ function OverviewReadOnlyDetail({
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
+            <tbody className="divide-gray-100 dark:divide-gray-800">
               {items.map((item, index) => (
                 <tr
                   key={item.id || `${item.noSurat}-${index}`}
                   className="hover:bg-white/[0.03]"
                 >
-                  <td className="px-3 py-3 font-mono text-slate-300">
+                  <td className="px-3 py-3 font-mono text-gray-700 dark:text-gray-300">
                     {item.itemNo || index + 1}
                   </td>
-                  <td className="px-3 py-3 font-mono text-slate-200">
+                  <td className="px-3 py-3 font-mono text-gray-800 dark:text-gray-200">
                     {item.noSurat || "-"}
                   </td>
-                  <td className="min-w-[180px] px-3 py-3 text-slate-200">
+                  <td className="min-w-[180px] px-3 py-3 text-gray-800 dark:text-gray-200">
                     {item.namaProgram || "-"}
                   </td>
-                  <td className="px-3 py-3 text-slate-300">
+                  <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                     {item.periode || "-"}
                   </td>
-                  <td className="min-w-[140px] px-3 py-3 text-slate-300">
+                  <td className="min-w-[140px] px-3 py-3 text-gray-700 dark:text-gray-300">
                     {item.toko || "-"}
                   </td>
-                  <td className="px-3 py-3 text-slate-300">
+                  <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                     {item.barang || "-"}
                   </td>
-                  <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                  <td className="px-3 py-3 text-right font-mono text-success-500">
                     Rp {Number(item.nominal || 0).toLocaleString("id-ID")}
                   </td>
-                  <td className="px-3 py-3 text-slate-300">
+                  <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                     {item.caraBayar || "-"}
                   </td>
-                  <td className="px-3 py-3 text-slate-300">
+                  <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                     {item.type || "-"}
                   </td>
-                  <td className="px-3 py-3 text-slate-300">
+                  <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                     {formatDateDisplay(item.deadline)}
                   </td>
-                  <td className="min-w-[180px] px-3 py-3 text-slate-300">
+                  <td className="min-w-[180px] px-3 py-3 text-gray-700 dark:text-gray-300">
                     {itemDocsSummary(item)}
                   </td>
                 </tr>
@@ -7671,7 +7659,7 @@ function OverviewReadOnlyDetail({
                 <tr>
                   <td
                     colSpan={11}
-                    className="px-3 py-6 text-center text-sm text-slate-500"
+                    className="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
                   >
                     Tidak ada item batch.
                   </td>
@@ -7684,9 +7672,9 @@ function OverviewReadOnlyDetail({
 
       {payments.length > 0 && (
         <Panel title="Riwayat Pembayaran" icon={Wallet}>
-          <div className="overflow-x-auto rounded-xl border border-white/10">
+          <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
             <table className="w-full min-w-[900px] text-left text-sm">
-              <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+              <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
                 <tr>
                   {[
                     "No Pembayaran",
@@ -7703,23 +7691,23 @@ function OverviewReadOnlyDetail({
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/5">
+              <tbody className="divide-gray-100 dark:divide-gray-800">
                 {payments.map((payment) => (
                   <tr key={payment.id} className="hover:bg-white/[0.03]">
-                    <td className="px-3 py-3 font-mono text-slate-300">
+                    <td className="px-3 py-3 font-mono text-gray-700 dark:text-gray-300">
                       {payment.paymentNo}
                     </td>
-                    <td className="px-3 py-3 text-slate-300">
+                    <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                       {formatDateDisplay(payment.paymentDate)}
                     </td>
-                    <td className="px-3 py-3 text-slate-300">
+                    <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                       {payment.paymentMethod}
                     </td>
-                    <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                    <td className="px-3 py-3 text-right font-mono text-success-500">
                       Rp{" "}
                       {Number(payment.paidAmount || 0).toLocaleString("id-ID")}
                     </td>
-                    <td className="px-3 py-3 text-slate-300">
+                    <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                       {payment.senderBank || "-"}
                     </td>
                     <td className="px-3 py-3">
@@ -7729,15 +7717,15 @@ function OverviewReadOnlyDetail({
                           onClick={() =>
                             window.open(payment.proofUrl || "", "_blank")
                           }
-                          className="rounded-lg border border-teal-500/30 bg-teal-500/10 px-2 py-1 text-xs font-bold text-teal-300 hover:bg-teal-500/20"
+                          className="rounded-lg border border-gray-300 bg-white dark:border-gray-700 dark:bg-gray-800 px-2 py-1 text-xs font-bold text-gray-700 dark:text-brand-400 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
                         >
                           {payment.paymentProofName || "Lihat Bukti"}
                         </button>
                       ) : (
-                        <span className="text-slate-500">-</span>
+                        <span className="text-gray-500 dark:text-gray-400">-</span>
                       )}
                     </td>
-                    <td className="px-3 py-3 text-slate-300">
+                    <td className="px-3 py-3 text-gray-700 dark:text-gray-300">
                       {payment.note || "-"}
                     </td>
                   </tr>
@@ -7843,19 +7831,19 @@ function OverviewTab() {
     {
       label: "Total Batch",
       value: String(overviewBatches.length),
-      tone: "text-sky-300",
+      tone: "text-blue-light-500",
       icon: ClipboardCheck,
     },
     {
       label: "Menunggu Review SM",
       value: String(overviewBatches.filter(isSmActionableBatch).length),
-      tone: "text-amber-300",
+      tone: "text-warning-500",
       icon: Clock3,
     },
     {
       label: "Menunggu Persetujuan OM",
       value: String(overviewBatches.filter(isOmActionableBatch).length),
-      tone: "text-purple-300",
+      tone: "text-brand-400",
       icon: ShieldCheck,
     },
     {
@@ -7866,7 +7854,7 @@ function OverviewTab() {
             batch.status === "Completed" || batch.finalStatus === "Completed",
         ).length,
       ),
-      tone: "text-emerald-300",
+      tone: "text-success-500",
       icon: CheckCircle2,
     },
     {
@@ -7877,7 +7865,7 @@ function OverviewTab() {
             batch.status === "Paid" && batch.finalStatus !== "Completed",
         ).length,
       ),
-      tone: "text-rose-300",
+      tone: "text-error-500",
       icon: AlertTriangle,
     },
   ];
@@ -7898,17 +7886,17 @@ function OverviewTab() {
   return (
     <div className="space-y-6">
       {isLoading && (
-        <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+        <div className="border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
           Memuat data ringkasan...
         </div>
       )}
       {error && (
-        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-error-600 dark:text-error-400">
           {error}
         </div>
       )}
       {!isLoading && overviewBatches.length === 0 && !error && (
-        <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
+        <div className="border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
           Belum ada batch OFF Program Control.
         </div>
       )}
@@ -7934,7 +7922,7 @@ function OverviewTab() {
         onSelect={openOverviewDetail}
       />
       {isDetailLoading && (
-        <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+        <div className="border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
           Memuat detail ringkasan...
         </div>
       )}
@@ -8029,27 +8017,27 @@ export default function OffProgramControlPage() {
     <div className="max-w-[1800px] mx-auto pb-12">
       <div className="mb-6 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-teal-500/30 bg-teal-500/10 text-teal-300 text-xs font-bold uppercase tracking-widest mb-4">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-bold uppercase tracking-widest text-brand-600 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300">
             <ClipboardCheck size={14} /> Alur OFF
           </div>
-          <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
+          <h1 className="text-3xl font-black text-gray-900 dark:text-white/90 tracking-tight flex items-center gap-3">
             OFF Program Control
           </h1>
-          <p className="text-slate-400 mt-2 text-lg">
+          <p className="text-gray-500 dark:text-gray-400 mt-2 text-lg">
             Dashboard Keuangan Korporat untuk OFF Program / Faktur Beban
             Principle
           </p>
-          <p className="text-xs text-slate-500 mt-2">{mappingSummary}</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">{mappingSummary}</p>
           <div className="mt-3 flex flex-wrap gap-2 text-xs">
-            <span className="rounded-lg border border-white/10 bg-black/30 px-3 py-1.5 text-slate-300">
+            <span className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 dark:border-gray-700 dark:bg-gray-800/50 text-gray-700 dark:text-gray-300">
               Login sebagai:{" "}
-              <b className="text-slate-100">
+              <b className="text-gray-900 dark:text-white/90">
                 {sessionUser?.name ||
                   sessionUser?.email ||
                   "User Tidak Dikenal"}
               </b>
             </span>
-            <span className="rounded-lg border border-teal-500/20 bg-teal-500/10 px-3 py-1.5 text-teal-200">
+            <span className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-brand-600 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300">
               Role OFF:{" "}
               <b>
                 {offRole}
@@ -8062,13 +8050,13 @@ export default function OffProgramControlPage() {
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-[#1a1c23]/60 px-4 py-3">
-          <CalendarClock className="text-teal-300" size={20} />
+        <div className="flex items-center gap-3 rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03] px-4 py-3">
+          <CalendarClock className="text-brand-500 dark:text-brand-300" size={20} />
           <div>
-            <p className="text-xs uppercase tracking-wider text-slate-500 font-bold">
+            <p className="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 font-bold">
               Siklus
             </p>
-            <p className="text-sm text-slate-200 font-semibold">
+            <p className="text-sm text-gray-800 dark:text-gray-200 font-semibold">
               Monitoring Mei 2026
             </p>
           </div>
@@ -8077,7 +8065,7 @@ export default function OffProgramControlPage() {
 
       {offRole === "sales" && accessibleTabs.length === 0 && (
         <Panel title="OFF Program Control" icon={ClipboardCheck}>
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-gray-500 dark:text-gray-400">
             Role Sales belum dikonfigurasi untuk OFF Program Control.
           </p>
         </Panel>
@@ -8085,7 +8073,7 @@ export default function OffProgramControlPage() {
 
       {offRole !== "sales" && accessibleTabs.length === 0 && (
         <Panel title="OFF Program Control" icon={ClipboardCheck}>
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-gray-500 dark:text-gray-400">
             Anda belum memiliki akses OFF Program Control. Hubungi admin.
           </p>
         </Panel>
@@ -8094,13 +8082,13 @@ export default function OffProgramControlPage() {
       {accessibleTabs.length > 0 && (
         <>
           {shouldShowPaidNotification && paidIncompleteCount > 0 && (
-            <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 text-sm font-semibold text-amber-100">
+            <div className="mb-6 rounded-2xl border border-warning-200 bg-warning-50 px-5 py-4 text-sm font-semibold text-warning-700 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-400">
               Ada {paidIncompleteCount} Pengajuan Sudah Dibayar yang belum
               lengkap datanya, mohon segera ditindaklanjuti.
             </div>
           )}
 
-          <div className="mb-6 overflow-x-auto rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2 shadow-xl">
+          <div className={`mb-6 overflow-x-auto ${OFF_TAB_SHELL}`}>
             <div className="flex min-w-max gap-2">
               {accessibleTabs.map((tab) => (
                 <button
@@ -8108,8 +8096,8 @@ export default function OffProgramControlPage() {
                   onClick={() => setActiveTab(tab.key)}
                   className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
                     effectiveActiveTab === tab.key
-                      ? "bg-teal-500/20 text-teal-200 border border-teal-500/30"
-                      : "text-slate-400 hover:text-white hover:bg-white/5 border border-transparent"
+                      ? OFF_TAB_ACTIVE
+                      : OFF_TAB_INACTIVE
                   }`}
                 >
                   {tab.label}

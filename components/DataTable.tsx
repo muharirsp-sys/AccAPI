@@ -2,264 +2,303 @@
 
 import React, { useState } from "react";
 import {
-    ColumnDef,
-    flexRender,
-    getCoreRowModel,
-    getPaginationRowModel,
-    getFilteredRowModel,
-    getSortedRowModel,
-    useReactTable,
-    SortingState,
+  ColumnDef,
+  flexRender,
+  getCoreRowModel,
+  getPaginationRowModel,
+  getFilteredRowModel,
+  getSortedRowModel,
+  useReactTable,
+  SortingState,
 } from "@tanstack/react-table";
-import { ChevronDown, ChevronUp, Search, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  Search,
+  SlidersHorizontal,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+} from "lucide-react";
+import AppButton from "@/components/ui/AppButton";
 
 interface DataTableProps<TData, TValue> {
-    columns: ColumnDef<TData, TValue>[];
-    data: TData[];
-    searchKey?: string; 
-    searchPlaceholder?: string;
-    isLoading?: boolean;
+  columns: ColumnDef<TData, TValue>[];
+  data: TData[];
+  searchKey?: string;
+  searchPlaceholder?: string;
+  isLoading?: boolean;
 }
 
 export function DataTable<TData, TValue>({
-    columns,
-    data,
-    searchKey,
-    searchPlaceholder = "Search all columns...",
-    isLoading = false
+  columns,
+  data,
+  searchPlaceholder = "Search all columns...",
+  isLoading = false,
 }: DataTableProps<TData, TValue>) {
-    const [sorting, setSorting] = useState<SortingState>([]);
-    const [globalFilter, setGlobalFilter] = useState("");
-    const [rowSelection, setRowSelection] = useState({});
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [globalFilter, setGlobalFilter] = useState("");
+  const [rowSelection, setRowSelection] = useState({});
+  const [isViewOpen, setIsViewOpen] = useState(false);
 
-    const [isViewOpen, setIsViewOpen] = useState(false);
+  const fuzzyOrWildcardFilter = (
+    row: { getValue: (id: string) => unknown },
+    columnId: string,
+    filterValue: string,
+  ) => {
+    const value = row.getValue(columnId);
+    if (value == null) return false;
 
-    const fuzzyOrWildcardFilter = (row: any, columnId: string, filterValue: string) => {
-        const value = row.getValue(columnId);
-        if (value == null) return false;
-        
-        const stringValue = String(value).toLowerCase();
-        const searchValue = String(filterValue).toLowerCase();
+    const stringValue = String(value).toLowerCase();
+    const searchValue = String(filterValue).toLowerCase();
 
-        // If search contains % wildcard
-        if (searchValue.includes('%')) {
-            const escaped = searchValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regexStr = escaped.replace(/%/g, '.*');
-            try {
-                const regex = new RegExp(regexStr, 'i');
-                return regex.test(stringValue);
-            } catch(e) {
-                return false;
-            }
-        }
+    if (searchValue.includes("%")) {
+      const escaped = searchValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regexStr = escaped.replace(/%/g, ".*");
+      try {
+        const regex = new RegExp(regexStr, "i");
+        return regex.test(stringValue);
+      } catch {
+        return false;
+      }
+    }
 
-        return stringValue.includes(searchValue);
-    };
+    return stringValue.includes(searchValue);
+  };
 
-    const table = useReactTable({
-        data,
-        columns,
-        getCoreRowModel: getCoreRowModel(),
-        getPaginationRowModel: getPaginationRowModel(),
-        onSortingChange: setSorting,
-        getSortedRowModel: getSortedRowModel(),
-        getFilteredRowModel: getFilteredRowModel(),
-        onGlobalFilterChange: setGlobalFilter,
-        onRowSelectionChange: setRowSelection,
-        globalFilterFn: fuzzyOrWildcardFilter,
-        state: {
-            sorting,
-            globalFilter,
-            rowSelection,
-        },
-    });
+  const table = useReactTable({
+    data,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    onSortingChange: setSorting,
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    onGlobalFilterChange: setGlobalFilter,
+    onRowSelectionChange: setRowSelection,
+    globalFilterFn: fuzzyOrWildcardFilter,
+    state: {
+      sorting,
+      globalFilter,
+      rowSelection,
+    },
+  });
 
-    return (
-        <div className="space-y-4">
-            {/* Toolbar */}
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-2 w-72 focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 transition-all">
-                    <Search className="h-4 w-4 text-slate-400" />
-                    <input
-                        placeholder={searchPlaceholder}
-                        value={globalFilter ?? ""}
-                        onChange={(event) => setGlobalFilter(event.target.value)}
-                        className="bg-transparent border-none outline-none text-sm text-slate-200 w-full placeholder:text-slate-500"
-                    />
-                </div>
-                
-                <div className="flex items-center gap-2 relative">
-                    <button 
-                        onClick={() => setIsViewOpen(!isViewOpen)}
-                        className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-300 transition-colors"
-                    >
-                        <SlidersHorizontal className="h-4 w-4" />
-                        Kolom
-                    </button>
-
-                    {isViewOpen && (
-                        <div className="absolute right-0 top-full mt-2 w-48 bg-[#1a1c23] border border-white/10 rounded-lg shadow-xl shadow-black/50 z-50 p-2 py-3 backdrop-blur-xl">
-                            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-2 mb-2">Tampilkan Kolom</div>
-                            <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
-                                {table.getAllLeafColumns().map(column => {
-                                    if (column.id === "select") return null;
-                                    return (
-                                        <label key={column.id} className="flex items-center gap-2 px-2 py-1.5 hover:bg-white/5 rounded-md cursor-pointer transition-colors">
-                                            <input
-                                                type="checkbox"
-                                                className="w-4 h-4 rounded border-white/20 bg-black/20 text-indigo-500 focus:ring-indigo-500/50"
-                                                {...{
-                                                    checked: column.getIsVisible(),
-                                                    onChange: column.getToggleVisibilityHandler(),
-                                                }}
-                                            />
-                                            <span className="text-sm text-slate-300 truncate">{typeof column.columnDef.header === 'string' ? column.columnDef.header : column.id}</span>
-                                        </label>
-                                    )
-                                })}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Table */}
-            <div className="rounded-xl border border-white/10 bg-[#16181d]/80 overflow-hidden backdrop-blur-md shadow-xl">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left relative">
-                        <thead className="text-xs text-slate-400 uppercase bg-black/20 border-b border-white/10">
-                            {table.getHeaderGroups().map((headerGroup) => (
-                                <tr key={headerGroup.id}>
-                                    {headerGroup.headers.map((header) => {
-                                        return (
-                                            <th key={header.id} className="px-4 py-3 font-medium whitespace-nowrap">
-                                                {header.isPlaceholder ? null : (
-                                                    <div
-                                                        className={
-                                                            header.column.getCanSort()
-                                                                ? "cursor-pointer select-none flex items-center gap-1 group"
-                                                                : "flex items-center gap-1"
-                                                        }
-                                                        onClick={header.column.getToggleSortingHandler()}
-                                                    >
-                                                        {flexRender(
-                                                            header.column.columnDef.header,
-                                                            header.getContext()
-                                                        )}
-                                                        <span className="text-slate-500 group-hover:text-slate-300 transition-colors">
-                                                            {{
-                                                                asc: <ChevronUp className="h-3 w-3" />,
-                                                                desc: <ChevronDown className="h-3 w-3" />,
-                                                            }[header.column.getIsSorted() as string] ?? null}
-                                                        </span>
-                                                    </div>
-                                                )}
-                                            </th>
-                                        );
-                                    })}
-                                </tr>
-                            ))}
-                        </thead>
-                        <tbody className="divide-y divide-white/5">
-                            {isLoading ? (
-                                <tr>
-                                    <td colSpan={columns.length} className="h-24 text-center">
-                                        <div className="flex items-center justify-center gap-2 text-slate-400">
-                                            <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                                            Loading data...
-                                        </div>
-                                    </td>
-                                </tr>
-                            ) : table.getRowModel().rows?.length ? (
-                                table.getRowModel().rows.map((row) => (
-                                    <tr
-                                        key={row.id}
-                                        data-state={row.getIsSelected() && "selected"}
-                                        className={`hover:bg-white/5 transition-colors ${row.getIsSelected() ? 'bg-indigo-500/10' : ''}`}
-                                    >
-                                        {row.getVisibleCells().map((cell) => (
-                                            <td key={cell.id} className="px-4 py-3 text-slate-300">
-                                                {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                            </td>
-                                        ))}
-                                    </tr>
-                                ))
-                            ) : (
-                                <tr>
-                                    <td colSpan={columns.length} className="h-24 text-center text-slate-500">
-                                        No results found.
-                                    </td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            {/* Pagination Controls */}
-            <div className="flex items-center justify-between text-sm text-slate-400">
-                <div className="flex-1 text-xs">
-                    {Object.keys(rowSelection).length} of{" "}
-                    {table.getFilteredRowModel().rows.length} row(s) selected.
-                </div>
-                
-                <div className="flex items-center space-x-6 lg:space-x-8">
-                    <div className="flex items-center space-x-2">
-                        <p className="text-xs font-medium">Rows per page</p>
-                        <select
-                            value={table.getState().pagination.pageSize}
-                            onChange={(e) => {
-                                table.setPageSize(Number(e.target.value));
-                            }}
-                            className="bg-white/5 border border-white/10 rounded-md py-1 px-2 focus:ring-1 focus:ring-indigo-500 outline-none text-xs"
-                        >
-                            {[10, 20, 30, 40, 50].map((pageSize) => (
-                                <option key={pageSize} value={pageSize} className="bg-[#1a1c23]">
-                                    {pageSize}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                    <div className="flex w-[100px] items-center justify-center text-xs font-medium">
-                        Page {table.getState().pagination.pageIndex + 1} of{" "}
-                        {table.getPageCount()}
-                    </div>
-                    <div className="flex items-center space-x-2">
-                        <button
-                            onClick={() => table.setPageIndex(0)}
-                            disabled={!table.getCanPreviousPage()}
-                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors border border-white/5"
-                        >
-                            <span className="sr-only">Go to first page</span>
-                            <ChevronsLeft className="h-4 w-4" />
-                        </button>
-                        <button
-                            onClick={() => table.previousPage()}
-                            disabled={!table.getCanPreviousPage()}
-                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors border border-white/5"
-                        >
-                            <span className="sr-only">Go to previous page</span>
-                            <ChevronLeft className="h-4 w-4" />
-                        </button>
-                        <button
-                            onClick={() => table.nextPage()}
-                            disabled={!table.getCanNextPage()}
-                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors border border-white/5"
-                        >
-                            <span className="sr-only">Go to next page</span>
-                            <ChevronRight className="h-4 w-4" />
-                        </button>
-                        <button
-                            onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-                            disabled={!table.getCanNextPage()}
-                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors border border-white/5"
-                        >
-                            <span className="sr-only">Go to last page</span>
-                            <ChevronsRight className="h-4 w-4" />
-                        </button>
-                    </div>
-                </div>
-            </div>
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex w-full max-w-sm items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 shadow-theme-xs focus-within:border-brand-300 focus-within:ring-3 focus-within:ring-brand-500/10 dark:border-gray-700 dark:bg-gray-900">
+          <Search className="h-4 w-4 shrink-0 text-gray-500 dark:text-gray-400" />
+          <input
+            placeholder={searchPlaceholder}
+            value={globalFilter ?? ""}
+            onChange={(event) => setGlobalFilter(event.target.value)}
+            className="w-full border-none bg-transparent text-sm text-gray-800 outline-none placeholder:text-gray-400 dark:text-white/90"
+          />
         </div>
-    );
+
+        <div className="relative flex items-center gap-2">
+          <AppButton
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setIsViewOpen(!isViewOpen)}
+            startIcon={<SlidersHorizontal className="h-4 w-4" />}
+          >
+            Kolom
+          </AppButton>
+
+          {isViewOpen && (
+            <div className="absolute right-0 top-full z-50 mt-2 w-48 rounded-xl border border-gray-200 bg-white p-2 py-3 shadow-theme-lg dark:border-gray-800 dark:bg-gray-900">
+              <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                Tampilkan Kolom
+              </div>
+              <div className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+                {table.getAllLeafColumns().map((column) => {
+                  if (column.id === "select") return null;
+                  return (
+                    <label
+                      key={column.id}
+                      className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-gray-50 dark:hover:bg-white/5"
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-500/20 dark:border-gray-600 dark:bg-gray-900"
+                        checked={column.getIsVisible()}
+                        onChange={column.getToggleVisibilityHandler()}
+                      />
+                      <span className="truncate text-sm text-gray-700 dark:text-gray-300">
+                        {typeof column.columnDef.header === "string"
+                          ? column.columnDef.header
+                          : column.id}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-theme-sm dark:border-gray-800 dark:bg-white/[0.03]">
+        <div className="overflow-x-auto">
+          <table className="relative w-full text-left text-sm">
+            <thead className="border-b border-gray-200 bg-gray-50 text-xs font-semibold uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
+              {table.getHeaderGroups().map((headerGroup) => (
+                <tr key={headerGroup.id}>
+                  {headerGroup.headers.map((header) => (
+                    <th
+                      key={header.id}
+                      className="whitespace-nowrap px-4 py-3 font-medium"
+                    >
+                      {header.isPlaceholder ? null : (
+                        <div
+                          className={
+                            header.column.getCanSort()
+                              ? "group flex cursor-pointer select-none items-center gap-1"
+                              : "flex items-center gap-1"
+                          }
+                          onClick={header.column.getToggleSortingHandler()}
+                        >
+                          {flexRender(
+                            header.column.columnDef.header,
+                            header.getContext(),
+                          )}
+                          <span className="text-gray-400 transition-colors group-hover:text-gray-600 dark:group-hover:text-gray-300">
+                            {{
+                              asc: <ChevronUp className="h-3 w-3" />,
+                              desc: <ChevronDown className="h-3 w-3" />,
+                            }[header.column.getIsSorted() as string] ?? null}
+                          </span>
+                        </div>
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              ))}
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={columns.length} className="h-24 text-center">
+                    <div className="flex items-center justify-center gap-2 text-gray-500 dark:text-gray-400">
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+                      Loading data...
+                    </div>
+                  </td>
+                </tr>
+              ) : table.getRowModel().rows?.length ? (
+                table.getRowModel().rows.map((row) => (
+                  <tr
+                    key={row.id}
+                    data-state={row.getIsSelected() && "selected"}
+                    className={`transition-colors hover:bg-gray-50 dark:hover:bg-white/[0.03] ${row.getIsSelected() ? "bg-brand-50/50 dark:bg-brand-500/10" : ""}`}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <td
+                        key={cell.id}
+                        className="px-4 py-3 text-gray-700 dark:text-gray-300"
+                      >
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext(),
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td
+                    colSpan={columns.length}
+                    className="h-24 text-center text-gray-500 dark:text-gray-400"
+                  >
+                    No results found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400">
+        <div className="flex-1 text-xs">
+          {Object.keys(rowSelection).length} of{" "}
+          {table.getFilteredRowModel().rows.length} row(s) selected.
+        </div>
+
+        <div className="flex items-center space-x-6 lg:space-x-8">
+          <div className="flex items-center space-x-2">
+            <p className="text-xs font-medium">Rows per page</p>
+            <select
+              value={table.getState().pagination.pageSize}
+              onChange={(e) => {
+                table.setPageSize(Number(e.target.value));
+              }}
+              className="rounded-md border border-gray-300 bg-white py-1 pl-2 pr-8 text-xs outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-500/10 dark:border-gray-700 dark:bg-gray-900 dark:text-white/90"
+            >
+              {[10, 20, 30, 40, 50].map((pageSize) => (
+                <option key={pageSize} value={pageSize}>
+                  {pageSize}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex w-[100px] items-center justify-center text-xs font-medium">
+            Page {table.getState().pagination.pageIndex + 1} of{" "}
+            {table.getPageCount()}
+          </div>
+          <div className="flex items-center space-x-1">
+            <AppButton
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => table.setPageIndex(0)}
+              disabled={!table.getCanPreviousPage()}
+              className="!px-2"
+            >
+              <span className="sr-only">Go to first page</span>
+              <ChevronsLeft className="h-4 w-4" />
+            </AppButton>
+            <AppButton
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
+              className="!px-2"
+            >
+              <span className="sr-only">Go to previous page</span>
+              <ChevronLeft className="h-4 w-4" />
+            </AppButton>
+            <AppButton
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
+              className="!px-2"
+            >
+              <span className="sr-only">Go to next page</span>
+              <ChevronRight className="h-4 w-4" />
+            </AppButton>
+            <AppButton
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+              disabled={!table.getCanNextPage()}
+              className="!px-2"
+            >
+              <span className="sr-only">Go to last page</span>
+              <ChevronsRight className="h-4 w-4" />
+            </AppButton>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }

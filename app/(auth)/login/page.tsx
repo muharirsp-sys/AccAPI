@@ -6,6 +6,8 @@ import { authClient } from "@/lib/auth-client";
 import { Lock, Mail } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
+import AppButton from "@/components/ui/AppButton";
+import AppInput from "@/components/ui/AppInput";
 
 export default function LoginPage() {
     const router = useRouter();
@@ -39,72 +41,70 @@ export default function LoginPage() {
     };
 
     return (
-        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-            <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
-                <div className="bg-gradient-to-r from-blue-600 to-indigo-700 p-8 text-white text-center">
-                    <h2 className="text-3xl font-extrabold tracking-tight">Portal CV. Surya Perkasa</h2>
-                    <p className="mt-2 text-blue-100 text-sm">Masuk ke sistem kontrol</p>
-                </div>
+        <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4 dark:bg-gray-900">
+            <div className="w-full max-w-[420px]">
+                <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-theme-md dark:border-gray-800 dark:bg-white/[0.03]">
+                    <div className="mb-8 text-center">
+                        <h2 className="text-2xl font-bold text-gray-800 dark:text-white/90">
+                            Portal CV. Surya Perkasa
+                        </h2>
+                        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                            Masuk ke sistem kontrol
+                        </p>
+                    </div>
 
-                <div className="p-8">
-                    <form onSubmit={handleLogin} className="space-y-6">
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
-                            <div className="relative">
-                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                    <Mail className="h-5 w-5 text-slate-400" />
-                                </div>
-                                <input
-                                    type="email"
-                                    required
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 sm:text-sm shadow-sm transition-colors text-slate-900"
-                                    placeholder="email@perusahaan.com"
-                                />
-                            </div>
-                        </div>
+                    <form onSubmit={handleLogin} className="space-y-5">
+                        <AppInput
+                            label="Email"
+                            type="email"
+                            required
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="email@perusahaan.com"
+                            icon={<Mail className="h-5 w-5" />}
+                            className="h-12"
+                        />
 
                         <div>
-                            <div className="flex items-center justify-between mb-1">
-                                <label className="block text-sm font-medium text-slate-700">Password</label>
-                                <Link href="/forgot-password" className="text-xs font-semibold text-blue-600 hover:text-blue-500">
+                            <div className="mb-1.5 flex items-center justify-between">
+                                <span className="text-sm font-medium text-gray-700 dark:text-gray-400">
+                                    Password
+                                </span>
+                                <Link
+                                    href="/forgot-password"
+                                    className="text-sm font-semibold text-brand-500 hover:text-brand-600 dark:text-brand-400"
+                                >
                                     Lupa Password?
                                 </Link>
                             </div>
-                            <div className="relative">
-                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                    <Lock className="h-5 w-5 text-slate-400" />
-                                </div>
-                                <input
-                                    type="password"
-                                    required
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 sm:text-sm shadow-sm transition-colors text-slate-900"
-                                    placeholder="••••••••"
-                                />
-                            </div>
+                            <AppInput
+                                type="password"
+                                required
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                placeholder="••••••••"
+                                icon={<Lock className="h-5 w-5" />}
+                                className="h-12"
+                            />
                         </div>
 
-                        <button
+                        <AppButton
                             type="submit"
                             disabled={loading}
-                            className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors disabled:opacity-50"
+                            className="h-12 w-full"
                         >
                             {loading ? "Memproses..." : "Masuk"}
-                        </button>
+                        </AppButton>
                     </form>
-                    
-                    <div className="mt-6 text-center">
-                        <p className="text-sm text-slate-600">
-                            Akun dibuat oleh admin internal.
-                        </p>
-                    </div>
+
+                    <p className="mt-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                        Akun dibuat oleh admin internal.
+                    </p>
                 </div>
-                <div className="bg-slate-50 px-8 py-4 border-t border-slate-100 text-center">
-                    <p className="text-xs text-slate-500">&copy; 2026 Muh. Ari Ramadhan</p>
-                </div>
+
+                <p className="mt-6 text-center text-sm text-gray-400 dark:text-gray-600">
+                    &copy; 2026 Muh. Ari Ramadhan
+                </p>
             </div>
         </div>
     );
