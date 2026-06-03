@@ -99,7 +99,7 @@ export default function DatePickerField({
             <div
                 ref={panelRef}
                 data-accapi-date-picker-calendar="true"
-                className="fixed z-[9999] rounded-xl border border-white/10 bg-[#11141b] p-3 shadow-2xl shadow-black/40"
+                className="fixed z-[9999] rounded-xl border border-gray-200 dark:border-gray-700 bg-[#11141b] p-3 shadow-2xl shadow-black/40"
                 style={{ top: panelPosition.top, left: panelPosition.left, width: panelPosition.width }}
             >
                 <div className="mb-3 flex items-center justify-between">
@@ -107,7 +107,7 @@ export default function DatePickerField({
                         type="button"
                         aria-label="Bulan sebelumnya"
                         onClick={() => setMonth((current) => subMonths(current, 1))}
-                        className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-slate-300 hover:bg-white/10"
+                        className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-1.5 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.05]"
                     >
                         <ChevronLeft size={16} />
                     </button>
@@ -118,12 +118,12 @@ export default function DatePickerField({
                         type="button"
                         aria-label="Bulan berikutnya"
                         onClick={() => setMonth((current) => addMonths(current, 1))}
-                        className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-slate-300 hover:bg-white/10"
+                        className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-1.5 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.05]"
                     >
                         <ChevronRight size={16} />
                     </button>
                 </div>
-                <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold uppercase text-slate-500">
+                <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold uppercase text-gray-500 dark:text-gray-400">
                     {weekdays.map((day) => (
                         <div key={day} className={day === "Min" ? "text-red-300" : ""}>{day}</div>
                     ))}
@@ -158,9 +158,9 @@ export default function DatePickerField({
                                 className={cn(
                                     "relative flex h-9 items-center justify-center rounded-lg border text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-45",
                                     outside && !redDate && "border-transparent text-slate-700",
-                                    outside && redDate && "border-red-500/20 bg-red-500/5 text-red-400/70",
-                                    !outside && !redDate && !selected && "border-white/5 text-slate-200 hover:border-white/20 hover:bg-white/10",
-                                    redDate && !selected && "border-red-500/50 bg-red-500/10 text-red-300 hover:border-red-300 hover:bg-red-500/20 hover:text-red-100 focus-visible:ring-red-400/70",
+                                    outside && redDate && "border-error-500/20 bg-red-500/5 text-error-500/70",
+                                    !outside && !redDate && !selected && "border-gray-100 dark:border-gray-800 text-gray-800 dark:text-gray-200 hover:border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-white/[0.05]",
+                                    redDate && !selected && "border-error-500/50 bg-red-500/10 text-red-300 hover:border-red-300 hover:bg-red-500/20 hover:text-red-100 focus-visible:ring-red-400/70",
                                     redDate && "font-bold",
                                     selected && !redDate && "border-emerald-400 bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 focus-visible:ring-emerald-300/70",
                                     selected && redDate && "border-red-200 bg-red-600 text-white shadow-lg shadow-red-500/25 ring-2 ring-red-300/80 focus-visible:ring-red-100",
@@ -191,7 +191,7 @@ export default function DatePickerField({
                         );
                     })}
                 </div>
-                <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-[11px] text-red-100">
+                <div className="mt-3 rounded-lg border border-error-500/20 bg-red-500/10 px-3 py-2 text-[11px] text-red-100">
                     Tanggal merah: libur nasional/cuti bersama Indonesia. Hari Minggu otomatis merah.
                 </div>
             </div>,
@@ -201,7 +201,7 @@ export default function DatePickerField({
 
     return (
         <div ref={anchorRef} data-accapi-date-picker="true" className="relative">
-            <Calendar size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+            <Calendar size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" />
             <input
                 type="text"
                 readOnly
@@ -224,7 +224,7 @@ export default function DatePickerField({
                     if (["Enter", " ", "ArrowDown"].includes(event.key)) openPicker();
                 }}
                 className={cn(
-                    "w-full cursor-pointer rounded-lg border border-white/10 bg-black/40 py-2 pl-8 pr-8 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-emerald-500/60 disabled:cursor-not-allowed disabled:opacity-50",
+                    "w-full cursor-pointer rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 py-2 pl-8 pr-8 text-sm text-gray-800 dark:text-gray-200 outline-none placeholder:text-gray-400 dark:text-gray-500 focus:border-emerald-500/60 disabled:cursor-not-allowed disabled:opacity-50",
                     className
                 )}
             />
@@ -233,7 +233,7 @@ export default function DatePickerField({
                     type="button"
                     aria-label="Kosongkan tanggal"
                     onClick={() => onChange("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 hover:bg-white/10 hover:text-slate-200"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/[0.05] hover:text-gray-800 dark:text-gray-200"
                 >
                     <X size={14} />
                 </button>

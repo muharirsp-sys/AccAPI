@@ -95,7 +95,7 @@ const MultiSelect = ({
             <button
                 type="button"
                 onClick={() => setIsOpen(!isOpen)}
-                className="w-full text-left border border-white/10 rounded-lg px-2 py-1.5 bg-black/40 text-slate-300 truncate text-xs flex justify-between items-center outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full text-left border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 truncate text-xs flex justify-between items-center outline-none focus:ring-1 focus:ring-blue-500"
             >
                 <span className="truncate">{displayText}</span>
                 <span className="text-[10px] ml-1">▼</span>
@@ -103,22 +103,22 @@ const MultiSelect = ({
             {isOpen && (
                 <>
                     <div className="fixed inset-0 z-10" onClick={() => setIsOpen(false)}></div>
-                    <div className="absolute z-20 mt-1 w-48 bg-[#1a1c23] border border-white/10 rounded-lg shadow-xl shadow-black max-h-60 overflow-y-auto">
+                    <div className="absolute z-20 mt-1 w-48 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl shadow-black max-h-60 overflow-y-auto">
                         <div className="p-1 space-y-1">
                             {options.length === 0 ? (
-                                <div className="p-2 text-slate-500 italic text-[10px]">Pilih kelompok dulu</div>
+                                <div className="p-2 text-gray-500 dark:text-gray-400 italic text-[10px]">Pilih kelompok dulu</div>
                             ) : (
                                 options.map((opt, i) => {
                                     const isSelected = selectedValues.includes(opt.value) || value.toLowerCase().includes("all");
                                     return (
-                                        <label key={i} className="flex items-center gap-2 p-1.5 hover:bg-white/5 rounded cursor-pointer">
+                                        <label key={i} className="flex items-center gap-2 p-1.5 hover:bg-white dark:bg-gray-800 rounded cursor-pointer">
                                             <input
                                                 type="checkbox"
                                                 checked={isSelected}
                                                 onChange={() => handleToggle(opt.value)}
-                                                className="rounded bg-black/50 border-white/10 text-blue-500 focus:ring-blue-500/50"
+                                                className="rounded bg-black/50 border-gray-200 dark:border-gray-700 text-blue-500 focus:ring-blue-500/50"
                                             />
-                                            <span className="text-[11px] text-slate-300 truncate">{opt.text}</span>
+                                            <span className="text-[11px] text-gray-700 dark:text-gray-300 truncate">{opt.text}</span>
                                         </label>
                                     );
                                 })
@@ -405,12 +405,12 @@ export default function SummaryManualPage() {
                     <CalendarCheck2 className="text-emerald-500" />
                     Summary Promo Editor
                 </h1>
-                <p className="text-slate-400 mt-2 text-lg">Buat Summary Promo / LPB Form secara manual atau semi-otomatis</p>
+                <p className="text-gray-500 dark:text-gray-400 mt-2 text-lg">Buat Summary Promo / LPB Form secara manual atau semi-otomatis</p>
             </div>
 
             <div className="space-y-6">
                 {/* STEP 1: Master Setup */}
-                <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-white/10 relative overflow-hidden">
+                <div className="bg-white dark:bg-gray-900/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-3xl -mr-10 -mt-10"></div>
                     <div className="flex items-center gap-3 mb-6 relative">
                         <div className="bg-blue-500/20 text-blue-400 w-8 h-8 rounded-full flex items-center justify-center font-bold border border-blue-500/30">1</div>
@@ -418,10 +418,10 @@ export default function SummaryManualPage() {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative">
-                        <div className="p-4 bg-black/40 border border-white/5 rounded-xl">
-                            <label className="block text-sm font-medium text-slate-300 mb-3">Pilih Principle Tersimpan</label>
+                        <div className="p-4 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl">
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Pilih Principle Tersimpan</label>
                             <div className="flex gap-2">
-                                <select className="flex-1 bg-black/50 border border-white/10 rounded-lg text-sm text-white px-3 py-2 outline-none focus:ring-1 focus:ring-blue-500"
+                                <select className="flex-1 bg-black/50 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-white px-3 py-2 outline-none focus:ring-1 focus:ring-blue-500"
                                     value={selectedPrinciple} onChange={e => setSelectedPrinciple(e.target.value)}>
                                     <option value="" className="bg-black/80">-- Pilih Principle --</option>
                                     {Object.entries(principles).map(([id, p]) => <option key={id} value={id} className="bg-black/80">{p.name}</option>)}
@@ -432,28 +432,28 @@ export default function SummaryManualPage() {
                             </div>
                         </div>
 
-                        <div className="p-4 bg-black/40 border border-white/5 rounded-xl">
-                            <label className="block text-sm font-medium text-slate-300 mb-3">Unggah Excel Master Baru</label>
-                            <input type="file" accept=".xlsx,.xls" onChange={handleMasterUpload} className="text-sm block w-full file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30 text-white/50 cursor-pointer" />
+                        <div className="p-4 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl">
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Unggah Excel Master Baru</label>
+                            <input type="file" accept=".xlsx,.xls" onChange={handleMasterUpload} className="text-sm block w-full file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-brand-500/20 file:text-brand-500 dark:text-brand-300 hover:file:bg-brand-500/30 text-white/50 cursor-pointer" />
                         </div>
                     </div>
-                    {masterStatus && <p className="mt-4 text-sm font-medium text-emerald-400 bg-emerald-500/10 inline-block px-3 py-1.5 rounded-md border border-emerald-500/20">{masterStatus}</p>}
+                    {masterStatus && <p className="mt-4 text-sm font-medium text-success-500 bg-emerald-500/10 inline-block px-3 py-1.5 rounded-md border border-emerald-500/20">{masterStatus}</p>}
                 </div>
 
                 {/* STEP 1.5: PDF Extraction */}
                 {masterToken && (
-                    <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-emerald-500/20 relative overflow-hidden group">
+                    <div className="bg-white dark:bg-gray-900/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-emerald-500/20 relative overflow-hidden group">
                         <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl -mr-10 -mt-10 group-hover:bg-emerald-500/20 transition-all"></div>
                         <div className="flex items-center gap-3 mb-6 relative">
                             <FileText className="text-emerald-500" size={26} />
                             <div>
                                 <h2 className="text-lg font-bold text-white">Ekstrak dari Dokumen PDF</h2>
-                                <p className="text-sm text-slate-400">Pilih metode ekstraksi PDF ke dalam tabel.</p>
+                                <p className="text-sm text-gray-500 dark:text-gray-400">Pilih metode ekstraksi PDF ke dalam tabel.</p>
                             </div>
                         </div>
                         <div className="flex flex-col gap-4 max-w-2xl relative">
                             <div className="flex flex-col sm:flex-row items-center gap-3">
-                                <input type="file" accept="application/pdf" onChange={e => setPdfFile(e.target.files?.[0] || null)} className="text-sm w-full sm:flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white/70" />
+                                <input type="file" accept="application/pdf" onChange={e => setPdfFile(e.target.files?.[0] || null)} className="text-sm w-full sm:flex-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-white/70" />
                                 
                                 <div className="flex gap-2 w-full sm:w-auto">
                                     <button onClick={() => handlePdfExtract('regex')} disabled={!pdfFile || isPdfParsing} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-slate-700/50 hover:bg-slate-600 text-white px-4 py-2 border border-slate-600 rounded-lg text-sm font-semibold disabled:opacity-50 transition-colors">
@@ -472,20 +472,20 @@ export default function SummaryManualPage() {
 
                 {/* STEP 2: Table */}
                 {masterToken && (
-                    <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-white/10 overflow-hidden relative">
+                    <div className="bg-white dark:bg-gray-900/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden relative">
                         <div className="flex justify-between items-center mb-6">
                             <div className="flex items-center gap-3">
-                                <div className="bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 w-8 h-8 rounded-full flex items-center justify-center font-bold">2</div>
+                                <div className="bg-brand-500/20 text-brand-500 dark:text-brand-400 border border-brand-500/30 w-8 h-8 rounded-full flex items-center justify-center font-bold">2</div>
                                 <h2 className="text-xl font-bold text-white">Data Summary Grid</h2>
                             </div>
-                            <button onClick={addRow} className="flex items-center gap-2 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white border border-white/10 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                            <button onClick={addRow} className="flex items-center gap-2 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.05] hover:text-white border border-gray-200 dark:border-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                                 <Plus size={16} /> Tambah Baris Kosong
                             </button>
                         </div>
 
-                        <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/20">
+                        <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
                             <table className="w-full text-xs text-left whitespace-nowrap min-w-max">
-                                <thead className="bg-black/60 border-b border-white/10 text-slate-400 uppercase tracking-tighter">
+                                <thead className="bg-black/60 border-b border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 uppercase tracking-tighter">
                                     <tr>
                                         <th className="px-3 py-3 font-semibold">No</th>
                                         <th className="px-3 py-3 font-semibold">Principle</th>
@@ -504,12 +504,12 @@ export default function SummaryManualPage() {
                                 <tbody className="divide-y divide-white/5">
                                     {rows.map((r) => (
                                         <tr key={r.id} className="hover:bg-white/[0.02]">
-                                            <td className="px-2 py-2"><input type="text" value={r.no} onChange={e => updateRow(r.id, "no", e.target.value)} className="w-10 bg-black/40 border border-white/10 rounded px-1.5 py-1 text-slate-300 focus:ring-1 focus:ring-blue-500 outline-none" /></td>
-                                            <td className="px-2 py-2"><input type="text" value={r.principle} onChange={e => updateRow(r.id, "principle", e.target.value)} className="w-24 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 focus:ring-1 focus:ring-blue-500 outline-none" /></td>
-                                            <td className="px-2 py-2"><input type="text" value={r.surat_program} onChange={e => updateRow(r.id, "surat_program", e.target.value)} className="w-28 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 focus:ring-1 focus:ring-blue-500 outline-none" /></td>
-                                            <td className="px-2 py-2"><input type="text" value={r.nama_program} onChange={e => updateRow(r.id, "nama_program", e.target.value)} className="w-32 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 focus:ring-1 focus:ring-blue-500 outline-none" /></td>
+                                            <td className="px-2 py-2"><input type="text" value={r.no} onChange={e => updateRow(r.id, "no", e.target.value)} className="w-10 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none" /></td>
+                                            <td className="px-2 py-2"><input type="text" value={r.principle} onChange={e => updateRow(r.id, "principle", e.target.value)} className="w-24 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none" /></td>
+                                            <td className="px-2 py-2"><input type="text" value={r.surat_program} onChange={e => updateRow(r.id, "surat_program", e.target.value)} className="w-28 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none" /></td>
+                                            <td className="px-2 py-2"><input type="text" value={r.nama_program} onChange={e => updateRow(r.id, "nama_program", e.target.value)} className="w-32 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none" /></td>
                                             <td className="px-2 py-2">
-                                                <select value={r.channel_gtmt} onChange={e => updateRow(r.id, "channel_gtmt", e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-slate-300 focus:ring-1 focus:ring-blue-500 outline-none">
+                                                <select value={r.channel_gtmt} onChange={e => updateRow(r.id, "channel_gtmt", e.target.value)} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none">
                                                     <option value="">-</option><option value="GT">GT</option><option value="MT">MT</option>
                                                 </select>
                                             </td>
@@ -522,17 +522,17 @@ export default function SummaryManualPage() {
                                             <td className="px-2 py-2">
                                                 <MultiSelect options={gramasiOptions[r.id] || []} value={r.gramasi} onChange={g => updateRow(r.id, "gramasi", g)} placeholder="- Gramasi -" />
                                             </td>
-                                            <td className="px-2 py-2"><input type="text" value={r.ketentuan} onChange={e => updateRow(r.id, "ketentuan", e.target.value)} className="w-20 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                                            <td className="px-2 py-2"><input type="text" value={r.ketentuan} onChange={e => updateRow(r.id, "ketentuan", e.target.value)} className="w-20 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 text-gray-700 dark:text-gray-300 outline-none focus:ring-1 focus:ring-blue-500" /></td>
                                             <td className="px-2 py-2">
-                                                <select value={r.benefit_type} onChange={e => updateRow(r.id, "benefit_type", e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-slate-300 outline-none focus:ring-1 focus:ring-blue-500">
+                                                <select value={r.benefit_type} onChange={e => updateRow(r.id, "benefit_type", e.target.value)} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-700 dark:text-gray-300 outline-none focus:ring-1 focus:ring-blue-500">
                                                     <option value="DISC_PCT">DISC_PCT (%)</option>
                                                     <option value="DISC_RP">DISC_RP (Rp)</option>
                                                     <option value="BONUS_QTY">BONUS_QTY (+)</option>
                                                 </select>
                                             </td>
-                                            <td className="px-2 py-2"><input type="text" value={r.benefit} onChange={e => updateRow(r.id, "benefit", e.target.value)} className="w-20 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                                            <td className="px-2 py-2"><input type="text" value={r.benefit} onChange={e => updateRow(r.id, "benefit", e.target.value)} className="w-20 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 text-gray-700 dark:text-gray-300 outline-none focus:ring-1 focus:ring-blue-500" /></td>
                                             <td className="px-2 py-2 text-center">
-                                                <button onClick={() => setRows(p => p.filter(x => x.id !== r.id))} className="text-red-400 hover:text-red-300 hover:bg-red-500/20 p-1.5 rounded transition-colors">
+                                                <button onClick={() => setRows(p => p.filter(x => x.id !== r.id))} className="text-error-500 hover:text-red-300 hover:bg-red-500/20 p-1.5 rounded transition-colors">
                                                     <Trash2 size={16} />
                                                 </button>
                                             </td>
@@ -540,7 +540,7 @@ export default function SummaryManualPage() {
                                     ))}
                                     {rows.length === 0 && (
                                         <tr>
-                                            <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
+                                            <td colSpan={12} className="px-4 py-12 text-center text-gray-500 dark:text-gray-400">
                                                 Belum ada data. Tambahkan baris kosong atau ekstrak dari PDF.
                                             </td>
                                         </tr>
@@ -550,7 +550,7 @@ export default function SummaryManualPage() {
                         </div>
 
                         {rows.length > 0 && (
-                            <div className="mt-6 flex flex-col gap-4 p-6 bg-black/40 border border-white/5 rounded-xl justify-center items-center">
+                            <div className="mt-6 flex flex-col gap-4 p-6 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl justify-center items-center">
                                 {!downloadLinks ? (
                                     <>
                                         <button onClick={handleGenerate} disabled={isGenerating} className="flex items-center gap-2 bg-blue-600 text-white px-8 py-3.5 rounded-xl font-bold hover:bg-blue-500 disabled:opacity-50 shadow-lg shadow-blue-500/20 transition-colors">
@@ -565,15 +565,15 @@ export default function SummaryManualPage() {
                                             <button onClick={() => handleDownload(downloadLinks.form, "Form_Summary_Program.pdf")} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-500 shadow-lg shadow-emerald-500/20">
                                                 <Download size={18} /> Form PDF
                                             </button>
-                                            <button onClick={() => handleDownload(downloadLinks.dataset, "Dataset_Diskon_With_Channel.xlsx")} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-indigo-500 shadow-lg shadow-indigo-500/20">
+                                            <button onClick={() => handleDownload(downloadLinks.dataset, "Dataset_Diskon_With_Channel.xlsx")} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-brand-500 shadow-lg shadow-indigo-500/20">
                                                 <Download size={18} /> Excel Engine
                                             </button>
                                         </div>
-                                        <hr className="w-full border-white/10" />
+                                        <hr className="w-full border-gray-200 dark:border-gray-700" />
                                         <div className="w-full">
-                                            <label className="block text-sm font-bold text-slate-300 mb-2">Automasi n8n: Kirim via Email</label>
+                                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Automasi n8n: Kirim via Email</label>
                                             <div className="flex flex-col sm:flex-row gap-3 w-full">
-                                                <input type="email" value={emailTarget} onChange={e => setEmailTarget(e.target.value)} required placeholder="Masukkan email divisi..." className="flex-1 w-full text-sm border border-white/10 bg-black/50 text-white rounded-xl px-4 py-2.5 outline-none focus:ring-1 focus:ring-blue-500" />
+                                                <input type="email" value={emailTarget} onChange={e => setEmailTarget(e.target.value)} required placeholder="Masukkan email divisi..." className="flex-1 w-full text-sm border border-gray-200 dark:border-gray-700 bg-black/50 text-white rounded-xl px-4 py-2.5 outline-none focus:ring-1 focus:ring-blue-500" />
                                                 <button type="button" onClick={handleSendEmail} disabled={!emailTarget} className="flex items-center justify-center gap-2 bg-sky-600 text-white font-bold px-6 py-2.5 rounded-xl text-sm hover:bg-sky-500 disabled:opacity-50 shadow-lg shadow-sky-500/20">
                                                     Kirim Otomatis
                                                 </button>

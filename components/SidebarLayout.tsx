@@ -1,24 +1,21 @@
-// Tujuan: Shell navigasi utama dashboard Smart ERP dengan filtering navigasi berdasarkan RBAC dan satu pintu fitur Accurate.
-// Caller: `app/(dashboard)/layout.tsx`.
-// Dependensi: `authClient`, router Next.js, ikon `lucide-react`, helper RBAC, ThemeSwitcher.
-// Main Functions: `SidebarLayout`, `handleSignOut`.
-// Side Effects: Sign-out Better Auth dan navigasi browser; tidak melakukan DB/file I/O langsung.
 "use client";
 
 import { useState } from "react";
-import { Menu, Home, Users, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ClipboardCheck, X } from "lucide-react";
+import { Menu, Home, Users, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ClipboardCheck, X, ChevronDown } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { canAccessPath, normalizeRole } from "@/lib/rbac";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
 
 export default function SidebarLayout({ children, role, permissions }: { children: React.ReactNode; role?: string | null; permissions?: string | null }) {
-    // Desktop: sidebar collapse/expand. Mobile: drawer open/close (hamburger).
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isMobileOpen, setIsMobileOpen] = useState(false);
     const router = useRouter();
+    const pathname = usePathname();
     const { data: session } = authClient.useSession();
     const userRole = normalizeRole(role || session?.user?.role);
+    const userName = session?.user?.name || "User";
+    const userInitial = userName.charAt(0).toUpperCase();
 
     const handleSignOut = async () => {
         await authClient.signOut({
@@ -45,22 +42,34 @@ export default function SidebarLayout({ children, role, permissions }: { childre
     const navItems = allNavItems.filter((item) => canAccessPath(item.href, userRole, permissions || "{}"));
 
     const navList = (
-        <ul className="space-y-1 px-2">
+        <ul className="space-y-1 px-3">
             {navItems.map((item) => {
                 const Icon = item.icon;
+                const isActive = pathname === item.href;
                 return (
                     <li key={item.name}>
                         <a
                             href={item.href}
                             onClick={() => setIsMobileOpen(false)}
-                            className={`flex items-center py-2.5 text-slate-300 hover:bg-indigo-500/20 hover:text-indigo-300 rounded-lg transition-colors group ${
-                                isSidebarOpen ? 'px-3' : 'justify-center'
+                            className={`relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                                isSidebarOpen ? "" : "justify-center"
+                            } ${
+                                isActive
+                                    ? "bg-brand-50 text-brand-500 dark:bg-brand-500/[0.12] dark:text-brand-400"
+                                    : "text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/5"
                             }`}
                             title={!isSidebarOpen ? item.name : undefined}
                         >
-                            <Icon size={20} className="min-w-[20px]" />
+                            <Icon
+                                size={20}
+                                className={`min-w-[20px] shrink-0 ${
+                                    isActive
+                                        ? "text-brand-500 dark:text-brand-400"
+                                        : "text-gray-500 dark:text-gray-400"
+                                }`}
+                            />
                             {isSidebarOpen && (
-                                <span className="ml-3 text-sm font-medium whitespace-nowrap">{item.name}</span>
+                                <span className="truncate">{item.name}</span>
                             )}
                         </a>
                     </li>
@@ -70,91 +79,104 @@ export default function SidebarLayout({ children, role, permissions }: { childre
     );
 
     return (
-        <div className="flex h-screen overflow-hidden">
+        <div className="flex min-h-screen">
             {/* Sidebar desktop (md+) */}
             <aside
                 className={`hidden md:flex transition-all duration-300 ease-in-out ${
-                    isSidebarOpen ? "w-64" : "w-[60px]"
-                } bg-[#1a1c23]/80 backdrop-blur-xl border-r border-white/5 flex-col z-20`}
+                    isSidebarOpen ? "w-[290px]" : "w-[90px]"
+                } border-r border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-dark flex-col z-20`}
             >
-                <div className="h-16 flex items-center justify-between px-4 border-b border-white/5">
+                <div className="flex h-[72px] items-center justify-between px-5 border-b border-gray-200 dark:border-gray-800">
                     {isSidebarOpen && (
-                        <div className="flex items-center gap-2 overflow-hidden">
-                            <Server className="text-indigo-500" size={24} />
-                            <span className="font-bold text-lg text-white truncate">Smart ERP</span>
+                        <div className="flex items-center gap-3 overflow-hidden">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500 text-white">
+                                <Server size={20} />
+                            </div>
+                            <span className="font-bold text-lg text-gray-900 dark:text-white truncate">Smart ERP</span>
                         </div>
                     )}
                     <button
                         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                        className={`p-1 hover:bg-white/10 rounded-md transition-colors ${!isSidebarOpen && 'mx-auto'}`}
+                        className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-white/5 ${!isSidebarOpen && "mx-auto"}`}
                         aria-label="Toggle sidebar"
                     >
-                        <Menu size={20} className="text-slate-300" />
+                        <ChevronDown
+                            size={20}
+                            className={`rotate-90 transition-transform duration-300 text-gray-500 dark:text-gray-400 ${isSidebarOpen ? "rotate-90" : "-rotate-90"}`}
+                        />
                     </button>
                 </div>
 
-                <nav className="flex-1 overflow-y-auto py-4 overflow-x-hidden">
+                <nav className="flex-1 overflow-y-auto py-4 overflow-x-hidden custom-scrollbar">
                     {navList}
                 </nav>
             </aside>
 
-            {/* Sidebar mobile drawer (< md) */}
+            {/* Mobile drawer */}
             {isMobileOpen && (
                 <div className="fixed inset-0 z-40 md:hidden">
                     <div
-                        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                        className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm"
                         onClick={() => setIsMobileOpen(false)}
                         aria-hidden="true"
                     />
-                    <aside className="absolute left-0 top-0 h-full w-64 bg-[#1a1c23] border-r border-white/10 flex flex-col">
-                        <div className="h-16 flex items-center justify-between px-4 border-b border-white/5">
-                            <div className="flex items-center gap-2 overflow-hidden">
-                                <Server className="text-indigo-500" size={24} />
-                                <span className="font-bold text-lg text-white truncate">Smart ERP</span>
+                    <aside className="absolute left-0 top-0 h-full w-[290px] bg-white dark:bg-gray-dark border-r border-gray-200 dark:border-gray-800 flex flex-col">
+                        <div className="flex h-[72px] items-center justify-between px-5 border-b border-gray-200 dark:border-gray-800">
+                            <div className="flex items-center gap-3 overflow-hidden">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500 text-white">
+                                    <Server size={20} />
+                                </div>
+                                <span className="font-bold text-lg text-gray-900 dark:text-white truncate">Smart ERP</span>
                             </div>
                             <button
                                 onClick={() => setIsMobileOpen(false)}
-                                className="p-1 hover:bg-white/10 rounded-md transition-colors"
+                                className="flex h-9 w-9 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-white/5"
                                 aria-label="Tutup menu"
                             >
-                                <X size={20} className="text-slate-300" />
+                                <X size={20} className="text-gray-500 dark:text-gray-400" />
                             </button>
                         </div>
-                        <nav className="flex-1 overflow-y-auto py-4 overflow-x-hidden">
+                        <nav className="flex-1 overflow-y-auto py-4 overflow-x-hidden custom-scrollbar">
                             {navList}
                         </nav>
                     </aside>
                 </div>
             )}
 
-            {/* Main Content Area */}
-            <div className="flex-1 flex flex-col min-w-0 bg-black/20">
+            {/* Main Content */}
+            <div className="flex-1 flex flex-col min-w-0 bg-gray-50 dark:bg-gray-900">
                 {/* Top Header */}
-                <header className="h-16 bg-[#1a1c23]/50 backdrop-blur-md border-b border-white/5 flex items-center justify-between px-4 md:px-6 z-10 sticky top-0">
+                <header className="sticky top-0 z-30 flex h-[72px] items-center justify-between border-b border-gray-200 bg-white px-4 md:px-6 dark:border-gray-800 dark:bg-gray-dark shadow-theme-sm">
                     <div className="flex items-center gap-3">
-                        {/* Hamburger hanya tampil di mobile */}
                         <button
                             onClick={() => setIsMobileOpen(true)}
-                            className="md:hidden p-1.5 hover:bg-white/10 rounded-md transition-colors"
+                            className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 md:hidden"
                             aria-label="Buka menu"
                         >
-                            <Menu size={20} className="text-slate-300" />
+                            <Menu size={20} className="text-gray-500 dark:text-gray-400" />
                         </button>
-                        <span className="text-sm font-medium text-slate-400 hidden sm:inline">Headless Accurate Frontend</span>
+                        <span className="text-sm font-medium text-gray-500 dark:text-gray-400 hidden sm:inline">
+                            Headless Accurate Frontend
+                        </span>
                     </div>
                     <div className="flex items-center gap-3">
                         <ThemeSwitcher />
-                        <button onClick={handleSignOut} className="text-slate-400 hover:text-red-400 transition-colors" title="Log Out" aria-label="Log Out">
+                        <button
+                            onClick={handleSignOut}
+                            className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 hover:bg-error-50 hover:text-error-500 transition dark:text-gray-400 dark:hover:bg-error-500/10 dark:hover:text-error-400"
+                            title="Log Out"
+                            aria-label="Log Out"
+                        >
                             <LogOut size={20} />
                         </button>
-                        <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center text-indigo-300 border border-indigo-500/30 text-sm font-bold">
-                            A
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-500/10 text-brand-500 font-semibold text-sm dark:bg-brand-500/20 dark:text-brand-400">
+                            {userInitial}
                         </div>
                     </div>
                 </header>
 
                 {/* Page Content */}
-                <main className="flex-1 overflow-y-auto p-4 md:p-6 relative">
+                <main className="flex-1 overflow-y-auto p-4 md:p-6 max-w-[1536px] mx-auto w-full">
                     {children}
                 </main>
             </div>

@@ -2476,9 +2476,9 @@ export default function Home() {
   if (!isMounted) {
     return (
       <div className="min-h-screen bg-[#0f1015] flex items-center justify-center font-sans">
-        <div className="flex flex-col items-center gap-3 text-indigo-400">
+        <div className="flex flex-col items-center gap-3 text-brand-500 dark:text-brand-400">
           <Loader2 className="w-8 h-8 animate-spin" />
-          <p className="text-sm border border-white/10 bg-white/5 backdrop-blur-md px-4 py-2 rounded-full font-medium text-slate-300 animate-pulse shadow-[0_0_15px_rgba(79,70,229,0.2)]">Menghubungkan ke Workspace...</p>
+          <p className="text-sm border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 backdrop-blur-md px-4 py-2 rounded-full font-medium text-gray-700 dark:text-gray-300 animate-pulse shadow-[0_0_15px_rgba(79,70,229,0.2)]">Menghubungkan ke Workspace...</p>
         </div>
       </div>
     );
@@ -2489,16 +2489,16 @@ export default function Home() {
       <div className="max-w-6xl mx-auto space-y-6">
 
         {/* Header Section */}
-        <header className="flex items-center justify-between pb-6 border-b border-white/10">
+        <header className="flex items-center justify-between pb-6 border-b border-gray-200 dark:border-gray-700">
           <div>
             <h1 className="text-3xl font-extrabold text-white tracking-tight flex items-center gap-2 drop-shadow-md">
-              <Database className="w-8 h-8 text-indigo-400 drop-shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
+              <Database className="w-8 h-8 text-brand-500 dark:text-brand-400 drop-shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
               AOL API Wrapper
             </h1>
-            <p className="text-sm text-slate-400 mt-1">SaaS & Internal IT Execution Dashboard</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">SaaS & Internal IT Execution Dashboard</p>
           </div>
           {isKeySaved && (
-            <button onClick={handleLogout} className="text-sm font-medium text-red-400 hover:text-red-300 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 px-4 py-2 rounded-xl flex items-center gap-2 transition-all backdrop-blur-md shadow-[0_0_15px_rgba(239,68,68,0.1)]">
+            <button onClick={handleLogout} className="text-sm font-medium text-error-500 hover:text-red-300 bg-red-500/10 border border-error-500/20 hover:bg-red-500/20 px-4 py-2 rounded-xl flex items-center gap-2 transition-all backdrop-blur-md shadow-[0_0_15px_rgba(239,68,68,0.1)]">
               <LogOut className="w-4 h-4" /> Disconnect
             </button>
           )}
@@ -2510,10 +2510,10 @@ export default function Home() {
           <div className="lg:col-span-4 space-y-6">
 
             {/* Authenticated State Card */}
-            <div className="bg-[#1e1f29]/40 backdrop-blur-xl rounded-2xl p-6 shadow-2xl border border-white/10 relative overflow-hidden text-slate-300">
-              <div className={`absolute top-0 left-0 w-1 h-full rounded-l-2xl shadow-[0_0_15px_currentColor] ${isKeySaved ? "bg-emerald-500 text-emerald-500" : "bg-indigo-500 text-indigo-500"}`}></div>
+            <div className="bg-[#1e1f29]/40 backdrop-blur-xl rounded-2xl p-6 shadow-2xl border border-gray-200 dark:border-gray-700 relative overflow-hidden text-gray-700 dark:text-gray-300">
+              <div className={`absolute top-0 left-0 w-1 h-full rounded-l-2xl shadow-[0_0_15px_currentColor] ${isKeySaved ? "bg-emerald-500 text-emerald-500" : "bg-brand-500 text-brand-500"}`}></div>
               <h2 className="text-lg font-semibold flex items-center gap-2 mb-4 text-white">
-                <Key className={`w-5 h-5 ${isKeySaved ? "text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.8)]" : "text-indigo-400 drop-shadow-[0_0_8px_rgba(99,102,241,0.8)]"}`} />
+                <Key className={`w-5 h-5 ${isKeySaved ? "text-success-500 drop-shadow-[0_0_8px_rgba(52,211,153,0.8)]" : "text-brand-500 dark:text-brand-400 drop-shadow-[0_0_8px_rgba(99,102,241,0.8)]"}`} />
                 {isKeySaved ? "Sesi Terhubung" : "Autentikasi Aplikasi"}
               </h2>
 
@@ -2522,7 +2522,7 @@ export default function Home() {
                   <p className="text-sm text-white/50 mb-2">Aplikasi ini membutuhkan akses Secure OAuth ke Accurate Online Anda.</p>
                   <button
                     onClick={handleLoginAccurate}
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)] hover:shadow-[0_0_25px_rgba(79,70,229,0.5)] flex items-center justify-center gap-2"
+                    className="w-full bg-indigo-600 hover:bg-brand-500 text-white font-medium text-sm py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)] hover:shadow-[0_0_25px_rgba(79,70,229,0.5)] flex items-center justify-center gap-2"
                   >
                     Login dengan Accurate
                   </button>
@@ -2531,7 +2531,7 @@ export default function Home() {
                 <div className="space-y-4">
                   <p className="text-sm text-white/60">Pilih Database yang ingin dikelola:</p>
                   {isFetchingDbs ? (
-                    <div className="flex items-center gap-2 text-indigo-400 text-sm font-medium">
+                    <div className="flex items-center gap-2 text-brand-500 dark:text-brand-400 text-sm font-medium">
                       <Loader2 className="w-4 h-4 animate-spin drop-shadow-[0_0_5px_currentColor]" /> Mengambil daftar database...
                     </div>
                   ) : (
@@ -2539,7 +2539,7 @@ export default function Home() {
                       <select
                         value={selectedDb}
                         onChange={(e) => setSelectedDb(e.target.value)}
-                        className="w-full px-4 py-3 text-sm rounded-xl border border-white/10 bg-black/40 text-white focus:ring-2 focus:ring-indigo-500/50 appearance-none bg-no-repeat"
+                        className="w-full px-4 py-3 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-white focus:ring-2 focus:ring-brand-500/50 appearance-none bg-no-repeat"
                         style={{ backgroundImage: `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%23ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>')`, backgroundPosition: 'right 16px center' }}
                       >
                         <option value="" className="bg-[#1e1f29] text-white">-- Pilih Database --</option>
@@ -2561,7 +2561,7 @@ export default function Home() {
                   <div className="bg-emerald-500/20 text-emerald-300 text-xs font-semibold px-4 py-3 rounded-xl border border-emerald-500/30 flex items-center gap-2 shadow-[0_0_15px_rgba(52,211,153,0.1)]">
                     <CheckCircle2 className="w-4 h-4 drop-shadow-[0_0_5px_currentColor]" /> Ready to serve
                   </div>
-                  <div className="text-xs break-all text-white/50 bg-black/40 p-3 rounded-xl font-mono border border-white/5">
+                  <div className="text-xs break-all text-white/50 bg-white dark:bg-gray-900 p-3 rounded-xl font-mono border border-gray-100 dark:border-gray-800">
                     <span className="font-semibold text-white/70 block mb-1">Host Endpoint:</span>
                     {dbHost}
                   </div>
@@ -2570,9 +2570,9 @@ export default function Home() {
             </div>
 
             {/* Route Selector Card */}
-            <div className={`bg-[#1e1f29]/40 backdrop-blur-xl rounded-2xl p-6 shadow-2xl border border-white/10 transition-opacity ${!isKeySaved ? "opacity-40 pointer-events-none grayscale blur-[1px]" : ""}`}>
+            <div className={`bg-[#1e1f29]/40 backdrop-blur-xl rounded-2xl p-6 shadow-2xl border border-gray-200 dark:border-gray-700 transition-opacity ${!isKeySaved ? "opacity-40 pointer-events-none grayscale blur-[1px]" : ""}`}>
               <h2 className="text-lg font-semibold flex items-center gap-2 mb-4 text-white">
-                <Settings2 className="w-5 h-5 text-indigo-400 drop-shadow-[0_0_8px_rgba(99,102,241,0.8)]" />
+                <Settings2 className="w-5 h-5 text-brand-500 dark:text-brand-400 drop-shadow-[0_0_8px_rgba(99,102,241,0.8)]" />
                 Modul Endpoint
               </h2>
               <div className="space-y-5">
@@ -2581,7 +2581,7 @@ export default function Home() {
                   <select
                     value={selectedRoute}
                     onChange={handleChangeRoute}
-                    className="w-full px-4 py-3 text-sm rounded-xl border border-white/10 bg-black/40 hover:bg-black/60 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all text-white cursor-pointer appearance-none shadow-inner"
+                    className="w-full px-4 py-3 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:bg-black/60 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500/50 transition-all text-white cursor-pointer appearance-none shadow-inner"
                     style={{ backgroundImage: `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%23ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>')`, backgroundPosition: 'right 16px center', backgroundRepeat: 'no-repeat', paddingRight: '40px' }}
                   >
                     {(Object.keys(accurateRoutes) as RouteKey[]).map((key) => (
@@ -2592,9 +2592,9 @@ export default function Home() {
                   </select>
                 </div>
 
-                <div className="bg-indigo-500/10 rounded-xl p-4 border border-indigo-500/20 shadow-inner">
-                  <p className="text-xs text-indigo-300 font-medium break-all flex justify-between items-center">
-                    <span className="opacity-90 font-bold bg-indigo-500/20 px-2 py-1 rounded">{accurateRoutes[selectedRoute].method}</span>
+                <div className="bg-brand-500/10 rounded-xl p-4 border border-brand-500/20 shadow-inner">
+                  <p className="text-xs text-brand-500 dark:text-brand-300 font-medium break-all flex justify-between items-center">
+                    <span className="opacity-90 font-bold bg-brand-500/20 px-2 py-1 rounded">{accurateRoutes[selectedRoute].method}</span>
                     <span className="font-mono opacity-80">{accurateRoutes[selectedRoute].path}</span>
                   </p>
                   <p className="text-xs text-white/60 mt-3 italic">{accurateRoutes[selectedRoute].description}</p>
@@ -2608,18 +2608,18 @@ export default function Home() {
           <div className={`lg:col-span-8 flex flex-col gap-6 transition-opacity ${!isKeySaved ? "opacity-50 pointer-events-none grayscale" : ""}`}>
 
             {/* Input Mode Tabs & Payload Area */}
-            <div className="bg-[#1e1f29]/40 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/10 flex flex-col overflow-hidden">
-              <div className="flex items-center border-b border-white/10 bg-black/20 px-2 py-2">
+            <div className="bg-[#1e1f29]/40 backdrop-blur-xl rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden">
+              <div className="flex items-center border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-2 py-2">
                 <button
                   onClick={() => setInputMode("manual")}
-                  className={`flex-1 flex justify-center items-center gap-2 py-2.5 text-sm font-medium rounded-xl transition-all ${inputMode === "manual" ? "bg-indigo-600 text-white shadow-[0_0_15px_rgba(79,70,229,0.3)] border border-transparent" : "text-white/50 hover:text-white hover:bg-white/5"}`}
+                  className={`flex-1 flex justify-center items-center gap-2 py-2.5 text-sm font-medium rounded-xl transition-all ${inputMode === "manual" ? "bg-indigo-600 text-white shadow-[0_0_15px_rgba(79,70,229,0.3)] border border-transparent" : "text-white/50 hover:text-white hover:bg-white dark:bg-gray-800"}`}
                 >
                   <FileJson className="w-4 h-4" />
                   JSON / Parameter Manual
                 </button>
                 <button
                   onClick={() => setInputMode("excel")}
-                  className={`flex-1 flex justify-center items-center gap-2 py-2.5 text-sm font-medium rounded-xl transition-all ${inputMode === "excel" ? "bg-indigo-600 text-white shadow-[0_0_15px_rgba(79,70,229,0.3)] border border-transparent" : "text-white/50 hover:text-white hover:bg-white/5"}`}
+                  className={`flex-1 flex justify-center items-center gap-2 py-2.5 text-sm font-medium rounded-xl transition-all ${inputMode === "excel" ? "bg-indigo-600 text-white shadow-[0_0_15px_rgba(79,70,229,0.3)] border border-transparent" : "text-white/50 hover:text-white hover:bg-white dark:bg-gray-800"}`}
                 >
                   <FileSpreadsheet className="w-4 h-4" />
                   Excel Import (Batch)
@@ -2631,15 +2631,15 @@ export default function Home() {
                   <textarea
                     value={payloadStr}
                     onChange={(e) => setPayloadStr(e.target.value)}
-                    className="w-full flex-1 p-6 text-sm font-mono text-emerald-300 bg-black/20 focus:outline-none focus:ring-inset focus:ring-1 focus:ring-indigo-500/50 resize-y min-h-[300px]"
+                    className="w-full flex-1 p-6 text-sm font-mono text-emerald-300 bg-gray-50 dark:bg-gray-800/50 focus:outline-none focus:ring-inset focus:ring-1 focus:ring-brand-500/50 resize-y min-h-[300px]"
                     spellCheck={false}
                   />
                 ) : (
                   <>
-                  <div className="mx-6 mt-6 p-5 bg-[#1e1f29]/80 shadow-inner border border-white/10 rounded-2xl flex flex-col sm:flex-row sm:items-center gap-4">
+                  <div className="mx-6 mt-6 p-5 bg-[#1e1f29]/80 shadow-inner border border-gray-200 dark:border-gray-700 rounded-2xl flex flex-col sm:flex-row sm:items-center gap-4">
                      <div>
                        <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                          <CalendarIcon className="w-4 h-4 text-emerald-400" />
+                          <CalendarIcon className="w-4 h-4 text-success-500" />
                           Tanggal Transaksi Default
                        </h3>
                        <p className="text-xs text-white/50 mt-1">Tanggal H-1 secara default. Akan disuntikkan ke seluruh tagihan dari Excel.</p>
@@ -2649,68 +2649,68 @@ export default function Home() {
                            value={trxDate}
                            onChange={setTrxDate}
                            ariaLabel="Tanggal transaksi default"
-                           className="w-[180px] py-2 text-white focus:border-indigo-500"
+                           className="w-[180px] py-2 text-white focus:border-brand-500"
                         />
                      </div>
                   </div>
 
                   {selectedRoute === "salesReceiptBulkSave" && (
-                     <div className="mx-6 mt-6 p-5 bg-indigo-900/20 shadow-inner border border-indigo-500/30 rounded-2xl">
+                     <div className="mx-6 mt-6 p-5 bg-indigo-900/20 shadow-inner border border-brand-500/30 rounded-2xl">
                         <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-                           <Settings2 className="w-4 h-4 text-indigo-400" />
+                           <Settings2 className="w-4 h-4 text-brand-500 dark:text-brand-400" />
                            Mapping Format Pelunasan Internal (Hanya Berlaku Excel Internal)
                         </h3>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                            <div className="space-y-2">
                               <label className="text-xs text-white/50 font-medium">Tunai (No Kas/Bank & Penomoran)</label>
                               <div className="flex gap-2">
-                                 <input type="text" placeholder="ID/No Akun Bank" value={mapTunaiBank} onChange={e => setMapTunaiBank(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                                 <input type="text" placeholder="ID AutoNumber" value={mapTunaiAutoNum} onChange={e => setMapTunaiAutoNum(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                                 <input type="text" placeholder="ID/No Akun Bank" value={mapTunaiBank} onChange={e => setMapTunaiBank(e.target.value)} className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-brand-500" />
+                                 <input type="text" placeholder="ID AutoNumber" value={mapTunaiAutoNum} onChange={e => setMapTunaiAutoNum(e.target.value)} className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-brand-500" />
                               </div>
                            </div>
                            <div className="space-y-2">
                               <label className="text-xs text-white/50 font-medium">Trf (No Kas/Bank & Penomoran)</label>
                               <div className="flex gap-2">
-                                 <input type="text" placeholder="ID/No Akun Bank" value={mapTrfBank} onChange={e => setMapTrfBank(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                                 <input type="text" placeholder="ID AutoNumber" value={mapTrfAutoNum} onChange={e => setMapTrfAutoNum(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                                 <input type="text" placeholder="ID/No Akun Bank" value={mapTrfBank} onChange={e => setMapTrfBank(e.target.value)} className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-brand-500" />
+                                 <input type="text" placeholder="ID AutoNumber" value={mapTrfAutoNum} onChange={e => setMapTrfAutoNum(e.target.value)} className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-brand-500" />
                               </div>
                            </div>
                            <div className="space-y-2">
                               <label className="text-xs text-white/50 font-medium">BG (No Kas/Bank & Penomoran)</label>
                               <div className="flex gap-2">
-                                 <input type="text" placeholder="ID/No Akun Bank" value={mapBgBank} onChange={e => setMapBgBank(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                                 <input type="text" placeholder="ID AutoNumber" value={mapBgAutoNum} onChange={e => setMapBgAutoNum(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                                 <input type="text" placeholder="ID/No Akun Bank" value={mapBgBank} onChange={e => setMapBgBank(e.target.value)} className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-brand-500" />
+                                 <input type="text" placeholder="ID AutoNumber" value={mapBgAutoNum} onChange={e => setMapBgAutoNum(e.target.value)} className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-brand-500" />
                               </div>
                            </div>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-white/10">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                            <div className="space-y-2">
                               <label className="text-xs text-white/50 font-medium">Pot.1 (Akun GL Diskon)</label>
-                              <input type="text" placeholder="No. Akun GL (Biarkan kosong bila tdk digunakan)" value={mapPot1Account} onChange={e => setMapPot1Account(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                              <input type="text" placeholder="No. Akun GL (Biarkan kosong bila tdk digunakan)" value={mapPot1Account} onChange={e => setMapPot1Account(e.target.value)} className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-brand-500" />
                            </div>
                            <div className="space-y-2">
                               <label className="text-xs text-white/50 font-medium">Pot.2 (Akun GL Diskon)</label>
-                              <input type="text" placeholder="No. Akun GL" value={mapPot2Account} onChange={e => setMapPot2Account(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                              <input type="text" placeholder="No. Akun GL" value={mapPot2Account} onChange={e => setMapPot2Account(e.target.value)} className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-brand-500" />
                            </div>
                            <div className="space-y-2">
                               <label className="text-xs text-white/50 font-medium">Pot.3 (Akun GL Diskon)</label>
-                              <input type="text" placeholder="No. Akun GL" value={mapPot3Account} onChange={e => setMapPot3Account(e.target.value)} className="w-full px-3 py-2 text-xs bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                              <input type="text" placeholder="No. Akun GL" value={mapPot3Account} onChange={e => setMapPot3Account(e.target.value)} className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-brand-500" />
                            </div>
                         </div>
                      </div>
                   )}
-                  <div className="p-12 flex flex-col items-center justify-center text-center min-h-[300px] bg-black/20 border-2 border-dashed border-white/10 m-6 rounded-2xl">
-                    <div className="w-16 h-16 bg-indigo-500/20 text-indigo-400 rounded-full flex items-center justify-center mb-4 shadow-[0_0_15px_rgba(99,102,241,0.2)]">
+                  <div className="p-12 flex flex-col items-center justify-center text-center min-h-[300px] bg-gray-50 dark:bg-gray-800/50 border-2 border-dashed border-gray-200 dark:border-gray-700 m-6 rounded-2xl">
+                    <div className="w-16 h-16 bg-brand-500/20 text-brand-500 dark:text-brand-400 rounded-full flex items-center justify-center mb-4 shadow-[0_0_15px_rgba(99,102,241,0.2)]">
                       <Upload className="w-8 h-8 drop-shadow-[0_0_8px_currentColor]" />
                     </div>
                     <h3 className="text-sm font-semibold text-white">Pilih File Excel Anda</h3>
                     <p className="text-xs text-white/50 mt-1 mb-6">Pastikan nama kolom Excel di Baris Pertama (Header) PERSIS sama persis dengan nama parameter API Accurate.</p>
                     <div className="flex items-center gap-3">
-                      <button onClick={handleDownloadTemplate} className="px-5 py-2.5 bg-indigo-900/40 border border-indigo-500/30 rounded-xl text-sm font-medium text-indigo-300 hover:bg-indigo-800/60 hover:text-indigo-200 transition-all shadow-[0_0_15px_rgba(79,70,229,0.1)] inline-flex items-center gap-2">
+                      <button onClick={handleDownloadTemplate} className="px-5 py-2.5 bg-indigo-900/40 border border-brand-500/30 rounded-xl text-sm font-medium text-brand-500 dark:text-brand-300 hover:bg-indigo-800/60 hover:text-indigo-200 transition-all shadow-[0_0_15px_rgba(79,70,229,0.1)] inline-flex items-center gap-2">
                         <FileSpreadsheet className="w-4 h-4" />
                         Download Template Excel
                       </button>
-                      <label className="px-5 py-2.5 bg-[#ffffff]/10 backdrop-blur-md border border-white/20 rounded-xl text-sm font-medium text-white hover:bg-white/20 transition-all cursor-pointer inline-flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.05)]">
+                      <label className="px-5 py-2.5 bg-[#ffffff]/10 backdrop-blur-md border border-gray-300 dark:border-gray-600 rounded-xl text-sm font-medium text-white hover:bg-white/20 transition-all cursor-pointer inline-flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.05)]">
                         <input type="file" className="hidden" accept=".xlsx, .xls, .csv" onChange={handleFileUpload} />
                         Upload Data (.xlsx)
                       </label>
@@ -2720,7 +2720,7 @@ export default function Home() {
                 )}
               </div>
 
-              <div className="p-5 border-t border-white/5 bg-black/20 flex justify-end">
+              <div className="p-5 border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 flex justify-end">
                 <button
                   disabled={isLoading || !isKeySaved}
                   onClick={handleExecute}
@@ -2733,30 +2733,30 @@ export default function Home() {
             </div>
 
             {/* Response Viewer */}
-            <div className="bg-[#1e1f29]/30 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/10 overflow-hidden flex flex-col min-h-[300px]">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-black/20">
+            <div className="bg-[#1e1f29]/30 backdrop-blur-xl rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col min-h-[300px]">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
                 <h3 className="text-sm font-semibold text-white/80 flex items-center gap-2">
-                  <ExternalLink className="w-4 h-4 text-emerald-400 drop-shadow-[0_0_5px_currentColor]" />
+                  <ExternalLink className="w-4 h-4 text-success-500 drop-shadow-[0_0_5px_currentColor]" />
                   Terminal Log & Response Viewer
                 </h3>
               </div>
-              <div className="p-5 overflow-auto flex-1 font-mono text-xs text-slate-300 bg-black/10">
+              <div className="p-5 overflow-auto flex-1 font-mono text-xs text-gray-700 dark:text-gray-300 bg-black/10">
                 {!responseLog ? (
                   <div className="h-full flex flex-col opacity-50 items-center justify-center text-white/40">
                     <p>Menunggu eksekusi endpoint...</p>
                   </div>
                 ) : (
                   responseLog.status === "error" ? (
-                    <div className="text-red-400 flex flex-col gap-2">
+                    <div className="text-error-500 flex flex-col gap-2">
                       <div className="flex items-center gap-2 font-semibold">
                         <ServerCrash className="w-4 h-4" /> Error Eksekusi:
                       </div>
-                      <pre className="whitespace-pre overflow-x-auto bg-red-950/20 p-4 rounded-xl border border-red-500/20 shadow-inner text-red-300">
+                      <pre className="whitespace-pre overflow-x-auto bg-red-950/20 p-4 rounded-xl border border-error-500/20 shadow-inner text-red-300">
                         {responseLog.message}
                       </pre>
                     </div>
                   ) : (
-                    <div className="text-emerald-400 flex flex-col gap-2">
+                    <div className="text-success-500 flex flex-col gap-2">
                       <div className="flex items-center gap-2 font-semibold text-emerald-300 mb-2 drop-shadow-[0_0_5px_currentColor]">
                         <CheckCircle2 className="w-4 h-4" /> Eksekusi Sukses
                       </div>
@@ -2781,8 +2781,8 @@ export default function Home() {
                         </div>
                       ) : null}
                       {Array.isArray(responseLog.data?.d) && responseLog.data.d.length > 0 ? (
-                        <div className="overflow-x-auto border border-emerald-500/20 rounded-xl mt-2 mb-2 pb-2 bg-black/20 shadow-inner">
-                          <table className="w-full text-left text-emerald-400 border-collapse">
+                        <div className="overflow-x-auto border border-emerald-500/20 rounded-xl mt-2 mb-2 pb-2 bg-gray-50 dark:bg-gray-800/50 shadow-inner">
+                          <table className="w-full text-left text-success-500 border-collapse">
                             <thead className="bg-emerald-900/30 text-emerald-300 border-b border-emerald-500/20">
                               <tr>
                                 {Array.from(new Set(responseLog.data.d.flatMap((row: any) => Object.keys(row || {})))).map(key => (
@@ -2809,7 +2809,7 @@ export default function Home() {
                           </p>
                         </div>
                       ) : (
-                        <pre className="whitespace-pre overflow-x-auto text-emerald-400 bg-emerald-950/10 p-4 rounded-xl border border-emerald-500/20 shadow-inner">
+                        <pre className="whitespace-pre overflow-x-auto text-success-500 bg-emerald-950/10 p-4 rounded-xl border border-emerald-500/20 shadow-inner">
                           {JSON.stringify(responseLog.data, null, 2)}
                         </pre>
                       )}
@@ -2824,21 +2824,21 @@ export default function Home() {
 
         {duplicateReview && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-            <div className="w-full max-w-5xl rounded-2xl border border-amber-400/20 bg-[#15161f] shadow-2xl overflow-hidden">
-              <div className="px-6 py-4 border-b border-white/10 bg-amber-500/10">
+            <div className="w-full max-w-5xl rounded-2xl border border-amber-400/20 bg-white dark:bg-gray-900 shadow-2xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-amber-500/10">
                 <h3 className="text-lg font-semibold text-white">Review Potensi Pembayaran Ganda</h3>
                 <p className="text-sm text-white/60 mt-1">
                   Sistem menemukan baris yang mirip dengan upload lain atau muncul lebih dari sekali di batch ini.
                   Centang baris yang tetap ingin diproses.
                 </p>
               </div>
-              <div className="px-6 py-4 text-xs text-white/60 border-b border-white/10 bg-black/20 flex items-center justify-between">
+              <div className="px-6 py-4 text-xs text-white/60 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center justify-between">
                 <span>{duplicateReview.reviewRows.length} kandidat perlu direview</span>
                 <span>{Object.values(duplicateReview.selections).filter(Boolean).length} dipilih untuk lanjut</span>
               </div>
               <div className="max-h-[60vh] overflow-auto">
-                <table className="w-full text-left text-sm text-slate-200">
-                  <thead className="sticky top-0 bg-[#1b1c26] border-b border-white/10 text-white/70">
+                <table className="w-full text-left text-sm text-gray-800 dark:text-gray-200">
+                  <thead className="sticky top-0 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 text-white/70">
                     <tr>
                       <th className="px-4 py-3">Pilih</th>
                       <th className="px-4 py-3">Customer</th>
@@ -2853,13 +2853,13 @@ export default function Home() {
                     {duplicateReview.reviewRows
                       .sort((a, b) => a.originalIndex - b.originalIndex)
                       .map((item) => (
-                        <tr key={item.reviewId} className="border-b border-white/5 hover:bg-white/[0.03]">
+                        <tr key={item.reviewId} className="border-b border-gray-100 dark:border-gray-800 hover:bg-white/[0.03]">
                           <td className="px-4 py-3 align-top">
                             <input
                               type="checkbox"
                               checked={!!duplicateReview.selections[item.reviewId]}
                               onChange={(e) => handleDuplicateSelectionChange(item.reviewId, e.target.checked)}
-                              className="h-4 w-4 rounded border-white/20 bg-black/40 text-amber-400 focus:ring-amber-400"
+                              className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-amber-400 focus:ring-amber-400"
                             />
                           </td>
                           <td className="px-4 py-3 align-top">
@@ -2908,14 +2908,14 @@ export default function Home() {
                   </tbody>
                 </table>
               </div>
-              <div className="flex items-center justify-between gap-3 border-t border-white/10 bg-black/20 px-6 py-4">
+              <div className="flex items-center justify-between gap-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-6 py-4">
                 <p className="text-xs text-white/45">
                   Baris yang tidak dicentang tidak akan diproses pada eksekusi ini.
                 </p>
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => setDuplicateReview(null)}
-                    className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold text-white/70 hover:bg-white/5"
+                    className="rounded-xl border border-gray-200 dark:border-gray-700 px-4 py-2 text-sm font-semibold text-white/70 hover:bg-white dark:bg-gray-800"
                   >
                     Tutup
                   </button>

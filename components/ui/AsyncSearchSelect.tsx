@@ -139,8 +139,8 @@ export const AsyncSearchSelect = forwardRef<any, AsyncSearchSelectProps>(
         return (
             <div className={cn("flex flex-col gap-1.5 w-full", className)}>
                 {label && (
-                    <label className="text-sm font-medium text-slate-300">
-                        {label} {required && <span className="text-red-400">*</span>}
+                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        {label} {required && <span className="text-error-500">*</span>}
                     </label>
                 )}
                 
@@ -161,12 +161,12 @@ export const AsyncSearchSelect = forwardRef<any, AsyncSearchSelectProps>(
                 />
 
                 {error && (
-                    <span className="text-xs text-red-400 font-medium animate-in fade-in slide-in-from-top-1">
+                    <span className="text-xs text-error-500 font-medium animate-in fade-in slide-in-from-top-1">
                         {error}
                     </span>
                 )}
                 {helperText && !error && (
-                    <span className="text-xs text-slate-500">
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
                         {helperText}
                     </span>
                 )}

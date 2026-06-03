@@ -25,17 +25,21 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: applyStoredThemeScript }} />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#0f1015] text-slate-200 min-h-screen selection:bg-indigo-500/30 selection:text-indigo-200 overflow-x-hidden`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased font-outfit bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-white/90 min-h-screen overflow-x-hidden`}
       >
-        <div className="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.25),rgba(255,255,255,0))]"></div>
-        <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_800px_at_100%_200px,#1a1a3a,transparent)]"></div>
-        <Toaster position="top-right" richColors theme="dark" toastOptions={{ className: 'bg-[#1a1c23]/90 backdrop-blur-xl border-white/10 text-slate-200 shadow-2xl' }} />
-          {children}
+        <Toaster
+          position="top-right"
+          richColors
+          toastOptions={{
+            className: "rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-dark shadow-theme-lg text-gray-800 dark:text-white/90",
+          }}
+        />
+        {children}
       </body>
     </html>
   );

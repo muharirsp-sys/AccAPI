@@ -59,7 +59,7 @@ function ResetPasswordForm() {
                     <label className="block text-sm font-medium text-slate-700 mb-1">Password Baru</label>
                     <div className="relative">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Lock className="h-5 w-5 text-slate-400" />
+                            <Lock className="h-5 w-5 text-gray-500 dark:text-gray-400" />
                         </div>
                         <input
                             type="password"
@@ -76,7 +76,7 @@ function ResetPasswordForm() {
                     <label className="block text-sm font-medium text-slate-700 mb-1">Konfirmasi Password Baru</label>
                     <div className="relative">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Lock className="h-5 w-5 text-slate-400" />
+                            <Lock className="h-5 w-5 text-gray-500 dark:text-gray-400" />
                         </div>
                         <input
                             type="password"
@@ -99,7 +99,7 @@ function ResetPasswordForm() {
             </form>
             
             <div className="mt-6 text-center">
-                <Link href="/login" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors">
+                <Link href="/login" className="text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-slate-800 transition-colors">
                     Kembali ke halaman masuk
                 </Link>
             </div>
@@ -117,7 +117,7 @@ export default function ResetPasswordPage() {
                 </div>
 
                 <Suspense fallback={
-                    <div className="p-12 text-center text-slate-500">Menganalisis Token...</div>
+                    <div className="p-12 text-center text-gray-500 dark:text-gray-400">Menganalisis Token...</div>
                 }>
                     <ResetPasswordForm />
                 </Suspense>

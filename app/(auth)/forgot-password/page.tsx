@@ -84,7 +84,7 @@ export default function ForgotPasswordPage() {
                                 <Mail size={32} />
                             </div>
                             <h3 className="text-xl font-bold text-slate-800">Email Terkirim</h3>
-                            <p className="text-slate-600 text-sm">Kami telah mengirimkan tautan reset password ke kotak masuk Anda. Tautan kedaluwarsa dalam 1 jam.</p>
+                            <p className="text-gray-400 dark:text-gray-500 text-sm">Kami telah mengirimkan tautan reset password ke kotak masuk Anda. Tautan kedaluwarsa dalam 1 jam.</p>
                             <Link href="/login" className="inline-block mt-4 w-full py-3 px-4 rounded-lg bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition-colors">
                                 Kembali ke Login
                             </Link>
@@ -95,7 +95,7 @@ export default function ForgotPasswordPage() {
                                 <label className="block text-sm font-medium text-slate-700 mb-1">Alamat Email Terdaftar</label>
                                 <div className="relative">
                                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                        <Mail className="h-5 w-5 text-slate-400" />
+                                        <Mail className="h-5 w-5 text-gray-500 dark:text-gray-400" />
                                     </div>
                                     <input
                                         type="email"

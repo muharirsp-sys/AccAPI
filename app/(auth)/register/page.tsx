@@ -14,7 +14,7 @@ export default function RegisterPage() {
                 </div>
 
                 <div className="p-8 text-center space-y-5">
-                    <p className="text-sm text-slate-600 leading-6">
+                    <p className="text-sm text-gray-400 dark:text-gray-500 leading-6">
                         Untuk menjaga akses sistem tetap internal, pendaftaran publik dinonaktifkan.
                         Minta admin membuat akun dan menentukan role Anda.
                     </p>

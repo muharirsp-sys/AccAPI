@@ -202,14 +202,14 @@ export default function UserManagement() {
         <div className="space-y-6">
             <div>
                 <h1 className="text-2xl font-bold text-white">User & RBAC</h1>
-                <p className="text-sm text-slate-400 mt-1">Kelola akun internal, role, dan akses per halaman/modul.</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Kelola akun internal, role, dan akses per halaman/modul.</p>
             </div>
 
-            <form onSubmit={createUser} className="grid gap-3 md:grid-cols-5 bg-[#1a1c23]/70 border border-white/10 rounded-lg p-4">
-                <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Nama" className="rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm text-white" />
-                <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm text-white" />
-                <input required type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm text-white" />
-                <select value={role} onChange={(e) => setRole(e.target.value as AppRole)} className="rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm text-white">
+            <form onSubmit={createUser} className="grid gap-3 md:grid-cols-5 bg-white dark:bg-gray-900/70 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Nama" className="rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 px-3 py-2 text-sm text-white" />
+                <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 px-3 py-2 text-sm text-white" />
+                <input required type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 px-3 py-2 text-sm text-white" />
+                <select value={role} onChange={(e) => setRole(e.target.value as AppRole)} className="rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 px-3 py-2 text-sm text-white">
                     {appRoles.map((item) => <option key={item} value={item}>{roleLabels[item]}</option>)}
                 </select>
                 <button disabled={saving} className="rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 px-4 py-2 text-sm font-semibold text-white">
@@ -217,10 +217,10 @@ export default function UserManagement() {
                 </button>
             </form>
 
-            <div className="bg-[#1a1c23]/70 border border-white/10 rounded-lg overflow-hidden">
+            <div className="bg-white dark:bg-gray-900/70 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm">
-                        <thead className="bg-white/5 text-slate-300">
+                        <thead className="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300">
                             <tr>
                                 <th className="text-left px-4 py-3">Nama</th>
                                 <th className="text-left px-4 py-3">Email</th>
@@ -228,11 +228,11 @@ export default function UserManagement() {
                                 <th className="text-left px-4 py-3">Aksi</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-white/10 text-slate-200">
+                        <tbody className="divide-y divide-white/10 text-gray-800 dark:text-gray-200">
                             {loading ? (
-                                <tr><td colSpan={4} className="px-4 py-6 text-center text-slate-400">Memuat...</td></tr>
+                                <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500 dark:text-gray-400">Memuat...</td></tr>
                             ) : sortedUsers.length === 0 ? (
-                                <tr><td colSpan={4} className="px-4 py-6 text-center text-slate-400">Belum ada user.</td></tr>
+                                <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500 dark:text-gray-400">Belum ada user.</td></tr>
                             ) : sortedUsers.map((item) => {
                                 const userRole = normalizeRole(item.role);
                                 const draft = permissionDrafts[item.id] || permissionMapForUser(userRole, item.permissions);
@@ -242,14 +242,14 @@ export default function UserManagement() {
                                         <td className="px-4 py-3">
                                             <div>{item.email}</div>
                                             <details className="mt-3 group">
-                                                <summary className="cursor-pointer text-xs font-semibold text-indigo-300 hover:text-indigo-200">Atur permission modul</summary>
+                                                <summary className="cursor-pointer text-xs font-semibold text-brand-500 dark:text-brand-300 hover:text-indigo-200">Atur permission modul</summary>
                                                 <div className="mt-3 grid gap-3 min-w-[760px]">
                                                     {appModules.map((module) => (
-                                                        <div key={module} className="grid grid-cols-[150px_1fr] gap-3 rounded-lg border border-white/10 bg-black/25 p-3">
-                                                            <div className="text-xs font-semibold text-slate-200">{moduleLabels[module]}</div>
+                                                        <div key={module} className="grid grid-cols-[150px_1fr] gap-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-black/25 p-3">
+                                                            <div className="text-xs font-semibold text-gray-800 dark:text-gray-200">{moduleLabels[module]}</div>
                                                             <div className="flex flex-wrap gap-2">
                                                                 {moduleActions[module].map((action) => (
-                                                                    <label key={action} className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-slate-300">
+                                                                    <label key={action} className="inline-flex items-center gap-2 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-xs text-gray-700 dark:text-gray-300">
                                                                         <input
                                                                             type="checkbox"
                                                                             checked={hasAction(draft, module, action)}
@@ -263,10 +263,10 @@ export default function UserManagement() {
                                                         </div>
                                                     ))}
                                                     <div className="flex flex-wrap gap-2">
-                                                        <button type="button" onClick={() => savePermissions(item.id)} className="rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500">
+                                                        <button type="button" onClick={() => savePermissions(item.id)} className="rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-500">
                                                             Simpan Permission
                                                         </button>
-                                                        <button type="button" onClick={() => resetPermissionsToRole(item)} className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/10">
+                                                        <button type="button" onClick={() => resetPermissionsToRole(item)} className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-xs font-semibold text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.05]">
                                                             Ikuti Preset Role
                                                         </button>
                                                     </div>
@@ -277,13 +277,13 @@ export default function UserManagement() {
                                             <select
                                                 value={userRole}
                                                 onChange={(e) => updateRole(item.id, e.target.value as AppRole)}
-                                                className="rounded bg-black/30 border border-white/10 px-2 py-1 text-white"
+                                                className="rounded bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 px-2 py-1 text-white"
                                             >
                                                 {appRoles.map((roleItem) => <option key={roleItem} value={roleItem}>{roleLabels[roleItem]}</option>)}
                                             </select>
                                         </td>
                                         <td className="px-4 py-3">
-                                            <button onClick={() => resetPassword(item.id)} className="text-indigo-300 hover:text-indigo-200 font-medium">Reset Password</button>
+                                            <button onClick={() => resetPassword(item.id)} className="text-brand-500 dark:text-brand-300 hover:text-indigo-200 font-medium">Reset Password</button>
                                         </td>
                                     </tr>
                                 );

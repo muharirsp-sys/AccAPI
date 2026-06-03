@@ -192,16 +192,16 @@ export default function PaymentsSppdSettingsPage() {
             <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
                 <div>
                     <div className="flex items-center gap-3 text-white">
-                        <Settings2 className="text-emerald-400" size={26} />
+                        <Settings2 className="text-success-500" size={26} />
                         <h1 className="text-2xl font-bold tracking-tight">Format SPPD Bank Panin</h1>
                     </div>
-                    <div className="mt-2 text-sm text-slate-400">Nomor berikutnya: <span className="text-emerald-300 font-semibold">{localPreview || serverPreview || "-"}</span></div>
+                    <div className="mt-2 text-sm text-gray-500 dark:text-gray-400">Nomor berikutnya: <span className="text-emerald-300 font-semibold">{localPreview || serverPreview || "-"}</span></div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                    <a href="/payments" className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10">
+                    <a href="/payments" className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.05]">
                         <ArrowLeft size={16} /> Payments
                     </a>
-                    <button onClick={fetchSettings} disabled={loading || saving} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 disabled:opacity-50">
+                    <button onClick={fetchSettings} disabled={loading || saving} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.05] disabled:opacity-50">
                         <RefreshCcw size={16} /> Refresh
                     </button>
                     <button onClick={handleSave} disabled={loading || saving} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-500 disabled:opacity-50">
@@ -211,64 +211,64 @@ export default function PaymentsSppdSettingsPage() {
             </div>
 
             <div className="grid lg:grid-cols-[1.2fr_0.8fr] gap-5">
-                <section className="border border-white/10 bg-black/30 rounded-lg p-5">
+                <section className="border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 rounded-lg p-5">
                     <div className="grid md:grid-cols-2 gap-4">
                         <label className="block">
-                            <span className="text-xs uppercase tracking-wide text-slate-500">Nomor Surat Terakhir</span>
-                            <input type="number" min={0} value={settings.last_sequence} onChange={(e) => updateSetting("last_sequence", e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white outline-none focus:border-emerald-500" />
+                            <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Nomor Surat Terakhir</span>
+                            <input type="number" min={0} value={settings.last_sequence} onChange={(e) => updateSetting("last_sequence", e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-white outline-none focus:border-emerald-500" />
                         </label>
                         <label className="block">
-                            <span className="text-xs uppercase tracking-wide text-slate-500">Tanggal Jaminan</span>
+                            <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Tanggal Jaminan</span>
                             <div className="mt-2">
                                 <DatePickerField value={settings.fixed_jaminan_date} onChange={(value) => updateSetting("fixed_jaminan_date", value)} className="text-white focus:border-emerald-500" ariaLabel="Tanggal jaminan" />
                             </div>
                         </label>
                         <label className="block md:col-span-2">
-                            <span className="text-xs uppercase tracking-wide text-slate-500">Format Nomor</span>
-                            <input value={settings.number_template} onChange={(e) => updateSetting("number_template", e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white outline-none focus:border-emerald-500" />
+                            <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Format Nomor</span>
+                            <input value={settings.number_template} onChange={(e) => updateSetting("number_template", e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-white outline-none focus:border-emerald-500" />
                         </label>
                         <label className="block">
-                            <span className="text-xs uppercase tracking-wide text-slate-500">Jatuh Tempo Bank</span>
-                            <input type="number" min={1} max={24} value={settings.maturity_months} onChange={(e) => updateSetting("maturity_months", e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white outline-none focus:border-emerald-500" />
+                            <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Jatuh Tempo Bank</span>
+                            <input type="number" min={1} max={24} value={settings.maturity_months} onChange={(e) => updateSetting("maturity_months", e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-white outline-none focus:border-emerald-500" />
                         </label>
                         <label className="block">
-                            <span className="text-xs uppercase tracking-wide text-slate-500">Transfer per Halaman</span>
-                            <input type="number" min={1} max={20} value={settings.items_per_page} onChange={(e) => updateSetting("items_per_page", e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white outline-none focus:border-emerald-500" />
+                            <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Transfer per Halaman</span>
+                            <input type="number" min={1} max={20} value={settings.items_per_page} onChange={(e) => updateSetting("items_per_page", e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-white outline-none focus:border-emerald-500" />
                         </label>
                     </div>
                 </section>
 
-                <section className="border border-white/10 bg-black/30 rounded-lg p-5">
-                    <div className="flex items-center gap-2 text-slate-200 font-semibold mb-4">
-                        <FileText size={18} className="text-emerald-400" />
+                <section className="border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 rounded-lg p-5">
+                    <div className="flex items-center gap-2 text-gray-800 dark:text-gray-200 font-semibold mb-4">
+                        <FileText size={18} className="text-success-500" />
                         Preview
                     </div>
                     <div className="space-y-3 text-sm">
                         <label className="block">
-                            <span className="text-xs uppercase tracking-wide text-slate-500">Tanggal Makassar</span>
+                            <span className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Tanggal Makassar</span>
                             <div className="mt-2">
                                 <DatePickerField value={previewDate} onChange={setPreviewDate} className="text-white focus:border-emerald-500" ariaLabel="Tanggal Makassar" />
                             </div>
                         </label>
-                        <div className="rounded-lg border border-white/10 bg-black/40 p-4 text-slate-300">
-                            <div className="text-xs uppercase tracking-wide text-slate-500">Nomor Berikutnya</div>
+                        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 text-gray-700 dark:text-gray-300">
+                            <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Nomor Berikutnya</div>
                             <div className="mt-1 text-lg font-semibold text-white">{localPreview || serverPreview || "-"}</div>
-                            <div className="mt-4 text-xs uppercase tracking-wide text-slate-500">Template DOCX</div>
-                            <div className="mt-1 break-all text-slate-400">{templatePath || "-"}</div>
+                            <div className="mt-4 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Template DOCX</div>
+                            <div className="mt-1 break-all text-gray-500 dark:text-gray-400">{templatePath || "-"}</div>
                         </div>
-                        <div className="text-xs text-slate-500">Updated: {settings.updated_at || "-"} {settings.updated_by ? `oleh ${settings.updated_by}` : ""}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">Updated: {settings.updated_at || "-"} {settings.updated_by ? `oleh ${settings.updated_by}` : ""}</div>
                     </div>
                 </section>
             </div>
 
-            <section className="mt-5 border border-white/10 bg-black/30 rounded-lg p-5">
+            <section className="mt-5 border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 rounded-lg p-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                     <div>
-                        <div className="flex items-center gap-2 text-slate-200 font-semibold">
-                            <Upload size={18} className="text-indigo-400" />
+                        <div className="flex items-center gap-2 text-gray-800 dark:text-gray-200 font-semibold">
+                            <Upload size={18} className="text-brand-500 dark:text-brand-400" />
                             Upload Excel Data SPPD
                         </div>
-                        <p className="mt-1 text-sm text-slate-400">
+                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                             Update data pembayaran dari Excel. Kolom ajukan, gap, status track/status pembayaran, draft/submission, dan nomor SPPD tidak ditulis dari Excel.
                         </p>
                     </div>
@@ -277,26 +277,26 @@ export default function PaymentsSppdSettingsPage() {
                             type="file"
                             accept=".xlsx,.xls"
                             onChange={(event) => setUploadFile(event.target.files?.[0] || null)}
-                            className="max-w-[280px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-600 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white"
+                            className="max-w-[280px] rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-600 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white"
                         />
-                        <button disabled={uploading || !uploadFile} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-500 disabled:opacity-50">
+                        <button disabled={uploading || !uploadFile} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-brand-500 disabled:opacity-50">
                             <Upload size={16} /> {uploading ? "Uploading..." : "Upload"}
                         </button>
                     </form>
                 </div>
                 {uploadResult && (
                     <div className="mt-4 grid gap-3 md:grid-cols-3 text-sm">
-                        <div className="rounded-lg border border-white/10 bg-black/40 p-3">
-                            <div className="text-xs uppercase tracking-wide text-slate-500">Record Update</div>
+                        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3">
+                            <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Record Update</div>
                             <div className="mt-1 text-xl font-bold text-white">{uploadResult.updated || 0}</div>
                         </div>
-                        <div className="rounded-lg border border-white/10 bg-black/40 p-3">
-                            <div className="text-xs uppercase tracking-wide text-slate-500">Kolom Diblok</div>
-                            <div className="mt-1 text-slate-300">{uploadResult.blocked_columns?.join(", ") || "-"}</div>
+                        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3">
+                            <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Kolom Diblok</div>
+                            <div className="mt-1 text-gray-700 dark:text-gray-300">{uploadResult.blocked_columns?.join(", ") || "-"}</div>
                         </div>
-                        <div className="rounded-lg border border-white/10 bg-black/40 p-3">
-                            <div className="text-xs uppercase tracking-wide text-slate-500">Tidak Ditemukan</div>
-                            <div className="mt-1 text-slate-300">{uploadResult.not_found?.join(", ") || "-"}</div>
+                        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3">
+                            <div className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Tidak Ditemukan</div>
+                            <div className="mt-1 text-gray-700 dark:text-gray-300">{uploadResult.not_found?.join(", ") || "-"}</div>
                         </div>
                     </div>
                 )}

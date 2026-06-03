@@ -471,42 +471,42 @@ export default function FinancePage() {
                         <DollarSign className="text-emerald-500" />
                         Manajemen Finance
                     </h1>
-                    <p className="text-slate-400 mt-1 text-sm">Approve transfer, simpan bukti server, lalu post purchase-payment Accurate.</p>
+                    <p className="text-gray-500 dark:text-gray-400 mt-1 text-sm">Approve transfer, simpan bukti server, lalu post purchase-payment Accurate.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
                     <DatePickerField value={dateFilter} onChange={handleDateChange} className="w-[170px] py-2.5" ariaLabel="Filter tanggal finance" />
                     <div className="relative flex items-center">
-                        <Search className="absolute left-3 text-slate-400" size={16} />
-                        <input type="text" placeholder="Cari principle, draft, invoice, SPPD..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 pr-4 py-2.5 text-sm border border-white/10 rounded-lg outline-none bg-black/40 text-slate-300 w-80" />
+                        <Search className="absolute left-3 text-gray-500 dark:text-gray-400" size={16} />
+                        <input type="text" placeholder="Cari principle, draft, invoice, SPPD..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 pr-4 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg outline-none bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 w-80" />
                     </div>
-                    <button onClick={() => fetchData(dateFilter)} className="flex items-center gap-2 bg-white/5 border border-white/10 text-slate-300 px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-white/10">
+                    <button onClick={() => fetchData(dateFilter)} className="flex items-center gap-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-gray-100 dark:hover:bg-white/[0.05]">
                         <RefreshCcw size={16} /> Refresh
                     </button>
-                    <button onClick={handleExport} className="flex items-center gap-2 bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-emerald-500/30">
+                    <button onClick={handleExport} className="flex items-center gap-2 bg-emerald-600/20 border border-emerald-500/30 text-success-500 px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-emerald-500/30">
                         <Download size={16} /> Export Excel
                     </button>
                 </div>
             </div>
 
             {errorMsg && (
-                <div className="mb-4 p-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-3">
-                    <AlertCircle className="text-red-400 shrink-0" />
+                <div className="mb-4 p-4 rounded-lg bg-red-500/10 border border-error-500/20 flex items-start gap-3">
+                    <AlertCircle className="text-error-500 shrink-0" />
                     <p className="text-red-200 text-sm font-medium">{errorMsg}</p>
                 </div>
             )}
 
-            <div className="bg-[#1a1c23]/60 rounded-lg shadow-xl border border-white/10 overflow-hidden">
-                <div className="p-4 border-b border-white/5 flex items-center justify-between bg-black/40">
+            <div className="bg-white dark:bg-gray-900/60 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-white dark:bg-gray-900">
                     <h2 className="text-base font-bold text-white">Daftar Pengajuan Pembayaran</h2>
-                    <div className="text-sm text-slate-400">Total: <span className="font-mono font-bold text-emerald-400">{totalAll}</span></div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">Total: <span className="font-mono font-bold text-success-500">{totalAll}</span></div>
                 </div>
 
                 <div className="overflow-x-auto w-full relative">
                     {loading && records.length === 0 ? (
-                        <div className="p-12 text-center text-slate-400 animate-pulse">Memuat integrasi data Finance...</div>
+                        <div className="p-12 text-center text-gray-500 dark:text-gray-400 animate-pulse">Memuat integrasi data Finance...</div>
                     ) : (
                         <table className="w-full min-w-[1900px] text-xs text-left">
-                            <thead className="bg-black/60 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
+                            <thead className="bg-black/60 text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider border-b border-gray-200 dark:border-gray-700">
                                 <tr className="whitespace-nowrap">
                                     <th className="px-4 py-3">Draft</th>
                                     <th className="px-4 py-3">Principle</th>
@@ -523,7 +523,7 @@ export default function FinancePage() {
                             <tbody className="divide-y divide-white/5">
                                 {filtered.length === 0 ? (
                                     <tr>
-                                        <td colSpan={10} className="px-5 py-12 text-center text-slate-500 italic">Tidak ada data finance untuk tanggal {dateFilter}.</td>
+                                        <td colSpan={10} className="px-5 py-12 text-center text-gray-500 dark:text-gray-400 italic">Tidak ada data finance untuk tanggal {dateFilter}.</td>
                                     </tr>
                                 ) : filtered.map((record) => {
                                     const key = recordKey(record);
@@ -533,36 +533,36 @@ export default function FinancePage() {
                                     const failedPost = record.accurate_post_status === "failed";
                                     return (
                                         <tr key={key} className="hover:bg-white/[0.02] align-top">
-                                            <td className="px-4 py-3 font-mono font-bold text-slate-300 whitespace-nowrap">
+                                            <td className="px-4 py-3 font-mono font-bold text-gray-700 dark:text-gray-300 whitespace-nowrap">
                                                 {record.draft_label === "-" && record.submission_id ? `SUB-${record.submission_id}` : record.draft_label}
-                                                <div className="mt-1 text-[10px] text-slate-500">{record.tipe_pengajuan} | {record.payment_method || "-"}</div>
+                                                <div className="mt-1 text-[10px] text-gray-500 dark:text-gray-400">{record.tipe_pengajuan} | {record.payment_method || "-"}</div>
                                             </td>
-                                            <td className="px-4 py-3 text-slate-300 max-w-[220px]">
+                                            <td className="px-4 py-3 text-gray-700 dark:text-gray-300 max-w-[220px]">
                                                 <div className="font-semibold truncate" title={record.principle}>{record.principle}</div>
-                                                <div className="mt-1 text-[10px] text-slate-500">Tanggal: {record.submitted_date}</div>
+                                                <div className="mt-1 text-[10px] text-gray-500 dark:text-gray-400">Tanggal: {record.submitted_date}</div>
                                             </td>
-                                            <td className="px-4 py-3 font-mono text-slate-400">{record.sppd_no || "-"}</td>
-                                            <td className="px-4 py-3 text-right font-mono text-slate-300">{record.total_invoice_display}</td>
-                                            <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400">{record.total_nilai_display}</td>
-                                            <td className="px-4 py-3 text-slate-500 max-w-[240px]">
+                                            <td className="px-4 py-3 font-mono text-gray-500 dark:text-gray-400">{record.sppd_no || "-"}</td>
+                                            <td className="px-4 py-3 text-right font-mono text-gray-700 dark:text-gray-300">{record.total_invoice_display}</td>
+                                            <td className="px-4 py-3 text-right font-mono font-bold text-success-500">{record.total_nilai_display}</td>
+                                            <td className="px-4 py-3 text-gray-500 dark:text-gray-400 max-w-[240px]">
                                                 <div className="truncate" title={record.invoice_concat}>{record.invoice_concat || "-"}</div>
-                                                <div className="mt-1 text-[10px] text-slate-600">{record.detail_invoices?.length || 0} invoice</div>
+                                                <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">{record.detail_invoices?.length || 0} invoice</div>
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div className="grid grid-cols-2 gap-2 w-[300px]">
-                                                    <input value={mapping.vendorNo || ""} onChange={(e) => patchMapping(key, { vendorNo: e.target.value })} placeholder="Vendor No" className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-slate-200 outline-none focus:border-emerald-500" />
-                                                    <input value={mapping.bankNo || ""} onChange={(e) => patchMapping(key, { bankNo: e.target.value })} placeholder="Bank No" className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-slate-200 outline-none focus:border-emerald-500" />
-                                                    <input value={mapping.vendorName || ""} onChange={(e) => patchMapping(key, { vendorName: e.target.value })} placeholder="Vendor Name" className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-slate-400 outline-none focus:border-emerald-500" />
-                                                    <input value={mapping.bankName || ""} onChange={(e) => patchMapping(key, { bankName: e.target.value })} placeholder="Bank Name" className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-slate-400 outline-none focus:border-emerald-500" />
+                                                    <input value={mapping.vendorNo || ""} onChange={(e) => patchMapping(key, { vendorNo: e.target.value })} placeholder="Vendor No" className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-800 dark:text-gray-200 outline-none focus:border-emerald-500" />
+                                                    <input value={mapping.bankNo || ""} onChange={(e) => patchMapping(key, { bankNo: e.target.value })} placeholder="Bank No" className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-800 dark:text-gray-200 outline-none focus:border-emerald-500" />
+                                                    <input value={mapping.vendorName || ""} onChange={(e) => patchMapping(key, { vendorName: e.target.value })} placeholder="Vendor Name" className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-500 dark:text-gray-400 outline-none focus:border-emerald-500" />
+                                                    <input value={mapping.bankName || ""} onChange={(e) => patchMapping(key, { bankName: e.target.value })} placeholder="Bank Name" className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-500 dark:text-gray-400 outline-none focus:border-emerald-500" />
                                                 </div>
-                                                <button disabled={isBusy} onClick={() => handleSaveMapping(record)} className="mt-2 inline-flex items-center gap-1 text-[11px] text-emerald-400 hover:text-emerald-300 disabled:opacity-50">
+                                                <button disabled={isBusy} onClick={() => handleSaveMapping(record)} className="mt-2 inline-flex items-center gap-1 text-[11px] text-success-500 hover:text-emerald-300 disabled:opacity-50">
                                                     <Save size={12} /> Simpan mapping
                                                 </button>
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div className="flex flex-col gap-2 w-[260px]">
                                                     <DatePickerField value={transferDates[key] || ""} onChange={(value) => setTransferDates((prev) => ({ ...prev, [key]: value }))} className="py-1.5 text-xs focus:border-emerald-500" ariaLabel="Tanggal transfer" />
-                                                    <label className="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded px-2 py-1.5 text-slate-300 cursor-pointer hover:bg-white/10">
+                                                    <label className="inline-flex items-center gap-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-gray-700 dark:text-gray-300 cursor-pointer hover:bg-gray-100 dark:hover:bg-white/[0.05]">
                                                         <FileUp size={14} />
                                                         <span className="truncate">{proofFiles[key]?.name || record.transfer_proof?.original_filename || "Upload bukti"}</span>
                                                         <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={(e) => setProofFiles((prev) => ({ ...prev, [key]: e.target.files?.[0] || null }))} />
@@ -573,10 +573,10 @@ export default function FinancePage() {
                                                 </div>
                                             </td>
                                             <td className="px-4 py-3">
-                                                <span className={`inline-flex items-center gap-1 px-2 py-1 rounded border font-bold ${record.status_pembayaran.toLowerCase().includes("sudah") ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" : record.status_pembayaran.toLowerCase().includes("ulang") ? "bg-amber-500/10 text-amber-400 border-amber-500/30" : "bg-white/5 text-slate-400 border-white/10"}`}>
+                                                <span className={`inline-flex items-center gap-1 px-2 py-1 rounded border font-bold ${record.status_pembayaran.toLowerCase().includes("sudah") ? "bg-emerald-500/10 text-success-500 border-emerald-500/30" : record.status_pembayaran.toLowerCase().includes("ulang") ? "bg-amber-500/10 text-amber-400 border-amber-500/30" : "bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700"}`}>
                                                     {record.status_pembayaran || "Belum Transfer"}
                                                 </span>
-                                                {posted && <div className="mt-2 text-[11px] text-emerald-400">Posted Accurate {record.accurate_purchase_payment_number || ""}</div>}
+                                                {posted && <div className="mt-2 text-[11px] text-success-500">Posted Accurate {record.accurate_purchase_payment_number || ""}</div>}
                                                 {failedPost && <div className="mt-2 max-w-[220px] text-[11px] text-red-300 truncate" title={record.accurate_post_error}>Post gagal: {record.accurate_post_error}</div>}
                                             </td>
                                             <td className="px-4 py-3">
@@ -585,7 +585,7 @@ export default function FinancePage() {
                                                         <Send size={14} /> Sudah Transfer
                                                     </button>
                                                     <div className="grid grid-cols-2 gap-2">
-                                                        <button disabled={isBusy} onClick={() => handleMarkStatus(record, "Belum Transfer")} className="inline-flex items-center justify-center gap-1 bg-white/5 border border-white/10 text-slate-300 px-2 py-1.5 rounded hover:bg-white/10 disabled:opacity-50">
+                                                        <button disabled={isBusy} onClick={() => handleMarkStatus(record, "Belum Transfer")} className="inline-flex items-center justify-center gap-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 px-2 py-1.5 rounded hover:bg-gray-100 dark:hover:bg-white/[0.05] disabled:opacity-50">
                                                             <XCircle size={13} /> Belum
                                                         </button>
                                                         <button disabled={isBusy} onClick={() => handleMarkStatus(record, "Ajukan Ulang")} className="inline-flex items-center justify-center gap-1 bg-amber-500/10 border border-amber-500/20 text-amber-300 px-2 py-1.5 rounded hover:bg-amber-500/20 disabled:opacity-50">

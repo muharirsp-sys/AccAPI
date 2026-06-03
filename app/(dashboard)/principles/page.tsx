@@ -97,13 +97,13 @@ export default function PrincipleManagementPage() {
                     <Database className="text-blue-500" />
                     Manajemen Master Principle
                 </h1>
-                <p className="text-slate-400 mt-2 text-lg">Unggah dan kelola data master excel rujukan per Principle (Dibutuhkan untuk Summary Promo AI Regex).</p>
+                <p className="text-gray-500 dark:text-gray-400 mt-2 text-lg">Unggah dan kelola data master excel rujukan per Principle (Dibutuhkan untuk Summary Promo AI Regex).</p>
             </div>
 
             <div className="grid lg:grid-cols-3 gap-6">
                 
                 {/* Upload Section */}
-                <div className="lg:col-span-1 bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-white/10 relative overflow-hidden h-fit">
+                <div className="lg:col-span-1 bg-white dark:bg-gray-900/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 relative overflow-hidden h-fit">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-3xl -mr-16 -mt-16"></div>
                     <div className="flex items-center gap-3 mb-6 relative">
                         <Upload className="text-blue-400" size={24} />
@@ -112,25 +112,25 @@ export default function PrincipleManagementPage() {
 
                     <form onSubmit={handleUpload} className="space-y-5 relative">
                         <div>
-                            <label className="block text-sm font-medium text-slate-300 mb-2">Nama Principle / Perusahaan</label>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Nama Principle / Perusahaan</label>
                             <input
                                 type="text"
                                 required
                                 value={newPrincipleName}
                                 onChange={e => setNewPrincipleName(e.target.value)}
                                 placeholder="Cth: PT. Unilever"
-                                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-slate-300 outline-none focus:ring-1 focus:ring-blue-500/50"
+                                className="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 text-gray-700 dark:text-gray-300 outline-none focus:ring-1 focus:ring-blue-500/50"
                             />
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-slate-300 mb-2">File Excel Master</label>
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">File Excel Master</label>
                             <input
                                 type="file"
                                 required
                                 accept=".xlsx,.xls"
                                 onChange={e => setFile(e.target.files?.[0] || null)}
-                                className="text-sm block w-full file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-bold file:bg-blue-600 file:text-white file:cursor-pointer hover:file:bg-blue-500 text-slate-400 border border-white/10 rounded-xl bg-black/40 overflow-hidden"
+                                className="text-sm block w-full file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-bold file:bg-blue-600 file:text-white file:cursor-pointer hover:file:bg-blue-500 text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-900 overflow-hidden"
                             />
                         </div>
 
@@ -145,36 +145,36 @@ export default function PrincipleManagementPage() {
                 </div>
 
                 {/* List Grid */}
-                <div className="lg:col-span-2 bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-white/10">
+                <div className="lg:col-span-2 bg-white dark:bg-gray-900/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700">
                     <div className="flex items-center gap-3 mb-6">
-                        <Database className="text-slate-400" size={24} />
+                        <Database className="text-gray-500 dark:text-gray-400" size={24} />
                         <h2 className="text-lg font-bold text-white">Daftar Master Principle Aktif</h2>
                     </div>
 
                     {loading ? (
-                        <div className="text-center py-12 text-slate-500 animate-pulse">Memuat list principle dari node backend...</div>
+                        <div className="text-center py-12 text-gray-500 dark:text-gray-400 animate-pulse">Memuat list principle dari node backend...</div>
                     ) : Object.keys(principles).length === 0 ? (
-                        <div className="text-center py-12 border border-dashed border-white/10 rounded-xl bg-black/20 flex flex-col items-center justify-center gap-2 text-slate-500">
+                        <div className="text-center py-12 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50 dark:bg-gray-800/50 flex flex-col items-center justify-center gap-2 text-gray-500 dark:text-gray-400">
                             <AlertCircle size={24} />
                             <p className="text-sm">Belum ada Principle yang diunggah di Sistem.</p>
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             {Object.entries(principles).map(([id, p]) => (
-                                <div key={id} className="bg-black/40 border border-white/10 rounded-xl p-5 hover:border-blue-500/50 transition-colors group relative">
+                                <div key={id} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-5 hover:border-blue-500/50 transition-colors group relative">
                                     <h3 className="font-bold text-white mb-1.5">{p.name}</h3>
-                                    <p className="text-xs font-mono text-slate-400 mb-4 bg-white/5 py-1 px-2 rounded inline-block truncate max-w-full">
+                                    <p className="text-xs font-mono text-gray-500 dark:text-gray-400 mb-4 bg-white dark:bg-gray-800 py-1 px-2 rounded inline-block truncate max-w-full">
                                         {p.filename}
                                     </p>
 
-                                    <div className="flex justify-between items-center text-[10px] text-slate-500 pt-3 border-t border-white/5">
+                                    <div className="flex justify-between items-center text-[10px] text-gray-500 dark:text-gray-400 pt-3 border-t border-gray-100 dark:border-gray-800">
                                         <span className="truncate max-w-[100px]">By: {p.uploaded_by || "Sistem"}</span>
                                         <span>{p.created_at}</span>
                                     </div>
 
                                     <button
                                         onClick={() => handleDelete(id)}
-                                        className="absolute top-4 right-4 text-slate-500 hover:text-red-400 hover:bg-red-500/10 p-1.5 rounded-md transition-colors"
+                                        className="absolute top-4 right-4 text-gray-500 dark:text-gray-400 hover:text-error-500 hover:bg-red-500/10 p-1.5 rounded-md transition-colors"
                                         title="Hapus Master Principle"
                                     >
                                         <Trash2 size={16} />
