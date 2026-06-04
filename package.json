@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed:demo": "node scripts/seed-demo-workflows.mjs",
+    "migrate:r7a-submissions": "node scripts/migrate-r7a-default-submission.mjs"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.5.5",

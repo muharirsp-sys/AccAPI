@@ -6,7 +6,7 @@
 "use client";
 
 import { useState } from "react";
-import { Menu, Home, Users, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ClipboardCheck, X } from "lucide-react";
+import { Menu, Home, Users, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ClipboardCheck, ReceiptText, X } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 import { canAccessPath, normalizeRole } from "@/lib/rbac";
@@ -39,6 +39,7 @@ export default function SidebarLayout({ children, role, permissions }: { childre
         { name: "Pembayaran / SPPD", icon: Wallet, href: "/payments" },
         { name: "Format SPPD", icon: FileText, href: "/payments/sppd" },
         { name: "OFF Program Control", icon: ClipboardCheck, href: "/off-program-control" },
+        { name: "Claim Workflow", icon: ReceiptText, href: "/claim-workflow" },
         { name: "Master Principle", icon: Database, href: "/principles" },
         { name: "User & RBAC", icon: Shield, href: "/admin/users" },
     ];
