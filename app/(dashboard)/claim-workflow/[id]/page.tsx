@@ -861,6 +861,7 @@ export default function ClaimWorkflowDetailPage() {
   const [excelVariantKey, setExcelVariantKey] = useState<string>("");
   const [excelYear, setExcelYear] = useState("2026");
   const [excelDefaultMonth, setExcelDefaultMonth] = useState("01");
+  const [bulkStartSequence, setBulkStartSequence] = useState("1");
   const [excelSearch, setExcelSearch] = useState("");
   const [excelStatusFilter, setExcelStatusFilter] = useState<
     "all" | "needs_no_claim" | "needs_docs" | "outstanding" | "paid" | "closed"
@@ -999,6 +1000,62 @@ export default function ClaimWorkflowDetailPage() {
     ? getNoClaimRuleVariants(excelPrincipalCode)
     : [];
   const excelHasVariants = excelVariants.length > 0;
+
+  // Bulk generate: fill all visible rows' noClaimDraft from sequence start.
+  const generateNoClaimDrafts = () => {
+    const startNum = parseInt(bulkStartSequence, 10);
+    if (!Number.isFinite(startNum) || startNum < 1) {
+      toast.error("Nomor awal harus angka >= 1.");
+      return;
+    }
+    const month = excelDefaultMonth.trim();
+    if (!/^\d{2}$/.test(month) || Number(month) < 1 || Number(month) > 12) {
+      toast.error("Bulan harus 2 digit (01-12).");
+      return;
+    }
+    const year = excelYear.trim();
+    if (!/^\d{4}$/.test(year)) {
+      toast.error("Tahun harus 4 digit.");
+      return;
+    }
+    const rule = excelCurrentRule;
+    const distributor = excelDistributorCode.trim() || "SUPER";
+    const principal = excelPrincipalCode.trim() || (workflow?.principleCode ?? "");
+
+    if (!principal) {
+      toast.error("Principal belum tersedia.");
+      return;
+    }
+
+    setExcelRowDrafts((prev) => {
+      const next = { ...prev };
+      let seq = startNum;
+      for (const item of items) {
+        const existing = next[item.id];
+        if (!existing) continue;
+        let generated = "";
+        if (rule) {
+          generated = buildNoClaimFromRule(rule, {
+            sequence: String(seq),
+            month,
+            year,
+            variantKey: excelVariantKey || undefined,
+          });
+        }
+        // Fallback: format legacy with workflow principal
+        if (!generated) {
+          const padWidth = rule?.padWidth ?? 2;
+          const seqStr = padWidth ? String(seq).padStart(padWidth, "0") : String(seq);
+          const mm = month.padStart(2, "0");
+          generated = `${seqStr}/${distributor}-${principal}/${mm}/${year}`;
+        }
+        next[item.id] = { ...existing, noClaimDraft: generated };
+        seq++;
+      }
+      return next;
+    });
+    toast.success(`No Claim draft terisi untuk ${items.length} baris (mulai dari ${startNum}).`);
+  };
 
   // R7h — sinkronkan principal default dari workflow.principleCode (via rule).
   useEffect(() => {
@@ -2256,6 +2313,57 @@ export default function ClaimWorkflowDetailPage() {
                     </button>
                   </div>
                 </div>
+
+                {/* Generate No Claim Panel */}
+                {noClaimEditable && (
+                  <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4">
+                    <div className="flex flex-wrap items-end gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Nomor Awal</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={bulkStartSequence}
+                          onChange={(e) => setBulkStartSequence(e.target.value)}
+                          className="w-20 rounded-md border border-white/10 bg-black/40 px-2 py-1.5 text-sm tabular-nums text-white outline-none focus:border-indigo-500/60"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Bulan</label>
+                        <input
+                          type="text"
+                          maxLength={2}
+                          value={excelDefaultMonth}
+                          onChange={(e) => setExcelDefaultMonth(e.target.value)}
+                          placeholder="06"
+                          className="w-14 rounded-md border border-white/10 bg-black/40 px-2 py-1.5 text-sm tabular-nums text-white outline-none focus:border-indigo-500/60"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Tahun</label>
+                        <input
+                          type="text"
+                          maxLength={4}
+                          value={excelYear}
+                          onChange={(e) => setExcelYear(e.target.value)}
+                          placeholder="2026"
+                          className="w-20 rounded-md border border-white/10 bg-black/40 px-2 py-1.5 text-sm tabular-nums text-white outline-none focus:border-indigo-500/60"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={generateNoClaimDrafts}
+                        disabled={!noClaimEditable}
+                        className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-indigo-500 disabled:opacity-40"
+                      >
+                        Generate No Claim
+                      </button>
+                    </div>
+                    <p className="mt-2 text-[10px] text-slate-500">
+                      Generate hanya mengisi draft No Claim di tabel. Klik <span className="font-bold text-slate-300">Simpan</span> per baris untuk menyimpan ke database.
+                    </p>
+                  </div>
+                )}
 
                 {/* Table */}
                 {totalRows === 0 ? (
