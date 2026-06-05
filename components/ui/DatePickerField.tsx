@@ -99,33 +99,35 @@ export default function DatePickerField({
             <div
                 ref={panelRef}
                 data-accapi-date-picker-calendar="true"
-                className="fixed z-[9999] rounded-xl border border-white/10 bg-[#11141b] p-3 shadow-2xl shadow-black/40"
-                style={{ top: panelPosition.top, left: panelPosition.left, width: panelPosition.width }}
+                className="fixed z-[9999] rounded-xl border p-3 shadow-2xl"
+                style={{ top: panelPosition.top, left: panelPosition.left, width: panelPosition.width, background: 'var(--surface)', borderColor: 'var(--border-strong)', boxShadow: 'var(--luxury-shadow)' }}
             >
                 <div className="mb-3 flex items-center justify-between">
                     <button
                         type="button"
                         aria-label="Bulan sebelumnya"
                         onClick={() => setMonth((current) => subMonths(current, 1))}
-                        className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-slate-300 hover:bg-white/10"
+                        className="rounded-lg p-1.5 transition-colors"
+                        style={{ border: '1px solid var(--border-strong)', color: 'var(--luxury-muted)', background: 'var(--surface-2)' }}
                     >
                         <ChevronLeft size={16} />
                     </button>
-                    <div className="text-sm font-bold text-white">
+                    <div className="text-sm font-bold" style={{ color: 'var(--luxury-text)' }}>
                         {format(month, "MMMM yyyy", { locale: idLocale })}
                     </div>
                     <button
                         type="button"
                         aria-label="Bulan berikutnya"
                         onClick={() => setMonth((current) => addMonths(current, 1))}
-                        className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-slate-300 hover:bg-white/10"
+                        className="rounded-lg p-1.5 transition-colors"
+                        style={{ border: '1px solid var(--border-strong)', color: 'var(--luxury-muted)', background: 'var(--surface-2)' }}
                     >
                         <ChevronRight size={16} />
                     </button>
                 </div>
-                <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold uppercase text-slate-300">
+                <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold uppercase" style={{ color: 'var(--luxury-muted)' }}>
                     {weekdays.map((day) => (
-                        <div key={day} className={day === "Min" ? "text-red-300" : ""}>{day}</div>
+                        <div key={day} style={day === "Min" ? { color: '#dc2626' } : undefined}>{day}</div>
                     ))}
                 </div>
                 <div className="mt-1 grid grid-cols-7 gap-1">
@@ -138,6 +140,38 @@ export default function DatePickerField({
                         const sunday = isSunday(day);
                         const redDate = isRedDate(day);
                         const holidayName = getHolidayName(day);
+
+                        // Build inline styles for proper theme-aware contrast
+                        let btnStyle: React.CSSProperties = {};
+                        let btnClass = "relative flex h-9 items-center justify-center rounded-lg border text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-45";
+
+                        if (selected && redDate) {
+                            btnStyle = { background: '#dc2626', borderColor: '#fca5a5', color: '#ffffff', boxShadow: '0 4px 12px rgba(220, 38, 38, 0.3)' };
+                            btnClass += " ring-2 ring-red-300/80";
+                        } else if (selected && !redDate) {
+                            btnStyle = { background: 'var(--luxury-gold)', borderColor: 'var(--luxury-gold-2)', color: '#ffffff', boxShadow: '0 4px 12px rgba(199, 154, 63, 0.35)' };
+                        } else if (outside && redDate) {
+                            btnStyle = { borderColor: 'rgba(220, 38, 38, 0.25)', background: 'rgba(220, 38, 38, 0.06)', color: 'rgba(220, 38, 38, 0.55)' };
+                            btnClass += " font-bold";
+                        } else if (outside && !redDate) {
+                            btnStyle = { borderColor: 'var(--border-soft)', color: 'var(--luxury-subtle)' };
+                        } else if (redDate && !selected) {
+                            btnStyle = { borderColor: 'rgba(220, 38, 38, 0.5)', background: 'rgba(220, 38, 38, 0.08)', color: '#dc2626' };
+                            btnClass += " font-bold hover:opacity-80";
+                        } else {
+                            btnStyle = { borderColor: 'var(--border-soft)', color: 'var(--luxury-text)' };
+                            btnClass += " hover:opacity-75";
+                        }
+
+                        if (today && !selected && !redDate) {
+                            btnClass += " ring-2";
+                            btnStyle = { ...btnStyle, outlineColor: 'var(--luxury-gold)', boxShadow: `0 0 0 2px var(--luxury-gold)` };
+                        } else if (today && !selected && redDate) {
+                            btnClass += " ring-2";
+                            btnStyle = { ...btnStyle, boxShadow: '0 0 0 2px rgba(220, 38, 38, 0.5)' };
+                        }
+
+                        if (redDate) btnClass += " font-bold";
 
                         return (
                             <button
@@ -155,43 +189,29 @@ export default function DatePickerField({
                                     onChange(dayValue);
                                     setOpen(false);
                                 }}
-                                className={cn(
-                                    "relative flex h-9 items-center justify-center rounded-lg border text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-45",
-                                    outside && !redDate && "border-white/5 text-slate-400",
-                                    outside && redDate && "border-red-500/30 bg-red-500/10 text-red-300/80",
-                                    !outside && !redDate && !selected && "border-white/10 text-white hover:border-white/30 hover:bg-white/10",
-                                    redDate && !selected && !outside && "border-red-400/60 bg-red-500/15 text-red-200 hover:border-red-300 hover:bg-red-500/25 hover:text-red-100 focus-visible:ring-red-400/70",
-                                    redDate && "font-bold",
-                                    selected && !redDate && "border-emerald-400 bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 focus-visible:ring-emerald-300/70",
-                                    selected && redDate && "border-red-200 bg-red-600 text-white shadow-lg shadow-red-500/25 ring-2 ring-red-300/80 focus-visible:ring-red-100",
-                                    today && !selected && !redDate && "ring-1 ring-sky-400/60",
-                                    today && !selected && redDate && "ring-2 ring-red-300/70"
-                                )}
+                                className={btnClass}
+                                style={btnStyle}
                             >
                                 {format(day, "d")}
                                 {redDate && (
                                     <span
                                         aria-hidden="true"
-                                        className={cn(
-                                            "absolute bottom-1 h-1.5 w-1.5 rounded-full",
-                                            selected ? "bg-white" : holiday ? "bg-red-200" : "bg-red-400"
-                                        )}
+                                        className="absolute bottom-1 h-1.5 w-1.5 rounded-full"
+                                        style={{ background: selected ? '#ffffff' : '#dc2626' }}
                                     />
                                 )}
                                 {holiday && (
                                     <span
                                         aria-hidden="true"
-                                        className={cn(
-                                            "absolute right-1 top-1 h-1.5 w-1.5 rounded-full",
-                                            selected ? "bg-red-100" : "bg-red-300"
-                                        )}
+                                        className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full"
+                                        style={{ background: selected ? '#fecaca' : '#ef4444' }}
                                     />
                                 )}
                             </button>
                         );
                     })}
                 </div>
-                <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-50">
+                <div className="mt-3 rounded-lg px-3 py-2 text-[11px] font-medium" style={{ border: '1px solid rgba(220, 38, 38, 0.3)', background: 'rgba(220, 38, 38, 0.06)', color: '#dc2626' }}>
                     Tanggal merah: libur nasional/cuti bersama Indonesia. Hari Minggu otomatis merah.
                 </div>
             </div>,
