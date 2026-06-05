@@ -12,6 +12,7 @@ import {
     SortingState,
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp, Search, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { fuzzyMatch } from "@/lib/fuzzySearch";
 
 interface DataTableProps<TData, TValue> {
     columns: ColumnDef<TData, TValue>[];
@@ -36,24 +37,7 @@ export function DataTable<TData, TValue>({
 
     const fuzzyOrWildcardFilter = (row: any, columnId: string, filterValue: string) => {
         const value = row.getValue(columnId);
-        if (value == null) return false;
-        
-        const stringValue = String(value).toLowerCase();
-        const searchValue = String(filterValue).toLowerCase();
-
-        // If search contains % wildcard
-        if (searchValue.includes('%')) {
-            const escaped = searchValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regexStr = escaped.replace(/%/g, '.*');
-            try {
-                const regex = new RegExp(regexStr, 'i');
-                return regex.test(stringValue);
-            } catch(e) {
-                return false;
-            }
-        }
-
-        return stringValue.includes(searchValue);
+        return fuzzyMatch(value, filterValue);
     };
 
     const table = useReactTable({

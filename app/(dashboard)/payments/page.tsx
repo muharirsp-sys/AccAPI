@@ -13,6 +13,7 @@ import { Wallet, Upload, FileSpreadsheet, Send, Plus, Search, Save, Trash2, Down
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
 import DatePickerField from "@/components/ui/DatePickerField";
+import { fuzzyMatch } from "@/lib/fuzzySearch";
 
 interface PaymentRecord {
     id?: string;
@@ -401,7 +402,7 @@ export default function PaymentsPage() {
         setFilters(prev => ({ ...prev, [key]: value.toLowerCase() }));
     };
 
-    // Filter Logic
+    // Filter Logic (fuzzy search — user tidak perlu ketik persis)
     const filteredRecords = useMemo(() => {
         return records.filter(r => {
             if (filters['ajukan'] === 'checked' && !r.ajukan) return false;
@@ -419,14 +420,14 @@ export default function PaymentsPage() {
             };
 
             for (const [fKey, getVal] of Object.entries(searchParams)) {
-                if (filters[fKey] && !String(getVal || '').toLowerCase().includes(filters[fKey])) {
+                if (filters[fKey] && !fuzzyMatch(getVal, filters[fKey])) {
                     return false;
                 }
             }
 
             const searchStatus = filters['status_pembayaran'];
-            const tipeSt = `${r.tipe_pengajuan || 'LPB'} - ${r.status_pembayaran || '-'}`.toLowerCase();
-            if (searchStatus && !tipeSt.includes(searchStatus)) return false;
+            const tipeSt = `${r.tipe_pengajuan || 'LPB'} - ${r.status_pembayaran || '-'}`;
+            if (searchStatus && !fuzzyMatch(tipeSt, searchStatus)) return false;
 
             return true;
         });
@@ -459,40 +460,40 @@ export default function PaymentsPage() {
     }, [page, pageCount]);
 
     return (
-        <div className="max-w-[1700px] mx-auto pb-12">
-            <div className="mb-8">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                        <h1 className="text-3xl font-bold text-white tracking-tight flex items-center gap-3">
-                            <Wallet className="text-blue-500" />
-                            Manajemen Pembayaran & SPPD
-                        </h1>
-                        <p className="text-slate-400 mt-2 text-lg">Kelola tagihan harian, LPB, CBD, upload dataset dan jadwalkan ke pembayaran pusat.</p>
-                    </div>
-                    <a href="/payments/sppd" className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-slate-200 hover:bg-white/10">
-                        <FileText size={16} /> Format SPPD
-                    </a>
+        <div className="max-w-[1700px] mx-auto pb-12 space-y-6">
+            {/* Page Header */}
+            <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2.5">
+                        <Wallet className="text-blue-500" size={24} />
+                        Manajemen Pembayaran & SPPD
+                    </h1>
+                    <p className="text-slate-400 mt-1">Kelola tagihan harian, LPB, CBD, upload dataset dan jadwalkan ke pembayaran pusat.</p>
                 </div>
+                <a href="/payments/sppd" className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-white/5 border border-white/10 text-slate-200 hover:bg-white/10 text-sm font-medium transition-colors">
+                    <FileText size={15} /> Format SPPD
+                </a>
             </div>
 
-            <div className="grid lg:grid-cols-2 gap-6 mb-8">
+            {/* Upload & Manual Entry - two columns */}
+            <div className="grid lg:grid-cols-2 gap-5">
                 {/* Upload Panel */}
-                <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-white/10 relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 w-48 h-48 bg-blue-500/10 rounded-full blur-3xl -mr-16 -mt-16 group-hover:bg-blue-500/20 transition-colors"></div>
+                <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-5 rounded-xl shadow-lg border border-white/10 relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 w-40 h-40 bg-blue-500/8 rounded-full blur-3xl -mr-12 -mt-12 group-hover:bg-blue-500/15 transition-colors"></div>
                     <div className="relative">
-                        <h2 className="text-xl font-bold text-white flex items-center gap-2 mb-1">
-                            <FileSpreadsheet size={20} className="text-blue-400" /> Unggah LPB / Restore Backup
+                        <h2 className="text-base font-bold text-white flex items-center gap-2 mb-0.5">
+                            <FileSpreadsheet size={18} className="text-blue-400" /> Unggah LPB / Restore Backup
                         </h2>
-                        <p className="text-sm text-slate-400 mb-6">Terima template LPB lama atau backup export PAYMENTS untuk restore data tanpa input ulang.</p>
+                        <p className="text-xs text-slate-400 mb-4">Terima template LPB lama atau backup export PAYMENTS untuk restore data tanpa input ulang.</p>
 
-                        <div className="flex items-center gap-4">
-                            <button onClick={handleTemplate} className="flex-1 bg-white/5 border border-white/10 text-slate-300 px-4 py-3 rounded-xl font-bold text-sm hover:bg-white/10 transition-colors">
+                        <div className="flex items-center gap-3">
+                            <button onClick={handleTemplate} className="bg-white/5 border border-white/10 text-slate-300 px-3.5 py-2.5 rounded-lg font-semibold text-sm hover:bg-white/10 transition-colors whitespace-nowrap">
                                 Unduh Template LPB
                             </button>
-                            <form onSubmit={handleUpload} className="flex-[2] flex bg-black/40 border border-white/10 rounded-xl overflow-hidden focus-within:ring-1 focus-within:ring-blue-500/50 transition-colors">
-                                <input type="file" accept=".xlsx,.xls" onChange={e => setUploadFile(e.target.files?.[0] || null)} className="flex-1 text-sm text-slate-300 py-3 block file:hidden px-4" />
-                                <button type="submit" disabled={!uploadFile || isUploading} className="bg-blue-600 text-white px-6 font-bold text-sm hover:bg-blue-500 transition-colors disabled:opacity-50">
-                                    <Upload size={18} />
+                            <form onSubmit={handleUpload} className="flex-1 flex bg-black/40 border border-white/10 rounded-lg overflow-hidden focus-within:ring-1 focus-within:ring-blue-500/50 transition-colors">
+                                <input type="file" accept=".xlsx,.xls" onChange={e => setUploadFile(e.target.files?.[0] || null)} className="flex-1 text-sm text-slate-300 py-2.5 block file:hidden px-3 min-w-0" />
+                                <button type="submit" disabled={!uploadFile || isUploading} className="bg-blue-600 text-white px-4 font-bold text-sm hover:bg-blue-500 transition-colors disabled:opacity-50 flex-shrink-0">
+                                    <Upload size={16} />
                                 </button>
                             </form>
                         </div>
@@ -500,13 +501,13 @@ export default function PaymentsPage() {
                 </div>
 
                 {/* Manual Add Panel */}
-                <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-white/10 relative overflow-hidden">
-                    <h2 className="text-xl font-bold text-white flex items-center gap-2 mb-1">
-                        <Plus size={20} className="text-emerald-400" /> Tambah Pengajuan Manual
+                <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-5 rounded-xl shadow-lg border border-white/10 relative overflow-hidden">
+                    <h2 className="text-base font-bold text-white flex items-center gap-2 mb-0.5">
+                        <Plus size={18} className="text-emerald-400" /> Tambah Pengajuan Manual
                     </h2>
-                    <p className="text-sm text-slate-400 mb-6">Input cepat data non-rutin (CBD / NON_LPB).</p>
+                    <p className="text-xs text-slate-400 mb-4">Input cepat data non-rutin (CBD / NON_LPB).</p>
                     
-                    <form onSubmit={handleManualAdd} className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <form onSubmit={handleManualAdd} className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                         <select className="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-300 outline-none focus:ring-1 focus:ring-emerald-500/50" value={manualEntry.tipe} onChange={e => setManualEntry({ ...manualEntry, tipe: e.target.value })}>
                             <option value="CBD">Tipe: CBD</option>
                             <option value="NON_LPB">Tipe: NON_LPB</option>
@@ -522,48 +523,50 @@ export default function PaymentsPage() {
                 </div>
             </div>
 
-            {/* Compilation & Submit */}
-            <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-8 rounded-2xl shadow-xl border border-white/10 mb-8 flex flex-col md:flex-row items-center gap-8">
-                <div className="flex-1">
-                    <h2 className="text-2xl font-black text-white flex items-center gap-3 mb-2 tracking-tight">
-                        <Landmark size={28} className="text-blue-400" /> Tahap Kompilasi Pembayaran
-                    </h2>
-                    <p className="text-slate-400">Centang baris data pada area tabel utama di bawah, tentukan rute bank sistem pencairan, lalu sinkronkan semuanya menjadi 1 Draft (SPPD).</p>
-                    {/* Total Nilai Invoice yang dicentang */}
-                    <div className="mt-4 flex items-center gap-3">
-                        <span className="text-sm text-slate-400">Total Nilai Invoice (dicentang):</span>
-                        <span className="font-mono font-bold text-lg text-emerald-400">
-                            {totalCheckedInvoice > 0 ? `Rp ${formatInvoiceAmountDisplay(totalCheckedInvoice)}` : "—"}
-                        </span>
-                        <span className="text-xs text-slate-500 font-mono">
-                            ({records.filter(r => r.ajukan).length} item)
-                        </span>
+            {/* Compilation & Submit - more compact */}
+            <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-5 rounded-xl shadow-lg border border-white/10">
+                <div className="flex flex-col lg:flex-row lg:items-center gap-5">
+                    <div className="flex-1 min-w-0">
+                        <h2 className="text-lg font-bold text-white flex items-center gap-2.5 mb-1">
+                            <Landmark size={22} className="text-blue-400" /> Tahap Kompilasi Pembayaran
+                        </h2>
+                        <p className="text-sm text-slate-400 leading-relaxed">Centang baris data pada area tabel utama di bawah, tentukan rute bank sistem pencairan, lalu sinkronkan semuanya menjadi 1 Draft (SPPD).</p>
+                        <div className="mt-3 flex items-center gap-3">
+                            <span className="text-sm text-slate-400">Total Nilai Invoice (dicentang):</span>
+                            <span className="font-mono font-bold text-base text-emerald-400">
+                                {totalCheckedInvoice > 0 ? `Rp ${formatInvoiceAmountDisplay(totalCheckedInvoice)}` : "—"}
+                            </span>
+                            <span className="text-xs text-slate-500 font-mono">
+                                ({records.filter(r => r.ajukan).length} item)
+                            </span>
+                        </div>
                     </div>
-                </div>
-                <div className="flex-1 w-full bg-black/40 p-4 border border-white/10 rounded-xl flex items-center gap-4">
-                    <select className="flex-1 bg-[#1a1c23] border border-white/10 text-white font-bold rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-amber-500 shadow-inner" value={payMethod} onChange={e => setPayMethod(e.target.value)}>
-                        <option value="NON_PANIN">Route: BNN (Bank Non Panin)</option>
-                        <option value="BANK_PANIN">Route: BPA (Bank Panin Terkhusus)</option>
-                    </select>
-                    <button onClick={handleSubmitCart} disabled={isSubmitting} className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500 shadow-lg transition-all disabled:opacity-50 text-base">
-                        Eksekusi Pengajuan <Send size={18} />
-                    </button>
+                    <div className="flex items-center gap-3 lg:flex-shrink-0">
+                        <select className="bg-[#1a1c23] border border-white/10 text-white font-semibold rounded-lg px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-500 text-sm" value={payMethod} onChange={e => setPayMethod(e.target.value)}>
+                            <option value="NON_PANIN">Route: BNN (Bank Non Panin)</option>
+                            <option value="BANK_PANIN">Route: BPA (Bank Panin Terkhusus)</option>
+                        </select>
+                        <button onClick={handleSubmitCart} disabled={isSubmitting} className="flex items-center gap-2 bg-blue-600 text-white font-bold py-2.5 px-5 rounded-lg hover:bg-blue-500 shadow-lg transition-all disabled:opacity-50 text-sm whitespace-nowrap">
+                            Eksekusi Pengajuan <Send size={16} />
+                        </button>
+                    </div>
                 </div>
             </div>
 
             {/* Main Interactive Matrix */}
-            <div className="bg-[#1a1c23]/60 backdrop-blur-xl rounded-2xl shadow-xl border border-white/10 flex flex-col overflow-hidden relative">
-                <div className="p-4 border-b border-white/5 bg-black/40 flex flex-col lg:flex-row justify-between lg:items-center gap-4">
-                    <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-2 text-emerald-400 font-semibold">
-                            <Search size={18} /> Engine Filter Kolom Data
+            <div className="bg-[#1a1c23]/60 backdrop-blur-xl rounded-xl shadow-lg border border-white/10 flex flex-col overflow-hidden relative">
+                {/* Toolbar: Filter title + pagination left, action buttons right */}
+                <div className="px-4 py-3 border-b border-white/10 bg-black/30 flex flex-col lg:flex-row justify-between lg:items-center gap-3">
+                    <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2 text-emerald-400 font-semibold text-sm">
+                            <Search size={16} /> Engine Filter Kolom Data
                         </div>
-                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                        <div className="flex items-center gap-2 text-xs text-slate-400">
                             <span className="font-mono text-slate-300">{pageStart}-{pageEnd}</span>
                             <span>dari</span>
                             <span className="font-mono text-slate-300">{filteredRecords.length}</span>
                             <select
-                                className="h-8 bg-black/50 border border-white/10 rounded-lg px-2 text-slate-300 outline-none focus:border-emerald-500/50"
+                                className="h-7 bg-black/50 border border-white/10 rounded px-1.5 text-slate-300 outline-none focus:border-emerald-500/50 text-xs"
                                 value={pageSize}
                                 onChange={e => setPageSize(Number(e.target.value))}
                                 title="Jumlah baris per halaman"
@@ -574,115 +577,116 @@ export default function PaymentsPage() {
                                 type="button"
                                 onClick={() => setPage(prev => Math.max(1, prev - 1))}
                                 disabled={activePage <= 1}
-                                className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-white/5"
+                                className="h-7 w-7 inline-flex items-center justify-center rounded border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-40"
                                 title="Halaman sebelumnya"
                             >
-                                <ChevronLeft size={16} />
+                                <ChevronLeft size={14} />
                             </button>
-                            <span className="font-mono text-slate-300">{activePage}/{pageCount}</span>
+                            <span className="font-mono text-slate-300 text-xs">{activePage}/{pageCount}</span>
                             <button
                                 type="button"
                                 onClick={() => setPage(prev => Math.min(pageCount, prev + 1))}
                                 disabled={activePage >= pageCount}
-                                className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-white/5"
+                                className="h-7 w-7 inline-flex items-center justify-center rounded border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-40"
                                 title="Halaman berikutnya"
                             >
-                                <ChevronRight size={16} />
+                                <ChevronRight size={14} />
                             </button>
                         </div>
                     </div>
-                    <div className="flex flex-wrap gap-2 text-sm">
-                        <button onClick={handleExport} className="flex items-center gap-2 bg-white/5 border border-white/10 text-slate-300 font-bold px-4 py-2.5 rounded-xl hover:bg-white/10 transition-colors">
-                            <DownloadCloud size={16} /> Backup Tabel
+                    <div className="flex flex-wrap gap-2 text-xs">
+                        <button onClick={handleExport} className="flex items-center gap-1.5 bg-white/5 border border-white/10 text-slate-300 font-semibold px-3 py-2 rounded-lg hover:bg-white/10 transition-colors">
+                            <DownloadCloud size={14} /> Backup Tabel
                         </button>
                         {isAdmin && (
-                            <button onClick={handleClearAll} disabled={isClearing} className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 text-red-300 font-bold px-4 py-2.5 rounded-xl hover:bg-red-500/20 transition-colors disabled:opacity-50">
-                                <AlertTriangle size={16} /> Clear Semua
+                            <button onClick={handleClearAll} disabled={isClearing} className="flex items-center gap-1.5 bg-red-500/10 border border-red-500/30 text-red-300 font-semibold px-3 py-2 rounded-lg hover:bg-red-500/20 transition-colors disabled:opacity-50">
+                                <AlertTriangle size={14} /> Clear Semua
                             </button>
                         )}
-                        <button onClick={handleDelete} disabled={isDeleting} className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/20 text-rose-400 font-bold px-4 py-2.5 rounded-xl hover:bg-rose-500/20 transition-colors disabled:opacity-50">
-                            <Trash2 size={16} /> Hapus Ceklis
+                        <button onClick={handleDelete} disabled={isDeleting} className="flex items-center gap-1.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 font-semibold px-3 py-2 rounded-lg hover:bg-rose-500/20 transition-colors disabled:opacity-50">
+                            <Trash2 size={14} /> Hapus Ceklis
                         </button>
-                        <button onClick={handleSaveBulk} disabled={isSaving || pendingChangeCount === 0} className="flex items-center gap-2 bg-emerald-600 text-white font-bold px-5 py-2.5 rounded-xl hover:bg-emerald-500 shadow-lg transition-all disabled:opacity-50">
-                            <Save size={16} /> {isSaving ? "Menyimpan..." : `Update Semua${pendingChangeCount ? ` (${pendingChangeCount})` : ""}`}
+                        <button onClick={handleSaveBulk} disabled={isSaving || pendingChangeCount === 0} className="flex items-center gap-1.5 bg-emerald-600 text-white font-bold px-4 py-2 rounded-lg hover:bg-emerald-500 shadow-lg transition-all disabled:opacity-50">
+                            <Save size={14} /> {isSaving ? "Menyimpan..." : `Update Semua${pendingChangeCount ? ` (${pendingChangeCount})` : ""}`}
                         </button>
                     </div>
                 </div>
 
+                {/* Table with separated header and filter rows */}
                 <div className="overflow-x-auto h-[65vh] w-full custom-scrollbar relative">
-                    <table className="w-full text-sm text-left relative min-w-max border-separate border-spacing-0">
+                    <table className="w-full text-xs text-left relative min-w-max border-separate border-spacing-0">
                         <thead className="text-[10px] uppercase font-bold text-slate-500 sticky top-0 z-30">
-                            <tr>
-                                {/* Header Labels */}
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">Ajukan</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] sticky left-0 z-40 shadow-[1px_0_0_0_rgba(255,255,255,0.1)] text-white">No. LPB / Ref</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">Principle</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">Tgl Setor</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">Tgl Win</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">J.Tempo Win</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-right text-emerald-400">Nilai Sistem</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">Terima Brg</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-blue-400">Tgl Invoice</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-blue-400">Invoice</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-blue-400">Jenis Dok.</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-blue-400">No. Dok</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-right text-indigo-400">Nilai Inv.</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-blue-400">JT Invoice</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-right text-rose-400">Gap</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-blue-400">Actual Date</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-emerald-400">Tgl Bayar Pst</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">Status Track</th>
+                            {/* Header Labels */}
+                            <tr className="bg-[#0f1115]">
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] whitespace-nowrap">Ajukan</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] sticky left-0 z-40 shadow-[2px_0_4px_rgba(0,0,0,0.15)] text-white whitespace-nowrap">No. LPB / Ref</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] whitespace-nowrap">Principle</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] whitespace-nowrap">Tgl Setor</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] whitespace-nowrap">Tgl Win</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] whitespace-nowrap">J.Tempo Win</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] text-right text-emerald-400 whitespace-nowrap">Nilai Sistem</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] whitespace-nowrap">Terima Brg</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] text-blue-400 whitespace-nowrap">Tgl Invoice</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] text-blue-400 whitespace-nowrap">Invoice</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] text-blue-400 whitespace-nowrap">Jenis Dok.</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] text-blue-400 whitespace-nowrap">No. Dok</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] text-right text-indigo-400 whitespace-nowrap">Nilai Inv.</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] text-blue-400 whitespace-nowrap">JT Invoice</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] text-right text-rose-400 whitespace-nowrap">Gap</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] text-blue-400 whitespace-nowrap">Actual Date</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] text-emerald-400 whitespace-nowrap">Tgl Bayar Pst</th>
+                                <th className="px-2.5 py-2.5 border-b border-white/10 bg-[#0f1115] whitespace-nowrap">Status Track</th>
                             </tr>
-                            {/* Filter Controls */}
-                            <tr>
-                                <th className="p-1 px-[2px] bg-[#0f1115] border-b border-white/5 sticky top-[41px] z-30">
-                                    <select className="w-full bg-black/60 border border-white/10 rounded text-[10px] py-1 text-slate-300 outline-none" onChange={e => handleFilterChange('ajukan', e.target.value)}>
+                            {/* Filter Controls - separate row with proper spacing */}
+                            <tr className="bg-[#0f1115]">
+                                <th className="px-1.5 py-2 bg-[#0f1115] border-b border-white/10 sticky top-[37px] z-30">
+                                    <select className="w-full bg-black/60 border border-white/10 rounded text-[10px] py-1.5 px-1 text-slate-300 outline-none focus:border-emerald-500/50" onChange={e => handleFilterChange('ajukan', e.target.value)}>
                                         <option value="">Semua</option><option value="checked">Ceklis</option><option value="unchecked">Kosong</option>
                                     </select>
                                 </th>
-                                <th className="p-1 px-[2px] bg-[#0f1115] border-b border-white/5 sticky left-0 top-[41px] z-40 shadow-[1px_0_0_0_rgba(255,255,255,0.1)]">
-                                    <input type="text" placeholder="Cari Ref..." className="w-[120px] bg-black/50 border border-white/10 focus:border-blue-500 rounded text-[10px] py-1 px-2 text-white outline-none placeholder:text-slate-600 font-mono" onChange={e => handleFilterChange('no_lpb', e.target.value)} />
+                                <th className="px-1.5 py-2 bg-[#0f1115] border-b border-white/10 sticky left-0 top-[37px] z-40 shadow-[2px_0_4px_rgba(0,0,0,0.15)]">
+                                    <input type="text" placeholder="Cari Ref..." className="w-[110px] bg-black/50 border border-white/10 focus:border-blue-500 rounded text-[10px] py-1.5 px-2 text-white outline-none placeholder:text-slate-600 font-mono" onChange={e => handleFilterChange('no_lpb', e.target.value)} />
                                 </th>
                                 {['principle', 'tgl_setor', 'tgl_win', 'jtempo_win', 'nilai_sistem', 'tgl_terima_barang', 'tgl_invoice', 'invoice', 'jenis_dokumen', 'nomor_dokumen', 'nilai_invoice', 'jt_invoice', 'gap_nilai_display', 'actual_date', 'tgl_pembayaran', 'status_pembayaran'].map((fKey, i) => (
-                                    <th key={i} className="p-1 px-[2px] bg-[#0f1115] border-b border-white/5 sticky top-[41px] z-30">
-                                        <input type="text" placeholder="Filter..." className="w-full min-w-[70px] bg-black/60 border border-white/10 focus:border-blue-500 rounded text-[10px] py-1 px-1.5 text-slate-300 outline-none placeholder:text-slate-700 font-mono" onChange={e => handleFilterChange(fKey, e.target.value)} />
+                                    <th key={i} className="px-1.5 py-2 bg-[#0f1115] border-b border-white/10 sticky top-[37px] z-30">
+                                        <input type="text" placeholder="Filter..." className="w-full min-w-[65px] bg-black/60 border border-white/10 focus:border-blue-500 rounded text-[10px] py-1.5 px-1.5 text-slate-300 outline-none placeholder:text-slate-600 font-mono" onChange={e => handleFilterChange(fKey, e.target.value)} />
                                     </th>
                                 ))}
                             </tr>
                         </thead>
-                        <tbody className="textxs divide-y divide-white/5">
+                        <tbody className="text-xs divide-y divide-white/5">
                             {loading && records.length === 0 ? (
-                                <tr><td colSpan={18} className="px-5 py-24 text-center text-slate-500 pb-[200px]">Memuat dataset internal...</td></tr>
+                                <tr><td colSpan={18} className="px-5 py-20 text-center text-slate-500">Memuat dataset internal...</td></tr>
                             ) : filteredRecords.length === 0 ? (
-                                <tr><td colSpan={18} className="px-5 py-24 text-center text-slate-500 italic pb-[200px]">Data pembayaran SPPD tidak ditemukan (Kosong).</td></tr>
+                                <tr><td colSpan={18} className="px-5 py-20 text-center text-slate-500 italic">Data pembayaran SPPD tidak ditemukan (Kosong).</td></tr>
                             ) : (
                                 paginatedRecords.map((r) => (
                                     <tr key={r.record_id} className="hover:bg-white/[0.03] transition-colors whitespace-nowrap group">
-                                        <td className="px-3 py-1.5 text-center">
+                                        <td className="px-2.5 py-2 text-center">
                                             <input type="checkbox" checked={!!r.ajukan} onChange={e => handleInputChange(r.record_id, 'ajukan', e.target.checked)} className="rounded bg-black/50 border-white/10 text-emerald-500 focus:ring-emerald-500/50 w-4 h-4 cursor-pointer" />
                                         </td>
-                                        <td className="px-3 py-1.5 sticky left-0 z-10 font-mono font-bold text-white bg-[#1a1c23]/60 group-hover:bg-white/10 shadow-[1px_0_0_0_rgba(255,255,255,0.05)] transition-colors">
+                                        <td className="px-2.5 py-2 sticky left-0 z-10 font-mono font-bold text-white bg-[#1a1c23]/90 group-hover:bg-white/10 shadow-[2px_0_4px_rgba(0,0,0,0.15)] transition-colors text-xs">
                                             {r.no_lpb || "-"}
                                         </td>
-                                        <td className="px-3 py-1.5 text-slate-300 font-medium truncate max-w-[150px]">{r.principle || "-"}</td>
-                                        <td className="px-3 py-1.5 font-mono text-slate-500">{r.tgl_setor || "-"}</td>
-                                        <td className="px-3 py-1.5 font-mono text-slate-500">{r.tgl_win || "-"}</td>
-                                        <td className="px-3 py-1.5 font-mono text-slate-500">{r.tgl_jtempo_win || r.jt_win || "-"}</td>
-                                        <td className="px-3 py-1.5 text-right font-mono text-emerald-200/50 lg:font-bold">{r.nilai_win_display || "-"}</td>
-                                        <td className="px-3 py-1.5 font-mono text-slate-500">{r.tgl_terima_barang || "-"}</td>
+                                        <td className="px-2.5 py-2 text-slate-300 font-medium truncate max-w-[140px]">{r.principle || "-"}</td>
+                                        <td className="px-2.5 py-2 font-mono text-slate-500">{r.tgl_setor || "-"}</td>
+                                        <td className="px-2.5 py-2 font-mono text-slate-500">{r.tgl_win || "-"}</td>
+                                        <td className="px-2.5 py-2 font-mono text-slate-500">{r.tgl_jtempo_win || r.jt_win || "-"}</td>
+                                        <td className="px-2.5 py-2 text-right font-mono text-emerald-200/50 font-bold">{r.nilai_win_display || "-"}</td>
+                                        <td className="px-2.5 py-2 font-mono text-slate-500">{r.tgl_terima_barang || "-"}</td>
                                         
                                         {/* Editable Columns Start */}
-                                        <td className="px-1 py-1"><DatePickerField value={r.tgl_invoice || ""} onChange={value => handleInputChange(r.record_id, 'tgl_invoice', value)} className="w-[145px] py-1 pl-8 pr-7 text-xs focus:border-blue-500/50" ariaLabel="Tanggal invoice" /></td>
-                                        <td className="px-1 py-1"><input type="text" value={r.invoice_no || r.invoice || ""} onChange={e => handleInputChange(r.record_id, 'invoice_no', e.target.value)} className="w-[120px] rounded border border-white/10 bg-black/40 text-slate-300 px-2 py-1 outline-none focus:border-blue-500/50" /></td>
-                                        <td className="px-1 py-1"><input type="text" value={r.jenis_dokumen || ""} onChange={e => handleInputChange(r.record_id, 'jenis_dokumen', e.target.value)} className="w-[90px] rounded border border-white/10 bg-black/40 text-slate-300 px-2 py-1 outline-none focus:border-blue-500/50 placeholder:text-slate-600" placeholder="-" /></td>
-                                        <td className="px-1 py-1"><input type="text" value={r.nomor_dokumen || ""} onChange={e => handleInputChange(r.record_id, 'nomor_dokumen', e.target.value)} className="w-[120px] rounded border border-white/10 bg-black/40 text-slate-300 px-2 py-1 outline-none focus:border-blue-500/50 placeholder:text-slate-600" placeholder="-" /></td>
-                                        <td className="px-1 py-1"><input type="text" inputMode="decimal" value={r.nilai_invoice || ""} onChange={e => handleInputChange(r.record_id, 'nilai_invoice', formatInvoiceAmountInput(e.target.value))} onBlur={() => handleInputChange(r.record_id, 'nilai_invoice', formatInvoiceAmountDisplay(r.nilai_invoice))} className="w-[120px] text-indigo-400 font-bold text-right rounded border border-indigo-500/30 bg-indigo-500/5 px-2 py-1 outline-none focus:border-indigo-500" /></td>
-                                        <td className="px-1 py-1"><DatePickerField value={r.jt_invoice || ""} onChange={value => handleInputChange(r.record_id, 'jt_invoice', value)} className="w-[145px] py-1 pl-8 pr-7 text-xs focus:border-blue-500/50" ariaLabel="Jatuh tempo invoice" /></td>
-                                        <td className="px-3 py-1.5 text-right font-mono text-red-400 text-xs">{formatInvoiceAmountDisplay(r.gap_nilai_display || r.gap_nilai || 0)}</td>
-                                        <td className="px-1 py-1"><DatePickerField value={r.actual_date || ""} onChange={value => handleInputChange(r.record_id, 'actual_date', value)} className="w-[145px] py-1 pl-8 pr-7 text-xs focus:border-blue-500/50" ariaLabel="Actual date" /></td>
-                                        <td className="px-1 py-1"><DatePickerField value={r.tgl_pembayaran || ""} onChange={value => handleInputChange(r.record_id, 'tgl_pembayaran', value)} className="w-[145px] border-emerald-500/30 bg-emerald-500/5 py-1 pl-8 pr-7 text-xs font-semibold text-emerald-400 focus:border-emerald-500" ariaLabel="Tanggal pembayaran pusat" /></td>
-                                        <td className="px-3 py-1.5">
-                                            <span className="inline-block px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider bg-white/5 border border-white/10 text-slate-400">
+                                        <td className="px-1 py-1.5"><DatePickerField value={r.tgl_invoice || ""} onChange={value => handleInputChange(r.record_id, 'tgl_invoice', value)} className="w-[130px] py-1 pl-7 pr-6 text-xs focus:border-blue-500/50" ariaLabel="Tanggal invoice" /></td>
+                                        <td className="px-1 py-1.5"><input type="text" value={r.invoice_no || r.invoice || ""} onChange={e => handleInputChange(r.record_id, 'invoice_no', e.target.value)} className="w-[110px] rounded border border-white/10 bg-black/40 text-slate-300 px-2 py-1 outline-none focus:border-blue-500/50 text-xs" /></td>
+                                        <td className="px-1 py-1.5"><input type="text" value={r.jenis_dokumen || ""} onChange={e => handleInputChange(r.record_id, 'jenis_dokumen', e.target.value)} className="w-[80px] rounded border border-white/10 bg-black/40 text-slate-300 px-2 py-1 outline-none focus:border-blue-500/50 placeholder:text-slate-600 text-xs" placeholder="-" /></td>
+                                        <td className="px-1 py-1.5"><input type="text" value={r.nomor_dokumen || ""} onChange={e => handleInputChange(r.record_id, 'nomor_dokumen', e.target.value)} className="w-[110px] rounded border border-white/10 bg-black/40 text-slate-300 px-2 py-1 outline-none focus:border-blue-500/50 placeholder:text-slate-600 text-xs" placeholder="-" /></td>
+                                        <td className="px-1 py-1.5"><input type="text" inputMode="decimal" value={r.nilai_invoice || ""} onChange={e => handleInputChange(r.record_id, 'nilai_invoice', formatInvoiceAmountInput(e.target.value))} onBlur={() => handleInputChange(r.record_id, 'nilai_invoice', formatInvoiceAmountDisplay(r.nilai_invoice))} className="w-[110px] text-indigo-400 font-bold text-right rounded border border-indigo-500/30 bg-indigo-500/5 px-2 py-1 outline-none focus:border-indigo-500 text-xs" /></td>
+                                        <td className="px-1 py-1.5"><DatePickerField value={r.jt_invoice || ""} onChange={value => handleInputChange(r.record_id, 'jt_invoice', value)} className="w-[130px] py-1 pl-7 pr-6 text-xs focus:border-blue-500/50" ariaLabel="Jatuh tempo invoice" /></td>
+                                        <td className="px-2.5 py-2 text-right font-mono text-red-400 text-xs">{formatInvoiceAmountDisplay(r.gap_nilai_display || r.gap_nilai || 0)}</td>
+                                        <td className="px-1 py-1.5"><DatePickerField value={r.actual_date || ""} onChange={value => handleInputChange(r.record_id, 'actual_date', value)} className="w-[130px] py-1 pl-7 pr-6 text-xs focus:border-blue-500/50" ariaLabel="Actual date" /></td>
+                                        <td className="px-1 py-1.5"><DatePickerField value={r.tgl_pembayaran || ""} onChange={value => handleInputChange(r.record_id, 'tgl_pembayaran', value)} className="w-[130px] border-emerald-500/30 bg-emerald-500/5 py-1 pl-7 pr-6 text-xs font-semibold text-emerald-400 focus:border-emerald-500" ariaLabel="Tanggal pembayaran pusat" /></td>
+                                        <td className="px-2.5 py-2">
+                                            <span className="inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-white/5 border border-white/10 text-slate-400">
                                                 {(r.tipe_pengajuan || "LPB")} | {(r.status_pembayaran || "Draft")}
                                             </span>
                                         </td>
@@ -693,12 +697,13 @@ export default function PaymentsPage() {
                     </table>
                 </div>
             </div>
-            {/* Inject Global CSS just for this table scrollbar for a seamless dark-theme view */}
+
+            {/* Scrollbar Styles */}
             <style jsx global>{`
-                .custom-scrollbar::-webkit-scrollbar { width: 10px; height: 10px; }
-                .custom-scrollbar::-webkit-scrollbar-track { background: var(--surface-2, #f5ead8); border-radius: 6px; }
-                .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(176, 125, 43, 0.3); border-radius: 6px; }
-                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(176, 125, 43, 0.5); }
+                .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+                .custom-scrollbar::-webkit-scrollbar-track { background: var(--surface-2, #f5ead8); border-radius: 4px; }
+                .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(176, 125, 43, 0.25); border-radius: 4px; }
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(176, 125, 43, 0.45); }
             `}</style>
         </div>
     );

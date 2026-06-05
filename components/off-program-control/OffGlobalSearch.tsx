@@ -7,6 +7,7 @@
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import { Search, X, ArrowRight } from "lucide-react";
+import { fuzzyMatch } from "@/lib/fuzzySearch";
 
 export interface OffSearchableItem {
     id: string;
@@ -29,13 +30,12 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari b
 
     const filtered = useMemo(() => {
         if (!query.trim()) return items.slice(0, 8);
-        const q = query.toLowerCase();
         return items.filter(
             (item) =>
-                item.noPengajuan.toLowerCase().includes(q) ||
-                item.principleName.toLowerCase().includes(q) ||
-                item.status.toLowerCase().includes(q) ||
-                (item.supervisorName || "").toLowerCase().includes(q)
+                fuzzyMatch(item.noPengajuan, query) ||
+                fuzzyMatch(item.principleName, query) ||
+                fuzzyMatch(item.status, query) ||
+                fuzzyMatch(item.supervisorName, query)
         ).slice(0, 10);
     }, [items, query]);
 

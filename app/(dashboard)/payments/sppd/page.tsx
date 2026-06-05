@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, FileText, RefreshCcw, Save, Settings2, Upload } from "lucide-react";
+import { ArrowLeft, CheckCircle2, AlertTriangle, FileText, RefreshCcw, Save, Settings2, Upload, Database } from "lucide-react";
 import { toast } from "sonner";
 import DatePickerField from "@/components/ui/DatePickerField";
 
@@ -96,6 +96,337 @@ function formatPreview(template: string, nextSeq: number, previewDate: string) {
         .replaceAll("{month}", String(dt.getMonth() + 1))
         .replaceAll("{year}", year)
         .replaceAll("{yy}", year.slice(-2));
+}
+
+/* ─── Bank Data Section: Replace & Auto-Fix Principle Names ─── */
+
+interface BankDataItem {
+    principle: string;
+    bank: string;
+    rekening: string;
+    penerima: string;
+    has_rekening: boolean;
+}
+
+interface MatchReportData {
+    matched: Array<{ web_name: string; excel_name: string; bank: string; rekening: string; penerima: string }>;
+    unmatched: string[];
+    ambiguous: string[];
+    empty_rekening: Array<{ principle: string; bank: string; reason: string }>;
+}
+
+interface AutoFixChange {
+    old: string;
+    new: string;
+    count: number;
+}
+
+interface AutoFixResult {
+    ok: boolean;
+    executed: boolean;
+    changes: AutoFixChange[];
+    skipped: Array<{ name: string; reason: string; count: string }>;
+    already_correct: string[];
+    total_records_affected: number;
+    message: string;
+}
+
+interface ReplaceResult {
+    ok: boolean;
+    replaced: number;
+    old_name: string;
+    new_name: string;
+    message: string;
+}
+
+function BankDataSection() {
+    const [bankItems, setBankItems] = useState<BankDataItem[]>([]);
+    const [matchReport, setMatchReport] = useState<MatchReportData | null>(null);
+    const [autoFixResult, setAutoFixResult] = useState<AutoFixResult | null>(null);
+    const [replaceOld, setReplaceOld] = useState("");
+    const [replaceNew, setReplaceNew] = useState("");
+    const [replaceResult, setReplaceResult] = useState<ReplaceResult | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [replacing, setReplacing] = useState(false);
+    const [autoFixing, setAutoFixing] = useState(false);
+    const [showTable, setShowTable] = useState(false);
+
+    const API = process.env.NEXT_PUBLIC_FASTAPI_BASE_URL || (typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:8000` : "http://localhost:8000");
+
+    async function getCsrf(): Promise<string> {
+        const res = await fetch(`${API}/api/me`, { credentials: "include" });
+        const data = await res.json().catch(() => ({}));
+        return data.csrf_token || "";
+    }
+
+    const fetchBankData = async () => {
+        setLoading(true);
+        try {
+            const res = await fetch(`${API}/api/bank-data`, { credentials: "include" });
+            const data = await res.json();
+            if (data.ok) setBankItems(data.items || []);
+        } catch { /* ignore */ }
+        finally { setLoading(false); }
+    };
+
+    const fetchMatchReport = async () => {
+        setLoading(true);
+        try {
+            const res = await fetch(`${API}/api/bank-data/match-report`, { credentials: "include" });
+            const data = await res.json();
+            if (data.ok) setMatchReport(data.report);
+        } catch { /* ignore */ }
+        finally { setLoading(false); }
+    };
+
+    const handleReplace = async () => {
+        if (!replaceOld.trim() || !replaceNew.trim()) {
+            toast.error("Nama lama dan nama baru wajib diisi.");
+            return;
+        }
+        setReplacing(true);
+        setReplaceResult(null);
+        try {
+            const csrf = await getCsrf();
+            const res = await fetch(`${API}/api/bank-data/replace-principle-name`, {
+                method: "POST",
+                credentials: "include",
+                headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+                body: JSON.stringify({ old_name: replaceOld, new_name: replaceNew }),
+            });
+            const data = await res.json();
+            if (data.ok) {
+                setReplaceResult(data);
+                toast.success(data.message);
+            } else {
+                toast.error(data.error || "Gagal replace.");
+            }
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Error jaringan.");
+        } finally {
+            setReplacing(false);
+        }
+    };
+
+    const handleAutoFix = async (confirm: boolean) => {
+        setAutoFixing(true);
+        try {
+            const csrf = await getCsrf();
+            const res = await fetch(`${API}/api/bank-data/auto-fix-names`, {
+                method: "POST",
+                credentials: "include",
+                headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+                body: JSON.stringify({ confirm }),
+            });
+            const data = await res.json();
+            if (data.ok) {
+                setAutoFixResult(data);
+                if (confirm && data.executed) toast.success(data.message);
+                else if (!confirm) toast.info("Preview auto-fix siap. Klik Eksekusi jika setuju.");
+            } else {
+                toast.error(data.error || "Gagal auto-fix.");
+            }
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Error jaringan.");
+        } finally {
+            setAutoFixing(false);
+        }
+    };
+
+    useEffect(() => { fetchBankData(); }, []);
+
+    return (
+        <section className="mt-5 border border-white/10 bg-black/30 rounded-lg p-5 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-2 text-slate-200 font-semibold">
+                    <Database size={18} className="text-amber-400" />
+                    Data Rekening Principle
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    <button onClick={() => setShowTable(!showTable)} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-xs text-slate-300 hover:bg-white/10">
+                        {showTable ? "Tutup Tabel" : "Lihat Daftar Rekening"}
+                    </button>
+                    <button onClick={fetchMatchReport} disabled={loading} className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-xs text-slate-300 hover:bg-white/10 disabled:opacity-50">
+                        Cek Match Report
+                    </button>
+                </div>
+            </div>
+
+            {/* Daftar Rekening Table */}
+            {showTable && (
+                <div className="overflow-x-auto max-h-[300px] overflow-y-auto rounded-lg border border-white/10">
+                    <table className="w-full text-xs text-left">
+                        <thead className="bg-black/40 text-slate-400 sticky top-0">
+                            <tr>
+                                <th className="px-3 py-2">Principle</th>
+                                <th className="px-3 py-2">Bank</th>
+                                <th className="px-3 py-2">No. Rekening</th>
+                                <th className="px-3 py-2">Penerima</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                            {bankItems.map((item, i) => (
+                                <tr key={i} className={`${item.has_rekening ? "text-slate-300" : "text-slate-500 italic"}`}>
+                                    <td className="px-3 py-1.5">{item.principle}</td>
+                                    <td className="px-3 py-1.5">{item.bank}</td>
+                                    <td className="px-3 py-1.5 font-mono">{item.rekening || "(kosong)"}</td>
+                                    <td className="px-3 py-1.5">{item.penerima || "-"}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {/* Replace All Section */}
+            <div className="border border-white/10 rounded-lg p-4 bg-black/20">
+                <div className="text-sm font-semibold text-slate-300 mb-3">Replace Nama Principle (Semua Record)</div>
+                <p className="text-xs text-slate-500 mb-3">Ganti nama principle yang salah/tidak sesuai data rekening. Semua record di payments yang cocok akan diupdate.</p>
+                <div className="grid sm:grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                    <label className="block">
+                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Nama Lama (di Web)</span>
+                        <input
+                            value={replaceOld}
+                            onChange={(e) => setReplaceOld(e.target.value)}
+                            placeholder="cth: ABC PRESIDENT INDONESIA PT"
+                            className="mt-1 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-sm outline-none focus:border-amber-500"
+                        />
+                    </label>
+                    <label className="block">
+                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Nama Baru (sesuai Rekening)</span>
+                        <input
+                            value={replaceNew}
+                            onChange={(e) => setReplaceNew(e.target.value)}
+                            placeholder="cth: PT Abc President Indonesia"
+                            className="mt-1 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-sm outline-none focus:border-amber-500"
+                        />
+                    </label>
+                    <button
+                        onClick={handleReplace}
+                        disabled={replacing || !replaceOld || !replaceNew}
+                        className="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-semibold hover:bg-amber-500 disabled:opacity-50"
+                    >
+                        {replacing ? "..." : "Replace All"}
+                    </button>
+                </div>
+                {replaceResult && (
+                    <div className="mt-3 text-xs p-2 rounded bg-black/40 border border-white/10">
+                        <span className={replaceResult.replaced > 0 ? "text-emerald-400" : "text-slate-400"}>
+                            {replaceResult.message}
+                        </span>
+                    </div>
+                )}
+            </div>
+
+            {/* Auto-Fix Section */}
+            <div className="border border-white/10 rounded-lg p-4 bg-black/20">
+                <div className="text-sm font-semibold text-slate-300 mb-2">Auto-Fix Nama Principle</div>
+                <p className="text-xs text-slate-500 mb-3">
+                    Otomatis cocokkan semua nama principle di web ke format yang benar (sesuai file daftar rekening).
+                    Preview dulu, baru eksekusi.
+                </p>
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => handleAutoFix(false)}
+                        disabled={autoFixing}
+                        className="px-4 py-2 rounded-lg bg-slate-700 text-white text-sm font-semibold hover:bg-slate-600 disabled:opacity-50"
+                    >
+                        {autoFixing ? "..." : "Preview"}
+                    </button>
+                    {autoFixResult && autoFixResult.changes.length > 0 && !autoFixResult.executed && (
+                        <button
+                            onClick={() => handleAutoFix(true)}
+                            disabled={autoFixing}
+                            className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-500 disabled:opacity-50"
+                        >
+                            Eksekusi ({autoFixResult.total_records_affected} record)
+                        </button>
+                    )}
+                </div>
+                {autoFixResult && (
+                    <div className="mt-3 space-y-2 text-xs">
+                        {autoFixResult.executed && (
+                            <div className="flex items-center gap-1 text-emerald-400">
+                                <CheckCircle2 size={14} /> {autoFixResult.message}
+                            </div>
+                        )}
+                        {autoFixResult.changes.length > 0 && (
+                            <div className="overflow-x-auto max-h-[200px] overflow-y-auto rounded border border-white/10">
+                                <table className="w-full text-xs">
+                                    <thead className="bg-black/40 text-slate-400 sticky top-0">
+                                        <tr>
+                                            <th className="px-2 py-1 text-left">Nama Lama</th>
+                                            <th className="px-2 py-1 text-left">→ Nama Baru</th>
+                                            <th className="px-2 py-1 text-right">Record</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-white/5 text-slate-300">
+                                        {autoFixResult.changes.map((c, i) => (
+                                            <tr key={i}>
+                                                <td className="px-2 py-1 text-red-300">{c.old}</td>
+                                                <td className="px-2 py-1 text-emerald-300">{c.new}</td>
+                                                <td className="px-2 py-1 text-right">{c.count}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                        {autoFixResult.skipped.length > 0 && (
+                            <div>
+                                <span className="text-amber-400 flex items-center gap-1"><AlertTriangle size={12} /> Skipped ({autoFixResult.skipped.length}):</span>
+                                <ul className="ml-4 mt-1 text-slate-400 space-y-0.5">
+                                    {autoFixResult.skipped.map((s, i) => (
+                                        <li key={i}>{s.name} — <span className="text-amber-300">{s.reason}</span> ({s.count} record)</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                        {autoFixResult.changes.length === 0 && !autoFixResult.executed && (
+                            <div className="text-slate-400">Semua nama principle sudah benar atau tidak ditemukan match.</div>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* Match Report */}
+            {matchReport && (
+                <div className="border border-white/10 rounded-lg p-4 bg-black/20 space-y-3 text-xs">
+                    <div className="text-sm font-semibold text-slate-300">Match Report</div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div className="p-2 rounded bg-emerald-900/30 border border-emerald-500/20">
+                            <div className="text-emerald-400 font-bold text-lg">{matchReport.matched.length}</div>
+                            <div className="text-slate-400">Matched</div>
+                        </div>
+                        <div className="p-2 rounded bg-red-900/30 border border-red-500/20">
+                            <div className="text-red-400 font-bold text-lg">{matchReport.unmatched.length}</div>
+                            <div className="text-slate-400">Unmatched</div>
+                        </div>
+                        <div className="p-2 rounded bg-amber-900/30 border border-amber-500/20">
+                            <div className="text-amber-400 font-bold text-lg">{matchReport.ambiguous.length}</div>
+                            <div className="text-slate-400">Ambiguous</div>
+                        </div>
+                        <div className="p-2 rounded bg-slate-800/50 border border-white/10">
+                            <div className="text-slate-300 font-bold text-lg">{matchReport.empty_rekening.length}</div>
+                            <div className="text-slate-400">Rek. Kosong</div>
+                        </div>
+                    </div>
+                    {matchReport.unmatched.length > 0 && (
+                        <div>
+                            <span className="text-red-400 font-semibold">Unmatched:</span>
+                            <ul className="ml-3 mt-1 text-slate-400 space-y-0.5">{matchReport.unmatched.map((n, i) => <li key={i}>{n}</li>)}</ul>
+                        </div>
+                    )}
+                    {matchReport.ambiguous.length > 0 && (
+                        <div>
+                            <span className="text-amber-400 font-semibold">Ambiguous:</span>
+                            <ul className="ml-3 mt-1 text-slate-400 space-y-0.5">{matchReport.ambiguous.map((n, i) => <li key={i}>{n}</li>)}</ul>
+                        </div>
+                    )}
+                </div>
+            )}
+        </section>
+    );
 }
 
 export default function PaymentsSppdSettingsPage() {
@@ -301,6 +632,8 @@ export default function PaymentsSppdSettingsPage() {
                     </div>
                 )}
             </section>
+
+            <BankDataSection />
         </div>
     );
 }

@@ -13,6 +13,7 @@ import { AlertCircle, CheckCircle2, DollarSign, Download, FileUp, RefreshCcw, Sa
 import { toast } from "sonner";
 import { accurateFetch } from "@/lib/apiFetcher";
 import DatePickerField from "@/components/ui/DatePickerField";
+import { fuzzyMatch } from "@/lib/fuzzySearch";
 
 interface FinanceMapping {
     principle?: string;
@@ -280,12 +281,12 @@ export default function FinancePage() {
     };
 
     const filtered = useMemo(() => {
-        const q = search.toLowerCase();
+        if (!search.trim()) return records;
         return records.filter((r) =>
-            (r.principle || "").toLowerCase().includes(q) ||
-            (r.draft_label || "").toLowerCase().includes(q) ||
-            (r.invoice_concat || "").toLowerCase().includes(q) ||
-            (r.sppd_no || "").toLowerCase().includes(q)
+            fuzzyMatch(r.principle, search) ||
+            fuzzyMatch(r.draft_label, search) ||
+            fuzzyMatch(r.invoice_concat, search) ||
+            fuzzyMatch(r.sppd_no, search)
         );
     }, [records, search]);
 

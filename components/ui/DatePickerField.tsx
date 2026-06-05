@@ -123,7 +123,7 @@ export default function DatePickerField({
                         <ChevronRight size={16} />
                     </button>
                 </div>
-                <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold uppercase text-slate-500">
+                <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold uppercase text-slate-300">
                     {weekdays.map((day) => (
                         <div key={day} className={day === "Min" ? "text-red-300" : ""}>{day}</div>
                     ))}
@@ -157,10 +157,10 @@ export default function DatePickerField({
                                 }}
                                 className={cn(
                                     "relative flex h-9 items-center justify-center rounded-lg border text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-45",
-                                    outside && !redDate && "border-transparent text-slate-700",
-                                    outside && redDate && "border-red-500/20 bg-red-500/5 text-red-400/70",
-                                    !outside && !redDate && !selected && "border-white/5 text-slate-200 hover:border-white/20 hover:bg-white/10",
-                                    redDate && !selected && "border-red-500/50 bg-red-500/10 text-red-300 hover:border-red-300 hover:bg-red-500/20 hover:text-red-100 focus-visible:ring-red-400/70",
+                                    outside && !redDate && "border-white/5 text-slate-400",
+                                    outside && redDate && "border-red-500/30 bg-red-500/10 text-red-300/80",
+                                    !outside && !redDate && !selected && "border-white/10 text-white hover:border-white/30 hover:bg-white/10",
+                                    redDate && !selected && !outside && "border-red-400/60 bg-red-500/15 text-red-200 hover:border-red-300 hover:bg-red-500/25 hover:text-red-100 focus-visible:ring-red-400/70",
                                     redDate && "font-bold",
                                     selected && !redDate && "border-emerald-400 bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 focus-visible:ring-emerald-300/70",
                                     selected && redDate && "border-red-200 bg-red-600 text-white shadow-lg shadow-red-500/25 ring-2 ring-red-300/80 focus-visible:ring-red-100",
@@ -191,7 +191,7 @@ export default function DatePickerField({
                         );
                     })}
                 </div>
-                <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-[11px] text-red-100">
+                <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-50">
                     Tanggal merah: libur nasional/cuti bersama Indonesia. Hari Minggu otomatis merah.
                 </div>
             </div>,

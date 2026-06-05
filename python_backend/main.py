@@ -53,6 +53,13 @@ from payments import (
     validator_promo_template_rows,
     validator_sales_template_rows,
 )
+from principle_matcher import (
+    normalize_principle_name,
+    get_principle_match_key,
+    find_best_match,
+    build_normalized_key_map,
+    generate_import_report,
+)
 try:
     import bcrypt as _bcrypt  # type: ignore
 except Exception:
@@ -2148,26 +2155,70 @@ def render_sppd_docx(
             z.writestr(name, content)
 
 def load_bank_map() -> Dict[str, Dict[str, str]]:
+    """
+    Load data rekening dari Excel. Key = UPPERCASE principle name.
+    Juga menyimpan normalized key untuk fuzzy matching.
+    Nomor rekening disimpan sebagai string agar leading zeros tidak hilang.
+    Data kosong (DF/VA tanpa nomor rekening) tetap disimpan apa adanya, tidak dikarang.
+    """
     if not BANK_DATA_PATH or not os.path.exists(BANK_DATA_PATH):
         return {}
-    df = pd.read_excel(BANK_DATA_PATH)
-    cols = {c.strip().upper(): c for c in df.columns}
-    required = ["PRINCIPLE", "NAMA BANK", "NOMOR REKENING", "NAMA PENERIMA"]
-    missing = [c for c in required if c not in cols]
-    if missing:
+    # Try reading with header auto-detection: the Excel might have header at row 0 or row 2
+    # First attempt: standard read
+    try:
+        df = pd.read_excel(BANK_DATA_PATH, dtype=str)
+        cols = {c.strip().upper(): c for c in df.columns}
+        required = ["PRINCIPLE", "NAMA BANK", "NOMOR REKENING", "NAMA PENERIMA"]
+        missing = [c for c in required if c not in cols]
+        if missing:
+            # Try with header at row 2 (common format from rekprinciple.xlsx)
+            df = pd.read_excel(BANK_DATA_PATH, header=2, dtype=str)
+            cols = {c.strip().upper(): c for c in df.columns}
+            missing = [c for c in required if c not in cols]
+            if missing:
+                return {}
+    except Exception:
         return {}
     mp = {}
     for _, r in df.iterrows():
-        p = s(r[cols["PRINCIPLE"]])
+        raw_p = r.get(cols.get("PRINCIPLE", ""), None)
+        p = s(raw_p) if raw_p is not None and not pd.isna(raw_p) else ""
         if not p:
             continue
+        # Nomor rekening: pastikan string, jangan convert ke float
+        raw_rek = r.get(cols.get("NOMOR REKENING", ""), None)
+        if raw_rek is None or pd.isna(raw_rek):
+            rek_str = ""
+        else:
+            rek_str = str(raw_rek).strip()
+            # Hapus trailing .0 jika pandas membaca sebagai float
+            if rek_str.endswith(".0"):
+                rek_str = rek_str[:-2]
+
+        raw_bank = r.get(cols.get("NAMA BANK", ""), None)
+        bank_val = s(raw_bank) if raw_bank is not None and not pd.isna(raw_bank) else ""
+        raw_pen = r.get(cols.get("NAMA PENERIMA", ""), None)
+        penerima_val = s(raw_pen) if raw_pen is not None and not pd.isna(raw_pen) else ""
+
+        # Jika bank = DF/VA dan rekening kosong, jangan mengarang
+        # Simpan apa adanya
         mp[p.upper()] = {
-            "principle": p,
-            "bank": s(r[cols["NAMA BANK"]]),
-            "rekening": s(r[cols["NOMOR REKENING"]]),
-            "penerima": s(r[cols["NAMA PENERIMA"]]),
+            "principle": normalize_principle_name(p),
+            "bank": bank_val,
+            "rekening": rek_str,
+            "penerima": penerima_val,
         }
     return mp
+
+
+def load_bank_map_with_normalized_keys() -> Tuple[Dict[str, Dict[str, str]], Dict[str, str]]:
+    """
+    Load bank map + pre-build normalized keys untuk fuzzy matching.
+    Returns: (bank_map, normalized_key_map)
+    """
+    bank_map = load_bank_map()
+    norm_keys = build_normalized_key_map(bank_map)
+    return bank_map, norm_keys
 
 def write_invoice_excel(rows: List[Dict[str, Any]], out_path: str):
     cols = [
@@ -6558,15 +6609,14 @@ async def payments_cart_submit(request: Request):
     sppd_file = None
     sppd_no = None
     if method == "BANK_PANIN":
-        bank_map = load_bank_map()
+        bank_map, norm_keys = load_bank_map_with_normalized_keys()
         transfer_items = []
         total_all = 0.0
         for group_key, recs in groups.items():
             principle = s(recs[0].get("principle", ""))
-            key = principle.upper()
-            if key not in bank_map:
-                return JSONResponse(status_code=400, content={"ok": False, "error": f"Data rekening untuk principle '{principle}' tidak ditemukan."})
-            info = bank_map[key]
+            info, match_status = find_best_match(principle, bank_map, norm_keys)
+            if not info or match_status == "ambiguous":
+                return JSONResponse(status_code=400, content={"ok": False, "error": f"Data rekening untuk principle '{principle}' tidak ditemukan. Status: {match_status}"})
             cart_info = item_map.get(group_key, {})
             amount = float(cart_info.get("nilai_pembayaran", 0.0) or 0.0)
             total_all += amount
@@ -6726,14 +6776,13 @@ async def payments_submit(request: Request):
     sppd_file = None
     sppd_no = None
     if method == "BANK_PANIN":
-        bank_map = load_bank_map()
+        bank_map, norm_keys = load_bank_map_with_normalized_keys()
         transfer_items = []
         total_all = 0.0
         for principle, recs in groups.items():
-            key = principle.upper()
-            if key not in bank_map:
-                return JSONResponse(status_code=400, content={"ok": False, "error": f"Data rekening untuk principle '{principle}' tidak ditemukan."})
-            info = bank_map[key]
+            info, match_status = find_best_match(principle, bank_map, norm_keys)
+            if not info or match_status == "ambiguous":
+                return JSONResponse(status_code=400, content={"ok": False, "error": f"Data rekening untuk principle '{principle}' tidak ditemukan. Status: {match_status}"})
             amount = sum(parse_number_id(r.get("nilai_invoice", r.get("nilai_principle", 0))) for r in recs)
             total_all += amount
             transfer_items.append(
@@ -6853,6 +6902,294 @@ async def payments_sppd_settings_save(request: Request):
         "next_sequence": next_seq,
         "preview_number": format_sppd_number_with_template(next_seq, preview_dt, s(settings.get("number_template", ""))),
     })
+
+
+# ---------------------------
+# Bank Data / Rekening Principle Endpoints
+# ---------------------------
+
+@app.get("/api/bank-data")
+def get_bank_data(request: Request):
+    """Get all bank/rekening data from Excel master."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    bank_map = load_bank_map()
+    items = []
+    for key, info in bank_map.items():
+        items.append({
+            "principle": info["principle"],
+            "bank": info["bank"],
+            "rekening": info["rekening"],
+            "penerima": info["penerima"],
+            "has_rekening": bool(info["rekening"].strip()),
+        })
+    return {"ok": True, "items": items, "total": len(items), "source": BANK_DATA_PATH}
+
+
+@app.get("/api/bank-data/match-report")
+def get_bank_data_match_report(request: Request):
+    """
+    Generate report matching antara nama principle di payments.json vs data rekening Excel.
+    Berguna untuk verifikasi sebelum submit SPPD.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    bank_map = load_bank_map()
+    # Kumpulkan semua principle names dari payments DB
+    db = load_payments_db()
+    web_principles = set()
+    for rec_key, r in db.get("lpb", {}).items():
+        p = s(r.get("principle", ""))
+        if p:
+            web_principles.add(p)
+    report = generate_import_report(bank_map, list(web_principles))
+    return {
+        "ok": True,
+        "report": report,
+        "total_excel_principles": len(bank_map),
+        "total_web_principles": len(web_principles),
+    }
+
+
+@app.post("/api/bank-data/upload")
+async def upload_bank_data(request: Request, file: UploadFile = File(None)):
+    """
+    Upload file Excel rekening principle baru. Menggantikan file existing.
+    Validasi: harus punya kolom PRINCIPLE, NAMA BANK, NOMOR REKENING, NAMA PENERIMA.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "sppd", "edit_settings"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    csrf_token = request.headers.get("X-CSRF-Token", "")
+    if not validate_csrf_request(request, csrf_token):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
+    if file is None:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "File Excel belum diupload."})
+    try:
+        content = await read_upload_file_limited(
+            file,
+            max_bytes=MAX_EXCEL_UPLOAD_BYTES,
+            allowed_exts=(".xlsx", ".xls"),
+            label="File Rekening",
+        )
+        # Validasi kolom
+        df = pd.read_excel(io.BytesIO(content), dtype=str)
+        cols = {c.strip().upper(): c for c in df.columns}
+        required = ["PRINCIPLE", "NAMA BANK", "NOMOR REKENING", "NAMA PENERIMA"]
+        missing = [c for c in required if c not in cols]
+        if missing:
+            # Try header at row 2
+            df = pd.read_excel(io.BytesIO(content), header=2, dtype=str)
+            cols = {c.strip().upper(): c for c in df.columns}
+            missing = [c for c in required if c not in cols]
+        if missing:
+            return JSONResponse(status_code=400, content={
+                "ok": False,
+                "error": f"Kolom wajib tidak ditemukan: {', '.join(missing)}. Kolom yang ada: {', '.join(df.columns.tolist())}"
+            })
+        # Hitung jumlah baris valid
+        valid_count = 0
+        for _, r in df.iterrows():
+            p = s(r[cols["PRINCIPLE"]])
+            if p:
+                valid_count += 1
+        if valid_count == 0:
+            return JSONResponse(status_code=400, content={"ok": False, "error": "Tidak ada baris dengan data Principle valid."})
+        # Simpan file (overwrite)
+        with open(BANK_DATA_PATH, "wb") as f:
+            f.write(content)
+        # Generate report
+        new_bank_map = load_bank_map()
+        db = load_payments_db()
+        web_principles = set()
+        for rec_key, r in db.get("lpb", {}).items():
+            p = s(r.get("principle", ""))
+            if p:
+                web_principles.add(p)
+        report = generate_import_report(new_bank_map, list(web_principles))
+        append_audit_log(user, "bank_data_upload", "bank_data", {
+            "filename": file.filename,
+            "total_principles": valid_count,
+            "matched": len(report["matched"]),
+            "unmatched": len(report["unmatched"]),
+            "ambiguous": len(report["ambiguous"]),
+        })
+        return {
+            "ok": True,
+            "message": f"File rekening berhasil diupload. {valid_count} principle ditemukan.",
+            "total_principles": valid_count,
+            "report": report,
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": f"Gagal memproses file: {str(e)}"})
+
+
+@app.get("/api/bank-data/lookup")
+def lookup_bank_data(request: Request):
+    """
+    Lookup rekening untuk satu principle name tertentu (fuzzy match).
+    Query param: ?principle=NAMA
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    principle_name = s(request.query_params.get("principle", ""))
+    if not principle_name:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "Parameter 'principle' wajib diisi."})
+    bank_map, norm_keys = load_bank_map_with_normalized_keys()
+    info, status = find_best_match(principle_name, bank_map, norm_keys)
+    if info:
+        return {
+            "ok": True,
+            "status": status,
+            "data": {
+                "principle": info["principle"],
+                "bank": info["bank"],
+                "rekening": info["rekening"],
+                "penerima": info["penerima"],
+                "has_rekening": bool(info["rekening"].strip()),
+            },
+        }
+    return {"ok": True, "status": status, "data": None, "message": f"Tidak ditemukan rekening untuk '{principle_name}'."}
+
+
+@app.post("/api/bank-data/replace-principle-name")
+async def replace_principle_name(request: Request):
+    """
+    Replace All: Ganti semua occurrence nama principle lama dengan nama baru di payments.json.
+    Body JSON: { "old_name": "...", "new_name": "..." }
+    Berguna ketika nama principle di web tidak sesuai data rekening.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "sppd", "edit_settings"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    csrf_token = request.headers.get("X-CSRF-Token", "")
+    if not validate_csrf_request(request, csrf_token):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "Body JSON tidak valid."})
+    old_name = s(payload.get("old_name", ""))
+    new_name = s(payload.get("new_name", ""))
+    if not old_name:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "old_name wajib diisi."})
+    if not new_name:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "new_name wajib diisi."})
+    if old_name == new_name:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "old_name dan new_name tidak boleh sama."})
+
+    db = load_payments_db()
+    replaced_count = 0
+    replaced_keys: List[str] = []
+    for rec_key, rec in db.get("lpb", {}).items():
+        current = s(rec.get("principle", ""))
+        # Case-insensitive comparison for matching
+        if current.upper() == old_name.upper():
+            rec["principle"] = new_name
+            replaced_count += 1
+            replaced_keys.append(rec_key)
+    if replaced_count > 0:
+        save_payments_db(db)
+        append_audit_log(user, "replace_principle_name", "lpb", {
+            "old_name": old_name,
+            "new_name": new_name,
+            "count": replaced_count,
+            "samples": replaced_keys[:20],
+        })
+    return {
+        "ok": True,
+        "replaced": replaced_count,
+        "old_name": old_name,
+        "new_name": new_name,
+        "message": f"Berhasil mengganti {replaced_count} record dari '{old_name}' menjadi '{new_name}'." if replaced_count > 0 else f"Tidak ada record dengan principle '{old_name}'.",
+    }
+
+
+@app.post("/api/bank-data/auto-fix-names")
+async def auto_fix_principle_names(request: Request):
+    """
+    Auto-fix: Untuk semua principle di payments.json yang bisa di-match (non-ambiguous)
+    ke data rekening Excel, ganti namanya agar konsisten dengan format Excel.
+    Dry-run by default (preview only). Kirim { "confirm": true } untuk eksekusi.
+    """
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "sppd", "edit_settings"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    csrf_token = request.headers.get("X-CSRF-Token", "")
+    if not validate_csrf_request(request, csrf_token):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    confirm = bool(payload.get("confirm", False))
+
+    bank_map, norm_keys = load_bank_map_with_normalized_keys()
+    db = load_payments_db()
+
+    # Collect unique principle names from payments
+    name_counts: Dict[str, int] = {}
+    for rec_key, rec in db.get("lpb", {}).items():
+        p = s(rec.get("principle", ""))
+        if p:
+            name_counts[p] = name_counts.get(p, 0) + 1
+
+    changes: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, str]] = []
+    already_correct: List[str] = []
+
+    for web_name, count in name_counts.items():
+        info, status = find_best_match(web_name, bank_map, norm_keys)
+        if status == "matched" and info:
+            excel_name = info["principle"]
+            if web_name != excel_name:
+                changes.append({"old": web_name, "new": excel_name, "count": count})
+            else:
+                already_correct.append(web_name)
+        elif status == "ambiguous":
+            skipped.append({"name": web_name, "reason": "ambiguous", "count": str(count)})
+        else:
+            skipped.append({"name": web_name, "reason": "unmatched", "count": str(count)})
+
+    total_records_affected = sum(c["count"] for c in changes)
+
+    if confirm and changes:
+        # Execute the renames
+        for change in changes:
+            old = change["old"]
+            new = change["new"]
+            for rec_key, rec in db.get("lpb", {}).items():
+                if s(rec.get("principle", "")) == old:
+                    rec["principle"] = new
+        save_payments_db(db)
+        append_audit_log(user, "auto_fix_principle_names", "lpb", {
+            "changes": changes,
+            "total_records": total_records_affected,
+        })
+
+    return {
+        "ok": True,
+        "executed": confirm and bool(changes),
+        "changes": changes,
+        "skipped": skipped,
+        "already_correct": already_correct,
+        "total_records_affected": total_records_affected,
+        "message": (
+            f"Berhasil mengupdate {total_records_affected} record ({len(changes)} nama principle)."
+            if confirm and changes
+            else f"Preview: {len(changes)} nama akan diubah ({total_records_affected} record). Kirim confirm=true untuk eksekusi."
+        ),
+    }
+
 
 @app.get("/payments/finance/data")
 def payments_finance_data(request: Request):
