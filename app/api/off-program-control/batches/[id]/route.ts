@@ -1,9 +1,17 @@
+/*
+ * Tujuan: API detail dan revisi pengajuan OFF Program Control.
+ * Caller: Halaman OFF Program Control saat membuka detail atau menyimpan revisi.
+ * Dependensi: Better Auth OFF session, Drizzle SQLite, helper workflow/data OFF.
+ * Main Functions: GET detail pengajuan, PATCH revisi pengajuan.
+ * Side Effects: DB read/write SQLite, audit log OFF.
+ */
+
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem } from "@/db/schema";
-import { buildNoPengajuan, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, findDuplicateNoSuratWithinPayload, findOffNoSuratConflicts, getPrincipleByCode, getPrincipleByName, getBatchWithItems, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, writeOffAudit } from "@/lib/off-program-control";
+import { buildNoPengajuan, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, findDuplicateNoSuratWithinPayload, findOffNoSuratConflicts, getPrincipleByCode, getPrincipleByName, getBatchWithItems, isOffPeriodClosedForBatch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, writeOffAudit } from "@/lib/off-program-control";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -76,14 +84,17 @@ export async function GET(_request: Request, context: Context) {
 export async function PATCH(request: Request, context: Context) {
     try {
         const actor = await requireOffSession();
-        if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+        if (!actor) return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." }, { status: 401 });
         if (!canActorPerformOffAction(actor, "edit_returned_batch")) {
             return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses edit batch OFF." }, { status: 403 });
         }
 
         const { id } = await context.params;
         const data = await getBatchWithItems(id);
-        if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
+        if (!data) return NextResponse.json({ ok: false, error: "Pengajuan tidak ditemukan." }, { status: 404 });
+        if (actor.role !== "admin" && await isOffPeriodClosedForBatch(data.batch)) {
+            return NextResponse.json({ ok: false, error: "Periode ini sudah ditutup dan tidak dapat diubah." }, { status: 409 });
+        }
         if (data.batch.locked) return NextResponse.json({ ok: false, error: "Batch sudah approved oleh SM dan terkunci untuk Supervisor." }, { status: 409 });
         if (!["Draft", "Returned by SM", "Returned by Claim"].includes(data.batch.status) && !["Returned"].includes(data.batch.smStatus) && !["Returned"].includes(data.batch.claimStatus)) {
             return NextResponse.json({ ok: false, error: "Batch hanya bisa diedit saat Draft atau Returned/Rejected dan belum terkunci." }, { status: 409 });

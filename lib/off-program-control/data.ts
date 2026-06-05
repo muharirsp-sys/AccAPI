@@ -1,10 +1,18 @@
+/*
+ * Tujuan: Helper data access OFF Program Control untuk session, batch detail, audit, konflik No Surat, dan status periode.
+ * Caller: Route API OFF Program Control.
+ * Dependensi: Better Auth, Drizzle SQLite, schema OFF, resolver akses OFF.
+ * Main Functions: requireOffSession, getBatchWithItems, findOffNoSuratConflicts, writeOffAudit, isOffPeriodClosedForBatch.
+ * Side Effects: DB read/write SQLite dan baca header session.
+ */
+
 import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
-import { and, asc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { offAuditLog, offBatch, offBatchItem, offPayment } from "@/db/schema";
-import type { OffActor } from "./types";
+import { offAuditLog, offBatch, offBatchItem, offPayment, offPeriodClosure } from "@/db/schema";
+import type { OffActor, OffBatchRow } from "./types";
 import { canPerformOffAction, resolveOffRole, type OffAction } from "./access";
 
 // Status batch yang No Surat-nya dianggap sudah dibatalkan / dibebaskan.
@@ -59,6 +67,42 @@ export async function getBatchWithItems(batchId: string) {
     const items = await db.select().from(offBatchItem).where(eq(offBatchItem.batchId, batchId)).orderBy(asc(offBatchItem.itemNo));
     const payments = await db.select().from(offPayment).where(eq(offPayment.batchId, batchId)).orderBy(asc(offPayment.paymentNo));
     return { batch, items, payments };
+}
+
+async function ensurePeriodClosureTable() {
+    await db.run(sql`
+        CREATE TABLE IF NOT EXISTS off_period_closure (
+            id TEXT PRIMARY KEY,
+            principle_code TEXT NOT NULL,
+            principle_name TEXT NOT NULL,
+            bulan TEXT NOT NULL,
+            tahun TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Terbuka',
+            total_submitted REAL NOT NULL DEFAULT 0,
+            total_claimed REAL NOT NULL DEFAULT 0,
+            submitted_count INTEGER NOT NULL DEFAULT 0,
+            claimed_count INTEGER NOT NULL DEFAULT 0,
+            closed_by TEXT,
+            closed_at INTEGER,
+            unlocked_by TEXT,
+            unlocked_at INTEGER,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+    `);
+}
+
+export async function isOffPeriodClosedForBatch(batch: Pick<OffBatchRow, "principleCode" | "bulan" | "tahun">) {
+    await ensurePeriodClosureTable();
+    const [period] = await db
+        .select({ status: offPeriodClosure.status })
+        .from(offPeriodClosure)
+        .where(and(
+            eq(offPeriodClosure.principleCode, batch.principleCode),
+            eq(offPeriodClosure.bulan, batch.bulan),
+            eq(offPeriodClosure.tahun, batch.tahun),
+        ));
+    return period?.status === "Ditutup" || period?.status === "Dikunci";
 }
 
 /**

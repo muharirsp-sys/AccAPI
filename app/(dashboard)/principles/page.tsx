@@ -1,3 +1,10 @@
+/*
+ * Tujuan: Halaman manajemen master principle dengan upload Excel dan daftar master aktif bergaya warm luxury.
+ * Caller: Route dashboard `/principles`.
+ * Dependensi: FastAPI `/api/principles`, toast Sonner, ikon lucide-react.
+ * Main Functions: `PrincipleManagementPage`, `fetchPrinciples`, `handleUpload`, `handleDelete`.
+ * Side Effects: HTTP read/write ke FastAPI, upload file Excel, konfirmasi hapus via browser.
+ */
 "use client";
 
 import { useEffect, useState } from "react";
@@ -19,7 +26,7 @@ const api = {
         if (!res.ok) throw new Error("Fetch failed");
         return { data: await res.json(), status: res.status, ok: res.ok };
     },
-    post: async (url: string, data?: any) => {
+    post: async (url: string, data?: unknown) => {
         const fetchUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
         const isFormData = data instanceof FormData;
         const res = await fetch(fetchUrl, {
@@ -51,7 +58,7 @@ export default function PrincipleManagementPage() {
         try {
             const res = await api.get("/api/principles");
             if (res.data.ok) setPrinciples(res.data.principles);
-        } catch (err) {
+        } catch {
             toast.error("Gagal memuat Master Principles. Pastikan Python backend menyala.");
         } finally {
             setLoading(false);
@@ -75,7 +82,7 @@ export default function PrincipleManagementPage() {
                 toast.success("Berhasil mengunggah Data Master.");
                 fetchPrinciples();
             } else toast.error("Gagal mengunggah: " + res.data.error);
-        } catch (err) { toast.error("Error jaringan saat upload Master."); } 
+        } catch { toast.error("Error jaringan saat upload Master."); }
         finally { setIsUploading(false); }
     };
 
@@ -87,14 +94,14 @@ export default function PrincipleManagementPage() {
                 toast.success("Principle Master berhasil dihapus.");
                 fetchPrinciples();
             } else toast.error("Gagal menghapus: " + res.data.error);
-        } catch (e: any) { toast.error("Error jaringan saat menghapus Master."); }
+        } catch { toast.error("Error jaringan saat menghapus Master."); }
     };
 
     return (
         <div className="max-w-[1200px] mx-auto pb-12">
             <div className="mb-8">
                 <h1 className="text-3xl font-bold text-white tracking-tight flex items-center gap-3">
-                    <Database className="text-blue-500" />
+                    <Database className="text-[#9a7a45]" />
                     Manajemen Master Principle
                 </h1>
                 <p className="text-slate-400 mt-2 text-lg">Unggah dan kelola data master excel rujukan per Principle (Dibutuhkan untuk Summary Promo AI Regex).</p>
@@ -106,7 +113,7 @@ export default function PrincipleManagementPage() {
                 <div className="lg:col-span-1 bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-white/10 relative overflow-hidden h-fit">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-3xl -mr-16 -mt-16"></div>
                     <div className="flex items-center gap-3 mb-6 relative">
-                        <Upload className="text-blue-400" size={24} />
+                        <Upload className="text-[#9a7a45]" size={24} />
                         <h2 className="text-lg font-bold text-white">Tambah Baru</h2>
                     </div>
 
@@ -119,7 +126,7 @@ export default function PrincipleManagementPage() {
                                 value={newPrincipleName}
                                 onChange={e => setNewPrincipleName(e.target.value)}
                                 placeholder="Cth: PT. Unilever"
-                                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-slate-300 outline-none focus:ring-1 focus:ring-blue-500/50"
+                                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-slate-300 outline-none focus:ring-1 focus:ring-[#c79a3f]/50"
                             />
                         </div>
 

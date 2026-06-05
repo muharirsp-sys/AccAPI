@@ -1,3 +1,11 @@
+/*
+ * Tujuan: API pencatatan pembayaran Keuangan untuk pengajuan OFF Program Control.
+ * Caller: Halaman OFF Program Control tab Keuangan.
+ * Dependensi: Better Auth OFF session, Drizzle SQLite, file upload bukti bayar, helper pembayaran OFF.
+ * Main Functions: POST finance-payment.
+ * Side Effects: DB write SQLite, file I/O bukti bayar, audit log OFF.
+ */
+
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -5,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { db } from "@/lib/db";
 import { offBatch, offPayment } from "@/db/schema";
-import { canActorPerformOffAction, canProcessFinancePayment, computeOffFinancePaymentSummary, computeOffPaymentSummary, getBatchWithItems, normalizeOffPaymentMethod, parseCurrency, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { canActorPerformOffAction, canProcessFinancePayment, computeOffFinancePaymentSummary, computeOffPaymentSummary, getBatchWithItems, isOffPeriodClosedForBatch, normalizeOffPaymentMethod, parseCurrency, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -24,19 +32,22 @@ function proofMimeOk(type: string) {
 export async function POST(request: Request, context: Context) {
     try {
         const actor = await requireOffSession();
-        if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+        if (!actor) return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." }, { status: 401 });
         if (!canActorPerformOffAction(actor, "finance_payment")) return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses pembayaran Keuangan." }, { status: 403 });
         const { id } = await context.params;
         const data = await getBatchWithItems(id);
-        if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
+        if (!data) return NextResponse.json({ ok: false, error: "Pengajuan tidak ditemukan." }, { status: 404 });
+        if (actor.role !== "admin" && await isOffPeriodClosedForBatch(data.batch)) {
+            return NextResponse.json({ ok: false, error: "Periode ini sudah ditutup dan tidak dapat diubah." }, { status: 409 });
+        }
         if (data.batch.smStatus !== "Approved by SM" || data.batch.claimStatus !== "Approved") {
-            return NextResponse.json({ ok: false, error: "Batch belum lengkap approval SM dan Claim." }, { status: 409 });
+            return NextResponse.json({ ok: false, error: "Pengajuan belum lengkap persetujuan Sales Manager dan Klaim." }, { status: 409 });
         }
         if (data.batch.omStatus !== "Approved") {
-            return NextResponse.json({ ok: false, error: "Batch belum Approved by OM." }, { status: 409 });
+            return NextResponse.json({ ok: false, error: "Pengajuan belum disetujui OM." }, { status: 409 });
         }
         if (!canProcessFinancePayment(data.batch)) {
-            return NextResponse.json({ ok: false, error: "Batch tidak sedang menunggu pembayaran Keuangan." }, { status: 409 });
+            return NextResponse.json({ ok: false, error: "Pengajuan tidak sedang menunggu pembayaran Keuangan." }, { status: 409 });
         }
 
         const formData = await request.formData();

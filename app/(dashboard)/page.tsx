@@ -1,10 +1,10 @@
-// Tujuan: Landing dashboard untuk akses cepat modul operasional Smart ERP dengan satu pintu Accurate.
+// Tujuan: Landing dashboard bergaya Executive Control Tower untuk akses cepat modul operasional Smart ERP dengan satu pintu Accurate.
 // Caller: Route Next.js dashboard `/`.
 // Dependensi: `lucide-react`, `next/link`, Better Auth, Drizzle user, helper RBAC, daftar modul lokal.
-// Main Functions: `DashboardLanding`, `MODULES`.
+// Main Functions: `DashboardLanding`, `MODULES`, kartu modul warm luxury.
 // Side Effects: DB read user permissions dan navigasi via link.
 
-import { Percent, CalendarCheck2, DollarSign, Wallet, Database, ArrowRight, Settings2, ShieldCheck, Cpu } from "lucide-react";
+import { Percent, CalendarCheck2, DollarSign, Wallet, Database, ArrowRight, Settings2, ShieldCheck, Cpu, ClipboardCheck } from "lucide-react";
 import Link from "next/link";
 import { headers } from "next/headers";
 import { eq } from "drizzle-orm";
@@ -16,11 +16,11 @@ import { canAccessPath, normalizeRole } from "@/lib/rbac";
 const MODULES = [
     {
         title: "AOL Form Engine",
-        desc: "API Injector ke Accurate Online massal. Bypass web forms.",
+        desc: "API Injector ke Accurate Online secara bulk. Bypass web forms.",
         icon: Settings2,
         href: "/api-wrapper",
-        color: "from-indigo-500/20 to-indigo-600/5",
-        iconColor: "text-indigo-400",
+        color: "from-[#f2d28a]/35 to-[#fff8ea]/20",
+        iconColor: "text-[#9a6b23]",
         border: "border-indigo-500/20 hover:border-indigo-400/50"
     },
     {
@@ -28,8 +28,8 @@ const MODULES = [
         desc: "Lakukan validasi data potongan diskon manual secara bulk.",
         icon: Percent,
         href: "/validator",
-        color: "from-emerald-500/20 to-emerald-600/5",
-        iconColor: "text-emerald-400",
+        color: "from-[#f5dfad]/34 to-[#fff8ea]/20",
+        iconColor: "text-[#8f6c2f]",
         border: "border-emerald-500/20 hover:border-emerald-400/50"
     },
     {
@@ -37,17 +37,26 @@ const MODULES = [
         desc: "Ekstraksi PDF otomatis dengan regex AI dan kompilasi SPT.",
         icon: CalendarCheck2,
         href: "/summary",
-        color: "from-sky-500/20 to-sky-600/5",
-        iconColor: "text-sky-400",
+        color: "from-[#edd09a]/34 to-[#fff4df]/18",
+        iconColor: "text-[#9b742d]",
         border: "border-sky-500/20 hover:border-sky-400/50"
+    },
+    {
+        title: "OFF Program Control",
+        desc: "Kontrol pengajuan OFF, approval, pembayaran, dan audit batch.",
+        icon: ClipboardCheck,
+        href: "/off-program-control",
+        color: "from-[#f0d596]/34 to-[#fff8ea]/20",
+        iconColor: "text-[#84682e]",
+        border: "border-teal-500/20 hover:border-teal-400/50"
     },
     {
         title: "Finance",
         desc: "Review transfer, bukti pembayaran, dan posting purchase-payment.",
         icon: DollarSign,
         href: "/finance",
-        color: "from-purple-500/20 to-purple-600/5",
-        iconColor: "text-purple-400",
+        color: "from-[#e8c174]/32 to-[#fff2d5]/18",
+        iconColor: "text-[#8d5a24]",
         border: "border-purple-500/20 hover:border-purple-400/50"
     },
     {
@@ -55,8 +64,8 @@ const MODULES = [
         desc: "Manajemen LPB / CBD dan auto-generate draft cart SPPD.",
         icon: Wallet,
         href: "/payments",
-        color: "from-rose-500/20 to-rose-600/5",
-        iconColor: "text-rose-400",
+        color: "from-[#f3dba5]/34 to-[#fff6e4]/18",
+        iconColor: "text-[#966b2f]",
         border: "border-rose-500/20 hover:border-rose-400/50"
     },
     {
@@ -64,8 +73,8 @@ const MODULES = [
         desc: "Konfigurasi kamus data principle untuk PDF Extraction AI.",
         icon: Database,
         href: "/principles",
-        color: "from-cyan-500/20 to-cyan-600/5",
-        iconColor: "text-cyan-400",
+        color: "from-[#ead7b4]/38 to-[#fff9ed]/18",
+        iconColor: "text-[#7e653d]",
         border: "border-cyan-500/20 hover:border-cyan-400/50"
     }
 ];
@@ -83,18 +92,19 @@ export default async function DashboardLanding() {
     return (
         <div className="max-w-7xl mx-auto pb-12 pt-4 selection:bg-indigo-500/30">
             {/* Hero Section */}
-            <div className="relative rounded-3xl overflow-hidden bg-gradient-to-br from-[#1a1c23] to-[#0f1115] border border-white/10 p-8 md:p-14 mb-10 shadow-2xl">
+            <div className="relative rounded-[2rem] overflow-hidden bg-gradient-to-br from-[#fffaf0]/90 via-[#f8ead1]/78 to-[#ead2a5]/58 border border-white/10 p-8 md:p-14 mb-10 shadow-2xl">
                 <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[100px] -mr-48 -mt-48 pointer-events-none"></div>
-                <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-emerald-500/5 rounded-full blur-[80px] -ml-32 -mb-32 pointer-events-none"></div>
+                <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-emerald-500/10 rounded-full blur-[80px] -ml-32 -mb-32 pointer-events-none"></div>
+                <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-[#d3a64a]/60 to-transparent"></div>
                 
                 <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-10">
                     <div className="flex-1 space-y-6">
-                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-xs font-bold tracking-widest uppercase">
+                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-xs font-bold tracking-widest uppercase shadow-[0_10px_30px_rgba(199,154,63,0.14)]">
                             <ShieldCheck size={14} /> ERP Sistem Terpusat
                         </div>
                         <h1 className="text-4xl md:text-5xl font-black text-white tracking-tight leading-tight">
                             Portal Internal <br className="hidden md:block"/>
-                            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-emerald-400">
+                            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#b77a25] via-[#d6a948] to-[#7a4e20]">
                                 CV. Surya Perkasa
                             </span>
                         </h1>
@@ -103,8 +113,9 @@ export default async function DashboardLanding() {
                         </p>
                     </div>
                     
-                    <div className="hidden lg:flex shrink-0 w-64 h-64 bg-black/40 border border-white/10 rounded-2xl shadow-xl items-center justify-center relative overflow-hidden group">
+                    <div className="hidden lg:flex shrink-0 w-64 h-64 bg-black/40 border border-white/10 rounded-[1.75rem] shadow-xl items-center justify-center relative overflow-hidden group">
                         <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                        <div className="absolute inset-8 rounded-full border border-white/10"></div>
                         <Cpu size={80} className="text-indigo-500/40 group-hover:text-indigo-400 transition-colors duration-500 group-hover:scale-110" />
                     </div>
                 </div>
@@ -112,8 +123,8 @@ export default async function DashboardLanding() {
 
             {/* Modules Grid */}
             <div className="mb-4">
-                <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2 mb-6 px-2">
-                    <span className="w-1.5 h-6 rounded-full bg-indigo-500 block"></span> Modul Operasional
+                <h2 className="text-xl font-extrabold text-white tracking-tight flex items-center gap-2 mb-6 px-2">
+                    <span className="w-1.5 h-6 rounded-full bg-gradient-to-b from-[#f2d28a] to-[#b77a25] block shadow-[0_6px_18px_rgba(199,154,63,0.35)]"></span> Modul Operasional
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                     {visibleModules.map((mod, i) => {
@@ -122,11 +133,11 @@ export default async function DashboardLanding() {
                             <Link 
                                 href={mod.href} 
                                 key={i}
-                                className={`group flex flex-col justify-between p-6 rounded-2xl bg-[#1a1c23] bg-gradient-to-br ${mod.color} border ${mod.border} backdrop-blur-xl transition-all duration-300 hover:shadow-xl hover:-translate-y-1`}
-                                style={{ boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.05)' }}
+                                className={`group flex flex-col justify-between p-6 rounded-[1.5rem] bg-[#1a1c23] bg-gradient-to-br ${mod.color} border ${mod.border} backdrop-blur-xl transition-all duration-300 hover:shadow-xl hover:-translate-y-1`}
+                                style={{ boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.55), 0 18px 46px rgba(122,78,32,0.10)' }}
                             >
                                 <div>
-                                    <div className={`w-12 h-12 rounded-xl bg-black/40 flex items-center justify-center mb-5 border border-white/5 group-hover:scale-110 transition-transform`}>
+                                    <div className={`w-12 h-12 rounded-2xl bg-black/40 flex items-center justify-center mb-5 border border-white/5 group-hover:scale-110 transition-transform shadow-[0_12px_30px_rgba(199,154,63,0.15)]`}>
                                         <Icon className={`${mod.iconColor}`} size={24} />
                                     </div>
                                     <h3 className="text-lg font-bold text-white mb-2">{mod.title}</h3>

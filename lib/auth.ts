@@ -1,3 +1,10 @@
+/*
+ * Tujuan: Konfigurasi Better Auth server untuk email/password internal, admin RBAC, trusted origin lokal, dan adapter SQLite.
+ * Caller: `app/api/auth/[...all]/route.ts`, dashboard layout, dan server-side auth checks.
+ * Dependensi: Better Auth, Drizzle adapter, SQLite schema, email service, dan RBAC role access.
+ * Main Functions: `auth`.
+ * Side Effects: DB read/write auth ke SQLite dan pengiriman email reset/verifikasi saat flow terkait dipanggil.
+ */
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { admin } from "better-auth/plugins";
@@ -15,8 +22,25 @@ if (databaseFile?.startsWith("/")) {
     mkdirSync(databaseFile.replace(/\/[^/]*$/, ""), { recursive: true });
 }
 const authDb = drizzle(createClient({ url: databaseUrl }), { schema });
+const baseURL = process.env.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const trustedOrigins = Array.from(new Set([
+    baseURL,
+    process.env.NEXT_PUBLIC_APP_URL,
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://localhost:3003",
+    "http://localhost:3004",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://127.0.0.1:3002",
+    "http://127.0.0.1:3003",
+    "http://127.0.0.1:3004",
+].filter(Boolean) as string[]));
 
 export const auth = betterAuth({
+    baseURL,
+    trustedOrigins,
     database: drizzleAdapter(authDb, {
         provider: "sqlite",
         schema: {

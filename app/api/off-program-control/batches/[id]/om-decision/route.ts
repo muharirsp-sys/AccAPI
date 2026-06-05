@@ -1,26 +1,37 @@
+/*
+ * Tujuan: API keputusan Operational Manager untuk pengajuan OFF Program Control.
+ * Caller: Halaman OFF Program Control tab OM.
+ * Dependensi: Better Auth OFF session, Drizzle SQLite, helper workflow/data OFF.
+ * Main Functions: POST om-decision approve/cancel.
+ * Side Effects: DB write SQLite dan audit log OFF.
+ */
+
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch } from "@/db/schema";
-import { canActorPerformOffAction, getBatchWithItems, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { canActorPerformOffAction, getBatchWithItems, isOffPeriodClosedForBatch, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
 
 type Context = { params: Promise<{ id: string }> };
 
 function canDecideOm(batch: { smStatus: string; claimStatus: string; omStatus: string }) {
-    if (batch.smStatus !== "Approved by SM") return "Batch belum Approved by SM.";
-    if (batch.claimStatus !== "Approved") return "Batch belum Approved by Claim.";
-    if (batch.omStatus !== "Waiting Approval") return "Batch tidak sedang menunggu approval OM.";
+    if (batch.smStatus !== "Approved by SM") return "Pengajuan belum disetujui Sales Manager.";
+    if (batch.claimStatus !== "Approved") return "Pengajuan belum disetujui Klaim.";
+    if (batch.omStatus !== "Waiting Approval") return "Pengajuan tidak sedang menunggu persetujuan OM.";
     return null;
 }
 
 export async function POST(request: Request, context: Context) {
     try {
         const actor = await requireOffSession();
-        if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+        if (!actor) return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." }, { status: 401 });
         if (!canActorPerformOffAction(actor, "om_approve") && !canActorPerformOffAction(actor, "om_cancel")) return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses keputusan OM." }, { status: 403 });
         const { id } = await context.params;
         const data = await getBatchWithItems(id);
-        if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
+        if (!data) return NextResponse.json({ ok: false, error: "Pengajuan tidak ditemukan." }, { status: 404 });
+        if (actor.role !== "admin" && await isOffPeriodClosedForBatch(data.batch)) {
+            return NextResponse.json({ ok: false, error: "Periode ini sudah ditutup dan tidak dapat diubah." }, { status: 409 });
+        }
         const invalidReason = canDecideOm(data.batch);
         if (invalidReason) return NextResponse.json({ ok: false, error: invalidReason }, { status: 409 });
 

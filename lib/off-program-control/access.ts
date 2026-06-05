@@ -1,6 +1,6 @@
 /*
  * Tujuan: Resolver role dan permission tahap untuk halaman OFF Program Control.
- * Caller: app/(dashboard)/off-program-control/page.tsx.
+ * Caller: app/(dashboard)/off-program-control/page.tsx dan route API OFF Program Control.
  * Dependensi: Field role/session Better Auth dan inferensi domain email internal.
  * Main Functions: normalizeOffRole, resolveOffRole, getOffAccessibleTabs, canPerformOffAction.
  * Side Effects: Tidak ada; hanya normalisasi role in-memory.
@@ -43,9 +43,12 @@ export type OffAction =
   | "om_approve"
   | "om_cancel"
   | "finance_payment"
+  | "submit_refund"
   | "audit_read"
   | "audit_export"
   | "audit_correct"
+  | "period_close"
+  | "period_unlock"
   | "discount_view"
   | "discount_manage";
 
@@ -275,11 +278,11 @@ export function canPerformOffAction(
 
   const allowedActions: Record<OffRole, OffAction[]> = {
     admin: [],
-    supervisor: ["create_batch", "edit_returned_batch", "submit_batch", "discount_view", "discount_manage"],
+    supervisor: ["create_batch", "edit_returned_batch", "submit_batch", "submit_refund", "discount_view", "discount_manage"],
     sales_manager: ["sm_approve", "sm_return"],
-    claim: ["claim_review", "claim_final", "audit_read", "audit_export", "audit_correct"],
+    claim: ["claim_review", "claim_final", "audit_read", "audit_export", "audit_correct", "period_close"],
     operational_manager: ["om_approve", "om_cancel"],
-    finance: ["finance_payment"],
+    finance: ["finance_payment", "submit_refund"],
     sales: [],
     unknown: [],
   };

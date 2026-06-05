@@ -1,3 +1,11 @@
+/*
+ * Tujuan: API verifikasi final Klaim setelah pembayaran Keuangan.
+ * Caller: Halaman OFF Program Control tab Klaim.
+ * Dependensi: Better Auth OFF session, Drizzle SQLite, checklist dokumen final, helper pembayaran OFF.
+ * Main Functions: POST final-claim complete/remind.
+ * Side Effects: DB write SQLite dan audit log OFF.
+ */
+
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -9,6 +17,7 @@ import {
   computeOffPaymentSummary,
   getBatchWithItems,
   hasMinimalFinalChecklist,
+  isOffPeriodClosedForBatch,
   paymentsHaveProofs,
   publicBatch,
   requireOffSession,
@@ -22,21 +31,27 @@ export async function POST(request: Request, context: Context) {
     const actor = await requireOffSession();
     if (!actor)
       return NextResponse.json(
-        { ok: false, error: "Unauthorized" },
+        { ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." },
         { status: 401 },
       );
     if (!canActorPerformOffAction(actor, "claim_final"))
       return NextResponse.json(
-        { ok: false, error: "Role Anda tidak memiliki akses final Claim." },
+        { ok: false, error: "Anda tidak memiliki akses final klaim." },
         { status: 403 },
       );
     const { id } = await context.params;
     const data = await getBatchWithItems(id);
     if (!data)
       return NextResponse.json(
-        { ok: false, error: "Batch not found" },
+        { ok: false, error: "Pengajuan tidak ditemukan." },
         { status: 404 },
       );
+    if (actor.role !== "admin" && await isOffPeriodClosedForBatch(data.batch)) {
+      return NextResponse.json(
+        { ok: false, error: "Periode ini sudah ditutup dan tidak dapat diubah." },
+        { status: 409 },
+      );
+    }
     const itemSummary = computeOffPaymentSummary(data.items);
     const paymentSummary = computeOffFinancePaymentSummary(
       itemSummary.total,
@@ -44,7 +59,7 @@ export async function POST(request: Request, context: Context) {
     );
     if (!canOpenFinalClaim(data.batch)) {
       return NextResponse.json(
-        { ok: false, error: "Batch belum dibayar Keuangan." },
+        { ok: false, error: "Pengajuan belum dibayar Keuangan." },
         { status: 409 },
       );
     }
@@ -62,6 +77,9 @@ export async function POST(request: Request, context: Context) {
     const action = String(body.action || body.decision || "complete");
     const note = String(body.note || body.finalClaimNote || "").trim();
     const claimRefs = Array.isArray(body.claimRefs) ? body.claimRefs : [];
+    const inputVerifiedAmount = body.verifiedAmount !== undefined && body.verifiedAmount !== null
+      ? Number(body.verifiedAmount)
+      : null;
     const now = new Date();
 
     if (action === "remind_incomplete_documents") {
@@ -210,6 +228,13 @@ export async function POST(request: Request, context: Context) {
       );
     }
 
+    // Hitung selisih dana: jika Claim reviewer input verifiedAmount < totalPaid,
+    // maka ada selisih yang perlu dikembalikan (refund).
+    const effectiveVerifiedAmount = (inputVerifiedAmount !== null && Number.isFinite(inputVerifiedAmount) && inputVerifiedAmount >= 0)
+      ? inputVerifiedAmount
+      : paymentSummary.totalPaid;
+    const overpaidAmount = Math.max(0, paymentSummary.totalPaid - effectiveVerifiedAmount);
+
     await Promise.all(
       data.items.map((item) => {
         const ref = claimRefMap.get(item.id);
@@ -237,9 +262,12 @@ export async function POST(request: Request, context: Context) {
     await db
       .update(offBatch)
       .set({
-        status: "Completed",
-        finalStatus: "Completed",
-        verifiedAmount: paymentSummary.totalPaid,
+        status: overpaidAmount > 0 ? "Overpaid - Pending Refund" : "Completed",
+        finalStatus: overpaidAmount > 0 ? "Pending Refund" : "Completed",
+        verifiedAmount: effectiveVerifiedAmount,
+        refundStatus: overpaidAmount > 0 ? "Pending Refund" : "Not Applicable",
+        refundAmount: overpaidAmount > 0 ? overpaidAmount : null,
+        totalRefunded: 0,
         finalClaimNote: note,
         locked: true,
         updatedAt: now,
@@ -249,12 +277,16 @@ export async function POST(request: Request, context: Context) {
     await writeOffAudit({
       batchId: id,
       actor,
-      action: "complete",
+      action: overpaidAmount > 0 ? "final_claim_overpaid" : "complete",
       fromStatus: data.batch.finalStatus,
-      toStatus: "Completed",
-      note,
+      toStatus: overpaidAmount > 0 ? "Pending Refund" : "Completed",
+      note: overpaidAmount > 0
+        ? `Realisasi klaim Rp ${effectiveVerifiedAmount.toLocaleString("id-ID")} lebih kecil dari dana keluar Rp ${paymentSummary.totalPaid.toLocaleString("id-ID")}. Selisih Rp ${overpaidAmount.toLocaleString("id-ID")} perlu dikembalikan. ${note}`.trim()
+        : note,
       metadata: {
         totalPaid: paymentSummary.totalPaid,
+        verifiedAmount: effectiveVerifiedAmount,
+        overpaidAmount,
         paymentCount: data.payments.length,
         claimRefs: sanitizedClaimRefs,
       },
@@ -262,7 +294,11 @@ export async function POST(request: Request, context: Context) {
     const updated = await getBatchWithItems(id);
     return NextResponse.json({
       ok: true,
-      message: "Pengajuan selesai dan status menjadi Completed.",
+      message: overpaidAmount > 0
+        ? `Verifikasi selesai. Selisih dana Rp ${overpaidAmount.toLocaleString("id-ID")} perlu dikembalikan sebelum batch ditutup sebagai Completed.`
+        : "Pengajuan selesai dan status menjadi Completed.",
+      overpaidAmount,
+      refundRequired: overpaidAmount > 0,
       batch: updated ? publicBatch(updated.batch) : null,
     });
   } catch (error) {

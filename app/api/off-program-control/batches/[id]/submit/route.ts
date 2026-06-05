@@ -1,9 +1,17 @@
+/*
+ * Tujuan: API submit pengajuan OFF Program Control ke Sales Manager dan generate PDF.
+ * Caller: Form pengajuan Supervisor.
+ * Dependensi: Better Auth OFF session, Drizzle SQLite, helper PDF/workflow OFF.
+ * Main Functions: POST submit_batch.
+ * Side Effects: DB write SQLite, audit log OFF, file I/O PDF.
+ */
+
 import { NextResponse } from "next/server";
 import { stat } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch } from "@/db/schema";
-import { canActorPerformOffAction, computeOffPaymentSummary, generateOffBatchPdf, getBatchWithItems, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { canActorPerformOffAction, computeOffPaymentSummary, generateOffBatchPdf, getBatchWithItems, isOffPeriodClosedForBatch, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
 
 export const runtime = "nodejs";
 
@@ -12,15 +20,18 @@ type Context = { params: Promise<{ id: string }> };
 export async function POST(_request: Request, context: Context) {
     try {
         const actor = await requireOffSession();
-        if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+        if (!actor) return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." }, { status: 401 });
         if (!canActorPerformOffAction(actor, "submit_batch")) {
             return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses submit batch OFF." }, { status: 403 });
         }
 
         const { id } = await context.params;
         const data = await getBatchWithItems(id);
-        if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
-        if (data.batch.locked) return NextResponse.json({ ok: false, error: "Batch is locked" }, { status: 409 });
+        if (!data) return NextResponse.json({ ok: false, error: "Pengajuan tidak ditemukan." }, { status: 404 });
+        if (actor.role !== "admin" && await isOffPeriodClosedForBatch(data.batch)) {
+            return NextResponse.json({ ok: false, error: "Periode ini sudah ditutup dan tidak dapat diubah." }, { status: 409 });
+        }
+        if (data.batch.locked) return NextResponse.json({ ok: false, error: "Pengajuan ini sudah terkunci." }, { status: 409 });
         if (!["Draft", "Returned by SM", "Returned by Claim"].includes(data.batch.status) && !["Returned"].includes(data.batch.smStatus) && !["Returned"].includes(data.batch.claimStatus)) {
             return NextResponse.json({ ok: false, error: "Batch hanya bisa disubmit saat Draft atau Returned/Rejected dan belum terkunci." }, { status: 409 });
         }

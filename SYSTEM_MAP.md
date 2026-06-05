@@ -21,6 +21,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
     - FastAPI
   - styling:
     - Tailwind CSS 4 via `@import "tailwindcss"` di `app/globals.css`
+    - Tema visual warm luxury berbasis CSS variables, remap utilitas warna existing, dan glassmorphism cream/champagne.
     - UI icons: `lucide-react`
     - toast: `sonner`
   - ORM:
@@ -50,11 +51,12 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - FastAPI -> file I/O, JSON store, SQLite Python side, OCR/PDF libs, external HTTP API
 
 # Core Logic Flow (Function-Level Flowchart)
-- `UI(LoginPage) -> authClient.signIn.email() -> app/api/auth/[...all]/route.ts[GET|POST] -> lib/auth[betterAuth] -> Drizzle adapter -> SQLite(user, session, account, verification)`
+- `UI(LoginPage) -> authClient.signIn.email() -> app/api/auth/[...all]/route.ts[GET|POST] -> lib/auth[betterAuth trusted local origins 3000-3004] -> Drizzle adapter -> SQLite(user, session, account, verification); LoginPage membedakan error email verification dari 403 auth/origin lain`
 - `UI(ForgotPasswordPage) -> checkUserStatus() -> app/(auth)/actions.ts -> Drizzle(user) -> authClient.requestPasswordReset() -> Better Auth email flow -> lib/email[sendEmail] -> SMTP`
 - `UI(Dashboard/*) -> proxy.ts set x-current-path -> app/(dashboard)/layout.tsx -> auth.api.getSession() -> Drizzle user(role, permissions) -> lib/rbac.canAccessPath() -> redirect('/login' atau '/') bila session/permission tidak valid`
+- `UI(DashboardLanding) -> app/(dashboard)/page.tsx -> auth.api.getSession() -> Drizzle user(role, permissions) -> filter module cards via canAccessPath() -> render Portal Internal module cards sesuai akses role`
 - `UI(Admin Users & RBAC) -> app/(dashboard)/admin/users/UserManagement.tsx -> /api/admin/users/permissions[GET|POST] -> Drizzle user.permissions JSON -> Sidebar/layout/FastAPI memakai permission module/action yang sama`
-- `UI(OFF Program Control) -> app/(dashboard)/layout.tsx guard RBAC module off_program_control:view -> app/(dashboard)/off-program-control/page.tsx -> authClient.useSession() -> lib/off-program-control/access.resolveOffRole() -> role Better Auth manager dipetakan ke OFF admin agar izin RBAC manager tidak diblokir lagi oleh guard tab internal`
+- `UI(OFF Program Control) -> app/(dashboard)/layout.tsx guard RBAC module off_program_control:view -> app/(dashboard)/off-program-control/page.tsx -> authClient.useSession() -> lib/off-program-control/access.resolveOffRole() -> admin masuk ke Admin Overview cockpit + selector "Lihat sebagai" terkelompok sebelum drill-down role, role lain tetap ke tab antrean sesuai akses -> overview/role monitoring memakai health system, compact filter toolbar dengan search tetap terlihat + advanced filter collapsed + chips aktif, Status Per Divisi, bottleneck, aging/SLA, mismatch pengajuan-vs-klaim kondisional, tabel monitoring ringkas berkolom status saat ini/PIC/deadline/aksi, support collapsible untuk alur/detail status/tutup periode + drawer/detail panel pengajuan; pencarian daftar pengajuan masuk ke app/api/off-program-control/batches/route.ts -> lib/off-program-control/search.searchOffBatchIdsWithElasticsearch() bila ELASTICSEARCH_URL tersedia, fallback lokal saat belum dikonfigurasi; tutup periode masuk ke app/api/off-program-control/periods/route.ts -> off_period_closure dan guard mutasi via lib/off-program-control/data.isOffPeriodClosedForBatch(); role Better Auth manager dipetakan ke OFF admin agar izin RBAC manager tidak diblokir lagi oleh guard tab internal`
 - `UI(Dashboard payments/finance/SPPD) -> browser GET FastAPI /api/me untuk csrf_token -> POST/upload kirim X-CSRF-Token + Better Auth cookie -> python_backend/main.py[get_current_user] -> validasi session di BETTER_AUTH_DB_PATH -> role admin/manager/finance/staff/viewer + user.permissions -> user_has_permission() -> endpoint payments/finance/sppd`
 - `UI(API Wrapper) -> handleLoginAccurate() -> Accurate OAuth authorize -> app/api/auth/callback/route.ts[GET] -> Accurate OAuth token exchange -> redirect hash access_token -> UI`
 - `UI(API Wrapper) -> fetchDatabases()/handleOpenDatabase() -> app/api/auth/db-list|open-db/route.ts -> Accurate account API -> sessionStorage(host, session, token)`
@@ -130,9 +132,11 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - `app/api/idempotency/complete/route.ts`
   - `app/api/admin/bootstrap/route.ts`
   - `app/api/admin/users/permissions/route.ts`
+  - `app/api/off-program-control/periods/route.ts`
   - `app/api/webhook/accurate/route.ts`
 - `frontend shared`
   - `components/SidebarLayout.tsx`
+  - `components/ThemeSwitcher.tsx`
   - `components/DataTable.tsx`
   - `components/ui/AsyncSearchSelect.tsx`
   - `components/ui/DatePickerField.tsx`
@@ -144,6 +148,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - `lib/rbac.ts`
   - `lib/off-program-control/access.ts`
   - `lib/off-program-control/constants.ts`
+  - `lib/off-program-control/search.ts`
   - `lib/off-program-control/workflow.ts`
   - `lib/db.ts`
   - `lib/apiFetcher.ts`
@@ -213,7 +218,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - Mengaktifkan TypeScript strict mode dan `allowJs`, sehingga `config/accurateRoutes.js` bisa diimpor dari code TS.
 - `next.config.ts`
   - `nextConfig`
-  - Konfigurasi Next minimal; tidak ada wiring custom di level framework.
+  - Konfigurasi Next dengan root tracing/Turbopack dikunci ke working directory agar checkout clean di dalam folder lama tidak salah infer parent workspace.
 - `postcss.config.mjs`
   - plugin `@tailwindcss/postcss`
   - Wiring PostCSS untuk Tailwind CSS 4.
@@ -222,13 +227,13 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - Menetapkan Drizzle ke SQLite `file:sqlite.db` dengan schema di `db/schema.ts`.
 - `app/layout.tsx`
   - `RootLayout`
-  - Shell global UI, font, background theme, dan toaster aplikasi.
+  - Shell global UI, font, warm luxury ambient background, script ThemeSwitcher, dan toaster aplikasi.
 - `proxy.ts`
   - `proxy`
   - Menyisipkan header `x-current-path` agar dashboard layout bisa mengecek RBAC per halaman.
 - `app/globals.css`
   - theme root + `@import "tailwindcss"`
-  - Basis styling global; Tailwind 4 dipakai model CSS-first.
+  - Basis styling global, variable tema warm executive, dan remap warna existing; Tailwind 4 dipakai model CSS-first.
 - `app/manifest.ts`
   - `manifest`
   - Metadata PWA dasar untuk app Next.
@@ -237,7 +242,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - Server Action untuk cek eksistensi/verifikasi user langsung ke SQLite via Drizzle.
 - `app/(auth)/login/page.tsx`
   - `LoginPage`
-  - Form login Better Auth email/password internal; Google OAuth dinonaktifkan.
+  - Form login Better Auth email/password internal dengan warm luxury surface; Google OAuth dinonaktifkan; pesan 403 tidak lagi otomatis dianggap email belum diverifikasi.
 - `app/(auth)/register/page.tsx`
   - `RegisterPage`
   - Public register dinonaktifkan; user dibuat dari admin RBAC.
@@ -261,10 +266,13 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - API admin untuk membaca user dan menyimpan `user.permissions` sebagai JSON RBAC.
 - `components/SidebarLayout.tsx`
   - `SidebarLayout`
-  - Navigasi utama modul dengan filter RBAC per halaman, termasuk Format SPPD dan tombol sign-out Better Auth.
+  - App shell Smart ERP dengan sidebar, mobile drawer, topbar, ThemeSwitcher, sign-out, dan filter RBAC per halaman.
+- `components/ThemeSwitcher.tsx`
+  - `ThemeSwitcher`, `OFF_THEMES`, `applyStoredThemeScript`
+  - Switch tema visual berbasis localStorage dan atribut `data-theme` tanpa DB.
 - `app/(dashboard)/page.tsx`
   - `DashboardLanding`
-  - Landing dashboard yang mengarahkan ke modul bisnis utama sesuai akses role.
+  - Portal Internal CV. Surya Perkasa yang membaca session/user DB, memfilter kartu modul sesuai RBAC, dan menampilkan akses cepat modul operasional seperti dashboard GitHub.
 - `components/DataTable.tsx`
   - `DataTable`
   - Tabel reusable berbasis TanStack Table untuk list master/transaksi.
@@ -282,10 +290,10 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - Inisialisasi Drizzle + `@libsql/client` ke `sqlite.db`.
 - `lib/auth.ts`
   - `auth`
-  - Konfigurasi Better Auth, adapter Drizzle, email verification, reset password, dan RBAC internal tanpa Google OAuth.
+  - Konfigurasi Better Auth, local trusted origins (`localhost`/`127.0.0.1` port 3000-3004), adapter Drizzle, email verification, reset password, dan RBAC internal tanpa Google OAuth.
 - `lib/auth-client.ts`
   - `authClient`
-  - Client Better Auth untuk dipakai di React client pages.
+  - Client Better Auth untuk React client pages; di browser memakai `window.location.origin` agar login tidak cross-origin saat dev memakai `localhost` atau `127.0.0.1`.
 - `lib/rbac.ts`
   - `normalizeRole`, `permissionMapForUser`, `canAccess`, `canAccessPath`
   - Definisi role admin/manager/finance/staff/viewer, module/action permission, preset role, dan mapping path ke permission.
@@ -456,7 +464,7 @@ Side Effects: Tidak ada; dokumentasi sinkron terhadap flow kode aktif.
   - Helper reusable pemisah format display vs payload API dan data libur nasional/cuti bersama Indonesia.
 - `app/(dashboard)/principles/page.tsx`
   - `PrincipleManagementPage`, `fetchPrinciples`, `handleUpload`, `handleDelete`
-  - UI CRUD master principle berbasis file Excel yang disimpan di backend Python.
+  - UI CRUD master principle berbasis file Excel dengan warm luxury surface yang disimpan di backend Python.
 - `python_backend/requirements.txt`
   - dependency list
   - Mendefinisikan stack backend Python: FastAPI, pandas/openpyxl, PDF/OCR, requests/httpx, OpenAI client.

@@ -6,6 +6,8 @@
  * Side Effects: Redirect login/dashboard bila session atau permission halaman tidak valid.
  */
 import SidebarLayout from "@/components/SidebarLayout";
+import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
+import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -43,11 +45,8 @@ export default async function DashboardLayout({
     return (
         <SidebarLayout role={role} permissions={permissions}>
             {children}
-            <script
-                dangerouslySetInnerHTML={{
-                    __html: `if ('serviceWorker' in navigator) { window.addEventListener('load', function() { navigator.serviceWorker.register('/sw.js'); }); }`,
-                }}
-            />
+            <ServiceWorkerRegistration />
+            <PWAInstallPrompt />
         </SidebarLayout>
     );
 }

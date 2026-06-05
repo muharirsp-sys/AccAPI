@@ -1,42 +1,181 @@
+/*
+ * Tujuan: Global style Tailwind dan token tema warm luxury untuk seluruh dashboard Smart ERP.
+ * Caller: app/layout.tsx.
+ * Dependensi: Tailwind CSS 4, ThemeSwitcher via atribut html[data-theme].
+ * Main Functions: token CSS root, mapping tema, body baseline, remap utilitas warna existing.
+ * Side Effects: Mengubah tampilan global app; tidak ada DB/HTTP/file I/O.
+ */
 @import "tailwindcss";
 
+/* ============================================
+ * PWA & Responsive Utilities
+ * ============================================ */
+
+/* Safe area padding for notch devices (iPhone, etc.) */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Smooth scrolling for all scrollable containers */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Prevent pull-to-refresh on mobile when scrolled to top */
+body {
+  overscroll-behavior-y: contain;
+}
+
+/* Custom scrollbar for sidebar & content */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+/* Touch-friendly sizing */
+@media (pointer: coarse) {
+  button, a, input, select, textarea {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  input, select, textarea {
+    font-size: 16px; /* Prevents iOS zoom on focus */
+  }
+}
+
+/* Animation utilities */
+@keyframes slide-in-from-bottom-4 {
+  from { transform: translateY(1rem); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes slide-in-from-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+.animate-in {
+  animation-fill-mode: both;
+}
+
+.slide-in-from-bottom-4 {
+  animation-name: slide-in-from-bottom-4;
+}
+
+.slide-in-from-left {
+  animation-name: slide-in-from-left;
+}
+
+.duration-200 {
+  animation-duration: 200ms;
+}
+
+.duration-300 {
+  animation-duration: 300ms;
+}
+
+/* TV / large display optimizations */
+@media (min-width: 1920px) {
+  html {
+    font-size: 18px;
+  }
+}
+
+@media (min-width: 2560px) {
+  html {
+    font-size: 20px;
+  }
+}
+
+/* Standalone PWA mode adjustments */
+@media (display-mode: standalone) {
+  body {
+    /* Extra top padding when running as installed PWA (no browser chrome) */
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}
+
+/* ============================================
+ * Theme tokens
+ * ============================================ */
+
 :root {
-  --background: #0f1015;
-  --foreground: #e2e8f0;
+  --background: #f7efe1;
+  --foreground: #2d241b;
 }
 
 /*
- * Tema calming (revisi G).
+ * Tema warm executive.
  * Disimpan di localStorage (key: off-theme), tidak di database.
- * Tiga opsi: Focus Dark (default), Office Calm, Finance Soft Blue.
- * Pendekatan: CSS variables surface/border yang dipetakan ke kelas warna literal
- * yang dipakai existing UI, sehingga retint berlaku app-wide (monitor, form,
- * table, button, badge, modal) tanpa menulis ulang komponen.
- * Semua tema dijaga pada sisi gelap/medium agar kontras teks & badge tetap aman.
+ * Tiga opsi existing dipertahankan, namun divisualkan sebagai variasi ivory,
+ * champagne, dan bronze agar retint berlaku app-wide tanpa mengubah komponen.
  */
 :root,
 html[data-theme="focus-dark"] {
-  --app-bg: #0f1015;
-  --surface: #1a1c23;
-  --surface-2: #0f1115;
-  --border-strong: rgba(255, 255, 255, 0.1);
-  --border-soft: rgba(255, 255, 255, 0.05);
+  --app-bg: #f7efe1;
+  --surface: rgba(255, 250, 239, 0.78);
+  --surface-2: rgba(250, 239, 218, 0.72);
+  --border-strong: rgba(176, 125, 43, 0.24);
+  --border-soft: rgba(176, 125, 43, 0.14);
+  --luxury-text: #2d241b;
+  --luxury-muted: #5f5142;
+  --luxury-subtle: #7a664c;
+  --luxury-soft: #8b6730;
+  --luxury-teal: #0f766e;
+  --luxury-gold: #c79a3f;
+  --luxury-gold-2: #f2d28a;
+  --luxury-bronze: #7a4e20;
+  --luxury-shadow: 0 24px 80px rgba(122, 78, 32, 0.14), 0 10px 28px rgba(122, 78, 32, 0.08);
 }
 
 html[data-theme="office-calm"] {
-  --app-bg: #19211f;
-  --surface: #232c2a;
-  --surface-2: #1b2423;
-  --border-strong: rgba(190, 220, 210, 0.14);
-  --border-soft: rgba(190, 220, 210, 0.08);
+  --app-bg: #fbf3e3;
+  --surface: rgba(255, 252, 244, 0.8);
+  --surface-2: rgba(246, 229, 198, 0.64);
+  --border-strong: rgba(190, 141, 54, 0.22);
+  --border-soft: rgba(190, 141, 54, 0.12);
+  --luxury-text: #2e261d;
+  --luxury-muted: #5f5142;
+  --luxury-subtle: #7a664c;
+  --luxury-soft: #8b6730;
+  --luxury-teal: #0f766e;
+  --luxury-gold: #c89432;
+  --luxury-gold-2: #f2d99b;
+  --luxury-bronze: #82531f;
+  --luxury-shadow: 0 24px 76px rgba(130, 83, 31, 0.12), 0 8px 24px rgba(130, 83, 31, 0.08);
 }
 
 html[data-theme="finance-blue"] {
-  --app-bg: #0e1730;
-  --surface: #16234a;
-  --surface-2: #111c3b;
-  --border-strong: rgba(160, 190, 255, 0.16);
-  --border-soft: rgba(160, 190, 255, 0.08);
+  --app-bg: #f4ead9;
+  --surface: rgba(255, 248, 235, 0.78);
+  --surface-2: rgba(239, 220, 189, 0.62);
+  --border-strong: rgba(154, 103, 40, 0.24);
+  --border-soft: rgba(154, 103, 40, 0.13);
+  --luxury-text: #30251b;
+  --luxury-muted: #5f5142;
+  --luxury-subtle: #7a664c;
+  --luxury-soft: #8b6730;
+  --luxury-teal: #0f766e;
+  --luxury-gold: #bd8731;
+  --luxury-gold-2: #e9c777;
+  --luxury-bronze: #70481e;
+  --luxury-shadow: 0 24px 80px rgba(112, 72, 30, 0.14), 0 8px 26px rgba(112, 72, 30, 0.08);
 }
 
 @theme inline {
@@ -47,31 +186,363 @@ html[data-theme="finance-blue"] {
 }
 
 body {
-  background: var(--app-bg);
+  background:
+    radial-gradient(circle at 14% 6%, rgba(242, 210, 138, 0.42), transparent 30rem),
+    radial-gradient(circle at 92% 10%, rgba(199, 154, 63, 0.24), transparent 28rem),
+    radial-gradient(circle at 65% 92%, rgba(122, 78, 32, 0.14), transparent 34rem),
+    linear-gradient(135deg, #fff8ea 0%, var(--app-bg) 44%, #f1dfbf 100%);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
 
 /* Pemetaan kelas warna literal existing -> variabel tema. */
 .bg-\[\#0f1015\] {
-  background-color: var(--app-bg);
+  background-color: var(--app-bg) !important;
 }
 
 .bg-\[\#0f1115\] {
-  background-color: var(--surface-2);
+  background-color: var(--surface-2) !important;
 }
 
 .bg-\[\#1a1c23\],
+.bg-\[\#1a1c23\]\/25,
+.bg-\[\#1a1c23\]\/30,
+.bg-\[\#1a1c23\]\/40,
+.bg-\[\#1a1c23\]\/45,
 .bg-\[\#1a1c23\]\/50,
+.bg-\[\#1a1c23\]\/55,
+.bg-\[\#1a1c23\]\/60,
+.bg-\[\#1a1c23\]\/70,
 .bg-\[\#1a1c23\]\/80,
 .bg-\[\#1a1c23\]\/90 {
-  background-color: var(--surface);
+  background-color: var(--surface) !important;
+}
+
+.bg-\[\#101219\] {
+  background-color: rgba(255, 250, 239, 0.96) !important;
+}
+
+.bg-\[\#15161f\] {
+  background-color: rgba(255, 250, 239, 0.96) !important;
+}
+
+.bg-\[\#16181f\] {
+  background-color: var(--surface-2) !important;
+}
+
+.bg-\[\#1e212b\] {
+  background-color: var(--surface) !important;
+}
+
+.bg-\[\#101217\] {
+  background-color: rgba(255, 250, 239, 0.92) !important;
+}
+
+.group-hover\:bg-\[\#1a1d24\]:is(.group:hover *) {
+  background-color: rgba(242, 210, 138, 0.18) !important;
+}
+
+.bg-\[\#1e2333\] {
+  background-color: rgba(242, 210, 138, 0.12) !important;
+}
+
+.bg-\[\#1a1c24\] {
+  background-color: var(--surface) !important;
 }
 
 .border-white\/10 {
-  border-color: var(--border-strong);
+  border-color: var(--border-strong) !important;
 }
 
 .border-white\/5 {
-  border-color: var(--border-soft);
+  border-color: var(--border-soft) !important;
+}
+
+.bg-black\/20 {
+  background-color: rgba(122, 78, 32, 0.04) !important;
+}
+
+.bg-black\/25,
+.bg-black\/30 {
+  background-color: rgba(122, 78, 32, 0.06) !important;
+}
+
+.bg-black\/40 {
+  background-color: rgba(122, 78, 32, 0.08) !important;
+}
+
+.bg-black\/50 {
+  background-color: rgba(122, 78, 32, 0.10) !important;
+}
+
+.bg-black\/60,
+.bg-black\/65 {
+  background-color: rgba(45, 36, 27, 0.34) !important;
+}
+
+.bg-white\/5 {
+  background-color: rgba(255, 250, 239, 0.36) !important;
+}
+
+.bg-white\/10,
+.hover\:bg-white\/10:hover {
+  background-color: rgba(255, 250, 239, 0.42) !important;
+}
+
+.hover\:bg-white\/\[0\.03\]:hover {
+  background-color: rgba(199, 154, 63, 0.06) !important;
+}
+
+.text-white,
+.text-slate-200 {
+  color: var(--luxury-text) !important;
+}
+
+.text-slate-300 {
+  color: #574839 !important;
+}
+
+.text-slate-400 {
+  color: var(--luxury-muted) !important;
+}
+
+.text-slate-500 {
+  color: var(--luxury-subtle) !important;
+}
+
+.text-slate-600 {
+  color: #8a7558 !important;
+}
+
+.text-amber-100,
+.text-amber-100\/80,
+.text-amber-200,
+.text-amber-300,
+.text-sky-400,
+.text-purple-400,
+.text-cyan-400 {
+  color: var(--luxury-soft) !important;
+}
+
+.text-blue-400,
+.text-blue-500 {
+  color: #6b5a2e !important;
+}
+
+.text-emerald-400,
+.text-emerald-500 {
+  color: var(--luxury-teal) !important;
+}
+
+.text-indigo-300,
+.text-indigo-400,
+.text-indigo-500 {
+  color: #7c4d18 !important;
+}
+
+.text-rose-400 {
+  color: #b91c1c !important;
+}
+
+.text-red-400,
+.text-red-400\/70 {
+  color: #b91c1c !important;
+}
+
+.text-emerald-200\/50,
+.text-emerald-400\/50 {
+  color: var(--luxury-teal) !important;
+}
+
+.text-rose-100,
+.text-rose-200,
+.text-rose-300 {
+  color: #9f1239 !important;
+}
+
+.text-emerald-500\/70 {
+  color: var(--luxury-teal) !important;
+}
+
+.text-red-400\/70 {
+  color: #b91c1c !important;
+}
+
+.text-emerald-200\/50 {
+  color: var(--luxury-teal) !important;
+}
+
+.bg-indigo-500\/5 {
+  background-color: rgba(242, 210, 138, 0.12) !important;
+}
+
+.bg-emerald-500\/5 {
+  background-color: rgba(15, 118, 110, 0.06) !important;
+}
+
+.border-emerald-500\/30 {
+  border-color: rgba(15, 118, 110, 0.30) !important;
+}
+
+.border-indigo-500\/30 {
+  border-color: rgba(124, 77, 24, 0.30) !important;
+}
+
+.bg-emerald-600\/20 {
+  background-color: rgba(15, 118, 110, 0.12) !important;
+}
+
+.text-slate-100 {
+  color: var(--luxury-text) !important;
+}
+
+.text-cyan-100,
+.text-cyan-200,
+.text-cyan-300,
+.text-emerald-100,
+.text-emerald-200,
+.text-emerald-300,
+.text-green-100,
+.text-green-200,
+.text-green-300,
+.text-teal-100,
+.text-teal-200,
+.text-teal-300,
+.text-teal-400,
+.text-teal-500 {
+  color: var(--luxury-teal) !important;
+}
+
+.border-indigo-500\/20,
+.border-indigo-500\/30,
+.border-amber-400\/20,
+.border-amber-500,
+.border-amber-500\/20,
+.border-amber-500\/30,
+.border-amber-500\/60,
+.border-blue-500\/30,
+.border-emerald-500\/20,
+.border-emerald-500\/30,
+.border-slate-500\/30,
+.border-sky-500\/20,
+.border-teal-500,
+.border-teal-300,
+.border-teal-400,
+.border-teal-500\/20,
+.border-teal-500\/30,
+.border-teal-300\/30,
+.border-teal-300\/40,
+.border-teal-400\/30,
+.border-purple-500\/20,
+.border-rose-500\/20,
+.border-rose-500\/30,
+.border-cyan-500\/20 {
+  border-color: var(--border-strong) !important;
+}
+
+.hover\:border-indigo-400\/50:hover,
+.hover\:border-blue-500\/50:hover,
+.hover\:border-emerald-400\/50:hover,
+.hover\:border-sky-400\/50:hover,
+.hover\:border-teal-400\/50:hover,
+.hover\:border-purple-400\/50:hover,
+.hover\:border-rose-400\/50:hover,
+.hover\:border-cyan-400\/50:hover {
+  border-color: rgba(199, 154, 63, 0.48) !important;
+}
+
+.focus\:ring-blue-500:focus,
+.focus\:ring-blue-500\/50:focus,
+.focus\:ring-emerald-500:focus,
+.focus\:ring-emerald-500\/50:focus,
+.focus\:ring-2:focus {
+  --tw-ring-color: rgba(199, 154, 63, 0.4) !important;
+}
+
+.focus\:border-blue-500:focus,
+.focus\:border-blue-500\/50:focus,
+.focus\:border-emerald-500:focus,
+.focus\:border-emerald-500\/50:focus,
+.focus\:border-indigo-500:focus {
+  border-color: rgba(199, 154, 63, 0.6) !important;
+}
+
+.bg-indigo-500\/10,
+.bg-indigo-500\/20,
+.bg-amber-500,
+.bg-amber-500\/10,
+.bg-amber-500\/20,
+.bg-amber-500\/30,
+.bg-amber-500\/\[0\.06\],
+.bg-blue-500\/10,
+.bg-blue-500\/20,
+.bg-emerald-500\/10,
+.bg-emerald-500\/20,
+.bg-slate-500\/10,
+.bg-sky-500\/20,
+.bg-cyan-500\/10,
+.bg-cyan-500\/20,
+.bg-emerald-300\/10,
+.bg-teal-500\/20,
+.bg-teal-300\/10,
+.bg-teal-500\/10,
+.bg-purple-500\/20 {
+  background-color: rgba(242, 210, 138, 0.22) !important;
+}
+
+.bg-rose-500\/10,
+.bg-rose-500\/20 {
+  background-color: rgba(254, 226, 226, 0.7) !important;
+}
+
+.bg-amber-600,
+.bg-blue-600,
+.bg-emerald-600,
+.bg-teal-600,
+.hover\:bg-amber-500:hover,
+.hover\:bg-blue-500:hover,
+.hover\:bg-emerald-500:hover,
+.hover\:bg-teal-500:hover {
+  background: linear-gradient(135deg, var(--luxury-gold-2), var(--luxury-gold) 52%, var(--luxury-bronze)) !important;
+  color: #3d2814 !important;
+}
+
+.hover\:bg-rose-500\/20:hover {
+  background-color: rgba(254, 202, 202, 0.72) !important;
+}
+
+.hover\:bg-emerald-500\/30:hover {
+  background-color: rgba(15, 118, 110, 0.18) !important;
+}
+
+.hover\:bg-teal-500\/20:hover,
+.hover\:bg-teal-500\/30:hover {
+  background-color: rgba(199, 154, 63, 0.24) !important;
+}
+
+.file\:bg-blue-600::file-selector-button,
+.file\:bg-teal-600::file-selector-button {
+  background: linear-gradient(135deg, var(--luxury-gold-2), var(--luxury-gold) 52%, var(--luxury-bronze));
+  color: #3d2814;
+}
+
+.file\:text-white::file-selector-button {
+  color: #3d2814;
+}
+
+.placeholder\:text-slate-600::placeholder {
+  color: #9c8a70;
+}
+
+.\[color-scheme\:dark\] {
+  color-scheme: light;
+}
+
+.bg-indigo-500\/30,
+.selection\:bg-indigo-500\/30::selection {
+  background-color: rgba(199, 154, 63, 0.28);
+}
+
+.selection\:text-indigo-200::selection {
+  color: #4a351f;
 }

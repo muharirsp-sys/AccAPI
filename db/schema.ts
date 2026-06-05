@@ -1,8 +1,8 @@
 /*
- * Tujuan: Skema Drizzle SQLite untuk Better Auth, RBAC, cache master, dan idempotency lokal.
+ * Tujuan: Skema Drizzle SQLite untuk Better Auth, RBAC, cache master, idempotency lokal, dan OFF Program Control.
  * Caller: Better Auth adapter, route handler Next.js, script init-db, dan service cache lokal.
  * Dependensi: drizzle-orm/sqlite-core.
- * Main Functions: table `user`, `session`, `account`, `verification`, `syncState`, `item`, `customer`, `idempotencyLog`.
+ * Main Functions: table `user`, `session`, `account`, `verification`, `syncState`, `item`, `customer`, `idempotencyLog`, `offBatch`, `offPeriodClosure`.
  * Side Effects: Definisi schema untuk DB read/write SQLite oleh caller.
  */
 import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
@@ -161,8 +161,34 @@ export const offBatch = sqliteTable("off_batch", {
     receiptPdfPath: text("receipt_pdf_path"),
     receiptPdfGeneratedAt: integer("receipt_pdf_generated_at", { mode: "timestamp" }),
     receiptPdfStatus: text("receipt_pdf_status").notNull().default("pending"),
+    // --- Refund (Pengembalian Dana Selisih) ---
+    // refundStatus mencatat apakah ada selisih yang perlu dikembalikan setelah verifikasi final.
+    // "Not Applicable" = tidak ada selisih, "Pending Refund" = ada selisih belum lunas,
+    // "Partially Refunded" = sebagian dikembalikan, "Fully Refunded" = lunas.
+    refundStatus: text("refund_status").notNull().default("Not Applicable"),
+    refundAmount: real("refund_amount"), // Total selisih yang harus dikembalikan
+    totalRefunded: real("total_refunded"), // Total yang sudah dikembalikan
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+});
+
+export const offPeriodClosure = sqliteTable("off_period_closure", {
+    id: text("id").primaryKey(),
+    principleCode: text("principle_code").notNull(),
+    principleName: text("principle_name").notNull(),
+    bulan: text("bulan").notNull(),
+    tahun: text("tahun").notNull(),
+    status: text("status").notNull().default("Terbuka"),
+    totalSubmitted: real("total_submitted").notNull().default(0),
+    totalClaimed: real("total_claimed").notNull().default(0),
+    submittedCount: integer("submitted_count").notNull().default(0),
+    claimedCount: integer("claimed_count").notNull().default(0),
+    closedBy: text("closed_by"),
+    closedAt: integer("closed_at", { mode: "timestamp" }),
+    unlockedBy: text("unlocked_by"),
+    unlockedAt: integer("unlocked_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
 });
 
 export const offBatchItem = sqliteTable("off_batch_item", {
@@ -266,6 +292,33 @@ export const offAuditLog = sqliteTable("off_audit_log", {
     newValue: text("new_value", { mode: "json" }),
     parentAuditLogId: text("parent_audit_log_id"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull()
+});
+
+// --- OFF Refund (Pengembalian Dana Selisih) --- //
+// Mencatat pengembalian dana saat realisasi klaim < dana yang sudah dikeluarkan.
+// Contoh: diajukan 100jt, sudah dibayar Finance, realisasi klaim hanya 80jt → selisih 20jt wajib dikembalikan.
+// Batch tidak bisa Completed sampai selisih = 0.
+export const offRefund = sqliteTable("off_refund", {
+    id: text("id").primaryKey(),
+    batchId: text("batch_id").notNull().references(() => offBatch.id),
+    refundNo: integer("refund_no").notNull(),
+    refundAmount: real("refund_amount").notNull().default(0),
+    refundMethod: text("refund_method").notNull(), // "Transfer" | "Tunai" | "Kompensasi Batch Lain"
+    refundDate: text("refund_date").notNull(),
+    senderName: text("sender_name"), // Siapa yang mengembalikan
+    receiverBank: text("receiver_bank"), // Bank penerima (untuk transfer)
+    proofPath: text("proof_path"),
+    proofName: text("proof_name"),
+    proofMime: text("proof_mime"),
+    proofSize: integer("proof_size"),
+    note: text("note"),
+    status: text("status").notNull().default("Pending"), // "Pending" | "Verified" | "Rejected"
+    verifiedBy: text("verified_by"),
+    verifiedAt: integer("verified_at", { mode: "timestamp" }),
+    verificationNote: text("verification_note"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
 });
 
 // --- OFF Discount (Dashboard Diskon SPV) --- //

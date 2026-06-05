@@ -1,9 +1,17 @@
+/*
+ * Tujuan: API daftar dan pembuatan pengajuan OFF Program Control.
+ * Caller: Halaman OFF Program Control tab overview/supervisor/claim/OM/finance.
+ * Dependensi: Better Auth OFF session, Drizzle SQLite, Elasticsearch optional, helper workflow OFF.
+ * Main Functions: GET daftar pengajuan dengan pencarian/filter, POST buat pengajuan.
+ * Side Effects: DB read/write SQLite, audit log OFF, HTTP call Elasticsearch bila pencarian aktif dan env tersedia.
+ */
+
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem, offPayment } from "@/db/schema";
-import { buildNoPengajuan, buildSearchHaystack, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, findDuplicateNoSuratWithinPayload, findOffNoSuratConflicts, getPrincipleByCode, getPrincipleByName, matchesSearch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, writeOffAudit } from "@/lib/off-program-control";
+import { buildNoPengajuan, buildSearchHaystack, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, findDuplicateNoSuratWithinPayload, findOffNoSuratConflicts, getPrincipleByCode, getPrincipleByName, matchesSearch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, searchOffBatchIdsWithElasticsearch, writeOffAudit, type OffSearchDocument } from "@/lib/off-program-control";
 
 // PPh masih HOLD. NOTE: PPh disiapkan nullable di level item/toko, tetapi
 // perhitungan final ditahan karena masih terkait format kwitansi setelah pembayaran.
@@ -189,6 +197,33 @@ function buildBatchSearchText(
     ]);
 }
 
+function buildElasticsearchDocument(
+    batch: typeof offBatch.$inferSelect,
+    items: Array<typeof offBatchItem.$inferSelect>,
+): OffSearchDocument {
+    const itemPeriods = items.map((item) => item.periode).filter(Boolean).join(" ");
+    const itemClaimNumbers = items.map((item) => item.noClaim).filter(Boolean).join(" ");
+    const searchText = buildBatchSearchText(batch, items);
+
+    return {
+        id: batch.id,
+        noPengajuan: batch.noPengajuan,
+        noClaim: batch.noClaim || itemClaimNumbers,
+        principal: batch.principleName,
+        principalCode: batch.principleCode,
+        status: batch.status,
+        smStatus: batch.smStatus,
+        claimStatus: batch.claimStatus,
+        omStatus: batch.omStatus,
+        financeStatus: batch.financeStatus,
+        finalStatus: batch.finalStatus,
+        period: `${batch.bulan}/${batch.tahun} ${itemPeriods}`.trim(),
+        division: batch.supervisorName,
+        actor: batch.supervisorName,
+        searchText,
+    };
+}
+
 function alreadySubmittedResponse(batch: typeof offBatch.$inferSelect) {
     const publicRow = publicBatch(batch);
     return NextResponse.json({
@@ -203,7 +238,7 @@ function alreadySubmittedResponse(batch: typeof offBatch.$inferSelect) {
 
 export async function GET(request: Request) {
     const actor = await requireOffSession();
-    if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (!actor) return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." }, { status: 401 });
     if (!canActorAccessOffData(actor)) {
         return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses OFF Program Control." }, { status: 403 });
     }
@@ -241,18 +276,48 @@ export async function GET(request: Request) {
             paymentSummaries.set(row.id, computeOffFinancePaymentSummary(paymentSummary.total, batchPayments));
         });
 
-        const filteredRows = rows.filter((row) => {
+        const periodFilteredRows = rows.filter((row) => {
             const batchItems = itemsByBatch.get(row.id) || [];
             const batchPayments = paymentsByBatch.get(row.id) || [];
             if (!matchesPeriodFilter(row, batchItems, batchPayments, { periodType, month, year, dateFrom, dateTo })) {
                 return false;
             }
-            if (!search) return true;
-            return matchesSearch(buildBatchSearchText(row, batchItems), search);
+            return true;
         });
+        let searchBackend: "elasticsearch" | "local" | "none" = search ? "local" : "none";
+        let filteredRows = periodFilteredRows;
+
+        if (search) {
+            try {
+                const documents = periodFilteredRows.map((row) =>
+                    buildElasticsearchDocument(row, itemsByBatch.get(row.id) || []),
+                );
+                const elasticResult = await searchOffBatchIdsWithElasticsearch({
+                    query: search,
+                    documents,
+                });
+                if (elasticResult) {
+                    searchBackend = elasticResult.backend;
+                    const order = new Map(elasticResult.ids.map((id, index) => [id, index]));
+                    filteredRows = periodFilteredRows
+                        .filter((row) => order.has(row.id))
+                        .sort((a, b) => Number(order.get(a.id)) - Number(order.get(b.id)));
+                } else {
+                    filteredRows = periodFilteredRows.filter((row) =>
+                        matchesSearch(buildBatchSearchText(row, itemsByBatch.get(row.id) || []), search),
+                    );
+                }
+            } catch (searchError) {
+                console.warn("[OFF ELASTICSEARCH SEARCH FALLBACK]", searchError);
+                filteredRows = periodFilteredRows.filter((row) =>
+                    matchesSearch(buildBatchSearchText(row, itemsByBatch.get(row.id) || []), search),
+                );
+            }
+        }
 
         return NextResponse.json({
             ok: true,
+            searchBackend,
             batches: filteredRows.map((row) => ({
                 ...publicBatch(row),
                 payments: (paymentsByBatch.get(row.id) || []).map(publicPayment),
@@ -273,13 +338,13 @@ export async function GET(request: Request) {
         });
     } catch (error) {
         console.error("[OFF BATCH LIST ERROR]", error);
-        return NextResponse.json({ ok: false, error: "Gagal mengambil daftar batch." }, { status: 500 });
+        return NextResponse.json({ ok: false, error: "Data pengajuan belum berhasil dimuat. Silakan coba lagi." }, { status: 500 });
     }
 }
 
 export async function POST(request: Request) {
     const actor = await requireOffSession();
-    if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (!actor) return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." }, { status: 401 });
     if (!canActorPerformOffAction(actor, "create_batch")) {
         return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses membuat batch OFF." }, { status: 403 });
     }
@@ -287,21 +352,21 @@ export async function POST(request: Request) {
     try {
         const body = await request.json();
         const principle = getPrincipleByName(String(body.principleName || ""));
-        if (!principle) return NextResponse.json({ ok: false, error: "Invalid principle" }, { status: 400 });
+        if (!principle) return NextResponse.json({ ok: false, error: "Principal tidak valid." }, { status: 400 });
         const principleFromCode = body.principleCode ? getPrincipleByCode(String(body.principleCode)) : principle;
         if (!principleFromCode || principleFromCode.code !== principle.code) {
-            return NextResponse.json({ ok: false, error: "Principle code does not match selected principle" }, { status: 400 });
+            return NextResponse.json({ ok: false, error: "Kode principal tidak sesuai dengan principal yang dipilih." }, { status: 400 });
         }
 
         const gelombang = String(body.gelombang || "").padStart(3, "0");
         const bulan = String(body.bulan || "").padStart(2, "0");
         const tahun = String(body.tahun || "");
         if (!gelombang || !bulan || !tahun) {
-            return NextResponse.json({ ok: false, error: "Gelombang, bulan, and tahun are required" }, { status: 400 });
+            return NextResponse.json({ ok: false, error: "Gelombang, periode, dan tahun wajib diisi." }, { status: 400 });
         }
 
         const items = normalizeItems(Array.isArray(body.items) ? body.items : []);
-        if (items.length === 0) return NextResponse.json({ ok: false, error: "At least one item is required" }, { status: 400 });
+        if (items.length === 0) return NextResponse.json({ ok: false, error: "Minimal satu data pengajuan wajib diisi." }, { status: 400 });
 
         // Validasi duplikat No Surat (per principle, kecuali batch yang sudah Cancelled by OM).
         const force = body.forceDuplicateNoSurat === true || body.forceDuplicateNoSurat === "true";
@@ -329,7 +394,7 @@ export async function POST(request: Request) {
                 return NextResponse.json({
                     ok: false,
                     code: "DUPLICATE_NO_SURAT",
-                    message: `No Surat berikut sudah pernah dipakai pada principle ${principle.name}: ${Array.from(conflictMap.keys()).join(", ")}. Konfirmasi ulang jika ingin tetap melanjutkan.`,
+                    message: `Nomor surat berikut sudah pernah dipakai pada principal ${principle.name}: ${Array.from(conflictMap.keys()).join(", ")}. Konfirmasi ulang jika ingin tetap melanjutkan.`,
                     principleCode: principle.code,
                     principleName: principle.name,
                     conflicts,
@@ -392,6 +457,6 @@ export async function POST(request: Request) {
             }, { status: 409 });
         }
         console.error("[OFF CREATE BATCH ERROR]", error);
-        return NextResponse.json({ ok: false, error: "Failed to create batch" }, { status: 500 });
+        return NextResponse.json({ ok: false, error: "Pengajuan belum berhasil dibuat. Silakan coba lagi." }, { status: 500 });
     }
 }

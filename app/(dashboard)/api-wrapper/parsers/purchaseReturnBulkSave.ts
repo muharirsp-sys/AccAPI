@@ -846,7 +846,7 @@ export const parsePurchaseReturnBulkSaveWorkbook: WorkbookRouteParser = async ({
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     warnings.push(
-      `Prefetch stok massal GD0BS via list-stock.do gagal: ${message}. Fallback ke get-stock.do per item.`,
+      `Prefetch stok bulk GD0BS via list-stock.do gagal: ${message}. Fallback ke get-stock.do per item.`,
     );
     stockPrefetchSource = "get-stock.do fallback";
   }

@@ -29,21 +29,22 @@ export const applyStoredThemeScript = `(function(){try{var t=localStorage.getIte
 
 export default function ThemeSwitcher() {
   const [open, setOpen] = useState(false);
-  const [theme, setTheme] = useState<OffThemeKey>(DEFAULT_THEME);
+  const [theme, setTheme] = useState<OffThemeKey>(() => {
+    if (typeof window === "undefined") return DEFAULT_THEME;
+    try {
+      const stored = window.localStorage.getItem(OFF_THEME_STORAGE_KEY);
+      return isOffThemeKey(stored) ? stored : DEFAULT_THEME;
+    } catch {
+      return DEFAULT_THEME;
+    }
+  });
 
   useEffect(() => {
-    const stored = typeof window !== "undefined" ? localStorage.getItem(OFF_THEME_STORAGE_KEY) : null;
-    if (isOffThemeKey(stored)) {
-      setTheme(stored);
-      document.documentElement.setAttribute("data-theme", stored);
-    } else {
-      document.documentElement.setAttribute("data-theme", DEFAULT_THEME);
-    }
-  }, []);
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
 
   const selectTheme = (next: OffThemeKey) => {
     setTheme(next);
-    document.documentElement.setAttribute("data-theme", next);
     try {
       localStorage.setItem(OFF_THEME_STORAGE_KEY, next);
     } catch {

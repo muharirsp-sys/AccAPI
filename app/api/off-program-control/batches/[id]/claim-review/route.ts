@@ -1,3 +1,11 @@
+/*
+ * Tujuan: API tinjauan Klaim setelah persetujuan Sales Manager.
+ * Caller: Halaman OFF Program Control tab Klaim.
+ * Dependensi: Better Auth OFF session, Drizzle SQLite, helper workflow/data OFF.
+ * Main Functions: POST claim_review untuk approve/return pengajuan.
+ * Side Effects: DB write SQLite dan audit log OFF.
+ */
+
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -5,6 +13,7 @@ import { offBatch } from "@/db/schema";
 import {
   canActorPerformOffAction,
   getBatchWithItems,
+  isOffPeriodClosedForBatch,
   publicBatch,
   requireOffSession,
   writeOffAudit,
@@ -21,24 +30,30 @@ export async function POST(request: Request, context: Context) {
     const actor = await requireOffSession();
     if (!actor)
       return NextResponse.json(
-        { ok: false, error: "Unauthorized" },
+        { ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." },
         { status: 401 },
       );
     if (!canActorPerformOffAction(actor, "claim_review"))
       return NextResponse.json(
-        { ok: false, error: "Role Anda tidak memiliki akses review Claim." },
+        { ok: false, error: "Anda tidak memiliki akses untuk meninjau klaim." },
         { status: 403 },
       );
     const { id } = await context.params;
     const data = await getBatchWithItems(id);
     if (!data)
       return NextResponse.json(
-        { ok: false, error: "Batch not found" },
+        { ok: false, error: "Pengajuan tidak ditemukan." },
         { status: 404 },
       );
+    if (actor.role !== "admin" && await isOffPeriodClosedForBatch(data.batch)) {
+      return NextResponse.json(
+        { ok: false, error: "Periode ini sudah ditutup dan tidak dapat diubah." },
+        { status: 409 },
+      );
+    }
     if (!canReviewClaim(data.batch.smStatus)) {
       return NextResponse.json(
-        { ok: false, error: "Batch belum Approved by SM." },
+        { ok: false, error: "Pengajuan belum disetujui Sales Manager." },
         { status: 409 },
       );
     }
@@ -52,7 +67,7 @@ export async function POST(request: Request, context: Context) {
     if (action === "return") {
       if (!note)
         return NextResponse.json(
-          { ok: false, error: "Catatan Claim wajib diisi untuk return." },
+          { ok: false, error: "Catatan klaim wajib diisi untuk pengembalian." },
           { status: 400 },
         );
       await db

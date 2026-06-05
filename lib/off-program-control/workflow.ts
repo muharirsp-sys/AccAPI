@@ -66,6 +66,8 @@ export function computeBatchProgress(batch: BatchProgressSource): number {
 
   if (status === "Cancelled" || status === "Cancelled by OM") return 0;
   if (finalStatus === "Completed" || status === "Completed") return 100;
+  if (finalStatus === "Fully Refunded") return 100;
+  if (finalStatus === "Pending Refund" || finalStatus === "Partially Refunded" || status === "Overpaid - Pending Refund") return 92;
   if (finalStatus === "Incomplete Documents") return 90;
   if (finalStatus === "Waiting Claim Final Verification" || status === "Paid")
     return 85;

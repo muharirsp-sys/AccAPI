@@ -258,7 +258,7 @@ export default function PaymentsPage() {
         setIsSubmitting(true);
         try {
             const res = await api.post('/payments/cart/create', { method: payMethod, record_ids: selectedIds });
-            if (res.data.ok) window.location.href = `${API_BASE}/payments/cart/${res.data.draft_id}`;
+            if (res.data.ok) window.location.href = `/payments/cart/${res.data.draft_id}`;
             else toast.error(res.data.error || 'Gagal membuat pengajuan cart.');
         } catch { toast.error('Koneksi ke server gagal saat submit draft panin/non-panin.'); } 
         finally { setIsSubmitting(false); }
@@ -319,7 +319,7 @@ export default function PaymentsPage() {
                     toast.warning("Data tersimpan, tetapi refresh gagal. Tampilan lokal tetap dipertahankan.");
                 }
             } else toast.error(res.data.error || "Gagal menyimpan perubahan tabel.");
-        } catch { toast.error("Kesalahan jaringan saat sinkronisasi grid massal."); } 
+        } catch { toast.error("Kesalahan jaringan saat sinkronisasi grid batch."); } 
         finally { setIsSaving(false); }
     };
 
@@ -375,7 +375,19 @@ export default function PaymentsPage() {
 
     const handleInputChange = (id: string, field: keyof PaymentRecordPatch, value: PaymentRecord[keyof PaymentRecord] | boolean) => {
         const key = String(id);
-        setRecords(prev => prev.map(r => String(r.record_id || r.id) === key ? { ...r, [field]: value } : r));
+        setRecords(prev => prev.map(r => {
+            if (String(r.record_id || r.id) !== key) return r;
+            const updated = { ...r, [field]: value };
+            // Hitung gap secara real-time saat nilai_invoice berubah
+            if (field === 'nilai_invoice') {
+                const nilaiSistem = parseInvoiceAmount(r.nilai_sistem || r.nilai_win || 0);
+                const nilaiInvoice = parseInvoiceAmount(value as string | number);
+                const gap = nilaiSistem - nilaiInvoice;
+                updated.gap_nilai = gap;
+                updated.gap_nilai_display = formatInvoiceAmountDisplay(gap);
+            }
+            return updated;
+        }));
         setPendingChanges(prev => ({
             ...prev,
             [key]: {
@@ -430,6 +442,13 @@ export default function PaymentsPage() {
         const start = (activePage - 1) * pageSize;
         return filteredRecords.slice(start, start + pageSize);
     }, [filteredRecords, activePage, pageSize]);
+
+    // Total nilai invoice dari semua record yang di-centang (ajukan)
+    const totalCheckedInvoice = useMemo(() => {
+        return records
+            .filter(r => r.ajukan)
+            .reduce((sum, r) => sum + parseInvoiceAmount(r.nilai_invoice), 0);
+    }, [records]);
 
     useEffect(() => {
         setPage(1);
@@ -495,7 +514,7 @@ export default function PaymentsPage() {
                         <input placeholder="No Ref/LPB (Opsional)" className="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-emerald-500/50" value={manualEntry.no_lpb} onChange={e => setManualEntry({ ...manualEntry, no_lpb: e.target.value })} disabled={manualEntry.tipe === 'CBD'} />
                         <input placeholder="Principle (Wajib)" required className="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-emerald-500/50" value={manualEntry.principle} onChange={e => setManualEntry({ ...manualEntry, principle: e.target.value })} />
                         <input placeholder="No Invoice" className="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-emerald-500/50" value={manualEntry.invoice_no} onChange={e => setManualEntry({ ...manualEntry, invoice_no: e.target.value })} />
-                        <input placeholder="Nilai Invoice (Wajib)" required inputMode="decimal" className="bg-[#1e2333] font-bold border border-emerald-500/30 rounded-lg px-3 py-2 text-sm text-emerald-400 outline-none focus:ring-1 focus:ring-emerald-500" value={manualEntry.nilai_invoice} onChange={e => setManualEntry({ ...manualEntry, nilai_invoice: formatInvoiceAmountInput(e.target.value) })} onBlur={() => setManualEntry(prev => ({ ...prev, nilai_invoice: formatInvoiceAmountDisplay(prev.nilai_invoice) }))} />
+                        <input placeholder="Nilai Invoice (Wajib)" required inputMode="decimal" className="bg-emerald-500/5 font-bold border border-emerald-500/30 rounded-lg px-3 py-2 text-sm text-emerald-400 outline-none focus:ring-1 focus:ring-emerald-500" value={manualEntry.nilai_invoice} onChange={e => setManualEntry({ ...manualEntry, nilai_invoice: formatInvoiceAmountInput(e.target.value) })} onBlur={() => setManualEntry(prev => ({ ...prev, nilai_invoice: formatInvoiceAmountDisplay(prev.nilai_invoice) }))} />
                         <button type="submit" disabled={isAddingManual} className="bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 font-bold rounded-lg px-3 py-2 text-sm hover:bg-emerald-500/30 transition-colors disabled:opacity-50">
                             Simpan Entry
                         </button>
@@ -504,19 +523,29 @@ export default function PaymentsPage() {
             </div>
 
             {/* Compilation & Submit */}
-            <div className="bg-gradient-to-r from-blue-900/40 to-[#1a1c23]/60 backdrop-blur-xl p-8 rounded-2xl shadow-xl border border-blue-500/20 mb-8 flex flex-col md:flex-row items-center gap-8">
+            <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-8 rounded-2xl shadow-xl border border-white/10 mb-8 flex flex-col md:flex-row items-center gap-8">
                 <div className="flex-1">
                     <h2 className="text-2xl font-black text-white flex items-center gap-3 mb-2 tracking-tight">
                         <Landmark size={28} className="text-blue-400" /> Tahap Kompilasi Pembayaran
                     </h2>
                     <p className="text-slate-400">Centang baris data pada area tabel utama di bawah, tentukan rute bank sistem pencairan, lalu sinkronkan semuanya menjadi 1 Draft (SPPD).</p>
+                    {/* Total Nilai Invoice yang dicentang */}
+                    <div className="mt-4 flex items-center gap-3">
+                        <span className="text-sm text-slate-400">Total Nilai Invoice (dicentang):</span>
+                        <span className="font-mono font-bold text-lg text-emerald-400">
+                            {totalCheckedInvoice > 0 ? `Rp ${formatInvoiceAmountDisplay(totalCheckedInvoice)}` : "—"}
+                        </span>
+                        <span className="text-xs text-slate-500 font-mono">
+                            ({records.filter(r => r.ajukan).length} item)
+                        </span>
+                    </div>
                 </div>
                 <div className="flex-1 w-full bg-black/40 p-4 border border-white/10 rounded-xl flex items-center gap-4">
-                    <select className="flex-1 bg-[#1a1c23] border border-blue-500/30 text-white font-bold rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 shadow-inner" value={payMethod} onChange={e => setPayMethod(e.target.value)}>
+                    <select className="flex-1 bg-[#1a1c23] border border-white/10 text-white font-bold rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-amber-500 shadow-inner" value={payMethod} onChange={e => setPayMethod(e.target.value)}>
                         <option value="NON_PANIN">Route: BNN (Bank Non Panin)</option>
                         <option value="BANK_PANIN">Route: BPA (Bank Panin Terkhusus)</option>
                     </select>
-                    <button onClick={handleSubmitCart} disabled={isSubmitting} className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500 shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50 text-base">
+                    <button onClick={handleSubmitCart} disabled={isSubmitting} className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500 shadow-lg transition-all disabled:opacity-50 text-base">
                         Eksekusi Pengajuan <Send size={18} />
                     </button>
                 </div>
@@ -574,7 +603,7 @@ export default function PaymentsPage() {
                         <button onClick={handleDelete} disabled={isDeleting} className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/20 text-rose-400 font-bold px-4 py-2.5 rounded-xl hover:bg-rose-500/20 transition-colors disabled:opacity-50">
                             <Trash2 size={16} /> Hapus Ceklis
                         </button>
-                        <button onClick={handleSaveBulk} disabled={isSaving || pendingChangeCount === 0} className="flex items-center gap-2 bg-emerald-600 text-white font-bold px-5 py-2.5 rounded-xl hover:bg-emerald-500 shadow-lg shadow-emerald-500/20 transition-all disabled:opacity-50">
+                        <button onClick={handleSaveBulk} disabled={isSaving || pendingChangeCount === 0} className="flex items-center gap-2 bg-emerald-600 text-white font-bold px-5 py-2.5 rounded-xl hover:bg-emerald-500 shadow-lg transition-all disabled:opacity-50">
                             <Save size={16} /> {isSaving ? "Menyimpan..." : `Update Semua${pendingChangeCount ? ` (${pendingChangeCount})` : ""}`}
                         </button>
                     </div>
@@ -585,24 +614,24 @@ export default function PaymentsPage() {
                         <thead className="text-[10px] uppercase font-bold text-slate-500 sticky top-0 z-30">
                             <tr>
                                 {/* Header Labels */}
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f]">Ajukan</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#1e212b] sticky left-0 z-40 shadow-[1px_0_0_0_rgba(255,255,255,0.1)] text-white">No. LPB / Ref</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f]">Principle</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f]">Tgl Setor</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f]">Tgl Win</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f]">J.Tempo Win</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f] text-right text-emerald-500/70">Nilai Sistem</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f]">Terima Brg</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f] text-blue-400">Tgl Invoice</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f] text-blue-400">Invoice</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f] text-blue-400">Jenis Dok.</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f] text-blue-400">No. Dok</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f] text-right text-indigo-400">Nilai Inv.</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f] text-blue-400">JT Invoice</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f] text-right text-red-400/70">Gap</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f] text-blue-400">Actual Date</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f] text-emerald-400">Tgl Bayar Pst</th>
-                                <th className="px-3 py-3 border-b border-white/10 bg-[#16181f]">Status Track</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">Ajukan</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] sticky left-0 z-40 shadow-[1px_0_0_0_rgba(255,255,255,0.1)] text-white">No. LPB / Ref</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">Principle</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">Tgl Setor</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">Tgl Win</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">J.Tempo Win</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-right text-emerald-400">Nilai Sistem</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">Terima Brg</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-blue-400">Tgl Invoice</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-blue-400">Invoice</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-blue-400">Jenis Dok.</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-blue-400">No. Dok</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-right text-indigo-400">Nilai Inv.</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-blue-400">JT Invoice</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-right text-rose-400">Gap</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-blue-400">Actual Date</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115] text-emerald-400">Tgl Bayar Pst</th>
+                                <th className="px-3 py-3 border-b border-white/10 bg-[#0f1115]">Status Track</th>
                             </tr>
                             {/* Filter Controls */}
                             <tr>
@@ -611,8 +640,8 @@ export default function PaymentsPage() {
                                         <option value="">Semua</option><option value="checked">Ceklis</option><option value="unchecked">Kosong</option>
                                     </select>
                                 </th>
-                                <th className="p-1 px-[2px] bg-[#1a1c24] border-b border-white/5 sticky left-0 top-[41px] z-40 shadow-[1px_0_0_0_rgba(255,255,255,0.1)]">
-                                    <input type="text" placeholder="Cari Ref..." className="w-[120px] bg-black/60 border border-white/10 focus:border-blue-500 rounded text-[10px] py-1 px-2 text-white outline-none placeholder:text-slate-600 font-mono" onChange={e => handleFilterChange('no_lpb', e.target.value)} />
+                                <th className="p-1 px-[2px] bg-[#0f1115] border-b border-white/5 sticky left-0 top-[41px] z-40 shadow-[1px_0_0_0_rgba(255,255,255,0.1)]">
+                                    <input type="text" placeholder="Cari Ref..." className="w-[120px] bg-black/50 border border-white/10 focus:border-blue-500 rounded text-[10px] py-1 px-2 text-white outline-none placeholder:text-slate-600 font-mono" onChange={e => handleFilterChange('no_lpb', e.target.value)} />
                                 </th>
                                 {['principle', 'tgl_setor', 'tgl_win', 'jtempo_win', 'nilai_sistem', 'tgl_terima_barang', 'tgl_invoice', 'invoice', 'jenis_dokumen', 'nomor_dokumen', 'nilai_invoice', 'jt_invoice', 'gap_nilai_display', 'actual_date', 'tgl_pembayaran', 'status_pembayaran'].map((fKey, i) => (
                                     <th key={i} className="p-1 px-[2px] bg-[#0f1115] border-b border-white/5 sticky top-[41px] z-30">
@@ -632,7 +661,7 @@ export default function PaymentsPage() {
                                         <td className="px-3 py-1.5 text-center">
                                             <input type="checkbox" checked={!!r.ajukan} onChange={e => handleInputChange(r.record_id, 'ajukan', e.target.checked)} className="rounded bg-black/50 border-white/10 text-emerald-500 focus:ring-emerald-500/50 w-4 h-4 cursor-pointer" />
                                         </td>
-                                        <td className="px-3 py-1.5 sticky left-0 z-10 font-mono font-bold text-white bg-[#101217] group-hover:bg-[#1a1d24] shadow-[1px_0_0_0_rgba(255,255,255,0.05)] transition-colors">
+                                        <td className="px-3 py-1.5 sticky left-0 z-10 font-mono font-bold text-white bg-[#1a1c23]/60 group-hover:bg-white/10 shadow-[1px_0_0_0_rgba(255,255,255,0.05)] transition-colors">
                                             {r.no_lpb || "-"}
                                         </td>
                                         <td className="px-3 py-1.5 text-slate-300 font-medium truncate max-w-[150px]">{r.principle || "-"}</td>
@@ -667,9 +696,9 @@ export default function PaymentsPage() {
             {/* Inject Global CSS just for this table scrollbar for a seamless dark-theme view */}
             <style jsx global>{`
                 .custom-scrollbar::-webkit-scrollbar { width: 10px; height: 10px; }
-                .custom-scrollbar::-webkit-scrollbar-track { background: #0f1115; border-radius: 6px; }
-                .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 6px; }
-                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
+                .custom-scrollbar::-webkit-scrollbar-track { background: var(--surface-2, #f5ead8); border-radius: 6px; }
+                .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(176, 125, 43, 0.3); border-radius: 6px; }
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(176, 125, 43, 0.5); }
             `}</style>
         </div>
     );
