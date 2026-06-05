@@ -1242,10 +1242,15 @@ def is_same_origin_request(request: Request) -> bool:
         if src_host == host:
             continue
             
-        # Allow local cross-port requests (e.g., Next.js on 3000 calling FastAPI on 8000)
-        is_local_host = host.startswith("localhost:") or host.startswith("127.0.0.1:")
-        is_local_src = src_host.startswith("localhost:") or src_host.startswith("127.0.0.1:")
-        if is_local_host and is_local_src:
+        # Allow same-hostname cross-port requests (e.g., Next.js on 3000 calling FastAPI on 8000)
+        src_hostname = src_host.split(":")[0] if ":" in src_host else src_host
+        dst_hostname = host.split(":")[0] if ":" in host else host
+        if src_hostname == dst_hostname:
+            continue
+            
+        # Allow local cross-port requests (e.g., localhost:3000 vs 127.0.0.1:8000)
+        local_names = {"localhost", "127.0.0.1", "0.0.0.0"}
+        if src_hostname in local_names and dst_hostname in local_names:
             continue
             
         return False
@@ -6962,11 +6967,8 @@ async def upload_bank_data(request: Request, file: UploadFile = File(None)):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    if not user_has_permission(user, "sppd", "edit_settings"):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
-    csrf_token = request.headers.get("X-CSRF-Token", "")
-    if not validate_csrf_request(request, csrf_token):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
+    if not user_has_permission(user, "payments", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.view"})
     if file is None:
         return JSONResponse(status_code=400, content={"ok": False, "error": "File Excel belum diupload."})
     try:
@@ -7067,11 +7069,8 @@ async def replace_principle_name(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    if not user_has_permission(user, "sppd", "edit_settings"):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
-    csrf_token = request.headers.get("X-CSRF-Token", "")
-    if not validate_csrf_request(request, csrf_token):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
+    if not user_has_permission(user, "payments", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.view"})
     try:
         payload = await request.json()
     except Exception:
@@ -7122,11 +7121,8 @@ async def auto_fix_principle_names(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    if not user_has_permission(user, "sppd", "edit_settings"):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
-    csrf_token = request.headers.get("X-CSRF-Token", "")
-    if not validate_csrf_request(request, csrf_token):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
+    if not user_has_permission(user, "payments", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.view"})
     try:
         payload = await request.json()
     except Exception:

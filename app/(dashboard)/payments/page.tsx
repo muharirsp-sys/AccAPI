@@ -122,11 +122,15 @@ function hasOwnField<T extends object>(source: T, field: keyof T): boolean {
 
 async function getBackendCsrfToken(forceRefresh = false): Promise<string> {
     if (cachedCsrfToken && !forceRefresh) return cachedCsrfToken;
-    const res = await fetch(`${API_BASE}/api/me`, { credentials: "include" });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.csrf_token) throw new Error("CSRF token backend tidak tersedia.");
-    cachedCsrfToken = String(data.csrf_token);
-    return cachedCsrfToken;
+    try {
+        const res = await fetch(`${API_BASE}/api/me`, { credentials: "include" });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.csrf_token) {
+            cachedCsrfToken = String(data.csrf_token);
+            return cachedCsrfToken;
+        }
+    } catch { /* ignore - will proceed without CSRF token */ }
+    return cachedCsrfToken || "";
 }
 
 const api = {
@@ -221,7 +225,7 @@ export default function PaymentsPage() {
             } else {
                 toast.error(res.data.error || "Gagal mengunggah dataset pembayaran.");
             }
-        } catch { toast.error("Koneksi gagal saat upload."); }
+        } catch (err: unknown) { toast.error(err instanceof Error ? `Upload gagal: ${err.message}` : "Koneksi gagal saat upload. Pastikan backend menyala."); }
         finally { setIsUploading(false); }
     };
 

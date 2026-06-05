@@ -153,30 +153,36 @@ function BankDataSection() {
 
     const API = process.env.NEXT_PUBLIC_FASTAPI_BASE_URL || (typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:8000` : "http://localhost:8000");
 
-    async function getCsrf(): Promise<string> {
-        const res = await fetch(`${API}/api/me`, { credentials: "include" });
-        const data = await res.json().catch(() => ({}));
-        return data.csrf_token || "";
-    }
-
     const fetchBankData = async () => {
         setLoading(true);
         try {
             const res = await fetch(`${API}/api/bank-data`, { credentials: "include" });
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+                toast.error(`Gagal memuat data rekening: ${errData.error || res.statusText}`);
+                return;
+            }
             const data = await res.json();
             if (data.ok) setBankItems(data.items || []);
-        } catch { /* ignore */ }
-        finally { setLoading(false); }
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? `Koneksi gagal: ${err.message}` : "Tidak bisa terhubung ke backend.");
+        } finally { setLoading(false); }
     };
 
     const fetchMatchReport = async () => {
         setLoading(true);
         try {
             const res = await fetch(`${API}/api/bank-data/match-report`, { credentials: "include" });
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+                toast.error(`Gagal memuat report: ${errData.error || res.statusText}`);
+                return;
+            }
             const data = await res.json();
             if (data.ok) setMatchReport(data.report);
-        } catch { /* ignore */ }
-        finally { setLoading(false); }
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? `Koneksi gagal: ${err.message}` : "Tidak bisa terhubung ke backend.");
+        } finally { setLoading(false); }
     };
 
     const handleReplace = async () => {
@@ -187,22 +193,21 @@ function BankDataSection() {
         setReplacing(true);
         setReplaceResult(null);
         try {
-            const csrf = await getCsrf();
             const res = await fetch(`${API}/api/bank-data/replace-principle-name`, {
                 method: "POST",
                 credentials: "include",
-                headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ old_name: replaceOld, new_name: replaceNew }),
             });
-            const data = await res.json();
+            const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
             if (data.ok) {
                 setReplaceResult(data);
                 toast.success(data.message);
             } else {
-                toast.error(data.error || "Gagal replace.");
+                toast.error(data.error || `Gagal replace (HTTP ${res.status}).`);
             }
         } catch (err: unknown) {
-            toast.error(err instanceof Error ? err.message : "Error jaringan.");
+            toast.error(err instanceof Error ? `Koneksi gagal: ${err.message}` : "Tidak bisa terhubung ke backend.");
         } finally {
             setReplacing(false);
         }
@@ -211,23 +216,22 @@ function BankDataSection() {
     const handleAutoFix = async (confirm: boolean) => {
         setAutoFixing(true);
         try {
-            const csrf = await getCsrf();
             const res = await fetch(`${API}/api/bank-data/auto-fix-names`, {
                 method: "POST",
                 credentials: "include",
-                headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ confirm }),
             });
-            const data = await res.json();
+            const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
             if (data.ok) {
                 setAutoFixResult(data);
                 if (confirm && data.executed) toast.success(data.message);
                 else if (!confirm) toast.info("Preview auto-fix siap. Klik Eksekusi jika setuju.");
             } else {
-                toast.error(data.error || "Gagal auto-fix.");
+                toast.error(data.error || `Gagal auto-fix (HTTP ${res.status}).`);
             }
         } catch (err: unknown) {
-            toast.error(err instanceof Error ? err.message : "Error jaringan.");
+            toast.error(err instanceof Error ? `Koneksi gagal: ${err.message}` : "Tidak bisa terhubung ke backend.");
         } finally {
             setAutoFixing(false);
         }
