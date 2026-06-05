@@ -2264,16 +2264,11 @@ export default function ClaimWorkflowDetailPage() {
                   </div>
                 ) : (
                   <div className="overflow-auto rounded-xl border border-white/10">
-                    <div className="sticky left-0 top-0 z-10 border-b border-white/10 bg-[#141820] px-3 py-2 text-[11px] text-slate-300">
-                      Alur cepat: isi <span className="font-bold text-indigo-200">No. Urut</span> dan <span className="font-bold text-indigo-200">Bulan Claim</span> di sebelah <span className="font-bold text-indigo-200">No Claim</span>, klik <span className="font-bold text-indigo-200">Generate</span>, lalu <span className="font-bold text-indigo-200">Simpan</span>.
-                    </div>
                     <table className="min-w-[1700px] text-left text-sm">
                       <thead className="bg-black/40 text-[11px] uppercase tracking-wider text-slate-500">
                         <tr>
                           <th className="px-3 py-2 font-semibold">No.</th>
                           <th className="px-3 py-2 font-semibold">No Claim</th>
-                          <th className="px-3 py-2 font-semibold text-indigo-200">No. Urut</th>
-                          <th className="px-3 py-2 font-semibold text-indigo-200">Bulan Claim</th>
                           <th className="px-3 py-2 font-semibold">Perihal</th>
                           <th className="px-3 py-2 font-semibold">Periode</th>
                           <th className="px-3 py-2 font-semibold">Surat Program</th>
@@ -2348,53 +2343,6 @@ export default function ClaimWorkflowDetailPage() {
                               },
                             }));
                           };
-                          const generateNoClaim = () => {
-                            const currentDraft = excelRowDrafts[item.id] ?? draft;
-                            const seq = currentDraft.sequence.trim();
-                            const month = (currentDraft.month.trim() || excelDefaultMonth);
-                            const year = excelYear;
-
-                            if (!seq) {
-                              toast.error("Nomor urut wajib diisi.");
-                              return;
-                            }
-                            if (!month) {
-                              toast.error("Bulan wajib diisi.");
-                              return;
-                            }
-                            if (!year) {
-                              toast.error("Tahun wajib diisi.");
-                              return;
-                            }
-
-                            let generated = "";
-                            if (excelCurrentRule) {
-                              generated = buildNoClaimFromRule(excelCurrentRule, {
-                                sequence: seq,
-                                month,
-                                year,
-                                variantKey: excelVariantKey || undefined,
-                              });
-                            }
-                            // Fallback: jika rule tidak tersedia atau pattern
-                            // tidak menghasilkan output, pakai format legacy.
-                            if (!generated) {
-                              const principal = excelPrincipalCode.trim();
-                              const distributor = excelDistributorCode.trim();
-                              if (!principal || !distributor) {
-                                toast.error("Principal dan Distributor wajib diisi.");
-                                return;
-                              }
-                              const mm = month.padStart(2, "0");
-                              generated = `${formatNoClaimSequence(seq)}/${distributor}-${principal}/${mm}/${year}`;
-                            }
-
-                            updateDraft({
-                              sequence: formatNoClaimSequence(seq),
-                              month: month.trim(),
-                              noClaimDraft: generated,
-                            });
-                          };
                           const inputClass =
                             "w-full rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm text-white outline-none focus:border-indigo-500/60";
                           const numberInputClass =
@@ -2431,43 +2379,6 @@ export default function ClaimWorkflowDetailPage() {
                                 ) : (
                                   <span className="text-[11px] italic text-amber-300">
                                     Belum siap
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-3 py-2">
-                                {noClaimEditable ? (
-                                  <input
-                                    type="text"
-                                    inputMode="numeric"
-                                    value={draft.sequence}
-                                    onChange={(event) =>
-                                      updateDraft({ sequence: event.target.value })
-                                    }
-                                    placeholder="01"
-                                    className={`${inputClass} w-16 border-indigo-500/40 bg-indigo-500/10 font-mono`}
-                                  />
-                                ) : (
-                                  <span className="font-mono text-xs text-slate-400">
-                                    {draft.sequence || "-"}
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-3 py-2">
-                                {noClaimEditable ? (
-                                  <input
-                                    type="text"
-                                    inputMode="numeric"
-                                    maxLength={2}
-                                    value={draft.month}
-                                    onChange={(event) =>
-                                      updateDraft({ month: event.target.value })
-                                    }
-                                    placeholder={excelDefaultMonth}
-                                    className={`${inputClass} w-14 border-indigo-500/40 bg-indigo-500/10 font-mono`}
-                                  />
-                                ) : (
-                                  <span className="font-mono text-xs text-slate-400">
-                                    {draft.month || "-"}
                                   </span>
                                 )}
                               </td>
@@ -2589,20 +2500,6 @@ export default function ClaimWorkflowDetailPage() {
                               </td>
                               <td className="px-3 py-2">
                                 <div className="flex flex-wrap gap-1.5">
-                                  {noClaimEditable && (
-                                    <button
-                                      type="button"
-                                      onClick={generateNoClaim}
-                                      className="rounded-md border border-indigo-500/30 bg-indigo-500/10 px-2 py-1 text-[10px] font-bold text-indigo-200 hover:bg-indigo-500/20"
-                                      title={
-                                        sub
-                                          ? "Generate No Claim dari No. Urut, Bulan Claim, Distributor, Principal, dan Tahun"
-                                          : "Generate preview No Claim."
-                                      }
-                                    >
-                                      Generate
-                                    </button>
-                                  )}
                                   {editable && (
                                     <button
                                       type="button"
@@ -2834,7 +2731,7 @@ export default function ClaimWorkflowDetailPage() {
         {showPanduan && (
           <div className="space-y-3 border-t border-white/10 p-5 text-xs text-slate-300">
             <p>
-              Setiap baris di Daftar Claim mengikuti pola kerja sheet BASE: isi No. Urut dan Bulan Claim, generate No Claim, cek DPP/PPN/PPH, lalu Simpan.
+              Setiap baris di Daftar Claim: ketik No Claim final langsung di kolom, cek DPP/PPN/PPH, lalu klik Simpan.
             </p>
             <div className="rounded-lg border border-white/10 bg-black/30 p-3">
               <p className="font-bold text-white">Apa itu Berkas Claim?</p>
@@ -2849,8 +2746,7 @@ export default function ClaimWorkflowDetailPage() {
               <div className="rounded-lg border border-white/10 bg-black/30 p-3">
                 <p className="font-bold text-white">Urutan Kerja</p>
                 <ol className="mt-2 list-decimal space-y-1 pl-5">
-                  <li>Isi No Claim secara manual di kolom No Claim.</li>
-                  <li>Opsional: isi No. Urut dan Bulan Claim, lalu klik Generate untuk preview format.</li>
+                  <li>Ketik No Claim final di kolom No Claim.</li>
                   <li>Cek/edit DPP, PPN %, dan PPH %, lalu klik Simpan.</li>
                   <li>Klik Detail untuk dokumen, payment summary, outstanding, dan status close.</li>
                 </ol>
