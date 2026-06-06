@@ -130,7 +130,7 @@ export async function buildReconciliationPdf(data: ReconciliationData): Promise<
 
     const headers = ["No", "No. Pengajuan", "Nama Toko", "Nilai Pengajuan", "No. Claim", "Nilai Claim", "Selisih"];
     const rowHeight = 22;
-    const rowsPerPage = 16;
+    const rowsPerPage = 15;
     const totalPages = Math.max(1, Math.ceil(data.rows.length / rowsPerPage));
 
     for (let page = 0; page < totalPages; page++) {
@@ -185,11 +185,11 @@ export async function buildReconciliationPdf(data: ReconciliationData): Promise<
         const matchLabel = data.totalSelisih === 0 ? "Data Sudah Sesuai" : "Ada Selisih";
         const matchColor = data.totalSelisih === 0 ? rgb(0.05, 0.5, 0.3) : rgb(0.7, 0.2, 0.1);
         pdfPage.drawText(matchLabel, {
-            x: margin + 550, y: infoY - 52, size: 9, font: bold, color: matchColor,
+            x: margin + 550, y: infoY - 54, size: 9, font: bold, color: matchColor,
         });
 
         // Table header
-        const tableTopY = infoY - 72;
+        const tableTopY = infoY - 82;
         pdfPage.drawRectangle({ x: margin, y: tableTopY, width: contentWidth, height: 22, color: rgb(0.44, 0.34, 0.14) });
 
         let x = margin;
