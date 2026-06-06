@@ -70,11 +70,18 @@ export async function fetchReconciliationData(principleCode: string, bulan: stri
             ? Array.from(tokoSet).join(", ")
             : `${Array.from(tokoSet).slice(0, 2).join(", ")} +${tokoSet.size - 2}`;
 
+        // No Claim: prioritas batch-level, fallback ke item-level (ambil yang pertama terisi)
+        const batchNoClaim = String(batch.noClaim || "").trim();
+        const itemNoClaim = items
+            .map((item) => String(item.noClaim || "").trim())
+            .find((val) => val.length > 0) || "";
+        const noClaim = batchNoClaim || itemNoClaim || "-";
+
         rows.push({
             noPengajuan: batch.noPengajuan,
             toko: tokoLabel,
             nilaiPengajuan,
-            noClaim: batch.noClaim || "-",
+            noClaim,
             nilaiClaim,
             selisih,
         });
