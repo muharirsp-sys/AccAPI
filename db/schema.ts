@@ -1,11 +1,11 @@
 /*
- * Tujuan: Skema Drizzle SQLite untuk Better Auth, RBAC, cache master, idempotency lokal, dan OFF Program Control.
+ * Tujuan: Skema Drizzle SQLite untuk Better Auth, RBAC, cache master, dan idempotency lokal.
  * Caller: Better Auth adapter, route handler Next.js, script init-db, dan service cache lokal.
  * Dependensi: drizzle-orm/sqlite-core.
- * Main Functions: table `user`, `session`, `account`, `verification`, `syncState`, `item`, `customer`, `idempotencyLog`, `offBatch`, `offPeriodClosure`.
+ * Main Functions: table `user`, `session`, `account`, `verification`, `syncState`, `item`, `customer`, `idempotencyLog`.
  * Side Effects: Definisi schema untuk DB read/write SQLite oleh caller.
  */
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core";
 
 export const user = sqliteTable("user", {
     id: text("id").primaryKey(),
@@ -161,13 +161,9 @@ export const offBatch = sqliteTable("off_batch", {
     receiptPdfPath: text("receipt_pdf_path"),
     receiptPdfGeneratedAt: integer("receipt_pdf_generated_at", { mode: "timestamp" }),
     receiptPdfStatus: text("receipt_pdf_status").notNull().default("pending"),
-    // --- Refund (Pengembalian Dana Selisih) ---
-    // refundStatus mencatat apakah ada selisih yang perlu dikembalikan setelah verifikasi final.
-    // "Not Applicable" = tidak ada selisih, "Pending Refund" = ada selisih belum lunas,
-    // "Partially Refunded" = sebagian dikembalikan, "Fully Refunded" = lunas.
     refundStatus: text("refund_status").notNull().default("Not Applicable"),
-    refundAmount: real("refund_amount"), // Total selisih yang harus dikembalikan
-    totalRefunded: real("total_refunded"), // Total yang sudah dikembalikan
+    refundAmount: real("refund_amount"),
+    totalRefunded: real("total_refunded"),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 });
@@ -204,6 +200,10 @@ export const offBatchItem = sqliteTable("off_batch_item", {
     barang: text("barang"),
     nominal: real("nominal").notNull().default(0),
     caraBayar: text("cara_bayar"),
+    financePaymentStatus: text("finance_payment_status").notNull().default("unpaid"),
+    financePaidAt: integer("finance_paid_at", { mode: "timestamp" }),
+    financePaymentId: text("finance_payment_id"),
+    financePaidAmount: real("finance_paid_amount"),
     type: text("type"),
     // --- Tipe Program (revisi dropdown + legacy) ---
     // originalType menyimpan nilai tipe asli sebelum normalisasi (audit legacy).
@@ -259,6 +259,29 @@ export const offPayment = sqliteTable("off_payment", {
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
 });
 
+export const offRefund = sqliteTable("off_refund", {
+    id: text("id").primaryKey(),
+    batchId: text("batch_id").notNull().references(() => offBatch.id),
+    refundNo: integer("refund_no").notNull(),
+    refundAmount: real("refund_amount").notNull().default(0),
+    refundMethod: text("refund_method").notNull(),
+    refundDate: text("refund_date").notNull(),
+    senderName: text("sender_name"),
+    receiverBank: text("receiver_bank"),
+    proofPath: text("proof_path"),
+    proofName: text("proof_name"),
+    proofMime: text("proof_mime"),
+    proofSize: integer("proof_size"),
+    note: text("note"),
+    status: text("status").notNull().default("Pending"),
+    verifiedBy: text("verified_by"),
+    verifiedAt: integer("verified_at", { mode: "timestamp" }),
+    verificationNote: text("verification_note"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
+});
+
 export const offNotification = sqliteTable("off_notification", {
     id: text("id").primaryKey(),
     batchId: text("batch_id").notNull().references(() => offBatch.id),
@@ -292,33 +315,6 @@ export const offAuditLog = sqliteTable("off_audit_log", {
     newValue: text("new_value", { mode: "json" }),
     parentAuditLogId: text("parent_audit_log_id"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull()
-});
-
-// --- OFF Refund (Pengembalian Dana Selisih) --- //
-// Mencatat pengembalian dana saat realisasi klaim < dana yang sudah dikeluarkan.
-// Contoh: diajukan 100jt, sudah dibayar Finance, realisasi klaim hanya 80jt → selisih 20jt wajib dikembalikan.
-// Batch tidak bisa Completed sampai selisih = 0.
-export const offRefund = sqliteTable("off_refund", {
-    id: text("id").primaryKey(),
-    batchId: text("batch_id").notNull().references(() => offBatch.id),
-    refundNo: integer("refund_no").notNull(),
-    refundAmount: real("refund_amount").notNull().default(0),
-    refundMethod: text("refund_method").notNull(), // "Transfer" | "Tunai" | "Kompensasi Batch Lain"
-    refundDate: text("refund_date").notNull(),
-    senderName: text("sender_name"), // Siapa yang mengembalikan
-    receiverBank: text("receiver_bank"), // Bank penerima (untuk transfer)
-    proofPath: text("proof_path"),
-    proofName: text("proof_name"),
-    proofMime: text("proof_mime"),
-    proofSize: integer("proof_size"),
-    note: text("note"),
-    status: text("status").notNull().default("Pending"), // "Pending" | "Verified" | "Rejected"
-    verifiedBy: text("verified_by"),
-    verifiedAt: integer("verified_at", { mode: "timestamp" }),
-    verificationNote: text("verification_note"),
-    createdBy: text("created_by"),
-    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
 });
 
 // --- OFF Discount (Dashboard Diskon SPV) --- //
@@ -357,3 +353,179 @@ export const offDiscountAuditLog = sqliteTable("off_discount_audit_log", {
     metadata: text("metadata", { mode: "json" }),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull()
 });
+
+// --- Claim Workflow (may start after OFF OM Approved) --- //
+
+export const claimWorkflow = sqliteTable("claim_workflow", {
+    id: text("id").primaryKey(),
+    offBatchId: text("off_batch_id").notNull().unique().references(() => offBatch.id),
+    claimWorkflowNo: text("claim_workflow_no").notNull().unique(),
+    principleCode: text("principle_code").notNull(),
+    principleName: text("principle_name").notNull(),
+    // Phase R7a — Multi No Claim + Direct Claim Source (additive only):
+    // - `sourceType` mendokumentasikan asal data klaim. Saat ini selalu
+    //   `off_program`; nilai `direct_kwitansi` dan `manual` disiapkan
+    //   untuk R7f (deferred).
+    // - `sourceRefId` menyimpan referensi ke sumber non-OFF di masa depan.
+    //   Saat ini selalu NULL.
+    // - `aggregateStatus` menyimpan status gabungan dari semua submission.
+    //   Saat ini mirror dari `status` sampai R7e mengaktifkannya.
+    sourceType: text("source_type").notNull().default("off_program"),
+    sourceRefId: text("source_ref_id"),
+    aggregateStatus: text("aggregate_status"),
+    status: text("status").notNull().default("Draft"),
+    totalDpp: real("total_dpp").notNull().default(0),
+    totalPpn: real("total_ppn").notNull().default(0),
+    totalPph: real("total_pph").notNull().default(0),
+    totalClaim: real("total_claim").notNull().default(0),
+    totalPaid: real("total_paid").notNull().default(0),
+    remainingAmount: real("remaining_amount").notNull().default(0),
+    submittedToPrincipalAt: integer("submitted_to_principal_at", { mode: "timestamp" }),
+    claimLetterPdfPath: text("claim_letter_pdf_path"),
+    claimLetterGeneratedAt: integer("claim_letter_generated_at", { mode: "timestamp" }),
+    claimLetterGeneratedBy: text("claim_letter_generated_by"),
+    summaryPdfPath: text("summary_pdf_path"),
+    summaryGeneratedAt: integer("summary_generated_at", { mode: "timestamp" }),
+    summaryGeneratedBy: text("summary_generated_by"),
+    receiptPdfPath: text("receipt_pdf_path"),
+    receiptGeneratedAt: integer("receipt_generated_at", { mode: "timestamp" }),
+    receiptGeneratedBy: text("receipt_generated_by"),
+    noClaim: text("no_claim"),
+    noClaimAssignedAt: integer("no_claim_assigned_at", { mode: "timestamp" }),
+    noClaimAssignedBy: text("no_claim_assigned_by"),
+    closedAt: integer("closed_at", { mode: "timestamp" }),
+    closedBy: text("closed_by"),
+    closeNote: text("close_note"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
+});
+
+export const claimWorkflowItem = sqliteTable("claim_workflow_item", {
+    id: text("id").primaryKey(),
+    claimWorkflowId: text("claim_workflow_id").notNull().references(() => claimWorkflow.id),
+    // Phase R7a — Multi No Claim (additive):
+    // `claimSubmissionId` di R7a bersifat nullable; diisi oleh backfill
+    // migration atau oleh route R7b saat item di-assign ke submission.
+    // Di R7b ke atas kolom ini menjadi wajib secara bisnis, tetapi
+    // diberlakukan di app layer mulai R7b.
+    claimSubmissionId: text("claim_submission_id"),
+    offBatchItemId: text("off_batch_item_id").references(() => offBatchItem.id),
+    noSurat: text("no_surat"),
+    jenisPromosi: text("jenis_promosi"),
+    periode: text("periode"),
+    outlet: text("outlet"),
+    dpp: real("dpp").notNull().default(0),
+    ppnRate: real("ppn_rate").notNull().default(0),
+    ppnAmount: real("ppn_amount").notNull().default(0),
+    pphRate: real("pph_rate").notNull().default(0),
+    pphAmount: real("pph_amount").notNull().default(0),
+    nilaiKlaim: real("nilai_klaim").notNull().default(0),
+    status: text("status").notNull().default("Draft"),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+}, (table) => ({
+    workflowIdx: index("idx_claim_workflow_item_workflow_id").on(table.claimWorkflowId),
+    offBatchItemIdx: index("idx_claim_workflow_item_off_batch_item_id").on(table.offBatchItemId),
+    submissionIdx: index("idx_claim_workflow_item_submission_id").on(table.claimSubmissionId),
+}));
+
+export const claimPayment = sqliteTable("claim_payment", {
+    id: text("id").primaryKey(),
+    claimWorkflowId: text("claim_workflow_id").notNull().references(() => claimWorkflow.id),
+    // Phase R7a — Multi No Claim (additive):
+    // Payment akan pindah ke level submission di Phase R7d. Di R7a kolom
+    // ini bersifat opsional dan diisi oleh migration backfill ke default
+    // submission per workflow. `claimWorkflowId` tetap dipertahankan
+    // sebagai redundant pointer agar query agregate tetap cepat dan
+    // backward-compat dengan route existing.
+    claimSubmissionId: text("claim_submission_id"),
+    paymentDate: text("payment_date").notNull(),
+    paymentAmount: real("payment_amount").notNull().default(0),
+    paymentType: text("payment_type"),
+    paymentNote: text("payment_note"),
+    proofPath: text("proof_path"),
+    createdBy: text("created_by"),
+    // Phase R3 — Principal Payment + Outstanding:
+    // Void adalah pengganti hard delete untuk koreksi pembayaran.
+    // Active payment didefinisikan `voided_at IS NULL`. totalPaid hanya
+    // menjumlahkan active payment. Audit log mencatat alasan void di
+    // metadata + `void_reason` agar trace lengkap.
+    voidedAt: integer("voided_at", { mode: "timestamp" }),
+    voidedBy: text("voided_by"),
+    voidReason: text("void_reason"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+}, (table) => ({
+    workflowIdx: index("idx_claim_payment_workflow_id").on(table.claimWorkflowId),
+    voidedAtIdx: index("idx_claim_payment_voided_at").on(table.voidedAt),
+    submissionIdx: index("idx_claim_payment_submission_id").on(table.claimSubmissionId),
+}));
+
+export const claimAuditLog = sqliteTable("claim_audit_log", {
+    id: text("id").primaryKey(),
+    claimWorkflowId: text("claim_workflow_id").notNull().references(() => claimWorkflow.id),
+    // Phase R7a — Multi No Claim (additive):
+    // Audit tetap satu tabel terpusat. Untuk audit yang scope-nya satu
+    // submission (mis. assign No Claim, generate dokumen submission),
+    // kolom `claimSubmissionId` diisi dan `auditScope = "submission"`.
+    // Audit existing biarkan NULL / `auditScope = "workflow"` supaya
+    // timeline UI tetap bisa membedakan.
+    claimSubmissionId: text("claim_submission_id"),
+    auditScope: text("audit_scope"),
+    actorId: text("actor_id"),
+    actorName: text("actor_name"),
+    actorRole: text("actor_role"),
+    action: text("action").notNull(),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status"),
+    note: text("note"),
+    metadata: text("metadata", { mode: "json" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+}, (table) => ({
+    workflowIdx: index("idx_claim_audit_log_workflow_id").on(table.claimWorkflowId),
+    createdAtIdx: index("idx_claim_audit_log_created_at").on(table.createdAt),
+    submissionIdx: index("idx_claim_audit_log_submission_id").on(table.claimSubmissionId),
+}));
+
+// Phase R7a — Multi No Claim + Direct Claim Source (additive):
+// `claim_submission` adalah container baru untuk SATU No Claim. Satu
+// `claim_workflow` boleh punya banyak `claim_submission`. Di R7a tabel ini
+// hanya dibuat + di-backfill (1 default submission per workflow lama)
+// supaya schema siap dipakai oleh Phase R7b ke depan.
+export const claimSubmission = sqliteTable("claim_submission", {
+    id: text("id").primaryKey(),
+    claimWorkflowId: text("claim_workflow_id").notNull().references(() => claimWorkflow.id),
+    noClaim: text("no_claim"),
+    noClaimAssignedAt: integer("no_claim_assigned_at", { mode: "timestamp" }),
+    noClaimAssignedBy: text("no_claim_assigned_by"),
+    scope: text("scope").notNull().default("per_pengajuan"),
+    scopeLabel: text("scope_label"),
+    status: text("status").notNull().default("Draft"),
+    totalDpp: real("total_dpp").notNull().default(0),
+    totalPpn: real("total_ppn").notNull().default(0),
+    totalPph: real("total_pph").notNull().default(0),
+    totalClaim: real("total_claim").notNull().default(0),
+    totalPaid: real("total_paid").notNull().default(0),
+    remainingAmount: real("remaining_amount").notNull().default(0),
+    submittedToPrincipalAt: integer("submitted_to_principal_at", { mode: "timestamp" }),
+    claimLetterPdfPath: text("claim_letter_pdf_path"),
+    claimLetterGeneratedAt: integer("claim_letter_generated_at", { mode: "timestamp" }),
+    claimLetterGeneratedBy: text("claim_letter_generated_by"),
+    summaryPdfPath: text("summary_pdf_path"),
+    summaryGeneratedAt: integer("summary_generated_at", { mode: "timestamp" }),
+    summaryGeneratedBy: text("summary_generated_by"),
+    receiptPdfPath: text("receipt_pdf_path"),
+    receiptGeneratedAt: integer("receipt_generated_at", { mode: "timestamp" }),
+    receiptGeneratedBy: text("receipt_generated_by"),
+    closedAt: integer("closed_at", { mode: "timestamp" }),
+    closedBy: text("closed_by"),
+    closeNote: text("close_note"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+}, (table) => ({
+    workflowIdx: index("idx_claim_submission_workflow_id").on(table.claimWorkflowId),
+    statusIdx: index("idx_claim_submission_status").on(table.status),
+}));

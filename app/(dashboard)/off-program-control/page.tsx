@@ -1,11 +1,11 @@
-﻿"use client";
+"use client";
 
 /*
- * Tujuan: Dashboard OFF Program Control bergaya warm luxury untuk cockpit admin, pengajuan, tinjauan, persetujuan, klaim, pembayaran, audit, dan tutup periode.
+ * Tujuan: Dashboard OFF Program Control untuk input, review, approval, pembayaran, dan audit program off invoice.
  * Caller: App Router dashboard `app/(dashboard)/off-program-control/page.tsx`.
- * Dependensi: `authClient`, helper akses OFF, workflow OFF, constants OFF, `DatePickerField`, route API OFF Program Control/periods.
- * Main Functions: `OffProgramControlPage`, `OverviewTab`, `AdminViewSelector`, `AdminHealthPanel`, `CompactFilterToolbar`, `CompactSubmissionTable`, `SummaryStrip`, `SupportTogglePanel`, `OverviewDetailDrawer`, form/table workflow per role.
- * Side Effects: HTTP read/write ke API OFF Program Control, baca session Better Auth, mutasi state workflow/filter/drawer/tutup periode UI.
+ * Dependensi: `authClient`, helper akses OFF, workflow OFF, constants OFF, `DatePickerField`, route API OFF Program Control.
+ * Main Functions: `OffProgramControlPage`, `OffDashboard`, `DateField`, form/table workflow per role.
+ * Side Effects: HTTP read/write ke API OFF Program Control, baca session Better Auth, mutasi state workflow dan filter UI.
  */
 
 import {
@@ -16,16 +16,16 @@ import {
   type ElementType,
   type ReactNode,
 } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowRight,
   Bell,
   CalendarClock,
-  ChevronDown,
   CheckCircle2,
+  ChevronDown,
   ClipboardCheck,
   Clock3,
-  Download,
   FileCheck2,
   FileText,
   ListChecks,
@@ -37,7 +37,6 @@ import {
   Send,
   ShieldCheck,
   Wallet,
-  X,
   XCircle,
 } from "lucide-react";
 import {
@@ -68,10 +67,6 @@ import {
   type OffRole,
 } from "@/lib/off-program-control/access";
 import DatePickerField from "@/components/ui/DatePickerField";
-import OffBreadcrumb from "@/components/off-program-control/OffBreadcrumb";
-import OffNotificationBell from "@/components/off-program-control/OffNotificationBell";
-import OffGlobalSearch, { type OffSearchableItem } from "@/components/off-program-control/OffGlobalSearch";
-import { detectProblematicBatches, getProblemsForRole, type ProblemDetectionBatch } from "@/lib/off-program-control/problematic";
 
 type TabKey =
   | "overview"
@@ -94,38 +89,19 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "overview", label: "Ringkasan" },
   { key: "supervisor", label: "Supervisor" },
   { key: "sales", label: "Sales Manager" },
-  { key: "claim", label: "Klaim" },
+  { key: "claim", label: "Claim" },
   { key: "om", label: "Operational Manager" },
   { key: "finance", label: "Keuangan" },
   { key: "audit", label: "Log Audit" },
 ];
 
-const adminViewGroups: Array<{
-  title: string;
-  tabs: TabKey[];
-}> = [
-  {
-    title: "Monitoring",
-    tabs: ["overview", "audit"],
-  },
-  {
-    title: "Approval Flow",
-    tabs: ["supervisor", "sales", "om"],
-  },
-  {
-    title: "Financial & Claim",
-    tabs: ["claim", "finance"],
-  },
-];
-
 const workflowSteps = [
-  "Input Batch Supervisor",
-  "Tinjauan Data Sales Manager",
-  "Validasi Klaim",
+  "Input Massal Supervisor",
+  "Review Data Sales Manager",
+  "Validasi Claim",
   "Persetujuan Operational Manager",
   "Pembayaran Keuangan",
-  "Verifikasi Final Pembayaran Klaim",
-  "Pengembalian Selisih (jika ada)",
+  "Verifikasi Final Pembayaran Claim",
   "Selesai",
 ];
 
@@ -197,6 +173,13 @@ type OffApiBatch = {
     claim?: string[];
     bayar?: string[];
   } | null;
+  // Claim Workflow aggregate (enriched from API)
+  claimWorkflowId?: string | null;
+  claimWorkflowStatus?: string | null;
+  activeSubmissionCount?: number;
+  noClaimCompletedCount?: number;
+  hasWorkflowDocuments?: boolean;
+  needsNoClaim?: boolean;
 };
 
 type OffApiPayment = {
@@ -232,6 +215,10 @@ type OffApiItem = {
   barang: string | null;
   nominal: number;
   caraBayar: string | null;
+  financePaymentStatus?: string | null;
+  financePaidAt?: string | number | null;
+  financePaymentId?: string | null;
+  financePaidAmount?: number | null;
   type: string | null;
   normalizedType?: string | null;
   originalType?: string | null;
@@ -295,118 +282,6 @@ type MetricItem = {
   tone: string;
   icon: ElementType;
 };
-
-// --- Dummy Batches untuk fallback ketika API belum tersedia ---
-const dummyBatches: OffApiBatch[] = [
-  {
-    id: "demo-batch-1",
-    noPengajuan: "001/RB/06/2026",
-    gelombang: "001",
-    principleName: "RECKITT BENCKISER, PT",
-    principleCode: "RB",
-    bulan: "06",
-    tahun: "2026",
-    supervisorName: "Supervisor Area 1",
-    status: "Submitted to SM",
-    smStatus: "Waiting Review",
-    claimStatus: "Not Started",
-    omStatus: "Not Started",
-    financeStatus: "Not Started",
-    finalStatus: "Not Started",
-    locked: false,
-    createdAt: "2026-06-01T08:00:00.000Z",
-    updatedAt: "2026-06-02T10:00:00.000Z",
-    summary: { totalNominal: 12500000, totalRows: 3, transfer: 8100000, tunai: 4400000 },
-  },
-  {
-    id: "demo-batch-2",
-    noPengajuan: "002/GDI/06/2026",
-    gelombang: "002",
-    principleName: "GODREJ DISTRIBUSI INDONESIA, PT",
-    principleCode: "GDI",
-    bulan: "06",
-    tahun: "2026",
-    supervisorName: "Supervisor Area 2",
-    status: "Approved by SM",
-    smStatus: "Approved by SM",
-    claimStatus: "Not Started",
-    omStatus: "Not Started",
-    financeStatus: "Not Started",
-    finalStatus: "Not Started",
-    locked: true,
-    createdAt: "2026-05-28T09:00:00.000Z",
-    updatedAt: "2026-06-03T14:00:00.000Z",
-    summary: { totalNominal: 5150000, totalRows: 2, transfer: 5150000, tunai: 0 },
-  },
-  {
-    id: "demo-batch-3",
-    noPengajuan: "001/GDI/05/2026",
-    gelombang: "001",
-    principleName: "GODREJ DISTRIBUSI INDONESIA, PT",
-    principleCode: "GDI",
-    bulan: "05",
-    tahun: "2026",
-    supervisorName: "Supervisor Area 1",
-    status: "Paid",
-    smStatus: "Approved by SM",
-    claimStatus: "Approved",
-    omStatus: "Approved",
-    financeStatus: "Paid",
-    finalStatus: "Waiting Claim Final Verification",
-    locked: true,
-    paidAmount: 100000000,
-    verifiedAmount: 80000000,
-    noClaim: "CLM/GDI/05/001",
-    createdAt: "2026-05-10T09:00:00.000Z",
-    updatedAt: "2026-06-01T16:00:00.000Z",
-    summary: { totalNominal: 100000000, totalRows: 5, transfer: 100000000, tunai: 0 },
-    paymentSummary: { totalNominal: 100000000, totalPaid: 100000000, remainingAmount: 0, isFullyPaid: true },
-  },
-  {
-    id: "demo-batch-4",
-    noPengajuan: "003/RB/06/2026",
-    gelombang: "003",
-    principleName: "RECKITT BENCKISER, PT",
-    principleCode: "RB",
-    bulan: "06",
-    tahun: "2026",
-    supervisorName: "Supervisor Area 3",
-    status: "Draft",
-    smStatus: "Not Started",
-    claimStatus: "Not Started",
-    omStatus: "Not Started",
-    financeStatus: "Not Started",
-    finalStatus: "Not Started",
-    locked: false,
-    createdAt: "2026-06-04T07:30:00.000Z",
-    updatedAt: "2026-06-04T07:30:00.000Z",
-    summary: { totalNominal: 4775000, totalRows: 2, transfer: 2500000, tunai: 2275000 },
-  },
-  {
-    id: "demo-batch-5",
-    noPengajuan: "001/RB/05/2026",
-    gelombang: "001",
-    principleName: "RECKITT BENCKISER, PT",
-    principleCode: "RB",
-    bulan: "05",
-    tahun: "2026",
-    supervisorName: "Supervisor Area 1",
-    status: "Overpaid - Pending Refund",
-    smStatus: "Approved by SM",
-    claimStatus: "Approved",
-    omStatus: "Approved",
-    financeStatus: "Paid",
-    finalStatus: "Pending Refund",
-    locked: true,
-    paidAmount: 50000000,
-    verifiedAmount: 42000000,
-    noClaim: "CLM/RB/05/001",
-    createdAt: "2026-05-05T08:00:00.000Z",
-    updatedAt: "2026-06-03T11:00:00.000Z",
-    summary: { totalNominal: 50000000, totalRows: 4, transfer: 50000000, tunai: 0 },
-    paymentSummary: { totalNominal: 50000000, totalPaid: 50000000, remainingAmount: 0, isFullyPaid: true },
-  },
-];
 
 const initialBulkRows: SupervisorBulkRow[] = [
   {
@@ -603,14 +478,14 @@ function indonesianMonthLabel(month: number | string) {
 const statusLabelMap: Record<string, string> = {
   Draft: "Draf",
   "Submitted to SM": "Dikirim ke Sales Manager",
-  "Waiting Review": "Menunggu Tinjauan",
+  "Waiting Review": "Menunggu Review",
   "Returned by SM": "Dikembalikan oleh Sales Manager",
-  "Returned by Claim": "Dikembalikan oleh Klaim",
+  "Returned by Claim": "Dikembalikan oleh Claim",
   Returned: "Dikembalikan",
   "Approved by SM": "Disetujui Sales Manager",
   "Approved by SM - Locked": "Disetujui Sales Manager - Terkunci",
-  "Waiting Claim": "Menunggu Klaim",
-  "Claim Approved": "Disetujui Klaim",
+  "Waiting Claim": "Menunggu Claim",
+  "Claim Approved": "Disetujui Claim",
   "Waiting Approval": "Menunggu Persetujuan",
   "Ready for OM": "Siap Diproses OM",
   "Waiting OM": "Menunggu OM",
@@ -620,7 +495,7 @@ const statusLabelMap: Record<string, string> = {
   "Partial Paid": "Dibayar Sebagian",
   "Need Correction": "Perlu Koreksi",
   Paid: "Sudah Dibayar",
-  "Waiting Claim Final Verification": "Menunggu Verifikasi Final Klaim",
+  "Waiting Claim Final Verification": "Menunggu Verifikasi Final Claim",
   "Incomplete Documents": "Kelengkapan Belum Lengkap",
   Completed: "Selesai",
   "Not Started": "Belum Dimulai",
@@ -630,11 +505,6 @@ const statusLabelMap: Record<string, string> = {
   Aman: "Aman",
   Kurang: "Kurang",
   "Perlu Revisi": "Perlu Revisi",
-  "Overpaid - Pending Refund": "Kelebihan Dana - Menunggu Pengembalian",
-  "Pending Refund": "Menunggu Pengembalian",
-  "Partially Refunded": "Sebagian Dikembalikan",
-  "Fully Refunded": "Sudah Dikembalikan Penuh",
-  "Not Applicable": "Tidak Ada Selisih",
 };
 
 function displayStatusLabel(status: string | null | undefined) {
@@ -745,8 +615,7 @@ function statusClass(status: string) {
   if (
     status.includes("Completed") ||
     status.includes("Approved") ||
-    status.includes("Aman") ||
-    status.includes("Fully Refunded")
+    status.includes("Aman")
   )
     return "bg-emerald-500/10 text-emerald-300 border-emerald-500/30";
   if (status.includes("OM") || status.includes("Ready"))
@@ -761,8 +630,6 @@ function statusClass(status: string) {
     status.includes("Revisi")
   )
     return "bg-rose-500/10 text-rose-300 border-rose-500/30";
-  if (status.includes("Overpaid") || status.includes("Pending Refund") || status.includes("Partially Refunded"))
-    return "bg-orange-500/10 text-orange-300 border-orange-500/30";
   return "bg-amber-500/10 text-amber-300 border-amber-500/30";
 }
 
@@ -812,67 +679,6 @@ function filterBatchesByMainStatus(
 ) {
   if (!statusFilter) return batches;
   return batches.filter((batch) => batch.status === statusFilter);
-}
-
-function filterBatchesByPrincipal(
-  batches: OffApiBatch[],
-  principalFilter: string,
-) {
-  if (!principalFilter) return batches;
-  return batches.filter((batch) => batch.principleCode === principalFilter);
-}
-
-function getPrincipalOptions(batches: OffApiBatch[]) {
-  return Array.from(
-    new Map(
-      batches
-        .filter((batch) => batch.principleCode || batch.principleName)
-        .map((batch) => [
-          batch.principleCode || batch.principleName,
-          {
-            value: batch.principleCode || batch.principleName,
-            label: batch.principleName || batch.principleCode,
-          },
-        ]),
-    ).values(),
-  ).sort((a, b) => a.label.localeCompare(b.label));
-}
-
-function computeClaimComparison(batches: OffApiBatch[]) {
-  const totalSubmitted = batches.reduce(
-    (total, batch) => total + Number(batch.summary?.totalNominal || 0),
-    0,
-  );
-  const totalClaimed = batches.reduce(
-    (total, batch) =>
-      total +
-      Number(
-        batch.paymentSummary?.totalPaid ||
-          batch.verifiedAmount ||
-          batch.paidAmount ||
-          0,
-      ),
-    0,
-  );
-  const submittedCount = batches.length;
-  const claimedCount = batches.filter(
-    (batch) =>
-      String(batch.noClaim || "").trim().length > 0 ||
-      Number(batch.paymentSummary?.totalPaid || batch.paidAmount || 0) > 0,
-  ).length;
-  const difference = totalSubmitted - totalClaimed;
-  const isMatched =
-    submittedCount > 0 && Math.round(totalSubmitted) === Math.round(totalClaimed);
-
-  return {
-    totalSubmitted,
-    totalClaimed,
-    difference,
-    submittedCount,
-    claimedCount,
-    isMatched,
-    status: submittedCount === 0 ? "Belum ada pengajuan" : isMatched ? "Data sudah sesuai" : "Data belum sesuai",
-  };
 }
 
 function isSupervisorEditableBatch(batch: OffApiBatch) {
@@ -925,117 +731,6 @@ function isFinanceActionableBatch(batch: OffApiBatch | null) {
   );
 }
 
-function isClaimActionableBatch(batch: OffApiBatch | null) {
-  return Boolean(
-    batch &&
-      batch.smStatus === "Approved by SM" &&
-      !["Approved", "Returned"].includes(batch.claimStatus) &&
-      !["Cancelled", "Completed", "Claim Approved", "Returned by Claim"].includes(
-        batch.status,
-      ),
-  );
-}
-
-function isFinalClaimActionableBatch(batch: OffApiBatch | null) {
-  return Boolean(
-    batch &&
-      batch.status === "Paid" &&
-      batch.financeStatus === "Paid" &&
-      batch.finalStatus !== "Completed",
-  );
-}
-
-function isCompletedOrCancelledBatch(batch: OffApiBatch) {
-  return (
-    batch.status === "Completed" ||
-    batch.finalStatus === "Completed" ||
-    batch.finalStatus === "Fully Refunded" ||
-    batch.status === "Cancelled" ||
-    batch.omStatus === "Cancelled"
-  );
-}
-
-function isReturnedOrCorrectionBatch(batch: OffApiBatch) {
-  return (
-    batch.status === "Returned by SM" ||
-    batch.status === "Returned by Claim" ||
-    batch.smStatus === "Returned" ||
-    batch.claimStatus === "Returned" ||
-    batch.financeStatus === "Need Correction"
-  );
-}
-
-function batchTimestamp(batch: OffApiBatch) {
-  const rawValue =
-    batch.updatedAt ||
-    batch.createdAt ||
-    batch.claimSubmittedDate ||
-    batch.paymentDate ||
-    "";
-  const time = Date.parse(rawValue);
-  return Number.isFinite(time) ? time : 0;
-}
-
-function batchAgeDays(batch: OffApiBatch) {
-  const time = batchTimestamp(batch);
-  if (!time) return 0;
-  return Math.max(0, Math.floor((Date.now() - time) / 86_400_000));
-}
-
-function isOverdueBatch(batch: OffApiBatch) {
-  if (!batch.claimDeadline || isCompletedOrCancelledBatch(batch)) return false;
-  const deadline = Date.parse(batch.claimDeadline);
-  if (!Number.isFinite(deadline)) return false;
-  return deadline < Date.now();
-}
-
-function buildAdminQueueStats(batches: OffApiBatch[]) {
-  return [
-    {
-      key: "supervisor",
-      label: "Supervisor",
-      count: batches.filter(isSupervisorEditableBatch).length,
-      desc: "Ada pengajuan yang belum selesai atau perlu diperbaiki.",
-      icon: FileText,
-    },
-    {
-      key: "sales",
-      label: "Sales Manager",
-      count: batches.filter(isSmActionableBatch).length,
-      desc: "Data menunggu diperiksa oleh Sales Manager.",
-      icon: Send,
-    },
-    {
-      key: "claim",
-      label: "Klaim",
-      count: batches.filter(isClaimActionableBatch).length,
-      desc: "Menunggu validasi klaim.",
-      icon: FileCheck2,
-    },
-    {
-      key: "om",
-      label: "Operational Manager",
-      count: batches.filter(isOmActionableBatch).length,
-      desc: "Menunggu persetujuan Manajer Operasional.",
-      icon: ShieldCheck,
-    },
-    {
-      key: "finance",
-      label: "Keuangan",
-      count: batches.filter(isFinanceActionableBatch).length,
-      desc: "Menunggu pembayaran.",
-      icon: Wallet,
-    },
-    {
-      key: "final",
-      label: "Final Klaim",
-      count: batches.filter(isFinalClaimActionableBatch).length,
-      desc: "Sudah dibayar, menunggu konfirmasi dokumen akhir.",
-      icon: ListChecks,
-    },
-  ];
-}
-
 function isFinanceMonitoringBatch(batch: OffApiBatch) {
   const hasPayments =
     Number(batch.paidAmount || 0) > 0 ||
@@ -1077,7 +772,7 @@ function filterFinanceBatchesByStatus(batches: OffApiBatch[], status: string) {
 function MonitoringSearch({
   value,
   onChange,
-  placeholder = "Ketik nama principal, nomor, atau status pengajuan",
+  placeholder = "Cari No Pengajuan, principle, toko, no surat, no claim, user, atau status...",
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -1102,7 +797,7 @@ function MonitoringSearch({
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
       placeholder={placeholder}
-      className="w-full rounded-xl border border-[#d4ad61]/35 bg-[#fffaf0]/85 px-4 py-2.5 text-sm text-[#2d241b] outline-none placeholder:text-[#8a7558] focus:border-[#c79a3f]"
+      className="w-full rounded-xl border border-white/10 bg-white/10 px-4 py-2.5 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
     />
   );
 }
@@ -1131,7 +826,7 @@ function createEmptyPeriodFilter(): OffPeriodFilterValue {
 const periodTypeLabels: Record<OffPeriodFilterValue["periodType"], string> = {
   program: "Periode Program",
   pengajuan: "Tanggal Pengajuan",
-  claim: "Tanggal Pengajuan Klaim",
+  claim: "Tanggal Diajukan Claim",
   bayar: "Tanggal Bayar",
 };
 
@@ -1175,6 +870,9 @@ function PeriodFilter({
   value: OffPeriodFilterValue;
   onChange: (value: OffPeriodFilterValue) => void;
 }) {
+  // Filter periode tersembunyi secara default; muncul ke bawah saat header diklik.
+  const [open, setOpen] = useState(false);
+  const isActive = isPeriodFilterActive(value);
   const months = [
     { value: "", label: "Semua Bulan" },
     ...Array.from({ length: 12 }, (_, index) => ({
@@ -1183,25 +881,42 @@ function PeriodFilter({
     })),
   ];
   return (
-    <div className="rounded-xl border border-[#d4ad61]/35 bg-[#fffaf0]/70 p-3">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs font-semibold text-slate-400">
-          Periode
-        </span>
-        {isPeriodFilterActive(value) && (
+    <div className="rounded-xl border border-white/10 bg-black/30">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          aria-expanded={open}
+          className="flex items-center gap-2 text-xs font-semibold text-slate-300 hover:text-white"
+        >
+          <ChevronDown
+            size={16}
+            className={`text-slate-400 transition-transform duration-200 ${
+              open ? "rotate-180" : ""
+            }`}
+          />
+          Filter Periode
+          {isActive && (
+            <span className="rounded-full bg-teal-500/20 px-2 py-0.5 text-[10px] font-bold text-teal-300">
+              Aktif
+            </span>
+          )}
+        </button>
+        {isActive && (
           <button
             type="button"
             onClick={() => onChange(createEmptyPeriodFilter())}
-            className="rounded-md border border-[#d4ad61]/35 px-2 py-0.5 text-[11px] font-semibold text-[#7a664c] hover:bg-[#f2d28a]/20"
+            className="rounded-md border border-white/10 px-2 py-0.5 text-[11px] text-slate-400 hover:bg-white/5"
           >
-            Reset Filter
+            Reset
           </button>
         )}
       </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {open && (
+      <div className="grid grid-cols-1 gap-2 border-t border-white/10 p-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="block">
           <span className="mb-1 block text-[11px] font-semibold text-slate-500">
-            Cari Berdasarkan Tanggal
+            Jenis Tanggal
           </span>
           <select
             value={value.periodType}
@@ -1212,14 +927,14 @@ function PeriodFilter({
                   .value as OffPeriodFilterValue["periodType"],
               })
             }
-            className="w-full rounded-lg border border-[#d4ad61]/35 bg-[#fffaf0]/85 px-3 py-2 text-sm text-[#2d241b] outline-none focus:border-[#c79a3f]"
+            className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/50 placeholder:text-slate-500"
           >
             {(
               Object.keys(periodTypeLabels) as Array<
                 OffPeriodFilterValue["periodType"]
               >
             ).map((key) => (
-              <option key={key} value={key} className="bg-[#fffaf0] text-[#2d241b]">
+              <option key={key} value={key} className="bg-[#1a1c23]">
                 {periodTypeLabels[key]}
               </option>
             ))}
@@ -1227,7 +942,7 @@ function PeriodFilter({
         </label>
         <label className="block">
           <span className="mb-1 block text-[11px] font-semibold text-slate-500">
-            Cara Pencarian
+            Mode
           </span>
           <select
             value={value.mode}
@@ -1237,12 +952,12 @@ function PeriodFilter({
                 mode: event.target.value as OffPeriodFilterValue["mode"],
               })
             }
-            className="w-full rounded-lg border border-[#d4ad61]/35 bg-[#fffaf0]/85 px-3 py-2 text-sm text-[#2d241b] outline-none focus:border-[#c79a3f]"
+            className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/50 placeholder:text-slate-500"
           >
-            <option value="month" className="bg-[#fffaf0] text-[#2d241b]">
+            <option value="month" className="bg-[#1a1c23]">
               Bulan-Tahun
             </option>
-            <option value="range" className="bg-[#fffaf0] text-[#2d241b]">
+            <option value="range" className="bg-[#1a1c23]">
               Rentang Tanggal
             </option>
           </select>
@@ -1259,13 +974,13 @@ function PeriodFilter({
                 onChange={(event) =>
                   onChange({ ...value, month: event.target.value })
                 }
-                className="w-full rounded-lg border border-[#d4ad61]/35 bg-[#fffaf0]/85 px-3 py-2 text-sm text-[#2d241b] outline-none focus:border-[#c79a3f]"
+                className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/50 placeholder:text-slate-500"
               >
                 {months.map((month) => (
                   <option
                     key={month.value}
                     value={month.value}
-                    className="bg-[#fffaf0] text-[#2d241b]"
+                    className="bg-[#1a1c23]"
                   >
                     {month.label}
                   </option>
@@ -1286,7 +1001,7 @@ function PeriodFilter({
                 }
                 placeholder="cth: 2026"
                 inputMode="numeric"
-                className="w-full rounded-lg border border-[#d4ad61]/35 bg-[#fffaf0]/85 px-3 py-2 text-sm text-[#2d241b] outline-none placeholder:text-[#8a7558] focus:border-[#c79a3f]"
+                className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
               />
             </label>
           </>
@@ -1302,7 +1017,7 @@ function PeriodFilter({
                 onChange={(event) =>
                   onChange({ ...value, dateFrom: event.target.value })
                 }
-                className="w-full rounded-lg border border-[#d4ad61]/35 bg-[#fffaf0]/85 px-3 py-2 text-sm text-[#2d241b] outline-none [color-scheme:light] focus:border-[#c79a3f]"
+                className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
               />
             </label>
             <label className="block">
@@ -1315,12 +1030,13 @@ function PeriodFilter({
                 onChange={(event) =>
                   onChange({ ...value, dateTo: event.target.value })
                 }
-                className="w-full rounded-lg border border-[#d4ad61]/35 bg-[#fffaf0]/85 px-3 py-2 text-sm text-[#2d241b] outline-none [color-scheme:light] focus:border-[#c79a3f]"
+                className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
               />
             </label>
           </>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -1329,7 +1045,7 @@ function StatusFilterSelect({
   value,
   onChange,
   options,
-  label = "Status",
+  label = "Filter Status",
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -1344,9 +1060,9 @@ function StatusFilterSelect({
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-xl border border-[#d4ad61]/35 bg-[#fffaf0]/85 px-4 py-2.5 text-sm text-[#2d241b] outline-none focus:border-[#c79a3f]"
+        className="w-full rounded-xl border border-white/10 bg-white/10 px-4 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
       >
-        <option value="" className="bg-[#fffaf0] text-[#2d241b]">
+        <option value="" className="bg-[#1a1c23]">
           Semua Status
         </option>
         {options.map((option) => {
@@ -1357,428 +1073,13 @@ function StatusFilterSelect({
               : option.label;
 
           return (
-            <option key={value} value={value} className="bg-[#fffaf0] text-[#2d241b]">
+            <option key={value} value={value} className="bg-[#1a1c23]">
               {label}
             </option>
           );
         })}
       </select>
     </label>
-  );
-}
-
-type FilterChip = {
-  label: string;
-  value: string;
-};
-
-function optionLabel(
-  options: Array<string | { value: string; label: string }>,
-  value: string,
-) {
-  const match = options.find((option) =>
-    typeof option === "string" ? option === value : option.value === value,
-  );
-  if (!match) return displayStatusLabel(value);
-  return typeof match === "string" ? displayStatusLabel(match) : match.label;
-}
-
-function periodFilterLabel(period: OffPeriodFilterValue) {
-  if (!isPeriodFilterActive(period)) return "";
-  if (period.mode === "range") {
-    const from = period.dateFrom ? formatDateDisplay(period.dateFrom) : "awal";
-    const to = period.dateTo ? formatDateDisplay(period.dateTo) : "akhir";
-    return `${periodTypeLabels[period.periodType]}: ${from} - ${to}`;
-  }
-  const month = period.month ? indonesianMonthLabel(period.month) : "Semua bulan";
-  const year = period.year || "Semua tahun";
-  return `${periodTypeLabels[period.periodType]}: ${month} ${year}`;
-}
-
-function buildBatchFilterChips({
-  principalFilter,
-  principalOptions,
-  statusFilter,
-  statusOptions,
-  period,
-}: {
-  principalFilter?: string;
-  principalOptions?: Array<{ value: string; label: string }>;
-  statusFilter?: string;
-  statusOptions?: Array<string | { value: string; label: string }>;
-  period?: OffPeriodFilterValue;
-}): FilterChip[] {
-  const chips: FilterChip[] = [];
-  if (principalFilter) {
-    chips.push({
-      label: "Principal",
-      value:
-        principalOptions?.find((option) => option.value === principalFilter)
-          ?.label || principalFilter,
-    });
-  }
-  if (statusFilter) {
-    chips.push({
-      label: "Status",
-      value: optionLabel(statusOptions || [], statusFilter),
-    });
-  }
-  if (period) {
-    const label = periodFilterLabel(period);
-    if (label) chips.push({ label: "Periode", value: label });
-  }
-  return chips;
-}
-
-function EmptyState({
-  title = "Belum ada pengajuan pada filter ini.",
-  desc = "Coba ubah filter atau reset pencarian.",
-  actionLabel,
-  onAction,
-}: {
-  title?: string;
-  desc?: string;
-  actionLabel?: string;
-  onAction?: () => void;
-}) {
-  return (
-    <div className="rounded-2xl bg-black/25 px-5 py-8 text-center">
-      <p className="text-sm font-bold text-slate-200">{title}</p>
-      <p className="mt-2 text-sm text-slate-500">{desc}</p>
-      {actionLabel && onAction && (
-        <button
-          type="button"
-          onClick={onAction}
-          className="mt-4 rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
-        >
-          {actionLabel}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function CompactFilterToolbar({
-  searchValue,
-  onSearchChange,
-  placeholder,
-  activeFilters,
-  onReset,
-  children,
-}: {
-  searchValue: string;
-  onSearchChange: (value: string) => void;
-  placeholder: string;
-  activeFilters?: FilterChip[];
-  onReset: () => void;
-  children: ReactNode;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const hasActiveFilters = Boolean(activeFilters?.length || searchValue.trim());
-
-  return (
-    <section className="rounded-2xl border border-[#d4ad61]/30 bg-[#fffaf0]/78 p-4 shadow-[0_18px_46px_rgba(122,78,32,0.10)] backdrop-blur-xl">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-        <div className="min-w-0 flex-1">
-          <MonitoringSearch
-            value={searchValue}
-            onChange={onSearchChange}
-            placeholder={placeholder}
-          />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setIsOpen((current) => !current)}
-            aria-expanded={isOpen}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#d4ad61]/35 bg-[#fffaf0]/90 px-4 py-2.5 text-sm font-bold text-[#2d241b] hover:bg-[#f2d28a]/20"
-          >
-            Filter
-            <ChevronDown
-              size={14}
-              className={`transition-transform ${isOpen ? "rotate-180" : ""}`}
-            />
-          </button>
-          <button
-            type="button"
-            onClick={onReset}
-            disabled={!hasActiveFilters}
-            className="text-sm font-semibold text-[#7a664c] underline px-2 py-2 hover:text-[#2d241b] disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
-          >
-            Reset
-          </button>
-        </div>
-      </div>
-      {activeFilters && activeFilters.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {activeFilters.map((chip) => (
-            <span
-              key={`${chip.label}-${chip.value}`}
-              className="rounded-lg border border-[#d4ad61]/20 bg-[#f7ead0]/70 px-3 py-1.5 text-xs font-semibold text-[#574839]"
-            >
-              <span className="text-[#7a664c]">{chip.label}:</span> {chip.value}
-            </span>
-          ))}
-        </div>
-      )}
-      {isOpen && <div className="mt-4 pt-4">{children}</div>}
-    </section>
-  );
-}
-
-function currentWorkflowStage(batch: OffApiBatch) {
-  if (batch.status === "Completed" || batch.finalStatus === "Completed") {
-    return "Selesai";
-  }
-  if (batch.status === "Cancelled" || batch.omStatus === "Cancelled") {
-    return "Dibatalkan";
-  }
-  if (isFinalClaimActionableBatch(batch)) {
-    return "Menunggu Verifikasi Final Klaim";
-  }
-  if (isFinanceActionableBatch(batch)) {
-    return "Menunggu Pembayaran Keuangan";
-  }
-  if (isOmActionableBatch(batch)) {
-    return "Menunggu Persetujuan OM";
-  }
-  if (isClaimActionableBatch(batch)) {
-    return "Menunggu Validasi Klaim";
-  }
-  if (isSmActionableBatch(batch)) {
-    return "Menunggu Tinjauan SM";
-  }
-  if (isSupervisorEditableBatch(batch)) {
-    return "Perlu Revisi Supervisor";
-  }
-  return displayStatusLabel(batch.status);
-}
-
-function nextWorkflowPic(batch: OffApiBatch) {
-  if (batch.status === "Completed" || batch.finalStatus === "Completed") return "-";
-  if (isFinalClaimActionableBatch(batch)) return "Klaim";
-  if (isFinanceActionableBatch(batch)) return "Keuangan";
-  if (isOmActionableBatch(batch)) return "Operational Manager";
-  if (isClaimActionableBatch(batch)) return "Klaim";
-  if (isSmActionableBatch(batch)) return "Sales Manager";
-  if (isSupervisorEditableBatch(batch)) return "Supervisor";
-  return displayStatusLabel(batch.status);
-}
-
-function workflowDeadline(batch: OffApiBatch) {
-  return batch.claimDeadline || batch.paymentDate || batch.updatedAt || batch.createdAt;
-}
-
-function CompactSubmissionTable({
-  title = "Daftar Pengajuan",
-  batches,
-  selectedBatchId,
-  onSelect,
-  actionLabel,
-  emptyText,
-  onPrintReceipt,
-  printingReceiptBatchId,
-}: {
-  title?: string;
-  batches: OffApiBatch[];
-  selectedBatchId?: string | null;
-  onSelect: (batch: OffApiBatch) => void;
-  actionLabel: (batch: OffApiBatch) => string;
-  emptyText: string;
-  onPrintReceipt?: (batch: OffApiBatch) => void;
-  printingReceiptBatchId?: string;
-}) {
-  const headers = [
-    "Nomor Pengajuan",
-    "Principal",
-    "Nominal",
-    "Status Saat Ini",
-    "Penanggung Jawab",
-    "Deadline",
-    "Aksi",
-  ];
-
-  return (
-    <section className="rounded-2xl bg-[#1a1c23]/45 p-4 shadow-xl">
-      <div className="mb-6 flex items-center gap-3">
-        <h3 className="flex items-center gap-2 text-base font-bold text-white">
-          <ReceiptText className="text-teal-300" size={18} /> {title}
-        </h3>
-      </div>
-      {batches.length === 0 ? (
-        <EmptyState title={emptyText} />
-      ) : (
-        <>
-          <div className="space-y-3 lg:hidden">
-            {batches.map((batch) => (
-              <article
-                key={batch.id}
-                className={`rounded-xl p-4 ${
-                  selectedBatchId === batch.id
-                    ? "bg-teal-500/10"
-                    : "bg-black/25"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate font-mono text-sm font-black text-white">
-                      {batch.noPengajuan}
-                    </p>
-                    <p className="mt-1 line-clamp-2 text-sm text-slate-300">
-                      {batch.principleName}
-                    </p>
-                  </div>
-                  <span
-                    className={`shrink-0 rounded-md border px-2 py-1 text-[11px] font-bold ${statusClass(batch.status)}`}
-                  >
-                    {currentWorkflowStage(batch)}
-                  </span>
-                </div>
-                <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-slate-400">
-                  <div>
-                    <span className="block text-slate-600">Nominal</span>
-                    <span className="font-mono font-bold text-emerald-300">
-                      Rp{" "}
-                      {Number(batch.summary?.totalNominal || 0).toLocaleString(
-                        "id-ID",
-                      )}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="block text-slate-600">PIC berikutnya</span>
-                    <span className="font-bold text-slate-200">
-                      {nextWorkflowPic(batch)}
-                    </span>
-                  </div>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onSelect(batch)}
-                    className="flex-1 rounded-lg bg-teal-600 px-4 py-2 text-xs font-bold text-white hover:bg-teal-500"
-                  >
-                    {actionLabel(batch)}
-                  </button>
-                  {onPrintReceipt && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        OFF_KWITANSI_DISABLED ? undefined : onPrintReceipt(batch)
-                      }
-                      disabled={
-                        OFF_KWITANSI_DISABLED ||
-                        printingReceiptBatchId === batch.id
-                      }
-                      title="Cetak Kwitansi"
-                      className="rounded-lg border border-white/15 px-2 py-2 text-slate-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <ReceiptText size={15} />
-                    </button>
-                  )}
-                </div>
-              </article>
-            ))}
-          </div>
-          <div className="hidden overflow-x-auto lg:block">
-            <table className="w-full min-w-[1040px] text-left text-sm">
-              <thead className="text-xs uppercase tracking-wider text-slate-500">
-                <tr>
-                  {headers.map((header) => (
-                    <th key={header} className="px-4 py-3 font-bold">
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {batches.map((batch) => (
-                  <tr
-                    key={batch.id}
-                    className={
-                      selectedBatchId === batch.id
-                        ? "bg-teal-500/10"
-                        : "hover:bg-white/[0.03]"
-                    }
-                  >
-                    <td className="px-4 py-4 font-mono font-bold text-white">
-                      {batch.noPengajuan}
-                    </td>
-                    <td className="min-w-[220px] px-4 py-4">
-                      <p className="font-semibold text-slate-200">
-                        {batch.principleName}
-                      </p>
-                      <p className="mt-1 font-mono text-xs text-teal-300">
-                        {batch.principleCode}
-                      </p>
-                    </td>
-                    <td className="px-4 py-4 text-right font-mono text-emerald-300">
-                      Rp{" "}
-                      {Number(batch.summary?.totalNominal || 0).toLocaleString(
-                        "id-ID",
-                      )}
-                    </td>
-                    <td className="min-w-[220px] px-4 py-4">
-                      <span
-                        className={`inline-flex rounded-md border px-2.5 py-1 text-xs font-bold ${statusClass(batch.status)}`}
-                      >
-                        {currentWorkflowStage(batch)}
-                      </span>
-                      <div className="mt-2">
-                        <ProgressBar
-                          value={computeUiBatchProgress(batch)}
-                          showLabel={false}
-                        />
-                      </div>
-                    </td>
-                    <td className="px-4 py-4 text-slate-300">
-                      {nextWorkflowPic(batch)}
-                    </td>
-                    <td className="px-4 py-4 text-slate-300">
-                      {formatDateDisplay(
-                        workflowDeadline(batch)?.slice(0, 10),
-                      )}
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex min-w-[150px] items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onSelect(batch)}
-                          className="rounded-lg bg-teal-600 px-4 py-2 text-xs font-bold text-white hover:bg-teal-500"
-                        >
-                          {actionLabel(batch)}
-                        </button>
-                        {onPrintReceipt && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              OFF_KWITANSI_DISABLED
-                                ? undefined
-                                : onPrintReceipt(batch)
-                            }
-                            disabled={
-                              OFF_KWITANSI_DISABLED ||
-                              printingReceiptBatchId === batch.id
-                            }
-                            title={
-                              OFF_KWITANSI_DISABLED
-                                ? OFF_KWITANSI_DISABLED_MESSAGE
-                                : "Cetak Kwitansi"
-                            }
-                            className="rounded-lg border border-white/15 px-2 py-2 text-slate-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <ReceiptText size={15} />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-    </section>
   );
 }
 
@@ -1789,7 +1090,7 @@ function BatchMonitoringTable({
   onPrintReceipt,
   printingReceiptBatchId,
   actionLabel,
-  emptyText = "Tidak ada data yang sesuai dengan pencarian atau filter yang dipilih.",
+  emptyText = "Belum ada batch yang cocok.",
   stickyAction = false,
 }: {
   batches: OffApiBatch[];
@@ -1801,17 +1102,162 @@ function BatchMonitoringTable({
   emptyText?: string;
   stickyAction?: boolean;
 }) {
-  void stickyAction;
+  const headers = [
+    "No Pengajuan",
+    "Principle",
+    "Kode Principle",
+    "Total",
+    "Progress",
+    "Status",
+    "Status SM",
+    "Status Claim",
+    "Status OM",
+    "Status Keuangan",
+    "Status Final",
+    "Dibuat/Diperbarui",
+    "Aksi",
+  ];
+
   return (
-    <CompactSubmissionTable
-      batches={batches}
-      selectedBatchId={selectedBatchId}
-      onSelect={onSelect}
-      actionLabel={actionLabel}
-      emptyText={emptyText}
-      onPrintReceipt={onPrintReceipt}
-      printingReceiptBatchId={printingReceiptBatchId}
-    />
+    <div className="overflow-x-auto rounded-xl border border-white/10">
+      <table className="w-full min-w-[1800px] text-left text-sm">
+        <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+          <tr>
+            {headers.map((header) => {
+              const isActionColumn = header === "Aksi";
+
+              return (
+                <th
+                  key={header}
+                  className={`px-3 py-3 font-bold ${
+                    stickyAction && isActionColumn
+                      ? "sticky right-0 z-30 min-w-[150px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                      : ""
+                  }`}
+                >
+                  {header}
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+
+        <tbody className="divide-y divide-white/5">
+          {batches.map((batch) => (
+            <tr
+              key={batch.id}
+              className={`${
+                selectedBatchId === batch.id
+                  ? "bg-teal-500/10"
+                  : "hover:bg-white/[0.03]"
+              }`}
+            >
+              <td className="min-w-[180px] whitespace-nowrap px-3 py-3 font-mono font-bold text-white">
+                {batch.noPengajuan}
+              </td>
+
+              <td className="min-w-[260px] px-3 py-3 text-slate-300">
+                {batch.principleName}
+              </td>
+
+              <td className="px-3 py-3 font-mono text-teal-300">
+                {batch.principleCode}
+              </td>
+
+              <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                Rp{" "}
+                {Number(batch.summary?.totalNominal || 0).toLocaleString(
+                  "id-ID",
+                )}
+              </td>
+
+              <td className="px-3 py-3 min-w-[120px]">
+                <ProgressBar value={computeUiBatchProgress(batch)} />
+              </td>
+
+              <td className="px-3 py-3">
+                <span
+                  className={`inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(batch.status)}`}
+                >
+                  {displayStatusLabel(batch.status)}
+                </span>
+              </td>
+
+              <td className="px-3 py-3 text-slate-300">
+                {displayStatusLabel(batch.smStatus)}
+              </td>
+
+              <td className="px-3 py-3 text-slate-300">
+                {displayStatusLabel(batch.claimStatus)}
+              </td>
+
+              <td className="px-3 py-3 text-slate-300">
+                {displayStatusLabel(batch.omStatus)}
+              </td>
+
+              <td className="px-3 py-3 text-slate-300">
+                {displayStatusLabel(batch.financeStatus)}
+              </td>
+
+              <td className="px-3 py-3 text-slate-300">
+                {displayStatusLabel(batch.finalStatus)}
+              </td>
+
+              <td className="min-w-[180px] px-3 py-3 text-xs text-slate-400">
+                <div>Dibuat: {formatDateDisplay(batch.createdAt)}</div>
+                <div>Diperbarui: {formatDateDisplay(batch.updatedAt)}</div>
+              </td>
+
+              <td
+                className={`px-3 py-3 ${
+                  stickyAction
+                    ? "sticky right-0 z-20 min-w-[170px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                    : ""
+                }`}
+              >
+                <button
+                  onClick={() => onSelect(batch)}
+                  className="w-full rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                >
+                  {actionLabel(batch)}
+                </button>
+                {onPrintReceipt && (
+                  <button
+                    onClick={() =>
+                      OFF_KWITANSI_DISABLED ? undefined : onPrintReceipt(batch)
+                    }
+                    disabled={
+                      OFF_KWITANSI_DISABLED ||
+                      printingReceiptBatchId === batch.id
+                    }
+                    title={
+                      OFF_KWITANSI_DISABLED
+                        ? OFF_KWITANSI_DISABLED_MESSAGE
+                        : undefined
+                    }
+                    className="mt-2 w-full rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-bold text-indigo-200 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {OFF_KWITANSI_DISABLED
+                      ? OFF_KWITANSI_DISABLED_MESSAGE
+                      : printingReceiptBatchId === batch.id
+                        ? "Membuat..."
+                        : "Print Kwitansi"}
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
+
+          {batches.length === 0 && (
+            <tr>
+              <td colSpan={13} className="px-3 py-6 text-center text-slate-500">
+                {emptyText}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -1824,15 +1270,129 @@ function FinanceMonitoringTable({
   selectedBatchId?: string | null;
   onSelect: (batch: OffApiBatch) => void;
 }) {
+  const headers = [
+    "No Pengajuan",
+    "Batch",
+    "Principle",
+    "Kode Principle",
+    "Jumlah Baris",
+    "Total Nominal",
+    "Status Keuangan",
+    "Status Final",
+    "Total Dibayar",
+    "Sisa Pembayaran",
+    "Status",
+    "Aksi",
+  ];
+
   return (
-    <CompactSubmissionTable
-      title="Daftar Pembayaran"
-      batches={batches}
-      selectedBatchId={selectedBatchId}
-      onSelect={onSelect}
-      actionLabel={financeActionLabel}
-      emptyText="Belum ada data pembayaran pada filter ini."
-    />
+    <div className="overflow-x-auto rounded-xl border border-white/10">
+      <table className="w-full min-w-[1650px] text-left text-sm">
+        <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
+          <tr>
+            {headers.map((header) => (
+              <th
+                key={header}
+                className={`px-3 py-3 font-bold ${
+                  header === "Aksi"
+                    ? "sticky right-0 z-30 min-w-[160px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                    : ""
+                }`}
+              >
+                {header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-white/5">
+          {batches.map((batch) => {
+            const summary = batch.summary || {
+              totalRows: 0,
+              rowCount: 0,
+              totalNominal: 0,
+            };
+            const paymentSummary = batch.paymentSummary || {
+              totalPaid: Number(batch.paidAmount || 0),
+              remainingAmount: Math.max(
+                0,
+                Number(summary.totalNominal || 0) -
+                  Number(batch.paidAmount || 0),
+              ),
+            };
+
+            return (
+              <tr
+                key={batch.id}
+                className={
+                  selectedBatchId === batch.id
+                    ? "bg-teal-500/10"
+                    : "hover:bg-white/[0.03]"
+                }
+              >
+                <td className="min-w-[180px] whitespace-nowrap px-3 py-3 font-mono font-bold text-white">
+                  {batch.noPengajuan}
+                </td>
+                <td className="px-3 py-3 text-slate-300">
+                  Gelombang {batch.gelombang || "-"}
+                </td>
+                <td className="min-w-[260px] px-3 py-3 text-slate-300">
+                  {batch.principleName}
+                </td>
+                <td className="px-3 py-3 font-mono text-teal-300">
+                  {batch.principleCode}
+                </td>
+                <td className="px-3 py-3 text-center text-slate-300">
+                  {summary.totalRows || summary.rowCount || 0}
+                </td>
+                <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                  Rp {Number(summary.totalNominal || 0).toLocaleString("id-ID")}
+                </td>
+                <td className="px-3 py-3 text-slate-300">
+                  {displayStatusLabel(batch.financeStatus)}
+                </td>
+                <td className="px-3 py-3 text-slate-300">
+                  {displayStatusLabel(batch.finalStatus)}
+                </td>
+                <td className="px-3 py-3 text-right font-mono text-sky-300">
+                  Rp{" "}
+                  {Number(paymentSummary.totalPaid || 0).toLocaleString(
+                    "id-ID",
+                  )}
+                </td>
+                <td className="px-3 py-3 text-right font-mono text-amber-300">
+                  Rp{" "}
+                  {Number(paymentSummary.remainingAmount || 0).toLocaleString(
+                    "id-ID",
+                  )}
+                </td>
+                <td className="px-3 py-3">
+                  <span
+                    className={`inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(batch.status)}`}
+                  >
+                    {displayStatusLabel(batch.status)}
+                  </span>
+                </td>
+                <td className="sticky right-0 z-20 min-w-[160px] bg-[#0f1115] px-3 py-3 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]">
+                  <button
+                    onClick={() => onSelect(batch)}
+                    className="w-full rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                  >
+                    {financeActionLabel(batch)}
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+          {batches.length === 0 && (
+            <tr>
+              <td colSpan={12} className="px-3 py-6 text-center text-slate-500">
+                Belum ada batch pembayaran yang cocok.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -1844,7 +1404,7 @@ function Field({ label, value = "" }: { label: string; value?: string }) {
         readOnly
         value={value}
         placeholder={label}
-        className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-300 outline-none placeholder:text-slate-600"
+        className="mt-1 w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-300 outline-none placeholder:text-slate-600"
       />
     </label>
   );
@@ -1854,10 +1414,12 @@ function EditableField({
   label,
   value,
   onChange,
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  placeholder?: string;
 }) {
   return (
     <label className="block">
@@ -1865,7 +1427,8 @@ function EditableField({
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+        placeholder={placeholder}
+        className="mt-1 w-full rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-2 text-sm text-[#1f1408] shadow-sm outline-none placeholder:text-[#8a6a3d] focus:border-[#c6922e] focus:ring-2 focus:ring-[#f2d49b]/40"
       />
     </label>
   );
@@ -1887,7 +1450,7 @@ function DateField({
         value={value}
         onChange={onChange}
         ariaLabel={label}
-        className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+        className="mt-1 w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
       />
     </label>
   );
@@ -1912,7 +1475,7 @@ function PrincipleSelect({
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className={`${label ? "mt-1" : ""} w-full rounded-lg border border-white/10 bg-black/40 px-3 ${compact ? "py-2 min-w-[250px]" : "py-2.5"} text-sm text-slate-200 outline-none focus:border-teal-500/50`}
+        className={`${label ? "mt-1" : ""} w-full rounded-lg border border-white/10 bg-white/10 px-3 ${compact ? "py-2 min-w-[250px]" : "py-2.5"} text-sm text-slate-200 outline-none focus:border-teal-500/50`}
       >
         {PRINCIPLE_OPTIONS.map((item) => (
           <option key={item.code} value={item.name} className="bg-[#1a1c23]">
@@ -1933,7 +1496,7 @@ function TextArea({ label, value = "" }: { label: string; value?: string }) {
         value={value}
         placeholder={label}
         rows={4}
-        className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-300 outline-none placeholder:text-slate-600"
+        className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-300 outline-none placeholder:text-slate-600"
       />
     </label>
   );
@@ -1949,8 +1512,8 @@ function Panel({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-white/5 bg-[#1a1c23]/55 p-6 shadow-xl">
-      <h2 className="mb-6 flex items-center gap-2 text-lg font-bold text-white">
+    <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
+      <h2 className="text-lg font-bold text-white flex items-center gap-2 mb-5">
         <Icon className="text-teal-300" size={20} /> {title}
       </h2>
       {children}
@@ -1977,841 +1540,54 @@ function InfoNote({ children }: { children: ReactNode }) {
   );
 }
 
-function PrincipalFilterSelect({
-  value,
-  onChange,
-  options,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  options: Array<{ value: string; label: string }>;
-}) {
+function MetricsGrid({ metrics }: { metrics: MetricItem[] }) {
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-semibold text-slate-500">
-        Principal
-      </span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-xl border border-[#d4ad61]/35 bg-[#fffaf0]/85 px-4 py-2.5 text-sm text-[#2d241b] outline-none focus:border-[#c79a3f]"
-      >
-        <option value="" className="bg-[#fffaf0] text-[#2d241b]">
-          Semua Principal
-        </option>
-        {options.map((option) => (
-          <option key={option.value} value={option.value} className="bg-[#fffaf0] text-[#2d241b]">
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function ClaimComparisonSummary({
-  comparison,
-}: {
-  comparison: ReturnType<typeof computeClaimComparison>;
-}) {
-  const items = [
-    { label: "Total Diajukan", value: `Rp ${comparison.totalSubmitted.toLocaleString("id-ID")}` },
-    { label: "Total Diklaim", value: `Rp ${comparison.totalClaimed.toLocaleString("id-ID")}` },
-    { label: "Selisih", value: `Rp ${Math.abs(comparison.difference).toLocaleString("id-ID")}` },
-    { label: "Jumlah Pengajuan", value: String(comparison.submittedCount) },
-    { label: "Jumlah Klaim", value: String(comparison.claimedCount) },
-    { label: "Status Pencocokan", value: comparison.status },
-  ];
-
-  return (
-    <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-4 shadow-xl">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-bold text-white">Perbandingan Pengajuan &amp; Klaim</h2>
-        <span
-          className={`rounded-md border px-3 py-1 text-xs font-bold ${
-            comparison.isMatched
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-              : "border-amber-500/30 bg-amber-500/10 text-amber-300"
-          }`}
-        >
-          {comparison.isMatched ? "Sesuai" : "Belum Sesuai"}
-        </span>
-      </div>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-6">
-        {items.map((item) => (
-          <div key={item.label} className="rounded-xl bg-black/25 px-3 py-3">
-            <p className="text-xs font-semibold text-slate-500">{item.label}</p>
-            <p className="mt-1 text-sm font-black text-white">{item.value}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function PeriodClosurePanel({
-  batches,
-  offRole,
-  onUpdated,
-}: {
-  batches: OffApiBatch[];
-  offRole: OffRole;
-  onUpdated: () => Promise<void>;
-}) {
-  const principalOptions = getPrincipalOptions(batches);
-  const firstBatch = batches[0];
-  // BUG FIX: principalCode harus default ke "" agar "Semua Principal" selalu
-  // bisa dipilih. Inisialisasi ke firstBatch.principleCode menyebabkan opsi
-  // "Semua Principal" tidak pernah menjadi nilai default, dan useEffect lama
-  // meng-override pilihan user kembali ke principle pertama setiap kali deps berubah.
-  const [principalCode, setPrincipalCode] = useState("");
-  const [month, setMonth] = useState(firstBatch?.bulan || "");
-  const [year, setYear] = useState(firstBatch?.tahun || "");
-  const [status, setStatus] = useState("");
-  const [periodStatus, setPeriodStatus] = useState("Terbuka");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [hasUserInteracted, setHasUserInteracted] = useState(false);
-
-  // Hanya auto-set bulan dan tahun saat data pertama tersedia dan user belum interaksi.
-  // principalCode TIDAK di-auto-fill: default "Semua Principal" (value="") dipertahankan
-  // agar user selalu bisa memilihnya tanpa di-reset oleh effect ini.
-  useEffect(() => {
-    if (hasUserInteracted) return;
-    if (!month && firstBatch?.bulan) setMonth(firstBatch.bulan);
-    if (!year && firstBatch?.tahun) setYear(firstBatch.tahun);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firstBatch?.bulan, firstBatch?.tahun]);
-
-  const handlePrincipalChange = (value: string) => {
-    setHasUserInteracted(true);
-    setPrincipalCode(value);
-  };
-
-  const targetBatches = batches.filter(
-    (batch) =>
-      (!principalCode || batch.principleCode === principalCode) &&
-      (!month || batch.bulan === month) &&
-      (!year || batch.tahun === year),
-  );
-  const comparison = computeClaimComparison(targetBatches);
-  const canUnlock = offRole === "admin";
-  // isBulkMode = true saat "Semua Principal" dipilih (principalCode === "").
-  // Tombol aktif di mode bulk asalkan bulan+tahun terisi, ada batch, dan selisih = 0.
-  const isBulkMode = !principalCode;
-  const canClosePeriod =
-    Boolean(month && year) &&
-    targetBatches.length > 0 &&
-    comparison.isMatched &&
-    (isBulkMode || Boolean(principalCode));
-  const isPeriodClosed = periodStatus === "Ditutup" || periodStatus === "Dikunci";
-  const selectedPeriodLabel =
-    month && year
-      ? `${principalCode ? (principalOptions.find((option) => option.value === principalCode)?.label || principalCode) : "Semua Principal"} - ${indonesianMonthLabel(month)} ${year}`
-      : "Pilih principal dan periode";
-
-  const submitPeriodAction = async (action: "close" | "unlock") => {
-    if (!month || !year) {
-      setStatus("Bulan dan tahun wajib dipilih.");
-      return;
-    }
-
-    // ── MODE BULK: Semua Principal ──────────────────────────────────────────
-    if (isBulkMode) {
-      const uniquePrincipals = [
-        ...new Set(
-          targetBatches.map((b) => b.principleCode).filter(Boolean),
-        ),
-      ] as string[];
-      if (uniquePrincipals.length === 0) {
-        setStatus("Tidak ada principal yang ditemukan untuk periode ini.");
-        return;
-      }
-      if (
-        action === "close" &&
-        !window.confirm(
-          `Tutup semua ${uniquePrincipals.length} principal untuk ${indonesianMonthLabel(month)} ${year}? Data tidak bisa diubah lagi setelah dikunci.`,
-        )
-      ) {
-        return;
-      }
-      setIsSubmitting(true);
-      setStatus("");
-      try {
-        const results = await Promise.all(
-          uniquePrincipals.map(async (pc) => {
-            const res = await fetch("/api/off-program-control/periods", {
-              method: "POST",
-              credentials: "include",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ action, principleCode: pc, bulan: month, tahun: year }),
-            });
-            const data = await parseJsonResponse(res);
-            return { ok: res.ok && Boolean(data.ok), pc };
-          }),
-        );
-        const failed = results.filter((r) => !r.ok);
-        if (failed.length > 0) {
-          throw new Error(
-            `${failed.length} principal gagal diproses: ${failed.map((r) => r.pc).join(", ")}`,
-          );
-        }
-        setPeriodStatus(action === "close" ? "Ditutup" : "Terbuka");
-        setStatus(
-          `Semua ${uniquePrincipals.length} principal berhasil ${action === "close" ? "ditutup" : "dibuka kunci"} untuk periode ${indonesianMonthLabel(month)} ${year}.`,
-        );
-        await onUpdated();
-      } catch (error) {
-        setStatus(
-          error instanceof Error ? error.message : "Periode belum berhasil diproses.",
-        );
-      } finally {
-        setIsSubmitting(false);
-      }
-      return;
-    }
-
-    // ── MODE SINGLE: Satu Principal ─────────────────────────────────────────
-    if (
-      action === "close" &&
-      !window.confirm(
-        "Tutup periode ini? Setelah dikunci, data tidak bisa diubah lagi.",
-      )
-    ) {
-      return;
-    }
-    setIsSubmitting(true);
-    setStatus("");
-    try {
-      const response = await fetch("/api/off-program-control/periods", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, principleCode: principalCode, bulan: month, tahun: year }),
-      });
-      const data = await parseJsonResponse(response);
-      if (!response.ok || !data.ok) {
-        throw new Error(String(data.error || "Periode belum berhasil diproses."));
-      }
-      setPeriodStatus(String(data.status || (action === "close" ? "Ditutup" : "Terbuka")));
-      setStatus(String(data.message || "Periode berhasil diproses."));
-      await onUpdated();
-    } catch (error) {
-      setStatus(
-        error instanceof Error ? error.message : "Periode belum berhasil diproses.",
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  return (
-    <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-4 shadow-xl">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-bold text-white">Tutup Periode</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-md border border-white/10 bg-black/30 px-3 py-1 text-xs font-bold text-slate-300">
-            {selectedPeriodLabel}
-          </span>
-          <span className="rounded-md border border-white/10 bg-black/30 px-3 py-1 text-xs font-bold text-slate-300">
-            Status Periode: {periodStatus}
-          </span>
-        </div>
-      </div>
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(260px,1fr)_180px_180px]">
-        <PrincipalFilterSelect
-          value={principalCode}
-          onChange={handlePrincipalChange}
-          options={principalOptions}
-        />
-        <label className="block">
-          <span className="mb-1 block text-xs font-semibold text-slate-500">
-            Periode
-          </span>
-          <select
-            value={month}
-            onChange={(event) => setMonth(event.target.value)}
-            className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
-          >
-            <option value="" className="bg-[#1a1c23]">Pilih Periode</option>
-            {Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, "0")).map((value) => (
-            <option key={value} value={value} className="bg-[#fffaf0] text-[#2d241b]">
-                {indonesianMonthLabel(value)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className="mb-1 block text-xs font-semibold text-slate-500">
-            Tahun
-          </span>
-          <input
-            value={year}
-            onChange={(event) => setYear(event.target.value.replace(/[^\d]/g, "").slice(0, 4))}
-            className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
-          />
-        </label>
-      </div>
-      <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-4">
-        {[
-          { label: "Total Diajukan", value: `Rp ${comparison.totalSubmitted.toLocaleString("id-ID")}` },
-          { label: "Total Diklaim", value: `Rp ${comparison.totalClaimed.toLocaleString("id-ID")}` },
-          { label: "Selisih", value: `Rp ${Math.abs(comparison.difference).toLocaleString("id-ID")}` },
-          { label: "Kesesuaian Data", value: comparison.status },
-        ].map((item) => (
-          <div key={item.label} className="rounded-xl bg-black/25 px-3 py-3">
-            <p className="text-xs font-semibold text-slate-500">{item.label}</p>
-            <p className="mt-1 text-sm font-black text-white">{item.value}</p>
-          </div>
-        ))}
-      </div>
-      <div className="mt-6 flex flex-wrap items-center gap-4">
-        <button
-          type="button"
-          disabled={isSubmitting || !canClosePeriod}
-          onClick={() => submitPeriodAction("close")}
-          className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Tutup Periode
-        </button>
-        {targetBatches.length > 0 && principalCode && month && year && (
-          <button
-            type="button"
-            onClick={() => {
-              const params = new URLSearchParams({ principleCode: principalCode, bulan: month, tahun: year });
-              window.open(`/api/off-program-control/periods/reconciliation?${params.toString()}`, "_blank");
-            }}
-            className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-4 py-2.5 text-sm font-semibold text-slate-300 hover:bg-black/40 hover:text-white transition-colors"
-          >
-            <Download size={15} />
-            Download Rekonsiliasi
-          </button>
-        )}
-        {canUnlock && isPeriodClosed && (
-          <button
-            type="button"
-            disabled={isSubmitting}
-            onClick={() => submitPeriodAction("unlock")}
-            className="text-xs font-semibold text-amber-400 underline hover:text-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Buka kunci periode ini
-          </button>
-        )}
-      </div>
-      {status && (
-        <div className="mt-3 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
-          {status}
-        </div>
-      )}
-      {!comparison.isMatched && targetBatches.length > 0 && (
-        <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-          Periode belum dapat ditutup karena total pengajuan dan total klaim belum sesuai.
-        </div>
-      )}
-      {targetBatches.length > 0 && (
-        <details className="mt-4 rounded-xl border border-white/10 bg-black/20 overflow-hidden">
-          <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-300 hover:text-white select-none">
-            Lihat Detail Rekonsiliasi ({targetBatches.length} pengajuan)
-          </summary>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left border-t border-white/10">
-              <thead className="text-[10px] uppercase text-slate-500 bg-black/30">
-                <tr>
-                  <th className="px-3 py-2">No</th>
-                  <th className="px-3 py-2">No. Pengajuan</th>
-                  <th className="px-3 py-2">Nama Toko</th>
-                  <th className="px-3 py-2 text-right">Nilai Pengajuan</th>
-                  <th className="px-3 py-2">No. Claim</th>
-                  <th className="px-3 py-2 text-right">Nilai Claim</th>
-                  <th className="px-3 py-2 text-right">Selisih</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {targetBatches.map((batch, idx) => {
-                  const nilaiPengajuan = Number(batch.summary?.totalNominal || 0);
-                  const nilaiClaim = Number(batch.paymentSummary?.totalPaid || batch.verifiedAmount || batch.paidAmount || 0);
-                  const selisih = nilaiPengajuan - nilaiClaim;
-                  return (
-                    <tr key={batch.id} className="hover:bg-white/5">
-                      <td className="px-3 py-2 text-slate-400">{idx + 1}</td>
-                      <td className="px-3 py-2 text-slate-200 font-mono">{batch.noPengajuan}</td>
-                      <td className="px-3 py-2 text-slate-300">{batch.principleName}</td>
-                      <td className="px-3 py-2 text-right text-slate-200">Rp {nilaiPengajuan.toLocaleString("id-ID")}</td>
-                      <td className="px-3 py-2 text-slate-300">{batch.noClaim || "-"}</td>
-                      <td className="px-3 py-2 text-right text-slate-200">Rp {nilaiClaim.toLocaleString("id-ID")}</td>
-                      <td className={`px-3 py-2 text-right font-bold ${selisih !== 0 ? "text-red-400" : "text-emerald-400"}`}>
-                        Rp {Math.abs(selisih).toLocaleString("id-ID")}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </details>
-      )}
-    </section>
-  );
-}
-
-function SupportTogglePanel({
-  title,
-  actionLabel,
-  icon: Icon,
-  children,
-}: {
-  title: string;
-  actionLabel: string;
-  icon: ElementType;
-  children: ReactNode;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  return (
-    <section className="rounded-2xl border border-[#d4ad61]/28 bg-[#fffaf0]/78 p-5 shadow-[0_18px_46px_rgba(122,78,32,0.12)] backdrop-blur-xl">
-      <button
-        type="button"
-        onClick={() => setIsOpen((current) => !current)}
-        aria-expanded={isOpen}
-        className="flex w-full flex-col gap-3 text-left sm:flex-row sm:items-center sm:justify-between"
-      >
-        <span className="flex items-start gap-3">
-          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#d4ad61]/35 bg-[#f7ead0]/80 shadow-[0_8px_22px_rgba(122,78,32,0.10)]">
-            <Icon className="text-[#00877b]" size={18} />
-          </span>
-          <span>
-            <span className="block text-sm font-bold text-[#2d241b]">{title}</span>
-          </span>
-        </span>
-        <span className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#d4ad61]/40 bg-gradient-to-r from-[#f7d989]/80 to-[#d6a948]/70 px-3 py-2 text-xs font-bold text-[#006d65] shadow-[0_10px_24px_rgba(183,122,37,0.16)] hover:from-[#f2d28a] hover:to-[#c99631]">
-          {isOpen ? "Sembunyikan" : actionLabel}
-          <ChevronDown
-            size={14}
-            className={`transition-transform ${isOpen ? "rotate-180" : ""}`}
-          />
-        </span>
-      </button>
-      {isOpen && <div className="mt-5 pt-2">{children}</div>}
-    </section>
-  );
-}
-
-function SummaryStrip({ metrics }: { metrics: MetricItem[] }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const visibleMetrics = isExpanded ? metrics : metrics.slice(0, 3);
-
-  return (
-    <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 px-4 py-3 shadow-xl">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-3">
-          {visibleMetrics.map((metric) => {
-            const Icon = metric.icon;
-            return (
-              <div
-                key={metric.label}
-                className="flex min-h-16 items-center justify-between gap-3 rounded-xl bg-black/25 px-4 py-3"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-semibold text-slate-500">
-                    {metric.label}
-                  </p>
-                  <p className="mt-0.5 text-xl font-black text-white">
-                    {metric.value}
-                  </p>
-                </div>
-                <Icon className={`${metric.tone} shrink-0`} size={18} />
-              </div>
-            );
-          })}
-        </div>
-        {metrics.length > 3 && (
-          <button
-            type="button"
-            onClick={() => setIsExpanded((current) => !current)}
-            aria-expanded={isExpanded}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-300 hover:bg-white/10"
-          >
-            {isExpanded ? "Sembunyikan" : "Lihat Lebih Banyak"}
-            <ChevronDown
-              size={14}
-              className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}
-            />
-          </button>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function AdminViewSelector({
-  activeTab,
-  accessibleTabKeys,
-  onSelect,
-}: {
-  activeTab: TabKey | undefined;
-  accessibleTabKeys: TabKey[];
-  onSelect: (tab: TabKey) => void;
-}) {
-  return (
-    <section className="mb-6 rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
-      <div className="mb-5 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-        <p className="text-sm font-bold text-white">Tinjau Berdasarkan Bagian</p>
-        <span className="inline-flex w-fit items-center gap-2 rounded-xl border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200">
-          <ShieldCheck size={14} />
-          Anda masuk sebagai Admin
-        </span>
-      </div>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        {adminViewGroups.map((group) => (
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      {metrics.map((metric) => {
+        const Icon = metric.icon;
+        return (
           <div
-            key={group.title}
-            className="rounded-xl border border-white/10 bg-black/25 p-5"
+            key={metric.label}
+            className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl"
           >
-            <p className="mb-4 text-xs font-bold uppercase tracking-wider text-slate-500">
-              {group.title}
-            </p>
-            <div className="flex flex-wrap gap-3">
-              {group.tabs
-                .filter((key) => accessibleTabKeys.includes(key))
-                .map((key) => {
-                  const tab = tabs.find((item) => item.key === key);
-                  if (!tab) return null;
-
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => onSelect(key)}
-                      className={`rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${
-                        activeTab === key
-                          ? "border-teal-500/40 bg-teal-500/20 text-teal-100"
-                          : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"
-                      }`}
-                    >
-                      {key === "overview" ? "Admin" : tab.label}
-                    </button>
-                  );
-                })}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function AdminHealthPanel({
-  batches,
-  comparison,
-  error,
-  isLoading,
-  onSelectBatch,
-}: {
-  batches: OffApiBatch[];
-  comparison: ReturnType<typeof computeClaimComparison>;
-  error: string;
-  isLoading: boolean;
-  onSelectBatch: (batch: OffApiBatch) => void;
-}) {
-  const activeBatches = batches.filter((batch) => !isCompletedOrCancelledBatch(batch));
-  const queueStats = buildAdminQueueStats(batches);
-  const bottleneck = [...queueStats].sort((a, b) => b.count - a.count)[0];
-  const overdueBatches = batches.filter(isOverdueBatch);
-  const agingBatches = activeBatches.filter((batch) => batchAgeDays(batch) >= 7);
-  const paidIncompleteBatches = batches.filter(isFinalClaimActionableBatch);
-  const returnedBatches = batches.filter(isReturnedOrCorrectionBatch);
-  const problemBatches = Array.from(
-    new Map(
-      [
-        ...overdueBatches,
-        ...agingBatches,
-        ...paidIncompleteBatches,
-        ...returnedBatches,
-      ].map((batch) => [batch.id, batch]),
-    ).values(),
-  )
-    .sort((a, b) => batchTimestamp(b) - batchTimestamp(a))
-    .slice(0, 6);
-  const recentBatches = [...batches]
-    .sort((a, b) => batchTimestamp(b) - batchTimestamp(a))
-    .slice(0, 5);
-  const attentionItems = [
-    error
-      ? {
-          title: "Data gagal dimuat",
-          desc: error,
-          count: "!",
-          tone: "text-rose-300",
-          border: "border-rose-500/30 bg-rose-500/10",
-        }
-      : null,
-    overdueBatches.length > 0
-      ? {
-          title: "Melewati Batas Waktu",
-          desc: "Deadline klaim sudah lewat.",
-          count: String(overdueBatches.length),
-          tone: "text-rose-300",
-          border: "border-rose-500/30 bg-rose-500/10",
-        }
-      : null,
-    agingBatches.length > 0
-      ? {
-          title: "Pengajuan Terlalu Lama Diproses",
-          desc: "Aktif lebih dari 7 hari sejak update terakhir.",
-          count: String(agingBatches.length),
-          tone: "text-amber-300",
-          border: "border-amber-500/30 bg-amber-500/10",
-        }
-      : null,
-    paidIncompleteBatches.length > 0
-      ? {
-          title: "Sudah bayar belum final",
-          desc: "Menunggu verifikasi final Klaim.",
-          count: String(paidIncompleteBatches.length),
-          tone: "text-sky-300",
-          border: "border-sky-500/30 bg-sky-500/10",
-        }
-      : null,
-    comparison.submittedCount > 0 && !comparison.isMatched
-      ? {
-          title: "Ketidaksesuaian pengajuan & klaim",
-          desc: `Selisih Rp ${Math.abs(comparison.difference).toLocaleString("id-ID")}.`,
-          count: String(comparison.submittedCount),
-          tone: "text-amber-300",
-          border: "border-amber-500/30 bg-amber-500/10",
-        }
-      : null,
-    bottleneck && bottleneck.count > 0
-      ? {
-          title: "Bottleneck terbesar",
-          desc: bottleneck.label,
-          count: String(bottleneck.count),
-          tone: "text-teal-300",
-          border: "border-teal-500/30 bg-teal-500/10",
-        }
-      : null,
-  ].filter(
-    (
-      item,
-    ): item is {
-      title: string;
-      desc: string;
-      count: string;
-      tone: string;
-      border: string;
-    } => Boolean(item),
-  );
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.1fr_1fr]">
-        <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
-          <div className="mb-4 flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-bold text-white">Admin Overview</h2>
-              <p className="mt-1 text-sm text-slate-400">
-                Cockpit health system untuk memantau proses aktif sebelum masuk ke role tertentu.
-              </p>
-            </div>
-            {isLoading && (
-              <span className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold text-slate-300">
-                Memuat
-              </span>
-            )}
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-white/10 bg-black/25 p-4">
-              <p className="text-xs font-semibold text-slate-500">
-                Total Pengajuan Aktif
-              </p>
-              <p className="mt-2 text-3xl font-black text-white">
-                {activeBatches.length}
-              </p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-black/25 p-4">
-              <p className="text-xs font-semibold text-slate-500">
-                Bottleneck Terbesar
-              </p>
-              <p className="mt-2 text-lg font-black text-white">
-                {bottleneck?.count ? bottleneck.label : "Tidak ada"}
-              </p>
-              <p className="mt-1 text-xs text-slate-500">
-                {bottleneck?.count || 0} pengajuan
-              </p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-black/25 p-4">
-              <p className="text-xs font-semibold text-slate-500">
-                SLA / Overdue
-              </p>
-              <p className="mt-2 text-3xl font-black text-white">
-                {overdueBatches.length}
-              </p>
-              <p className="mt-1 text-xs text-slate-500">
-                {agingBatches.length} tertahan 7+ hari
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
-          <h2 className="text-lg font-bold text-white">Butuh Perhatian</h2>
-          {attentionItems.length === 0 ? (
-            <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-              Tidak ada masalah prioritas pada data yang sedang dimuat.
-            </div>
-          ) : (
-            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {attentionItems.map((item) => (
-                <div
-                  key={item.title}
-                  className={`rounded-xl border px-4 py-3 ${item.border}`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-white">
-                        {item.title}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-300">
-                        {item.desc}
-                      </p>
-                    </div>
-                    <span className={`font-mono text-xl font-black ${item.tone}`}>
-                      {item.count}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
-
-      <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
-        <h2 className="text-lg font-bold text-white">Status Per Divisi</h2>
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-6">
-          {queueStats.map((queue) => {
-            const Icon = queue.icon;
-
-            return (
-              <div
-                key={queue.key}
-                className="rounded-xl border border-white/10 bg-black/25 p-4"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <Icon className="text-teal-300" size={18} />
-                  <span className="font-mono text-xl font-black text-white">
-                    {queue.count}
-                  </span>
-                </div>
-                <p className="mt-3 text-sm font-bold text-white">
-                  {queue.label}
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm text-slate-400">{metric.label}</p>
+                <p className="mt-2 text-3xl font-black text-white">
+                  {metric.value}
                 </p>
-                <p className="mt-1 text-xs text-slate-500">{queue.desc}</p>
               </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {problemBatches.length > 0 && (
-        <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
-          <h2 className="text-lg font-bold text-white">Pengajuan Bermasalah</h2>
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="border-b border-white/10 text-xs uppercase tracking-wider text-slate-500">
-                <tr>
-                  <th className="px-3 py-3 font-bold">No Pengajuan</th>
-                  <th className="px-3 py-3 font-bold">Principle</th>
-                  <th className="px-3 py-3 font-bold">No Klaim</th>
-                  <th className="px-3 py-3 font-bold">Status Saat Ini</th>
-                  <th className="px-3 py-3 font-bold">Keterangan</th>
-                  <th className="px-3 py-3 font-bold">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {problemBatches.map((batch) => (
-                  <tr key={batch.id} className="hover:bg-white/[0.03]">
-                    <td className="px-3 py-3">
-                      <p className="font-bold text-white">{batch.noPengajuan}</p>
-                      <p className="mt-1 text-xs text-slate-500">{batch.supervisorName || "-"}</p>
-                    </td>
-                    <td className="px-3 py-3 text-sm text-slate-300">
-                      {batch.principleName || "-"}
-                    </td>
-                    <td className="px-3 py-3 text-sm text-slate-300 font-mono">
-                      {batch.noClaim || "-"}
-                    </td>
-                    <td className="px-3 py-3">
-                      <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(batch.status)}`}>
-                        {displayStatusLabel(batch.status)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3">
-                      <span className="text-xs font-bold text-amber-300">
-                        {isOverdueBatch(batch)
-                          ? "Overdue"
-                          : batchAgeDays(batch) >= 7
-                            ? `${batchAgeDays(batch)} hari`
-                            : "Perlu cek"}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3">
-                      <button
-                        type="button"
-                        onClick={() => onSelectBatch(batch)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-1.5 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
-                      >
-                        Detail
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+              <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center">
+                <Icon className={metric.tone} size={22} />
+              </div>
+            </div>
           </div>
-        </section>
-      )}
-
-      {recentBatches.length > 0 && (
-        <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
-          <h2 className="text-lg font-bold text-white">Aktivitas Terakhir</h2>
-          <div className="mt-4 grid grid-cols-1 gap-2 lg:grid-cols-5">
-            {recentBatches.map((batch) => (
-              <button
-                key={batch.id}
-                type="button"
-                onClick={() => onSelectBatch(batch)}
-                className="rounded-xl border border-white/10 bg-black/25 p-3 text-left hover:bg-white/5"
-              >
-                <p className="truncate text-sm font-bold text-white">
-                  {batch.noPengajuan}
-                </p>
-                <p className="mt-1 truncate text-xs text-slate-500">
-                  {displayStatusLabel(batch.status)}
-                </p>
-                <p className="mt-2 text-xs text-slate-400">
-                  {batch.updatedAt || batch.createdAt
-                    ? formatDateDisplay(
-                        String(batch.updatedAt || batch.createdAt).slice(0, 10),
-                      )
-                    : "-"}
-                </p>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
+        );
+      })}
     </div>
   );
 }
 
 function WorkflowStepper() {
   return (
-    <div>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-8 gap-3">
+    <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
+      <div className="flex items-center justify-between gap-4 mb-5">
+        <div>
+          <h2 className="text-lg font-bold text-white">Alur Persetujuan</h2>
+          <p className="text-sm text-slate-400">
+            Alur batch dari input massal sampai verifikasi final pembayaran
+            Claim.
+          </p>
+        </div>
+        <span className="hidden sm:inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-teal-300">
+          <ArrowRight size={14} /> Alur Batch
+        </span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-3">
         {workflowSteps.map((step, index) => (
           <div
             key={step}
-            className="relative rounded-xl border border-white/10 bg-black/30 p-4"
+            className="relative rounded-xl border border-white/10 bg-black/30 p-4 min-h-28"
           >
             <div className="flex items-center justify-between mb-4">
               <span className="w-8 h-8 rounded-lg bg-teal-500/10 border border-teal-500/30 text-teal-300 flex items-center justify-center text-sm font-black">
@@ -2841,14 +1617,139 @@ function OverviewMonitoringTable({
   selectedBatchId?: string | null;
   onSelect: (batch: OffApiBatch) => void;
 }) {
+  const headers = [
+    "No Pengajuan",
+    "Batch",
+    "Principle",
+    "Kode Principle",
+    "Jumlah Baris",
+    "Total Nominal",
+    "Progress",
+    "Status SM",
+    "Status Claim",
+    "Status OM",
+    "Status Keuangan",
+    "Status Final",
+    "Status",
+    "Aksi",
+  ];
   return (
-    <CompactSubmissionTable
-      batches={batches}
-      selectedBatchId={selectedBatchId}
-      onSelect={onSelect}
-      actionLabel={() => "Lihat Detail"}
-      emptyText="Belum ada pengajuan pada filter ini."
-    />
+    <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 overflow-hidden shadow-xl">
+      <div className="p-5 border-b border-white/10 bg-black/30">
+        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+          <ReceiptText className="text-teal-300" size={20} /> Monitoring Batch
+          Pengajuan
+        </h2>
+        <p className="text-sm text-slate-400 mt-1">
+          Pilih batch untuk melihat detail baca-saja.
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[1750px] text-sm text-left">
+          <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
+            <tr>
+              {headers.map((col) => {
+                const isActionColumn = col === "Aksi";
+                return (
+                  <th
+                    key={col}
+                    className={`px-4 py-3 font-bold ${col === "No Pengajuan" ? "min-w-[180px]" : ""} ${
+                      isActionColumn
+                        ? "sticky right-0 z-30 min-w-[150px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                        : ""
+                    }`}
+                  >
+                    {col}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {batches.map((batch) => {
+              const summary = batch.summary || {
+                totalRows: 0,
+                rowCount: 0,
+                totalNominal: 0,
+              };
+              return (
+                <tr
+                  key={batch.id}
+                  className={
+                    selectedBatchId === batch.id
+                      ? "bg-teal-500/10"
+                      : "hover:bg-white/[0.03]"
+                  }
+                >
+                  <td className="px-4 py-4 min-w-[180px] whitespace-nowrap font-mono font-bold text-white">
+                    {batch.noPengajuan}
+                  </td>
+                  <td className="px-4 py-4 text-slate-300">
+                    Gelombang {batch.gelombang || "-"}
+                  </td>
+                  <td className="px-4 py-4 text-slate-300 min-w-[260px]">
+                    {batch.principleName}
+                  </td>
+                  <td className="px-4 py-4 font-mono text-teal-300">
+                    {batch.principleCode}
+                  </td>
+                  <td className="px-4 py-4 text-center text-slate-300">
+                    {summary.totalRows || summary.rowCount || 0}
+                  </td>
+                  <td className="px-4 py-4 text-right font-mono text-emerald-300">
+                    Rp{" "}
+                    {Number(summary.totalNominal || 0).toLocaleString("id-ID")}
+                  </td>
+                  <td className="px-4 py-4 min-w-[120px]">
+                    <ProgressBar value={computeUiBatchProgress(batch)} />
+                  </td>
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.smStatus)}
+                  </td>
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.claimStatus)}
+                  </td>
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.omStatus)}
+                  </td>
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.financeStatus)}
+                  </td>
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.finalStatus)}
+                  </td>
+                  <td className="px-4 py-4">
+                    <span
+                      className={`inline-flex px-2.5 py-1 rounded-md border text-xs font-bold ${statusClass(batch.status)}`}
+                    >
+                      {displayStatusLabel(batch.status)}
+                    </span>
+                  </td>
+                  <td className="sticky right-0 z-20 min-w-[150px] bg-[#0f1115] px-4 py-4 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]">
+                    <button
+                      onClick={() => onSelect(batch)}
+                      className="w-full rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                    >
+                      Lihat Detail
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {batches.length === 0 && (
+              <tr>
+                <td
+                  colSpan={14}
+                  className="px-4 py-6 text-center text-sm text-slate-500"
+                >
+                  Belum ada batch OFF Program Control.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -2857,7 +1758,7 @@ function BatchOverviewActionTable({
   selectedBatchId,
   onSelect,
   actionLabel,
-  emptyText = "Tidak ada data yang sesuai dengan pencarian atau filter yang dipilih.",
+  emptyText = "Belum ada batch pengajuan.",
 }: {
   batches: OffApiBatch[];
   selectedBatchId?: string | null;
@@ -2865,14 +1766,148 @@ function BatchOverviewActionTable({
   actionLabel: (batch: OffApiBatch) => string;
   emptyText?: string;
 }) {
+  const headers = [
+    "No Pengajuan",
+    "Principle",
+    "Kode Principle",
+    "Total Nominal",
+    "Status SM",
+    "Status Claim",
+    "Status OM",
+    "Status Finance",
+    "Status Final",
+    "Progress %",
+    "Updated At",
+    "Aksi",
+  ];
+
   return (
-    <CompactSubmissionTable
-      batches={batches}
-      selectedBatchId={selectedBatchId}
-      onSelect={onSelect}
-      actionLabel={actionLabel}
-      emptyText={emptyText}
-    />
+    <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 overflow-hidden shadow-xl">
+      <div className="p-5 border-b border-white/10 bg-black/30">
+        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+          <ReceiptText className="text-teal-300" size={20} /> Monitoring Batch
+          Pengajuan
+        </h2>
+        <p className="text-sm text-slate-400 mt-1">
+          Pilih batch untuk membuka detail review.
+        </p>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[1550px] text-sm text-left">
+          <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
+            <tr>
+              {headers.map((col) => {
+                const isActionColumn = col === "Aksi";
+
+                return (
+                  <th
+                    key={col}
+                    className={`px-4 py-3 font-bold ${
+                      col === "No Pengajuan" ? "min-w-[180px]" : ""
+                    } ${
+                      isActionColumn
+                        ? "sticky right-0 z-30 min-w-[150px] bg-[#0f1115] shadow-[-12px_0_18px_rgba(0,0,0,0.45)]"
+                        : ""
+                    }`}
+                  >
+                    {col}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+
+          <tbody className="divide-y divide-white/5">
+            {batches.map((batch) => {
+              const summary = batch.summary || {
+                totalRows: 0,
+                rowCount: 0,
+                totalNominal: 0,
+              };
+
+              return (
+                <tr
+                  key={batch.id}
+                  className={`${
+                    selectedBatchId === batch.id
+                      ? "bg-teal-500/10"
+                      : "hover:bg-white/[0.03]"
+                  }`}
+                >
+                  <td className="px-4 py-4 min-w-[180px] whitespace-nowrap font-mono font-bold text-white">
+                    {batch.noPengajuan}
+                  </td>
+
+                  <td className="px-4 py-4 text-slate-300 min-w-[260px]">
+                    {batch.principleName}
+                  </td>
+
+                  <td className="px-4 py-4 font-mono text-teal-300">
+                    {batch.principleCode}
+                  </td>
+
+                  <td className="px-4 py-4 text-right font-mono text-emerald-300">
+                    Rp{" "}
+                    {Number(summary.totalNominal || 0).toLocaleString("id-ID")}
+                  </td>
+
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.smStatus)}
+                  </td>
+
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.claimStatus)}
+                  </td>
+
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.omStatus)}
+                  </td>
+
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.financeStatus)}
+                  </td>
+
+                  <td className="px-4 py-4 text-slate-300">
+                    {displayStatusLabel(batch.finalStatus)}
+                  </td>
+
+                  <td className="px-4 py-4 min-w-[120px]">
+                    <ProgressBar value={computeUiBatchProgress(batch)} />
+                  </td>
+
+                  <td className="px-4 py-4 whitespace-nowrap text-slate-300">
+                    {batch.updatedAt
+                      ? new Date(batch.updatedAt).toLocaleString("id-ID")
+                      : "-"}
+                  </td>
+
+                  <td className="sticky right-0 z-20 min-w-[150px] bg-[#0f1115] px-4 py-4 shadow-[-12px_0_18px_rgba(0,0,0,0.45)]">
+                    <button
+                      onClick={() => onSelect(batch)}
+                      className="w-full rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
+                    >
+                      {actionLabel(batch)}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+
+            {batches.length === 0 && (
+              <tr>
+                <td
+                  colSpan={12}
+                  className="px-4 py-6 text-center text-sm text-slate-500"
+                >
+                  {emptyText}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -2889,15 +1924,19 @@ function IncompleteDocumentsReminderPanel({
 
   return (
     <Panel title="Pengingat Kelengkapan Belum Lengkap" icon={AlertTriangle}>
+      <p className="mb-4 text-sm text-amber-100">
+        Claim menandai kelengkapan belum lengkap dan meminta koordinasi
+        real-life dengan Claim. Panel ini hanya pengingat web, bukan email.
+      </p>
       <div className="overflow-x-auto rounded-xl border border-white/10">
         <table className="w-full min-w-[1050px] text-left text-sm">
           <thead className="border-b border-white/10 bg-black/50 text-xs uppercase tracking-wider text-slate-500">
             <tr>
               {[
-                "Nomor Pengajuan",
-                "Principal",
-                "Kode Principal",
-                "Catatan Klaim",
+                "No Pengajuan",
+                "Principle",
+                "Kode Principle",
+                "Catatan Claim",
                 "Status Final",
                 "Diperbarui",
               ].map((header) => (
@@ -3047,11 +2086,11 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
   const [supervisorMenu, setSupervisorMenu] = useState<
     "pengajuan" | "monitoring" | "diskon"
   >("pengajuan");
-  const [supervisorName, setSupervisorName] = useState("Supervisor Area 1");
+  const [supervisorName, setSupervisorName] = useState("");
   const [batchPrinciple, setBatchPrinciple] = useState("RECKITT BENCKISER, PT");
   const [gelombangInput, setGelombangInput] = useState("001");
-  const [bulanInput, setBulanInput] = useState(() => String(new Date().getMonth() + 1).padStart(2, "0"));
-  const [tahunInput, setTahunInput] = useState(() => String(new Date().getFullYear()));
+  const [bulanInput, setBulanInput] = useState("05");
+  const [tahunInput, setTahunInput] = useState("2026");
   const [submitStatus, setSubmitStatus] = useState("");
   const [receiptStatus, setReceiptStatus] = useState("");
   const [printingReceiptBatchId, setPrintingReceiptBatchId] = useState("");
@@ -3071,7 +2110,6 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
     OffApiBatch[]
   >([]);
   const [monitoringSearch, setMonitoringSearch] = useState("");
-  const [monitoringPrincipalFilter, setMonitoringPrincipalFilter] = useState("");
   const [monitoringStatusFilter, setMonitoringStatusFilter] = useState("");
   const [monitoringPeriod, setMonitoringPeriod] = useState(createEmptyPeriodFilter());
   const [returnedBatches, setReturnedBatches] = useState<OffApiBatch[]>([]);
@@ -3142,16 +2180,11 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
       );
       setReturnedSummaries(Object.fromEntries(entries));
     } catch (error) {
-      // Fallback: gunakan dummy data dari draf jika API tidak tersedia
-      const dummyReturned = dummyBatches.filter(
-        (batch) => batch.status === "Draft" || batch.status === "Returned by SM" || batch.status === "Returned by Claim"
+      setReturnedStatus(
+        error instanceof Error
+          ? error.message
+          : "Gagal mengambil batch yang dikembalikan.",
       );
-      setAllSupervisorBatches(dummyBatches);
-      setReturnedBatches(dummyReturned);
-      setReturnedSummaries(Object.fromEntries(
-        dummyReturned.map((batch) => [batch.id, { rowCount: batch.summary?.totalRows || 2, totalNominal: batch.summary?.totalNominal || 0 }])
-      ));
-      setReturnedStatus("");
     }
   };
 
@@ -3185,7 +2218,11 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
       setEditingBatchId(detailBatch.id);
       setEditingLocked(!isSupervisorEditableBatch(detailBatch));
       setReturnNote(detailBatch.claimNote || detailBatch.smNote || "");
-      setSupervisorName(detailBatch.supervisorName || "Supervisor Area 1");
+      setSupervisorName(
+        detailBatch.supervisorName === "Supervisor Area 1"
+          ? ""
+          : detailBatch.supervisorName || "",
+      );
       setGelombangInput(detailBatch.gelombang || "001");
       setBatchPrinciple(detailBatch.principleName || "RECKITT BENCKISER, PT");
       setBulanInput(detailBatch.bulan || "05");
@@ -3307,7 +2344,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
       return;
     }
     setIsSubmitting(true);
-    setSubmitStatus("Menyimpan draf batch...");
+    setSubmitStatus("Menyimpan draf massal...");
     setSubmitResult(null);
     try {
       const items = buildSupervisorItems();
@@ -3544,15 +2581,11 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
 
   const supervisorMonitoringStatusOptions =
     getBatchStatusOptions(allSupervisorBatches);
-  const supervisorPrincipalOptions = getPrincipalOptions(allSupervisorBatches);
 
   const filteredSupervisorMonitoringBatches = filterBatchesByMainStatus(
-    filterBatchesByPrincipal(
-      filterBatchesByPeriod(
-        filterBatchesBySearch(allSupervisorBatches, monitoringSearch),
-        monitoringPeriod,
-      ),
-      monitoringPrincipalFilter,
+    filterBatchesByPeriod(
+      filterBatchesBySearch(allSupervisorBatches, monitoringSearch),
+      monitoringPeriod,
     ),
     monitoringStatusFilter,
   );
@@ -3595,71 +2628,38 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
 
       {supervisorMenu === "monitoring" && (
         <Panel title="Monitoring Semua Status" icon={ReceiptText}>
-          <div className="mb-6">
-            <CompactFilterToolbar
-              searchValue={monitoringSearch}
-              onSearchChange={setMonitoringSearch}
-              placeholder="Ketik nama principal, nomor, atau status pengajuan"
-              activeFilters={buildBatchFilterChips({
-                principalFilter: monitoringPrincipalFilter,
-                principalOptions: supervisorPrincipalOptions,
-                statusFilter: monitoringStatusFilter,
-                statusOptions: supervisorMonitoringStatusOptions,
-                period: monitoringPeriod,
-              })}
-              onReset={() => {
-                setMonitoringSearch("");
-                setMonitoringPrincipalFilter("");
-                setMonitoringStatusFilter("");
-                setMonitoringPeriod(createEmptyPeriodFilter());
-              }}
-            >
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[260px_260px_1fr]">
-                <PrincipalFilterSelect
-                  value={monitoringPrincipalFilter}
-                  onChange={setMonitoringPrincipalFilter}
-                  options={supervisorPrincipalOptions}
-                />
-                <StatusFilterSelect
-                  value={monitoringStatusFilter}
-                  onChange={setMonitoringStatusFilter}
-                  options={supervisorMonitoringStatusOptions}
-                />
-                <PeriodFilter
-                  value={monitoringPeriod}
-                  onChange={setMonitoringPeriod}
-                />
-              </div>
-            </CompactFilterToolbar>
+          <div className="mb-4 grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
+            <MonitoringSearch
+              value={monitoringSearch}
+              onChange={setMonitoringSearch}
+            />
+
+            <StatusFilterSelect
+              value={monitoringStatusFilter}
+              onChange={setMonitoringStatusFilter}
+              options={supervisorMonitoringStatusOptions}
+            />
           </div>
 
-          {filteredSupervisorMonitoringBatches.length === 0 ? (
-            <EmptyState
-              onAction={() => {
-                setMonitoringSearch("");
-                setMonitoringPrincipalFilter("");
-                setMonitoringStatusFilter("");
-                setMonitoringPeriod(createEmptyPeriodFilter());
-              }}
-              actionLabel="Reset Filter"
-            />
-          ) : (
-            <BatchMonitoringTable
-              batches={filteredSupervisorMonitoringBatches}
-              selectedBatchId={editingBatchId}
-              stickyAction
-              onSelect={openReturnedBatch}
-              onPrintReceipt={handlePrintKwitansi}
-              printingReceiptBatchId={printingReceiptBatchId}
-              actionLabel={(batch) =>
-                batch.status === "Draft"
-                  ? "Buka Draf"
-                  : isSupervisorEditableBatch(batch)
-                    ? "Buka Revisi"
-                    : "Lihat Detail"
-              }
-            />
-          )}
+          <div className="mb-4">
+            <PeriodFilter value={monitoringPeriod} onChange={setMonitoringPeriod} />
+          </div>
+
+          <BatchMonitoringTable
+            batches={filteredSupervisorMonitoringBatches}
+            selectedBatchId={editingBatchId}
+            stickyAction
+            onSelect={openReturnedBatch}
+            onPrintReceipt={handlePrintKwitansi}
+            printingReceiptBatchId={printingReceiptBatchId}
+            actionLabel={(batch) =>
+              batch.status === "Draft"
+                ? "Buka Draf"
+                : isSupervisorEditableBatch(batch)
+                  ? "Buka Revisi"
+                  : "Lihat Detail"
+            }
+          />
         </Panel>
       )}
 
@@ -3679,7 +2679,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                 <span className="font-bold">Catatan SM:</span> {returnNote}
               </div>
             )}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
               {returnedBatches.map((batch) => {
                 const summary = returnedSummaries[batch.id] || {
                   rowCount: 0,
@@ -3688,41 +2688,54 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                 return (
                   <div
                     key={batch.id}
-                    className="rounded-xl border border-white/15 bg-[#1a1c23]/80 p-5 shadow-lg"
+                    className="rounded-xl border border-white/10 bg-black/30 p-4"
                   >
-                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                      <div className="space-y-2">
-                        <p className="font-mono text-base font-bold text-white tracking-wide">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <p className="font-mono text-sm font-bold text-white">
                           {batch.noPengajuan}
                         </p>
-                        <p className="text-sm text-slate-200">
+                        <p className="mt-1 text-sm text-slate-300">
                           {batch.principleName}{" "}
-                          <span className="font-mono text-teal-300 font-semibold">
+                          <span className="font-mono text-teal-300">
                             ({batch.principleCode})
                           </span>
                         </p>
-                        <p className="text-sm text-slate-300">
-                          Baris: <span className="font-semibold text-white">{summary.rowCount}</span> | Total:{" "}
-                          <span className="font-semibold text-white">
-                            Rp {summary.totalNominal.toLocaleString("id-ID")}
-                          </span>
+                        <p className="mt-2 text-xs text-slate-500">
+                          Baris: {summary.rowCount} | Total: Rp{" "}
+                          {summary.totalNominal.toLocaleString("id-ID")}
                         </p>
-                        <p className="text-sm text-rose-200 leading-relaxed">
-                          {batch.claimNote ||
-                            batch.smNote ||
-                            "Tidak ada catatan pengembalian."}
+                        <p className="mt-2 text-sm text-rose-200">
+                          {(() => {
+                            const status = batch.status || "";
+                            let source = "";
+                            if (status.includes("Returned by SM") || status.includes("Returned by Claim")) {
+                              source = status.includes("SM") ? "Sales Manager" : "Claim";
+                            } else if (status.includes("Returned")) {
+                              source = "Tim terkait";
+                            } else if (status.includes("Cancelled")) {
+                              source = "Operational Manager";
+                            }
+                            const note = batch.claimNote || batch.smNote || "";
+                            return (
+                              <>
+                                {source && <span className="block text-xs font-bold text-rose-300 mb-1">Dikembalikan oleh: {source}</span>}
+                                {note ? note : "Tidak ada catatan pengembalian."}
+                              </>
+                            );
+                          })()}
                         </p>
                         <span
-                          className={`inline-flex rounded-md border px-2.5 py-1 text-xs font-bold ${statusClass(batch.status)}`}
+                          className={`mt-3 inline-flex rounded-md border px-2 py-1 text-xs font-bold ${statusClass(batch.status)}`}
                         >
                           {displayStatusLabel(batch.status)}
                         </span>
                       </div>
-                      <div className="flex flex-col gap-2 shrink-0">
+                      <div className="flex flex-col gap-2">
                         {canEditSupervisor && (
                           <button
                             onClick={() => openReturnedBatch(batch)}
-                            className="inline-flex items-center justify-center rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2.5 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
+                            className="inline-flex items-center justify-center rounded-xl border border-teal-500/30 bg-teal-500/10 px-4 py-2 text-sm font-bold text-teal-200 hover:bg-teal-500/20"
                           >
                             Buka Revisi
                           </button>
@@ -3742,7 +2755,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                               ? OFF_KWITANSI_DISABLED_MESSAGE
                               : undefined
                           }
-                          className="inline-flex items-center justify-center rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-2.5 text-sm font-bold text-indigo-200 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="inline-flex items-center justify-center rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-2 text-sm font-bold text-indigo-200 hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {OFF_KWITANSI_DISABLED
                             ? OFF_KWITANSI_DISABLED_MESSAGE
@@ -3768,6 +2781,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                 label="Nama Supervisor"
                 value={supervisorName}
                 onChange={(value) => !editingLocked && setSupervisorName(value)}
+                placeholder="Isi nama Anda"
               />
               <EditableField
                 label="Gelombang Input"
@@ -3782,8 +2796,16 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                 }
               />
               <Field label="Kode Principle" value={batchCode} />
-              <Field label="Bulan" value={bulanInput} />
-              <Field label="Tahun" value={tahunInput} />
+              <EditableField
+                label="Bulan"
+                value={bulanInput}
+                onChange={(value) => !editingLocked && setBulanInput(value)}
+              />
+              <EditableField
+                label="Tahun"
+                value={tahunInput}
+                onChange={(value) => !editingLocked && setTahunInput(value)}
+              />
             </div>
             <div className="mt-4 rounded-xl border border-teal-500/20 bg-teal-500/10 px-4 py-3">
               <p className="text-xs uppercase tracking-wider text-teal-300 font-bold">
@@ -3803,10 +2825,10 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
             )}
           </Panel>
 
-          <Panel title="Input Batch Pengajuan Supervisor" icon={FileText}>
+          <Panel title="Input Massal Pengajuan Supervisor" icon={FileText}>
             <div className="overflow-x-auto rounded-xl border border-white/10">
               <table className="w-full min-w-[1980px] text-sm text-left">
-                <thead className="bg-[#1a1c23] text-xs uppercase tracking-wider text-slate-300 border-b border-white/15">
+                <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
                   <tr>
                     {[
                       "No Pengajuan",
@@ -3827,38 +2849,32 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                       "Lainnya",
                       "Aksi",
                     ].map((header) => (
-                      <th key={header} className="px-3 py-3.5 font-bold whitespace-nowrap">
+                      <th key={header} className="px-3 py-3 font-bold">
                         {header}
                       </th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/10">
+                <tbody className="divide-y divide-white/5">
                   {rows.map((row) => (
                     <tr
                       key={row.id}
-                      className="hover:bg-white/[0.03] align-top"
+                      className="hover:bg-[#fffaf0]/30 align-top"
                     >
                       <td className="px-3 py-3">
-                        <input
-                          readOnly
-                          value={generatedNo}
-                          className="w-full min-w-[170px] rounded-lg border border-[#d4ad61]/30 bg-[#f7ead0]/60 px-3 py-2 text-sm font-mono font-bold text-[#2d241b] outline-none"
-                        />
+                        <div className="w-full min-w-[170px] rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-2 text-sm font-mono font-bold text-[#1f1408] shadow-sm">
+                          {generatedNo}
+                        </div>
                       </td>
                       <td className="px-3 py-3">
-                        <input
-                          readOnly
-                          value={batchPrinciple}
-                          className="w-full min-w-[250px] rounded-lg border border-[#d4ad61]/30 bg-[#f7ead0]/60 px-3 py-2 text-sm text-[#2d241b] outline-none"
-                        />
+                        <div className="w-full min-w-[250px] rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-2 text-sm text-[#1f1408] shadow-sm">
+                          {batchPrinciple}
+                        </div>
                       </td>
                       <td className="px-3 py-3">
-                        <input
-                          readOnly
-                          value={batchCode}
-                          className="w-full min-w-[100px] rounded-lg border border-[#d4ad61]/30 bg-[#f7ead0]/60 px-3 py-2 text-sm font-mono font-bold text-[#00877b] outline-none"
-                        />
+                        <div className="w-full min-w-[100px] rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-2 text-sm font-mono font-bold text-[#1f1408] shadow-sm">
+                          {batchCode}
+                        </div>
                       </td>
                       <td className="px-3 py-3">
                         <input
@@ -3867,7 +2883,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           onChange={(event) =>
                             updateRow(row.id, "noSurat", event.target.value)
                           }
-                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                          className="w-full min-w-[130px] rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-2 text-sm text-[#1f1408] shadow-sm outline-none placeholder:text-[#8a6a3d] focus:border-[#c6922e] focus:ring-2 focus:ring-[#f2d49b]/40"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -3877,7 +2893,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           onChange={(event) =>
                             updateRow(row.id, "namaProgram", event.target.value)
                           }
-                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                          className="w-full min-w-[150px] rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-2 text-sm text-[#1f1408] shadow-sm outline-none placeholder:text-[#8a6a3d] focus:border-[#c6922e] focus:ring-2 focus:ring-[#f2d49b]/40"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -3886,7 +2902,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           value={row.periodeAwal}
                           onChange={(value) => updateRow(row.id, "periodeAwal", value)}
                           ariaLabel="Periode awal"
-                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+                          className="w-full min-w-[150px] rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-2 text-sm text-[#1f1408] shadow-sm outline-none disabled:opacity-100 disabled:cursor-default focus:border-[#c6922e] focus:ring-2 focus:ring-[#f2d49b]/40"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -3895,7 +2911,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           value={row.periodeAkhir}
                           onChange={(value) => updateRow(row.id, "periodeAkhir", value)}
                           ariaLabel="Periode akhir"
-                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+                          className="w-full min-w-[150px] rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-2 text-sm text-[#1f1408] shadow-sm outline-none disabled:opacity-100 disabled:cursor-default focus:border-[#c6922e] focus:ring-2 focus:ring-[#f2d49b]/40"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -3905,7 +2921,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           onChange={(event) =>
                             updateRow(row.id, "toko", event.target.value)
                           }
-                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                          className="w-full min-w-[130px] rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-2 text-sm text-[#1f1408] shadow-sm outline-none placeholder:text-[#8a6a3d] focus:border-[#c6922e] focus:ring-2 focus:ring-[#f2d49b]/40"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -3915,7 +2931,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           onChange={(event) =>
                             updateRow(row.id, "barang", event.target.value)
                           }
-                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                          className="w-full min-w-[130px] rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-2 text-sm text-[#1f1408] shadow-sm outline-none placeholder:text-[#8a6a3d] focus:border-[#c6922e] focus:ring-2 focus:ring-[#f2d49b]/40"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -3926,7 +2942,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                             updateRow(row.id, "nominal", event.target.value)
                           }
                           placeholder="Rp 0"
-                          className="w-full min-w-[130px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                          className="w-full min-w-[130px] rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-2 text-sm text-[#1f1408] shadow-sm outline-none placeholder:text-[#8a6a3d] focus:border-[#c6922e] focus:ring-2 focus:ring-[#f2d49b]/40"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -3936,12 +2952,12 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           onChange={(event) =>
                             updateRow(row.id, "caraBayar", event.target.value)
                           }
-                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50 disabled:opacity-70"
+                          className="w-full min-w-[150px] rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-2 text-sm text-[#1f1408] shadow-sm outline-none disabled:opacity-100 disabled:cursor-default focus:border-[#c6922e] focus:ring-2 focus:ring-[#f2d49b]/40"
                         >
                           {offPaymentMethods.map((method) => (
                             <option
                               key={method}
-                              className="bg-[#1a1c23]"
+                              className="bg-[#fffaf0] text-[#1f1408]"
                               value={method}
                             >
                               {method}
@@ -3957,7 +2973,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                             onChange={(event) =>
                               updateRowType(row.id, event.target.value)
                             }
-                            className={`w-full rounded-lg border bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50 disabled:opacity-70 ${
+                            className={`w-full rounded-lg border bg-white/10 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/50 placeholder:text-slate-500 disabled:opacity-100 disabled:cursor-default ${
                               row.type
                                 ? "border-white/10"
                                 : "border-amber-500/60"
@@ -3996,7 +3012,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                         {/* NOTE: PPh disiapkan nullable di level item/toko, tetapi
                             perhitungan final ditahan karena masih terkait format
                             kwitansi setelah pembayaran. */}
-                        <label className="flex min-w-[150px] items-center gap-2 rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-slate-300">
+                        <label className="flex min-w-[150px] items-center gap-2 rounded-lg border border-white/10 bg-white/10 px-2 py-2 text-xs text-slate-300">
                           <input
                             type="checkbox"
                             checked={row.pphExempt}
@@ -4019,7 +3035,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                           value={row.deadline}
                           onChange={(value) => updateRow(row.id, "deadline", value)}
                           ariaLabel="Deadline"
-                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+                          className="w-full min-w-[150px] rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none disabled:opacity-100 disabled:cursor-default [color-scheme:dark] focus:border-teal-500/50"
                         />
                       </td>
                       <td className="px-3 py-3">
@@ -4029,7 +3045,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                             .map((item) => (
                               <label
                                 key={item}
-                                className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-slate-300"
+                                className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5 text-xs text-slate-300"
                               >
                                 <input
                                   type="checkbox"
@@ -4055,7 +3071,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                       </td>
                       <td className="px-3 py-3">
                         <div className="min-w-[220px] space-y-2">
-                          <label className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-slate-300">
+                          <label className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/10 px-2 py-1.5 text-xs text-slate-300">
                             <input
                               type="checkbox"
                               checked={row.others}
@@ -4082,7 +3098,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                               )
                             }
                             placeholder="Sebutkan dokumen lainnya"
-                            className="w-full rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                            className="w-full rounded-lg border border-white/10 bg-white/10 px-2 py-1.5 text-xs text-slate-200 outline-none disabled:opacity-100 disabled:cursor-default placeholder:text-slate-600 focus:border-teal-500/50"
                           />
                         </div>
                       </td>
@@ -4104,22 +3120,22 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
               <button
                 onClick={addRow}
                 disabled={editingLocked}
-                className="order-3 inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Plus size={16} /> Tambah Baris
               </button>
               <button
                 onClick={() => saveDraft()}
                 disabled={isSubmitting || editingLocked}
-                className="order-2 inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Simpan Draf Batch
+                Simpan Draf Massal
               </button>
               {canSubmitSupervisor ? (
                 <button
                   onClick={() => handleSubmitBatch()}
                   disabled={isSubmitting || editingLocked}
-                  className="order-1 inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
                 >
                   {isSubmitting
                     ? "Mengirim..."
@@ -4204,27 +3220,6 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
             </p>
           </Panel>
 
-          <Panel title="Status Kunci" icon={ShieldCheck}>
-            <div className="space-y-3">
-              {[
-                "Draft",
-                "Submitted to SM",
-                "Returned by SM",
-                "Approved by SM - Locked",
-              ].map((item) => (
-                <span
-                  key={item}
-                  className={`inline-flex mr-2 rounded-md border px-2.5 py-1 text-xs font-bold ${statusClass(item)}`}
-                >
-                  {displayStatusLabel(item)}
-                </span>
-              ))}
-            </div>
-            <p className="mt-4 text-sm text-slate-400">
-              Supervisor masih bisa edit saat Draf atau Dikembalikan. Batch yang
-              sudah dikirim ke SM atau disetujui/terkunci bersifat baca-saja.
-            </p>
-          </Panel>
         </>
       )}
 
@@ -4262,7 +3257,6 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
     canPerformOffAction(offRole, "sm_return");
   const [batches, setBatches] = useState<OffApiBatch[]>([]);
   const [smSearch, setSmSearch] = useState("");
-  const [smPrincipalFilter, setSmPrincipalFilter] = useState("");
   const [smStatusFilter, setSmStatusFilter] = useState("");
   const [smPeriod, setSmPeriod] = useState(createEmptyPeriodFilter());
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
@@ -4498,13 +3492,9 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
   };
 
   const smStatusOptions = getBatchStatusOptions(batches);
-  const smPrincipalOptions = getPrincipalOptions(batches);
 
   const filteredSmBatches = filterBatchesByMainStatus(
-    filterBatchesByPrincipal(
-      filterBatchesByPeriod(filterBatchesBySearch(batches, smSearch), smPeriod),
-      smPrincipalFilter,
-    ),
+    filterBatchesByPeriod(filterBatchesBySearch(batches, smSearch), smPeriod),
     smStatusFilter,
   );
 
@@ -4543,77 +3533,48 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-black text-white">
-          Monitoring Pengajuan
+          Monitoring Batch Pengajuan
         </h2>
+        <p className="mt-1 text-sm text-slate-400">
+          Monitoring-first: pilih batch pada tabel untuk membuka detail review
+          Sales Manager di bawah tabel.
+        </p>
       </div>
 
-      <SummaryStrip metrics={smMetrics} />
+      <MetricsGrid metrics={smMetrics} />
 
       <IncompleteDocumentsReminderPanel batches={batches} />
 
-      <div className="space-y-6">
-        <CompactFilterToolbar
-          searchValue={smSearch}
-          onSearchChange={setSmSearch}
-          placeholder="Ketik nama principal, nomor, atau status pengajuan"
-          activeFilters={buildBatchFilterChips({
-            principalFilter: smPrincipalFilter,
-            principalOptions: smPrincipalOptions,
-            statusFilter: smStatusFilter,
-            statusOptions: smStatusOptions,
-            period: smPeriod,
-          })}
-          onReset={() => {
-            setSmSearch("");
-            setSmPrincipalFilter("");
-            setSmStatusFilter("");
-            setSmPeriod(createEmptyPeriodFilter());
-          }}
-        >
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-[260px_260px_1fr]">
-            <PrincipalFilterSelect
-              value={smPrincipalFilter}
-              onChange={setSmPrincipalFilter}
-              options={smPrincipalOptions}
-            />
-            <StatusFilterSelect
-              value={smStatusFilter}
-              onChange={setSmStatusFilter}
-              options={smStatusOptions}
-            />
-            <PeriodFilter value={smPeriod} onChange={setSmPeriod} />
-          </div>
-        </CompactFilterToolbar>
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
+          <MonitoringSearch value={smSearch} onChange={setSmSearch} />
+
+          <StatusFilterSelect
+            value={smStatusFilter}
+            onChange={setSmStatusFilter}
+            options={smStatusOptions}
+          />
+        </div>
+
+        <PeriodFilter value={smPeriod} onChange={setSmPeriod} />
 
         {isLoading && (
           <p className="text-sm text-slate-400">Memuat data Sales Manager...</p>
         )}
 
-        {filteredSmBatches.length === 0 && !isLoading ? (
-          <EmptyState
-            onAction={() => {
-              setSmSearch("");
-              setSmPrincipalFilter("");
-              setSmStatusFilter("");
-              setSmPeriod(createEmptyPeriodFilter());
-            }}
-            actionLabel="Reset Filter"
-          />
-        ) : (
-          <BatchOverviewActionTable
-            batches={filteredSmBatches}
-            selectedBatchId={selectedBatch?.id}
-            onSelect={selectBatch}
-            actionLabel={(batch) =>
-              isSmActionableBatch(batch) ? "Proses Tinjauan" : "Lihat"
-            }
-          />
-        )}
+        <BatchOverviewActionTable
+          batches={filteredSmBatches}
+          selectedBatchId={selectedBatch?.id}
+          onSelect={selectBatch}
+          actionLabel={(batch) =>
+            isSmActionableBatch(batch) ? "Proses Review" : "Lihat"
+          }
+        />
       </div>
 
       {selectedBatch && (
         <div ref={smReviewDetailRef} className="space-y-6 scroll-mt-6">
-          <Panel title="Tinjauan Sales Manager" icon={ShieldCheck}>
+          <Panel title="Review Batch Sales Manager" icon={ShieldCheck}>
             <div className="mb-4 flex justify-end">
               <button
                 onClick={closeDetail}
@@ -4624,7 +3585,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               <Field
-                label="Nomor Pengajuan"
+                label="No Pengajuan Batch"
                 value={selectedBatch?.noPengajuan || "-"}
               />
               <Field
@@ -4632,11 +3593,11 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
                 value={selectedBatch?.gelombang || "-"}
               />
               <Field
-                label="Principal"
+                label="Principle"
                 value={selectedBatch?.principleName || "-"}
               />
               <Field
-                label="Kode Principal"
+                label="Kode Principle"
                 value={selectedBatch?.principleCode || "-"}
               />
               <Field
@@ -4751,7 +3712,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
                   onChange={(event) => setSmNote(event.target.value)}
                   placeholder="Isi catatan jika dikembalikan. Catatan persetujuan boleh dikosongkan."
                   rows={4}
-                  className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                  className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none disabled:opacity-100 disabled:cursor-default placeholder:text-slate-600 focus:border-teal-500/50"
                 />
               </label>
             </div>
@@ -4924,6 +3885,7 @@ function SalesManagerDashboard({ offRole }: OffDashboardProps) {
 }
 
 function ClaimDashboard({ offRole }: OffDashboardProps) {
+  const router = useRouter();
   const canReviewClaim = canPerformOffAction(offRole, "claim_review");
   const canFinalClaim = canPerformOffAction(offRole, "claim_final");
   const [claimView, setClaimView] = useState<
@@ -4932,13 +3894,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
   const [allClaimBatches, setAllClaimBatches] = useState<OffApiBatch[]>([]);
   const [claimBatches, setClaimBatches] = useState<OffApiBatch[]>([]);
   const [claimSearch, setClaimSearch] = useState("");
-  const [claimPrincipalFilter, setClaimPrincipalFilter] = useState("");
-  const [claimStatusFilter, setClaimStatusFilter] = useState("");
   const [claimPeriod, setClaimPeriod] = useState(createEmptyPeriodFilter());
   const [finalBatches, setFinalBatches] = useState<OffApiBatch[]>([]);
   const [finalClaimSearch, setFinalClaimSearch] = useState("");
-  const [finalClaimPrincipalFilter, setFinalClaimPrincipalFilter] = useState("");
-  const [finalClaimStatusFilter, setFinalClaimStatusFilter] = useState("");
   const [finalClaimPeriod, setFinalClaimPeriod] = useState(createEmptyPeriodFilter());
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
   const [selectedItems, setSelectedItems] = useState<OffApiItem[]>([]);
@@ -5438,22 +4396,47 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
     }
   };
 
-  const claimPrincipalOptions = getPrincipalOptions(allClaimBatches);
-  const claimStatusOptions = getBatchStatusOptions(allClaimBatches);
-  const claimInitialMonitoringBatches = filterBatchesByMainStatus(
-    filterBatchesByPrincipal(
-      filterBatchesByPeriod(
-        allClaimBatches.filter(
-          (batch) =>
-            isClaimInitialMonitoringBatch(batch) &&
-            filterBatchesBySearch([batch], claimSearch).length > 0,
-        ),
-        claimPeriod,
-      ),
-      claimPrincipalFilter,
+  const claimInitialMonitoringBatches = filterBatchesByPeriod(
+    allClaimBatches.filter(
+      (batch) =>
+        isClaimInitialMonitoringBatch(batch) &&
+        filterBatchesBySearch([batch], claimSearch).length > 0,
     ),
-    claimStatusFilter,
+    claimPeriod,
   );
+
+  const openOrCreateClaimWorkflow = async (offBatchId: string) => {
+    setIsActionLoading(true);
+    setClaimMessage("");
+    try {
+      const response = await fetch(
+        `/api/claim-workflow/from-off-batch/${offBatchId}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) },
+      );
+      const data = await parseJsonResponse(response);
+      if (response.ok && data.ok) {
+        // Workflow baru dibuat
+        const wf = data.workflow as { id: string } | undefined;
+        if (wf?.id) {
+          router.push(`/claim-workflow/${wf.id}?focus=no-claim`);
+          return;
+        }
+      }
+      if (response.status === 409 && data.code === "CLAIM_WORKFLOW_ALREADY_EXISTS" && data.workflow) {
+        // Workflow sudah ada, buka yang existing
+        const wf = data.workflow as { id: string };
+        router.push(`/claim-workflow/${wf.id}?focus=no-claim`);
+        return;
+      }
+      setClaimMessage(String(data.error || "Gagal membuka Claim Workflow."));
+    } catch (error) {
+      setClaimMessage(
+        error instanceof Error ? error.message : "Gagal membuka Claim Workflow.",
+      );
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
 
   const isFinalClaimProcessable = (batch: OffApiBatch) =>
     batch.financeStatus === "Paid" &&
@@ -5461,31 +4444,28 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
       batch.finalStatus,
     );
 
-  const finalClaimMonitoringBatches = filterBatchesByMainStatus(
-    filterBatchesByPrincipal(
-      filterBatchesByPeriod(
-        allClaimBatches.filter((batch) => {
-          const isRelevant =
-            (batch.financeStatus === "Paid" &&
-              batch.finalStatus === "Waiting Claim Final Verification") ||
-            batch.finalStatus === "Incomplete Documents" ||
-            batch.finalStatus === "Completed";
-          return (
-            isRelevant && filterBatchesBySearch([batch], finalClaimSearch).length > 0
-          );
-        }),
-        finalClaimPeriod,
-      ),
-      finalClaimPrincipalFilter,
-    ),
-    finalClaimStatusFilter,
+  const finalClaimMonitoringBatches = filterBatchesByPeriod(
+    allClaimBatches.filter((batch) => {
+      const isRelevant =
+        (batch.financeStatus === "Paid" &&
+          batch.finalStatus === "Waiting Claim Final Verification") ||
+        batch.finalStatus === "Incomplete Documents" ||
+        batch.finalStatus === "Completed";
+      return (
+        isRelevant && filterBatchesBySearch([batch], finalClaimSearch).length > 0
+      );
+    }),
+    finalClaimPeriod,
   );
 
   if (claimView === "hub") {
     return (
       <div className="space-y-6">
         <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-6 shadow-xl">
-          <h2 className="text-2xl font-black text-white">Dashboard Klaim</h2>
+          <h2 className="text-2xl font-black text-white">Dashboard Claim</h2>
+          <p className="mt-2 text-sm text-slate-400">
+            Pilih jenis validasi Claim yang ingin diproses.
+          </p>
         </div>
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-6 shadow-xl">
@@ -5500,9 +4480,13 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
             <h3 className="mt-5 text-xl font-black text-white">
               Validasi Setelah SM
             </h3>
+            <p className="mt-2 text-sm leading-6 text-slate-400">
+              Cek data batch yang sudah disetujui Sales Manager dan validasi
+              kelengkapan awal sebelum diteruskan ke OM.
+            </p>
             <button
               onClick={() => setClaimView("after-sm")}
-              className="mt-6 inline-flex rounded-xl border border-[#f2d28a]/70 bg-gradient-to-r from-[#f2d28a] via-[#d6a948] to-[#b77a25] px-4 py-2.5 text-sm font-bold text-[#3d2814] shadow-[0_12px_26px_rgba(199,154,63,0.22)] transition-all hover:shadow-[0_16px_34px_rgba(199,154,63,0.28)]"
+              className="mt-6 inline-flex rounded-xl border border-teal-500 bg-teal-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-teal-500"
             >
               Buka Validasi Setelah SM
             </button>
@@ -5519,9 +4503,14 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
             <h3 className="mt-5 text-xl font-black text-white">
               Validasi Setelah Keuangan
             </h3>
+            <p className="mt-2 text-sm leading-6 text-slate-400">
+              Cek data yang sudah dibayar Keuangan, input No Claim per No Surat,
+              verifikasi bukti bayar dan jumlah pembayaran. Jika kelengkapan
+              belum lengkap, gunakan pengingat web untuk SM & SPV.
+            </p>
             <button
               onClick={() => setClaimView("after-finance")}
-              className="mt-6 inline-flex rounded-xl border border-[#f2d28a]/70 bg-gradient-to-r from-[#f2d28a] via-[#d6a948] to-[#b77a25] px-4 py-2.5 text-sm font-bold text-[#3d2814] shadow-[0_12px_26px_rgba(199,154,63,0.22)] transition-all hover:shadow-[0_16px_34px_rgba(199,154,63,0.28)]"
+              className="mt-6 inline-flex rounded-xl border border-teal-500 bg-teal-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-teal-500"
             >
               Buka Validasi Setelah Keuangan
             </button>
@@ -5543,7 +4532,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
           onClick={() => setClaimView("hub")}
           className="inline-flex rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 hover:bg-white/10"
         >
-          Kembali ke Dashboard Klaim
+          Kembali ke Dashboard Claim
         </button>
         <button
           onClick={() => setClaimView("after-sm")}
@@ -5564,64 +4553,45 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
             ? "Validasi Setelah SM"
             : "Validasi Setelah Keuangan"}
         </h2>
+        <p className="mt-1 text-sm text-slate-400">
+          {claimView === "after-sm"
+            ? "Cek batch yang sudah disetujui Sales Manager dan lakukan validasi Claim awal."
+            : "Cek pembayaran Keuangan, input No Claim per No Surat, verifikasi bukti bayar dan jumlah. Jika kelengkapan belum lengkap, gunakan pengingat web."}
+        </p>
       </div>
       <InfoNote>
-        Checklist Supervisor bukan persetujuan. Klaim wajib melakukan verifikasi
+        Checklist Supervisor bukan persetujuan. Claim wajib melakukan verifikasi
         nyata sebelum menyetujui.
       </InfoNote>
       {claimView === "after-sm" && (
         <>
           <Panel title="Monitoring Validasi Setelah SM" icon={ScrollText}>
-            <div className="mb-6">
-              <CompactFilterToolbar
-                searchValue={claimSearch}
-                onSearchChange={setClaimSearch}
-                placeholder="Ketik nama principal, nomor, atau status pengajuan"
-                activeFilters={buildBatchFilterChips({
-                  principalFilter: claimPrincipalFilter,
-                  principalOptions: claimPrincipalOptions,
-                  statusFilter: claimStatusFilter,
-                  statusOptions: claimStatusOptions,
-                  period: claimPeriod,
-                })}
-                onReset={() => {
-                  setClaimSearch("");
-                  setClaimPrincipalFilter("");
-                  setClaimStatusFilter("");
-                  setClaimPeriod(createEmptyPeriodFilter());
-                }}
-              >
-                <div className="grid grid-cols-1 gap-3 xl:grid-cols-[260px_260px_1fr]">
-                  <PrincipalFilterSelect
-                    value={claimPrincipalFilter}
-                    onChange={setClaimPrincipalFilter}
-                    options={claimPrincipalOptions}
-                  />
-                  <StatusFilterSelect
-                    value={claimStatusFilter}
-                    onChange={setClaimStatusFilter}
-                    options={claimStatusOptions}
-                  />
-                  <PeriodFilter value={claimPeriod} onChange={setClaimPeriod} />
-                </div>
-              </CompactFilterToolbar>
+            <div className="mb-4">
+              <MonitoringSearch
+                value={claimSearch}
+                onChange={setClaimSearch}
+                placeholder="Cari No Pengajuan, principle, kode, atau status Claim..."
+              />
+            </div>
+            <div className="mb-4">
+              <PeriodFilter value={claimPeriod} onChange={setClaimPeriod} />
             </div>
             <div className="overflow-x-auto rounded-xl border border-white/10">
               <table className="w-full min-w-[1300px] text-left text-sm">
                 <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500">
                   <tr>
                     {[
-                      "Nomor Pengajuan",
-                      "Principal",
-                      "Kode Principal",
+                      "No Pengajuan",
+                      "Principle",
+                      "Kode Principle",
                       "Total Nominal",
-                      "Status Klaim",
+                      "Status Claim",
                       "Status OM",
-                      "Status Keuangan",
+                      "Status Finance",
                       "Status Final",
                       "Progress %",
-                      "Catatan Klaim",
-                      "Diperbarui",
+                      "Claim Note",
+                      "Updated At",
                       "Aksi",
                     ].map((header) => (
                       <th key={header} className="px-3 py-3 font-bold">
@@ -5803,7 +4773,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                       onChange={(event) =>
                         setCompletenessStatus(event.target.value)
                       }
-                      className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                      className="mt-1 w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
                     >
                       <option className="bg-[#1a1c23]" value="Aman">
                         Aman
@@ -5820,13 +4790,13 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                 <div className="mt-4">
                   <label className="block">
                     <span className="text-xs text-slate-500 font-semibold">
-                      Catatan Klaim
+                      Catatan Claim
                     </span>
                     <textarea
                       value={claimNote}
                       onChange={(event) => setClaimNote(event.target.value)}
                       rows={4}
-                      className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                      className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
                     />
                   </label>
                 </div>
@@ -5849,12 +4819,12 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                       disabled={isActionLoading}
                       className="rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"
                     >
-                      Setujui Klaim
+                      Setujui Claim
                     </button>
                   </div>
                 ) : (
                   <div className="mt-5 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
-                    Baca-saja atau pengajuan sudah diproses.
+                    Baca-saja atau batch sudah diproses.
                   </div>
                 )}
               </Panel>
@@ -5865,58 +4835,35 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
 
       {claimView === "after-finance" && (
         <>
-          <Panel title="Monitoring Final Klaim" icon={Wallet}>
-            <div className="mb-6">
-              <CompactFilterToolbar
-                searchValue={finalClaimSearch}
-                onSearchChange={setFinalClaimSearch}
-                placeholder="Ketik nama principal, nomor, atau status pengajuan"
-                activeFilters={buildBatchFilterChips({
-                  principalFilter: finalClaimPrincipalFilter,
-                  principalOptions: claimPrincipalOptions,
-                  statusFilter: finalClaimStatusFilter,
-                  statusOptions: claimStatusOptions,
-                  period: finalClaimPeriod,
-                })}
-                onReset={() => {
-                  setFinalClaimSearch("");
-                  setFinalClaimPrincipalFilter("");
-                  setFinalClaimStatusFilter("");
-                  setFinalClaimPeriod(createEmptyPeriodFilter());
-                }}
-              >
-                <div className="grid grid-cols-1 gap-3 xl:grid-cols-[260px_260px_1fr]">
-                  <PrincipalFilterSelect
-                    value={finalClaimPrincipalFilter}
-                    onChange={setFinalClaimPrincipalFilter}
-                    options={claimPrincipalOptions}
-                  />
-                  <StatusFilterSelect
-                    value={finalClaimStatusFilter}
-                    onChange={setFinalClaimStatusFilter}
-                    options={claimStatusOptions}
-                  />
-                  <PeriodFilter
-                    value={finalClaimPeriod}
-                    onChange={setFinalClaimPeriod}
-                  />
-                </div>
-              </CompactFilterToolbar>
+          <Panel title="Monitoring Final Claim" icon={Wallet}>
+            <p className="mb-4 text-sm text-slate-400">
+              Lihat data yang menunggu verifikasi final dan data yang sudah
+              diproses Claim Final.
+            </p>
+            <div className="mb-4">
+              <MonitoringSearch
+                value={finalClaimSearch}
+                onChange={setFinalClaimSearch}
+                placeholder="Cari No Pengajuan, principle, kode, status pembayaran, atau No Surat..."
+              />
+            </div>
+            <div className="mb-4">
+              <PeriodFilter value={finalClaimPeriod} onChange={setFinalClaimPeriod} />
             </div>
             <div className="overflow-x-auto rounded-xl border border-white/10">
               <table className="w-full min-w-[1200px] text-left text-sm">
                 <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500">
                   <tr>
                     {[
-                      "Nomor Pengajuan",
-                      "Principal",
-                      "Kode Principal",
+                      "No Pengajuan",
+                      "Principle",
+                      "Kode Principle",
                       "Total Nominal",
-                      "Status Keuangan",
+                      "Status Finance",
                       "Status Final",
                       "Progress %",
-                      "Catatan Final Klaim",
-                      "Diperbarui",
+                      "Final Claim Note",
+                      "Updated At",
                       "Aksi",
                     ].map((header) => (
                       <th key={header} className="px-3 py-3 font-bold">
@@ -5961,12 +4908,22 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                           {formatDateDisplay(batch.updatedAt)}
                         </td>
                         <td className="px-3 py-3">
-                          <button
-                            onClick={() => selectFinalBatch(batch)}
-                            className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${canProcessFinal ? "border-teal-500 bg-teal-600 text-white hover:bg-teal-500" : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"}`}
-                          >
-                            {canProcessFinal ? "Proses Final" : "Lihat"}
-                          </button>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => void openOrCreateClaimWorkflow(batch.id)}
+                              disabled={isActionLoading || batch.omStatus !== "Approved"}
+                              className="rounded-lg border border-indigo-500 bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-500 disabled:opacity-40"
+                              title="Buka atau buat Claim Workflow untuk batch ini"
+                            >
+                              Buka Claim Workflow
+                            </button>
+                            <button
+                              onClick={() => selectFinalBatch(batch)}
+                              className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold text-slate-200 hover:bg-white/10"
+                            >
+                              Lihat Detail
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -5988,7 +4945,14 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
 
           {selectedFinalBatch && (
             <div className="space-y-6">
-              <div className="flex justify-end">
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  onClick={() => void openOrCreateClaimWorkflow(selectedFinalBatch.id)}
+                  disabled={isActionLoading || selectedFinalBatch.omStatus !== "Approved"}
+                  className="rounded-xl border border-indigo-500 bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-40"
+                >
+                  Buka Claim Workflow
+                </button>
                 <button
                   onClick={() => {
                     setSelectedFinalBatch(null);
@@ -6236,17 +5200,14 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                               {item.noSurat || "-"}
                             </td>
                             <td className="px-3 py-3">
-                              <input
-                                value={finalClaimRefs[item.id] || ""}
-                                onChange={(event) =>
-                                  setFinalClaimRefs((current) => ({
-                                    ...current,
-                                    [item.id]: event.target.value,
-                                  }))
-                                }
-                                placeholder="Isi No Claim"
-                                className="w-full min-w-[160px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm font-mono text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
-                              />
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-sm text-slate-300">
+                                  {finalClaimRefs[item.id] || <span className="italic text-slate-500">Belum diisi</span>}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-[10px] text-slate-500">
+                                No Claim dikerjakan di Claim Workflow.
+                              </p>
                             </td>
                             <td className="px-3 py-3 min-w-[300px]">
                               <div className="grid grid-cols-4 gap-2 text-xs text-slate-300">
@@ -6275,7 +5236,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                                           [key]: event.target.checked,
                                         } as Partial<typeof checklist>)
                                       }
-                                      className="h-4 w-4 rounded border-white/20 bg-black/40 accent-teal-500"
+                                      className="h-4 w-4 rounded border-white/20 bg-white/10 accent-teal-500"
                                     />
                                     {label}
                                   </label>
@@ -6292,7 +5253,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                                 }
                                 disabled={!checklist.finalOthers}
                                 placeholder="Jika Others dicentang"
-                                className="w-full min-w-[180px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50 disabled:opacity-50"
+                                className="w-full min-w-[180px] rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50 disabled:opacity-50"
                               />
                             </td>
                             <td className="px-3 py-3">
@@ -6305,7 +5266,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                                 }
                                 rows={2}
                                 placeholder="Catatan per item"
-                                className="w-full min-w-[220px] resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                                className="w-full min-w-[220px] resize-none rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
                               />
                             </td>
                             <td className="px-3 py-3 min-w-[180px] text-slate-200">
@@ -6389,7 +5350,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                         setFinalClaimNote(event.target.value)
                       }
                       rows={4}
-                      className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                      className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
                     />
                   </label>
                 </div>
@@ -6505,27 +5466,29 @@ function LiveQueueSummaryPanel({ batches }: { batches: OffApiBatch[] }) {
   ];
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-7 gap-3">
-      {queues.map((queue) => {
-        const Icon = queue.icon;
+    <Panel title="Ringkasan Antrean Per Divisi" icon={ListChecks}>
+      <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-7 gap-3">
+        {queues.map((queue) => {
+          const Icon = queue.icon;
 
-        return (
-          <div
-            key={queue.title}
-            className="rounded-xl border border-white/10 bg-black/30 p-4"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <Icon className="text-teal-300 shrink-0" size={20} />
-              <span className="font-mono text-xl font-black text-white">
-                {queue.count}
-              </span>
+          return (
+            <div
+              key={queue.title}
+              className="rounded-xl border border-white/10 bg-black/30 p-4"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <Icon className="text-teal-300 shrink-0" size={20} />
+                <span className="font-mono text-xl font-black text-white">
+                  {queue.count}
+                </span>
+              </div>
+              <p className="text-sm font-bold text-white mt-3">{queue.title}</p>
+              <p className="text-xs text-slate-500 mt-1">{queue.desc}</p>
             </div>
-            <p className="text-sm font-bold text-white mt-3">{queue.title}</p>
-            <p className="text-xs text-slate-500 mt-1">{queue.desc}</p>
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+    </Panel>
   );
 }
 
@@ -6536,7 +5499,6 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
   const [omBatches, setOmBatches] = useState<OffApiBatch[]>([]);
   const [omMenu, setOmMenu] = useState<"monitoring" | "approval">("monitoring");
   const [omSearch, setOmSearch] = useState("");
-  const [omPrincipalFilter, setOmPrincipalFilter] = useState("");
   const [omStatusFilter, setOmStatusFilter] = useState("");
   const [omPeriod, setOmPeriod] = useState(createEmptyPeriodFilter());
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
@@ -6686,13 +5648,9 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
   };
 
   const omStatusOptions = getBatchStatusOptions(omBatches);
-  const omPrincipalOptions = getPrincipalOptions(omBatches);
 
   const filteredOmBatches = filterBatchesByMainStatus(
-    filterBatchesByPrincipal(
-      filterBatchesByPeriod(filterBatchesBySearch(omBatches, omSearch), omPeriod),
-      omPrincipalFilter,
-    ),
+    filterBatchesByPeriod(filterBatchesBySearch(omBatches, omSearch), omPeriod),
     omStatusFilter,
   );
 
@@ -6700,7 +5658,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
     <div className="space-y-6">
       <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2">
         {[
-          ["monitoring", "Monitoring Pengajuan"],
+          ["monitoring", "Monitoring Batch Pengajuan"],
           ["approval", "Persetujuan OM"],
         ].map(([key, label]) => (
           <button
@@ -6721,85 +5679,45 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
         <div className="space-y-6">
           <LiveQueueSummaryPanel batches={omBatches} />
 
-          <div className="space-y-6">
-            <CompactFilterToolbar
-              searchValue={omSearch}
-              onSearchChange={setOmSearch}
-              placeholder="Ketik nama principal, nomor, atau status pengajuan"
-              activeFilters={buildBatchFilterChips({
-                principalFilter: omPrincipalFilter,
-                principalOptions: omPrincipalOptions,
-                statusFilter: omStatusFilter,
-                statusOptions: omStatusOptions,
-                period: omPeriod,
-              })}
-              onReset={() => {
-                setOmSearch("");
-                setOmPrincipalFilter("");
-                setOmStatusFilter("");
-                setOmPeriod(createEmptyPeriodFilter());
-              }}
-            >
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[260px_260px_1fr]">
-                <PrincipalFilterSelect
-                  value={omPrincipalFilter}
-                  onChange={setOmPrincipalFilter}
-                  options={omPrincipalOptions}
-                />
-                <StatusFilterSelect
-                  value={omStatusFilter}
-                  onChange={setOmStatusFilter}
-                  options={omStatusOptions}
-                />
-                <PeriodFilter value={omPeriod} onChange={setOmPeriod} />
-              </div>
-            </CompactFilterToolbar>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
+              <MonitoringSearch
+                value={omSearch}
+                onChange={setOmSearch}
+                placeholder="Cari No Pengajuan, principle, kode, atau status OM..."
+              />
+
+              <StatusFilterSelect
+                value={omStatusFilter}
+                onChange={setOmStatusFilter}
+                options={omStatusOptions}
+              />
+            </div>
+
+            <PeriodFilter value={omPeriod} onChange={setOmPeriod} />
 
             {isLoading && (
               <p className="text-sm text-slate-400">Memuat data OM...</p>
             )}
 
-            {filteredOmBatches.length === 0 && !isLoading ? (
-              <EmptyState
-                onAction={() => {
-                  setOmSearch("");
-                  setOmPrincipalFilter("");
-                  setOmStatusFilter("");
-                  setOmPeriod(createEmptyPeriodFilter());
-                }}
-                actionLabel="Reset Filter"
-              />
-            ) : (
-              <BatchOverviewActionTable
-                batches={filteredOmBatches}
-                selectedBatchId={selectedBatch?.id}
-                onSelect={selectOmBatch}
-                actionLabel={(batch) =>
-                  isOmActionableBatch(batch) ? "Tinjauan OM" : "Lihat Detail"
-                }
-              />
-            )}
+            <BatchOverviewActionTable
+              batches={filteredOmBatches}
+              selectedBatchId={selectedBatch?.id}
+              onSelect={selectOmBatch}
+              actionLabel={(batch) =>
+                isOmActionableBatch(batch) ? "Review OM" : "Lihat Detail"
+              }
+            />
           </div>
         </div>
       )}
 
-      {omMenu === "approval" && !selectedBatch && (
-        <Panel title="Persetujuan OM" icon={ShieldCheck}>
-          <EmptyState
-            title="Pilih pengajuan untuk persetujuan OM."
-            desc="Buka Monitoring Pengajuan, lalu pilih satu pengajuan agar detail dan aksi OM ditampilkan."
-            actionLabel="Buka Monitoring"
-            onAction={() => setOmMenu("monitoring")}
-          />
-        </Panel>
-      )}
-
-      {omMenu === "approval" && selectedBatch && (
+      {omMenu === "approval" && (
         <div className="space-y-6">
           <Panel title="Detail Persetujuan OM" icon={ClipboardCheck}>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               <Field
-                label="Nomor Pengajuan"
+                label="No Pengajuan"
                 value={selectedBatch?.noPengajuan || "-"}
               />
               <Field
@@ -6807,11 +5725,11 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                 value={selectedBatch?.gelombang || "-"}
               />
               <Field
-                label="Principal"
+                label="Principle"
                 value={selectedBatch?.principleName || "-"}
               />
               <Field
-                label="Kode Principal"
+                label="Kode Principle"
                 value={selectedBatch?.principleCode || "-"}
               />
               <Field
@@ -6826,9 +5744,9 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                 label="Supervisor"
                 value={selectedBatch?.supervisorName || "-"}
               />
-              <Field label="Nomor Klaim" value={selectedBatch?.noClaim || "-"} />
+              <Field label="No Claim" value={selectedBatch?.noClaim || "-"} />
               <Field
-                label="Tanggal Pengajuan Klaim"
+                label="Tanggal Diajukan Claim"
                 value={formatDateDisplay(selectedBatch?.claimSubmittedDate)}
               />
               <Field
@@ -6854,13 +5772,8 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
             </div>
           </Panel>
 
-          <SupportTogglePanel
-            title="Data Pendukung Approval"
-            actionLabel="Tampilkan Data Pendukung"
-            icon={ClipboardCheck}
-          >
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <div className="rounded-xl bg-black/25 p-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="rounded-xl border border-white/10 bg-black/30 p-4">
               <h3 className="font-bold text-white mb-3">Data Disetujui SM</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field
@@ -6891,7 +5804,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                 />
               </div>
             </div>
-              <div className="rounded-xl bg-black/25 p-4">
+            <div className="rounded-xl border border-white/10 bg-black/30 p-4">
               <h3 className="font-bold text-white mb-3">Validasi Claim</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field
@@ -6916,14 +5829,9 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                 />
               </div>
             </div>
-            </div>
-          </SupportTogglePanel>
+          </div>
 
-          <SupportTogglePanel
-            title="Item Batch untuk Persetujuan OM"
-            actionLabel="Tampilkan Item Batch"
-            icon={ReceiptText}
-          >
+          <Panel title="Item Batch untuk Persetujuan OM" icon={ReceiptText}>
             <div className="overflow-x-auto rounded-xl border border-white/10">
               <table className="w-full min-w-[1350px] text-sm text-left">
                 <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
@@ -7008,7 +5916,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                 </tbody>
               </table>
             </div>
-          </SupportTogglePanel>
+          </Panel>
 
           <Panel title="Ringkasan Pembayaran" icon={Wallet}>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -7043,7 +5951,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                 onChange={(event) => setOmNote(event.target.value)}
                 placeholder="Catatan wajib diisi untuk pembatalan. Catatan persetujuan boleh dikosongkan."
                 rows={4}
-                className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
               />
             </label>
             {omMessage && (
@@ -7088,295 +5996,6 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
   );
 }
 
-// --- Refund Panel (Pengembalian Dana Selisih) ---
-type OffApiRefund = {
-  id: string;
-  batchId: string;
-  refundNo: number;
-  refundAmount: number;
-  refundMethod: string;
-  refundDate: string;
-  senderName?: string | null;
-  receiverBank?: string | null;
-  proofUrl?: string | null;
-  proofName?: string | null;
-  note?: string | null;
-  status: string;
-  verifiedBy?: string | null;
-  verifiedAt?: string | null;
-  verificationNote?: string | null;
-};
-
-type RefundSummary = {
-  paidAmount: number;
-  verifiedAmount: number;
-  overpaidAmount: number;
-  totalRefunded: number;
-  pendingRefund: number;
-  remainingRefund: number;
-  isFullyRefunded: boolean;
-};
-
-function RefundPanel({
-  batchId,
-  batch,
-  offRole,
-  onRefundUpdated,
-}: {
-  batchId: string;
-  batch: OffApiBatch;
-  offRole: OffRole;
-  onRefundUpdated: () => void;
-}) {
-  const canSubmitRefund = canPerformOffAction(offRole, "submit_refund") || canPerformOffAction(offRole, "finance_payment");
-  const canVerifyRefund = canPerformOffAction(offRole, "finance_payment");
-  const [refunds, setRefunds] = useState<OffApiRefund[]>([]);
-  const [summary, setSummary] = useState<RefundSummary | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [message, setMessage] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  // Form
-  const [refundAmount, setRefundAmount] = useState("");
-  const [refundMethod, setRefundMethod] = useState("Transfer");
-  const [refundDate, setRefundDate] = useState("");
-  const [senderName, setSenderName] = useState("");
-  const [receiverBank, setReceiverBank] = useState("");
-  const [refundNote, setRefundNote] = useState("");
-
-  const loadRefunds = async () => {
-    setIsLoading(true);
-    try {
-      const response = await fetch(`/api/off-program-control/batches/${batchId}/refund`, { credentials: "include" });
-      const data = await parseJsonResponse(response);
-      if (!response.ok || !data.ok) throw new Error(String(data.error || "Gagal memuat data refund."));
-      setRefunds(Array.isArray(data.refunds) ? (data.refunds as OffApiRefund[]) : []);
-      setSummary((data.summary as RefundSummary) || null);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Gagal memuat data refund.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => { loadRefunds(); }, [batchId]);
-
-  const submitRefund = async () => {
-    setIsSubmitting(true);
-    setMessage("");
-    try {
-      const response = await fetch(`/api/off-program-control/batches/${batchId}/refund`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          refundAmount: parseUiCurrency(refundAmount),
-          refundMethod,
-          refundDate,
-          senderName,
-          receiverBank,
-          note: refundNote,
-        }),
-      });
-      const data = await parseJsonResponse(response);
-      if (!response.ok || !data.ok) throw new Error(String(data.error || data.message || "Gagal submit refund."));
-      setMessage(String(data.message || "Refund berhasil disubmit."));
-      setRefundAmount("");
-      setRefundDate("");
-      setSenderName("");
-      setReceiverBank("");
-      setRefundNote("");
-      await loadRefunds();
-      onRefundUpdated();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Gagal submit refund.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const verifyRefund = async (refundId: string, action: "verify" | "reject") => {
-    setIsSubmitting(true);
-    setMessage("");
-    try {
-      const note = action === "reject" ? window.prompt("Alasan penolakan (opsional):") || "" : "";
-      const response = await fetch(`/api/off-program-control/batches/${batchId}/refund`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refundId, action, note }),
-      });
-      const data = await parseJsonResponse(response);
-      if (!response.ok || !data.ok) throw new Error(String(data.error || data.message || "Gagal memproses refund."));
-      setMessage(String(data.message || "Berhasil."));
-      await loadRefunds();
-      onRefundUpdated();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Gagal memproses refund.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // Jangan tampilkan panel jika tidak ada selisih
-  if (summary && summary.overpaidAmount <= 0 && refunds.length === 0) return null;
-
-  return (
-    <Panel title="Pengembalian Dana Selisih" icon={Wallet}>
-      {isLoading ? (
-        <p className="text-sm text-slate-400">Memuat data pengembalian...</p>
-      ) : (
-        <>
-          {summary && summary.overpaidAmount > 0 && (
-            <div className="mb-5 rounded-xl border border-orange-500/30 bg-orange-500/10 p-4">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <div>
-                  <p className="text-xs text-slate-400 font-semibold">Dana Dikeluarkan</p>
-                  <p className="mt-1 text-lg font-bold text-white">Rp {summary.paidAmount.toLocaleString("id-ID")}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-400 font-semibold">Realisasi Klaim</p>
-                  <p className="mt-1 text-lg font-bold text-white">Rp {summary.verifiedAmount.toLocaleString("id-ID")}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-400 font-semibold">Selisih Harus Kembali</p>
-                  <p className="mt-1 text-lg font-bold text-orange-300">Rp {summary.overpaidAmount.toLocaleString("id-ID")}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-400 font-semibold">Sudah Dikembalikan</p>
-                  <p className="mt-1 text-lg font-bold text-emerald-300">Rp {summary.totalRefunded.toLocaleString("id-ID")}</p>
-                  {summary.remainingRefund > 0 && (
-                    <p className="mt-1 text-xs text-orange-300">Sisa: Rp {summary.remainingRefund.toLocaleString("id-ID")}</p>
-                  )}
-                  {summary.isFullyRefunded && (
-                    <p className="mt-1 text-xs text-emerald-300 font-bold">Lunas</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {refunds.length > 0 && (
-            <div className="mb-5">
-              <h3 className="text-sm font-bold text-white mb-3">Riwayat Pengembalian</h3>
-              <div className="overflow-x-auto rounded-xl border border-white/10">
-                <table className="w-full text-sm text-left">
-                  <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-400 border-b border-white/10">
-                    <tr>
-                      <th className="px-3 py-2.5">#</th>
-                      <th className="px-3 py-2.5">Tanggal</th>
-                      <th className="px-3 py-2.5">Jumlah</th>
-                      <th className="px-3 py-2.5">Metode</th>
-                      <th className="px-3 py-2.5">Pengirim</th>
-                      <th className="px-3 py-2.5">Status</th>
-                      <th className="px-3 py-2.5">Catatan</th>
-                      {canVerifyRefund && <th className="px-3 py-2.5">Aksi</th>}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {refunds.map((refund) => (
-                      <tr key={refund.id} className="hover:bg-white/[0.03]">
-                        <td className="px-3 py-2.5 font-mono text-slate-300">{refund.refundNo}</td>
-                        <td className="px-3 py-2.5 text-slate-300">{formatDateDisplay(refund.refundDate)}</td>
-                        <td className="px-3 py-2.5 font-mono font-bold text-white">Rp {refund.refundAmount.toLocaleString("id-ID")}</td>
-                        <td className="px-3 py-2.5 text-slate-300">{refund.refundMethod}</td>
-                        <td className="px-3 py-2.5 text-slate-300">{refund.senderName || "-"}</td>
-                        <td className="px-3 py-2.5">
-                          <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-bold ${
-                            refund.status === "Verified" ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30" :
-                            refund.status === "Rejected" ? "bg-rose-500/10 text-rose-300 border-rose-500/30" :
-                            "bg-amber-500/10 text-amber-300 border-amber-500/30"
-                          }`}>
-                            {refund.status === "Verified" ? "Terverifikasi" : refund.status === "Rejected" ? "Ditolak" : "Menunggu"}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 text-xs text-slate-400 max-w-[200px] truncate">{refund.note || refund.verificationNote || "-"}</td>
-                        {canVerifyRefund && (
-                          <td className="px-3 py-2.5">
-                            {refund.status === "Pending" && (
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => verifyRefund(refund.id, "verify")}
-                                  disabled={isSubmitting}
-                                  className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-bold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
-                                >
-                                  Verifikasi
-                                </button>
-                                <button
-                                  onClick={() => verifyRefund(refund.id, "reject")}
-                                  disabled={isSubmitting}
-                                  className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-bold text-rose-200 hover:bg-rose-500/20 disabled:opacity-50"
-                                >
-                                  Tolak
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {canSubmitRefund && summary && summary.remainingRefund > 0 && (
-            <div className="rounded-xl border border-white/10 bg-black/25 p-4">
-              <h3 className="text-sm font-bold text-white mb-4">Submit Pengembalian Dana</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                <EditableField label="Jumlah Pengembalian" value={refundAmount} onChange={setRefundAmount} />
-                <label className="block">
-                  <span className="text-xs text-slate-500 font-semibold">Metode</span>
-                  <select
-                    value={refundMethod}
-                    onChange={(e) => setRefundMethod(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
-                  >
-                    <option value="Transfer" className="bg-[#1a1c23]">Transfer</option>
-                    <option value="Tunai" className="bg-[#1a1c23]">Tunai</option>
-                    <option value="Kompensasi Batch Lain" className="bg-[#1a1c23]">Kompensasi Batch Lain</option>
-                  </select>
-                </label>
-                <div>
-                  <span className="text-xs text-slate-500 font-semibold">Tanggal Pengembalian</span>
-                  <DatePickerField
-                    value={refundDate}
-                    onChange={setRefundDate}
-                    ariaLabel="Tanggal pengembalian"
-                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
-                  />
-                </div>
-                <EditableField label="Nama Pengirim" value={senderName} onChange={setSenderName} />
-                <EditableField label="Bank Penerima" value={receiverBank} onChange={setReceiverBank} />
-                <EditableField label="Catatan" value={refundNote} onChange={setRefundNote} />
-              </div>
-              <button
-                onClick={submitRefund}
-                disabled={isSubmitting || !refundAmount || !refundDate}
-                className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl border border-orange-500 bg-orange-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isSubmitting ? "Mengirim..." : "Submit Pengembalian"}
-              </button>
-            </div>
-          )}
-
-          {summary && summary.isFullyRefunded && (
-            <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200 font-semibold">
-              Selisih dana telah dikembalikan seluruhnya. Batch dapat ditutup sebagai Completed.
-            </div>
-          )}
-
-          {message && (
-            <div className="mt-4 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
-              {message}
-            </div>
-          )}
-        </>
-      )}
-    </Panel>
-  );
-}
-
 function FinanceDashboard({ offRole }: OffDashboardProps) {
   const canPayFinance = canPerformOffAction(offRole, "finance_payment");
   const [financeMenu, setFinanceMenu] = useState<"monitoring" | "payment">(
@@ -7384,7 +6003,6 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
   );
   const [financeBatches, setFinanceBatches] = useState<OffApiBatch[]>([]);
   const [financeSearch, setFinanceSearch] = useState("");
-  const [financePrincipalFilter, setFinancePrincipalFilter] = useState("");
   const [financeStatusFilter, setFinanceStatusFilter] = useState("");
   const [financePeriod, setFinancePeriod] = useState(createEmptyPeriodFilter());
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
@@ -7392,13 +6010,12 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
     string | null
   >(null);
   const [selectedItems, setSelectedItems] = useState<OffApiItem[]>([]);
+  const [selectedFinanceItemIds, setSelectedFinanceItemIds] = useState<string[]>([]);
   const [selectedPayments, setSelectedPayments] = useState<OffApiPayment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [financeMessage, setFinanceMessage] = useState("");
   const [paymentDate, setPaymentDate] = useState("");
-  const [paidAmount, setPaidAmount] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("Transfer");
   const [senderBank, setSenderBank] = useState("");
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
   const [financeNote, setFinanceNote] = useState("");
@@ -7450,6 +6067,30 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
     paymentSummary?.remainingAmount ?? Math.max(0, totalNominal - totalPaid),
   );
   const hasMixedItemPayments = transfer > 0 && tunai > 0;
+  const selectedFinanceItems = selectedItems.filter((item) => selectedFinanceItemIds.includes(item.id));
+  const selectedFinanceTotal = selectedFinanceItems.reduce((total, item) => total + Number(item.nominal || 0), 0);
+  const selectedFinanceMethods = Array.from(new Set(selectedFinanceItems.map((item) => normalizeUiPaymentMethod(item.caraBayar || "")).filter(Boolean)));
+  const selectedFinanceMethod = selectedFinanceMethods.length === 1 ? selectedFinanceMethods[0] : "";
+  const hasMixedSelectedFinanceMethods = selectedFinanceMethods.length > 1;
+  const selectedFinanceNeedsProof = selectedFinanceMethod === "Transfer";
+
+  const isItemFinancePaid = (item: OffApiItem) =>
+    item.financePaymentStatus === "paid" || Boolean(item.financePaymentId);
+
+  const isFinanceItemSelectable = (item: OffApiItem) => {
+    if (isItemFinancePaid(item)) return false;
+    if (selectedFinanceItemIds.includes(item.id)) return true;
+    if (!selectedFinanceMethod) return true;
+    return normalizeUiPaymentMethod(item.caraBayar || "") === selectedFinanceMethod;
+  };
+
+  const toggleFinanceItem = (itemId: string) => {
+    setSelectedFinanceItemIds((current) =>
+      current.includes(itemId)
+        ? current.filter((id) => id !== itemId)
+        : [...current, itemId],
+    );
+  };
 
   const isFinanceQueueBatch = (batch: OffApiBatch) =>
     batch.smStatus === "Approved by SM" &&
@@ -7482,9 +6123,9 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
     setSelectedItems(
       Array.isArray(data.items) ? (data.items as OffApiItem[]) : [],
     );
+    setSelectedFinanceItemIds([]);
     setSelectedPayments(payments);
     setPaymentDate("");
-    setPaidAmount("");
     setFinanceNote(detailBatch?.financeNote || "");
   };
 
@@ -7532,17 +6173,19 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
         setSelectedBatch(null);
         setSelectedFinanceBatchId(null);
         setSelectedItems([]);
+        setSelectedFinanceItemIds([]);
         setSelectedPayments([]);
         setPaymentDate("");
-        setPaidAmount("");
         setFinanceNote("");
       }
     } catch (error) {
-      // Fallback: gunakan dummy data jika API tidak tersedia
-      const monitoringRows = dummyBatches.filter(isFinanceMonitoringBatch);
-      setFinanceBatches(monitoringRows.length > 0 ? monitoringRows : dummyBatches);
-      setFinanceMessage("");
+      setFinanceMessage(
+        error instanceof Error
+          ? error.message
+          : "Gagal mengambil antrean Keuangan.",
+      );
       setSelectedItems([]);
+      setSelectedFinanceItemIds([]);
       setSelectedPayments([]);
     } finally {
       setIsLoading(false);
@@ -7559,6 +6202,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
     setSelectedBatch(batch);
     setSelectedFinanceBatchId(batch.id);
     setSelectedItems([]);
+    setSelectedFinanceItemIds([]);
     setSelectedPayments([]);
     setFinanceMessage("");
     setPaymentResult(null);
@@ -7580,9 +6224,15 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
     setIsActionLoading(true);
     setFinanceMessage("");
     try {
-      // Revisi B: bukti pembayaran tidak wajib untuk Tunai. Untuk Transfer tetap wajib.
-      const isTunai = normalizeUiPaymentMethod(paymentMethod) === "Tunai";
-      if (!isTunai && !paymentProofFile) {
+      if (selectedFinanceItemIds.length === 0) {
+        setFinanceMessage("Pilih item yang akan dibayar.");
+        return;
+      }
+      if (hasMixedSelectedFinanceMethods) {
+        setFinanceMessage("Pilih item dengan cara bayar yang sama.");
+        return;
+      }
+      if (selectedFinanceNeedsProof && !paymentProofFile) {
         setFinanceMessage("Bukti pembayaran wajib diupload untuk pembayaran Transfer.");
         return;
       }
@@ -7602,8 +6252,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
       }
       const formData = new FormData();
       formData.append("paymentDate", paymentDate);
-      formData.append("paidAmount", paidAmount);
-      formData.append("paymentMethod", paymentMethod);
+      formData.append("itemIds", JSON.stringify(selectedFinanceItemIds));
       formData.append("senderBank", senderBank);
       formData.append("note", financeNote);
       if (paymentProofFile) {
@@ -7634,15 +6283,15 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
       setPaymentResult({
         paymentNo: payment?.paymentNo,
         paymentDate,
-        paidAmount,
-        paymentMethod,
+        paidAmount: `Rp ${Number(payment?.paidAmount || selectedFinanceTotal).toLocaleString("id-ID")}`,
+        paymentMethod: payment?.paymentMethod || selectedFinanceMethod,
         senderBank,
         paymentProofName: paymentProofFile?.name || "",
         remainingAmount: nextPaymentSummary?.remainingAmount,
         isFullyPaid: nextPaymentSummary?.isFullyPaid,
       });
       setPaymentDate("");
-      setPaidAmount("");
+      setSelectedFinanceItemIds([]);
       setPaymentProofFile(null);
       await loadFinanceBatches({
         preserveSelectedId: selectedBatch.id,
@@ -7669,15 +6318,11 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
     value: status,
     label: displayStatusLabel(status),
   }));
-  const financePrincipalOptions = getPrincipalOptions(financeBatches);
 
   const filteredFinanceBatches = filterFinanceBatchesByStatus(
-    filterBatchesByPrincipal(
-      filterBatchesByPeriod(
-        filterBatchesBySearch(financeBatches, financeSearch),
-        financePeriod,
-      ),
-      financePrincipalFilter,
+    filterBatchesByPeriod(
+      filterBatchesBySearch(financeBatches, financeSearch),
+      financePeriod,
     ),
     financeStatusFilter,
   );
@@ -7686,7 +6331,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
     <div className="space-y-6">
       <div className="flex flex-wrap gap-2 rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2">
         {[
-          ["monitoring", "Monitoring Pembayaran"],
+          ["monitoring", "Monitoring Batch Pembayaran"],
           ["payment", "Pembayaran"],
         ].map(([key, label]) => (
           <button
@@ -7704,73 +6349,39 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
       </div>
 
       {financeMenu === "monitoring" && (
-        <Panel title="Monitoring Pembayaran" icon={Wallet}>
-          <div className="mb-6">
-            <CompactFilterToolbar
-              searchValue={financeSearch}
-              onSearchChange={setFinanceSearch}
-              placeholder="Ketik nama principal, nomor, atau status pengajuan"
-              activeFilters={buildBatchFilterChips({
-                principalFilter: financePrincipalFilter,
-                principalOptions: financePrincipalOptions,
-                statusFilter: financeStatusFilter,
-                statusOptions: financeStatusOptions,
-                period: financePeriod,
-              })}
-              onReset={() => {
-                setFinanceSearch("");
-                setFinancePrincipalFilter("");
-                setFinanceStatusFilter("");
-                setFinancePeriod(createEmptyPeriodFilter());
-              }}
-            >
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[260px_260px_1fr]">
-                <PrincipalFilterSelect
-                  value={financePrincipalFilter}
-                  onChange={setFinancePrincipalFilter}
-                  options={financePrincipalOptions}
-                />
-                <StatusFilterSelect
-                  value={financeStatusFilter}
-                  onChange={setFinanceStatusFilter}
-                  options={financeStatusOptions}
-                />
-                <PeriodFilter
-                  value={financePeriod}
-                  onChange={setFinancePeriod}
-                />
-              </div>
-            </CompactFilterToolbar>
+        <Panel title="Monitoring Batch Pembayaran" icon={Wallet}>
+          <div className="mb-4 grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
+            <MonitoringSearch
+              value={financeSearch}
+              onChange={setFinanceSearch}
+              placeholder="Cari No Pengajuan, principle, kode, status, atau No Claim..."
+            />
+            <StatusFilterSelect
+              value={financeStatusFilter}
+              onChange={setFinanceStatusFilter}
+              options={financeStatusOptions}
+            />
+          </div>
+          <div className="mb-4">
+            <PeriodFilter value={financePeriod} onChange={setFinancePeriod} />
           </div>
           {isLoading && (
             <p className="mb-4 text-sm text-slate-400">
               Memuat data Keuangan...
             </p>
           )}
-          {filteredFinanceBatches.length === 0 && !isLoading ? (
-            <EmptyState
-              onAction={() => {
-                setFinanceSearch("");
-                setFinancePrincipalFilter("");
-                setFinanceStatusFilter("");
-                setFinancePeriod(createEmptyPeriodFilter());
-              }}
-              actionLabel="Reset Filter"
-            />
-          ) : (
-            <FinanceMonitoringTable
-              batches={filteredFinanceBatches}
-              selectedBatchId={selectedBatch?.id}
-              onSelect={selectFinanceBatch}
-            />
-          )}
+          <FinanceMonitoringTable
+            batches={filteredFinanceBatches}
+            selectedBatchId={selectedBatch?.id}
+            onSelect={selectFinanceBatch}
+          />
         </Panel>
       )}
 
       {financeMenu === "payment" && !selectedBatch && (
         <Panel title="Pembayaran" icon={Wallet}>
           <p className="text-sm text-slate-400">
-            Pilih pengajuan dari Monitoring Pembayaran untuk melihat detail
+            Pilih batch dari Monitoring Batch Pembayaran untuk melihat detail
             pembayaran.
           </p>
         </Panel>
@@ -7785,15 +6396,15 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
             </InfoNote>
             <div className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               <Field
-                label="Nomor Pengajuan"
+                label="No Pengajuan"
                 value={selectedBatch?.noPengajuan || "-"}
               />
               <Field
-                label="Principal"
+                label="Principle"
                 value={selectedBatch?.principleName || "-"}
               />
               <Field
-                label="Kode Principal"
+                label="Kode Principle"
                 value={selectedBatch?.principleCode || "-"}
               />
               <Field
@@ -7881,6 +6492,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                 <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500 border-b border-white/10">
                   <tr>
                     {[
+                      "Pilih",
                       "No",
                       "No Surat",
                       "Nama Program",
@@ -7890,6 +6502,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                       "Barang",
                       "Nominal",
                       "Cara Bayar",
+                      "Status Bayar",
                       "Tipe",
                       "Deadline",
                     ].map((header) => (
@@ -7902,11 +6515,24 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                 <tbody className="divide-y divide-white/5">
                   {selectedItems.map((item, index) => {
                     const period = splitPeriodDates(item.periode);
+                    const isPaid = isItemFinancePaid(item);
+                    const isSelectable = isFinanceItemSelectable(item);
+                    const isSelected = selectedFinanceItemIds.includes(item.id);
                     return (
                       <tr
                         key={item.id || `${item.noSurat}-${index}`}
-                        className="hover:bg-white/[0.03]"
+                        className={isPaid ? "bg-emerald-500/[0.04] text-slate-500" : "hover:bg-white/[0.03]"}
                       >
+                        <td className="px-3 py-3">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={!canPayFinance || !isSelectable}
+                            onChange={() => toggleFinanceItem(item.id)}
+                            aria-label={`Pilih item ${item.itemNo || index + 1} untuk dibayar`}
+                            className="h-4 w-4 rounded border-white/20 bg-white/10 text-teal-500 focus:ring-teal-500 disabled:opacity-40"
+                          />
+                        </td>
                         <td className="px-3 py-3 font-mono text-slate-300">
                           {item.itemNo || index + 1}
                         </td>
@@ -7934,6 +6560,11 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                         <td className="px-3 py-3 text-slate-300">
                           {item.caraBayar || "-"}
                         </td>
+                        <td className="px-3 py-3">
+                          <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-bold ${isPaid ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-amber-500/30 bg-amber-500/10 text-amber-300"}`}>
+                            {isPaid ? "Paid" : "Unpaid"}
+                          </span>
+                        </td>
                         <td className="px-3 py-3 text-slate-300">
                           {item.type || "-"}
                         </td>
@@ -7946,9 +6577,9 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                   {!isLoading && selectedItems.length === 0 && (
                     <tr>
                       <td
-                        colSpan={11}
-                        className="px-3 py-6 text-center text-sm text-slate-500"
-                      >
+                         colSpan={13}
+                         className="px-3 py-6 text-center text-sm text-slate-500"
+                       >
                         Pilih batch untuk melihat item.
                       </td>
                     </tr>
@@ -8044,81 +6675,22 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                 value={paymentDate}
                 onChange={setPaymentDate}
               />
-              <div className="space-y-2">
-                <EditableField
-                  label="Jumlah Dibayar oleh Keuangan"
-                  value={paidAmount}
-                  onChange={setPaidAmount}
-                />
-
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setPaidAmount(
-                        `Rp ${remainingAmount.toLocaleString("id-ID")}`,
-                      )
-                    }
-                    className="rounded-lg border border-teal-500/30 bg-teal-500/10 px-3 py-1.5 text-xs font-bold text-teal-200 hover:bg-teal-500/20"
-                  >
-                    Bayar Sisa
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setPaidAmount(
-                        `Rp ${Math.min(transfer, remainingAmount).toLocaleString("id-ID")}`,
-                      )
-                    }
-                    disabled={transfer <= 0}
-                    className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-bold text-sky-200 hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Bayar Transfer
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setPaidAmount(
-                        `Rp ${Math.min(tunai, remainingAmount).toLocaleString("id-ID")}`,
-                      )
-                    }
-                    disabled={tunai <= 0}
-                    className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Bayar Tunai
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setPaidAmount("")}
-                    className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold text-slate-300 hover:bg-white/10"
-                  >
-                    Kosongkan
-                  </button>
-                </div>
-              </div>
-              <label className="block">
-                <span className="text-xs text-slate-500 font-semibold">
-                  Metode Pembayaran
-                </span>
-                <select
-                  value={paymentMethod}
-                  onChange={(event) => setPaymentMethod(event.target.value)}
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
-                >
-                  {offPaymentMethods.map((method) => (
-                    <option
-                      key={method}
-                      className="bg-[#1a1c23]"
-                      value={method}
-                    >
-                      {method}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <Field
+                label="Item Dipilih"
+                value={`${selectedFinanceItemIds.length} item`}
+              />
+              <Field
+                label="Total Nominal Dipilih"
+                value={`Rp ${selectedFinanceTotal.toLocaleString("id-ID")}`}
+              />
+              <Field
+                label="Cara Bayar Dipilih"
+                value={
+                  hasMixedSelectedFinanceMethods
+                    ? "Campur"
+                    : selectedFinanceMethod || "Pilih item"
+                }
+              />
               <EditableField
                 label="Bank Pengirim"
                 value={senderBank}
@@ -8127,7 +6699,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
               <label className="block">
                 <span className="text-xs text-slate-500 font-semibold">
                   Bukti Pembayaran
-                  {normalizeUiPaymentMethod(paymentMethod) === "Tunai" ? (
+                  {selectedFinanceMethod === "Tunai" ? (
                     <span className="ml-1 font-normal text-emerald-300">
                       (opsional untuk Tunai)
                     </span>
@@ -8144,15 +6716,20 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                     const file = event.target.files?.[0] || null;
                     setPaymentProofFile(file);
                   }}
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-teal-600 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white outline-none focus:border-teal-500/50"
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2.5 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-teal-600 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white outline-none focus:border-teal-500/50"
                 />
                 <p className="mt-1 text-[11px] text-slate-500">
-                  {normalizeUiPaymentMethod(paymentMethod) === "Tunai"
+                  {selectedFinanceMethod === "Tunai"
                     ? "Pembayaran Tunai boleh tanpa bukti. Bukti tetap boleh diupload bila ada. PDF/PNG/JPG/JPEG, maks 5MB."
                     : "PDF, PNG, JPG, atau JPEG. Maksimal 5MB."}
                 </p>
               </label>
             </div>
+            {hasMixedSelectedFinanceMethods && (
+              <div className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                Pilihan campur Transfer/Tunai tidak diizinkan. Satu aksi pembayaran hanya untuk satu cara bayar.
+              </div>
+            )}
             <div className="mt-4">
               <label className="block">
                 <span className="text-xs text-slate-500 font-semibold">
@@ -8162,7 +6739,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                   value={financeNote}
                   onChange={(event) => setFinanceNote(event.target.value)}
                   rows={4}
-                  className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
+                  className="mt-1 w-full resize-none rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-teal-500/50"
                 />
               </label>
             </div>
@@ -8238,7 +6815,11 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                   disabled={
                     !selectedBatch ||
                     !isFinanceActionableBatch(selectedBatch) ||
-                    isActionLoading
+                    isActionLoading ||
+                    selectedFinanceItemIds.length === 0 ||
+                    selectedFinanceTotal <= 0 ||
+                    hasMixedSelectedFinanceMethods ||
+                    (selectedFinanceNeedsProof && !paymentProofFile)
                   }
                   className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -8251,16 +6832,6 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
               </div>
             )}
           </Panel>
-
-          {/* Panel Pengembalian Dana Selisih (Refund) */}
-          {selectedBatch && (
-            <RefundPanel
-              batchId={selectedBatch.id}
-              batch={selectedBatch}
-              offRole={offRole}
-              onRefundUpdated={() => loadFinanceBatches({ preserveSelectedId: selectedBatch?.id, autoSelectFirst: false })}
-            />
-          )}
         </div>
       )}
     </div>
@@ -8284,7 +6855,7 @@ type OffDiscountSubmissionRow = {
   createdAt?: number | string | null;
 };
 
-// Revisi I: Dashboard Diskon SPV â€” jejak digital, BELUM approval resmi.
+// Revisi I: Dashboard Diskon SPV — jejak digital, BELUM approval resmi.
 function DiscountDashboard({ offRole }: OffDashboardProps) {
   // Hanya Supervisor yang dapat membuat pengajuan (selaras backend). Admin
   // read-only + note, walau admin superuser di action lain.
@@ -8430,7 +7001,7 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
               <input
                 value={toko}
                 onChange={(event) => setToko(event.target.value)}
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/50 placeholder:text-slate-500"
               />
             </label>
             <label className="block">
@@ -8440,7 +7011,7 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
               <select
                 value={principleName}
                 onChange={(event) => setPrincipleName(event.target.value)}
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/50 placeholder:text-slate-500"
               >
                 <option value="" className="bg-[#1a1c23]">
                   Pilih principle...
@@ -8463,7 +7034,7 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
               <input
                 value={program}
                 onChange={(event) => setProgram(event.target.value)}
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/50 placeholder:text-slate-500"
               />
             </label>
             <label className="block">
@@ -8474,7 +7045,7 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
                 value={nominal}
                 onChange={(event) => setNominal(event.target.value)}
                 placeholder="Rp 0"
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/50 placeholder:text-slate-500"
               />
             </label>
             <label className="block">
@@ -8485,7 +7056,7 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
                 value={tanggal}
                 onChange={setTanggal}
                 ariaLabel="Tanggal pengajuan diskon"
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
+                className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none [color-scheme:dark] focus:border-teal-500/50"
               />
             </label>
             <label className="block">
@@ -8496,7 +7067,7 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
                 type="file"
                 accept="application/pdf,image/png,image/jpeg"
                 onChange={(event) => setDocFile(event.target.files?.[0] || null)}
-                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-teal-600 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white outline-none focus:border-teal-500/50"
+                className="w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-teal-600 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white outline-none focus:border-teal-500/50"
               />
             </label>
           </div>
@@ -8508,7 +7079,7 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
               value={alasan}
               onChange={(event) => setAlasan(event.target.value)}
               rows={2}
-              className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+              className="w-full resize-none rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/50 placeholder:text-slate-500"
             />
           </label>
           <label className="mt-3 block">
@@ -8519,7 +7090,7 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
               value={catatan}
               onChange={(event) => setCatatan(event.target.value)}
               rows={2}
-              className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+              className="w-full resize-none rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/50 placeholder:text-slate-500"
             />
           </label>
           {message && (
@@ -8541,23 +7112,15 @@ function DiscountDashboard({ offRole }: OffDashboardProps) {
       )}
 
       <Panel title="Daftar Pengajuan Diskon" icon={ListChecks}>
-        <div className="mb-6">
-          <CompactFilterToolbar
-            searchValue={search}
-            onSearchChange={setSearch}
+        <div className="mb-4">
+          <MonitoringSearch
+            value={search}
+            onChange={setSearch}
             placeholder="Cari toko, principle, program, atau alasan diskon..."
-            activeFilters={
-              isPeriodFilterActive(period)
-                ? [{ label: "Periode", value: periodFilterLabel(period) }]
-                : []
-            }
-            onReset={() => {
-              setSearch("");
-              setPeriod(createEmptyPeriodFilter());
-            }}
-          >
-            <PeriodFilter value={period} onChange={setPeriod} />
-          </CompactFilterToolbar>
+          />
+        </div>
+        <div className="mb-4">
+          <PeriodFilter value={period} onChange={setPeriod} />
         </div>
         {error && (
           <div className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
@@ -8804,28 +7367,17 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
   return (
     <Panel title="Log Audit OFF Program Control" icon={ScrollText}>
       <InfoNote>
-        Klaim dapat membaca, mengekspor, dan mengoreksi audit log. Koreksi bersifat
+        Claim dapat membaca, mengekspor, dan mengoreksi audit log. Koreksi bersifat
         non-destruktif: jejak lama tidak dihapus dan setiap koreksi tercatat sebagai
         riwayat baru. {isAdmin ? "Admin dapat melihat histori sebelum dan sesudah perubahan." : ""}
       </InfoNote>
 
-      <div className="mb-6 grid grid-cols-1 gap-3 xl:grid-cols-[1fr_auto]">
-        <CompactFilterToolbar
-          searchValue={search}
-          onSearchChange={setSearch}
-          placeholder="Ketik nama principal, nomor, atau catatan"
-          activeFilters={
-            isPeriodFilterActive(period)
-              ? [{ label: "Periode", value: periodFilterLabel(period) }]
-              : []
-          }
-          onReset={() => {
-            setSearch("");
-            setPeriod(createEmptyPeriodFilter());
-          }}
-        >
-          <PeriodFilter value={period} onChange={setPeriod} />
-        </CompactFilterToolbar>
+      <div className="mb-4 grid grid-cols-1 gap-3 xl:grid-cols-[1fr_auto]">
+        <MonitoringSearch
+          value={search}
+          onChange={setSearch}
+          placeholder="Cari No Pengajuan, principle, user, aksi, atau catatan..."
+        />
         {canExport && (
           <button
             type="button"
@@ -8835,6 +7387,10 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
             Export CSV
           </button>
         )}
+      </div>
+
+      <div className="mb-4">
+        <PeriodFilter value={period} onChange={setPeriod} />
       </div>
 
       {message && (
@@ -8913,7 +7469,7 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
                           Alasan koreksi:
                         </span>{" "}
                         {log.correctionReason}
-                        {log.note ? ` â€” ${log.note}` : ""}
+                        {log.note ? ` — ${log.note}` : ""}
                       </span>
                     ) : (
                       log.note || "-"
@@ -8976,7 +7532,7 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
                   value={correctionReason}
                   onChange={(event) => setCorrectionReason(event.target.value)}
                   rows={3}
-                  className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-amber-500/50"
+                  className="w-full resize-none rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-200 outline-none focus:border-amber-500/50"
                   placeholder="Jelaskan kesalahan pencatatan yang diperbaiki..."
                 />
               </label>
@@ -8988,7 +7544,7 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
                   value={correctionNote}
                   onChange={(event) => setCorrectionNote(event.target.value)}
                   rows={2}
-                  className="w-full resize-none rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 outline-none focus:border-teal-500/50"
+                  className="w-full resize-none rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-slate-100 outline-none focus:border-teal-500/50 placeholder:text-slate-500"
                 />
               </label>
             </div>
@@ -9251,88 +7807,9 @@ function OverviewReadOnlyDetail({
   );
 }
 
-function OverviewDetailDrawer({
-  batch,
-  items,
-  payments,
-  paymentSummary,
-  isLoading,
-  onClose,
-}: {
-  batch: OffApiBatch | null;
-  items: OffApiItem[];
-  payments: OffApiPayment[];
-  paymentSummary?: OffPaymentSummary;
-  isLoading: boolean;
-  onClose: () => void;
-}) {
-  if (!batch && !isLoading) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/65 backdrop-blur-sm">
-      <button
-        type="button"
-        aria-label="Tutup detail batch"
-        className="absolute inset-0 h-full w-full cursor-default"
-        onClick={onClose}
-      />
-      <aside
-        aria-modal="true"
-        role="dialog"
-        className="relative z-10 flex h-full w-full max-w-5xl flex-col border-l border-white/10 bg-[#101219] shadow-2xl"
-      >
-        <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4">
-          <div className="min-w-0">
-            <p className="text-xs font-bold uppercase tracking-wider text-teal-300">
-              Detail Batch
-            </p>
-            <h2 className="mt-1 truncate text-xl font-black text-white">
-              {batch?.noPengajuan || "Memuat detail..."}
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Item, pembayaran, dan status lengkap hanya tampil di drawer ini.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl border border-white/10 bg-white/5 p-2 text-slate-300 hover:bg-white/10 hover:text-white"
-            aria-label="Tutup detail batch"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5">
-          {isLoading && (
-            <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
-              Memuat detail ringkasan...
-            </div>
-          )}
-          {batch && !isLoading && (
-            <OverviewReadOnlyDetail
-              batch={batch}
-              items={items}
-              payments={payments}
-              paymentSummary={paymentSummary}
-            />
-          )}
-        </div>
-      </aside>
-    </div>
-  );
-}
-
-function OverviewTab({
-  offRole,
-  pendingBatchId,
-  onPendingBatchHandled,
-}: OffDashboardProps & {
-  pendingBatchId?: string;
-  onPendingBatchHandled?: () => void;
-}) {
+function OverviewTab() {
   const [overviewBatches, setOverviewBatches] = useState<OffApiBatch[]>([]);
   const [overviewSearch, setOverviewSearch] = useState("");
-  const [overviewPrincipalFilter, setOverviewPrincipalFilter] = useState("");
   const [overviewStatusFilter, setOverviewStatusFilter] = useState("");
   const [overviewPeriod, setOverviewPeriod] = useState(createEmptyPeriodFilter());
   const [selectedBatch, setSelectedBatch] = useState<OffApiBatch | null>(null);
@@ -9344,7 +7821,6 @@ function OverviewTab({
   const [isLoading, setIsLoading] = useState(true);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [error, setError] = useState("");
-  const isAdminOverview = offRole === "admin";
 
   const loadOverview = async () => {
     setIsLoading(true);
@@ -9356,13 +7832,17 @@ function OverviewTab({
       const data = await parseJsonResponse(response);
       if (!response.ok || !data.ok)
         throw new Error(
-          String(data.error || "Data pengajuan belum berhasil dimuat. Silakan coba lagi."),
+          String(data.error || "Gagal mengambil data ringkasan."),
         );
-      const batches = Array.isArray(data.batches) ? (data.batches as OffApiBatch[]) : [];
-      setOverviewBatches(batches.length > 0 ? batches : dummyBatches);
+      setOverviewBatches(
+        Array.isArray(data.batches) ? (data.batches as OffApiBatch[]) : [],
+      );
     } catch (loadError) {
-      setError("");
-      setOverviewBatches(dummyBatches);
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Gagal mengambil data ringkasan.",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -9371,17 +7851,6 @@ function OverviewTab({
   useEffect(() => {
     loadOverview();
   }, []);
-
-  // Buka drawer otomatis ketika parent mengirim pendingBatchId dari Global Search.
-  useEffect(() => {
-    if (!pendingBatchId || overviewBatches.length === 0) return;
-    const target = overviewBatches.find((b) => b.id === pendingBatchId);
-    if (target) {
-      openOverviewDetail(target);
-      onPendingBatchHandled?.();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingBatchId, overviewBatches]);
 
   const openOverviewDetail = async (batch: OffApiBatch) => {
     setIsDetailLoading(true);
@@ -9419,30 +7888,22 @@ function OverviewTab({
       setError(
         detailError instanceof Error
           ? detailError.message
-          : "Detail pengajuan belum berhasil dimuat. Silakan coba lagi.",
+          : "Gagal mengambil detail ringkasan.",
       );
     } finally {
       setIsDetailLoading(false);
     }
   };
 
-  const closeOverviewDetail = () => {
-    setSelectedBatch(null);
-    setSelectedItems([]);
-    setSelectedPayments([]);
-    setSelectedPaymentSummary(undefined);
-    setIsDetailLoading(false);
-  };
-
   const metrics: MetricItem[] = [
     {
-      label: "Total Pengajuan",
+      label: "Total Batch",
       value: String(overviewBatches.length),
       tone: "text-sky-300",
       icon: ClipboardCheck,
     },
     {
-      label: "Menunggu Tinjauan SM",
+      label: "Menunggu Review SM",
       value: String(overviewBatches.filter(isSmActionableBatch).length),
       tone: "text-amber-300",
       icon: Clock3,
@@ -9482,19 +7943,13 @@ function OverviewTab({
       label: displayStatusLabel(status),
     }),
   );
-  const principalOptions = getPrincipalOptions(overviewBatches);
   const filteredBatches = filterBatchesByMainStatus(
-    filterBatchesByPrincipal(
-      filterBatchesByPeriod(
-        filterBatchesBySearch(overviewBatches, overviewSearch),
-        overviewPeriod,
-      ),
-      overviewPrincipalFilter,
+    filterBatchesByPeriod(
+      filterBatchesBySearch(overviewBatches, overviewSearch),
+      overviewPeriod,
     ),
     overviewStatusFilter,
   );
-  const allComparison = computeClaimComparison(overviewBatches);
-  const comparison = computeClaimComparison(filteredBatches);
 
   return (
     <div className="space-y-6">
@@ -9510,102 +7965,43 @@ function OverviewTab({
       )}
       {!isLoading && overviewBatches.length === 0 && !error && (
         <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-400">
-          Tidak ada data yang sesuai dengan pencarian atau filter yang dipilih.
+          Belum ada batch OFF Program Control.
         </div>
       )}
-      {isAdminOverview ? (
-        <AdminHealthPanel
-          batches={overviewBatches}
-          comparison={allComparison}
-          error={error}
-          isLoading={isLoading}
-          onSelectBatch={openOverviewDetail}
+      <MetricsGrid metrics={metrics} />
+      <WorkflowStepper />
+      <LiveQueueSummaryPanel batches={overviewBatches} />
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
+        <MonitoringSearch
+          value={overviewSearch}
+          onChange={setOverviewSearch}
+          placeholder="Cari No Pengajuan, principle, kode, status, atau No Claim..."
         />
-      ) : (
-        <SummaryStrip metrics={metrics} />
-      )}
-      <CompactFilterToolbar
-        searchValue={overviewSearch}
-        onSearchChange={setOverviewSearch}
-        placeholder="Ketik nama principal, nomor, atau status pengajuan"
-        activeFilters={buildBatchFilterChips({
-          principalFilter: overviewPrincipalFilter,
-          principalOptions,
-          statusFilter: overviewStatusFilter,
-          statusOptions,
-          period: overviewPeriod,
-        })}
-        onReset={() => {
-          setOverviewSearch("");
-          setOverviewPrincipalFilter("");
-          setOverviewStatusFilter("");
-          setOverviewPeriod(createEmptyPeriodFilter());
-        }}
-      >
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[280px_280px_1fr]">
-          <PrincipalFilterSelect
-            value={overviewPrincipalFilter}
-            onChange={setOverviewPrincipalFilter}
-            options={principalOptions}
-          />
-          <StatusFilterSelect
-            value={overviewStatusFilter}
-            onChange={setOverviewStatusFilter}
-            options={statusOptions}
-          />
-          <PeriodFilter value={overviewPeriod} onChange={setOverviewPeriod} />
-        </div>
-      </CompactFilterToolbar>
-      {(!isAdminOverview ||
-        (comparison.submittedCount > 0 && !comparison.isMatched)) && (
-        <ClaimComparisonSummary comparison={comparison} />
-      )}
-      {isAdminOverview ? (
-        <SupportTogglePanel
-          title="Semua Status"
-          actionLabel="Tampilkan Detail"
-          icon={ClipboardCheck}
-        >
-          <OverviewMonitoringTable
-            batches={filteredBatches}
-            selectedBatchId={selectedBatch?.id}
-            onSelect={openOverviewDetail}
-          />
-        </SupportTogglePanel>
-      ) : (
-        <OverviewMonitoringTable
-          batches={filteredBatches}
-          selectedBatchId={selectedBatch?.id}
-          onSelect={openOverviewDetail}
+        <StatusFilterSelect
+          value={overviewStatusFilter}
+          onChange={setOverviewStatusFilter}
+          options={statusOptions}
         />
-      )}
-      {isAdminOverview ? (
-        <SupportTogglePanel
-          title="Tutup Periode"
-          actionLabel="Tampilkan Kontrol"
-          icon={CalendarClock}
-        >
-          <PeriodClosurePanel
-            batches={overviewBatches}
-            offRole={offRole}
-            onUpdated={loadOverview}
-          />
-        </SupportTogglePanel>
-      ) : (
-        <PeriodClosurePanel
-          batches={overviewBatches}
-          offRole={offRole}
-          onUpdated={loadOverview}
-        />
-      )}
-      <OverviewDetailDrawer
-        batch={selectedBatch}
-        items={selectedItems}
-        payments={selectedPayments}
-        paymentSummary={selectedPaymentSummary}
-        isLoading={isDetailLoading}
-        onClose={closeOverviewDetail}
+      </div>
+      <PeriodFilter value={overviewPeriod} onChange={setOverviewPeriod} />
+      <OverviewMonitoringTable
+        batches={filteredBatches}
+        selectedBatchId={selectedBatch?.id}
+        onSelect={openOverviewDetail}
       />
+      {isDetailLoading && (
+        <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
+          Memuat detail ringkasan...
+        </div>
+      )}
+      {selectedBatch && !isDetailLoading && (
+        <OverviewReadOnlyDetail
+          batch={selectedBatch}
+          items={selectedItems}
+          payments={selectedPayments}
+          paymentSummary={selectedPaymentSummary}
+        />
+      )}
     </div>
   );
 }
@@ -9613,9 +8009,6 @@ function OverviewTab({
 export default function OffProgramControlPage() {
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
   const [paidIncompleteCount, setPaidIncompleteCount] = useState(0);
-  const [showAccessDetail, setShowAccessDetail] = useState(false);
-  const [pendingBatchId, setPendingBatchId] = useState("");
-  const [globalSearchItems, setGlobalSearchItems] = useState<OffSearchableItem[]>([]);
   const { data: session } = authClient.useSession();
   const sessionUser = session?.user as
     | {
@@ -9647,7 +8040,6 @@ export default function OffProgramControlPage() {
   const effectiveActiveTab = accessibleTabKeys.includes(activeTab)
     ? activeTab
     : accessibleTabs[0]?.key;
-  const isAdminMode = offRole === "admin";
   const mappingSummary = useMemo(
     () => `${PRINCIPLE_OPTIONS.length} mapping principle dimuat`,
     [],
@@ -9689,120 +8081,22 @@ export default function OffProgramControlPage() {
     };
   }, [shouldShowPaidNotification]);
 
-  // --- Deteksi Pengajuan Bermasalah ---
-  const [offProblems, setOffProblems] = useState<ReturnType<typeof detectProblematicBatches>>([]);
-
-  useEffect(() => {
-    let isActive = true;
-
-    const loadAndDetect = async () => {
-      try {
-        const response = await fetch("/api/off-program-control/batches", {
-          credentials: "include",
-        });
-        const data = await parseJsonResponse(response);
-        if (!response.ok || !data.ok) return;
-        const rows = Array.isArray(data.batches)
-          ? (data.batches as OffApiBatch[])
-          : [];
-
-        // Map ke format ProblemDetectionBatch
-        const detectionBatches: ProblemDetectionBatch[] = rows.map((batch) => ({
-          id: batch.id,
-          noPengajuan: batch.noPengajuan,
-          principleName: batch.principleName,
-          status: batch.status,
-          smStatus: batch.smStatus,
-          claimStatus: batch.claimStatus,
-          omStatus: batch.omStatus,
-          financeStatus: batch.financeStatus,
-          finalStatus: batch.finalStatus,
-          locked: batch.locked,
-          claimDeadline: batch.claimDeadline,
-          submittedAt: (batch as any).submittedAt,
-          smApprovedAt: (batch as any).smApprovedAt,
-          claimReviewedAt: (batch as any).claimReviewedAt,
-          returnedAt: (batch as any).returnedAt,
-          paidAt: (batch as any).paidAt,
-          createdAt: batch.createdAt,
-          updatedAt: batch.updatedAt,
-          refundStatus: (batch as any).refundStatus,
-          completenessStatus: (batch as any).completenessStatus,
-        }));
-
-        const allProblems = detectProblematicBatches(detectionBatches);
-        const roleProblems = getProblemsForRole(allProblems, offRole);
-
-        if (isActive) {
-          setOffProblems(roleProblems);
-          setGlobalSearchItems(
-            rows.map((b) => ({
-              id: b.id,
-              noPengajuan: b.noPengajuan,
-              principleName: b.principleName,
-              status: b.status,
-              supervisorName: b.supervisorName,
-            })),
-          );
-        }
-      } catch {
-        if (isActive) setOffProblems([]);
-      }
-    };
-
-    loadAndDetect();
-    const interval = window.setInterval(loadAndDetect, 60000);
-    return () => {
-      isActive = false;
-      window.clearInterval(interval);
-    };
-  }, [offRole]);
-
   return (
     <div className="max-w-[1800px] mx-auto pb-12">
-      {/* Breadcrumb */}
-      <OffBreadcrumb />
-
       <div className="mb-6 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-teal-500/30 bg-teal-500/10 text-teal-300 text-xs font-bold uppercase tracking-widest mb-3">
-            <ClipboardCheck size={14} /> OFF Control
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-teal-500/30 bg-teal-500/10 text-teal-300 text-xs font-bold uppercase tracking-widest mb-4">
+            <ClipboardCheck size={14} /> Alur OFF
           </div>
           <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
-            Program OFF — Pengelolaan Klaim
+            OFF Program Control
           </h1>
-          <p className="text-slate-400 mt-2 text-sm sm:text-base">
-            {isAdminMode
-              ? "Pantau health system lebih dulu, lalu drill down ke role tertentu saat perlu."
-              : "Pilih antrean, review masalah, lalu ambil aksi sesuai role."}
+          <p className="text-slate-400 mt-2 text-lg">
+            Dashboard Keuangan Korporat untuk OFF Program / Faktur Beban
+            Principle
           </p>
-          {isAdminMode && (
-            <div className="mt-3 inline-flex items-center gap-2 rounded-xl border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200">
-              <ShieldCheck size={14} />
-              Mode Admin: Semua akses aktif
-            </div>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setShowAccessDetail((current) => !current)}
-            aria-expanded={showAccessDetail}
-            className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 hover:bg-white/10"
-          >
-            Detail akses
-            <ChevronDown
-              size={14}
-              className={`transition-transform ${showAccessDetail ? "rotate-180" : ""}`}
-            />
-          </button>
-
-        </div>
-      </div>
-
-      {showAccessDetail && (
-        <div className="mb-6 rounded-2xl border border-white/10 bg-[#1a1c23]/60 px-4 py-3 text-xs shadow-xl">
-          <div className="flex flex-wrap gap-2">
+          <p className="text-xs text-slate-500 mt-2">{mappingSummary}</p>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs">
             <span className="rounded-lg border border-white/10 bg-black/30 px-3 py-1.5 text-slate-300">
               Login sebagai:{" "}
               <b className="text-slate-100">
@@ -9822,12 +8116,20 @@ export default function OffProgramControlPage() {
                     : ""}
               </b>
             </span>
-            <span className="rounded-lg border border-white/10 bg-black/30 px-3 py-1.5 text-slate-400">
-              {mappingSummary}
-            </span>
           </div>
         </div>
-      )}
+        <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-[#1a1c23]/60 px-4 py-3">
+          <CalendarClock className="text-teal-300" size={20} />
+          <div>
+            <p className="text-xs uppercase tracking-wider text-slate-500 font-bold">
+              Siklus
+            </p>
+            <p className="text-sm text-slate-200 font-semibold">
+              Monitoring Mei 2026
+            </p>
+          </div>
+        </div>
+      </div>
 
       {offRole === "sales" && accessibleTabs.length === 0 && (
         <Panel title="OFF Program Control" icon={ClipboardCheck}>
@@ -9847,64 +8149,32 @@ export default function OffProgramControlPage() {
 
       {accessibleTabs.length > 0 && (
         <>
-          {/* Search bar */}
-          <div className="mb-6 max-w-sm">
-            <OffGlobalSearch
-              items={globalSearchItems}
-              onSelect={(id) => {
-                setActiveTab("overview");
-                setPendingBatchId(id);
-              }}
-              placeholder="Cari pengajuan..."
-            />
-          </div>
-
-          {/* Notification Bell - Pengajuan Bermasalah */}
-          <OffNotificationBell problems={offProblems} />
-
-          <div className="mb-6">
-            <SupportTogglePanel
-              title="Alur Persetujuan"
-              actionLabel="Tampilkan Alur"
-              icon={ArrowRight}
-            >
-              <WorkflowStepper />
-            </SupportTogglePanel>
-          </div>
-
-          {isAdminMode ? (
-            <AdminViewSelector
-              activeTab={effectiveActiveTab}
-              accessibleTabKeys={accessibleTabKeys}
-              onSelect={setActiveTab}
-            />
-          ) : (
-            <div className="mb-6 overflow-x-auto rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2 shadow-xl">
-              <div className="flex min-w-max gap-2">
-                {accessibleTabs.map((tab) => (
-                  <button
-                    key={tab.key}
-                    onClick={() => setActiveTab(tab.key)}
-                    className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
-                      effectiveActiveTab === tab.key
-                        ? "bg-teal-500/20 text-teal-200 border border-teal-500/30"
-                        : "text-slate-400 hover:text-white hover:bg-white/5 border border-transparent"
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
+          {shouldShowPaidNotification && paidIncompleteCount > 0 && (
+            <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 text-sm font-semibold text-amber-100">
+              Ada {paidIncompleteCount} Pengajuan Sudah Dibayar yang belum
+              lengkap datanya, mohon segera ditindaklanjuti.
             </div>
           )}
 
-          {effectiveActiveTab === "overview" && (
-            <OverviewTab
-              offRole={offRole}
-              pendingBatchId={pendingBatchId}
-              onPendingBatchHandled={() => setPendingBatchId("")}
-            />
-          )}
+          <div className="mb-6 overflow-x-auto rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2 shadow-xl">
+            <div className="flex min-w-max gap-2">
+              {accessibleTabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
+                    effectiveActiveTab === tab.key
+                      ? "bg-teal-500/20 text-teal-200 border border-teal-500/30"
+                      : "text-slate-400 hover:text-white hover:bg-white/5 border border-transparent"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {effectiveActiveTab === "overview" && <OverviewTab />}
           {effectiveActiveTab === "supervisor" && (
             <SupervisorDashboard offRole={offRole} />
           )}

@@ -1,25 +1,13 @@
-/*
- * Tujuan: API pencatatan pembayaran Keuangan untuk pengajuan OFF Program Control.
- * Caller: Halaman OFF Program Control tab Keuangan.
- * Dependensi: Better Auth OFF session, Drizzle SQLite, file upload bukti bayar, helper pembayaran OFF.
- * Main Functions: POST finance-payment.
- * Side Effects: DB write SQLite, file I/O bukti bayar, audit log OFF.
- */
-
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { db } from "@/lib/db";
-import { offBatch, offPayment } from "@/db/schema";
-import { canActorPerformOffAction, canProcessFinancePayment, computeOffFinancePaymentSummary, computeOffPaymentSummary, getBatchWithItems, isOffPeriodClosedForBatch, normalizeOffPaymentMethod, parseCurrency, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { offBatch, offBatchItem, offPayment } from "@/db/schema";
+import { canActorPerformOffAction, canProcessFinancePayment, computeOffFinancePaymentSummary, computeOffPaymentSummary, getBatchWithItems, normalizeOffPaymentMethod, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
 
 type Context = { params: Promise<{ id: string }> };
-
-function asNumber(value: unknown) {
-    return parseCurrency(value);
-}
 
 function sanitizeFileName(value: string) {
     return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "payment-proof";
@@ -29,42 +17,67 @@ function proofMimeOk(type: string) {
     return ["application/pdf", "image/png", "image/jpeg", "image/jpg"].includes(type);
 }
 
+function parseItemIds(formData: FormData) {
+    const rawValues = formData.getAll("itemIds").flatMap((value) => {
+        const text = String(value || "").trim();
+        if (!text) return [];
+        if (text.startsWith("[")) {
+            try {
+                const parsed = JSON.parse(text);
+                return Array.isArray(parsed) ? parsed.map((item) => String(item || "").trim()) : [];
+            } catch {
+                return [];
+            }
+        }
+        return text.split(",").map((item) => item.trim());
+    });
+    return Array.from(new Set(rawValues.filter(Boolean)));
+}
+
 export async function POST(request: Request, context: Context) {
     try {
         const actor = await requireOffSession();
-        if (!actor) return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." }, { status: 401 });
+        if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
         if (!canActorPerformOffAction(actor, "finance_payment")) return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses pembayaran Keuangan." }, { status: 403 });
         const { id } = await context.params;
         const data = await getBatchWithItems(id);
-        if (!data) return NextResponse.json({ ok: false, error: "Pengajuan tidak ditemukan." }, { status: 404 });
-        if (actor.role !== "admin" && await isOffPeriodClosedForBatch(data.batch)) {
-            return NextResponse.json({ ok: false, error: "Periode ini sudah ditutup dan tidak dapat diubah." }, { status: 409 });
-        }
+        if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
         if (data.batch.smStatus !== "Approved by SM" || data.batch.claimStatus !== "Approved") {
-            return NextResponse.json({ ok: false, error: "Pengajuan belum lengkap persetujuan Sales Manager dan Klaim." }, { status: 409 });
+            return NextResponse.json({ ok: false, error: "Batch belum lengkap approval SM dan Claim." }, { status: 409 });
         }
         if (data.batch.omStatus !== "Approved") {
-            return NextResponse.json({ ok: false, error: "Pengajuan belum disetujui OM." }, { status: 409 });
+            return NextResponse.json({ ok: false, error: "Batch belum Approved by OM." }, { status: 409 });
         }
         if (!canProcessFinancePayment(data.batch)) {
-            return NextResponse.json({ ok: false, error: "Pengajuan tidak sedang menunggu pembayaran Keuangan." }, { status: 409 });
+            return NextResponse.json({ ok: false, error: "Batch tidak sedang menunggu pembayaran Keuangan." }, { status: 409 });
         }
 
         const formData = await request.formData();
         const paymentDate = String(formData.get("paymentDate") || "").trim();
-        const paidAmount = asNumber(formData.get("paidAmount"));
-        const paymentMethodInput = String(formData.get("paymentMethod") || "").trim();
         const senderBank = String(formData.get("senderBank") || "").trim();
         const note = String(formData.get("note") || formData.get("financeNote") || "").trim();
         const proof = formData.get("paymentProof");
+        const itemIds = parseItemIds(formData);
 
         if (!paymentDate) return NextResponse.json({ ok: false, error: "Tanggal bayar wajib diisi." }, { status: 400 });
-        if (!paidAmount || paidAmount <= 0) return NextResponse.json({ ok: false, error: "Jumlah dibayar wajib lebih dari 0." }, { status: 400 });
-        if (!paymentMethodInput) return NextResponse.json({ ok: false, error: "Metode pembayaran wajib diisi." }, { status: 400 });
-        const paymentMethod = normalizeOffPaymentMethod(paymentMethodInput);
-        // Revisi B: Bukti pembayaran TIDAK wajib untuk metode Tunai.
-        // Untuk Transfer/non-tunai, bukti tetap wajib (aturan existing dipertahankan).
-        // Bukti boleh tetap diupload walau Tunai.
+        if (itemIds.length === 0) return NextResponse.json({ ok: false, error: "Pilih item yang akan dibayar." }, { status: 400 });
+
+        const selectedItems = data.items.filter((item) => itemIds.includes(item.id));
+        if (selectedItems.length !== itemIds.length) {
+            return NextResponse.json({ ok: false, error: "Item pembayaran tidak valid untuk batch ini." }, { status: 400 });
+        }
+        const alreadyPaid = selectedItems.filter((item) => item.financePaymentStatus === "paid" || item.financePaymentId);
+        if (alreadyPaid.length > 0) {
+            return NextResponse.json({ ok: false, error: "Item yang sudah dibayar tidak boleh dipilih lagi." }, { status: 409 });
+        }
+        const methods = Array.from(new Set(selectedItems.map((item) => normalizeOffPaymentMethod(item.caraBayar))));
+        if (methods.length !== 1) {
+            return NextResponse.json({ ok: false, error: "Pilih item dengan cara bayar yang sama." }, { status: 400 });
+        }
+        const paymentMethod = methods[0];
+        const paidAmount = selectedItems.reduce((total, item) => total + Number(item.nominal || 0), 0);
+        if (paidAmount <= 0) return NextResponse.json({ ok: false, error: "Total item yang dipilih wajib lebih dari 0." }, { status: 400 });
+
         const isTunai = paymentMethod === "Tunai";
         const hasProof = proof instanceof File && proof.size > 0;
         if (!isTunai && !hasProof) {
@@ -76,14 +89,10 @@ export async function POST(request: Request, context: Context) {
             if (proofFile.size > 5 * 1024 * 1024) return NextResponse.json({ ok: false, error: "Ukuran file maksimal 5MB." }, { status: 400 });
         }
 
-        const itemSummary = computeOffPaymentSummary(data.items);
-        const totalNominal = itemSummary.total;
+        const totalNominal = computeOffPaymentSummary(data.items).total;
         const existingPayments = data.payments;
-        const totalPaidBefore = existingPayments.reduce((total, payment) => total + Number(payment.paidAmount || 0), 0);
-        const totalPaidAfter = totalPaidBefore + paidAmount;
-        if (totalPaidAfter > totalNominal) {
-            return NextResponse.json({ ok: false, error: "Jumlah pembayaran melebihi total pengajuan." }, { status: 400 });
-        }
+        const itemPaidBefore = data.items.reduce((total, item) => total + (item.financePaymentStatus === "paid" ? Number(item.financePaidAmount || item.nominal || 0) : 0), 0);
+        const totalPaidAfter = itemPaidBefore + paidAmount;
         const paymentNo = existingPayments.reduce((maxNo, payment) => Math.max(maxNo, Number(payment.paymentNo || 0)), 0) + 1;
         const remainingAmount = totalNominal - totalPaidAfter;
         const isFullyPaid = remainingAmount === 0;
@@ -109,8 +118,10 @@ export async function POST(request: Request, context: Context) {
             proofMime = proofFile.type;
             proofSize = proofFile.size;
         }
-        const [payment] = await db.insert(offPayment).values({
-            id: randomUUID(),
+        const paymentId = randomUUID();
+        const [payment] = await db.transaction(async (tx) => {
+            const [createdPayment] = await tx.insert(offPayment).values({
+            id: paymentId,
             batchId: id,
             paymentNo,
             paymentDate,
@@ -125,8 +136,17 @@ export async function POST(request: Request, context: Context) {
             createdBy: actor.id,
             createdAt: now,
             updatedAt: now,
-        }).returning();
-        await db.update(offBatch).set({
+            }).returning();
+            for (const item of selectedItems) {
+                await tx.update(offBatchItem).set({
+                    financePaymentStatus: "paid",
+                    financePaidAt: now,
+                    financePaymentId: paymentId,
+                    financePaidAmount: Number(item.nominal || 0),
+                    updatedAt: now,
+                }).where(eq(offBatchItem.id, item.id));
+            }
+            await tx.update(offBatch).set({
             status: isFullyPaid ? "Paid" : "Partial Paid",
             financeStatus: isFullyPaid ? "Paid" : "Partial Paid",
             finalStatus: isFullyPaid ? "Waiting Claim Final Verification" : "Not Started",
@@ -134,7 +154,9 @@ export async function POST(request: Request, context: Context) {
             paymentDate,
             paidAmount: totalPaidAfter,
             updatedAt: now,
-        }).where(eq(offBatch.id, id));
+            }).where(eq(offBatch.id, id));
+            return [createdPayment];
+        });
         await writeOffAudit({
             batchId: id,
             actor,
@@ -142,7 +164,7 @@ export async function POST(request: Request, context: Context) {
             fromStatus: data.batch.financeStatus,
             toStatus: isFullyPaid ? "Paid" : "Partial Paid",
             note,
-            metadata: { paymentNo, amount: paidAmount, method: paymentMethod, proofName: proofName || null, hasProof, totalPaidAfter, remainingAmount },
+            metadata: { paymentNo, itemIds, selectedItemCount: itemIds.length, selectedTotal: paidAmount, paymentMethod, proofName: proofName || null, hasProof, totalPaidAfter, remainingAmount },
         });
         const updated = await getBatchWithItems(id);
         return NextResponse.json({

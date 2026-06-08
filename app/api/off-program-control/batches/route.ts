@@ -8,9 +8,9 @@
 
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { offBatch, offBatchItem, offPayment } from "@/db/schema";
+import { offBatch, offBatchItem, offPayment, claimWorkflow, claimSubmission } from "@/db/schema";
 import { buildNoPengajuan, buildSearchHaystack, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, findDuplicateNoSuratWithinPayload, findOffNoSuratConflicts, getPrincipleByCode, getPrincipleByName, matchesSearch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, searchOffBatchIdsWithElasticsearch, writeOffAudit, type OffSearchDocument } from "@/lib/off-program-control";
 
 // PPh masih HOLD. NOTE: PPh disiapkan nullable di level item/toko, tetapi
@@ -315,18 +315,93 @@ export async function GET(request: Request) {
             }
         }
 
+        // Enrich with Claim Workflow aggregate per batch (source-of-truth No Claim).
+        const allBatchIds = filteredRows.map((r) => r.id);
+        const claimAggregateMap = new Map<string, {
+            claimWorkflowId: string | null;
+            claimWorkflowStatus: string | null;
+            activeSubmissionCount: number;
+            noClaimCompletedCount: number;
+            uniqueNoClaimList: string[];
+            hasWorkflowDocuments: boolean;
+            needsNoClaim: boolean;
+        }>();
+        if (allBatchIds.length > 0) {
+            // Fetch claim_workflow per off_batch_id
+            const workflows = await db
+                .select({
+                    id: claimWorkflow.id,
+                    offBatchId: claimWorkflow.offBatchId,
+                    status: claimWorkflow.status,
+                    claimLetterPdfPath: claimWorkflow.claimLetterPdfPath,
+                    summaryPdfPath: claimWorkflow.summaryPdfPath,
+                    receiptPdfPath: claimWorkflow.receiptPdfPath,
+                })
+                .from(claimWorkflow);
+            const wfByBatch = new Map(workflows.map((w) => [w.offBatchId, w]));
+
+            // Fetch submission aggregates per workflow
+            for (const row of filteredRows) {
+                const wf = wfByBatch.get(row.id);
+                if (!wf) {
+                    claimAggregateMap.set(row.id, {
+                        claimWorkflowId: null,
+                        claimWorkflowStatus: null,
+                        activeSubmissionCount: 0,
+                        noClaimCompletedCount: 0,
+                        uniqueNoClaimList: [],
+                        hasWorkflowDocuments: false,
+                        needsNoClaim: false,
+                    });
+                    continue;
+                }
+                const subs = await db
+                    .select({
+                        id: claimSubmission.id,
+                        noClaim: claimSubmission.noClaim,
+                        totalClaim: claimSubmission.totalClaim,
+                        itemCount: sql<number>`(SELECT COUNT(*) FROM claim_workflow_item WHERE claim_submission_id = ${claimSubmission.id})`,
+                    })
+                    .from(claimSubmission)
+                    .where(eq(claimSubmission.claimWorkflowId, wf.id));
+                const activeSubs = subs.filter((s) => Number(s.totalClaim || 0) > 0 || Number(s.itemCount || 0) > 0);
+                const noClaimFilled = activeSubs.filter((s) => String(s.noClaim || "").trim().length > 0);
+                const uniqueNoClaims = [...new Set(noClaimFilled.map((s) => String(s.noClaim || "").trim()).filter(Boolean))];
+                const hasDocs = Boolean(wf.claimLetterPdfPath && wf.summaryPdfPath && wf.receiptPdfPath);
+                claimAggregateMap.set(row.id, {
+                    claimWorkflowId: wf.id,
+                    claimWorkflowStatus: wf.status,
+                    activeSubmissionCount: activeSubs.length,
+                    noClaimCompletedCount: noClaimFilled.length,
+                    uniqueNoClaimList: uniqueNoClaims,
+                    hasWorkflowDocuments: hasDocs,
+                    needsNoClaim: activeSubs.length > 0 && noClaimFilled.length < activeSubs.length,
+                });
+            }
+        }
+
         return NextResponse.json({
             ok: true,
             searchBackend,
             batches: filteredRows.map((row) => {
                 const batchItems = itemsByBatch.get(row.id) || [];
-                // Fallback noClaim: batch-level → item-level (ambil pertama yang terisi)
-                const resolvedNoClaim = String(row.noClaim || "").trim()
-                    || batchItems.map((item) => String(item.noClaim || "").trim()).find((v) => v.length > 0)
-                    || "";
+                const claimAgg = claimAggregateMap.get(row.id);
+                // Source-of-truth No Claim: claim_submission first, fallback to legacy
+                const resolvedNoClaim = (claimAgg?.uniqueNoClaimList?.length ?? 0) > 0
+                    ? claimAgg!.uniqueNoClaimList.join(", ")
+                    : String(row.noClaim || "").trim()
+                        || batchItems.map((item) => String(item.noClaim || "").trim()).find((v) => v.length > 0)
+                        || "";
                 return {
                     ...publicBatch(row),
                     noClaim: resolvedNoClaim || null,
+                    // Claim Workflow aggregate
+                    claimWorkflowId: claimAgg?.claimWorkflowId ?? null,
+                    claimWorkflowStatus: claimAgg?.claimWorkflowStatus ?? null,
+                    activeSubmissionCount: claimAgg?.activeSubmissionCount ?? 0,
+                    noClaimCompletedCount: claimAgg?.noClaimCompletedCount ?? 0,
+                    hasWorkflowDocuments: claimAgg?.hasWorkflowDocuments ?? false,
+                    needsNoClaim: claimAgg?.needsNoClaim ?? false,
                     payments: (paymentsByBatch.get(row.id) || []).map(publicPayment),
                     summary: summaries.get(row.id),
                     paymentSummary: paymentSummaries.get(row.id),

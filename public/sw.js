@@ -4,8 +4,8 @@
  * Mendukung offline fallback page.
  */
 
-const CACHE_NAME = "smart-erp-v1";
-const STATIC_CACHE = "smart-erp-static-v1";
+const CACHE_NAME = "smart-erp-v3";
+const STATIC_CACHE = "smart-erp-static-v3";
 
 const STATIC_ASSETS = [
   "/offline.html",
@@ -78,16 +78,21 @@ self.addEventListener("fetch", (event) => {
     request.url.includes("/icons/") ||
     request.url.includes("/_next/static/")
   ) {
+    // Stale-while-revalidate: sajikan dari cache bila ada, tapi selalu
+    // fetch versi terbaru di background dan perbarui cache. Mencegah
+    // chunk lama (tema lama) menempel setelah deploy/perubahan source.
     event.respondWith(
       caches.match(request).then((cached) => {
-        if (cached) return cached;
-        return fetch(request).then((response) => {
-          const clone = response.clone();
-          caches.open(STATIC_CACHE).then((cache) => {
-            cache.put(request, clone);
-          });
-          return response;
-        });
+        const networkFetch = fetch(request)
+          .then((response) => {
+            const clone = response.clone();
+            caches.open(STATIC_CACHE).then((cache) => {
+              cache.put(request, clone);
+            });
+            return response;
+          })
+          .catch(() => cached);
+        return cached || networkFetch;
       })
     );
     return;

@@ -11,7 +11,29 @@ import { useEffect } from "react";
 
 export default function ServiceWorkerRegistration() {
   useEffect(() => {
-    if ("serviceWorker" in navigator) {
+    if (!("serviceWorker" in navigator)) return;
+
+    // Dev: jangan daftarkan service worker. SW cache-first untuk
+    // /_next/static menyebabkan chunk lama (tema lama) tetap disajikan
+    // setelah logout-login walau source sudah benar. Unregister SW lama
+    // dan bersihkan cache agar localhost selalu memakai chunk terbaru.
+    if (process.env.NODE_ENV !== "production") {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        registrations.forEach((registration) => {
+          void registration.unregister();
+        });
+      });
+      if (typeof caches !== "undefined") {
+        caches.keys().then((keys) => {
+          keys.forEach((key) => {
+            void caches.delete(key);
+          });
+        });
+      }
+      return;
+    }
+
+    {
       navigator.serviceWorker
         .register("/sw.js", { scope: "/" })
         .then((registration) => {

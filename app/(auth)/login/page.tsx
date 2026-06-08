@@ -59,6 +59,7 @@ export default function LoginPage() {
         } else {
             toast.success("Login berhasil.");
             router.push("/");
+            router.refresh();
         }
     };
 
