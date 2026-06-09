@@ -16,7 +16,7 @@ import {
   type ElementType,
   type ReactNode,
 } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   ArrowRight,
@@ -29,6 +29,7 @@ import {
   FileCheck2,
   FileText,
   ListChecks,
+  Lock,
   Mail,
   Percent,
   Plus,
@@ -36,6 +37,7 @@ import {
   ScrollText,
   Send,
   ShieldCheck,
+  Unlock,
   Wallet,
   XCircle,
 } from "lucide-react";
@@ -115,6 +117,7 @@ type SupervisorBulkRow = {
   barang: string;
   nominal: string;
   caraBayar: string;
+  noRekening: string;
   type: string;
   originalType: string;
   typeIsLegacy: boolean;
@@ -215,6 +218,7 @@ type OffApiItem = {
   barang: string | null;
   nominal: number;
   caraBayar: string | null;
+  noRekening?: string | null;
   financePaymentStatus?: string | null;
   financePaidAt?: string | number | null;
   financePaymentId?: string | null;
@@ -294,6 +298,7 @@ const initialBulkRows: SupervisorBulkRow[] = [
     barang: "Dettol",
     nominal: "Rp 4.400.000",
     caraBayar: "Transfer",
+    noRekening: "1234567890 (BCA a.n. Toko Makmur)",
     type: "Display",
     originalType: "Display",
     typeIsLegacy: false,
@@ -318,6 +323,7 @@ const initialBulkRows: SupervisorBulkRow[] = [
     barang: "Harpic",
     nominal: "Rp 3.750.000",
     caraBayar: "Tunai",
+    noRekening: "",
     type: "Visibility",
     originalType: "Visibility",
     typeIsLegacy: false,
@@ -342,6 +348,7 @@ const initialBulkRows: SupervisorBulkRow[] = [
     barang: "Vanish",
     nominal: "Rp 4.350.000",
     caraBayar: "Tunai",
+    noRekening: "",
     type: "Sample",
     originalType: "Sampling",
     typeIsLegacy: true,
@@ -421,6 +428,7 @@ function createEmptyBulkRow(index: number): SupervisorBulkRow {
     barang: "",
     nominal: "",
     caraBayar: "Transfer",
+    noRekening: "",
     type: "",
     originalType: "",
     typeIsLegacy: false,
@@ -505,6 +513,9 @@ const statusLabelMap: Record<string, string> = {
   Aman: "Aman",
   Kurang: "Kurang",
   "Perlu Revisi": "Perlu Revisi",
+  Lengkap: "Lengkap",
+  "Kurang dokumen": "Kurang dokumen",
+  "Dokumen revisi": "Dokumen revisi",
 };
 
 function displayStatusLabel(status: string | null | undefined) {
@@ -544,6 +555,7 @@ function apiItemToBulkRow(item: OffApiItem, index: number): SupervisorBulkRow {
       ? `Rp ${Number(item.nominal).toLocaleString("id-ID")}`
       : "",
     caraBayar: item.caraBayar || "Transfer",
+    noRekening: item.noRekening || "",
     // Bila forcedToFallback, biarkan kosong agar Supervisor wajib memilih ulang.
     type: resolved.forcedToFallback ? "" : resolved.normalizedType,
     originalType: item.originalType || String(item.type || ""),
@@ -615,7 +627,8 @@ function statusClass(status: string) {
   if (
     status.includes("Completed") ||
     status.includes("Approved") ||
-    status.includes("Aman")
+    status.includes("Aman") ||
+    status.includes("Lengkap")
   )
     return "bg-emerald-500/10 text-emerald-300 border-emerald-500/30";
   if (status.includes("OM") || status.includes("Ready"))
@@ -2303,6 +2316,14 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
     return index === -1 ? 0 : index + 1;
   };
 
+  // Baris pertama (1-based) yang Cara Bayar = Transfer tapi No Rekening kosong.
+  const findMissingRekeningRowNumber = () => {
+    const index = rows.findIndex(
+      (row) => row.caraBayar === "Transfer" && !row.noRekening.trim(),
+    );
+    return index === -1 ? 0 : index + 1;
+  };
+
   const buildSupervisorItems = () =>
     rows.map((row) => ({
       noSurat: row.noSurat,
@@ -2314,6 +2335,7 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
       barang: row.barang,
       nominal: row.nominal,
       caraBayar: row.caraBayar,
+      noRekening: row.noRekening,
       type: row.type,
       // Audit legacy: kirim nilai asli agar backend menyimpan originalType.
       originalType: row.originalType || row.type,
@@ -2340,6 +2362,13 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
     if (invalidTypeRow) {
       setSubmitStatus(
         `Tipe program pada baris ${invalidTypeRow} wajib dipilih dari dropdown (Display/Visibility/Promo On Store/Event/Sample) sebelum disimpan.`,
+      );
+      return;
+    }
+    const missingRekeningRowDraft = findMissingRekeningRowNumber();
+    if (missingRekeningRowDraft) {
+      setSubmitStatus(
+        `No Rekening pada baris ${missingRekeningRowDraft} wajib diisi karena Cara Bayar Transfer.`,
       );
       return;
     }
@@ -2421,6 +2450,13 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
     if (invalidTypeRow) {
       setSubmitStatus(
         `Tipe program pada baris ${invalidTypeRow} wajib dipilih dari dropdown (Display/Visibility/Promo On Store/Event/Sample) sebelum dikirim ke Sales Manager.`,
+      );
+      return;
+    }
+    const missingRekeningRow = findMissingRekeningRowNumber();
+    if (missingRekeningRow) {
+      setSubmitStatus(
+        `No Rekening pada baris ${missingRekeningRow} wajib diisi karena Cara Bayar Transfer.`,
       );
       return;
     }
@@ -2966,6 +3002,29 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                         </select>
                       </td>
                       <td className="px-3 py-3">
+                        <div className="min-w-[170px] space-y-1.5">
+                          <input
+                            readOnly={editingLocked}
+                            value={row.noRekening}
+                            onChange={(event) =>
+                              updateRow(row.id, "noRekening", event.target.value)
+                            }
+                            placeholder={
+                              row.caraBayar === "Transfer"
+                                ? "No rekening (wajib)"
+                                : "Opsional"
+                            }
+                            className="w-full rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-2 text-sm text-[#1f1408] shadow-sm outline-none placeholder:text-[#8a6a3d] focus:border-[#c6922e] focus:ring-2 focus:ring-[#f2d49b]/40"
+                          />
+                          {row.caraBayar === "Transfer" &&
+                          !row.noRekening.trim() ? (
+                            <span className="block text-[10px] font-semibold text-amber-300">
+                              No Rekening wajib untuk Transfer.
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
                         <div className="min-w-[180px] space-y-1.5">
                           <select
                             disabled={editingLocked}
@@ -2992,14 +3051,6 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
                               </option>
                             ))}
                           </select>
-                          {row.typeIsLegacy && row.type ? (
-                            <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-300">
-                              Data Lama
-                              {row.originalType
-                                ? ` (${row.originalType})`
-                                : ""}
-                            </span>
-                          ) : null}
                           {!row.type && row.originalType ? (
                             <span className="block text-[10px] font-semibold text-amber-300">
                               Tipe lama &quot;{row.originalType}&quot; perlu
@@ -3164,57 +3215,57 @@ function SupervisorDashboard({ offRole }: OffDashboardProps) {
               </a>
             )}
             {submitResult && (
-              <div className="mt-4 rounded-xl border border-white/10 bg-[#0f1115]/80 p-4 text-xs text-slate-400">
-                <p className="mb-2 font-bold uppercase tracking-wider text-slate-300">
+              <div className="mt-4 rounded-xl border border-[#e7c98f] bg-[#fffaf0] p-4 text-xs text-[#7a5a2a]">
+                <p className="mb-2 font-bold uppercase tracking-wider text-[#3a240c]">
                   Hasil Pengiriman
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
                   <p>
                     Batch ID:{" "}
-                    <span className="font-mono text-slate-200">
+                    <span className="font-mono text-[#1f1408]">
                       {submitResult.batchId}
                     </span>
                   </p>
                   <p>
                     No Pengajuan:{" "}
-                    <span className="font-mono text-slate-200">
+                    <span className="font-mono text-[#1f1408]">
                       {submitResult.noPengajuan}
                     </span>
                   </p>
                   <p>
                     Jumlah baris terkirim:{" "}
-                    <span className="font-mono text-slate-200">
+                    <span className="font-mono text-[#1f1408]">
                       {submitResult.rowCount}
                     </span>
                   </p>
                   <p>
                     Total Nominal:{" "}
-                    <span className="font-mono text-slate-200">
+                    <span className="font-mono text-[#1f1408]">
                       Rp {submitResult.total.toLocaleString("id-ID")}
                     </span>
                   </p>
                   <p>
                     Transfer:{" "}
-                    <span className="font-mono text-slate-200">
+                    <span className="font-mono text-[#1f1408]">
                       Rp {submitResult.transfer.toLocaleString("id-ID")}
                     </span>
                   </p>
                   <p>
                     Tunai:{" "}
-                    <span className="font-mono text-slate-200">
+                    <span className="font-mono text-[#1f1408]">
                       Rp {submitResult.tunai.toLocaleString("id-ID")}
                     </span>
                   </p>
                   <p>
                     PDF URL:{" "}
-                    <span className="font-mono text-slate-200 break-all">
+                    <span className="font-mono text-[#1f1408] break-all">
                       {submitResult.pdfUrl}
                     </span>
                   </p>
                 </div>
               </div>
             )}
-            <p className="mt-4 text-sm text-slate-400">
+            <p className="mt-4 text-sm text-[#7a5a2a]">
               Kelengkapan yang diisi Supervisor adalah informasi awal. Validasi
               aman/tidaknya tetap ditentukan oleh Claim.
             </p>
@@ -3888,9 +3939,17 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
   const router = useRouter();
   const canReviewClaim = canPerformOffAction(offRole, "claim_review");
   const canFinalClaim = canPerformOffAction(offRole, "claim_final");
+  // Hidrasi sub-view dari URL (?claimView=after-sm | after-finance). Default
+  // "hub" bila tidak ada/invalid. Hanya dibaca sekali saat mount; user tetap
+  // bisa pindah view manual setelahnya.
+  const claimSearchParams = useSearchParams();
+  const initialClaimView: "hub" | "after-sm" | "after-finance" = (() => {
+    const v = claimSearchParams.get("claimView");
+    return v === "after-sm" || v === "after-finance" ? v : "hub";
+  })();
   const [claimView, setClaimView] = useState<
     "hub" | "after-sm" | "after-finance"
-  >("hub");
+  >(initialClaimView);
   const [allClaimBatches, setAllClaimBatches] = useState<OffApiBatch[]>([]);
   const [claimBatches, setClaimBatches] = useState<OffApiBatch[]>([]);
   const [claimSearch, setClaimSearch] = useState("");
@@ -3913,7 +3972,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
   const [claimMessage, setClaimMessage] = useState("");
   const [claimSubmittedDate, setClaimSubmittedDate] = useState("");
   const [claimDeadline, setClaimDeadline] = useState("");
-  const [completenessStatus, setCompletenessStatus] = useState("Aman");
+  const [completenessStatus, setCompletenessStatus] = useState("Lengkap");
   const [claimNote, setClaimNote] = useState("");
   const [finalClaimNote, setFinalClaimNote] = useState("");
   const [finalClaimRefs, setFinalClaimRefs] = useState<Record<string, string>>(
@@ -4207,6 +4266,10 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
 
   const approveByClaim = async () => {
     if (!selectedBatch) return;
+    if (!claimNote.trim()) {
+      setClaimMessage("Catatan Claim wajib diisi untuk menyetujui pengajuan.");
+      return;
+    }
     setIsActionLoading(true);
     setClaimMessage("");
     try {
@@ -4775,14 +4838,14 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                       }
                       className="mt-1 w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-teal-500/50"
                     >
-                      <option className="bg-[#1a1c23]" value="Aman">
-                        Aman
+                      <option className="bg-[#1a1c23]" value="Lengkap">
+                        Lengkap
                       </option>
-                      <option className="bg-[#1a1c23]" value="Kurang">
-                        Kurang
+                      <option className="bg-[#1a1c23]" value="Kurang dokumen">
+                        Kurang dokumen
                       </option>
-                      <option className="bg-[#1a1c23]" value="Perlu Revisi">
-                        Perlu Revisi
+                      <option className="bg-[#1a1c23]" value="Dokumen revisi">
+                        Dokumen revisi
                       </option>
                     </select>
                   </label>
@@ -5151,8 +5214,9 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                           "Periode Akhir",
                           "Toko",
                           "Barang",
-                          "Nominal",
-                          "Cara Bayar",
+                      "Nominal",
+                      "Cara Bayar",
+                      "No Rekening",
                       "Tipe",
                       "Deadline",
                         ].map((header) => (
@@ -5507,6 +5571,9 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [omNote, setOmNote] = useState("");
   const [omMessage, setOmMessage] = useState("");
+  // Setelah OM approve sukses: sembunyikan panel keputusan dan tampilkan
+  // notifikasi berhasil submit. Direset saat memilih batch lain.
+  const [omApproveSuccess, setOmApproveSuccess] = useState(false);
   const summary = selectedBatch?.summary;
   const totalNominal = Number(
     summary?.totalNominal ||
@@ -5601,6 +5668,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
     setOmMenu("approval");
     setSelectedItems([]);
     setOmMessage("");
+    setOmApproveSuccess(false);
     try {
       await loadOmDetail(batch);
     } catch (error) {
@@ -5635,6 +5703,9 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
         );
       setOmMessage(String(data.message || "Keputusan OM berhasil disimpan."));
       setOmNote("");
+      if (action === "approve") {
+        setOmApproveSuccess(true);
+      }
       await loadOmBatches();
     } catch (error) {
       setOmMessage(
@@ -5820,7 +5891,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
                   label="Deadline Claim"
                   value={formatDateDisplay(selectedBatch?.claimDeadline)}
                 />
-                <Field label="Status Kelengkapan Claim" value="Aman" />
+                <Field label="Status Kelengkapan Claim" value="Lengkap" />
               </div>
               <div className="mt-3">
                 <TextArea
@@ -5941,6 +6012,20 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
             )}
           </Panel>
 
+          {omApproveSuccess ? (
+            <Panel title="Keputusan Operational Manager" icon={ShieldCheck}>
+              <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-6 py-10 text-center">
+                <CheckCircle2 size={48} className="text-emerald-400" />
+                <p className="text-base font-bold text-emerald-200">
+                  Berhasil Submit
+                </p>
+                <p className="max-w-md text-sm text-emerald-100/80">
+                  {omMessage ||
+                    "Pengajuan telah disetujui Operational Manager dan diteruskan ke Keuangan."}
+                </p>
+              </div>
+            </Panel>
+          ) : (
           <Panel title="Keputusan Operational Manager" icon={ShieldCheck}>
             <label className="block">
               <span className="text-xs text-slate-500 font-semibold">
@@ -5990,6 +6075,7 @@ function OperationalManagerDashboard({ offRole }: OffDashboardProps) {
               </div>
             )}
           </Panel>
+          )}
         </div>
       )}
     </div>
@@ -6502,6 +6588,7 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                       "Barang",
                       "Nominal",
                       "Cara Bayar",
+                      "No Rekening",
                       "Status Bayar",
                       "Tipe",
                       "Deadline",
@@ -6559,6 +6646,9 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
                         </td>
                         <td className="px-3 py-3 text-slate-300">
                           {item.caraBayar || "-"}
+                        </td>
+                        <td className="px-3 py-3 font-mono text-slate-200">
+                          {item.noRekening || "-"}
                         </td>
                         <td className="px-3 py-3">
                           <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-bold ${isPaid ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-amber-500/30 bg-amber-500/10 text-amber-300"}`}>
@@ -7807,7 +7897,304 @@ function OverviewReadOnlyDetail({
   );
 }
 
-function OverviewTab() {
+function PeriodClosurePanel({ offRole }: OffDashboardProps) {
+  const canClose = canPerformOffAction(offRole, "period_close");
+  const canUnlock = canPerformOffAction(offRole, "period_unlock");
+  
+  // Panel tidak dirender untuk role tanpa akses
+  if (!canClose && !canUnlock) return null;
+
+  const [open, setOpen] = useState(false);
+  const [principleCode, setPrincipleCode] = useState("");
+  const [bulan, setBulan] = useState("");
+  const [tahun, setTahun] = useState(new Date().getFullYear().toString());
+  const [closures, setClosures] = useState<Array<{
+    id: string;
+    principleCode: string;
+    principleName: string;
+    bulan: string;
+    tahun: string;
+    status: string;
+    totalSubmitted: number;
+    totalClaimed: number;
+    submittedCount: number;
+    claimedCount: number;
+    closedAt: number | null;
+    unlockedAt: number | null;
+  }>>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isActionLoading, setIsActionLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const loadClosures = async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/off-program-control/periods", {
+        credentials: "include",
+      });
+      const data = await parseJsonResponse(response);
+      if (!response.ok || !data.ok) {
+        throw new Error(String(data.error || "Gagal memuat daftar periode."));
+      }
+      setClosures(Array.isArray(data.closures) ? data.closures : []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal memuat daftar periode.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (open) loadClosures();
+  }, [open]);
+
+  const handleSubmit = async (action: "close" | "unlock") => {
+    if (!principleCode || !bulan || !tahun) {
+      setMessage("Principal, bulan, dan tahun wajib diisi.");
+      return;
+    }
+    setIsActionLoading(true);
+    setMessage("");
+    setError("");
+    try {
+      const response = await fetch("/api/off-program-control/periods", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, principleCode, bulan, tahun }),
+      });
+      const data = await parseJsonResponse(response);
+      if (!response.ok || !data.ok) {
+        // Tampilkan summary jika ada (untuk close yang ditolak karena unmatched)
+        if (data.summary) {
+          const summary = data.summary as {
+            totalSubmitted?: number;
+            totalClaimed?: number;
+            submittedCount?: number;
+            claimedCount?: number;
+          };
+          const summaryMsg = `Total pengajuan: Rp ${(summary.totalSubmitted || 0).toLocaleString("id-ID")} (${summary.submittedCount || 0} batch), Total klaim: Rp ${(summary.totalClaimed || 0).toLocaleString("id-ID")} (${summary.claimedCount || 0} batch)`;
+          throw new Error(`${data.error}\n${summaryMsg}`);
+        }
+        throw new Error(String(data.error || "Aksi gagal."));
+      }
+      setMessage(String(data.message || "Berhasil."));
+      await loadClosures();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Aksi gagal.");
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const months = [
+    { value: "", label: "Pilih Bulan" },
+    ...Array.from({ length: 12 }, (_, i) => ({
+      value: String(i + 1).padStart(2, "0"),
+      label: indonesianMonthLabel(i + 1),
+    })),
+  ];
+
+  const formatMoney = (value: number) => `Rp ${value.toLocaleString("id-ID")}`;
+  const formatDate = (timestamp: number | null) => {
+    if (!timestamp) return "-";
+    return new Date(timestamp).toLocaleDateString("id-ID", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  };
+
+  return (
+    <div className="rounded-2xl border border-[#e7c98f] bg-[#fffaf0] p-5">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex w-full items-center justify-between text-left"
+      >
+        <div className="flex items-center gap-2">
+          <Lock size={20} className="text-[#b9821f]" />
+          <h3 className="text-lg font-bold text-[#1f1408]">Tutup Periode</h3>
+        </div>
+        <ChevronDown
+          size={20}
+          className={`text-[#7a5a2a] transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {open && (
+        <div className="mt-4 space-y-4">
+          {/* Form */}
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div>
+              <label className="block text-xs font-semibold text-[#7a5a2a]">
+                Principal
+              </label>
+              <select
+                value={principleCode}
+                onChange={(e) => setPrincipleCode(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-[#e7c98f] bg-white px-3 py-2 text-sm text-[#1f1408] focus:border-[#c6922e] focus:outline-none focus:ring-2 focus:ring-[#f2d49b]/40"
+              >
+                <option value="">Pilih Principal</option>
+                {PRINCIPLE_OPTIONS.map((p) => (
+                  <option key={p.code} value={p.code}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[#7a5a2a]">
+                Bulan
+              </label>
+              <select
+                value={bulan}
+                onChange={(e) => setBulan(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-[#e7c98f] bg-white px-3 py-2 text-sm text-[#1f1408] focus:border-[#c6922e] focus:outline-none focus:ring-2 focus:ring-[#f2d49b]/40"
+              >
+                {months.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-[#7a5a2a]">
+                Tahun
+              </label>
+              <input
+                type="text"
+                value={tahun}
+                onChange={(e) => setTahun(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-[#e7c98f] bg-white px-3 py-2 text-sm text-[#1f1408] focus:border-[#c6922e] focus:outline-none focus:ring-2 focus:ring-[#f2d49b]/40"
+              />
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex flex-wrap gap-2">
+            {canClose && (
+              <button
+                type="button"
+                onClick={() => handleSubmit("close")}
+                disabled={isActionLoading}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#c6922e] px-4 py-2 text-sm font-bold text-white hover:bg-[#a87518] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Lock size={16} />
+                Tutup Periode
+              </button>
+            )}
+            {canUnlock && (
+              <button
+                type="button"
+                onClick={() => handleSubmit("unlock")}
+                disabled={isActionLoading}
+                className="inline-flex items-center gap-2 rounded-lg border border-[#e7c98f] bg-white px-4 py-2 text-sm font-bold text-[#7a5a2a] hover:bg-[#f7ead1] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Unlock size={16} />
+                Buka Kunci
+              </button>
+            )}
+          </div>
+
+          {/* Message/Error */}
+          {message && (
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800">
+              {message}
+            </div>
+          )}
+          {error && (
+            <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-800 whitespace-pre-line">
+              {error}
+            </div>
+          )}
+
+          {/* Daftar Periode */}
+          <div>
+            <h4 className="mb-2 text-sm font-bold text-[#1f1408]">
+              Daftar Status Periode
+            </h4>
+            {isLoading ? (
+              <div className="rounded-lg border border-[#e7c98f] bg-white px-4 py-3 text-sm text-[#7a5a2a]">
+                Memuat...
+              </div>
+            ) : closures.length === 0 ? (
+              <div className="rounded-lg border border-[#e7c98f] bg-white px-4 py-3 text-sm text-[#7a5a2a]">
+                Belum ada periode yang ditutup.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-[#e7c98f] bg-white">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-[#e7c98f] bg-[#f1dfbd] text-xs uppercase tracking-wider text-[#3a240c]">
+                    <tr>
+                      <th className="px-3 py-2 font-semibold">Principal</th>
+                      <th className="px-3 py-2 font-semibold">Periode</th>
+                      <th className="px-3 py-2 font-semibold">Status</th>
+                      <th className="px-3 py-2 text-right font-semibold">Total Pengajuan</th>
+                      <th className="px-3 py-2 text-right font-semibold">Total Klaim</th>
+                      <th className="px-3 py-2 font-semibold">Tanggal</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#e7c98f]/60">
+                    {closures.map((c) => (
+                      <tr key={c.id} className="text-[#3a240c] hover:bg-[#fff7e6]">
+                        <td className="px-3 py-2">
+                          <div className="font-semibold">{c.principleName}</div>
+                          <div className="text-xs text-[#7a5a2a]">{c.principleCode}</div>
+                        </td>
+                        <td className="px-3 py-2">
+                          {indonesianMonthLabel(c.bulan)} {c.tahun}
+                        </td>
+                        <td className="px-3 py-2">
+                          <span
+                            className={`inline-flex rounded-md border px-2 py-1 text-xs font-bold ${
+                              c.status === "Terbuka"
+                                ? "border-emerald-700/30 bg-emerald-700/10 text-emerald-800"
+                                : c.status === "Ditutup"
+                                ? "border-rose-700/30 bg-rose-700/10 text-rose-800"
+                                : "border-slate-500/30 bg-slate-500/10 text-slate-700"
+                            }`}
+                          >
+                            {c.status}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          <div>{formatMoney(c.totalSubmitted)}</div>
+                          <div className="text-xs text-[#7a5a2a]">{c.submittedCount} batch</div>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          <div>{formatMoney(c.totalClaimed)}</div>
+                          <div className="text-xs text-[#7a5a2a]">{c.claimedCount} batch</div>
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          {c.status === "Ditutup" && c.closedAt ? (
+                            <div>
+                              <div>Tutup: {formatDate(c.closedAt)}</div>
+                              {c.unlockedAt && <div>Buka: {formatDate(c.unlockedAt)}</div>}
+                            </div>
+                          ) : c.status === "Terbuka" && c.unlockedAt ? (
+                            <div>Buka: {formatDate(c.unlockedAt)}</div>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OverviewTab({ offRole }: OffDashboardProps) {
   const [overviewBatches, setOverviewBatches] = useState<OffApiBatch[]>([]);
   const [overviewSearch, setOverviewSearch] = useState("");
   const [overviewStatusFilter, setOverviewStatusFilter] = useState("");
@@ -7971,6 +8358,7 @@ function OverviewTab() {
       <MetricsGrid metrics={metrics} />
       <WorkflowStepper />
       <LiveQueueSummaryPanel batches={overviewBatches} />
+      <PeriodClosurePanel offRole={offRole} />
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_280px]">
         <MonitoringSearch
           value={overviewSearch}
@@ -8007,7 +8395,26 @@ function OverviewTab() {
 }
 
 export default function OffProgramControlPage() {
-  const [activeTab, setActiveTab] = useState<TabKey>("overview");
+  // Hidrasi tab dari URL (?tab=...). Tombol "Kembali ke Validasi Keuangan"
+  // di Claim Workflow menggunakan `?tab=claim` agar landing langsung di tab
+  // Claim. Default tetap "overview" bila tidak ada/invalid.
+  const searchParams = useSearchParams();
+  const initialTab = (() => {
+    const t = searchParams.get("tab");
+    const allowed: TabKey[] = [
+      "overview",
+      "supervisor",
+      "sales",
+      "claim",
+      "om",
+      "finance",
+      "audit",
+    ];
+    return (allowed as readonly string[]).includes(t || "")
+      ? (t as TabKey)
+      : "overview";
+  })();
+  const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [paidIncompleteCount, setPaidIncompleteCount] = useState(0);
   const { data: session } = authClient.useSession();
   const sessionUser = session?.user as
@@ -8174,7 +8581,7 @@ export default function OffProgramControlPage() {
             </div>
           </div>
 
-          {effectiveActiveTab === "overview" && <OverviewTab />}
+          {effectiveActiveTab === "overview" && <OverviewTab offRole={offRole} />}
           {effectiveActiveTab === "supervisor" && (
             <SupervisorDashboard offRole={offRole} />
           )}

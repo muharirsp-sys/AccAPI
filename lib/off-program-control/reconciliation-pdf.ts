@@ -13,6 +13,7 @@ import { offBatch, offBatchItem } from "@/db/schema";
 import { fitText, indonesianMonthName, money } from "./helpers";
 
 export interface ReconciliationRow {
+    // Daftar No. Pengajuan yang tergabung dalam satu No. Claim (mis. "PGJ-001, PGJ-002").
     noPengajuan: string;
     toko: string;
     nilaiPengajuan: number;
@@ -49,7 +50,17 @@ export async function fetchReconciliationData(principleCode: string, bulan: stri
 
     if (batches.length === 0) return null;
 
-    const rows: ReconciliationRow[] = [];
+    // Akumulator grouping per No. Claim. Key:
+    //  - No. Claim terisi  -> key = noClaim (batch dengan claim sama digabung)
+    //  - No. Claim kosong   -> key unik per batch ("__empty__<id>") agar tetap terpisah
+    interface ReconciliationGroup {
+        noClaim: string;
+        noPengajuanList: string[];
+        tokoSet: Set<string>;
+        nilaiPengajuan: number;
+        nilaiClaim: number;
+    }
+    const groups = new Map<string, ReconciliationGroup>();
     let totalPengajuan = 0;
     let totalClaim = 0;
 
@@ -62,33 +73,54 @@ export async function fetchReconciliationData(principleCode: string, bulan: stri
 
         const nilaiPengajuan = items.reduce((sum, item) => sum + Number(item.nominal || 0), 0);
         const nilaiClaim = Number(batch.verifiedAmount || batch.paidAmount || 0);
-        const selisih = nilaiPengajuan - nilaiClaim;
-
-        // Kumpulkan nama toko unik dari items
-        const tokoSet = new Set(items.map((item) => item.toko || "-").filter(Boolean));
-        const tokoLabel = tokoSet.size <= 2
-            ? Array.from(tokoSet).join(", ")
-            : `${Array.from(tokoSet).slice(0, 2).join(", ")} +${tokoSet.size - 2}`;
 
         // No Claim: prioritas batch-level, fallback ke item-level (ambil yang pertama terisi)
         const batchNoClaim = String(batch.noClaim || "").trim();
         const itemNoClaim = items
             .map((item) => String(item.noClaim || "").trim())
             .find((val) => val.length > 0) || "";
-        const noClaim = batchNoClaim || itemNoClaim || "-";
+        const noClaim = batchNoClaim || itemNoClaim;
+        const groupKey = noClaim.length > 0 ? noClaim : `__empty__${batch.id}`;
 
-        rows.push({
-            noPengajuan: batch.noPengajuan,
-            toko: tokoLabel,
-            nilaiPengajuan,
-            noClaim,
-            nilaiClaim,
-            selisih,
+        let group = groups.get(groupKey);
+        if (!group) {
+            group = {
+                noClaim: noClaim.length > 0 ? noClaim : "-",
+                noPengajuanList: [],
+                tokoSet: new Set<string>(),
+                nilaiPengajuan: 0,
+                nilaiClaim: 0,
+            };
+            groups.set(groupKey, group);
+        }
+
+        if (batch.noPengajuan) group.noPengajuanList.push(String(batch.noPengajuan));
+        items.forEach((item) => {
+            if (item.toko) group!.tokoSet.add(item.toko);
         });
+        group.nilaiPengajuan += nilaiPengajuan;
+        group.nilaiClaim += nilaiClaim;
 
         totalPengajuan += nilaiPengajuan;
         totalClaim += nilaiClaim;
     }
+
+    const truncateList = (values: string[]): string => {
+        const unique = Array.from(new Set(values.filter(Boolean)));
+        if (unique.length === 0) return "-";
+        return unique.length <= 2
+            ? unique.join(", ")
+            : `${unique.slice(0, 2).join(", ")} +${unique.length - 2}`;
+    };
+
+    const rows: ReconciliationRow[] = Array.from(groups.values()).map((group) => ({
+        noPengajuan: truncateList(group.noPengajuanList),
+        toko: truncateList(Array.from(group.tokoSet)),
+        nilaiPengajuan: group.nilaiPengajuan,
+        noClaim: group.noClaim,
+        nilaiClaim: group.nilaiClaim,
+        selisih: group.nilaiPengajuan - group.nilaiClaim,
+    }));
 
     return {
         principleName: batches[0].principleName,
@@ -121,14 +153,14 @@ export async function buildReconciliationPdf(data: ReconciliationData): Promise<
     const contentWidth = pageWidth - margin * 2;
 
     // Column widths for table
-    const colWidths = [30, 140, 130, 135, 105, 125, 120];
+    const colWidths = [30, 120, 160, 120, 115, 110, 105];
     const colWidthTotal = colWidths.reduce((s, w) => s + w, 0);
     const widths = colWidths.map((w) => (w / colWidthTotal) * contentWidth);
     // Adjust last column to fill remaining space
     const sumWidths = widths.reduce((s, w) => s + w, 0);
     widths[widths.length - 1] += contentWidth - sumWidths;
 
-    const headers = ["No", "No. Pengajuan", "Nama Toko", "Nilai Pengajuan", "No. Claim", "Nilai Claim", "Selisih"];
+    const headers = ["No", "No. Claim", "No. Pengajuan", "Nama Toko", "Nilai Pengajuan", "Nilai Claim", "Selisih"];
     const rowHeight = 22;
     const rowsPerPage = 15;
     const totalPages = Math.max(1, Math.ceil(data.rows.length / rowsPerPage));
@@ -210,10 +242,10 @@ export async function buildReconciliationPdf(data: ReconciliationData): Promise<
 
             const cells = [
                 String(globalIdx + 1),
+                row.noClaim,
                 row.noPengajuan,
                 row.toko,
                 money(row.nilaiPengajuan),
-                row.noClaim,
                 money(row.nilaiClaim),
                 money(Math.abs(row.selisih)),
             ];
@@ -240,9 +272,9 @@ export async function buildReconciliationPdf(data: ReconciliationData): Promise<
             const totalCells = [
                 "",
                 "",
+                "",
                 "TOTAL",
                 money(data.totalPengajuan),
-                "",
                 money(data.totalClaim),
                 money(Math.abs(data.totalSelisih)),
             ];

@@ -106,6 +106,11 @@ export async function POST(request: Request, context: Context) {
     const claimSubmittedDate = String(body.claimSubmittedDate || "").trim();
     const claimDeadline = String(body.claimDeadline || "").trim();
 
+    if (!note)
+      return NextResponse.json(
+        { ok: false, error: "Catatan Claim wajib diisi untuk menyetujui pengajuan." },
+        { status: 400 },
+      );
     if (!claimSubmittedDate)
       return NextResponse.json(
         { ok: false, error: "Tanggal Diajukan wajib diisi." },
@@ -116,9 +121,9 @@ export async function POST(request: Request, context: Context) {
         { ok: false, error: "Deadline Claim wajib diisi." },
         { status: 400 },
       );
-    if (completenessStatus !== "Aman")
+    if (completenessStatus !== "Lengkap" && completenessStatus !== "Aman")
       return NextResponse.json(
-        { ok: false, error: "Status Kelengkapan harus Aman untuk approve." },
+        { ok: false, error: "Status Kelengkapan harus Lengkap untuk approve." },
         { status: 400 },
       );
 

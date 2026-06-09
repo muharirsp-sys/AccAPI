@@ -7,11 +7,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem, offPayment, offPeriodClosure } from "@/db/schema";
 import {
+  canActorAccessOffData,
   canActorPerformOffAction,
   getPrincipleByCode,
   requireOffSession,
@@ -107,6 +108,50 @@ async function summarizePeriod(input: {
       batches.length > 0 &&
       moneyComparable(totalSubmitted) === moneyComparable(totalClaimed),
   };
+}
+
+export async function GET() {
+  await ensurePeriodClosureTable();
+  const actor = await requireOffSession();
+  if (!actor) {
+    return NextResponse.json(
+      { ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." },
+      { status: 401 },
+    );
+  }
+  if (!canActorAccessOffData(actor)) {
+    return NextResponse.json(
+      { ok: false, error: "Role Anda tidak memiliki akses OFF Program Control." },
+      { status: 403 },
+    );
+  }
+  try {
+    const rows = await db
+      .select()
+      .from(offPeriodClosure)
+      .orderBy(desc(offPeriodClosure.updatedAt));
+    const closures = rows.map((row) => ({
+      id: row.id,
+      principleCode: row.principleCode,
+      principleName: row.principleName,
+      bulan: row.bulan,
+      tahun: row.tahun,
+      status: row.status,
+      totalSubmitted: Number(row.totalSubmitted || 0),
+      totalClaimed: Number(row.totalClaimed || 0),
+      submittedCount: Number(row.submittedCount || 0),
+      claimedCount: Number(row.claimedCount || 0),
+      closedAt: row.closedAt,
+      unlockedAt: row.unlockedAt,
+    }));
+    return NextResponse.json({ ok: true, closures });
+  } catch (error) {
+    console.error("[OFF PERIOD CLOSURE LIST ERROR]", error);
+    return NextResponse.json(
+      { ok: false, error: "Gagal mengambil daftar status periode." },
+      { status: 500 },
+    );
+  }
 }
 
 export async function POST(request: Request) {

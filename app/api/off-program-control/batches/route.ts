@@ -51,6 +51,13 @@ function normalizeItems(items: unknown[]) {
             row.type ?? row.normalizedType,
             row.originalType,
         );
+        const caraBayar = normalizeCaraBayar(row.caraBayar);
+        const noRekening = String(row.noRekening || "").trim();
+        if (caraBayar === "Transfer" && !noRekening) {
+            throw new Error(
+                `No Rekening wajib diisi untuk pembayaran Transfer (baris ${index + 1}).`,
+            );
+        }
         return {
             id: randomUUID(),
             itemNo: index + 1,
@@ -61,7 +68,8 @@ function normalizeItems(items: unknown[]) {
             toko: String(row.toko || ""),
             barang: String(row.barang || ""),
             nominal: asNumber(row.nominal),
-            caraBayar: normalizeCaraBayar(row.caraBayar),
+            caraBayar,
+            noRekening: noRekening || null,
             type: resolvedType.normalizedType,
             normalizedType: resolvedType.normalizedType,
             originalType: resolvedType.originalType || resolvedType.normalizedType,
@@ -529,7 +537,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true, batchId, noPengajuan });
     } catch (error) {
         const message = error instanceof Error ? error.message : "";
-        if (message === "Jenis pembayaran hanya boleh Tunai atau Transfer.") {
+        if (
+            message === "Jenis pembayaran hanya boleh Tunai atau Transfer." ||
+            message.startsWith("No Rekening wajib diisi")
+        ) {
             return NextResponse.json({ ok: false, error: message }, { status: 400 });
         }
         if (message.toLowerCase().includes("unique") || message.toLowerCase().includes("no_pengajuan")) {

@@ -200,6 +200,7 @@ export const offBatchItem = sqliteTable("off_batch_item", {
     barang: text("barang"),
     nominal: real("nominal").notNull().default(0),
     caraBayar: text("cara_bayar"),
+    noRekening: text("no_rekening"),
     financePaymentStatus: text("finance_payment_status").notNull().default("unpaid"),
     financePaidAt: integer("finance_paid_at", { mode: "timestamp" }),
     financePaymentId: text("finance_payment_id"),

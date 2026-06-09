@@ -67,10 +67,19 @@ export async function GET(_request: Request, context: Context) {
         const data = await getBatchWithItems(id);
         if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
         const summary = batchSummary(data.items);
+        // No Rekening hanya boleh dibaca Keuangan, Admin, dan Supervisor
+        // (penginput). Role lain (SM/Claim/OM) menerima null.
+        const canSeeRekening =
+            actor.role === "finance" ||
+            actor.role === "admin" ||
+            actor.role === "supervisor";
+        const items = canSeeRekening
+            ? data.items
+            : data.items.map((item) => ({ ...item, noRekening: null }));
         return NextResponse.json({
             ok: true,
             batch: publicBatch(data.batch),
-            items: data.items,
+            items,
             payments: data.payments.map(publicPayment),
             summary,
             paymentSummary: computeOffFinancePaymentSummary(summary.totalNominal, data.payments),
@@ -194,6 +203,16 @@ export async function PATCH(request: Request, context: Context) {
                     barang: String(item.barang || ""),
                     nominal: asNumber(item.nominal),
                     caraBayar: normalizeCaraBayar(item.caraBayar),
+                    noRekening: (() => {
+                        const caraBayar = normalizeCaraBayar(item.caraBayar);
+                        const noRekening = String(item.noRekening || "").trim();
+                        if (caraBayar === "Transfer" && !noRekening) {
+                            throw new Error(
+                                `No Rekening wajib diisi untuk pembayaran Transfer (baris ${index + 1}).`,
+                            );
+                        }
+                        return noRekening || null;
+                    })(),
                     type: resolvedType.normalizedType,
                     normalizedType: resolvedType.normalizedType,
                     originalType: resolvedType.originalType || resolvedType.normalizedType,
@@ -242,7 +261,10 @@ export async function PATCH(request: Request, context: Context) {
     } catch (error) {
         console.error("[OFF BATCH PATCH ERROR]", error);
         const message = error instanceof Error ? error.message : "";
-        if (message === "Jenis pembayaran hanya boleh Tunai atau Transfer.") {
+        if (
+            message === "Jenis pembayaran hanya boleh Tunai atau Transfer." ||
+            message.startsWith("No Rekening wajib diisi")
+        ) {
             return NextResponse.json({ ok: false, error: message }, { status: 400 });
         }
         return NextResponse.json({ ok: false, error: "Gagal menyimpan revisi batch." }, { status: 500 });

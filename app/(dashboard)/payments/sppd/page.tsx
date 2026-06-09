@@ -269,14 +269,28 @@ function BankDataSection() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5">
-                            {bankItems.map((item, i) => (
-                                <tr key={i} className={`${item.has_rekening ? "text-slate-300" : "text-slate-500 italic"}`}>
-                                    <td className="px-3 py-1.5">{item.principle}</td>
-                                    <td className="px-3 py-1.5">{item.bank}</td>
-                                    <td className="px-3 py-1.5 font-mono">{item.rekening || "(kosong)"}</td>
-                                    <td className="px-3 py-1.5">{item.penerima || "-"}</td>
+                            {loading ? (
+                                <tr>
+                                    <td colSpan={4} className="px-3 py-8 text-center text-slate-400">
+                                        Memuat data rekening...
+                                    </td>
                                 </tr>
-                            ))}
+                            ) : bankItems.length === 0 ? (
+                                <tr>
+                                    <td colSpan={4} className="px-3 py-8 text-center text-slate-500 italic">
+                                        Data rekening tidak ditemukan. Pastikan file master rekening sudah diupload dan backend aktif.
+                                    </td>
+                                </tr>
+                            ) : (
+                                bankItems.map((item, i) => (
+                                    <tr key={`${item.principle}-${item.rekening}-${i}`} className={`${item.has_rekening ? "text-slate-300" : "text-slate-500 italic"}`}>
+                                        <td className="px-3 py-1.5">{item.principle}</td>
+                                        <td className="px-3 py-1.5">{item.bank}</td>
+                                        <td className="px-3 py-1.5 font-mono">{item.rekening || "(kosong)"}</td>
+                                        <td className="px-3 py-1.5">{item.penerima || "-"}</td>
+                                    </tr>
+                                ))
+                            )}
                         </tbody>
                     </table>
                 </div>
