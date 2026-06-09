@@ -8,10 +8,10 @@
 
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem, offPayment, claimWorkflow, claimSubmission } from "@/db/schema";
-import { buildNoPengajuan, buildSearchHaystack, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, findDuplicateNoSuratWithinPayload, findOffNoSuratConflicts, getPrincipleByCode, getPrincipleByName, matchesSearch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, searchOffBatchIdsWithElasticsearch, writeOffAudit, type OffSearchDocument } from "@/lib/off-program-control";
+import { buildNoPengajuan, buildSearchHaystack, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, findOffNoSuratConflicts, getPrincipleByCode, getPrincipleByName, matchesSearch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, searchOffBatchIdsWithElasticsearch, writeOffAudit, type OffSearchDocument } from "@/lib/off-program-control";
 
 // PPh masih HOLD. NOTE: PPh disiapkan nullable di level item/toko, tetapi
 // perhitungan final ditahan karena masih terkait format kwitansi setelah pembayaran.
@@ -255,8 +255,11 @@ export async function GET(request: Request) {
 
     try {
         const rows = await db.select().from(offBatch).orderBy(desc(offBatch.createdAt)).limit(200);
-        const items = await db.select().from(offBatchItem);
-        const payments = await db.select().from(offPayment);
+        const batchIds = rows.map((r) => r.id);
+        const [items, payments] = await Promise.all([
+            batchIds.length > 0 ? db.select().from(offBatchItem).where(inArray(offBatchItem.batchId, batchIds)) : Promise.resolve([]),
+            batchIds.length > 0 ? db.select().from(offPayment).where(inArray(offPayment.batchId, batchIds)) : Promise.resolve([]),
+        ]);
         const summaries = new Map<string, { totalRows: number; totalNominal: number; transfer: number; tunai: number }>();
         const paymentSummaries = new Map<string, { totalNominal: number; totalPaid: number; remainingAmount: number; isFullyPaid: boolean }>();
         const paymentsByBatch = new Map<string, Array<typeof offPayment.$inferSelect>>();
@@ -327,7 +330,7 @@ export async function GET(request: Request) {
             needsNoClaim: boolean;
         }>();
         if (allBatchIds.length > 0) {
-            // Fetch claim_workflow per off_batch_id
+            // Fetch claim_workflow only for the batches in view (not entire table)
             const workflows = await db
                 .select({
                     id: claimWorkflow.id,
@@ -337,10 +340,31 @@ export async function GET(request: Request) {
                     summaryPdfPath: claimWorkflow.summaryPdfPath,
                     receiptPdfPath: claimWorkflow.receiptPdfPath,
                 })
-                .from(claimWorkflow);
+                .from(claimWorkflow)
+                .where(inArray(claimWorkflow.offBatchId, allBatchIds));
             const wfByBatch = new Map(workflows.map((w) => [w.offBatchId, w]));
 
-            // Fetch submission aggregates per workflow
+            // Fetch ALL submissions for the relevant workflows in one query (no N+1)
+            const wfIds = workflows.map((w) => w.id);
+            const allSubs = wfIds.length > 0
+                ? await db
+                    .select({
+                        id: claimSubmission.id,
+                        claimWorkflowId: claimSubmission.claimWorkflowId,
+                        noClaim: claimSubmission.noClaim,
+                        totalClaim: claimSubmission.totalClaim,
+                        itemCount: sql<number>`(SELECT COUNT(*) FROM claim_workflow_item WHERE claim_submission_id = ${claimSubmission.id})`,
+                    })
+                    .from(claimSubmission)
+                    .where(inArray(claimSubmission.claimWorkflowId, wfIds))
+                : [];
+            const subsByWf = new Map<string, typeof allSubs>();
+            for (const sub of allSubs) {
+                const list = subsByWf.get(sub.claimWorkflowId) ?? [];
+                list.push(sub);
+                subsByWf.set(sub.claimWorkflowId, list);
+            }
+
             for (const row of filteredRows) {
                 const wf = wfByBatch.get(row.id);
                 if (!wf) {
@@ -355,15 +379,7 @@ export async function GET(request: Request) {
                     });
                     continue;
                 }
-                const subs = await db
-                    .select({
-                        id: claimSubmission.id,
-                        noClaim: claimSubmission.noClaim,
-                        totalClaim: claimSubmission.totalClaim,
-                        itemCount: sql<number>`(SELECT COUNT(*) FROM claim_workflow_item WHERE claim_submission_id = ${claimSubmission.id})`,
-                    })
-                    .from(claimSubmission)
-                    .where(eq(claimSubmission.claimWorkflowId, wf.id));
+                const subs = subsByWf.get(wf.id) ?? [];
                 const activeSubs = subs.filter((s) => Number(s.totalClaim || 0) > 0 || Number(s.itemCount || 0) > 0);
                 const noClaimFilled = activeSubs.filter((s) => String(s.noClaim || "").trim().length > 0);
                 const uniqueNoClaims = [...new Set(noClaimFilled.map((s) => String(s.noClaim || "").trim()).filter(Boolean))];
@@ -457,15 +473,9 @@ export async function POST(request: Request) {
             .map((item) => String(item.noSurat || "").trim())
             .filter((value) => value.length > 0);
 
-        const intraDuplicates = findDuplicateNoSuratWithinPayload(candidateNoSurats);
-        if (intraDuplicates.length > 0) {
-            return NextResponse.json({
-                ok: false,
-                code: "DUPLICATE_NO_SURAT_IN_PAYLOAD",
-                message: `No Surat tidak boleh sama dalam satu batch: ${intraDuplicates.join(", ")}`,
-                duplicates: intraDuplicates,
-            }, { status: 409 });
-        }
+        // Catatan (#4): No Surat boleh sama DALAM satu pengajuan/batch.
+        // Validasi duplikat intra-payload sengaja dilonggarkan sesuai kebutuhan bisnis.
+        // Validasi lintas-batch (per principle) tetap dipertahankan dengan bypass `force`.
 
         if (!force && candidateNoSurats.length > 0) {
             const conflictMap = await findOffNoSuratConflicts({
