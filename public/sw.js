@@ -1,111 +1,92 @@
-/*
- * Service Worker untuk Smart ERP PWA.
- * Strategy: Network-first untuk halaman/API, Cache-first untuk static assets.
- * Mendukung offline fallback page.
- */
+// Service Worker AccAPI — VERSION-based cache invalidation, no API caching.
+// Increment VERSION on every deploy to auto-purge stale caches.
+const VERSION = "accapi-v2";
+const STATIC_CACHE = `${VERSION}-static`;
+const PAGE_CACHE = `${VERSION}-pages`;
 
-const CACHE_NAME = "smart-erp-v3";
-const STATIC_CACHE = "smart-erp-static-v3";
+const PRECACHE = ["/offline.html", "/icons/icon-192x192.png", "/icons/icon-512x512.png"];
 
-const STATIC_ASSETS = [
-  "/offline.html",
-  "/icons/icon-192x192.png",
-  "/icons/icon-512x512.png",
-];
+// Routes that must never be cached (dynamic data, auth-gated).
+function isBypass(url) {
+  return (
+    url.pathname.startsWith("/api/") ||
+    url.pathname.startsWith("/fastapi/") ||
+    url.pathname.startsWith("/pdf/") ||
+    url.pathname.startsWith("/uploads/")
+  );
+}
 
-// Install: cache static assets dan offline page
+function isStatic(url) {
+  return (
+    url.pathname.startsWith("/_next/static/") ||
+    url.pathname.startsWith("/icons/")
+  );
+}
+
+// Install: pre-cache shell assets, then activate immediately.
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    })
+    caches
+      .open(STATIC_CACHE)
+      .then((c) => c.addAll(PRECACHE))
+      .then(() => self.skipWaiting()),
   );
-  self.skipWaiting();
 });
 
-// Activate: hapus cache lama
+// Activate: purge any cache that doesn't belong to this VERSION, then claim tabs.
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys
-          .filter((key) => key !== CACHE_NAME && key !== STATIC_CACHE)
-          .map((key) => caches.delete(key))
-      );
-    })
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(
+          keys.filter((k) => !k.startsWith(VERSION)).map((k) => caches.delete(k)),
+        ),
+      )
+      .then(() => self.clients.claim()),
   );
-  self.clients.claim();
 });
 
-// Fetch: network-first untuk navigasi, cache-first untuk static
 self.addEventListener("fetch", (event) => {
-  const { request } = event;
+  const req = event.request;
+  if (req.method !== "GET") return;
+  if (!req.url.startsWith("http")) return;
 
-  // Skip non-GET requests
-  if (request.method !== "GET") return;
+  const url = new URL(req.url);
 
-  // Skip chrome-extension and other non-http
-  if (!request.url.startsWith("http")) return;
+  // Bypass: let API / dynamic routes go straight to the network, no caching.
+  if (url.origin === self.location.origin && isBypass(url)) return;
 
-  // Navigation requests (halaman HTML)
-  if (request.mode === "navigate") {
+  // Static assets (_next/static, icons): stale-while-revalidate.
+  if (isStatic(url)) {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          // Cache halaman yang berhasil
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(request, clone);
-          });
-          return response;
-        })
-        .catch(() => {
-          // Offline: coba dari cache, fallback ke offline page
-          return caches.match(request).then((cached) => {
-            return cached || caches.match("/offline.html");
-          });
-        })
-    );
-    return;
-  }
-
-  // Static assets (JS, CSS, images, fonts)
-  if (
-    request.destination === "script" ||
-    request.destination === "style" ||
-    request.destination === "image" ||
-    request.destination === "font" ||
-    request.url.includes("/icons/") ||
-    request.url.includes("/_next/static/")
-  ) {
-    // Stale-while-revalidate: sajikan dari cache bila ada, tapi selalu
-    // fetch versi terbaru di background dan perbarui cache. Mencegah
-    // chunk lama (tema lama) menempel setelah deploy/perubahan source.
-    event.respondWith(
-      caches.match(request).then((cached) => {
-        const networkFetch = fetch(request)
-          .then((response) => {
-            const clone = response.clone();
-            caches.open(STATIC_CACHE).then((cache) => {
-              cache.put(request, clone);
-            });
-            return response;
+      caches.open(STATIC_CACHE).then(async (cache) => {
+        const hit = await cache.match(req);
+        const fetchPromise = fetch(req)
+          .then((res) => {
+            if (res.ok) cache.put(req, res.clone());
+            return res;
           })
-          .catch(() => cached);
-        return cached || networkFetch;
-      })
+          .catch(() => hit);
+        return hit || fetchPromise;
+      }),
     );
     return;
   }
 
-  // API dan lainnya: network-first
-  event.respondWith(
-    fetch(request)
-      .then((response) => {
-        return response;
-      })
-      .catch(() => {
-        return caches.match(request);
-      })
-  );
+  // Navigation: network-first, fallback to cached page then offline shell.
+  if (req.mode === "navigate") {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          caches.open(PAGE_CACHE).then((c) => c.put(req, res.clone()));
+          return res;
+        })
+        .catch(async () => (await caches.match(req)) || (await caches.match("/offline.html"))),
+    );
+    return;
+  }
+
+  // Everything else: network-first, fallback to cache.
+  event.respondWith(fetch(req).catch(() => caches.match(req)));
 });
