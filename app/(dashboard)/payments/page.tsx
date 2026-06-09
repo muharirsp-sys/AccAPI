@@ -46,7 +46,7 @@ interface PaymentRecord {
 }
 
 type PaymentApiRecord = PaymentRecord & { id?: string; ajukan?: boolean };
-type PaymentRecordPatch = Partial<Pick<PaymentRecord, "ajukan" | "tgl_invoice" | "invoice_no" | "jenis_dokumen" | "nomor_dokumen" | "nilai_invoice" | "jt_invoice" | "actual_date" | "tgl_pembayaran">>;
+type PaymentRecordPatch = Partial<Pick<PaymentRecord, "ajukan" | "tgl_invoice" | "invoice_no" | "jenis_dokumen" | "nomor_dokumen" | "nilai_invoice" | "jt_invoice" | "actual_date" | "tgl_pembayaran" | "principle">>;
 
 const API_BASE = process.env.NEXT_PUBLIC_FASTAPI_BASE_URL || (typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:8000` : "http://localhost:8000");
 const PAGE_SIZE_OPTIONS = [50, 100, 200];
@@ -284,6 +284,7 @@ export default function PaymentsPage() {
                 const item: Record<string, unknown> = { id };
 
                 if (hasOwnField(changes, "ajukan")) item.ajukan = record?.ajukan ?? changes.ajukan;
+                if (hasOwnField(changes, "principle")) item.principle = record?.principle ?? "";
                 if (hasOwnField(changes, "tgl_invoice")) item.tgl_invoice = record?.tgl_invoice ?? "";
                 if (hasOwnField(changes, "invoice_no")) item.invoice_no = record?.invoice_no ?? "";
                 if (hasOwnField(changes, "jenis_dokumen")) item.jenis_dokumen = record?.jenis_dokumen ?? "";
@@ -412,8 +413,17 @@ export default function PaymentsPage() {
             if (filters['ajukan'] === 'checked' && !r.ajukan) return false;
             if (filters['ajukan'] === 'unchecked' && r.ajukan) return false;
 
+            // Filter No. LPB/Ref: exact substring match (lebih ketat, tanpa fuzzy)
+            const lpbFilter = filters['no_lpb'];
+            if (lpbFilter) {
+                const lpbValue = String(r.no_lpb || '').toLowerCase();
+                if (!lpbValue.includes(lpbFilter.toLowerCase())) {
+                    return false;
+                }
+            }
+
             const searchParams: { [key: string]: string | undefined } = {
-                no_lpb: r.no_lpb, principle: r.principle, tgl_setor: r.tgl_setor, tgl_win: r.tgl_win,
+                principle: r.principle, tgl_setor: r.tgl_setor, tgl_win: r.tgl_win,
                 jtempo_win: r.jt_win || r.tgl_jtempo_win,
                 nilai_sistem: r.nilai_win_display || formatInvoiceAmountDisplay(r.nilai_sistem || r.nilai_win),
                 tgl_terima_barang: r.tgl_terima_barang, tgl_invoice: r.tgl_invoice,
@@ -672,7 +682,7 @@ export default function PaymentsPage() {
                                         <td className="px-2.5 py-2 sticky left-0 z-10 font-mono font-bold text-white bg-[#1a1c23]/90 group-hover:bg-white/10 shadow-[2px_0_4px_rgba(0,0,0,0.15)] transition-colors text-xs">
                                             {r.no_lpb || "-"}
                                         </td>
-                                        <td className="px-2.5 py-2 text-slate-300 font-medium truncate max-w-[140px]">{r.principle || "-"}</td>
+                                        <td className="px-1 py-1.5"><input type="text" value={r.principle || ""} onChange={e => handleInputChange(r.record_id, 'principle', e.target.value)} className="w-[150px] rounded border border-white/10 bg-black/40 text-slate-300 font-medium px-2 py-1 outline-none focus:border-blue-500/50 text-xs" placeholder="-" /></td>
                                         <td className="px-2.5 py-2 font-mono text-slate-500">{r.tgl_setor || "-"}</td>
                                         <td className="px-2.5 py-2 font-mono text-slate-500">{r.tgl_win || "-"}</td>
                                         <td className="px-2.5 py-2 font-mono text-slate-500">{r.tgl_jtempo_win || r.jt_win || "-"}</td>

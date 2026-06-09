@@ -206,10 +206,10 @@ export default function ClaimWorkflowReportsPage() {
         </p>
         <div className="mt-4">
           <Link
-            href="/claim-workflow"
+            href="/off-program-control?tab=claim&claimView=after-finance"
             className="text-xs font-semibold text-indigo-300 hover:text-indigo-200"
           >
-            ← Kembali ke Claim Workflow
+            ← Kembali ke Validasi Keuangan
           </Link>
         </div>
       </div>

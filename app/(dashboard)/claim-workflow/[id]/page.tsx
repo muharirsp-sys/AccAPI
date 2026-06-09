@@ -1906,8 +1906,8 @@ export default function ClaimWorkflowDetailPage() {
 
   return (
     <div className="w-full space-y-6 pb-12 pt-2">
-      <Link href="/claim-workflow" className="text-sm font-semibold text-indigo-300 hover:text-indigo-200">
-        Kembali ke Claim Workflow
+      <Link href="/off-program-control?tab=claim&claimView=after-finance" className="text-sm font-semibold text-indigo-300 hover:text-indigo-200">
+        ← Kembali ke Validasi Keuangan
       </Link>
 
       <section className="rounded-2xl border border-white/10 bg-[#1a1c23] p-5">
