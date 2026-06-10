@@ -156,11 +156,9 @@ body {
 /*
  * Tema warm executive.
  * Disimpan di localStorage (key: off-theme), tidak di database.
- * Tiga opsi existing dipertahankan, namun divisualkan sebagai variasi ivory,
- * champagne, dan bronze agar retint berlaku app-wide tanpa mengubah komponen.
+ * :root = fallback token sebelum data-theme ter-apply.
  */
-:root,
-html[data-theme="focus-dark"] {
+:root {
   --app-bg: #f7efe1;
   --surface: rgba(255, 250, 239, 0.78);
   --surface-2: rgba(250, 239, 218, 0.72);
@@ -192,23 +190,6 @@ html[data-theme="office-calm"] {
   --luxury-gold-2: #f2d99b;
   --luxury-bronze: #82531f;
   --luxury-shadow: 0 24px 76px rgba(130, 83, 31, 0.12), 0 8px 24px rgba(130, 83, 31, 0.08);
-}
-
-html[data-theme="finance-blue"] {
-  --app-bg: #f4ead9;
-  --surface: rgba(255, 248, 235, 0.78);
-  --surface-2: rgba(239, 220, 189, 0.62);
-  --border-strong: rgba(154, 103, 40, 0.24);
-  --border-soft: rgba(154, 103, 40, 0.13);
-  --luxury-text: #30251b;
-  --luxury-muted: #5f5142;
-  --luxury-subtle: #7a664c;
-  --luxury-soft: #8b6730;
-  --luxury-teal: #0f766e;
-  --luxury-gold: #bd8731;
-  --luxury-gold-2: #e9c777;
-  --luxury-bronze: #70481e;
-  --luxury-shadow: 0 24px 80px rgba(112, 72, 30, 0.14), 0 8px 26px rgba(112, 72, 30, 0.08);
 }
 
 @theme inline {
@@ -603,3 +584,522 @@ body {
 .selection\:text-indigo-200::selection {
   color: #4a351f;
 }
+
+/* ============================================
+ * Tema "Neon HUD" (opsional, data-theme="neon")
+ * Ekstraksi palet/glow/font dari referensi divisi-sales-dashboard.html.
+ * Murni additive: selector di-scope html[data-theme="neon"] sehingga
+ * tiga tema warm existing tidak terpengaruh.
+ * ============================================ */
+
+html[data-theme="neon"] {
+  --background: #03060d;
+  --foreground: #cfe6ff;
+  --app-bg: #03060d;
+  --surface: rgba(13, 34, 64, 0.55);
+  --surface-2: rgba(4, 16, 31, 0.85);
+  --border-strong: rgba(31, 143, 255, 0.35);
+  --border-soft: rgba(31, 143, 255, 0.18);
+  --luxury-text: #cfe6ff;
+  --luxury-muted: #7fa3c9;
+  --luxury-subtle: #6f93b9;
+  --luxury-soft: #3ed0ff;
+  --luxury-teal: #2ee56b;
+  --luxury-gold: #1f8fff;
+  --luxury-gold-2: #3ed0ff;
+  --luxury-bronze: #0b3263;
+  --luxury-shadow: 0 0 14px rgba(31, 143, 255, 0.35), inset 0 0 22px rgba(31, 143, 255, 0.07);
+  --btn-primary-text: #021024;
+  --btn-primary-border: #1d5fa8;
+  --btn-primary-shadow: 0 0 14px rgba(31, 143, 255, 0.4);
+  --btn-primary-shadow-hover: 0 0 22px rgba(31, 143, 255, 0.55);
+}
+
+/* Background dark navy; grid sirkuit & vignette dirender via ::before/::after. */
+html[data-theme="neon"] body {
+  background: var(--app-bg);
+  color: var(--luxury-text);
+  font-family: var(--font-rajdhani), Arial, sans-serif;
+  position: relative;
+}
+
+/* Layer 1 (di bawah konten): radial glow biru/hijau ala control tower. */
+html[data-theme="neon"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(900px 420px at 50% -120px, rgba(31, 143, 255, 0.16), transparent 70%),
+    radial-gradient(700px 380px at 8% 100%, rgba(31, 143, 255, 0.08), transparent 70%),
+    radial-gradient(700px 380px at 92% 100%, rgba(46, 229, 107, 0.06), transparent 70%),
+    var(--app-bg);
+}
+
+/* Layer 2: grid garis sirkuit 46px + vignette gelap di tepi layar. */
+html[data-theme="neon"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, rgba(31, 143, 255, 0.045) 0 1px, transparent 1px 46px),
+    repeating-linear-gradient(90deg, rgba(31, 143, 255, 0.045) 0 1px, transparent 1px 46px),
+    radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+  mask-image: radial-gradient(ellipse at 50% 30%, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0.35) 75%);
+  -webkit-mask-image: radial-gradient(ellipse at 50% 30%, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0.35) 75%);
+}
+
+/* Layer ambient warm (fixed -z-10 di root layout) disembunyikan agar
+ * tidak menimpa grid neon; layout/DOM tidak berubah. */
+html[data-theme="neon"] body > div.fixed.-z-10 {
+  display: none;
+}
+
+/* ===== HUD PANEL: border line + glow + sudut siku neon ===== */
+html[data-theme="neon"] main :is(.rounded-xl, .rounded-2xl, .rounded-3xl, .rounded-\[1\.5rem\], .rounded-\[1\.75rem\], .rounded-\[2rem\]):is(div, section, article, a) {
+  position: relative;
+  border: 1px solid #0e2a4d;
+  box-shadow: 0 0 14px rgba(31, 143, 255, 0.35), inset 0 0 22px rgba(31, 143, 255, 0.07);
+  background-image: linear-gradient(180deg, rgba(13, 34, 64, 0.55), rgba(4, 10, 22, 0.85));
+}
+
+/* Sudut siku kiri-atas.
+ * Dikecualikan: container yang bisa di-scroll (pseudo-element ikut bergeser
+ * bersama konten) dan chip/ikon kecil berukuran tetap (w-8..w-16) agar tiap
+ * kartu hanya punya satu pasang siku — tidak berisik. */
+html[data-theme="neon"] main :is(.rounded-xl, .rounded-2xl, .rounded-3xl, .rounded-\[1\.5rem\], .rounded-\[1\.75rem\], .rounded-\[2rem\]):is(div, section, article, a):not(.overflow-auto):not(.overflow-x-auto):not(.overflow-y-auto):not(.overflow-scroll):not(.overflow-x-scroll):not(.overflow-y-scroll):not(.w-8):not(.w-9):not(.w-10):not(.w-11):not(.w-12):not(.w-14):not(.w-16):not(.h-8):not(.h-9):not(.h-10):not(.h-11):not(.h-12):not(.h-14):not(.h-16)::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  border: 3px solid #1f8fff;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 8px 0 0 0;
+  opacity: 0.9;
+  z-index: 1;
+}
+
+/* Sudut siku kanan-bawah. */
+html[data-theme="neon"] main :is(.rounded-xl, .rounded-2xl, .rounded-3xl, .rounded-\[1\.5rem\], .rounded-\[1\.75rem\], .rounded-\[2rem\]):is(div, section, article, a):not(.overflow-auto):not(.overflow-x-auto):not(.overflow-y-auto):not(.overflow-scroll):not(.overflow-x-scroll):not(.overflow-y-scroll):not(.w-8):not(.w-9):not(.w-10):not(.w-11):not(.w-12):not(.w-14):not(.w-16):not(.h-8):not(.h-9):not(.h-10):not(.h-11):not(.h-12):not(.h-14):not(.h-16)::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  border: 3px solid #1f8fff;
+  border-left: 0;
+  border-top: 0;
+  border-radius: 0 0 8px 0;
+  opacity: 0.9;
+  z-index: 1;
+}
+
+/* Tombol gradient dengan teks hijau/teal -> samakan dengan tombol primary
+ * biru (gradient cyan->blue->navy, teks navy gelap) agar konsisten. */
+html[data-theme="neon"] [class*="bg-gradient"]:is(
+  [class*="text-[#006d65]"],
+  [class*="text-[#00877b]"],
+  [class*="text-emerald"],
+  [class*="text-teal"],
+  [class*="text-green"]
+) {
+  background: var(--btn-primary-bg) !important;
+  color: var(--btn-primary-text) !important;
+  border-color: var(--btn-primary-border) !important;
+  box-shadow: var(--btn-primary-shadow) !important;
+}
+
+/* ===== TYPOGRAPHY HUD: display italic uppercase + glow cyan ===== */
+html[data-theme="neon"] h1,
+html[data-theme="neon"] h2,
+html[data-theme="neon"] h3 {
+  font-family: var(--font-exo2), var(--font-rajdhani), sans-serif;
+  font-style: italic;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 12px rgba(62, 208, 255, 0.6);
+}
+
+html[data-theme="neon"] code,
+html[data-theme="neon"] pre,
+html[data-theme="neon"] .font-mono {
+  font-family: var(--font-tech-mono), monospace;
+}
+
+/* Override remap literal warm -> neon (specificity menang atas rule global). */
+html[data-theme="neon"] .bg-\[\#101219\],
+html[data-theme="neon"] .bg-\[\#15161f\] {
+  background-color: rgba(5, 12, 26, 0.96) !important;
+}
+
+html[data-theme="neon"] .bg-\[\#101217\] {
+  background-color: rgba(5, 12, 26, 0.92) !important;
+}
+
+html[data-theme="neon"] .group-hover\:bg-\[\#1a1d24\]:is(.group:hover *) {
+  background-color: rgba(31, 143, 255, 0.18) !important;
+}
+
+html[data-theme="neon"] .bg-\[\#1e2333\] {
+  background-color: rgba(31, 143, 255, 0.12) !important;
+}
+
+html[data-theme="neon"] .bg-black\/20 {
+  background-color: rgba(0, 8, 20, 0.3) !important;
+}
+
+html[data-theme="neon"] .bg-black\/25,
+html[data-theme="neon"] .bg-black\/30 {
+  background-color: rgba(0, 8, 20, 0.38) !important;
+}
+
+html[data-theme="neon"] .bg-black\/40 {
+  background-color: rgba(0, 8, 20, 0.46) !important;
+}
+
+html[data-theme="neon"] .bg-black\/50 {
+  background-color: rgba(0, 8, 20, 0.55) !important;
+}
+
+html[data-theme="neon"] .bg-black\/60,
+html[data-theme="neon"] .bg-black\/65 {
+  background-color: rgba(0, 5, 14, 0.65) !important;
+}
+
+html[data-theme="neon"] .bg-white\/5 {
+  background-color: rgba(31, 143, 255, 0.08) !important;
+}
+
+html[data-theme="neon"] .bg-white\/10,
+html[data-theme="neon"] .hover\:bg-white\/10:hover {
+  background-color: rgba(31, 143, 255, 0.14) !important;
+}
+
+html[data-theme="neon"] .hover\:bg-white\/\[0\.03\]:hover {
+  background-color: rgba(62, 208, 255, 0.06) !important;
+}
+
+html[data-theme="neon"] .text-slate-300 {
+  color: #a8c5e6 !important;
+}
+
+html[data-theme="neon"] .text-slate-600 {
+  color: #5f7fa3 !important;
+}
+
+html[data-theme="neon"] .text-blue-400,
+html[data-theme="neon"] .text-blue-500,
+html[data-theme="neon"] .text-indigo-50,
+html[data-theme="neon"] .text-indigo-100,
+html[data-theme="neon"] .text-indigo-200,
+html[data-theme="neon"] .text-indigo-300,
+html[data-theme="neon"] .text-indigo-400,
+html[data-theme="neon"] .text-indigo-500 {
+  color: #3ed0ff !important;
+}
+
+html[data-theme="neon"] .text-rose-400,
+html[data-theme="neon"] .text-red-400,
+html[data-theme="neon"] .text-red-400\/70 {
+  color: #ff5d5d !important;
+}
+
+html[data-theme="neon"] .text-rose-100,
+html[data-theme="neon"] .text-rose-200,
+html[data-theme="neon"] .text-rose-300 {
+  color: #ff8a8a !important;
+}
+
+html[data-theme="neon"] .bg-indigo-500\/5 {
+  background-color: rgba(31, 143, 255, 0.1) !important;
+}
+
+html[data-theme="neon"] .bg-emerald-500\/5 {
+  background-color: rgba(46, 229, 107, 0.06) !important;
+}
+
+html[data-theme="neon"] .border-emerald-500\/30 {
+  border-color: rgba(46, 229, 107, 0.35) !important;
+}
+
+html[data-theme="neon"] .border-indigo-500\/30 {
+  border-color: rgba(31, 143, 255, 0.35) !important;
+}
+
+html[data-theme="neon"] .bg-emerald-600\/20 {
+  background-color: rgba(46, 229, 107, 0.14) !important;
+}
+
+html[data-theme="neon"] .hover\:border-indigo-400\/50:hover,
+html[data-theme="neon"] .hover\:border-blue-500\/50:hover,
+html[data-theme="neon"] .hover\:border-emerald-400\/50:hover,
+html[data-theme="neon"] .hover\:border-sky-400\/50:hover,
+html[data-theme="neon"] .hover\:border-teal-400\/50:hover,
+html[data-theme="neon"] .hover\:border-purple-400\/50:hover,
+html[data-theme="neon"] .hover\:border-rose-400\/50:hover,
+html[data-theme="neon"] .hover\:border-cyan-400\/50:hover {
+  border-color: rgba(62, 208, 255, 0.5) !important;
+}
+
+html[data-theme="neon"] .focus\:ring-blue-500:focus,
+html[data-theme="neon"] .focus\:ring-blue-500\/50:focus,
+html[data-theme="neon"] .focus\:ring-emerald-500:focus,
+html[data-theme="neon"] .focus\:ring-emerald-500\/50:focus,
+html[data-theme="neon"] .focus\:ring-2:focus {
+  --tw-ring-color: rgba(31, 143, 255, 0.45) !important;
+}
+
+html[data-theme="neon"] .focus\:border-blue-500:focus,
+html[data-theme="neon"] .focus\:border-blue-500\/50:focus,
+html[data-theme="neon"] .focus\:border-emerald-500:focus,
+html[data-theme="neon"] .focus\:border-emerald-500\/50:focus,
+html[data-theme="neon"] .focus\:border-indigo-500:focus {
+  border-color: rgba(62, 208, 255, 0.6) !important;
+}
+
+html[data-theme="neon"] .bg-indigo-500\/10,
+html[data-theme="neon"] .bg-indigo-500\/20,
+html[data-theme="neon"] .bg-amber-500,
+html[data-theme="neon"] .bg-amber-500\/10,
+html[data-theme="neon"] .bg-amber-500\/20,
+html[data-theme="neon"] .bg-amber-500\/30,
+html[data-theme="neon"] .bg-amber-500\/\[0\.06\],
+html[data-theme="neon"] .bg-blue-500\/10,
+html[data-theme="neon"] .bg-blue-500\/20,
+html[data-theme="neon"] .bg-emerald-500\/10,
+html[data-theme="neon"] .bg-emerald-500\/20,
+html[data-theme="neon"] .bg-slate-500\/10,
+html[data-theme="neon"] .bg-sky-500\/10,
+html[data-theme="neon"] .bg-sky-500\/20,
+html[data-theme="neon"] .bg-orange-500\/10,
+html[data-theme="neon"] .bg-orange-500\/20,
+html[data-theme="neon"] .bg-purple-500\/10,
+html[data-theme="neon"] .bg-indigo-600\/30,
+html[data-theme="neon"] .bg-cyan-500\/10,
+html[data-theme="neon"] .bg-cyan-500\/20,
+html[data-theme="neon"] .bg-emerald-300\/10,
+html[data-theme="neon"] .bg-teal-500\/20,
+html[data-theme="neon"] .bg-teal-300\/10,
+html[data-theme="neon"] .bg-teal-500\/10,
+html[data-theme="neon"] .bg-purple-500\/20 {
+  background-color: rgba(31, 143, 255, 0.16) !important;
+}
+
+html[data-theme="neon"] .bg-rose-500\/10,
+html[data-theme="neon"] .bg-rose-500\/20 {
+  background-color: rgba(255, 93, 93, 0.14) !important;
+}
+
+html[data-theme="neon"] .hover\:bg-rose-500\/20:hover {
+  background-color: rgba(255, 93, 93, 0.22) !important;
+}
+
+html[data-theme="neon"] .hover\:bg-emerald-500\/30:hover {
+  background-color: rgba(46, 229, 107, 0.2) !important;
+}
+
+html[data-theme="neon"] .hover\:bg-teal-500\/20:hover,
+html[data-theme="neon"] .hover\:bg-teal-500\/30:hover {
+  background-color: rgba(46, 229, 107, 0.18) !important;
+}
+
+html[data-theme="neon"] .file\:text-white::file-selector-button {
+  color: #021024;
+}
+
+html[data-theme="neon"] .placeholder\:text-slate-600::placeholder {
+  color: #54759c;
+}
+
+html[data-theme="neon"] .\[color-scheme\:dark\] {
+  color-scheme: dark;
+}
+
+html[data-theme="neon"] .bg-indigo-500\/30,
+html[data-theme="neon"] .bg-indigo-600\/50,
+html[data-theme="neon"] .hover\:bg-indigo-600\/50:hover,
+html[data-theme="neon"] .selection\:bg-indigo-500\/30::selection {
+  background-color: rgba(31, 143, 255, 0.3);
+}
+
+html[data-theme="neon"] .selection\:text-indigo-200::selection {
+  color: #e7f6ff;
+}
+
+/* Gradient arbitrary warm -> neon (override custom property Tailwind). */
+html[data-theme="neon"] .from-\[\#f2d28a\]\/35,
+html[data-theme="neon"] .from-\[\#f5dfad\]\/34,
+html[data-theme="neon"] .from-\[\#edd09a\]\/34,
+html[data-theme="neon"] .from-\[\#f0d596\]\/34,
+html[data-theme="neon"] .from-\[\#e8c174\]\/32,
+html[data-theme="neon"] .from-\[\#f3dba5\]\/34,
+html[data-theme="neon"] .from-\[\#ead7b4\]\/38 {
+  --tw-gradient-from: rgba(31, 143, 255, 0.2) !important;
+}
+
+html[data-theme="neon"] .to-\[\#fff8ea\]\/20,
+html[data-theme="neon"] .to-\[\#fff4df\]\/18,
+html[data-theme="neon"] .to-\[\#fff2d5\]\/18,
+html[data-theme="neon"] .to-\[\#fff6e4\]\/18,
+html[data-theme="neon"] .to-\[\#fff9ed\]\/18 {
+  --tw-gradient-to: rgba(62, 208, 255, 0.08) !important;
+}
+
+html[data-theme="neon"] .from-\[\#fffaf0\]\/90,
+html[data-theme="neon"] .from-\[\#fff7e6\] {
+  --tw-gradient-from: rgba(13, 34, 64, 0.85) !important;
+}
+
+html[data-theme="neon"] .via-\[\#f8ead1\]\/78 {
+  --tw-gradient-via: rgba(7, 20, 40, 0.8) !important;
+}
+
+html[data-theme="neon"] .to-\[\#ead2a5\]\/58,
+html[data-theme="neon"] .to-\[\#f1dfbd\] {
+  --tw-gradient-to: rgba(4, 16, 31, 0.8) !important;
+}
+
+html[data-theme="neon"] .via-\[\#d3a64a\]\/60 {
+  --tw-gradient-via: rgba(31, 143, 255, 0.6) !important;
+}
+
+html[data-theme="neon"] .from-\[\#f2d28a\],
+html[data-theme="neon"] .from-\[\#f7d989\]\/80,
+html[data-theme="neon"] .from-\[\#fff3d1\] {
+  --tw-gradient-from: #3ed0ff !important;
+}
+
+html[data-theme="neon"] .from-\[\#b77a25\] {
+  --tw-gradient-from: #1f8fff !important;
+}
+
+html[data-theme="neon"] .via-\[\#c79a3f\],
+html[data-theme="neon"] .via-\[\#d6a948\],
+html[data-theme="neon"] .via-\[\#e4ba62\] {
+  --tw-gradient-via: #1f8fff !important;
+}
+
+html[data-theme="neon"] .to-\[\#b77a25\],
+html[data-theme="neon"] .to-\[\#d6a948\]\/70,
+html[data-theme="neon"] .to-\[\#c99631\],
+html[data-theme="neon"] .to-\[\#7a4e20\],
+html[data-theme="neon"] .to-\[\#9a6424\] {
+  --tw-gradient-to: #0b3263 !important;
+}
+
+html[data-theme="neon"] .from-\[\#1a1c23\] {
+  --tw-gradient-from: rgba(13, 34, 64, 0.7) !important;
+}
+
+html[data-theme="neon"] .to-\[\#0f1115\] {
+  --tw-gradient-to: rgba(4, 16, 31, 0.9) !important;
+}
+
+/* Literal warm di komponen (panel cream + teks coklat) -> neon. */
+html[data-theme="neon"] .bg-\[\#fffaf0\],
+html[data-theme="neon"] .bg-\[\#fffaf0\]\/70,
+html[data-theme="neon"] .bg-\[\#fffaf0\]\/74,
+html[data-theme="neon"] .bg-\[\#fffaf0\]\/78,
+html[data-theme="neon"] .bg-\[\#fffaf0\]\/82,
+html[data-theme="neon"] .bg-\[\#fffaf0\]\/85,
+html[data-theme="neon"] .bg-\[\#fffaf0\]\/90,
+html[data-theme="neon"] .bg-\[\#f7ead1\],
+html[data-theme="neon"] .bg-\[\#fff7e6\],
+html[data-theme="neon"] .bg-\[\#f1dfbd\] {
+  background-color: rgba(7, 20, 40, 0.85) !important;
+}
+
+html[data-theme="neon"] .bg-\[\#f7ead0\]\/60,
+html[data-theme="neon"] .bg-\[\#f7ead0\]\/70,
+html[data-theme="neon"] .bg-\[\#f7ead0\]\/72,
+html[data-theme="neon"] .bg-\[\#f7ead0\]\/80,
+html[data-theme="neon"] .bg-\[\#f2d28a\]\/20,
+html[data-theme="neon"] .bg-\[\#ffffff\]\/10 {
+  background-color: rgba(31, 143, 255, 0.12) !important;
+}
+
+html[data-theme="neon"] .bg-\[\#c6922e\],
+html[data-theme="neon"] .bg-\[\#a87518\] {
+  background-color: #1f8fff !important;
+}
+
+html[data-theme="neon"] .text-\[\#2d241b\],
+html[data-theme="neon"] .text-\[\#3a240c\],
+html[data-theme="neon"] .text-\[\#1f1408\],
+html[data-theme="neon"] .text-\[\#3d2814\],
+html[data-theme="neon"] .text-\[\#4f3218\]\/80 {
+  color: #e7f6ff !important;
+}
+
+html[data-theme="neon"] .text-\[\#7a5a2a\],
+html[data-theme="neon"] .text-\[\#8a4703\],
+html[data-theme="neon"] .text-\[\#7a4b00\],
+html[data-theme="neon"] .text-\[\#a98a55\],
+html[data-theme="neon"] .text-\[\#9a7a45\],
+html[data-theme="neon"] .text-\[\#7a664c\],
+html[data-theme="neon"] .text-\[\#574839\],
+html[data-theme="neon"] .text-\[\#8a7558\],
+html[data-theme="neon"] .text-\[\#766753\],
+html[data-theme="neon"] .text-\[\#927f66\],
+html[data-theme="neon"] .text-\[\#7e653d\],
+html[data-theme="neon"] .text-\[\#84682e\],
+html[data-theme="neon"] .text-\[\#8d5a24\],
+html[data-theme="neon"] .text-\[\#966b2f\],
+html[data-theme="neon"] .text-\[\#9a6b23\],
+html[data-theme="neon"] .text-\[\#9b742d\],
+html[data-theme="neon"] .text-\[\#8f6c2f\],
+html[data-theme="neon"] .text-\[\#9a6424\],
+html[data-theme="neon"] .text-\[\#7a4e20\] {
+  color: #7fa3c9 !important;
+}
+
+html[data-theme="neon"] .text-\[\#b9821f\],
+html[data-theme="neon"] .text-\[\#a87518\],
+html[data-theme="neon"] .text-\[\#c9a96a\] {
+  color: #3ed0ff !important;
+}
+
+html[data-theme="neon"] .text-\[\#00877b\],
+html[data-theme="neon"] .text-\[\#006d65\] {
+  color: #2ee56b !important;
+}
+
+html[data-theme="neon"] .border-\[\#e7c98f\],
+html[data-theme="neon"] .border-\[\#d4ad61\]\/20,
+html[data-theme="neon"] .border-\[\#d4ad61\]\/28,
+html[data-theme="neon"] .border-\[\#d4ad61\]\/30,
+html[data-theme="neon"] .border-\[\#d4ad61\]\/35,
+html[data-theme="neon"] .border-\[\#d4ad61\]\/40,
+html[data-theme="neon"] .border-\[\#c79a3f\],
+html[data-theme="neon"] .border-\[\#c79a3f\]\/14,
+html[data-theme="neon"] .border-\[\#c79a3f\]\/20,
+html[data-theme="neon"] .border-\[\#c79a3f\]\/24,
+html[data-theme="neon"] .border-\[\#d7b56d\],
+html[data-theme="neon"] .border-\[\#b9821f\],
+html[data-theme="neon"] .border-\[\#f2d28a\]\/60 {
+  border-color: rgba(31, 143, 255, 0.35) !important;
+}
+
+html[data-theme="neon"] .divide-\[\#e7c98f\]\/60 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(31, 143, 255, 0.25) !important;
+}
+
+html[data-theme="neon"] .ring-\[\#d6a948\],
+html[data-theme="neon"] .ring-\[\#c79a3f\]\/50 {
+  --tw-ring-color: rgba(31, 143, 255, 0.5) !important;
+}
+
+html[data-theme="neon"] .shadow-\[\#d7b56d\]\/10 {
+  --tw-shadow-color: rgba(31, 143, 255, 0.15) !important;
+}
+
+/* neon-theme: end */

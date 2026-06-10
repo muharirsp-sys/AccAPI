@@ -10,22 +10,21 @@ import { Palette, Check } from "lucide-react";
 
 export const OFF_THEME_STORAGE_KEY = "off-theme";
 
-export type OffThemeKey = "focus-dark" | "office-calm" | "finance-blue";
+export type OffThemeKey = "office-calm" | "neon";
 
 export const OFF_THEMES: Array<{ key: OffThemeKey; label: string; hint: string; swatch: string }> = [
-  { key: "office-calm", label: "Office Calm", hint: "Hijau teduh untuk kerja lama", swatch: "#232c2a" },
-  { key: "focus-dark", label: "Focus Dark", hint: "Gelap fokus (default)", swatch: "#1a1c23" },
-  { key: "finance-blue", label: "Finance Soft Blue", hint: "Biru lembut keuangan", swatch: "#16234a" },
+  { key: "office-calm", label: "Office Calm", hint: "Hijau teduh untuk kerja lama (default)", swatch: "#232c2a" },
+  { key: "neon", label: "Neon HUD", hint: "Sci-fi control tower", swatch: "#03060d" },
 ];
 
-const DEFAULT_THEME: OffThemeKey = "focus-dark";
+const DEFAULT_THEME: OffThemeKey = "office-calm";
 
 function isOffThemeKey(value: string | null): value is OffThemeKey {
-  return value === "focus-dark" || value === "office-calm" || value === "finance-blue";
+  return value === "office-calm" || value === "neon";
 }
 
 // Script inline untuk apply tema sebelum paint agar tidak ada flash.
-export const applyStoredThemeScript = `(function(){try{var t=localStorage.getItem('${OFF_THEME_STORAGE_KEY}');if(t!=='focus-dark'&&t!=='office-calm'&&t!=='finance-blue'){t='${DEFAULT_THEME}';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','${DEFAULT_THEME}');}})();`;
+export const applyStoredThemeScript = `(function(){try{var t=localStorage.getItem('${OFF_THEME_STORAGE_KEY}');if(t!=='office-calm'&&t!=='neon'){t='${DEFAULT_THEME}';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','${DEFAULT_THEME}');}})();`;
 
 export default function ThemeSwitcher() {
   const [open, setOpen] = useState(false);
