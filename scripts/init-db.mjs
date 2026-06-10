@@ -537,6 +537,8 @@ const migrations = [
   `ALTER TABLE off_batch ADD COLUMN refund_status TEXT NOT NULL DEFAULT 'Not Applicable';`,
   `ALTER TABLE off_batch ADD COLUMN refund_amount REAL;`,
   `ALTER TABLE off_batch ADD COLUMN total_refunded REAL;`,
+  `ALTER TABLE off_batch ADD COLUMN no_rekening TEXT;`,
+  `ALTER TABLE off_batch ADD COLUMN created_by_role TEXT;`,
   `ALTER TABLE off_batch_item ADD COLUMN no_claim TEXT;`,
   `ALTER TABLE off_batch_item ADD COLUMN finance_payment_status TEXT NOT NULL DEFAULT 'unpaid';`,
   `ALTER TABLE off_batch_item ADD COLUMN finance_paid_at INTEGER;`,
