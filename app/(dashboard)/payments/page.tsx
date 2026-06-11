@@ -693,11 +693,11 @@ export default function PaymentsPage() {
                                             {r.no_lpb || "-"}
                                         </td>
                                         <td className="px-1 py-1.5"><input type="text" value={r.principle || ""} onChange={e => handleInputChange(r.record_id, 'principle', e.target.value)} className="w-[150px] rounded border border-white/10 bg-black/40 text-slate-300 font-medium px-2 py-1 outline-none focus:border-blue-500/50 text-xs" placeholder="-" /></td>
-                                        <td className="px-2.5 py-2 font-mono text-slate-500">{r.tgl_setor || "-"}</td>
-                                        <td className="px-2.5 py-2 font-mono text-slate-500">{r.tgl_win || "-"}</td>
-                                        <td className="px-2.5 py-2 font-mono text-slate-500">{r.tgl_jtempo_win || r.jt_win || "-"}</td>
+                                        <td className="px-1 py-1.5"><DatePickerField value={r.tgl_setor || ""} onChange={() => {}} disabled clearable={false} placeholder="-" className="w-[130px] py-1 pl-7 pr-6 text-xs" ariaLabel="Tanggal setor" /></td>
+                                        <td className="px-1 py-1.5"><DatePickerField value={r.tgl_win || ""} onChange={() => {}} disabled clearable={false} placeholder="-" className="w-[130px] py-1 pl-7 pr-6 text-xs" ariaLabel="Tanggal win" /></td>
+                                        <td className="px-1 py-1.5"><DatePickerField value={r.tgl_jtempo_win || r.jt_win || ""} onChange={() => {}} disabled clearable={false} placeholder="-" className="w-[130px] py-1 pl-7 pr-6 text-xs" ariaLabel="Jatuh tempo win" /></td>
                                         <td className="px-2.5 py-2 text-right font-mono text-emerald-200/50 font-bold">{r.nilai_win_display || "-"}</td>
-                                        <td className="px-2.5 py-2 font-mono text-slate-500">{r.tgl_terima_barang || "-"}</td>
+                                        <td className="px-1 py-1.5"><DatePickerField value={r.tgl_terima_barang || ""} onChange={() => {}} disabled clearable={false} placeholder="-" className="w-[130px] py-1 pl-7 pr-6 text-xs" ariaLabel="Tanggal terima barang" /></td>
                                         
                                         {/* Editable Columns Start */}
                                         <td className="px-1 py-1.5"><DatePickerField value={r.tgl_invoice || ""} onChange={value => handleInputChange(r.record_id, 'tgl_invoice', value)} className="w-[130px] py-1 pl-7 pr-6 text-xs focus:border-blue-500/50" ariaLabel="Tanggal invoice" /></td>
