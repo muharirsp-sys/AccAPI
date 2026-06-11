@@ -14,6 +14,14 @@ import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
 import DatePickerField from "@/components/ui/DatePickerField";
 import { fuzzyMatch } from "@/lib/fuzzySearch";
+import { matchDmyDateFilter } from "@/lib/dateFilter";
+
+// Kolom tanggal di Engine Filter Kolom Data: diketik user format DD-MM-YYYY
+// (tanggal-bulan-tahun) dengan dukungan input bertahap (11 / 11-06 / 11-06-2026).
+const DATE_FILTER_KEYS = new Set([
+    "tgl_setor", "tgl_win", "jtempo_win", "tgl_terima_barang",
+    "tgl_invoice", "jt_invoice", "actual_date", "tgl_pembayaran",
+]);
 
 interface PaymentRecord {
     id?: string;
@@ -434,9 +442,11 @@ export default function PaymentsPage() {
             };
 
             for (const [fKey, getVal] of Object.entries(searchParams)) {
-                if (filters[fKey] && !fuzzyMatch(getVal, filters[fKey])) {
-                    return false;
-                }
+                if (!filters[fKey]) continue;
+                const ok = DATE_FILTER_KEYS.has(fKey)
+                    ? matchDmyDateFilter(getVal, filters[fKey])
+                    : fuzzyMatch(getVal, filters[fKey]);
+                if (!ok) return false;
             }
 
             const searchStatus = filters['status_pembayaran'];
@@ -663,7 +673,7 @@ export default function PaymentsPage() {
                                 </th>
                                 {['principle', 'tgl_setor', 'tgl_win', 'jtempo_win', 'nilai_sistem', 'tgl_terima_barang', 'tgl_invoice', 'invoice', 'jenis_dokumen', 'nomor_dokumen', 'nilai_invoice', 'jt_invoice', 'gap_nilai_display', 'actual_date', 'tgl_pembayaran', 'status_pembayaran'].map((fKey, i) => (
                                     <th key={i} className="px-1.5 py-2 bg-[#0f1115] border-b border-white/10 sticky top-[37px] z-30">
-                                        <input type="text" placeholder="Filter..." className="w-full min-w-[65px] bg-black/60 border border-white/10 focus:border-blue-500 rounded text-[10px] py-1.5 px-1.5 text-slate-300 outline-none placeholder:text-slate-600 font-mono" onChange={e => handleFilterChange(fKey, e.target.value)} />
+                                        <input type="text" placeholder={DATE_FILTER_KEYS.has(fKey) ? "hh-bb-tttt" : "Filter..."} title={DATE_FILTER_KEYS.has(fKey) ? "Filter tanggal: ketik tanggal-bulan-tahun, mis. 11-06-2026 (boleh bertahap: 11 atau 11-06)" : undefined} className="w-full min-w-[65px] bg-black/60 border border-white/10 focus:border-blue-500 rounded text-[10px] py-1.5 px-1.5 text-slate-300 outline-none placeholder:text-slate-600 font-mono" onChange={e => handleFilterChange(fKey, e.target.value)} />
                                     </th>
                                 ))}
                             </tr>
