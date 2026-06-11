@@ -442,7 +442,7 @@ export default function ClaimWorkflowPage() {
               placeholder="Cari: nomor, no claim, principal, nota, status..."
               className="w-64 rounded-lg border border-[#e7c98f] bg-[#fffaf0] px-3 py-1.5 text-xs text-[#1f1408] placeholder:text-[#a98a55] focus:border-[#b9821f] focus:outline-none"
             />
-            <div className="flex flex-wrap items-center gap-1 rounded-full border border-[#e7c98f] bg-[#fff7e6] p-1 text-xs">
+            <div className="flex flex-wrap items-center gap-1 rounded-xl border border-[#e7c98f] bg-[#fff7e6] p-1 text-xs">
               {([
                 { key: "all", label: "Semua" },
                 { key: "ready_no_claim", label: "Siap Generate No Claim" },
@@ -457,10 +457,10 @@ export default function ClaimWorkflowPage() {
                   key={option.key}
                   type="button"
                   onClick={() => setTab(option.key)}
-                  className={`rounded-full px-3 py-1.5 font-bold transition ${
+                  className={`rounded-full border px-2.5 py-1 font-medium transition ${
                     tab === option.key
-                      ? "bg-[#c6922e] text-white"
-                      : "text-[#3a240c] hover:bg-[#f1dfbd]"
+                      ? "border-[#b9821f] bg-[#c6922e] text-white shadow-sm"
+                      : "border-[#e7c98f] bg-[#fffaf0] text-[#3a240c] hover:bg-[#f1dfbd]"
                   }`}
                 >
                   {option.label}
