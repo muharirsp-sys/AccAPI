@@ -1144,3 +1144,365 @@ html[data-theme="neon"] h3 {
 }
 
 /* neon-theme: end */
+
+/* ============================================
+ * Tema "Mazer" (opsional, data-theme="mazer")
+ * Sumber: runtime/ui-backups/mazer-outline-20260610-211546/globals.css.bak
+ * Identitas: admin terang biru (Bootstrap/Mazer-style) — page biru muda,
+ * card putih, primary indigo. Murni additive: semua selector di-scope
+ * html[data-theme="mazer"] sehingga office-calm & neon TIDAK terpengaruh.
+ * ============================================ */
+
+html[data-theme="mazer"] {
+  /* Mazer base palette */
+  --mazer-primary: #435ebe;
+  --mazer-primary-dark: #25396f;
+  --mazer-primary-soft: #ebf3ff;
+  --mazer-sidebar: #ffffff;
+  --mazer-page: #f2f7ff;
+  --mazer-card: #ffffff;
+  --mazer-card-soft: #f7faff;
+  --mazer-border: #e5edf8;
+  --mazer-muted: #7c8db5;
+  --mazer-heading: #25396f;
+  --mazer-body: #607080;
+
+  /* Override token global */
+  --background: var(--mazer-page);
+  --foreground: var(--mazer-heading);
+  --app-bg: var(--mazer-page);
+  --surface: var(--mazer-card);
+  --surface-2: var(--mazer-card-soft);
+  --border-strong: var(--mazer-border);
+  --border-soft: #edf2fb;
+  --luxury-text: var(--mazer-heading);
+  --luxury-muted: var(--mazer-body);
+  --luxury-subtle: var(--mazer-muted);
+  --luxury-soft: var(--mazer-primary);
+  --luxury-teal: #198754;
+  --luxury-gold: var(--mazer-primary);
+  --luxury-gold-2: #6f86dd;
+  --luxury-bronze: var(--mazer-primary-dark);
+  --luxury-shadow: 0 12px 34px rgba(31, 45, 92, 0.08);
+
+  /* Tombol primary (gradient indigo) */
+  --btn-primary-bg: linear-gradient(135deg, #5a73d8, #435ebe);
+  --btn-primary-text: #ffffff;
+  --btn-primary-border: rgba(67, 94, 190, 0.42);
+  --btn-primary-shadow: 0 10px 24px rgba(67, 94, 190, 0.24);
+  --btn-primary-shadow-hover: 0 14px 30px rgba(67, 94, 190, 0.32);
+
+  /* Outline ring (penebalan visual ~2px tanpa geser layout).
+   * Diterapkan via box-shadow: inset 0 0 0 1px ... pada elemen ber-border. */
+  --mazer-border-strong: #c5d2e8;
+  --mazer-border-strong-accent: rgba(67, 94, 190, 0.22);
+}
+
+html[data-theme="mazer"] body {
+  background: var(--mazer-page) !important;
+  color: var(--mazer-body);
+  font-family: "Inter", "Segoe UI", Arial, sans-serif;
+}
+
+/* Sembunyikan layer ambient warm (fixed -z-10) supaya tidak menimpa tema terang. */
+html[data-theme="mazer"] body > div.fixed.-z-10 {
+  display: none;
+}
+
+/* ===== Override kelas literal warm/dark agar konsisten dengan palet Mazer ===== */
+/* Card / surface hardcoded → putih */
+html[data-theme="mazer"] .bg-\[\#0f1015\],
+html[data-theme="mazer"] .bg-\[\#0f1115\],
+html[data-theme="mazer"] .bg-\[\#101219\],
+html[data-theme="mazer"] .bg-\[\#15161f\],
+html[data-theme="mazer"] .bg-\[\#16181f\],
+html[data-theme="mazer"] .bg-\[\#1e212b\],
+html[data-theme="mazer"] .bg-\[\#101217\],
+html[data-theme="mazer"] .bg-\[\#1e2333\],
+html[data-theme="mazer"] .bg-\[\#1a1c24\],
+html[data-theme="mazer"] .bg-\[\#1a1c23\],
+html[data-theme="mazer"] .bg-\[\#1a1c23\]\/25,
+html[data-theme="mazer"] .bg-\[\#1a1c23\]\/30,
+html[data-theme="mazer"] .bg-\[\#1a1c23\]\/40,
+html[data-theme="mazer"] .bg-\[\#1a1c23\]\/45,
+html[data-theme="mazer"] .bg-\[\#1a1c23\]\/50,
+html[data-theme="mazer"] .bg-\[\#1a1c23\]\/55,
+html[data-theme="mazer"] .bg-\[\#1a1c23\]\/60,
+html[data-theme="mazer"] .bg-\[\#1a1c23\]\/70,
+html[data-theme="mazer"] .bg-\[\#1a1c23\]\/80,
+html[data-theme="mazer"] .bg-\[\#1a1c23\]\/90 {
+  background-color: var(--mazer-card) !important;
+}
+
+/* Black/white alpha fills → card-soft */
+html[data-theme="mazer"] .bg-black\/20,
+html[data-theme="mazer"] .bg-black\/25,
+html[data-theme="mazer"] .bg-black\/30,
+html[data-theme="mazer"] .bg-black\/40,
+html[data-theme="mazer"] .bg-black\/50,
+html[data-theme="mazer"] .bg-white\/5,
+html[data-theme="mazer"] .bg-white\/10,
+html[data-theme="mazer"] .hover\:bg-white\/10:hover,
+html[data-theme="mazer"] .hover\:bg-white\/\[0\.03\]:hover {
+  background-color: var(--mazer-card-soft) !important;
+}
+
+html[data-theme="mazer"] .bg-black\/60,
+html[data-theme="mazer"] .bg-black\/65 {
+  background-color: rgba(37, 57, 111, 0.28) !important;
+}
+
+/* Borders */
+html[data-theme="mazer"] .border-white\/5,
+html[data-theme="mazer"] .border-white\/10,
+html[data-theme="mazer"] .border-slate-500\/30 {
+  border-color: var(--mazer-border) !important;
+  box-shadow: inset 0 0 0 1px var(--mazer-border-strong);
+}
+
+/* Teks */
+html[data-theme="mazer"] .text-white,
+html[data-theme="mazer"] .text-slate-100,
+html[data-theme="mazer"] .text-slate-200 {
+  color: var(--mazer-heading) !important;
+}
+
+html[data-theme="mazer"] .text-slate-300,
+html[data-theme="mazer"] .text-slate-400,
+html[data-theme="mazer"] .text-slate-500,
+html[data-theme="mazer"] .text-slate-600 {
+  color: var(--mazer-body) !important;
+}
+
+html[data-theme="mazer"] .text-indigo-50,
+html[data-theme="mazer"] .text-indigo-100,
+html[data-theme="mazer"] .text-indigo-200,
+html[data-theme="mazer"] .text-indigo-300,
+html[data-theme="mazer"] .text-indigo-400,
+html[data-theme="mazer"] .text-indigo-500,
+html[data-theme="mazer"] .text-blue-400,
+html[data-theme="mazer"] .text-blue-500 {
+  color: var(--mazer-primary) !important;
+}
+
+/* Background tint indigo/blue lembut */
+html[data-theme="mazer"] .bg-indigo-500\/5,
+html[data-theme="mazer"] .bg-indigo-500\/10,
+html[data-theme="mazer"] .bg-indigo-500\/20,
+html[data-theme="mazer"] .bg-blue-500\/10,
+html[data-theme="mazer"] .bg-blue-500\/20,
+html[data-theme="mazer"] .bg-slate-500\/10 {
+  background-color: var(--mazer-primary-soft) !important;
+}
+
+/* Tombol solid → gradient primary */
+html[data-theme="mazer"] .bg-indigo-600,
+html[data-theme="mazer"] .bg-blue-600,
+html[data-theme="mazer"] .hover\:bg-indigo-500:hover,
+html[data-theme="mazer"] .hover\:bg-blue-500:hover,
+html[data-theme="mazer"] .hover\:bg-indigo-600\/50:hover {
+  background: var(--btn-primary-bg) !important;
+  color: #ffffff !important;
+}
+
+/* Border / focus */
+html[data-theme="mazer"] .border-indigo-500,
+html[data-theme="mazer"] .border-indigo-500\/20,
+html[data-theme="mazer"] .border-indigo-500\/30,
+html[data-theme="mazer"] .border-indigo-500\/50,
+html[data-theme="mazer"] .border-blue-500\/30,
+html[data-theme="mazer"] .hover\:border-indigo-400\/50:hover,
+html[data-theme="mazer"] .hover\:border-blue-500\/50:hover,
+html[data-theme="mazer"] .focus\:border-blue-500:focus,
+html[data-theme="mazer"] .focus\:border-indigo-500:focus {
+  border-color: rgba(67, 94, 190, 0.36) !important;
+  box-shadow: inset 0 0 0 1px var(--mazer-border-strong-accent);
+}
+
+html[data-theme="mazer"] .focus\:ring-blue-500:focus,
+html[data-theme="mazer"] .focus\:ring-blue-500\/50:focus,
+html[data-theme="mazer"] .focus\:ring-indigo-500\/50:focus {
+  --tw-ring-color: rgba(67, 94, 190, 0.28) !important;
+}
+
+/* Misc */
+html[data-theme="mazer"] .file\:text-white::file-selector-button {
+  color: #ffffff;
+}
+
+html[data-theme="mazer"] .placeholder\:text-slate-600::placeholder {
+  color: #9aa9c8;
+}
+
+html[data-theme="mazer"] .bg-indigo-500\/30,
+html[data-theme="mazer"] .bg-indigo-600\/50,
+html[data-theme="mazer"] .selection\:bg-indigo-500\/30::selection {
+  background-color: rgba(67, 94, 190, 0.24);
+}
+
+html[data-theme="mazer"] .selection\:text-indigo-200::selection {
+  color: #ffffff;
+}
+
+/* Retint legacy warm hardcoded → palet Mazer */
+html[data-theme="mazer"] .bg-\[\#fffaf0\]\/82,
+html[data-theme="mazer"] .bg-\[\#fffaf0\]\/74,
+html[data-theme="mazer"] .bg-\[\#f7ead0\]\/72 {
+  background-color: var(--mazer-card) !important;
+}
+
+html[data-theme="mazer"] .bg-\[\#f2d28a\],
+html[data-theme="mazer"] .bg-\[\#c79a3f\],
+html[data-theme="mazer"] .bg-\[\#b77a25\],
+html[data-theme="mazer"] .bg-\[\#7a4e20\],
+html[data-theme="mazer"] .from-\[\#f2d28a\],
+html[data-theme="mazer"] .from-\[\#fff3d1\],
+html[data-theme="mazer"] .via-\[\#e4ba62\],
+html[data-theme="mazer"] .via-\[\#c79a3f\],
+html[data-theme="mazer"] .to-\[\#9a6424\],
+html[data-theme="mazer"] .to-\[\#7a4e20\] {
+  --tw-gradient-from: #5a73d8 var(--tw-gradient-from-position) !important;
+  --tw-gradient-via: #435ebe var(--tw-gradient-via-position) !important;
+  --tw-gradient-to: #25396f var(--tw-gradient-to-position) !important;
+  background-color: var(--mazer-primary) !important;
+}
+
+html[data-theme="mazer"] .from-\[\#fff7e6\],
+html[data-theme="mazer"] .from-\[\#fff8ea\],
+html[data-theme="mazer"] .from-\[\#fffaf0\]\/90,
+html[data-theme="mazer"] .from-\[\#f5dfad\]\/34,
+html[data-theme="mazer"] .from-\[\#edd09a\]\/34,
+html[data-theme="mazer"] .from-\[\#f0d596\]\/34,
+html[data-theme="mazer"] .from-\[\#e8c174\]\/32,
+html[data-theme="mazer"] .from-\[\#f3dba5\]\/34,
+html[data-theme="mazer"] .from-\[\#ead7b4\]\/38,
+html[data-theme="mazer"] .to-\[\#f1dfbd\],
+html[data-theme="mazer"] .to-\[\#fff8ea\]\/20,
+html[data-theme="mazer"] .to-\[\#fff4df\]\/18,
+html[data-theme="mazer"] .to-\[\#fff2d5\]\/18,
+html[data-theme="mazer"] .to-\[\#fff6e4\]\/18,
+html[data-theme="mazer"] .to-\[\#fff9ed\]\/18 {
+  --tw-gradient-from: #ffffff var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: #f7faff var(--tw-gradient-to-position) !important;
+}
+
+html[data-theme="mazer"] .bg-gradient-to-br.from-\[\#1a1c23\],
+html[data-theme="mazer"] .from-\[\#1a1c23\],
+html[data-theme="mazer"] .to-\[\#0f1115\] {
+  --tw-gradient-from: #ffffff var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: #f7faff var(--tw-gradient-to-position) !important;
+}
+
+html[data-theme="mazer"] .text-\[\#3d2814\],
+html[data-theme="mazer"] .text-\[\#4f3218\]\/80,
+html[data-theme="mazer"] .text-\[\#574839\],
+html[data-theme="mazer"] .text-\[\#766753\],
+html[data-theme="mazer"] .text-\[\#927f66\],
+html[data-theme="mazer"] .text-\[\#9a6424\],
+html[data-theme="mazer"] .text-\[\#7a4e20\],
+html[data-theme="mazer"] .text-\[\#8f6c2f\],
+html[data-theme="mazer"] .text-\[\#9a6b23\],
+html[data-theme="mazer"] .text-\[\#9b742d\],
+html[data-theme="mazer"] .text-\[\#84682e\],
+html[data-theme="mazer"] .text-\[\#8d5a24\],
+html[data-theme="mazer"] .text-\[\#966b2f\],
+html[data-theme="mazer"] .text-\[\#7e653d\] {
+  color: var(--mazer-heading) !important;
+}
+
+html[data-theme="mazer"] .border-\[\#c79a3f\]\/14,
+html[data-theme="mazer"] .border-\[\#c79a3f\]\/20,
+html[data-theme="mazer"] .border-\[\#c79a3f\]\/24,
+html[data-theme="mazer"] .border-\[\#e7c98f\] {
+  border-color: var(--mazer-border) !important;
+  box-shadow: inset 0 0 0 1px var(--mazer-border-strong);
+}
+
+/* Form controls (light mode native) */
+html[data-theme="mazer"] input,
+html[data-theme="mazer"] select,
+html[data-theme="mazer"] textarea {
+  color-scheme: light;
+}
+
+html[data-theme="mazer"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+html[data-theme="mazer"] select,
+html[data-theme="mazer"] textarea {
+  background-color: #ffffff;
+  border-color: var(--mazer-border);
+  color: var(--mazer-heading);
+  box-shadow: inset 0 0 0 1px var(--mazer-border-strong);
+}
+
+html[data-theme="mazer"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+html[data-theme="mazer"] select:focus,
+html[data-theme="mazer"] textarea:focus {
+  box-shadow: inset 0 0 0 1px var(--mazer-border-strong-accent);
+}
+
+html[data-theme="mazer"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"])::placeholder,
+html[data-theme="mazer"] textarea::placeholder {
+  color: #9aa9c8;
+}
+
+/* Tabel */
+html[data-theme="mazer"] table {
+  color: var(--mazer-body);
+}
+
+html[data-theme="mazer"] thead,
+html[data-theme="mazer"] .dataTable-table thead {
+  background-color: #f7faff;
+}
+
+html[data-theme="mazer"] tbody tr:hover {
+  background-color: #f7faff;
+}
+
+/* Shadow & blur */
+html[data-theme="mazer"] .shadow-black\/20,
+html[data-theme="mazer"] .shadow-black\/50,
+html[data-theme="mazer"] .shadow-black {
+  --tw-shadow-color: rgba(31, 45, 92, 0.10) !important;
+}
+
+html[data-theme="mazer"] .backdrop-blur-xl,
+html[data-theme="mazer"] .backdrop-blur-md {
+  backdrop-filter: blur(8px);
+}
+
+/* Pertahankan teks putih di atas tombol/gradient solid (override
+ * kelas literal warm yang sebelumnya bisa berubah menjadi gelap). */
+html[data-theme="mazer"] button.text-white,
+html[data-theme="mazer"] a.text-white,
+html[data-theme="mazer"] .bg-indigo-600.text-white,
+html[data-theme="mazer"] .bg-blue-600.text-white,
+html[data-theme="mazer"] .bg-emerald-600.text-white,
+html[data-theme="mazer"] .bg-teal-600.text-white,
+html[data-theme="mazer"] .bg-gradient-to-r.text-white,
+html[data-theme="mazer"] .bg-gradient-to-br.text-white,
+html[data-theme="mazer"] .bg-gradient-to-l.text-white,
+html[data-theme="mazer"] button .text-white,
+html[data-theme="mazer"] a .text-white,
+html[data-theme="mazer"] .bg-indigo-600 .text-white,
+html[data-theme="mazer"] .bg-blue-600 .text-white,
+html[data-theme="mazer"] .bg-emerald-600 .text-white,
+html[data-theme="mazer"] .bg-teal-600 .text-white,
+html[data-theme="mazer"] .bg-gradient-to-r .text-white,
+html[data-theme="mazer"] .bg-gradient-to-br .text-white,
+html[data-theme="mazer"] .bg-gradient-to-l .text-white {
+  color: #ffffff !important;
+}
+
+/* Pertebal garis tabel: pemisah antar baris (divide-y) dan border bawah header.
+ * Pakai inset box-shadow agar visual ~2px (border 1px + ring 1px) tanpa
+ * menggeser layout. Hanya aktif di tema Mazer. */
+html[data-theme="mazer"] tbody > tr + tr {
+  box-shadow: inset 0 1px 0 var(--mazer-border-strong);
+}
+
+html[data-theme="mazer"] thead {
+  box-shadow: inset 0 -1px 0 var(--mazer-border-strong);
+}
+
+/* mazer-theme: end */
