@@ -5334,6 +5334,8 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
   // Ref ke kontainer detail/form validasi Claim — dipakai auto-scroll saat
   // tombol "Proses" diklik (pola sama dengan smReviewDetailRef di SM Dashboard).
   const claimDetailRef = useRef<HTMLDivElement | null>(null);
+  // Ref ke kontainer detail/form Final Claim (view "Validasi Setelah Keuangan").
+  const finalDetailRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const clmCode = getPrincipleCode(clmPrinciple);
@@ -5695,6 +5697,13 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
           ? error.message
           : "Gagal mengambil detail final Claim.",
       );
+    } finally {
+      setTimeout(() => {
+        finalDetailRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 50);
     }
   };
 
@@ -6484,7 +6493,20 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
               </CompactFilterToolbar>
             </div>
             <div className="overflow-x-auto rounded-xl border border-white/10">
-              <table className="w-full min-w-[1200px] text-left text-sm">
+              {/* table-fixed + colgroup: muat di PC normal tanpa scroll horizontal. */}
+              <table className="w-full min-w-[920px] table-fixed text-left text-sm">
+                <colgroup>
+                  <col className="w-[11%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[7%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[17%]" />
+                </colgroup>
                 <thead className="bg-black/50 text-xs uppercase tracking-wider text-slate-500">
                   <tr>
                     {[
@@ -6499,7 +6521,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                       "Diperbarui",
                       "Aksi",
                     ].map((header) => (
-                      <th key={header} className="px-3 py-3 font-bold">
+                      <th key={header} className="px-2 py-3 font-bold">
                         {header}
                       </th>
                     ))}
@@ -6510,38 +6532,47 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                     const canProcessFinal = isFinalClaimProcessable(batch);
                     return (
                       <tr key={batch.id} className="hover:bg-white/[0.03]">
-                        <td className="px-3 py-3 font-mono text-slate-200">
+                        <td
+                          className="truncate px-2 py-3 font-mono text-slate-200"
+                          title={batch.noPengajuan}
+                        >
                           {batch.noPengajuan}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td
+                          className="truncate px-2 py-3 text-slate-300"
+                          title={batch.principleName}
+                        >
                           {batch.principleName}
                         </td>
-                        <td className="px-3 py-3 font-mono text-teal-300">
+                        <td className="truncate px-2 py-3 font-mono text-teal-300">
                           {batch.principleCode}
                         </td>
-                        <td className="px-3 py-3 text-right font-mono text-emerald-300">
+                        <td className="px-2 py-3 text-right font-mono text-emerald-300">
                           Rp{" "}
                           {Number(
                             batch.summary?.totalNominal || 0,
                           ).toLocaleString("id-ID")}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-2 py-3 text-slate-300">
                           {displayStatusLabel(batch.financeStatus)}
                         </td>
-                        <td className="px-3 py-3 text-slate-300">
+                        <td className="px-2 py-3 text-slate-300">
                           {displayStatusLabel(batch.finalStatus)}
                         </td>
-                        <td className="px-3 py-3 min-w-[130px]">
+                        <td className="px-2 py-3">
                           <ProgressBar value={computeUiBatchProgress(batch)} />
                         </td>
-                        <td className="px-3 py-3 text-slate-400">
+                        <td
+                          className="truncate px-2 py-3 text-slate-400"
+                          title={batch.finalClaimNote || "-"}
+                        >
                           {batch.finalClaimNote || "-"}
                         </td>
-                        <td className="px-3 py-3 text-slate-400">
+                        <td className="px-2 py-3 text-slate-400">
                           {formatDateDisplay(batch.updatedAt)}
                         </td>
-                        <td className="px-3 py-3">
-                          <div className="flex gap-2">
+                        <td className="px-2 py-3">
+                          <div className="flex flex-wrap gap-2">
                             <button
                               onClick={() => selectFinalBatch(batch)}
                               className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${canProcessFinal ? "border-teal-500 bg-teal-600 text-white hover:bg-teal-500" : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"}`}
@@ -6577,7 +6608,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
           </Panel>
 
           {selectedFinalBatch && (
-            <div className="space-y-6">
+            <div ref={finalDetailRef} className="scroll-mt-6 space-y-6">
               <div className="flex justify-end">
                 <button
                   onClick={() => {
