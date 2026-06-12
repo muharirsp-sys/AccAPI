@@ -1491,6 +1491,342 @@ html[data-theme="mazer"] .backdrop-blur-md {
   backdrop-filter: blur(8px);
 }
 
+/* ============================================
+ * Tema "iOS Liquid Glass" (opsional, data-theme="ios")
+ * Identitas: light frosted-glass ala iOS 26. Page abu sangat muda,
+ * surface kaca buram (backdrop-blur), aksen biru iOS #007AFF.
+ * Murni additive: semua selector di-scope html[data-theme="ios"]
+ * sehingga office-calm, neon, & mazer TIDAK terpengaruh.
+ * ============================================ */
+
+html[data-theme="ios"] {
+  --ios-primary: #007aff;
+  --ios-primary-dark: #0051d5;
+  --ios-primary-soft: #e5f0ff;
+  --ios-page: #f2f2f7;
+  --ios-card: rgba(255, 255, 255, 0.72);
+  --ios-card-solid: #ffffff;
+  --ios-card-soft: rgba(255, 255, 255, 0.55);
+  --ios-border: rgba(60, 60, 67, 0.18);
+  --ios-border-quiet: rgba(60, 60, 67, 0.10);
+  --ios-line: rgba(60, 60, 67, 0.22);
+  --ios-muted: rgba(60, 60, 67, 0.6);
+  --ios-heading: #1c1c1e;
+  --ios-body: #3a3a3c;
+
+  --background: var(--ios-page);
+  --foreground: var(--ios-heading);
+  --app-bg: var(--ios-page);
+  --surface: var(--ios-card);
+  --surface-2: var(--ios-card-soft);
+  --border-strong: var(--ios-border);
+  --border-soft: var(--ios-border-quiet);
+  --control-border: var(--ios-line);
+  --luxury-text: var(--ios-heading);
+  --luxury-muted: var(--ios-body);
+  --luxury-subtle: var(--ios-muted);
+  --luxury-soft: var(--ios-primary);
+  --luxury-teal: #34c759;
+  --luxury-gold: var(--ios-primary);
+  --luxury-gold-2: #5ac8fa;
+  --luxury-bronze: var(--ios-primary-dark);
+  --luxury-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.06);
+
+  --btn-primary-bg: linear-gradient(135deg, #2a93ff, #007aff);
+  --btn-primary-text: #ffffff;
+  --btn-primary-border: rgba(0, 122, 255, 0.42);
+  --btn-primary-shadow: 0 8px 20px rgba(0, 122, 255, 0.24);
+  --btn-primary-shadow-hover: 0 12px 26px rgba(0, 122, 255, 0.32);
+}
+
+html[data-theme="ios"] body {
+  background:
+    radial-gradient(1200px 600px at 100% 0%, #ffffff 0%, rgba(255, 255, 255, 0) 60%),
+    var(--ios-page) !important;
+  color: var(--ios-body);
+  font-family: -apple-system, "SF Pro Display", "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+}
+
+html[data-theme="ios"] body > div.fixed.-z-10 {
+  display: none;
+}
+
+/* ===== Override kelas literal warm/dark agar konsisten dengan palet iOS ===== */
+html[data-theme="ios"] .bg-\[\#0f1015\],
+html[data-theme="ios"] .bg-\[\#0f1115\],
+html[data-theme="ios"] .bg-\[\#101219\],
+html[data-theme="ios"] .bg-\[\#15161f\],
+html[data-theme="ios"] .bg-\[\#16181f\],
+html[data-theme="ios"] .bg-\[\#1e212b\],
+html[data-theme="ios"] .bg-\[\#101217\],
+html[data-theme="ios"] .bg-\[\#1e2333\],
+html[data-theme="ios"] .bg-\[\#1a1c24\],
+html[data-theme="ios"] .bg-\[\#1a1c23\],
+html[data-theme="ios"] .bg-\[\#1a1c23\]\/25,
+html[data-theme="ios"] .bg-\[\#1a1c23\]\/30,
+html[data-theme="ios"] .bg-\[\#1a1c23\]\/40,
+html[data-theme="ios"] .bg-\[\#1a1c23\]\/45,
+html[data-theme="ios"] .bg-\[\#1a1c23\]\/50,
+html[data-theme="ios"] .bg-\[\#1a1c23\]\/55,
+html[data-theme="ios"] .bg-\[\#1a1c23\]\/60,
+html[data-theme="ios"] .bg-\[\#1a1c23\]\/70,
+html[data-theme="ios"] .bg-\[\#1a1c23\]\/80,
+html[data-theme="ios"] .bg-\[\#1a1c23\]\/90 {
+  background-color: var(--ios-card) !important;
+}
+
+html[data-theme="ios"] .bg-black\/20,
+html[data-theme="ios"] .bg-black\/25,
+html[data-theme="ios"] .bg-black\/30,
+html[data-theme="ios"] .bg-black\/40,
+html[data-theme="ios"] .bg-black\/50,
+html[data-theme="ios"] .bg-white\/5,
+html[data-theme="ios"] .bg-white\/10,
+html[data-theme="ios"] .hover\:bg-white\/10:hover,
+html[data-theme="ios"] .hover\:bg-white\/\[0\.03\]:hover {
+  background-color: var(--ios-card-soft) !important;
+}
+
+html[data-theme="ios"] .bg-black\/60,
+html[data-theme="ios"] .bg-black\/65 {
+  background-color: rgba(28, 28, 30, 0.28) !important;
+}
+
+html[data-theme="ios"] .border-white\/5,
+html[data-theme="ios"] .border-white\/10,
+html[data-theme="ios"] .border-slate-500\/30 {
+  border-color: var(--ios-border) !important;
+}
+
+html[data-theme="ios"] .text-white,
+html[data-theme="ios"] .text-slate-100,
+html[data-theme="ios"] .text-slate-200 {
+  color: var(--ios-heading) !important;
+}
+
+html[data-theme="ios"] .text-slate-300,
+html[data-theme="ios"] .text-slate-400,
+html[data-theme="ios"] .text-slate-500,
+html[data-theme="ios"] .text-slate-600 {
+  color: var(--ios-muted) !important;
+}
+
+html[data-theme="ios"] .text-indigo-50,
+html[data-theme="ios"] .text-indigo-100,
+html[data-theme="ios"] .text-indigo-200,
+html[data-theme="ios"] .text-indigo-300,
+html[data-theme="ios"] .text-indigo-400,
+html[data-theme="ios"] .text-indigo-500,
+html[data-theme="ios"] .text-blue-400,
+html[data-theme="ios"] .text-blue-500 {
+  color: var(--ios-primary) !important;
+}
+
+html[data-theme="ios"] .bg-indigo-500\/5,
+html[data-theme="ios"] .bg-indigo-500\/10,
+html[data-theme="ios"] .bg-indigo-500\/20,
+html[data-theme="ios"] .bg-blue-500\/10,
+html[data-theme="ios"] .bg-blue-500\/20,
+html[data-theme="ios"] .bg-slate-500\/10 {
+  background-color: var(--ios-primary-soft) !important;
+}
+
+html[data-theme="ios"] .bg-indigo-600,
+html[data-theme="ios"] .bg-blue-600,
+html[data-theme="ios"] .hover\:bg-indigo-500:hover,
+html[data-theme="ios"] .hover\:bg-blue-500:hover,
+html[data-theme="ios"] .hover\:bg-indigo-600\/50:hover {
+  background: var(--btn-primary-bg) !important;
+  color: #ffffff !important;
+}
+
+html[data-theme="ios"] .border-indigo-500,
+html[data-theme="ios"] .border-indigo-500\/20,
+html[data-theme="ios"] .border-indigo-500\/30,
+html[data-theme="ios"] .border-indigo-500\/50,
+html[data-theme="ios"] .border-blue-500\/30,
+html[data-theme="ios"] .hover\:border-indigo-400\/50:hover,
+html[data-theme="ios"] .hover\:border-blue-500\/50:hover,
+html[data-theme="ios"] .focus\:border-blue-500:focus,
+html[data-theme="ios"] .focus\:border-indigo-500:focus {
+  border-color: rgba(0, 122, 255, 0.40) !important;
+}
+
+html[data-theme="ios"] .focus\:ring-blue-500:focus,
+html[data-theme="ios"] .focus\:ring-blue-500\/50:focus,
+html[data-theme="ios"] .focus\:ring-indigo-500\/50:focus {
+  --tw-ring-color: rgba(0, 122, 255, 0.30) !important;
+}
+
+html[data-theme="ios"] .file\:text-white::file-selector-button {
+  color: #ffffff;
+}
+
+html[data-theme="ios"] .placeholder\:text-slate-600::placeholder {
+  color: rgba(60, 60, 67, 0.5);
+}
+
+html[data-theme="ios"] .bg-indigo-500\/30,
+html[data-theme="ios"] .bg-indigo-600\/50,
+html[data-theme="ios"] .selection\:bg-indigo-500\/30::selection {
+  background-color: rgba(0, 122, 255, 0.24);
+}
+
+html[data-theme="ios"] .selection\:text-indigo-200::selection {
+  color: #ffffff;
+}
+
+/* Retint legacy warm hardcoded → palet iOS */
+html[data-theme="ios"] .bg-\[\#fffaf0\]\/82,
+html[data-theme="ios"] .bg-\[\#fffaf0\]\/74,
+html[data-theme="ios"] .bg-\[\#f7ead0\]\/72 {
+  background-color: var(--ios-card) !important;
+}
+
+html[data-theme="ios"] .bg-\[\#f2d28a\],
+html[data-theme="ios"] .bg-\[\#c79a3f\],
+html[data-theme="ios"] .bg-\[\#b77a25\],
+html[data-theme="ios"] .bg-\[\#7a4e20\],
+html[data-theme="ios"] .from-\[\#f2d28a\],
+html[data-theme="ios"] .from-\[\#fff3d1\],
+html[data-theme="ios"] .via-\[\#e4ba62\],
+html[data-theme="ios"] .via-\[\#c79a3f\],
+html[data-theme="ios"] .to-\[\#9a6424\],
+html[data-theme="ios"] .to-\[\#7a4e20\] {
+  --tw-gradient-from: #2a93ff var(--tw-gradient-from-position) !important;
+  --tw-gradient-via: #007aff var(--tw-gradient-via-position) !important;
+  --tw-gradient-to: #0051d5 var(--tw-gradient-to-position) !important;
+  background-color: var(--ios-primary) !important;
+}
+
+html[data-theme="ios"] .from-\[\#fff7e6\],
+html[data-theme="ios"] .from-\[\#fff8ea\],
+html[data-theme="ios"] .from-\[\#fffaf0\]\/90,
+html[data-theme="ios"] .from-\[\#f5dfad\]\/34,
+html[data-theme="ios"] .from-\[\#edd09a\]\/34,
+html[data-theme="ios"] .from-\[\#f0d596\]\/34,
+html[data-theme="ios"] .from-\[\#e8c174\]\/32,
+html[data-theme="ios"] .from-\[\#f3dba5\]\/34,
+html[data-theme="ios"] .from-\[\#ead7b4\]\/38,
+html[data-theme="ios"] .to-\[\#f1dfbd\],
+html[data-theme="ios"] .to-\[\#fff8ea\]\/20,
+html[data-theme="ios"] .to-\[\#fff4df\]\/18,
+html[data-theme="ios"] .to-\[\#fff2d5\]\/18,
+html[data-theme="ios"] .to-\[\#fff6e4\]\/18,
+html[data-theme="ios"] .to-\[\#fff9ed\]\/18 {
+  --tw-gradient-from: #ffffff var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: #f2f2f7 var(--tw-gradient-to-position) !important;
+}
+
+html[data-theme="ios"] .bg-gradient-to-br.from-\[\#1a1c23\],
+html[data-theme="ios"] .from-\[\#1a1c23\],
+html[data-theme="ios"] .to-\[\#0f1115\] {
+  --tw-gradient-from: #ffffff var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: #f2f2f7 var(--tw-gradient-to-position) !important;
+}
+
+html[data-theme="ios"] .text-\[\#3d2814\],
+html[data-theme="ios"] .text-\[\#4f3218\]\/80,
+html[data-theme="ios"] .text-\[\#574839\],
+html[data-theme="ios"] .text-\[\#766753\],
+html[data-theme="ios"] .text-\[\#927f66\],
+html[data-theme="ios"] .text-\[\#9a6424\],
+html[data-theme="ios"] .text-\[\#7a4e20\],
+html[data-theme="ios"] .text-\[\#8f6c2f\],
+html[data-theme="ios"] .text-\[\#9a6b23\],
+html[data-theme="ios"] .text-\[\#9b742d\],
+html[data-theme="ios"] .text-\[\#84682e\],
+html[data-theme="ios"] .text-\[\#8d5a24\],
+html[data-theme="ios"] .text-\[\#966b2f\],
+html[data-theme="ios"] .text-\[\#7e653d\] {
+  color: var(--ios-heading) !important;
+}
+
+html[data-theme="ios"] .border-\[\#c79a3f\]\/14,
+html[data-theme="ios"] .border-\[\#c79a3f\]\/20,
+html[data-theme="ios"] .border-\[\#c79a3f\]\/24,
+html[data-theme="ios"] .border-\[\#e7c98f\] {
+  border-color: var(--ios-border) !important;
+}
+
+/* Form controls (light mode native) */
+html[data-theme="ios"] input,
+html[data-theme="ios"] select,
+html[data-theme="ios"] textarea {
+  color-scheme: light;
+}
+
+html[data-theme="ios"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+html[data-theme="ios"] select,
+html[data-theme="ios"] textarea {
+  background-color: #ffffff;
+  border-color: var(--control-border);
+  color: var(--ios-heading);
+  box-shadow: none;
+}
+
+html[data-theme="ios"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+html[data-theme="ios"] select:focus,
+html[data-theme="ios"] textarea:focus {
+  border-color: rgba(0, 122, 255, 0.5);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.12);
+}
+
+html[data-theme="ios"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"])::placeholder,
+html[data-theme="ios"] textarea::placeholder {
+  color: rgba(60, 60, 67, 0.5);
+}
+
+/* Tabel */
+html[data-theme="ios"] table {
+  color: var(--ios-body);
+}
+
+html[data-theme="ios"] thead,
+html[data-theme="ios"] .dataTable-table thead {
+  background-color: rgba(242, 242, 247, 0.9);
+}
+
+html[data-theme="ios"] tbody tr:hover {
+  background-color: rgba(0, 122, 255, 0.06);
+}
+
+/* Chip/ikon kecil: non-aktifkan frosted glass agar tidak aneh. */
+html[data-theme="ios"] main :is(.w-8, .w-9, .w-10, .w-11, .w-12, .h-8, .h-9, .h-10, .h-11, .h-12):is(.bg-\[\#1a1c23\], .bg-black\/20, .bg-black\/25, .bg-black\/30, .bg-white\/5) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background-color: var(--ios-card-soft) !important;
+}
+
+html[data-theme="ios"] main :is(.w-8, .w-9, .w-10, .w-11, .w-12, .h-8, .h-9, .h-10, .h-11, .h-12):is(.border-white\/5, .border-white\/10) {
+  border-color: transparent !important;
+}
+
+/* Backdrop blur utility → iOS glass strength */
+html[data-theme="ios"] .backdrop-blur-xl,
+html[data-theme="ios"] .backdrop-blur-md {
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* Divide lines → ios border */
+html[data-theme="ios"] .divide-white\/5 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--ios-border-quiet) !important;
+}
+
+html[data-theme="ios"] .divide-white\/10 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--ios-line) !important;
+}
+
+/* Shadow → subtle iOS */
+html[data-theme="ios"] .shadow-black\/20,
+html[data-theme="ios"] .shadow-black\/50,
+html[data-theme="ios"] .shadow-black {
+  --tw-shadow-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+/* ios-theme: end */
+
 /* Pertahankan teks putih di atas tombol/gradient solid (override
  * kelas literal warm yang sebelumnya bisa berubah menjadi gelap). */
 html[data-theme="mazer"] button.text-white,

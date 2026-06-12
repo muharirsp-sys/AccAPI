@@ -10,22 +10,23 @@ import { Palette, Check } from "lucide-react";
 
 export const OFF_THEME_STORAGE_KEY = "off-theme";
 
-export type OffThemeKey = "office-calm" | "neon" | "mazer";
+export type OffThemeKey = "office-calm" | "neon" | "mazer" | "ios";
 
 export const OFF_THEMES: Array<{ key: OffThemeKey; label: string; hint: string; swatch: string }> = [
   { key: "office-calm", label: "Office Calm", hint: "Hijau teduh untuk kerja lama (default)", swatch: "#232c2a" },
   { key: "neon", label: "Neon HUD", hint: "Sci-fi control tower", swatch: "#03060d" },
   { key: "mazer", label: "Mazer", hint: "Admin terang biru (Bootstrap/Mazer)", swatch: "#435ebe" },
+  { key: "ios", label: "iOS Liquid Glass", hint: "Frosted glass terang ala iOS terbaru", swatch: "#007AFF" },
 ];
 
 const DEFAULT_THEME: OffThemeKey = "office-calm";
 
 function isOffThemeKey(value: string | null): value is OffThemeKey {
-  return value === "office-calm" || value === "neon" || value === "mazer";
+  return value === "office-calm" || value === "neon" || value === "mazer" || value === "ios";
 }
 
 // Script inline untuk apply tema sebelum paint agar tidak ada flash.
-export const applyStoredThemeScript = `(function(){try{var t=localStorage.getItem('${OFF_THEME_STORAGE_KEY}');if(t!=='office-calm'&&t!=='neon'&&t!=='mazer'){t='${DEFAULT_THEME}';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','${DEFAULT_THEME}');}})();`;
+export const applyStoredThemeScript = `(function(){try{var t=localStorage.getItem('${OFF_THEME_STORAGE_KEY}');if(t!=='office-calm'&&t!=='neon'&&t!=='mazer'&&t!=='ios'){t='${DEFAULT_THEME}';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','${DEFAULT_THEME}');}})();`;
 
 export default function ThemeSwitcher() {
   const [open, setOpen] = useState(false);
