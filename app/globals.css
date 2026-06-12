@@ -2053,7 +2053,12 @@ html[data-theme="ios"] .hover\:bg-\[\#f2d28a\]\/20:hover {
   background-color: rgba(0, 122, 255, 0.06) !important;
 }
 
-/* ios-theme: end (rev9a) */
+/* Master Principle: teks tan/emas sekunder → muted iOS */
+html[data-theme="ios"] .text-\[\#9a7a45\] {
+  color: var(--ios-muted) !important;
+}
+
+/* ios-theme: end (rev10 · principles) */
 
 /* Pertahankan teks putih di atas tombol/gradient solid (override
  * kelas literal warm yang sebelumnya bisa berubah menjadi gelap). */
