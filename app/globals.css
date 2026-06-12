@@ -1857,7 +1857,17 @@ html[data-theme="ios"] .shadow-black {
   --tw-shadow-color: rgba(0, 0, 0, 0.08) !important;
 }
 
-/* ios-theme: end (rev3) */
+/* Heading clip-text gold "CV. Surya Perkasa" → gradient biru iOS */
+html[data-theme="ios"] .bg-clip-text.from-\[\#b77a25\] {
+  background-image: linear-gradient(90deg, #007aff, #5856d6) !important;
+}
+
+/* Hero card warm gradient (via/to belum tertangani) → kaca terang */
+html[data-theme="ios"] .bg-gradient-to-br.from-\[\#fffaf0\]\/90 {
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(229, 240, 255, 0.55), rgba(88, 86, 214, 0.10)) !important;
+}
+
+/* ios-theme: end (rev4) */
 
 /* Pertahankan teks putih di atas tombol/gradient solid (override
  * kelas literal warm yang sebelumnya bisa berubah menjadi gelap). */
