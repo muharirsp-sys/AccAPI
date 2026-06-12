@@ -1952,7 +1952,12 @@ html[data-theme="ios"] .text-cyan-400 {
   color: var(--ios-primary) !important;
 }
 
-/* ios-theme: end (rev5a) */
+/* Link warm coklat arbitrary (mis. "Lihat semua") → biru iOS. */
+html[data-theme="ios"] .text-\[\#7a664c\] {
+  color: var(--ios-primary) !important;
+}
+
+/* ios-theme: end (rev6) */
 
 /* Pertahankan teks putih di atas tombol/gradient solid (override
  * kelas literal warm yang sebelumnya bisa berubah menjadi gelap). */
