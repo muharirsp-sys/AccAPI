@@ -14,10 +14,9 @@ import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
 import DatePickerField from "@/components/ui/DatePickerField";
 import { fuzzyMatch } from "@/lib/fuzzySearch";
-import { matchDmyDateFilter } from "@/lib/dateFilter";
+import { parseAnyDate } from "@/lib/dateFilter";
 
-// Kolom tanggal di Engine Filter Kolom Data: diketik user format DD-MM-YYYY
-// (tanggal-bulan-tahun) dengan dukungan input bertahap (11 / 11-06 / 11-06-2026).
+// Kolom tanggal di Engine Filter Kolom Data: dipilih via kalender dan dicocokkan persis.
 const DATE_FILTER_KEYS = new Set([
     "tgl_setor", "tgl_win", "jtempo_win", "tgl_terima_barang",
     "tgl_invoice", "jt_invoice", "actual_date", "tgl_pembayaran",
@@ -112,6 +111,13 @@ function formatInvoiceAmountInput(value: string): string {
     const formattedWhole = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     const fraction = fractionParts.join("").slice(0, 2);
     return hasDot ? `${formattedWhole}.${fraction}` : formattedWhole;
+}
+
+function matchExactApiDate(storedValue: unknown, selectedDate: string): boolean {
+    if (!selectedDate) return true;
+    const parsed = parseAnyDate(storedValue);
+    if (!parsed) return false;
+    return `${parsed.y}-${parsed.m}-${parsed.d}` === selectedDate;
 }
 
 function normalizePaymentRecord(r: PaymentApiRecord): PaymentRecord {
@@ -432,7 +438,7 @@ export default function PaymentsPage() {
 
             const searchParams: { [key: string]: string | undefined } = {
                 principle: r.principle, tgl_setor: r.tgl_setor, tgl_win: r.tgl_win,
-                jtempo_win: r.jt_win || r.tgl_jtempo_win,
+                jtempo_win: r.tgl_jtempo_win || r.jt_win,
                 nilai_sistem: r.nilai_win_display || formatInvoiceAmountDisplay(r.nilai_sistem || r.nilai_win),
                 tgl_terima_barang: r.tgl_terima_barang, tgl_invoice: r.tgl_invoice,
                 invoice: r.invoice_no || r.invoice, jenis_dokumen: r.jenis_dokumen,
@@ -444,7 +450,7 @@ export default function PaymentsPage() {
             for (const [fKey, getVal] of Object.entries(searchParams)) {
                 if (!filters[fKey]) continue;
                 const ok = DATE_FILTER_KEYS.has(fKey)
-                    ? matchDmyDateFilter(getVal, filters[fKey])
+                    ? matchExactApiDate(getVal, filters[fKey])
                     : fuzzyMatch(getVal, filters[fKey]);
                 if (!ok) return false;
             }
@@ -673,7 +679,17 @@ export default function PaymentsPage() {
                                 </th>
                                 {['principle', 'tgl_setor', 'tgl_win', 'jtempo_win', 'nilai_sistem', 'tgl_terima_barang', 'tgl_invoice', 'invoice', 'jenis_dokumen', 'nomor_dokumen', 'nilai_invoice', 'jt_invoice', 'gap_nilai_display', 'actual_date', 'tgl_pembayaran', 'status_pembayaran'].map((fKey, i) => (
                                     <th key={i} className="px-1.5 py-2 bg-[#0f1115] border-b border-white/10 sticky top-[37px] z-30">
-                                        <input type="text" placeholder={DATE_FILTER_KEYS.has(fKey) ? "hh-bb-tttt" : "Filter..."} title={DATE_FILTER_KEYS.has(fKey) ? "Filter tanggal: ketik tanggal-bulan-tahun, mis. 11-06-2026 (boleh bertahap: 11 atau 11-06)" : undefined} className="w-full min-w-[65px] bg-black/60 border border-white/10 focus:border-blue-500 rounded text-[10px] py-1.5 px-1.5 text-slate-300 outline-none placeholder:text-slate-600 font-mono" onChange={e => handleFilterChange(fKey, e.target.value)} />
+                                        {DATE_FILTER_KEYS.has(fKey) ? (
+                                            <DatePickerField
+                                                value={filters[fKey] || ""}
+                                                onChange={(value) => handleFilterChange(fKey, value)}
+                                                placeholder="Tanggal"
+                                                className="w-[130px] border-white/10 bg-black/60 py-1 pl-7 pr-6 text-[10px] font-mono text-slate-300 focus:border-blue-500"
+                                                ariaLabel={`Filter tanggal ${fKey}`}
+                                            />
+                                        ) : (
+                                            <input type="text" placeholder="Filter..." className="w-full min-w-[65px] bg-black/60 border border-white/10 focus:border-blue-500 rounded text-[10px] py-1.5 px-1.5 text-slate-300 outline-none placeholder:text-slate-600 font-mono" onChange={e => handleFilterChange(fKey, e.target.value)} />
+                                        )}
                                     </th>
                                 ))}
                             </tr>

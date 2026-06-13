@@ -1,13 +1,11 @@
 /*
- * Tujuan: Pencocokan filter tanggal yang diketik user dengan format DD-MM-YYYY
- *         (tanggal-bulan-tahun), mendukung input bertahap (11 / 11-06 / 11-06-2026).
- * Caller: Filter kolom tanggal di "Engine Filter Kolom Data" halaman Payments.
- * Dependensi: lib/fuzzySearch (fallback bila nilai tersimpan tak bisa di-parse).
- * Main Functions: parseAnyDate, matchDmyDateFilter.
+ * Tujuan: Normalisasi nilai tanggal tersimpan ke komponen (d,m,y) untuk
+ *         pencocokan filter tanggal berbasis kalender (exact match YYYY-MM-DD).
+ * Caller: matchExactApiDate pada filter kolom tanggal halaman Payments.
+ * Dependensi: Tidak ada.
+ * Main Functions: parseAnyDate.
  * Side Effects: Tidak ada (pure utility).
  */
-
-import { fuzzyMatch } from "@/lib/fuzzySearch";
 
 function pad2(value: string | number): string {
     return String(value).padStart(2, "0");
@@ -52,66 +50,4 @@ export function parseAnyDate(value: unknown): ParsedDate | null {
     }
 
     return null;
-}
-
-/**
- * Cocokkan satu segmen query terhadap komponen tanggal (hari/bulan).
- * Mendukung input bertahap dan unpadded:
- *  - "6" / "06" cocok dengan "06"
- *  - "1" cocok awalan "1x" (mis. 10-19) — startsWith
- */
-function segmentMatchesDayMonth(component: string, seg: string): boolean {
-    if (!seg) return true;
-    if (component === pad2(seg)) return true;
-    if (component.startsWith(seg)) return true;
-    if (Number(component) === Number(seg)) return true;
-    return false;
-}
-
-/**
- * Cocokkan filter tanggal yang diketik user (format DD-MM-YYYY, bertahap)
- * terhadap nilai tanggal tersimpan.
- *
- * Aturan:
- *  - query kosong  → true (filter mati)
- *  - nilai tak ter-parse → fallback fuzzyMatch (string mentah tetap bisa dicari)
- *  - segmen yang ADA harus cocok semua (AND): seg0=hari, seg1=bulan, seg2=tahun
- *
- * @example
- * matchDmyDateFilter("2026-06-11", "11")          // true (hari 11)
- * matchDmyDateFilter("2026-06-11", "11-06")       // true (11 Juni)
- * matchDmyDateFilter("2026-06-11", "11-06-2026")  // true (persis)
- * matchDmyDateFilter("2026-06-11", "11-07")       // false (bulan beda)
- */
-export function matchDmyDateFilter(storedValue: unknown, query: string): boolean {
-    if (!query || !query.trim()) return true;
-
-    const parsed = parseAnyDate(storedValue);
-    if (!parsed) {
-        // Tak bisa di-parse sebagai tanggal → jangan regresi, pakai fuzzy.
-        return fuzzyMatch(storedValue, query);
-    }
-
-    // Normalisasi query: samakan pemisah ke "-", buang pemisah ganda/tepi.
-    const segs = query
-        .toLowerCase()
-        .replace(/[/.\s]+/g, "-")
-        .split("-")
-        .filter(Boolean);
-
-    if (segs.length === 0) return true;
-
-    const [segDay, segMonth, segYear] = segs;
-
-    if (segDay && !segmentMatchesDayMonth(parsed.d, segDay)) return false;
-    if (segMonth && !segmentMatchesDayMonth(parsed.m, segMonth)) return false;
-    if (segYear) {
-        // Tahun: dukung pengetikan progresif dari depan (2 / 20 / 202 / 2026)
-        // dan akhiran 2 digit (26 → 2026). Hindari `includes` agar fragmen
-        // pendek (mis. "2", "0") tidak mencocokkan banyak tahun secara tak terduga.
-        const yearOk = parsed.y.startsWith(segYear) || (segYear.length >= 2 && parsed.y.endsWith(segYear));
-        if (!yearOk) return false;
-    }
-
-    return true;
 }
