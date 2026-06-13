@@ -1714,3 +1714,14 @@ html[data-theme="ios"] .text-\[\#9a7a45\] {
 
 /* ios-theme: end (rev12 · biru→biru mazer, hijau→hijau mazer) */
 
+/* ============================================
+ * DatePicker popup: paksa background OPAQUE di semua tema.
+ * Panel popup (data-accapi-date-picker-calendar) memakai inline
+ * background:var(--surface) yang translucent → override pakai !important
+ * dengan warna solid setara --surface tiap tema. (rev: opaque-datepicker)
+ * ============================================ */
+[data-accapi-date-picker-calendar="true"] { background-color: #fffaef !important; }
+html[data-theme="office-calm"] [data-accapi-date-picker-calendar="true"] { background-color: #fffcf4 !important; }
+html[data-theme="neon"] [data-accapi-date-picker-calendar="true"] { background-color: #0d2240 !important; }
+html[data-theme="ios"] [data-accapi-date-picker-calendar="true"] { background-color: #ffffff !important; }
+
