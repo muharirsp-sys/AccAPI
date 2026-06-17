@@ -94,6 +94,11 @@ export async function GET(_request: Request, context: Context) {
         const { id } = await context.params;
         const data = await getBatchWithItems(id);
         if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
+        // Isolasi per-supervisor: SPV tidak boleh membaca detail pengajuan milik SPV lain
+        // (tutup celah akses langsung via API). Role lain tidak terpengaruh.
+        if (actor.role === "supervisor" && data.batch.createdBy !== actor.id) {
+            return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
+        }
         const summary = batchSummary(data.items);
         // No Rekening item hanya terlihat oleh Finance/Admin, atau Supervisor pemilik
         // saat batch masih editable. Field batch legacy tidak dipakai UI baru.

@@ -87,6 +87,9 @@ type TabKey =
 type OffDashboardProps = {
   offRole: OffRole;
   supervisorDisplayName?: string;
+  // Id user yang sedang login — dipakai SupervisorDashboard untuk filter defensif
+  // agar SPV hanya melihat pengajuan miliknya (createdBy === sessionUserId).
+  sessionUserId?: string;
 };
 
 type Principle = (typeof offPrinciples)[number];
@@ -194,6 +197,8 @@ type OffApiBatch = {
   payments?: OffApiPayment[];
   // #1-3: penanda asal pengajuan ("supervisor" | "claim").
   createdByRole?: string | null;
+  // Pemilik pengajuan (id user pembuat) — dipakai untuk isolasi tampilan per-supervisor.
+  createdBy?: string | null;
   // #17: status dan jumlah refund dari alur selisih.
   refundStatus?: string | null;
   refundAmount?: number | null;
@@ -3075,6 +3080,7 @@ function DuplicateNoSuratPrompt({
 function SupervisorDashboard({
   offRole,
   supervisorDisplayName = "",
+  sessionUserId = "",
 }: OffDashboardProps) {
   const canSubmitSupervisor = canPerformOffAction(offRole, "submit_batch");
   const canEditSupervisor = canPerformOffAction(offRole, "edit_returned_batch");
@@ -3204,9 +3210,15 @@ function SupervisorDashboard({
         throw new Error(
           String(data.error || "Gagal mengambil batch yang dikembalikan."),
         );
-      const allBatches = Array.isArray(data.batches)
+      const rawBatches = Array.isArray(data.batches)
         ? (data.batches as OffApiBatch[])
         : [];
+      // Guard defensif: backend sudah memfilter, tapi pastikan SPV hanya melihat
+      // pengajuan miliknya walau respons API berubah. Role lain tidak difilter.
+      const allBatches =
+        offRole === "supervisor" && sessionUserId
+          ? rawBatches.filter((batch) => batch.createdBy === sessionUserId)
+          : rawBatches;
       setAllSupervisorBatches(allBatches);
       const returned = allBatches.filter(
         (batch) =>
@@ -10701,6 +10713,7 @@ export default function OffProgramControlPage() {
   const { data: session } = authClient.useSession();
   const sessionUser = session?.user as
     | {
+        id?: string | null;
         name?: string | null;
         email?: string | null;
         role?: unknown;
@@ -10785,9 +10798,15 @@ export default function OffProgramControlPage() {
         });
         const data = await parseJsonResponse(response);
         if (!response.ok || !data.ok) return;
-        const rows = Array.isArray(data.batches)
+        const rawRows = Array.isArray(data.batches)
           ? (data.batches as OffApiBatch[])
           : [];
+        // Guard defensif: SPV hanya mendeteksi masalah dari pengajuan miliknya
+        // (backend sudah memfilter; ini lapis kedua). Role lain tidak difilter.
+        const rows =
+          offRole === "supervisor" && sessionUser?.id
+            ? rawRows.filter((batch) => batch.createdBy === sessionUser.id)
+            : rawRows;
 
         // Map ke format ProblemDetectionBatch
         const detectionBatches: ProblemDetectionBatch[] = rows.map((batch) => ({
@@ -10839,7 +10858,7 @@ export default function OffProgramControlPage() {
       isActive = false;
       window.clearInterval(interval);
     };
-  }, [offRole]);
+  }, [offRole, sessionUser?.id]);
 
   // Shell stabil (SSR === render klien pertama) sampai sesi/role siap di klien.
   if (!mounted) {
@@ -11030,6 +11049,7 @@ export default function OffProgramControlPage() {
               supervisorDisplayName={
                 sessionUser?.name || sessionUser?.email || ""
               }
+              sessionUserId={sessionUser?.id || ""}
             />
           )}
           {effectiveActiveTab === "sales" && (

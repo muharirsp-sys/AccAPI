@@ -251,7 +251,12 @@ export async function GET(request: Request) {
     const dateTo = (url.searchParams.get("dateTo") || "").trim();
 
     try {
-        const rows = await db.select().from(offBatch).orderBy(desc(offBatch.createdAt)).limit(200);
+        // Isolasi per-supervisor: SPV hanya melihat pengajuan yang dia buat sendiri
+        // (createdBy = id user). Role lain (SM/Claim/OM/Finance/Admin) tetap melihat semua.
+        const baseQuery = db.select().from(offBatch);
+        const rows = actor.role === "supervisor"
+            ? await baseQuery.where(eq(offBatch.createdBy, actor.id)).orderBy(desc(offBatch.createdAt)).limit(200)
+            : await baseQuery.orderBy(desc(offBatch.createdAt)).limit(200);
         const batchIds = rows.map((r) => r.id);
         const [items, payments] = await Promise.all([
             batchIds.length > 0 ? db.select().from(offBatchItem).where(inArray(offBatchItem.batchId, batchIds)) : Promise.resolve([]),
