@@ -66,19 +66,26 @@ test("Payments LPB upload shows a toast notification when a date is invalid", as
 
   await page.goto("/payments");
   await expect(page.getByRole("heading", { name: "Manajemen Pembayaran & SPPD" })).toBeVisible();
+  await page.waitForLoadState("networkidle");
 
   const uploadForm = page
     .locator("form")
     .filter({ has: page.locator('input[type="file"][accept=".xlsx,.xls"]') })
     .first();
   const uploadButton = uploadForm.locator('button[type="submit"]');
+  const fileInput = uploadForm.locator('input[type="file"][accept=".xlsx,.xls"]');
 
-  await uploadForm.locator('input[type="file"][accept=".xlsx,.xls"]').setInputFiles({
-    name: "lpb-invalid-date.xlsx",
-    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    buffer: buildInvalidDateWorkbook(),
-  });
-  await expect(uploadButton).toBeEnabled();
+  // Hidrasi React di `next dev` bisa selesai setelah heading tampil; bila file
+  // di-set sebelum onChange terpasang, event `change` hilang dan tombol tetap
+  // disabled selamanya. Ulangi set-file sampai React menangkapnya & tombol enable.
+  await expect(async () => {
+    await fileInput.setInputFiles({
+      name: "lpb-invalid-date.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      buffer: buildInvalidDateWorkbook(),
+    });
+    await expect(uploadButton).toBeEnabled({ timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
 
   const uploadFailure = new Promise<never>((_, reject) => {
     page.on("requestfailed", (request) => {
