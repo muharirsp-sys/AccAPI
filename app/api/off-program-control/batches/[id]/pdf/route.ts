@@ -14,6 +14,10 @@ export async function GET(_request: Request, context: Context) {
     const { id } = await context.params;
     const data = await getBatchWithItems(id);
     if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
+    // Isolasi per-supervisor: SPV hanya boleh mengunduh PDF batch miliknya sendiri.
+    if (actor.role === "supervisor" && data.batch.createdBy !== actor.id) {
+        return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
+    }
     if (!data.batch.pdfPath) return NextResponse.json({ ok: false, error: "PDF has not been generated" }, { status: 404 });
 
     try {

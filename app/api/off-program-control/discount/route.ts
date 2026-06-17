@@ -82,7 +82,11 @@ export async function GET(request: Request) {
       .orderBy(desc(offDiscountSubmission.createdAt))
       .limit(2000);
 
+    // Isolasi per-supervisor: SPV hanya melihat pengajuan diskon miliknya sendiri.
+    // Admin tetap melihat semua (read-only).
+    const isSupervisor = normalizeOffRole(actor.role) === "supervisor";
     const filtered = rows.filter((row) => {
+      if (isSupervisor && row.createdById !== actor.id) return false;
       if (!withinPeriod(row.tanggal || "", dateFrom, dateTo)) return false;
       if (!search) return true;
       const haystack = buildSearchHaystack([

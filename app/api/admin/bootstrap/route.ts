@@ -1,9 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { count } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { appRoles, isAppRole } from "@/lib/rbac";
 import { user } from "@/db/schema";
+
+// Bandingkan token secara konstan-waktu untuk mencegah timing attack.
+function safeTokenEqual(a: string, b: string) {
+    const bufA = Buffer.from(a, "utf8");
+    const bufB = Buffer.from(b, "utf8");
+    if (bufA.length !== bufB.length) return false;
+    return timingSafeEqual(bufA, bufB);
+}
 
 export async function POST(request: NextRequest) {
     const setupToken = process.env.ADMIN_SETUP_TOKEN;
@@ -11,8 +20,8 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "ADMIN_SETUP_TOKEN is not configured" }, { status: 503 });
     }
 
-    const providedToken = request.headers.get("x-admin-setup-token");
-    if (providedToken !== setupToken) {
+    const providedToken = request.headers.get("x-admin-setup-token") || "";
+    if (!safeTokenEqual(providedToken, setupToken)) {
         return NextResponse.json({ error: "Invalid setup token" }, { status: 401 });
     }
 

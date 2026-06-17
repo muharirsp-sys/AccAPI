@@ -12,6 +12,7 @@ import { eq, and } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offRefund } from "@/db/schema";
 import {
+    canActorAccessOffData,
     canActorPerformOffAction,
     getBatchWithItems,
     computeOffFinancePaymentSummary,
@@ -59,10 +60,17 @@ export async function GET(_request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
+    if (!canActorAccessOffData(actor)) {
+        return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses OFF Program Control." }, { status: 403 });
+    }
 
     const { id } = await context.params;
     const data = await getBatchWithItems(id);
     if (!data) {
+        return NextResponse.json({ ok: false, error: "Batch tidak ditemukan." }, { status: 404 });
+    }
+    // Isolasi per-supervisor: SPV hanya boleh melihat refund batch miliknya sendiri.
+    if (actor.role === "supervisor" && data.batch.createdBy !== actor.id) {
         return NextResponse.json({ ok: false, error: "Batch tidak ditemukan." }, { status: 404 });
     }
 
@@ -104,6 +112,10 @@ export async function POST(request: Request, context: Context) {
     const { id } = await context.params;
     const data = await getBatchWithItems(id);
     if (!data) {
+        return NextResponse.json({ ok: false, error: "Batch tidak ditemukan." }, { status: 404 });
+    }
+    // Isolasi per-supervisor: SPV hanya boleh submit refund untuk batch miliknya sendiri.
+    if (actor.role === "supervisor" && data.batch.createdBy !== actor.id) {
         return NextResponse.json({ ok: false, error: "Batch tidak ditemukan." }, { status: 404 });
     }
     if (actor.role !== "admin" && await isOffPeriodClosedForBatch(data.batch)) {

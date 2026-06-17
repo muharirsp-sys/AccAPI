@@ -31,6 +31,10 @@ export async function GET(_request: Request, context: Context) {
   if (!row || !row.documentPath) {
     return NextResponse.json({ ok: false, error: "Dokumen tidak ditemukan." }, { status: 404 });
   }
+  // Isolasi per-supervisor: SPV hanya boleh mengunduh dokumen diskon miliknya sendiri.
+  if (normalizeOffRole(actor.role) === "supervisor" && row.createdById !== actor.id) {
+    return NextResponse.json({ ok: false, error: "Dokumen tidak ditemukan." }, { status: 404 });
+  }
 
   try {
     const file = await readFile(row.documentPath);

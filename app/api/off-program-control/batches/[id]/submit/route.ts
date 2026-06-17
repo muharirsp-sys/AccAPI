@@ -28,6 +28,10 @@ export async function POST(_request: Request, context: Context) {
         const { id } = await context.params;
         const data = await getBatchWithItems(id);
         if (!data) return NextResponse.json({ ok: false, error: "Pengajuan tidak ditemukan." }, { status: 404 });
+        // Isolasi per-supervisor: SPV hanya boleh submit pengajuan miliknya sendiri (cegah IDOR).
+        if (actor.role === "supervisor" && data.batch.createdBy !== actor.id) {
+            return NextResponse.json({ ok: false, error: "Pengajuan tidak ditemukan." }, { status: 404 });
+        }
         if (actor.role !== "admin" && await isOffPeriodClosedForBatch(data.batch)) {
             return NextResponse.json({ ok: false, error: "Periode ini sudah ditutup dan tidak dapat diubah." }, { status: 409 });
         }

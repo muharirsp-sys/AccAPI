@@ -65,6 +65,10 @@ export async function POST(_request: Request, context: Context) {
         const { id } = await context.params;
         const data = await getBatchWithItems(id);
         if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
+        // Isolasi per-supervisor: SPV hanya boleh membuat kwitansi batch miliknya sendiri.
+        if (actor.role === "supervisor" && data.batch.createdBy !== actor.id) {
+            return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
+        }
         const validationError = validateReceiptItems(data);
         if (validationError) return NextResponse.json({ ok: false, error: validationError }, { status: 400 });
 
@@ -115,6 +119,10 @@ export async function GET(_request: Request, context: Context) {
     const { id } = await context.params;
     const data = await getBatchWithItems(id);
     if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
+    // Isolasi per-supervisor: SPV hanya boleh mengunduh kwitansi batch miliknya sendiri.
+    if (actor.role === "supervisor" && data.batch.createdBy !== actor.id) {
+        return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });
+    }
     if (!data.batch.receiptPdfPath) return NextResponse.json({ ok: false, error: "PDF kwitansi belum pernah disimpan." }, { status: 404 });
 
     try {
