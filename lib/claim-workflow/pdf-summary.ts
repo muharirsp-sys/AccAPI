@@ -28,13 +28,13 @@ const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
 // Layout kolom tabel item (lebar dalam point pdf-lib).
 // Total harus = CONTENT_WIDTH supaya garis vertikal rapi.
 const COLUMN_WIDTHS = {
-    no: 28,
-    noSurat: 88,
-    program: 159,
-    dpp: 70,
-    ppn: 60,
-    pph: 60,
-    nilai: CONTENT_WIDTH - 28 - 88 - 159 - 70 - 60 - 60,
+    no: 26,
+    noSurat: 82,
+    program: 133,
+    dpp: 66,
+    ppn: 50,
+    pph: 50,
+    nilai: CONTENT_WIDTH - 26 - 82 - 133 - 66 - 50 - 50,
 } as const;
 
 type ColumnKey = keyof typeof COLUMN_WIDTHS;
@@ -85,13 +85,23 @@ function safeFileName(value: string): string {
     return clean || "claim-workflow";
 }
 
-function drawRightText(page: PDFPage, value: string, rightX: number, y: number, size: number, font: PDFFont) {
+function drawRightText(
+    page: PDFPage,
+    value: string,
+    rightX: number,
+    y: number,
+    size: number,
+    font: PDFFont,
+    color = rgb(0.08, 0.1, 0.14),
+) {
+    // Ukur lebar pada teks UPPERCASE karena page.drawText di-uppercase otomatis
+    // (uppercasePageText). Tanpa ini, teks rata-kanan meleset/overflow.
     page.drawText(value, {
-        x: rightX - font.widthOfTextAtSize(value, size),
+        x: rightX - font.widthOfTextAtSize(value.toUpperCase(), size),
         y,
         size,
         font,
-        color: rgb(0.08, 0.1, 0.14),
+        color,
     });
 }
 
@@ -115,7 +125,7 @@ function drawHeaderRow(page: PDFPage, y: number, bold: PDFFont) {
         const isNumeric = key === "dpp" || key === "ppn" || key === "pph" || key === "nilai";
         const labelText = fitText(label, approxCharCapacity(width - 12, 9));
         if (isNumeric) {
-            drawRightText(page, labelText, cursorX + width - 6, y - 15, 9, bold);
+            drawRightText(page, labelText, cursorX + width - 6, y - 15, 9, bold, rgb(1, 1, 1));
         } else {
             page.drawText(labelText, { x: cursorX + 6, y: y - 15, size: 9, font: bold, color: rgb(1, 1, 1) });
         }

@@ -47,6 +47,13 @@ function rupiah(value: number): string {
     return Number(value || 0).toLocaleString("id-ID");
 }
 
+// Lebar teks UPPERCASE — page.drawText di-uppercase otomatis (uppercasePageText),
+// jadi pengukuran untuk teks rata-kanan harus pakai versi uppercase agar tidak
+// overflow menembus tepi kartu.
+function uWidth(font: PDFFont, text: string, size: number): number {
+    return font.widthOfTextAtSize(text.toUpperCase(), size);
+}
+
 function safeFileName(value: string): string {
     const clean = asciiText(value).replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
     return clean || "claim-workflow";
@@ -213,27 +220,27 @@ async function buildClaimReceiptPdf(
     const footerTopY = MARGIN + 160;
     const dateText = `Makassar, ${indonesianLongDate(generatedAt)}`;
     page.drawText(dateText, {
-        x: PAGE_WIDTH - MARGIN - 16 - font.widthOfTextAtSize(dateText, 10),
+        x: PAGE_WIDTH - MARGIN - 16 - uWidth(font, dateText, 10),
         y: footerTopY,
         size: 10,
         font,
         color: rgb(0.15, 0.18, 0.24),
     });
     page.drawText("Hormat kami,", {
-        x: PAGE_WIDTH - MARGIN - 16 - font.widthOfTextAtSize("Hormat kami,", 10),
+        x: PAGE_WIDTH - MARGIN - 16 - uWidth(font, "Hormat kami,", 10),
         y: footerTopY - 18,
         size: 10,
         font,
     });
     page.drawText("CV. Surya Perkasa", {
-        x: PAGE_WIDTH - MARGIN - 16 - bold.widthOfTextAtSize("CV. Surya Perkasa", 11),
+        x: PAGE_WIDTH - MARGIN - 16 - uWidth(bold, "CV. Surya Perkasa", 11),
         y: MARGIN + 60,
         size: 11,
         font: bold,
         color: rgb(0.08, 0.19, 0.3),
     });
     page.drawText("Distributor Makassar", {
-        x: PAGE_WIDTH - MARGIN - 16 - font.widthOfTextAtSize("Distributor Makassar", 9),
+        x: PAGE_WIDTH - MARGIN - 16 - uWidth(font, "Distributor Makassar", 9),
         y: MARGIN + 46,
         size: 9,
         font,
@@ -415,14 +422,14 @@ function drawMiniReceipt(
     // Footer: tanggal + entitas.
     const dateText = `Makassar, ${indonesianLongDate(generatedAt)}`;
     page.drawText(dateText, {
-        x: cellX + cellW - 10 - font.widthOfTextAtSize(dateText, 7.5),
+        x: cellX + cellW - 10 - uWidth(font, dateText, 7.5),
         y: cellY + 30,
         size: 7.5,
         font,
         color: rgb(0.15, 0.18, 0.24),
     });
     page.drawText("CV. Surya Perkasa", {
-        x: cellX + cellW - 10 - bold.widthOfTextAtSize("CV. Surya Perkasa", 8),
+        x: cellX + cellW - 10 - uWidth(bold, "CV. Surya Perkasa", 8),
         y: cellY + 14,
         size: 8,
         font: bold,

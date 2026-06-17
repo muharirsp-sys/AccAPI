@@ -107,7 +107,7 @@ async function buildPdf(batch: OffBatchRow, items: OffItemRow[]) {
       color: rgb(0.05, 0.08, 0.12),
     });
     pdfPage.drawText(
-      "Fallback PDF dari data sheet PRINT karena converter Excel tidak tersedia",
+      "Dokumen ringkasan pengajuan program OFF - CV. Surya Perkasa",
       { x: margin + 20, y: 531, size: 7.5, font, color: rgb(0.18, 0.22, 0.3) },
     );
     pdfPage.drawText(`Page ${page + 1} / ${totalPages}`, {

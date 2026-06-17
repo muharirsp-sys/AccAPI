@@ -133,8 +133,10 @@ function buildRows(workflow: ClaimWorkflowRow, items: ClaimWorkflowItemRow[]): L
 }
 
 function drawRightText(page: PDFPage, value: string, rightX: number, y: number, size: number, font: PDFFont) {
+    // Ukur lebar pada UPPERCASE karena page.drawText di-uppercase otomatis
+    // (uppercasePageText) — mencegah teks rata-kanan meleset/overflow.
     page.drawText(value, {
-        x: rightX - font.widthOfTextAtSize(value, size),
+        x: rightX - font.widthOfTextAtSize(value.toUpperCase(), size),
         y,
         size,
         font,
@@ -260,8 +262,15 @@ async function buildClaimLetterPdf(
     });
     page.drawText("kami ucapkan terima kasih.", { x: MARGIN, y: y - 78, size: 10, font });
     page.drawText("Hormat kami,", { x: MARGIN, y: y - 120, size: 10, font });
-    page.drawText("CV. Surya Perkasa", { x: MARGIN, y: y - 172, size: 10, font: bold });
-    page.drawText("Distributor Makassar", { x: MARGIN, y: y - 189, size: 10, font });
+    // Ruang + garis tanda tangan agar dokumen bisa ditandatangani basah.
+    page.drawLine({
+        start: { x: MARGIN, y: y - 166 },
+        end: { x: MARGIN + 180, y: y - 166 },
+        thickness: 0.8,
+        color: rgb(0.45, 0.5, 0.56),
+    });
+    page.drawText("CV. Surya Perkasa", { x: MARGIN, y: y - 180, size: 10, font: bold });
+    page.drawText("Distributor Makassar", { x: MARGIN, y: y - 195, size: 10, font });
 
     return Buffer.from(await pdfDoc.save());
 }
