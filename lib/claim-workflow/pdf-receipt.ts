@@ -54,6 +54,16 @@ function uWidth(font: PDFFont, text: string, size: number): number {
     return font.widthOfTextAtSize(text.toUpperCase(), size);
 }
 
+function rightAlignedX(
+    rightEdge: number,
+    font: PDFFont,
+    text: string,
+    size: number,
+    rightPadding: number,
+) {
+    return rightEdge - rightPadding - uWidth(font, text, size);
+}
+
 function safeFileName(value: string): string {
     const clean = asciiText(value).replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
     return clean || "claim-workflow";
@@ -219,28 +229,30 @@ async function buildClaimReceiptPdf(
     // Footer: tanggal + tanda tangan.
     const footerTopY = MARGIN + 160;
     const dateText = `Makassar, ${indonesianLongDate(generatedAt)}`;
+    const footerRightEdge = PAGE_WIDTH - MARGIN;
+    const footerRightPadding = 24;
     page.drawText(dateText, {
-        x: PAGE_WIDTH - MARGIN - 16 - uWidth(font, dateText, 10),
+        x: rightAlignedX(footerRightEdge, font, dateText, 10, footerRightPadding),
         y: footerTopY,
         size: 10,
         font,
         color: rgb(0.15, 0.18, 0.24),
     });
     page.drawText("Hormat kami,", {
-        x: PAGE_WIDTH - MARGIN - 16 - uWidth(font, "Hormat kami,", 10),
+        x: rightAlignedX(footerRightEdge, font, "Hormat kami,", 10, footerRightPadding),
         y: footerTopY - 18,
         size: 10,
         font,
     });
     page.drawText("CV. Surya Perkasa", {
-        x: PAGE_WIDTH - MARGIN - 16 - uWidth(bold, "CV. Surya Perkasa", 11),
+        x: rightAlignedX(footerRightEdge, bold, "CV. Surya Perkasa", 11, footerRightPadding),
         y: MARGIN + 60,
         size: 11,
         font: bold,
         color: rgb(0.08, 0.19, 0.3),
     });
     page.drawText("Distributor Makassar", {
-        x: PAGE_WIDTH - MARGIN - 16 - uWidth(font, "Distributor Makassar", 9),
+        x: rightAlignedX(footerRightEdge, font, "Distributor Makassar", 9, footerRightPadding),
         y: MARGIN + 46,
         size: 9,
         font,
@@ -421,15 +433,17 @@ function drawMiniReceipt(
 
     // Footer: tanggal + entitas.
     const dateText = `Makassar, ${indonesianLongDate(generatedAt)}`;
+    const footerRightEdge = cellX + cellW;
+    const footerRightPadding = 22;
     page.drawText(dateText, {
-        x: cellX + cellW - 10 - uWidth(font, dateText, 7.5),
+        x: rightAlignedX(footerRightEdge, font, dateText, 7.5, footerRightPadding),
         y: cellY + 30,
         size: 7.5,
         font,
         color: rgb(0.15, 0.18, 0.24),
     });
     page.drawText("CV. Surya Perkasa", {
-        x: cellX + cellW - 10 - uWidth(bold, "CV. Surya Perkasa", 8),
+        x: rightAlignedX(footerRightEdge, bold, "CV. Surya Perkasa", 8, footerRightPadding),
         y: cellY + 14,
         size: 8,
         font: bold,
