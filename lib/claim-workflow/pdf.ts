@@ -2,7 +2,7 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { terbilangRupiah } from "@/lib/off-program-control/helpers";
-import { uppercasePageText } from "@/lib/pdf-text";
+import { drawTextLetterhead, uppercasePageText } from "@/lib/pdf-text";
 import { claimDocumentTypes } from "./constants";
 import {
     buildSubmissionDocumentFilePath,
@@ -189,6 +189,7 @@ async function buildClaimLetterPdf(
     let page = uppercasePageText(pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]));
     let pageNo = 1;
 
+    drawTextLetterhead(page, { bold, regular: font }, { x: MARGIN, topY: PAGE_HEIGHT - 36, width: TABLE_WIDTH });
     drawRightText(page, `Makassar, ${generatedDateText(generatedAt)}`, PAGE_WIDTH - MARGIN, 776, 10, font);
     page.drawText(`No.     : ${fitText(generatedReference(workflow, items), 68)}`, { x: MARGIN, y: 741, size: 10, font });
     page.drawText(`Perihal : ${fitText(subjectText(workflow, items), 68)}`, { x: MARGIN, y: 723, size: 10, font });
