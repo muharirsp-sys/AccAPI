@@ -12,7 +12,7 @@
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
-import { uppercasePageText } from "@/lib/pdf-text";
+import { drawTextLetterhead, uppercasePageText } from "@/lib/pdf-text";
 import { claimDocumentTypes } from "./constants";
 import {
     buildSubmissionDocumentFilePath,
@@ -229,8 +229,9 @@ async function buildClaimSummaryPdf(
     const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
     let page = uppercasePageText(pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]));
-    page.drawText("CLAIM SUMMARY", { x: MARGIN, y: PAGE_HEIGHT - 60, size: 18, font: bold, color: rgb(0.08, 0.19, 0.3) });
-    drawRightText(page, `Generated: ${generatedDateText(generatedAt)}`, PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 60, 9, font);
+    drawTextLetterhead(page, { bold, regular: font }, { x: MARGIN, topY: PAGE_HEIGHT - 44, width: CONTENT_WIDTH });
+    page.drawText("CLAIM SUMMARY", { x: MARGIN, y: PAGE_HEIGHT - 96, size: 18, font: bold, color: rgb(0.08, 0.19, 0.3) });
+    drawRightText(page, `Generated: ${generatedDateText(generatedAt)}`, PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 96, 9, font);
 
     // Header info block (2 kolom label + value).
     const headerLines: Array<[string, string]> = [
@@ -239,7 +240,7 @@ async function buildClaimSummaryPdf(
         ["Principle", asciiText(workflow.principleName || "-")],
         ["Status", asciiText(workflow.status || "-")],
     ];
-    const headerStartY = PAGE_HEIGHT - 100;
+    const headerStartY = PAGE_HEIGHT - 136;
     headerLines.forEach(([label, value], idx) => {
         const lineY = headerStartY - idx * 16;
         page.drawText(`${label}`, { x: MARGIN, y: lineY, size: 9, font: bold, color: rgb(0.25, 0.29, 0.36) });
