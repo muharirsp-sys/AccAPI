@@ -90,8 +90,10 @@ export default function LoginPage() {
     return (
         <main className="login-portal-shell min-h-screen overflow-hidden md:h-screen" style={{ fontFamily: BASE_FONT }}>
             <div className="grid min-h-screen md:h-screen md:grid-cols-[49%_51%] md:overflow-hidden">
+
+                {/* Brand section: compact strip on mobile, full panel on md+ */}
                 <section
-                    className="login-portal-brand relative flex min-h-[540px] overflow-hidden px-8 py-10 sm:px-12 md:h-screen md:min-h-0 md:px-10 md:py-11 lg:px-11 lg:py-12"
+                    className="login-portal-brand relative flex overflow-hidden px-6 py-7 sm:px-10 sm:py-9 md:h-screen md:px-10 md:py-11 lg:px-11 lg:py-12"
                 >
                     <div
                         aria-hidden="true"
@@ -101,24 +103,26 @@ export default function LoginPage() {
                         aria-hidden="true"
                         className="login-portal-pattern absolute inset-x-0 bottom-0 h-[60%] opacity-80"
                     />
+                    {/* Decorative rings — hidden on mobile to keep header compact */}
                     <div
                         aria-hidden="true"
-                        className="login-portal-ring absolute bottom-[16%] left-[34%] h-40 w-40 rounded-full"
+                        className="login-portal-ring absolute bottom-[16%] left-[34%] h-40 w-40 rounded-full hidden md:block"
                     />
                     <div
                         aria-hidden="true"
-                        className="login-portal-ring absolute bottom-[7%] left-[48%] h-72 w-72 rounded-full"
+                        className="login-portal-ring absolute bottom-[7%] left-[48%] h-72 w-72 rounded-full hidden md:block"
                     />
                     <div
                         aria-hidden="true"
-                        className="login-portal-ring absolute -right-28 -bottom-16 h-80 w-80 rounded-full"
+                        className="login-portal-ring absolute -right-28 -bottom-16 h-80 w-80 rounded-full hidden md:block"
                     />
                     <div
                         aria-hidden="true"
-                        className="login-portal-ring absolute -right-16 -bottom-24 h-96 w-96 rounded-full"
+                        className="login-portal-ring absolute -right-16 -bottom-24 h-96 w-96 rounded-full hidden md:block"
                     />
 
                     <div className="relative z-10 flex w-full max-w-[520px] flex-col">
+                        {/* Logo + brand name — always visible */}
                         <div className="flex items-center gap-3">
                             <div className="login-portal-logo relative flex h-11 w-11 items-center justify-center rounded-full">
                                 <div className="login-portal-logo-ring h-7 w-7 rounded-full border-[5px]" />
@@ -130,51 +134,55 @@ export default function LoginPage() {
                                     CV. Surya Perkasa
                                 </p>
                                 <p className="login-portal-brand-subtitle text-sm font-medium">
-                                    Solusi Distribusi & Logistik
+                                    Solusi Distribusi &amp; Logistik
                                 </p>
                             </div>
                         </div>
 
-                        <div className="mt-16 sm:mt-20 md:mt-20 lg:mt-28">
-                            <h1
-                                className="login-portal-hero-title max-w-[440px] text-5xl font-extrabold leading-[1.03] tracking-[-0.04em] sm:text-6xl lg:text-7xl"
-                            >
-                                Portal CV. Surya Perkasa
-                            </h1>
-                            <p className="login-portal-hero-subtitle mt-5 text-xl font-medium sm:text-2xl">
-                                Masuk ke sistem kontrol
-                            </p>
-                        </div>
+                        {/* Hero text + feature list — hidden on mobile, shown md+ */}
+                        <div className="hidden md:block">
+                            <div className="mt-20 lg:mt-28">
+                                <h1
+                                    className="login-portal-hero-title max-w-[440px] text-5xl font-extrabold leading-[1.03] tracking-[-0.04em] lg:text-7xl"
+                                >
+                                    Portal CV. Surya Perkasa
+                                </h1>
+                                <p className="login-portal-hero-subtitle mt-5 text-xl font-medium">
+                                    Masuk ke sistem kontrol
+                                </p>
+                            </div>
 
-                        <div className="mt-7 space-y-4 sm:mt-8 md:space-y-4 lg:mt-12 lg:space-y-7">
-                            {FEATURE_ITEMS.map((item) => {
-                                const Icon = item.icon;
-                                return (
-                                    <div key={item.title} className="flex items-start gap-5">
-                                        <div className="login-portal-feature-icon flex h-12 w-12 shrink-0 items-center justify-center rounded-full lg:h-14 lg:w-14">
-                                            <Icon aria-hidden="true" className="h-6 w-6 lg:h-7 lg:w-7" strokeWidth={2.2} />
+                            <div className="mt-7 space-y-4 lg:mt-12 lg:space-y-7">
+                                {FEATURE_ITEMS.map((item) => {
+                                    const Icon = item.icon;
+                                    return (
+                                        <div key={item.title} className="flex items-start gap-5">
+                                            <div className="login-portal-feature-icon flex h-12 w-12 shrink-0 items-center justify-center rounded-full lg:h-14 lg:w-14">
+                                                <Icon aria-hidden="true" className="h-6 w-6 lg:h-7 lg:w-7" strokeWidth={2.2} />
+                                            </div>
+                                            <div>
+                                                <h2 className="login-portal-feature-title text-base font-bold lg:text-lg">
+                                                    {item.title}
+                                                </h2>
+                                                <p className="login-portal-feature-copy mt-1 max-w-[310px] text-sm leading-[1.55] lg:leading-6">
+                                                    {item.description}
+                                                </p>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <h2 className="login-portal-feature-title text-base font-bold lg:text-lg">
-                                                {item.title}
-                                            </h2>
-                                            <p className="login-portal-feature-copy mt-1 max-w-[310px] text-sm leading-[1.55] lg:leading-6">
-                                                {item.description}
-                                            </p>
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                                    );
+                                })}
+                            </div>
                         </div>
                     </div>
                 </section>
 
+                {/* Form section */}
                 <section
-                    className="login-portal-form-side flex min-h-screen items-center justify-center px-6 py-12 sm:px-10 md:h-screen md:min-h-0 md:overflow-hidden"
+                    className="login-portal-form-side flex min-h-[calc(100vh-6rem)] items-center justify-center px-5 py-10 sm:px-10 md:h-screen md:min-h-0 md:overflow-hidden"
                 >
                     <form
                         onSubmit={handleLogin}
-                        className="login-portal-card w-full max-w-[430px] rounded-xl px-8 py-9 sm:px-9 sm:py-10"
+                        className="login-portal-card w-full max-w-[430px] rounded-xl px-6 py-8 sm:px-9 sm:py-10"
                     >
                         <div className="text-center">
                             <h2 className="login-portal-card-title text-2xl font-extrabold tracking-[-0.02em]">
@@ -185,7 +193,7 @@ export default function LoginPage() {
                             </p>
                         </div>
 
-                        <div className="mt-10">
+                        <div className="mt-8">
                             <label htmlFor="email" className="login-portal-label block text-sm font-extrabold">
                                 Email
                             </label>
@@ -209,7 +217,7 @@ export default function LoginPage() {
                             </div>
                         </div>
 
-                        <div className="mt-8">
+                        <div className="mt-6">
                             <div className="flex items-center justify-between">
                                 <label htmlFor="password" className="login-portal-label block text-sm font-extrabold">
                                     Password
@@ -249,12 +257,12 @@ export default function LoginPage() {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="login-portal-button mt-10 h-14 w-full rounded-lg text-base font-extrabold transition focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
+                            className="login-portal-button mt-8 h-14 w-full rounded-lg text-base font-extrabold transition focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
                         >
                             {loading ? "Memproses..." : "Masuk"}
                         </button>
 
-                        <p className="login-portal-note mt-10 text-center text-sm font-medium">
+                        <p className="login-portal-note mt-8 text-center text-sm font-medium">
                             Akun dibuat oleh admin internal.
                         </p>
                     </form>
