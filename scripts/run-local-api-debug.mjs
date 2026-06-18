@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-const port = Number(process.env.DEBUG_PORT || 3101);
+const port = Number(process.env.DEBUG_PORT || 3000);
 const baseUrl = process.env.SEED_BASE_URL || process.env.BASE_URL || `http://localhost:${port}`;
 const dbCopyPath = process.env.DEBUG_DATABASE_PATH || "runtime/debug-db/local-api-debug.sqlite";
 const dbUrl = `file:${dbCopyPath.replaceAll("\\", "/")}`;
@@ -86,7 +86,7 @@ function startServer() {
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   fs.rmSync(serverOut, { force: true });
   fs.rmSync(serverErr, { force: true });
-  serverProcess = spawn(npm, ["run", "dev", "--", "--hostname", "127.0.0.1", "--port", String(port)], {
+  serverProcess = spawn(npm, ["run", "dev", "--", "--hostname", "localhost", "--port", String(port)], {
     env: {
       ...process.env,
       DATABASE_URL: dbUrl,

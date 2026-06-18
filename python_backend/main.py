@@ -32,7 +32,7 @@ from openpyxl.utils import get_column_letter
 import pandas as pd
 import io, os, re, uuid, json, math, base64, hashlib, hmac, time, zipfile, copy, mimetypes
 from dotenv import load_dotenv
-load_dotenv(override=True)
+load_dotenv(override=False)
 import traceback
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Tuple, Optional, Set, Any
@@ -216,7 +216,8 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # mengizinkan SEMUA origin (celah pencurian data lintas-situs saat digabung
 # allow_credentials=True).
 # Sumber origin (prioritas): env CORS_ORIGINS (pisahkan koma) > NEXT_PUBLIC_APP_URL
-# > localhost dev. Untuk dev tunnel / domain tambahan, set CORS_ORIGINS.
+# > localhost dev. Origin lokal dikunci ke http://localhost:3000 agar cookie
+# auth tidak pecah karena campur localhost/127.0.0.1 atau port dev lain.
 _cors_env = str(os.getenv("CORS_ORIGINS", "")).strip()
 if _cors_env:
     CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
@@ -225,9 +226,19 @@ else:
         o for o in [
             str(os.getenv("NEXT_PUBLIC_APP_URL", "")).strip(),
             "http://localhost:3000",
-            "http://127.0.0.1:3000",
         ] if o
     ]
+
+def is_allowed_cors_origin(origin: str) -> bool:
+    try:
+        parsed = urlparse(origin)
+    except Exception:
+        return False
+    host = str(parsed.hostname or "").strip().lower()
+    is_local = host in {"localhost", "127.0.0.1", "0.0.0.0"}
+    return (not is_local) or origin == "http://localhost:3000"
+
+CORS_ALLOWED_ORIGINS = [o for o in CORS_ALLOWED_ORIGINS if is_allowed_cors_origin(o)]
 # Dedup sambil menjaga urutan.
 CORS_ALLOWED_ORIGINS = list(dict.fromkeys(CORS_ALLOWED_ORIGINS))
 
@@ -1265,17 +1276,12 @@ def is_same_origin_request(request: Request) -> bool:
         if src_host == host:
             continue
             
-        # Allow same-hostname cross-port requests (e.g., Next.js on 3000 calling FastAPI on 8000)
+        # Allow locked local frontend (localhost:3000) to call the local backend.
         src_hostname = src_host.split(":")[0] if ":" in src_host else src_host
         dst_hostname = host.split(":")[0] if ":" in host else host
-        if src_hostname == dst_hostname:
+        if src_host == "localhost:3000" and dst_hostname == "localhost":
             continue
-            
-        # Allow local cross-port requests (e.g., localhost:3000 vs 127.0.0.1:8000)
-        local_names = {"localhost", "127.0.0.1", "0.0.0.0"}
-        if src_hostname in local_names and dst_hostname in local_names:
-            continue
-            
+
         return False
     return True
 

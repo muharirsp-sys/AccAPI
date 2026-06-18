@@ -158,7 +158,7 @@ const permissionActionSet = new Set<string>(permissionActions);
 
 function allPermissions(): PermissionMap {
     return Object.fromEntries(
-        appModules.map((module) => [module, [...moduleActions[module]]])
+        appModules.map((moduleName) => [moduleName, [...moduleActions[moduleName]]])
     ) as PermissionMap;
 }
 
@@ -169,14 +169,14 @@ function pick(module: AppModule, actions: PermissionAction[]): PermissionMap {
 function mergePermissionMaps(...maps: PermissionMap[]): PermissionMap {
     const merged: PermissionMap = {};
     for (const map of maps) {
-        for (const module of appModules) {
-            const actions = map[module] || [];
+        for (const moduleName of appModules) {
+            const actions = map[moduleName] || [];
             if (!actions.length) continue;
-            const current = new Set<PermissionAction>(merged[module] || []);
+            const current = new Set<PermissionAction>(merged[moduleName] || []);
             for (const action of actions) {
-                if (moduleActions[module].includes(action)) current.add(action);
+                if (moduleActions[moduleName].includes(action)) current.add(action);
             }
-            merged[module] = [...current];
+            merged[moduleName] = [...current];
         }
     }
     return merged;
@@ -257,7 +257,7 @@ export function normalizePermissionMap(raw: unknown): PermissionMap {
     const permissions: PermissionMap = {};
     for (const [moduleKey, value] of Object.entries(source)) {
         if (!appModuleSet.has(moduleKey)) continue;
-        const module = moduleKey as AppModule;
+        const moduleName = moduleKey as AppModule;
         const rawActions = Array.isArray(value)
             ? value
             : typeof value === "string"
@@ -266,11 +266,11 @@ export function normalizePermissionMap(raw: unknown): PermissionMap {
         const actions = new Set<PermissionAction>();
         for (const item of rawActions) {
             const action = String(item || "").trim() as PermissionAction;
-            if (permissionActionSet.has(action) && moduleActions[module].includes(action)) {
+            if (permissionActionSet.has(action) && moduleActions[moduleName].includes(action)) {
                 actions.add(action);
             }
         }
-        if (actions.size) permissions[module] = [...actions];
+        if (actions.size) permissions[moduleName] = [...actions];
     }
     return permissions;
 }

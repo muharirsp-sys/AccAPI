@@ -1,23 +1,29 @@
 /*
- * Tujuan: Halaman login internal Better Auth email/password bergaya warm luxury dengan pesan error yang membedakan origin dev dan verifikasi email.
+ * Tujuan: Halaman login internal Better Auth email/password bergaya portal CV. Surya Perkasa.
  * Caller: Route auth `/login`.
- * Dependensi: `authClient`, router Next.js, toast Sonner, link reset password.
- * Main Functions: `LoginPage`, `isEmailVerificationError`, form login glassmorphism.
+ * Dependensi: `authClient`, router Next.js, toast Sonner, lucide-react.
+ * Main Functions: `LoginPage`, `isEmailVerificationError`.
  * Side Effects: HTTP sign-in ke Better Auth dan navigasi browser setelah session berhasil.
  */
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
-import { Lock, Mail } from "lucide-react";
-import Link from "next/link";
+import { BarChart3, Eye, Lock, Mail, ShieldCheck, UsersRound } from "lucide-react";
 import { toast } from "sonner";
 
 type LoginAuthError = {
     status?: number;
     message?: string;
     code?: string;
+};
+
+type FeatureItem = {
+    title: string;
+    description: string;
+    icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
 };
 
 function isEmailVerificationError(error: LoginAuthError) {
@@ -29,12 +35,30 @@ function isEmailVerificationError(error: LoginAuthError) {
     );
 }
 
+const BASE_FONT = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif";
+const FEATURE_ITEMS: FeatureItem[] = [
+    {
+        title: "Kontrol Operasional",
+        description: "Pantau dan kelola operasional secara real-time.",
+        icon: BarChart3,
+    },
+    {
+        title: "Aman & Terpercaya",
+        description: "Sistem terintegrasi dengan standar keamanan perusahaan.",
+        icon: ShieldCheck,
+    },
+    {
+        title: "Akses Internal",
+        description: "Akun dibuat oleh admin internal perusahaan.",
+        icon: UsersRound,
+    },
+];
+
 export default function LoginPage() {
     const router = useRouter();
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
-
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -42,13 +66,13 @@ export default function LoginPage() {
 
         const { error } = await authClient.signIn.email({
             email,
-            password
+            password,
         });
 
         if (error) {
             if (isEmailVerificationError(error)) {
                 toast.error("Email belum diverifikasi.", {
-                    description: "Silakan periksa kotak masuk email Anda dan klik tautan verifikasi."
+                    description: "Silakan periksa kotak masuk email Anda dan klik tautan verifikasi.",
                 });
             } else {
                 toast.error(error.message || "Gagal masuk. Periksa kembali email dan kata sandi Anda.", {
@@ -64,52 +88,160 @@ export default function LoginPage() {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-[radial-gradient(circle_at_20%_12%,rgba(242,210,138,0.45),transparent_28rem),radial-gradient(circle_at_80%_85%,rgba(199,154,63,0.20),transparent_30rem),linear-gradient(135deg,#fff8ea,#f4ead9)]">
-            <div className="max-w-md w-full bg-[#fffaf0]/82 rounded-[2rem] shadow-[0_28px_90px_rgba(122,78,32,0.16),0_8px_28px_rgba(122,78,32,0.10)] overflow-hidden border border-[#c79a3f]/20 backdrop-blur-2xl">
-                <div className="relative bg-gradient-to-br from-[#fff3d1] via-[#e4ba62] to-[#9a6424] p-8 text-white text-center overflow-hidden">
-                    <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/80 to-transparent"></div>
-                    <div className="absolute -right-16 -top-20 h-48 w-48 rounded-full bg-white/20 blur-3xl"></div>
-                    <h2 className="text-3xl font-extrabold tracking-tight">Portal CV. Surya Perkasa</h2>
-                    <p className="mt-2 text-[#4f3218]/80 text-sm font-medium">Masuk ke sistem kontrol</p>
-                </div>
+        <main className="login-portal-shell min-h-screen overflow-hidden md:h-screen" style={{ fontFamily: BASE_FONT }}>
+            <div className="grid min-h-screen md:h-screen md:grid-cols-[49%_51%] md:overflow-hidden">
+                <section
+                    className="login-portal-brand relative flex min-h-[540px] overflow-hidden px-8 py-10 sm:px-12 md:h-screen md:min-h-0 md:px-10 md:py-11 lg:px-11 lg:py-12"
+                >
+                    <div
+                        aria-hidden="true"
+                        className="login-portal-dot-layer absolute inset-0 opacity-25"
+                    />
+                    <div
+                        aria-hidden="true"
+                        className="login-portal-pattern absolute inset-x-0 bottom-0 h-[60%] opacity-80"
+                    />
+                    <div
+                        aria-hidden="true"
+                        className="login-portal-ring absolute bottom-[16%] left-[34%] h-40 w-40 rounded-full"
+                    />
+                    <div
+                        aria-hidden="true"
+                        className="login-portal-ring absolute bottom-[7%] left-[48%] h-72 w-72 rounded-full"
+                    />
+                    <div
+                        aria-hidden="true"
+                        className="login-portal-ring absolute -right-28 -bottom-16 h-80 w-80 rounded-full"
+                    />
+                    <div
+                        aria-hidden="true"
+                        className="login-portal-ring absolute -right-16 -bottom-24 h-96 w-96 rounded-full"
+                    />
 
-                <div className="p-8 bg-[#fffaf0]/74">
-                    <form onSubmit={handleLogin} className="space-y-6">
-                        <div>
-                            <label className="block text-sm font-semibold text-[#574839] mb-1">Email</label>
-                            <div className="relative">
-                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                    <Mail className="h-5 w-5 text-[#9a7a45]" />
-                                </div>
+                    <div className="relative z-10 flex w-full max-w-[520px] flex-col">
+                        <div className="flex items-center gap-3">
+                            <div className="login-portal-logo relative flex h-11 w-11 items-center justify-center rounded-full">
+                                <div className="login-portal-logo-ring h-7 w-7 rounded-full border-[5px]" />
+                                <div className="login-portal-logo-bar absolute h-3.5 w-9 rotate-[-28deg] rounded-full" />
+                                <div className="login-portal-logo-cut absolute h-2.5 w-7 rotate-[-28deg] rounded-full" />
+                            </div>
+                            <div>
+                                <p className="login-portal-brand-title text-xl font-extrabold uppercase leading-tight tracking-tight">
+                                    CV. Surya Perkasa
+                                </p>
+                                <p className="login-portal-brand-subtitle text-sm font-medium">
+                                    Solusi Distribusi & Logistik
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="mt-16 sm:mt-20 md:mt-20 lg:mt-28">
+                            <h1
+                                className="login-portal-hero-title max-w-[440px] text-5xl font-extrabold leading-[1.03] tracking-[-0.04em] sm:text-6xl lg:text-7xl"
+                            >
+                                Portal CV. Surya Perkasa
+                            </h1>
+                            <p className="login-portal-hero-subtitle mt-5 text-xl font-medium sm:text-2xl">
+                                Masuk ke sistem kontrol
+                            </p>
+                        </div>
+
+                        <div className="mt-7 space-y-4 sm:mt-8 md:space-y-4 lg:mt-12 lg:space-y-7">
+                            {FEATURE_ITEMS.map((item) => {
+                                const Icon = item.icon;
+                                return (
+                                    <div key={item.title} className="flex items-start gap-5">
+                                        <div className="login-portal-feature-icon flex h-12 w-12 shrink-0 items-center justify-center rounded-full lg:h-14 lg:w-14">
+                                            <Icon aria-hidden="true" className="h-6 w-6 lg:h-7 lg:w-7" strokeWidth={2.2} />
+                                        </div>
+                                        <div>
+                                            <h2 className="login-portal-feature-title text-base font-bold lg:text-lg">
+                                                {item.title}
+                                            </h2>
+                                            <p className="login-portal-feature-copy mt-1 max-w-[310px] text-sm leading-[1.55] lg:leading-6">
+                                                {item.description}
+                                            </p>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </section>
+
+                <section
+                    className="login-portal-form-side flex min-h-screen items-center justify-center px-6 py-12 sm:px-10 md:h-screen md:min-h-0 md:overflow-hidden"
+                >
+                    <form
+                        onSubmit={handleLogin}
+                        className="login-portal-card w-full max-w-[430px] rounded-xl px-8 py-9 sm:px-9 sm:py-10"
+                    >
+                        <div className="text-center">
+                            <h2 className="login-portal-card-title text-2xl font-extrabold tracking-[-0.02em]">
+                                Selamat Datang
+                            </h2>
+                            <p className="login-portal-card-subtitle mt-3 text-sm font-medium">
+                                Silakan masuk untuk melanjutkan
+                            </p>
+                        </div>
+
+                        <div className="mt-10">
+                            <label htmlFor="email" className="login-portal-label block text-sm font-extrabold">
+                                Email
+                            </label>
+                            <div className="relative mt-3">
+                                <Mail
+                                    aria-hidden="true"
+                                    className="login-portal-input-icon absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2"
+                                    strokeWidth={1.9}
+                                />
                                 <input
+                                    id="email"
                                     type="email"
                                     required
+                                    autoComplete="email"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="block w-full pl-10 pr-3 py-2.5 border border-[#c79a3f]/24 rounded-xl focus:ring-[#d6a948] focus:border-[#c79a3f] sm:text-sm shadow-sm transition-colors text-[#2d241b] bg-white/72"
                                     placeholder="email@perusahaan.com"
+                                    disabled={loading}
+                                    className="login-portal-input h-12 w-full rounded-lg pl-12 pr-4 text-sm font-medium outline-none transition disabled:opacity-60"
                                 />
                             </div>
                         </div>
 
-                        <div>
-                            <div className="flex items-center justify-between mb-1">
-                                <label className="block text-sm font-semibold text-[#574839]">Password</label>
-                                <Link href="/forgot-password" className="text-xs font-semibold text-[#9a6424] hover:text-[#7a4e20]">
+                        <div className="mt-8">
+                            <div className="flex items-center justify-between">
+                                <label htmlFor="password" className="login-portal-label block text-sm font-extrabold">
+                                    Password
+                                </label>
+                                <Link
+                                    href="/forgot-password"
+                                    className="login-portal-forgot text-xs font-extrabold transition"
+                                >
                                     Lupa Password?
                                 </Link>
                             </div>
-                            <div className="relative">
-                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                    <Lock className="h-5 w-5 text-[#9a7a45]" />
-                                </div>
+                            <div className="relative mt-3">
+                                <Lock
+                                    aria-hidden="true"
+                                    className="login-portal-input-icon absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2"
+                                    strokeWidth={1.9}
+                                />
                                 <input
+                                    id="password"
                                     type="password"
                                     required
+                                    autoComplete="current-password"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="block w-full pl-10 pr-3 py-2.5 border border-[#c79a3f]/24 rounded-xl focus:ring-[#d6a948] focus:border-[#c79a3f] sm:text-sm shadow-sm transition-colors text-[#2d241b] bg-white/72"
-                                    placeholder="••••••••"
+                                    placeholder="********"
+                                    disabled={loading}
+                                    className="login-portal-input h-12 w-full rounded-lg pl-12 pr-12 text-sm font-medium outline-none transition disabled:opacity-60"
+                                />
+                                <Eye
+                                    aria-hidden="true"
+                                    className="login-portal-input-icon absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2"
+                                    strokeWidth={1.9}
                                 />
                             </div>
                         </div>
@@ -117,22 +249,17 @@ export default function LoginPage() {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full flex justify-center py-3 px-4 border border-[#f2d28a]/60 rounded-xl shadow-[0_14px_32px_rgba(199,154,63,0.28)] text-sm font-semibold text-[#3d2814] bg-gradient-to-r from-[#f2d28a] via-[#d6a948] to-[#b77a25] hover:shadow-[0_18px_40px_rgba(199,154,63,0.34)] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#d6a948] transition-all disabled:opacity-50"
+                            className="login-portal-button mt-10 h-14 w-full rounded-lg text-base font-extrabold transition focus:outline-none disabled:cursor-not-allowed disabled:opacity-70"
                         >
                             {loading ? "Memproses..." : "Masuk"}
                         </button>
-                    </form>
-                    
-                    <div className="mt-6 text-center">
-                        <p className="text-sm text-[#766753]">
+
+                        <p className="login-portal-note mt-10 text-center text-sm font-medium">
                             Akun dibuat oleh admin internal.
                         </p>
-                    </div>
-                </div>
-                <div className="bg-[#f7ead0]/72 px-8 py-4 border-t border-[#c79a3f]/14 text-center">
-                    <p className="text-xs text-[#927f66]">&copy; 2026 Muh. Ari Ramadhan</p>
-                </div>
+                    </form>
+                </section>
             </div>
-        </div>
+        </main>
     );
 }

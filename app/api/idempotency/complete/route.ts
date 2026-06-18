@@ -9,9 +9,13 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { idempotencyLog } from '@/db/schema';
 import { inArray } from 'drizzle-orm';
+import { requireApiSession } from '@/lib/api-security';
 
 export async function POST(req: Request) {
     try {
+        const authCheck = await requireApiSession(req);
+        if (authCheck.response) return authCheck.response;
+
         const body = await req.json();
         const { keys, status } = body; 
 
@@ -25,8 +29,8 @@ export async function POST(req: Request) {
                 .where(inArray(idempotencyLog.key, keys));
 
         return NextResponse.json({ ok: true });
-    } catch (e: any) {
+    } catch (e: unknown) {
         console.error("Failed idempotency complete:", e);
-        return NextResponse.json({ error: e.message }, { status: 500 });
+        return NextResponse.json({ error: e instanceof Error ? e.message : "Failed idempotency complete" }, { status: 500 });
     }
 }

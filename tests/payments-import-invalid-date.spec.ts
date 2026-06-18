@@ -59,8 +59,8 @@ test("Payments LPB upload shows a toast notification when a date is invalid", as
   expect(hasUploadedRecord()).toBe(false);
 
   await page.goto("/login");
-  await page.getByPlaceholder("email@perusahaan.com").fill(QA_EMAIL);
-  await page.getByPlaceholder("••••••••").fill(QA_PASSWORD);
+  await page.locator('input[type="email"]').fill(QA_EMAIL);
+  await page.locator('input[autocomplete="current-password"]').fill(QA_PASSWORD);
   await page.getByRole("button", { name: "Masuk" }).click();
   await expect(page.getByText("Login berhasil.")).toBeVisible();
 

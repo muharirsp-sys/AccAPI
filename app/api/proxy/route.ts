@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
 
 export async function POST(req: NextRequest) {
     try {
+        const authCheck = await requireApiSession(req);
+        if (authCheck.response) return authCheck.response;
+
         const body = await req.json();
         const { endpointPath, method, payload, sessionHost, sessionId, apiKey } = body;
 
         if (!endpointPath || !method || !sessionHost || !sessionId || !apiKey) {
             return NextResponse.json({ error: "Missing required parameters for proxy" }, { status: 400 });
+        }
+        if (!isAllowedAccurateHost(sessionHost)) {
+            return NextResponse.json({ error: "Session host Accurate tidak diizinkan" }, { status: 400 });
         }
 
         // Berdasarkan Swagger, Base URL Accurate adalah https://{host}/accurate
@@ -27,15 +34,17 @@ export async function POST(req: NextRequest) {
         }
 
         // Helper untuk nge-flatten JSON bersarang atau array ke dalam format properti dot/bracket (data[0].key)
-        const flattenPayload = (obj: any, prefix = ''): Record<string, any> => {
-            let result: Record<string, any> = {};
+        const flattenPayload = (obj: unknown, prefix = ''): Record<string, unknown> => {
+            const result: Record<string, unknown> = {};
+            if (typeof obj !== "object" || obj === null) return result;
             for (const key in obj) {
-                if (obj.hasOwnProperty(key)) {
+                if (Object.prototype.hasOwnProperty.call(obj, key)) {
+                    const source = obj as Record<string, unknown>;
                     const newKey = prefix ? (Array.isArray(obj) ? `${prefix}[${key}]` : `${prefix}.${key}`) : key;
-                    if (typeof obj[key] === 'object' && obj[key] !== null && !(obj[key] instanceof Date)) {
-                        Object.assign(result, flattenPayload(obj[key], newKey));
+                    if (typeof source[key] === 'object' && source[key] !== null && !(source[key] instanceof Date)) {
+                        Object.assign(result, flattenPayload(source[key], newKey));
                     } else {
-                        result[newKey] = obj[key];
+                        result[newKey] = source[key];
                     }
                 }
             }
@@ -71,15 +80,16 @@ export async function POST(req: NextRequest) {
         });
 
         const rawText = await response.text();
-        let data: any;
+        let data: unknown;
 
         try {
             data = JSON.parse(rawText);
-            if (url.includes('sales-return/list.do') && data && data.d && data.d.length > 0) {
+            const responseObject = data as { d?: unknown[] };
+            if (url.includes('sales-return/list.do') && Array.isArray(responseObject.d) && responseObject.d.length > 0) {
                  console.log("=== SALES RETURN API FIELDS ===");
-                 console.log(Object.keys(data.d[0]));
+                 console.log(Object.keys(responseObject.d[0] as Record<string, unknown>));
                  console.log("=== DATA ===");
-                 console.log(data.d[0]);
+                 console.log(responseObject.d[0]);
             }
         } catch (e) {
             console.error("[ACCURATE API RETURNED NON-JSON]", rawText);
@@ -87,13 +97,14 @@ export async function POST(req: NextRequest) {
         }
 
         // SERVER LOG FOR DEBUGGING
-        if (!response.ok || !data.s) {
+        const accurateResult = data as { s?: boolean };
+        if (!response.ok || !accurateResult.s) {
             console.error("[ACCURATE API ERROR FORMAT JSON]", JSON.stringify(data, null, 2));
         }
 
         return NextResponse.json(data);
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("[PROXY SERVER INTERNAL ERROR]", error);
-        return NextResponse.json({ error: error.message || "Proxy request failed" }, { status: 500 });
+        return NextResponse.json({ error: error instanceof Error ? error.message : "Proxy request failed" }, { status: 500 });
     }
 }

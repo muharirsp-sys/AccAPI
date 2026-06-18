@@ -9,9 +9,13 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { idempotencyLog } from '@/db/schema';
 import { inArray } from 'drizzle-orm';
+import { requireApiSession } from '@/lib/api-security';
 
 export async function POST(req: Request) {
     try {
+        const authCheck = await requireApiSession(req);
+        if (authCheck.response) return authCheck.response;
+
         const body = await req.json();
         const { keys, preview, allowDuplicateKeys, allowLockedKeys } = body; // Array of objects { key, invoiceNo, customerNo, amount, transDate, paymentMethod, source }
 
@@ -19,7 +23,7 @@ export async function POST(req: Request) {
             return NextResponse.json({ ok: true, blockedKeys: [], blockedEntries: [] });
         }
 
-        const exactKeys = keys.map((k: any) => k.key);
+        const exactKeys = keys.map((k: { key: string }) => k.key);
         // Check existing keys
         const existing = await db.select().from(idempotencyLog).where(inArray(idempotencyLog.key, exactKeys));
 
@@ -27,11 +31,11 @@ export async function POST(req: Request) {
         const FIFTEEN_MINUTES = 15 * 60 * 1000;
 
         const blockedKeys: string[] = [];
-        const blockedEntries: any[] = [];
+        const blockedEntries: Array<Record<string, unknown>> = [];
         const toUpdateToProcessing: string[] = [];
-        const toInsert: any[] = [];
+        const toInsert: Array<typeof idempotencyLog.$inferInsert> = [];
 
-        const existingMap = new Map(existing.map((r: any) => [r.key, r]));
+        const existingMap = new Map(existing.map((r) => [r.key, r]));
         const seenInRequest = new Set<string>();
         const allowDuplicateKeySet = new Set(Array.isArray(allowDuplicateKeys) ? allowDuplicateKeys : []);
         const allowLockedKeySet = new Set(Array.isArray(allowLockedKeys) ? allowLockedKeys : []);
@@ -71,7 +75,7 @@ export async function POST(req: Request) {
                         });
                     }
                 } else if (ex.status === 'PROCESSING') {
-                    const lastUpdated = ex.updatedAt ? new Date(ex.updatedAt) : new Date(ex.createdAt);
+                    const lastUpdated = new Date(ex.updatedAt || ex.createdAt || now);
                     if (now.getTime() - lastUpdated.getTime() > FIFTEEN_MINUTES) {
                         // Expired! We can overtake this.
                         if (!preview) toUpdateToProcessing.push(item.key);
@@ -124,8 +128,8 @@ export async function POST(req: Request) {
         }
 
         return NextResponse.json({ ok: true, blockedKeys, blockedEntries });
-    } catch (e: any) {
+    } catch (e: unknown) {
         console.error("Failed idempotency lock:", e);
-        return NextResponse.json({ error: e.message }, { status: 500 });
+        return NextResponse.json({ error: e instanceof Error ? e.message : "Failed idempotency lock" }, { status: 500 });
     }
 }
