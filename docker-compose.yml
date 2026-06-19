@@ -49,7 +49,6 @@ services:
       NEXT_PUBLIC_ACCURATE_REDIRECT_URI: ${NEXT_PUBLIC_ACCURATE_REDIRECT_URI:-http://localhost:3000/api/auth/callback}
     volumes:
       - accapi_frontend_data:/app/data
-      - accapi_frontend_runtime:/app/runtime
     depends_on:
       - accapi-backend
     ports:
@@ -59,4 +58,3 @@ volumes:
   accapi_backend_data:
   accapi_backend_output:
   accapi_frontend_data:
-  accapi_frontend_runtime:

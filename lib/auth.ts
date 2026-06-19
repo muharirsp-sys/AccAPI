@@ -46,6 +46,21 @@ const trustedOrigins = Array.from(new Set([
 export const auth = betterAuth({
     baseURL,
     trustedOrigins,
+    rateLimit: {
+        // ponytail: explicit — don't rely on NODE_ENV inference; custom rule gentler than
+        // the 3/10s default while still blocking brute force (5 per 15 min per IP)
+        enabled: true,
+        storage: "memory",
+        customRules: {
+            "/sign-in/email": { window: 900, max: 5 },
+        },
+    },
+    advanced: {
+        // Coolify uses Traefik — read real client IP from forwarded headers
+        ipAddress: {
+            ipAddressHeaders: ["x-forwarded-for", "x-real-ip"],
+        },
+    },
     database: drizzleAdapter(authDb, {
         provider: "sqlite",
         schema: {

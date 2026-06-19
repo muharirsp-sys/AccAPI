@@ -5,7 +5,7 @@
  * Main Functions: table `user`, `session`, `account`, `verification`, `syncState`, `item`, `customer`, `idempotencyLog`.
  * Side Effects: Definisi schema untuk DB read/write SQLite oleh caller.
  */
-import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const user = sqliteTable("user", {
     id: text("id").primaryKey(),
@@ -544,4 +544,279 @@ export const claimSubmission = sqliteTable("claim_submission", {
 }, (table) => ({
     workflowIdx: index("idx_claim_submission_workflow_id").on(table.claimWorkflowId),
     statusIdx: index("idx_claim_submission_status").on(table.status),
+}));
+
+// ============================================================
+// Insentif Sales Module — new tables (add-on)
+// ============================================================
+
+export const salesProfile = sqliteTable("sales_profile", {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => user.id),
+    salesCode: text("sales_code").notNull().unique(),
+    salesName: text("sales_name").notNull(),
+    principle: text("principle").notNull(),
+    branch: text("branch").notNull(),
+    channel: text("channel").notNull().default("TT"),
+    spvName: text("spv_name"),
+    smName: text("sm_name"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    codeIdx: index("idx_sales_profile_code").on(t.salesCode),
+    userIdx: index("idx_sales_profile_user").on(t.userId),
+}));
+
+export const salesTargets = sqliteTable("sales_targets", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    salesName: text("sales_name").notNull(),
+    principle: text("principle").notNull(),
+    branch: text("branch").notNull(),
+    channel: text("channel").notNull().default("TT"),
+    spvName: text("spv_name"),
+    smName: text("sm_name"),
+    periodMonth: integer("period_month").notNull(),
+    periodYear: integer("period_year").notNull(),
+    targetValue: real("target_value").notNull().default(0),
+    targetEc: integer("target_ec").notNull().default(0),
+    targetAo: integer("target_ao").notNull().default(0),
+    targetIa: integer("target_ia").notNull().default(0),
+    splmValue: real("splm_value").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    periodIdx: index("idx_sales_targets_period").on(t.periodMonth, t.periodYear),
+    codeIdx: index("idx_sales_targets_code").on(t.salesCode),
+}));
+
+export const salesDailyProgress = sqliteTable("sales_daily_progress", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    principle: text("principle").notNull(),
+    branch: text("branch").notNull(),
+    date: text("date").notNull(),
+    periodMonth: integer("period_month").notNull(),
+    periodYear: integer("period_year").notNull(),
+    invoiceNumber: text("invoice_number"),
+    achievedValueDpp: real("achieved_value_dpp").notNull().default(0),
+    achievedEc: integer("achieved_ec").notNull().default(0),
+    achievedAo: integer("achieved_ao").notNull().default(0),
+    achievedIa: integer("achieved_ia").notNull().default(0),
+    uploadedBy: text("uploaded_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    periodIdx: index("idx_sdp_period").on(t.periodMonth, t.periodYear),
+    codeIdx: index("idx_sdp_code").on(t.salesCode),
+    dateIdx: index("idx_sdp_date").on(t.date),
+}));
+
+export const incentiveTiers = sqliteTable("incentive_tiers", {
+    id: text("id").primaryKey(),
+    principle: text("principle").notNull().default("ALL"),
+    branch: text("branch").notNull().default("ALL"),
+    kpiType: text("kpi_type").notNull(),
+    minPercentage: real("min_percentage").notNull(),
+    maxPercentage: real("max_percentage").notNull(),
+    incentiveAmount: real("incentive_amount").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    kpiIdx: index("idx_incentive_tiers_kpi").on(t.kpiType),
+}));
+
+export const incentivePayments = sqliteTable("incentive_payments", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    salesName: text("sales_name").notNull(),
+    principle: text("principle").notNull(),
+    branch: text("branch").notNull(),
+    periodMonth: integer("period_month").notNull(),
+    periodYear: integer("period_year").notNull(),
+    totalIncentive: real("total_incentive").notNull().default(0),
+    paymentStatus: text("payment_status").notNull().default("belum"),
+    paymentProofUrl: text("payment_proof_url"),
+    paymentDate: integer("payment_date", { mode: "timestamp" }),
+    paidBy: text("paid_by"),
+    paidByName: text("paid_by_name"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    periodIdx: index("idx_inc_payments_period").on(t.periodMonth, t.periodYear),
+    codeIdx: index("idx_inc_payments_code").on(t.salesCode),
+    statusIdx: index("idx_inc_payments_status").on(t.paymentStatus),
+}));
+
+// ============================================================
+// Form Kontrol SUPER Module
+// ============================================================
+
+export const jksMaster = sqliteTable("jks_master", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    salesName: text("sales_name").notNull(),
+    custCode: text("cust_code").notNull(),
+    custName: text("cust_name").notNull(),
+    market: text("market"),
+    alamat: text("alamat"),
+    kota: text("kota"),
+    hariKunjungan: text("hari_kunjungan"),
+    mingguPattern: text("minggu_pattern").notNull().default("all"),
+    area: text("area"),
+    rayon: text("rayon"),
+    principle: text("principle").notNull(),
+    channel: text("channel").notNull().default("TT"),
+    visitFrequency: integer("visit_frequency").notNull().default(1),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    salesPrincipleIdx: index("idx_jks_sales_principle").on(t.salesCode, t.principle),
+    custCodeIdx: index("idx_jks_cust_code").on(t.custCode),
+    principleHariIdx: index("idx_jks_principle_hari").on(t.principle, t.hariKunjungan),
+    uniqueEntry: uniqueIndex("idx_jks_unique").on(t.salesCode, t.custCode, t.principle),
+}));
+
+export const salesOutletTxn = sqliteTable("sales_outlet_txn", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    custCode: text("cust_code").notNull(),
+    principle: text("principle").notNull(),
+    date: text("date").notNull(),
+    periodMonth: integer("period_month").notNull(),
+    periodYear: integer("period_year").notNull(),
+    invoiceNumber: text("invoice_number"),
+    valueDpp: real("value_dpp").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    custDateIdx: index("idx_sot_cust_date").on(t.custCode, t.date),
+    salesPeriodIdx: index("idx_sot_sales_period").on(t.salesCode, t.periodMonth, t.periodYear),
+}));
+
+export const noOrderReason = sqliteTable("no_order_reason", {
+    id: text("id").primaryKey(),
+    reasonCode: text("reason_code").notNull().unique(),
+    label: text("label").notNull(),
+    category: text("category").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+});
+
+export const aoControlDaily = sqliteTable("ao_control_daily", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    custCode: text("cust_code").notNull(),
+    principle: text("principle").notNull(),
+    date: text("date").notNull(),
+    periodMonth: integer("period_month").notNull(),
+    periodYear: integer("period_year").notNull(),
+    status: text("status").notNull().default("not_visited"),
+    orderValueDpp: real("order_value_dpp"),
+    invoiceNumber: text("invoice_number"),
+    isVisited: integer("is_visited", { mode: "boolean" }),
+    noOrderReasonCode: text("no_order_reason_code"),
+    noOrderNote: text("no_order_note"),
+    checkinAt: integer("checkin_at", { mode: "timestamp" }),
+    checkinPhotoUrl: text("checkin_photo_url"),
+    checkoutAt: integer("checkout_at", { mode: "timestamp" }),
+    checkoutPhotoUrl: text("checkout_photo_url"),
+    autoMatched: integer("auto_matched", { mode: "boolean" }).notNull().default(false),
+    source: text("source").notNull().default("manual"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    salesDateIdx: index("idx_ao_sales_date").on(t.salesCode, t.date),
+    custPeriodIdx: index("idx_ao_cust_period").on(t.custCode, t.periodMonth, t.periodYear),
+    statusIdx: index("idx_ao_status").on(t.status),
+    uniqueEntry: uniqueIndex("idx_ao_unique").on(t.salesCode, t.custCode, t.principle, t.date),
+}));
+
+export const merchandisingCheck = sqliteTable("merchandising_check", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    custCode: text("cust_code").notNull(),
+    principle: text("principle").notNull(),
+    date: text("date").notNull(),
+    produkJelas: integer("produk_jelas", { mode: "boolean" }).notNull().default(false),
+    displayRapi: integer("display_rapi", { mode: "boolean" }).notNull().default(false),
+    dibersihkan: integer("dibersihkan", { mode: "boolean" }).notNull().default(false),
+    ditataulang: integer("ditataulang", { mode: "boolean" }).notNull().default(false),
+    posisiMudah: integer("posisi_mudah", { mode: "boolean" }).notNull().default(false),
+    semuaSku: integer("semua_sku", { mode: "boolean" }).notNull().default(false),
+    photoUrl: text("photo_url"),
+    stepPhotos: text("step_photos", { mode: "json" }),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    salesDateIdx: index("idx_merch_sales_date").on(t.salesCode, t.date),
+    custDateIdx: index("idx_merch_cust_date").on(t.custCode, t.date),
+}));
+
+export const salesmanDailyReport = sqliteTable("salesman_daily_report", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    date: text("date").notNull(),
+    periodMonth: integer("period_month").notNull(),
+    periodYear: integer("period_year").notNull(),
+    totalTokoJks: integer("total_toko_jks").notNull().default(0),
+    totalOrder: integer("total_order").notNull().default(0),
+    totalActive: integer("total_active").notNull().default(0),
+    totalNotOrder: integer("total_not_order").notNull().default(0),
+    totalNotVisited: integer("total_not_visited").notNull().default(0),
+    reasonSummary: text("reason_summary", { mode: "json" }),
+    tindakLanjut: text("tindak_lanjut"),
+    submittedAt: integer("submitted_at", { mode: "timestamp" }),
+    spvAck: integer("spv_ack", { mode: "boolean" }).notNull().default(false),
+    spvAckBy: text("spv_ack_by"),
+    spvAckAt: integer("spv_ack_at", { mode: "timestamp" }),
+}, (t) => ({
+    salesPeriodIdx: index("idx_sdr_sales_period").on(t.salesCode, t.periodMonth, t.periodYear),
+    dateIdx: index("idx_sdr_date").on(t.date),
+    uniqueEntry: uniqueIndex("idx_sdr_unique").on(t.salesCode, t.date),
+}));
+
+export const spvBriefing = sqliteTable("spv_briefing", {
+    id: text("id").primaryKey(),
+    spvName: text("spv_name").notNull(),
+    date: text("date").notNull(),
+    session: text("session").notNull(),
+    agenda: text("agenda", { mode: "json" }),
+    tokoDialas: text("toko_dibahas", { mode: "json" }),
+    penyebab: text("penyebab"),
+    solusi: text("solusi"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    spvDateIdx: index("idx_briefing_spv_date").on(t.spvName, t.date),
+}));
+
+export const smControl = sqliteTable("sm_control", {
+    id: text("id").primaryKey(),
+    smName: text("sm_name").notNull(),
+    date: text("date").notNull(),
+    spvChecked: text("spv_checked", { mode: "json" }),
+    jksChecked: integer("jks_checked", { mode: "boolean" }).notNull().default(false),
+    fotoChecked: integer("foto_checked", { mode: "boolean" }).notNull().default(false),
+    coachingNote: text("coaching_note"),
+    deviations: text("deviations", { mode: "json" }),
+    followUp: text("follow_up"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    smDateIdx: index("idx_sm_control_date").on(t.smName, t.date),
+}));
+
+export const kontrolAuditLog = sqliteTable("kontrol_audit_log", {
+    id: text("id").primaryKey(),
+    entity: text("entity").notNull(),
+    entityId: text("entity_id").notNull(),
+    action: text("action").notNull(),
+    actorId: text("actor_id"),
+    actorName: text("actor_name"),
+    payload: text("payload", { mode: "json" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    entityIdx: index("idx_kal_entity").on(t.entity, t.entityId),
+    actorIdx: index("idx_kal_actor").on(t.actorId),
 }));

@@ -10,7 +10,6 @@
 import { useState, useEffect } from "react";
 import { Key, Upload, FileJson, Play, ServerCrash, ExternalLink, Settings2, Database, FileSpreadsheet, CheckCircle2, Loader2, LogOut, CalendarIcon } from "lucide-react";
 import { toast } from "sonner";
-import * as XLSX from "xlsx";
 import { accurateRoutes } from "@/config/accurateRoutes";
 import { accurateFetch, AccurateError } from "@/lib/apiFetcher";
 import DatePickerField from "@/components/ui/DatePickerField";
@@ -217,6 +216,7 @@ export default function Home() {
     reader.onload = async (evt) => {
       try {
         const bstr = evt.target?.result;
+        const XLSX = await import("xlsx");
         const wb = XLSX.read(bstr, { type: 'binary' });
         const workbookParser = workbookRouteParsers[selectedRoute];
         if (workbookParser) {
@@ -1800,6 +1800,7 @@ export default function Home() {
        rows.push(dummyRow);
     }
 
+    const XLSX = await import("xlsx");
     const ws1 = XLSX.utils.json_to_sheet(rows);
     
     // Sheet 2: Penjelasan Kolom
@@ -2359,6 +2360,7 @@ export default function Home() {
         setTimeout(() => {
           toast("Mengunduh Excel Log Error...", { icon: "📥" });
           try {
+            const XLSX = await import("xlsx");
             const wsErr = XLSX.utils.json_to_sheet(errorLogForExcel);
             const wbErr = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wbErr, wsErr, "Error Log");

@@ -19,3 +19,8 @@ python_backend/output
 python_backend/__pycache__
 **/__pycache__
 *.pyc
+
+# SQLite files — use persistent volumes, not baked into image
+*.db
+*.db-shm
+*.db-wal

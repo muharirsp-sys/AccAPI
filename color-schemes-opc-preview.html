@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Color Schemes untuk OPC Pages</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #1a1a1a;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto;
+            padding: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 24px;
+        }
+
+        .schemes-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .scheme-card {
+            background: #2a2a2a;
+            border-radius: 12px;
+            overflow: hidden;
+            padding: 16px;
+            border: 1px solid #404040;
+        }
+
+        .scheme-title {
+            font-size: 12px;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+
+        .color-preview {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            height: 60px;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .color-swatch {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 500;
+            color: #000;
+            text-shadow: 0 1px 2px rgba(255,255,255,0.1);
+        }
+
+        .color-code {
+            font-size: 11px;
+            color: #666;
+            font-family: 'Courier New', monospace;
+            margin-bottom: 4px;
+            padding: 4px 8px;
+            background: #1a1a1a;
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        .component-preview {
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 12px;
+            font-size: 12px;
+        }
+
+        .btn-preview {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            margin-right: 8px;
+            margin-bottom: 8px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+            margin-right: 6px;
+            margin-bottom: 6px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Color Schemes untuk OPC Pages - Preview</h1>
+
+    <div class="schemes-container">
+        <!-- Scheme 1: Warm & Professional -->
+        <div class="scheme-card">
+            <div class="scheme-title">Scheme 1: Warm & Professional</div>
+            <div class="color-preview">
+                <div class="color-swatch" style="background: #F0E3D3; color: #333;">BG</div>
+                <div class="color-swatch" style="background: #1E3C0B; color: #fff;">Primary</div>
+                <div class="color-swatch" style="background: #D3A474; color: #333;">Accent</div>
+            </div>
+            <div class="color-code">#F0E3D3</div>
+            <div class="color-code">#1E3C0B</div>
+            <div class="color-code">#D3A474</div>
+
+            <div class="component-preview">
+                <div style="color: #1E3C0B; font-weight: 500; margin-bottom: 6px;">Heading</div>
+                <button class="btn-preview" style="background: #1E3C0B; color: #fff;">Primary Button</button>
+                <button class="btn-preview" style="background: #D3A474; color: #333;">Secondary Button</button>
+                <div style="color: #666; font-size: 11px;">Subdued text</div>
+                <div style="margin-top: 8px;">
+                    <div class="badge" style="background: #1E3C0B; color: #fff;">Active</div>
+                    <div class="badge" style="background: #D3A474; color: #333;">Pending</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scheme 2: Energetic & Playful -->
+        <div class="scheme-card">
+            <div class="scheme-title">Scheme 2: Energetic & Playful</div>
+            <div class="color-preview">
+                <div class="color-swatch" style="background: #FEF3E1; color: #333;">BG</div>
+                <div class="color-swatch" style="background: #F8BCA4; color: #333;">Primary</div>
+                <div class="color-swatch" style="background: #FFE301; color: #333;">Accent</div>
+            </div>
+            <div class="color-code">#FEF3E1</div>
+            <div class="color-code">#F8BCA4</div>
+            <div class="color-code">#FFE301</div>
+
+            <div class="component-preview">
+                <div style="color: #F8BCA4; font-weight: 500; margin-bottom: 6px;">Heading</div>
+                <button class="btn-preview" style="background: #F8BCA4; color: #333;">Primary Button</button>
+                <button class="btn-preview" style="background: #FFE301; color: #333;">Secondary Button</button>
+                <div style="color: #999; font-size: 11px;">Subdued text</div>
+                <div style="margin-top: 8px;">
+                    <div class="badge" style="background: #F8BCA4; color: #333;">Ongoing</div>
+                    <div class="badge" style="background: #FFE301; color: #333;">Alert</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scheme 3: Modern & Technical -->
+        <div class="scheme-card">
+            <div class="scheme-title">Scheme 3: Modern & Technical</div>
+            <div class="color-preview">
+                <div class="color-swatch" style="background: #F0E0CC; color: #333;">BG</div>
+                <div class="color-swatch" style="background: #2B87F6; color: #fff;">Primary</div>
+                <div class="color-swatch" style="background: #FF5C2B; color: #fff;">Accent</div>
+            </div>
+            <div class="color-code">#F0E0CC</div>
+            <div class="color-code">#2B87F6</div>
+            <div class="color-code">#FF5C2B</div>
+
+            <div class="component-preview">
+                <div style="color: #2B87F6; font-weight: 500; margin-bottom: 6px;">Heading</div>
+                <button class="btn-preview" style="background: #2B87F6; color: #fff;">Primary Button</button>
+                <button class="btn-preview" style="background: #FF5C2B; color: #fff;">Secondary Button</button>
+                <div style="color: #888; font-size: 11px;">Subdued text</div>
+                <div style="margin-top: 8px;">
+                    <div class="badge" style="background: #2B87F6; color: #fff;">Processing</div>
+                    <div class="badge" style="background: #FF5C2B; color: #fff;">Error</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scheme 4: Soft & Elegant -->
+        <div class="scheme-card">
+            <div class="scheme-title">Scheme 4: Soft & Elegant</div>
+            <div class="color-preview">
+                <div class="color-swatch" style="background: #FEFEFF; color: #333;">BG</div>
+                <div class="color-swatch" style="background: #B0BAD9; color: #fff;">Primary</div>
+                <div class="color-swatch" style="background: #FF97BF; color: #fff;">Accent</div>
+            </div>
+            <div class="color-code">#FEFEFF</div>
+            <div class="color-code">#B0BAD9</div>
+            <div class="color-code">#FF97BF</div>
+
+            <div class="component-preview">
+                <div style="color: #B0BAD9; font-weight: 500; margin-bottom: 6px;">Heading</div>
+                <button class="btn-preview" style="background: #B0BAD9; color: #fff;">Primary Button</button>
+                <button class="btn-preview" style="background: #FF97BF; color: #fff;">Secondary Button</button>
+                <div style="color: #aaa; font-size: 11px;">Subdued text</div>
+                <div style="margin-top: 8px;">
+                    <div class="badge" style="background: #B0BAD9; color: #fff;">Waiting</div>
+                    <div class="badge" style="background: #FF97BF; color: #fff;">Notify</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scheme 5: Professional & Neutral -->
+        <div class="scheme-card">
+            <div class="scheme-title">Scheme 5: Professional & Neutral</div>
+            <div class="color-preview">
+                <div class="color-swatch" style="background: #D0CBAD; color: #333;">BG</div>
+                <div class="color-swatch" style="background: #2D2D2D; color: #fff;">Primary</div>
+                <div class="color-swatch" style="background: #A58763; color: #fff;">Accent</div>
+            </div>
+            <div class="color-code">#D0CBAD</div>
+            <div class="color-code">#2D2D2D</div>
+            <div class="color-code">#A58763</div>
+
+            <div class="component-preview">
+                <div style="color: #2D2D2D; font-weight: 500; margin-bottom: 6px;">Heading</div>
+                <button class="btn-preview" style="background: #2D2D2D; color: #fff;">Primary Button</button>
+                <button class="btn-preview" style="background: #A58763; color: #fff;">Secondary Button</button>
+                <div style="color: #666; font-size: 11px;">Subdued text</div>
+                <div style="margin-top: 8px;">
+                    <div class="badge" style="background: #2D2D2D; color: #fff;">Complete</div>
+                    <div class="badge" style="background: #A58763; color: #fff;">Archive</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div style="margin-top: 40px; padding: 20px; background: #252525; border-radius: 12px; max-width: 800px; margin-left: auto; margin-right: auto;">
+        <h2 style="font-size: 14px; margin-bottom: 12px;">Rekomendasi Penggunaan untuk OPC Pages:</h2>
+        <ul style="font-size: 12px; line-height: 1.6; color: #ccc;">
+            <li><strong>Scheme 1 (Warm & Professional):</strong> Untuk dashboard summary, report pages, professional looking data</li>
+            <li><strong>Scheme 2 (Energetic & Playful):</strong> Untuk achievement milestones, success confirmations, interactive forms</li>
+            <li><strong>Scheme 3 (Modern & Technical):</strong> Untuk detailed data views, technical information, error/warning states</li>
+            <li><strong>Scheme 4 (Soft & Elegant):</strong> Untuk customer-facing pages, premium feel, notifications</li>
+            <li><strong>Scheme 5 (Professional & Neutral):</strong> Untuk corporate/formal pages, status tracking, archival data</li>
+        </ul>
+    </div>
+</body>
+</html>

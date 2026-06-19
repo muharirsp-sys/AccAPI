@@ -1,0 +1,124 @@
+/*
+ * Tujuan: CRUD targets bulanan Insentif Sales.
+ * Caller: app/(dashboard)/insentif-sales/page.tsx admin panel.
+ * Dependensi: lib/insentif-sales, db/schema (salesTargets).
+ * Main Functions: GET list targets per periode; POST upsert batch targets.
+ * Side Effects: DB read + write (upsert by salesCode+periodMonth+periodYear).
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
+import { and, eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { salesTargets } from "@/db/schema";
+import { requireSalesSession, getTargetsForPeriod } from "@/lib/insentif-sales";
+
+export async function GET(req: NextRequest) {
+    const actor = await requireSalesSession();
+    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const { searchParams } = req.nextUrl;
+    const now = new Date();
+    const month = parseInt(searchParams.get("month") ?? String(now.getMonth() + 1), 10);
+    const year = parseInt(searchParams.get("year") ?? String(now.getFullYear()), 10);
+    const principle = searchParams.get("principle") ?? undefined;
+    const branch = searchParams.get("branch") ?? undefined;
+
+    const rows = await getTargetsForPeriod(month, year, principle, branch);
+    return NextResponse.json({ month, year, rows });
+}
+
+interface TargetInput {
+    salesCode: string;
+    salesName: string;
+    principle: string;
+    branch: string;
+    channel?: string;
+    spvName?: string;
+    smName?: string;
+    periodMonth: number;
+    periodYear: number;
+    targetValue: number;
+    targetEc: number;
+    targetAo: number;
+    targetIa: number;
+    splmValue?: number;
+}
+
+export async function POST(req: NextRequest) {
+    const actor = await requireSalesSession();
+    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!["admin", "super_admin", "manager"].includes(actor.role)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    let body: TargetInput[];
+    try {
+        const raw = await req.json();
+        body = Array.isArray(raw) ? raw : [raw];
+    } catch {
+        return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    }
+
+    const now = new Date();
+    let upserted = 0;
+
+    for (const t of body) {
+        if (!t.salesCode || !t.periodMonth || !t.periodYear) continue;
+
+        const [existing] = await db
+            .select({ id: salesTargets.id })
+            .from(salesTargets)
+            .where(
+                and(
+                    eq(salesTargets.salesCode, t.salesCode),
+                    eq(salesTargets.periodMonth, t.periodMonth),
+                    eq(salesTargets.periodYear, t.periodYear),
+                ),
+            )
+            .limit(1);
+
+        if (existing) {
+            await db
+                .update(salesTargets)
+                .set({
+                    salesName: t.salesName,
+                    principle: t.principle,
+                    branch: t.branch,
+                    channel: t.channel ?? "TT",
+                    spvName: t.spvName ?? null,
+                    smName: t.smName ?? null,
+                    targetValue: t.targetValue,
+                    targetEc: t.targetEc,
+                    targetAo: t.targetAo,
+                    targetIa: t.targetIa,
+                    splmValue: t.splmValue ?? 0,
+                    updatedAt: now,
+                })
+                .where(eq(salesTargets.id, existing.id));
+        } else {
+            await db.insert(salesTargets).values({
+                id: randomUUID(),
+                salesCode: t.salesCode,
+                salesName: t.salesName,
+                principle: t.principle,
+                branch: t.branch,
+                channel: t.channel ?? "TT",
+                spvName: t.spvName ?? null,
+                smName: t.smName ?? null,
+                periodMonth: t.periodMonth,
+                periodYear: t.periodYear,
+                targetValue: t.targetValue,
+                targetEc: t.targetEc,
+                targetAo: t.targetAo,
+                targetIa: t.targetIa,
+                splmValue: t.splmValue ?? 0,
+                createdAt: now,
+                updatedAt: now,
+            });
+        }
+        upserted++;
+    }
+
+    return NextResponse.json({ upserted });
+}

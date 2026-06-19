@@ -6,7 +6,7 @@
 "use client";
 
 import { useState } from "react";
-import { Menu, Home, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ClipboardCheck, ReceiptText, X } from "lucide-react";
+import { Menu, Home, Users, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ClipboardCheck, ReceiptText, Trophy, ClipboardList, X } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { usePathname } from "next/navigation";
 import { canAccessPath, normalizeRole } from "@/lib/rbac";
@@ -36,6 +36,8 @@ export default function SidebarLayout({ children, role, permissions }: { childre
         { name: "Validator Diskon", icon: Percent, href: "/validator" },
         { name: "Summary Promo", icon: CalendarCheck2, href: "/summary" },
         { name: "Finance", icon: DollarSign, href: "/finance" },
+        { name: "Insentif Sales", icon: Trophy, href: "/insentif-sales" },
+        { name: "Form Kontrol", icon: ClipboardList, href: "/form-kontrol" },
         { name: "Pembayaran / SPPD", icon: Wallet, href: "/payments" },
         { name: "Format SPPD", icon: FileText, href: "/payments/sppd" },
         { name: "OFF Program Control", icon: ClipboardCheck, href: "/off-program-control" },
