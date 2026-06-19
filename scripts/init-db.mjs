@@ -711,4 +711,91 @@ for (const sql of claimIndexes) {
   }
 }
 
+// --- Insentif Sales tables ---
+const insentifStatements = [
+  `CREATE TABLE IF NOT EXISTS sales_targets (
+    id TEXT PRIMARY KEY NOT NULL,
+    sales_code TEXT NOT NULL,
+    sales_name TEXT NOT NULL,
+    principle TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    channel TEXT NOT NULL DEFAULT 'TT',
+    spv_name TEXT,
+    sm_name TEXT,
+    period_month INTEGER NOT NULL,
+    period_year INTEGER NOT NULL,
+    target_value REAL NOT NULL DEFAULT 0,
+    target_ec INTEGER NOT NULL DEFAULT 0,
+    target_ao INTEGER NOT NULL DEFAULT 0,
+    target_ia INTEGER NOT NULL DEFAULT 0,
+    splm_value REAL NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS sales_daily_progress (
+    id TEXT PRIMARY KEY NOT NULL,
+    sales_code TEXT NOT NULL,
+    principle TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    date TEXT NOT NULL,
+    period_month INTEGER NOT NULL,
+    period_year INTEGER NOT NULL,
+    invoice_number TEXT,
+    achieved_value_dpp REAL NOT NULL DEFAULT 0,
+    achieved_ec INTEGER NOT NULL DEFAULT 0,
+    achieved_ao INTEGER NOT NULL DEFAULT 0,
+    achieved_ia INTEGER NOT NULL DEFAULT 0,
+    uploaded_by TEXT,
+    created_at INTEGER NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS incentive_tiers (
+    id TEXT PRIMARY KEY NOT NULL,
+    principle TEXT NOT NULL DEFAULT 'ALL',
+    branch TEXT NOT NULL DEFAULT 'ALL',
+    kpi_type TEXT NOT NULL,
+    min_percentage REAL NOT NULL,
+    max_percentage REAL NOT NULL,
+    incentive_amount REAL NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS incentive_payments (
+    id TEXT PRIMARY KEY NOT NULL,
+    sales_code TEXT NOT NULL,
+    sales_name TEXT NOT NULL,
+    principle TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    period_month INTEGER NOT NULL,
+    period_year INTEGER NOT NULL,
+    total_incentive REAL NOT NULL DEFAULT 0,
+    payment_status TEXT NOT NULL DEFAULT 'belum',
+    payment_proof_url TEXT,
+    payment_date INTEGER,
+    paid_by TEXT,
+    paid_by_name TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );`,
+  `CREATE INDEX IF NOT EXISTS idx_sales_targets_period ON sales_targets(period_month, period_year);`,
+  `CREATE INDEX IF NOT EXISTS idx_sales_targets_code ON sales_targets(sales_code);`,
+  `CREATE INDEX IF NOT EXISTS idx_sdp_period ON sales_daily_progress(period_month, period_year);`,
+  `CREATE INDEX IF NOT EXISTS idx_sdp_code ON sales_daily_progress(sales_code);`,
+  `CREATE INDEX IF NOT EXISTS idx_sdp_date ON sales_daily_progress(date);`,
+  `CREATE INDEX IF NOT EXISTS idx_incentive_tiers_kpi ON incentive_tiers(kpi_type);`,
+  `CREATE INDEX IF NOT EXISTS idx_inc_payments_period ON incentive_payments(period_month, period_year);`,
+  `CREATE INDEX IF NOT EXISTS idx_inc_payments_code ON incentive_payments(sales_code);`,
+  `CREATE INDEX IF NOT EXISTS idx_inc_payments_status ON incentive_payments(payment_status);`,
+];
+
+for (const sql of insentifStatements) {
+  try {
+    await db.execute(sql);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (!/already exists/i.test(message)) {
+      throw error;
+    }
+  }
+}
+
 console.log("SQLite tables are ready");
