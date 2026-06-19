@@ -1,8 +1,8 @@
 /** Client-safe Excel helpers for target input — no server-only imports. */
+import * as XLSX from "xlsx";
 
 /** Buat template Excel untuk input target. */
 export function generateTargetTemplate() {
-    const XLSX = require("xlsx");
     const wb = XLSX.utils.book_new();
     const templateData = [
         ["Kode Salesman", "Nama Salesman", "Principal", "Cabang", "Channel", "SPV", "SM", "Target Value (Rp)", "Target EC", "Target AO", "Target IA", "SPLM Value"],
@@ -21,7 +21,6 @@ export function generateTargetTemplate() {
 
 /** Parse Excel file untuk target input. */
 export function parseTargetExcel(arrayBuffer: ArrayBuffer): Array<Record<string, unknown>> {
-    const XLSX = require("xlsx");
     const workbook = XLSX.read(arrayBuffer, { type: "array" });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const data = XLSX.utils.sheet_to_json(sheet);
