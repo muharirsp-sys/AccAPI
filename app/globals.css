@@ -1852,9 +1852,21 @@ html[data-theme="ios"] .text-\[\#9a7a45\] {
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
+.login-portal-logo-stack {
+  line-height: 0;
+}
+
 .login-portal-logo-mark {
   display: block;
   filter: drop-shadow(0 10px 24px rgba(0, 31, 65, 0.18));
+}
+
+.login-portal-logo-mark-blue {
+  display: none;
+}
+
+.login-portal-logo-mark-white {
+  display: block;
 }
 
 .login-portal-brand-title,
@@ -1978,6 +1990,18 @@ html[data-theme="office-calm"] .login-portal-ring {
   border-color: rgba(130, 83, 31, 0.14);
 }
 
+html[data-theme="office-calm"] .login-portal-logo-mark {
+  filter: drop-shadow(0 10px 22px rgba(130, 83, 31, 0.12));
+}
+
+html[data-theme="office-calm"] .login-portal-logo-mark-blue {
+  display: block;
+}
+
+html[data-theme="office-calm"] .login-portal-logo-mark-white {
+  display: none;
+}
+
 html[data-theme="office-calm"] .login-portal-brand-title,
 html[data-theme="office-calm"] .login-portal-hero-title,
 html[data-theme="office-calm"] .login-portal-feature-title {
@@ -2071,6 +2095,15 @@ html[data-theme="neon"] .login-portal-pattern {
 html[data-theme="neon"] .login-portal-ring {
   border-color: rgba(62, 208, 255, 0.2);
   box-shadow: 0 0 28px rgba(31, 143, 255, 0.12);
+}
+
+html[data-theme="neon"] .login-portal-logo-mark-white {
+  display: block;
+  filter: drop-shadow(0 0 16px rgba(62, 208, 255, 0.22));
+}
+
+html[data-theme="neon"] .login-portal-logo-mark-blue {
+  display: none;
 }
 
 html[data-theme="neon"] .login-portal-brand-title,
@@ -2175,6 +2208,15 @@ html[data-theme="ios"] .login-portal-pattern {
     linear-gradient(0deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
 }
 
+html[data-theme="ios"] .login-portal-logo-mark-white {
+  display: block;
+  filter: drop-shadow(0 12px 24px rgba(37, 57, 111, 0.2));
+}
+
+html[data-theme="ios"] .login-portal-logo-mark-blue {
+  display: none;
+}
+
 html[data-theme="ios"] .login-portal-brand-title,
 html[data-theme="ios"] .login-portal-hero-title,
 html[data-theme="ios"] .login-portal-feature-title {
@@ -2252,116 +2294,6 @@ html[data-theme="ios"] .login-portal-button {
 
 html[data-theme="ios"] .login-portal-button:hover:not(:disabled) {
   background: #25396f;
-}
-
-html[data-theme] .login-portal-shell {
-  background: #f5f8fc;
-  color: #102033;
-}
-
-html[data-theme] .login-portal-brand {
-  color: #ffffff;
-  background:
-    radial-gradient(circle at 78% 16%, rgba(255, 255, 255, 0.18), transparent 28%),
-    radial-gradient(circle at 18% 78%, rgba(0, 126, 199, 0.34), transparent 40%),
-    linear-gradient(155deg, #0068b7 0%, #00509d 48%, #003f7c 100%) !important;
-}
-
-html[data-theme] .login-portal-logo-mark {
-  filter: drop-shadow(0 10px 24px rgba(0, 31, 65, 0.18));
-}
-
-html[data-theme] .login-portal-dot-layer {
-  background-image:
-    linear-gradient(120deg, transparent 0 66%, rgba(255, 255, 255, 0.08) 66.2%, transparent 67%),
-    radial-gradient(circle at 82% 8%, rgba(255, 255, 255, 0.28) 1px, transparent 1.4px);
-}
-
-html[data-theme] .login-portal-pattern {
-  background-image:
-    linear-gradient(180deg, rgba(0, 80, 157, 0), rgba(0, 31, 65, 0.24)),
-    radial-gradient(ellipse at 58% 82%, rgba(255, 255, 255, 0.13), transparent 42%),
-    linear-gradient(90deg, transparent 0 8%, rgba(255, 255, 255, 0.08) 8.2% 9%, transparent 9.2% 20%, rgba(255, 255, 255, 0.06) 20.2% 21%, transparent 21.2% 36%, rgba(255, 255, 255, 0.05) 36.2% 37%, transparent 37.2%),
-    linear-gradient(0deg, rgba(255, 255, 255, 0.07) 1px, transparent 1px);
-}
-
-html[data-theme] .login-portal-ring {
-  border-color: rgba(255, 255, 255, 0.12);
-}
-
-html[data-theme] .login-portal-hero-title,
-html[data-theme] .login-portal-feature-title {
-  color: #ffffff !important;
-}
-
-html[data-theme] .login-portal-feature-copy,
-html[data-theme] .login-portal-hero-subtitle {
-  color: rgba(255, 255, 255, 0.82) !important;
-}
-
-html[data-theme] .login-portal-feature-icon {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.13);
-  border-color: rgba(255, 255, 255, 0.22);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
-}
-
-html[data-theme] .login-portal-form-side {
-  background:
-    radial-gradient(circle at 50% 14%, rgba(0, 80, 157, 0.08), transparent 38%),
-    #f5f8fc;
-  box-shadow: inset 16px 0 34px rgba(0, 31, 65, 0.04);
-}
-
-html[data-theme] .login-portal-card {
-  background: rgba(255, 255, 255, 0.86);
-  border-color: rgba(0, 80, 157, 0.1);
-  box-shadow: 0 24px 76px rgba(0, 31, 65, 0.1), 0 8px 24px rgba(0, 31, 65, 0.06);
-}
-
-html[data-theme] .login-portal-card-title,
-html[data-theme] .login-portal-label {
-  color: #102033 !important;
-}
-
-html[data-theme] .login-portal-card-subtitle,
-html[data-theme] .login-portal-note {
-  color: #5d6c7c !important;
-}
-
-html[data-theme] .login-portal-input {
-  color: #102033;
-  background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(0, 80, 157, 0.16);
-  box-shadow: 0 1px 2px rgba(0, 31, 65, 0.04);
-}
-
-html[data-theme] .login-portal-input::placeholder {
-  color: #8796a7;
-}
-
-html[data-theme] .login-portal-input:focus {
-  border-color: rgba(0, 80, 157, 0.68);
-  box-shadow: 0 0 0 4px rgba(0, 80, 157, 0.14);
-}
-
-html[data-theme] .login-portal-input-icon,
-html[data-theme] .login-portal-forgot {
-  color: #00509d !important;
-}
-
-html[data-theme] .login-portal-forgot:hover {
-  color: #003f7c !important;
-}
-
-html[data-theme] .login-portal-button {
-  color: #ffffff !important;
-  background: linear-gradient(135deg, #0068b7, #00509d 55%, #003f7c) !important;
-  box-shadow: 0 12px 26px rgba(0, 80, 157, 0.22);
-}
-
-html[data-theme] .login-portal-button:hover:not(:disabled) {
-  background: linear-gradient(135deg, #0074c9, #005aa8 55%, #004785) !important;
 }
 
 /* ============================================

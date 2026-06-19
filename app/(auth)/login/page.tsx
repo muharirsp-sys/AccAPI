@@ -124,15 +124,30 @@ export default function LoginPage() {
 
                     <div className="relative z-10 flex w-full max-w-[520px] flex-col">
                         {/* Logo brand */}
-                        <div className="inline-flex w-fit items-center">
+                        <div
+                            className="login-portal-logo-stack inline-grid w-fit items-center"
+                            role="img"
+                            aria-label="CV. Surya Perkasa Distribution Company"
+                        >
                             <Image
-                                src="/brand/logo_SP_horizontal_white.png"
-                                alt="CV. Surya Perkasa Distribution Company"
+                                src="/brand/logo_SP_horizontal.png"
+                                alt=""
+                                aria-hidden="true"
                                 width={305}
                                 height={95}
                                 priority
                                 unoptimized
-                                className="login-portal-logo-mark h-auto w-[min(64vw,15.5rem)] sm:w-[16rem] md:w-[14.5rem] lg:w-[16rem]"
+                                className="login-portal-logo-mark login-portal-logo-mark-blue col-start-1 row-start-1 h-auto w-[min(64vw,15.5rem)] sm:w-[16rem] md:w-[14.5rem] lg:w-[16rem]"
+                            />
+                            <Image
+                                src="/brand/logo_SP_horizontal_white.png"
+                                alt=""
+                                aria-hidden="true"
+                                width={305}
+                                height={95}
+                                priority
+                                unoptimized
+                                className="login-portal-logo-mark login-portal-logo-mark-white col-start-1 row-start-1 h-auto w-[min(64vw,15.5rem)] sm:w-[16rem] md:w-[14.5rem] lg:w-[16rem]"
                             />
                         </div>
 
