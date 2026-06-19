@@ -11,7 +11,7 @@ import { useState, useEffect } from "react";
 import { Key, Upload, FileJson, Play, ServerCrash, ExternalLink, Settings2, Database, FileSpreadsheet, CheckCircle2, Loader2, LogOut, CalendarIcon } from "lucide-react";
 import { toast } from "sonner";
 import { accurateRoutes } from "@/config/accurateRoutes";
-import { accurateFetch, AccurateError } from "@/lib/apiFetcher";
+import { accurateFetch } from "@/lib/apiFetcher";
 import DatePickerField from "@/components/ui/DatePickerField";
 import { workbookRouteParsers } from "./parsers";
 
@@ -20,7 +20,7 @@ type RouteKey = keyof typeof accurateRoutes;
 type LogState = {
   status: "success" | "error";
   message?: string;
-  data?: any;
+  data?: unknown;
 };
 
 type DuplicateConflictReason = "DUPLICATE_IN_UPLOAD" | "ALREADY_SUCCESS" | "STILL_PROCESSING" | "ACCURATE_HISTORY";
@@ -28,7 +28,7 @@ type DuplicateConflictReason = "DUPLICATE_IN_UPLOAD" | "ALREADY_SUCCESS" | "STIL
 type DuplicateReviewEntry = {
   reviewId: string;
   key: string;
-  row: any;
+  row: Record<string, unknown>;
   originalIndex: number;
   invoiceNo: string;
   customerNo: string;
@@ -42,7 +42,7 @@ type DuplicateReviewEntry = {
 
 type DuplicateReviewState = {
   routeKey: RouteKey;
-  passthroughRows: Array<{ originalIndex: number; row: any }>;
+  passthroughRows: Array<{ originalIndex: number; row: Record<string, unknown> }>;
   reviewRows: DuplicateReviewEntry[];
   selections: Record<string, boolean>;
 };
@@ -60,7 +60,7 @@ export default function Home() {
   const [isMounted, setIsMounted] = useState(false); // To prevent hydration mismatch
 
   // Database Selection State
-  const [databases, setDatabases] = useState<any[]>([]);
+  const [databases, setDatabases] = useState<Array<{ id: string | number; alias: string }>>([]);
   const [selectedDb, setSelectedDb] = useState("");
   const [isFetchingDbs, setIsFetchingDbs] = useState(false);
 
@@ -71,7 +71,7 @@ export default function Home() {
   const [duplicateReview, setDuplicateReview] = useState<DuplicateReviewState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const normalizePayloadMoney = (value: any) => {
+  const normalizePayloadMoney = (value: unknown) => {
     const num = Number(value);
     if (!Number.isFinite(num)) return 0;
     // Simpan presisi sampai 6 desimal agar selisih kecil seperti 0.002 tidak hilang,
@@ -110,6 +110,7 @@ export default function Home() {
 
     loadAccurateSession();
     setPayloadStr(JSON.stringify(accurateRoutes[selectedRoute].samplePayload, null, 2));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleLoginAccurate = () => {
@@ -135,11 +136,11 @@ export default function Home() {
       if (data.connected && !data.databaseConnected) {
         fetchDatabases();
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       setIsAccurateConnected(false);
       setIsKeySaved(false);
       setDbHost("");
-      toast.error(e.message);
+      toast.error(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -163,8 +164,8 @@ export default function Home() {
       const data = await res.json();
       if (data.error || !data.d) throw new Error(data.error || "Gagal mengambil database.");
       setDatabases(data.d);
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setIsFetchingDbs(false);
     }
