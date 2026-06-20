@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
+import sharp from "sharp";
 
 export async function POST(req: Request) {
     const session = await auth.api.getSession({ headers: await headers() });
@@ -18,11 +19,16 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Only image files allowed" }, { status: 400 });
         }
 
-        const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
-        const filename = `${randomUUID()}.${ext}`;
+        const filename = `${randomUUID()}.jpg`;
         const dir = path.join(process.cwd(), "public", "uploads", "form-kontrol");
         await mkdir(dir, { recursive: true });
-        await writeFile(path.join(dir, filename), Buffer.from(await file.arrayBuffer()));
+
+        const buf = await sharp(Buffer.from(await file.arrayBuffer()))
+            .rotate()
+            .resize(1600, 1600, { fit: "inside", withoutEnlargement: true })
+            .jpeg({ quality: 72 })
+            .toBuffer();
+        await writeFile(path.join(dir, filename), buf);
 
         return NextResponse.json({ url: `/uploads/form-kontrol/${filename}` });
     } catch {
