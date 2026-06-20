@@ -5,15 +5,16 @@ import * as XLSX from "xlsx";
 export function generateTargetTemplate() {
     const wb = XLSX.utils.book_new();
     const templateData = [
-        ["Kode Salesman", "Nama Salesman", "Principal", "Cabang", "Channel", "SPV", "SM", "Target Value (Rp)", "Target EC", "Target AO", "Target IA", "SPLM Value"],
-        ["SLS-001", "Andi Pratama", "NESTLE", "BANDUNG", "TT", "Budi Santoso", "Hendra Wijaya", 250000000, 320, 180, 540, 142300000],
-        ["SLS-002", "Siti Rahmawati", "NESTLE", "BANDUNG", "MT", "Budi Santoso", "Hendra Wijaya", 210000000, 280, 160, 480, 188400000],
-        ["SLS-003", "Rudi Hartono", "UNILEVER", "CIMAHI", "TT", "Dewi Lestari", "Hendra Wijaya", 300000000, 360, 200, 600, 151900000],
+        ["Kode Salesman", "Nama Salesman", "Principal", "Cabang", "Channel", "SPV", "SM", "Target Value (Rp)", "Target EC", "Target AO", "Target IA", "SPLM Value", "Tipe Sales", "Status Insentif"],
+        ["SLS-001", "Andi Pratama", "NESTLE", "BANDUNG", "GT", "Budi Santoso", "Hendra Wijaya", 250000000, 320, 180, 540, 142300000, "Exclusive", "Distributor+Principle"],
+        ["SLS-002", "Siti Rahmawati", "NESTLE", "BANDUNG", "GT", "Budi Santoso", "Hendra Wijaya", 210000000, 280, 160, 480, 188400000, "Mix", "Distributor"],
+        ["SLS-003", "Rudi Hartono", "UNILEVER", "CIMAHI", "GT", "Dewi Lestari", "Hendra Wijaya", 300000000, 360, 200, 600, 151900000, "Mix", "Principle"],
     ];
     const ws = XLSX.utils.aoa_to_sheet(templateData);
     ws["!cols"] = [
         { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 8 },
         { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 },
+        { wch: 12 }, { wch: 20 },
     ];
     XLSX.utils.book_append_sheet(wb, ws, "Target");
     return XLSX.write(wb, { bookType: "xlsx", type: "array" }) as Uint8Array;
@@ -38,5 +39,7 @@ export function parseTargetExcel(arrayBuffer: ArrayBuffer): Array<Record<string,
         targetAo: Number(row["Target AO"] || 0),
         targetIa: Number(row["Target IA"] || 0),
         splmValue: Number(row["SPLM Value"] || 0),
+        tipeSales: String(row["Tipe Sales"] || "Exclusive").trim(),
+        statusInsentif: String(row["Status Insentif"] || "Distributor+Principle").trim(),
     }));
 }

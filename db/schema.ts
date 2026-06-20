@@ -583,6 +583,10 @@ export const salesTargets = sqliteTable("sales_targets", {
     targetAo: integer("target_ao").notNull().default(0),
     targetIa: integer("target_ia").notNull().default(0),
     splmValue: real("splm_value").notNull().default(0),
+    // Insentif GT (lib/insentif-sales-calc): "mix" | "exclusive".
+    tipeSales: text("tipe_sales").notNull().default("exclusive"),
+    // "distributor_principle" | "distributor" | "principle" (full principle → tak ikut skema).
+    statusInsentif: text("status_insentif").notNull().default("distributor_principle"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 }, (t) => ({
@@ -645,6 +649,23 @@ export const incentivePayments = sqliteTable("incentive_payments", {
     periodIdx: index("idx_inc_payments_period").on(t.periodMonth, t.periodYear),
     codeIdx: index("idx_inc_payments_code").on(t.salesCode),
     statusIdx: index("idx_inc_payments_status").on(t.paymentStatus),
+}));
+
+// Support principle per salesman+principle+periode. Diisi Finance saat payout (setelah bulan tutup).
+// Dikurangkan dari konstanta insentif GT — lihat lib/insentif-sales-calc.
+export const incentiveSupport = sqliteTable("incentive_support", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    principle: text("principle").notNull(),
+    periodMonth: integer("period_month").notNull(),
+    periodYear: integer("period_year").notNull(),
+    supportAmount: real("support_amount").notNull().default(0),
+    inputBy: text("input_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    periodIdx: index("idx_inc_support_period").on(t.periodMonth, t.periodYear),
+    codeIdx: index("idx_inc_support_code").on(t.salesCode),
 }));
 
 // ============================================================

@@ -550,6 +550,8 @@ const migrations = [
   `ALTER TABLE off_batch ADD COLUMN total_refunded REAL;`,
   `ALTER TABLE off_batch ADD COLUMN no_rekening TEXT;`,
   `ALTER TABLE off_batch ADD COLUMN created_by_role TEXT;`,
+  `ALTER TABLE sales_targets ADD COLUMN tipe_sales TEXT NOT NULL DEFAULT 'exclusive';`,
+  `ALTER TABLE sales_targets ADD COLUMN status_insentif TEXT NOT NULL DEFAULT 'distributor_principle';`,
   `ALTER TABLE off_batch_item ADD COLUMN no_claim TEXT;`,
   `ALTER TABLE off_batch_item ADD COLUMN no_rekening TEXT;`,
   `ALTER TABLE off_batch_item ADD COLUMN finance_payment_status TEXT NOT NULL DEFAULT 'unpaid';`,
@@ -729,6 +731,19 @@ const insentifStatements = [
     target_ao INTEGER NOT NULL DEFAULT 0,
     target_ia INTEGER NOT NULL DEFAULT 0,
     splm_value REAL NOT NULL DEFAULT 0,
+    tipe_sales TEXT NOT NULL DEFAULT 'exclusive',
+    status_insentif TEXT NOT NULL DEFAULT 'distributor_principle',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS incentive_support (
+    id TEXT PRIMARY KEY NOT NULL,
+    sales_code TEXT NOT NULL,
+    principle TEXT NOT NULL,
+    period_month INTEGER NOT NULL,
+    period_year INTEGER NOT NULL,
+    support_amount REAL NOT NULL DEFAULT 0,
+    input_by TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );`,
@@ -785,6 +800,8 @@ const insentifStatements = [
   `CREATE INDEX IF NOT EXISTS idx_inc_payments_period ON incentive_payments(period_month, period_year);`,
   `CREATE INDEX IF NOT EXISTS idx_inc_payments_code ON incentive_payments(sales_code);`,
   `CREATE INDEX IF NOT EXISTS idx_inc_payments_status ON incentive_payments(payment_status);`,
+  `CREATE INDEX IF NOT EXISTS idx_inc_support_period ON incentive_support(period_month, period_year);`,
+  `CREATE INDEX IF NOT EXISTS idx_inc_support_code ON incentive_support(sales_code);`,
 ];
 
 for (const sql of insentifStatements) {

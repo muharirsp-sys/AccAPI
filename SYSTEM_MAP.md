@@ -504,6 +504,28 @@ idempotency_log [fingerprint bulk upload]
 
 ---
 
+## Insentif Sales — Kalkulasi Insentif
+
+Dua model insentif hidup berdampingan, dipisah oleh `channel`:
+
+| Model | Berlaku | Logic | File |
+|---|---|---|---|
+| **Strata-DB** (4 KPI: Value/EC/AO/IA, rata-rata) | channel non-GT | `lookupTierFromDb` (tabel `incentive_tiers`, nominal per jenjang %) | `lib/insentif-sales.ts` |
+| **Konstanta-bobot** (2 KPI: AO 70% + Value 30%) | channel **GT** | `computeExclusive` / `computeMix` (pure) | `lib/insentif-sales-calc.ts` |
+
+Konstanta-bobot (GT):
+- Pengali %: `<0.90→0`, `0.90–1.00→aktual`, `>1.00→cap 1.00`. Target AO konstan **240**.
+- Distributor bayar = `konstanta − total_support` (floor 0), split 70/30 × pencapaian.
+- **Exclusive** (1 principle): konstanta 1jt. **Mix** (n principle): 2=1jt, 3=1.2jt, 4=1.4jt, 5=1.5jt (cap). Value mix global → dialokasikan proporsional `target_value` per principle.
+- **Status Insentif** (`distributor_principle`/`distributor`/`principle`): hanya 2 pertama ikut skema & masuk count; `principle` (full principle, mis. Motasa/Heinz) tidak dihitung. **Tipe Sales** (`mix`/`exclusive`) di kolom target.
+- Kolom DB: `sales_targets.tipe_sales`, `sales_targets.status_insentif`. Support per `salesCode+principle+period` di tabel **`incentive_support`** (diisi Finance saat payout).
+
+Alur: target Excel (kolom Tipe Sales + Status Insentif, kunci upsert `salesCode+principle+period`) → `dashboard/route.ts` (GT pakai calc baru, non-GT strata; achievement 4-KPI tetap untuk semua) → Finance input support (`/api/insentif-sales/support`) → dashboard hitung ulang.
+
+Self-check: `node --experimental-strip-types lib/insentif-sales-calc.test.ts` (Case 1 exclusive=300rb, Case 2 mix=500rb sebagai angka acuan).
+
+---
+
 ## Risks / Blind Spots
 
 | Area | Catatan |

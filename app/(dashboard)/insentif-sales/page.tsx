@@ -28,6 +28,9 @@ interface ApiRow {
     principle: string;
     branch: string;
     channel: string;
+    tipeSales?: string;
+    statusInsentif?: string;
+    support?: number;
     spvName: string | null;
     smName: string | null;
     target: { value: number; ec: number; ao: number; ia: number; isq: number; splm: number };
@@ -473,14 +476,16 @@ function SpvView({ rows }: { rows: Salesman[] }) {
                             const mtList = list.filter((r) => r.channel === "MT");
                             const aoTtReal = ttList.reduce((a, r) => a + r.realAo, 0);
                             const aoTtTarget = ttList.reduce((a, r) => a + r.targetAo, 0);
-                            const avgAo = list.length ? Math.round(list.reduce((a, r) => a + r.realAo, 0) / list.length) : 0;
+                            // 1 salesman bisa banyak baris (per principle) → count distinct salesCode untuk per-sales.
+                            const salesmanCount = new Set(list.map((r) => r.code)).size;
+                            const avgAo = salesmanCount ? Math.round(list.reduce((a, r) => a + r.realAo, 0) / salesmanCount) : 0;
                             const aveIaTt = ttList.length ? Math.round(ttList.reduce((a, r) => a + r.realIa, 0) / ttList.length) : 0;
                             const aveIaMt = mtList.length ? Math.round(mtList.reduce((a, r) => a + r.realIa, 0) / mtList.length) : 0;
                             return (
                                 <tr key={spv} className="even:bg-white/[0.025] hover:bg-white/[0.05] transition-colors">
                                     <td className="px-3 py-3">
                                         <div className="font-semibold text-slate-200">{spv}</div>
-                                        <div className="text-[10px] text-slate-500">{list.length} salesman</div>
+                                        <div className="text-[10px] text-slate-500">{salesmanCount} salesman</div>
                                     </td>
                                     <td className="px-3 py-3 text-center"><PaceCell value={pct(rv, tv)} real={rv} target={tv} /></td>
                                     <td className="px-3 py-3 text-center"><PaceCell value={pct(aoTtReal, aoTtTarget)} /></td>
@@ -1012,7 +1017,86 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 // ── Finance View — fetch payments API + PATCH mark lunas ──────────────────
-function FinanceView({ apiRows, month, year }: { apiRows: ApiRow[]; month: number; year: number }) {
+// ── Finance: input support principle per salesman (channel GT) ────────────────
+function SupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; month: number; year: number; onSaved?: () => void }) {
+    const gtRows = useMemo(() => apiRows.filter((r) => r.channel === "GT"), [apiRows]);
+    const [draft, setDraft] = useState<Record<string, string>>({});
+    const [saving, setSaving] = useState(false);
+
+    const keyOf = (r: ApiRow) => `${r.salesCode}|${r.principle}`;
+    const valueOf = (r: ApiRow) => draft[keyOf(r)] ?? String(r.support ?? 0);
+
+    async function save() {
+        setSaving(true);
+        try {
+            const payload = gtRows.map((r) => ({
+                salesCode: r.salesCode, principle: r.principle,
+                periodMonth: month, periodYear: year,
+                supportAmount: Number(valueOf(r)) || 0,
+            }));
+            const res = await fetch("/api/insentif-sales/support", {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error ?? "Gagal simpan support");
+            toast.success(`Support tersimpan (${data.upserted} baris). Insentif dihitung ulang.`);
+            setDraft({});
+            onSaved?.();
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal simpan support");
+        }
+        setSaving(false);
+    }
+
+    if (gtRows.length === 0) return null;
+
+    return (
+        <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
+            <SectionTitle icon={DollarSign} no={0} title="Input Support Principle (GT)" desc="Support dari principle per salesman — konstanta insentif dikurangi nilai ini" />
+            <div className="overflow-x-auto mt-3">
+                <table className="w-full text-sm">
+                    <thead>
+                        <tr className="text-left text-slate-400 border-b border-white/10">
+                            <th className="px-3 py-2">Kode</th>
+                            <th className="px-3 py-2">Nama</th>
+                            <th className="px-3 py-2">Principal</th>
+                            <th className="px-3 py-2">Tipe / Status</th>
+                            <th className="px-3 py-2 text-right">Support (Rp)</th>
+                            <th className="px-3 py-2 text-right">Insentif</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {gtRows.map((r) => (
+                            <tr key={keyOf(r)} className="border-b border-white/5">
+                                <td className="px-3 py-2 font-mono text-slate-300">{r.salesCode}</td>
+                                <td className="px-3 py-2 text-slate-300">{r.salesName}</td>
+                                <td className="px-3 py-2 text-slate-300">{r.principle}</td>
+                                <td className="px-3 py-2 text-xs text-slate-500">{r.tipeSales ?? "-"} / {r.statusInsentif ?? "-"}</td>
+                                <td className="px-3 py-2 text-right">
+                                    <input
+                                        type="number" min={0}
+                                        value={valueOf(r)}
+                                        onChange={(e) => setDraft((p) => ({ ...p, [keyOf(r)]: e.target.value }))}
+                                        className="w-32 bg-[#11131a] border border-white/10 rounded px-2 py-1 text-right font-mono text-slate-200"
+                                    />
+                                </td>
+                                <td className="px-3 py-2 text-right font-mono text-amber-400">{formatRp(r.incentive.total)}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+            <div className="flex justify-end mt-3">
+                <button onClick={save} disabled={saving}
+                    className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium">
+                    {saving ? "Menyimpan…" : "Simpan Support & Hitung Ulang"}
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; month: number; year: number; onSaved?: () => void }) {
     const [payments, setPayments] = useState<PaymentRow[]>([]);
     const [selectedMonth, setSelectedMonth] = useState(month);
     const [saving, setSaving] = useState(false);
@@ -1062,7 +1146,7 @@ function FinanceView({ apiRows, month, year }: { apiRows: ApiRow[]; month: numbe
     const detailRows = useMemo(() => {
         if (selectedMonth === month) {
             return apiRows.map((r) => {
-                const pay = payments.find((p) => p.salesCode === r.salesCode && p.periodMonth === selectedMonth);
+                const pay = payments.find((p) => p.salesCode === r.salesCode && p.principle === r.principle && p.periodMonth === selectedMonth);
                 return { salesCode: r.salesCode, salesName: r.salesName, principle: r.principle, total: r.incentive.total, paymentId: pay?.id ?? null, status: (pay?.paymentStatus ?? r.paymentStatus) as string };
             });
         }
@@ -1117,6 +1201,8 @@ function FinanceView({ apiRows, month, year }: { apiRows: ApiRow[]; month: numbe
 
     return (
         <div className="space-y-5">
+            {/* Support principle GT — diisi Finance saat payout */}
+            <SupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
             {/* 12-month strip */}
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
                 <SectionTitle icon={DollarSign} no={1} title="Rekap Pembayaran Tahunan" desc="12 bulan dari DB — indikator tunggakan real-time" />
@@ -1346,7 +1432,7 @@ export default function InsentifSalesPage() {
                         </>
                     )}
                     {view === "admin" && <AdminView rows={salesmen} />}
-                    {view === "finance" && <FinanceView apiRows={apiRows} month={month} year={year} />}
+                    {view === "finance" && <FinanceView apiRows={apiRows} month={month} year={year} onSaved={fetchDashboard} />}
                 </div>
             )}
         </div>

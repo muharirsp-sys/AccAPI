@@ -1,25 +1,35 @@
 /*
  * Tujuan: GET aggregated dashboard data Insentif Sales per periode.
  * Caller: app/(dashboard)/insentif-sales/page.tsx via fetch("/api/insentif-sales/dashboard").
- * Dependensi: lib/insentif-sales, db/schema (incentivePayments).
- * Main Functions: GET handler — join targets + MTD progress + tier lookup + payment status.
+ * Dependensi: lib/insentif-sales, lib/insentif-sales-calc, db/schema (incentivePayments, incentiveSupport).
+ * Main Functions: GET — join targets (per principle) + MTD per principle + insentif.
+ *   - channel GT: model konstanta-bobot (lib/insentif-sales-calc); mix dihitung per salesman, value dialokasikan proporsional.
+ *   - channel non-GT: tetap strata-DB (lookupTierFromDb), 4 KPI.
+ *   Pencapaian/achievement 4-KPI ditampilkan untuk semua channel.
  * Side Effects: DB read only.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { eq, and } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { incentivePayments } from "@/db/schema";
+import { incentivePayments, incentiveSupport } from "@/db/schema";
 import {
     requireSalesSession,
     getWorkdayProgress,
     pct,
     itemSuper,
     lookupTierFromDb,
-    computeMtdProgress,
+    computeMtdByPrinciple,
     getTargetsForPeriod,
     type KpiType,
 } from "@/lib/insentif-sales";
+import {
+    computeExclusive,
+    computeMix,
+    type StatusInsentif,
+    type MixPrincipalInput,
+    type MixLineDetail,
+} from "@/lib/insentif-sales-calc";
 
 export async function GET(req: NextRequest) {
     const actor = await requireSalesSession();
@@ -32,17 +42,46 @@ export async function GET(req: NextRequest) {
     const principle = searchParams.get("principle") ?? undefined;
     const branch = searchParams.get("branch") ?? undefined;
 
-    const [targets, mtd] = await Promise.all([
+    const [targets, realByPrinciple, supportRows] = await Promise.all([
         getTargetsForPeriod(month, year, principle, branch),
-        computeMtdProgress(month, year, principle, branch),
+        computeMtdByPrinciple(month, year),
+        db
+            .select()
+            .from(incentiveSupport)
+            .where(and(eq(incentiveSupport.periodMonth, month), eq(incentiveSupport.periodYear, year))),
     ]);
 
-    const mtdMap = new Map(mtd.map((r) => [r.salesCode, r]));
+    const key = (salesCode: string, prin: string) => `${salesCode}|${prin}`;
+    const supportMap = new Map(supportRows.map((s) => [key(s.salesCode, s.principle), s.supportAmount]));
+    const realOf = (salesCode: string, prin: string) =>
+        realByPrinciple.get(key(salesCode, prin)) ?? { realValue: 0, realEc: 0, realAo: 0, realIa: 0 };
+
+    // Pra-hitung insentif GT-mix per salesman (value global → alokasi per principle).
+    const mixLineMap = new Map<string, MixLineDetail>();
+    const mixGroups = new Map<string, MixPrincipalInput[]>();
+    for (const t of targets) {
+        if (t.channel !== "GT" || t.tipeSales !== "mix") continue;
+        const r = realOf(t.salesCode, t.principle);
+        const arr = mixGroups.get(t.salesCode) ?? [];
+        arr.push({
+            nama: t.principle,
+            status: t.statusInsentif as StatusInsentif,
+            target_value: t.targetValue,
+            realisasi_value: r.realValue,
+            realisasi_ao: r.realAo,
+            nilai_support_principal: supportMap.get(key(t.salesCode, t.principle)) ?? 0,
+        });
+        mixGroups.set(t.salesCode, arr);
+    }
+    for (const [salesCode, arr] of mixGroups) {
+        for (const line of computeMix(arr).rincian) mixLineMap.set(key(salesCode, line.nama), line);
+    }
+
     const timeGone = getWorkdayProgress(new Date());
 
     const rows = await Promise.all(
         targets.map(async (t) => {
-            const real = mtdMap.get(t.salesCode) ?? { realValue: 0, realEc: 0, realAo: 0, realIa: 0 };
+            const real = realOf(t.salesCode, t.principle);
 
             const pVal = pct(real.realValue, t.targetValue);
             const pEc = pct(real.realEc, t.targetEc);
@@ -52,13 +91,31 @@ export async function GET(req: NextRequest) {
             const pIsq = pct(isqReal, isqTgt);
             const totalAchieve = Math.round(((pVal + pEc + pAo + pIsq) / 4) * 10) / 10;
 
-            const [ivVal, ivEc, ivAo, ivIsq] = await Promise.all([
-                lookupTierFromDb("value" as KpiType, pVal, t.principle, t.branch),
-                lookupTierFromDb("ec" as KpiType, pEc, t.principle, t.branch),
-                lookupTierFromDb("ao" as KpiType, pAo, t.principle, t.branch),
-                lookupTierFromDb("ia" as KpiType, pIsq, t.principle, t.branch),
-            ]);
-            const totalIncentive = ivVal + ivEc + ivAo + ivIsq;
+            let incentive: { value: number; ec: number; ao: number; isq: number; total: number };
+
+            if (t.channel === "GT") {
+                if (t.tipeSales === "mix") {
+                    const line = mixLineMap.get(key(t.salesCode, t.principle));
+                    incentive = { value: line?.insentif_value ?? 0, ec: 0, ao: line?.insentif_ao ?? 0, isq: 0, total: line?.total ?? 0 };
+                } else {
+                    const ex = computeExclusive({
+                        status: t.statusInsentif as StatusInsentif,
+                        target_value: t.targetValue,
+                        realisasi_value: real.realValue,
+                        realisasi_ao: real.realAo,
+                        nilai_support_principal: supportMap.get(key(t.salesCode, t.principle)) ?? 0,
+                    });
+                    incentive = { value: ex.insentif_value, ec: 0, ao: ex.insentif_ao, isq: 0, total: ex.total };
+                }
+            } else {
+                const [ivVal, ivEc, ivAo, ivIsq] = await Promise.all([
+                    lookupTierFromDb("value" as KpiType, pVal, t.principle, t.branch),
+                    lookupTierFromDb("ec" as KpiType, pEc, t.principle, t.branch),
+                    lookupTierFromDb("ao" as KpiType, pAo, t.principle, t.branch),
+                    lookupTierFromDb("ia" as KpiType, pIsq, t.principle, t.branch),
+                ]);
+                incentive = { value: ivVal, ec: ivEc, ao: ivAo, isq: ivIsq, total: ivVal + ivEc + ivAo + ivIsq };
+            }
 
             const [payment] = await db
                 .select({ status: incentivePayments.paymentStatus })
@@ -66,6 +123,7 @@ export async function GET(req: NextRequest) {
                 .where(
                     and(
                         eq(incentivePayments.salesCode, t.salesCode),
+                        eq(incentivePayments.principle, t.principle),
                         eq(incentivePayments.periodMonth, month),
                         eq(incentivePayments.periodYear, year),
                     ),
@@ -78,25 +136,15 @@ export async function GET(req: NextRequest) {
                 principle: t.principle,
                 branch: t.branch,
                 channel: t.channel,
+                tipeSales: t.tipeSales,
+                statusInsentif: t.statusInsentif,
                 spvName: t.spvName,
                 smName: t.smName,
-                target: {
-                    value: t.targetValue,
-                    ec: t.targetEc,
-                    ao: t.targetAo,
-                    ia: t.targetIa,
-                    isq: isqTgt,
-                    splm: t.splmValue,
-                },
-                real: {
-                    value: real.realValue,
-                    ec: real.realEc,
-                    ao: real.realAo,
-                    ia: real.realIa,
-                    isq: isqReal,
-                },
+                support: supportMap.get(key(t.salesCode, t.principle)) ?? 0,
+                target: { value: t.targetValue, ec: t.targetEc, ao: t.targetAo, ia: t.targetIa, isq: isqTgt, splm: t.splmValue },
+                real: { value: real.realValue, ec: real.realEc, ao: real.realAo, ia: real.realIa, isq: isqReal },
                 pct: { value: pVal, ec: pEc, ao: pAo, isq: pIsq, total: totalAchieve },
-                incentive: { value: ivVal, ec: ivEc, ao: ivAo, isq: ivIsq, total: totalIncentive },
+                incentive,
                 paymentStatus: payment?.status ?? "belum",
             };
         }),

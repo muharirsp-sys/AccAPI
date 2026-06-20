@@ -121,6 +121,32 @@ export async function computeMtdProgress(
     }));
 }
 
+/** Aggregate MTD per salesCode+principle. Untuk insentif GT (AO per principle). Key: `${salesCode}|${principle}`. */
+export async function computeMtdByPrinciple(
+    month: number,
+    year: number,
+): Promise<Map<string, MtdProgress & { principle: string }>> {
+    const rows = await db
+        .select({
+            salesCode: salesDailyProgress.salesCode,
+            principle: salesDailyProgress.principle,
+            realValue: sql<number>`SUM(${salesDailyProgress.achievedValueDpp})`,
+            realEc: sql<number>`SUM(${salesDailyProgress.achievedEc})`,
+            realAo: sql<number>`MAX(${salesDailyProgress.achievedAo})`,
+            realIa: sql<number>`MAX(${salesDailyProgress.achievedIa})`,
+        })
+        .from(salesDailyProgress)
+        .where(and(eq(salesDailyProgress.periodMonth, month), eq(salesDailyProgress.periodYear, year)))
+        .groupBy(salesDailyProgress.salesCode, salesDailyProgress.principle);
+
+    return new Map(
+        rows.map((r) => [
+            `${r.salesCode}|${r.principle}`,
+            { salesCode: r.salesCode, principle: r.principle, realValue: r.realValue ?? 0, realEc: r.realEc ?? 0, realAo: r.realAo ?? 0, realIa: r.realIa ?? 0 },
+        ]),
+    );
+}
+
 /** Ambil targets untuk satu periode + filter opsional. */
 export async function getTargetsForPeriod(
     month: number,

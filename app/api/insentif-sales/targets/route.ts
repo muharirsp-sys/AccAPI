@@ -12,6 +12,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { salesTargets } from "@/db/schema";
 import { requireSalesSession, getTargetsForPeriod } from "@/lib/insentif-sales";
+import { normalizeStatus, normalizeTipe } from "@/lib/insentif-sales-calc";
 
 export async function GET(req: NextRequest) {
     const actor = await requireSalesSession();
@@ -43,6 +44,8 @@ interface TargetInput {
     targetAo: number;
     targetIa: number;
     splmValue?: number;
+    tipeSales?: string;
+    statusInsentif?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -66,12 +69,24 @@ export async function POST(req: NextRequest) {
     for (const t of body) {
         if (!t.salesCode || !t.periodMonth || !t.periodYear) continue;
 
+        // Validasi nilai kolom Excel (trust boundary). Nilai aneh → 400.
+        let tipeSales: string, statusInsentif: string;
+        try {
+            tipeSales = normalizeTipe(t.tipeSales ?? "exclusive");
+            statusInsentif = normalizeStatus(t.statusInsentif ?? "distributor_principle");
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : "Nilai tidak valid";
+            return NextResponse.json({ error: `Baris ${t.salesCode}/${t.principle}: ${msg}` }, { status: 400 });
+        }
+
+        // Kunci unik = salesCode + principle + periode (mix → 1 baris per principle).
         const [existing] = await db
             .select({ id: salesTargets.id })
             .from(salesTargets)
             .where(
                 and(
                     eq(salesTargets.salesCode, t.salesCode),
+                    eq(salesTargets.principle, t.principle),
                     eq(salesTargets.periodMonth, t.periodMonth),
                     eq(salesTargets.periodYear, t.periodYear),
                 ),
@@ -83,7 +98,6 @@ export async function POST(req: NextRequest) {
                 .update(salesTargets)
                 .set({
                     salesName: t.salesName,
-                    principle: t.principle,
                     branch: t.branch,
                     channel: t.channel ?? "TT",
                     spvName: t.spvName ?? null,
@@ -93,6 +107,8 @@ export async function POST(req: NextRequest) {
                     targetAo: t.targetAo,
                     targetIa: t.targetIa,
                     splmValue: t.splmValue ?? 0,
+                    tipeSales,
+                    statusInsentif,
                     updatedAt: now,
                 })
                 .where(eq(salesTargets.id, existing.id));
@@ -113,6 +129,8 @@ export async function POST(req: NextRequest) {
                 targetAo: t.targetAo,
                 targetIa: t.targetIa,
                 splmValue: t.splmValue ?? 0,
+                tipeSales,
+                statusInsentif,
                 createdAt: now,
                 updatedAt: now,
             });

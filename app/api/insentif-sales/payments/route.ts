@@ -71,12 +71,14 @@ export async function POST(req: NextRequest) {
 
     const now = new Date();
 
+    // Kunci = salesCode + principle + period (mix → 1 payment per principle).
     const [existing] = await db
         .select({ id: incentivePayments.id })
         .from(incentivePayments)
         .where(
             and(
                 eq(incentivePayments.salesCode, body.salesCode),
+                eq(incentivePayments.principle, body.principle),
                 eq(incentivePayments.periodMonth, body.periodMonth),
                 eq(incentivePayments.periodYear, body.periodYear),
             ),
