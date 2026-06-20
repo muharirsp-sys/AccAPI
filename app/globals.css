@@ -627,11 +627,11 @@ body {
 .bg-indigo-600\/50,
 .hover\:bg-indigo-600\/50:hover,
 .selection\:bg-indigo-500\/30::selection {
-  background-color: rgba(199, 154, 63, 0.28);
+  background-color: rgba(199, 154, 63, 0.55);
 }
 
 .selection\:text-indigo-200::selection {
-  color: #4a351f;
+  color: #1f1408;
 }
 
 /* ============================================
@@ -1423,11 +1423,11 @@ html[data-theme="ios"] .placeholder\:text-slate-600::placeholder {
 html[data-theme="ios"] .bg-indigo-500\/30,
 html[data-theme="ios"] .bg-indigo-600\/50,
 html[data-theme="ios"] .selection\:bg-indigo-500\/30::selection {
-  background-color: rgba(67, 94, 190, 0.24);
+  background-color: rgba(67, 94, 190, 0.42);
 }
 
 html[data-theme="ios"] .selection\:text-indigo-200::selection {
-  color: #ffffff;
+  color: #111827;
 }
 
 /* Retint legacy warm hardcoded → palet iOS */
@@ -2458,4 +2458,23 @@ html[data-theme="ios"] .login-portal-button:hover:not(:disabled) {
 html[data-theme="office-calm"] [data-accapi-date-picker-calendar="true"] { background-color: #fffcf4 !important; }
 html[data-theme="neon"] [data-accapi-date-picker-calendar="true"] { background-color: #0d2240 !important; }
 html[data-theme="ios"] [data-accapi-date-picker-calendar="true"] { background-color: #ffffff !important; }
+
+/* ponytail: global override karena selection class di body tidak selalu turun ke teks anak. */
+::selection,
+*::selection {
+  background-color: rgba(199, 154, 63, 0.58);
+  color: #1f1408;
+}
+
+html[data-theme="neon"] ::selection,
+html[data-theme="neon"] *::selection {
+  background-color: rgba(31, 143, 255, 0.55);
+  color: #e7f6ff;
+}
+
+html[data-theme="ios"] ::selection,
+html[data-theme="ios"] *::selection {
+  background-color: rgba(67, 94, 190, 0.52);
+  color: #111827;
+}
 
