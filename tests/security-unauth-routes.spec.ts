@@ -63,6 +63,23 @@ test.describe("security guardrails for sensitive utility routes", () => {
 
     const openDb = await request.get("/api/auth/open-db?access_token=fake-browser-token&id=1");
     expect(openDb.status()).toBe(401);
+
+    const principles = await request.get("/api/off-program-control/principles");
+    expect(principles.status()).toBe(401);
+
+    const targetTemplate = await request.get("/api/insentif-sales/targets/template");
+    expect(targetTemplate.status()).toBe(401);
+
+    const upload = await request.post("/api/upload/form-kontrol", {
+      multipart: {
+        file: {
+          name: "tiny.png",
+          mimeType: "image/png",
+          buffer: Buffer.from("not-a-real-image"),
+        },
+      },
+    });
+    expect(upload.status()).toBe(401);
   });
 
   test("allows authenticated idempotency preview requests", async ({ request, baseURL }) => {
@@ -114,5 +131,28 @@ test.describe("security guardrails for sensitive utility routes", () => {
       data: [{ eventType: "SECURITY_SMOKE", module: "TEST" }],
     });
     expect(res.status()).toBe(403);
+  });
+
+  test("rejects authenticated Form Kontrol image uploads above 5MB", async ({ request, baseURL }) => {
+    const login = await request.post("/api/auth/sign-in/email", {
+      headers: { Origin: baseURL || "http://localhost:3000" },
+      data: { email: QA_EMAIL, password: QA_PASSWORD },
+    });
+    expect(login.ok()).toBeTruthy();
+
+    const oversizedUpload = await request.post("/api/upload/form-kontrol", {
+      multipart: {
+        file: {
+          name: "oversized.png",
+          mimeType: "image/png",
+          buffer: Buffer.alloc(5 * 1024 * 1024 + 1),
+        },
+      },
+    });
+
+    expect(oversizedUpload.status()).toBe(400);
+    await expect(await oversizedUpload.json()).toMatchObject({
+      error: "Ukuran file maksimal 5MB.",
+    });
   });
 });

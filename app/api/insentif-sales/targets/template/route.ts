@@ -7,9 +7,13 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireApiSession } from "@/lib/api-security";
 import { generateTargetTemplate } from "@/lib/insentif-sales-excel";
 
-export async function GET() {
+export async function GET(request: Request) {
+    const authCheck = await requireApiSession(request);
+    if (authCheck.response) return authCheck.response;
+
     try {
         const templateBuffer = generateTargetTemplate();
         return new NextResponse(Buffer.from(templateBuffer), {

@@ -35,6 +35,7 @@ const MERCH_STEPS: { key: keyof MerchInfo; label: string }[] = [
     { key: "posisiMudah", label: "Posisi mudah ditemukan konsumen" },
     { key: "semuaSku",    label: "Seluruh SKU terpajang" },
 ];
+const PHOTO_MAX_SIZE_LABEL = "Maksimal ukuran foto 5MB.";
 
 async function uploadPhoto(file: File): Promise<string> {
     const fd = new FormData();
@@ -83,6 +84,7 @@ function PhotoInput({ onUploaded, existingUrl, label = "Upload Foto", size = "md
                 {uploading ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}
                 {uploading ? "Mengupload..." : existingUrl ? "Ganti Foto" : label}
             </button>
+            <p className="text-xs text-slate-500 text-center">{PHOTO_MAX_SIZE_LABEL}</p>
             <input ref={ref} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleChange} />
         </div>
     );

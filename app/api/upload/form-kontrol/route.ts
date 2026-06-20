@@ -6,6 +6,8 @@ import path from "path";
 import { randomUUID } from "crypto";
 import sharp from "sharp";
 
+const MAX_IMAGE_UPLOAD_BYTES = 5 * 1024 * 1024;
+
 export async function POST(req: Request) {
     const session = await auth.api.getSession({ headers: await headers() });
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -17,6 +19,9 @@ export async function POST(req: Request) {
 
         if (!file.type.startsWith("image/")) {
             return NextResponse.json({ error: "Only image files allowed" }, { status: 400 });
+        }
+        if (file.size > MAX_IMAGE_UPLOAD_BYTES) {
+            return NextResponse.json({ error: "Ukuran file maksimal 5MB." }, { status: 400 });
         }
 
         const filename = `${randomUUID()}.jpg`;
