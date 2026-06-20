@@ -17,25 +17,28 @@ export async function GET(req: Request) {
     let deleted = 0;
     let errors = 0;
 
+    let files: string[];
     try {
-        const files = await readdir(dir);
-        await Promise.all(
-            files.map(async (file) => {
-                const filePath = path.join(dir, file);
-                try {
-                    const { mtimeMs } = await stat(filePath);
-                    if (mtimeMs < cutoff) {
-                        await unlink(filePath);
-                        deleted++;
-                    }
-                } catch {
-                    errors++;
-                }
-            })
-        );
+        files = await readdir(dir);
     } catch {
-        return NextResponse.json({ error: "Directory not found" }, { status: 500 });
+        // dir belum ada (belum ada upload) = gak ada yang dibersihin
+        return NextResponse.json({ deleted: 0, errors: 0, retentionDays: RETENTION_DAYS });
     }
+
+    await Promise.all(
+        files.map(async (file) => {
+            const filePath = path.join(dir, file);
+            try {
+                const { mtimeMs } = await stat(filePath);
+                if (mtimeMs < cutoff) {
+                    await unlink(filePath);
+                    deleted++;
+                }
+            } catch {
+                errors++;
+            }
+        })
+    );
 
     return NextResponse.json({ deleted, errors, retentionDays: RETENTION_DAYS });
 }
