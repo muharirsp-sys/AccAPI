@@ -11,6 +11,7 @@ export interface Scope {
     role: string;
     salesCode?: string;
     salesName?: string;
+    principle?: string;
     spvName?: string;
     smName?: string;
     allowedSalesCodes: string[] | null;

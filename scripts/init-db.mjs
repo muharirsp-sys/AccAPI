@@ -816,6 +816,8 @@ for (const sql of insentifStatements) {
 }
 
 // --- Form Kontrol tables ---
+// Catatan: kolom *_at adalah INTEGER (unix timestamp) agar cocok dengan
+// drizzle schema (mode: "timestamp"). `date` tetap TEXT 'YYYY-MM-DD'.
 const formKontrolStatements = [
   `CREATE TABLE IF NOT EXISTS jks_master (
     id TEXT PRIMARY KEY NOT NULL,
@@ -834,8 +836,8 @@ const formKontrolStatements = [
     channel TEXT NOT NULL DEFAULT 'TT',
     visit_frequency INTEGER NOT NULL DEFAULT 1,
     is_active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
     UNIQUE(sales_code, cust_code, principle)
   );`,
   `CREATE INDEX IF NOT EXISTS idx_jks_sales_principle ON jks_master(sales_code, principle);`,
@@ -855,15 +857,15 @@ const formKontrolStatements = [
     is_visited INTEGER,
     no_order_reason_code TEXT,
     no_order_note TEXT,
-    checkin_at TEXT,
+    checkin_at INTEGER,
     checkin_photo_url TEXT,
-    checkout_at TEXT,
+    checkout_at INTEGER,
     checkout_photo_url TEXT,
     auto_matched INTEGER NOT NULL DEFAULT 0,
     source TEXT NOT NULL DEFAULT 'manual',
     created_by TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
     UNIQUE(sales_code, cust_code, principle, date)
   );`,
   `CREATE INDEX IF NOT EXISTS idx_ao_sales_date ON ao_control_daily(sales_code, date);`,
@@ -892,7 +894,7 @@ const formKontrolStatements = [
     photo_url TEXT,
     step_photos TEXT,
     note TEXT,
-    created_at TEXT NOT NULL
+    created_at INTEGER NOT NULL
   );`,
   `CREATE INDEX IF NOT EXISTS idx_merch_sales_date ON merchandising_check(sales_code, date);`,
   `CREATE TABLE IF NOT EXISTS salesman_daily_report (
@@ -908,10 +910,10 @@ const formKontrolStatements = [
     total_not_visited INTEGER NOT NULL DEFAULT 0,
     reason_summary TEXT,
     tindak_lanjut TEXT,
-    submitted_at TEXT,
+    submitted_at INTEGER,
     spv_ack INTEGER NOT NULL DEFAULT 0,
     spv_ack_by TEXT,
-    spv_ack_at TEXT
+    spv_ack_at INTEGER
   );`,
   `CREATE TABLE IF NOT EXISTS spv_briefing (
     id TEXT PRIMARY KEY NOT NULL,
@@ -923,7 +925,7 @@ const formKontrolStatements = [
     penyebab TEXT,
     solusi TEXT,
     created_by TEXT,
-    created_at TEXT NOT NULL
+    created_at INTEGER NOT NULL
   );`,
   `CREATE TABLE IF NOT EXISTS sm_control (
     id TEXT PRIMARY KEY NOT NULL,
@@ -936,7 +938,7 @@ const formKontrolStatements = [
     deviations TEXT,
     follow_up TEXT,
     created_by TEXT,
-    created_at TEXT NOT NULL
+    created_at INTEGER NOT NULL
   );`,
   `CREATE TABLE IF NOT EXISTS kontrol_audit_log (
     id TEXT PRIMARY KEY NOT NULL,
@@ -946,20 +948,23 @@ const formKontrolStatements = [
     actor_id TEXT,
     actor_name TEXT,
     payload TEXT,
-    created_at TEXT NOT NULL
+    created_at INTEGER NOT NULL
   );`,
   `CREATE TABLE IF NOT EXISTS sales_profile (
     id TEXT PRIMARY KEY NOT NULL,
     user_id TEXT NOT NULL UNIQUE,
-    sales_code TEXT NOT NULL,
+    sales_code TEXT NOT NULL UNIQUE,
     sales_name TEXT NOT NULL,
+    principle TEXT NOT NULL DEFAULT '',
+    branch TEXT NOT NULL DEFAULT '',
+    channel TEXT NOT NULL DEFAULT 'TT',
     spv_name TEXT,
     sm_name TEXT,
-    principle TEXT,
-    branch TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
   );`,
+  `CREATE INDEX IF NOT EXISTS idx_sales_profile_code ON sales_profile(sales_code);`,
+  `CREATE INDEX IF NOT EXISTS idx_sales_profile_user ON sales_profile(user_id);`,
   `CREATE TABLE IF NOT EXISTS sales_outlet_txn (
     id TEXT PRIMARY KEY NOT NULL,
     sales_code TEXT NOT NULL,
@@ -970,7 +975,7 @@ const formKontrolStatements = [
     period_year INTEGER NOT NULL,
     invoice_number TEXT,
     value_dpp REAL NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
+    created_at INTEGER NOT NULL
   );`,
 ];
 

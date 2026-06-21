@@ -41,6 +41,7 @@ export async function POST(req: Request) {
             posisiMudah: body.posisiMudah ?? false,
             semuaSku: body.semuaSku ?? false,
             photoUrl: body.photoUrl ?? null,
+            stepPhotos: body.stepPhotos ?? null,
             note: body.note ?? null,
         });
         return NextResponse.json({ success: true, id });

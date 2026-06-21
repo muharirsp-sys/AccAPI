@@ -42,7 +42,6 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/scripts/init-db.mjs ./scripts/init-db.mjs
 COPY --from=builder /app/scripts/seed-insentif-sales.mjs ./scripts/seed-insentif-sales.mjs
-COPY --from=builder /app/scripts/seed-form-kontrol.mjs ./scripts/seed-form-kontrol.mjs
 
 RUN mkdir -p /app/data
 

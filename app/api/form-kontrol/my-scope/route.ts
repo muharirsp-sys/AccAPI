@@ -20,6 +20,7 @@ export async function GET() {
                 role: role === "staff" ? "salesman" : role,
                 salesCode: profile.salesCode,
                 salesName: profile.salesName,
+                principle: profile.principle ?? null,
                 spvName: profile.spvName ?? null,
                 smName: profile.smName ?? null,
                 allowedSalesCodes: [profile.salesCode],

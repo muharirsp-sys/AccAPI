@@ -11,7 +11,7 @@ export default function TabAo({ scope }: { scope: Scope }) {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
-    const [selectedPrinciple, setSelectedPrinciple] = useState(PRINCIPLES[0]);
+    const [selectedPrinciple, setSelectedPrinciple] = useState(scope.principle ?? PRINCIPLES[0]);
     const [selectedSalesCode, setSelectedSalesCode] = useState(scope.salesCode ?? "");
 
     const summary = {
