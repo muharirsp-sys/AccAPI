@@ -373,27 +373,23 @@ function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
     const grand = apiRows.reduce(
         (acc, r) => {
             acc.value += r.incentive.value;
-            acc.ec += r.incentive.ec;
             acc.ao += r.incentive.ao;
-            acc.ia += r.incentive.isq;
             acc.total += r.incentive.total;
             return acc;
         },
-        { value: 0, ec: 0, ao: 0, ia: 0, total: 0 },
+        { value: 0, ao: 0, total: 0 },
     );
 
     return (
         <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-            <SectionTitle icon={Wallet} no={3} title="Tabel Insentif" desc="Nominal rupiah per KPI dari strata DB — nilai real berdasarkan tier terkonfigurasi" />
+            <SectionTitle icon={Wallet} no={3} title="Tabel Insentif" desc="Skema GT/TT: Value (30%) + Aktif Outlet (70%). MT belum ada aturan." />
             <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] text-xs text-left">
+                <table className="w-full min-w-[640px] text-xs text-left">
                     <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
                         <tr className="whitespace-nowrap">
                             <th className="px-3 py-3">Salesman</th>
                             <th className="px-3 py-3 text-right">{KPI_LABELS.value}</th>
-                            <th className="px-3 py-3 text-right">{KPI_LABELS.ec}</th>
                             <th className="px-3 py-3 text-right">{KPI_LABELS.ao}</th>
-                            <th className="px-3 py-3 text-right">{KPI_LABELS.ia}</th>
                             <th className="px-3 py-3 text-right bg-amber-500/10">Total Insentif</th>
                             <th className="px-3 py-3 text-center">Status</th>
                         </tr>
@@ -414,9 +410,7 @@ function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
                                         <div className="text-[10px] text-slate-500 font-mono">{r.salesCode}</div>
                                     </td>
                                     <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.incentive.value)}</td>
-                                    <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.incentive.ec)}</td>
                                     <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.incentive.ao)}</td>
-                                    <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.incentive.isq)}</td>
                                     <td className="px-3 py-3 text-right bg-amber-500/5 font-mono font-bold text-amber-400">{formatRp(r.incentive.total)}</td>
                                     <td className="px-3 py-3 text-center">
                                         <span className={`inline-block px-2 py-0.5 rounded border text-[10px] font-bold ${sc}`}>
@@ -431,9 +425,7 @@ function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
                         <tr className="bg-black/50 border-t-2 border-amber-500/30 font-bold">
                             <td className="px-3 py-3 uppercase text-[11px] tracking-wider text-amber-300">Grand Total</td>
                             <td className="px-3 py-3 text-right font-mono text-slate-200">{formatRp(grand.value)}</td>
-                            <td className="px-3 py-3 text-right font-mono text-slate-200">{formatRp(grand.ec)}</td>
                             <td className="px-3 py-3 text-right font-mono text-slate-200">{formatRp(grand.ao)}</td>
-                            <td className="px-3 py-3 text-right font-mono text-slate-200">{formatRp(grand.ia)}</td>
                             <td className="px-3 py-3 text-right bg-amber-500/10 font-mono text-amber-300 text-sm">{formatRp(grand.total)}</td>
                             <td />
                         </tr>

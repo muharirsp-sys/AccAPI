@@ -18,10 +18,8 @@ import {
     getWorkdayProgress,
     pct,
     itemSuper,
-    lookupTierFromDb,
     computeMtdByPrinciple,
     getTargetsForPeriod,
-    type KpiType,
 } from "@/lib/insentif-sales";
 import {
     computeExclusive,
@@ -51,6 +49,8 @@ export async function GET(req: NextRequest) {
             .where(and(eq(incentiveSupport.periodMonth, month), eq(incentiveSupport.periodYear, year))),
     ]);
 
+    // Skema insentif konstanta-bobot berlaku untuk GT/TT (sinonim). MT: belum ada aturan → 0.
+    const isSchemeChannel = (ch: string) => ch === "GT" || ch === "TT";
     const key = (salesCode: string, prin: string) => `${salesCode}|${prin}`;
     const supportMap = new Map(supportRows.map((s) => [key(s.salesCode, s.principle), s.supportAmount]));
     const realOf = (salesCode: string, prin: string) =>
@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
     const mixLineMap = new Map<string, MixLineDetail>();
     const mixGroups = new Map<string, MixPrincipalInput[]>();
     for (const t of targets) {
-        if (t.channel !== "GT" || t.tipeSales !== "mix") continue;
+        if (!isSchemeChannel(t.channel) || t.tipeSales !== "mix") continue;
         const r = realOf(t.salesCode, t.principle);
         const arr = mixGroups.get(t.salesCode) ?? [];
         arr.push({
@@ -93,7 +93,7 @@ export async function GET(req: NextRequest) {
 
             let incentive: { value: number; ec: number; ao: number; isq: number; total: number };
 
-            if (t.channel === "GT") {
+            if (isSchemeChannel(t.channel)) {
                 if (t.tipeSales === "mix") {
                     const line = mixLineMap.get(key(t.salesCode, t.principle));
                     incentive = { value: line?.insentif_value ?? 0, ec: 0, ao: line?.insentif_ao ?? 0, isq: 0, total: line?.total ?? 0 };
@@ -108,13 +108,8 @@ export async function GET(req: NextRequest) {
                     incentive = { value: ex.insentif_value, ec: 0, ao: ex.insentif_ao, isq: 0, total: ex.total };
                 }
             } else {
-                const [ivVal, ivEc, ivAo, ivIsq] = await Promise.all([
-                    lookupTierFromDb("value" as KpiType, pVal, t.principle, t.branch),
-                    lookupTierFromDb("ec" as KpiType, pEc, t.principle, t.branch),
-                    lookupTierFromDb("ao" as KpiType, pAo, t.principle, t.branch),
-                    lookupTierFromDb("ia" as KpiType, pIsq, t.principle, t.branch),
-                ]);
-                incentive = { value: ivVal, ec: ivEc, ao: ivAo, isq: ivIsq, total: ivVal + ivEc + ivAo + ivIsq };
+                // MT (dan channel lain): belum ada aturan insentif → 0.
+                incentive = { value: 0, ec: 0, ao: 0, isq: 0, total: 0 };
             }
 
             const [payment] = await db
