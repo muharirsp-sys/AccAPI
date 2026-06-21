@@ -988,4 +988,18 @@ for (const sql of formKontrolStatements) {
   }
 }
 
+// Migrasi additive untuk tabel form-kontrol yang mungkin dibuat versi DDL lama
+// (mis. sales_profile sebelum kolom channel ada). Toleran duplicate/no-such-table.
+const formKontrolMigrations = [
+  `ALTER TABLE sales_profile ADD COLUMN channel TEXT NOT NULL DEFAULT 'TT';`,
+];
+for (const sql of formKontrolMigrations) {
+  try {
+    await db.execute(sql);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (!/duplicate column name|no such table|no such column/i.test(message)) throw error;
+  }
+}
+
 console.log("SQLite tables are ready");
