@@ -63,15 +63,18 @@ function buildJksRows(s: typeof SALESMEN[number]) {
     return rows;
 }
 
+// Kalender Juni 2026: 1 Juni = Senin. Parity = ISO week (sama dgn getWeekParity di db.ts):
+// minggu 23 (1-5 Jun)=ganjil, minggu 24 (8-12)=genap, minggu 25 (15-19)=ganjil.
 const JUNI_WORKDAYS = [
-    { date: "2026-06-02", hari: "Senin",  parity: "genap"  }, { date: "2026-06-03", hari: "Selasa", parity: "genap"  },
-    { date: "2026-06-04", hari: "Rabu",   parity: "genap"  }, { date: "2026-06-05", hari: "Kamis",  parity: "genap"  },
-    { date: "2026-06-06", hari: "Jumat",  parity: "genap"  }, { date: "2026-06-09", hari: "Senin",  parity: "ganjil" },
-    { date: "2026-06-10", hari: "Selasa", parity: "ganjil" }, { date: "2026-06-11", hari: "Rabu",   parity: "ganjil" },
-    { date: "2026-06-12", hari: "Kamis",  parity: "ganjil" }, { date: "2026-06-13", hari: "Jumat",  parity: "ganjil" },
-    { date: "2026-06-16", hari: "Senin",  parity: "genap"  }, { date: "2026-06-17", hari: "Selasa", parity: "genap"  },
-    { date: "2026-06-18", hari: "Rabu",   parity: "genap"  }, { date: "2026-06-19", hari: "Kamis",  parity: "genap"  },
-    { date: "2026-06-20", hari: "Jumat",  parity: "genap"  },
+    { date: "2026-06-01", hari: "Senin",  parity: "ganjil" }, { date: "2026-06-02", hari: "Selasa", parity: "ganjil" },
+    { date: "2026-06-03", hari: "Rabu",   parity: "ganjil" }, { date: "2026-06-04", hari: "Kamis",  parity: "ganjil" },
+    { date: "2026-06-05", hari: "Jumat",  parity: "ganjil" },
+    { date: "2026-06-08", hari: "Senin",  parity: "genap"  }, { date: "2026-06-09", hari: "Selasa", parity: "genap"  },
+    { date: "2026-06-10", hari: "Rabu",   parity: "genap"  }, { date: "2026-06-11", hari: "Kamis",  parity: "genap"  },
+    { date: "2026-06-12", hari: "Jumat",  parity: "genap"  },
+    { date: "2026-06-15", hari: "Senin",  parity: "ganjil" }, { date: "2026-06-16", hari: "Selasa", parity: "ganjil" },
+    { date: "2026-06-17", hari: "Rabu",   parity: "ganjil" }, { date: "2026-06-18", hari: "Kamis",  parity: "ganjil" },
+    { date: "2026-06-19", hari: "Jumat",  parity: "ganjil" },
 ];
 const STATUSES = ["ordered", "ordered", "ordered", "active", "not_order", "not_order", "not_visited"];
 const REASON_CODES = ["R01", "R02", "R07", "R09", "R14"];
