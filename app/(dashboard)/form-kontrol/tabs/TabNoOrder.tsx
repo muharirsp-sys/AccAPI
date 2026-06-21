@@ -11,7 +11,7 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
     const [loading, setLoading] = useState(true);
     const [edits, setEdits] = useState<Record<string, { reasonCode: string; note: string }>>({});
     const [saving, setSaving] = useState<string | null>(null);
-    const [selectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+    const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
     const [selectedPrinciple, setSelectedPrinciple] = useState(PRINCIPLES[0]);
     const [selectedSalesCode, setSelectedSalesCode] = useState(scope.salesCode ?? "");
 
@@ -87,6 +87,8 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
 
             <div className="flex flex-wrap items-center gap-2 bg-[#1a1c23]/60 border border-white/10 rounded-xl px-4 py-3">
                 <Filter size={14} className="text-slate-400" />
+                <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
+                    className="bg-black/40 border border-white/10 rounded-lg text-xs text-white px-2 py-1.5" />
                 <select value={selectedPrinciple} onChange={e => setSelectedPrinciple(e.target.value)}
                     className="bg-black/40 border border-white/10 rounded-lg text-xs text-white px-2 py-1.5">
                     {PRINCIPLES.map(p => <option key={p} value={p}>{p}</option>)}

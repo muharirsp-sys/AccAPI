@@ -88,7 +88,8 @@ export const TABS: { key: TabKey; label: string; icon: typeof ClipboardList; rol
     { key: "jks",           label: "Kontrol JKS",        icon: MapPin,      roles: ["admin", "manager", "admin_sales", "sm", "spv"] },
     { key: "ao",            label: "Form AO Harian",      icon: Target,      roles: ["salesman", "spv", "staff", "admin", "manager"] },
     { key: "no-order",      label: "Toko Tidak Order",    icon: RotateCcw,   roles: ["salesman", "spv", "sm", "staff", "admin", "manager"] },
-    { key: "merchandising", label: "Merchandising",       icon: ShoppingBag, roles: ["salesman", "spv", "staff", "admin", "manager"] },
+    // ponytail: tab Merchandising disembunyikan — merch kini bagian wizard kunjungan (ber-foto/GPS).
+    // SPV tetap lihat hasil merch di dashboard. Render branch di page.tsx jadi dead (tak match).
     { key: "laporan",       label: "Laporan Harian",      icon: FileText,    roles: ["salesman", "spv", "staff", "admin", "manager"] },
     { key: "briefing",      label: "Briefing SPV",        icon: Users,       roles: ["spv", "sm", "admin", "manager"] },
     { key: "sm-control",    label: "Kontrol SM",          icon: BarChart3,   roles: ["sm", "admin", "manager"] },

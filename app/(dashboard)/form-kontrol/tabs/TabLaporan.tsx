@@ -11,7 +11,7 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
     const [loading, setLoading] = useState(true);
     const [submitted, setSubmitted] = useState(false);
     const [summary, setSummary] = useState({ totalJks: 0, order: 0, aktif: 0, notOrder: 0, notVisited: 0 });
-    const [selectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+    const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
 
     const salesCode = scope.salesCode ?? "";
 
@@ -30,7 +30,10 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
                         notVisited: (row.totalNotVisited as number) ?? 0,
                     });
                     setTindakLanjut((row.tindakLanjut as string) ?? "");
-                    setSubmitted(true);
+                    // hanya "submitted" bila benar2 sudah disubmit (submittedAt terisi); baris live = belum
+                    setSubmitted(!!row.submittedAt);
+                } else {
+                    setSubmitted(false);
                 }
             })
             .catch(() => {})
@@ -78,7 +81,13 @@ export default function TabLaporan({ scope }: { scope: Scope }) {
     return (
         <div className="space-y-4">
             <SectionTitle icon={FileText} no={5} title="Laporan Wajib Salesman"
-                desc="Ringkasan sore — angka terisi otomatis dari Form AO, lengkapi tindak lanjut" />
+                desc="Ringkasan sore — angka terisi otomatis & live dari Form AO, lengkapi tindak lanjut" />
+
+            <div className="flex items-center gap-2 bg-[#1a1c23]/60 border border-white/10 rounded-xl px-4 py-3">
+                <span className="text-xs text-slate-400">Tanggal laporan</span>
+                <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
+                    className="bg-black/40 border border-white/10 rounded-lg text-xs text-white px-2 py-1.5" />
+            </div>
 
             {submitted && (
                 <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-4 py-2.5 text-emerald-400 text-sm">

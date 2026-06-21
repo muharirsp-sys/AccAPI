@@ -291,40 +291,31 @@ export async function getMerchandisingForDate(salesCode: string, principle: stri
 
 // ── Salesman Daily Report ────────────────────────────────────────────────────
 
-export async function saveReport(data: {
-    salesCode: string; date: string; tindakLanjut: string;
-}) {
-    const periodYear = parseInt(data.date.split("-")[0], 10);
-    const periodMonth = parseInt(data.date.split("-")[1], 10);
-    const now = new Date();
-
+// ponytail: satu sumber agregat — dipakai saveReport (persist) & getReport (preview live).
+// totalActive = jumlah toko berstatus "priority".
+async function computeReportSummary(salesCode: string, dateStr: string) {
     const aoRows = await db.select().from(aoControlDaily).where(
-        and(
-            eq(aoControlDaily.salesCode, data.salesCode),
-            eq(aoControlDaily.date, data.date),
-        )
+        and(eq(aoControlDaily.salesCode, salesCode), eq(aoControlDaily.date, dateStr))
     );
 
     const totalOrder      = aoRows.filter(r => r.status === "ordered" || r.status === "active").length;
     const totalNotOrder   = aoRows.filter(r => r.status === "not_order").length;
     const totalNotVisited = aoRows.filter(r => r.status === "not_visited").length;
-    const totalPriority   = aoRows.filter(r => r.status === "priority").length;
+    const totalActive     = aoRows.filter(r => r.status === "priority").length;
 
     const reasonSummary: Record<string, number> = {};
     for (const r of aoRows) {
-        if (r.noOrderReasonCode) {
-            reasonSummary[r.noOrderReasonCode] = (reasonSummary[r.noOrderReasonCode] ?? 0) + 1;
-        }
+        if (r.noOrderReasonCode) reasonSummary[r.noOrderReasonCode] = (reasonSummary[r.noOrderReasonCode] ?? 0) + 1;
     }
 
-    const date = parseDateString(data.date);
+    const date = parseDateString(dateStr);
     const dayName = DAY_TO_HARI[date.getDay()];
     let totalTokoJks = aoRows.length;
     if (dayName) {
         const parity = getWeekParity(date);
         const cnt = await db.select({ count: sql<number>`count(*)` }).from(jksMaster).where(
             and(
-                eq(jksMaster.salesCode, data.salesCode),
+                eq(jksMaster.salesCode, salesCode),
                 eq(jksMaster.hariKunjungan, dayName),
                 or(eq(jksMaster.mingguPattern, "all"), eq(jksMaster.mingguPattern, parity)),
                 eq(jksMaster.isActive, true),
@@ -333,6 +324,19 @@ export async function saveReport(data: {
         totalTokoJks = cnt[0]?.count ?? aoRows.length;
     }
 
+    return { totalTokoJks, totalOrder, totalActive, totalNotOrder, totalNotVisited, reasonSummary };
+}
+
+export async function saveReport(data: {
+    salesCode: string; date: string; tindakLanjut: string;
+}) {
+    const periodYear = parseInt(data.date.split("-")[0], 10);
+    const periodMonth = parseInt(data.date.split("-")[1], 10);
+    const now = new Date();
+
+    const { totalTokoJks, totalOrder, totalActive, totalNotOrder, totalNotVisited, reasonSummary } =
+        await computeReportSummary(data.salesCode, data.date);
+
     const existing = await db.select({ id: salesmanDailyReport.id })
         .from(salesmanDailyReport)
         .where(and(eq(salesmanDailyReport.salesCode, data.salesCode), eq(salesmanDailyReport.date, data.date)))
@@ -340,7 +344,7 @@ export async function saveReport(data: {
 
     if (existing.length > 0) {
         await db.update(salesmanDailyReport).set({
-            totalTokoJks, totalOrder, totalActive: totalPriority,
+            totalTokoJks, totalOrder, totalActive,
             totalNotOrder, totalNotVisited,
             reasonSummary, tindakLanjut: data.tindakLanjut, submittedAt: now,
         }).where(eq(salesmanDailyReport.id, existing[0].id));
@@ -351,7 +355,7 @@ export async function saveReport(data: {
     await db.insert(salesmanDailyReport).values({
         id, salesCode: data.salesCode, date: data.date,
         periodMonth, periodYear,
-        totalTokoJks, totalOrder, totalActive: totalPriority,
+        totalTokoJks, totalOrder, totalActive,
         totalNotOrder, totalNotVisited,
         reasonSummary, tindakLanjut: data.tindakLanjut, submittedAt: now,
     });
@@ -359,9 +363,22 @@ export async function saveReport(data: {
 }
 
 export async function getReport(salesCode: string, dateStr: string) {
-    return db.select().from(salesmanDailyReport).where(
+    const saved = await db.select().from(salesmanDailyReport).where(
         and(eq(salesmanDailyReport.salesCode, salesCode), eq(salesmanDailyReport.date, dateStr))
     ).limit(1);
+    if (saved.length > 0) return saved;
+
+    // ponytail: belum submit → kirim angka LIVE dari AO (submittedAt:null) biar salesman & SPV
+    // lihat progres tanpa nunggu salesman klik submit. Baris sintetis, tidak dipersist.
+    const live = await computeReportSummary(salesCode, dateStr);
+    return [{
+        id: null, salesCode, date: dateStr,
+        periodMonth: parseInt(dateStr.split("-")[1], 10),
+        periodYear: parseInt(dateStr.split("-")[0], 10),
+        ...live,
+        tindakLanjut: "", submittedAt: null,
+        spvAck: false, spvAckBy: null, spvAckAt: null,
+    }];
 }
 
 // ── Briefing ─────────────────────────────────────────────────────────────────
