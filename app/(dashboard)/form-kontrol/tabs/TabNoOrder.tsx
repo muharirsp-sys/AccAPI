@@ -137,7 +137,7 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
                                     >
                                         <option value="">— Pilih Alasan (Wajib) —</option>
                                         {reasons.map(reason => (
-                                            <option key={reason.code} value={reason.code}>[{reason.category}] {reason.label}</option>
+                                            <option key={reason.reasonCode} value={reason.reasonCode}>[{reason.category}] {reason.label}</option>
                                         ))}
                                     </select>
                                     <input

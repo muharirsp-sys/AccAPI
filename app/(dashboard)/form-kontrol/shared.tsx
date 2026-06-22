@@ -53,7 +53,7 @@ export interface AoRow {
 
 export interface Reason {
     id: string;
-    code: string;
+    reasonCode: string;
     label: string;
     category: string;
 }
