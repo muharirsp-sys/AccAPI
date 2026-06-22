@@ -3,19 +3,35 @@
 // Kontrol Wajib SM — coaching notes: label di atas input (bukan w-20 inline).
 // Deviasi: grid 2-kolom (SPV | catatan) + tombol hapus, input min-h-[44px].
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { BarChart3, Loader2, Save, CheckCircle2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { type Scope, SectionTitle } from "../shared";
 
+interface SpvBriefing { session: string; penyebab: string | null; solusi: string | null }
+interface SpvBriefingRow { spvName: string; briefings: SpvBriefing[] }
+
 export default function TabSmControl({ scope }: { scope: Scope }) {
-    const [spvList, setSpvList] = useState([{ name: "SPV 1", note: "" }, { name: "SPV 2", note: "" }]);
+    const [spvList, setSpvList] = useState<{ name: string; note: string }[]>([]);
+    const [briefings, setBriefings] = useState<SpvBriefingRow[]>([]);
     const [jksChecked, setJksChecked] = useState(false);
     const [fotoChecked, setFotoChecked] = useState(false);
     const [deviasi, setDeviasi] = useState<{ spv: string; catatan: string }[]>([]);
     const [followUp, setFollowUp] = useState("");
     const [saving, setSaving] = useState(false);
     const [selectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+
+    // Briefing SPV nyata di bawah SM ini (ganti hardcode SPV 1/2).
+    useEffect(() => {
+        fetch(`/api/form-kontrol/sm-briefings?date=${selectedDate}`)
+            .then(r => r.json())
+            .then(d => {
+                const rows: SpvBriefingRow[] = d.rows ?? [];
+                setBriefings(rows);
+                setSpvList(rows.map(r => ({ name: r.spvName, note: "" })));
+            })
+            .catch(() => {});
+    }, [selectedDate]);
 
     async function handleSave() {
         const smName = scope.smName ?? scope.spvName ?? scope.salesName ?? "";
@@ -73,15 +89,33 @@ export default function TabSmControl({ scope }: { scope: Scope }) {
             <div className="bg-[#1a1c23]/60 border border-white/10 rounded-xl p-4 space-y-3">
                 <h3 className="text-sm font-semibold text-white">Catatan Coaching per SPV</h3>
                 <div className="space-y-3">
-                    {spvList.map((spv, i) => (
-                        <div key={i} className="space-y-1">
-                            <p className="text-xs text-slate-400 font-medium">{spv.name}</p>
-                            <input value={spv.note}
-                                onChange={e => setSpvList(prev => prev.map((s, j) => j === i ? { ...s, note: e.target.value } : s))}
-                                placeholder="Catatan coaching (kosongkan jika tidak ada)..."
-                                className="w-full bg-black/30 border border-white/10 rounded-lg text-sm text-white px-3 py-2.5 min-h-[44px] placeholder-slate-500" />
-                        </div>
-                    ))}
+                    {spvList.length === 0 && (
+                        <p className="text-sm text-slate-500">Belum ada SPV terhubung ke SM ini (isi <span className="font-mono">smName</span> di sales profile SPV).</p>
+                    )}
+                    {spvList.map((spv, i) => {
+                        const br = briefings.find(b => b.spvName === spv.name);
+                        const pagi = br?.briefings.find(x => x.session === "pagi");
+                        const sore = br?.briefings.find(x => x.session === "sore");
+                        return (
+                            <div key={i} className="space-y-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <p className="text-xs text-slate-400 font-medium">{spv.name}</p>
+                                    <span className={`text-[10px] px-1.5 py-0 rounded border ${pagi ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" : "bg-slate-500/15 text-slate-400 border-slate-500/30"}`}>briefing pagi {pagi ? "✓" : "—"}</span>
+                                    <span className={`text-[10px] px-1.5 py-0 rounded border ${sore ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" : "bg-slate-500/15 text-slate-400 border-slate-500/30"}`}>sore {sore ? "✓" : "—"}</span>
+                                </div>
+                                {(pagi?.penyebab || pagi?.solusi || sore?.penyebab || sore?.solusi) && (
+                                    <div className="bg-black/20 rounded-lg px-2.5 py-1.5 text-xs text-slate-400 space-y-0.5">
+                                        {(sore?.penyebab || pagi?.penyebab) && <p><span className="text-slate-500">Penyebab:</span> {sore?.penyebab || pagi?.penyebab}</p>}
+                                        {(sore?.solusi || pagi?.solusi) && <p><span className="text-slate-500">Solusi:</span> {sore?.solusi || pagi?.solusi}</p>}
+                                    </div>
+                                )}
+                                <input value={spv.note}
+                                    onChange={e => setSpvList(prev => prev.map((s, j) => j === i ? { ...s, note: e.target.value } : s))}
+                                    placeholder="Catatan coaching (kosongkan jika tidak ada)..."
+                                    className="w-full bg-black/30 border border-white/10 rounded-lg text-sm text-white px-3 py-2.5 min-h-[44px] placeholder-slate-500" />
+                            </div>
+                        );
+                    })}
                 </div>
             </div>
 

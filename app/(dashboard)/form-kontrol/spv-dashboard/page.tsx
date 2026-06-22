@@ -12,12 +12,16 @@ interface VisitRow {
     checkinAt: string | null; checkoutAt: string | null;
     durationMinutes: number | null;
     gpsFlag: string | null; durFlag: string | null;
+    checkinPhotoUrl: string | null; checkoutPhotoUrl: string | null;
+    merchDone: number; merchTotal: number;
+    merchStepPhotos: Record<string, string> | null;
 }
 interface SalesmanRow {
     salesCode: string; salesName: string;
     totalRoute: number; ordered: number; notOrder: number; notVisited: number;
     checkedIn: number; checkedOut: number;
     submittedAt: string | null; tindakLanjut: string | null;
+    spvAck?: boolean; spvAckAt?: string | null;
     visits?: VisitRow[]; totalFieldMinutes?: number;
 }
 
@@ -70,6 +74,18 @@ export default function SpvDashboardPage() {
     }, [date]);
 
     useEffect(() => { load(); }, [load]);
+
+    async function acknowledge(salesCode: string) {
+        try {
+            const res = await fetch("/api/form-kontrol/reports/ack", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ salesCode, date }),
+            });
+            if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Gagal acknowledge"); }
+            toast.success("Laporan di-acknowledge");
+            load();
+        } catch (e) { toast.error(e instanceof Error ? e.message : "Gagal"); }
+    }
 
     const totals = {
         route:     rows.reduce((a, r) => a + r.totalRoute, 0),
@@ -178,6 +194,16 @@ export default function SpvDashboardPage() {
                                                 <Clock size={10} /> Menunggu
                                             </span>
                                         )}
+                                        {r.submittedAt && (r.spvAck ? (
+                                            <span className="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-md flex items-center gap-1">
+                                                <CheckCircle2 size={10} /> Di-ack SPV
+                                            </span>
+                                        ) : (
+                                            <button onClick={() => acknowledge(r.salesCode)}
+                                                className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-0.5 rounded-md font-semibold">
+                                                Acknowledge
+                                            </button>
+                                        ))}
                                     </div>
                                 </div>
 
@@ -225,9 +251,19 @@ export default function SpvDashboardPage() {
                                             const flags = [v.gpsFlag, v.durFlag].filter(Boolean).join(",").split(",").filter(Boolean);
                                             return (
                                                 <div key={v.custCode} className="flex items-center gap-2 border-t border-white/5 py-1.5">
+                                                    {[v.checkinPhotoUrl, v.checkoutPhotoUrl].filter(Boolean).map((url, i) => (
+                                                        // eslint-disable-next-line @next/next/no-img-element
+                                                        <a key={i} href={url as string} target="_blank" rel="noreferrer" className="shrink-0">
+                                                            <img src={url as string} alt="bukti" className="w-10 h-10 rounded object-cover border border-white/10" />
+                                                        </a>
+                                                    ))}
                                                     <div className="flex-1 min-w-0">
                                                         <p className="text-sm text-slate-300 truncate">{v.custName}</p>
-                                                        <p className="text-xs text-slate-500">{hhmm(v.checkinAt)} – {hhmm(v.checkoutAt)} · {v.durationMinutes !== null ? `${v.durationMinutes}m` : "—"}</p>
+                                                        <p className="text-xs text-slate-500">
+                                                            {hhmm(v.checkinAt)} – {hhmm(v.checkoutAt)} · {v.durationMinutes !== null ? `${v.durationMinutes}m` : "—"}
+                                                            {" · "}
+                                                            <span className={v.merchDone >= v.merchTotal ? "text-emerald-400" : "text-amber-400"}>Merch {v.merchDone}/{v.merchTotal}</span>
+                                                        </p>
                                                     </div>
                                                     <div className="shrink-0">
                                                         {flags.length === 0 ? (

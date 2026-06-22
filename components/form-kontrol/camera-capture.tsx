@@ -8,6 +8,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Camera, X, RotateCcw, Check, Loader2, ImageUp, SwitchCamera } from "lucide-react";
 
 export default function CameraCapture({ open, onClose, onCapture }: {
@@ -23,6 +24,9 @@ export default function CameraCapture({ open, onClose, onCapture }: {
     const [blob, setBlob]       = useState<Blob | null>(null);
     const [starting, setStarting] = useState(false);
     const [facing, setFacing]   = useState<"environment" | "user">("environment"); // belakang default
+    const [mounted, setMounted] = useState(false); // portal butuh document (client only)
+
+    useEffect(() => { setMounted(true); }, []);
 
     const stopStream = useCallback(() => {
         streamRef.current?.getTracks().forEach(t => t.stop());
@@ -89,9 +93,11 @@ export default function CameraCapture({ open, onClose, onCapture }: {
         e.target.value = "";
     }
 
-    if (!open) return null;
-    return (
-        <div className="fixed inset-0 z-50 bg-black flex flex-col">
+    if (!open || !mounted) return null;
+    // ponytail: portal ke body — hindari ancestor transform/filter/backdrop yang bikin
+    // position:fixed ter-contain ke ancestor (modal tak full-screen / "tak buka") di tema tertentu.
+    return createPortal(
+        <div className="fixed inset-0 z-[100] bg-black flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 text-white">
                 <span className="text-sm font-semibold">Foto Bukti Kunjungan</span>
                 <button onClick={() => { stopStream(); onClose(); }} className="p-1.5 rounded-lg bg-white/10">
@@ -150,6 +156,7 @@ export default function CameraCapture({ open, onClose, onCapture }: {
             </div>
 
             <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onPickFile} />
-        </div>
+        </div>,
+        document.body
     );
 }

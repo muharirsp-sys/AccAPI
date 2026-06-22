@@ -381,6 +381,27 @@ export async function getReport(salesCode: string, dateStr: string) {
     }];
 }
 
+// SPV acknowledge laporan harian salesman. Non-admin: hanya boleh ack anak buahnya
+// (salesProfile.spvName/smName == nama supervisor). Return false jika tak berhak / report belum ada.
+export async function acknowledgeReport(data: {
+    salesCode: string; date: string; ackBy: string;
+    supervisorName?: string | null; isAdmin: boolean;
+}): Promise<boolean> {
+    if (!data.isAdmin) {
+        const prof = await db.select({ spvName: salesProfile.spvName, smName: salesProfile.smName })
+            .from(salesProfile).where(eq(salesProfile.salesCode, data.salesCode)).limit(1);
+        const p = prof[0];
+        if (!p || (p.spvName !== data.supervisorName && p.smName !== data.supervisorName)) return false;
+    }
+    const existing = await db.select({ id: salesmanDailyReport.id }).from(salesmanDailyReport)
+        .where(and(eq(salesmanDailyReport.salesCode, data.salesCode), eq(salesmanDailyReport.date, data.date))).limit(1);
+    if (existing.length === 0) return false; // laporan belum disubmit
+    await db.update(salesmanDailyReport)
+        .set({ spvAck: true, spvAckBy: data.ackBy, spvAckAt: new Date() })
+        .where(eq(salesmanDailyReport.id, existing[0].id));
+    return true;
+}
+
 // ── Briefing ─────────────────────────────────────────────────────────────────
 
 export async function saveBriefing(data: {
@@ -402,6 +423,23 @@ export async function getBriefings(spvName: string, dateStr: string) {
     return db.select().from(spvBriefing).where(
         and(eq(spvBriefing.spvName, spvName), eq(spvBriefing.date, dateStr))
     );
+}
+
+// SPV di bawah satu SM + briefing mereka hari itu — untuk Kontrol SM (ganti hardcode).
+export async function getSmSpvBriefings(smName: string, dateStr: string) {
+    const profiles = await db.select({ spvName: salesProfile.spvName })
+        .from(salesProfile).where(eq(salesProfile.smName, smName));
+    const spvNames = [...new Set(profiles.map(p => p.spvName).filter((n): n is string => !!n))];
+    if (spvNames.length === 0) return [];
+    const briefings = await db.select().from(spvBriefing).where(
+        and(eq(spvBriefing.date, dateStr), inArray(spvBriefing.spvName, spvNames))
+    );
+    return spvNames.map(name => ({
+        spvName: name,
+        briefings: briefings.filter(b => b.spvName === name).map(b => ({
+            session: b.session, penyebab: b.penyebab ?? null, solusi: b.solusi ?? null,
+        })),
+    }));
 }
 
 // ── SM Control ────────────────────────────────────────────────────────────────
@@ -610,7 +648,7 @@ export async function getSpvDashboard(spvName: string, dateStr: string) {
     const periodYear  = parseInt(dateStr.split("-")[0], 10);
     const periodMonth = parseInt(dateStr.split("-")[1], 10);
 
-    const [aoRows, reportRows, jksRows] = await Promise.all([
+    const [aoRows, reportRows, jksRows, merchRows] = await Promise.all([
         db.select({
             salesCode: aoControlDaily.salesCode,
             custCode: aoControlDaily.custCode,
@@ -618,6 +656,8 @@ export async function getSpvDashboard(spvName: string, dateStr: string) {
             checkinAt: aoControlDaily.checkinAt,
             checkoutAt: aoControlDaily.checkoutAt,
             gpsFlag: aoControlDaily.gpsFlag,
+            checkinPhotoUrl: aoControlDaily.checkinPhotoUrl,
+            checkoutPhotoUrl: aoControlDaily.checkoutPhotoUrl,
         }).from(aoControlDaily).where(
             and(
                 eq(aoControlDaily.date, dateStr),
@@ -632,10 +672,18 @@ export async function getSpvDashboard(spvName: string, dateStr: string) {
         ),
         db.select({ custCode: jksMaster.custCode, custName: jksMaster.custName })
             .from(jksMaster).where(inArray(jksMaster.salesCode, salesCodes)),
+        db.select().from(merchandisingCheck).where(
+            and(
+                eq(merchandisingCheck.date, dateStr),
+                inArray(merchandisingCheck.salesCode, salesCodes),
+            )
+        ),
     ]);
 
     const reportMap = new Map(reportRows.map(r => [r.salesCode, r]));
     const custNameMap = new Map(jksRows.map(j => [j.custCode, j.custName]));
+    // merch per toko per sales: hitung 6 item + simpan stepPhotos untuk dilihat SPV
+    const merchMap = new Map(merchRows.map(m => [`${m.salesCode}|${m.custCode}`, m]));
 
     return profiles.map(p => {
         const rows = aoRows.filter(r => r.salesCode === p.salesCode);
@@ -659,6 +707,10 @@ export async function getSpvDashboard(spvName: string, dateStr: string) {
                 const durFlag = durationMinutes === null ? null
                     : durationMinutes < 5 ? "durasi_singkat"
                     : durationMinutes > 120 ? "durasi_lama" : null;
+                const m = merchMap.get(`${p.salesCode}|${r.custCode}`);
+                const merchDone = m
+                    ? [m.produkJelas, m.displayRapi, m.dibersihkan, m.ditataulang, m.posisiMudah, m.semuaSku].filter(Boolean).length
+                    : 0;
                 return {
                     custCode: r.custCode,
                     custName: custNameMap.get(r.custCode) ?? r.custCode,
@@ -668,6 +720,11 @@ export async function getSpvDashboard(spvName: string, dateStr: string) {
                     durationMinutes,
                     gpsFlag: r.gpsFlag ?? null,
                     durFlag,
+                    checkinPhotoUrl: r.checkinPhotoUrl ?? null,
+                    checkoutPhotoUrl: r.checkoutPhotoUrl ?? null,
+                    merchDone,
+                    merchTotal: 6,
+                    merchStepPhotos: (m?.stepPhotos as Record<string, string> | null) ?? null,
                 };
             })
             .sort((a, b) => (a.checkinAt ?? "").localeCompare(b.checkinAt ?? ""));
@@ -685,6 +742,8 @@ export async function getSpvDashboard(spvName: string, dateStr: string) {
             checkedOut,
             submittedAt: report?.submittedAt ?? null,
             tindakLanjut: report?.tindakLanjut ?? null,
+            spvAck: report?.spvAck ?? false,
+            spvAckAt: report?.spvAckAt ? report.spvAckAt.toISOString() : null,
             visits,
             totalFieldMinutes,
             // Additional month context

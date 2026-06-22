@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { getVisitDetail } from "@/lib/form-kontrol";
+import { getVisitDetail, resolveScope, canAccessSales } from "@/lib/form-kontrol";
 
 export async function GET(req: Request) {
     const session = await auth.api.getSession({ headers: await headers() });
@@ -16,6 +16,9 @@ export async function GET(req: Request) {
 
         if (!salesCode || !custCode || !principle) {
             return NextResponse.json({ error: "salesCode, custCode and principle are required" }, { status: 400 });
+        }
+        if (!canAccessSales(await resolveScope(session), salesCode)) {
+            return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
         const detail = await getVisitDetail(salesCode, custCode, principle, date);
         if (!detail) return NextResponse.json({ error: "Store not found" }, { status: 404 });

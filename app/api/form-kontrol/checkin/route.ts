@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { saveCheckin } from "@/lib/form-kontrol";
+import { saveCheckin, resolveScope, canAccessSales } from "@/lib/form-kontrol";
 
 export async function POST(req: Request) {
     const session = await auth.api.getSession({ headers: await headers() });
@@ -12,6 +12,9 @@ export async function POST(req: Request) {
         const { salesCode, custCode, principle, date, photoUrl, lat, lng, accuracy } = body;
         if (!salesCode || !custCode || !principle || !date || !photoUrl) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+        }
+        if (!canAccessSales(await resolveScope(session), salesCode)) {
+            return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
         const id = await saveCheckin({
             salesCode, custCode, principle, date, photoUrl, createdBy: session.user.id,

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { getTodayRoute, upsertAoControl, getAoForDate, writeKontrolAudit } from "@/lib/form-kontrol";
+import { getTodayRoute, upsertAoControl, getAoForDate, writeKontrolAudit, resolveScope, canAccessSales } from "@/lib/form-kontrol";
 import type { AoStatus } from "@/lib/form-kontrol";
 
 export async function GET(req: Request) {
@@ -15,6 +15,15 @@ export async function GET(req: Request) {
         const today = new Date();
         const dateStr = searchParams.get("date") ??
             `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+        const scope = await resolveScope(session);
+        if (salesCode && !canAccessSales(scope, salesCode)) {
+            return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+        // non-admin tanpa salesCode eksplisit → batasi ke miliknya, jangan bocorkan global
+        if (!salesCode && scope.allowedSalesCodes !== null) {
+            return NextResponse.json({ rows: [], summary: { total: 0, ordered: 0, notOrder: 0, notVisited: 0, priority: 0 } });
+        }
 
         if (!salesCode || !principle) {
             const rows = await getAoForDate(salesCode, principle, dateStr);
@@ -51,6 +60,10 @@ export async function POST(req: Request) {
         const { salesCode, custCode, principle, date, status, isVisited, noOrderReasonCode, noOrderNote } = body;
         if (!salesCode || !custCode || !principle || !date || !status) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+        }
+        const scope = await resolveScope(session);
+        if (!canAccessSales(scope, salesCode)) {
+            return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
         const id = await upsertAoControl({
             salesCode, custCode, principle, date,

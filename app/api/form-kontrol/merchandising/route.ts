@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
-import { getMerchandisingForDate, saveMerchandising } from "@/lib/form-kontrol";
+import { getMerchandisingForDate, saveMerchandising, resolveScope, canAccessSales } from "@/lib/form-kontrol";
 
 export async function GET(req: Request) {
     const session = await auth.api.getSession({ headers: await headers() });
@@ -15,6 +15,13 @@ export async function GET(req: Request) {
         const dateStr = searchParams.get("date") ??
             `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 
+        const scope = await resolveScope(session);
+        if (salesCode && !canAccessSales(scope, salesCode)) {
+            return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+        if (!salesCode && scope.allowedSalesCodes !== null) {
+            return NextResponse.json({ rows: [], total: 0 });
+        }
         const rows = await getMerchandisingForDate(salesCode, principle, dateStr);
         return NextResponse.json({ rows, total: rows.length });
     } catch {
@@ -31,6 +38,9 @@ export async function POST(req: Request) {
         const { salesCode, custCode, principle, date } = body;
         if (!salesCode || !custCode || !principle || !date) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+        }
+        if (!canAccessSales(await resolveScope(session), salesCode)) {
+            return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
         const id = await saveMerchandising({
             salesCode, custCode, principle, date,

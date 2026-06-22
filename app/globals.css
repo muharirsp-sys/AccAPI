@@ -1209,6 +1209,21 @@ html[data-theme="neon"] h3 {
   text-shadow: 0 0 12px rgba(62,208,255,.4) !important;
 }
 
+/* Overlay link tap-target (kartu rute: <a class="absolute inset-0 rounded-xl">).
+ * HUD rule di atas meng-override position->relative & memberi siku ::before/::after,
+ * bikin overlay kolaps 0px (tak bisa diklik) + garis siku nyasar. Kembalikan absolute
+ * & matikan siku khusus overlay link ini. */
+html[data-theme="neon"] main a.absolute.inset-0 {
+  position: absolute !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  background-image: none !important;
+}
+html[data-theme="neon"] main a.absolute.inset-0::before,
+html[data-theme="neon"] main a.absolute.inset-0::after {
+  content: none !important;
+}
+
 /* neon-theme: end */
 
 /* ============================================
