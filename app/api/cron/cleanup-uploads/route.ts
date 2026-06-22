@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { readdir, stat, unlink } from "fs/promises";
 import path from "path";
+import { UPLOAD_DIR } from "@/lib/form-kontrol/uploads";
 
 // ponytail: 90-day retention, turunkan jika disk mepet
 const RETENTION_DAYS = 90;
@@ -11,7 +12,7 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const dir = path.join(process.cwd(), "public", "uploads", "form-kontrol");
+    const dir = UPLOAD_DIR;
     const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
     let deleted = 0;

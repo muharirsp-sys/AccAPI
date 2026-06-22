@@ -394,7 +394,10 @@ export default function VisitWizardPage() {
                             <div className="ml-8">
                                 <PhotoInput label="Foto Bukti" size="sm" existingUrl={stepPhotos[key]}
                                     salesName={store.salesName} custName={store.custName}
-                                    onUploaded={(url) => setStepPhotos(p => ({ ...p, [key]: url }))} />
+                                    onUploaded={(url) => {
+                                        setStepPhotos(p => ({ ...p, [key]: url }));
+                                        setMerch(p => ({ ...p, [key]: true })); // foto = bukti → auto-centang
+                                    }} />
                             </div>
                         </div>
                     ))}

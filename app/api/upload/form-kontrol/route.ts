@@ -5,6 +5,7 @@ import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 import sharp from "sharp";
+import { UPLOAD_DIR } from "@/lib/form-kontrol/uploads";
 
 const MAX_IMAGE_UPLOAD_BYTES = 5 * 1024 * 1024;
 
@@ -57,7 +58,7 @@ export async function POST(req: Request) {
         }
 
         const filename = `${randomUUID()}.jpg`;
-        const dir = path.join(process.cwd(), "public", "uploads", "form-kontrol");
+        const dir = UPLOAD_DIR;
         await mkdir(dir, { recursive: true });
 
         const resized = await sharp(Buffer.from(await file.arrayBuffer()))
@@ -81,7 +82,7 @@ export async function POST(req: Request) {
         }
         await writeFile(path.join(dir, filename), out);
 
-        return NextResponse.json({ url: `/uploads/form-kontrol/${filename}` });
+        return NextResponse.json({ url: `/api/uploads/form-kontrol/${filename}` });
     } catch {
         return NextResponse.json({ error: "Upload failed" }, { status: 500 });
     }
