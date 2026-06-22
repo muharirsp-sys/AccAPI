@@ -222,8 +222,8 @@ export async function upsertAoControl(data: {
 export async function getAoForDate(salesCode: string, principle: string, dateStr: string) {
     return db.select().from(aoControlDaily).where(
         and(
-            eq(aoControlDaily.salesCode, salesCode),
-            eq(aoControlDaily.principle, principle),
+            salesCode ? eq(aoControlDaily.salesCode, salesCode) : undefined,
+            principle ? eq(aoControlDaily.principle, principle) : undefined,
             eq(aoControlDaily.date, dateStr),
         )
     );
