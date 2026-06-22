@@ -1,6 +1,6 @@
 // Service Worker AccAPI — VERSION-based cache invalidation, no API caching.
 // Increment VERSION on every deploy to auto-purge stale caches.
-const VERSION = "accapi-v2";
+const VERSION = "accapi-v3";
 const STATIC_CACHE = `${VERSION}-static`;
 const PAGE_CACHE = `${VERSION}-pages`;
 
@@ -12,7 +12,9 @@ function isBypass(url) {
     url.pathname.startsWith("/api/") ||
     url.pathname.startsWith("/fastapi/") ||
     url.pathname.startsWith("/pdf/") ||
-    url.pathname.startsWith("/uploads/")
+    url.pathname.startsWith("/uploads/") ||
+    url.pathname === "/login" ||
+    url.pathname === "/forgot-password"
   );
 }
 
@@ -79,7 +81,9 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          caches.open(PAGE_CACHE).then((c) => c.put(req, res.clone()));
+          // Clone synchronously before any async op — body consumed after return.
+          const clone = res.clone();
+          caches.open(PAGE_CACHE).then((c) => c.put(req, clone));
           return res;
         })
         .catch(async () => (await caches.match(req)) || (await caches.match("/offline.html"))),
