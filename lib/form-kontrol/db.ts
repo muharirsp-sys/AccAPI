@@ -425,6 +425,20 @@ export async function getBriefings(spvName: string, dateStr: string) {
     );
 }
 
+// Semua salesCode di bawah satu SPV — untuk RBAC scope SPV.
+export async function getSalesCodesForSpv(spvName: string): Promise<string[]> {
+    const rows = await db.select({ salesCode: salesProfile.salesCode })
+        .from(salesProfile).where(eq(salesProfile.spvName, spvName));
+    return rows.map(r => r.salesCode).filter(Boolean) as string[];
+}
+
+// Semua salesCode di bawah satu SM — untuk RBAC scope SM.
+export async function getSalesCodesForSm(smName: string): Promise<string[]> {
+    const rows = await db.select({ salesCode: salesProfile.salesCode })
+        .from(salesProfile).where(eq(salesProfile.smName, smName));
+    return rows.map(r => r.salesCode).filter(Boolean) as string[];
+}
+
 // SPV di bawah satu SM + briefing mereka hari itu — untuk Kontrol SM (ganti hardcode).
 export async function getSmSpvBriefings(smName: string, dateStr: string) {
     const profiles = await db.select({ spvName: salesProfile.spvName })

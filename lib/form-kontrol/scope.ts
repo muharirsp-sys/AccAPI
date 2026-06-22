@@ -4,7 +4,7 @@
  * Dependensi: getScopeForUser (sales_profile).
  * Catatan: allowedSalesCodes === null = akses global (admin/manager/admin_sales).
  */
-import { getScopeForUser } from "./db";
+import { getScopeForUser, getSalesCodesForSpv, getSalesCodesForSm } from "./db";
 
 export interface UserScope {
     role: string;
@@ -15,12 +15,32 @@ export interface UserScope {
     allowedSalesCodes: string[] | null; // null = semua (admin)
 }
 
+// Strip suffix "(SPV)"/"(SM)" dari nama auth user agar cocok dengan spvName/smName di sales_profile.
+function stripRoleSuffix(name: string | null | undefined): string {
+    return (name ?? "").replace(/\s*\((SPV|SM)\)\s*$/i, "").trim();
+}
+
 // Replikasi logika my-scope — satu sumber untuk UI scope & enforcement.
 export async function resolveScope(session: { user: { id: string; name?: string | null; role?: string | null } }): Promise<UserScope> {
     const role = session.user.role ?? "staff";
     if (role === "admin" || role === "manager" || role === "admin_sales") {
         return { role, allowedSalesCodes: null };
     }
+
+    // SPV: allowedSalesCodes = semua salesCode anak buah yang spvName-nya cocok.
+    if (role === "spv") {
+        const spvName = stripRoleSuffix(session.user.name);
+        const codes = await getSalesCodesForSpv(spvName);
+        return { role: "spv", salesName: spvName, spvName, allowedSalesCodes: codes };
+    }
+
+    // SM: allowedSalesCodes = semua salesCode di bawah SM ini.
+    if (role === "sm") {
+        const smName = stripRoleSuffix(session.user.name);
+        const codes = await getSalesCodesForSm(smName);
+        return { role: "sm", salesName: smName, smName, allowedSalesCodes: codes };
+    }
+
     const profile = await getScopeForUser(session.user.id);
     if (profile) {
         return {
