@@ -2,7 +2,7 @@
 
 import {
     ClipboardList, MapPin, Target, ShoppingBag, FileText,
-    Users, BarChart3, RotateCcw,
+    Users, BarChart3, RotateCcw, Network,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ export interface FreqRow {
     overVisit: boolean;
 }
 
-export type TabKey = "jks" | "ao" | "no-order" | "merchandising" | "laporan" | "briefing" | "sm-control" | "frekuensi";
+export type TabKey = "jks" | "ao" | "no-order" | "merchandising" | "laporan" | "briefing" | "sm-control" | "frekuensi" | "hierarki";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -96,6 +96,7 @@ export const TABS: { key: TabKey; label: string; icon: typeof ClipboardList; rol
     { key: "briefing",      label: "Briefing SPV",        icon: Users,       roles: ["spv", "sm", "admin", "manager"] },
     { key: "sm-control",    label: "Kontrol SM",          icon: BarChart3,   roles: ["sm", "admin", "manager"] },
     { key: "frekuensi",     label: "Frekuensi Kunjungan", icon: RotateCcw,   roles: ["admin", "manager", "admin_sales", "sm"] },
+    { key: "hierarki",      label: "Hierarki Sales",      icon: Network,     roles: ["admin", "manager"] },
 ];
 
 export const PRINCIPLES = ["GODREJ", "MONTISS", "MUSTIKA RATU", "SOFTEX"];

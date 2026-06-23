@@ -14,6 +14,7 @@ const TabLaporan       = dynamic(() => import("./tabs/TabLaporan"),      { ssr: 
 const TabBriefing      = dynamic(() => import("./tabs/TabBriefing"),     { ssr: false });
 const TabSmControl     = dynamic(() => import("./tabs/TabSmControl"),    { ssr: false });
 const TabFrekuensi     = dynamic(() => import("./tabs/TabFrekuensi"),    { ssr: false });
+const TabHierarki      = dynamic(() => import("./tabs/TabHierarki"),     { ssr: false });
 
 export default function FormKontrolPage() {
     const [scope, setScope] = useState<Scope | null>(null);
@@ -95,6 +96,7 @@ export default function FormKontrolPage() {
                 {effectiveTab === "briefing"      && <TabBriefing scope={scope!} />}
                 {effectiveTab === "sm-control"    && <TabSmControl scope={scope!} />}
                 {effectiveTab === "frekuensi"     && <TabFrekuensi scope={scope!} />}
+                {effectiveTab === "hierarki"      && <TabHierarki scope={scope!} />}
             </div>
         </div>
     );

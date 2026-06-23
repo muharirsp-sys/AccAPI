@@ -539,6 +539,16 @@ export async function getScopeForUser(userId: string) {
     return profile[0] ?? null;
 }
 
+export async function getAllSalesProfiles() {
+    return db.select().from(salesProfile).orderBy(asc(salesProfile.salesName));
+}
+
+export async function updateSalesHierarchy(salesCode: string, spvName: string | null, smName: string | null) {
+    await db.update(salesProfile)
+        .set({ spvName: spvName || null, smName: smName || null, updatedAt: new Date() })
+        .where(eq(salesProfile.salesCode, salesCode));
+}
+
 // ── Check-in / Check-out ──────────────────────────────────────────────────────
 
 // ponytail: heuristik fake-GPS sederhana, FLAG saja (tidak memblok kunjungan).
