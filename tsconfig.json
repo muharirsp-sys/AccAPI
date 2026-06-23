@@ -31,5 +31,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "**/*.test.ts", "playwright.config.ts", "tests/**"]
+  "exclude": ["node_modules", "**/*.test.ts", "playwright.config.ts", "tests/**", "scripts/**"]
 }
