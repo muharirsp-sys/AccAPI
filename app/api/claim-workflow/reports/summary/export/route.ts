@@ -7,23 +7,19 @@ import { NextRequest, NextResponse } from "next/server";
 import {
     SUMMARY_REPORT_COLUMNS,
     buildSummaryReport,
-    canActorReadClaimWorkflow,
     requireClaimSession,
     rowsToCsv,
     todayStamp,
 } from "@/lib/claim-workflow";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 export async function GET(request: NextRequest) {
     const actor = await requireClaimSession();
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (!canActorReadClaimWorkflow(actor)) {
-        return NextResponse.json({
-            ok: false,
-            error: "Role Anda tidak memiliki akses report Claim Workflow.",
-        }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.export");
+    if (gate.response) return gate.response;
 
     try {
         const { searchParams } = new URL(request.url);

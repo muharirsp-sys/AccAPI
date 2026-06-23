@@ -3,12 +3,12 @@ import { and, desc, eq, inArray, lt, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { claimSubmission, claimWorkflow, offBatch, offPayment } from "@/db/schema";
 import {
-    canActorReadClaimWorkflow,
     claimWorkflowStatusList,
     claimWorkflowStatuses,
     requireClaimSession,
 } from "@/lib/claim-workflow";
 import { offFinanceStatuses } from "@/lib/off-program-control/constants";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -30,9 +30,8 @@ export async function GET(request: NextRequest) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (!canActorReadClaimWorkflow(actor)) {
-        return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses Claim Workflow." }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.view");
+    if (gate.response) return gate.response;
 
     try {
         const { searchParams } = new URL(request.url);

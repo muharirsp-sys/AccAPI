@@ -10,17 +10,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { incentivePayments } from "@/db/schema";
-import { requireSalesSession } from "@/lib/insentif-sales";
+import { requirePermission } from "@/lib/rbac/resolve";
 
 export async function PATCH(
     req: NextRequest,
     { params }: { params: Promise<{ id: string }> },
 ) {
-    const actor = await requireSalesSession();
-    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    if (!["admin", "super_admin", "finance"].includes(actor.role)) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const gate = await requirePermission(req, "insentif_sales.manage_payment");
+    if (gate.response) return gate.response;
 
     const { id } = await params;
 
@@ -50,8 +47,8 @@ export async function PATCH(
     if (body.paymentProofUrl) updateSet.paymentProofUrl = body.paymentProofUrl;
     if (body.paymentStatus === "lunas") {
         updateSet.paymentDate = body.paymentDate ? new Date(body.paymentDate) : now;
-        updateSet.paidBy = actor.id;
-        updateSet.paidByName = actor.name;
+        updateSet.paidBy = gate.session.user.id;
+        updateSet.paidByName = gate.session.user.name ?? gate.session.user.email ?? "Unknown";
     }
 
     await db

@@ -5,13 +5,13 @@
  * Akses: non-admin → di-scope ke namanya (salesName/smName); admin boleh ?smName=.
  */
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 import { getSmSpvBriefings, resolveScope } from "@/lib/form-kontrol";
 
 export async function GET(req: Request) {
-    const session = await auth.api.getSession({ headers: await headers() });
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await requirePermissionH("form_kontrol.view");
+    if (gate.response) return gate.response;
+    const session = gate.session;
 
     try {
         const { searchParams } = new URL(req.url);

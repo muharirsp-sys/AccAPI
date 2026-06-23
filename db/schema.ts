@@ -5,7 +5,7 @@
  * Main Functions: table `user`, `session`, `account`, `verification`, `syncState`, `item`, `customer`, `idempotencyLog`.
  * Side Effects: Definisi schema untuk DB read/write SQLite oleh caller.
  */
-import { sqliteTable, text, integer, real, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from "drizzle-orm/sqlite-core";
 
 export const user = sqliteTable("user", {
     id: text("id").primaryKey(),
@@ -844,4 +844,54 @@ export const kontrolAuditLog = sqliteTable("kontrol_audit_log", {
 }, (t) => ({
     entityIdx: index("idx_kal_entity").on(t.entity, t.entityId),
     actorIdx: index("idx_kal_actor").on(t.actorId),
+}));
+
+// --- Dynamic RBAC: Access Group (Fase 2/4) --- //
+// Additive di atas user.role + user.permissions (keduanya TIDAK dihapus; dibaca
+// sebagai override legacy selama transisi). Akses user = UNION permission semua group.
+
+export const accessGroup = sqliteTable("access_group", {
+    id: text("id").primaryKey(),
+    name: text("name").notNull().unique(),
+    description: text("description"),
+    isPreset: integer("is_preset", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
+// permission_key = "module.action" (mis. "off_program_control.sm_approve").
+// Divalidasi ke permission registry (P3) saat tulis — TIDAK ada tabel permissions.
+export const groupPermission = sqliteTable("group_permission", {
+    groupId: text("group_id").notNull().references(() => accessGroup.id),
+    permissionKey: text("permission_key").notNull(),
+}, (t) => ({
+    pk: primaryKey({ columns: [t.groupId, t.permissionKey] }),
+    groupIdx: index("idx_group_permission_group").on(t.groupId),
+}));
+
+export const userGroup = sqliteTable("user_group", {
+    userId: text("user_id").notNull().references(() => user.id),
+    groupId: text("group_id").notNull().references(() => accessGroup.id),
+    assignedBy: text("assigned_by"),
+    assignedAt: integer("assigned_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.groupId] }),
+    userIdx: index("idx_user_group_user").on(t.userId),
+    groupIdx: index("idx_user_group_group").on(t.groupId),
+}));
+
+// Jejak audit perubahan otorisasi: siapa ubah group/permission siapa, kapan.
+export const permissionAuditLog = sqliteTable("permission_audit_log", {
+    id: text("id").primaryKey(),
+    actorUserId: text("actor_user_id"),
+    actorName: text("actor_name"),
+    action: text("action").notNull(), // "group.create" | "user_group.assign" | "group_permission.add" | ...
+    targetUserId: text("target_user_id"),
+    targetGroupId: text("target_group_id"),
+    detail: text("detail", { mode: "json" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    actorIdx: index("idx_pal_actor").on(t.actorUserId),
+    targetUserIdx: index("idx_pal_target_user").on(t.targetUserId),
+    targetGroupIdx: index("idx_pal_target_group").on(t.targetGroupId),
 }));

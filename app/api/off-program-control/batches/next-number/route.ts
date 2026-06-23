@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
-import { canActorPerformOffAction, getNextOffBatchNumber, getPrincipleByCode, requireOffSession } from "@/lib/off-program-control";
+import { getNextOffBatchNumber, getPrincipleByCode, requireOffSession } from "@/lib/off-program-control";
+import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 export async function GET(request: Request) {
     const actor = await requireOffSession();
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (!canActorPerformOffAction(actor, "create_batch") && !canActorPerformOffAction(actor, "edit_returned_batch")) {
+    const access = await resolveRequestPermissionsH();
+    if (access.response) return access.response;
+    const perms = access.perms!;
+    if (!perms.has("off_program_control.create_batch") && !perms.has("off_program_control.edit_returned_batch")) {
         return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses membuat No Pengajuan OFF." }, { status: 403 });
     }
 

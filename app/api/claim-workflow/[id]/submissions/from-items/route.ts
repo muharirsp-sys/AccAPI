@@ -47,6 +47,7 @@ import {
     SCOPE_LABEL_MAX_LENGTH,
     writeClaimAudit,
 } from "@/lib/claim-workflow";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -97,13 +98,8 @@ export async function POST(request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (actor.role !== "admin" && actor.role !== "claim") {
-        return NextResponse.json({
-            ok: false,
-            code: "CLAIM_SUBMISSION_FORBIDDEN",
-            error: "Hanya role admin atau claim yang dapat membuat paket per item.",
-        }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.create");
+    if (gate.response) return gate.response;
 
     let body: { mode?: unknown } = {};
     if (request.headers.get("content-type")?.includes("application/json")) {

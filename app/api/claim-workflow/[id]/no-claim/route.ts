@@ -34,7 +34,6 @@ import { and, eq, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { claimSubmission, claimWorkflow, offBatchItem } from "@/db/schema";
 import {
-    canActorReadClaimWorkflow,
     claimAuditScopes,
     claimWorkflowStatuses,
     getOffFinanceGateForNoClaim,
@@ -42,6 +41,7 @@ import {
     requireClaimSession,
     writeClaimAudit,
 } from "@/lib/claim-workflow";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -53,22 +53,8 @@ export async function PATCH(request: Request, context: Context) {
             { status: 401 },
         );
     }
-    if (!canActorReadClaimWorkflow(actor)) {
-        return NextResponse.json(
-            { ok: false, error: "Role Anda tidak memiliki akses Claim Workflow." },
-            { status: 403 },
-        );
-    }
-    if (actor.role !== "admin" && actor.role !== "claim") {
-        return NextResponse.json(
-            {
-                ok: false,
-                code: "CLAIM_WORKFLOW_FORBIDDEN",
-                error: "Hanya role admin atau claim yang dapat assign / update No Claim.",
-            },
-            { status: 403 },
-        );
-    }
+    const gate = await requirePermissionH("claim_workflow.edit");
+    if (gate.response) return gate.response;
 
     let body: { noClaim?: unknown } = {};
     if (request.headers.get("content-type")?.includes("application/json")) {

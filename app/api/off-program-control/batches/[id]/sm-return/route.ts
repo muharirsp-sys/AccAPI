@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch } from "@/db/schema";
-import { canActorPerformOffAction, getBatchWithItems, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { getBatchWithItems, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -14,7 +15,8 @@ export async function POST(request: Request, context: Context) {
     try {
         const actor = await requireOffSession();
         if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-        if (!canActorPerformOffAction(actor, "sm_return")) return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses return Sales Manager." }, { status: 403 });
+        const gate = await requirePermissionH("off_program_control.sm_return");
+        if (gate.response) return gate.response;
         const { id } = await context.params;
         const data = await getBatchWithItems(id);
         if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });

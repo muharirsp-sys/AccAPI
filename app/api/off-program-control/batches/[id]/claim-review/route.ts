@@ -11,13 +11,13 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch } from "@/db/schema";
 import {
-  canActorPerformOffAction,
   getBatchWithItems,
   isOffPeriodClosedForBatch,
   publicBatch,
   requireOffSession,
   writeOffAudit,
 } from "@/lib/off-program-control";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -33,11 +33,8 @@ export async function POST(request: Request, context: Context) {
         { ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." },
         { status: 401 },
       );
-    if (!canActorPerformOffAction(actor, "claim_review"))
-      return NextResponse.json(
-        { ok: false, error: "Anda tidak memiliki akses untuk meninjau klaim." },
-        { status: 403 },
-      );
+    const gate = await requirePermissionH("off_program_control.claim_review");
+    if (gate.response) return gate.response;
     const { id } = await context.params;
     const data = await getBatchWithItems(id);
     if (!data)

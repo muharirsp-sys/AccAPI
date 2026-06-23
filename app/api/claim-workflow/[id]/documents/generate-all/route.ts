@@ -32,6 +32,7 @@ import {
     requireClaimSession,
     writeClaimAudit,
 } from "@/lib/claim-workflow";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 import type { ClaimWorkflowItemRow } from "@/lib/claim-workflow";
 
 export const runtime = "nodejs";
@@ -43,13 +44,8 @@ export async function POST(_request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (actor.role !== "admin" && actor.role !== "claim") {
-        return NextResponse.json({
-            ok: false,
-            code: "CLAIM_DOCS_FORBIDDEN",
-            error: "Hanya role admin atau claim yang dapat generate dokumen klaim.",
-        }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.update");
+    if (gate.response) return gate.response;
 
     try {
         const { id } = await context.params;

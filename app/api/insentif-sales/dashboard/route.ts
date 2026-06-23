@@ -14,13 +14,13 @@ import { eq, and } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { incentivePayments, incentiveSupport } from "@/db/schema";
 import {
-    requireSalesSession,
     getWorkdayProgress,
     pct,
     itemSuper,
     computeMtdByPrinciple,
     getTargetsForPeriod,
 } from "@/lib/insentif-sales";
+import { requirePermission } from "@/lib/rbac/resolve";
 import {
     computeExclusive,
     computeMix,
@@ -30,8 +30,8 @@ import {
 } from "@/lib/insentif-sales-calc";
 
 export async function GET(req: NextRequest) {
-    const actor = await requireSalesSession();
-    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await requirePermission(req, "insentif_sales.view");
+    if (gate.response) return gate.response;
 
     const { searchParams } = req.nextUrl;
     const now = new Date();

@@ -7,7 +7,8 @@
  */
 
 import { NextResponse } from "next/server";
-import { canActorAccessOffData, requireOffSession } from "@/lib/off-program-control";
+import { requireOffSession } from "@/lib/off-program-control";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 import { generateReconciliationPdf } from "@/lib/off-program-control/reconciliation-pdf";
 
 export async function GET(request: Request) {
@@ -15,9 +16,8 @@ export async function GET(request: Request) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (!canActorAccessOffData(actor)) {
-        return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses." }, { status: 403 });
-    }
+    const gate = await requirePermissionH("off_program_control.view");
+    if (gate.response) return gate.response;
 
     const { searchParams } = new URL(request.url);
     const principleCode = searchParams.get("principleCode");

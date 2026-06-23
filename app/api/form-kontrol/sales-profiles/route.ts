@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { headers } from "next/headers";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 import { getAllSalesProfiles, updateSalesHierarchy, resolveScope } from "@/lib/form-kontrol";
 
 export async function GET() {
-    const session = await auth.api.getSession({ headers: await headers() });
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await requirePermissionH("form_kontrol.manage");
+    if (gate.response) return gate.response;
+    const session = gate.session;
     const scope = await resolveScope(session);
     if (scope.allowedSalesCodes !== null) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     try {
@@ -17,8 +17,9 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
-    const session = await auth.api.getSession({ headers: await headers() });
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await requirePermissionH("form_kontrol.manage");
+    if (gate.response) return gate.response;
+    const session = gate.session;
     const scope = await resolveScope(session);
     if (scope.allowedSalesCodes !== null) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     try {

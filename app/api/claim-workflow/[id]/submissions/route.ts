@@ -26,7 +26,6 @@ import { and, asc, count, eq, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { claimSubmission, claimWorkflow, claimWorkflowItem } from "@/db/schema";
 import {
-    canActorReadClaimWorkflow,
     claimAuditScopes,
     claimSubmissionScopeList,
     claimSubmissionScopes,
@@ -38,6 +37,7 @@ import {
     SCOPE_LABEL_MAX_LENGTH,
     writeClaimAudit,
 } from "@/lib/claim-workflow";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -51,12 +51,8 @@ export async function GET(_request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (!canActorReadClaimWorkflow(actor)) {
-        return NextResponse.json({
-            ok: false,
-            error: "Role Anda tidak memiliki akses Claim Workflow.",
-        }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.view");
+    if (gate.response) return gate.response;
 
     try {
         const { id } = await context.params;
@@ -115,13 +111,8 @@ export async function POST(request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (actor.role !== "admin" && actor.role !== "claim") {
-        return NextResponse.json({
-            ok: false,
-            code: "CLAIM_SUBMISSION_FORBIDDEN",
-            error: "Hanya role admin atau claim yang dapat membuat Claim Submission.",
-        }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.create");
+    if (gate.response) return gate.response;
 
     let body: { scope?: unknown; scopeLabel?: unknown; noClaim?: unknown } = {};
     if (request.headers.get("content-type")?.includes("application/json")) {

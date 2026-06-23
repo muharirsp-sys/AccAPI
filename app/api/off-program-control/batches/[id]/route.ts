@@ -11,7 +11,8 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem } from "@/db/schema";
-import { canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, findOffNoSuratConflicts, getNextOffBatchNumber, getPrincipleByCode, getPrincipleByName, getBatchWithItems, isOffPeriodClosedForBatch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, writeOffAudit } from "@/lib/off-program-control";
+import { computeOffFinancePaymentSummary, computeOffPaymentSummary, findOffNoSuratConflicts, getNextOffBatchNumber, getPrincipleByCode, getPrincipleByName, getBatchWithItems, isOffPeriodClosedForBatch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, writeOffAudit } from "@/lib/off-program-control";
+import { requirePermissionH, resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -86,7 +87,10 @@ function batchSummary(items: Array<typeof offBatchItem.$inferSelect>) {
 export async function GET(_request: Request, context: Context) {
     const actor = await requireOffSession();
     if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    if (!canActorAccessOffData(actor)) {
+    const access = await resolveRequestPermissionsH();
+    if (access.response) return access.response;
+    const perms = access.perms!;
+    if (!perms.has("off_program_control.view")) {
         return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses OFF Program Control." }, { status: 403 });
     }
 
@@ -103,7 +107,7 @@ export async function GET(_request: Request, context: Context) {
         // No Rekening item hanya terlihat oleh Finance/Admin, atau Supervisor pemilik
         // saat batch masih editable. Field batch legacy tidak dipakai UI baru.
         const canSeeRekening =
-            canActorPerformOffAction(actor, "finance_payment") ||
+            perms.has("off_program_control.finance_payment") ||
             (actor.role === "supervisor" && data.batch.createdBy === actor.id && isSupervisorEditableBatch(data.batch));
         return NextResponse.json({
             ok: true,
@@ -123,9 +127,8 @@ export async function PATCH(request: Request, context: Context) {
     try {
         const actor = await requireOffSession();
         if (!actor) return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." }, { status: 401 });
-        if (!canActorPerformOffAction(actor, "edit_returned_batch")) {
-            return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses edit batch OFF." }, { status: 403 });
-        }
+        const gate = await requirePermissionH("off_program_control.edit_returned_batch");
+        if (gate.response) return gate.response;
 
         const { id } = await context.params;
         const data = await getBatchWithItems(id);

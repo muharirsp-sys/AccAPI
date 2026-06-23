@@ -12,8 +12,6 @@ import { eq, and } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offRefund } from "@/db/schema";
 import {
-    canActorAccessOffData,
-    canActorPerformOffAction,
     getBatchWithItems,
     computeOffFinancePaymentSummary,
     computeOffPaymentSummary,
@@ -21,6 +19,7 @@ import {
     requireOffSession,
     writeOffAudit,
 } from "@/lib/off-program-control";
+import { requirePermissionH, resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -60,9 +59,8 @@ export async function GET(_request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (!canActorAccessOffData(actor)) {
-        return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses OFF Program Control." }, { status: 403 });
-    }
+    const gate = await requirePermissionH("off_program_control.view");
+    if (gate.response) return gate.response;
 
     const { id } = await context.params;
     const data = await getBatchWithItems(id);
@@ -100,10 +98,13 @@ export async function POST(request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
+    const access = await resolveRequestPermissionsH();
+    if (access.response) return access.response;
+    const perms = access.perms!;
     // Supervisor atau Finance bisa submit refund
     const canSubmit =
-        canActorPerformOffAction(actor, "submit_refund") ||
-        canActorPerformOffAction(actor, "finance_payment") ||
+        perms.has("off_program_control.submit_refund") ||
+        perms.has("off_program_control.finance_payment") ||
         actor.role === "admin";
     if (!canSubmit) {
         return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk submit pengembalian dana." }, { status: 403 });
@@ -218,9 +219,12 @@ export async function PATCH(request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
+    const access = await resolveRequestPermissionsH();
+    if (access.response) return access.response;
+    const perms = access.perms!;
     // Hanya Finance atau Admin yang bisa verifikasi refund
     const canVerify =
-        canActorPerformOffAction(actor, "finance_payment") || actor.role === "admin";
+        perms.has("off_program_control.finance_payment") || actor.role === "admin";
     if (!canVerify) {
         return NextResponse.json({ ok: false, error: "Hanya Finance atau Admin yang dapat memverifikasi pengembalian." }, { status: 403 });
     }

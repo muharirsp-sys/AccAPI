@@ -11,18 +11,17 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offDiscountSubmission } from "@/db/schema";
 import { normalizeOffRole, requireOffSession } from "@/lib/off-program-control";
+import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
-
-function canViewDiscount(role: string) {
-  const normalized = normalizeOffRole(role);
-  return normalized === "supervisor" || normalized === "admin";
-}
 
 export async function GET(_request: Request, context: Context) {
   const actor = await requireOffSession();
   if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canViewDiscount(actor.role)) {
+  const access = await resolveRequestPermissionsH();
+  if (access.response) return access.response;
+  const perms = access.perms!;
+  if (!perms.has("off_program_control.discount_view")) {
     return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses dokumen diskon." }, { status: 403 });
   }
 

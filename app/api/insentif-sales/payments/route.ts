@@ -11,11 +11,11 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { incentivePayments } from "@/db/schema";
-import { requireSalesSession } from "@/lib/insentif-sales";
+import { requirePermission } from "@/lib/rbac/resolve";
 
 export async function GET(req: NextRequest) {
-    const actor = await requireSalesSession();
-    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await requirePermission(req, "insentif_sales.view");
+    if (gate.response) return gate.response;
 
     const { searchParams } = req.nextUrl;
     const now = new Date();
@@ -52,11 +52,8 @@ interface PaymentInput {
 }
 
 export async function POST(req: NextRequest) {
-    const actor = await requireSalesSession();
-    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    if (!["admin", "super_admin", "finance"].includes(actor.role)) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const gate = await requirePermission(req, "insentif_sales.manage_payment");
+    if (gate.response) return gate.response;
 
     let body: PaymentInput;
     try {

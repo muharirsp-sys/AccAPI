@@ -20,11 +20,11 @@ import { and, asc, desc, eq, inArray, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { claimPayment, claimSubmission, claimWorkflow, offBatch } from "@/db/schema";
 import {
-    canActorReadClaimWorkflow,
     claimWorkflowStatuses,
     recalcPaymentTotals,
     requireClaimSession,
 } from "@/lib/claim-workflow";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 const OUTSTANDING_SUBMISSION_STATUSES = [
     claimWorkflowStatuses.submittedToPrincipal,
@@ -56,12 +56,8 @@ export async function GET(request: Request) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (!canActorReadClaimWorkflow(actor)) {
-        return NextResponse.json({
-            ok: false,
-            error: "Role Anda tidak memiliki akses Claim Workflow.",
-        }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.view");
+    if (gate.response) return gate.response;
 
     try {
         const { searchParams } = new URL(request.url);

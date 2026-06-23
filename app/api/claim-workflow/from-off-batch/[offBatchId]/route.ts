@@ -20,6 +20,7 @@ import {
     requireClaimSession,
     SCOPE_LABEL_MAX_LENGTH,
 } from "@/lib/claim-workflow";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 import { recalcWorkflowAggregateFromSubmissions } from "@/lib/claim-workflow/submissions";
 
 type Context = { params: Promise<{ offBatchId: string }> };
@@ -66,9 +67,8 @@ export async function POST(request: NextRequest, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (actor.role !== "admin" && actor.role !== "claim") {
-        return NextResponse.json({ ok: false, error: "Hanya role admin atau claim yang dapat membuat Claim Workflow dari OFF." }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.create");
+    if (gate.response) return gate.response;
 
     let body: { ppnRate?: unknown; pphRate?: unknown; note?: unknown } = {};
     if (request.headers.get("content-type")?.includes("application/json")) {

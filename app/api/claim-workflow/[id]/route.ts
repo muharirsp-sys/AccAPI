@@ -12,7 +12,6 @@ import {
     user,
 } from "@/db/schema";
 import {
-    canActorReadClaimWorkflow,
     claimWorkflowStatuses,
     getActiveSubmissions,
     getOffFinanceGateForNoClaim,
@@ -20,6 +19,7 @@ import {
     recalcPaymentTotals,
     requireClaimSession,
 } from "@/lib/claim-workflow";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -48,9 +48,8 @@ export async function GET(_request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (!canActorReadClaimWorkflow(actor)) {
-        return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses detail Claim Workflow." }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.view");
+    if (gate.response) return gate.response;
 
     try {
         const { id } = await context.params;

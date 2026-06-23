@@ -11,12 +11,13 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { salesTargets } from "@/db/schema";
-import { requireSalesSession, getTargetsForPeriod } from "@/lib/insentif-sales";
+import { getTargetsForPeriod } from "@/lib/insentif-sales";
+import { requirePermission } from "@/lib/rbac/resolve";
 import { normalizeStatus, normalizeTipe } from "@/lib/insentif-sales-calc";
 
 export async function GET(req: NextRequest) {
-    const actor = await requireSalesSession();
-    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await requirePermission(req, "insentif_sales.view");
+    if (gate.response) return gate.response;
 
     const { searchParams } = req.nextUrl;
     const now = new Date();
@@ -49,11 +50,8 @@ interface TargetInput {
 }
 
 export async function POST(req: NextRequest) {
-    const actor = await requireSalesSession();
-    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    if (!["admin", "super_admin", "manager"].includes(actor.role)) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const gate = await requirePermission(req, "insentif_sales.upload_target");
+    if (gate.response) return gate.response;
 
     let body: TargetInput[];
     try {

@@ -114,45 +114,9 @@ export function normalizeOffRole(value?: unknown): OffRole {
   return "unknown";
 }
 
-export function inferOffRoleFromEmail(email?: unknown): OffRole {
-  const text = toText(email);
-
-  if (!text || !text.includes("@")) return "unknown";
-
-  const domain = text.split("@").pop()?.trim().toLowerCase();
-
-  switch (domain) {
-    case "admin.com":
-      return "admin";
-
-    case "spv.com":
-    case "supervisor.com":
-      return "supervisor";
-
-    case "sm.com":
-    case "salesmanager.com":
-    case "sales-manager.com":
-      return "sales_manager";
-
-    case "claim.com":
-      return "claim";
-
-    case "om.com":
-    case "operationalmanager.com":
-    case "operational-manager.com":
-      return "operational_manager";
-
-    case "keuangan.com":
-    case "finance.com":
-      return "finance";
-
-    case "sales.com":
-      return "sales";
-
-    default:
-      return "unknown";
-  }
-}
+// ponytail: inferOffRoleFromEmail DIHAPUS — menurunkan privilege dari domain email
+// (@claim.com→claim) adalah privilege escalation risk. Role wajib eksplisit dari
+// session/DB. Default-deny: tanpa role eksplisit = "unknown".
 
 export function resolveOffRoleFromUser(
   user?: OffSessionUserLike | null,
@@ -177,16 +141,7 @@ export function resolveOffRoleFromUser(
     }
   }
 
-  const emailRole = inferOffRoleFromEmail(user?.email);
-
-  if (emailRole !== "unknown") {
-    return {
-      role: emailRole,
-      source: "email",
-      isFallback: false,
-    };
-  }
-
+  // Default-deny: tidak ada lagi fallback email-domain. Role harus eksplisit.
   return {
     role: "unknown",
     source: "unknown",

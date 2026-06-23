@@ -3,16 +3,16 @@ import fs from "node:fs";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offPayment } from "@/db/schema";
-import { canActorAccessOffData, requireOffSession } from "@/lib/off-program-control";
+import { requireOffSession } from "@/lib/off-program-control";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ paymentId: string }> };
 
 export async function GET(_request: Request, context: Context) {
     const actor = await requireOffSession();
     if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    if (!canActorAccessOffData(actor)) {
-        return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses OFF Program Control." }, { status: 403 });
-    }
+    const gate = await requirePermissionH("off_program_control.view");
+    if (gate.response) return gate.response;
 
     try {
         const { paymentId } = await context.params;

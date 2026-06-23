@@ -3,7 +3,8 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem, offPayment } from "@/db/schema";
-import { canActorPerformOffAction, canProcessFinancePayment, computeOffFinancePaymentSummary, computeOffPaymentSummary, generateOffPaymentProofPdf, getBatchWithItems, isOffPeriodClosedForBatch, normalizeOffPaymentMethod, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { canProcessFinancePayment, computeOffFinancePaymentSummary, computeOffPaymentSummary, generateOffPaymentProofPdf, getBatchWithItems, isOffPeriodClosedForBatch, normalizeOffPaymentMethod, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -32,7 +33,8 @@ export async function POST(request: Request, context: Context) {
     try {
         const actor = await requireOffSession();
         if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-        if (!canActorPerformOffAction(actor, "finance_payment")) return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses pembayaran Keuangan." }, { status: 403 });
+        const gate = await requirePermissionH("off_program_control.finance_payment");
+        if (gate.response) return gate.response;
         const { id } = await context.params;
         const data = await getBatchWithItems(id);
         if (!data) return NextResponse.json({ ok: false, error: "Batch not found" }, { status: 404 });

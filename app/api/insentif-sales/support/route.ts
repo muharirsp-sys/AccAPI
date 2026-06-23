@@ -11,11 +11,11 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { incentiveSupport } from "@/db/schema";
-import { requireSalesSession } from "@/lib/insentif-sales";
+import { requirePermission } from "@/lib/rbac/resolve";
 
 export async function GET(req: NextRequest) {
-    const actor = await requireSalesSession();
-    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await requirePermission(req, "insentif_sales.view");
+    if (gate.response) return gate.response;
 
     const { searchParams } = req.nextUrl;
     const now = new Date();
@@ -38,11 +38,9 @@ interface SupportInput {
 }
 
 export async function POST(req: NextRequest) {
-    const actor = await requireSalesSession();
-    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    if (!["admin", "super_admin", "finance"].includes(actor.role)) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const gate = await requirePermission(req, "insentif_sales.input_support");
+    if (gate.response) return gate.response;
+    const actorName = gate.session.user.name ?? gate.session.user.email ?? "Unknown";
 
     let body: SupportInput[];
     try {
@@ -76,7 +74,7 @@ export async function POST(req: NextRequest) {
         if (existing) {
             await db
                 .update(incentiveSupport)
-                .set({ supportAmount: amount, inputBy: actor.name, updatedAt: now })
+                .set({ supportAmount: amount, inputBy: actorName, updatedAt: now })
                 .where(eq(incentiveSupport.id, existing.id));
         } else {
             await db.insert(incentiveSupport).values({
@@ -86,7 +84,7 @@ export async function POST(req: NextRequest) {
                 periodMonth: s.periodMonth,
                 periodYear: s.periodYear,
                 supportAmount: amount,
-                inputBy: actor.name,
+                inputBy: actorName,
                 createdAt: now,
                 updatedAt: now,
             });

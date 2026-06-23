@@ -9,7 +9,8 @@ export async function POST(request: Request) {
         const clientIp = forwardedFor ? forwardedFor.split(",")[0].trim() : (realIp || "unknown");
 
         const allowedIps = ["202.78.195.250", "163.61.77.2", "127.0.0.1", "::1"];
-        if (clientIp !== "unknown" && !allowedIps.includes(clientIp)) {
+        // Fail-closed: IP "unknown" (header XFF/real-ip absen) ditolak, bukan di-bypass.
+        if (!allowedIps.includes(clientIp)) {
             console.warn(`[WEBHOOK BLOCKED] Unauthorized IP: ${clientIp}`);
             return NextResponse.json({ error: "Unauthorized IP Address" }, { status: 403 });
         }
@@ -27,7 +28,9 @@ export async function POST(request: Request) {
             payload
         };
 
-        fs.appendFileSync(logFilePath, JSON.stringify(logEntry) + "\n", 'utf8');
+        // Cap per-entry agar payload jumbo tak membengkakkan disk dalam satu hit.
+        const entry = JSON.stringify(logEntry);
+        fs.appendFileSync(logFilePath, (entry.length > 100_000 ? entry.slice(0, 100_000) : entry) + "\n", 'utf8');
         console.log(`[+] Disimpan ke webhook_events.log`);
 
         if (Array.isArray(payload)) {

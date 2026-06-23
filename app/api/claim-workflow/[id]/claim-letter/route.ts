@@ -5,7 +5,6 @@ import { eq } from "drizzle-orm";
 import { claimSubmission, claimWorkflow, claimWorkflowItem } from "@/db/schema";
 import { db } from "@/lib/db";
 import {
-    canActorReadClaimWorkflow,
     claimAuditScopes,
     claimDocumentTypes,
     claimWorkflowStatuses,
@@ -15,6 +14,7 @@ import {
     requireClaimSession,
     writeClaimAudit,
 } from "@/lib/claim-workflow";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 export const runtime = "nodejs";
 
@@ -48,9 +48,8 @@ function validateGeneration(
 export async function POST(_request: Request, context: Context) {
     const actor = await requireClaimSession();
     if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    if (actor.role !== "admin" && actor.role !== "claim") {
-        return NextResponse.json({ ok: false, error: "Hanya role admin atau claim yang dapat membuat Claim Letter PDF." }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.update");
+    if (gate.response) return gate.response;
 
     try {
         const { id } = await context.params;
@@ -165,9 +164,8 @@ export async function POST(_request: Request, context: Context) {
 export async function GET(_request: Request, context: Context) {
     const actor = await requireClaimSession();
     if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    if (!canActorReadClaimWorkflow(actor)) {
-        return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses detail Claim Workflow." }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.view");
+    if (gate.response) return gate.response;
 
     const { id } = await context.params;
     const [workflow] = await db.select().from(claimWorkflow).where(eq(claimWorkflow.id, id));

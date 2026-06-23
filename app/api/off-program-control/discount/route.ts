@@ -24,16 +24,7 @@ import {
   parseCurrency,
   requireOffSession,
 } from "@/lib/off-program-control";
-
-// SPV (supervisor) penuh akses; Admin read-only (lihat note di UI).
-function canViewDiscount(role: string) {
-  const normalized = normalizeOffRole(role);
-  return normalized === "supervisor" || normalized === "admin";
-}
-
-function canManageDiscount(role: string) {
-  return normalizeOffRole(role) === "supervisor";
-}
+import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 function withinPeriod(tanggal: string, dateFrom: string, dateTo: string): boolean {
   if (!dateFrom && !dateTo) return true;
@@ -66,7 +57,10 @@ function publicSubmission(row: typeof offDiscountSubmission.$inferSelect) {
 export async function GET(request: Request) {
   const actor = await requireOffSession();
   if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canViewDiscount(actor.role)) {
+  const access = await resolveRequestPermissionsH();
+  if (access.response) return access.response;
+  const perms = access.perms!;
+  if (!perms.has("off_program_control.discount_view")) {
     return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses dashboard diskon SPV." }, { status: 403 });
   }
 
@@ -104,7 +98,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       ok: true,
-      readOnly: !canManageDiscount(actor.role),
+      readOnly: !perms.has("off_program_control.discount_manage"),
       submissions: filtered.map(publicSubmission),
     });
   } catch (error) {
@@ -117,7 +111,10 @@ export async function POST(request: Request) {
   try {
     const actor = await requireOffSession();
     if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    if (!canManageDiscount(actor.role)) {
+    const access = await resolveRequestPermissionsH();
+    if (access.response) return access.response;
+    const perms = access.perms!;
+    if (!perms.has("off_program_control.discount_manage")) {
       return NextResponse.json({ ok: false, error: "Hanya Supervisor yang dapat membuat pengajuan diskon." }, { status: 403 });
     }
 

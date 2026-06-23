@@ -13,6 +13,7 @@ import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { user, account, salesProfile, jksMaster, aoControlDaily, noOrderReason } from "@/db/schema";
 import { NO_ORDER_REASONS } from "@/lib/form-kontrol/constants";
+import { requireCronSecret } from "@/lib/api-security";
 
 // Password demo — sengaja sederhana, ini data test. Ganti di produksi.
 const SALESMAN_PW = "salesman123";
@@ -80,10 +81,12 @@ const STATUSES = ["ordered", "ordered", "ordered", "active", "not_order", "not_o
 const REASON_CODES = ["R01", "R02", "R07", "R09", "R14"];
 
 export async function GET(req: Request) {
-    const secret = new URL(req.url).searchParams.get("secret");
-    if (!secret || secret !== process.env.CRON_SECRET) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Seed = data demo. Tidak boleh ada di produksi (buat akun + echo kredensial).
+    if (process.env.NODE_ENV === "production") {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
+    const gate = requireCronSecret(req);
+    if (gate.response) return gate.response;
 
     const ctx = await auth.$context;
     const now = new Date();
@@ -180,7 +183,6 @@ export async function GET(req: Request) {
             logins: {
                 salesman: SALESMEN.map(s => ({ email: s.email, sales: s.code, principle: s.principle })),
                 spv: "spv@super.test", sm: "sm@super.test",
-                passwords: { salesman: SALESMAN_PW, spv: SPV_PW, sm: SM_PW },
             },
         });
     } catch (e: unknown) {

@@ -11,7 +11,8 @@ import { stat } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch } from "@/db/schema";
-import { canActorPerformOffAction, computeOffPaymentSummary, generateOffBatchPdf, getBatchWithItems, isOffPeriodClosedForBatch, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { computeOffPaymentSummary, generateOffBatchPdf, getBatchWithItems, isOffPeriodClosedForBatch, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 export const runtime = "nodejs";
 
@@ -21,9 +22,8 @@ export async function POST(_request: Request, context: Context) {
     try {
         const actor = await requireOffSession();
         if (!actor) return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." }, { status: 401 });
-        if (!canActorPerformOffAction(actor, "submit_batch")) {
-            return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses submit batch OFF." }, { status: 403 });
-        }
+        const gate = await requirePermissionH("off_program_control.submit_batch");
+        if (gate.response) return gate.response;
 
         const { id } = await context.params;
         const data = await getBatchWithItems(id);

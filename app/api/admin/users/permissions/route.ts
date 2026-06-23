@@ -8,21 +8,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { auth } from "@/lib/auth";
-import { normalizePermissionMap, normalizeRole, serializeCustomPermissions } from "@/lib/rbac";
+import { normalizePermissionMap, serializeCustomPermissions } from "@/lib/rbac";
 import { user } from "@/db/schema";
-
-async function requireAdmin(request: NextRequest) {
-    const session = await auth.api.getSession({ headers: request.headers });
-    const role = normalizeRole((session?.user as { role?: string } | undefined)?.role);
-    return session && role === "admin" ? session : null;
-}
+import { requirePermission } from "@/lib/rbac/resolve";
 
 export async function GET(request: NextRequest) {
-    const session = await requireAdmin(request);
-    if (!session) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const gate = await requirePermission(request, "users.manage");
+    if (gate.response) return gate.response;
 
     const rows = await db
         .select({
@@ -41,10 +33,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-    const session = await requireAdmin(request);
-    if (!session) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const gate = await requirePermission(request, "users.manage");
+    if (gate.response) return gate.response;
 
     const body = await request.json().catch(() => null);
     const userId = String(body?.userId || "").trim();

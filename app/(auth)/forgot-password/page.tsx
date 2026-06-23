@@ -6,8 +6,6 @@ import { Mail, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 
-import { checkUserStatus } from "../actions";
-
 export default function ForgotPasswordPage() {
     const [email, setEmail] = useState("");
     const [loading, setLoading] = useState(false);
@@ -17,50 +15,19 @@ export default function ForgotPasswordPage() {
         e.preventDefault();
         setLoading(true);
 
-        // 1. Cek secara eksplisit dari Database Server-Side
-        const status = await checkUserStatus(email);
-        
-        if (status.error) {
-             toast.error("Gagal terhubung ke database. Coba lagi.");
-             setLoading(false);
-             return;
-        }
+        // Anti user-enumeration: JANGAN cek keberadaan/verifikasi akun dulu (itu oracle
+        // enumerasi + timing leak). Better Auth hanya mengirim email untuk akun terdaftar;
+        // UI selalu menampilkan respons identik baik email ada maupun tidak.
+        await authClient
+            .requestPasswordReset({
+                email,
+                redirectTo: `${window.location.origin}/reset-password`,
+            })
+            .catch(() => {});
 
-        if (!status.exists) {
-             toast.error("Email tidak terdaftar di sistem kami.");
-             setLoading(false);
-             return;
-        }
-
-        if (!status.verified) {
-             toast.error("Email ini belum diverifikasi!", {
-                 description: "Anda tidak bisa mereset password sebelum memverifikasi akun. Silakan cek kotak masuk email pendaftaran Anda."
-             });
-             setLoading(false);
-             return;
-        }
-
-        // 2. Jika aman dan terverifikasi, lanjutkan API Reset
-        const { error } = await authClient.requestPasswordReset({
-            email,
-            redirectTo: `${window.location.origin}/reset-password`
-        });
-
-        if (error) {
-            // Jika user tidak ditemukan, jangan beritahu secara gamblang demi sekuriti (Hacker prevention).
-            // Namun, jika ada error server, tampilkan.
-            if (error?.status === 404 || error?.message?.includes("User not found")) {
-                 toast.success("Jika email Anda terdaftar, tautan pengaturan ulang sandi telah dikirimkan.");
-                 setSubmitted(true);
-            } else {
-                 toast.error(error?.message || "Terjadi kesalahan pada server saat memproses permintaan.");
-            }
-            setLoading(false);
-        } else {
-            toast.success("Tautan Lupa Password terkirim!");
-            setSubmitted(true);
-            setLoading(false);
-        }
+        toast.success("Jika email Anda terdaftar, tautan pengaturan ulang sandi telah dikirimkan.");
+        setSubmitted(true);
+        setLoading(false);
     };
 
     return (

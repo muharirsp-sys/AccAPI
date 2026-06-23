@@ -26,6 +26,7 @@ import {
     requireClaimSession,
     writeClaimAudit,
 } from "@/lib/claim-workflow";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string; paymentId: string }> };
 
@@ -36,13 +37,8 @@ export async function POST(request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (actor.role !== "admin" && actor.role !== "claim") {
-        return NextResponse.json({
-            ok: false,
-            code: "CLAIM_PAYMENT_FORBIDDEN",
-            error: "Hanya role admin atau claim yang dapat void pembayaran.",
-        }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.update");
+    if (gate.response) return gate.response;
 
     let body: { reason?: unknown } = {};
     if (request.headers.get("content-type")?.includes("application/json")) {

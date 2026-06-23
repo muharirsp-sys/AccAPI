@@ -12,6 +12,7 @@ import {
     requireClaimSession,
     writeClaimAudit,
 } from "@/lib/claim-workflow";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string; itemId: string }> };
 
@@ -32,9 +33,8 @@ export async function PATCH(request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (actor.role !== "admin" && actor.role !== "claim") {
-        return NextResponse.json({ ok: false, error: "Hanya role admin atau claim yang dapat mengubah pajak Claim Workflow." }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.edit");
+    if (gate.response) return gate.response;
 
     try {
         const { id, itemId } = await context.params;

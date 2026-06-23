@@ -4,8 +4,6 @@ import { eq } from "drizzle-orm";
 import { offBatch } from "@/db/schema";
 import { db } from "@/lib/db";
 import {
-    canActorAccessOffData,
-    canActorPerformOffAction,
     generateOffBatchReceiptPdf,
     getBatchWithItems,
     OFF_KWITANSI_DISABLED,
@@ -13,6 +11,7 @@ import {
     requireOffSession,
     writeOffAudit,
 } from "@/lib/off-program-control";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 // NOTE: Kwitansi dinonaktifkan sementara karena format/nilai kwitansi dapat
 // berubah setelah pembayaran dari Keuangan. Kode lama dipertahankan agar dapat
@@ -49,9 +48,8 @@ export async function POST(_request: Request, context: Context) {
     try {
         const actor = await requireOffSession();
         if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-        if (!canActorPerformOffAction(actor, "submit_batch")) {
-            return NextResponse.json({ ok: false, error: "Hanya Supervisor atau Admin yang dapat membuat kwitansi OFF." }, { status: 403 });
-        }
+        const gate = await requirePermissionH("off_program_control.submit_batch");
+        if (gate.response) return gate.response;
 
         // Kwitansi HOLD sementara: jangan menghasilkan kwitansi aktif.
         if (OFF_KWITANSI_DISABLED) {
@@ -112,9 +110,8 @@ export async function POST(_request: Request, context: Context) {
 export async function GET(_request: Request, context: Context) {
     const actor = await requireOffSession();
     if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    if (!canActorAccessOffData(actor)) {
-        return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses OFF Program Control." }, { status: 403 });
-    }
+    const gate = await requirePermissionH("off_program_control.view");
+    if (gate.response) return gate.response;
 
     const { id } = await context.params;
     const data = await getBatchWithItems(id);

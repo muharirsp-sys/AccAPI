@@ -17,9 +17,9 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offAuditLog } from "@/db/schema";
 import {
-  canActorPerformOffAction,
   requireOffSession,
 } from "@/lib/off-program-control";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -27,9 +27,8 @@ export async function POST(request: Request, context: Context) {
   try {
     const actor = await requireOffSession();
     if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    if (!canActorPerformOffAction(actor, "audit_correct")) {
-      return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses koreksi audit log." }, { status: 403 });
-    }
+    const gate = await requirePermissionH("off_program_control.audit_correct");
+    if (gate.response) return gate.response;
 
     const { id } = await context.params;
     const [original] = await db.select().from(offAuditLog).where(eq(offAuditLog.id, id));

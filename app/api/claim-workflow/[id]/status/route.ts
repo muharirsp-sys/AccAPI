@@ -14,6 +14,7 @@ import {
     requireClaimSession,
     writeClaimAudit,
 } from "@/lib/claim-workflow";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 const CLAIM_LETTERS_DIR = path.resolve(process.cwd(), "runtime", "claim-workflow", "letters");
 const SUMMARY_DIR = path.resolve(process.cwd(), "runtime", "claim-workflow", "summaries");
@@ -84,13 +85,8 @@ export async function POST(request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (actor.role !== "admin" && actor.role !== "claim") {
-        return NextResponse.json({
-            ok: false,
-            code: "CLAIM_WORKFLOW_FORBIDDEN",
-            error: "Hanya role admin atau claim yang dapat mengubah status Claim Workflow.",
-        }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.approve");
+    if (gate.response) return gate.response;
 
     let body: { action?: unknown; note?: unknown } = {};
     if (request.headers.get("content-type")?.includes("application/json")) {

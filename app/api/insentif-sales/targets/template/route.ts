@@ -7,12 +7,12 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireApiSession } from "@/lib/api-security";
+import { requirePermission } from "@/lib/rbac/resolve";
 import { generateTargetTemplate } from "@/lib/insentif-sales-excel";
 
 export async function GET(request: Request) {
-    const authCheck = await requireApiSession(request);
-    if (authCheck.response) return authCheck.response;
+    const gate = await requirePermission(request, "insentif_sales.view");
+    if (gate.response) return gate.response;
 
     try {
         const templateBuffer = generateTargetTemplate();

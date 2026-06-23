@@ -13,10 +13,10 @@ import { db } from "@/lib/db";
 import { offAuditLog, offBatch } from "@/db/schema";
 import {
   buildSearchHaystack,
-  canActorPerformOffAction,
   matchesSearch,
   requireOffSession,
 } from "@/lib/off-program-control";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 function withinPeriod(
   createdAt: Date | null,
@@ -53,9 +53,8 @@ function csvEscape(value: unknown): string {
 export async function GET(request: Request) {
   const actor = await requireOffSession();
   if (!actor) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canActorPerformOffAction(actor, "audit_read")) {
-    return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses audit log." }, { status: 403 });
-  }
+  const gate = await requirePermissionH("off_program_control.audit_read");
+  if (gate.response) return gate.response;
 
   const url = new URL(request.url);
   const search = url.searchParams.get("search") || "";

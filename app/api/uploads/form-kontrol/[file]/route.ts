@@ -8,8 +8,13 @@ import { NextResponse } from "next/server";
 import { readFile } from "fs/promises";
 import path from "path";
 import { UPLOAD_DIR } from "@/lib/form-kontrol/uploads";
+import { requireApiSession } from "@/lib/api-security";
 
-export async function GET(_req: Request, { params }: { params: Promise<{ file: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ file: string }> }) {
+    // Foto bukti kunjungan = data internal. Wajib sesi (cookie ikut di <img> same-origin).
+    // ponytail: scope per-salesCode bisa ditambah kalau nama file mulai encode pemilik.
+    const auth = await requireApiSession(req);
+    if (auth.response) return auth.response;
     const { file } = await params;
     // anti path-traversal: paksa basename + hanya .jpg
     const safe = path.basename(file);

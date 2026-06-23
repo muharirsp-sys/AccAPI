@@ -12,11 +12,11 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { claimSubmission, claimWorkflow, offBatch, offBatchItem, offPayment, offPeriodClosure } from "@/db/schema";
 import {
-  canActorPerformOffAction,
   getPrincipleByCode,
   requireOffSession,
   writeOffAudit,
 } from "@/lib/off-program-control";
+import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 type PeriodAction = "close" | "unlock";
 
@@ -177,6 +177,10 @@ export async function POST(request: Request) {
     );
   }
 
+  const access = await resolveRequestPermissionsH();
+  if (access.response) return access.response;
+  const perms = access.perms!;
+
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const action = String(body.action || "") as PeriodAction;
   const principleCode = String(body.principleCode || "").trim();
@@ -190,13 +194,13 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  if (action === "close" && !canActorPerformOffAction(actor, "period_close")) {
+  if (action === "close" && !perms.has("off_program_control.period_close")) {
     return NextResponse.json(
       { ok: false, error: "Anda tidak memiliki akses untuk menutup periode." },
       { status: 403 },
     );
   }
-  if (action === "unlock" && !canActorPerformOffAction(actor, "period_unlock")) {
+  if (action === "unlock" && !perms.has("off_program_control.period_unlock")) {
     return NextResponse.json(
       { ok: false, error: "Anda tidak memiliki akses untuk membuka kunci periode." },
       { status: 403 },

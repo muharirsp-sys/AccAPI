@@ -16,7 +16,6 @@ import {
 } from "@/db/schema";
 import { db } from "@/lib/db";
 import {
-    canActorReadClaimWorkflow,
     claimAuditScopes,
     claimDocumentTypes,
     claimWorkflowStatuses,
@@ -25,6 +24,7 @@ import {
     requireClaimSession,
     writeClaimAudit,
 } from "@/lib/claim-workflow";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 export const runtime = "nodejs";
 
@@ -51,13 +51,8 @@ export async function POST(_request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (actor.role !== "admin" && actor.role !== "claim") {
-        return NextResponse.json({
-            ok: false,
-            code: "CLAIM_SUMMARY_FORBIDDEN",
-            error: "Hanya role admin atau claim yang dapat membuat Claim Summary PDF.",
-        }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.update");
+    if (gate.response) return gate.response;
 
     try {
         const { id, submissionId } = await context.params;
@@ -231,12 +226,8 @@ export async function GET(_request: Request, context: Context) {
     if (!actor) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    if (!canActorReadClaimWorkflow(actor)) {
-        return NextResponse.json({
-            ok: false,
-            error: "Role Anda tidak memiliki akses detail Claim Workflow.",
-        }, { status: 403 });
-    }
+    const gate = await requirePermissionH("claim_workflow.view");
+    if (gate.response) return gate.response;
 
     const { id, submissionId } = await context.params;
     const [submission] = await db

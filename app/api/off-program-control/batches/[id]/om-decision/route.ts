@@ -10,7 +10,8 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch } from "@/db/schema";
-import { canActorPerformOffAction, getBatchWithItems, isOffPeriodClosedForBatch, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { getBatchWithItems, isOffPeriodClosedForBatch, publicBatch, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
+import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -25,7 +26,10 @@ export async function POST(request: Request, context: Context) {
     try {
         const actor = await requireOffSession();
         if (!actor) return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." }, { status: 401 });
-        if (!canActorPerformOffAction(actor, "om_approve") && !canActorPerformOffAction(actor, "om_cancel")) return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses keputusan OM." }, { status: 403 });
+        const access = await resolveRequestPermissionsH();
+        if (access.response) return access.response;
+        const perms = access.perms!;
+        if (!perms.has("off_program_control.om_approve") && !perms.has("off_program_control.om_cancel")) return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses keputusan OM." }, { status: 403 });
         const { id } = await context.params;
         const data = await getBatchWithItems(id);
         if (!data) return NextResponse.json({ ok: false, error: "Pengajuan tidak ditemukan." }, { status: 404 });

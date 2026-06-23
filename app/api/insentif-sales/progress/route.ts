@@ -11,11 +11,12 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { salesDailyProgress } from "@/db/schema";
-import { requireSalesSession, computeMtdProgress } from "@/lib/insentif-sales";
+import { computeMtdProgress } from "@/lib/insentif-sales";
+import { requirePermission } from "@/lib/rbac/resolve";
 
 export async function GET(req: NextRequest) {
-    const actor = await requireSalesSession();
-    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await requirePermission(req, "insentif_sales.view");
+    if (gate.response) return gate.response;
 
     const { searchParams } = req.nextUrl;
     const now = new Date();
@@ -43,11 +44,8 @@ interface ProgressInput {
 }
 
 export async function POST(req: NextRequest) {
-    const actor = await requireSalesSession();
-    if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    if (!["admin", "super_admin", "manager", "spv"].includes(actor.role)) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const gate = await requirePermission(req, "insentif_sales.upload_progress");
+    if (gate.response) return gate.response;
 
     let body: ProgressInput[];
     try {
@@ -93,7 +91,7 @@ export async function POST(req: NextRequest) {
             achievedEc: p.achievedEc,
             achievedAo: p.achievedAo,
             achievedIa: p.achievedIa,
-            uploadedBy: actor.id,
+            uploadedBy: gate.session.user.id,
             createdAt: now,
         });
         inserted++;

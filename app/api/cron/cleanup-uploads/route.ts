@@ -2,15 +2,14 @@ import { NextResponse } from "next/server";
 import { readdir, stat, unlink } from "fs/promises";
 import path from "path";
 import { UPLOAD_DIR } from "@/lib/form-kontrol/uploads";
+import { requireCronSecret } from "@/lib/api-security";
 
 // ponytail: 90-day retention, turunkan jika disk mepet
 const RETENTION_DAYS = 90;
 
 export async function GET(req: Request) {
-    const secret = new URL(req.url).searchParams.get("secret");
-    if (!secret || secret !== process.env.CRON_SECRET) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const gate = requireCronSecret(req);
+    if (gate.response) return gate.response;
 
     const dir = UPLOAD_DIR;
     const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;

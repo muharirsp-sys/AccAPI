@@ -11,7 +11,6 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem } from "@/db/schema";
 import {
-  canActorPerformOffAction,
   canOpenFinalClaim,
   computeOffFinancePaymentSummary,
   computeOffPaymentSummary,
@@ -23,6 +22,7 @@ import {
   requireOffSession,
   writeOffAudit,
 } from "@/lib/off-program-control";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -34,11 +34,8 @@ export async function POST(request: Request, context: Context) {
         { ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." },
         { status: 401 },
       );
-    if (!canActorPerformOffAction(actor, "claim_final"))
-      return NextResponse.json(
-        { ok: false, error: "Anda tidak memiliki akses final klaim." },
-        { status: 403 },
-      );
+    const gate = await requirePermissionH("off_program_control.claim_final");
+    if (gate.response) return gate.response;
     const { id } = await context.params;
     const data = await getBatchWithItems(id);
     if (!data)

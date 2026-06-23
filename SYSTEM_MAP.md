@@ -31,7 +31,9 @@
 - **Route Group** `(auth)` untuk halaman login/register, `(dashboard)` untuk seluruh halaman aplikasi yang dilindungi guard layout.
 - Layer `lib/*` memisahkan business logic dari route handler.
 - SQLite single-file sebagai database lokal (tidak cloud DB); opsi Turso/libSQL di production.
-- RBAC dua lapis: **role global** (Better Auth) + **OFF-specific role** (heuristic dari session/email domain).
+- RBAC tiga lapis: **Dynamic Permission-Group** (access_group + group_permission + user_group, default-deny) ∪ legacy **role global** (Better Auth) ∪ legacy **custom permissions** (user.permissions). Union resolver di `lib/rbac/resolve.ts`; sistem lama tetap berjalan selama transisi.
+- Permission key format: `"module.action"` (mis. `"off_program_control.sm_approve"`). Sumber tunggal: `lib/rbac/registry.ts` (85 key). Endpoint wajib pakai `requirePermission`/`requirePermissionH` — key tidak terdaftar → 403.
+- Email-domain role inference dihapus. OFF-specific role (`resolveOffRoleFromUser`) tetap ada untuk audit/state-machine, TIDAK untuk authz.
 
 ---
 
@@ -48,8 +50,16 @@ Browser -> /login page
 Browser -> any /dashboard/* route
   -> app/(dashboard)/layout.tsx [DashboardLayout]
   -> lib/auth.ts [auth.api.getSession]
-  -> lib/rbac.ts [canAccessPath(pathname, role, permissions)]
+  -> lib/rbac.ts [canAccessPath(pathname, role, permissions)]  ← page-level (legacy)
   -> [OK] render SidebarLayout | [FAIL] redirect /login atau /
+
+Browser -> any /api/* route (modul baru)
+  -> requirePermission(request, "module.action")              ← API-level (baru)
+     -> auth.api.getSession
+     -> getUserPermissions(userId)                            ← lib/rbac/resolve.ts
+        -> DB: user_group + group_permission (sistem baru)
+        -> permissionMapForUser(role, permissions)            ← legacy union
+     -> perms.has(key) ? proceed : 403
 ```
 
 ### 2. OFF Program Control — Buat & Submit Pengajuan
@@ -165,7 +175,6 @@ Browser -> NEXT_PUBLIC_FASTAPI_BASE_URL (port 8000)
 AccAPI/_github_clean/
 ├── app/
 │   ├── (auth)/
-│   │   ├── actions.ts                  # Server actions: signIn, signUp, resetPassword
 │   │   ├── login/page.tsx
 │   │   ├── register/page.tsx
 │   │   ├── forgot-password/page.tsx
@@ -190,7 +199,8 @@ AccAPI/_github_clean/
 │   │   ├── summary/page.tsx
 │   │   ├── validator/page.tsx
 │   │   ├── principles/page.tsx
-│   │   └── admin/users/                # User management + RBAC editor
+│   │   ├── admin/users/                # User management + legacy RBAC editor
+│   │   └── admin/groups/               # Dynamic RBAC: kelola Access Group + permission + member
 │   └── api/
 │       ├── auth/
 │       │   ├── [...all]/route.ts       # Better Auth catch-all handler
@@ -243,7 +253,12 @@ AccAPI/_github_clean/
 │       ├── webhook/accurate/route.ts   # Terima webhook dari Accurate
 │       └── admin/
 │           ├── bootstrap/route.ts      # One-time admin setup
-│           └── users/permissions/route.ts
+│           ├── users/permissions/route.ts
+│           └── groups/
+│               ├── route.ts            # GET list + POST create Access Group
+│               └── [id]/
+│                   ├── route.ts        # GET detail + PATCH sync perms + DELETE
+│                   └── members/route.ts # POST add / DELETE remove user dari group
 ├── components/
 │   ├── SidebarLayout.tsx               # Shell navigasi dashboard
 │   ├── DataTable.tsx                   # TanStack Table reusable
@@ -258,7 +273,11 @@ AccAPI/_github_clean/
 ├── lib/
 │   ├── auth.ts                         # Konfigurasi Better Auth server
 │   ├── auth-client.ts                  # Better Auth client (browser)
-│   ├── rbac.ts                         # Role/permission/module RBAC
+│   ├── rbac.ts                         # RBAC legacy (union layer selama transisi)
+│   ├── rbac/
+│   │   ├── registry.ts                 # PERMISSION_REGISTRY — sumber tunggal 87 key
+│   │   ├── resolve.ts                  # getUserPermissions, requirePermission/H, resolveRequestPermissions/H
+│   │   └── registry.test.ts            # Self-check: integritas registry + scan route.ts
 │   ├── db.ts                           # Drizzle client singleton
 │   ├── email.ts                        # nodemailer sendEmail
 │   ├── sync.ts                         # AccuratePaginator + syncModule
@@ -332,10 +351,18 @@ AccAPI/_github_clean/
 |---|---|---|
 | `lib/auth.ts` | `auth` (betterAuth instance) | Konfigurasi server auth: email/password, admin plugin, SQLite adapter, email reset/verify |
 | `lib/auth-client.ts` | `authClient` | Client-side Better Auth hooks untuk browser |
-| `lib/rbac.ts` | `canAccess`, `canAccessPath`, `permissionMapForUser`, `normalizeRole` | RBAC modular: roles × modules × actions, preset per role, custom per-user |
+| `lib/rbac.ts` | `canAccess`, `canAccessPath`, `permissionMapForUser`, `normalizeRole` | RBAC legacy: preset per role, custom per-user — masih aktif sebagai legacy union layer |
+| `lib/rbac/registry.ts` | `PERMISSION_REGISTRY`, `allPermissionKeys`, `isValidPermissionKey` | **Sumber tunggal** 85 permission key (`module.action`). Zero import — pure data. Test-guard scan semua route.ts saat CI |
+| `lib/rbac/resolve.ts` | `getUserPermissions`, `requirePermission`, `requirePermissionH`, `resolveRequestPermissions`, `resolveRequestPermissionsH` | Union resolver: DB group + legacy role/permissions. Guard endpoint default-deny. `requirePermissionH` untuk route pakai `next/headers` |
+| `lib/rbac/registry.test.ts` | self-check script | Validasi integritas registry + scan semua route.ts: gagal jika ada key tidak terdaftar. Jalankan: `node --experimental-strip-types lib/rbac/registry.test.ts` |
 | `app/(dashboard)/layout.tsx` | `DashboardLayout` | Guard semua halaman dashboard: session check + RBAC path check |
+| `app/(dashboard)/admin/users/` | `UserManagement` | UI kelola user internal, set role, set legacy custom permission |
+| `app/(dashboard)/admin/groups/` | `GroupManagement` | **UI Dynamic RBAC**: buat/edit Access Group, assign permission key per group, assign user ke group |
 | `app/api/auth/[...all]/route.ts` | Better Auth catch-all | Mount semua endpoint auth Better Auth |
 | `app/api/admin/bootstrap/route.ts` | `POST` | One-time setup akun admin pertama via token |
+| `app/api/admin/groups/route.ts` | `GET`, `POST` | List + buat Access Group; gate: `users.manage` |
+| `app/api/admin/groups/[id]/route.ts` | `GET`, `PATCH`, `DELETE` | Detail + sync permission + hapus group; tulis `permission_audit_log` |
+| `app/api/admin/groups/[id]/members/route.ts` | `POST`, `DELETE` | Assign/remove user dari group; tulis `permission_audit_log` |
 
 ### OFF Program Control (OPC)
 
@@ -462,6 +489,11 @@ sync_state [checkpoint per modul]
 item [cache Accurate items]
 customer [cache Accurate customers]
 idempotency_log [fingerprint bulk upload]
+
+# Dynamic RBAC (additive — Fase 2/4; user.role & user.permissions TIDAK dihapus)
+access_group ──── group_permission (group_id)   [permission_key = "module.action"]
+  └──────────── user_group (group_id + user_id)  [akses user = UNION group]
+permission_audit_log [siapa ubah group/permission siapa, kapan]
 ```
 
 **Status Lifecycle offBatch:**
@@ -479,6 +511,8 @@ idempotency_log [fingerprint bulk upload]
 | `scripts/migrate-opc-columns.mjs` | Migrasi tambahan kolom OPC |
 | `db/migrations/` | Output drizzle-kit (SQL migration files) |
 | `scripts/seed-opc-dummy.mjs` | 1.275 batch dummy OPC (51 batch x 25 principal, semua 12 problem code) |
+| `scripts/migrate-rbac-groups.mjs` | Buat tabel Dynamic RBAC (access_group, group_permission, user_group, permission_audit_log) — additive & idempotent |
+| `scripts/seed-rbac-presets.ts` | Seed 11 Access Group preset + backfill user_group dari user.role (`node --experimental-strip-types`) — backward-compat, idempotent |
 
 ### Output & Runtime Artifacts
 

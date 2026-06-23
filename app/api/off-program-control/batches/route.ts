@@ -11,7 +11,8 @@ import { randomUUID } from "node:crypto";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem, offPayment, claimWorkflow, claimSubmission } from "@/db/schema";
-import { buildSearchHaystack, canActorAccessOffData, canActorPerformOffAction, computeOffFinancePaymentSummary, computeOffPaymentSummary, findOffNoSuratConflicts, getNextOffBatchNumber, getPrincipleByCode, getPrincipleByName, matchesSearch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, searchOffBatchIdsWithElasticsearch, writeOffAudit, type OffSearchDocument } from "@/lib/off-program-control";
+import { buildSearchHaystack, computeOffFinancePaymentSummary, computeOffPaymentSummary, findOffNoSuratConflicts, getNextOffBatchNumber, getPrincipleByCode, getPrincipleByName, matchesSearch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, searchOffBatchIdsWithElasticsearch, writeOffAudit, type OffSearchDocument } from "@/lib/off-program-control";
+import { requirePermissionH } from "@/lib/rbac/resolve";
 
 // PPh masih HOLD. NOTE: PPh disiapkan nullable di level item/toko, tetapi
 // perhitungan final ditahan karena masih terkait format kwitansi setelah pembayaran.
@@ -237,9 +238,8 @@ function buildElasticsearchDocument(
 export async function GET(request: Request) {
     const actor = await requireOffSession();
     if (!actor) return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." }, { status: 401 });
-    if (!canActorAccessOffData(actor)) {
-        return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses OFF Program Control." }, { status: 403 });
-    }
+    const gate = await requirePermissionH("off_program_control.view");
+    if (gate.response) return gate.response;
     // Revisi C/D: filter periode + pencarian dilakukan di backend bila parameter dikirim.
     // Default tanpa parameter mengembalikan data seperti sebelumnya (tidak kosong tiba-tiba).
     const url = new URL(request.url);
@@ -448,9 +448,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     const actor = await requireOffSession();
     if (!actor) return NextResponse.json({ ok: false, error: "Anda tidak memiliki akses untuk melakukan tindakan ini." }, { status: 401 });
-    if (!canActorPerformOffAction(actor, "create_batch")) {
-        return NextResponse.json({ ok: false, error: "Role Anda tidak memiliki akses membuat batch OFF." }, { status: 403 });
-    }
+    const gate = await requirePermissionH("off_program_control.create_batch");
+    if (gate.response) return gate.response;
 
     try {
         const body = await request.json();
