@@ -119,7 +119,7 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     validator: ["view", "upload", "run", "download", "edit"],
     off_program_control: ["view", "create", "update", "approve", "export"],
     claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export"],
-    users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission"],
+    users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission", "manage"],
 };
 
 export type PermissionMap = Partial<Record<AppModule, PermissionAction[]>>;
