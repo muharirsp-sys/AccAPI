@@ -231,6 +231,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
 };
 
 export const pagePermissions: Array<{ prefix: string; module: AppModule; action: PermissionAction }> = [
+    { prefix: "/admin/groups", module: "users", action: "manage" },
     { prefix: "/admin/users", module: "users", action: "view" },
     { prefix: "/payments/sppd", module: "sppd", action: "view" },
     { prefix: "/payments", module: "payments", action: "view" },
