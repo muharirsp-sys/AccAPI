@@ -2,8 +2,8 @@
 # Tujuan: FastAPI backend untuk validator, payments restore/SPPD, finance approval, RBAC, proof upload, dan helper export berformat.
 # Caller: Next.js dashboard routes, browser uploads, dan service local AccAPI.
 # Dependensi: FastAPI, pandas/openpyxl, payments.py, template DOCX SPPD, Better Auth SQLite DB, filesystem JSON/output, auth utilities.
-# Main Functions: render_sppd_docx, payments_upload, payments_update, payments_clear, parse_lpb_upload, payments_template_download, payments_sppd_settings_get/save/upload, payments_finance_data, payments_finance_proof, payments_finance_update.
-# Side Effects: HTTP response/download, file upload/read/write, payments.json backup/mutation, DOCX/XLSX generation with number/date formatting, audit logging.
+# Main Functions: load_and_lock_payments_db, payments_conflict_response, render_sppd_docx, payments_upload, payments_update, payments_clear, parse_lpb_upload, payments_template_download, payments_sppd_settings_get/save/upload, payments_finance_data, payments_finance_proof, payments_finance_update.
+# Side Effects: HTTP response/download, file upload/read/write, locked payments.json backup/mutation, conflict notification responses, DOCX/XLSX generation with number/date formatting, audit logging.
 # =======================================================================================================
 # You requested:
 # 1) Engine reads program by channel using lookup "Data Channel by SUB" + data penjualan.
@@ -1542,6 +1542,28 @@ def save_payments_db(data: Dict[str, Any]) -> None:
     os.replace(tmp_path, PAYMENTS_DB_PATH)
     _PAYMENTS_DB_CACHE = data
     _PAYMENTS_DB_MTIME = os.path.getmtime(PAYMENTS_DB_PATH)
+
+def payment_write_timestamp() -> str:
+    return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def payment_record_revision(rec: Dict[str, Any]) -> str:
+    return s(rec.get("updated_at", ""))
+
+def touch_payment_record(rec: Dict[str, Any], user: str, ts: str = "") -> None:
+    stamp = ts or payment_write_timestamp()
+    rec["updated_at"] = stamp
+    rec["updated_by"] = user
+
+def payments_conflict_response(message: str, conflicts: List[Dict[str, Any]]) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content={
+            "ok": False,
+            "error": message,
+            "conflict": True,
+            "conflicts": conflicts[:10],
+        },
+    )
 
 async def load_and_lock_payments_db():
     """Acquire _PAYMENTS_DB_LOCK lalu load payments.json.
@@ -5917,8 +5939,13 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
                 db = load_payments_db()
                 conflicts = validate_backup_restore_conflicts(db, restore_rows)
                 if conflicts:
-                    return JSONResponse(status_code=400, content={"ok": False, "error": "Restore backup dibatalkan: " + "; ".join(conflicts[:5])})
+                    return payments_conflict_response(
+                        "Restore backup dibatalkan karena ada data yang sudah ada di server.",
+                        [{"record_id": c, "reason": c} for c in conflicts],
+                    )
+                restore_ts = payment_write_timestamp()
                 for key, rec in restore_rows:
+                    touch_payment_record(rec, user, restore_ts)
                     db["lpb"][key] = rec
                 rebuild_payment_submissions(db)
                 max_seq = max_sppd_sequence_from_records([rec for _, rec in restore_rows])
@@ -5931,7 +5958,7 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
         rows = parse_lpb_upload(content)
         if not rows:
             return JSONResponse(status_code=400, content={"ok": False, "error": "Data LPB kosong."})
-        now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = payment_write_timestamp()
         async with _PAYMENTS_DB_LOCK:
             db = load_payments_db()
             dups = []
@@ -5970,6 +5997,8 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
                     "keterangan": s(r.get("keterangan", "")),
                     "created_at": now,
                     "created_by": user,
+                    "updated_at": now,
+                    "updated_by": user,
                 }
             save_payments_db(db)
         append_audit_log(user, "payments_upload", "lpb", {"added": len(rows)})
@@ -6013,7 +6042,7 @@ async def payments_manual_add(request: Request):
     if tipe == "NON_LPB" and (not jenis_dokumen or not nomor_dokumen):
         return JSONResponse(status_code=400, content={"ok": False, "error": "NON_LPB wajib isi Jenis Dokumen dan Nomor Dokumen."})
 
-    now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = payment_write_timestamp()
     async with _PAYMENTS_DB_LOCK:
       db = load_payments_db()
       if no_lpb and find_lpb_duplicate_key(db, no_lpb):
@@ -6056,6 +6085,8 @@ async def payments_manual_add(request: Request):
           "nomor_dokumen": nomor_dokumen,
           "created_at": now,
           "created_by": user,
+          "updated_at": now,
+          "updated_by": user,
       }
       save_payments_db(db)
     append_audit_log(user, "payments_manual_add", "lpb", {"record_id": key, "tipe_pengajuan": tipe})
@@ -6082,6 +6113,29 @@ async def payments_update(request: Request):
     skipped = []
     async with _PAYMENTS_DB_LOCK:
         db = load_payments_db()
+        conflicts: List[Dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            row_id = s(item.get("record_id", "")) or s(item.get("id", "")) or s(item.get("no_lpb", ""))
+            key = resolve_payment_record_key(db, row_id)
+            if not key or key not in db.get("lpb", {}):
+                continue
+            expected_revision = s(item.get("source_updated_at", ""))
+            current_revision = payment_record_revision(db["lpb"][key])
+            if expected_revision != current_revision:
+                conflicts.append({
+                    "record_id": key,
+                    "no_lpb": s(db["lpb"][key].get("no_lpb", "")),
+                    "expected_updated_at": expected_revision,
+                    "current_updated_at": current_revision,
+                })
+        if conflicts:
+            return payments_conflict_response(
+                "Data server sudah berubah. Refresh halaman sebelum menyimpan agar perubahan user lain tidak tertimpa.",
+                conflicts,
+            )
+        update_ts = payment_write_timestamp()
         for item in items:
             if not isinstance(item, dict):
                 skipped.append("")
@@ -6149,6 +6203,7 @@ async def payments_update(request: Request):
             except Exception:
                 rec["gap_nilai"] = 0.0
             if changed:
+                touch_payment_record(rec, user, update_ts)
                 updated.append(key)
         save_payments_db(db)
     append_audit_log(user, "payments_update", "lpb", {"count": len(updated), "samples": updated[:10], "skipped": skipped[:10]})
@@ -6355,6 +6410,7 @@ async def payments_sppd_upload(request: Request, file: UploadFile = File(None)):
         updated: List[str] = []
         not_found: List[str] = []
         changed_fields: Dict[str, int] = {}
+        update_ts = payment_write_timestamp()
         for item in rows:
             row_id = s(item.get("record_id", "")) or s(item.get("no_lpb", ""))
             key = resolve_payment_record_key(db, row_id)
@@ -6377,6 +6433,7 @@ async def payments_sppd_upload(request: Request, file: UploadFile = File(None)):
                     rec["gap_nilai"] = float(parse_number_id(rec.get("nilai_win", 0))) - float(parse_number_id(rec.get("nilai_invoice", 0)))
                 except Exception:
                     rec["gap_nilai"] = 0.0
+            touch_payment_record(rec, user, update_ts)
             updated.append(key)
         if not updated:
             return JSONResponse(status_code=400, content={"ok": False, "error": "Tidak ada record yang cocok untuk diupdate.", "not_found": not_found[:20]})
@@ -6854,6 +6911,25 @@ async def payments_cart_submit(request: Request):
     # Tulis semua perubahan ke DB di dalam lock
     async with _PAYMENTS_DB_LOCK:
         db = load_payments_db()
+        stale_records = []
+        for rec in selected:
+            key = s(rec.get("record_id", ""))
+            current = db.get("lpb", {}).get(key, {})
+            existing_submission = s(current.get("submission_id", ""))
+            existing_status = s(current.get("status_pembayaran", "")).lower()
+            if existing_submission and existing_status != "ajukan ulang":
+                stale_records.append({
+                    "record_id": key,
+                    "no_lpb": s(current.get("no_lpb", "")),
+                    "submission_id": existing_submission,
+                    "status_pembayaran": s(current.get("status_pembayaran", "")),
+                    "target_payment_date": s(current.get("target_payment_date", "")),
+                })
+        if stale_records:
+            return payments_conflict_response(
+                "Draft sudah usang. Sebagian record sudah diajukan oleh proses lain, refresh halaman lalu buat draft baru.",
+                stale_records,
+            )
         for rec in selected:
             key = s(rec.get("record_id", ""))
             if key in db.get("lpb", {}):
@@ -6874,6 +6950,7 @@ async def payments_cart_submit(request: Request):
                 db["lpb"][key]["nilai_pembayaran"] = float(payment_alloc_by_lpb.get(key, 0.0) or 0.0)
                 if sppd_no:
                     db["lpb"][key]["sppd_no"] = sppd_no
+                touch_payment_record(db["lpb"][key], user, now)
 
         db["submissions"][submission_id] = {
             "id": submission_id,
@@ -7279,11 +7356,13 @@ async def replace_principle_name(request: Request):
     db = load_payments_db()
     replaced_count = 0
     replaced_keys: List[str] = []
+    update_ts = payment_write_timestamp()
     for rec_key, rec in db.get("lpb", {}).items():
         current = s(rec.get("principle", ""))
         # Case-insensitive comparison for matching
         if current.upper() == old_name.upper():
             rec["principle"] = new_name
+            touch_payment_record(rec, user, update_ts)
             replaced_count += 1
             replaced_keys.append(rec_key)
     if replaced_count > 0:
@@ -7352,12 +7431,14 @@ async def auto_fix_principle_names(request: Request):
 
     if confirm and changes:
         # Execute the renames
+        update_ts = payment_write_timestamp()
         for change in changes:
             old = change["old"]
             new = change["new"]
             for rec_key, rec in db.get("lpb", {}).items():
                 if s(rec.get("principle", "")) == old:
                     rec["principle"] = new
+                    touch_payment_record(rec, user, update_ts)
         save_payments_db(db)
         append_audit_log(user, "auto_fix_principle_names", "lpb", {
             "changes": changes,
@@ -7761,6 +7842,7 @@ async def payments_finance_update(request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "error": "Data finance yang akan diupdate tidak boleh kosong."})
     db = load_payments_db()
     updated_count = 0
+    update_ts = payment_write_timestamp()
     for item in items:
         no = normalize_lpb_no(s(item.get("no_lpb", "")))
         status = s(item.get("status_pembayaran", ""))
@@ -7798,6 +7880,7 @@ async def payments_finance_update(request: Request):
                 rec["accurate_payload_digest"] = s(item.get("accurate_payload_digest", ""))
                 rec["accurate_posted_at"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S") if rec["accurate_post_status"] == "posted" else s(rec.get("accurate_posted_at", ""))
                 rec["accurate_posted_by"] = user if rec["accurate_post_status"] == "posted" else s(rec.get("accurate_posted_by", ""))
+            touch_payment_record(rec, user, update_ts)
             updated_count += 1
 
         if no and no in db.get("lpb", {}):

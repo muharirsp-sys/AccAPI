@@ -1,11 +1,11 @@
 "use client";
 
 /*
- * Tujuan: Halaman manajemen payments/SPPD untuk upload LPB/backup, entry manual, edit grid terpaginasikan dengan format nilai decimal 2 digit, clear data, dan submit cart.
+ * Tujuan: Halaman manajemen payments/SPPD untuk upload LPB/backup, entry manual, edit grid terpaginasikan dengan format nilai decimal 2 digit, clear data, refresh tab/focus, dan submit cart.
  * Caller: Next.js App Router route `/payments`.
  * Dependensi: FastAPI payments endpoints, Better Auth client, DatePickerField, lucide-react, sonner.
- * Main Functions: PaymentsPage, fetchData, handleUpload, handleManualAdd, handleSubmitCart, handleSaveBulk, handleInputChange, handleDelete, handleClearAll.
- * Side Effects: HTTP call ke FastAPI, upload file Excel, update/delete/clear payments.json melalui backend.
+ * Main Functions: PaymentsPage, fetchData, handleUpload, handleManualAdd, handleSubmitCart, handleSaveBulk, handleInputChange, handleDelete, handleClearAll, backendConflictMessage.
+ * Side Effects: HTTP call ke FastAPI, upload file Excel, update/delete/clear payments.json melalui backend, refresh data saat window focus/visibility kembali.
  */
 
 import { useEffect, useState, useMemo } from "react";
@@ -53,6 +53,8 @@ interface PaymentRecord {
     actual_date?: string;
     tgl_pembayaran?: string;
     status_pembayaran?: string;
+    updated_at?: string;
+    updated_by?: string;
 }
 
 type PaymentApiRecord = PaymentRecord & { id?: string; ajukan?: boolean };
@@ -176,6 +178,21 @@ const api = {
     }
 };
 
+function backendConflictMessage(data: Record<string, unknown>): string {
+    const base = String(data.error || "Data server sudah berubah. Refresh halaman sebelum menyimpan ulang.");
+    const conflicts = Array.isArray(data.conflicts) ? data.conflicts : [];
+    const sample = conflicts
+        .slice(0, 3)
+        .map((item) => {
+            if (!item || typeof item !== "object") return "";
+            const rec = item as Record<string, unknown>;
+            return String(rec.no_lpb || rec.record_id || rec.reason || "");
+        })
+        .filter(Boolean)
+        .join(", ");
+    return sample ? `${base} (${sample})` : base;
+}
+
 export default function PaymentsPage() {
     const { data: session } = authClient.useSession();
     const isAdmin = (session?.user as { role?: string } | undefined)?.role === "admin";
@@ -219,14 +236,18 @@ export default function PaymentsPage() {
     // RC#2: Re-fetch saat user kembali ke tab ini agar data tidak stale
     // jika ada perubahan dari komputer/tab lain sejak halaman dibuka.
     useEffect(() => {
-        const handleVisibilityChange = () => {
-            if (document.visibilityState === "visible") {
-                fetchData({ showLoading: false });
-            }
+        const refreshIfVisible = () => {
+            if (document.visibilityState !== "visible") return;
+            if (Object.keys(pendingChanges).length > 0) return;
+            fetchData({ showLoading: false });
         };
-        document.addEventListener("visibilitychange", handleVisibilityChange);
-        return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-    }, []);
+        window.addEventListener("focus", refreshIfVisible);
+        document.addEventListener("visibilitychange", refreshIfVisible);
+        return () => {
+            window.removeEventListener("focus", refreshIfVisible);
+            document.removeEventListener("visibilitychange", refreshIfVisible);
+        };
+    }, [pendingChanges]);
 
     const fetchData = async (options: { showLoading?: boolean } = {}) => {
         const showLoading = options.showLoading !== false;
@@ -261,7 +282,11 @@ export default function PaymentsPage() {
                 toast.success(res.data.message || `Berhasil mengunggah ${res.data.added} data pembayaran.`);
                 fetchData();
             } else {
-                setUploadError(res.data.error || "Gagal mengunggah dataset pembayaran.");
+                const message = res.status === 409 || res.data.conflict
+                    ? backendConflictMessage(res.data)
+                    : res.data.error || "Gagal mengunggah dataset pembayaran.";
+                setUploadError(message);
+                toast.warning(message);
             }
         } catch (err: unknown) { setUploadError(err instanceof Error ? `Upload gagal: ${err.message}` : "Koneksi gagal saat upload. Pastikan backend menyala."); }
         finally { setIsUploading(false); }
@@ -336,6 +361,7 @@ export default function PaymentsPage() {
                 if (hasOwnField(changes, "jt_invoice")) item.jt_invoice = record?.jt_invoice ?? "";
                 if (hasOwnField(changes, "actual_date")) item.actual_date = record?.actual_date ?? "";
                 if (hasOwnField(changes, "tgl_pembayaran")) item.tgl_pembayaran = record?.tgl_pembayaran ?? "";
+                item.source_updated_at = record?.updated_at ?? "";
 
                 return item;
             });
@@ -367,6 +393,9 @@ export default function PaymentsPage() {
                 } else {
                     toast.warning("Data tersimpan, tetapi refresh gagal. Tampilan lokal tetap dipertahankan.");
                 }
+            } else if (res.status === 409 || res.data.conflict) {
+                toast.warning(backendConflictMessage(res.data));
+                fetchData({ showLoading: false });
             } else toast.error(res.data.error || "Gagal menyimpan perubahan tabel.");
         } catch { toast.error("Kesalahan jaringan saat sinkronisasi grid batch."); } 
         finally { setIsSaving(false); }

@@ -158,7 +158,7 @@ Data Sync (item/customer):
 ```
 Browser -> NEXT_PUBLIC_FASTAPI_BASE_URL (port 8000)
   -> python_backend/main.py [FastAPI app]
-     -> /payments/upload — parse Excel LPB, simpan ke payments.json
+     -> /payments/upload — parse Excel LPB/backup, simpan ke payments.json dengan lock dan konflik 409 jika restore menimpa data existing
      -> /payments/finance/data — data finance approval
      -> /payments/finance/proof — upload bukti transfer
      -> /validator/upload — upload data penjualan/channel
@@ -420,7 +420,7 @@ AccAPI/_github_clean/
 
 | File | Fungsi Utama | Peran |
 |---|---|---|
-| `python_backend/main.py` | FastAPI app (~60 route) | Validator data penjualan, payments management, SPPD DOCX generation, finance approval |
+| `python_backend/main.py` | FastAPI app (~60 route) | Validator data penjualan, payments management dengan lock request payments.json + konflik 409, SPPD DOCX generation, finance approval |
 | `python_backend/validator_engine.py` | `extract_pdf_text_safe`, `read_upload_file_limited` | Engine ekstraksi & validasi data (PDF/Excel) |
 | `python_backend/payments.py` | `lpb_upload_template_rows`, `validator_*_template_rows` | Template row builder untuk Excel upload |
 | `python_backend/principle_matcher.py` | `find_best_match`, `normalize_principle_name` | Fuzzy matching nama principal antar dataset |
