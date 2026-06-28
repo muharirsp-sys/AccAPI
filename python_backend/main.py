@@ -1,9 +1,9 @@
 # main.py (PATCH v12) — Channel lookup uploader + Internal dataset optional + Required-file guard UI/API
 # Tujuan: FastAPI backend untuk validator, payments restore/SPPD, finance approval, RBAC, proof upload, dan helper export berformat.
 # Caller: Next.js dashboard routes, browser uploads, dan service local AccAPI.
-# Dependensi: FastAPI, pandas/openpyxl, payments.py, template DOCX SPPD, Better Auth SQLite DB, filesystem JSON/output, auth utilities.
-# Main Functions: render_sppd_docx, payments_upload, payments_update, payments_clear, parse_lpb_upload, payments_template_download, payments_sppd_settings_get/save/upload, payments_finance_data, payments_finance_proof, payments_finance_update.
-# Side Effects: HTTP response/download, file upload/read/write, payments.json backup/mutation, DOCX/XLSX generation with number/date formatting, audit logging.
+# Dependensi: FastAPI, pandas/openpyxl, payments.py, template DOCX SPPD, Better Auth SQLite DB, filesystem JSON/output, stdlib lock file, auth utilities.
+# Main Functions: serialize_payments_db_requests, render_sppd_docx, payments_upload, payments_update, payments_clear, parse_lpb_upload, payments_template_download, payments_sppd_settings_get/save/upload, payments_finance_data, payments_finance_proof, payments_finance_update.
+# Side Effects: HTTP response/download, serialized payments.json read/write, file upload/read/write, payments.json backup/mutation, DOCX/XLSX generation with number/date formatting, audit logging.
 # =======================================================================================================
 # You requested:
 # 1) Engine reads program by channel using lookup "Data Channel by SUB" + data penjualan.
@@ -30,6 +30,7 @@ import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 import pandas as pd
+import asyncio
 import io, os, re, uuid, json, math, base64, hashlib, hmac, time, zipfile, copy, mimetypes
 from dotenv import load_dotenv
 load_dotenv(override=False)
@@ -45,7 +46,6 @@ from auth import (
     login_rate_key,
     parse_bool_env,
 )
-from ui_templates import inject_world_class_ui
 from validator_engine import extract_pdf_text_safe, read_upload_file_limited
 from payments import (
     lpb_upload_template_rows,
@@ -108,6 +108,10 @@ ERROR_LOG_PATH = str(os.getenv("ERROR_LOG_PATH", os.path.join(BASE_DIR, "data", 
 PAYMENTS_DB_PATH = str(os.getenv("PAYMENTS_DB_PATH", os.path.join(BASE_DIR, "data", "payments.json"))).strip()
 PAYMENTS_FILES_DIR = str(os.getenv("PAYMENTS_FILES_DIR", os.path.join(BASE_DIR, "output", "payments"))).strip()
 PAYMENTS_PROOFS_DIR = str(os.getenv("PAYMENTS_PROOFS_DIR", os.path.join(PAYMENTS_FILES_DIR, "proofs"))).strip()
+_PAYMENTS_DB_LOCKED_PREFIXES = ("/payments", "/api/bank-data")
+_PAYMENTS_DB_UNLOCKED_PREFIXES = ("/payments/files", "/payments/proofs")
+_PAYMENTS_DB_LOCK_TIMEOUT_SECONDS = float(os.getenv("PAYMENTS_DB_LOCK_TIMEOUT_SECONDS", "30"))
+_PAYMENTS_DB_LOCK_STALE_SECONDS = float(os.getenv("PAYMENTS_DB_LOCK_STALE_SECONDS", "120"))
 BANK_DATA_PATH = str(os.getenv("BANK_DATA_PATH", os.path.join(BASE_DIR, "Data No Rekening Principle.xlsx"))).strip()
 SPPD_TEMPLATE_PATH = str(os.getenv("SPPD_TEMPLATE_PATH", os.path.join(BASE_DIR, "SPPD TGL 24 FEBRUARI 2026.docx"))).strip()
 MAX_EXCEL_UPLOAD_BYTES = int(os.getenv("MAX_EXCEL_UPLOAD_BYTES", str(15 * 1024 * 1024)))
@@ -202,6 +206,63 @@ PATCH_NOTES_HTML = r"""
 """
 
 app = FastAPI(title="Discount Validator API", version=f"PATCH-{PATCH_VERSION}")
+
+def _payments_db_lock_path() -> str:
+    return f"{PAYMENTS_DB_PATH}.lock" if PAYMENTS_DB_PATH else ""
+
+def acquire_payments_db_file_lock() -> Optional[int]:
+    lock_path = _payments_db_lock_path()
+    if not lock_path:
+        return None
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    deadline = time.monotonic() + _PAYMENTS_DB_LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            os.write(fd, f"pid={os.getpid()} ts={time.time()}".encode("ascii", errors="ignore"))
+            return fd
+        except FileExistsError:
+            try:
+                age = time.time() - os.path.getmtime(lock_path)
+                # ponytail: stale lock cleanup assumes payments requests finish before this ceiling; raise env value if uploads/exports can run longer.
+                if age > _PAYMENTS_DB_LOCK_STALE_SECONDS:
+                    os.unlink(lock_path)
+                    continue
+            except FileNotFoundError:
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Timeout menunggu lock payments.json.")
+            time.sleep(0.05)
+
+def release_payments_db_file_lock(fd: Optional[int]) -> None:
+    lock_path = _payments_db_lock_path()
+    try:
+        if fd is not None:
+            os.close(fd)
+    finally:
+        if fd is not None and lock_path:
+            try:
+                os.unlink(lock_path)
+            except FileNotFoundError:
+                pass
+
+@app.middleware("http")
+async def serialize_payments_db_requests(request: Request, call_next):
+    path = request.url.path
+    touches_payments_db = (
+        any(path.startswith(prefix) for prefix in _PAYMENTS_DB_LOCKED_PREFIXES)
+        and not any(path.startswith(prefix) for prefix in _PAYMENTS_DB_UNLOCKED_PREFIXES)
+    )
+    if not touches_payments_db:
+        return await call_next(request)
+    lock_fd: Optional[int] = None
+    try:
+        lock_fd = await asyncio.to_thread(acquire_payments_db_file_lock)
+        return await call_next(request)
+    except TimeoutError as e:
+        return JSONResponse(status_code=503, content={"ok": False, "error": str(e)})
+    finally:
+        release_payments_db_file_lock(lock_fd)
 
 # ----- Background Jobs Storage -----
 # In a real enterprise app, use Redis/Celery. For now, in-memory dict mapped by job_id.
@@ -900,15 +961,6 @@ Teks surat:
 
     return out
 
-def parse_auth_users(spec: str) -> Dict[str, str]:
-    users: Dict[str, str] = {}
-    for part in str(spec or "").split(","):
-        part = part.strip()
-        if not part or ":" not in part:
-            continue
-        u, p = part.split(":", 1)
-        users[u.strip()] = p.strip()
-    return users
 
 def normalize_permissions(raw) -> Dict[str, Set[str]]:
     perms: Dict[str, Set[str]] = {}
@@ -973,71 +1025,13 @@ def parse_permission_profile(raw) -> Tuple[Dict[str, Set[str]], bool]:
     perms = normalize_permissions(parsed)
     return (perms, bool(perms))
 
-def load_users_json(path: str) -> Dict[str, Dict[str, str]]:
-    if not path or not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return {}
-    users: Dict[str, Dict[str, str]] = {}
-    if isinstance(data, dict):
-        for k, v in data.items():
-            u = s(k)
-            if not u:
-                continue
-            if isinstance(v, dict):
-                users[u] = {
-                    "password": s(v.get("password", "")),
-                    "role": s(v.get("role", "")),
-                    "permissions": v.get("permissions", v.get("perms")),
-                }
-            else:
-                users[u] = {"password": s(v), "role": ""}
-        return users
-    if isinstance(data, list):
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            u = s(item.get("username", ""))
-            p = s(item.get("password", ""))
-            r = s(item.get("role", ""))
-            if u:
-                users[u] = {"password": p, "role": r, "permissions": item.get("permissions", item.get("perms"))}
-    return users
 
-def save_users_json(path: str, users: Dict[str, Dict[str, str]]) -> None:
-    if not path:
-        return
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    data = []
-    for u in sorted(users.keys()):
-        info = users.get(u, {})
-        row = {"username": u, "password": s(info.get("password", "")), "role": s(info.get("role", ""))}
-        if "permissions" in info:
-            row["permissions"] = info.get("permissions")
-        data.append(row)
-    tmp_path = path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=True, indent=2)
-    os.replace(tmp_path, path)
 
 def get_auth_user_records() -> Dict[str, Dict[str, str]]:
-    users: Dict[str, Dict[str, str]] = {}
-    for u, p in parse_auth_users(AUTH_USERS).items():
-        role = "admin" if u in AUTH_ADMINS else ("finance" if u in AUTH_FINANCE else "user")
-        users[u] = {"password": p, "role": role, "source": "env", "permissions": None}
-    json_users = load_users_json(AUTH_USERS_JSON)
-    for u, info in json_users.items():
-        role = s(info.get("role", "")) or "user"
-        users[u] = {
-            "password": s(info.get("password", "")),
-            "role": role,
-            "source": "json",
-            "permissions": info.get("permissions", None),
-        }
-    return users
+    # ponytail: store kredensial paralel (users.json + env AUTH_USERS) dimatikan (#7).
+    # Identitas & RBAC kini hanya dari Better Auth (sqlite.db user/session). Fungsi
+    # dipertahankan agar pemanggil legacy aman; selalu kosong.
+    return {}
 
 def get_auth_user_map() -> Dict[str, str]:
     records = get_auth_user_records()
@@ -1077,17 +1071,6 @@ def _normalize_samesite(value: str) -> str:
         return v
     return "strict"
 
-def detect_password_scheme(stored: str) -> str:
-    stored = s(stored)
-    if stored.startswith("argon2$"):
-        return "argon2"
-    if stored.startswith("bcrypt$") or stored.startswith("$2a$") or stored.startswith("$2b$"):
-        return "bcrypt"
-    if stored.startswith("pbkdf2$"):
-        return "pbkdf2"
-    if stored.startswith("sha256$"):
-        return "sha256"
-    return "plain"
 
 def _pbkdf2_hash(password: str, iterations: Optional[int] = None, salt: Optional[bytes] = None) -> str:
     iters = int(iterations or AUTH_PBKDF2_ITERATIONS)
@@ -1108,104 +1091,7 @@ def _pbkdf2_verify(password: str, stored: str) -> bool:
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iters)
     return hmac.compare_digest(dk, expected)
 
-def hash_password(password: str, scheme: Optional[str] = None) -> str:
-    scheme = s(scheme) or AUTH_PASSWORD_SCHEME
-    scheme = scheme.lower()
-    if scheme == "auto":
-        if _ARGON2 is not None:
-            scheme = "argon2"
-        elif _bcrypt is not None:
-            scheme = "bcrypt"
-        else:
-            scheme = "pbkdf2"
 
-    if scheme == "argon2":
-        if _ARGON2 is None:
-            scheme = "bcrypt" if _bcrypt is not None else "pbkdf2"
-        else:
-            return "argon2$" + _ARGON2.hash(password)
-
-    if scheme == "bcrypt":
-        if _bcrypt is None:
-            scheme = "pbkdf2"
-        else:
-            hashed = _bcrypt.hashpw(password.encode("utf-8"), _bcrypt.gensalt(rounds=AUTH_BCRYPT_ROUNDS))
-            return "bcrypt$" + hashed.decode("utf-8")
-
-    return _pbkdf2_hash(password)
-
-def verify_password_hash(password: str, stored: str) -> bool:
-    scheme = detect_password_scheme(stored)
-    if scheme == "argon2":
-        if _ARGON2 is None:
-            return False
-        try:
-            return bool(_ARGON2.verify(stored.split("$", 1)[1], password))
-        except Exception:
-            return False
-    if scheme == "bcrypt":
-        if _bcrypt is None:
-            return False
-        hashed = stored.split("$", 1)[1] if stored.startswith("bcrypt$") else stored
-        try:
-            return bool(_bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8")))
-        except Exception:
-            return False
-    if scheme == "pbkdf2":
-        return _pbkdf2_verify(password, stored)
-    if scheme == "sha256":
-        expected = stored.split("$", 1)[1]
-        hashed = hashlib.sha256(password.encode("utf-8")).hexdigest()
-        return hmac.compare_digest(expected, hashed)
-    return hmac.compare_digest(stored, password)
-
-def verify_user(username: str, password: str) -> Tuple[bool, Optional[str], str]:
-    username = s(username)
-    password = s(password)
-    records = get_auth_user_records()
-    rec = records.get(username)
-    if not username or rec is None:
-        return (False, None, "")
-    stored = s(rec.get("password", ""))
-    if not stored:
-        return (False, None, s(rec.get("source", "")))
-    ok = verify_password_hash(password, stored)
-    if not ok:
-        return (False, None, s(rec.get("source", "")))
-    scheme = detect_password_scheme(stored)
-    upgrade = None
-    if scheme in ["plain", "sha256"]:
-        upgrade = hash_password(password)
-    return (True, upgrade, s(rec.get("source", "")))
-
-def make_token(username: str) -> str:
-    exp = int(time.time()) + int(AUTH_TTL_SECONDS)
-    payload = f"{username}|{exp}"
-    sig = hmac.new(AUTH_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-    return f"{_b64url_encode(payload.encode('utf-8'))}.{sig}"
-
-def validate_token(token: str) -> Optional[str]:
-    token = s(token)
-    if not token or "." not in token:
-        return None
-    payload_b64, sig = token.split(".", 1)
-    try:
-        payload = _b64url_decode(payload_b64).decode("utf-8")
-    except Exception:
-        return None
-    expected_sig = hmac.new(AUTH_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(sig, expected_sig):
-        return None
-    if "|" not in payload:
-        return None
-    user, exp_s = payload.rsplit("|", 1)
-    try:
-        exp = int(exp_s)
-    except Exception:
-        return None
-    if exp < int(time.time()):
-        return None
-    return s(user)
 
 def make_csrf_token() -> str:
     exp = int(time.time()) + int(CSRF_TTL_SECONDS)
@@ -1285,29 +1171,10 @@ def is_same_origin_request(request: Request) -> bool:
         return False
     return True
 
-def render_html_with_csrf(request: Request, html: str) -> HTMLResponse:
-    token = get_or_create_csrf_token(request)
-    samesite = _normalize_samesite(CSRF_COOKIE_SAMESITE)
-    enhanced_html = inject_world_class_ui(html)
-    rendered = enhanced_html.replace("__CSRF_TOKEN__", token).replace("__CSRF_COOKIE__", CSRF_COOKIE)
-    resp = HTMLResponse(rendered)
-    resp.set_cookie(
-        CSRF_COOKIE,
-        token,
-        httponly=False,
-        max_age=CSRF_TTL_SECONDS,
-        path="/",
-        samesite=samesite,
-        secure=AUTH_COOKIE_SECURE,
-    )
-    return resp
 
 def get_current_user(request: Request) -> Optional[str]:
-    # 1. Try legacy Token
-    old_token = request.cookies.get(AUTH_COOKIE, "")
-    user = validate_token(old_token) if old_token else None
-    if user:
-        return user
+    # ponytail: auth Python paralel dihapus (#7) — satu-satunya sumber identitas
+    # adalah sesi Better Auth (cookie better-auth.session_token) divalidasi ke sqlite.db.
         
     # 2. Try Better-Auth SQLite Session
     ba_token = None
@@ -1501,6 +1368,28 @@ def append_error_log(where: str, err: Exception, context: Optional[Dict[str, Any
 _PAYMENTS_DB_CACHE: Optional[Dict[str, Any]] = None
 _PAYMENTS_DB_MTIME: float = 0.0
 _PAYMENTS_DB_EMPTY: Dict[str, Any] = {"lpb": {}, "submissions": {}, "drafts": {}, "finance_mappings": {}, "proofs": {}, "sppd_settings": {}}
+
+def payment_write_timestamp() -> str:
+    return pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def payment_record_revision(rec: Dict[str, Any]) -> str:
+    return s(rec.get("updated_at", ""))
+
+def touch_payment_record(rec: Dict[str, Any], user: str, ts: str = "") -> None:
+    stamp = ts or payment_write_timestamp()
+    rec["updated_at"] = stamp
+    rec["updated_by"] = user
+
+def payments_conflict_response(message: str, conflicts: List[Dict[str, Any]]) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content={
+            "ok": False,
+            "error": message,
+            "conflict": True,
+            "conflicts": conflicts[:10],
+        },
+    )
 
 def load_payments_db() -> Dict[str, Any]:
     global _PAYMENTS_DB_CACHE, _PAYMENTS_DB_MTIME
@@ -3404,2159 +3293,16 @@ document.getElementById('form').addEventListener('submit', async (e) => {
 </body>
 </html>"""
 
-HOME_HTML = r"""<!doctype html>
-<html lang="id">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="icon" href="/favicon.ico">
-  <link rel="icon" type="image/png" href="/favicon.png">
-  <title>Dashboard</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="min-h-screen bg-[#EFEFEF] text-[#1D1F1E]">
-  <div class="max-w-5xl mx-auto px-6 py-10">
-    <div class="flex items-center justify-between">
-      <div>
-        <div class="text-xs uppercase tracking-widest text-[#1D1F1E]">CV. Surya Perkasa</div>
-        <h1 class="mt-2 text-2xl font-semibold">Portal Program</h1>
-        <p class="mt-1 text-sm text-[#1D1F1E]">Pilih fitur yang ingin kamu gunakan.</p>
-      </div>
-      <div class="flex items-center gap-2">
-        <a href="/change-password" class="text-xs px-3 py-2 rounded-full border border-[#8A4703] bg-[#EFEFEF] hover:bg-[#F2DA82] hover:text-[#1D1F1E]">Ubah Password</a>
-        <a href="/users" class="text-xs px-3 py-2 rounded-full border border-[#8A4703] bg-[#EFEFEF] hover:bg-[#F2DA82] hover:text-[#1D1F1E] __SHOW_USERS__">Users</a>
-        <a href="/logout" class="text-xs px-3 py-2 rounded-full border border-[#8A4703] bg-[#EFEFEF] hover:bg-[#F2DA82] hover:text-[#1D1F1E]">Logout</a>
-      </div>
-    </div>
 
-    <div class="mt-8 grid md:grid-cols-3 gap-5">
-      <a href="/validator" class="group rounded-2xl border border-[#8A4703] bg-[#EFEFEF] p-6 shadow-lg hover:shadow-xl transition __SHOW_VALIDATOR__">
-        <div class="text-xs uppercase tracking-widest text-[#1D1F1E]">Option 1</div>
-        <div class="mt-2 text-xl font-semibold">Program Validator</div>
-        <div class="mt-1 text-sm text-[#1D1F1E]">Validasi diskon & bonus vs dataset program.</div>
-        <div class="mt-4 text-sm text-[#1D1F1E] font-semibold">Masuk →</div>
-      </a>
 
-      <a href="/summary/manual" class="group rounded-2xl border border-[#8A4703] bg-[#EFEFEF] p-6 shadow-lg hover:shadow-xl transition __SHOW_SUMMARY__">
-        <div class="text-xs uppercase tracking-widest text-[#1D1F1E]">Option 2</div>
-        <div class="mt-2 text-xl font-semibold">Program Generator</div>
-        <div class="mt-1 text-sm text-[#1D1F1E]">Generate summary dari surat program (PDF/Excel).</div>
-        <div class="mt-4 text-sm text-[#1D1F1E] font-semibold">Masuk →</div>
-      
 
-            </a>
 
-      <a href="/payments" class="group rounded-2xl border border-[#8A4703] bg-[#EFEFEF] p-6 shadow-lg hover:shadow-xl transition __SHOW_PAYMENTS__">
-        <div class="text-xs uppercase tracking-widest text-[#1D1F1E]">Option 3</div>
-        <div class="mt-2 text-xl font-semibold">Pengajuan Pembayaran Invoice</div>
-        <div class="mt-1 text-sm text-[#1D1F1E]">Upload LPB, ajukan pembayaran, dan pantau status.</div>
-        <div class="mt-4 text-sm text-[#1D1F1E] font-semibold">Masuk →</div>
-      </a>
-    </div>
-  </div>
-</body>
-</html>"""
 
-SUMMARY_HTML = r"""<!doctype html>
-<html lang="id">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="icon" href="/favicon.ico">
-  <link rel="icon" type="image/png" href="/favicon.png">
-  <title>Summary Generator</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="min-h-screen bg-[#EFEFEF] text-[#1D1F1E]">
-  <div class="max-w-4xl mx-auto px-6 py-10">
-    <div class="flex items-center justify-between">
-      <div>
-        <div class="text-xs uppercase tracking-widest text-[#1D1F1E]">Summary Generator</div>
-        <h1 class="mt-2 text-2xl font-semibold">Generate Summary Program</h1>
-        <p class="mt-1 text-sm text-[#1D1F1E]">Upload surat program (PDF/Excel) lalu sistem isi otomatis.</p>
-      </div>
-      <div class="flex items-center gap-2">
-        <a href="/" class="text-xs px-3 py-2 rounded-full border border-[#8A4703] bg-[#EFEFEF] hover:bg-[#F2DA82] hover:text-[#1D1F1E]">Dashboard</a>
-        <a href="/logout" class="text-xs px-3 py-2 rounded-full border border-[#8A4703] bg-[#EFEFEF] hover:bg-[#F2DA82] hover:text-[#1D1F1E]">Logout</a>
-      </div>
-    </div>
 
-    <div class="mt-6 rounded-2xl border border-[#8A4703] bg-[#EFEFEF] p-6 shadow-lg">
-      <form id="sumForm" class="grid md:grid-cols-2 gap-4">
-        <div class="md:col-span-2">
-          <label class="text-sm font-semibold">Upload Surat Program</label>
-          <input id="sumFile" type="file" accept=".pdf,.xlsx,.xls" class="mt-2 block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-[#BD7401] file:text-[#EFEFEF] hover:file:brightness-110"/>
-          <div class="mt-2 text-xs text-[#1D1F1E]">PDF scan akan di‑OCR (jika tersedia).</div>
-        </div>
 
-        <div>
-          <label class="text-sm font-semibold">Ada List / Tanpa List</label>
-          <select id="listMode" class="mt-2 w-full rounded-xl border border-[#8A4703] px-3 py-2 text-sm">
-            <option value="TANPA LIST" selected>TANPA LIST</option>
-            <option value="ADA LIST">ADA LIST</option>
-          </select>
-        </div>
 
-        <div>
-          <label class="text-sm font-semibold">Template Principle</label>
-          <select id="template" class="mt-2 w-full rounded-xl border border-[#8A4703] px-3 py-2 text-sm">
-            <option value="GUMINDO" selected>PT. Gumindo Bogamanis</option>
-          </select>
-        </div>
 
-        <div class="md:col-span-2">
-          <button id="sumBtn" class="w-full rounded-2xl px-4 py-3 font-semibold text-[#EFEFEF] bg-[#BD7401] hover:bg-[#8A4703] hover:text-[#EFEFEF] transition">Generate</button>
-          <div id="sumMsg" class="mt-3 text-sm text-[#1D1F1E]"></div>
-          <a id="sumDownload" href="#" class="hidden mt-3 inline-block text-sm font-semibold text-[#1D1F1E]">Download Summary</a>
-        </div>
-      </form>
-    </div>
-  </div>
 
-<script>
-const CSRF_TOKEN = "__CSRF_TOKEN__";
-const CAN_SUMMARY_EDIT = __CAN_SUMMARY_EDIT__;
-const form = document.getElementById('sumForm');
-const msg = document.getElementById('sumMsg');
-const btn = document.getElementById('sumBtn');
-const dl = document.getElementById('sumDownload');
-
-if(!CAN_SUMMARY_EDIT){
-  btn.disabled = true;
-  msg.textContent = 'Akses tidak diizinkan.';
-}
-
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const file = document.getElementById('sumFile').files[0];
-  if(!file){
-    msg.textContent = 'File belum dipilih.';
-    return;
-  }
-  btn.disabled = true;
-  msg.textContent = 'Memproses...';
-  dl.classList.add('hidden');
-
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('list_mode', document.getElementById('listMode').value);
-  fd.append('template', document.getElementById('template').value);
-
-  try{
-    const res = await fetch('/summary/manual', { method: 'POST', body: fd, headers: { 'X-CSRF-Token': CSRF_TOKEN } });
-    const j = await res.json();
-    if(!res.ok || !j.ok) throw new Error(j.error || ('HTTP ' + res.status));
-    msg.textContent = 'Summary berhasil dibuat.';
-    dl.href = j.download_url;
-    dl.classList.remove('hidden');
-  }catch(err){
-    msg.textContent = err.message || String(err);
-  }finally{
-    btn.disabled = false;
-  }
-});
-</script>
-</body>
-</html>"""
-
-PAYMENTS_HTML = r""""<!doctype html>
-<html lang="id">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="icon" href="/favicon.ico">
-  <link rel="icon" type="image/png" href="/favicon.png">
-  <title>Pengajuan Pembayaran Invoice</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    .lpb-table {
-      border-collapse: separate;
-      border-spacing: 0;
-      width: max-content;
-      min-width: 100%;
-      table-layout: auto;
-      --header-h: 0px;
-    }
-    .lpb-table th,
-    .lpb-table td {
-      border: 1px solid #e2e8f0;
-      padding: 10px 14px;
-      white-space: nowrap;
-    }
-    .lpb-table thead th {
-      background: #f8fafc;
-      font-weight: 700;
-      color: #334155;
-      position: sticky;
-      top: 0;
-      z-index: 3;
-    }
-    .lpb-table thead tr:nth-child(2) th {
-      background: #f1f5f9;
-      top: var(--header-h);
-      z-index: 2;
-    }
-    .lpb-table th:first-child,
-    .lpb-table td:first-child {
-      position: sticky;
-      left: 0;
-      min-width: 60px;
-      width: 60px;
-      z-index: 4;
-      background: inherit;
-    }
-    .lpb-table th:nth-child(2),
-    .lpb-table td:nth-child(2) {
-      position: sticky;
-      left: 60px;
-      min-width: 180px;
-      z-index: 3;
-      background: inherit;
-    }
-    .lpb-table thead th:first-child,
-    .lpb-table thead th:nth-child(2) {
-      background: #f8fafc;
-      z-index: 6;
-    }
-    .lpb-table thead tr:nth-child(2) th:first-child,
-    .lpb-table thead tr:nth-child(2) th:nth-child(2) {
-      background: #f1f5f9;
-      z-index: 5;
-    }
-    .lpb-table tbody tr {
-      background: #ffffff;
-      transition: background-color 0.15s ease;
-    }
-    .lpb-table tbody tr:hover {
-      background: #f1f5f9;
-    }
-    .lpb-table input[type="text"],
-    .lpb-table input[type="date"],
-    .lpb-table select {
-      background: #ffffff;
-      border: 1px solid #cbd5e1;
-      border-radius: 6px;
-      padding: 6px 10px;
-      font-size: 13px;
-      color: #334155;
-      width: 100%;
-      transition: all 0.2s;
-    }
-    .lpb-table input[type="text"]:focus,
-    .lpb-table input[type="date"]:focus,
-    .lpb-table select:focus {
-      outline: none;
-      border-color: #6366f1;
-      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
-    }
-    
-    /* Custom Scrollbar for the table container */
-    .table-container::-webkit-scrollbar { height: 8px; width: 8px; }
-    .table-container::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 10px; }
-    .table-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-    .table-container::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-  </style>
-</head>
-<body class="min-h-screen bg-slate-50 text-gray-800 font-sans">
-  <div class="w-[98vw] max-w-[1600px] mx-auto px-4 sm:px-6 py-8">
-    
-    <!-- Header -->
-    <div class="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-gray-200">
-      <div>
-        <div class="text-[11px] uppercase tracking-widest text-indigo-600 font-bold mb-1">Aplikasi 3</div>
-        <h1 class="text-3xl font-extrabold text-gray-900 tracking-tight flex items-center gap-3">
-          <svg class="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"></path></svg>
-          Manajemen Invoice & Pembayaran
-        </h1>
-        <p class="mt-2 text-sm text-gray-500 max-w-2xl">Upload data LPB (Laporan Penerimaan Barang), lengkapi detail dokumen invoice, dan ajukan pembayaran ke Finance terpusat.</p>
-      </div>
-      <div class="flex items-center gap-3 shrink-0">
-        <a href="/" class="text-sm font-medium px-4 py-2 rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-all shadow-sm flex items-center gap-2">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
-          Dashboard
-        </a>
-        <a id="financeLink" href="/payments/finance" class="text-sm font-medium px-4 py-2 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-800 transition-all shadow-sm flex items-center gap-2 border border-indigo-200 hidden">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
-          Halaman Finance
-        </a>
-        <a href="/logout" class="text-sm font-medium px-4 py-2 rounded-xl border border-gray-200 bg-white text-red-600 hover:bg-red-50 hover:text-red-700 transition-all shadow-sm">Logout</a>
-      </div>
-    </div>
-
-    <!-- Top Action Cards -->
-    <div class="mt-8 grid lg:grid-cols-3 gap-6">
-      
-      <!-- Upload Card -->
-      <div class="lg:col-span-2 rounded-2xl bg-white border border-gray-100 p-6 sm:p-8 shadow-sm">
-        <div class="flex items-center gap-2 mb-2">
-          <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
-          <div class="text-lg font-extrabold text-gray-900 tracking-tight">Upload Data Invoice (LPB)</div>
-        </div>
-        <p class="text-[13px] text-gray-500 mb-5">Sistem akan membaca Excel, menyimpannya permanen di database, dan membuang duplikasi secara otomatis berdasarkan No. LPB.</p>
-        
-        <div class="flex flex-col sm:flex-row items-center gap-3">
-          <div class="flex-1 w-full bg-indigo-50/50 border border-indigo-100 rounded-xl p-1 pr-1.5 flex items-center justify-between hover:border-indigo-300 transition-colors">
-             <input id="lpbFile" type="file" accept=".xlsx,.xls"
-                    class="block w-full text-sm text-gray-600 file:cursor-pointer file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border-0
-                           file:bg-indigo-100 file:text-indigo-700 file:font-bold hover:file:bg-indigo-200 transition-colors"/>
-          </div>
-          <button id="uploadBtn" class="w-full sm:w-auto shrink-0 rounded-xl px-6 py-3 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition-all active:scale-[0.98]">
-            Proses Upload
-          </button>
-          <a href="/payments/template" class="w-full sm:w-auto shrink-0 text-center rounded-xl px-5 py-3 text-sm font-bold text-indigo-700 bg-white border border-indigo-200 hover:bg-indigo-50 hover:border-indigo-300 shadow-sm transition-all">
-            ↓ Unduh Template
-          </a>
-        </div>
-        <div id="uploadMsg" aria-live="polite" role="status" class="mt-3 text-[13px] font-medium text-emerald-600"></div>
-        
-        <div class="mt-8 pt-6 border-t border-gray-100">
-          <div class="flex items-center gap-2 mb-4">
-             <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-             <div class="text-base font-extrabold text-gray-900">Tambah Pengajuan Manual <span class="text-xs font-semibold text-gray-400 font-normal uppercase ml-1">(CBD / NON_LPB)</span></div>
-          </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-            <div>
-              <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Tipe Pengajuan</label>
-              <select id="manualType" class="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-sm transition-all cursor-pointer">
-                <option value="CBD">CBD</option>
-                <option value="NON_LPB">NON_LPB</option>
-                <option value="LPB">LPB</option>
-              </select>
-            </div>
-            <div>
-              <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">No. Dokumen</label>
-              <input id="manualNoLpb" type="text" class="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-sm transition-all placeholder:font-normal" placeholder="Cth: LPB/2602..." />
-            </div>
-            <div>
-              <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Principle</label>
-              <input id="manualPrinciple" type="text" class="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-sm transition-all placeholder:font-normal" placeholder="Nama entitas..." />
-            </div>
-            <div>
-              <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">No. Invoice</label>
-              <input id="manualInvoiceNo" type="text" class="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-sm transition-all placeholder:font-normal" placeholder="Opsional jika NON_LPB" />
-            </div>
-            <div>
-              <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Nilai Nominal Invoice</label>
-              <input id="manualNilaiInvoice" type="text" inputmode="numeric" class="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-bold text-amber-700 bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-sm transition-all placeholder:font-normal" placeholder="1.250.000" />
-            </div>
-            <div>
-              <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Jenis Dok (NON_LPB)</label>
-              <input id="manualJenisDokumen" type="text" class="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-sm transition-all placeholder:font-normal" placeholder="Memo Biaya dsb." />
-            </div>
-            <div class="sm:col-span-2">
-              <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Nomor Referensi (NON_LPB)</label>
-              <input id="manualNomorDokumen" type="text" class="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-sm transition-all placeholder:font-normal" placeholder="Cth: DOC/FIN/2026/0012" />
-            </div>
-            <div class="flex items-end">
-              <button id="manualAddBtn" class="w-full rounded-xl px-4 py-2.5 text-sm font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-sm transition-all active:scale-[0.98]">
-                Tambah Entry Manual
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Action Card -->
-      <div class="rounded-2xl bg-white border border-gray-100 p-6 sm:p-8 shadow-sm flex flex-col justify-between">
-        <div>
-          <div class="flex items-center gap-2 mb-2">
-            <svg class="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
-            <div class="text-lg font-extrabold text-gray-900 tracking-tight">Kompilasi & Submit</div>
-          </div>
-          <p class="text-[13px] text-gray-500 mb-6 leading-relaxed">Pilih baris data pengajuan (LPB/CBD/NON_LPB) dari tabel di bawah, lalu proses kompilasi untuk diajukan pembayarannya ke pusat.</p>
-          
-          <div class="mb-5">
-            <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">Metode Tujuan Bank</label>
-            <div class="relative">
-              <select id="payMethod" class="w-full appearance-none rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm transition-all cursor-pointer">
-                <option value="NON_PANIN">Bank Non Panin (Umum)</option>
-                <option value="BANK_PANIN">Bank Panin Khusus</option>
-              </select>
-              <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-400">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <button id="submitBtn" class="w-full rounded-xl px-4 py-3.5 text-[15px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-md hover:shadow-lg transition-all active:scale-[0.98] flex items-center justify-center gap-2">
-            Proses & Download Dokumen
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
-          </button>
-          <div id="submitMsg" aria-live="polite" role="status" class="mt-3 text-[13px] font-medium text-center text-gray-600 h-4"></div>
-          <div id="resultLinks" class="mt-4 space-y-2 text-sm text-center"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Data Table Card -->
-    <div class="mt-8 rounded-2xl bg-white border border-gray-100 shadow-sm flex flex-col overflow-hidden">
-      <!-- Table Header Bar -->
-      <div class="p-5 sm:p-6 border-b border-gray-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-gray-50/50">
-        <div>
-          <h2 class="text-xl font-bold text-gray-900 tracking-tight">Database LPB & Pengajuan</h2>
-          <p class="text-[13px] text-gray-500 mt-1">Gunakan tabel di bawah ini untuk mengedit, memfilter, dan memilih data yang akan diajukan.</p>
-        </div>
-        <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-          <button id="exportPaymentsBtn" class="flex-1 sm:flex-none justify-center rounded-xl px-4 py-2.5 text-sm font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-all flex items-center gap-2 shadow-sm">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-            Export Excel
-          </button>
-          <button id="deleteBtn" class="flex-1 sm:flex-none justify-center rounded-xl px-4 py-2.5 text-sm font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 hover:border-red-300 transition-all shadow-sm">
-            Gugurkan (Hapus)
-          </button>
-          <button id="saveBtn" class="flex-1 sm:flex-none justify-center w-full sm:w-auto rounded-xl px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-sm flex items-center gap-2">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
-            Simpan Perubahan
-          </button>
-        </div>
-      </div>
-      
-      <!-- Table Wrapper -->
-      <div class="table-container overflow-x-auto w-full relative">
-        <table class="lpb-table text-[13px]">
-          <thead>
-            <tr>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">Ajukan</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">Tipe</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">No. LPB / Referensi</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">Principle / Vendor</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">Tgl Setor</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">Tgl Win</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">J.Tempo Win</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500 text-amber-700">Nilai Sistem</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">Terima Barang</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">Tgl Invoice</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">No. Invoice</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">Jenis Dok.</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">No. Dokumen</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500 text-indigo-700">Nilai Invoice</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">JT Invoice</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500 text-red-600">Selisih/Gap</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">Actual Date</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500 text-emerald-700">Tgl Bayar</th>
-              <th class="text-left font-bold text-xs uppercase tracking-wider text-gray-500">Status</th>
-            </tr>
-            <!-- Global Filter Row -->
-            <tr class="bg-gray-50">
-              <th>
-                <select id="f_ajukan" class="cursor-pointer font-medium text-xs border border-gray-300 rounded shadow-sm py-1.5 focus:ring-1 focus:ring-indigo-500 font-sans">
-                  <option value="">(Semua)</option>
-                  <option value="checked">Dicentang</option>
-                  <option value="unchecked">Kosong</option>
-                </select>
-              </th>
-              <th>
-                <select id="f_tipe_pengajuan" class="cursor-pointer font-medium text-xs border border-gray-300 rounded shadow-sm py-1.5 focus:ring-1 focus:ring-indigo-500 font-sans">
-                  <option value="">(Semua Tipe)</option>
-                  <option value="LPB">LPB Form</option>
-                  <option value="CBD">CBD Form</option>
-                  <option value="NON_LPB">NON_LPB Form</option>
-                </select>
-              </th>
-              <th><input id="f_no_lpb" type="text" class="placeholder:text-gray-300 font-medium font-sans" placeholder="Cari..." /></th>
-              <th><input id="f_principle" type="text" class="placeholder:text-gray-300 font-medium font-sans" placeholder="Cari vendor..." /></th>
-              <th><input id="f_tgl_setor" type="date" class="text-gray-600 font-sans" /></th>
-              <th><input id="f_tgl_win" type="date" class="text-gray-600 font-sans" /></th>
-              <th><input id="f_tgl_jtempo_win" type="date" class="text-gray-600 font-sans" /></th>
-              <th><input id="f_nilai_sistem" type="text" class="placeholder:text-gray-300 font-medium font-sans text-right" placeholder="Rp..." /></th>
-              <th><input id="f_tgl_terima" type="date" class="text-gray-600 font-sans" /></th>
-              <th><input id="f_tgl_invoice" type="date" class="text-gray-600 font-sans" /></th>
-              <th><input id="f_invoice" type="text" class="placeholder:text-gray-300 font-medium font-sans" placeholder="INV..." /></th>
-              <th><input id="f_jenis_dokumen" type="text" class="placeholder:text-gray-300 font-medium font-sans" placeholder="..." /></th>
-              <th><input id="f_nomor_dokumen" type="text" class="placeholder:text-gray-300 font-medium font-sans" placeholder="..." /></th>
-              <th><input id="f_nilai_invoice" type="text" class="placeholder:text-gray-300 font-medium font-sans text-right" placeholder="Rp..." /></th>
-              <th><input id="f_jt_invoice" type="date" class="text-gray-600 font-sans" /></th>
-              <th><input id="f_gap" type="text" class="placeholder:text-gray-300 font-medium font-sans text-right" placeholder="..." /></th>
-              <th><input id="f_actual_date" type="date" class="text-gray-600 font-sans" /></th>
-              <th><input id="f_tgl_pembayaran" type="date" class="text-gray-600 font-sans" /></th>
-              <th>
-                <select id="f_status" class="cursor-pointer font-medium text-xs border border-gray-300 rounded shadow-sm py-1.5 focus:ring-1 focus:ring-indigo-500 font-sans text-xs">
-                  <option value="">(Semua Status)</option>
-                  <option value="Belum Transfer">⏱ Belum Transfer</option>
-                  <option value="Sudah Transfer">✅ Sudah Transfer</option>
-                  <option value="Ajukan Ulang">🔄 Ajukan Ulang</option>
-                </select>
-              </th>
-            </tr>
-          </thead>
-          <tbody id="lpbBody" class="font-medium text-gray-700 divide-y divide-gray-100"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-<script>
-const CSRF_TOKEN = "__CSRF_TOKEN__";
-const CSRF_COOKIE_NAME = "__CSRF_COOKIE__";
-const IS_FINANCE = __IS_FINANCE__;
-const CAN_EDIT = __CAN_PAYMENTS_EDIT__;
-const CAN_UPDATE = __CAN_PAYMENTS_UPDATE__;
-const CAN_DELETE = __CAN_PAYMENTS_DELETE__;
-const financeLink = document.getElementById('financeLink');
-if(!IS_FINANCE){ financeLink.classList.add('hidden'); }
-
-function getCookieValue(name){
-  const parts = document.cookie ? document.cookie.split('; ') : [];
-  for(const part of parts){
-    const eq = part.indexOf('=');
-    if(eq <= 0){ continue; }
-    const key = part.slice(0, eq);
-    if(key === name){
-      return decodeURIComponent(part.slice(eq + 1));
-    }
-  }
-  return '';
-}
-
-function getCsrfToken(){
-  if(CSRF_TOKEN && !CSRF_TOKEN.includes('__CSRF_')){
-    return CSRF_TOKEN;
-  }
-  return getCookieValue(CSRF_COOKIE_NAME);
-}
-
-const uploadMsg = document.getElementById('uploadMsg');
-const submitMsg = document.getElementById('submitMsg');
-const resultLinks = document.getElementById('resultLinks');
-let lpbCache = [];
-const selectedLPB = new Set();
-
-if(!CAN_EDIT){
-  document.getElementById('uploadBtn').disabled = true;
-  document.getElementById('submitBtn').disabled = true;
-  document.getElementById('manualAddBtn').disabled = true;
-}
-if(!CAN_UPDATE){
-  document.getElementById('saveBtn').disabled = true;
-}
-if(!CAN_DELETE){
-  document.getElementById('deleteBtn').disabled = true;
-}
-
-function normText(value){
-  return (value || '').toString().trim().toLowerCase();
-}
-
-function matchText(value, filter){
-  if(!filter){ return true; }
-  return normText(value).includes(filter);
-}
-
-function normalizeRawDigits(value){
-  const digits = (value || '').toString().replace(/\D/g, '');
-  return digits.replace(/^0+(?=\d)/, '');
-}
-
-function formatRawDigits(value){
-  const digits = normalizeRawDigits(value);
-  if(!digits){ return ''; }
-  const withSep = digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  return withSep;
-}
-
-function countDigits(value){
-  const m = (value || '').toString().match(/\d/g);
-  return m ? m.length : 0;
-}
-
-function caretFromDigits(value, digitsCount){
-  if(digitsCount <= 0){ return 0; }
-  let count = 0;
-  const str = (value || '').toString();
-  for(let i = 0; i < str.length; i++){
-    if(/\d/.test(str[i])){
-      count++;
-      if(count >= digitsCount){
-        return i + 1;
-      }
-    }
-  }
-  return str.length;
-}
-
-function updateCache(no, field, value){
-  const row = lpbCache.find(r => (r.record_id || r.no_lpb) === no);
-  if(row){
-    row[field] = value;
-  }
-}
-
-function syncSelected(rows){
-  const existing = new Set((rows || []).map(r => (r.record_id || r.no_lpb)));
-  Array.from(selectedLPB).forEach(no => {
-    if(!existing.has(no)){
-      selectedLPB.delete(no);
-    }
-  });
-}
-
-function applyFilters(){
-  const fAjukan = document.getElementById('f_ajukan').value;
-  const fTipe = normText(document.getElementById('f_tipe_pengajuan').value);
-  const fNo = normText(document.getElementById('f_no_lpb').value);
-  const fPrinciple = normText(document.getElementById('f_principle').value);
-  const fTglSetor = normText(document.getElementById('f_tgl_setor').value);
-  const fTglWin = normText(document.getElementById('f_tgl_win').value);
-  const fTglJTempoWin = normText(document.getElementById('f_tgl_jtempo_win').value);
-  const fNilaiSistem = normText(document.getElementById('f_nilai_sistem').value);
-  const fTglTerima = normText(document.getElementById('f_tgl_terima').value);
-  const fTglInvoice = normText(document.getElementById('f_tgl_invoice').value);
-  const fInvoice = normText(document.getElementById('f_invoice').value);
-  const fJenisDokumen = normText(document.getElementById('f_jenis_dokumen').value);
-  const fNomorDokumen = normText(document.getElementById('f_nomor_dokumen').value);
-  const fNilaiInvoice = normText(document.getElementById('f_nilai_invoice').value);
-  const fJtInvoice = normText(document.getElementById('f_jt_invoice').value);
-  const fGap = normText(document.getElementById('f_gap').value);
-  const fActualDate = normText(document.getElementById('f_actual_date').value);
-  const fTglPembayaran = normText(document.getElementById('f_tgl_pembayaran').value);
-  const fStatus = normText(document.getElementById('f_status').value);
-
-  const filtered = (lpbCache || []).filter(r => {
-    const rid = r.record_id || r.no_lpb;
-    if(fAjukan === 'checked' && !selectedLPB.has(rid)){ return false; }
-    if(fAjukan === 'unchecked' && selectedLPB.has(rid)){ return false; }
-    if(fTipe && !matchText(r.tipe_pengajuan, fTipe)){ return false; }
-    if(!matchText(r.no_lpb, fNo)){ return false; }
-    if(!matchText(r.principle, fPrinciple)){ return false; }
-    if(!matchText(r.tgl_setor, fTglSetor)){ return false; }
-    if(!matchText(r.tgl_win, fTglWin)){ return false; }
-    if(!matchText(r.tgl_jtempo_win, fTglJTempoWin)){ return false; }
-    if(!matchText(r.nilai_win_display, fNilaiSistem)){ return false; }
-    if(!matchText(r.tgl_terima_barang, fTglTerima)){ return false; }
-    if(!matchText(r.tgl_invoice, fTglInvoice)){ return false; }
-    if(!matchText(r.invoice_no, fInvoice)){ return false; }
-    if(!matchText(r.jenis_dokumen, fJenisDokumen)){ return false; }
-    if(!matchText(r.nomor_dokumen, fNomorDokumen)){ return false; }
-    if(!matchText(r.nilai_invoice, fNilaiInvoice)){ return false; }
-    if(!matchText(r.jt_invoice, fJtInvoice)){ return false; }
-    if(!matchText(r.gap_nilai_display, fGap)){ return false; }
-    if(!matchText(r.actual_date, fActualDate)){ return false; }
-    if(!matchText(r.tgl_pembayaran, fTglPembayaran)){ return false; }
-    if(!matchText(r.status_pembayaran, fStatus)){ return false; }
-    return true;
-  });
-
-  renderLPB(filtered);
-  updateHeaderSticky();
-}
-
-function bindFilters(){
-  const ids = [
-    'f_ajukan','f_tipe_pengajuan','f_no_lpb','f_principle','f_tgl_setor','f_tgl_win','f_tgl_jtempo_win',
-    'f_nilai_sistem','f_tgl_terima','f_tgl_invoice','f_invoice','f_jenis_dokumen','f_nomor_dokumen','f_nilai_invoice','f_jt_invoice',
-    'f_gap','f_actual_date','f_tgl_pembayaran','f_status'
-  ];
-  ids.forEach(id => {
-    const el = document.getElementById(id);
-    if(!el){ return; }
-    el.addEventListener('input', applyFilters);
-    el.addEventListener('change', applyFilters);
-  });
-}
-
-function updateHeaderSticky(){
-  const table = document.querySelector('.lpb-table');
-  if(!table){ return; }
-  const firstRow = table.querySelector('thead tr');
-  if(!firstRow){ return; }
-  const h = firstRow.getBoundingClientRect().height || 0;
-  table.style.setProperty('--header-h', `${h}px`);
-}
-
-async function loadLPB(){
-  const res = await fetch('/payments/data');
-  const j = await res.json();
-  if(!j.ok){ return; }
-  lpbCache = j.data || [];
-  syncSelected(lpbCache);
-  applyFilters();
-  updateHeaderSticky();
-}
-
-function renderLPB(rows){
-  const body = document.getElementById('lpbBody');
-  body.innerHTML = '';
-  rows.forEach(r => {
-    const tr = document.createElement('tr');
-    tr.className = '';
-    const rid = r.record_id || r.no_lpb || '';
-    tr.dataset.no = rid;
-    const tipe = (r.tipe_pengajuan || 'LPB').toUpperCase();
-    const isChecked = selectedLPB.has(rid) ? 'checked' : '';
-    tr.innerHTML = `
-      <td class="py-2"><input type="checkbox" class="pick" ${isChecked}></td>
-      <td class="py-2">
-        <select class="input tipe_pengajuan">
-          <option value="LPB" ${tipe === 'LPB' ? 'selected' : ''}>LPB</option>
-          <option value="CBD" ${tipe === 'CBD' ? 'selected' : ''}>CBD</option>
-          <option value="NON_LPB" ${tipe === 'NON_LPB' ? 'selected' : ''}>NON_LPB</option>
-        </select>
-      </td>
-      <td class="py-2"><input type="text" class="input no_lpb" value="${r.no_lpb || ''}" placeholder="${tipe === 'LPB' ? 'Wajib untuk LPB' : 'Opsional'}"></td>
-      <td class="py-2"><input type="text" class="input principle" value="${r.principle || ''}"></td>
-      <td class="py-2">${r.tgl_setor || ''}</td>
-      <td class="py-2">${r.tgl_win || ''}</td>
-      <td class="py-2">${r.tgl_jtempo_win || ''}</td>
-      <td class="py-2">${r.nilai_win_display || ''}</td>
-      <td class="py-2">${r.tgl_terima_barang || ''}</td>
-      <td class="py-2"><input type="date" class="input tgl_invoice" value="${r.tgl_invoice || ''}"></td>
-      <td class="py-2"><input type="text" class="input invoice_no" value="${r.invoice_no || ''}"></td>
-      <td class="py-2"><input type="text" class="input jenis_dokumen" value="${r.jenis_dokumen || ''}" placeholder="Untuk NON_LPB"></td>
-      <td class="py-2"><input type="text" class="input nomor_dokumen" value="${r.nomor_dokumen || ''}" placeholder="Untuk NON_LPB"></td>
-      <td class="py-2"><input type="text" class="input nilai_invoice" value="${r.nilai_invoice || ''}"></td>
-      <td class="py-2"><input type="date" class="input jt_invoice" value="${r.jt_invoice || ''}"></td>
-      <td class="py-2">${r.gap_nilai_display || ''}</td>
-      <td class="py-2"><input type="date" class="input actual_date" value="${r.actual_date || ''}"></td>
-      <td class="py-2"><input type="date" class="input tgl_pembayaran" value="${r.tgl_pembayaran || ''}"></td>
-      <td class="py-2">${r.status_pembayaran || '-'}</td>
-    `;
-    const tipeEl = tr.querySelector('.tipe_pengajuan');
-    const noLpbEl = tr.querySelector('.no_lpb');
-    const syncTypeUi = () => {
-      const currentType = (tipeEl ? tipeEl.value : 'LPB') || 'LPB';
-      if(noLpbEl){
-        noLpbEl.placeholder = currentType === 'LPB' ? 'Wajib untuk LPB' : 'Opsional';
-      }
-    };
-    syncTypeUi();
-    const pick = tr.querySelector('.pick');
-    pick.addEventListener('change', () => {
-      if(pick.checked){
-        selectedLPB.add(rid);
-      }else{
-        selectedLPB.delete(rid);
-      }
-      if(document.getElementById('f_ajukan').value){
-        applyFilters();
-      }
-    });
-    const bindInput = (selector, field) => {
-      const el = tr.querySelector(selector);
-      if(!el){ return; }
-      el.addEventListener('input', () => updateCache(rid, field, el.value));
-      el.addEventListener('change', () => updateCache(rid, field, el.value));
-    };
-    bindInput('.tipe_pengajuan', 'tipe_pengajuan');
-    bindInput('.no_lpb', 'no_lpb');
-    bindInput('.principle', 'principle');
-    bindInput('.tgl_invoice', 'tgl_invoice');
-    bindInput('.invoice_no', 'invoice_no');
-    bindInput('.jenis_dokumen', 'jenis_dokumen');
-    bindInput('.nomor_dokumen', 'nomor_dokumen');
-    const nilaiEl = tr.querySelector('.nilai_invoice');
-    if(nilaiEl){
-      const renderValue = (preserveCaret) => {
-        const raw = nilaiEl.value || '';
-        const caretPos = preserveCaret ? (nilaiEl.selectionStart || 0) : raw.length;
-        const digitsBefore = preserveCaret ? countDigits(raw.slice(0, caretPos)) : countDigits(raw);
-        const rawDigits = normalizeRawDigits(raw);
-        if(!rawDigits){
-          nilaiEl.value = '';
-          updateCache(rid, 'nilai_invoice', nilaiEl.value);
-          return;
-        }
-        const formatted = formatRawDigits(rawDigits);
-        nilaiEl.value = formatted;
-        if(preserveCaret){
-          const targetDigits = Math.min(digitsBefore, rawDigits.length);
-          const pos = caretFromDigits(formatted, targetDigits);
-          try{ nilaiEl.setSelectionRange(pos, pos); }catch(e){}
-        }
-        updateCache(rid, 'nilai_invoice', nilaiEl.value);
-      };
-      renderValue(false);
-      nilaiEl.addEventListener('input', () => renderValue(true));
-      nilaiEl.addEventListener('blur', () => renderValue(false));
-    }
-    bindInput('.jt_invoice', 'jt_invoice');
-    bindInput('.actual_date', 'actual_date');
-    bindInput('.tgl_pembayaran', 'tgl_pembayaran');
-    if(tipeEl){
-      tipeEl.addEventListener('change', syncTypeUi);
-    }
-    body.appendChild(tr);
-  });
-}
-
-document.getElementById('exportPaymentsBtn').addEventListener('click', () => {
-  window.location.href = '/payments/export';
-});
-
-document.getElementById('uploadBtn').addEventListener('click', async () => {
-  const file = document.getElementById('lpbFile').files[0];
-  if(!file){
-    uploadMsg.textContent = 'File belum dipilih.';
-    return;
-  }
-  uploadMsg.textContent = 'Mengunggah...';
-  const fd = new FormData();
-  fd.append('file', file);
-  const res = await fetch('/payments/upload', { method: 'POST', credentials: 'same-origin', body: fd, headers: { 'X-CSRF-Token': getCsrfToken() } });
-  const j = await res.json();
-  if(!res.ok || !j.ok){
-    uploadMsg.textContent = j.error || ('HTTP ' + res.status);
-    return;
-  }
-  uploadMsg.textContent = 'Upload sukses. Data ditambahkan: ' + (j.added || 0);
-  await loadLPB();
-});
-
-document.getElementById('manualAddBtn').addEventListener('click', async () => {
-  uploadMsg.textContent = '';
-  const tipe = (document.getElementById('manualType').value || 'CBD').toUpperCase();
-  const no_lpb = (document.getElementById('manualNoLpb').value || '').trim();
-  const principle = (document.getElementById('manualPrinciple').value || '').trim();
-  const invoice_no = (document.getElementById('manualInvoiceNo').value || '').trim();
-  const nilai_raw = (document.getElementById('manualNilaiInvoice').value || '').trim();
-  const jenis_dokumen = (document.getElementById('manualJenisDokumen').value || '').trim();
-  const nomor_dokumen = (document.getElementById('manualNomorDokumen').value || '').trim();
-  const nilai_invoice = Number(normalizeRawDigits(nilai_raw) || 0);
-
-  if(!principle){
-    uploadMsg.textContent = 'Principle wajib diisi.';
-    return;
-  }
-  if(!(nilai_invoice > 0)){
-    uploadMsg.textContent = 'Nilai Invoice wajib diisi dan > 0.';
-    return;
-  }
-
-  const res = await fetch('/payments/manual/add', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-    body: JSON.stringify({ tipe_pengajuan: tipe, no_lpb, principle, invoice_no, nilai_invoice, jenis_dokumen, nomor_dokumen }),
-  });
-  const j = await res.json();
-  if(!res.ok || !j.ok){
-    uploadMsg.textContent = j.error || ('HTTP ' + res.status);
-    return;
-  }
-  uploadMsg.textContent = 'Data manual berhasil ditambahkan.';
-  document.getElementById('manualNoLpb').value = '';
-  document.getElementById('manualPrinciple').value = '';
-  document.getElementById('manualInvoiceNo').value = '';
-  document.getElementById('manualNilaiInvoice').value = '';
-  document.getElementById('manualJenisDokumen').value = '';
-  document.getElementById('manualNomorDokumen').value = '';
-  await loadLPB();
-});
-
-document.getElementById('saveBtn').addEventListener('click', async () => {
-  if(!__CAN_PAYMENTS_UPDATE__) return;
-  const uploadMsg = document.getElementById('uploadMsg');
-  uploadMsg.textContent = 'Menyimpan...';
-
-  const rows = [];
-  document.querySelectorAll('.lpb-table tbody tr').forEach(tr => {
-    const rid = tr.getAttribute('data-rid');
-    const r = window.__PAYMENTS_DATA.find(x => String(x.id) === String(rid));
-    if(!r) return;
-    
-    r.ajukan = tr.querySelector('.cb-ajukan').checked;
-    r.tgl_invoice = tr.querySelector('.tgl_invoice').value;
-    r.invoice_no = tr.querySelector('.invoice_no').value;
-    r.jenis_dokumen = tr.querySelector('.jenis_dokumen').value;
-    r.nomor_dokumen = tr.querySelector('.nomor_dokumen').value;
-    
-    const rNilai = tr.querySelector('.nilai_invoice').value;
-    r.nilai_invoice = Number(normalizeRawDigits(rNilai));
-    
-    r.jt_invoice = tr.querySelector('.jt_invoice').value;
-    r.actual_date = tr.querySelector('.actual_date').value;
-    r.tgl_pembayaran = tr.querySelector('.tgl_pembayaran').value;
-
-    rows.push({
-      id: r.id, 
-      ajukan: r.ajukan,
-      tipe_pengajuan: r.tipe_pengajuan || 'LPB',
-      no_lpb: r.no_lpb,
-      principle: r.principle,
-      tgl_invoice: r.tgl_invoice,
-      invoice_no: r.invoice_no,
-      jenis_dokumen: r.jenis_dokumen,
-      nomor_dokumen: r.nomor_dokumen,
-      nilai_invoice: r.nilai_invoice,
-      jt_invoice: r.jt_invoice,
-      actual_date: r.actual_date,
-      tgl_pembayaran: r.tgl_pembayaran
-    });
-  });
-
-  const res = await fetch('/payments/update', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-    body: JSON.stringify({ items: rows }),
-  });
-  const j = await res.json();
-  uploadMsg.textContent = j.ok ? 'Perubahan disimpan.' : (j.error || 'Gagal menyimpan.');
-  await loadLPB();
-});
-
-document.getElementById('deleteBtn').addEventListener('click', async () => {
-  uploadMsg.textContent = '';
-  const picks = Array.from(selectedLPB);
-  if(picks.length === 0){
-    uploadMsg.textContent = 'Pilih minimal 1 data untuk dihapus.';
-    return;
-  }
-  const preview = picks.slice(0, 5);
-  const suffix = picks.length > 5 ? `, ${picks.length - 5} lainnya` : '';
-  const msg = `Yakin nih boy, mau hapus nomor ${preview.join(', ')}${suffix}`;
-  if(!window.confirm(msg)){
-    return;
-  }
-  const res = await fetch('/payments/delete', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-    body: JSON.stringify({ record_ids: picks }),
-  });
-  const j = await res.json();
-  if(!res.ok || !j.ok){
-    uploadMsg.textContent = j.error || ('HTTP ' + res.status);
-    return;
-  }
-  selectedLPB.clear();
-  uploadMsg.textContent = `Data terhapus: ${j.deleted || 0}`;
-  await loadLPB();
-});
-
-document.getElementById('submitBtn').addEventListener('click', async () => {
-  submitMsg.textContent = '';
-  resultLinks.innerHTML = '';
-  const picks = Array.from(selectedLPB);
-  if(picks.length === 0){
-    submitMsg.textContent = 'Pilih minimal 1 data.';
-    return;
-  }
-  const method = document.getElementById('payMethod').value;
-  submitMsg.textContent = 'Menyiapkan keranjang...';
-  const res = await fetch('/payments/cart/create', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-    body: JSON.stringify({ method: method, record_ids: picks }),
-  });
-  const j = await res.json();
-  if(!res.ok || !j.ok){
-    submitMsg.textContent = j.error || ('HTTP ' + res.status);
-    return;
-  }
-  window.location.href = `/payments/cart/${j.draft_id}`;
-});
-
-bindFilters();
-loadLPB();
-window.addEventListener('resize', updateHeaderSticky);
-</script>
-</body>
-</html>"""
-
-PAYMENTS_CART_HTML = r"""<!doctype html>
-<html lang="id">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="icon" href="/favicon.ico">
-  <link rel="icon" type="image/png" href="/favicon.png">
-  <title>Keranjang Pengajuan Pembayaran</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    .cart-table {
-      border-collapse: separate;
-      border-spacing: 0;
-      width: 100%;
-      min-width: 900px;
-      table-layout: auto;
-    }
-    .cart-table th,
-    .cart-table td {
-      border: 1px solid rgba(43, 13, 62, 0.18);
-      padding: 8px 10px;
-      vertical-align: top;
-    }
-    .cart-table thead th {
-      background: #C59DD9;
-      font-weight: 700;
-      color: #2B0D3E;
-    }
-    .cart-table tbody tr:nth-child(odd) { background: rgba(197, 157, 217, 0.12); }
-    .cart-table tbody tr:nth-child(even) { background: rgba(197, 157, 217, 0.2); }
-    .cart-table tbody tr:hover { background: rgba(197, 157, 217, 0.35); }
-    .cart-table select,
-    .cart-table textarea {
-      width: 100%;
-      border: 1px solid rgba(43, 13, 62, 0.25);
-      background: rgba(197, 157, 217, 0.12);
-      border-radius: 8px;
-      padding: 6px 8px;
-      font-size: 12px;
-      color: #2B0D3E;
-    }
-    .cart-table textarea { min-height: 44px; resize: vertical; }
-    .wrap-text { white-space: normal; word-break: break-word; max-width: 420px; }
-    .money-cell { min-width: 230px; }
-    .money-stack {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .money-field {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      border: 1px solid rgba(43, 13, 62, 0.28);
-      border-radius: 12px;
-      padding: 6px 10px;
-      background: #ffffff;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
-    }
-    .money-field:focus-within {
-      border-color: #7A3F91;
-      box-shadow: 0 0 0 2px rgba(122, 63, 145, 0.2);
-    }
-    .money-prefix {
-      flex: 0 0 auto;
-      border: 1px solid rgba(43, 13, 62, 0.2);
-      border-radius: 999px;
-      padding: 2px 7px;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      color: #2B0D3E;
-      background: rgba(197, 157, 217, 0.25);
-      line-height: 1.2;
-      text-transform: uppercase;
-    }
-    .money-input {
-      flex: 1 1 auto;
-      min-width: 0;
-      border: 0 !important;
-      background: transparent !important;
-      outline: none !important;
-      box-shadow: none !important;
-      padding: 4px 2px !important;
-      text-align: right;
-      font-size: 14px;
-      font-weight: 700;
-      font-variant-numeric: tabular-nums;
-      letter-spacing: 0.01em;
-      color: #2B0D3E;
-    }
-    .money-input::placeholder { color: rgba(43, 13, 62, 0.45); }
-    .money-field.is-readonly {
-      background: linear-gradient(180deg, rgba(197, 157, 217, 0.2), rgba(197, 157, 217, 0.1));
-      border-color: rgba(43, 13, 62, 0.22);
-    }
-    .money-field.is-readonly .money-prefix {
-      background: rgba(122, 63, 145, 0.22);
-      border-color: rgba(122, 63, 145, 0.35);
-    }
-    .money-input[readonly] {
-      color: #3D1C56;
-      cursor: default;
-    }
-    .money-meta {
-      font-size: 10px;
-      color: rgba(43, 13, 62, 0.7);
-      line-height: 1.2;
-      letter-spacing: 0.01em;
-    }
-  </style>
-</head>
-<body class="min-h-screen bg-[#F2EAF7] text-[#2B0D3E]">
-  <div class="max-w-6xl mx-auto px-6 py-8">
-    <div class="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <div class="text-xs uppercase tracking-widest text-[#2B0D3E]">Keranjang Pengajuan Pembayaran</div>
-        <h1 class="mt-2 text-2xl font-semibold">Konfirmasi Sebelum Diajukan ke Finance</h1>
-        <p class="mt-1 text-sm text-[#2B0D3E]">Isi jenis pembayaran & keterangan per principle.</p>
-      </div>
-      <div class="flex items-center gap-2">
-        <a href="/payments" class="text-xs px-3 py-2 rounded-full border border-[#2B0D3E] bg-[#F2EAF7] hover:bg-[#C59DD9]">LPB</a>
-        <a href="/logout" class="text-xs px-3 py-2 rounded-full border border-[#2B0D3E] bg-[#F2EAF7] hover:bg-[#C59DD9]">Logout</a>
-      </div>
-    </div>
-
-    <div class="mt-6 rounded-2xl border border-[#2B0D3E] bg-[#F2EAF7] p-6 shadow-lg">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="text-sm font-semibold">Ringkasan Pengajuan</div>
-        <button id="submitCart" class="rounded-xl px-4 py-2 text-sm font-semibold text-[#F2EAF7] bg-[#7A3F91] hover:bg-[#2B0D3E]">Ajukan ke Finance</button>
-      </div>
-      <div class="mt-2 text-sm text-[#2B0D3E]" id="cartMeta"></div>
-      <div class="mt-3">
-        <label class="text-xs uppercase tracking-widest text-[#2B0D3E]">Tanggal Pengajuan Pembayaran (Finance)</label>
-        <input id="targetPayDate" type="date" class="mt-2 rounded-xl border border-[#2B0D3E] bg-white px-3 py-2 text-sm" />
-        <div class="mt-1 text-[11px] text-[#2B0D3E]">Contoh: pembayaran tanggal 26, pilih 2026-..-26 agar masuk di tanggal itu pada halaman finance.</div>
-      </div>
-      <div id="cartMsg" class="mt-3 text-sm text-[#2B0D3E]"></div>
-      <div id="cartLinks" class="mt-3 space-y-2 text-sm text-[#2B0D3E]"></div>
-      <div class="mt-4 overflow-x-auto">
-        <table class="cart-table text-sm">
-          <thead>
-            <tr>
-              <th>No.</th>
-              <th>Principle</th>
-              <th>Tipe Pengajuan</th>
-              <th>Nilai Invoice (Total)</th>
-              <th>No. Invoice / Dokumen</th>
-              <th>Potongan</th>
-              <th>Nilai Pembayaran</th>
-              <th>Jenis Pembayaran</th>
-              <th>Keterangan</th>
-            </tr>
-          </thead>
-          <tbody id="cartBody"></tbody>
-        </table>
-      </div>
-      <div id="cartTotal" class="mt-3 text-sm font-semibold text-[#2B0D3E]"></div>
-    </div>
-  </div>
-
-<script>
-const CSRF_TOKEN = "__CSRF_TOKEN__";
-const CSRF_COOKIE_NAME = "__CSRF_COOKIE__";
-let DRAFT_ID = "__DRAFT_ID__";
-const cartMsg = document.getElementById('cartMsg');
-const cartLinks = document.getElementById('cartLinks');
-if(!DRAFT_ID || DRAFT_ID.indexOf('__DRAFT_ID__') !== -1){
-  const parts = window.location.pathname.split('/');
-  DRAFT_ID = parts[parts.length - 1] || '';
-}
-
-function formatIdr(val){
-  const num = Number(val || 0);
-  return num.toLocaleString('id-ID');
-}
-
-function parseIdr(val){
-  const digits = (val || '').toString().replace(/\D/g, '');
-  return digits ? Number(digits) : 0;
-}
-
-function getCookieValue(name){
-  const parts = document.cookie ? document.cookie.split('; ') : [];
-  for(const part of parts){
-    const eq = part.indexOf('=');
-    if(eq <= 0){ continue; }
-    const key = part.slice(0, eq);
-    if(key === name){
-      return decodeURIComponent(part.slice(eq + 1));
-    }
-  }
-  return '';
-}
-
-function getCsrfToken(){
-  if(CSRF_TOKEN && !CSRF_TOKEN.includes('__CSRF_')){
-    return CSRF_TOKEN;
-  }
-  return getCookieValue(CSRF_COOKIE_NAME);
-}
-
-function toYmd(d){
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-}
-
-function tomorrowYmd(){
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return toYmd(d);
-}
-
-function recalcRowPayment(tr){
-  const total = Number(tr.dataset.total || 0);
-  const potEl = tr.querySelector('.potongan');
-  const payEl = tr.querySelector('.nilai_bayar');
-  if(!potEl || !payEl){ return; }
-  let potongan = parseIdr(potEl.value);
-  if(potongan < 0){ potongan = 0; }
-  if(potongan > total){ potongan = total; }
-  const nilaiPembayaran = Math.max(total - potongan, 0);
-  tr.dataset.potongan = String(potongan);
-  tr.dataset.nilaiPembayaran = String(nilaiPembayaran);
-  potEl.value = potongan > 0 ? formatIdr(potongan) : '';
-  payEl.value = formatIdr(nilaiPembayaran);
-}
-
-function updateCartTotals(){
-  let totalInvoice = 0;
-  let totalPembayaran = 0;
-  document.querySelectorAll('#cartBody tr').forEach(tr => {
-    totalInvoice += Number(tr.dataset.total || 0);
-    totalPembayaran += Number(tr.dataset.nilaiPembayaran || 0);
-  });
-  const totalPotongan = Math.max(totalInvoice - totalPembayaran, 0);
-  const totalEl = document.getElementById('cartTotal');
-  if(totalInvoice > 0){
-    totalEl.textContent = `Total Invoice: Rp ${formatIdr(totalInvoice)} | Potongan: Rp ${formatIdr(totalPotongan)} | Nilai Pembayaran: Rp ${formatIdr(totalPembayaran)}`;
-  }else{
-    totalEl.textContent = '';
-  }
-}
-
-async function loadCart(){
-  cartMsg.textContent = '';
-  let res;
-  let j;
-  try{
-    res = await fetch(`/payments/cart-info?draft=${encodeURIComponent(DRAFT_ID)}`, { credentials: 'same-origin' });
-    const text = await res.text();
-    try{
-      j = JSON.parse(text);
-    }catch(parseErr){
-      cartMsg.textContent = `Gagal memuat keranjang (HTTP ${res.status}).`;
-      if(text){
-        cartMsg.textContent += ' ' + text.slice(0, 180);
-      }
-      return;
-    }
-  }catch(e){
-    cartMsg.textContent = 'Gagal memuat keranjang. Silakan refresh.';
-    return;
-  }
-  if(!res.ok || !j.ok){
-    cartMsg.textContent = j.error || 'Gagal memuat keranjang.';
-    return;
-  }
-  document.getElementById('cartMeta').textContent = `Draft: ${DRAFT_ID} | Metode: ${j.method_label || '-'}`;
-  const targetEl = document.getElementById('targetPayDate');
-  if(targetEl){
-    targetEl.value = j.target_payment_date || tomorrowYmd();
-  }
-  const body = document.getElementById('cartBody');
-  body.innerHTML = '';
-  (j.items || []).forEach((r) => {
-    const total = Number(r.total || 0);
-    let potongan = Number(r.potongan || 0);
-    if(potongan < 0){ potongan = 0; }
-    if(potongan > total){ potongan = total; }
-    const nilaiPembayaran = Math.max(total - potongan, 0);
-    const tr = document.createElement('tr');
-    tr.dataset.principle = r.principle || '';
-    tr.dataset.groupKey = r.group_key || `${r.principle || ''}||${r.tipe_pengajuan || 'LPB'}`;
-    tr.dataset.tipePengajuan = r.tipe_pengajuan || 'LPB';
-    tr.dataset.total = String(total);
-    tr.dataset.potongan = String(potongan);
-    tr.dataset.nilaiPembayaran = String(nilaiPembayaran);
-    tr.innerHTML = `
-      <td>${r.no || ''}</td>
-      <td>${r.principle || ''}</td>
-      <td>${r.tipe_pengajuan || 'LPB'}</td>
-      <td>${r.total_display || ''}</td>
-      <td class="wrap-text">${r.invoice_concat || ''}</td>
-      <td class="money-cell">
-        <div class="money-stack">
-          <label class="money-field">
-            <span class="money-prefix">Rp</span>
-            <input type="text" class="potongan money-input" inputmode="numeric" placeholder="Isi jika ada potongan" value="${potongan > 0 ? formatIdr(potongan) : ''}" aria-label="Potongan untuk ${r.principle || 'principle'}">
-          </label>
-          <div class="money-meta">Opsional. Jika kosong, nilai pembayaran = nilai invoice.</div>
-        </div>
-      </td>
-      <td class="money-cell">
-        <div class="money-stack">
-          <div class="money-field is-readonly">
-            <span class="money-prefix">Rp</span>
-            <input type="text" class="nilai_bayar money-input" value="${formatIdr(nilaiPembayaran)}" readonly tabindex="-1" aria-label="Nilai pembayaran untuk ${r.principle || 'principle'}">
-          </div>
-          <div class="money-meta">Terhitung otomatis: invoice dikurangi potongan.</div>
-        </div>
-      </td>
-      <td>
-        <select class="jenis">
-          <option value="">Pilih</option>
-          <option value="TRF" ${r.jenis_pembayaran === 'TRF' ? 'selected' : ''}>TRF</option>
-          <option value="DF" ${r.jenis_pembayaran === 'DF' ? 'selected' : ''}>DF</option>
-          <option value="VA" ${r.jenis_pembayaran === 'VA' ? 'selected' : ''}>VA</option>
-        </select>
-      </td>
-      <td><textarea class="ket">${r.keterangan || ''}</textarea></td>
-    `;
-    const potEl = tr.querySelector('.potongan');
-    if(potEl){
-      potEl.addEventListener('input', () => {
-        recalcRowPayment(tr);
-        updateCartTotals();
-      });
-      potEl.addEventListener('focus', () => {
-        try{ potEl.select(); }catch(e){}
-      });
-      potEl.addEventListener('blur', () => {
-        recalcRowPayment(tr);
-        updateCartTotals();
-      });
-    }
-    body.appendChild(tr);
-  });
-  updateCartTotals();
-}
-
-document.getElementById('submitCart').addEventListener('click', async () => {
-  cartMsg.textContent = '';
-  cartLinks.innerHTML = '';
-  const targetPaymentDate = (document.getElementById('targetPayDate').value || '').trim();
-  if(!targetPaymentDate){
-    cartMsg.textContent = 'Tanggal pengajuan pembayaran wajib diisi.';
-    return;
-  }
-  const rows = [];
-  let invalid = false;
-  document.querySelectorAll('#cartBody tr').forEach(tr => {
-    const jenis = tr.querySelector('.jenis').value;
-    if(!jenis){ invalid = true; }
-    recalcRowPayment(tr);
-    const potongan = Number(tr.dataset.potongan || 0);
-    const nilaiPembayaran = Number(tr.dataset.nilaiPembayaran || 0);
-    rows.push({
-      group_key: tr.dataset.groupKey,
-      principle: tr.dataset.principle,
-      tipe_pengajuan: tr.dataset.tipePengajuan || 'LPB',
-      jenis_pembayaran: jenis,
-      potongan: potongan,
-      nilai_pembayaran: nilaiPembayaran,
-      keterangan: tr.querySelector('.ket').value || '',
-    });
-  });
-  if(invalid){
-    cartMsg.textContent = 'Jenis Pembayaran wajib diisi.';
-    return;
-  }
-  const res = await fetch('/payments/cart/submit', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-    body: JSON.stringify({ draft_id: DRAFT_ID, target_payment_date: targetPaymentDate, items: rows }),
-  });
-  const j = await res.json();
-  if(!res.ok || !j.ok){
-    cartMsg.textContent = j.error || 'Gagal ajukan ke finance.';
-    return;
-  }
-  cartMsg.textContent = 'Pengajuan berhasil diproses.';
-  if(j.files && j.files.length){
-    j.files.forEach(f => {
-      const a = document.createElement('a');
-      a.href = f.url;
-      a.textContent = f.label;
-      a.className = 'block';
-      cartLinks.appendChild(a);
-    });
-  }
-});
-
-loadCart();
-</script>
-</body>
-</html>"""
-
-FINANCE_HTML = r""""<!doctype html>
-<html lang="id">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="icon" href="/favicon.ico">
-  <link rel="icon" type="image/png" href="/favicon.png">
-  <title>Finance - Status Pembayaran</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    /* Styling for dense data tables */
-    .finance-table {
-      border-collapse: separate;
-      border-spacing: 0;
-      width: 100%;
-      min-width: 1200px;
-      table-layout: auto;
-    }
-    .finance-table th,
-    .finance-table td {
-      border: 1px solid #e2e8f0;
-      padding: 10px 14px;
-      vertical-align: middle;
-      white-space: nowrap;
-    }
-    .finance-table thead th {
-      background: #f8fafc;
-      font-weight: 700;
-      color: #334155;
-      position: sticky;
-      top: 0;
-      z-index: 10;
-    }
-    .finance-table tbody tr {
-      background: #ffffff;
-      transition: background-color 0.15s ease;
-    }
-    .finance-table tbody tr:hover {
-      background: #f1f5f9;
-    }
-    
-    /* Scrollbar styling */
-    .table-container::-webkit-scrollbar { height: 8px; width: 8px; }
-    .table-container::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 10px; }
-    .table-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-    .table-container::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-  </style>
-</head>
-<body class="min-h-screen bg-slate-50 text-gray-800 font-sans">
-  <div class="w-[98vw] max-w-[1600px] mx-auto px-4 sm:px-6 py-8">
-    
-    <!-- Top Nav -->
-    <div class="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-gray-200">
-      <div>
-        <div class="flex items-center gap-2 text-[11px] uppercase tracking-widest text-emerald-600 font-bold mb-1">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-          Giro / Finance
-        </div>
-        <h1 class="text-3xl font-extrabold text-gray-900 tracking-tight">Status Eksekusi Pembayaran</h1>
-        <p class="mt-2 text-sm text-gray-500 max-w-2xl">Layar eksekusi pusat untuk tim Finance mengupdate status transfer bagi pengajuan LPB, CBD, maupun NON_LPB yang masuk dari unit.</p>
-      </div>
-      <div class="flex items-center gap-3 shrink-0">
-        <a href="/payments" class="text-sm font-medium px-4 py-2 rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-all shadow-sm">Main LPB</a>
-        <a href="/logout" class="text-sm font-medium px-4 py-2 rounded-xl border border-gray-200 bg-white text-red-600 hover:bg-red-50 hover:text-red-700 transition-all shadow-sm">Logout</a>
-      </div>
-    </div>
-
-    <!-- Main Working Area -->
-    <div class="mt-8 rounded-2xl bg-white border border-gray-100 shadow-sm overflow-hidden flex flex-col">
-      
-      <!-- Control Board -->
-      <div class="p-5 sm:p-6 border-b border-gray-200 bg-white flex flex-col lg:flex-row lg:items-end justify-between gap-6">
-        
-        <!-- Filter Tools -->
-        <div class="flex flex-col gap-4 flex-1 max-w-3xl">
-          <div class="grid sm:grid-cols-2 gap-4">
-            
-             <!-- Per Date Filter -->
-            <div class="bg-gray-50 border border-gray-100 rounded-xl p-4 flex flex-col md:flex-row md:items-end gap-3">
-              <div class="flex-1 w-full">
-                <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 leading-none">Cari per Tgl Eksekusi</label>
-                <input id="financeDate" type="date" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-[13px] font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm transition-all" />
-              </div>
-              <button id="filterFinance" class="w-full md:w-auto shrink-0 justify-center rounded-xl px-4 py-2 text-[13px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-all cursor-pointer">
-                Tampilkan
-              </button>
-            </div>
-
-            <!-- Export Range Filter -->
-            <div class="bg-gray-50 border border-gray-100 rounded-xl p-4 flex flex-col lg:flex-row lg:items-end gap-3 flex-wrap">
-              <div class="flex-1 w-full min-w-[120px]">
-                <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 leading-none">Dari Tanggal</label>
-                <input id="financeFromDate" type="date" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-[13px] font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm transition-all" />
-              </div>
-              <div class="flex-1 w-full min-w-[120px]">
-                <label class="block text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 leading-none">Sampai Tgl</label>
-                <input id="financeToDate" type="date" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-[13px] font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm transition-all" />
-              </div>
-              <button id="exportFinanceBtn" class="w-full lg:w-auto shrink-0 justify-center rounded-xl px-4 py-2 text-[13px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-all flex items-center justify-center gap-2 cursor-pointer">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                Export Excel
-              </button>
-            </div>
-          </div>
-        </div>
-        
-        <!-- Save Actions -->
-        <div class="flex flex-col gap-2 shrink-0">
-          <div class="text-[11px] text-gray-400 font-medium text-right mb-1">Jangan lupa simpan sebelum keluar.</div>
-          <button id="saveFinance" class="rounded-xl px-6 py-3 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow flex items-center justify-center gap-2 transition-all active:scale-[0.98]">
-             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-             Simpan Status Pembayaran
-          </button>
-          <div id="financeMsg" aria-live="polite" class="text-[13px] font-medium text-emerald-600 text-right h-4"></div>
-        </div>
-      </div>
-
-      <!-- Table Headings Info -->
-      <div class="px-5 sm:px-6 py-3 bg-indigo-50/40 border-b border-indigo-100 flex items-center gap-2">
-         <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-         <span class="text-xs text-indigo-800 font-medium tracking-wide">Struktur baris digabungkan berdasarkan: <strong><span class="text-indigo-600 uppercase">1 Principle + 1 Tipe + 1 Draft = 1 Baris.</span></strong></span>
-      </div>
-      
-      <!-- Table Viewport -->
-      <div class="table-container overflow-x-auto w-full relative h-[600px] bg-slate-50">
-        <table class="finance-table text-[13px]">
-          <thead>
-            <tr>
-              <th class="text-left font-bold text-[11px] uppercase tracking-wider text-gray-500">ID Draft</th>
-              <th class="text-left font-bold text-[11px] uppercase tracking-wider text-gray-500">Kreditor / Principle</th>
-              <th class="text-left font-bold text-[11px] uppercase tracking-wider text-gray-500">Tipe Dok</th>
-              <th class="text-left font-bold text-[11px] uppercase tracking-wider text-gray-500 text-amber-700">Total Invoice (Dasar)</th>
-              <th class="text-left font-bold text-[11px] uppercase tracking-wider text-gray-500 text-red-600">Terpotong</th>
-              <th class="text-left font-bold text-[11px] uppercase tracking-wider text-gray-500">No. Tagihan</th>
-              <th class="text-left font-bold text-[11px] uppercase tracking-wider text-gray-500">Sistem</th>
-              <th class="text-left font-bold text-[11px] uppercase tracking-wider text-gray-500">Catatan</th>
-              <th class="text-left font-bold text-[11px] uppercase tracking-wider text-gray-500">Metode Bank</th>
-              <th class="text-left font-bold text-[11px] uppercase tracking-wider text-gray-500 text-emerald-700">Tgl Eksekusi (Tujuan)</th>
-              <th class="text-left font-bold text-[11px] uppercase tracking-wider text-indigo-700">Ganti Status Eksekusi</th>
-            </tr>
-          </thead>
-          <tbody id="financeBody" class="text-gray-700 divide-y divide-gray-100"></tbody>
-        </table>
-      </div>
-      
-      <!-- Footer Totals -->
-      <div class="px-5 sm:px-6 py-4 bg-white border-t border-gray-200">
-        <div id="financeTotal" class="text-[14px] font-extrabold text-gray-900 border border-gray-200 shadow-sm rounded-xl px-5 py-3 inline-block bg-slate-50">
-          <!-- Populated by JS -->
-        </div>
-      </div>
-    </div>
-  </div>
-
-<script>
-const CSRF_TOKEN = "__CSRF_TOKEN__";
-const CSRF_COOKIE_NAME = "__CSRF_COOKIE__";
-const CAN_FINANCE_UPDATE = __CAN_FINANCE_UPDATE__;
-function getCookieValue(name){
-  const parts = document.cookie ? document.cookie.split('; ') : [];
-  for(const part of parts){
-    const eq = part.indexOf('=');
-    if(eq <= 0){ continue; }
-    const key = part.slice(0, eq);
-    if(key === name){
-      return decodeURIComponent(part.slice(eq + 1));
-    }
-  }
-  return '';
-}
-
-function getCsrfToken(){
-  if(CSRF_TOKEN && !CSRF_TOKEN.includes('__CSRF_')){
-    return CSRF_TOKEN;
-  }
-  return getCookieValue(CSRF_COOKIE_NAME);
-}
-
-function todayStr(){
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-async function loadFinance(dateValue){
-  const dateInput = document.getElementById('financeDate');
-  const date = dateValue || dateInput.value || todayStr();
-  const res = await fetch('/payments/finance/data?date=' + encodeURIComponent(date));
-  const j = await res.json();
-  if(!j.ok){ return; }
-  dateInput.value = j.date || date;
-  const fromInput = document.getElementById('financeFromDate');
-  const toInput = document.getElementById('financeToDate');
-  if(fromInput && !fromInput.value){ fromInput.value = dateInput.value; }
-  if(toInput && !toInput.value){ toInput.value = dateInput.value; }
-  const body = document.getElementById('financeBody');
-  body.innerHTML = '';
-  (j.data || []).forEach(r => {
-    const tr = document.createElement('tr');
-    tr.className = 'border-b';
-    tr.dataset.principle = r.principle || '';
-    tr.dataset.tipePengajuan = r.tipe_pengajuan || 'LPB';
-    tr.dataset.submissionId = r.submission_id || '';
-    tr.dataset.draftId = r.draft_id || '';
-    tr.innerHTML = `
-      <td class="py-2">${r.draft_label || '-'}</td>
-      <td class="py-2">${r.principle || ''}</td>
-      <td class="py-2">${r.tipe_pengajuan || 'LPB'}</td>
-      <td class="py-2">${r.total_nilai_display || ''}</td>
-      <td class="py-2">${r.total_potongan_display || ''}</td>
-      <td class="py-2">${r.invoice_concat || ''}</td>
-      <td class="py-2">${r.jenis_pembayaran || ''}</td>
-      <td class="py-2">${r.keterangan || ''}</td>
-      <td class="py-2">${r.payment_method || ''}</td>
-      <td class="py-2">${r.submitted_date || ''}</td>
-      <td class="py-2">
-        <select class="statusSel rounded-lg border border-[#8A4703] px-2 py-1 text-xs">
-          <option value="Belum Transfer" ${r.status_pembayaran === 'Belum Transfer' ? 'selected' : ''}>Belum Transfer</option>
-          <option value="Sudah Transfer" ${r.status_pembayaran === 'Sudah Transfer' ? 'selected' : ''}>Sudah Transfer</option>
-          <option value="Ajukan Ulang" ${r.status_pembayaran === 'Ajukan Ulang' ? 'selected' : ''}>Ajukan Ulang</option>
-        </select>
-      </td>
-    `;
-    body.appendChild(tr);
-  });
-  const totalEl = document.getElementById('financeTotal');
-  totalEl.textContent = j.total_all_display ? `Total semua pembayaran: Rp ${j.total_all_display}` : 'Total semua pembayaran: Rp 0';
-}
-
-const saveFinanceBtn = document.getElementById('saveFinance');
-if(!CAN_FINANCE_UPDATE){
-  saveFinanceBtn.disabled = true;
-}
-
-document.getElementById('exportFinanceBtn').addEventListener('click', () => {
-  const from = (document.getElementById('financeFromDate').value || '').trim();
-  const to = (document.getElementById('financeToDate').value || '').trim();
-  if(from && to && from > to){
-    document.getElementById('financeMsg').textContent = "Range tanggal tidak valid: 'Dari' harus <= 'Sampai'.";
-    return;
-  }
-  const qp = new URLSearchParams();
-  if(from){ qp.set('from', from); }
-  if(to){ qp.set('to', to); }
-  const url = '/payments/finance/export' + (qp.toString() ? ('?' + qp.toString()) : '');
-  window.location.href = url;
-});
-
-saveFinanceBtn.addEventListener('click', async () => {
-  const date = document.getElementById('financeDate').value || todayStr();
-  const items = [];
-  document.querySelectorAll('#financeBody tr').forEach(tr => {
-    items.push({
-      principle: tr.dataset.principle,
-      tipe_pengajuan: tr.dataset.tipePengajuan || 'LPB',
-      submission_id: tr.dataset.submissionId || '',
-      draft_id: tr.dataset.draftId || '',
-      date: date,
-      status_pembayaran: tr.querySelector('.statusSel').value,
-    });
-  });
-  const res = await fetch('/payments/finance/update', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-    body: JSON.stringify({ items: items }),
-  });
-  const j = await res.json();
-  document.getElementById('financeMsg').textContent = j.ok ? 'Status diperbarui.' : (j.error || 'Gagal update.');
-  await loadFinance(date);
-});
-
-document.getElementById('filterFinance').addEventListener('click', async () => {
-  const date = document.getElementById('financeDate').value || todayStr();
-  await loadFinance(date);
-});
-
-loadFinance();
-</script>
-</body>
-</html>"""
-
-LOGIN_HTML = r"""<!doctype html>
-<html lang="id">
-<head>
-  <meta charset="utf-8" />
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="icon" href="/favicon.ico">
-  <link rel="icon" type="image/png" href="/favicon.png">
-  <title>Login</title>
-  <style>
-    *{
-        margin: 0;
-        padding: 0;
-        font-family: Arial, Helvetica, sans-serif;
-    }
-    section{
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        min-height: 100vh;
-        width: 100%;
-        background-image: linear-gradient(135deg, rgba(189, 116, 1, 0.55), rgba(138, 71, 3, 0.65)),
-                          url('/login-bg.png');
-        background-repeat: no-repeat;
-        background-position: center;
-        background-size: cover;
-    }
-    .main-form{
-        position: relative;
-        width: 450px;
-        height: 500px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        border: 2px solid #8A4703;
-        border-radius: 35px;
-        backdrop-filter: blur(1px);
-        background: rgba(239,239,239,0.65);
-    }
-    h2{
-        font-size: 2.1em;
-        color: #1D1F1E;
-        text-align: center;
-    }
-    .brand{
-        font-size: 0.95em;
-        color: #8A4703;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-        text-align: center;
-        margin-bottom: 8px;
-    }
-    .input1{
-        position: relative;
-        margin: 30px 0;
-        width: 320px;
-        border-bottom: 2px solid #8A4703;
-    }
-    .input1 label {
-        position: absolute;
-        top: 50%;
-        left: 5px;
-        transform: translateY(-50%);
-        color: #1D1F1E;
-        font-size: 1em;
-        pointer-events: none;
-        transition: 0.5s;
-    }
-    input:focus ~ label,
-    input:valid ~ label{
-        top: -10px;
-    }
-    .input1 input{
-        width: 100%;
-        height: 60%;
-        background: transparent;
-        border: none;
-        outline: none;
-        font-size: 1em;
-        padding: 0 70px 0 6px;
-        color: #1D1F1E;
-    }
-    .input1 ion-icon{
-        position: absolute;
-        color: #8A4703;
-        font-size: 1.3em;
-        top: -15px;
-        right: 8px;
-    }
-    .toggle-pwd{
-        position: absolute;
-        right: 6px;
-        top: 50%;
-        transform: translateY(-50%);
-        background: transparent;
-        border: none;
-        color: #8A4703;
-        font-size: 0.85em;
-        font-weight: 600;
-        cursor: pointer;
-        padding: 2px 4px;
-    }
-    .toggle-pwd:focus{
-        outline: none;
-    }
-    button[type="submit"]{
-        width: 100%;
-        height: 45px;
-        background-color: #BD7401;
-        border: none;
-        outline: none;
-        cursor: pointer;
-        font-size: 1em;
-        font-weight: 700;
-        border-radius: 25px;
-        color: #EFEFEF;
-    }
-    .error{
-        margin: 12px 0 0;
-        padding: 8px 10px;
-        border: 1px solid #8A4703;
-        border-radius: 12px;
-        color: #1D1F1E;
-        font-size: 0.9em;
-        text-align: center;
-        background: rgba(242,218,130,0.55);
-    }
-  </style>
-</head>
-<body>
-  <section>
-    <div class="main-form">
-      <div class="form-content">
-        <form method="post" action="/login">
-          <input type="hidden" name="csrf_token" value="__CSRF_TOKEN__" />
-          <div class="brand">CV. Surya Perkasa</div>
-          <h2>Login</h2>
-          __LOGIN_ERROR__
-          <div class="input1">
-            <input id="username" name="username" type="text" required>
-            <label for="username">Username</label>
-            <ion-icon name="person-outline"></ion-icon>
-          </div>
-          <div class="input1">
-            <input id="password" name="password" type="password" required>
-            <label for="password">Password</label>
-            <button class="toggle-pwd" type="button" id="togglePwd" aria-pressed="false">Show</button>
-          </div>
-          <button type="submit">Login</button>
-        </form>
-      </div>
-    </div>
-  </section>
-  <script type="module" src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.esm.js"></script>
-  <script nomodule src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.js"></script>
-  <script>
-    const toggleBtn = document.getElementById('togglePwd');
-    const pwd = document.getElementById('password');
-    toggleBtn.addEventListener('click', () => {
-      const isText = pwd.type === 'text';
-      pwd.type = isText ? 'password' : 'text';
-      toggleBtn.textContent = isText ? 'Show' : 'Hide';
-      toggleBtn.setAttribute('aria-pressed', String(!isText));
-    });
-  </script>
-</body>
-</html>"""
-
-CHANGE_PASSWORD_HTML = r"""<!doctype html>
-<html lang="id">
-<head>
-  <meta charset="utf-8" />
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="icon" href="/favicon.ico">
-  <link rel="icon" type="image/png" href="/favicon.png">
-  <title>Ubah Password</title>
-  <style>
-    *{
-        margin: 0;
-        padding: 0;
-        font-family: Arial, Helvetica, sans-serif;
-    }
-    section{
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        min-height: 100vh;
-        width: 100%;
-        background-image: linear-gradient(135deg, rgba(189, 116, 1, 0.55), rgba(138, 71, 3, 0.65)),
-                          url('/login-bg.png');
-        background-repeat: no-repeat;
-        background-position: center;
-        background-size: cover;
-    }
-    .main-form{
-        position: relative;
-        width: 460px;
-        min-height: 520px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        border: 2px solid #8A4703;
-        border-radius: 35px;
-        backdrop-filter: blur(1px);
-        background: rgba(239,239,239,0.65);
-        padding: 28px 0;
-    }
-    h2{
-        font-size: 2.1em;
-        color: #1D1F1E;
-        text-align: center;
-    }
-    .brand{
-        font-size: 0.95em;
-        color: #8A4703;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-        text-align: center;
-        margin-bottom: 8px;
-    }
-    .input1{
-        position: relative;
-        margin: 24px 0;
-        width: 320px;
-        border-bottom: 2px solid #8A4703;
-    }
-    .input1 label {
-        position: absolute;
-        top: 50%;
-        left: 5px;
-        transform: translateY(-50%);
-        color: #1D1F1E;
-        font-size: 1em;
-        pointer-events: none;
-        transition: 0.5s;
-    }
-    input:focus ~ label,
-    input:valid ~ label{
-        top: -10px;
-    }
-    .input1 input{
-        width: 100%;
-        height: 60%;
-        background: transparent;
-        border: none;
-        outline: none;
-        font-size: 1em;
-        padding: 0 70px 0 6px;
-        color: #1D1F1E;
-    }
-    .toggle-pwd{
-        position: absolute;
-        right: 6px;
-        top: 50%;
-        transform: translateY(-50%);
-        background: transparent;
-        border: none;
-        color: #8A4703;
-        font-size: 0.85em;
-        font-weight: 600;
-        cursor: pointer;
-        padding: 2px 4px;
-    }
-    .toggle-pwd:focus{
-        outline: none;
-    }
-    button[type="submit"]{
-        width: 100%;
-        height: 45px;
-        background-color: #BD7401;
-        border: none;
-        outline: none;
-        cursor: pointer;
-        font-size: 1em;
-        font-weight: 700;
-        border-radius: 25px;
-        color: #EFEFEF;
-    }
-    .links{
-        margin-top: 14px;
-        text-align: center;
-        font-size: 0.9em;
-    }
-    .links a{
-        color: #8A4703;
-        text-decoration: none;
-    }
-    .links a:hover{
-        text-decoration: underline;
-    }
-    .error{
-        margin: 12px 0 0;
-        padding: 8px 10px;
-        border: 1px solid #8A4703;
-        border-radius: 12px;
-        color: #1D1F1E;
-        font-size: 0.9em;
-        text-align: center;
-        background: rgba(242,218,130,0.55);
-    }
-  </style>
-</head>
-<body>
-  <section>
-    <div class="main-form">
-      <div class="form-content">
-        <form method="post" action="/change-password">
-          <input type="hidden" name="csrf_token" value="__CSRF_TOKEN__" />
-          <div class="brand">CV. Surya Perkasa</div>
-          <h2>Ubah Password</h2>
-          __CHANGE_MSG__
-          <div class="input1">
-            <input id="current_password" name="current_password" type="password" required>
-            <label for="current_password">Password Lama</label>
-            <button class="toggle-pwd" type="button" data-target="current_password">Show</button>
-          </div>
-          <div class="input1">
-            <input id="new_password" name="new_password" type="password" required>
-            <label for="new_password">Password Baru</label>
-            <button class="toggle-pwd" type="button" data-target="new_password">Show</button>
-          </div>
-          <div class="input1">
-            <input id="confirm_password" name="confirm_password" type="password" required>
-            <label for="confirm_password">Konfirmasi Password</label>
-            <button class="toggle-pwd" type="button" data-target="confirm_password">Show</button>
-          </div>
-          <button type="submit">Simpan</button>
-          <div class="links"><a href="/">Kembali ke Dashboard</a></div>
-        </form>
-      </div>
-    </div>
-  </section>
-  <script>
-    document.querySelectorAll('.toggle-pwd').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const target = document.getElementById(btn.getAttribute('data-target'));
-        const isText = target.type === 'text';
-        target.type = isText ? 'password' : 'text';
-        btn.textContent = isText ? 'Show' : 'Hide';
-      });
-    });
-  </script>
-</body>
-</html>"""
-
-USERS_HTML = r"""<!doctype html>
-<html lang="id">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Manajemen User</title>
-  <style>
-    *{margin:0;padding:0;font-family:Arial, Helvetica, sans-serif;}
-    body{background:#EFEFEF;color:#1D1F1E;}
-    .wrap{max-width:900px;margin:40px auto;padding:0 16px;}
-    .card{background:#F2DA82;border:1px solid #8A4703;border-radius:16px;padding:20px;box-shadow:0 6px 24px rgba(138,71,3,0.12);color:#1D1F1E;}
-    h1{font-size:22px;}
-    .muted{color:#8A4703;font-size:13px;}
-    .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:16px;}
-    .field{flex:1;min-width:220px;}
-    label{display:block;font-size:13px;margin-bottom:6px;}
-    input,select{width:100%;padding:10px 12px;border:1px solid #8A4703;border-radius:10px;color:#1D1F1E;}
-    button{background:#BD7401;color:#EFEFEF;border:1px solid #8A4703;border-radius:10px;padding:10px 16px;font-weight:600;cursor:pointer;}
-    table{width:100%;border-collapse:collapse;margin-top:16px;}
-    th,td{border-bottom:1px solid #8A4703;padding:8px 6px;text-align:left;font-size:13px;}
-    .msg{margin-top:12px;padding:10px 12px;border-radius:10px;border:1px solid #8A4703;background:#F2DA82;color:#1D1F1E;font-size:13px;}
-    .perm-grid{display:grid;grid-template-columns:1fr;gap:10px;margin-top:8px;}
-    .perm-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 10px;border:1px solid #8A4703;border-radius:10px;background:#EFEFEF;}
-    .perm-row span{min-width:110px;font-weight:600;font-size:12px;}
-    .perm-row label{display:flex;align-items:center;gap:6px;margin:0;font-size:12px;}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-        <h1>Manajemen User - CV. Surya Perkasa</h1>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <a href="/" style="text-decoration:none;background:#EFEFEF;color:#1D1F1E;padding:8px 12px;border-radius:10px;font-size:12px;border:1px solid #8A4703;">Dashboard</a>
-          <a href="/logout" style="text-decoration:none;background:#BD7401;color:#EFEFEF;padding:8px 12px;border-radius:10px;font-size:12px;">Logout</a>
-        </div>
-      </div>
-      <div class="muted">Tambahkan user baru atau update password. Data disimpan di JSON.</div>
-
-      __USERS_MSG__
-
-      <form method="post" action="/users/save" class="row">
-        <input type="hidden" name="csrf_token" value="__CSRF_TOKEN__" />
-        <div class="field">
-          <label>Username</label>
-          <input name="username" type="text" required />
-        </div>
-        <div class="field">
-          <label>Password</label>
-          <input name="password" type="text" required />
-        </div>
-        <div class="field">
-          <label>Role</label>
-          <select name="role">
-            <option value="user" selected>User</option>
-            <option value="finance">Finance</option>
-            <option value="admin">Admin</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Mode Password</label>
-          <select name="mode">
-            <option value="auto" selected>Auto (argon2/bcrypt/pbkdf2)</option>
-            <option value="argon2">Argon2</option>
-            <option value="bcrypt">Bcrypt</option>
-            <option value="pbkdf2">PBKDF2</option>
-          </select>
-        </div>
-        <div class="field" style="align-self:flex-end;">
-          <button type="submit">Simpan User</button>
-        </div>
-
-        <div class="field" style="flex:1 1 100%;">
-          <label>Hak Akses (opsional)</label>
-          <div class="perm-row">
-            <label><input type="checkbox" name="perm_custom"> Aktifkan pembatasan akses</label>
-          </div>
-          <div class="perm-grid">
-            <div class="perm-row">
-              <span>Validator</span>
-              <label><input type="checkbox" name="perm_validator_view"> Lihat</label>
-              <label><input type="checkbox" name="perm_validator_edit"> Edit</label>
-              <label><input type="checkbox" name="perm_validator_update"> Ubah</label>
-              <label><input type="checkbox" name="perm_validator_delete"> Hapus</label>
-            </div>
-            <div class="perm-row">
-              <span>Summary</span>
-              <label><input type="checkbox" name="perm_summary_view"> Lihat</label>
-              <label><input type="checkbox" name="perm_summary_edit"> Edit</label>
-              <label><input type="checkbox" name="perm_summary_update"> Ubah</label>
-              <label><input type="checkbox" name="perm_summary_delete"> Hapus</label>
-            </div>
-            <div class="perm-row">
-              <span>Payments</span>
-              <label><input type="checkbox" name="perm_payments_view"> Lihat</label>
-              <label><input type="checkbox" name="perm_payments_edit"> Edit</label>
-              <label><input type="checkbox" name="perm_payments_update"> Ubah</label>
-              <label><input type="checkbox" name="perm_payments_delete"> Hapus</label>
-            </div>
-            <div class="perm-row">
-              <span>Finance</span>
-              <label><input type="checkbox" name="perm_finance_view"> Lihat</label>
-              <label><input type="checkbox" name="perm_finance_edit"> Edit</label>
-              <label><input type="checkbox" name="perm_finance_update"> Ubah</label>
-              <label><input type="checkbox" name="perm_finance_delete"> Hapus</label>
-            </div>
-          </div>
-          <div class="muted" style="margin-top:6px;">Jika tidak diaktifkan, akses mengikuti default (role lama).</div>
-        </div>
-      </form>
-
-      <table>
-        <thead>
-          <tr>
-            <th>Username</th>
-            <th>Source</th>
-            <th>Role</th>
-            <th>Mode Password</th>
-            <th>Akses</th>
-            <th>Aksi</th>
-          </tr>
-        </thead>
-        <tbody>
-          __USERS_ROWS__
-        </tbody>
-      </table>
-    </div>
-  </div>
-</body>
-</html>"""
-
-def render_ui() -> str:
-    """
-    Render HTML UI.
-    v16 FIX: keep all HTML/CSS/JS inside a single raw Python string to avoid SyntaxError.
-    """
-    # json-escape the message so it is safe inside JS string literal
-    msg = json.dumps(REQUIRED_MISSING_MSG)[1:-1]
-    return (
-        UI_HTML
-        .replace("__PATCH_VERSION__", str(PATCH_VERSION))
-        .replace("__PATCH_TITLE__", str(PATCH_TITLE))
-        .replace("__PATCH_NOTES_HTML__", str(PATCH_NOTES_HTML))
-        .replace("__REQUIRED_MISSING_MSG__", msg)
-    )
-
-@app.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse("/login")
-    can_validator = user_has_permission(user, "validator", "view")
-    can_summary = user_has_permission(user, "summary", "view")
-    can_payments = user_has_permission(user, "payments", "view")
-    can_users = is_admin_user(user)
-    html = (
-        HOME_HTML
-        .replace("__SHOW_VALIDATOR__", "" if can_validator else "hidden")
-        .replace("__SHOW_SUMMARY__", "" if can_summary else "hidden")
-        .replace("__SHOW_PAYMENTS__", "" if can_payments else "hidden")
-        .replace("__SHOW_USERS__", "" if can_users else "hidden")
-    )
-    return render_html_with_csrf(request, html)
-
-@app.get("/validator", response_class=HTMLResponse)
-def validator_page(request: Request):
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse("/login")
-    if not user_has_permission(user, "validator", "view"):
-        return HTMLResponse("Forbidden", status_code=403)
-    can_edit = user_has_permission(user, "validator", "edit")
-    html = render_ui().replace("__CAN_VALIDATOR_EDIT__", "true" if can_edit else "false")
-    return render_html_with_csrf(request, html)
 
 @app.get("/api/me")
 def api_me(request: Request):
@@ -5582,90 +3328,9 @@ def api_logout():
     resp.delete_cookie(CSRF_COOKIE)
     return resp
 
-@app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request):
-    user = get_current_user(request)
-    if user:
-        return RedirectResponse("/")
-    err_html = ""
-    if request.query_params.get("error") == "csrf":
-        err_html = '<div class="error">Token keamanan tidak valid. Silakan refresh halaman.</div>'
-    elif request.query_params.get("error") == "locked":
-        wait_s = s(request.query_params.get("wait", ""))
-        wait_txt = f" Coba lagi dalam {wait_s} detik." if wait_s else ""
-        err_html = f'<div class="error">Terlalu banyak percobaan login gagal.{wait_txt}</div>'
-    elif request.query_params.get("error"):
-        err_html = '<div class="error">Login gagal. Username atau password salah.</div>'
-    return render_html_with_csrf(request, LOGIN_HTML.replace("__LOGIN_ERROR__", err_html))
 
-@app.get("/login-bg.png")
-def login_bg():
-    if not os.path.exists(LOGIN_BG_PATH):
-        return JSONResponse(status_code=404, content={"detail": "File not found"})
-    return FileResponse(LOGIN_BG_PATH, media_type="image/png")
 
-@app.get("/change-password", response_class=HTMLResponse)
-def change_password_page(request: Request):
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse("/login")
-    msg = ""
-    qp = request.query_params
-    if qp.get("ok"):
-        msg = '<div class="error">Password berhasil diubah.</div>'
-    elif qp.get("error") == "csrf":
-        msg = '<div class="error">Token keamanan tidak valid. Silakan refresh halaman.</div>'
-    elif qp.get("error") == "source":
-        msg = '<div class="error">User ini tidak bisa ubah password (source env).</div>'
-    elif qp.get("error") == "current":
-        msg = '<div class="error">Password lama tidak sesuai.</div>'
-    elif qp.get("error") == "mismatch":
-        msg = '<div class="error">Konfirmasi password tidak sama.</div>'
-    elif qp.get("error"):
-        msg = '<div class="error">Gagal mengubah password.</div>'
-    html = CHANGE_PASSWORD_HTML.replace("__CHANGE_MSG__", msg)
-    return render_html_with_csrf(request, html)
 
-@app.get("/summary", response_class=HTMLResponse)
-def summary_page(request: Request):
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse("/login")
-    if not user_has_permission(user, "summary", "view"):
-        return HTMLResponse("Forbidden", status_code=403)
-    # New home for summary is /summary/manual
-    return RedirectResponse("/summary/manual")
-
-@app.get("/payments", response_class=HTMLResponse)
-def payments_page(request: Request):
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse("/login")
-    if not user_has_permission(user, "sppd", "view"):
-        return HTMLResponse("Forbidden", status_code=403)
-    is_fin = user_has_permission(user, "finance", "view")
-    can_edit = user_has_permission(user, "payments", "edit")
-    can_update = user_has_permission(user, "payments", "update")
-    can_delete = user_has_permission(user, "payments", "delete")
-    html = (
-        PAYMENTS_HTML
-        .replace("__IS_FINANCE__", "true" if is_fin else "false")
-        .replace("__CAN_PAYMENTS_EDIT__", "true" if can_edit else "false")
-        .replace("__CAN_PAYMENTS_UPDATE__", "true" if can_update else "false")
-        .replace("__CAN_PAYMENTS_DELETE__", "true" if can_delete else "false")
-    )
-    return render_html_with_csrf(request, html)
-
-@app.get("/payments/finance", response_class=HTMLResponse)
-def payments_finance_page(request: Request):
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse("/login")
-    if not user_has_permission(user, "finance", "view"):
-        return HTMLResponse("Forbidden", status_code=403)
-    can_update = user_has_permission(user, "finance", "update")
-    html = FINANCE_HTML.replace("__CAN_FINANCE_UPDATE__", "true" if can_update else "false")
-    return render_html_with_csrf(request, html)
 
 @app.get("/favicon.ico")
 @app.get("/favicon.png")
@@ -5675,61 +3340,6 @@ def favicon():
         return JSONResponse(status_code=404, content={"detail": "File not found"})
     return FileResponse(path, media_type=favicon_media_type(path))
 
-@app.get("/users", response_class=HTMLResponse)
-def users_page(request: Request):
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse("/login")
-    if not is_admin_user(user):
-        return HTMLResponse("Forbidden", status_code=403)
-
-    records = get_auth_user_records()
-    rows = []
-    for uname in sorted(records.keys()):
-        info = records[uname]
-        pwd = s(info.get("password", ""))
-        source = s(info.get("source", "JSON"))
-        role = s(info.get("role", "user")) or "user"
-        mode = detect_password_scheme(pwd)
-        perms, defined = get_user_permissions_info(uname)
-        perms_label = format_permissions(perms, defined)
-        can_delete = (source.lower() == "json") and (uname != user)
-        if can_delete:
-            confirm_js = json.dumps(f"Hapus user {uname}?")
-            delete_html = (
-                "<form method=\"post\" action=\"/users/delete\" style=\"display:inline;\" "
-                f"onsubmit='return confirm({confirm_js});'>"
-                "<input type=\"hidden\" name=\"csrf_token\" value=\"__CSRF_TOKEN__\" />"
-                f"<input type=\"hidden\" name=\"username\" value=\"{uname}\" />"
-                "<button type=\"submit\" style=\"background:#8A4703;color:#EFEFEF;border:1px solid #8A4703;"
-                "border-radius:8px;padding:6px 10px;font-size:11px;cursor:pointer;\">Hapus</button>"
-                "</form>"
-            )
-        else:
-            delete_html = "-"
-        rows.append(f"<tr><td>{uname}</td><td>{source}</td><td>{role}</td><td>{mode}</td><td>{perms_label}</td><td>{delete_html}</td></tr>")
-    rows_html = "\n".join(rows) if rows else "<tr><td colspan='6'>Belum ada user</td></tr>"
-
-    msg = ""
-    qp = request.query_params
-    if qp.get("ok") == "deleted":
-        msg = '<div class="msg">User berhasil dihapus.</div>'
-    elif qp.get("ok"):
-        msg = '<div class="msg">User berhasil disimpan.</div>'
-    if qp.get("error") == "csrf":
-        msg = '<div class="msg">Token keamanan tidak valid. Silakan refresh halaman.</div>'
-    elif qp.get("error") == "self":
-        msg = '<div class="msg">Tidak bisa menghapus user yang sedang login.</div>'
-    elif qp.get("error") == "source":
-        msg = '<div class="msg">User dari environment tidak bisa dihapus.</div>'
-    elif qp.get("error") == "notfound":
-        msg = '<div class="msg">User tidak ditemukan.</div>'
-    elif qp.get("error"):
-        msg = '<div class="msg">Gagal menyimpan user. Username/password wajib diisi.</div>'
-
-    html = USERS_HTML.replace("__USERS_ROWS__", rows_html).replace("__USERS_MSG__", msg)
-    return render_html_with_csrf(request, html)
-
 @app.get("/payments/data")
 def payments_data(request: Request):
     user = get_current_user(request)
@@ -5737,6 +3347,12 @@ def payments_data(request: Request):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "payments", "view"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    qp = request.query_params
+    q = s(qp.get("q", "")).lower()
+    tipe_filter = s(qp.get("tipe", ""))
+    raw_page = qp.get("page", "")
+    page = max(1, int(raw_page)) if raw_page.isdigit() else 0  # 0 = no pagination (return all, backwards compat)
+    page_size = min(500, max(10, int(qp.get("page_size", 100) or 100)))
     db = load_payments_db()
     rows = []
     for key in sorted(db.get("lpb", {}).keys()):
@@ -5744,6 +3360,17 @@ def payments_data(request: Request):
         row = dict(r)
         row["record_id"] = key
         row["tipe_pengajuan"] = normalize_pengajuan_type(row.get("tipe_pengajuan", "LPB"))
+        # Early-exit filters before expensive field formatting
+        if tipe_filter and row["tipe_pengajuan"] != tipe_filter:
+            continue
+        if q:
+            haystack = " ".join([
+                s(row.get("principle", "")), s(row.get("no_lpb", "")),
+                s(row.get("invoice", "")), s(row.get("invoice_no", "")),
+                s(row.get("nomor_dokumen", "")),
+            ]).lower()
+            if q not in haystack:
+                continue
         row["jenis_dokumen"] = s(row.get("jenis_dokumen", ""))
         row["nomor_dokumen"] = s(row.get("nomor_dokumen", ""))
         if not s(row.get("no_lpb", "")) and row["tipe_pengajuan"] == "LPB":
@@ -5779,7 +3406,11 @@ def payments_data(request: Request):
             row["gap_nilai_display"] = format_idr(gap_val)
         row["status_pembayaran"] = row.get("status_pembayaran", "")
         rows.append(row)
-    return ORJSONResponse({"ok": True, "data": rows})
+    total = len(rows)
+    if page > 0:
+        start = (page - 1) * page_size
+        rows = rows[start:start + page_size]
+    return ORJSONResponse({"ok": True, "data": rows, "total": total, "page": page or 1, "page_size": page_size})
 
 @app.get("/payments/export")
 def payments_export(request: Request):
@@ -5885,8 +3516,13 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
             db = load_payments_db()
             conflicts = validate_backup_restore_conflicts(db, restore_rows)
             if conflicts:
-                return JSONResponse(status_code=400, content={"ok": False, "error": "Restore backup dibatalkan: " + "; ".join(conflicts[:5])})
+                return payments_conflict_response(
+                    "Restore backup dibatalkan karena ada data yang sudah ada di server.",
+                    [{"record_id": c, "reason": c} for c in conflicts],
+                )
+            restore_ts = payment_write_timestamp()
             for key, rec in restore_rows:
+                touch_payment_record(rec, user, restore_ts)
                 db["lpb"][key] = rec
             rebuild_payment_submissions(db)
             max_seq = max_sppd_sequence_from_records([rec for _, rec in restore_rows])
@@ -5907,7 +3543,7 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
                 dups.append(no_lpb)
         if dups:
             return JSONResponse(status_code=400, content={"ok": False, "error": f"No. LPB {dups[0]} sudah ada di sistem, gagal upload"})
-        now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = payment_write_timestamp()
         for r in rows:
             key = normalize_lpb_no(r["no_lpb"])
             nilai_invoice = parse_number_id(r.get("nilai_invoice", 0))
@@ -5937,6 +3573,8 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
                 "keterangan": s(r.get("keterangan", "")),
                 "created_at": now,
                 "created_by": user,
+                "updated_at": now,
+                "updated_by": user,
             }
         save_payments_db(db)
         append_audit_log(user, "payments_upload", "lpb", {"added": len(rows)})
@@ -5991,7 +3629,7 @@ async def payments_manual_add(request: Request):
     while key in db.get("lpb", {}):
         key = make_payment_record_id(tipe)
 
-    now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = payment_write_timestamp()
     db["lpb"][key] = {
         "record_id": key,
         "tipe_pengajuan": tipe,
@@ -6022,6 +3660,8 @@ async def payments_manual_add(request: Request):
         "nomor_dokumen": nomor_dokumen,
         "created_at": now,
         "created_by": user,
+        "updated_at": now,
+        "updated_by": user,
     }
     save_payments_db(db)
     append_audit_log(user, "payments_manual_add", "lpb", {"record_id": key, "tipe_pengajuan": tipe})
@@ -6045,8 +3685,31 @@ async def payments_update(request: Request):
     if not isinstance(items, list):
         return JSONResponse(status_code=400, content={"ok": False, "error": "Format data tidak valid."})
     db = load_payments_db()
+    conflicts: List[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        row_id = s(item.get("record_id", "")) or s(item.get("id", "")) or s(item.get("no_lpb", ""))
+        key = resolve_payment_record_key(db, row_id)
+        if not key or key not in db.get("lpb", {}):
+            continue
+        expected_revision = s(item.get("source_updated_at", ""))
+        current_revision = payment_record_revision(db["lpb"][key])
+        if expected_revision != current_revision:
+            conflicts.append({
+                "record_id": key,
+                "no_lpb": s(db["lpb"][key].get("no_lpb", "")),
+                "expected_updated_at": expected_revision,
+                "current_updated_at": current_revision,
+            })
+    if conflicts:
+        return payments_conflict_response(
+            "Data server sudah berubah. Refresh halaman sebelum menyimpan agar perubahan user lain tidak tertimpa.",
+            conflicts,
+        )
     updated = []
     skipped = []
+    update_ts = payment_write_timestamp()
     for item in items:
         if not isinstance(item, dict):
             skipped.append("")
@@ -6114,6 +3777,7 @@ async def payments_update(request: Request):
         except Exception:
             rec["gap_nilai"] = 0.0
         if changed:
+            touch_payment_record(rec, user, update_ts)
             updated.append(key)
     save_payments_db(db)
     append_audit_log(user, "payments_update", "lpb", {"count": len(updated), "samples": updated[:10], "skipped": skipped[:10]})
@@ -6320,6 +3984,7 @@ async def payments_sppd_upload(request: Request, file: UploadFile = File(None)):
         updated: List[str] = []
         not_found: List[str] = []
         changed_fields: Dict[str, int] = {}
+        update_ts = payment_write_timestamp()
         for item in rows:
             row_id = s(item.get("record_id", "")) or s(item.get("no_lpb", ""))
             key = resolve_payment_record_key(db, row_id)
@@ -6342,6 +4007,7 @@ async def payments_sppd_upload(request: Request, file: UploadFile = File(None)):
                     rec["gap_nilai"] = float(parse_number_id(rec.get("nilai_win", 0))) - float(parse_number_id(rec.get("nilai_invoice", 0)))
                 except Exception:
                     rec["gap_nilai"] = 0.0
+            touch_payment_record(rec, user, update_ts)
             updated.append(key)
         if not updated:
             return JSONResponse(status_code=400, content={"ok": False, "error": "Tidak ada record yang cocok untuk diupdate.", "not_found": not_found[:20]})
@@ -6566,21 +4232,6 @@ async def payments_cart_create(request: Request):
     append_audit_log(user, "payments_cart_create", "draft", {"draft_id": draft_id, "count": len(selected), "types": sorted({normalize_pengajuan_type(x.get("tipe_pengajuan", "")) for x in selected})})
     return JSONResponse({"ok": True, "draft_id": draft_id})
 
-@app.get("/payments/cart/{draft_id}", response_class=HTMLResponse)
-def payments_cart_page(request: Request, draft_id: str):
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-    if not user_has_permission(user, "payments", "view"):
-        return HTMLResponse("Forbidden", status_code=403)
-    db = load_payments_db()
-    draft_id = s(draft_id)
-    drafts = db.get("drafts", {})
-    draft = drafts.get(draft_id) or drafts.get(draft_id.lower()) or drafts.get(draft_id.upper())
-    if not draft or not _can_access_draft(user, draft):
-        return HTMLResponse("Draft not found", status_code=404)
-    html = PAYMENTS_CART_HTML.replace("__DRAFT_ID__", s(draft_id))
-    return render_html_with_csrf(request, html)
 
 @app.get("/payments/cart-info")
 def payments_cart_data(request: Request):
@@ -6701,6 +4352,23 @@ async def payments_cart_submit(request: Request):
             selected.append({**rec, "record_id": key})
     if not selected:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Data pengajuan tidak ditemukan."})
+    stale_records = []
+    for rec in selected:
+        existing_submission = s(rec.get("submission_id", ""))
+        existing_status = s(rec.get("status_pembayaran", "")).lower()
+        if existing_submission and existing_status != "ajukan ulang":
+            stale_records.append({
+                "record_id": s(rec.get("record_id", "")),
+                "no_lpb": s(rec.get("no_lpb", "")),
+                "submission_id": existing_submission,
+                "status_pembayaran": s(rec.get("status_pembayaran", "")),
+                "target_payment_date": s(rec.get("target_payment_date", "")),
+            })
+    if stale_records:
+        return payments_conflict_response(
+            "Draft sudah usang. Sebagian record sudah diajukan oleh proses lain, refresh halaman lalu buat draft baru.",
+            stale_records,
+        )
 
     submission_id = str(uuid.uuid4())[:8]
     submit_dt = pd.Timestamp.now()
@@ -6829,6 +4497,7 @@ async def payments_cart_submit(request: Request):
             db["lpb"][key]["nilai_pembayaran"] = float(payment_alloc_by_lpb.get(key, 0.0) or 0.0)
             if sppd_no:
                 db["lpb"][key]["sppd_no"] = sppd_no
+            touch_payment_record(db["lpb"][key], user, now)
 
     db["submissions"][submission_id] = {
         "id": submission_id,
@@ -7234,11 +4903,13 @@ async def replace_principle_name(request: Request):
     db = load_payments_db()
     replaced_count = 0
     replaced_keys: List[str] = []
+    update_ts = payment_write_timestamp()
     for rec_key, rec in db.get("lpb", {}).items():
         current = s(rec.get("principle", ""))
         # Case-insensitive comparison for matching
         if current.upper() == old_name.upper():
             rec["principle"] = new_name
+            touch_payment_record(rec, user, update_ts)
             replaced_count += 1
             replaced_keys.append(rec_key)
     if replaced_count > 0:
@@ -7307,12 +4978,14 @@ async def auto_fix_principle_names(request: Request):
 
     if confirm and changes:
         # Execute the renames
+        update_ts = payment_write_timestamp()
         for change in changes:
             old = change["old"]
             new = change["new"]
             for rec_key, rec in db.get("lpb", {}).items():
                 if s(rec.get("principle", "")) == old:
                     rec["principle"] = new
+                    touch_payment_record(rec, user, update_ts)
         save_payments_db(db)
         append_audit_log(user, "auto_fix_principle_names", "lpb", {
             "changes": changes,
@@ -7716,6 +5389,7 @@ async def payments_finance_update(request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "error": "Data finance yang akan diupdate tidak boleh kosong."})
     db = load_payments_db()
     updated_count = 0
+    update_ts = payment_write_timestamp()
     for item in items:
         no = normalize_lpb_no(s(item.get("no_lpb", "")))
         status = s(item.get("status_pembayaran", ""))
@@ -7753,6 +5427,7 @@ async def payments_finance_update(request: Request):
                 rec["accurate_payload_digest"] = s(item.get("accurate_payload_digest", ""))
                 rec["accurate_posted_at"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S") if rec["accurate_post_status"] == "posted" else s(rec.get("accurate_posted_at", ""))
                 rec["accurate_posted_by"] = user if rec["accurate_post_status"] == "posted" else s(rec.get("accurate_posted_by", ""))
+            touch_payment_record(rec, user, update_ts)
             updated_count += 1
 
         if no and no in db.get("lpb", {}):
@@ -7778,218 +5453,6 @@ async def payments_finance_update(request: Request):
     save_payments_db(db)
     append_audit_log(user, "payments_finance_update", "lpb", {"count": updated_count, "items": len(items)})
     return JSONResponse({"ok": True, "updated": updated_count})
-
-@app.post("/users/save")
-async def users_save(
-    request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-    role: str = Form("user"),
-    mode: str = Form("auto"),
-    csrf_token: str = Form(""),
-):
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-    if not is_admin_user(user):
-        return HTMLResponse("Forbidden", status_code=403)
-    if not validate_csrf_request(request, csrf_token):
-        return RedirectResponse("/users?error=csrf", status_code=303)
-
-    username = s(username)
-    password = s(password)
-    if not username or not password:
-        return RedirectResponse("/users?error=1", status_code=303)
-
-    mode = s(mode).lower()
-    if mode not in ["auto", "argon2", "bcrypt", "pbkdf2"]:
-        mode = "auto"
-    stored = hash_password(password, scheme=mode)
-
-    form = await request.form()
-    custom = "perm_custom" in form
-    permissions = None
-    if custom:
-        perms: Dict[str, List[str]] = {}
-        for mod in PERMISSION_MODULES:
-            for act in PERMISSION_ACTIONS:
-                key = f"perm_{mod}_{act}"
-                if key in form:
-                    perms.setdefault(mod, []).append(act)
-        permissions = perms
-
-    users = load_users_json(AUTH_USERS_JSON)
-    info = {"password": stored, "role": s(role).lower() or "user"}
-    if permissions is not None:
-        info["permissions"] = permissions
-    elif username in users and "permissions" in users[username]:
-        users[username].pop("permissions", None)
-    users[username] = info
-    save_users_json(AUTH_USERS_JSON, users)
-    append_audit_log(
-        user,
-        "users_save",
-        "users",
-        {"username": username, "role": s(role).lower() or "user", "permissions_custom": custom},
-    )
-    return RedirectResponse("/users?ok=1", status_code=303)
-
-@app.post("/users/delete")
-async def users_delete(
-    request: Request,
-    username: str = Form(""),
-    csrf_token: str = Form(""),
-):
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-    if not is_admin_user(user):
-        return HTMLResponse("Forbidden", status_code=403)
-    if not validate_csrf_request(request, csrf_token):
-        return RedirectResponse("/users?error=csrf", status_code=303)
-
-    username = s(username)
-    if not username:
-        return RedirectResponse("/users?error=notfound", status_code=303)
-    if username == user:
-        return RedirectResponse("/users?error=self", status_code=303)
-
-    records = get_auth_user_records()
-    rec = records.get(username)
-    if not rec:
-        return RedirectResponse("/users?error=notfound", status_code=303)
-    if s(rec.get("source", "")).lower() != "json":
-        return RedirectResponse("/users?error=source", status_code=303)
-
-    users = load_users_json(AUTH_USERS_JSON)
-    if username not in users:
-        return RedirectResponse("/users?error=notfound", status_code=303)
-    users.pop(username, None)
-    save_users_json(AUTH_USERS_JSON, users)
-    append_audit_log(user, "users_delete", "users", {"username": username})
-    return RedirectResponse("/users?ok=deleted", status_code=303)
-
-@app.post("/login")
-def login_action(request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form("")):
-    username = s(username)
-    rate_key = login_rate_key(request, username)
-    remain = LOGIN_LIMITER.is_locked(rate_key)
-    if remain > 0:
-        return RedirectResponse(f"/login?error=locked&wait={remain}", status_code=303)
-    if not validate_csrf_request(request, csrf_token):
-        return RedirectResponse("/login?error=csrf", status_code=303)
-    ok, upgrade_hash, source = verify_user(username, password)
-    if not ok:
-        locked_wait = LOGIN_LIMITER.register_failure(rate_key)
-        if locked_wait > 0:
-            return RedirectResponse(f"/login?error=locked&wait={locked_wait}", status_code=303)
-        return RedirectResponse("/login?error=1", status_code=303)
-    LOGIN_LIMITER.register_success(rate_key)
-    if upgrade_hash and source == "json":
-        users = load_users_json(AUTH_USERS_JSON)
-        if username in users:
-            users[username]["password"] = upgrade_hash
-            save_users_json(AUTH_USERS_JSON, users)
-    token = make_token(username)
-    resp = RedirectResponse("/", status_code=303)
-    resp.set_cookie(
-        AUTH_COOKIE,
-        token,
-        httponly=True,
-        max_age=AUTH_TTL_SECONDS,
-        samesite=_normalize_samesite(AUTH_COOKIE_SAMESITE),
-        secure=AUTH_COOKIE_SECURE,
-    )
-    return resp
-
-@app.post("/api/login")
-async def api_login_json(request: Request):
-    """JSON-compatible login endpoint for React/Next.js frontend."""
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(status_code=400, content={"ok": False, "error": "Invalid JSON body."})
-    username = s(body.get("username", ""))
-    password = s(body.get("password", ""))
-    csrf_token = s(body.get("csrf_token", ""))
-    if not username or not password:
-        return JSONResponse(status_code=400, content={"ok": False, "error": "Username dan password wajib diisi."})
-    rate_key = login_rate_key(request, username)
-    remain = LOGIN_LIMITER.is_locked(rate_key)
-    if remain > 0:
-        return JSONResponse(status_code=429, content={"ok": False, "error": f"Terlalu banyak percobaan. Coba lagi dalam {remain} detik."})
-    if not validate_csrf_request(request, csrf_token):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token tidak valid. Refresh halaman dan coba lagi."})
-    ok, upgrade_hash, source = verify_user(username, password)
-    if not ok:
-        locked_wait = LOGIN_LIMITER.register_failure(rate_key)
-        if locked_wait > 0:
-            return JSONResponse(status_code=429, content={"ok": False, "error": f"Terlalu banyak percobaan. Coba lagi dalam {locked_wait} detik."})
-        return JSONResponse(status_code=401, content={"ok": False, "error": "Username atau password salah."})
-    LOGIN_LIMITER.register_success(rate_key)
-    if upgrade_hash and source == "json":
-        users = load_users_json(AUTH_USERS_JSON)
-        if username in users:
-            users[username]["password"] = upgrade_hash
-            save_users_json(AUTH_USERS_JSON, users)
-    token = make_token(username)
-    resp = JSONResponse(content={"ok": True, "user": username})
-    resp.set_cookie(
-        AUTH_COOKIE,
-        token,
-        httponly=True,
-        max_age=AUTH_TTL_SECONDS,
-        samesite=_normalize_samesite(AUTH_COOKIE_SAMESITE),
-        secure=AUTH_COOKIE_SECURE,
-    )
-    return resp
-
-@app.get("/logout")
-def logout():
-    resp = RedirectResponse("/login", status_code=303)
-    resp.delete_cookie(AUTH_COOKIE)
-    resp.delete_cookie(CSRF_COOKIE)
-    return resp
-
-@app.post("/change-password")
-async def change_password_action(
-    request: Request,
-    current_password: str = Form(""),
-    new_password: str = Form(""),
-    confirm_password: str = Form(""),
-    csrf_token: str = Form(""),
-):
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-    if not validate_csrf_request(request, csrf_token):
-        return RedirectResponse("/change-password?error=csrf", status_code=303)
-
-    current_password = s(current_password)
-    new_password = s(new_password)
-    confirm_password = s(confirm_password)
-    if not current_password or not new_password or not confirm_password:
-        return RedirectResponse("/change-password?error=1", status_code=303)
-    if new_password != confirm_password:
-        return RedirectResponse("/change-password?error=mismatch", status_code=303)
-
-    ok, _upgrade_hash, source = verify_user(user, current_password)
-    if not ok:
-        return RedirectResponse("/change-password?error=current", status_code=303)
-
-    records = get_auth_user_records()
-    rec = records.get(user)
-    if not rec or s(rec.get("source", "")).lower() != "json":
-        return RedirectResponse("/change-password?error=source", status_code=303)
-
-    users = load_users_json(AUTH_USERS_JSON)
-    if user not in users:
-        return RedirectResponse("/change-password?error=source", status_code=303)
-
-    users[user]["password"] = hash_password(new_password, scheme="auto")
-    save_users_json(AUTH_USERS_JSON, users)
-    append_audit_log(user, "change_password", "users", {})
-    return RedirectResponse("/change-password?ok=1", status_code=303)
 
 @app.get("/health")
 def health():
@@ -9339,960 +6802,6 @@ def _parse_master_customer_xlsx(file_bytes: bytes) -> list[dict]:
 def _ensure_dir(p: str):
     os.makedirs(p, exist_ok=True)
 
-@app.get("/summary/manual", response_class=HTMLResponse)
-def summary_manual_page(request: Request):
-    html = """<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Summary Program</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select/dist/css/tom-select.css">
-  <script src="https://cdn.jsdelivr.net/npm/tom-select/dist/js/tom-select.complete.min.js"></script>
-  <style>
-    :root{
-      --bg:#f8fafc;
-      --card:#ffffff;
-      --text:#0f172a;
-      --muted:#475569;
-      --border:#e2e8f0;
-      --primary:#6d28d9;      /* royal amethyst-ish */
-      --primary-2:#4c1d95;
-      --accent:#f59e0b;
-      --danger:#b00020;
-      --ok:#0a7a0a;
-    }
-    body{font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Helvetica Neue", Helvetica, sans-serif; margin:0; background:var(--bg); color:var(--text);}
-    a{color:var(--primary); text-decoration:none}
-    a:hover{text-decoration:underline}
-    .container{max-width:1280px; margin:0 auto; padding:24px;}
-    .topbar{display:flex; gap:14px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; margin-bottom:16px;}
-    .title h1{font-size:22px; margin:0;}
-    .title p{margin:6px 0 0 0; color:var(--muted); font-size:13px; line-height:1.4;}
-    .pill{font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid var(--border); background:#fff; color:var(--muted); display:inline-flex; gap:8px; align-items:center;}
-    .steps{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
-    .step{display:inline-flex; gap:8px; align-items:center; border:1px solid var(--border); background:#fff; padding:8px 10px; border-radius:12px; font-size:12px; color:var(--muted);}
-    .step b{color:var(--text);}
-    .card{background:var(--card); border:1px solid var(--border); border-radius:16px; padding:16px; box-shadow:0 1px 0 rgba(15,23,42,.03);}
-    .card h2{margin:0 0 6px 0; font-size:15px;}
-    .sub{color:var(--muted); font-size:12px; margin:0 0 10px 0;}
-    .grid{display:grid; grid-template-columns: 1fr; gap:14px;}
-    @media (min-width: 980px){ .grid{grid-template-columns: 380px 1fr;} }
-    .field{display:flex; flex-direction:column; gap:6px;}
-    .field label{font-size:12px; color:var(--muted);}
-    .help{font-size:12px; color:var(--muted); line-height:1.35;}
-    .btn{display:inline-flex; align-items:center; gap:8px; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:#fff; cursor:pointer; font-weight:600; font-size:12px;}
-    .btn.primary{border-color:transparent; background:linear-gradient(180deg, var(--primary), var(--primary-2)); color:#fff;}
-    .btn.ghost{background:#fff;}
-    .btn:disabled{opacity:.55; cursor:not-allowed;}
-    .btn.small{padding:8px 10px; border-radius:10px; font-weight:600;}
-    .row-actions{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
-    .alert{border-radius:12px; padding:10px 12px; border:1px solid var(--border); font-size:12px; margin-top:10px; white-space:pre-wrap;}
-    .alert.ok{border-color:rgba(10,122,10,.25); background:rgba(10,122,10,.06); color:var(--ok);}
-    .alert.err{border-color:rgba(176,0,32,.25); background:rgba(176,0,32,.06); color:var(--danger);}
-    .table-wrap{border:1px solid var(--border); border-radius:14px; overflow:auto; background:#fff;}
-    table{border-collapse:separate; border-spacing:0; width:100%; min-width:1100px;}
-    th, td{border-bottom:1px solid var(--border); padding:10px 8px; font-size:12px; vertical-align:top; background:#fff;}
-    th{position:sticky; top:0; background:#f1f5f9; z-index:2; font-weight:700; color:#0f172a;}
-    tr:last-child td{border-bottom:none;}
-    input[type=text], input[type=date], select{width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid var(--border); border-radius:10px; font-size:12px; background:#fff;}
-    input[type=file]{font-size:12px;}
-    .periode-wrap{display:flex;flex-direction:column;gap:4px;min-width:140px}
-    .periode-range{display:none;flex-direction:column;gap:4px}
-    .muted{color:var(--muted);}
-    .kpi{display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;}
-    .kpi .pill{background:#fff;}
-    .ts-wrapper.multi .ts-control{min-height:38px; border-radius:10px; border-color:var(--border);}
-    .ts-control{border-radius:10px;}
-    .stickybar{position:sticky; bottom:0; background:rgba(248,250,252,.9); backdrop-filter: blur(6px); padding:10px 0 0 0; margin-top:10px;}
-    .stickybar .inner{display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap;}
-    .kbd{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:11px; border:1px solid var(--border); border-radius:8px; padding:2px 6px; background:#fff; color:var(--muted);}
-    details{border:1px solid var(--border); border-radius:14px; padding:10px 12px; background:#fff;}
-    details summary{cursor:pointer; font-weight:700; font-size:12px; color:var(--text);}
-
-    /* pusatkan & batasi lebar halaman */
-    .page{
-      max-width: 1200px;
-      margin: 0;
-      padding: 24px 16px 24px 24px;
-    }
-
-    /* STACK: jangan 2 kolom */
-    .layout{
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 16px;
-      align-items: start;
-    }
-
-    /* kartu */
-    .card{
-      background: #fff;
-      border: 1px solid #e6e8ef;
-      border-radius: 14px;
-      box-shadow: 0 1px 10px rgba(0,0,0,.04);
-      padding: 16px;
-    }
-
-    /* bungkus tabel supaya tidak maksa layout */
-    .table-wrap{
-      width: 100%;
-      overflow-x: auto;
-      border-radius: 12px;
-      border: 1px solid #eef0f6;
-    }
-
-    table{
-      min-width: 1200px; /* biar kolom tidak gepeng */
-      width: 100%;
-      border-collapse: separate;
-      border-spacing: 0;
-    }
-
-    thead th{
-      position: sticky;
-      top: 0;
-      background: #f6f8ff;
-      z-index: 2;
-    }
-  </style>
-</head>
-<body>
-  <div class="page">
-    <div class="card">
-      <div class="topbar">
-      <div class="title">
-        <h1>Summary Program</h1>
-        <p>Ikuti 2 langkah: <b>Upload MASTER BARANG</b> untuk mengaktifkan dropdown, lalu isi tabel seperti Form Summary Program. Variant &amp; Gramasi bisa dipilih banyak (checkbox). Opsi <b>ALL</b> akan otomatis mengunci pilihan lain.</p>
-        <div class="kpi">
-          <span class="pill">⌁ Shortcut: <span class="kbd">Tab</span> pindah kolom</span>
-          <span class="pill">⌁ Tips: isi 1 baris = 1 program</span>
-          <span class="pill">⌁ Output: 2 file Excel</span>
-        </div>
-      </div>
-      <div class="steps">
-        <div class="step"><b>1</b> Upload Master</div>
-        <div class="step"><b>2</b> Input Program</div>
-        <div class="step"><b>3</b> Generate Excel</div>
-      </div>
-    </div>
-  </div>
-
-    <div class="card" id="ai">
-      <div class="topbar" style="margin-bottom:8px;">
-        <div class="title">
-          <h1>Summary Program</h1>
-          <p>Pilih jalur: <b>AI Generate</b> (upload surat program PDF) atau <b>Manual</b> (isi tabel seperti form). Untuk hasil paling rapi, tetap siapkan surat PDF yang jelas.</p>
-          <div class="kpi">
-            <span class="pill">⌁ AI: ekstrak otomatis → 1 file Summary.xlsx</span>
-            <span class="pill">⌁ Manual: output 2 file (Form + Dataset)</span>
-            <span class="pill">⌁ Model: kimi / deepseek</span>
-          </div>
-        </div>
-        <div class="steps">
-          <a class="pill" href="#ai">AI Generate</a>
-          <a class="pill" href="#manual">Manual</a>
-          <a class="pill" href="/">Dashboard</a>
-        </div>
-      </div>
-
-      <form id="aiForm">
-        <div class="field">
-          <label>Upload Surat Program (PDF)</label>
-          <input id="aiFile" type="file" accept=".pdf" required>
-          <div class="help">Kalau PDF hasil scan, server akan coba OCR (kalau tersedia). Jika teks kosong, coba scan lebih jelas / PDF asli.</div>
-        </div>
-
-        <div style="display:grid; grid-template-columns: 1fr; gap:12px; margin-top:10px;">
-          <div class="field">
-            <label>Opsi Generate</label>
-            <select id="aiEngine">
-              <option value="ai" selected>AI Generate (Kimi/DeepSeek)</option>
-              <option value="manual">Manual (Template Parser lama)</option>
-            </select>
-            <div class="help">Kalau AI error, pilih Manual agar tetap bisa jalan pakai parser template.</div>
-          </div>
-
-          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
-            <div class="field">
-              <label>Model AI</label>
-              <select id="aiModel">
-                <option value="gemini-2.5-flash" selected>gemini-2.5-flash</option>
-                <option value="gpt-4o-mini">gpt-4o-mini</option>
-                <option value="kimi-k2-250905">kimi-k2-250905</option>
-                <option value="deepseek-v3-2-251201">deepseek-v3-2-251201</option>
-              </select>
-            </div>
-
-            <div class="field">
-              <label>Ada List / Tanpa List</label>
-              <select id="aiListMode">
-                <option value="TANPA LIST" selected>TANPA LIST</option>
-                <option value="ADA LIST">ADA LIST</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="field">
-            <label>Template Principle</label>
-            <select id="aiTemplate">
-              <option value="GUMINDO" selected>PT. Gumindo Bogamanis</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="row-actions" style="margin-top:12px;">
-          <button class="btn primary" id="aiBtn" type="submit">⚡ Generate Summary</button>
-          <span id="aiMsg" class="help"></span>
-          <a id="aiDownload" href="#" class="btn ghost small" style="display:none;" target="_blank">⬇ Download Summary</a>
-        </div>
-      </form>
-
-      <div class="alert err" id="aiErr" style="display:none;"></div>
-    </div>
-
-
-    <div class="layout">
-      <div class="card" id="manual">
-        <h2>1) Upload Master Barang</h2>
-        <p class="sub">File ini dipakai untuk dropdown <b>Kelompok Barang → Variant &amp; Gramasi</b>. Kamu bisa upload versi 1 dulu (per principle) lalu nanti kita tambah multi-master.</p>
-
-        <form id="masterForm">
-          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
-            <div class="field">
-              <label>Pilih file MASTER BARANG (.xlsx)</label>
-              <input type="file" id="masterProduct" accept=".xlsx" required>
-              <div class="help">Harus punya kolom: <b>Kelompok Barang</b>, <b>Variant</b>, <b>Gramasi</b>.</div>
-            </div>
-            <div class="field">
-              <label>Pilih file MASTER CUSTOMER (.xlsx) - Opsional</label>
-              <input type="file" id="masterCustomer" accept=".xlsx">
-              <div class="help">Pilih jika ada program <b>OUTLET</b> khusus (C-XXX). Butuh kolom: <b>Kode Customer</b>, <b>Nama Customer</b>.</div>
-            </div>
-          </div>
-
-          <div class="row-actions" style="margin-top:10px;">
-            <button class="btn primary" type="submit">⬆️ Upload</button>
-            <button class="btn ghost small" type="button" onclick="location.reload()">↻ Reset halaman</button>
-          </div>
-        </form>
-
-        <div id="masterStatus" class="alert err" style="display:none;"></div>
-        <div id="masterOk" class="alert ok" style="display:none;"></div>
-
-        <div style="margin-top:12px;">
-          <details>
-            <summary>Bantuan cepat (untuk user awam)</summary>
-            <div class="help" style="margin-top:8px;">
-              <ul style="margin:0; padding-left:18px;">
-                <li>Kalau dropdown Variant/Gramasi kosong: pastikan master sudah berhasil ter-upload (status hijau).</li>
-                <li><b>ALL VARIANT</b> / <b>ALL GRAMASI</b> bersifat eksklusif: kalau dipilih, pilihan lain otomatis dibersihkan &amp; tidak bisa dicentang bersamaan.</li>
-                <li>Kamu boleh ketik nilai baru di Variant/Gramasi meskipun tidak ada di master (create option).</li>
-              </ul>
-            </div>
-          </details>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>2) Input Manual</h2>
-        <p class="sub">Isi tabel seperti Form Summary Program. Mulai dari klik <b>Tambah Baris</b> setelah master ter-upload.</p>
-
-        <div class="row-actions">
-          <button class="btn primary" id="addRowBtn" type="button" disabled>➕ Tambah Baris</button>
-          <span class="help">Variant/Gramasi akan otomatis mengikuti <b>Kelompok Barang</b>.</span>
-        </div>
-
-        <form id="manualForm">
-          <div class="table-wrap" style="margin-top:12px;">
-            <table>
-              <thead>
-                <tr>
-                  <th style="min-width:52px;">No</th>
-                  <th style="min-width:120px;">Principle</th>
-                  <th style="min-width:150px;">Surat Program</th>
-                  <th style="min-width:160px;">Nama Program</th>
-                  <th style="min-width:110px;">Promo Group ID</th>
-                  <th style="min-width:95px;">Channel (GT/MT)</th>
-                  <th style="min-width:115px;">Channel (List)</th>
-                  <th style="min-width:180px;">Periode</th>
-                  <th style="min-width:210px;">Kelompok Barang</th>
-                  <th style="min-width:180px;">Variant</th>
-                  <th style="min-width:170px;">Gramasi</th>
-                  <th style="min-width:170px;">Ketentuan</th>
-                  <th style="min-width:140px;">Benefit Type</th>
-                  <th style="min-width:150px;">Benefit</th>
-                  <th style="min-width:140px;">Syarat Claim</th>
-                  <th style="min-width:120px;">Update</th>
-                  <th style="min-width:160px;">Keterangan</th>
-                  <th style="min-width:90px;">Aksi</th>
-                </tr>
-              </thead>
-              <tbody id="tbody"></tbody>
-            </table>
-          </div>
-
-          <div class="stickybar">
-            <div class="inner">
-              <div class="help">Setelah semua baris siap, klik <b>Generate 2 Excel</b> untuk download output.</div>
-              <button class="btn primary" id="genBtn" type="submit" disabled>📄 Generate 2 Excel</button>
-            </div>
-            <div id="genStatus" class="alert err" style="display:none;"></div>
-            <div id="genOk" class="alert ok" style="display:none;"></div>
-            <div id="downloadLinks" style="margin-top:10px;"></div>
-          </div>
-        </form>
-      </div>
-    </div>
-
-  </div>
-<script>
-const CSRF_TOKEN = "__CSRF_TOKEN__";
-const CAN_SUMMARY_EDIT = __CAN_SUMMARY_EDIT__;
-let MASTER_TOKEN = null;
-let KELOMPOK_LIST = [];
-let ROW_CLIPBOARD = null;
-
-function escHtml(s){
-  return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
-}
-
-function buildKelompokOptions(){
-  let html = '<option value="">-- pilih --</option>';
-  for(const k of KELOMPOK_LIST){
-    html += '<option value="'+escHtml(k)+'">'+escHtml(k)+'</option>';
-  }
-  return html;
-}
-
-function setOptionDisabled(ts, value, disabled) {
-  const opt = ts.options[value];
-  if (!opt) return;
-  opt.disabled = !!disabled;
-  ts.updateOption(value, opt);
-  ts.refreshOptions(false);
-}
-
-function setAllOptionsDisabledExcept(ts, keepValue, disabled) {
-  Object.keys(ts.options).forEach(v => {
-    if (v === keepValue) return;
-    const opt = ts.options[v];
-    if (!opt) return;
-    opt.disabled = !!disabled;
-    ts.updateOption(v, opt);
-  });
-  ts.refreshOptions(false);
-}
-
-function enforceExclusiveAll(ts, allValue) {
-  const items = ts.items || [];
-  const hasAll = items.includes(allValue);
-  const hasOther = items.some(v => v !== allValue);
-
-  if (hasAll && hasOther) {
-    ts.setValue([allValue], true);
-  }
-
-  const nowItems = ts.items || [];
-  const nowHasAll = nowItems.includes(allValue);
-  const nowHasOther = nowItems.some(v => v !== allValue);
-
-  if (nowHasAll) {
-    setOptionDisabled(ts, allValue, false);
-    setAllOptionsDisabledExcept(ts, allValue, true);
-  } else if (nowHasOther) {
-    setAllOptionsDisabledExcept(ts, allValue, false);
-    setOptionDisabled(ts, allValue, true);
-  } else {
-    setAllOptionsDisabledExcept(ts, allValue, false);
-    setOptionDisabled(ts, allValue, false);
-  }
-}
-
-function initVariantTomSelect(selectEl){
-  if (selectEl.tomselect) { selectEl.tomselect.destroy(); }
-  return new TomSelect(selectEl, {
-    plugins: ['checkbox_options', 'remove_button'],
-    create: true,
-    persist: true,
-    maxItems: null,
-    delimiter: ', ',
-    disabledField: 'disabled',
-    onItemAdd: function(){ enforceExclusiveAll(this, 'ALL VARIANT'); },
-    onItemRemove: function(){ enforceExclusiveAll(this, 'ALL VARIANT'); },
-  });
-}
-
-function initGramasiTomSelect(selectEl){
-  if (selectEl.tomselect) { selectEl.tomselect.destroy(); }
-  return new TomSelect(selectEl, {
-    plugins: ['checkbox_options', 'remove_button'],
-    create: true,
-    persist: true,
-    maxItems: null,
-    delimiter: ', ',
-    disabledField: 'disabled',
-    onItemAdd: function(){ enforceExclusiveAll(this, 'ALL GRAMASI'); },
-    onItemRemove: function(){ enforceExclusiveAll(this, 'ALL GRAMASI'); },
-  });
-}
-
-async function fetchOptionsForGroup(group){
-  const url = '/summary/manual/master/options?token=' + encodeURIComponent(MASTER_TOKEN) + '&group=' + encodeURIComponent(group);
-  const res = await fetch(url);
-  return await res.json();
-}
-
-const _PERIODE_NOW = new Date();
-const PERIODE_MIN_DATE = new Date(_PERIODE_NOW.getFullYear(), _PERIODE_NOW.getMonth(), 1);
-const PERIODE_MAX_DATE = new Date(_PERIODE_NOW.getFullYear(), _PERIODE_NOW.getMonth() + 2, 0);
-const UPDATE_MIN_DATE = PERIODE_MIN_DATE;
-const UPDATE_MAX_DATE = endOfMonth(PERIODE_MIN_DATE);
-
-function toIsoDate(d){
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function formatMonthLabel(dateObj){
-  return dateObj.toLocaleString('id-ID', { month: 'short', year: 'numeric' });
-}
-
-function formatDateLabel(dateObj){
-  return dateObj.toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
-}
-
-function formatRangeLabel(startObj, endObj){
-  const sameMonth = startObj.getFullYear() === endObj.getFullYear()
-    && startObj.getMonth() === endObj.getMonth();
-  if(sameMonth){
-    if(startObj.getDate() === endObj.getDate()){
-      return formatDateLabel(startObj);
-    }
-    const dd1 = String(startObj.getDate()).padStart(2, '0');
-    const dd2 = String(endObj.getDate()).padStart(2, '0');
-    return `${dd1}-${dd2} ${startObj.toLocaleString('id-ID', { month: 'short', year: 'numeric' })}`;
-  }
-  return `${formatDateLabel(startObj)} - ${formatDateLabel(endObj)}`;
-}
-
-function endOfMonth(d){
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
-}
-
-function syncPeriodeRange(tr, fromUser, forceInit, hideOnDone){
-  const startEl = tr.querySelector('.periodeStart');
-  const endEl = tr.querySelector('.periodeEnd');
-  const hidden = tr.querySelector('input[name="periode"]');
-  const display = tr.querySelector('.periodeDisplay');
-  const rangeWrap = tr.querySelector('.periodeRange');
-  if(!startEl || !endEl || !hidden) return;
-
-  const hasAny = !!(startEl.value || endEl.value);
-  if(!hasAny && !forceInit){
-    hidden.value = '';
-    if(display && !fromUser) display.value = '';
-    return;
-  }
-  if(!startEl.value){
-    startEl.value = toIsoDate(PERIODE_MIN_DATE);
-  }
-  if(!endEl.value){
-    endEl.value = toIsoDate(endOfMonth(PERIODE_MIN_DATE));
-  }
-
-  let startObj = new Date(startEl.value);
-  let endObj = new Date(endEl.value);
-  if(startObj > endObj){
-    endObj = startObj;
-    endEl.value = toIsoDate(endObj);
-  }
-
-  const fullMonth = startObj.getDate() === 1
-    && startObj.getFullYear() === endObj.getFullYear()
-    && startObj.getMonth() === endObj.getMonth()
-    && endObj.getDate() === endOfMonth(startObj).getDate();
-
-  hidden.value = fullMonth ? formatMonthLabel(startObj) : formatRangeLabel(startObj, endObj);
-  if(display) display.value = hidden.value;
-  if(fromUser && hideOnDone && rangeWrap && startEl.value && endEl.value){
-    rangeWrap.style.display = 'none';
-  }
-}
-
-function initPeriodeControls(tr){
-  const display = tr.querySelector('.periodeDisplay');
-  const rangeWrap = tr.querySelector('.periodeRange');
-  const startEl = tr.querySelector('.periodeStart');
-  const endEl = tr.querySelector('.periodeEnd');
-  if(!startEl || !endEl) return;
-
-  startEl.min = toIsoDate(PERIODE_MIN_DATE);
-  startEl.max = toIsoDate(PERIODE_MAX_DATE);
-  endEl.min = toIsoDate(PERIODE_MIN_DATE);
-  endEl.max = toIsoDate(PERIODE_MAX_DATE);
-
-  startEl.addEventListener('change', ()=>syncPeriodeRange(tr, true, false, false));
-  endEl.addEventListener('change', ()=>syncPeriodeRange(tr, true, false, true));
-  const showRange = () => {
-    if(rangeWrap) rangeWrap.style.display = 'flex';
-    syncPeriodeRange(tr, false, true, false);
-  };
-  if(display){
-    display.addEventListener('focus', showRange);
-    display.addEventListener('click', showRange);
-    display.addEventListener('input', showRange);
-  }
-}
-
-function initUpdateDate(tr){
-  const upd = tr.querySelector('.updateDate');
-  if(!upd) return;
-  upd.min = toIsoDate(UPDATE_MIN_DATE);
-  upd.max = toIsoDate(UPDATE_MAX_DATE);
-}
-
-function rowHtml(){
-  return `
-    <tr>
-      <td><input type="text" name="no" style="width:60px"></td>
-      <td><input type="text" name="principle"></td>
-      <td><input type="text" name="surat_program"></td>
-      <td><input type="text" name="nama_program"></td>
-      <td>
-        <select name="promo_group_id">
-          <option value="NON_GROUP">NON_GROUP</option>
-          <option value="GROUP 1">GROUP 1</option>
-          <option value="GROUP 2">GROUP 2</option>
-          <option value="GROUP 3">GROUP 3</option>
-          <option value="GROUP 4">GROUP 4</option>
-          <option value="GROUP 5">GROUP 5</option>
-        </select>
-      </td>
-      <td>
-        <select name="channel_gtmt">
-          <option value=""></option>
-          <option value="GT">GT</option>
-          <option value="MT">MT</option>
-        </select>
-      </td>
-      <td>
-        <select name="channel_list">
-          <option value=""></option>
-          <option value="Ada List">Ada List</option>
-          <option value="Tanpa List">Tanpa List</option>
-        </select>
-      </td>
-      <td>
-        <div class="periode-wrap">
-          <input type="text" name="periode_display" class="periodeDisplay" placeholder="klik untuk pilih periode">
-          <div class="periode-range periodeRange">
-            <input type="date" name="periode_start" class="periodeStart">
-            <input type="date" name="periode_end" class="periodeEnd">
-          </div>
-          <input type="hidden" name="periode">
-        </div>
-      </td>
-      <td>
-        <select name="kelompok" class="kelompokSel">
-          ${buildKelompokOptions()}
-        </select>
-      </td>
-      <td>
-        <select class="variantSel" multiple></select>
-        <input type="hidden" name="variant">
-      </td>
-      <td>
-        <select class="gramasiSel" multiple></select>
-        <input type="hidden" name="gramasi">
-      </td>
-      <td><input type="text" name="ketentuan"></td>
-      <td>
-        <select name="benefit_type">
-          <option value=""></option>
-          <option value="BONUS_QTY">BONUS_QTY</option>
-          <option value="DISC_PCT">DISC_PCT</option>
-          <option value="DISC_RP">DISC_RP</option>
-        </select>
-      </td>
-      <td><input type="text" name="benefit"></td>
-      <td><input type="text" name="syarat_claim"></td>
-      <td><input type="date" name="update" class="updateDate"></td>
-      <td><input type="text" name="keterangan"></td>
-      <td>
-        <div class="row-actions">
-          <button class="btn small" type="button" data-role="copy">Copy</button>
-          <button class="btn small" type="button" data-role="paste">Paste</button>
-          <button class="btn small" type="button" data-role="del">Hapus</button>
-        </div>
-      </td>
-    </tr>
-  `;
-}
-
-function syncHiddenFromTomSelect(tr){
-  const vSel = tr.querySelector('.variantSel');
-  const gSel = tr.querySelector('.gramasiSel');
-  const v = (vSel.tomselect ? vSel.tomselect.items : []);
-  const g = (gSel.tomselect ? gSel.tomselect.items : []);
-  tr.querySelector('input[name="variant"]').value = v.join(', ');
-  tr.querySelector('input[name="gramasi"]').value = g.join(', ');
-}
-
-function parseList(val){
-  return String(val || "")
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
-}
-
-function setTomSelectValues(selectEl, values){
-  if(!selectEl || !selectEl.tomselect) return;
-  const ts = selectEl.tomselect;
-  const list = Array.isArray(values) ? values : parseList(values);
-  list.forEach(v => {
-    if(!ts.options[v]){
-      ts.addOption({ value: v, text: v });
-    }
-  });
-  ts.setValue(list, true);
-}
-
-async function refreshVariantGramasi(tr, group){
-  const vSel = tr.querySelector('.variantSel');
-  const gSel = tr.querySelector('.gramasiSel');
-  if (vSel.tomselect) vSel.tomselect.destroy();
-  if (gSel.tomselect) gSel.tomselect.destroy();
-  vSel.innerHTML = '';
-  gSel.innerHTML = '';
-
-  if(!group){
-    initVariantTomSelect(vSel);
-    initGramasiTomSelect(gSel);
-    vSel.tomselect.on('change', ()=>syncHiddenFromTomSelect(tr));
-    gSel.tomselect.on('change', ()=>syncHiddenFromTomSelect(tr));
-    syncHiddenFromTomSelect(tr);
-    return;
-  }
-
-  const data = await fetchOptionsForGroup(group);
-  if(!data.ok){
-    alert(data.error || 'Gagal ambil options');
-    initVariantTomSelect(vSel);
-    initGramasiTomSelect(gSel);
-    return;
-  }
-
-  for(const v of (data.variants || [])){
-    const opt = document.createElement('option');
-    opt.value = v.value;
-    opt.textContent = v.text;
-    if(v.disabled) opt.disabled = true;
-    vSel.appendChild(opt);
-  }
-  for(const g of (data.gramasis || [])){
-    const opt = document.createElement('option');
-    opt.value = g.value;
-    opt.textContent = g.text;
-    if(g.disabled) opt.disabled = true;
-    gSel.appendChild(opt);
-  }
-
-  initVariantTomSelect(vSel);
-  initGramasiTomSelect(gSel);
-
-  enforceExclusiveAll(vSel.tomselect, 'ALL VARIANT');
-  enforceExclusiveAll(gSel.tomselect, 'ALL GRAMASI');
-
-  vSel.tomselect.on('change', ()=>syncHiddenFromTomSelect(tr));
-  gSel.tomselect.on('change', ()=>syncHiddenFromTomSelect(tr));
-  syncHiddenFromTomSelect(tr);
-}
-
-function getRowData(tr){
-  syncHiddenFromTomSelect(tr);
-  syncPeriodeRange(tr, false, false);
-  const get = (name) => (tr.querySelector('[name="'+name+'"]')?.value || '').trim();
-    return {
-      no: get('no'),
-      principle: get('principle'),
-      surat_program: get('surat_program'),
-      nama_program: get('nama_program'),
-      promo_group_id: get('promo_group_id'),
-      channel_gtmt: get('channel_gtmt'),
-      channel_list: get('channel_list'),
-      periode: get('periode'),
-      periode_start: get('periode_start'),
-      periode_end: get('periode_end'),
-      kelompok: get('kelompok'),
-      variant: get('variant'),
-      gramasi: get('gramasi'),
-      ketentuan: get('ketentuan'),
-      benefit_type: get('benefit_type'),
-      benefit: get('benefit'),
-      syarat_claim: get('syarat_claim'),
-      update: get('update'),
-      keterangan: get('keterangan'),
-    };
-}
-
-async function applyRowData(tr, data){
-  if(!data) return;
-  const set = (name, val) => {
-    const el = tr.querySelector('[name="'+name+'"]');
-    if(el) el.value = val || '';
-  };
-  set('no', data.no);
-  set('principle', data.principle);
-  set('surat_program', data.surat_program);
-  set('nama_program', data.nama_program);
-  set('promo_group_id', data.promo_group_id || 'NON_GROUP');
-  set('channel_gtmt', data.channel_gtmt);
-  set('channel_list', data.channel_list);
-  set('ketentuan', data.ketentuan);
-  set('benefit_type', data.benefit_type);
-  set('benefit', data.benefit);
-  set('syarat_claim', data.syarat_claim);
-  set('update', data.update);
-  set('keterangan', data.keterangan);
-
-  const kSel = tr.querySelector('.kelompokSel');
-  if(kSel){
-    kSel.value = data.kelompok || '';
-    await refreshVariantGramasi(tr, kSel.value);
-  }
-
-  const vSel = tr.querySelector('.variantSel');
-  const gSel = tr.querySelector('.gramasiSel');
-  setTomSelectValues(vSel, data.variant);
-  setTomSelectValues(gSel, data.gramasi);
-  if(vSel && vSel.tomselect) enforceExclusiveAll(vSel.tomselect, 'ALL VARIANT');
-  if(gSel && gSel.tomselect) enforceExclusiveAll(gSel.tomselect, 'ALL GRAMASI');
-  syncHiddenFromTomSelect(tr);
-
-  const startEl = tr.querySelector('.periodeStart');
-  const endEl = tr.querySelector('.periodeEnd');
-  if(startEl && data.periode_start) startEl.value = data.periode_start;
-  if(endEl && data.periode_end) endEl.value = data.periode_end;
-  syncPeriodeRange(tr, false, false);
-  const rangeWrap = tr.querySelector('.periodeRange');
-  if(rangeWrap) rangeWrap.style.display = 'none';
-  const display = tr.querySelector('.periodeDisplay');
-  if(display && data.periode) display.value = data.periode;
-}
-
-function addRow(){
-  const tbody = document.getElementById('tbody');
-  const temp = document.createElement('tbody');
-  temp.innerHTML = rowHtml();
-  const tr = temp.firstElementChild;
-  tbody.appendChild(tr);
-
-  tr.querySelector('[data-role="del"]').onclick = () => tr.remove();
-  tr.querySelector('[data-role="copy"]').onclick = () => {
-    ROW_CLIPBOARD = getRowData(tr);
-  };
-  tr.querySelector('[data-role="paste"]').onclick = async () => {
-    if(!ROW_CLIPBOARD){
-      alert('Belum ada baris yang di-copy.');
-      return;
-    }
-    await applyRowData(tr, ROW_CLIPBOARD);
-  };
-
-  const vSel = tr.querySelector('.variantSel');
-  const gSel = tr.querySelector('.gramasiSel');
-  initVariantTomSelect(vSel);
-  initGramasiTomSelect(gSel);
-  vSel.tomselect.on('change', ()=>syncHiddenFromTomSelect(tr));
-  gSel.tomselect.on('change', ()=>syncHiddenFromTomSelect(tr));
-  syncHiddenFromTomSelect(tr);
-  initPeriodeControls(tr);
-  initUpdateDate(tr);
-
-  tr.querySelector('.kelompokSel').addEventListener('change', async (e) => {
-    const group = e.target.value || '';
-    await refreshVariantGramasi(tr, group);
-  });
-}
-
-document.getElementById('addRowBtn').addEventListener('click', addRow);
-
-document.getElementById('masterForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const status = document.getElementById('masterStatus');
-  const ok = document.getElementById('masterOk');
-  status.style.display='none'; ok.style.display='none';
-
-  const fd = new FormData();
-  const fProd = document.getElementById('masterProduct').files[0];
-  const fCust = document.getElementById('masterCustomer').files[0];
-  if(fProd) fd.append('master', fProd);
-  if(fCust) fd.append('master_customer', fCust);
-
-  const res = await fetch('/summary/manual/master/upload', { method:'POST', body: fd, headers: { 'X-CSRF-Token': CSRF_TOKEN } });
-  const data = await res.json();
-
-  if(!data.ok){
-    status.textContent = 'Error: ' + (data.error || 'unknown');
-    status.style.display='block';
-    return;
-  }
-  MASTER_TOKEN = data.token;
-  KELOMPOK_LIST = data.kelompok_list || [];
-  ok.textContent = 'OK - Master loaded. Kelompok: ' + KELOMPOK_LIST.length;
-  ok.style.display='block';
-
-  document.getElementById('addRowBtn').disabled = false;
-  document.getElementById('genBtn').disabled = false;
-  document.getElementById('tbody').innerHTML = '';
-  addRow(); addRow(); addRow();
-});
-
-document.getElementById('manualForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const status = document.getElementById('genStatus');
-  const ok = document.getElementById('genOk');
-  const links = document.getElementById('downloadLinks');
-  status.style.display='none'; ok.style.display='none'; links.innerHTML='';
-
-  if(!MASTER_TOKEN){
-    status.textContent = 'Upload master dulu.';
-    status.style.display='block';
-    return;
-  }
-
-  const rows = [];
-  document.querySelectorAll('#tbody tr').forEach(tr => {
-    syncHiddenFromTomSelect(tr);
-    syncPeriodeRange(tr, false, false);
-    const get = (name) => (tr.querySelector('[name="'+name+'"]')?.value || '').trim();
-    rows.push({
-      no: get('no'),
-      principle: get('principle'),
-      surat_program: get('surat_program'),
-      nama_program: get('nama_program'),
-      promo_group_id: get('promo_group_id'),
-      channel_gtmt: get('channel_gtmt'),
-      channel_list: get('channel_list'),
-      periode: get('periode'),
-      kelompok: get('kelompok'),
-      variant: get('variant'),
-      gramasi: get('gramasi'),
-      ketentuan: get('ketentuan'),
-      benefit_type: get('benefit_type'),
-      benefit: get('benefit'),
-      syarat_claim: get('syarat_claim'),
-      update: get('update'),
-      keterangan: get('keterangan'),
-    });
-  });
-
-  const fd = new FormData();
-  fd.append('token', MASTER_TOKEN);
-  fd.append('rows_json', JSON.stringify(rows));
-
-  const res = await fetch('/summary/manual/generate', { method:'POST', body: fd, headers: { 'X-CSRF-Token': CSRF_TOKEN } });
-  const data = await res.json();
-
-  if(!data.ok){
-    status.textContent = 'Error: ' + (data.error || 'unknown');
-    status.style.display='block';
-    return;
-  }
-
-  ok.textContent = 'OK - Generated.';
-  ok.style.display='block';
-  links.innerHTML = '<div>'
-    + '<a href="/summary/manual/download/'+data.file_id+'/form" target="_blank">Download Form Summary Program</a>'
-    + ' | '
-    + '<a href="/summary/manual/download/'+data.file_id+'/dataset" target="_blank">Download Dataset Diskon With Channel</a>'
-    + '</div>';
-});
-
-
-// ---------------------------
-// AI Generate (Upload Surat Program)
-// ---------------------------
-const aiForm = document.getElementById('aiForm');
-const aiBtn = document.getElementById('aiBtn');
-const aiMsg = document.getElementById('aiMsg');
-const aiErr = document.getElementById('aiErr');
-const aiDownload = document.getElementById('aiDownload');
-
-function showAiError(t){
-  if(!aiErr) return;
-  aiErr.textContent = t || '';
-  aiErr.style.display = t ? 'block' : 'none';
-}
-function setAiMsg(t){
-  if(aiMsg) aiMsg.textContent = t || '';
-}
-
-if(aiForm){
-  aiForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    showAiError('');
-    aiDownload.style.display = 'none';
-    const f = document.getElementById('aiFile').files[0];
-    if(!f){
-      showAiError('File belum dipilih.');
-      return;
-    }
-    if(!CAN_SUMMARY_EDIT){
-      showAiError('Akses tidak diizinkan.');
-      return;
-    }
-
-    aiBtn.disabled = true;
-    setAiMsg('Memproses...');
-
-    const fd = new FormData();
-    fd.append('file', f);
-    fd.append('list_mode', document.getElementById('aiListMode').value);
-    fd.append('template', document.getElementById('aiTemplate').value);
-    fd.append('engine', document.getElementById('aiEngine').value);
-    fd.append('model', document.getElementById('aiModel').value);
-
-    try{
-      const res = await fetch('/summary/manual', { method: 'POST', body: fd, headers: { 'X-CSRF-Token': CSRF_TOKEN } });
-      const j = await res.json();
-      if(!res.ok || !j.ok) throw new Error(j.error || ('HTTP ' + res.status));
-      setAiMsg('Berhasil dibuat.');
-      aiDownload.href = j.download_url;
-      aiDownload.style.display = 'inline-flex';
-    }catch(err){
-      showAiError(err.message || String(err));
-      setAiMsg('');
-    }finally{
-      aiBtn.disabled = false;
-    }
-  });
-}
-
-// Permission lock (UI-only)
-if(!CAN_SUMMARY_EDIT){
-  try{
-    setAiMsg('Akses tidak diizinkan.');
-    const els = document.querySelectorAll('#masterForm input, #masterForm button, #manualForm input, #manualForm button, #manualForm select');
-    els.forEach(el => { el.disabled = true; });
-  }catch(e){}
-}
-
-</script>
-</body>
-</html>"""
-
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse("/login")
-    if not user_has_permission(user, "summary", "view"):
-        return HTMLResponse("Forbidden", status_code=403)
-    can_edit = user_has_permission(user, "summary", "edit")
-    html = html.replace("__CAN_SUMMARY_EDIT__", "true" if can_edit else "false")
-    return render_html_with_csrf(request, html)
 
 @app.get("/dev/dump_context")
 def dev_dump_context(token: str, principle_name: str = "Priskila (Default)"):
@@ -10931,82 +7440,6 @@ def summary_manual_download(request: Request, file_id: str, kind: str, dummy: st
         "Content-Type": content_type
     }
     return FileResponse(path, filename=filename, headers=headers)
-
-@app.get("/api/users")
-def api_users_list(request: Request):
-    user = get_current_user(request)
-    if not user or not is_admin_user(user):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
-    
-    records = get_auth_user_records()
-    rows = []
-    for uname in sorted(records.keys()):
-        info = records[uname]
-        pwd = s(info.get("password", ""))
-        source = s(info.get("source", "JSON"))
-        perms, defined = get_user_permissions_info(uname)
-        rows.append({
-            "username": uname,
-            "source": source,
-            "role": s(info.get("role", "user")) or "user",
-            "mode": detect_password_scheme(pwd),
-            "permissions": perms if defined else None,
-            "can_delete": (source.lower() == "json") and (uname != user)
-        })
-    return {"ok": True, "users": rows}
-
-@app.post("/api/users/save")
-async def api_users_save(request: Request):
-    user = get_current_user(request)
-    if not user or not is_admin_user(user):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
-    
-    try: payload = await request.json()
-    except Exception: payload = {}
-    
-    username = s(payload.get("username", ""))
-    password = s(payload.get("password", ""))
-    role = s(payload.get("role", "user")).lower()
-    custom_perms = payload.get("permissions") # Dict if custom, else None
-    
-    if not username or not password:
-        return {"ok": False, "error": "Username dan password wajib diisi."}
-        
-    stored = hash_password(password, scheme="auto")
-    users = load_users_json(AUTH_USERS_JSON)
-    
-    info = {"password": stored, "role": role}
-    if custom_perms is not None:
-        info["permissions"] = custom_perms
-    elif username in users and "permissions" in users[username]:
-        users[username].pop("permissions", None)
-        
-    users[username] = info
-    save_users_json(AUTH_USERS_JSON, users)
-    append_audit_log(user, "api_users_save", "users", {"username": username, "role": role})
-    return {"ok": True}
-
-@app.post("/api/users/delete")
-async def api_users_delete(request: Request):
-    user = get_current_user(request)
-    if not user or not is_admin_user(user):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
-    
-    try: payload = await request.json()
-    except Exception: payload = {}
-    
-    username = s(payload.get("username", ""))
-    if not username: return {"ok": False, "error": "Username tidak valid."}
-    if username == user: return {"ok": False, "error": "Tidak bisa menghapus diri sendiri."}
-    
-    users = load_users_json(AUTH_USERS_JSON)
-    if username not in users:
-        return {"ok": False, "error": "User tidak ditemukan atau berasal dari Environment."}
-        
-    del users[username]
-    save_users_json(AUTH_USERS_JSON, users)
-    append_audit_log(user, "api_users_delete", "users", {"username": username})
-    return {"ok": True}
 
 @app.post("/api/principles/add")
 async def add_principle(request: Request, name: str = Form(...), file: UploadFile = File(...)):
