@@ -179,8 +179,10 @@ AccAPI/_github_clean/
 │   │   ├── register/page.tsx
 │   │   ├── forgot-password/page.tsx
 │   │   └── reset-password/page.tsx
+│   ├── global-error.tsx               # Root error boundary (render <html>/<body> sendiri)
 │   ├── (dashboard)/
-│   │   ├── layout.tsx                  # Auth guard + RBAC gate semua halaman dashboard
+│   │   ├── layout.tsx                  # Auth guard + RBAC gate semua halaman dashboard (denied → <AccessDenied/>)
+│   │   ├── error.tsx                   # Error boundary segmen dashboard (pesan rapi, tanpa stack)
 │   │   ├── page.tsx                    # Home/dashboard utama
 │   │   ├── off-program-control/
 │   │   │   └── page.tsx                # Cockpit OPC (SPV/SM/Claim/OM/Finance/Audit tabs)
@@ -262,6 +264,7 @@ AccAPI/_github_clean/
 ├── components/
 │   ├── SidebarLayout.tsx               # Shell navigasi dashboard
 │   ├── DataTable.tsx                   # TanStack Table reusable
+│   ├── AccessDenied.tsx                # Pesan "Akses ditolak" eksplisit (guard layout + page admin)
 │   ├── PWAInstallPrompt.tsx
 │   ├── ServiceWorkerRegistration.tsx
 │   ├── ThemeSwitcher.tsx
@@ -317,12 +320,11 @@ AccAPI/_github_clean/
 ├── db/
 │   └── schema.ts                       # Satu file Drizzle schema (semua tabel)
 ├── python_backend/
-│   ├── main.py                         # FastAPI app — validator, payments, SPPD, finance
-│   ├── auth.py                         # Auth + rate limiter Python backend
+│   ├── main.py                         # FastAPI headless JSON API — validator, payments, SPPD, finance (auth via cookie Better Auth; UI/auth HTML dihapus #7)
+│   ├── auth.py                         # Rate limiter login + security headers Python backend
 │   ├── payments.py                     # Template row builder untuk Excel
 │   ├── validator_engine.py             # Engine validasi data penjualan vs diskon
-│   ├── principle_matcher.py            # Fuzzy matcher nama principal
-│   └── ui_templates.py                 # HTML UI templates (server-rendered)
+│   └── principle_matcher.py            # Fuzzy matcher nama principal
 ├── scripts/
 │   ├── init-db.mjs                     # Inisialisasi tabel SQLite pertama kali
 │   ├── migrate-local.mjs               # Migrasi lokal (dev)
@@ -420,12 +422,11 @@ AccAPI/_github_clean/
 
 | File | Fungsi Utama | Peran |
 |---|---|---|
-| `python_backend/main.py` | FastAPI app (~60 route) | Validator data penjualan, payments management, SPPD DOCX generation, finance approval |
+| `python_backend/main.py` | FastAPI headless JSON API | Validator, payments management, SPPD DOCX, finance. Auth via sesi Better Auth (cookie); auth paralel + UI HTML lama dihapus (#7) |
 | `python_backend/validator_engine.py` | `extract_pdf_text_safe`, `read_upload_file_limited` | Engine ekstraksi & validasi data (PDF/Excel) |
 | `python_backend/payments.py` | `lpb_upload_template_rows`, `validator_*_template_rows` | Template row builder untuk Excel upload |
 | `python_backend/principle_matcher.py` | `find_best_match`, `normalize_principle_name` | Fuzzy matching nama principal antar dataset |
 | `python_backend/auth.py` | `LoginRateLimiter`, `build_security_headers` | Rate limiter login + security headers Python backend |
-| `python_backend/ui_templates.py` | `inject_world_class_ui` | HTML UI untuk halaman server-rendered Python backend |
 
 ### Idempotency & Utilities
 
@@ -557,6 +558,42 @@ Konstanta-bobot (GT):
 Alur: target Excel (kolom Tipe Sales + Status Insentif, kunci upsert `salesCode+principle+period`) → `dashboard/route.ts` (GT pakai calc baru, non-GT strata; achievement 4-KPI tetap untuk semua) → Finance input support (`/api/insentif-sales/support`) → dashboard hitung ulang.
 
 Self-check: `node --experimental-strip-types lib/insentif-sales-calc.test.ts` (Case 1 exclusive=300rb, Case 2 mix=500rb sebagai angka acuan).
+
+---
+
+## History Penjualan (Sales History)
+
+Halaman browse riwayat penjualan dari data **Data_Penjualan** internal (2022-2025, jutaan baris item) plus mapping customer. Cascade aktif: **Tahun -> Principal -> Customer/Toko**; hanya referensi **INV/** yang ditampilkan (RJN/SRT dikeluarkan). **No Faktur** tampil sebagai row tabel faktur, lalu klik row membuka detail transaksi dengan qty+satuan dan diskon ganda (%/Rp).
+
+**DB terpisah:** `sales-history-inv.db` (env `SALES_HISTORY_DATABASE_URL`, default `file:sales-history-inv.db`) - diisolasi dari `sqlite.db` ERP agar backup ERP tetap ramping. Tabel:
+- `sales_history_item` (flat, 1 row/item dari `Data_Penjualan/**.xlsx`, termasuk qty+satuan), index `referensi`/`tanggal`/`customer_nama`/`source_file`.
+- `customer_map` (kode -> nama, alamat, kota) dari `Mapping_Customer.xlsx` (sumber otoritatif nama/alamat). Kolom `region`/`npwp` dibuang 2026-06-27 (tak dipakai di kode mana pun; backup `sales-history-inv.db.bak`).
+- `invoice_map` (referensi=NO_NOTA -> kode_cust, principal, tanggal) dari `Data_Penjualan/**.xlsx`, kolom `salesman` dibuang 2026-06-27 (tak dipakai), index `principal`/`kode_cust` plus composite `principal+kode_cust`, `principal+tanggal`, `kode_cust+tanggal`, `kode_cust+principal+tanggal`, `tanggal+principal`, dan `tanggal`.
+
+Full rebuild besar memakai `scripts/build-sales-history-staging.mjs`: strategi latest-wins dari file mtime terbaru ke terlama, filter hanya `INV/`, skip referensi lama yang sudah muncul di file terbaru, lalu create index di akhir. `scripts/import-sales-mapping.mjs` tetap ada untuk incremental/backfill kecil dan opsional Elasticsearch, bukan jalur utama rebuild penuh.
+
+**Cascade penuh:** Tahun -> Principal -> Customer/Toko -> tabel faktur -> detail. Dropdown bersumber dari `invoice_map`/`customer_map` (kecil, terindeks); seluruh read path membatasi `referensi LIKE 'INV/%'`. Tabel faktur membaca `invoice_map` + agregat `sales_history_item`; detail item dari `sales_history_item` hanya saat 1 faktur dipilih. Filter tahun memakai range `tanggal >= yyyy-01-01 AND tanggal < yyyy+1-01-01`, bukan `substr()` di WHERE, agar index tanggal tetap efektif. Join: `sales_history_item.referensi` = `invoice_map.referensi` = `NO_NOTA` (`INV/2401/AB0001`). Nama/alamat customer dari `customer_map` (data penjualan tidak ter-update). Search produk memakai Elasticsearch index `ELASTICSEARCH_SALES_HISTORY_INDEX` bila tersedia; fallback lokal memakai SQLite `LIKE` page refs tanpa count exact dan menandai `totalApproximate`.
+
+| File | Fungsi Utama | Peran |
+|---|---|---|
+| `lib/sales-history/parse.ts` | `parseEfakturLines`, `splitCsvLine`, `parseFkContext`, `parseOfItem`, `parseIdrDate` | Parser pure CSV e-Faktur (FK/FAPR/OF). FAPR=penjual dan baris legenda di-skip. Self-check: `node --experimental-strip-types lib/sales-history/parse.ts` |
+| `lib/sales-history/db.ts` | `salesDb`, `salesClient`, `salesHistoryItem`, `customerMap`, `invoiceMap`, `ensureSalesHistorySchema` | Klien libsql + Drizzle DB terpisah; schema idempotent (CREATE IF NOT EXISTS) |
+| `lib/sales-history/service.ts` | `getSalesHistoryDatabaseStatus`, `listSalesHistoryYears`, `listSalesHistoryPrincipals`, `listSalesHistoryCustomers`, `listSalesHistoryInvoices`, `listSalesHistoryItems` | Service backend DB Sales History: status, cascade, tabel faktur, detail item, pagination, fallback SQLite product search |
+| `lib/sales-history/search.ts` | `searchSalesHistoryRefsWithElasticsearch`, `ensureSalesHistoryElasticsearchIndex`, `bulkIndexSalesHistoryDocuments`, `getSalesHistoryElasticsearchStatus` | Adapter product search + backend indexing Elasticsearch via REST; **dormant** bila `ELASTICSEARCH_URL` unset → jatuh ke fuzzy SQLite |
+| `lib/sales-history/fuzzy.ts` | `damerau`, `wordMatches`, `resolveFuzzyProduct`, `invalidateProductVocabulary` | Fuzzy product search toleran-typo (Damerau-Levenshtein di kamus nama unik ~11rb) pengganti Elasticsearch; dipakai `service.ts` via IN-clause berindeks. Self-check: `node lib/sales-history/fuzzy.ts` (#5) |
+| `app/api/sales-history/route.ts` | `GET` | Root status backend: kesiapan DB, count customer/faktur/item, tahun, dan status Elasticsearch. Guard `sales_history.view` |
+| `app/api/sales-history/import/route.ts` | `POST` | Impor CSV streaming (memori terbatas), idempotent per `source_file`. Guard `sales_history.manage` |
+| `app/api/sales-history/years/route.ts` | `GET` | Daftar Tahun (cascade L1) dari invoice_map. Guard `sales_history.view` |
+| `app/api/sales-history/principals/route.ts` | `GET` | Daftar Principal (cascade L2), opsional filter tahun. Guard `sales_history.view` |
+| `app/api/sales-history/customers/route.ts` | `GET` | Customer per Tahun/Principal (cascade L3), join customer_map (nama/alamat fresh). Guard `sales_history.view` |
+| `app/api/sales-history/invoices/route.ts` | `GET` | Tabel faktur dari invoice_map+customer_map+agregat item, filter tahun/principal/kodeCust/product. Product search: Elasticsearch lalu SQLite fallback. Guard `sales_history.view` |
+| `app/api/sales-history/items/route.ts` | `GET` | Detail item per REFERENSI (equality terindeks). Guard `sales_history.view` |
+| `app/api/sales-history/search-index/route.ts` | `GET`, `POST` | Backend operasional Elasticsearch: status index dan bulk indexing cursor-based dari `sales-history-inv.db`. Guard `sales_history.manage` |
+| `scripts/build-sales-history-staging.mjs` | script | Full rebuild DBA-grade: latest-wins, filter hanya `INV/`, skip duplikat lama sebelum insert item, lalu create index di akhir; output timestamped di `runtime/sales-history-build*`. |
+| `scripts/import-sales-mapping.mjs` | script | Legacy/incremental backfill customer_map, invoice_map, sales_history_item untuk referensi `INV/` saja, termasuk satuan item; opsional bulk index Elasticsearch. Bisa dibatasi dengan `SALES_HISTORY_IMPORT_YEAR` / `SALES_HISTORY_IMPORT_FILE`, tapi tidak dipakai untuk rebuild penuh jutaan baris. |
+| `app/(dashboard)/sales-history/page.tsx` | `SalesHistoryPage` | Cascade UI Tahun -> Principal -> Customer/Toko + search produk + tabel faktur INV + detail item fixed-layout qty+satuan |
+
+RBAC: module `sales_history` (`view`/`export`/`manage`) di `lib/rbac/registry.ts` + `lib/rbac.ts` (appModules, pagePermissions `/sales-history`, preset), menu sidebar `History Penjualan`.
 
 ---
 

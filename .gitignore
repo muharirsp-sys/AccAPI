@@ -86,3 +86,15 @@ docs/superpowers/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# arsip, installer, dump DB & sidecar SQLite — hardblock data raksasa (jangan masuk git)
+*.rar
+*.zip
+*.7z
+*.exe
+*.apl
+*.bak
+*.bak*
+*.db-wal
+*.db-shm
+*.db-journal
