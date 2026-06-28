@@ -30,6 +30,7 @@ export const appModules = [
     "off_program_control",
     "claim_workflow",
     "users",
+    "sales_history",
 ] as const;
 export type AppModule = (typeof appModules)[number];
 
@@ -45,6 +46,7 @@ export const moduleLabels: Record<AppModule, string> = {
     off_program_control: "OFF Program Control",
     claim_workflow: "Claim Workflow",
     users: "Users & RBAC",
+    sales_history: "History Penjualan",
 };
 
 export const permissionActions = [
@@ -120,6 +122,7 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     off_program_control: ["view", "create", "update", "approve", "export"],
     claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export"],
     users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission", "manage"],
+    sales_history: ["view", "export", "manage"],
 };
 
 export type PermissionMap = Partial<Record<AppModule, PermissionAction[]>>;
@@ -194,7 +197,8 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("summary", ["view", "export"]),
         pick("validator", ["view", "download"]),
         pick("off_program_control", ["view", "update", "approve", "export"]),
-        pick("claim_workflow", ["view", "approve", "export"])
+        pick("claim_workflow", ["view", "approve", "export"]),
+        pick("sales_history", ["view", "export", "manage"])
     ),
     finance: mergePermissionMaps(
         pick("dashboard", ["view"]),
@@ -203,7 +207,8 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("finance", ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"]),
         pick("off_program_control", ["view", "update"]),
         pick("claim_workflow", ["view", "update", "export"]),
-        pick("principles", ["view"])
+        pick("principles", ["view"]),
+        pick("sales_history", ["view", "export"])
     ),
     staff: mergePermissionMaps(
         pick("dashboard", ["view"]),
@@ -216,7 +221,8 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         // Claim Workflow guardrail: staff hanya boleh membaca daftar / detail
         // sebatas yang diizinkan policy. Pembuatan, edit pajak, dan submit
         // ke principal harus tetap eksklusif role admin/claim.
-        pick("claim_workflow", ["view"])
+        pick("claim_workflow", ["view"]),
+        pick("sales_history", ["view"])
     ),
     viewer: mergePermissionMaps(
         pick("dashboard", ["view"]),
@@ -226,7 +232,8 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("off_program_control", ["view"]),
         pick("claim_workflow", ["view"]),
         pick("summary", ["view"]),
-        pick("validator", ["view"])
+        pick("validator", ["view"]),
+        pick("sales_history", ["view"])
     ),
 };
 
@@ -242,6 +249,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/api-wrapper", module: "api_wrapper", action: "view" },
     { prefix: "/off-program-control", module: "off_program_control", action: "view" },
     { prefix: "/claim-workflow", module: "claim_workflow", action: "view" },
+    { prefix: "/sales-history", module: "sales_history", action: "view" },
     { prefix: "/", module: "dashboard", action: "view" },
 ];
 

@@ -1,6 +1,8 @@
 /*
  * Tujuan: SUMBER TUNGGAL daftar permission key valid untuk Dynamic RBAC (Fase 2/4 — Opsi A).
  * Caller: lib/rbac/resolve.ts (guard route), UI admin RBAC (P6), registry.test.ts (guard test).
+ * Main Functions: PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey.
+ * Side Effects: Tidak ada; pure registry permission in-memory.
  * Dependensi: TIDAK ADA (pure data) — sengaja bebas import agar bisa di-test di mana saja.
  * Catatan: permission baru = tambah action di sini → otomatis terbaca RBAC. Default-deny:
  *   key yang TIDAK ada di registry ditolak; test-guard gagal kalau route pakai key tak terdaftar.
@@ -30,6 +32,8 @@ export const PERMISSION_REGISTRY = {
     // Modul yang sebelumnya TIDAK terdaftar di RBAC (temuan Fase 3 — page-guard gap):
     form_kontrol: ["view", "submit", "manage"],
     insentif_sales: ["view", "manage", "upload_target", "upload_progress", "input_support", "manage_payment"],
+    // History Penjualan (cascade No Faktur -> Detail). manage = upload/import CSV e-Faktur.
+    sales_history: ["view", "export", "manage"],
 } as const;
 
 export type PermissionModule = keyof typeof PERMISSION_REGISTRY;

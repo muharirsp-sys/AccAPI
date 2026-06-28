@@ -6,7 +6,7 @@
 "use client";
 
 import { useState } from "react";
-import { Menu, Home, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ShieldCheck, ClipboardCheck, ReceiptText, Trophy, ClipboardList, X } from "lucide-react";
+import { Menu, Home, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ShieldCheck, ClipboardCheck, ReceiptText, Trophy, ClipboardList, History, X } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { usePathname } from "next/navigation";
 import { canAccessPath, normalizeRole } from "@/lib/rbac";
@@ -42,6 +42,7 @@ export default function SidebarLayout({ children, role, permissions }: { childre
         { name: "Format SPPD", icon: FileText, href: "/payments/sppd" },
         { name: "OFF Program Control", icon: ClipboardCheck, href: "/off-program-control" },
         { name: "Claim Workflow", icon: ReceiptText, href: "/claim-workflow" },
+        { name: "History Penjualan", icon: History, href: "/sales-history" },
         { name: "Master Principle", icon: Database, href: "/principles" },
         { name: "User & RBAC", icon: Shield, href: "/admin/users" },
         { name: "Kelola Akses Group", icon: ShieldCheck, href: "/admin/groups" },
