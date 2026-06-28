@@ -7,6 +7,8 @@
  *   - channel non-GT: tetap strata-DB (lookupTierFromDb), 4 KPI.
  *   Pencapaian/achievement 4-KPI ditampilkan untuk semua channel.
  * Side Effects: DB read only.
+ * Catatan perf: status pembayaran di-load 1 query grouped per periode (paymentMap),
+ *   bukan 1 query per baris target (hindari N+1) — ikut pola supportMap.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -40,19 +42,28 @@ export async function GET(req: NextRequest) {
     const principle = searchParams.get("principle") ?? undefined;
     const branch = searchParams.get("branch") ?? undefined;
 
-    const [targets, realByPrinciple, supportRows] = await Promise.all([
+    const [targets, realByPrinciple, supportRows, paymentRows] = await Promise.all([
         getTargetsForPeriod(month, year, principle, branch),
         computeMtdByPrinciple(month, year),
         db
             .select()
             .from(incentiveSupport)
             .where(and(eq(incentiveSupport.periodMonth, month), eq(incentiveSupport.periodYear, year))),
+        db
+            .select({
+                salesCode: incentivePayments.salesCode,
+                principle: incentivePayments.principle,
+                status: incentivePayments.paymentStatus,
+            })
+            .from(incentivePayments)
+            .where(and(eq(incentivePayments.periodMonth, month), eq(incentivePayments.periodYear, year))),
     ]);
 
     // Skema insentif konstanta-bobot berlaku untuk GT/TT (sinonim). MT: belum ada aturan → 0.
     const isSchemeChannel = (ch: string) => ch === "GT" || ch === "TT";
     const key = (salesCode: string, prin: string) => `${salesCode}|${prin}`;
     const supportMap = new Map(supportRows.map((s) => [key(s.salesCode, s.principle), s.supportAmount]));
+    const paymentMap = new Map(paymentRows.map((p) => [key(p.salesCode, p.principle), p.status]));
     const realOf = (salesCode: string, prin: string) =>
         realByPrinciple.get(key(salesCode, prin)) ?? { realValue: 0, realEc: 0, realAo: 0, realIa: 0 };
 
@@ -79,8 +90,7 @@ export async function GET(req: NextRequest) {
 
     const timeGone = getWorkdayProgress(new Date());
 
-    const rows = await Promise.all(
-        targets.map(async (t) => {
+    const rows = targets.map((t) => {
             const real = realOf(t.salesCode, t.principle);
 
             const pVal = pct(real.realValue, t.targetValue);
@@ -112,19 +122,6 @@ export async function GET(req: NextRequest) {
                 incentive = { value: 0, ec: 0, ao: 0, isq: 0, total: 0 };
             }
 
-            const [payment] = await db
-                .select({ status: incentivePayments.paymentStatus })
-                .from(incentivePayments)
-                .where(
-                    and(
-                        eq(incentivePayments.salesCode, t.salesCode),
-                        eq(incentivePayments.principle, t.principle),
-                        eq(incentivePayments.periodMonth, month),
-                        eq(incentivePayments.periodYear, year),
-                    ),
-                )
-                .limit(1);
-
             return {
                 salesCode: t.salesCode,
                 salesName: t.salesName,
@@ -140,10 +137,9 @@ export async function GET(req: NextRequest) {
                 real: { value: real.realValue, ec: real.realEc, ao: real.realAo, ia: real.realIa, isq: isqReal },
                 pct: { value: pVal, ec: pEc, ao: pAo, isq: pIsq, total: totalAchieve },
                 incentive,
-                paymentStatus: payment?.status ?? "belum",
+                paymentStatus: paymentMap.get(key(t.salesCode, t.principle)) ?? "belum",
             };
-        }),
-    );
+    });
 
     return NextResponse.json({ month, year, timeGone, rows });
 }

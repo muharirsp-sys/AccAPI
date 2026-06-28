@@ -81,6 +81,8 @@ type WorkflowItem = {
   note?: string | null;
   // Phase R7b — Multi No Claim: item dapat di-link ke claim_submission.
   claimSubmissionId?: string | null;
+  // Versi optimistic-locking; dikirim balik saat PATCH agar edit tak saling timpa.
+  updatedAt?: string | Date | null;
 };
 
 // Phase R7b — Multi No Claim: minimal type untuk daftar submission.
@@ -1127,10 +1129,12 @@ export default function ClaimWorkflowDetailPage() {
     setSavingId(itemId);
     setMessage("");
     try {
+      // Optimistic locking: sertakan versi item yang sedang diedit (cegah timpa edit orang lain).
+      const expectedUpdatedAt = items.find((it) => it.id === itemId)?.updatedAt;
       const response = await fetch(`/api/claim-workflow/${id}/items/${itemId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draft),
+        body: JSON.stringify({ ...draft, expectedUpdatedAt }),
       });
       const result = (await response.json()) as { ok?: boolean; error?: string };
       if (!response.ok || !result.ok) {
@@ -1656,6 +1660,7 @@ export default function ClaimWorkflowDetailPage() {
               dpp: draft.dpp,
               ppnRate: draft.ppnRate,
               pphRate: draft.pphRate,
+              expectedUpdatedAt: item.updatedAt, // optimistic locking
             }),
           },
         );

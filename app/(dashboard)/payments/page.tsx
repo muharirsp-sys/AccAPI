@@ -1,11 +1,11 @@
 "use client";
 
 /*
- * Tujuan: Halaman manajemen payments/SPPD untuk upload LPB/backup, entry manual, edit grid terpaginasikan dengan format nilai decimal 2 digit, clear data, dan submit cart.
+ * Tujuan: Halaman manajemen payments/SPPD untuk upload LPB/backup, entry manual, edit grid terpaginasikan dengan format nilai decimal 2 digit, clear data, refresh tab/focus, dan submit cart.
  * Caller: Next.js App Router route `/payments`.
  * Dependensi: FastAPI payments endpoints, Better Auth client, DatePickerField, lucide-react, sonner.
- * Main Functions: PaymentsPage, fetchData, handleUpload, handleManualAdd, handleSubmitCart, handleSaveBulk, handleInputChange, handleDelete, handleClearAll.
- * Side Effects: HTTP call ke FastAPI, upload file Excel, update/delete/clear payments.json melalui backend.
+ * Main Functions: PaymentsPage, fetchData, handleUpload, handleManualAdd, handleSubmitCart, handleSaveBulk, handleInputChange, handleDelete, handleClearAll, backendConflictMessage.
+ * Side Effects: HTTP call ke FastAPI, upload file Excel, update/delete/clear payments.json melalui backend, refresh data saat window focus/visibility kembali.
  */
 
 import { useEffect, useState, useMemo } from "react";
@@ -53,6 +53,8 @@ interface PaymentRecord {
     actual_date?: string;
     tgl_pembayaran?: string;
     status_pembayaran?: string;
+    updated_at?: string;
+    updated_by?: string;
 }
 
 type PaymentApiRecord = PaymentRecord & { id?: string; ajukan?: boolean };
@@ -176,6 +178,21 @@ const api = {
     }
 };
 
+function backendConflictMessage(data: Record<string, unknown>): string {
+    const base = String(data.error || "Data server sudah berubah. Refresh halaman sebelum menyimpan ulang.");
+    const conflicts = Array.isArray(data.conflicts) ? data.conflicts : [];
+    const sample = conflicts
+        .slice(0, 3)
+        .map((item) => {
+            if (!item || typeof item !== "object") return "";
+            const rec = item as Record<string, unknown>;
+            return String(rec.no_lpb || rec.record_id || rec.reason || "");
+        })
+        .filter(Boolean)
+        .join(", ");
+    return sample ? `${base} (${sample})` : base;
+}
+
 export default function PaymentsPage() {
     const { data: session } = authClient.useSession();
     const isAdmin = (session?.user as { role?: string } | undefined)?.role === "admin";
@@ -200,6 +217,7 @@ export default function PaymentsPage() {
     const [isClearing, setIsClearing] = useState(false);
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
+    const [serverTotal, setServerTotal] = useState(0);
 
     // Filters
     const [filters, setFilters] = useState<Record<string, string>>({});
@@ -212,18 +230,23 @@ export default function PaymentsPage() {
         setPage(1);
     };
 
+    // Refetch setiap page/pageSize berubah (server-side pagination)
     useEffect(() => {
         fetchData();
-    }, []);
+    // ponytail: fetchData via closure; page/pageSize adalah satu-satunya deps yang harus trigger refetch
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [page, pageSize]);
 
-    const fetchData = async (options: { showLoading?: boolean } = {}) => {
+    const fetchData = async (options: { showLoading?: boolean; pageOverride?: number } = {}) => {
         const showLoading = options.showLoading !== false;
+        const p = options.pageOverride ?? page;
         try {
             if (showLoading) setLoading(true);
-            const res = await api.get("/payments/data");
+            const res = await api.get(`/payments/data?page=${p}&page_size=${pageSize}`);
             if (res.data.ok) {
                 const data = (res.data.data || []).map((r: PaymentApiRecord) => normalizePaymentRecord(r));
                 setRecords(data);
+                setServerTotal(res.data.total ?? data.length);
                 return true;
             } else {
                 toast.error(res.data.error || "Gagal memuat data pembayaran.");
@@ -236,6 +259,20 @@ export default function PaymentsPage() {
         return false;
     };
 
+    useEffect(() => {
+        const refreshIfVisible = () => {
+            if (document.visibilityState !== "visible") return;
+            if (Object.keys(pendingChanges).length > 0) return;
+            fetchData({ showLoading: false });
+        };
+        window.addEventListener("focus", refreshIfVisible);
+        document.addEventListener("visibilitychange", refreshIfVisible);
+        return () => {
+            window.removeEventListener("focus", refreshIfVisible);
+            document.removeEventListener("visibilitychange", refreshIfVisible);
+        };
+    }, [pendingChanges]);
+
     const handleUpload = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!uploadFile) return;
@@ -247,9 +284,13 @@ export default function PaymentsPage() {
             if (res.data.ok) {
                 setUploadFile(null);
                 toast.success(res.data.message || `Berhasil mengunggah ${res.data.added} data pembayaran.`);
-                fetchData();
+                setPage(1); fetchData({ pageOverride: 1 });
             } else {
-                setUploadError(res.data.error || "Gagal mengunggah dataset pembayaran.");
+                const message = res.status === 409 || res.data.conflict
+                    ? backendConflictMessage(res.data)
+                    : res.data.error || "Gagal mengunggah dataset pembayaran.";
+                setUploadError(message);
+                toast.warning(message);
             }
         } catch (err: unknown) { setUploadError(err instanceof Error ? `Upload gagal: ${err.message}` : "Koneksi gagal saat upload. Pastikan backend menyala."); }
         finally { setIsUploading(false); }
@@ -276,7 +317,7 @@ export default function PaymentsPage() {
             if (res.data.ok) {
                 toast.success("Pengajuan manual berhasil ditambahkan.");
                 setManualEntry({ tipe: 'CBD', no_lpb: '', principle: '', invoice_no: '', nilai_invoice: '', jenis_dokumen: '', nomor_dokumen: '' });
-                fetchData();
+                setPage(1); fetchData({ pageOverride: 1 });
             } else toast.error(res.data.error || "Gagal menambahkan.");
         } catch { toast.error("Error pada server backend saat tambah manual."); } 
         finally { setIsAddingManual(false); }
@@ -319,6 +360,7 @@ export default function PaymentsPage() {
                 if (hasOwnField(changes, "jt_invoice")) item.jt_invoice = record?.jt_invoice ?? "";
                 if (hasOwnField(changes, "actual_date")) item.actual_date = record?.actual_date ?? "";
                 if (hasOwnField(changes, "tgl_pembayaran")) item.tgl_pembayaran = record?.tgl_pembayaran ?? "";
+                item.source_updated_at = record?.updated_at ?? "";
 
                 return item;
             });
@@ -350,6 +392,9 @@ export default function PaymentsPage() {
                 } else {
                     toast.warning("Data tersimpan, tetapi refresh gagal. Tampilan lokal tetap dipertahankan.");
                 }
+            } else if (res.status === 409 || res.data.conflict) {
+                toast.warning(backendConflictMessage(res.data));
+                fetchData({ showLoading: false });
             } else toast.error(res.data.error || "Gagal menyimpan perubahan tabel.");
         } catch { toast.error("Kesalahan jaringan saat sinkronisasi grid batch."); } 
         finally { setIsSaving(false); }
@@ -365,7 +410,7 @@ export default function PaymentsPage() {
             const res = await api.post('/payments/delete', { record_ids: selectedIds });
             if (res.data.ok) {
                 toast.success(`Berhasil menghapus ${res.data.deleted || 0} entri data LPB/CBD.`);
-                fetchData();
+                setPage(1); fetchData({ pageOverride: 1 });
             } else toast.error(res.data.error || 'Gagal mengeksekusi penghapusan dari SQL.');
         } catch { toast.error('Network Error.'); } 
         finally { setIsDeleting(false); }
@@ -391,7 +436,7 @@ export default function PaymentsPage() {
             if (res.data.ok) {
                 const cleared = res.data.cleared || {};
                 toast.success(`Data payments dibersihkan. Backup: ${res.data.backup_file || "-"}; LPB: ${cleared.lpb || 0}, draft: ${cleared.drafts || 0}, submission: ${cleared.submissions || 0}.`);
-                fetchData();
+                setPage(1); fetchData({ pageOverride: 1 });
             } else {
                 toast.error(res.data.error || "Gagal clear data payments.");
             }
@@ -493,16 +538,15 @@ export default function PaymentsPage() {
         });
     }, [records, filters, principleFilter]);
 
-    const pageCount = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
+    // Server mengembalikan satu halaman; pageCount dari serverTotal
+    const pageCount = Math.max(1, Math.ceil((serverTotal || filteredRecords.length) / pageSize));
     const activePage = Math.min(page, pageCount);
     const pageStart = filteredRecords.length === 0 ? 0 : (activePage - 1) * pageSize + 1;
-    const pageEnd = Math.min(activePage * pageSize, filteredRecords.length);
+    const pageEnd = Math.min(activePage * pageSize, serverTotal || filteredRecords.length);
     const pendingChangeCount = Object.keys(pendingChanges).length;
 
-    const paginatedRecords = useMemo(() => {
-        const start = (activePage - 1) * pageSize;
-        return filteredRecords.slice(start, start + pageSize);
-    }, [filteredRecords, activePage, pageSize]);
+    // Server sudah paginate; filteredRecords adalah subset halaman ini setelah filter client-side
+    const paginatedRecords = useMemo(() => filteredRecords, [filteredRecords]);
 
     // Total nilai invoice dari semua record yang di-centang (ajukan)
     const totalCheckedInvoice = useMemo(() => {
@@ -516,7 +560,7 @@ export default function PaymentsPage() {
     }, [filters, pageSize]);
 
     useEffect(() => {
-        if (page > pageCount) setPage(pageCount);
+        if (page > pageCount && pageCount > 0) setPage(pageCount);
     }, [page, pageCount]);
 
     return (
@@ -624,7 +668,7 @@ export default function PaymentsPage() {
                         <div className="flex items-center gap-2 text-xs text-slate-400">
                             <span className="font-mono text-slate-300">{pageStart}-{pageEnd}</span>
                             <span>dari</span>
-                            <span className="font-mono text-slate-300">{filteredRecords.length}</span>
+                            <span className="font-mono text-slate-300">{serverTotal || filteredRecords.length}</span>
                             <select
                                 className="h-7 bg-black/50 border border-white/10 rounded px-1.5 text-slate-300 outline-none focus:border-emerald-500/50 text-xs"
                                 value={pageSize}

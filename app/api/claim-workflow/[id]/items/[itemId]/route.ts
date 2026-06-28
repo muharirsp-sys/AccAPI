@@ -16,6 +16,9 @@ import { requirePermissionH } from "@/lib/rbac/resolve";
 
 type Context = { params: Promise<{ id: string; itemId: string }> };
 
+// Optimistic locking: dilempar saat versi item (updatedAt) sudah berubah → ditangkap jadi 409.
+class OptimisticLockError extends Error {}
+
 function numericField(
     body: Record<string, unknown>,
     key: "dpp" | "ppnRate" | "pphRate",
@@ -61,6 +64,34 @@ export async function PATCH(request: Request, context: Context) {
             return NextResponse.json({ ok: false, error: "Claim Workflow item not found" }, { status: 404 });
         }
 
+        // Optimistic locking (strict): client WAJIB mengirim versi item yang ia muat (expectedUpdatedAt).
+        // Cegah dua editor saling timpa nilai DPP/PPN/PPh tanpa sadar.
+        const expectedRaw = body.expectedUpdatedAt ?? body.updatedAt;
+        if (expectedRaw === undefined || expectedRaw === null || String(expectedRaw).trim() === "") {
+            return NextResponse.json({
+                ok: false,
+                error: "Versi item (updatedAt) wajib disertakan. Muat ulang halaman lalu coba lagi.",
+                code: "VERSION_REQUIRED",
+            }, { status: 400 });
+        }
+        const expectedMs = new Date(String(expectedRaw)).getTime();
+        if (!Number.isFinite(expectedMs)) {
+            return NextResponse.json({
+                ok: false,
+                error: "Format versi item (updatedAt) tidak valid.",
+                code: "VERSION_INVALID",
+            }, { status: 400 });
+        }
+        if (!item.updatedAt || expectedMs !== item.updatedAt.getTime()) {
+            return NextResponse.json({
+                ok: false,
+                error: "Item ini sudah diubah pengguna lain. Muat ulang halaman untuk melihat versi terbaru sebelum menyimpan.",
+                code: "CONFLICT",
+                currentUpdatedAt: item.updatedAt ?? null,
+            }, { status: 409 });
+        }
+        const expectedDate = new Date(expectedMs);
+
         const dpp = numericField(body, "dpp", Number(item.dpp || 0));
         const ppnRate = numericField(body, "ppnRate", Number(item.ppnRate || 0));
         const pphRate = numericField(body, "pphRate", Number(item.pphRate || 0));
@@ -90,10 +121,17 @@ export async function PATCH(request: Request, context: Context) {
         let resolvedSubmissionId: string | null = item.claimSubmissionId ?? null;
 
         await db.transaction(async (tx) => {
-            await tx
+            // UPDATE bersyarat pada updatedAt: bila ada penulis lain menyelip di antara
+            // pre-check dan transaksi ini, rowsAffected=0 → batalkan (rollback) jadi 409.
+            const updated = await tx
                 .update(claimWorkflowItem)
                 .set({ ...amount, note, updatedAt: now })
-                .where(and(eq(claimWorkflowItem.id, itemId), eq(claimWorkflowItem.claimWorkflowId, id)));
+                .where(and(
+                    eq(claimWorkflowItem.id, itemId),
+                    eq(claimWorkflowItem.claimWorkflowId, id),
+                    eq(claimWorkflowItem.updatedAt, expectedDate),
+                ));
+            if (!updated.rowsAffected) throw new OptimisticLockError();
 
             // Phase R7b — pastikan item terkait submission. Bila item
             // belum di-link (kasus warisan sebelum migration), fallback ke
@@ -169,6 +207,13 @@ export async function PATCH(request: Request, context: Context) {
             },
         });
     } catch (error) {
+        if (error instanceof OptimisticLockError) {
+            return NextResponse.json({
+                ok: false,
+                error: "Item ini sudah diubah pengguna lain. Muat ulang halaman untuk melihat versi terbaru sebelum menyimpan.",
+                code: "CONFLICT",
+            }, { status: 409 });
+        }
         console.error("[CLAIM WORKFLOW ITEM TAX UPDATE ERROR]", error);
         return NextResponse.json({ ok: false, error: "Gagal memperbarui pajak item Claim Workflow." }, { status: 500 });
     }
