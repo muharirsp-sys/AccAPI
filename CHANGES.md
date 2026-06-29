@@ -29,7 +29,12 @@
 
 ### Rencana commit (dieksekusi sesi ini, push ke origin/main)
 1. `fix(perf)` #1,#4,#6 · 2. `feat(reliability)` #2 error boundary · 3. `refactor(python)!` #7 headless API · 4. `feat(ux)` #11,#12 · 5. `chore` gitignore+SYSTEM_MAP+CHANGES · 6. `feat(sales-history)` fitur Sales History + #5 fuzzy.
-- **Hardblock**: `.gitignore` diperbarui cover `*.rar *.exe *.apl *.bak *.db-wal/-shm/-journal` + `runtime/` (folder rebuild DB) → file data raksasa (`sales-history-inv.db.bak` 2,3GB, dll.) tak masuk git.
+- **Hardblock**: `.gitignore` diperbarui cover `*.rar *.exe *.apl *.bak* *.db-wal/-shm/-journal` + `runtime/` (folder rebuild DB) → file data raksasa (`sales-history-inv.db.bak` 2,3GB, `.bak2`, dll.) tak masuk git.
+
+### Integrasi merge dengan origin/main (push 55eaf0c)
+- Saat push, `origin/main` sudah maju 1 commit: `99f2474 fix: payments race condition` (sesi paralel). Konflik di `python_backend/main.py` + `app/(dashboard)/payments/page.tsx`.
+- **Temuan**: commit #7 lokal **tak sengaja menyertakan draft race-fix payments** (`_PAYMENTS_DB_LOCK`×9, `touch_payment_record`, `payment_write_timestamp`, `payments_conflict_response`) yang sudah ada sbg uncommitted di working tree saat sesi mulai — bukan hasil kerja #7.
+- **Resolusi (disetujui user)**: `main.py` di-rekonstruksi = **versi payments origin (race-fix final, `_PAYMENTS_DB_LOCK`×13) + strip auth/HTML #7**; draft payments lokal dibuang. `page.tsx` = gabung (`pageOverride` #4 + `useEffect` anti-stale origin). Verifikasi: `py_compile` OK, `tsc` 0 error, auth/HTML symbol 0, draft helpers 0.
 
 ## TIER 3 — Refactor Berisiko (per-item, butuh izin)
 
