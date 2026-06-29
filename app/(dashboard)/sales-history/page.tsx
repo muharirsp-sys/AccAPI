@@ -67,14 +67,12 @@ function ItemHistoryTable({ rows, isLoading, hasQuery, frozen }: { rows: Product
                         <col className="w-[7%]" />
                         <col className="w-[12%]" />
                         <col className="w-[12%]" />
-                        <col className="w-[22%]" />
+                        <col className="w-[33%]" />
                         <col className="w-[4%]" />
                         <col className="w-[4%]" />
                         <col className="w-[6%]" />
                         <col className="w-[6%]" />
                         <col className="w-[5%]" />
-                        <col className="w-[5%]" />
-                        <col className="w-[6%]" />
                     </colgroup>
                     <thead className="border-b border-slate-200 bg-slate-100 text-xs font-semibold uppercase text-slate-600">
                         <tr>
