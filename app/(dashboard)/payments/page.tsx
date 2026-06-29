@@ -237,6 +237,18 @@ export default function PaymentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [page, pageSize]);
 
+    // RC#2: Re-fetch saat user kembali ke tab ini agar data tidak stale
+    // jika ada perubahan dari komputer/tab lain sejak halaman dibuka.
+    useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === "visible") {
+                fetchData({ showLoading: false });
+            }
+        };
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+    }, []);
+
     const fetchData = async (options: { showLoading?: boolean; pageOverride?: number } = {}) => {
         const showLoading = options.showLoading !== false;
         const p = options.pageOverride ?? page;
@@ -327,11 +339,16 @@ export default function PaymentsPage() {
         const selectedIds = records.filter(r => r.ajukan).map(r => r.record_id || r.id);
         if (selectedIds.length === 0) return toast.error('Pilih minimal 1 data untuk diajukan kompilasi.');
         
+        // RC#3: Informasikan berapa record yang akan diproses agar user tahu
+        // bahwa angka filter akan berubah setelah cart disubmit.
+        const selectedCount = selectedIds.length;
         setIsSubmitting(true);
         try {
             const res = await api.post('/payments/cart/create', { method: payMethod, record_ids: selectedIds });
-            if (res.data.ok) window.location.href = `/payments/cart/${res.data.draft_id}`;
-            else toast.error(res.data.error || 'Gagal membuat pengajuan cart.');
+            if (res.data.ok) {
+                toast.info(`Memproses ${selectedCount} record ke keranjang. Angka filter akan diperbarui saat kembali ke halaman ini.`);
+                window.location.href = `/payments/cart/${res.data.draft_id}`;
+            } else toast.error(res.data.error || 'Gagal membuat pengajuan cart.');
         } catch { toast.error('Koneksi ke server gagal saat submit draft panin/non-panin.'); } 
         finally { setIsSubmitting(false); }
     };
