@@ -82,21 +82,19 @@ function ItemHistoryTable({ rows, isLoading, hasQuery, frozen }: { rows: Product
                             <th className={`px-4 py-3 ${thFreeze}`}>Tanggal</th>
                             <th className={`px-4 py-3 ${thFreeze}`}>Principal</th>
                             <th className={`px-4 py-3 ${thFreeze}`}>Customer / Toko</th>
-                            <th className={`px-4 py-3 ${thFreeze}`}>Produk</th>
+                            <th className={`px-4 py-3 w-80 ${thFreeze}`}>Produk</th>
                             <th className={`px-4 py-3 text-right ${thFreeze}`}>Qty</th>
                             <th className={`px-4 py-3 ${thFreeze}`}>Satuan</th>
                             <th className={`px-4 py-3 text-right ${thFreeze}`}>Harga Satuan</th>
                             <th className={`px-4 py-3 text-right ${thFreeze}`}>Total Bruto</th>
                             <th className={`px-4 py-3 text-right ${thFreeze}`}>Diskon</th>
-                            <th className={`px-4 py-3 text-right ${thFreeze}`}>DPP</th>
-                            <th className={`px-4 py-3 text-right ${thFreeze}`}>PPN</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-700">
                         {!hasQuery ? (
-                            <tr><td colSpan={12} className="h-32 px-4 text-center text-slate-500">Ketik nama atau kode produk untuk menampilkan history penjualan.</td></tr>
+                            <tr><td colSpan={10} className="h-32 px-4 text-center text-slate-500">Ketik nama atau kode produk untuk menampilkan history penjualan.</td></tr>
                         ) : isLoading ? (
-                            <tr><td colSpan={12} className="h-32 px-4 text-center text-slate-500">Memuat history item...</td></tr>
+                            <tr><td colSpan={10} className="h-32 px-4 text-center text-slate-500">Memuat history item...</td></tr>
                         ) : rows.length ? (
                             rows.map((row) => (
                                 <tr key={row.id} className="group hover:bg-slate-50">
@@ -116,12 +114,10 @@ function ItemHistoryTable({ rows, isLoading, hasQuery, frozen }: { rows: Product
                                         <span className="block font-medium text-amber-600">{pct(row.diskonRp, row.hargaTotal).toFixed(1)}%</span>
                                         <span className="block text-xs text-slate-500">{rp(row.diskonRp)}</span>
                                     </td>
-                                    <td className="px-4 py-3 text-right tabular-nums">{rp(row.dpp)}</td>
-                                    <td className="px-4 py-3 text-right tabular-nums">{rp(row.ppn)}</td>
                                 </tr>
                             ))
                         ) : (
-                            <tr><td colSpan={12} className="h-32 px-4 text-center text-slate-500">Tidak ada item yang cocok dengan pencarian & filter ini.</td></tr>
+                            <tr><td colSpan={10} className="h-32 px-4 text-center text-slate-500">Tidak ada item yang cocok dengan pencarian & filter ini.</td></tr>
                         )}
                     </tbody>
                 </table>
