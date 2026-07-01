@@ -153,11 +153,15 @@ async function ensureSchema() {
         diskon_rp REAL NOT NULL,
         dpp REAL NOT NULL,
         ppn REAL NOT NULL,
-        source_file TEXT NOT NULL
+        source_file TEXT NOT NULL,
+        keterangan TEXT NOT NULL DEFAULT ''
     )`);
     const itemColumns = await db.execute("PRAGMA table_info(sales_history_item)");
     if (!itemColumns.rows.some((row) => String(row.name || "") === "satuan")) {
         await db.execute("ALTER TABLE sales_history_item ADD COLUMN satuan TEXT NOT NULL DEFAULT ''");
+    }
+    if (!itemColumns.rows.some((row) => String(row.name || "") === "keterangan")) {
+        await db.execute("ALTER TABLE sales_history_item ADD COLUMN keterangan TEXT NOT NULL DEFAULT ''");
     }
     await db.execute(`CREATE INDEX IF NOT EXISTS idx_shi_referensi ON sales_history_item(referensi)`);
     await db.execute(`CREATE INDEX IF NOT EXISTS idx_shi_tanggal ON sales_history_item(tanggal)`);
@@ -286,6 +290,7 @@ async function importInvoices() {
         const iNilaiJual = colIndex(header, "NILAI_JUAL", "Nilai Bruto");
         const iDpp = colIndex(header, "DPP");
         const iPpn = colIndex(header, "NILAI_PAJAK", "Nilai Pajak");
+        const iRem = colIndex(header, "REM");
         if (iNota < 0 || iKode < 0 || iPrin < 0) {
             console.warn(`SKIP (kolom kurang): ${path}`);
             continue;
@@ -320,8 +325,8 @@ async function importInvoices() {
                     sql: `INSERT INTO sales_history_item (
                         referensi, nomor_faktur, tanggal, customer_nama, customer_npwp,
                         kode_objek, nama_produk, qty, satuan, harga_satuan, harga_total,
-                        diskon_rp, dpp, ppn, source_file
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                        diskon_rp, dpp, ppn, source_file, keterangan
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                     args: [
                         ref,
                         ref,
@@ -338,6 +343,7 @@ async function importInvoices() {
                         iDpp >= 0 ? num(row[iDpp]) : hargaTotal,
                         iPpn >= 0 ? num(row[iPpn]) : 0,
                         sourceFile,
+                        clean(iRem >= 0 ? row[iRem] : ""),
                     ],
                 });
                 if (elastic) {

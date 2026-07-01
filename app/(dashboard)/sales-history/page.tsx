@@ -34,6 +34,7 @@ type ProductRow = {
     diskonRp: number;
     dpp: number;
     ppn: number;
+    keterangan: string;
 };
 
 const PAGE_SIZE = 50;
@@ -53,26 +54,31 @@ const selectStyles: StylesConfig<any, false, GroupBase<any>> = {
     indicatorSeparator: () => ({ display: "none" }),
 };
 
-function ItemHistoryTable({ rows, isLoading, hasQuery, frozen }: { rows: ProductRow[]; isLoading: boolean; hasQuery: boolean; frozen: boolean }) {
-    // ponytail: overflow-clip (not overflow-hidden) agar sticky header tidak terperangkap di parent non-scrolling.
+function ItemHistoryTable({ rows, isLoading, hasQuery, frozen, showKeterangan }: { rows: ProductRow[]; isLoading: boolean; hasQuery: boolean; frozen: boolean; showKeterangan: boolean }) {
+    // ponytail: freeze butuh scroll container SENDIRI (max-h + overflow-auto) — overflow-y:clip
+    // di elemen yg juga overflow-x:auto ternyata didemosikan browser jadi "hidden" (scroll container asli),
+    // sehingga sticky ngunci ke situ (yg tak pernah discroll) bukan ke halaman. Diverifikasi via repro terpisah.
     const thFreeze = frozen ? "sticky top-0 z-20 bg-slate-100" : "";
     const th1Freeze = frozen ? "sticky top-0 left-0 z-30 bg-slate-100" : "";
     const td1Freeze = frozen ? "sticky left-0 z-10 bg-white group-hover:bg-slate-50" : "";
+    const colCount = showKeterangan ? 11 : 10;
+    const produkWidth = showKeterangan ? "w-[23%]" : "w-[33%]";
     return (
         <div className="overflow-clip rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="overflow-x-auto [overflow-y:clip]">
-                <table className="w-full min-w-[1280px] table-fixed text-left text-sm">
+            <div className="max-h-[70vh] overflow-auto">
+                <table className="w-full min-w-[1280px] table-fixed border-separate border-spacing-0 text-left text-sm">
                     <colgroup>
                         <col className="w-[11%]" />
                         <col className="w-[7%]" />
                         <col className="w-[12%]" />
                         <col className="w-[12%]" />
-                        <col className="w-[33%]" />
+                        <col className={produkWidth} />
                         <col className="w-[4%]" />
                         <col className="w-[4%]" />
                         <col className="w-[6%]" />
                         <col className="w-[6%]" />
                         <col className="w-[5%]" />
+                        {showKeterangan && <col className="w-[10%]" />}
                     </colgroup>
                     <thead className="border-b border-slate-200 bg-slate-100 text-xs font-semibold uppercase text-slate-600">
                         <tr>
@@ -86,13 +92,14 @@ function ItemHistoryTable({ rows, isLoading, hasQuery, frozen }: { rows: Product
                             <th className={`px-4 py-3 text-right ${thFreeze}`}>Harga Satuan</th>
                             <th className={`px-4 py-3 text-right ${thFreeze}`}>Total Bruto</th>
                             <th className={`px-4 py-3 text-right ${thFreeze}`}>Diskon</th>
+                            {showKeterangan && <th className={`px-4 py-3 ${thFreeze}`}>Keterangan</th>}
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-700">
                         {!hasQuery ? (
-                            <tr><td colSpan={10} className="h-32 px-4 text-center text-slate-500">Ketik nama atau kode produk untuk menampilkan history penjualan.</td></tr>
+                            <tr><td colSpan={colCount} className="h-32 px-4 text-center text-slate-500">Ketik nama atau kode produk untuk menampilkan history penjualan.</td></tr>
                         ) : isLoading ? (
-                            <tr><td colSpan={10} className="h-32 px-4 text-center text-slate-500">Memuat history item...</td></tr>
+                            <tr><td colSpan={colCount} className="h-32 px-4 text-center text-slate-500">Memuat history item...</td></tr>
                         ) : rows.length ? (
                             rows.map((row) => (
                                 <tr key={row.id} className="group hover:bg-slate-50">
@@ -112,10 +119,15 @@ function ItemHistoryTable({ rows, isLoading, hasQuery, frozen }: { rows: Product
                                         <span className="block font-medium text-amber-600">{pct(row.diskonRp, row.hargaTotal).toFixed(1)}%</span>
                                         <span className="block text-xs text-slate-500">{rp(row.diskonRp)}</span>
                                     </td>
+                                    {showKeterangan && (
+                                        <td className="px-4 py-3">
+                                            <span className="block truncate text-xs text-slate-500" title={row.keterangan}>{row.keterangan || "-"}</span>
+                                        </td>
+                                    )}
                                 </tr>
                             ))
                         ) : (
-                            <tr><td colSpan={10} className="h-32 px-4 text-center text-slate-500">Tidak ada item yang cocok dengan pencarian & filter ini.</td></tr>
+                            <tr><td colSpan={colCount} className="h-32 px-4 text-center text-slate-500">Tidak ada item yang cocok dengan pencarian & filter ini.</td></tr>
                         )}
                     </tbody>
                 </table>
@@ -141,6 +153,7 @@ export default function SalesHistoryPage() {
     const [searchBackend, setSearchBackend] = useState<"none" | "sqlite" | "elasticsearch">("none");
     const [uploading, setUploading] = useState(false);
     const [frozen, setFrozen] = useState(true);
+    const [showKeterangan, setShowKeterangan] = useState(false);
     const selectPortalProps = { menuPortalTarget: menuPortalTarget ?? undefined, menuPosition: "fixed" as const };
     const pageCount = Math.max(Math.ceil(total / PAGE_SIZE), 1);
 
@@ -333,6 +346,14 @@ export default function SalesHistoryPage() {
                         </button>
                         <button
                             type="button"
+                            onClick={() => setShowKeterangan((s) => !s)}
+                            title={showKeterangan ? "Sembunyikan kolom Keterangan" : "Tampilkan kolom Keterangan (REM)"}
+                            className={`rounded-lg border px-3 py-1.5 text-xs font-medium ${showKeterangan ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100" : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}
+                        >
+                            Keterangan {showKeterangan ? "✓" : ""}
+                        </button>
+                        <button
+                            type="button"
                             onClick={() => setPage((p) => Math.max(p - 1, 1))}
                             disabled={page <= 1 || loading || !productQuery}
                             className="rounded-lg border border-slate-200 p-2 disabled:opacity-40"
@@ -350,7 +371,7 @@ export default function SalesHistoryPage() {
                         </button>
                     </div>
                 </div>
-                <ItemHistoryTable rows={rows} isLoading={loading} hasQuery={Boolean(productQuery)} frozen={frozen} />
+                <ItemHistoryTable rows={rows} isLoading={loading} hasQuery={Boolean(productQuery)} frozen={frozen} showKeterangan={showKeterangan} />
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-6 shadow-xl backdrop-blur-xl">

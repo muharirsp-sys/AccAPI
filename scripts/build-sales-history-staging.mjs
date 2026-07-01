@@ -133,7 +133,8 @@ async function prepareFinalDb() {
         diskon_rp REAL NOT NULL,
         dpp REAL NOT NULL,
         ppn REAL NOT NULL,
-        source_file TEXT NOT NULL
+        source_file TEXT NOT NULL,
+        keterangan TEXT NOT NULL DEFAULT ''
     )`);
 }
 
@@ -212,6 +213,7 @@ async function loadSalesLatestWins() {
         const iNilaiJual = colIndex(header, "NILAI_JUAL", "Nilai Bruto");
         const iDpp = colIndex(header, "DPP");
         const iPpn = colIndex(header, "NILAI_PAJAK", "Nilai Pajak");
+        const iRem = colIndex(header, "REM");
         const required = [iNota, iKode, iPrin, iCustomer, iKodeBarang, iNamaBarang, iQty, iHarga];
         if (required.some((i) => i < 0)) {
             console.warn(`SKIP (kolom kurang): ${path}`);
@@ -246,8 +248,8 @@ async function loadSalesLatestWins() {
                 sql: `INSERT INTO sales_history_item (
                     referensi, nomor_faktur, tanggal, customer_nama, customer_npwp,
                     kode_objek, nama_produk, qty, satuan, harga_satuan, harga_total,
-                    diskon_rp, dpp, ppn, source_file
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                    diskon_rp, dpp, ppn, source_file, keterangan
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                 args: [
                     ref,
                     ref,
@@ -264,6 +266,7 @@ async function loadSalesLatestWins() {
                     iDpp >= 0 ? num(row[iDpp]) : hargaTotal,
                     iPpn >= 0 ? num(row[iPpn]) : 0,
                     sourceFile,
+                    clean(iRem >= 0 ? row[iRem] : ""),
                 ],
             });
         }

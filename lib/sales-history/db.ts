@@ -41,6 +41,7 @@ export const salesHistoryItem = sqliteTable(
         dpp: real("dpp").notNull(),
         ppn: real("ppn").notNull(),
         sourceFile: text("source_file").notNull(),     // nama file asal -> re-import idempotent
+        keterangan: text("keterangan").notNull().default(""), // kolom REM sumber — referensi PO/SO, format bebas per principal
     },
     (t) => [
         index("idx_shi_referensi").on(t.referensi),
@@ -107,6 +108,9 @@ export function ensureSalesHistorySchema(): Promise<void> {
             const itemColumns = await salesClient.execute("PRAGMA table_info(sales_history_item)");
             if (!itemColumns.rows.some((row) => String(row.name || "") === "satuan")) {
                 await salesClient.execute("ALTER TABLE sales_history_item ADD COLUMN satuan TEXT NOT NULL DEFAULT ''");
+            }
+            if (!itemColumns.rows.some((row) => String(row.name || "") === "keterangan")) {
+                await salesClient.execute("ALTER TABLE sales_history_item ADD COLUMN keterangan TEXT NOT NULL DEFAULT ''");
             }
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_shi_referensi ON sales_history_item(referensi)`);
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_shi_tanggal ON sales_history_item(tanggal)`);

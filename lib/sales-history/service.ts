@@ -389,7 +389,8 @@ export async function searchSalesHistoryItems(input: SalesHistoryInvoiceFilters)
                      shi.diskon_rp AS diskonRp,
                      shi.dpp,
                      shi.ppn,
-                     shi.source_file AS sourceFile
+                     shi.source_file AS sourceFile,
+                     shi.keterangan
               FROM sales_history_item shi
               JOIN invoice_map im ON im.referensi = shi.referensi
               LEFT JOIN customer_map cm ON cm.kode = im.kode_cust
@@ -432,7 +433,8 @@ export async function listSalesHistoryItems(ref: string) {
                      diskon_rp AS diskonRp,
                      dpp,
                      ppn,
-                     source_file AS sourceFile
+                     source_file AS sourceFile,
+                     keterangan
               FROM sales_history_item
               WHERE referensi = ?
               ORDER BY id`,
