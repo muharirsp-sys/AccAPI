@@ -1,22 +1,19 @@
 "use client";
 
 /*
- * Tujuan: UI admin untuk membuat user internal, reset password, dan role (preset akses dasar).
+ * Tujuan: UI admin untuk membuat user internal, reset password, dan pilih Access Group.
  * Caller: Route dashboard `/admin/users`.
- * Dependensi: Better Auth admin API, `/api/admin/users/permissions`, helper RBAC, sonner.
- * Main Functions: UserManagement, loadUsers, createUser, updateRole, resetPassword.
+ * Dependensi: Better Auth admin API, `/api/admin/users/permissions`, `/api/admin/users/[id]/group`,
+ *   `/api/admin/groups`, sonner.
+ * Main Functions: UserManagement, loadUsers, loadGroups, createUser, setUserGroup, resetPassword.
  * Side Effects: HTTP read/write ke API auth/admin.
- * Catatan: permission granular per modul dikelola SATU PINTU di /admin/groups (Access Group).
- *   Matrix permission per-user dihapus agar tidak tumpang tindih dengan group.
+ * Catatan: permission granular SATU PINTU dari Access Group. Dropdown "Access Group" di sini
+ *   MENGGANTIKAN dropdown role lama — memilih group otomatis set membership + role identity
+ *   (server-side, lihat app/api/admin/users/[id]/group/route.ts) dan menghapus permission
+ *   legacy per-user, agar tidak ada dua sumber permission yang tumpang tindih.
  */
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import {
-    appRoles,
-    normalizeRole,
-    roleLabels,
-    type AppRole,
-} from "@/lib/rbac";
 
 type UserRow = {
     id: string;
@@ -26,7 +23,11 @@ type UserRow = {
     permissions?: string | null;
     emailVerified?: boolean;
     banned?: boolean | null;
+    groupId?: string | null;
+    groupName?: string | null;
 };
+
+type GroupOption = { id: string; name: string };
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
@@ -48,12 +49,13 @@ async function authFetch<T>(url: string, init?: RequestInit): Promise<T> {
 
 export default function UserManagement() {
     const [users, setUsers] = useState<UserRow[]>([]);
+    const [groups, setGroups] = useState<GroupOption[]>([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const [role, setRole] = useState<AppRole>("viewer");
+    const [groupId, setGroupId] = useState("");
 
     const sortedUsers = useMemo(
         () => [...users].sort((a, b) => a.email.localeCompare(b.email)),
@@ -72,23 +74,45 @@ export default function UserManagement() {
         }
     }
 
+    async function loadGroups() {
+        try {
+            const data = await authFetch<{ groups: GroupOption[] }>("/api/admin/groups");
+            const list = data.groups || [];
+            setGroups(list);
+            setGroupId((current) => current || list[0]?.id || "");
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Gagal memuat daftar group");
+        }
+    }
+
     useEffect(() => {
         void loadUsers();
+        void loadGroups();
     }, []);
 
     async function createUser(event: React.FormEvent) {
         event.preventDefault();
+        if (!groupId) {
+            toast.error("Pilih Access Group untuk user baru.");
+            return;
+        }
         setSaving(true);
         try {
-            await authFetch("/api/auth/admin/create-user", {
+            const created = await authFetch<{ user?: { id?: string } }>("/api/auth/admin/create-user", {
                 method: "POST",
-                body: JSON.stringify({ name, email, password, role, data: { emailVerified: true } }),
+                body: JSON.stringify({ name, email, password, role: "viewer", data: { emailVerified: true } }),
             });
+            const newUserId = created.user?.id;
+            if (newUserId) {
+                await authFetch(`/api/admin/users/${newUserId}/group`, {
+                    method: "POST",
+                    body: JSON.stringify({ groupId }),
+                });
+            }
             toast.success("User dibuat.");
             setName("");
             setEmail("");
             setPassword("");
-            setRole("viewer");
             await loadUsers();
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Gagal membuat user");
@@ -97,20 +121,17 @@ export default function UserManagement() {
         }
     }
 
-    async function updateRole(userId: string, nextRole: AppRole) {
+    async function setUserGroup(userId: string, nextGroupId: string) {
+        if (!nextGroupId) return;
         try {
-            await authFetch("/api/auth/admin/set-role", {
+            await authFetch(`/api/admin/users/${userId}/group`, {
                 method: "POST",
-                body: JSON.stringify({ userId, role: nextRole }),
+                body: JSON.stringify({ groupId: nextGroupId }),
             });
-            await authFetch("/api/admin/users/permissions", {
-                method: "POST",
-                body: JSON.stringify({ userId, useRolePreset: true }),
-            });
-            toast.success("Role diperbarui dan permission mengikuti preset role.");
+            toast.success("Access Group diperbarui.");
             await loadUsers();
         } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Gagal update role");
+            toast.error(error instanceof Error ? error.message : "Gagal update Access Group");
         }
     }
 
@@ -137,7 +158,7 @@ export default function UserManagement() {
             <div>
                 <h1 className="text-2xl font-bold text-white">User & RBAC</h1>
                 <p className="text-sm text-slate-400 mt-1">
-                    Kelola akun internal, role, dan reset password. Permission granular per modul dikelola di{" "}
+                    Kelola akun internal, Access Group, dan reset password. Edit permission tiap group di{" "}
                     <a href="/admin/groups" className="text-indigo-300 hover:text-indigo-200 underline">Kelola Akses Group</a>.
                 </p>
             </div>
@@ -146,8 +167,8 @@ export default function UserManagement() {
                 <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Nama" className="rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm text-white" />
                 <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm text-white" />
                 <input required type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm text-white" />
-                <select value={role} onChange={(e) => setRole(e.target.value as AppRole)} className="rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm text-white">
-                    {appRoles.map((item) => <option key={item} value={item}>{roleLabels[item]}</option>)}
+                <select value={groupId} onChange={(e) => setGroupId(e.target.value)} className="rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-sm text-white">
+                    {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
                 </select>
                 <button disabled={saving} className="rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 px-4 py-2 text-sm font-semibold text-white">
                     {saving ? "Menyimpan..." : "Buat User"}
@@ -161,7 +182,7 @@ export default function UserManagement() {
                             <tr>
                                 <th className="text-left px-4 py-3">Nama</th>
                                 <th className="text-left px-4 py-3">Email</th>
-                                <th className="text-left px-4 py-3">Role</th>
+                                <th className="text-left px-4 py-3">Access Group</th>
                                 <th className="text-left px-4 py-3">Aksi</th>
                             </tr>
                         </thead>
@@ -170,27 +191,25 @@ export default function UserManagement() {
                                 <tr><td colSpan={4} className="px-4 py-6 text-center text-slate-400">Memuat...</td></tr>
                             ) : sortedUsers.length === 0 ? (
                                 <tr><td colSpan={4} className="px-4 py-6 text-center text-slate-400">Belum ada user.</td></tr>
-                            ) : sortedUsers.map((item) => {
-                                const userRole = normalizeRole(item.role);
-                                return (
-                                    <tr key={item.id} className="align-top">
-                                        <td className="px-4 py-3">{item.name}</td>
-                                        <td className="px-4 py-3">{item.email}</td>
-                                        <td className="px-4 py-3">
-                                            <select
-                                                value={userRole}
-                                                onChange={(e) => updateRole(item.id, e.target.value as AppRole)}
-                                                className="rounded bg-black/30 border border-white/10 px-2 py-1 text-white"
-                                            >
-                                                {appRoles.map((roleItem) => <option key={roleItem} value={roleItem}>{roleLabels[roleItem]}</option>)}
-                                            </select>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <button onClick={() => resetPassword(item.id)} className="text-indigo-300 hover:text-indigo-200 font-medium">Reset Password</button>
-                                        </td>
-                                    </tr>
-                                );
-                            })}
+                            ) : sortedUsers.map((item) => (
+                                <tr key={item.id} className="align-top">
+                                    <td className="px-4 py-3">{item.name}</td>
+                                    <td className="px-4 py-3">{item.email}</td>
+                                    <td className="px-4 py-3">
+                                        <select
+                                            value={item.groupId ?? ""}
+                                            onChange={(e) => setUserGroup(item.id, e.target.value)}
+                                            className="rounded bg-black/30 border border-white/10 px-2 py-1 text-white"
+                                        >
+                                            <option value="" disabled>— pilih group —</option>
+                                            {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                                        </select>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                        <button onClick={() => resetPassword(item.id)} className="text-indigo-300 hover:text-indigo-200 font-medium">Reset Password</button>
+                                    </td>
+                                </tr>
+                            ))}
                         </tbody>
                     </table>
                 </div>

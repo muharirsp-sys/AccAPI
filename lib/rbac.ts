@@ -2,7 +2,7 @@
  * Tujuan: Definisi role, permission module/action, dan helper akses halaman untuk RBAC internal aktif.
  * Caller: Better Auth admin plugin, dashboard layout/sidebar, admin user management, dan API admin permission.
  * Dependensi: better-auth default access controller.
- * Main Functions: normalizeRole, normalizePermissionMap, permissionMapForUser, canAccess, canAccessPath.
+ * Main Functions: normalizeRole, normalizePermissionMap, permissionMapForUser, canAccess, canAccessPathWithKeys.
  * Side Effects: Tidak ada; hanya normalisasi data permission in-memory.
  */
 import { defaultAc } from "better-auth/plugins/admin/access";
@@ -320,13 +320,6 @@ export function permissionMapForUser(roleValue?: string | null, rawPermissions?:
     const profile = parsePermissionProfile(rawPermissions);
     if (profile.custom) return profile.permissions;
     return rolePermissionPresets[normalizeRole(roleValue)];
-}
-
-export function serializeCustomPermissions(permissions: PermissionMap): string {
-    return JSON.stringify({
-        __custom: true,
-        permissions: normalizePermissionMap(permissions),
-    });
 }
 
 export function canAccess(module: AppModule, action: PermissionAction, roleValue?: string | null, rawPermissions?: unknown): boolean {

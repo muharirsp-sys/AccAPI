@@ -1,15 +1,16 @@
 /*
- * Tujuan: API admin untuk membaca user internal dan menyimpan permission RBAC per user.
- * Caller: `app/(dashboard)/admin/users/UserManagement.tsx`.
- * Dependensi: Better Auth session, Drizzle SQLite, schema `user`, helper RBAC.
- * Main Functions: GET, POST.
- * Side Effects: DB read/write kolom `user.permissions`.
+ * Tujuan: API admin untuk membaca daftar user internal + Access Group primer masing-masing.
+ * Caller: `app/(dashboard)/admin/users/UserManagement.tsx`, `app/(dashboard)/admin/groups/GroupManagement.tsx`.
+ * Dependensi: Better Auth session, Drizzle SQLite, schema `user`/`userGroup`/`accessGroup`, helper RBAC.
+ * Main Functions: GET.
+ * Side Effects: DB read-only.
+ * Catatan: penulisan permission per-user (legacy) dihapus — satu pintu via
+ *   app/api/admin/users/[id]/group/route.ts (set Access Group) atau /api/admin/groups (edit group).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { normalizePermissionMap, serializeCustomPermissions } from "@/lib/rbac";
-import { user } from "@/db/schema";
+import { user, userGroup, accessGroup } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
 
 export async function GET(request: NextRequest) {
@@ -29,27 +30,16 @@ export async function GET(request: NextRequest) {
         .from(user)
         .orderBy(asc(user.email));
 
-    return NextResponse.json({ users: rows });
-}
+    // Group primer per user (model single-primary-group untuk dropdown Access Group).
+    const groupRows = await db
+        .select({ userId: userGroup.userId, groupId: userGroup.groupId, groupName: accessGroup.name })
+        .from(userGroup)
+        .innerJoin(accessGroup, eq(userGroup.groupId, accessGroup.id))
+        .orderBy(asc(accessGroup.name));
+    const groupByUser = new Map<string, { groupId: string; groupName: string }>();
+    for (const r of groupRows) if (!groupByUser.has(r.userId)) groupByUser.set(r.userId, { groupId: r.groupId, groupName: r.groupName });
 
-export async function POST(request: NextRequest) {
-    const gate = await requirePermission(request, "users.manage");
-    if (gate.response) return gate.response;
-
-    const body = await request.json().catch(() => null);
-    const userId = String(body?.userId || "").trim();
-    if (!userId) {
-        return NextResponse.json({ error: "userId wajib diisi" }, { status: 400 });
-    }
-
-    const permissions = body?.useRolePreset === true
-        ? "{}"
-        : serializeCustomPermissions(normalizePermissionMap(body?.permissions || {}));
-
-    await db
-        .update(user)
-        .set({ permissions, updatedAt: new Date() })
-        .where(eq(user.id, userId));
-
-    return NextResponse.json({ ok: true, permissions });
+    return NextResponse.json({
+        users: rows.map((r) => ({ ...r, groupId: groupByUser.get(r.id)?.groupId ?? null, groupName: groupByUser.get(r.id)?.groupName ?? null })),
+    });
 }
