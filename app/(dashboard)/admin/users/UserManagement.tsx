@@ -121,14 +121,19 @@ export default function UserManagement() {
         }
     }
 
-    async function setUserGroup(userId: string, nextGroupId: string) {
+    async function setUserGroup(userId: string, userName: string, currentGroupName: string | null | undefined, nextGroupId: string) {
         if (!nextGroupId) return;
+        const nextGroupName = groups.find((g) => g.id === nextGroupId)?.name ?? nextGroupId;
+        const confirmed = window.confirm(
+            `Ubah Access Group "${userName}" dari "${currentGroupName || "(belum ada)"}" ke "${nextGroupName}"?\n\nPermission user akan langsung mengikuti group baru ini.`
+        );
+        if (!confirmed) return;
         try {
             await authFetch(`/api/admin/users/${userId}/group`, {
                 method: "POST",
                 body: JSON.stringify({ groupId: nextGroupId }),
             });
-            toast.success("Access Group diperbarui.");
+            toast.success(`Access Group "${userName}" diperbarui ke "${nextGroupName}".`);
             await loadUsers();
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Gagal update Access Group");
@@ -198,7 +203,7 @@ export default function UserManagement() {
                                     <td className="px-4 py-3">
                                         <select
                                             value={item.groupId ?? ""}
-                                            onChange={(e) => setUserGroup(item.id, e.target.value)}
+                                            onChange={(e) => setUserGroup(item.id, item.name, item.groupName, e.target.value)}
                                             className="rounded bg-black/30 border border-white/10 px-2 py-1 text-white"
                                         >
                                             <option value="" disabled>— pilih group —</option>

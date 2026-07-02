@@ -1,9 +1,14 @@
 /*
- * Tujuan: Resolver akses tunggal — akses user = UNION permission semua Access Group-nya
- *   ∪ legacy (user.role preset / user.permissions custom) selama transisi.
+ * Tujuan: Resolver akses tunggal — group Access Group eksplisit = SATU-SATUNYA sumber
+ *   permission user. Legacy (user.role preset / user.permissions custom) hanya fallback
+ *   untuk user yang BELUM PERNAH dimasukkan ke group apa pun (belum dimigrasi).
  * Caller: requirePermission() (guard route, dipakai mulai P5) + UI admin RBAC (P6).
  * Dependensi: db (Drizzle), schema user/userGroup/groupPermission, legacy permissionMapForUser.
  * Side Effects: DB read-only.
+ * Catatan: sebelumnya legacy role preset DI-UNION dengan group meski user sudah punya group,
+ *   menyebabkan role lama (mis. "staff") menyelundupkan akses ekstra di luar group custom yang
+ *   sengaja dibatasi admin (bug: group "Return" 3 permission tapi user tetap lihat modul lain).
+ *   Begitu user punya >=1 group, legacy diabaikan total — group jadi otoritatif.
  */
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
@@ -13,24 +18,25 @@ import { auth } from "@/lib/auth";
 import { user, userGroup, groupPermission } from "@/db/schema";
 import { permissionMapForUser } from "@/lib/rbac";
 
-/** Permission key efektif user (Set "module.action"). UNION group + legacy. */
+/** Permission key efektif user (Set "module.action"). Group jika ada; legacy hanya jika belum punya group. */
 export async function getUserPermissions(userId: string): Promise<Set<string>> {
     const keys = new Set<string>();
 
-    // 1. Sistem baru: union semua group user.
     const groups = await db
         .select({ groupId: userGroup.groupId })
         .from(userGroup)
         .where(eq(userGroup.userId, userId));
+
     if (groups.length) {
         const rows = await db
             .select({ key: groupPermission.permissionKey })
             .from(groupPermission)
             .where(inArray(groupPermission.groupId, groups.map((g) => g.groupId)));
         for (const r of rows) keys.add(r.key);
+        return keys;
     }
 
-    // 2. Legacy override (transisi): user.role preset / user.permissions custom.
+    // Belum punya group sama sekali -> fallback legacy role/permissions.
     const [u] = await db
         .select({ role: user.role, permissions: user.permissions })
         .from(user)
