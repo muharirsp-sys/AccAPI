@@ -217,7 +217,6 @@ export default function PaymentsPage() {
     const [isClearing, setIsClearing] = useState(false);
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
-    const [serverTotal, setServerTotal] = useState(0);
 
     // Filters
     const [filters, setFilters] = useState<Record<string, string>>({});
@@ -230,12 +229,12 @@ export default function PaymentsPage() {
         setPage(1);
     };
 
-    // Refetch setiap page/pageSize berubah (server-side pagination)
+    // Backend kirim semua baris sekali; pagination & filter murni client-side.
+    // Fetch cukup sekali saat mount (ganti page tidak perlu network).
     useEffect(() => {
         fetchData();
-    // ponytail: fetchData via closure; page/pageSize adalah satu-satunya deps yang harus trigger refetch
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [page, pageSize]);
+    }, []);
 
     // RC#2: Re-fetch saat user kembali ke tab ini agar data tidak stale
     // jika ada perubahan dari komputer/tab lain sejak halaman dibuka.
@@ -258,7 +257,6 @@ export default function PaymentsPage() {
             if (res.data.ok) {
                 const data = (res.data.data || []).map((r: PaymentApiRecord) => normalizePaymentRecord(r));
                 setRecords(data);
-                setServerTotal(res.data.total ?? data.length);
                 return true;
             } else {
                 toast.error(res.data.error || "Gagal memuat data pembayaran.");
@@ -555,15 +553,19 @@ export default function PaymentsPage() {
         });
     }, [records, filters, principleFilter]);
 
-    // Server mengembalikan satu halaman; pageCount dari serverTotal
-    const pageCount = Math.max(1, Math.ceil((serverTotal || filteredRecords.length) / pageSize));
+    // Pagination client-side atas hasil filter; hanya baris halaman aktif yang dirender ke DOM.
+    const totalFiltered = filteredRecords.length;
+    const pageCount = Math.max(1, Math.ceil(totalFiltered / pageSize));
     const activePage = Math.min(page, pageCount);
-    const pageStart = filteredRecords.length === 0 ? 0 : (activePage - 1) * pageSize + 1;
-    const pageEnd = Math.min(activePage * pageSize, serverTotal || filteredRecords.length);
+    const pageStart = totalFiltered === 0 ? 0 : (activePage - 1) * pageSize + 1;
+    const pageEnd = Math.min(activePage * pageSize, totalFiltered);
     const pendingChangeCount = Object.keys(pendingChanges).length;
 
-    // Server sudah paginate; filteredRecords adalah subset halaman ini setelah filter client-side
-    const paginatedRecords = useMemo(() => filteredRecords, [filteredRecords]);
+    // Iris hanya baris halaman aktif -> hindari ledakan node DOM (semua baris di-mount).
+    const paginatedRecords = useMemo(
+        () => filteredRecords.slice((activePage - 1) * pageSize, activePage * pageSize),
+        [filteredRecords, activePage, pageSize]
+    );
 
     // Total nilai invoice dari semua record yang di-centang (ajukan)
     const totalCheckedInvoice = useMemo(() => {
@@ -685,7 +687,7 @@ export default function PaymentsPage() {
                         <div className="flex items-center gap-2 text-xs text-slate-400">
                             <span className="font-mono text-slate-300">{pageStart}-{pageEnd}</span>
                             <span>dari</span>
-                            <span className="font-mono text-slate-300">{serverTotal || filteredRecords.length}</span>
+                            <span className="font-mono text-slate-300">{totalFiltered}</span>
                             <select
                                 className="h-7 bg-black/50 border border-white/10 rounded px-1.5 text-slate-300 outline-none focus:border-emerald-500/50 text-xs"
                                 value={pageSize}
