@@ -8,7 +8,7 @@
  * Side Effects: Fetch /api/insentif-sales/dashboard, /payments, POST /progress, PATCH /payments/[id].
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
     Trophy, Filter, Clock, TrendingUp, BarChart3, ListChecks,
     Wallet, Upload, Target, Users, UserCog, DollarSign, CheckCircle2,
@@ -556,6 +556,107 @@ function SmView({ rows }: { rows: Salesman[] }) {
     );
 }
 
+// ── Tabel Insentif SPV — strata Value (lib/insentif-spv-calc), fetch mandiri ──
+interface SpvIncentiveDetail {
+    principle: string;
+    targetValue: number;
+    realisasiValue: number;
+    pctValue: number;
+    rate: number;
+    insentif: number;
+}
+interface SpvIncentiveRow {
+    spvName: string;
+    jumlahValid: number;
+    ratePerPrincipal: number;
+    rincian: SpvIncentiveDetail[];
+    total: number;
+}
+
+function SpvIncentiveTable({ month, year }: { month: number; year: number }) {
+    const [rows, setRows] = useState<SpvIncentiveRow[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            setLoading(true);
+            try {
+                const res = await fetch(`/api/insentif-sales/spv-dashboard?month=${month}&year=${year}`);
+                const data = await res.json();
+                if (!cancelled) setRows(res.ok ? (data.rows ?? []) : []);
+            } catch {
+                if (!cancelled) { toast.error("Gagal memuat insentif SPV."); setRows([]); }
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [month, year]);
+
+    const grandTotal = rows.reduce((a, r) => a + r.total, 0);
+
+    return (
+        <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
+            <SectionTitle icon={Wallet} no={3} title="Tabel Insentif SPV" desc="Strata berbasis Value — rate/principal berdasar jumlah principal valid yang dicover" />
+            {loading ? (
+                <div className="flex items-center justify-center py-8 gap-2 text-slate-500 text-sm">
+                    <Loader2 size={18} className="animate-spin text-indigo-400" /> Memuat…
+                </div>
+            ) : (
+                <div className="overflow-x-auto">
+                    <table className="w-full min-w-[700px] text-xs text-left">
+                        <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
+                            <tr>
+                                <th className="px-3 py-3">Nama SPV</th>
+                                <th className="px-3 py-3 text-center">Jumlah Principal</th>
+                                <th className="px-3 py-3 text-right">Rate/Principal</th>
+                                <th className="px-3 py-3 text-right bg-amber-500/10">Total Insentif</th>
+                                <th className="px-3 py-3 w-8"></th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/[0.1]">
+                            {rows.map((r) => (
+                                <Fragment key={r.spvName}>
+                                    <tr
+                                        className="even:bg-white/[0.025] hover:bg-white/[0.05] transition-colors cursor-pointer"
+                                        onClick={() => setExpanded((p) => ({ ...p, [r.spvName]: !p[r.spvName] }))}>
+                                        <td className="px-3 py-3 font-semibold text-slate-200">{r.spvName}</td>
+                                        <td className="px-3 py-3 text-center text-slate-300">{r.jumlahValid}</td>
+                                        <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.ratePerPrincipal)}</td>
+                                        <td className="px-3 py-3 text-right bg-amber-500/5 font-mono font-bold text-amber-400">{formatRp(r.total)}</td>
+                                        <td className="px-3 py-3 text-center text-slate-500">{expanded[r.spvName] ? "▲" : "▼"}</td>
+                                    </tr>
+                                    {expanded[r.spvName] && r.rincian.map((d) => (
+                                        <tr key={`${r.spvName}-${d.principle}`} className="bg-black/20 text-[11px]">
+                                            <td className="px-3 py-2 pl-8 text-slate-400">{d.principle}</td>
+                                            <td className="px-3 py-2 text-center text-slate-500">{Math.round(d.pctValue * 100)}%</td>
+                                            <td className="px-3 py-2 text-right font-mono text-slate-500">{formatRp(d.rate)}</td>
+                                            <td className="px-3 py-2 text-right font-mono text-slate-400">{formatRp(d.insentif)}</td>
+                                            <td />
+                                        </tr>
+                                    ))}
+                                </Fragment>
+                            ))}
+                            {rows.length === 0 && (
+                                <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-500 italic">Belum ada data SPV untuk periode ini.</td></tr>
+                            )}
+                        </tbody>
+                        <tfoot>
+                            <tr className="bg-black/50 border-t-2 border-amber-500/30 font-bold">
+                                <td className="px-3 py-3 uppercase text-[11px] tracking-wider text-amber-300" colSpan={3}>Grand Total</td>
+                                <td className="px-3 py-3 text-right bg-amber-500/10 font-mono text-amber-300 text-sm">{formatRp(grandTotal)}</td>
+                                <td />
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            )}
+        </div>
+    );
+}
+
 // ── Target Input Section ───────────────────────────────────────────────────
 interface TargetRow {
     salesCode: string;
@@ -879,14 +980,78 @@ function TargetInputSection() {
     );
 }
 
-// ── Admin: upload CSV → POST /api/insentif-sales/progress ─────────────────
+// ── Admin: input progress harian (manual atau upload CSV) ─────────────────
+interface ManualProgressRow {
+    salesCode: string;
+    principle: string;
+    branch: string;
+    invoiceNumber: string;
+    achievedValueDpp: number;
+    achievedEc: number;
+    achievedAo: number;
+    achievedIa: number;
+}
+const EMPTY_PROGRESS_ROW: ManualProgressRow = {
+    salesCode: "", principle: PRINCIPLES[0], branch: BRANCHES[0], invoiceNumber: "",
+    achievedValueDpp: 0, achievedEc: 0, achievedAo: 0, achievedIa: 0,
+};
+
 function AdminView({ rows }: { rows: Salesman[] }) {
     const now = new Date();
     const [period, setPeriod] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
-    const [principle, setPrinciple] = useState<string>(PRINCIPLES[0]);
-    const [branch, setBranch] = useState<string>(BRANCHES[0]);
+    const [progressMethod, setProgressMethod] = useState<"manual" | "excel">("manual");
+    const [manualRows, setManualRows] = useState<ManualProgressRow[]>([{ ...EMPTY_PROGRESS_ROW }]);
     const [uploading, setUploading] = useState(false);
+    const [savingManual, setSavingManual] = useState(false);
 
+    function setManualCell<K extends keyof ManualProgressRow>(idx: number, key: K, val: ManualProgressRow[K]) {
+        setManualRows((prev) => prev.map((r, i) => i === idx ? { ...r, [key]: val } : r));
+    }
+    function addManualRow() { setManualRows((prev) => [...prev, { ...EMPTY_PROGRESS_ROW }]); }
+    function removeManualRow(idx: number) { setManualRows((prev) => prev.filter((_, i) => i !== idx)); }
+
+    async function submitProgress(payload: unknown[]) {
+        const res = await fetch("/api/insentif-sales/progress", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Server error");
+        return data as { inserted: number };
+    }
+
+    async function handleSaveManual() {
+        const valid = manualRows.filter((r) => r.salesCode.trim());
+        if (valid.length === 0) { toast.error("Isi minimal 1 baris dengan Kode Salesman."); return; }
+        setSavingManual(true);
+        try {
+            const [year, month] = period.split("-").map(Number);
+            const payload = valid.map((r) => ({
+                salesCode: r.salesCode.trim(),
+                principle: r.principle,
+                branch: r.branch,
+                date: `${year}-${String(month).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
+                periodMonth: month,
+                periodYear: year,
+                invoiceNumber: r.invoiceNumber.trim() || undefined,
+                achievedValueDpp: r.achievedValueDpp,
+                achievedEc: r.achievedEc,
+                achievedAo: r.achievedAo,
+                achievedIa: r.achievedIa,
+            }));
+            const data = await submitProgress(payload);
+            toast.success(`${data.inserted} baris progress berhasil disimpan.`);
+            setManualRows([{ ...EMPTY_PROGRESS_ROW }]);
+        } catch (err) {
+            toast.error(`Gagal simpan: ${err instanceof Error ? err.message : "Error"}`);
+        } finally {
+            setSavingManual(false);
+        }
+    }
+
+    // Principal & Cabang dibaca PER BARIS dari kolom PRINCIPAL/JENISPRODUK di file —
+    // bukan dipilih global, karena 1 file laporan penjualan bisa berisi banyak principal.
     async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -899,13 +1064,13 @@ function AdminView({ rows }: { rows: Salesman[] }) {
             const idx = (name: string) => headers.indexOf(name);
 
             const [year, month] = period.split("-").map(Number);
-            const payload = lines.slice(1).map((line) => {
+            const parsed = lines.slice(1).map((line) => {
                 const cols = line.split(/[,;]/);
                 const get = (name: string) => cols[idx(name)]?.trim() ?? "";
                 return {
                     salesCode: get("KODE_SALESMAN"),
-                    principle,
-                    branch,
+                    principle: get("PRINCIPAL"),
+                    branch: get("JENISPRODUK"),
                     date: `${year}-${String(month).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
                     periodMonth: month,
                     periodYear: year,
@@ -915,18 +1080,14 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                     achievedAo: parseInt(get("AO")) || 0,
                     achievedIa: parseInt(get("IA")) || 0,
                 };
-            }).filter((r) => r.salesCode);
-
-            if (payload.length === 0) { toast.error("Tidak ada baris valid dalam CSV."); return; }
-
-            const res = await fetch("/api/insentif-sales/progress", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error ?? "Server error");
-            toast.success(`${data.inserted} baris diproses ke database.`);
+            const payload = parsed.filter((r) => r.salesCode && r.principle && r.branch);
+            const skipped = parsed.length - payload.length;
+
+            if (payload.length === 0) { toast.error("Tidak ada baris valid — pastikan kolom KODE_SALESMAN, PRINCIPAL, JENISPRODUK terisi."); return; }
+
+            const data = await submitProgress(payload);
+            toast.success(`${data.inserted} baris diproses ke database.${skipped ? ` (${skipped} baris dilewati — kolom wajib kosong)` : ""}`);
         } catch (err) {
             toast.error(`Gagal upload: ${err instanceof Error ? err.message : "Error tidak dikenal"}`);
         } finally {
@@ -935,32 +1096,105 @@ function AdminView({ rows }: { rows: Salesman[] }) {
         }
     }
 
+    const inp = "w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500 min-w-0";
+    const numInp = inp + " text-right font-mono";
+
     return (
         <div className="space-y-5">
             <TargetInputSection />
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-                <SectionTitle icon={Upload} no={2} title="Input Progress Harian (CSV)" desc="Mapping: DPP (Value), AO, EC, IA, KODE_SALESMAN — POST ke /api/insentif-sales/progress" />
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                <SectionTitle icon={Upload} no={2} title="Input Progress Harian" desc="Principal & Cabang dibaca per baris dari data — bukan dipilih global (1 file bisa berisi banyak principal)" />
+
+                <div className="flex flex-wrap items-center gap-3 mb-4">
                     <Field label="Periode">
-                        <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500" />
-                    </Field>
-                    <Field label="Principal">
-                        <select value={principle} onChange={(e) => setPrinciple(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500">
-                            {PRINCIPLES.map((p) => <option key={p}>{p}</option>)}
-                        </select>
-                    </Field>
-                    <Field label="Cabang">
-                        <select value={branch} onChange={(e) => setBranch(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500">
-                            {BRANCHES.map((b) => <option key={b}>{b}</option>)}
-                        </select>
+                        <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500" />
                     </Field>
                 </div>
-                <label className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-xl py-10 cursor-pointer transition-colors ${uploading ? "border-indigo-500/60 bg-indigo-500/[0.04]" : "border-white/15 hover:border-indigo-500/40 hover:bg-white/[0.02]"}`}>
-                    {uploading ? <Loader2 className="text-indigo-400 animate-spin" size={28} /> : <FileUp className="text-indigo-400" size={28} />}
-                    <span className="text-sm font-semibold text-slate-200">{uploading ? "Memproses…" : "Unggah CSV Laporan Penjualan Harian"}</span>
-                    <span className="text-[11px] text-slate-500">Kolom: KODE_SALESMAN, DPP, AO, EC, IA (+ NO_INVOICE opsional)</span>
-                    <input type="file" accept=".csv" className="hidden" disabled={uploading} onChange={handleUpload} />
-                </label>
+
+                <div className="flex gap-2 mb-4 border-b border-white/10 pb-3">
+                    <button
+                        onClick={() => setProgressMethod("manual")}
+                        className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                            progressMethod === "manual"
+                                ? "bg-indigo-600/40 text-indigo-200 border-b-2 border-indigo-500"
+                                : "text-slate-400 hover:text-slate-300"
+                        }`}>
+                        📋 Input Manual
+                    </button>
+                    <button
+                        onClick={() => setProgressMethod("excel")}
+                        className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                            progressMethod === "excel"
+                                ? "bg-indigo-600/40 text-indigo-200 border-b-2 border-indigo-500"
+                                : "text-slate-400 hover:text-slate-300"
+                        }`}>
+                        📊 Upload Excel/CSV
+                    </button>
+                </div>
+
+                {progressMethod === "manual" ? (
+                    <>
+                        <div className="overflow-x-auto">
+                            <table className="w-full min-w-[900px] text-xs border-collapse">
+                                <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
+                                    <tr>
+                                        <th className="px-2 py-2.5 text-left">Kode Salesman</th>
+                                        <th className="px-2 py-2.5 text-left">Principal</th>
+                                        <th className="px-2 py-2.5 text-left">Cabang</th>
+                                        <th className="px-2 py-2.5 text-left">No Invoice</th>
+                                        <th className="px-2 py-2.5 text-right text-orange-300">DPP (Value)</th>
+                                        <th className="px-2 py-2.5 text-right text-yellow-300">EC</th>
+                                        <th className="px-2 py-2.5 text-right text-blue-300">AO</th>
+                                        <th className="px-2 py-2.5 text-right text-violet-300">IA</th>
+                                        <th className="px-2 py-2.5 w-8"></th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/[0.07]">
+                                    {manualRows.map((r, i) => (
+                                        <tr key={i} className="even:bg-white/[0.015] hover:bg-white/[0.04] transition-colors">
+                                            <td className="px-2 py-2"><input className={inp} value={r.salesCode} onChange={(e) => setManualCell(i, "salesCode", e.target.value)} placeholder="SLS-001" /></td>
+                                            <td className="px-2 py-2">
+                                                <select className={inp} value={r.principle} onChange={(e) => setManualCell(i, "principle", e.target.value)}>
+                                                    {PRINCIPLES.map((p) => <option key={p}>{p}</option>)}
+                                                </select>
+                                            </td>
+                                            <td className="px-2 py-2">
+                                                <select className={inp} value={r.branch} onChange={(e) => setManualCell(i, "branch", e.target.value)}>
+                                                    {BRANCHES.map((b) => <option key={b}>{b}</option>)}
+                                                </select>
+                                            </td>
+                                            <td className="px-2 py-2"><input className={inp} value={r.invoiceNumber} onChange={(e) => setManualCell(i, "invoiceNumber", e.target.value)} placeholder="opsional" /></td>
+                                            <td className="px-2 py-2"><input type="number" className={numInp} value={r.achievedValueDpp || ""} onChange={(e) => setManualCell(i, "achievedValueDpp", Number(e.target.value))} placeholder="0" /></td>
+                                            <td className="px-2 py-2"><input type="number" className={numInp + " w-16"} value={r.achievedEc || ""} onChange={(e) => setManualCell(i, "achievedEc", Number(e.target.value))} placeholder="0" /></td>
+                                            <td className="px-2 py-2"><input type="number" className={numInp + " w-16"} value={r.achievedAo || ""} onChange={(e) => setManualCell(i, "achievedAo", Number(e.target.value))} placeholder="0" /></td>
+                                            <td className="px-2 py-2"><input type="number" className={numInp + " w-16"} value={r.achievedIa || ""} onChange={(e) => setManualCell(i, "achievedIa", Number(e.target.value))} placeholder="0" /></td>
+                                            <td className="px-2 py-2 text-center">
+                                                <button onClick={() => removeManualRow(i)} className="text-slate-600 hover:text-rose-400 transition-colors p-1 rounded" title="Hapus baris">×</button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div className="mt-3 flex items-center justify-between flex-wrap gap-3 border-t border-white/5 pt-3">
+                            <button onClick={addManualRow} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs text-slate-300 hover:bg-white/10 transition-colors">
+                                + Tambah Baris
+                            </button>
+                            <button onClick={handleSaveManual} disabled={savingManual || manualRows.length === 0}
+                                className="btn-primary disabled:opacity-50 flex items-center gap-2">
+                                {savingManual ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                                Simpan Progress
+                            </button>
+                        </div>
+                    </>
+                ) : (
+                    <label className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-xl py-10 cursor-pointer transition-colors ${uploading ? "border-indigo-500/60 bg-indigo-500/[0.04]" : "border-white/15 hover:border-indigo-500/40 hover:bg-white/[0.02]"}`}>
+                        {uploading ? <Loader2 className="text-indigo-400 animate-spin" size={28} /> : <FileUp className="text-indigo-400" size={28} />}
+                        <span className="text-sm font-semibold text-slate-200">{uploading ? "Memproses…" : "Unggah CSV Laporan Penjualan Harian"}</span>
+                        <span className="text-[11px] text-slate-500 text-center px-4">Kolom: KODE_SALESMAN, PRINCIPAL, JENISPRODUK, DPP, AO, EC, IA (+ NO_INVOICE opsional)</span>
+                        <input type="file" accept=".csv" className="hidden" disabled={uploading} onChange={handleUpload} />
+                    </label>
+                )}
             </div>
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
                 <SectionTitle icon={Target} no={3} title="Preview Salesman Terdaftar" desc="Data dari DB — periode saat ini" />
@@ -993,6 +1227,146 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                             ))}
                         </tbody>
                     </table>
+                </div>
+            </div>
+            <HierarchyAssignmentSection />
+        </div>
+    );
+}
+
+// ── Kelola Hierarki (Bagian C) — additive, BELUM dipakai kalkulasi/scoping apapun ──
+interface SpvSalesAssignmentRow { id: string; salesCode: string; spvName: string; }
+interface SmSpvAssignmentRow { id: string; spvName: string; smName: string; }
+
+function HierarchyAssignmentSection() {
+    const [spvSales, setSpvSales] = useState<SpvSalesAssignmentRow[]>([]);
+    const [smSpv, setSmSpv] = useState<SmSpvAssignmentRow[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [newSalesCode, setNewSalesCode] = useState("");
+    const [newSpvName, setNewSpvName] = useState("");
+    const [newSpvName2, setNewSpvName2] = useState("");
+    const [newSmName, setNewSmName] = useState("");
+    const [saving, setSaving] = useState(false);
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const [r1, r2] = await Promise.all([
+                fetch("/api/insentif-sales/hierarchy/spv-sales"),
+                fetch("/api/insentif-sales/hierarchy/sm-spv"),
+            ]);
+            setSpvSales(r1.ok ? ((await r1.json()).rows ?? []) : []);
+            setSmSpv(r2.ok ? ((await r2.json()).rows ?? []) : []);
+        } catch {
+            toast.error("Gagal memuat data hierarki.");
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => { load(); }, [load]);
+
+    async function addSpvSales() {
+        if (!newSalesCode.trim() || !newSpvName.trim()) { toast.error("Kode Sales & Nama SPV wajib diisi."); return; }
+        setSaving(true);
+        try {
+            const res = await fetch("/api/insentif-sales/hierarchy/spv-sales", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ salesCode: newSalesCode.trim(), spvName: newSpvName.trim() }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error ?? "Gagal simpan");
+            toast.success("Assignment Sales → SPV tersimpan.");
+            setNewSalesCode(""); setNewSpvName("");
+            load();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Gagal simpan");
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    async function removeSpvSales(id: string) {
+        try {
+            const res = await fetch(`/api/insentif-sales/hierarchy/spv-sales?id=${id}`, { method: "DELETE" });
+            if (!res.ok) throw new Error();
+            load();
+        } catch {
+            toast.error("Gagal hapus assignment.");
+        }
+    }
+
+    async function addSmSpv() {
+        if (!newSpvName2.trim() || !newSmName.trim()) { toast.error("Nama SPV & Nama SM wajib diisi."); return; }
+        setSaving(true);
+        try {
+            const res = await fetch("/api/insentif-sales/hierarchy/sm-spv", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ spvName: newSpvName2.trim(), smName: newSmName.trim() }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error ?? "Gagal simpan");
+            toast.success("Assignment SPV → SM tersimpan.");
+            setNewSpvName2(""); setNewSmName("");
+            load();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Gagal simpan");
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    async function removeSmSpv(id: string) {
+        try {
+            const res = await fetch(`/api/insentif-sales/hierarchy/sm-spv?id=${id}`, { method: "DELETE" });
+            if (!res.ok) throw new Error();
+            load();
+        } catch {
+            toast.error("Gagal hapus assignment.");
+        }
+    }
+
+    const inputCls = "flex-1 bg-black/40 border border-white/10 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500";
+
+    return (
+        <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
+            <SectionTitle icon={Users} no={4} title="Kelola Hierarki (Belum Aktif)" desc="Assignment Sales → SPV → SM — belum dipakai kalkulasi insentif maupun scoping akses" />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-3">
+                <div>
+                    <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Sales → SPV</div>
+                    <div className="flex gap-2 mb-3">
+                        <input className={inputCls} placeholder="Kode Sales" value={newSalesCode} onChange={(e) => setNewSalesCode(e.target.value)} />
+                        <input className={inputCls} placeholder="Nama SPV" value={newSpvName} onChange={(e) => setNewSpvName(e.target.value)} />
+                        <button onClick={addSpvSales} disabled={saving} className="px-3 py-1.5 rounded bg-indigo-600/40 border border-indigo-500/40 text-indigo-200 text-xs disabled:opacity-50 shrink-0">+ Tambah</button>
+                    </div>
+                    <div className="max-h-60 overflow-y-auto border border-white/10 rounded-lg divide-y divide-white/5">
+                        {loading ? <div className="p-3 text-xs text-slate-500">Memuat…</div> : spvSales.length === 0 ? (
+                            <div className="p-3 text-xs text-slate-500 italic">Belum ada assignment.</div>
+                        ) : spvSales.map((r) => (
+                            <div key={r.id} className="flex items-center justify-between px-3 py-2 text-xs">
+                                <span className="text-slate-300">{r.salesCode} → <span className="text-indigo-300">{r.spvName}</span></span>
+                                <button onClick={() => removeSpvSales(r.id)} className="text-slate-600 hover:text-rose-400" title="Hapus">×</button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                <div>
+                    <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">SPV → SM</div>
+                    <div className="flex gap-2 mb-3">
+                        <input className={inputCls} placeholder="Nama SPV" value={newSpvName2} onChange={(e) => setNewSpvName2(e.target.value)} />
+                        <input className={inputCls} placeholder="Nama SM" value={newSmName} onChange={(e) => setNewSmName(e.target.value)} />
+                        <button onClick={addSmSpv} disabled={saving} className="px-3 py-1.5 rounded bg-indigo-600/40 border border-indigo-500/40 text-indigo-200 text-xs disabled:opacity-50 shrink-0">+ Tambah</button>
+                    </div>
+                    <div className="max-h-60 overflow-y-auto border border-white/10 rounded-lg divide-y divide-white/5">
+                        {loading ? <div className="p-3 text-xs text-slate-500">Memuat…</div> : smSpv.length === 0 ? (
+                            <div className="p-3 text-xs text-slate-500 italic">Belum ada assignment.</div>
+                        ) : smSpv.map((r) => (
+                            <div key={r.id} className="flex items-center justify-between px-3 py-2 text-xs">
+                                <span className="text-slate-300">{r.spvName} → <span className="text-indigo-300">{r.smName}</span></span>
+                                <button onClick={() => removeSmSpv(r.id)} className="text-slate-600 hover:text-rose-400" title="Hapus">×</button>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             </div>
         </div>
@@ -1413,6 +1787,7 @@ export default function InsentifSalesPage() {
                         <>
                             <PerformanceBlock rows={salesmen} apiRows={apiRows} />
                             <SpvView rows={salesmen} />
+                            <SpvIncentiveTable month={month} year={year} />
                             <IncentiveTable apiRows={apiRows} />
                         </>
                     )}

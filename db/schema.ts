@@ -668,6 +668,31 @@ export const incentiveSupport = sqliteTable("incentive_support", {
     codeIdx: index("idx_inc_support_code").on(t.salesCode),
 }));
 
+// ── Hierarki pelaporan SM → SPV → Sales (Bagian C) ──────────────────────────
+// Additive, BELUM di-wire ke kalkulasi insentif atau scoping RBAC apapun.
+// Key masih teks bebas (sales_code/spv_name/sm_name) — konsisten dgn sales_targets,
+// bukan FK ke user.id (SPV/SM belum tentu punya akun login). Upsert-by-key (1 baris
+// per sales_code / per spv_name) — tidak ada histori/period, reassign = overwrite.
+export const spvSalesAssignment = sqliteTable("spv_sales_assignment", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull().unique(),
+    spvName: text("spv_name").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    spvIdx: index("idx_spv_sales_assignment_spv").on(t.spvName),
+}));
+
+export const smSpvAssignment = sqliteTable("sm_spv_assignment", {
+    id: text("id").primaryKey(),
+    spvName: text("spv_name").notNull().unique(),
+    smName: text("sm_name").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    smIdx: index("idx_sm_spv_assignment_sm").on(t.smName),
+}));
+
 // ============================================================
 // Form Kontrol SUPER Module
 // ============================================================

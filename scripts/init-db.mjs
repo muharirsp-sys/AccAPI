@@ -808,6 +808,23 @@ const insentifStatements = [
   `CREATE INDEX IF NOT EXISTS idx_inc_payments_status ON incentive_payments(payment_status);`,
   `CREATE INDEX IF NOT EXISTS idx_inc_support_period ON incentive_support(period_month, period_year);`,
   `CREATE INDEX IF NOT EXISTS idx_inc_support_code ON incentive_support(sales_code);`,
+  // Hierarki SM->SPV->Sales (Bagian C) — additive, belum di-wire ke kalkulasi/RBAC.
+  `CREATE TABLE IF NOT EXISTS spv_sales_assignment (
+    id TEXT PRIMARY KEY NOT NULL,
+    sales_code TEXT NOT NULL UNIQUE,
+    spv_name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS sm_spv_assignment (
+    id TEXT PRIMARY KEY NOT NULL,
+    spv_name TEXT NOT NULL UNIQUE,
+    sm_name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );`,
+  `CREATE INDEX IF NOT EXISTS idx_spv_sales_assignment_spv ON spv_sales_assignment(spv_name);`,
+  `CREATE INDEX IF NOT EXISTS idx_sm_spv_assignment_sm ON sm_spv_assignment(sm_name);`,
 ];
 
 for (const sql of insentifStatements) {

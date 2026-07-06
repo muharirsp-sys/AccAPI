@@ -545,8 +545,9 @@ Dua model insentif hidup berdampingan, dipisah oleh `channel`:
 
 | Model | Berlaku | Logic | File |
 |---|---|---|---|
-| **Strata-DB** (4 KPI: Value/EC/AO/IA, rata-rata) | channel non-GT | `lookupTierFromDb` (tabel `incentive_tiers`, nominal per jenjang %) | `lib/insentif-sales.ts` |
-| **Konstanta-bobot** (2 KPI: AO 70% + Value 30%) | channel **GT** | `computeExclusive` / `computeMix` (pure) | `lib/insentif-sales-calc.ts` |
+| **Strata-DB** (4 KPI: Value/EC/AO/IA, rata-rata) | tidak dipakai lagi untuk insentif (achievement 4-KPI tetap jalan) | `lookupTierFromDb` (tabel `incentive_tiers`) | `lib/insentif-sales.ts` |
+| **Konstanta-bobot** (2 KPI: AO 70% + Value 30%) | channel **GT dan TT** (sinonim) | `computeExclusive` / `computeMix` (pure) | `lib/insentif-sales-calc.ts` |
+| MT (belum ada aturan insentif) | channel **MT** | insentif selalu 0 | `dashboard/route.ts` |
 
 Konstanta-bobot (GT):
 - Pengali %: `<0.90→0`, `0.90–1.00→aktual`, `>1.00→cap 1.00`. Target AO konstan **240**.
@@ -558,6 +559,29 @@ Konstanta-bobot (GT):
 Alur: target Excel (kolom Tipe Sales + Status Insentif, kunci upsert `salesCode+principle+period`) → `dashboard/route.ts` (GT pakai calc baru, non-GT strata; achievement 4-KPI tetap untuk semua) → Finance input support (`/api/insentif-sales/support`) → dashboard hitung ulang.
 
 Self-check: `node --experimental-strip-types lib/insentif-sales-calc.test.ts` (Case 1 exclusive=300rb, Case 2 mix=500rb sebagai angka acuan).
+
+### Insentif SPV — Strata Value (`lib/insentif-spv-calc.ts`)
+
+Terpisah dari insentif Sales — **murni berbasis Value** (tidak ada komponen AO). Pure calc, **belum di-wire** ke route/UI manapun (belum ada tabel/route target-SPV — SPV tidak punya target sendiri, dihitung on-the-fly dari agregat sales bawahan via `spv_name` teks bebas di `sales_targets`, lihat catatan hierarki di bawah).
+
+- `calculateInsentifSPV(rows: SpvSalesRow[])`: group baris sales per `principle`, SUM `targetValue`/`realisasiValue` lintas channel (GT/TT/MT — cakupan bisnis SPV, bukan skema insentif per-Sales).
+- Principal valid (masuk count) jika **minimal 1 baris sales bawahan** berstatus skema (`distributor`/`distributor_principle`, reuse `isSchemePrincipal` dari `lib/insentif-sales-calc.ts`) — bukan seluruhnya `principle` (full principle).
+- Rate per principal (`ratePerPrincipalSpv`): n=1 → flat Rp1.500.000 (kasus khusus). n≥2 (termasuk ekstrapolasi n>6) → `Total(n) = 1.200.000 + 200.000×n`, `rate = Total(n)/n`. Cocok persis ke tabel given n=1..6 (1.5jt/800rb/600rb/500rb/440rb/400rb per principal).
+- Threshold pencapaian: reuse `percentageMultiplier` (sama seperti Sales) — `<0.90→0`, `0.90–1.00→aktual`, `>1.00→cap 1.00`.
+- Insentif_n = rate × pctValue; Total = sum(Insentif_n).
+
+Self-check: `node --experimental-strip-types lib/insentif-spv-calc.test.ts` (total n=1..6 tervalidasi ke tabel given, n=7/10 ekstrapolasi, SUM lintas sales, exclude campur status).
+
+**Wiring:** [GET /api/insentif-sales/spv-dashboard](app/api/insentif-sales/spv-dashboard/route.ts) — group `sales_targets` per `spv_name` (teks bebas), SUM realisasi via `computeMtdByPrinciple`, panggil `calculateInsentifSPV`. Tampil di UI sebagai `SpvIncentiveTable` pada tab SPV (`page.tsx`, expand-per-principal).
+
+### Hierarki SM → SPV → Sales (Bagian C — dibangun, BELUM di-wire ke kalkulasi/RBAC)
+
+Tabel additive di `db/schema.ts`: `spvSalesAssignment` (`sales_code` UNIQUE → `spv_name`) dan `smSpvAssignment` (`spv_name` UNIQUE → `sm_name`). Key masih teks bebas (bukan FK ke `user.id`) — konsisten dgn `sales_targets.spv_name`/`sm_name` yang sudah ada, karena SPV/SM belum tentu punya akun login.
+
+- CRUD: [/api/insentif-sales/hierarchy/spv-sales](app/api/insentif-sales/hierarchy/spv-sales/route.ts), [/api/insentif-sales/hierarchy/sm-spv](app/api/insentif-sales/hierarchy/sm-spv/route.ts). GET pakai `insentif_sales.view`; POST/DELETE pakai permission baru **`insentif_sales.manage_hierarchy`** — key ini **tidak ada** di modul legacy (`appModules` di `lib/rbac.ts` tidak mencakup `insentif_sales`) dan **belum ditambahkan ke `group_permission` manapun**, jadi otomatis OFF untuk semua orang sampai sengaja diaktifkan lewat RBAC admin UI (P6).
+- UI: `HierarchyAssignmentSection` di `AdminView` (page.tsx) — 2 mini-form assign + list + hapus.
+- **Belum digunakan** oleh `calculateInsentifSPV`/`computeExclusive`/`computeMix` maupun scoping row-level manapun. `SpvIncentiveTable` di atas masih group by `sales_targets.spv_name` langsung (bukan dari tabel assignment ini) — keduanya sengaja dibiarkan terpisah sampai ada keputusan migrasi.
+- **Gap yang belum diisi:** link `user.id` (akun login) → identitas SPV/SM (mis. kolom `hierarchyName` di `user`) — dibutuhkan nanti kalau mau enforce scoping "SPV cuma lihat sales bawahannya sendiri". Belum dibangun.
 
 ---
 
