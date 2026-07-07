@@ -1,19 +1,25 @@
 /*
  * Tujuan: CRUD targets bulanan Insentif Sales.
- * Caller: app/(dashboard)/insentif-sales/page.tsx admin panel.
- * Dependensi: lib/insentif-sales, db/schema (salesTargets).
- * Main Functions: GET list targets per periode; POST upsert batch targets.
- * Side Effects: DB read + write (upsert by salesCode+periodMonth+periodYear).
+ * Caller: app/(dashboard)/insentif-sales/page.tsx admin panel (SPV/SM input target tim sendiri;
+ *   Admin upload laporan penjualan lewat route progress, bukan di sini).
+ * Dependensi: lib/insentif-sales, db/schema (salesTargets, spvSalesAssignment),
+ *   lib/insentif-hierarchy-scope.
+ * Main Functions: GET list targets per periode (scoped kalau caller SPV/SM); POST upsert batch
+ *   targets (scoped: SPV/SM cuma boleh tulis salesCode timnya; salesCode BARU/unclaimed oleh
+ *   SPV -> otomatis di-claim jadi tim SPV itu; salesCode milik SPV LAIN -> ditolak, arahkan ke
+ *   Kelola Hierarki utk proses klaim/approval).
+ * Side Effects: DB read + write (upsert by salesCode+principle+periodMonth+periodYear).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { salesTargets } from "@/db/schema";
+import { salesTargets, spvSalesAssignment } from "@/db/schema";
 import { getTargetsForPeriod } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { normalizeStatus, normalizeTipe } from "@/lib/insentif-sales-calc";
+import { getScopeForUser, getUserHierarchyIdentity, getCurrentSpvOwner } from "@/lib/insentif-hierarchy-scope";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
@@ -26,7 +32,11 @@ export async function GET(req: NextRequest) {
     const principle = searchParams.get("principle") ?? undefined;
     const branch = searchParams.get("branch") ?? undefined;
 
-    const rows = await getTargetsForPeriod(month, year, principle, branch);
+    const [rawRows, scope] = await Promise.all([
+        getTargetsForPeriod(month, year, principle, branch),
+        getScopeForUser(gate.session.user.id),
+    ]);
+    const rows = scope === null ? rawRows : rawRows.filter((r) => scope.has(r.salesCode));
     return NextResponse.json({ month, year, rows });
 }
 
@@ -61,11 +71,44 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
 
+    const scope = await getScopeForUser(gate.session.user.id);
+    const identity = scope !== null ? await getUserHierarchyIdentity(gate.session.user.id) : null;
+
     const now = new Date();
     let upserted = 0;
 
     for (const t of body) {
         if (!t.salesCode || !t.periodMonth || !t.periodYear) continue;
+
+        // Scoping SPV/SM: hanya boleh tulis baris timnya sendiri. salesCode baru/unclaimed
+        // oleh SPV -> auto-claim jadi tim SPV itu. Milik SPV lain / SM di luar scope -> tolak.
+        if (scope !== null && !scope.has(t.salesCode)) {
+            if (identity?.role === "spv") {
+                const owner = await getCurrentSpvOwner(t.salesCode);
+                if (owner && owner !== identity.name) {
+                    return NextResponse.json(
+                        { error: `Baris ${t.salesCode}: sudah milik SPV lain (${owner}). Ajukan klaim lewat Kelola Hierarki.` },
+                        { status: 403 },
+                    );
+                }
+                // Unclaimed atau sudah milik sendiri (belum masuk scope cache) -> claim otomatis.
+                const [existingAssignment] = await db
+                    .select({ id: spvSalesAssignment.id })
+                    .from(spvSalesAssignment)
+                    .where(eq(spvSalesAssignment.salesCode, t.salesCode))
+                    .limit(1);
+                if (!existingAssignment) {
+                    await db.insert(spvSalesAssignment).values({
+                        id: randomUUID(), salesCode: t.salesCode, spvName: identity.name, createdAt: now, updatedAt: now,
+                    });
+                }
+            } else {
+                return NextResponse.json(
+                    { error: `Baris ${t.salesCode}: di luar cakupan tim Anda.` },
+                    { status: 403 },
+                );
+            }
+        }
 
         // Validasi nilai kolom Excel (trust boundary). Nilai aneh → 400.
         let tipeSales: string, statusInsentif: string;

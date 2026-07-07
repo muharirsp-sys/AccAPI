@@ -1239,11 +1239,15 @@ function AdminView({ rows }: { rows: Salesman[] }) {
 interface SpvSalesAssignmentRow { id: string; salesCode: string; spvName: string; }
 interface SmSpvAssignmentRow { id: string; spvName: string; smName: string; }
 interface UserIdentityRow { id: string; name: string; email: string; hierarchyRole: "spv" | "sm" | null; hierarchyName: string | null; }
+interface MyIdentity { identity: { role: "spv" | "sm"; name: string } | null; isAdmin: boolean; }
+interface ClaimRequestRow { id: string; salesCode: string; requestedBySpvName: string; previousSpvName: string | null; }
 
 function HierarchyAssignmentSection() {
     const [spvSales, setSpvSales] = useState<SpvSalesAssignmentRow[]>([]);
     const [smSpv, setSmSpv] = useState<SmSpvAssignmentRow[]>([]);
     const [users, setUsers] = useState<UserIdentityRow[]>([]);
+    const [myIdentity, setMyIdentity] = useState<MyIdentity | null>(null);
+    const [pendingRequests, setPendingRequests] = useState<ClaimRequestRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [newSalesCode, setNewSalesCode] = useState("");
     const [newSpvName, setNewSpvName] = useState("");
@@ -1257,14 +1261,21 @@ function HierarchyAssignmentSection() {
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const [r1, r2, r3] = await Promise.all([
+            const [r1, r2, r3, r4] = await Promise.all([
                 fetch("/api/insentif-sales/hierarchy/spv-sales"),
                 fetch("/api/insentif-sales/hierarchy/sm-spv"),
                 fetch("/api/insentif-sales/hierarchy/user-identity"),
+                fetch("/api/insentif-sales/hierarchy/my-identity"),
             ]);
             setSpvSales(r1.ok ? ((await r1.json()).rows ?? []) : []);
             setSmSpv(r2.ok ? ((await r2.json()).rows ?? []) : []);
             setUsers(r3.ok ? ((await r3.json()).users ?? []) : []);
+            const mine: MyIdentity = r4.ok ? await r4.json() : { identity: null, isAdmin: false };
+            setMyIdentity(mine);
+            if (mine.isAdmin) {
+                const r5 = await fetch("/api/insentif-sales/hierarchy/spv-sales/requests");
+                setPendingRequests(r5.ok ? ((await r5.json()).rows ?? []) : []);
+            }
         } catch {
             toast.error("Gagal memuat data hierarki.");
         } finally {
@@ -1273,6 +1284,21 @@ function HierarchyAssignmentSection() {
     }, []);
 
     useEffect(() => { load(); }, [load]);
+
+    async function decideRequest(id: string, decision: "approve" | "reject") {
+        try {
+            const res = await fetch("/api/insentif-sales/hierarchy/spv-sales/requests", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ requestId: id, decision }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error ?? "Gagal proses");
+            toast.success(decision === "approve" ? "Klaim disetujui." : "Klaim ditolak.");
+            load();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Gagal proses");
+        }
+    }
 
     async function linkIdentity() {
         if (!selUserId || !selName.trim()) { toast.error("Pilih user & isi nama identitas."); return; }
@@ -1309,7 +1335,11 @@ function HierarchyAssignmentSection() {
     }
 
     async function addSpvSales() {
-        if (!newSalesCode.trim() || !newSpvName.trim()) { toast.error("Kode Sales & Nama SPV wajib diisi."); return; }
+        const isSelfService = !myIdentity?.isAdmin;
+        if (!newSalesCode.trim() || (!isSelfService && !newSpvName.trim())) {
+            toast.error(isSelfService ? "Kode Sales wajib diisi." : "Kode Sales & Nama SPV wajib diisi.");
+            return;
+        }
         setSaving(true);
         try {
             const res = await fetch("/api/insentif-sales/hierarchy/spv-sales", {
@@ -1317,8 +1347,13 @@ function HierarchyAssignmentSection() {
                 body: JSON.stringify({ salesCode: newSalesCode.trim(), spvName: newSpvName.trim() }),
             });
             const data = await res.json();
+            if (res.status === 202) {
+                toast.info(`Salesman ${newSalesCode.trim()} sudah dipegang SPV lain — permintaan klaim dikirim, tunggu approval admin.`);
+                setNewSalesCode(""); setNewSpvName("");
+                return;
+            }
             if (!res.ok) throw new Error(data.error ?? "Gagal simpan");
-            toast.success("Assignment Sales → SPV tersimpan.");
+            toast.success(isSelfService ? "Salesman berhasil ditambahkan ke tim Anda." : "Assignment Sales → SPV tersimpan.");
             setNewSalesCode(""); setNewSpvName("");
             load();
         } catch (err) {
@@ -1369,6 +1404,22 @@ function HierarchyAssignmentSection() {
     }
 
     const inputCls = "flex-1 bg-black/40 border border-white/10 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500";
+    const isAdmin = !!myIdentity?.isAdmin;
+    const isSpvSelf = !isAdmin && myIdentity?.identity?.role === "spv";
+
+    if (!loading && !isAdmin && !isSpvSelf) return null; // tidak relevan utk role ini (mis. SM, viewer)
+
+    if (isSpvSelf) {
+        return (
+            <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
+                <SectionTitle icon={Users} no={4} title="Tambahkan Salesman ke Tim Saya" desc={`Sebagai SPV "${myIdentity?.identity?.name}" — salesman baru langsung masuk tim Anda; kalau sudah dipegang SPV lain, dikirim sebagai permintaan klaim ke admin`} />
+                <div className="flex gap-2 mb-3 max-w-md">
+                    <input className={inputCls} placeholder="Kode Sales" value={newSalesCode} onChange={(e) => setNewSalesCode(e.target.value)} />
+                    <button onClick={addSpvSales} disabled={saving} className="px-3 py-1.5 rounded bg-indigo-600/40 border border-indigo-500/40 text-indigo-200 text-xs disabled:opacity-50 shrink-0">+ Tambah</button>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
@@ -1409,6 +1460,24 @@ function HierarchyAssignmentSection() {
                             </div>
                         ))}
                     </div>
+                </div>
+            </div>
+            <div className="mt-6 pt-6 border-t border-white/10">
+                <div className="text-xs font-semibold text-orange-400 uppercase tracking-wider mb-2">Permintaan Klaim Tertunda (Rolling)</div>
+                <div className="max-h-48 overflow-y-auto border border-white/10 rounded-lg divide-y divide-white/5">
+                    {pendingRequests.length === 0 ? (
+                        <div className="p-3 text-xs text-slate-500 italic">Tidak ada permintaan tertunda.</div>
+                    ) : pendingRequests.map((r) => (
+                        <div key={r.id} className="flex items-center justify-between px-3 py-2 text-xs gap-2">
+                            <span className="text-slate-300">
+                                <span className="font-mono">{r.salesCode}</span>: <span className="text-slate-500">{r.previousSpvName}</span> → <span className="text-indigo-300">{r.requestedBySpvName}</span>
+                            </span>
+                            <div className="flex gap-1 shrink-0">
+                                <button onClick={() => decideRequest(r.id, "approve")} className="px-2 py-1 rounded bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 text-[11px]">Setuju</button>
+                                <button onClick={() => decideRequest(r.id, "reject")} className="px-2 py-1 rounded bg-rose-600/30 border border-rose-500/40 text-rose-300 text-[11px]">Tolak</button>
+                            </div>
+                        </div>
+                    ))}
                 </div>
             </div>
             <div className="mt-6 pt-6 border-t border-white/10">

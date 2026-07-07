@@ -699,6 +699,23 @@ export const smSpvAssignment = sqliteTable("sm_spv_assignment", {
     smIdx: index("idx_sm_spv_assignment_sm").on(t.smName),
 }));
 
+// Klaim salesman baru oleh SPV (self-service kalau salesCode belum dipegang siapapun;
+// kalau sudah dipegang SPV lain -> jadi pending, tunggu approve admin — "rolling").
+export const spvSalesClaimRequest = sqliteTable("spv_sales_claim_request", {
+    id: text("id").primaryKey(),
+    salesCode: text("sales_code").notNull(),
+    requestedBySpvName: text("requested_by_spv_name").notNull(),
+    requestedByUserId: text("requested_by_user_id").notNull(),
+    previousSpvName: text("previous_spv_name"), // null kalau sebelumnya unclaimed
+    status: text("status").notNull().default("pending"), // 'pending' | 'approved' | 'rejected'
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    decidedAt: integer("decided_at", { mode: "timestamp" }),
+    decidedByUserId: text("decided_by_user_id"),
+}, (t) => ({
+    statusIdx: index("idx_spv_claim_request_status").on(t.status),
+    salesIdx: index("idx_spv_claim_request_sales").on(t.salesCode),
+}));
+
 // ============================================================
 // Form Kontrol SUPER Module
 // ============================================================

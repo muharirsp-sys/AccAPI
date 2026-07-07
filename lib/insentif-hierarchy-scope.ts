@@ -47,6 +47,30 @@ async function effectiveSmBySpvName(): Promise<Map<string, string>> {
     return map;
 }
 
+export interface HierarchyIdentity {
+    role: "spv" | "sm";
+    name: string;
+}
+
+/** Identitas SPV/SM user sendiri (untuk keputusan eligibility, mis. self-service claim salesman). null = bukan SPV/SM (termasuk hierarchyRole korup/tak dikenal — deny, bukan diam-diam anggap valid). */
+export async function getUserHierarchyIdentity(userId: string): Promise<HierarchyIdentity | null> {
+    const [row] = await db
+        .select({ hierarchyRole: user.hierarchyRole, hierarchyName: user.hierarchyName })
+        .from(user)
+        .where(eq(user.id, userId))
+        .limit(1);
+    if ((row?.hierarchyRole === "spv" || row?.hierarchyRole === "sm") && row.hierarchyName) {
+        return { role: row.hierarchyRole, name: row.hierarchyName };
+    }
+    return null;
+}
+
+/** Nama SPV pemilik salesCode saat ini (assignment override, fallback sales_targets.spv_name). null = belum ada yang klaim. */
+export async function getCurrentSpvOwner(salesCode: string): Promise<string | null> {
+    const spvOf = await effectiveSpvBySalesCode();
+    return spvOf.get(salesCode) ?? null;
+}
+
 /** null = tidak ada scoping (lihat semua) — default untuk semua user yang belum di-assign. */
 export async function getScopeForUser(userId: string): Promise<Set<string> | null> {
     const [row] = await db

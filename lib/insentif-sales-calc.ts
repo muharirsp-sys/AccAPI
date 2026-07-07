@@ -164,7 +164,7 @@ export function normalizeStatus(raw: string): StatusInsentif {
     const s = raw.trim().toLowerCase().replace(/\s+/g, "");
     if (s === "principle" || s === "principal") return "principle";
     if (s === "distributor") return "distributor";
-    if (s === "distributor+principle" || s === "distributor+principal" || s === "distributorprinciple")
+    if (s === "distributor+principle" || s === "distributor+principal" || s === "distributorprinciple" || s === "distributor_principle")
         return "distributor_principle";
     throw new Error(`Status Insentif tidak dikenal: "${raw}"`);
 }

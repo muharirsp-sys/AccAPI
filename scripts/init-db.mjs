@@ -827,6 +827,20 @@ const insentifStatements = [
   );`,
   `CREATE INDEX IF NOT EXISTS idx_spv_sales_assignment_spv ON spv_sales_assignment(spv_name);`,
   `CREATE INDEX IF NOT EXISTS idx_sm_spv_assignment_sm ON sm_spv_assignment(sm_name);`,
+  // Klaim salesman self-service SPV (rolling -> pending, approve admin).
+  `CREATE TABLE IF NOT EXISTS spv_sales_claim_request (
+    id TEXT PRIMARY KEY NOT NULL,
+    sales_code TEXT NOT NULL,
+    requested_by_spv_name TEXT NOT NULL,
+    requested_by_user_id TEXT NOT NULL,
+    previous_spv_name TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    decided_at INTEGER,
+    decided_by_user_id TEXT
+  );`,
+  `CREATE INDEX IF NOT EXISTS idx_spv_claim_request_status ON spv_sales_claim_request(status);`,
+  `CREATE INDEX IF NOT EXISTS idx_spv_claim_request_sales ON spv_sales_claim_request(sales_code);`,
 ];
 
 for (const sql of insentifStatements) {
