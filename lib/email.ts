@@ -2,7 +2,7 @@ import nodemailer from "nodemailer";
 
 interface EmailAttachment {
     filename: string;
-    content: Buffer | Uint8Array;
+    content: Buffer;
     contentType?: string;
 }
 

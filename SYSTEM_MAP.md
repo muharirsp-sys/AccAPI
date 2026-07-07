@@ -641,4 +641,25 @@ UI: modul /laporan-harian (atau tab di /insentif-sales)
         -> output: (a) rows per SPV & per SM, (b) rows stock per SPV, (c) agregat progress harian
      -> tulis file per-SPV/SM ke runtime/laporan-harian/<tanggal>/
      -> feed dashboard: BULK upsert ke sales_daily_progress (batch, hindari N+1)
-  <- { ok, runId, ringkasan per SPV, daftar penerima (PREVIEW, belum k
+  <- { ok, runId, ringkasan per SPV, daftar penerima (PREVIEW, belum kirim) }
+UI: tombol "Kirim" terpisah (gated, confirm:true) -> POST /api/laporan-harian/[runId]/send
+     -> requirePermission("laporan_harian.send") -> ambil file per-SPV/SM dari backend -> kirim email (nodemailer)
+```
+
+---
+
+## Risks / Blind Spots
+
+| Area | Catatan |
+|---|---|
+| **Python backend integrasi Next.js** | Tidak ada shared session antar Next.js dan FastAPI. FastAPI punya auth sendiri (`auth.py`); sinkronisasi user hanya via filesystem/env, bukan DB shared. |
+| **Elasticsearch optional** | Jika env tidak di-set, search fallback ke in-memory fuzzy. Perilaku ini tidak eksplisit diuji di test script. |
+| **PPh HOLD** | Kolom PPh disiapkan di schema tapi perhitungan final ditahan (`// PPh HOLD` tersebar di beberapa file). Belum aktif secara bisnis. |
+| **Phase R7 (Multi No Claim)** | Fitur `claim_submission` tabel (R7a+) masih dalam rollout bertahap. Phase R7b-R7k tercakup di `scripts/test-r7*.mjs` tapi belum semua route production-ready. |
+| **Webhook Accurate IP whitelist** | Kode whitelist ada tapi baris `return 403` dikomentari. Di production, IP filtering harus diaktifkan manual. |
+| **`config/`** | Folder berisi data statik (principles, dll) — tidak ter-trace penuh karena bukan TypeScript eksportabel; kemungkinan JSON/YAML. |
+| **`runtime/` path** | Direktori file PDF dibuat dinamis saat runtime. Tidak ada cleanup otomatis; bisa membesar di production jika tidak ada cron/purge. |
+| **`app/(dashboard)/finance/page.tsx`** | Memanggil Python FastAPI backend langsung via `NEXT_PUBLIC_FASTAPI_BASE_URL`. Jika backend mati, halaman finance tidak berfungsi. |
+| **Docker vs dev** | `drizzle.config.ts` hardcode `file:sqlite.db` (bukan env). Perlu disesuaikan jika path container berbeda dari root. |
+| **`rekprinciple.xlsx`** | File Excel di root — tidak jelas apakah dipakai runtime atau hanya referensi manual. |
+| **Laporan Harian: stock Accurate & openpyxl** | File stock export Accurate tidak terbaca `openpyxl` (perlu `python-calamine` terpasang di server). |

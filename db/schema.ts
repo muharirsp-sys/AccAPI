@@ -911,7 +911,39 @@ export const accessGroup = sqliteTable("access_group", {
 // Divalidasi ke permission registry (P3) saat tulis — TIDAK ada tabel permissions.
 export const groupPermission = sqliteTable("group_permission", {
     groupId: text("group_id").notNull().references(() => accessGroup.id),
-    permissionKey: text("p
+    permissionKey: text("permission_key").notNull(),
+}, (t) => ({
+    pk: primaryKey({ columns: [t.groupId, t.permissionKey] }),
+    groupIdx: index("idx_group_permission_group").on(t.groupId),
+}));
+
+export const userGroup = sqliteTable("user_group", {
+    userId: text("user_id").notNull().references(() => user.id),
+    groupId: text("group_id").notNull().references(() => accessGroup.id),
+    assignedBy: text("assigned_by"),
+    assignedAt: integer("assigned_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.groupId] }),
+    userIdx: index("idx_user_group_user").on(t.userId),
+    groupIdx: index("idx_user_group_group").on(t.groupId),
+}));
+
+// Jejak audit perubahan otorisasi: siapa ubah group/permission siapa, kapan.
+export const permissionAuditLog = sqliteTable("permission_audit_log", {
+    id: text("id").primaryKey(),
+    actorUserId: text("actor_user_id"),
+    actorName: text("actor_name"),
+    action: text("action").notNull(), // "group.create" | "user_group.assign" | "group_permission.add" | ...
+    targetUserId: text("target_user_id"),
+    targetGroupId: text("target_group_id"),
+    detail: text("detail", { mode: "json" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+}, (t) => ({
+    actorIdx: index("idx_pal_actor").on(t.actorUserId),
+    targetUserIdx: index("idx_pal_target_user").on(t.targetUserId),
+    targetGroupIdx: index("idx_pal_target_group").on(t.targetGroupId),
+}));
+
 // --- Laporan Harian per SPV/SM (modul baru) --- //
 // Menggantikan pipeline Excel lama (Power Query 2.3 + generate_laporan.exe + kirim_laporan.exe).
 // report_recipient = pengganti mapping_laporan.csv (keyword SPV -> daftar email).

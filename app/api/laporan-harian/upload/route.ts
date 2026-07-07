@@ -64,18 +64,18 @@ export async function POST(req: NextRequest) {
     fwd.append("report_date", reportDate);
     fwd.append("write_files", "1");
 
-    let result: any;
+    let result: Record<string, unknown>;
     try {
         const resp = await fetch(`${fastapiBase()}/laporan-harian/process`, { method: "POST", body: fwd });
         result = await resp.json();
         if (!resp.ok || !result?.ok) {
             return NextResponse.json({ error: "Proses FastAPI gagal", detail: result?.error ?? null }, { status: 502 });
         }
-    } catch (e: any) {
+    } catch (e) {
         return NextResponse.json({ error: "Tidak bisa menghubungi FastAPI backend", detail: String(e) }, { status: 502 });
     }
 
-    const { month, year } = result.period ?? {};
+    const { month, year } = (result.period ?? {}) as { month?: number; year?: number };
     const progress: DailyProgressRow[] = Array.isArray(result.progress) ? result.progress : [];
     const spvList: string[] = Array.isArray(result.spv_list) ? result.spv_list : [];
 

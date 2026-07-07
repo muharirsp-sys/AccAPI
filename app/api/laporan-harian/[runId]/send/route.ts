@@ -27,7 +27,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
     if (gate.response) return gate.response;
 
     const { runId } = await ctx.params;
-    let body: any = {};
+    let body: { confirm?: boolean } = {};
     try { body = await req.json(); } catch { /* body opsional */ }
 
     // GATE 1: konfirmasi eksplisit wajib
