@@ -79,61 +79,68 @@ export async function POST(req: NextRequest) {
     const progress: DailyProgressRow[] = Array.isArray(result.progress) ? result.progress : [];
     const spvList: string[] = Array.isArray(result.spv_list) ? result.spv_list : [];
 
-    // Feed dashboard (batch, replace-per-periode). Idempotent.
-    let fed = { deleted: false, inserted: 0 };
-    if (month && year && progress.length) {
-        fed = await replaceDailyProgressForPeriod(Number(month), Number(year), progress, gate.session.user.id);
-    }
+    try {
+        // Feed dashboard (batch, replace-per-periode). Idempotent.
+        let fed = { deleted: false, inserted: 0 };
+        if (month && year && progress.length) {
+            fed = await replaceDailyProgressForPeriod(Number(month), Number(year), progress, gate.session.user.id);
+        }
 
-    // Preview penerima (DRY-RUN): match keyword report_recipient ke nama file per SPV (mirror logika lama).
-    const recips = (await db.select().from(reportRecipient).where(eq(reportRecipient.active, true)));
-    const preview: { keyword: string; spv: string; fileName: string; emails: string[] }[] = [];
-    for (const spv of spvList) {
-        const fileName = `${reportDate}_${spv}.xlsx`;
-        const fnl = fileName.toLowerCase();
-        for (const r of recips) {
-            if (fnl.includes(r.keyword.toLowerCase())) {
-                preview.push({ keyword: r.keyword, spv, fileName, emails: splitEmails(r.emails) });
+        // Preview penerima (DRY-RUN): match keyword report_recipient ke nama file per SPV (mirror logika lama).
+        const recips = (await db.select().from(reportRecipient).where(eq(reportRecipient.active, true)));
+        const preview: { keyword: string; spv: string; fileName: string; emails: string[] }[] = [];
+        for (const spv of spvList) {
+            const fileName = `${reportDate}_${spv}.xlsx`;
+            const fnl = fileName.toLowerCase();
+            for (const r of recips) {
+                if (fnl.includes(r.keyword.toLowerCase())) {
+                    preview.push({ keyword: r.keyword, spv, fileName, emails: splitEmails(r.emails) });
+                }
             }
         }
-    }
-    const totalEmails = new Set(preview.flatMap((p) => p.emails)).size;
+        const totalEmails = new Set(preview.flatMap((p) => p.emails)).size;
 
-    // Catat report_run (status dry_run) + report_run_recipient (pending)
-    const now = new Date();
-    await db.insert(reportRun).values({
-        id: runId,
-        reportDate,
-        status: "dry_run",
-        fileCount: spvList.length,
-        emailCount: totalEmails,
-        salesRows: Number(result.sales_rows ?? 0),
-        progressRows: progress.length,
-        note: `feed dashboard: +${fed.inserted} baris (periode ${month}/${year})`,
-        uploadedBy: gate.session.user.id,
-        createdAt: now,
-    });
-    if (preview.length) {
-        const rows = preview.flatMap((p) =>
-            p.emails.map((email) => ({
-                id: randomUUID(), runId, keyword: p.keyword, email, fileName: p.fileName,
-                sendStatus: "pending", error: null as string | null,
-            })),
+        // Catat report_run (status dry_run) + report_run_recipient (pending)
+        const now = new Date();
+        await db.insert(reportRun).values({
+            id: runId,
+            reportDate,
+            status: "dry_run",
+            fileCount: spvList.length,
+            emailCount: totalEmails,
+            salesRows: Number(result.sales_rows ?? 0),
+            progressRows: progress.length,
+            note: `feed dashboard: +${fed.inserted} baris (periode ${month}/${year})`,
+            uploadedBy: gate.session.user.id,
+            createdAt: now,
+        });
+        if (preview.length) {
+            const rows = preview.flatMap((p) =>
+                p.emails.map((email) => ({
+                    id: randomUUID(), runId, keyword: p.keyword, email, fileName: p.fileName,
+                    sendStatus: "pending", error: null as string | null,
+                })),
+            );
+            for (let i = 0; i < rows.length; i += 400) await db.insert(reportRunRecipient).values(rows.slice(i, i + 400));
+        }
+
+        return NextResponse.json({
+            ok: true,
+            runId,
+            dryRun: true,
+            message: "Proses selesai (DRY-RUN). Email BELUM dikirim. Review daftar penerima lalu panggil /send.",
+            period: { month, year },
+            dashboardFed: fed,
+            salesRows: result.sales_rows,
+            netDpp: result.net_dpp,
+            summary: result.summary,
+            recipientsPreview: preview,
+            totalRecipients: totalEmails,
+        });
+    } catch (e) {
+        return NextResponse.json(
+            { error: "Proses FastAPI berhasil tapi gagal simpan ke database", detail: String(e) },
+            { status: 500 },
         );
-        for (let i = 0; i < rows.length; i += 400) await db.insert(reportRunRecipient).values(rows.slice(i, i + 400));
     }
-
-    return NextResponse.json({
-        ok: true,
-        runId,
-        dryRun: true,
-        message: "Proses selesai (DRY-RUN). Email BELUM dikirim. Review daftar penerima lalu panggil /send.",
-        period: { month, year },
-        dashboardFed: fed,
-        salesRows: result.sales_rows,
-        netDpp: result.net_dpp,
-        summary: result.summary,
-        recipientsPreview: preview,
-        totalRecipients: totalEmails,
-    });
 }
