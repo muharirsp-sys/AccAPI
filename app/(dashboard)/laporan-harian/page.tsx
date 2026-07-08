@@ -38,7 +38,10 @@ export default function LaporanHarianPage() {
             if (stock) fd.append("stock", stock);
             const resp = await fetch("/api/laporan-harian/upload", { method: "POST", body: fd });
             const data = await resp.json();
-            if (!resp.ok || !data.ok) { setError(data.error || "Proses gagal"); return; }
+            if (!resp.ok || !data.ok) {
+                setError([data.error, data.detail].filter(Boolean).join(": ") || "Proses gagal");
+                return;
+            }
             setResult(data);
         } catch (e) {
             setError("Gagal upload/proses: " + String(e));
