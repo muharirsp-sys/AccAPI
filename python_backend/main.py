@@ -1122,10 +1122,40 @@ def is_same_origin_request(request: Request) -> bool:
     return True
 
 
+# Audit F9/D4: verifikasi sesi via HTTP ke Next (/api/auth/verify) bila AUTH_VERIFY_URL
+# di-set — wajib saat DB pindah dari file sqlite lokal (Postgres). Cache TTL 60s per token.
+# AUTH_VERIFY_URL kosong = jalur lama (baca sqlite langsung), zero perubahan perilaku.
+AUTH_VERIFY_URL = str(os.getenv("AUTH_VERIFY_URL", "")).strip()
+_AUTH_VERIFY_CACHE: Dict[str, Tuple[float, Optional[str]]] = {}
+_AUTH_VERIFY_TTL = 60.0
+
+def _verify_session_via_next(ba_token: str, raw_cookie: str) -> Optional[str]:
+    import time
+    cached = _AUTH_VERIFY_CACHE.get(ba_token)
+    if cached and cached[0] > time.time():
+        return cached[1]
+    result: Optional[str] = None
+    try:
+        import requests
+        r = requests.get(AUTH_VERIFY_URL, headers={"cookie": raw_cookie}, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("ok"):
+                role = s(data.get("role")).lower() or "viewer"
+                if role not in {"admin", "manager", "finance", "staff", "viewer"}:
+                    role = "viewer"
+                identity = s(data.get("email")).lower() or s(data.get("name"))
+                result = f"betterauth|{role}|{identity}"
+    except Exception as e:
+        print(f"[AUTH VERIFY] gagal panggil {AUTH_VERIFY_URL}: {e}")
+        return None  # jangan cache kegagalan network — fallback sqlite di caller
+    _AUTH_VERIFY_CACHE[ba_token] = (time.time() + _AUTH_VERIFY_TTL, result)
+    return result
+
 def get_current_user(request: Request) -> Optional[str]:
     # ponytail: auth Python paralel dihapus (#7) — satu-satunya sumber identitas
     # adalah sesi Better Auth (cookie better-auth.session_token) divalidasi ke sqlite.db.
-        
+
     # 2. Try Better-Auth SQLite Session
     ba_token = None
     raw_cookie = request.headers.get("cookie", "")
@@ -1138,9 +1168,16 @@ def get_current_user(request: Request) -> Optional[str]:
             elif chunk.startswith("__Secure-better-auth.session_token="):
                 ba_token = unquote(chunk.split("=", 1)[1]).split(".")[0]
                 break
-    
+
     # print(f"[DEBUG AUTH] Manual ba_token: {ba_token}")
-    
+
+    if ba_token and AUTH_VERIFY_URL:
+        verified = _verify_session_via_next(ba_token, raw_cookie)
+        if verified is not None:
+            return verified
+        # None = network error ATAU sesi invalid; utk sesi invalid cache menyimpan None
+        # dan kita tetap coba fallback sqlite di bawah (aman: sqlite juga akan menolak).
+
     if ba_token:
         try:
             import sqlite3
