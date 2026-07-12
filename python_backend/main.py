@@ -36,6 +36,15 @@ from dotenv import load_dotenv
 load_dotenv(override=False)
 import traceback
 import xml.etree.ElementTree as ET
+# Modul determinisme Summary Program (FASE 1-4): cache OCR, parser tier posisional,
+# resolusi varian tabel, correction store stable-key. Lihat SYSTEM_MAP.md.
+from variant_resolver import load_variant_mapping, resolve_variant
+from correction_store import load_corrections as load_stable_corrections, apply_corrections as apply_stable_corrections, save_correction, correction_key
+from tier_parser import regroup_rows_by_tier
+from golden_store import canonical_signature, golden_check_and_freeze
+from deterministic_output import enable_pdf_determinism, finalize_xlsx
+from parse_cache import parse_cache_key, parse_cache_get, parse_cache_put
+_VARIANT_MAPPING = load_variant_mapping()
 from typing import List, Dict, Tuple, Optional, Set, Any
 from urllib.parse import urlparse, unquote
 from auth import (
@@ -6817,7 +6826,11 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         if token not in MANUAL_MASTER_CACHE:
             return {"ok": False, "error": "Token master tidak ditemukan / expired"}
         rows = json.loads(rows_json)
-        
+        # FASE 5: identitas input DIUKUR DI SINI (rows msh murni, sblm diproses/dimutasi
+        # di bawah -- _matched_items_cache dll ditempel belakangan). Order-sensitive: run
+        # dokumen yg sama menghasilkan urutan baris yg sama (ekstraksi kini deterministik).
+        _golden_input_key = canonical_signature(rows)
+
         try:
             with open("d:/disc_web/debug_payload.json", "w") as f:
                 json.dump(rows, f, indent=4)
@@ -6841,61 +6854,58 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         def has_number(text: str) -> bool:
             return bool(re.search(r"\d", str(text or "")))
 
+        # ponytail: nilai kelompok/variant/gramasi digabung pakai " & " saat konsolidasi, BUKAN koma.
+        # split_list (koma) tak pernah memecahnya -> dulu tak ada compression/dedup. Pisah pakai " & ".
+        # Pakai spasi wajib di sekitar & supaya varian spt "H.SHIN&STR HLD" tidak ikut terpecah.
+        def split_amp(val: str) -> List[str]:
+            return [x.strip() for x in re.split(r'\s+&\s+', str(val or "")) if x.strip()]
+
+        def join_human(items: List[str]) -> str:
+            if not items: return ""
+            if len(items) == 1: return items[0]
+            if len(items) == 2: return f"{items[0]} & {items[1]}"
+            return ", ".join(items[:-1]) + f" & {items[-1]}"
+
         def format_array_human_readable(raw_str: str) -> str:
-            v_list = split_list(raw_str)
-            if not v_list: return ""
             seen = set()
             unique_arr = []
-            for g in v_list:
+            for g in split_amp(raw_str):
                 if g not in seen:
                     unique_arr.append(g)
                     seen.add(g)
-            if len(unique_arr) == 1:
-                return unique_arr[0]
-            elif len(unique_arr) == 2:
-                return f"{unique_arr[0]} & {unique_arr[1]}"
-            else:
-                return ", ".join(unique_arr[:-1]) + f" & {unique_arr[-1]}"
-                
+            return join_human(unique_arr)
+
         def format_kelompoks_human_readable(raw_str: str) -> str:
-            v_list = split_list(raw_str)
-            if not v_list: return ""
             seen = set()
             unique_k = []
-            for k in v_list:
+            for k in split_amp(raw_str):
                 if k not in seen:
                     unique_k.append(k)
                     seen.add(k)
-                    
+
             from collections import defaultdict
             groups = defaultdict(list)
+            order = []
             for k in unique_k:
                 if " - " in k:
                     prefix, suffix = k.split(" - ", 1)
-                    groups[prefix].append(suffix)
+                    # "EDP - PRESTIGE" -> "EDP PRESTIGE" (rapikan dash internal sub-kelompok)
+                    suffix = suffix.replace(" - ", " ").strip()
                 else:
-                    groups[k].append("")
-                    
+                    prefix, suffix = k, ""
+                if prefix not in groups:
+                    order.append(prefix)
+                if suffix and suffix not in groups[prefix]:
+                    groups[prefix].append(suffix)
+
             result_parts = []
-            for prefix, suffixes in groups.items():
-                clean_suffixes = [s for s in suffixes if s]
-                if not clean_suffixes:
+            for prefix in order:
+                clean = groups[prefix]
+                if not clean:
                     result_parts.append(prefix)
                 else:
-                    if len(clean_suffixes) == 1:
-                        formatted_suffixes = clean_suffixes[0]
-                    elif len(clean_suffixes) == 2:
-                        formatted_suffixes = f"{clean_suffixes[0]} & {clean_suffixes[1]}"
-                    else:
-                        formatted_suffixes = ", ".join(clean_suffixes[:-1]) + f" & {clean_suffixes[-1]}"
-                    result_parts.append(f"{prefix} - {formatted_suffixes}")
-                    
-            if len(result_parts) == 1:
-                return result_parts[0]
-            elif len(result_parts) == 2:
-                return f"{result_parts[0]} & {result_parts[1]}"
-            else:
-                return ", ".join(result_parts[:-1]) + f" & {result_parts[-1]}"
+                    result_parts.append(f"{prefix} - {join_human(clean)}")
+            return join_human(result_parts)
 
         # Row Consolidation Algorithm: Merge rows that share exactly the same Base Prefix, Ketentuan, Benefit, and Channel.
         consolidated_rows_dict = {}
@@ -7000,6 +7010,8 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             
             canvas_obj.restoreState()
 
+        # FASE 6: PDF reproducible (CreationDate/ModDate/doc-id tetap) -> byte-identik antar-run
+        enable_pdf_determinism()
         # Update margins to give space for the custom canvas headers
         doc = SimpleDocTemplate(form_path, pagesize=landscape(A4), rightMargin=0.5*cm, leftMargin=0.5*cm, topMargin=2.2*cm, bottomMargin=0.5*cm)
         elements = []
@@ -7039,20 +7051,231 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         cell_style.leading = 7
         cell_style.alignment = TA_CENTER
 
-        for r in rows:
+        def benefit_display(r) -> str:
+            # ponytail: cut price (DISC_RP) tampilkan per-satuan (default PCS) -> "4700/PCS".
+            # BONUS_QTY sudah "1 PCS", DISC_PCT sudah "5%" -> biarkan apa adanya.
+            b = str(r.get("benefit", "") or "").strip()
+            bt = norm(r.get("benefit_type", ""))
+            if bt == "DISC_RP" and has_number(b) and "/" not in b:
+                unit = unit_from_text(str(r.get("ketentuan", "")) + " " + b)
+                return f"{b}/{unit}"
+            return b
+
+        # ============================================================
+        # SINGLE SOURCE OF TRUTH: cocokkan tiap baris surat ke item per-SKU SEKALI di sini.
+        # PDF (loop di bawah) & Excel (setelah PDF, lihat blok Excel) SAMA-SAMA dibangun dari
+        # hasil ini -- tidak ada lagi 2 pipeline independen yang bisa saling berbeda (akar
+        # divergensi PDF vs Excel yg dilaporkan user).
+        # ============================================================
+        channel_seq: Dict[str, int] = {}
+        pdf_meta: Dict[int, dict] = {}
+        pdf_items: Dict[int, list] = {}
+        excel_rows: List[Dict[str, Any]] = []
+        flagged_mismatches: List[Dict[str, Any]] = []
+        flagged_conflicts: List[Dict[str, Any]] = []
+
+        for i, r in enumerate(rows):
+            kelompok = str(r.get("kelompok","") or "").strip()
+            vlist = split_list(r.get("variant",""))
+            glist_raw = str(r.get("gramasi","") or "")
+            glist = split_list(glist_raw)
+            v_all = (not vlist) or any(norm(x) == "ALL VARIANT" for x in vlist)
+            g_all = (not glist) or any(norm(x) == "ALL GRAMASI" for x in glist)
+
+            ket = str(r.get("ketentuan","") or "").strip()
+            promo_label = str(r.get("nama_program","") or "").strip()
+            promo_group_id = str(r.get("promo_group_id","") or "").strip()
+            promo_group = str(r.get("channel_gtmt","") or "").strip()
+            periode = str(r.get("periode","") or "").strip()
+            if not promo_group_id or promo_group_id.upper() == "NON_GROUP":
+                promo_group_id = promo_group
+
+            pdf_meta[i] = {
+                "no": i + 1, "surat_program": r.get("surat_program",""), "nama_program": promo_label,
+                "channel_gtmt": promo_group, "periode": periode, "ketentuan": ket,
+                "benefit_type": r.get("benefit_type",""), "benefit": r.get("benefit",""),
+                "syarat_claim": r.get("syarat_claim",""), "keterangan": r.get("keterangan",""),
+                "variant_display": r.get("variant",""), "kelompok_fallback": r.get("kelompok",""),
+            }
+            pdf_items[i] = []
+
+            matched_items = []
+            klist = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
+
+            if klist:
+                for it in items:
+                    if str(it.get("kode_barang", "")).strip() in klist:
+                        matched_items.append(it)
+                # ponytail: guard V3b -- kode dari AI divalidasi silang ke gramasi yg BENERAN
+                # diklaim baris surat ini (terbukti live: "Pomade 80gr" salah nyantol ke master
+                # "PMD KIDZ" gramasi 40gr krn AI cuma percaya kode_barangs GPT tanpa cross-check).
+                # Kalau gramasi master tidak muncul sama sekali di klaim surat -> buang & catat,
+                # JANGAN diam-diam dipakai (akurasi finansial wajib, bukan tebak-tebakan).
+                if not g_all and glist:
+                    _kept = []
+                    for it in matched_items:
+                        it_gram = norm(it.get("gramasi"))
+                        if any(it_gram and (norm(g) == it_gram or it_gram in norm(g) or norm(g) in it_gram) for g in glist):
+                            _kept.append(it)
+                        else:
+                            flagged_mismatches.append({
+                                "kode_barang": it.get("kode_barang"), "nama_barang": it.get("nama_barang"),
+                                "gramasi_master": it.get("gramasi"), "gramasi_klaim_surat": glist_raw,
+                                "channel": promo_group, "ketentuan": ket,
+                            })
+                    matched_items = _kept
+
+            if not matched_items:
+                fb_kelompok = kelompok
+                if fb_kelompok and any(skip in fb_kelompok.lower() for skip in ["- kelompok -", "bisa meleset"]):
+                    fb_kelompok = ""
+                pool = [it for it in items if norm(it.get("kelompok")) == norm(fb_kelompok)] if fb_kelompok else items
+                if not pool: pool = items
+                for it in pool:
+                    it_variant = norm(it.get("variant")); it_nama = norm(it.get("nama_barang"))
+                    variant_match = v_all
+                    if not variant_match:
+                        for v in [norm(x) for x in vlist]:
+                            if "- variant -" in v.lower() or "all variant" in v.lower() or "bisa meleset" in v.lower():
+                                variant_match = True; break
+                            if v == it_nama or v == it_variant or (len(v) > 5 and v in it_nama):
+                                variant_match = True; break
+                    if not variant_match: continue
+                    it_gramasi = norm(it.get("gramasi"))
+                    gramasi_match = g_all
+                    if not gramasi_match:
+                        for g in [norm(x) for x in glist]:
+                            if "- gramasi -" in g.lower() or "all gramasi" in g.lower() or "bisa meleset" in g.lower():
+                                gramasi_match = True; break
+                            if g == it_gramasi or (len(g) > 2 and g in it_nama):
+                                gramasi_match = True; break
+                    if not gramasi_match: continue
+                    matched_items.append(it)
+
+            _seen_kb, _dedup = set(), []
+            for _it in matched_items:
+                _kb = str(_it.get("kode_barang","")).strip()
+                if _kb and _kb in _seen_kb: continue
+                _seen_kb.add(_kb); _dedup.append(_it)
+            matched_items = _dedup
+
+            trig_has_num = has_number(ket)
+            trig_qty = parse_number_id(ket) if trig_has_num else ""
+            trig_unit = unit_from_text(ket) if trig_has_num else ""
+            benefit_text = str(r.get("benefit","") or "").strip()
+            benefit_type = str(r.get("benefit_type","") or "").strip()
+            benefit_unit = unit_from_text(benefit_text) if benefit_text else ""
+
+            if not matched_items:
+                excel_rows.append({"pdf_key": i, "channel": promo_group, "kode_barang": "", "nama_barang": "",
+                                    "promo_label": promo_label, "pg_id": promo_group_id, "periode": periode,
+                                    "trig_qty": trig_qty, "trig_unit": trig_unit, "benefit_type": benefit_type,
+                                    "benefit_text": benefit_text, "benefit_unit": benefit_unit})
+                continue
+
+            pdf_items[i].extend(matched_items)
+
+            from collections import defaultdict
+            grouped_by_master_kel = defaultdict(list)
+            for it in matched_items:
+                grouped_by_master_kel[str(it.get("kelompok","")).strip()].append(it)
+
+            for master_kel, items_in_kel in grouped_by_master_kel.items():
+                current_pg_id = promo_group_id
+                if not current_pg_id or current_pg_id.upper() == "NON_GROUP" or current_pg_id == promo_group:
+                    prefix = "".join(e for e in promo_group if e.isalnum())
+                    if not prefix: prefix = "Retail"
+                    channel_seq[prefix] = channel_seq.get(prefix, 0) + 1
+                    current_pg_id = f"{prefix}_{channel_seq[prefix]}"
+                for it in items_in_kel:
+                    excel_rows.append({"pdf_key": i, "channel": promo_group, "kode_barang": str(it.get("kode_barang","")),
+                                        "nama_barang": str(it.get("nama_barang","")), "promo_label": promo_label,
+                                        "pg_id": current_pg_id, "periode": periode, "trig_qty": trig_qty,
+                                        "trig_unit": trig_unit, "benefit_type": benefit_type, "benefit_text": benefit_text,
+                                        "benefit_unit": benefit_unit})
+
+        # ponytail: guard V4 -- 1 kode fisik tidak boleh nyantol di >1 baris-surat (tier beda) dlm
+        # channel yg sama (terbukti live: "Pmd Wtr Bas" muncul di baris 4+1 DAN 7+1 sekaligus).
+        # Akurasi finansial wajib -> JANGAN menebak salah satu benar, buang dari SEMUA sisi (Excel
+        # & PDF) dan wajib direview manusia lewat tombol Laporkan Salah.
+        kode_channel_to_pdfkeys: Dict[Tuple[str, str], set] = {}
+        for er in excel_rows:
+            if er["kode_barang"]:
+                kode_channel_to_pdfkeys.setdefault((er["channel"], er["kode_barang"]), set()).add(er["pdf_key"])
+        conflicted = {k for k, v in kode_channel_to_pdfkeys.items() if len(v) > 1}
+        if conflicted:
+            kept_excel_rows = []
+            for er in excel_rows:
+                ck = (er["channel"], er["kode_barang"])
+                if er["kode_barang"] and ck in conflicted:
+                    flagged_conflicts.append({"kode_barang": er["kode_barang"], "nama_barang": er["nama_barang"],
+                                               "channel": er["channel"], "pg_id": er["pg_id"]})
+                else:
+                    kept_excel_rows.append(er)
+            excel_rows = kept_excel_rows
+            conflicted_kodes = {kb for (_, kb) in conflicted}
+            for i in pdf_items:
+                pdf_items[i] = [it for it in pdf_items[i] if str(it.get("kode_barang","")).strip() not in conflicted_kodes]
+
+        for i in range(len(rows)):
+            meta = pdf_meta[i]
+            items_in_row = pdf_items.get(i, [])
+
+            seen_kel, kel_order = set(), []
+            for it in items_in_row:
+                k = str(it.get("kelompok","")).strip()
+                if k and k not in seen_kel:
+                    seen_kel.add(k); kel_order.append(k)
+            # ponytail: JANGAN jatuh ke teks kelompok mentah klaim AI kalau semua item-nya sudah
+            # dibuang guard (terbukti live: "BLAGIO HM - PMD KIDZ" halusinasi tetap bocor ke PDF
+            # walau Excel-nya sudah bersih -- itu justru meniadakan tujuan guard V3b/V4). Kalau
+            # tidak ada item valid sama sekali, tandai jelas utk direview, jangan tampilkan nama
+            # yang belum tentu benar.
+            if kel_order:
+                kelompok_display = format_kelompoks_human_readable(" & ".join(kel_order))
+            elif meta.get("kelompok_fallback",""):
+                kelompok_display = "(TIDAK ADA ITEM COCOK DI MASTER -- PERLU REVIEW MANUAL)"
+            else:
+                kelompok_display = ""
+
+            if not items_in_row or norm(meta.get("variant_display","")).replace(" ","") == "ALLVARIANT":
+                variant_display = meta.get("variant_display","")
+            else:
+                seen_v, v_order = set(), []
+                for it in items_in_row:
+                    v = str(it.get("variant","")).strip()
+                    if v and v not in seen_v:
+                        seen_v.add(v); v_order.append(v)
+                variant_display = format_array_human_readable(" & ".join(v_order)) if v_order else meta.get("variant_display","")
+
+            # guard/fix E: SATU ENTRI GRAMASI PER KELOMPOK BARANG, urutan sesuai kelompok,
+            # JANGAN di-dedupe lintas kelompok walau angkanya kebetulan sama (mis. 2 kelompok
+            # sama-sama 100ml tetap harus tampil 2x sesuai posisi kelompoknya).
+            gramasi_parts = []
+            for k in kel_order:
+                gram_for_k, seen_g = [], set()
+                for it in items_in_row:
+                    if str(it.get("kelompok","")).strip() == k:
+                        g = str(it.get("gramasi","")).strip()
+                        if g and g not in seen_g:
+                            seen_g.add(g); gram_for_k.append(g)
+                if gram_for_k:
+                    gramasi_parts.append(",".join(gram_for_k))
+            gramasi_display = join_human(gramasi_parts)
+
             table_data.append([
-                Paragraph(str(r.get("no","")), cell_style),
-                Paragraph(str(r.get("surat_program","")), cell_style),
-                Paragraph(str(r.get("nama_program","")), cell_style),
-                Paragraph(str(r.get("channel_gtmt","")), cell_style),
-                Paragraph(str(r.get("periode","")), cell_style),
-                Paragraph(str(r.get("kelompok","")), cell_style),
-                Paragraph(str(r.get("variant","")), cell_style),
-                Paragraph(str(r.get("gramasi","")), cell_style),
-                Paragraph(str(r.get("ketentuan","")), cell_style),
-                Paragraph(str(r.get("benefit","")), cell_style),
-                Paragraph(str(r.get("syarat_claim","")), cell_style),
-                Paragraph(str(r.get("keterangan","")), cell_style),
+                Paragraph(str(meta["no"]), cell_style),
+                Paragraph(str(meta.get("surat_program","")), cell_style),
+                Paragraph(str(meta.get("nama_program","")), cell_style),
+                Paragraph(str(meta.get("channel_gtmt","")), cell_style),
+                Paragraph(str(meta.get("periode","")), cell_style),
+                Paragraph(kelompok_display, cell_style),
+                Paragraph(variant_display, cell_style),
+                Paragraph(gramasi_display, cell_style),
+                Paragraph(str(meta.get("ketentuan","")), cell_style),
+                Paragraph(benefit_display(meta), cell_style),
+                Paragraph(str(meta.get("syarat_claim","")), cell_style),
+                Paragraph(str(meta.get("keterangan","")), cell_style),
             ])
             
         # Total A4 landscape width is ~842. Margins are 0.5cm each (approx 14 points each, total 28 pts margin)
@@ -7133,162 +7356,54 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         ]
         ws2.append(headers2)
 
-        tier_counter: Dict[Tuple[str, str, str], int] = {}
-        channel_seq: Dict[str, int] = {}
+        # FASE 4b: override koreksi manusia (stable key kode_barang+channel+no_surat) --
+        # menang atas HASIL APA PUN (parser posisional, variant_resolver, atau LLM lama).
+        # Key TIDAK PERNAH pakai posisi/index baris -> aman walau urutan OCR run berikutnya beda.
+        for _er in excel_rows:
+            _er["no_surat"] = pdf_meta.get(_er.get("pdf_key"), {}).get("surat_program", "")
+        excel_rows, _correction_log = apply_stable_corrections(excel_rows, load_stable_corrections())
 
-        for r in rows:
-            kelompok = str(r.get("kelompok","") or "").strip()
-            vlist = split_list(r.get("variant",""))
-            glist = split_list(r.get("gramasi",""))
-            v_all = (not vlist) or any(norm(x) == "ALL VARIANT" for x in vlist)
-            g_all = (not glist) or any(norm(x) == "ALL GRAMASI" for x in glist)
-
-            ket = str(r.get("ketentuan","") or "").strip()
-            trig_has_num = has_number(ket)
-            trig_qty = parse_number_id(ket) if trig_has_num else ""
-            trig_unit = unit_from_text(ket) if trig_has_num else ""
-            benefit_text = str(r.get("benefit","") or "").strip()
-            benefit_type = str(r.get("benefit_type","") or "").strip()
-            benefit_unit = unit_from_text(benefit_text) if benefit_text else ""
-            benefit_beban = "PABRIK"
-
-            promo_label = str(r.get("nama_program","") or "").strip()
-            promo_group_id = str(r.get("promo_group_id","") or "").strip()
-            promo_group = str(r.get("channel_gtmt","") or "").strip()
-            periode = str(r.get("periode","") or "").strip()
-            key = (promo_label, promo_group_id, promo_group)
-            
-            if not promo_group_id or promo_group_id.upper() == "NON_GROUP":
-                promo_group_id = promo_group
-
-            matched_items = []
-            klist = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
-            
-            # 1. Primary Match: Deterministic Kode Barang from AI
-            if klist:
-                for it in items:
-                    if str(it.get("kode_barang", "")).strip() in klist:
-                        matched_items.append(it)
-            
-            # 2. Fallback Match: String matching if AI failed to provide API keys or "ALL VARIANT"
-            if not matched_items:            
-                # Treat generic placeholders as empty
-                if kelompok and any(skip in kelompok.lower() for skip in ["- kelompok -", "bisa meleset"]):
-                    kelompok = ""
-                    
-                # Filter pool initially based on Kelompok if provided
-                pool = []
-                if kelompok:
-                    pool = [it for it in items if norm(it.get("kelompok")) == norm(kelompok)]
-                else:
-                    pool = items
-    
-                # If pool is empty (hallucinated kelompok), fallback to all items
-                if not pool: pool = items
-    
-                # Now filter the pool based on variants and gramasi
-                for it in pool:
-                    # 2. Check Variant
-                    it_variant = norm(it.get("variant"))
-                    it_nama = norm(it.get("nama_barang"))
-                    variant_match = False
-                    if v_all:
-                        variant_match = True
-                    else:
-                        for v in [norm(x) for x in vlist]:
-                            if "- variant -" in v.lower() or "all variant" in v.lower() or "bisa meleset" in v.lower():
-                                variant_match = True; break
-                                
-                            if v == it_nama or v == it_variant or (len(v) > 5 and v in it_nama):
-                                variant_match = True; break
-                                
-                    if not variant_match: continue
-                        
-                    # 3. Check Gramasi
-                    it_gramasi = norm(it.get("gramasi"))
-                    gramasi_match = False
-                    if g_all:
-                        gramasi_match = True
-                    else:
-                        for g in [norm(x) for x in glist]:
-                            if "- gramasi -" in g.lower() or "all gramasi" in g.lower() or "bisa meleset" in g.lower():
-                                gramasi_match = True; break
-                                
-                            if g == it_gramasi or (len(g) > 2 and g in it_nama):
-                                gramasi_match = True; break
-                                
-                    if not gramasi_match: continue
-                        
-                    matched_items.append(it)
-                
-            if not matched_items:
-                key_unmatched = (promo_label, promo_group_id, promo_group, "UNMATCHED")
-                tier_counter[key_unmatched] = tier_counter.get(key_unmatched, 0) + 1
-                tier_no = tier_counter[key_unmatched]
-                
-                ws2.append([
-                    "",
-                    "",
-                    promo_label,
-                    promo_group_id,
-                    promo_group,
-                    periode,
-                    True,
-                    tier_no,
-                    trig_qty,
-                    trig_unit,
-                    benefit_type,
-                    benefit_text,
-                    benefit_unit,
-                    benefit_beban,
-                ])
-                continue
-
-            from collections import defaultdict
-            grouped_by_master_kel = defaultdict(list)
-            for it in matched_items:
-                grouped_by_master_kel[str(it.get("kelompok", "")).strip()].append(it)
-                
-            for master_kel, items_in_kel in grouped_by_master_kel.items():
-                current_pg_id = promo_group_id
-                
-                # If AI ID is generic, we auto-sequence it per master Kelompok
-                if not current_pg_id or current_pg_id.upper() == "NON_GROUP" or current_pg_id == promo_group:
-                    # e.g., 'Retail' -> 'Retail_1'
-                    prefix = "".join(e for e in promo_group if e.isalnum())
-                    if not prefix: prefix = "Retail"
-                    
-                    # Split logic: if "Mix Kelompok" is in the text, or if there are multiple groups, 
-                    # we should separate each group into its own ID so they don't combine in cross-group mixing.
-                    channel_seq[prefix] = channel_seq.get(prefix, 0) + 1
-                    current_pg_id = f"{prefix}_{channel_seq[prefix]}"
-                    
-                for it in items_in_kel:
-                    kb = str(it.get("kode_barang", ""))
-                    key_item = (promo_label, current_pg_id, promo_group, kb)
-                    tier_counter[key_item] = tier_counter.get(key_item, 0) + 1
-                    tier_no = tier_counter[key_item]
-                    
-                    ws2.append([
-                        kb,
-                        str(it.get("nama_barang", "")),
-                        promo_label,
-                        current_pg_id,
-                        promo_group,
-                        periode,
-                        True,
-                        tier_no,
-                        trig_qty,
-                        trig_unit,
-                        benefit_type,
-                        benefit_text,
-                        benefit_unit,
-                        benefit_beban,
-                    ])
+        # excel_rows sudah dihitung SEKALI di atas (dipakai jg utk PDF) -- di sini cuma tulis ke sheet.
+        excel_tier_counter: Dict[Tuple[str, str, str, str], int] = {}
+        for er in excel_rows:
+            tkey = (er["promo_label"], er["pg_id"], er["channel"], er["kode_barang"])
+            excel_tier_counter[tkey] = excel_tier_counter.get(tkey, 0) + 1
+            ws2.append([
+                er["kode_barang"], er["nama_barang"], er["promo_label"], er["pg_id"], er["channel"],
+                er["periode"], True, excel_tier_counter[tkey], er["trig_qty"], er["trig_unit"],
+                er["benefit_type"], er["benefit_text"], er["benefit_unit"], "PABRIK",
+            ])
         wb2.save(dataset_path)
+        # FASE 6: paku timestamp entry-zip + core.xml modified -> xlsx byte-identik antar-run
+        finalize_xlsx(dataset_path)
+
+        if flagged_mismatches or flagged_conflicts:
+            append_error_log("summary_manual_generate_flags", Exception("data quality flags"), {
+                "mismatches": flagged_mismatches, "conflicts": flagged_conflicts, "user": user,
+            })
 
         MANUAL_OUTPUTS[file_id] = {"form": form_path, "dataset": dataset_path}
-        return {"ok": True, "file_id": file_id}
+
+        # FASE 5: golden snapshot. Input baris identik (dok+approval sama) HARUS -> output identik.
+        # input_key: urutan baris diabaikan (identitas dok). output_sig: urutan DIPERTAHANKAN
+        # (drift urutan pun terdeteksi). status "drift" = regresi non-determinisme -> dilaporkan
+        # ke UI, golden TIDAK ditimpa diam2 (butuh approve manual). Gagal apa pun di sini tak
+        # boleh menggagalkan generate -> dibungkus try (fitur audit, bukan jalur kritikal output).
+        _determinism = None
+        try:
+            _output_sig = canonical_signature(excel_rows)
+            _g = golden_check_and_freeze(_golden_input_key, _output_sig, {"user": user, "file_id": file_id})
+            _determinism = _g["status"]
+            if _determinism == "drift":
+                append_error_log("summary_golden_drift", Exception("output berbeda utk input identik"), {
+                    "input_key": _golden_input_key, "golden_sig": _g.get("golden_sig"),
+                    "current_sig": _g.get("current_sig"), "user": user,
+                })
+        except Exception as _ge:
+            append_error_log("summary_golden_error", _ge, {"user": user})
+
+        return {"ok": True, "file_id": file_id, "flagged_mismatches": flagged_mismatches,
+                "flagged_conflicts": flagged_conflicts, "determinism": _determinism}
     except Exception as e:
         append_error_log("summary_manual_generate", e, {"user": user, "token": token})
         payload = {"ok": False, "error": "Gagal membuat output summary manual."}
@@ -7419,7 +7534,11 @@ async def summary_manual_parse_pdf_regex(request: Request, token: str = Form(...
         pdf_text = ""
         with fitz.open(stream=file_bytes, filetype="pdf") as doc:
             for page in doc: pdf_text += page.get_text() + "\n"
-            
+
+        # ponytail: PDF scan (image-only) -> get_text() kosong -> regex mustahil. Jangan balas 0 baris diam-diam.
+        if not pdf_text.strip():
+            return {"ok": False, "error": "PDF ini hasil scan (tanpa teks). Regex tidak bisa membaca gambar — gunakan tombol 'Ekstrak Cerdas' (AI/OCR)."}
+
         rows = []
         # Basic Regex implementation (Fragile, structure-dependent)
         # Looks for lines starting with "PROID-..." and captures nearby context naively
@@ -7461,7 +7580,16 @@ def _apply_native_kelompok(rows_to_check, master_items):
 
     for r in rows_to_check:
         matched_items = []
-        klist = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
+        # FASE 3b: resolusi varian data-driven (variant_mapping.json) DULU, sebelum LLM/
+        # kode_barangs manapun -- kasus terbukti: "Spray Cologne Series" harus jadi White SR
+        # + Black SR (bukan cuma GLASS/salah satu), "EDT Sport" harus 4 varian tertentu
+        # (Azzuro/Bianco/Nero/Rosso), bukan tebakan LLM yg terbukti salah/tak konsisten.
+        _variant_hit = resolve_variant(str(r.get("kelompok", "")), master_items, _VARIANT_MAPPING)
+        if _variant_hit is not None:
+            matched_items = _variant_hit
+            klist = []  # skip jalur matching lama sepenuhnya utk baris ini
+        else:
+            klist = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
         if klist:
             for it in master_items:
                 if str(it.get("kode_barang", "")).strip() in klist:
@@ -7598,7 +7726,14 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
             return {"ok": False, "error": "Token master tidak ditemukan / expired"}
             
         file_bytes = await read_upload_file_limited(pdf, max_bytes=MAX_PDF_UPLOAD_BYTES, allowed_exts=(".pdf",), label="PDF Program")
-        
+
+        # FASE 1b: hasil parse dibekukan per (dokumen, principle). Hit -> lewati OCR+LLM total
+        # (0 biaya API) & rows IDENTIK dgn run pertama -> pipeline dok->rows deterministik penuh.
+        _parse_key = parse_cache_key(file_bytes, principle_name)
+        _cached_rows = parse_cache_get(_parse_key)
+        if _cached_rows is not None:
+            return {"ok": True, "rows": _cached_rows}
+
         # Direct Python native parsing via OpenAI SDK (Sumopod)
         api_key = os.getenv("SUMOPOD_API_KEY") or os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -7617,9 +7752,16 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
         # SANGAT PENTING: Filter context supaya API Proxy tidak memuntah/terpotong (Tokens Limit)
         # Hanya gunakan barang yang sesuai dengan Principle yang sedang diproses!
         if principle_name and principle_name.strip():
-            items = [it for it in raw_items if principle_name.upper() in str(it.get("principle", "")).upper()]
+            # ponytail: dulu dicocokkan ke kolom 'principle' (nama produk) -> "Priskila" tak pernah match -> 0.
+            # Cocokkan tiap keyword principal (>=4 huruf) ke principle ATAU nama_barang; kosong -> pakai semua
+            # (master per-principal itu normal; kolom 'Nama Pcpl' memang blank).
+            _kw = [w for w in re.sub(r"\(.*?\)", "", principle_name).upper().split() if len(w) >= 4]
+            def _match_principal(it):
+                blob = (str(it.get("principle", "")) + " " + str(it.get("nama_barang", ""))).upper()
+                return any(w in blob for w in _kw)
+            items = [it for it in raw_items if _match_principal(it)] if _kw else raw_items
             if not items:
-                items = raw_items # Fallback jika principle tidak cocok 100%
+                items = raw_items # Fallback: master ini memang katalog 1 principal
         else:
             items = raw_items
         
@@ -7678,8 +7820,10 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
             base64_images = []
             
             with fitz.open(stream=file_bytes, filetype="pdf") as doc:
-                # Limit to 10 pages for safety
-                for page in doc[:10]:
+                # ponytail: dulu doc[:10] -> halaman 11+ hilang diam-diam. Proses semua sampai cap longgar.
+                MAX_OCR_PAGES = int(os.getenv("SUMMARY_MAX_OCR_PAGES", "40"))
+                pages_total = doc.page_count
+                for page in doc[:MAX_OCR_PAGES]:
                     txt = page.get_text()
                     pdf_text += txt + "\n"
                     # Compress the image so the Base64 string doesn't eat the token budget
@@ -7687,6 +7831,7 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
                     img_bytes = pix.tobytes("jpeg", 80)
                     b64 = base64.b64encode(img_bytes).decode("utf-8")
                     base64_images.append(b64)
+            pages_truncated = pages_total > len(base64_images)
                     
             if not pdf_text.strip() and not base64_images:
                 return {"ok": False, "error": "PDF kosong atau tidak memiliki halaman valid."}
@@ -7700,10 +7845,28 @@ Tugas Anda: EKSTRAK SEMUA TABEL PROMO/DISKON dari dokumen ini ke dalam ARRAY JSO
 KEMBALIKAN HASILNYA SAJA DALAM FORMAT JSON VALID! (JANGAN ada teks pembuka/penutup).
 
 ATURAN REASONING & EKSTRAKSI (WAJIB DIIKUTI 100%):
-1. COST RATIO (CR): ABAIKAN semua angka atau kolom 'CR' atau 'Cost Ratio'. Itu BUKAN benefit/diskon promo.
+1. COST RATIO (CR): Kolom 'CR' / 'Cost Ratio' HANYA angka referensi internal (BUKAN benefit/diskon) -- ABAIKAN KOLOM ITU SAJA. JANGAN abaikan kolom LAIN di tabel yang sama hanya karena tabel tersebut JUGA punya kolom CR! Kolom 'CUT PRICE' / 'HET' / 'PAKET' di tabel yang sama TETAP WAJIB diekstrak sebagai benefit (lihat aturan 2 & 3) -- CR cuma 1 kolom yang diabaikan, bukan alasan mengosongkan seluruh baris/tabel.
 2. BONUS QTY (Beli X Gratis Y): JIKA mekanismenya memberikan gratis barang (misal: "Beli 2 gratis 1"), isi 'benefit_type' dengan "BONUS_QTY". Nilai 'benefit' adalah jumlah barang gratisnya (1).
+   ATURAN FORMAT "X+Y" (SANGAT PENTING - kolom PAKET biasa tertulis "7+1", "4+1", "10+2", "65+7"):
+   Angka ini BUKAN penjumlahan! "7+1" artinya BELI 7 GRATIS 1. Maka: 'ketentuan' = "Beli 7" (angka KIRI saja, JANGAN dijumlah jadi "Beli 8"!), 'benefit_type' = "BONUS_QTY", 'benefit' = "1 PCS" (angka KANAN + satuan). Contoh: "10+2" -> ketentuan "Beli 10", benefit "2 PCS". "65+7" -> ketentuan "Beli 65", benefit "7 PCS". DILARANG KERAS menjumlahkan kiri+kanan.
 3. POTONGAN HARGA (Cut Price): Isi 'benefit_type' dengan "DISC_RP" dan 'benefit' angkanya SAJA (TANPA huruf "Cut Price" atau "Potongan"). JANGAN SEKALI-KALI MENGGANTI NILAI `ketentuan` (Trigger Beli) DENGAN TEKS POTONGAN HARGA INI! `ketentuan` WAJIB TETAP BERISI "Beli 1", "Beli 2", dll.
 4. KETENTUAN TRIGGER QTY: Jika di surat tertulis "Setiap pembelian", "Setiap pengambilan", ATAU "TIDAK ADA ANGKA MINIMAL", WAJIB ubah teks 'ketentuan' menjadi "Beli 1".
+4b. TABEL FORMAT "CUT PRICE" TANPA TEKS TRIGGER SAMA SEKALI (channel MTI/Modern Trade biasanya
+    begini -- WAJIB tetap diekstrak, JANGAN dikosongkan/dilewati hanya karena tidak ada frasa "Beli X"):
+    Kalau tabel HANYA berisi kolom seperti "CUT PRICE | HET | CR" tanpa kolom "PAKET" dan tanpa kalimat
+    trigger apa pun, maka SETIAP baris tabel = 1 promo terpisah dengan 'ketentuan'="Beli 1",
+    'benefit_type'="DISC_RP", 'benefit'=angka di kolom CUT PRICE SAJA (tanpa titik/koma ribuan diubah
+    jadi angka polos). ABAIKAN kolom HET dan CR (bukan benefit). WAJIB ekstrak SEMUA baris/brand
+    sampai baris TERAKHIR tabel, walau tabelnya panjang dan tidak ada kalimat pemicu di setiap barisnya.
+    CONTOH KONKRET (WAJIB DIIKUTI POLA INI):
+      Input tabel: "| BELLAGIO | Bellagio Eau de Toilette 100ml | 4,700 | 31,628 | 13% |"
+      Output JSON: {{"kelompok": "Bellagio Eau de Toilette 100ml", "ketentuan": "Beli 1",
+                    "benefit_type": "DISC_RP", "benefit": "4700"}}
+      Input tabel: "|          | Bellagio Pomade Kidz 40gr        | 1,400 | 12,600 | 10% |"
+      Output JSON: {{"kelompok": "Bellagio Pomade Kidz 40gr", "ketentuan": "Beli 1",
+                    "benefit_type": "DISC_RP", "benefit": "1400"}}
+      (Catatan: "Pomade Kidz" BEDA dari "Pomade" biasa -- keduanya bisa SAMA-SAMA ada di channel yang
+      sama dengan harga cut price berbeda, JANGAN dianggap duplikat/salah satu dibuang.)
 5. CHANNEL PROMO: Isi 'channel_gtmt' dengan NAMA ASLI channel sesuai di surat.
 6. ATURAN PEMISAHAN & PENGGABUNGAN MEREK (MUTLAK - PROMPT EXPLODER):
    - HANYA BOLEH GABUNGKAN item-item promo ke dalam 1 baris JSON APABILA mereka memiliki MEREK UTAMA (Brand Keluarga) yang sama 100%. (Misal: Sesama Bellagio Homme boleh digabung).
@@ -7715,6 +7878,14 @@ ATURAN REASONING & EKSTRAKSI (WAJIB DIIKUTI 100%):
      * (Keduanya memiliki isi ketentuan, benefit_type, dan benefit yang sama dari hasil duplikasi. JANGAN LUPA tambahkan " Boleh Mix Kelompok dan Gramasi Barang Sama" pada masing-masing baris jika di dalamnya masih merupakan gabungan varian dari merek tersebut).
    - Ingat: 1 Object JSON = MAKSIMAL 1 MEREK UTAMA (KELOMPOK)! Jangan pernah ada penggabungan silang brand di kolom `kelompok` atau `kode_barangs`!
 7. TIERING PROMO: Beda 'Ketentuan' (trigger qty) = baris JSON harus dipisah! (e.g., Beli 1 diskon 5%, Beli 10 diskon 10% -> 2 baris json).
+8. PARTISI ITEM PER PAKET (MUTLAK - PENYEBAB UTAMA KESALAHAN!):
+   Di dalam SATU merek, TIAP baris GROUP ITEM punya nilai PAKET/CUT PRICE-nya SENDIRI. Kamu WAJIB mengelompokkan item berdasarkan nilai paket yang PERSIS SAMA, lalu buat 1 baris JSON per nilai paket.
+   - SATU item (kode_barang) hanya boleh masuk ke SATU baris JSON -- yaitu baris dengan paket yang sesuai barisnya di surat. DILARANG KERAS memasukkan item yang sama ke lebih dari satu baris ketentuan!
+   - CONTOH BENAR (Bellagio, channel Retail):
+       * "Bellagio Eau de Toilette 100ml"=7+1 dan "Bellagio EDP Prestige 50ml"=7+1 -> 1 baris: ketentuan "Beli 7", kode HANYA kedua item itu.
+       * "Bellagio Roll On 50ml"=4+1, "Bellagio EDP 50ml"=4+1, "Bellagio Pomade 80gr"=4+1, "Bellagio Clay 90gr"=4+1, "Bellagio Body Spray 80ml"=4+1 -> 1 baris TERPISAH: ketentuan "Beli 4", kode HANYA kelima item itu.
+   - CONTOH SALAH (JANGAN LAKUKAN): menaruh SEMUA item Bellagio ke baris "Beli 7" DAN juga ke baris "Beli 4". Item EDT 100ml TIDAK boleh muncul di baris Beli 4, dan Roll On TIDAK boleh muncul di baris Beli 7.
+   - Jadi jumlah `kode_barangs` gabungan dari semua baris 1 merek = TEPAT sama dengan jumlah item merek itu di surat (tidak ada item dobel lintas baris).
 
 === DAFTAR REFERENSI BARANG ===
 {master_names_context}
@@ -7738,7 +7909,7 @@ ATURAN PENGISIAN PROPERTI JSON (HURUF KECIL):
 - "periode": (String) Ekstrak periode dari surat (misal "Februari 2024").
 - "kelompok": (String) Jika nama kelompok tidak spesifik, JIBLAK EXACT dari `OUTPUT_KELOMPOK` referensi. Jika tidak ada referensi, isi string kosong "".
 - "variant": (String) ATURAN MUTLAK: Jika surat program menyebut semua tipe/wangi, WAJIB isi dengan 'All Variant'.
-- "gramasi": (String) Angka gramasi.
+- "gramasi": (String) Gramasi/volume LENGKAP DENGAN SATUAN persis seperti di surat (mis. "22ml", "100gr", "50ml", "80gr"). JANGAN buang satuannya. Kalau ada beberapa, pisah koma.
 - "kode_barangs": (String) Angka Kode Barang dari `OUTPUT_KODE`. Pisahkan koma jika > 1.
 - "ketentuan": (String) Syarat Beli (Misal "Beli 7"). JIKA PROMO BERLAKU UNTUK GABUNGAN VARIAN/GRAMASI, WAJIB tambahkan kalimat " Boleh Mix Kelompok dan Gramasi Barang Sama" di akhir teks! (Contoh: "Beli 7 Boleh Mix Kelompok dan Gramasi Barang Sama").
 - "benefit_type": (String) DISC_RP, DISC_PCT, atau BONUS_QTY
@@ -7748,6 +7919,11 @@ ATURAN PENGISIAN PROPERTI JSON (HURUF KECIL):
 
 SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
 """
+            # ponytail: "AI learning" dari koreksi manual user (tombol Laporkan Salah) -- bukan fine-tune
+            # model, tapi few-shot: inject before->after koreksi lama ke prompt supaya kesalahan yg sama
+            # tidak terulang utk principal yg sama.
+            prompt += _format_corrections_for_prompt(_load_corrections(principle_name))
+
             # Prepare multimodal payload for Gemini 2.5 Flash
             import httpx
             import json
@@ -7759,79 +7935,255 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                 # ==========================
                 # SPLIT MODE LOGIC
                 # ==========================
-                if True: # User requested Split Mode (Gemini OCR + GLM-5)
-                    # --- Phase 1: Gemini OCR ---
-                    ocr_prompt = "Tugas Anda adalah melakukan OCR (Optical Character Recognition). Baca SEMUA gambar halaman dokumen yang diunggah dari awal sampai akhir. Ekstrak SELURUH teks di dalamnya persis seperti aslinya, baris demi baris, tabel demi tabel. JANGAN diringkas, JANGAN ada kata atau angka yang terlewat sekecil apapun!"
-                    ocr_content = [{"type": "text", "text": ocr_prompt}]
-                    for b64 in base64_images:
-                        ocr_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
-                        
-                    ocr_payload = {
-                        "model": os.getenv("SUMOPOD_OCR_MODEL", "gemini/gemini-2.5-flash"),
-                        "messages": [
-                            {"role": "system", "content": "You are an expert Data Entry and OCR assistant."},
-                            {"role": "user", "content": ocr_content}
-                        ],
-                        "temperature": 0.1,
-                        "max_tokens": 8192
-                    }
-                    
+                if True: # Split Mode (Gemini OCR per-halaman + deepseek JSON parse)
+                    # --- Phase 1: OCR PER-HALAMAN ---
+                    # ponytail: dulu 1 request untuk SEMUA gambar -> mentok max_tokens (finish_reason=length)
+                    # dan buang ~12% teks di dok 9 hlm (terbukti live). Per-halaman bikin tiap call finish=stop.
+                    # Model OCR: gemini/gemini-2.5-flash (kualitas OCR dokumen unggul, dipilih user).
+                    # Parse JSON pakai gpt-4.1-mini (non-reasoning, murah). mimo-v2.5/deepseek = reasoning
+                    # (risiko token kebakar di halaman padat), gpt-4.1-mini juga vision kalau perlu fallback.
+                    ocr_prompt = "Tugas Anda adalah melakukan OCR (Optical Character Recognition). Baca gambar halaman dokumen ini. Ekstrak SELURUH teks di dalamnya persis seperti aslinya, baris demi baris, tabel demi tabel. JANGAN diringkas, JANGAN ada kata atau angka yang terlewat sekecil apapun!"
                     headers = {
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json"
                     }
-                    
-                    ocr_resp = await client_http.post("https://ai.sumopod.com/v1/chat/completions", json=ocr_payload, headers=headers)
-                    if ocr_resp.status_code != 200:
-                        append_error_log("gemini_ocr_error", Exception(f"HTTP {ocr_resp.status_code}"), {"text": ocr_resp.text})
-                    ocr_resp.raise_for_status()
-                    
-                    ocr_text = ocr_resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                    ocr_model = os.getenv("SUMOPOD_OCR_MODEL", "gemini/gemini-2.5-flash")
+                    # FASE 1: OCR cache by content hash -- surat byte-identik TIDAK di-OCR ulang
+                    # (fondasi determinisme: run ke-2 ambil teks beku, Gemini 0 panggilan).
+                    from ocr_cache import ocr_cache_key, ocr_cache_get, ocr_cache_put
+                    _doc_hash = ocr_cache_key(file_bytes)
+                    _cached_ocr = ocr_cache_get(_doc_hash)
+                    ocr_chunks = []
+                    for _pg_idx, b64 in enumerate([] if _cached_ocr is not None else base64_images):
+                        ocr_payload = {
+                            "model": ocr_model,
+                            "messages": [
+                                {"role": "system", "content": "You are an expert Data Entry and OCR assistant."},
+                                {"role": "user", "content": [
+                                    {"type": "text", "text": ocr_prompt},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                                ]}
+                            ],
+                            "temperature": 0.1,
+                            "max_tokens": 8192
+                        }
+                        # ponytail: Gemini kadang balas 503 "high demand, usually temporary" -> retry
+                        # singkat dgn backoff sebelum nyerah ke placeholder (terbukti live: 4/9 hlm gagal
+                        # tanpa retry -> combined_text penuh placeholder -> parser downstream balik kosong).
+                        _pg_text = None
+                        _last_ocr_err = None
+                        for _attempt in range(3):
+                            try:
+                                ocr_resp = await client_http.post("https://ai.sumopod.com/v1/chat/completions", json=ocr_payload, headers=headers)
+                                if ocr_resp.status_code in (503, 429) and _attempt < 2:
+                                    append_error_log("gemini_ocr_retry", Exception(f"HTTP {ocr_resp.status_code} hlm {_pg_idx+1} attempt {_attempt+1}"), {"text": ocr_resp.text[:300]})
+                                    await asyncio.sleep(3 * (_attempt + 1))
+                                    continue
+                                if ocr_resp.status_code != 200:
+                                    append_error_log("gemini_ocr_error", Exception(f"HTTP {ocr_resp.status_code} hlm {_pg_idx+1}"), {"text": ocr_resp.text})
+                                    ocr_resp.raise_for_status()
+                                _pg_text = ocr_resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                                # ponytail: halaman minim-konten (mis. tanda tangan) kadang bikin model OCR
+                                # nyasar ke loop repetisi karakter tanpa henti (terbukti live: 1 halaman jadi
+                                # >120rb karakter underscore). Deteksi & retry spt 503, biar tak membengkakkan
+                                # chunk lain yang menempel di akhir teks.
+                                _degenerate = bool(re.search(r'(.)\1{199,}', _pg_text))
+                                if _degenerate and _attempt < 2:
+                                    append_error_log("gemini_ocr_degenerate", Exception(f"repetition loop hlm {_pg_idx+1} attempt {_attempt+1}"), {"len": len(_pg_text)})
+                                    _pg_text = None
+                                    await asyncio.sleep(3 * (_attempt + 1))
+                                    continue
+                                if _degenerate:
+                                    # percobaan terakhir masih degenerate -> potong sebelum repetisi mulai,
+                                    # simpan konten valid yg sempat terbaca drpd buang seluruh halaman
+                                    _pg_text = re.split(r'(.)\1{199,}', _pg_text, maxsplit=1)[0].strip() or None
+                                break
+                            except Exception as _ocr_e:
+                                _last_ocr_err = _ocr_e
+                                if _attempt < 2:
+                                    await asyncio.sleep(3 * (_attempt + 1))
+                                    continue
+                        if _pg_text is not None:
+                            ocr_chunks.append(f"--- HALAMAN {_pg_idx+1} ---\n{_pg_text}")
+                        else:
+                            append_error_log("gemini_ocr_page_fail", _last_ocr_err or Exception("unknown"), {"page": _pg_idx + 1})
+                            ocr_chunks.append(f"--- HALAMAN {_pg_idx+1} (OCR GAGAL setelah 3x percobaan) ---")
+                    if _cached_ocr is not None:
+                        ocr_text = _cached_ocr.get("ocr_text", "")  # cache hit: teks OCR beku, Gemini tak dipanggil
+                    else:
+                        ocr_text = "\n\n".join(ocr_chunks)
+                        ocr_cache_put(_doc_hash, getattr(pdf, "filename", "") or "", ocr_text, pages_total, len(base64_images))
                     combined_text = pdf_text + "\n\n=== HASIL OCR DARI GAMBAR ===\n\n" + ocr_text
+                    if pages_truncated:
+                        combined_text += f"\n\n[PERINGATAN: surat {pages_total} halaman, hanya {len(base64_images)} halaman pertama diproses. Naikkan SUMMARY_MAX_OCR_PAGES.]"
 
-                    # --- Phase 2: Claude/Gemini JSON Parsing ---
-                    parsing_prompt = f"{prompt}\n\n====================\nBERIKUT ADALAH TEKS DOKUMEN PROMO:\n{combined_text}\n\n====================\nPENTING: Ekstrak tabel dari teks di atas dan KEMBALIKAN ARRAY JSON SEKARANG JUGA DIAWALI DENGAN SIMBOL '['. JANGAN TULIS HAL LAIN." 
-                    parsing_payload = {
-                        "model": os.getenv("SUMOPOD_MODEL", "gemini/gemini-2.5-flash"),
-                        "messages": [
-                            {"role": "system", "content": "You are a STRICT data extraction AI. You ONLY speak in valid JSON array format starting with '['. You NEVER output regular text, markdown, or greetings. You MUST obey the schema."},
-                            {"role": "user", "content": parsing_prompt}
-                        ],
-                        "temperature": 0.1,
-                        "max_completion_tokens": 8192,
-                        "max_tokens": 8192
+                    # --- Phase 2: Parsing JSON PER-CHANNEL ---
+                    # ponytail: 1 panggilan utk SELURUH dokumen kehabisan max_tokens di tengah channel
+                    # pertama (Retail) krn format JSON per-SKU sangat verbose (puluhan kode per baris) ->
+                    # channel MTI/Grosir/Star Outlet tak pernah ke-generate meski JSON yg dihasilkan valid
+                    # (terbukti live: qwen3.6-flash & gpt-4.1-mini keduanya berhenti persis stlh Retail).
+                    # Fix: pecah teks per section "N. ... CHANNEL ..." lalu parse tiap bagian terpisah
+                    # (pola sama dgn fix OCR per-halaman) -> tiap panggilan dapat budget token penuh.
+                    import re
+                    _hdr_re = re.compile(r'^\s*\d+\.\s*.{0,80}?channel', re.IGNORECASE | re.MULTILINE)
+                    _hdrs = list(_hdr_re.finditer(combined_text))
+                    if len(_hdrs) >= 2:
+                        _preamble = combined_text[:_hdrs[0].start()]
+                        channel_chunks = [
+                            combined_text[_hdrs[i].start(): _hdrs[i + 1].start() if i + 1 < len(_hdrs) else len(combined_text)]
+                            for i in range(len(_hdrs))
+                        ]
+                    else:
+                        _preamble = ""
+                        channel_chunks = [combined_text]
+
+                    # ponytail: guard V1/D -- deteksi TERBUKTI SALAH kalau pakai regex baris-tabel
+                    # markdown (rapuh, gagal kalau OCR format tabelnya beda per run -- chunk MTI live
+                    # sempat balik expected_brands KOSONG shg guard lolos trivial padahal brand hilang
+                    # total). Ganti: alias brand (ejaan surat vs abrev master, spt "BELLAGIO"->"BLAGIO"
+                    # yg sudah dipakai di _apply_native_kelompok) + substring BEBAS di teks mentah,
+                    # BUKAN bergantung struktur tabel -- tahan terhadap variasi format OCR apa pun.
+                    _BRAND_ALIASES = {
+                        "BLAGIO": ["BLAGIO", "BELLAGIO"],
+                        "CAMELLIA": ["CAMELLIA"],
+                        "CSBNCA": ["CSBNCA", "CASABLANCA"],
+                        "EXCELO": ["EXCELO", "EXCELLO"],
+                        "MARIE JOSE": ["MARIE JOSE", "MARIE-JOSE", "MARIEJOSE"],
+                        "REGAZZA": ["REGAZZA", "REGZZA", "REGGAZZA"],
                     }
-                    
-                    full_raw_text = ""
-                    for loop_idx in range(5):
-                        resp = await client_http.post("https://ai.sumopod.com/v1/chat/completions", json=parsing_payload, headers=headers)
-                        if resp.status_code != 200:
-                            append_error_log("claude_400_debug", Exception(f"HTTP {resp.status_code}"), {"text": resp.text})
-                        resp.raise_for_status()
-                        
-                        response_json = resp.json()
-                        chunk_text = response_json.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                        
-                        import re
-                        clean_chunk = re.sub(r"```json", "", chunk_text, flags=re.IGNORECASE)
-                        clean_chunk = re.sub(r"```", "", clean_chunk)
-                        
-                        overlap_len = 0
-                        if full_raw_text:
-                            for i in range(min(100, len(full_raw_text), len(clean_chunk)), 0, -1):
-                                if full_raw_text[-i:] == clean_chunk[:i]:
-                                    overlap_len = i
-                                    break
-                        full_raw_text += clean_chunk[overlap_len:]
-                        
-                        if full_raw_text.strip().endswith("]"): break
-                        if not chunk_text: break
-                            
-                        parsing_payload["messages"].append({"role": "assistant", "content": chunk_text})
-                        parsing_payload["messages"].append({"role": "user", "content": "Teks JSON terpotong karena batas token! WAJIB lanjutkan string JSON di atas TEPAT mulai dari huruf/simbol yang terputus tanpa basa-basi pengantar, tanpa markdown ```json. Langsung sambung karakternya!"})
-                        
+                    def _extract_expected_brands(_chunk_text_for_ai):
+                        _upper = _chunk_text_for_ai.upper()
+                        return {p for p, aliases in _BRAND_ALIASES.items() if any(a in _upper for a in aliases)}
+
+                    async def _parse_json_chunk(_chunk_text_for_ai, _label):
+                        _parsing_prompt = f"{prompt}\n\n====================\nBERIKUT ADALAH TEKS DOKUMEN PROMO ({_label}):\n{_chunk_text_for_ai}\n\n====================\nPENTING: Ekstrak tabel dari teks di atas dan KEMBALIKAN ARRAY JSON SEKARANG JUGA DIAWALI DENGAN SIMBOL '['. JANGAN TULIS HAL LAIN."
+                        _payload = {
+                            "model": os.getenv("SUMOPOD_MODEL", "gpt-4.1-mini"),
+                            "messages": [
+                                {"role": "system", "content": "You are a STRICT data extraction AI. You ONLY speak in valid JSON array format starting with '['. You NEVER output regular text, markdown, or greetings. You MUST obey the schema."},
+                                {"role": "user", "content": _parsing_prompt}
+                            ],
+                            "temperature": 0.1,
+                            # ponytail: HANYA "max_tokens" -- OpenAI/litellm menolak 400 kalau max_tokens &
+                            # max_completion_tokens dikirim BERSAMAAN (terbukti live dgn gpt-4.1-mini).
+                            "max_tokens": int(os.getenv("SUMMARY_PARSE_MAX_TOKENS", "16000"))
+                        }
+                        _full_raw = ""
+                        for _loop_idx in range(5):
+                            _resp = await client_http.post("https://ai.sumopod.com/v1/chat/completions", json=_payload, headers=headers)
+                            if _resp.status_code != 200:
+                                append_error_log("claude_400_debug", Exception(f"HTTP {_resp.status_code} chunk={_label}"), {"text": _resp.text})
+                            _resp.raise_for_status()
+                            _chunk_msg = _resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                            _clean = re.sub(r"```json", "", _chunk_msg, flags=re.IGNORECASE)
+                            _clean = re.sub(r"```", "", _clean)
+                            _overlap = 0
+                            if _full_raw:
+                                for _i in range(min(100, len(_full_raw), len(_clean)), 0, -1):
+                                    if _full_raw[-_i:] == _clean[:_i]:
+                                        _overlap = _i
+                                        break
+                            _full_raw += _clean[_overlap:]
+                            if _full_raw.strip().endswith("]"):
+                                break
+                            if not _chunk_msg:
+                                break
+                            _payload["messages"].append({"role": "assistant", "content": _chunk_msg})
+                            _payload["messages"].append({"role": "user", "content": "Teks JSON terpotong karena batas token! WAJIB lanjutkan string JSON di atas TEPAT mulai dari huruf/simbol yang terputus tanpa basa-basi pengantar, tanpa markdown ```json. Langsung sambung karakternya!"})
+                        return _full_raw.strip()
+
+                    all_rows = []
+                    _debug_dump = []
+                    for _ci, _chunk in enumerate(channel_chunks):
+                        # ponytail: preamble berisi No surat (mis. "002/PPM/NSPM/III/2026") -> WAJIB ikut
+                        # ke SEMUA chunk termasuk chunk pertama (dulu _ci>0 bikin Retail kosong surat_program).
+                        _chunk_full = (_preamble + "\n\n" + _chunk) if _preamble else _chunk
+                        _label = f"bagian {_ci + 1}/{len(channel_chunks)}"
+                        _chunk_rows = []
+                        # ponytail: 2 kegagalan berbeda yg pernah kejadian live: (a) model balas [] valid
+                        # padahal chunk jelas ada datanya (non-deterministik), (b) model balas SEBAGIAN
+                        # brand saja lalu berhenti (MTI: cuma 2 dari 6 brand tertangkap, JSON tetap valid
+                        # jadi tidak "kosong"). Guard emptiness SAJA tidak menangkap (b) -- tambah cek
+                        # kelengkapan brand (dari kolom BRAND tabel OCR, generik, tidak spesifik principal),
+                        # retry sampai lengkap, simpan percobaan TERBAIK (paling sedikit brand hilang).
+                        _expected_brands = _extract_expected_brands(_chunk_full)
+                        _best_rows, _best_missing = [], None
+                        for _retry in range(6):  # ponytail: akurasi wajib > biaya -- retry lebih banyak sampai brand lengkap
+                            _raw = await _parse_json_chunk(_chunk_full, _label)
+                            _debug_dump.append(f"=== CHUNK {_label} (percobaan {_retry + 1}) ===\n{_raw}\n")
+                            if not _raw:
+                                append_error_log("chunk_empty_response", Exception("No text returned"), {"chunk": _label, "attempt": _retry + 1, "user": user})
+                                continue
+                            _match = re.search(r"\[.*\]", _raw, re.DOTALL)
+                            _clean_text = _match.group(0).strip() if _match else _raw.strip()
+                            if _clean_text.startswith("[") and not _clean_text.endswith("]"):
+                                _last_brace = _clean_text.rfind("}")
+                                if _last_brace != -1:
+                                    _clean_text = _clean_text[:_last_brace + 1] + "\n]"
+                            try:
+                                _chunk_data = json.loads(_clean_text, strict=False)
+                            except json.JSONDecodeError:
+                                append_error_log("chunk_invalid_json", Exception("Non-JSON payload"), {"chunk": _label, "attempt": _retry + 1, "raw": _raw[:500]})
+                                continue
+                            if isinstance(_chunk_data, list):
+                                _chunk_rows = _chunk_data
+                            elif isinstance(_chunk_data, dict) and "rows" in _chunk_data:
+                                _chunk_rows = _chunk_data["rows"]
+                            if not _chunk_rows:
+                                continue
+                            # ponytail: cek kelengkapan brand HARUS pakai kelompok HASIL MATCHING ke
+                            # master (yg sungguhan masuk Excel/PDF), BUKAN teks tebakan AI mentah --
+                            # terbukti live keduanya bisa berbeda (raw text bilang "hilang" padahal
+                            # setelah di-match ke master brand-nya sebenarnya ketemu, atau sebaliknya).
+                            import copy as _copy
+                            try:
+                                _resolved_probe = _apply_native_kelompok(_copy.deepcopy(_chunk_rows), items)
+                            except Exception:
+                                _resolved_probe = _chunk_rows
+                            _got_text = " ".join(str(_r.get("kelompok","")) + " " + str(_r.get("principle","")) for _r in _resolved_probe).upper()
+                            _missing = [b for b in _expected_brands if b not in _got_text]
+                            if _best_missing is None or len(_missing) < len(_best_missing):
+                                _best_rows, _best_missing = _chunk_rows, _missing
+                            if not _missing:
+                                break
+                        if _best_missing:
+                            append_error_log("chunk_incomplete_brands", Exception("Brand tidak lengkap setelah retry"), {"chunk": _label, "missing_brands": _best_missing, "user": user})
+                        all_rows.extend(_best_rows)
+
+                    try:
+                        with open(os.path.join(BASE_DIR, "data", "debug_ai.txt"), "w", encoding="utf-8") as f:
+                            f.write(f"=== OCR PHASE 1 ===\n{ocr_text if 'ocr_text' in locals() else 'N/A'}\n\n=== JSON PHASE 2 (per-channel) ===\n" + "\n".join(_debug_dump))
+                    except Exception:
+                        pass
+
+                    if not all_rows:
+                        return {"ok": False, "error": "AI tidak menemukan tabel promo valid di dalam dokumen, atau gagal mengekstrak."}
+
+                    for idx, row in enumerate(all_rows):
+                        if "id" not in row:
+                            row["id"] = str(uuid.uuid4())
+                        if "no" not in row:
+                            row["no"] = str(idx + 1)
+
+                    # TAHAP 2: Native Master DB Mapping (Injects Kelompok perfectly)
+                    all_rows = _apply_native_kelompok(all_rows, items)
+
+                    # FASE 2b: regroup baris berdasarkan tier OTORITATIF dari tabel OCR (bukan LLM) --
+                    # kode_barang yg terbukti (keyakinan tinggi) py trigger/benefit sama digabung jadi
+                    # 1 baris (kasus nyata: Bellagio EDT & EDP Prestige ke-split LLM padahal 7+1 sama).
+                    # Kode yg tak ter-bridge dgn keyakinan tinggi TIDAK disentuh (aman, no silent guess).
+                    all_rows, _tier_regroup_log = regroup_rows_by_tier(all_rows, items, ocr_text)
+
+                    # FASE 1b: bekukan rows hasil parse (freeze-on-first-write) -> run berikut
+                    # dok+principle sama pakai ini, tanpa OCR/LLM lagi (deterministik + hemat).
+                    parse_cache_put(_parse_key, all_rows, getattr(pdf, "filename", "") or "", principle_name)
+
+                    # TAHAP 3: Return raw rows directly to frontend so the user can see/edit individual variants natively.
+                    # (The actual grouping and Prefix Compression runs natively during summary_manual_generate)
+                    return {"ok": True, "rows": all_rows}
+
                 # ==========================
-                # FULL MODE LOGIC
+                # FULL MODE LOGIC (dead code, ai_mode selalu "split" di UI -- dibiarkan sbg fallback lama)
                 # ==========================
                 else: 
                     # Original logic using only Gemini
@@ -7978,6 +8330,90 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
         if APP_DEBUG and is_admin_user(user):
             payload["detail"] = str(e)
         return payload
+
+# ======================================================================================
+# "AI LEARNING" DARI KOREKSI MANUAL (tombol Laporkan Salah di grid)
+# Bukan fine-tuning model -- few-shot memory: tiap koreksi user (before->after) disimpan,
+# lalu di-inject balik ke prompt parse_pdf_ai supaya kesalahan yg sama tidak berulang.
+# ======================================================================================
+CORRECTIONS_PATH = os.path.join(BASE_DIR, "data", "parse_corrections.jsonl")
+_CORRECTION_IGNORE_KEYS = {"id", "_matched_items_cache", "no"}
+
+def _load_corrections(principle_name: str, limit: int = 15) -> List[Dict[str, Any]]:
+    if not os.path.exists(CORRECTIONS_PATH):
+        return []
+    items = []
+    try:
+        with open(CORRECTIONS_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    items.append(json.loads(line))
+                except Exception:
+                    continue
+    except Exception:
+        return []
+    pn = s(principle_name).upper()
+    matched = [it for it in items if pn and pn in s(it.get("principle_name", "")).upper()]
+    pool = matched if matched else items
+    return pool[-limit:]
+
+def _format_corrections_for_prompt(corrections: List[Dict[str, Any]]) -> str:
+    blocks = []
+    for c in corrections:
+        before = c.get("before") or {}
+        after = c.get("after") or {}
+        diffs = []
+        for k in set(before.keys()) | set(after.keys()):
+            if k in _CORRECTION_IGNORE_KEYS:
+                continue
+            bv, av = before.get(k, ""), after.get(k, "")
+            if s(bv) != s(av):
+                diffs.append(f'    {k}: SALAH="{bv}" -> BENAR="{av}"')
+        if diffs:
+            note = s(c.get("note", ""))
+            header = f"KOREKSI ({note}):" if note else "KOREKSI:"
+            blocks.append(header + "\n" + "\n".join(diffs))
+    if not blocks:
+        return ""
+    return ("\n\n=== KOREKSI DARI USER SEBELUMNYA (WAJIB DIPATUHI, JANGAN ULANGI KESALAHAN INI) ===\n"
+            + "\n".join(blocks) + "\n=== AKHIR KOREKSI ===")
+
+@app.post("/summary/manual/report_correction")
+async def summary_manual_report_correction(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "summary", "edit"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    csrf_token = request.headers.get("X-CSRF-Token", "")
+    if not validate_csrf_request(request, csrf_token):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
+    try:
+        body = await request.json()
+        before = body.get("before") if isinstance(body.get("before"), dict) else {}
+        after = body.get("after") if isinstance(body.get("after"), dict) else {}
+        if not before and not after:
+            return {"ok": False, "error": "Data before/after kosong."}
+        from datetime import datetime
+        entry = {
+            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "user": user,
+            "principle_name": s(body.get("principle_name", "")),
+            "before": {k: v for k, v in before.items() if k not in _CORRECTION_IGNORE_KEYS},
+            "after": {k: v for k, v in after.items() if k not in _CORRECTION_IGNORE_KEYS},
+            "note": s(body.get("note", "")),
+        }
+        _ensure_dir(os.path.join(BASE_DIR, "data"))
+        with open(CORRECTIONS_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        return {"ok": True}
+    except Exception as e:
+        append_error_log("summary_manual_report_correction", e, {"user": user})
+        return {"ok": False, "error": "Gagal menyimpan koreksi."}
+
 def process_summary_generation_job(job_id: str, token: str, rows: List[Dict[str, Any]], user: str):
     try:
         BACKGROUND_JOBS[job_id]["status"] = "processing"
@@ -8067,6 +8503,8 @@ def process_summary_generation_job(job_id: str, token: str, rows: List[Dict[str,
             
             canvas_obj.restoreState()
 
+        # FASE 6: PDF reproducible (CreationDate/ModDate/doc-id tetap) -> byte-identik antar-run
+        enable_pdf_determinism()
         # Update margins to give space for the custom canvas headers
         doc = SimpleDocTemplate(form_path, pagesize=landscape(A4), rightMargin=0.5*cm, leftMargin=0.5*cm, topMargin=2.2*cm, bottomMargin=0.5*cm)
         elements = []

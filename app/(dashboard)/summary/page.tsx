@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Trash2, Plus, Upload, Play, FileText, Download, ChevronLeft, CalendarCheck2 } from "lucide-react";
+import { Trash2, Plus, Upload, Play, FileText, Download, ChevronLeft, CalendarCheck2, Flag } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { resolveApiBase } from "@/lib/apiBase";
@@ -32,6 +32,7 @@ interface RowData {
     keterangan: string;
     kode_barangs?: string;
     periode?: string;
+    _original?: Record<string, any>;
 }
 
 // Emulating Axios for backwards compatibility with legacy codebase
@@ -258,7 +259,8 @@ export default function SummaryManualPage() {
                 const parsedRows = res.data.rows.map((r: any) => {
                     const id = crypto.randomUUID();
                     let correctKelompok = r.kelompok || "";
-                    return { ...r, id, kelompok: correctKelompok };
+                    // ponytail: simpan snapshot hasil AI asli utk fitur "Laporkan Salah" (before/after)
+                    return { ...r, id, kelompok: correctKelompok, _original: { ...r } };
                 });
 
                 setRows(prev => [...prev, ...parsedRows]);
@@ -384,6 +386,25 @@ export default function SummaryManualPage() {
                 toast.success("Email antrean dijadwalkan.");
             } else setEmailStatus("Gagal: " + res.data.error);
         } catch (e) { setEmailStatus("Gagal terhubung ke server."); }
+    };
+
+    const handleReportWrong = async (row: RowData) => {
+        const note = window.prompt("Catatan koreksi (opsional, mis. 'Camellia 22ml seharusnya Beli 7 bukan Beli 4'):", "");
+        if (note === null) return; // batal
+        const { id, _original, ...after } = row;
+        const principleName = principles[selectedPrinciple]?.name || "Priskila (Default)";
+        try {
+            const res = await api.post("/summary/manual/report_correction", {
+                principle_name: principleName,
+                before: _original || {},
+                after,
+                note,
+            });
+            if (res.data.ok) toast.success("Koreksi tersimpan, akan dipakai AI di ekstraksi berikutnya.");
+            else toast.error("Gagal simpan koreksi: " + res.data.error);
+        } catch {
+            toast.error("Error koneksi saat kirim koreksi.");
+        }
     };
 
     const handleDownload = async (url: string, filename: string) => {
@@ -532,7 +553,10 @@ export default function SummaryManualPage() {
                                                 </select>
                                             </td>
                                             <td className="px-2 py-2"><input type="text" value={r.benefit} onChange={e => updateRow(r.id, "benefit", e.target.value)} className="w-20 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 outline-none focus:ring-1 focus:ring-blue-500" /></td>
-                                            <td className="px-2 py-2 text-center">
+                                            <td className="px-2 py-2 text-center flex items-center justify-center gap-1">
+                                                <button onClick={() => handleReportWrong(r)} title="Laporkan baris ini salah, AI akan belajar dari koreksinya" className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/20 p-1.5 rounded transition-colors">
+                                                    <Flag size={16} />
+                                                </button>
                                                 <button onClick={() => setRows(p => p.filter(x => x.id !== r.id))} className="text-red-400 hover:text-red-300 hover:bg-red-500/20 p-1.5 rounded transition-colors">
                                                     <Trash2 size={16} />
                                                 </button>
