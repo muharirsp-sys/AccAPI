@@ -80,19 +80,56 @@ export const item = sqliteTable("item", {
     no: text("no").notNull(), // Item number/SKU
     name: text("name").notNull(),
     itemType: text("itemType"),
-    unitPrice: integer("unitPrice"),
+    // Audit F3: real, bukan integer — harga desimal terpotong kalau integer (diubah selagi tabel kosong)
+    unitPrice: real("unitPrice"),
     rawData: text("raw_data", { mode: 'json' }), // Complete unprocessed payload
     lastUpdate: text("last_update") // Accurate's modified timestamp
 });
 
 export const customer = sqliteTable("customer", {
     id: integer("id").primaryKey(), // Accurate's internal numeric ID
-    customerNo: text("customerNo").notNull(), 
+    customerNo: text("customerNo").notNull(),
     name: text("name").notNull(),
-    balance: integer("balance"),
+    // Audit F3: real — saldo piutang bisa desimal
+    balance: real("balance"),
     rawData: text("raw_data", { mode: 'json' }), // Complete unprocessed payload
     lastUpdate: text("last_update") // Accurate's modified timestamp
 });
+
+// Audit F3 / PRD 02-03: cache faktur penjualan (sumber piutang/nota) dari Accurate.
+// Kolom typed nullable — hanya diisi bila field tersedia di respons list.do; rawData
+// menyimpan payload utuh sehingga tidak ada data yang dikarang.
+export const salesInvoiceCache = sqliteTable("sales_invoice", {
+    id: integer("id").primaryKey(), // Accurate's internal numeric ID
+    number: text("number"),
+    transDate: text("trans_date"),
+    customerNo: text("customer_no"),
+    customerName: text("customer_name"),
+    totalAmount: real("total_amount"),
+    outstanding: real("outstanding"),
+    status: text("status"),
+    rawData: text("raw_data", { mode: 'json' }),
+    lastUpdate: text("last_update")
+}, (t) => [
+    index("idx_sales_invoice_trans_date").on(t.transDate),
+    index("idx_sales_invoice_customer_no").on(t.customerNo)
+]);
+
+// Audit F3 / PRD 03: cache retur penjualan dari Accurate (bahan claim retur).
+export const salesReturnCache = sqliteTable("sales_return", {
+    id: integer("id").primaryKey(),
+    number: text("number"),
+    transDate: text("trans_date"),
+    customerNo: text("customer_no"),
+    customerName: text("customer_name"),
+    totalAmount: real("total_amount"),
+    status: text("status"),
+    rawData: text("raw_data", { mode: 'json' }),
+    lastUpdate: text("last_update")
+}, (t) => [
+    index("idx_sales_return_trans_date").on(t.transDate),
+    index("idx_sales_return_customer_no").on(t.customerNo)
+]);
 
 export const idempotencyLog = sqliteTable("idempotency_log", {
     key: text("key").primaryKey(), 

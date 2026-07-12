@@ -1,6 +1,13 @@
+/*
+ * Tujuan: Sync terjadwal data Accurate -> cache SQLite lokal (item, customer, sales_invoice, sales_return).
+ * Caller: app/api/cron/sync-accurate/route.ts (dipicu scheduler eksternal, bukan request user).
+ * Dependensi: Drizzle, tabel sync_state sebagai checkpoint per modul.
+ * Catatan Audit F3: dulu onConflictDoNothing (data lama tak pernah ter-update) — kini upsert penuh.
+ * ponytail: full resync tiap run (throttled 150ms/halaman); delta sync via lastUpdate kalau volume mulai berat.
+ */
 import { db } from "./db";
-import { syncState, item as customItem, customer as customCustomer } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { syncState, item, customer, salesInvoiceCache, salesReturnCache } from "../db/schema";
+import { eq, sql } from "drizzle-orm";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -10,7 +17,7 @@ export interface AccurateCredentials {
     apiKey: string;
 }
 
-// 1. AccuratePaginator: Generator Asinkron untuk menangani pagination dan throttle Rate Limit.
+// 1. AccuratePaginator: Generator asinkron pagination + throttle rate limit.
 export async function* AccuratePaginator(
     endpoint: string,
     creds: AccurateCredentials,
@@ -31,6 +38,7 @@ export async function* AccuratePaginator(
                 "Authorization": `Bearer ${creds.apiKey}`,
                 "X-Session-ID": creds.sessionId,
             },
+            signal: AbortSignal.timeout(60_000),
         });
 
         if (!response.ok) {
@@ -42,107 +50,189 @@ export async function* AccuratePaginator(
             throw new Error(`Accurate API returned logical error: ${data.m || JSON.stringify(data)}`);
         }
 
-        // Parse meta page
         if (data.sp && data.sp.pageCount) {
             pageCount = data.sp.pageCount;
         }
 
         yield {
-            data: data.d,
+            data: data.d as Array<Record<string, unknown>>,
             page: currentPage,
-            pageCount: pageCount,
+            pageCount,
             totalRows: data.sp?.rowCount || 0,
         };
 
         currentPage++;
-        
-        // THROTTLING: 150ms delay for Rate Limit Protection
         if (currentPage <= pageCount) {
-            await delay(150);
+            await delay(150); // rate limit Accurate
         }
     }
 }
 
-// 2. ModuleSyncJob: Orchestrator sinkronisasi (Menyimpan Checkpoint & Meneruskan ke Local Cache)
-export async function syncModule(
-    moduleName: 'item' | 'customer',
-    endpoint: string,
-    creds: AccurateCredentials
-) {
-    // A. Dapatkan atau buat status Sinkronisasi Terakhir (SyncStateStore)
-    let state = await db.select().from(syncState).where(eq(syncState.module, moduleName)).get();
+// Helper null-safe: tidak mengarang angka — field absen jadi null, payload utuh tetap di rawData.
+const num = (v: unknown): number | null => {
+    if (v === undefined || v === null || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+};
+const str = (v: unknown): string | null => (v === undefined || v === null ? null : String(v));
+const nested = (row: Record<string, unknown>, key: string): Record<string, unknown> =>
+    (row[key] && typeof row[key] === "object" ? row[key] as Record<string, unknown> : {});
 
+export type SyncModuleName = "item" | "customer" | "sales_invoice" | "sales_return";
+
+// 2. Registry modul sync: endpoint + upsert per halaman.
+const SYNC_MODULES: Record<SyncModuleName, {
+    endpoint: string;
+    upsertPage: (rows: Array<Record<string, unknown>>) => Promise<void>;
+}> = {
+    item: {
+        endpoint: "/item/list.do",
+        upsertPage: async (rows) => {
+            const payloads = rows.map((row) => ({
+                id: Number(row.id),
+                no: String(row.no ?? ""),
+                name: String(row.name ?? ""),
+                itemType: str(row.itemType),
+                unitPrice: num(row.unitPrice),
+                rawData: JSON.stringify(row),
+                lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
+            }));
+            await db.insert(item).values(payloads).onConflictDoUpdate({
+                target: item.id,
+                set: {
+                    no: sql`excluded."no"`,
+                    name: sql`excluded."name"`,
+                    itemType: sql`excluded."itemType"`,
+                    unitPrice: sql`excluded."unitPrice"`,
+                    rawData: sql`excluded."raw_data"`,
+                    lastUpdate: sql`excluded."last_update"`,
+                },
+            });
+        },
+    },
+    customer: {
+        endpoint: "/customer/list.do",
+        upsertPage: async (rows) => {
+            const payloads = rows.map((row) => ({
+                id: Number(row.id),
+                customerNo: String(row.customerNo ?? ""),
+                name: String(row.name ?? ""),
+                balance: num(row.balance),
+                rawData: JSON.stringify(row),
+                lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
+            }));
+            await db.insert(customer).values(payloads).onConflictDoUpdate({
+                target: customer.id,
+                set: {
+                    customerNo: sql`excluded."customerNo"`,
+                    name: sql`excluded."name"`,
+                    balance: sql`excluded."balance"`,
+                    rawData: sql`excluded."raw_data"`,
+                    lastUpdate: sql`excluded."last_update"`,
+                },
+            });
+        },
+    },
+    sales_invoice: {
+        endpoint: "/sales-invoice/list.do",
+        upsertPage: async (rows) => {
+            const payloads = rows.map((row) => ({
+                id: Number(row.id),
+                number: str(row.number ?? row.no),
+                transDate: str(row.transDate),
+                customerNo: str(nested(row, "customer").customerNo ?? row.customerNo),
+                customerName: str(nested(row, "customer").name ?? row.customerName),
+                totalAmount: num(row.totalAmount),
+                outstanding: num(row.outstanding ?? row.outstandingAmount),
+                status: str(row.status ?? row.statusName),
+                rawData: JSON.stringify(row),
+                lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
+            }));
+            await db.insert(salesInvoiceCache).values(payloads).onConflictDoUpdate({
+                target: salesInvoiceCache.id,
+                set: {
+                    number: sql`excluded."number"`,
+                    transDate: sql`excluded."trans_date"`,
+                    customerNo: sql`excluded."customer_no"`,
+                    customerName: sql`excluded."customer_name"`,
+                    totalAmount: sql`excluded."total_amount"`,
+                    outstanding: sql`excluded."outstanding"`,
+                    status: sql`excluded."status"`,
+                    rawData: sql`excluded."raw_data"`,
+                    lastUpdate: sql`excluded."last_update"`,
+                },
+            });
+        },
+    },
+    sales_return: {
+        endpoint: "/sales-return/list.do",
+        upsertPage: async (rows) => {
+            const payloads = rows.map((row) => ({
+                id: Number(row.id),
+                number: str(row.number ?? row.no),
+                transDate: str(row.transDate),
+                customerNo: str(nested(row, "customer").customerNo ?? row.customerNo),
+                customerName: str(nested(row, "customer").name ?? row.customerName),
+                totalAmount: num(row.totalAmount),
+                status: str(row.status ?? row.statusName),
+                rawData: JSON.stringify(row),
+                lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
+            }));
+            await db.insert(salesReturnCache).values(payloads).onConflictDoUpdate({
+                target: salesReturnCache.id,
+                set: {
+                    number: sql`excluded."number"`,
+                    transDate: sql`excluded."trans_date"`,
+                    customerNo: sql`excluded."customer_no"`,
+                    customerName: sql`excluded."customer_name"`,
+                    totalAmount: sql`excluded."total_amount"`,
+                    status: sql`excluded."status"`,
+                    rawData: sql`excluded."raw_data"`,
+                    lastUpdate: sql`excluded."last_update"`,
+                },
+            });
+        },
+    },
+};
+
+export const SYNC_MODULE_NAMES = Object.keys(SYNC_MODULES) as SyncModuleName[];
+
+// 3. syncModule: orchestrator dengan checkpoint per halaman + watermark selesai.
+export async function syncModule(moduleName: SyncModuleName, creds: AccurateCredentials) {
+    const mod = SYNC_MODULES[moduleName];
+    if (!mod) return { success: false, message: `Modul sync tidak dikenal: ${moduleName}` };
+
+    let state = await db.select().from(syncState).where(eq(syncState.module, moduleName)).get();
     if (!state) {
-        await db.insert(syncState).values({
-            module: moduleName,
-            lastPage: 1,
-            status: 'syncing',
-        });
-        state = { module: moduleName, lastSyncTimestamp: null, lastPage: 1, status: 'syncing', updatedAt: new Date() };
+        await db.insert(syncState).values({ module: moduleName, lastPage: 1, status: "syncing", updatedAt: new Date() });
+        state = { module: moduleName, lastSyncTimestamp: null, lastPage: 1, status: "syncing", updatedAt: new Date() };
     } else {
-        await db.update(syncState).set({ status: 'syncing', updatedAt: new Date() }).where(eq(syncState.module, moduleName));
+        await db.update(syncState).set({ status: "syncing", updatedAt: new Date() }).where(eq(syncState.module, moduleName));
     }
 
+    const startedAt = Date.now();
+    let totalRows = 0;
     try {
-        // B. Eksekusi Paginator Generator (Melanjutkan dari lastPage bila sempat terpotong)
-        const paginator = AccuratePaginator(endpoint, creds, state.lastPage ?? 1);
-
+        const paginator = AccuratePaginator(mod.endpoint, creds, state.lastPage ?? 1);
         for await (const chunk of paginator) {
-            // C. Mapping Payload bergantung dari Modul
-            const payloadsToInsert = chunk.data.map((row: any) => {
-                if (moduleName === 'item') {
-                    return {
-                        id: row.id,
-                        no: row.no,
-                        name: row.name,
-                        itemType: row.itemType,
-                        unitPrice: row.unitPrice || 0,
-                        rawData: JSON.stringify(row),
-                        lastUpdate: row.lastUpdate || new Date().toISOString() // Assuming there is a lastUpdate
-                    };
-                } else if (moduleName === 'customer') {
-                    return {
-                        id: row.id,
-                        customerNo: row.customerNo,
-                        name: row.name,
-                        balance: row.balance || 0,
-                        rawData: JSON.stringify(row),
-                        lastUpdate: row.lastUpdate || new Date().toISOString()
-                    };
-                }
-            });
-
-            // D. Lempar (Upsert) Data ke Database Lokal (SQLite) per Halaman
-            // Catatan: Drizzle on SQLite mendadak upsert via onConflictDoUpdate
-            if (payloadsToInsert.length > 0) {
-                if (moduleName === 'item') {
-                    // Kita asumsikan implementasi upsert (simplicity)
-                    await db.insert(customItem).values(payloadsToInsert).onConflictDoNothing();
-                } else if (moduleName === 'customer') {
-                    await db.insert(customCustomer).values(payloadsToInsert).onConflictDoNothing();
-                }
+            if (chunk.data.length > 0) {
+                await mod.upsertPage(chunk.data);
+                totalRows += chunk.data.length;
             }
-
-            // E. Simpan Checkpoint setiap berhasil 1 Halaman
-            await db.update(syncState).set({
-                lastPage: chunk.page + 1,
-            }).where(eq(syncState.module, moduleName));
+            // Checkpoint per halaman — run terputus bisa dilanjutkan.
+            await db.update(syncState).set({ lastPage: chunk.page + 1, updatedAt: new Date() }).where(eq(syncState.module, moduleName));
         }
 
-        // F. Sinkronisasi Selesai (Full Sync) -> Reset Checkpoint untuk Delta Sync berikutnya
-        // Di sistem Enterprise nyata, Delta Sync mengirim param ?lastUpdateHistory=...
-        // Untuk saat ini kita kembalikan Mode ke "idle" dan set lastPage = 1
         await db.update(syncState).set({
-            status: 'idle',
+            status: "idle",
             lastPage: 1,
-            updatedAt: new Date()
+            lastSyncTimestamp: new Date().toISOString(),
+            updatedAt: new Date(),
         }).where(eq(syncState.module, moduleName));
 
-        return { success: true, message: `Berhasil tersinkronisasi. Modul: ${moduleName}` };
-
-    } catch (e: any) {
-        // Fallback Error Logging ke SyncStore
-        await db.update(syncState).set({ status: 'error', updatedAt: new Date() }).where(eq(syncState.module, moduleName));
-        return { success: false, message: e.message };
+        return { success: true, message: `Sync ${moduleName} selesai`, rows: totalRows, durationMs: Date.now() - startedAt };
+    } catch (e) {
+        await db.update(syncState).set({ status: "error", updatedAt: new Date() }).where(eq(syncState.module, moduleName));
+        return { success: false, message: e instanceof Error ? e.message : String(e), rows: totalRows, durationMs: Date.now() - startedAt };
     }
 }
