@@ -169,6 +169,108 @@ Browser -> NEXT_PUBLIC_FASTAPI_BASE_URL (port 8000)
 
 ---
 
+### 7. Dashboard Generator Desktop (Fase 2-8)
+```
+User -> dashboard-generator/app.py [pywebview desktop window]
+  -> dashboard-generator/index.html [sidebar + upload UI]
+
+Single report:
+  -> Api.pick_file() [native Excel file dialog]
+  -> Api.generate(path, selected_type)
+     -> detector.detect_report_type_from_file(path, preferred_jenis=selected_type)
+        [scan header semua sheet, kumpulkan semua sheet yang cocok dengan dashboard dipilih]
+     -> read_detected_sheets(path, result)
+        [pandas.read_excel per sheet cocok, baca kolom terpakai saja, concat jika >1 sheet]
+     -> module.generate_dashboard(df)
+        modules: penjualan, labarugi, stok, analisa, retur, outstanding, umur_piutang
+  <- HTML preview in iframe + optional export_html()
+
+Cross-analysis (Fase 7):
+  -> Api.pick_files() [multi-file Excel dialog]
+  -> Api.generate_cross(paths)
+     -> detector.detect_report_type_from_file(path) per file
+     -> reject duplicate report type / unknown signature
+     -> reject cepat kombinasi tanpa pasangan detail aktif (tanpa baca full data)
+     -> read_detected_sheets(path, result) per detected report
+     -> cross_analysis.generate_dashboard({jenis: DataFrame})
+        -> overlap matrix first
+        -> detail sections only when overlap is real:
+           Posisi Stok x Analisa Stok, Retur x Outstanding SO, Penjualan x Laba Rugi
+  <- CrossAnalysis HTML preview + optional export_html()
+```
+
+| File | Fungsi Utama | Peran |
+|---|---|---|
+| `dashboard-generator/app.py` | `READ_COLUMNS`, `read_detected_sheets`, `Api.generate`, `Api.generate_cross`, `main` | Entrypoint desktop pywebview; single-file dan multi-file workflow; gabungkan semua sheet sejenis dalam workbook sambil membaca hanya kolom terpakai; CrossAnalysis reject cepat kombinasi yang belum didukung |
+| `dashboard-generator/index.html` | sidebar, picker, preview iframe | UI lokal tanpa web server; tanpa hardcoded nama perusahaan; CrossAnalysis memakai multi-file picker + hint pasangan aktif; label user-facing: `Laba Rugi Penjualan`, `Retur Penjualan`, `Umur Piutang` |
+| `dashboard-generator/detector.py` | `detect_report_type_from_file`, `detect_report_sheets_from_file` | Signature kolom, bukan nama file; scan semua sheet header-only dan kembalikan `sheet_names` semua sheet cocok; Laba Rugi menerima alias HPP `JUM HPP`/`Nilai HPP`; prioritas UmurPiutang/Retur/Outstanding sebelum Penjualan |
+| `dashboard-generator/shared.py` + `assets/echarts.min.js` | `inline_echarts` | Chart ECharts dibundel lokal dan diinjeksi inline agar preview/export jalan offline tanpa CDN |
+| `dashboard-generator/umur_piutang.py` | `build_data`, `generate_dashboard` | Dashboard Umur Piutang: aging bucket, customer exposure, prioritas collection, salesman, wilayah/job, tipe dokumen |
+| `dashboard-generator/test_umur_piutang.py` | `main` | Self-check Umur Piutang dengan sample XLS nyata dan validasi output offline |
+| `dashboard-generator/cross_analysis.py` | `has_supported_pair`, `build_data`, `generate_dashboard` | Fase 7 overlap-check, daftar pasangan detail aktif, dan render cross-analysis |
+| `dashboard-generator/test_cross_analysis.py` | `demo` | Self-check Fase 7 dengan 6 sample XLS nyata |
+| `dashboard-generator/test_multisheet_dashboard.py` | `demo` | Self-check workbook multi-sheet sejenis dibaca dan digabung ke dashboard |
+| `dashboard-generator/test_no_company_branding.py` | `main` | Self-check agar source/output dashboard generator tidak membawa hardcoded nama perusahaan internal |
+| `dashboard-generator/DashboardGenerator.spec` | PyInstaller build graph | Fase 8 build command: `python -m PyInstaller DashboardGenerator.spec --noconfirm --clean`; output `dist/DashboardGenerator.exe`; include `index.html` + `assets/echarts.min.js` |
+
+---
+
+## Summary Program — Determinisme Pipeline (FASE 1–5)
+
+**Masalah:** surat program (foto/PDF scan) → Dataset Diskon (xlsx) + Form Summary (PDF) via OCR+LLM
+non-deterministik: dokumen SAMA bisa keluar hasil BEDA tiap run (tier bergeser, varian ditebak,
+baris ke-split). Solusi: buang keputusan LLM dari jalur yang harus pasti, ganti dgn lookup/parser
+deterministik + snapshot regresi. Semua modul additive (jalur lama tetap sbg fallback).
+
+```
+surat (bytes)
+  │  ocr_cache_key = sha256(bytes)
+  ▼
+[FASE 1] ocr_cache.py ── cache hit? ── ya ─▶ teks OCR BEKU (Gemini 0 panggilan, determinis)
+  │ tidak: OCR per-halaman (gemini) → simpan (freeze, tak pernah ditimpa)
+  ▼
+LLM parse per-channel (gpt-4.1-mini)  →  rows  →  _apply_native_kelompok (match ke master)
+  │                                                    │
+  │                            [FASE 3b] variant_resolver.py + variant_mapping.json
+  │                            resolusi varian via TABEL deklaratif (bukan tebakan LLM):
+  │                            cth "Spray Cologne Series" → White+Black SR (GLASS excluded),
+  │                            "EDT Sport" → 4 varian tertentu. Return None → fallback jalur lama.
+  ▼
+[FASE 2b] tier_parser.py :: regroup_rows_by_tier
+  parser POSISIONAL tabel OCR (kolom PAKET/CUT PRICE by posisi) = tier OTORITATIF, bukan LLM.
+  kode_barang ter-bridge keyakinan-tinggi (overlap token + gramasi sama) → trigger/benefit
+  di-override & baris ber-tier sama DIGABUNG (fix Bellagio EDT & EDP Prestige ke-split).
+  Ragu → kode TIDAK disentuh (no silent guess).
+  ▼
+summary_manual_generate → excel_rows (single source of truth utk Excel + PDF)
+  │  guard V3b (cross-check gramasi), V4 (buang duplikat lintas-tier)
+  │
+  │  [FASE 4b] correction_store.py :: apply_corrections
+  │  override koreksi manusia (tombol "Laporkan Salah") via STABLE KEY
+  │  (kode_barang, channel, no_surat) — BUKAN index baris (aman walau urutan OCR beda).
+  │  Menang atas hasil apa pun.
+  ▼
+[FASE 5] golden_store.py :: golden_check_and_freeze
+  input_key = sig(rows murni) ; output_sig = sig(excel_rows).
+  new = dibekukan | match = deterministik terbukti | drift = input SAMA output BEDA (regresi,
+  dilaporkan, golden TIDAK ditimpa; refresh butuh approve_golden manual).
+  response.determinism = new|match|drift
+```
+
+| File | Fungsi Utama | Peran |
+|---|---|---|
+| `python_backend/ocr_cache.py` | `ocr_cache_key`, `ocr_cache_get/put` | FASE 1: cache OCR by content-hash, freeze-on-first-write (run ke-2 dok sama = 0 panggilan Gemini) |
+| `python_backend/tier_parser.py` | `parse_positional_tables`, `match_item_to_tablerow`, `regroup_rows_by_tier` | FASE 2/2b: tier dari POSISI tabel OCR (no LLM); regroup baris LLM ke tier otoritatif; self-check `__main__` |
+| `python_backend/variant_resolver.py` + `variant_mapping.json` | `load_variant_mapping`, `resolve_variant` | FASE 3/3b: resolusi varian via tabel deklaratif; None = fallback; anti-halusinasi |
+| `python_backend/correction_store.py` | `save_correction`, `apply_corrections`, `correction_key` | FASE 4: koreksi manusia stable-key, override deterministik (bukan hint prompt) |
+| `python_backend/golden_store.py` | `canonical_signature`, `golden_check_and_freeze`, `approve_golden` | FASE 5: snapshot determinisme; deteksi drift output utk input identik; self-check `__main__` |
+
+Titik integrasi di `main.py`: import blok FASE 1–5 (~baris 41), `regroup_rows_by_tier` setelah
+`_apply_native_kelompok` di `summary_manual_parse_pdf_ai`, `apply_stable_corrections` + golden
+check di `summary_manual_generate`.
+
+---
+
 ## Clean Tree
 
 ```
@@ -648,6 +750,16 @@ UI: tombol "Kirim" terpisah (gated, confirm:true) -> POST /api/laporan-harian/[r
 
 ---
 
+## Dokumen Perencanaan (docs/)
+
+| Path | Isi |
+|---|---|
+| `docs/prd/00-overview.md` | Peta visi Ops Control Tower dari 11 poster (`poster/`) + rantai dokumen lintas divisi |
+| `docs/prd/01..10-*.md` | PRD per divisi: Audit, Incaso, Claim, Sales, Admin Gudang, Delivery, Gudang, Management Dashboard, Control Center, Fakturist — angka poster FIKTIF |
+| `docs/audit/findings.md` | Fase B: gap vs PRD + tantangan atas kode yang sudah jalan (baseline, klaim, rollback, ranking) |
+
+---
+
 ## Risks / Blind Spots
 
 | Area | Catatan |
@@ -656,10 +768,27 @@ UI: tombol "Kirim" terpisah (gated, confirm:true) -> POST /api/laporan-harian/[r
 | **Elasticsearch optional** | Jika env tidak di-set, search fallback ke in-memory fuzzy. Perilaku ini tidak eksplisit diuji di test script. |
 | **PPh HOLD** | Kolom PPh disiapkan di schema tapi perhitungan final ditahan (`// PPh HOLD` tersebar di beberapa file). Belum aktif secara bisnis. |
 | **Phase R7 (Multi No Claim)** | Fitur `claim_submission` tabel (R7a+) masih dalam rollout bertahap. Phase R7b-R7k tercakup di `scripts/test-r7*.mjs` tapi belum semua route production-ready. |
-| **Webhook Accurate IP whitelist** | Kode whitelist ada tapi baris `return 403` dikomentari. Di production, IP filtering harus diaktifkan manual. |
+| **Webhook Accurate** | (Dikoreksi audit 2026-07-12) IP whitelist AKTIF & fail-closed (`route.ts:11-16`). Masalah sebenarnya: webhook hanya append `webhook_events.log` — tidak memicu proses apa pun (logger buntu). |
+| **`lib/sync.ts` dead code** | (Audit 2026-07-12) Tidak diimpor file mana pun; `item`/`customer`/`sync_state` = 0 baris. Alur "Data Sync" di §5 belum pernah berjalan. `onConflictDoNothing` = data tak pernah ter-update bila dihidupkan. |
+| **Modul `form-kontrol` tak terdokumentasi** | (Audit 2026-07-12) `app/api/form-kontrol/checkin|checkout|visit|jks` + tabel `jks_master`, `ao_control_daily` hidup dan terpakai, tapi tidak tercantum di peta ini. Perlu ditambahkan saat trace berikutnya. |
 | **`config/`** | Folder berisi data statik (principles, dll) — tidak ter-trace penuh karena bukan TypeScript eksportabel; kemungkinan JSON/YAML. |
 | **`runtime/` path** | Direktori file PDF dibuat dinamis saat runtime. Tidak ada cleanup otomatis; bisa membesar di production jika tidak ada cron/purge. |
 | **`app/(dashboard)/finance/page.tsx`** | Memanggil Python FastAPI backend langsung via `NEXT_PUBLIC_FASTAPI_BASE_URL`. Jika backend mati, halaman finance tidak berfungsi. |
 | **Docker vs dev** | `drizzle.config.ts` hardcode `file:sqlite.db` (bukan env). Perlu disesuaikan jika path container berbeda dari root. |
 | **`rekprinciple.xlsx`** | File Excel di root — tidak jelas apakah dipakai runtime atau hanya referensi manual. |
 | **Laporan Harian: stock Accurate & openpyxl** | File stock export Accurate tidak terbaca `openpyxl` (perlu `python-calamine` terpasang di server). |
+
+---
+
+## Summary Promo Editor (Manual) — `/summary`
+
+On-demand (bukan cron). UI `app/(dashboard)/summary/page.tsx` hanya proxy tampilan; **semua logic di Python FastAPI**, tanpa DB. Alur: load Master Barang → upload surat PDF → ekstrak (Regex atau AI OCR) → edit grid → generate **Form PDF + Dataset Diskon xlsx** → download/email. Cache master & output = dict **in-memory** (`MANUAL_MASTER_CACHE`/`MANUAL_OUTPUTS`, hilang saat restart / pecah bila uvicorn multi-worker).
+
+| Endpoint (`python_backend/main.py`) | Peran |
+|---|---|
+| `POST /summary/manual/master/upload` (6727), `load_principle/{pid}` (7355) | Parse `MASTER BARANG` → kelompok/variant/gramasi/items |
+| `POST /summary/manual/parse_pdf_ai` (7584) | OCR gemini **per-halaman** → parse JSON deepseek → `_apply_native_kelompok` |
+| `POST /summary/manual/parse_pdf_regex` (7403) | Regex `PROID-`; **guard**: PDF scan tanpa teks ditolak (bukan 0 baris diam) |
+| `POST /summary/manual/generate` (6805) | Match item→master (dedupe by kode), consolidate, build Form PDF + Dataset xlsx |
+
+**Audit 2026-07-08 (fix terpasang):** (4) dedupe Kode Barang kembar cegah baris/TIER_NO dobel; (2) filter principle diperbaiki (keyword match, bukan no-op); (5a) cap `doc[:10]`→`SUMMARY_MAX_OCR_PAGES`(40)+warning; (5b) OCR single-call (mentok `finish_reason=length`, buang ~12% teks) → **per-halaman** (finish=stop). Env: `SUMOPOD_OCR_MODEL` (default `gemini/gemini-2.5-flash`), `SUMOPOD_MODEL` parse (default `deepseek-v4-pro`).
