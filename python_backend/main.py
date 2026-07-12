@@ -6583,8 +6583,48 @@ def summary_download(request: Request, file_id: str):
 
 import openpyxl  # added for master parsing + excel output
 
-MANUAL_MASTER_CACHE: dict = {}   # token -> {"kelompok": [...], "variant_map": {...}, "gramasi_map": {...}}
-MANUAL_OUTPUTS: dict = {}        # file_id -> {"form": path, "dataset": path}
+# Audit F8: cache manual dipersist ke disk (JSON) agar selamat dari restart dan
+# konsisten bila uvicorn multi-worker. Interface tetap dict — 21 call-site tak berubah.
+# Flush hanya terjadi saat WRITE (upload master / generate output = aksi jarang),
+# read path tetap dict lookup murni (0 tambahan latensi).
+class _PersistentDict(dict):
+    def __init__(self, path: str):
+        super().__init__()
+        self._path = path
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    self.update(json.load(f))
+        except Exception as e:
+            print(f"[MANUAL CACHE] gagal load {path}: {e}")
+
+    def _flush(self) -> None:
+        # Persist gagal TIDAK boleh mematikan request — cache in-memory tetap benar.
+        try:
+            tmp = self._path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self, f, ensure_ascii=False, default=str)
+            os.replace(tmp, self._path)
+        except Exception as e:
+            print(f"[MANUAL CACHE] gagal persist {self._path}: {e}")
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        self._flush()
+
+    def __delitem__(self, key):
+        super().__delitem__(key)
+        self._flush()
+
+    def pop(self, *args, **kwargs):
+        result = super().pop(*args, **kwargs)
+        self._flush()
+        return result
+
+_MANUAL_CACHE_DIR = os.path.join(BASE_DIR, "data", "manual_cache")
+MANUAL_MASTER_CACHE: dict = _PersistentDict(os.path.join(_MANUAL_CACHE_DIR, "master_cache.json"))   # token -> {"kelompok": [...], "variant_map": {...}, "gramasi_map": {...}}
+MANUAL_OUTPUTS: dict = _PersistentDict(os.path.join(_MANUAL_CACHE_DIR, "outputs.json"))        # file_id -> {"form": path, "dataset": path}
 
 def _norm_col(x: object) -> str:
     return " ".join(str(x or "").strip().split()).upper()
