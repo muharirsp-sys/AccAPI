@@ -253,15 +253,54 @@ export async function GET(request: Request) {
     try {
         // Isolasi per-supervisor: SPV hanya melihat pengajuan yang dia buat sendiri
         // (createdBy = id user). Role lain (SM/Claim/OM/Finance/Admin) tetap melihat semua.
-        const baseQuery = db.select().from(offBatch);
-        const rows = actor.role === "supervisor"
-            ? await baseQuery.where(eq(offBatch.createdBy, actor.id)).orderBy(desc(offBatch.createdAt)).limit(200)
-            : await baseQuery.orderBy(desc(offBatch.createdAt)).limit(200);
-        const batchIds = rows.map((r) => r.id);
-        const [items, payments] = await Promise.all([
-            batchIds.length > 0 ? db.select().from(offBatchItem).where(inArray(offBatchItem.batchId, batchIds)) : Promise.resolve([]),
-            batchIds.length > 0 ? db.select().from(offPayment).where(inArray(offPayment.batchId, batchIds)) : Promise.resolve([]),
+        const scopeWhere = actor.role === "supervisor" ? eq(offBatch.createdBy, actor.id) : undefined;
+        const loadChildren = async (ids: string[]) => Promise.all([
+            ids.length > 0 ? db.select().from(offBatchItem).where(inArray(offBatchItem.batchId, ids)) : Promise.resolve([]),
+            ids.length > 0 ? db.select().from(offPayment).where(inArray(offPayment.batchId, ids)) : Promise.resolve([]),
         ]);
+
+        // Audit F7: dulu LIMIT 200 dieksekusi SEBELUM filter periode/search sehingga batch
+        // lama yang cocok tidak pernah muncul. Kini: tanpa filter = jalur lama persis;
+        // dengan filter = paging per 400 batch, terapkan predikat yang SAMA, berhenti
+        // begitu 200 hasil cocok terkumpul (early-exit, memori tetap terikat).
+        const hasPeriodFilter = Boolean(month || year || dateFrom || dateTo);
+        const hasActiveFilter = hasPeriodFilter || Boolean(search);
+        let rows: Array<typeof offBatch.$inferSelect> = [];
+        let items: Array<typeof offBatchItem.$inferSelect> = [];
+        let payments: Array<typeof offPayment.$inferSelect> = [];
+
+        if (!hasActiveFilter) {
+            const baseQuery = db.select().from(offBatch);
+            rows = scopeWhere
+                ? await baseQuery.where(scopeWhere).orderBy(desc(offBatch.createdAt)).limit(200)
+                : await baseQuery.orderBy(desc(offBatch.createdAt)).limit(200);
+            const [loadedItems, loadedPayments] = await loadChildren(rows.map((r) => r.id));
+            items = loadedItems;
+            payments = loadedPayments;
+        } else {
+            const PAGE = 400;
+            for (let pageOffset = 0; rows.length < 200; pageOffset += PAGE) {
+                const baseQuery = db.select().from(offBatch);
+                const page = scopeWhere
+                    ? await baseQuery.where(scopeWhere).orderBy(desc(offBatch.createdAt)).limit(PAGE).offset(pageOffset)
+                    : await baseQuery.orderBy(desc(offBatch.createdAt)).limit(PAGE).offset(pageOffset);
+                if (page.length === 0) break;
+                const [pageItems, pagePayments] = await loadChildren(page.map((r) => r.id));
+                for (const row of page) {
+                    const rowItems = pageItems.filter((x) => x.batchId === row.id);
+                    const rowPayments = pagePayments.filter((x) => x.batchId === row.id);
+                    if (!matchesPeriodFilter(row, rowItems, rowPayments, { periodType, month, year, dateFrom, dateTo })) continue;
+                    // Pre-filter search lokal saat paging; Elasticsearch (bila aktif) tetap
+                    // me-ranking ulang hasil di bawah — set kandidatnya kini benar.
+                    if (search && !matchesSearch(buildBatchSearchText(row, rowItems), search)) continue;
+                    rows.push(row);
+                    items.push(...rowItems);
+                    payments.push(...rowPayments);
+                    if (rows.length >= 200) break;
+                }
+                if (page.length < PAGE) break;
+            }
+        }
         const summaries = new Map<string, { totalRows: number; totalNominal: number; transfer: number; tunai: number }>();
         const paymentSummaries = new Map<string, { totalNominal: number; totalPaid: number; remainingAmount: number; isFullyPaid: boolean }>();
         const paymentsByBatch = new Map<string, Array<typeof offPayment.$inferSelect>>();
