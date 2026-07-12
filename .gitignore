@@ -115,3 +115,6 @@ python_backend/data/e2e_live_output/
 # materi referensi bisnis (PDF surat program asli) & poster visi — bukan source code
 reference_surat_program/
 poster/
+
+# plugin lokal Claude (bukan bagian app)
+ponytail/
