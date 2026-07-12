@@ -187,7 +187,12 @@ export const offBatch = sqliteTable("off_batch", {
     createdByRole: text("created_by_role"),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull()
-});
+}, (t) => [
+    // Audit F1: list terbaru (ORDER BY created_at DESC LIMIT), filter SPV, lookup periode/no-urut
+    index("idx_off_batch_created_at").on(t.createdAt),
+    index("idx_off_batch_created_by").on(t.createdBy, t.createdAt),
+    index("idx_off_batch_periode").on(t.principleCode, t.tahun, t.bulan)
+]);
 
 export const offPeriodClosure = sqliteTable("off_period_closure", {
     id: text("id").primaryKey(),
@@ -260,7 +265,7 @@ export const offBatchItem = sqliteTable("off_batch_item", {
     finalCompletenessNote: text("final_completeness_note"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
-});
+}, (t) => [index("idx_off_batch_item_batch").on(t.batchId)]);
 
 export const offPayment = sqliteTable("off_payment", {
     id: text("id").primaryKey(),
@@ -279,7 +284,7 @@ export const offPayment = sqliteTable("off_payment", {
     createdBy: text("created_by"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
-});
+}, (t) => [index("idx_off_payment_batch").on(t.batchId)]);
 
 export const offRefund = sqliteTable("off_refund", {
     id: text("id").primaryKey(),
@@ -302,7 +307,7 @@ export const offRefund = sqliteTable("off_refund", {
     createdBy: text("created_by"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull()
-});
+}, (t) => [index("idx_off_refund_batch").on(t.batchId)]);
 
 export const offNotification = sqliteTable("off_notification", {
     id: text("id").primaryKey(),
@@ -313,7 +318,7 @@ export const offNotification = sqliteTable("off_notification", {
     message: text("message").notNull(),
     status: text("status").notNull().default("created"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull()
-});
+}, (t) => [index("idx_off_notification_batch").on(t.batchId)]);
 
 export const offAuditLog = sqliteTable("off_audit_log", {
     id: text("id").primaryKey(),
@@ -337,7 +342,7 @@ export const offAuditLog = sqliteTable("off_audit_log", {
     newValue: text("new_value", { mode: "json" }),
     parentAuditLogId: text("parent_audit_log_id"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull()
-});
+}, (t) => [index("idx_off_audit_log_batch").on(t.batchId)]);
 
 // --- OFF Discount (Dashboard Diskon SPV) --- //
 // Modul jejak digital pengajuan diskon SPV. BELUM menjadi workflow approval resmi.
