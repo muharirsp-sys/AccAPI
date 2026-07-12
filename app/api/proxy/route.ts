@@ -69,7 +69,9 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        console.log(`\n\n[PROXY FIRE] Method: ${method.toUpperCase()} | Target URL: ${url}`);
+        // Audit F5: log tanpa query string (bisa berisi data bisnis); timeout 30s agar
+        // request menggantung ke Accurate tidak menahan koneksi tanpa batas.
+        console.log(`[PROXY FIRE] ${method.toUpperCase()} ${endpointPath}`);
 
         const response = await fetch(url, {
             method: method.toUpperCase(),
@@ -82,6 +84,7 @@ export async function POST(req: NextRequest) {
             },
             body: finalBody,
             redirect: "manual",
+            signal: AbortSignal.timeout(30_000),
         });
 
         const rawText = await response.text();
@@ -89,13 +92,6 @@ export async function POST(req: NextRequest) {
 
         try {
             data = JSON.parse(rawText);
-            const responseObject = data as { d?: unknown[] };
-            if (url.includes('sales-return/list.do') && Array.isArray(responseObject.d) && responseObject.d.length > 0) {
-                 console.log("=== SALES RETURN API FIELDS ===");
-                 console.log(Object.keys(responseObject.d[0] as Record<string, unknown>));
-                 console.log("=== DATA ===");
-                 console.log(responseObject.d[0]);
-            }
         } catch (e) {
             console.error("[ACCURATE API RETURNED NON-JSON]", rawText);
             return NextResponse.json({ error: "Accurate mengembalikan respons non-JSON (Gagal)", detail: rawText.substring(0, 1000) }, { status: 502 });
@@ -109,6 +105,9 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json(data);
     } catch (error: unknown) {
+        if (error instanceof Error && error.name === "TimeoutError") {
+            return NextResponse.json({ error: "Accurate tidak merespons dalam 30 detik (timeout). Coba lagi." }, { status: 504 });
+        }
         console.error("[PROXY SERVER INTERNAL ERROR]", error);
         return NextResponse.json({ error: error instanceof Error ? error.message : "Proxy request failed" }, { status: 500 });
     }

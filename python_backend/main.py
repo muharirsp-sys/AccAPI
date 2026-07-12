@@ -104,6 +104,8 @@ CSRF_COOKIE_SAMESITE = str(os.getenv("CSRF_COOKIE_SAMESITE", "lax")).strip().low
 CSRF_TTL_SECONDS = int(os.getenv("CSRF_TTL_SECONDS", "7200"))
 APP_ENV = str(os.getenv("APP_ENV", "development")).strip().lower()
 APP_DEBUG = parse_bool_env(os.getenv("APP_DEBUG"), default=False)
+# Audit F11: tarif PPN satu sumber (selaras lib/claim-workflow/calculations.ts yang parametrized).
+PPN_RATE = float(os.getenv("PPN_RATE", "0.11"))
 APP_IS_PRODUCTION = is_production_env(APP_ENV)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BETTER_AUTH_DB_PATH = str(os.getenv("BETTER_AUTH_DB_PATH", os.path.join(BASE_DIR, "..", "sqlite.db"))).strip()
@@ -5958,7 +5960,7 @@ def run_engine(sales_bytes: bytes, promo_bytes: bytes, channel_bytes: bytes, int
             for _, tr in disc_rp_rows.iterrows():
                 bunit = norm(tr.get("BENEFIT_UNIT", "PCS"))
                 rp = parse_number_id(tr.get("BENEFIT_VALUE", "0"))
-                rp_dpp = rp / 1.11
+                rp_dpp = rp / (1 + PPN_RATE)
 
                 if bunit == "GROSSAMOUNT":
                     total_rp = rp_dpp
@@ -6022,7 +6024,7 @@ def run_engine(sales_bytes: bytes, promo_bytes: bytes, channel_bytes: bytes, int
                 for _, tr in disc_rp_rows.iterrows():
                     bunit = norm(tr.get("BENEFIT_UNIT", "PCS"))
                     rp = parse_number_id(tr.get("BENEFIT_VALUE", "0"))
-                    rp_dpp = rp / 1.11
+                    rp_dpp = rp / (1 + PPN_RATE)
                     rp_add += rp_dpp * qty_in_unit(line, bunit)
 
                 if rp_add:
