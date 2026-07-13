@@ -18,16 +18,20 @@ export interface AccurateCredentials {
 }
 
 // 1. AccuratePaginator: Generator asinkron pagination + throttle rate limit.
+// Catatan: Accurate list.do TANPA parameter `fields` hanya mengembalikan { id } per baris
+// (dibuktikan production 2026-07-13: raw_data == {"id":2331}) — fields wajib eksplisit.
 export async function* AccuratePaginator(
     endpoint: string,
     creds: AccurateCredentials,
-    startPage: number = 1
+    startPage: number = 1,
+    fields?: string
 ) {
     let currentPage = startPage;
     let pageCount = currentPage;
 
     while (currentPage <= pageCount) {
-        const url = `${creds.sessionHost}/accurate/api${endpoint}?sp.page=${currentPage}&sp.pageSize=100`;
+        const fieldsParam = fields ? `&fields=${encodeURIComponent(fields)}` : "";
+        const url = `${creds.sessionHost}/accurate/api${endpoint}?sp.page=${currentPage}&sp.pageSize=100${fieldsParam}`;
 
         const response = await fetch(url, {
             method: "GET",
@@ -80,13 +84,16 @@ const nested = (row: Record<string, unknown>, key: string): Record<string, unkno
 
 export type SyncModuleName = "item" | "customer" | "sales_invoice" | "sales_return";
 
-// 2. Registry modul sync: endpoint + upsert per halaman.
+// 2. Registry modul sync: endpoint + fields (WAJIB — list.do tanpa `fields` hanya
+// mengembalikan { id }, dibuktikan live production 2026-07-13) + upsert per halaman.
 const SYNC_MODULES: Record<SyncModuleName, {
     endpoint: string;
+    fields: string;
     upsertPage: (rows: Array<Record<string, unknown>>) => Promise<void>;
 }> = {
     item: {
         endpoint: "/item/list.do",
+        fields: "no,name,unitPrice,itemType,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
@@ -112,6 +119,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
     },
     customer: {
         endpoint: "/customer/list.do",
+        fields: "customerNo,name,balance,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
@@ -135,6 +143,9 @@ const SYNC_MODULES: Record<SyncModuleName, {
     },
     sales_invoice: {
         endpoint: "/sales-invoice/list.do",
+        // outstanding/status/customerName: nama field Accurate yang benar belum diketahui
+        // (diuji live 2026-07-13, tidak muncul di respons) — TBD saat PRD 02 Incaso dibangun.
+        fields: "number,customerNo,totalAmount,transDate,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
@@ -166,6 +177,8 @@ const SYNC_MODULES: Record<SyncModuleName, {
     },
     sales_return: {
         endpoint: "/sales-return/list.do",
+        // status/customerName: nama field belum diketahui (diuji live, tidak muncul) — TBD.
+        fields: "number,customerNo,totalAmount,transDate,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
@@ -213,7 +226,7 @@ export async function syncModule(moduleName: SyncModuleName, creds: AccurateCred
     const startedAt = Date.now();
     let totalRows = 0;
     try {
-        const paginator = AccuratePaginator(mod.endpoint, creds, state.lastPage ?? 1);
+        const paginator = AccuratePaginator(mod.endpoint, creds, state.lastPage ?? 1, mod.fields);
         for await (const chunk of paginator) {
             if (chunk.data.length > 0) {
                 await mod.upsertPage(chunk.data);
