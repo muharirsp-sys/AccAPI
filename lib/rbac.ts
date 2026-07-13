@@ -126,7 +126,7 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
     validator: ["view", "upload", "run", "download", "edit"],
     off_program_control: ["view", "create", "update", "approve", "export"],
-    reconciliation: ["view", "run", "export"],
+    reconciliation: ["view", "run"],
     claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export"],
     users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission", "manage"],
     sales_history: ["view", "export", "manage"],
@@ -205,7 +205,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("summary", ["view", "export"]),
         pick("validator", ["view", "download"]),
         pick("off_program_control", ["view", "update", "approve", "export"]),
-        pick("reconciliation", ["view", "export"]),
+        pick("reconciliation", ["view"]),
         pick("claim_workflow", ["view", "approve", "export"]),
         pick("sales_history", ["view", "export", "manage"])
     ),
@@ -227,7 +227,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("summary", ["view", "upload", "generate", "export", "edit", "update"]),
         pick("validator", ["view", "upload", "run", "download", "edit"]),
         pick("off_program_control", ["view", "create", "update"]),
-        pick("reconciliation", ["view", "run", "export"]),
+        pick("reconciliation", ["view", "run"]),
         // Claim Workflow guardrail: staff hanya boleh membaca daftar / detail
         // sebatas yang diizinkan policy. Pembuatan, edit pajak, dan submit
         // ke principal harus tetap eksklusif role admin/claim.

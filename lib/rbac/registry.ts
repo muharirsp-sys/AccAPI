@@ -19,7 +19,7 @@ export const PERMISSION_REGISTRY = {
     principles: ["view", "upload", "delete"],
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
     validator: ["view", "upload", "run", "download", "edit"],
-    reconciliation: ["view", "run", "export"],
+    reconciliation: ["view", "run"],
     off_program_control: [
         "view", "create", "update", "approve", "export",
         // workflow granular (mirror OffAction) — chain SPV→SM→Claim→OM→Finance:

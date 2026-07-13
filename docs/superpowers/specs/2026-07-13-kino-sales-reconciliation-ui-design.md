@@ -52,9 +52,8 @@ Tambahkan modul permission `reconciliation` dengan aksi:
 
 - `view`
 - `run`
-- `export`
 
-Halaman memerlukan `reconciliation.view`; API memerlukan `reconciliation.run`. Preset awal mengikuti akses Faktur/staff dan admin, sedangkan pengaturan akhir tetap dapat diubah melalui Access Group.
+Halaman memerlukan `reconciliation.view`; API dan export browser memerlukan `reconciliation.run`. Preset awal mengikuti akses Faktur/staff dan admin, sedangkan pengaturan akhir tetap dapat diubah melalui Access Group.
 
 ## Validasi dan Keamanan
 
