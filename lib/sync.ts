@@ -93,7 +93,9 @@ const SYNC_MODULES: Record<SyncModuleName, {
 }> = {
     item: {
         endpoint: "/item/list.do",
-        fields: "no,name,unitPrice,itemType,lastUpdate",
+        // "id" wajib eksplisit — Accurate TIDAK menyertakannya otomatis saat fields diisi
+        // (dibuktikan live 2026-07-13: tanpa "id" → NaN saat insert, primary key gagal).
+        fields: "id,no,name,unitPrice,itemType,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
@@ -119,7 +121,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
     },
     customer: {
         endpoint: "/customer/list.do",
-        fields: "customerNo,name,balance,lastUpdate",
+        fields: "id,customerNo,name,balance,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
@@ -145,7 +147,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
         endpoint: "/sales-invoice/list.do",
         // outstanding/status/customerName: nama field Accurate yang benar belum diketahui
         // (diuji live 2026-07-13, tidak muncul di respons) — TBD saat PRD 02 Incaso dibangun.
-        fields: "number,customerNo,totalAmount,transDate,lastUpdate",
+        fields: "id,number,customerNo,totalAmount,transDate,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
@@ -178,7 +180,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
     sales_return: {
         endpoint: "/sales-return/list.do",
         // status/customerName: nama field belum diketahui (diuji live, tidak muncul) — TBD.
-        fields: "number,customerNo,totalAmount,transDate,lastUpdate",
+        fields: "id,number,customerNo,totalAmount,transDate,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
