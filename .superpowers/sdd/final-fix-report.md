@@ -20,3 +20,13 @@ Status: DONE
 
 ## Scope
 No database, dependency, or future-principal abstraction added.
+## Follow-up review fixes
+- `safeParserMessage` now uses only a positive anchored whitelist, preserving actionable values containing `/` such as `FLAG_BONUS harus Y/N pada baris 9` while paths/stacks/unexpected text do not match.
+- Production `POST` now delegates to `createKinoSalesPostHandler`; the runnable test invokes this exact handler logic with injected permission, mapping, and engine boundaries.
+- Route test covers 403 before multipart/mapping, duplicate and unknown fields (400), >10 MB (413), bad ZIP (422), missing master (safe 500), actionable parser 422, unexpected-error masking (500), and successful JSON/buffer parity.
+
+## Follow-up exact evidence
+- RED: route test failed because `createKinoSalesPostHandler` was not exported.
+- GREEN: route test exited 0: `OK — actual KINO POST handler covers auth, multipart, size, ZIP, master, masking, parser, and success parity.`
+- Real three-XLSX engine acceptance exited 0: `OK — parser, mapping, unit alias, tolerance, dan full outer reconciliation tervalidasi.`
+- `npx tsc --noEmit`, scoped route/helper ESLint, and `git diff --check` each exited 0; only Git CRLF conversion warnings were emitted.
