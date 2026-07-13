@@ -1081,6 +1081,8 @@ def is_same_origin_request(request: Request) -> bool:
 # AUTH_VERIFY_URL kosong = jalur lama (baca sqlite langsung), zero perubahan perilaku.
 AUTH_VERIFY_URL = str(os.getenv("AUTH_VERIFY_URL", "")).strip()
 _AUTH_VERIFY_CACHE: Dict[str, Tuple[float, Optional[str]]] = {}
+# D4: permissions per email hasil verify — pengganti baca kolom user.permissions dari sqlite.
+_AUTH_VERIFY_PERMS: Dict[str, Tuple[float, Any]] = {}
 _AUTH_VERIFY_TTL = 60.0
 
 def _verify_session_via_next(ba_token: str, raw_cookie: str) -> Optional[str]:
@@ -1100,6 +1102,9 @@ def _verify_session_via_next(ba_token: str, raw_cookie: str) -> Optional[str]:
                     role = "viewer"
                 identity = s(data.get("email")).lower() or s(data.get("name"))
                 result = f"betterauth|{role}|{identity}"
+                if s(data.get("email")):
+                    _AUTH_VERIFY_PERMS[s(data.get("email")).lower()] = (
+                        time.time() + _AUTH_VERIFY_TTL, data.get("permissions"))
     except Exception as e:
         print(f"[AUTH VERIFY] gagal panggil {AUTH_VERIFY_URL}: {e}")
         return None  # jangan cache kegagalan network — fallback sqlite di caller
@@ -1132,7 +1137,9 @@ def get_current_user(request: Request) -> Optional[str]:
         # None = network error ATAU sesi invalid; utk sesi invalid cache menyimpan None
         # dan kita tetap coba fallback sqlite di bawah (aman: sqlite juga akan menolak).
 
-    if ba_token:
+    # D4: bila AUTH_VERIFY_URL aktif (DB utama = Postgres), file sqlite lokal stale —
+    # JANGAN fallback ke sana (risiko sesi kadaluarsa/di-revoke tetap lolos). Deny saja.
+    if ba_token and not AUTH_VERIFY_URL:
         try:
             import sqlite3
             db_path = BETTER_AUTH_DB_PATH
@@ -1180,6 +1187,14 @@ def get_user_permissions_info(username: str) -> Tuple[Dict[str, Set[str]], bool]
         parts = username.split("|", 2)
         email = s(parts[2] if len(parts) > 2 else "").lower()
         if not email:
+            return ({}, False)
+        # D4: jalur verify — permissions ikut respons /api/auth/verify (cache 60s,
+        # terisi oleh _verify_session_via_next pada request yang sama). Sqlite stale dilewati.
+        if AUTH_VERIFY_URL:
+            import time
+            cached = _AUTH_VERIFY_PERMS.get(email)
+            if cached and cached[0] > time.time():
+                return parse_permission_profile(cached[1])
             return ({}, False)
         try:
             import sqlite3
