@@ -30,9 +30,16 @@ function loadEnvFile() {
 loadEnvFile();
 
 const databaseUrl = process.env.DATABASE_URL || "file:/app/data/sqlite.db";
-const filePath = databaseUrl.startsWith("file:")
-  ? databaseUrl.slice("file:".length)
-  : null;
+
+// D4 cutover: skema Postgres sudah dibuat via `drizzle-kit push` (50 pgTable) —
+// script ini murni DDL SQLite (@libsql/client tidak paham skema "postgres:").
+// Jalankan hanya saat masih di sqlite; kalau tidak, container gagal start.
+if (!databaseUrl.startsWith("file:")) {
+  console.log("DATABASE_URL bukan sqlite — skip init-db.mjs (skema Postgres sudah via drizzle-kit push).");
+  process.exit(0);
+}
+
+const filePath = databaseUrl.slice("file:".length);
 if (filePath?.startsWith("/")) {
   mkdirSync(filePath.replace(/\/[^/]*$/, ""), { recursive: true });
 }
