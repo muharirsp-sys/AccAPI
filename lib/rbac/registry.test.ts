@@ -9,6 +9,7 @@ import assert from "node:assert";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { canAccessPathWithKeys, getPagePermission } from "../rbac.ts";
 import { PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey } from "./registry.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +24,16 @@ const keys = allPermissionKeys();
 assert.ok(keys.size > 0, "registry kosong");
 assert.ok(isValidPermissionKey("off_program_control.sm_approve"), "key OPC valid harus dikenali");
 assert.ok(!isValidPermissionKey("off_program_control.nope"), "key tak terdaftar harus ditolak");
+assert.ok(isValidPermissionKey("reconciliation.view"));
+assert.ok(isValidPermissionKey("reconciliation.run"));
+assert.ok(isValidPermissionKey("reconciliation.export"));
+assert.deepEqual(getPagePermission("/reconciliation"), {
+    prefix: "/reconciliation",
+    module: "reconciliation",
+    action: "view",
+});
+assert.ok(canAccessPathWithKeys("/reconciliation", ["reconciliation.view"]));
+assert.ok(!canAccessPathWithKeys("/reconciliation", ["reconciliation.run"]));
 
 // --- 2. Scan requirePermission(...) di route ---
 function walk(dir: string): string[] {

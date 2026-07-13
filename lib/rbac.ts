@@ -28,6 +28,7 @@ export const appModules = [
     "summary",
     "validator",
     "off_program_control",
+    "reconciliation",
     "claim_workflow",
     "users",
     "sales_history",
@@ -45,6 +46,7 @@ export const moduleLabels: Record<AppModule, string> = {
     summary: "Summary",
     validator: "Validator",
     off_program_control: "OFF Program Control",
+    reconciliation: "Rekonsiliasi",
     claim_workflow: "Claim Workflow",
     users: "Users & RBAC",
     sales_history: "History Penjualan",
@@ -124,6 +126,7 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
     validator: ["view", "upload", "run", "download", "edit"],
     off_program_control: ["view", "create", "update", "approve", "export"],
+    reconciliation: ["view", "run", "export"],
     claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export"],
     users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission", "manage"],
     sales_history: ["view", "export", "manage"],
@@ -202,6 +205,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("summary", ["view", "export"]),
         pick("validator", ["view", "download"]),
         pick("off_program_control", ["view", "update", "approve", "export"]),
+        pick("reconciliation", ["view", "export"]),
         pick("claim_workflow", ["view", "approve", "export"]),
         pick("sales_history", ["view", "export", "manage"])
     ),
@@ -223,6 +227,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("summary", ["view", "upload", "generate", "export", "edit", "update"]),
         pick("validator", ["view", "upload", "run", "download", "edit"]),
         pick("off_program_control", ["view", "create", "update"]),
+        pick("reconciliation", ["view", "run", "export"]),
         // Claim Workflow guardrail: staff hanya boleh membaca daftar / detail
         // sebatas yang diizinkan policy. Pembuatan, edit pajak, dan submit
         // ke principal harus tetap eksklusif role admin/claim.
@@ -253,6 +258,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/validator", module: "validator", action: "view" },
     { prefix: "/api-wrapper", module: "api_wrapper", action: "view" },
     { prefix: "/off-program-control", module: "off_program_control", action: "view" },
+    { prefix: "/reconciliation", module: "reconciliation", action: "view" },
     { prefix: "/claim-workflow", module: "claim_workflow", action: "view" },
     { prefix: "/sales-history", module: "sales_history", action: "view" },
     { prefix: "/laporan-harian", module: "laporan_harian", action: "view" },

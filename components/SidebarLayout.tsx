@@ -6,7 +6,7 @@
 "use client";
 
 import { useState } from "react";
-import { Menu, Home, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ShieldCheck, ClipboardCheck, ReceiptText, Trophy, ClipboardList, History, Send, X } from "lucide-react";
+import { Menu, Home, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ShieldCheck, ClipboardCheck, ReceiptText, Trophy, ClipboardList, History, Send, GitCompareArrows, X } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { usePathname } from "next/navigation";
 import { canAccessPathWithKeys } from "@/lib/rbac";
@@ -40,6 +40,7 @@ export default function SidebarLayout({ children, permKeys }: { children: React.
         { name: "Pembayaran / SPPD", icon: Wallet, href: "/payments" },
         { name: "Format SPPD", icon: FileText, href: "/payments/sppd" },
         { name: "OFF Program Control", icon: ClipboardCheck, href: "/off-program-control" },
+        { name: "Rekonsiliasi", icon: GitCompareArrows, href: "/reconciliation" },
         { name: "Claim Workflow", icon: ReceiptText, href: "/claim-workflow" },
         { name: "History Penjualan", icon: History, href: "/sales-history" },
         { name: "Master Principle", icon: Database, href: "/principles" },
