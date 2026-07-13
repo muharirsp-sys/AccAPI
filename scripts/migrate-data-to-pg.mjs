@@ -96,7 +96,17 @@ async function migrateTable(table) {
 
   if (doTruncate) await pool.query(`TRUNCATE TABLE "${table}" CASCADE`);
 
-  const { rows: srcRows } = await lite.execute(`SELECT ${quoted} FROM "${table}"`);
+  // Sebagian tabel modul baru (mis. laporan-harian) belum pernah dibuat di sqlite production
+  // (belum pernah dipakai) — bukan error migrasi, PG tetap kosong sesuai kondisi asal.
+  let srcRows;
+  try {
+    ({ rows: srcRows } = await lite.execute(`SELECT ${quoted} FROM "${table}"`));
+  } catch (e) {
+    if (String(e.message).includes("no such table")) {
+      return { table, total: 0, pgCount: 0, ok: true, sampleOk: true, sampleChecked: 0, skippedNoSource: true };
+    }
+    throw e;
+  }
   const total = srcRows.length;
 
   // batch: jaga di bawah limit 65535 parameter pg
@@ -151,7 +161,8 @@ for (const t of TABLES) {
     const r = await migrateTable(t);
     const flag = r.ok && r.sampleOk ? "OK " : "FAIL";
     if (!(r.ok && r.sampleOk)) failed = true;
-    console.log(`${flag} ${t.padEnd(28)} sqlite=${String(r.total).padStart(7)} pg=${String(r.pgCount).padStart(7)} sampel=${r.sampleChecked}`);
+    const note = r.skippedNoSource ? " (tabel belum ada di sumber)" : "";
+    console.log(`${flag} ${t.padEnd(28)} sqlite=${String(r.total).padStart(7)} pg=${String(r.pgCount).padStart(7)} sampel=${r.sampleChecked}${note}`);
   } catch (e) {
     failed = true;
     console.error(`FAIL ${t}: ${e.message}`);
