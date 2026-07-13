@@ -64,6 +64,8 @@ export default function ReconciliationPage() {
       return;
     }
     setIsRunning(true);
+    setResult(null);
+    setStatusFilter("ALL");
     setError(null);
     try {
       const form = new FormData();
@@ -82,7 +84,9 @@ export default function ReconciliationPage() {
 
   async function exportResult() {
     if (!result) return;
-    const XLSX = await import("xlsx");
+    setError(null);
+    try {
+      const XLSX = await import("xlsx");
     const summary = statuses.map((status) => ({ Status: excelText(status), Jumlah: result.summary[status] }));
     const detail = result.results.map((row) => ({
       Status: excelText(row.status), Order: excelText(row.orderNumber), "Produk Internal": excelText(row.internalProductCode),
@@ -94,11 +98,16 @@ export default function ReconciliationPage() {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summary), "Ringkasan");
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detail), "Detail");
-    XLSX.writeFile(workbook, `hasil-rekonsiliasi-kino-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      XLSX.writeFile(workbook, `hasil-rekonsiliasi-kino-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch {
+      setError("File hasil gagal diekspor. Silakan coba lagi.");
+    }
   }
 
   const matched = result?.summary.MATCH ?? 0;
   const total = result?.results.length ?? 0;
+  const mismatch = (result?.summary.QTY_MISMATCH ?? 0) + (result?.summary.VALUE_MISMATCH ?? 0) + (result?.summary.QTY_AND_VALUE_MISMATCH ?? 0);
+  const missing = (result?.summary.MISSING_INTERNAL ?? 0) + (result?.summary.MISSING_PRINCIPAL ?? 0);
 
   return (
     <div className="mx-auto max-w-7xl space-y-8 pb-12">
@@ -140,8 +149,8 @@ export default function ReconciliationPage() {
         </div>
       </section>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Ringkasan hasil">
-        {[["Total perbandingan", total], ["Cocok", matched], ["Bermasalah", total - matched], ["Baris sumber", (result?.accurateLines.length ?? 0) + (result?.kinoLines.length ?? 0)]].map(([label, value]) => (
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="Ringkasan hasil">
+        {[["Total perbandingan", total], ["Cocok", matched], ["Selisih qty/nilai", mismatch], ["Data tidak ditemukan", missing], ["SKU belum dipetakan", result?.summary.UNMAPPED_SKU ?? 0], ["Konversi satuan gagal", result?.summary.UNIT_CONVERSION_ERROR ?? 0]].map(([label, value]) => (
           <div key={label} className="rounded-2xl border border-white/5 bg-[#16181d]/80 p-5"><p className="text-sm text-slate-400">{label}</p><p className="mt-2 text-3xl font-bold text-white">{number.format(Number(value))}</p></div>
         ))}
       </section>
