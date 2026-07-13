@@ -124,7 +124,7 @@ export default function ReconciliationPage() {
                 <input id={`${kind}-file`} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={isRunning} onChange={(event) => changeFile(kind, event.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-400 file:mr-4 file:rounded-full file:border-0 file:bg-white/10 file:px-4 file:py-2 file:text-xs file:font-semibold file:text-slate-200 hover:file:bg-white/15 disabled:opacity-50" />
                 <div className="mt-4 flex min-h-8 items-center justify-between gap-3 text-sm text-slate-300">
                   <span className="truncate">{file ? `${file.name} (${fileSize(file.size)})` : "Belum ada file dipilih"}</span>
-                  {file && <button type="button" disabled={isRunning} onClick={() => changeFile(kind, null)} aria-label={`Hapus ${label}`} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-50"><X size={16} /></button>}
+                  {file && <button type="button" disabled={isRunning} onClick={() => { const input = document.getElementById(`${kind}-file`); if (input instanceof HTMLInputElement) input.value = ""; changeFile(kind, null); }} aria-label={`Hapus ${label}`} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-50"><X size={16} /></button>}
                 </div>
               </div>
             );
