@@ -80,6 +80,11 @@ test.describe("security guardrails for sensitive utility routes", () => {
       },
     });
     expect(upload.status()).toBe(401);
+
+    const kinoReconciliation = await request.post("/api/reconciliation/kino/sales", {
+      multipart: {},
+    });
+    expect(kinoReconciliation.status()).toBe(401);
   });
 
   test("allows authenticated idempotency preview requests", async ({ request, baseURL }) => {
