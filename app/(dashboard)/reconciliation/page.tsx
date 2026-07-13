@@ -163,7 +163,13 @@ export default function ReconciliationPage() {
             <button type="button" onClick={exportResult} disabled={!result} className="flex items-center justify-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"><FileSpreadsheet size={17} /> Ekspor XLSX</button>
           </div>
         </div>
-        <DataTable columns={columns} data={filteredResults} searchPlaceholder="Cari order, produk, atau status…" />
+        <DataTable
+          columns={columns}
+          data={filteredResults}
+          initialColumnVisibility={{ transactionClass: false, warnings: false, sourceRows: false }}
+          emptyMessage="Tidak ada hasil untuk filter ini."
+          searchPlaceholder="Cari order, produk, atau status…"
+        />
       </section>
     </div>
   );

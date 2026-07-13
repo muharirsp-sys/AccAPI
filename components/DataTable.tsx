@@ -11,6 +11,7 @@ import {
     useReactTable,
     SortingState,
     FilterFn,
+    VisibilityState,
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp, Search, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { fuzzyMatch } from "@/lib/fuzzySearch";
@@ -18,20 +19,22 @@ import { fuzzyMatch } from "@/lib/fuzzySearch";
 interface DataTableProps<TData, TValue> {
     columns: ColumnDef<TData, TValue>[];
     data: TData[];
-    searchKey?: string; 
     searchPlaceholder?: string;
     isLoading?: boolean;
+    initialColumnVisibility?: VisibilityState;
+    emptyMessage?: string;
 }
 
 export function DataTable<TData, TValue>({
     columns,
     data,
     searchPlaceholder = "Cari semua kolom...",
-    isLoading = false
+    isLoading = false,
+    initialColumnVisibility = {},
+    emptyMessage = "Tidak ada hasil."
 }: DataTableProps<TData, TValue>) {
     const [sorting, setSorting] = useState<SortingState>([]);
     const [globalFilter, setGlobalFilter] = useState("");
-    const [rowSelection, setRowSelection] = useState({});
 
     const [isViewOpen, setIsViewOpen] = useState(false);
     const tableId = useId();
@@ -47,20 +50,17 @@ export function DataTable<TData, TValue>({
     const table = useReactTable({
         data,
         columns,
+        initialState: { columnVisibility: initialColumnVisibility },
         getCoreRowModel: getCoreRowModel(),
         getPaginationRowModel: getPaginationRowModel(),
         onSortingChange: setSorting,
         getSortedRowModel: getSortedRowModel(),
         getFilteredRowModel: getFilteredRowModel(),
         onGlobalFilterChange: setGlobalFilter,
-        onRowSelectionChange: setRowSelection,
         globalFilterFn: fuzzyOrWildcardFilter,
-        state: {
-            sorting,
-            globalFilter,
-            rowSelection,
-        },
+        state: { sorting, globalFilter },
     });
+    const filteredRowCount = table.getFilteredRowModel().rows.length;
 
     return (
         <div className="space-y-4">
@@ -84,7 +84,8 @@ export function DataTable<TData, TValue>({
                         onClick={() => setIsViewOpen(!isViewOpen)}
                         aria-expanded={isViewOpen}
                         aria-controls={columnMenuId}
-                        className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg px-3 py-2 text-sm text-slate-300 transition-colors shadow-sm"
+                        aria-label="Atur visibilitas kolom"
+                        className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg px-3 py-2 text-sm text-slate-300 transition-colors shadow-sm focus-visible:ring-2 focus-visible:ring-indigo-500/50"
                     >
                         <SlidersHorizontal className="h-4 w-4" />
                         Kolom
@@ -117,7 +118,7 @@ export function DataTable<TData, TValue>({
             </div>
 
             {/* Table */}
-            <div className="rounded-xl border border-white/5 bg-[#16181d]/80 overflow-hidden backdrop-blur-md shadow-xl">
+            <div className="rounded-xl border border-white/5 bg-[#1a1c23]/80 overflow-hidden backdrop-blur-md shadow-xl">
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm text-left relative">
                         <thead className="text-xs text-slate-400 uppercase bg-black/20 border-b border-white/5">
@@ -165,7 +166,7 @@ export function DataTable<TData, TValue>({
                         <tbody className="divide-y divide-white/5">
                             {isLoading ? (
                                 <tr>
-                                    <td colSpan={columns.length} className="h-24 text-center">
+                                    <td colSpan={table.getVisibleLeafColumns().length} className="h-24 text-center">
                                         <div className="flex items-center justify-center gap-2 text-slate-400">
                                             <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
                                             Memuat data...
@@ -176,8 +177,7 @@ export function DataTable<TData, TValue>({
                                 table.getRowModel().rows.map((row) => (
                                     <tr
                                         key={row.id}
-                                        data-state={row.getIsSelected() && "selected"}
-                                        className={`hover:bg-white/5 transition-colors ${row.getIsSelected() ? 'bg-indigo-500/10' : ''}`}
+                                        className="hover:bg-white/5 transition-colors"
                                     >
                                         {row.getVisibleCells().map((cell) => (
                                             <td key={cell.id} className="px-4 py-3 text-slate-300">
@@ -188,8 +188,8 @@ export function DataTable<TData, TValue>({
                                 ))
                             ) : (
                                 <tr>
-                                    <td colSpan={columns.length} className="h-24 text-center text-slate-500">
-                                        Tidak ada hasil.
+                                    <td colSpan={table.getVisibleLeafColumns().length} className="h-24 text-center text-slate-500">
+                                        {emptyMessage}
                                     </td>
                                 </tr>
                             )}
@@ -199,12 +199,7 @@ export function DataTable<TData, TValue>({
             </div>
 
             {/* Pagination Controls */}
-            <div className="flex flex-col gap-3 text-sm text-slate-400 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-xs">
-                    {Object.keys(rowSelection).length} dari{" "}
-                    {table.getFilteredRowModel().rows.length} baris dipilih.
-                </div>
-                
+            {filteredRowCount > 0 && <div className="flex flex-col gap-3 text-sm text-slate-400 sm:flex-row sm:items-center sm:justify-end">
                 <div className="flex flex-wrap items-center gap-4 sm:gap-6 lg:gap-8">
                     <div className="flex items-center space-x-2">
                         <label htmlFor={pageSizeId} className="text-xs font-medium">Baris per halaman</label>
@@ -229,40 +224,44 @@ export function DataTable<TData, TValue>({
                     </div>
                     <div className="flex items-center space-x-2">
                         <button
+                            type="button"
+                            aria-label="Ke halaman pertama"
                             onClick={() => table.setPageIndex(0)}
                             disabled={!table.getCanPreviousPage()}
-                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors"
+                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50"
                         >
-                            <span className="sr-only">Ke halaman pertama</span>
                             <ChevronsLeft className="h-4 w-4" />
                         </button>
                         <button
+                            type="button"
+                            aria-label="Ke halaman sebelumnya"
                             onClick={() => table.previousPage()}
                             disabled={!table.getCanPreviousPage()}
-                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors"
+                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50"
                         >
-                            <span className="sr-only">Ke halaman sebelumnya</span>
                             <ChevronLeft className="h-4 w-4" />
                         </button>
                         <button
+                            type="button"
+                            aria-label="Ke halaman berikutnya"
                             onClick={() => table.nextPage()}
                             disabled={!table.getCanNextPage()}
-                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors"
+                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50"
                         >
-                            <span className="sr-only">Ke halaman berikutnya</span>
                             <ChevronRight className="h-4 w-4" />
                         </button>
                         <button
+                            type="button"
+                            aria-label="Ke halaman terakhir"
                             onClick={() => table.setPageIndex(table.getPageCount() - 1)}
                             disabled={!table.getCanNextPage()}
-                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors"
+                            className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50"
                         >
-                            <span className="sr-only">Ke halaman terakhir</span>
                             <ChevronsRight className="h-4 w-4" />
                         </button>
                     </div>
                 </div>
-            </div>
+            </div>}
         </div>
     );
 }
