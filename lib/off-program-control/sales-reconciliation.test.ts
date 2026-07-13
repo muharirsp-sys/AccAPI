@@ -1,0 +1,69 @@
+/*
+ * Self-check parser + engine rekonsiliasi penjualan KINO.
+ * Jalankan sintetis: node --experimental-strip-types lib/off-program-control/sales-reconciliation.test.ts
+ * Jalankan file nyata: node --experimental-strip-types lib/off-program-control/sales-reconciliation.test.ts <accurate.xlsx> <sales-detail.xlsx> <kino.xlsx>
+ */
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import * as XLSX from "xlsx";
+import { reconcileKinoSales } from "./sales-reconciliation.ts";
+
+function workbook(sheets: Record<string, unknown[][]>): Buffer {
+  const wb = XLSX.utils.book_new();
+  for (const [name, rows] of Object.entries(sheets)) {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name);
+  }
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+}
+
+const accurate = workbook({
+  "Rincian Faktur Penjualan": [
+    ["NO_NOTA", "TANGGAL", "KODE PELANGGAN INDUK", "KODE_SALESMAN", "KODE_BARANG", "QTY_SATUANKECIL", "SATUAN_KECIL", "NILAI JUAL", "POTONGAN", "DPP", "NILAI_PAJAK", "JUMLAH", "REM", "JENIS_TRANSAKSI"],
+    ["INV-1", 46204, "C-1", "S-1", "ITEM-1", 6, "BTL", 100, 0, 100, 11, 111, "teks 1671-SOP-1 tambahan", "1. Penjualan Bruto"],
+    ["INV-2", 46204, "C-1", "S-1", "ITEM-2", 3, "TUBE", 200, 0, 200, 22, 222, "1671-SOP-2", "1. Penjualan Bruto"],
+  ],
+});
+
+const kino = workbook({
+  Sheet1: [
+    ["REPORT SALES DETAIL"],
+    ["Periode", ": 2026-07-01"],
+    ["Cabang", ": 1201671"],
+    ["CUSTCODE1", "ORDER_NO", "INVOICE_NO", "INVOICE_DATE", "PRODUCT_CODE", "SALESMAN_ID", "FLAG_BONUS", "INVOICE_QTY", "INVOICE_GROSS", "INVOICE_TOTALLINEDISC", "INVOICE_PROMO", "INVOICE_CASHDISC", "INVOICE_TAX", "INVOICE_NET", "PRD_UOM1"],
+    ["KC-1", "1671-SOP-1", "INV-K1", "2026-07-01", "P-1", "KS-1", "N", 6, 100, 0, 0, 0, 11, 111, "BT"],
+    ["KC-1", "1671-SOP-2", "INV-K2", "2026-07-01", "P-2", "KS-1", "N", 4, 200, 0, 0, 0, 22, 222, "TUB"],
+    ["Grand Total"],
+  ],
+});
+
+const mapping = workbook({
+  Mapping_Prd: [
+    ["KODE ITEM", "Kode Alias", "Satuan", "ISI"],
+    ["ITEM-1", "P-1", "BTL", 36],
+    ["ITEM-2", "P-2", "TUBE", 12],
+  ],
+  Mapping_Customer: [["Code Kino", "Code Internal"], ["KC-1", "C-1"]],
+  Mapping_Sls: [["SLSMAN_ID", "Code Internal"], ["KS-1", "S-1"]],
+});
+
+const synthetic = reconcileKinoSales(accurate, kino, mapping, { valueTolerance: 1 });
+assert.equal(synthetic.results.length, 2);
+assert.equal(synthetic.summary.MATCH, 1);
+assert.equal(synthetic.summary.QTY_MISMATCH, 1);
+assert.equal(synthetic.summary.INVALID_DATA, 0);
+assert.equal(synthetic.results.find((r) => r.internalProductCode === "ITEM-1")?.status, "MATCH");
+assert.equal(synthetic.results.find((r) => r.internalProductCode === "ITEM-2")?.quantityDifference, -1);
+
+const realPaths = process.argv.slice(2);
+if (realPaths.length) {
+  assert.equal(realPaths.length, 3, "berikan path Accurate, SALES_DETAIL, dan Kino.xlsx");
+  const real = reconcileKinoSales(...realPaths.map((path) => readFileSync(path)) as [Buffer, Buffer, Buffer], { valueTolerance: 1 });
+  assert.equal(real.accurateLines.length, 238);
+  assert.equal(real.kinoLines.length, 238);
+  assert.equal(real.summary.MATCH, 236);
+  assert.equal(real.summary.QTY_AND_VALUE_MISMATCH, 2);
+  assert.equal(real.summary.MISSING_INTERNAL, 0);
+  assert.equal(real.summary.MISSING_PRINCIPAL, 0);
+}
+
+console.log("OK â€” parser, mapping, unit alias, tolerance, dan full outer reconciliation tervalidasi.");
