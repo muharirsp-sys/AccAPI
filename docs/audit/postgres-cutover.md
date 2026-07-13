@@ -3,7 +3,7 @@
 | Doc | Nilai |
 |---|---|
 | Status infra | ✅ SELESAI 2026-07-12 — PostgreSQL 16.14 jalan di VPS 43.156.118.114, container `accapi-postgres`, network `coolify` (internal-only, TANPA port publik), volume `accapi-pgdata`, kredensial di `/root/accapi-postgres.env` (chmod 600) |
-| Status kode | ⏳ BELUM — dikerjakan sebagai fase khusus (lihat langkah) dengan verifikasi penuh sebelum switch |
+| Status kode | 🔶 GERBANG 1–3 LOLOS 2026-07-13 (branch `migrate-postgres`): schema 50 pgTable + adapter pg (tsc bersih, drizzle-kit push = 50 tabel di PG VPS); `scripts/migrate-data-to-pg.mjs` 50/50 COUNT+sampel OK; uji lokal vs PG: login, /api/auth/verify (+permissions), OPC list+create, claim workflow, insentif dashboard, FastAPI get_current_user via AUTH_VERIFY_URL — semua hijau. SISA: Gerbang 4–5 (switch production, tunggu jadwal freeze dari user) |
 | Scheduler | ✅ `/etc/cron.d/accapi` terpasang (sync 4×/hari, cleanup harian) — teruji hit `cleanup-uploads` 200 |
 
 ## Prinsip
