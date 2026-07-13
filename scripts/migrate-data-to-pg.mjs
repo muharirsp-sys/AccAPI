@@ -74,9 +74,24 @@ function normalize(v, dataType) {
       const d = v instanceof Date ? v : epochToDate(v);
       return d ? d.getTime() : null;
     }
-    case "jsonb": return stable(typeof v === "string" ? JSON.parse(v) : v);
+    case "jsonb": {
+      // Beberapa raw_data historis di production double-JSON-encoded (bug lama
+      // lib/sync.ts: JSON.stringify(row) dipassing ke kolom mode:'json' yang
+      // auto-stringify lagi). Field ini terbukti tidak dibaca kode manapun
+      // (grep .rawData kosong) — migrasi harus BYTE-FAITHFUL, bukan "memperbaiki"
+      // data diam-diam. Unwrap berulang sampai bentuk stabil supaya perbandingan
+      // tidak salah lapor beda padahal isinya sama persis.
+      let parsed = v;
+      for (let i = 0; i < 5 && typeof parsed === "string"; i++) {
+        try { parsed = JSON.parse(parsed); } catch { break; }
+      }
+      return stable(parsed);
+    }
     case "double precision":
     case "numeric": return Number(v);
+    // node-postgres mengembalikan bigint sebagai string (hindari presisi hilang di JS number),
+    // sqlite libsql mengembalikan number — bandingkan sebagai Number, bukan tipe mentah.
+    case "bigint": return v === null ? null : Number(v);
     default: return v;
   }
 }
@@ -104,6 +119,17 @@ async function migrateTable(table) {
   } catch (e) {
     if (String(e.message).includes("no such table")) {
       return { table, total: 0, pgCount: 0, ok: true, sampleOk: true, sampleChecked: 0, skippedNoSource: true };
+    }
+    if (String(e.message).includes("no such column")) {
+      // Drift pre-existing schema.ts vs kolom fisik sqlite (mis. spv_briefing.toko_dibahas
+      // vs toko_dialas) — bukan dari migrasi ini. Aman DIABAIKAN hanya bila tabel sumber
+      // sungguh 0 baris (dicek via COUNT(*) tanpa referensi kolom manapun); kalau ada
+      // data, ini blocker nyata dan harus dilaporkan, bukan dilewati diam-diam.
+      const { rows: [{ n }] } = await lite.execute(`SELECT COUNT(*) n FROM "${table}"`);
+      if (Number(n) === 0) {
+        return { table, total: 0, pgCount: 0, ok: true, sampleOk: true, sampleChecked: 0, skippedColumnDrift: true };
+      }
+      throw new Error(`${e.message} — DAN tabel berisi ${n} baris data, bukan kosong. Perlu keputusan mapping kolom sebelum migrasi.`);
     }
     throw e;
   }
@@ -161,7 +187,8 @@ for (const t of TABLES) {
     const r = await migrateTable(t);
     const flag = r.ok && r.sampleOk ? "OK " : "FAIL";
     if (!(r.ok && r.sampleOk)) failed = true;
-    const note = r.skippedNoSource ? " (tabel belum ada di sumber)" : "";
+    const note = r.skippedNoSource ? " (tabel belum ada di sumber)"
+      : r.skippedColumnDrift ? " (drift kolom pre-existing, tabel 0 baris di sumber)" : "";
     console.log(`${flag} ${t.padEnd(28)} sqlite=${String(r.total).padStart(7)} pg=${String(r.pgCount).padStart(7)} sampel=${r.sampleChecked}${note}`);
   } catch (e) {
     failed = true;
