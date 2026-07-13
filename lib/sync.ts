@@ -217,7 +217,8 @@ export async function syncModule(moduleName: SyncModuleName, creds: AccurateCred
     const mod = SYNC_MODULES[moduleName];
     if (!mod) return { success: false, message: `Modul sync tidak dikenal: ${moduleName}` };
 
-    let state = await db.select().from(syncState).where(eq(syncState.module, moduleName)).get();
+    // D4: .get() sqlite-only — pg pakai destructure limit(1)
+    let [state] = await db.select().from(syncState).where(eq(syncState.module, moduleName)).limit(1);
     if (!state) {
         await db.insert(syncState).values({ module: moduleName, lastPage: 1, status: "syncing", updatedAt: new Date() });
         state = { module: moduleName, lastSyncTimestamp: null, lastPage: 1, status: "syncing", updatedAt: new Date() };

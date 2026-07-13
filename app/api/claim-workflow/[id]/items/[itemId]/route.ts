@@ -131,7 +131,8 @@ export async function PATCH(request: Request, context: Context) {
                     eq(claimWorkflowItem.claimWorkflowId, id),
                     eq(claimWorkflowItem.updatedAt, expectedDate),
                 ));
-            if (!updated.rowsAffected) throw new OptimisticLockError();
+            // D4: pg driver pakai rowCount (libsql: rowsAffected)
+            if (!updated.rowCount) throw new OptimisticLockError();
 
             // Phase R7b — pastikan item terkait submission. Bila item
             // belum di-link (kasus warisan sebelum migration), fallback ke

@@ -45,7 +45,7 @@ function decryptSecret(value: string) {
 }
 
 async function ensureAccurateSessionTable() {
-    await db.run(sql`
+    await db.execute(sql`
         CREATE TABLE IF NOT EXISTS accurate_oauth_session (
             user_id TEXT PRIMARY KEY NOT NULL,
             access_token TEXT NOT NULL,
@@ -53,9 +53,9 @@ async function ensureAccurateSessionTable() {
             session_id TEXT,
             database_id TEXT,
             database_alias TEXT,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            FOREIGN KEY (user_id) REFERENCES user(id)
+            created_at TIMESTAMP NOT NULL,
+            updated_at TIMESTAMP NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES "user"(id)
         )
     `);
 }

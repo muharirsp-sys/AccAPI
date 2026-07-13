@@ -21,7 +21,7 @@ import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 type PeriodAction = "close" | "unlock";
 
 async function ensurePeriodClosureTable() {
-  await db.run(sql`
+  await db.execute(sql`
     CREATE TABLE IF NOT EXISTS off_period_closure (
       id TEXT PRIMARY KEY,
       principle_code TEXT NOT NULL,
@@ -29,19 +29,19 @@ async function ensurePeriodClosureTable() {
       bulan TEXT NOT NULL,
       tahun TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'Terbuka',
-      total_submitted REAL NOT NULL DEFAULT 0,
-      total_claimed REAL NOT NULL DEFAULT 0,
+      total_submitted DOUBLE PRECISION NOT NULL DEFAULT 0,
+      total_claimed DOUBLE PRECISION NOT NULL DEFAULT 0,
       submitted_count INTEGER NOT NULL DEFAULT 0,
       claimed_count INTEGER NOT NULL DEFAULT 0,
       closed_by TEXT,
-      closed_at INTEGER,
+      closed_at TIMESTAMP,
       unlocked_by TEXT,
-      unlocked_at INTEGER,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+      unlocked_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL,
+      updated_at TIMESTAMP NOT NULL
     )
   `);
-  await db.run(sql`
+  await db.execute(sql`
     CREATE UNIQUE INDEX IF NOT EXISTS off_period_closure_key_idx
     ON off_period_closure (principle_code, bulan, tahun)
   `);
