@@ -62,6 +62,9 @@ assert.equal(godrejResult.kinoLines[0]?.discountAmount, 50_000);
 assert.equal(godrejResult.kinoLines[0]?.dppAmount, 950_000);
 assert.equal(godrejResult.kinoLines[0]?.taxAmount, 104_500);
 assert.equal(godrejResult.kinoLines[0]?.netAmount, 1_054_500);
+const godrejWrongUnitMapping = workbook({ "Pvt Map 1": [["Kode Pcpl", "Kode BARANG Win2", "SATUAN Fix Win"], ["40043482", "ITEM-G", "CTN"]] });
+const godrejUnitMismatch = reconcileGodrejSales(godrejAccurate, godrej, godrejWrongUnitMapping);
+assert.equal(godrejUnitMismatch.results[0]?.status, "UNIT_CONVERSION_ERROR");
 const unsupportedAdjustment = workbook({ Sheet1: [["IV_NO", "IV_DATE", "CS_NO", "PS_NO", "INV_NO", "IV_TOTPCS", "IV_PRICE", "IV_DISC1", "IV_FRA", "IV_DISC2"], ["FK/BFG-10025410", 46216, "FGC-1", "FGM-1", "40043482", 6, 1200, 5, 72, 1]] });
 assert.throws(() => reconcileGodrejSales(godrejAccurate, unsupportedAdjustment, godrejMapping), /IV_DISC2 belum memiliki aturan/);
 
