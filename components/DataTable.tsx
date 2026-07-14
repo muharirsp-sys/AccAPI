@@ -66,7 +66,7 @@ export function DataTable<TData, TValue>({
         <div className="space-y-4">
             {/* Toolbar */}
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex w-full items-center gap-2 bg-white/5 border border-white/5 rounded-lg px-3 py-2 shadow-sm focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 transition-all sm:w-72">
+                <div className="flex w-full items-center gap-2 bg-white/5 border border-white/5 rounded-lg px-3 py-2 shadow-sm focus-within:ring-2 focus-within:ring-indigo-500/50 focus-within:border-indigo-500 focus-within:outline focus-within:outline-2 focus-within:outline-indigo-500 focus-within:outline-offset-2 transition-all sm:w-72">
                     <Search className="h-4 w-4 text-slate-400" />
                     <label htmlFor={searchInputId} className="sr-only">Cari tabel</label>
                     <input

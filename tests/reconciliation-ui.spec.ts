@@ -59,6 +59,16 @@ test("shows the progressive KINO reconciliation workflow", async ({ page, baseUR
   await expect(page.getByText("Tidak ada hasil untuk filter ini.")).toBeVisible();
   await expect(page.getByText("Halaman 1 dari 0")).toHaveCount(0);
 
+  await page.getByRole("button", { name: "Tema" }).click();
+  await page.getByRole("button", { name: /Office Calm/ }).click();
+  const tableSearch = page.getByLabel("Cari tabel");
+  const searchWrapper = tableSearch.locator("xpath=..");
+  const baselineOutline = await searchWrapper.evaluate((element) => window.getComputedStyle(element).outlineStyle);
+  await tableSearch.focus();
+  const focusedOutline = await searchWrapper.evaluate((element) => window.getComputedStyle(element).outlineStyle);
+  expect(focusedOutline).not.toBe(baselineOutline);
+  expect(focusedOutline).not.toBe("none");
+
   await page.unroute("**/api/reconciliation/kino/sales");
   await page.reload();
   await page.route("**/api/reconciliation/kino/sales", route => route.fulfill({ json: { ...result, summary: { ...summary, MATCH: 1, QTY_AND_VALUE_MISMATCH: 0 }, results: [result.results[0]] } }));
