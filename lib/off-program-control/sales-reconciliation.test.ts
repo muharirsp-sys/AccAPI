@@ -20,7 +20,7 @@ const accurate = workbook({
   "Rincian Faktur Penjualan": [
     ["NO_NOTA", "TANGGAL", "KODE PELANGGAN INDUK", "KODE_SALESMAN", "KODE_BARANG", "QTY_SATUANKECIL", "SATUAN_KECIL", "NILAI JUAL", "POTONGAN", "DPP", "NILAI_PAJAK", "JUMLAH", "REM", "JENIS_TRANSAKSI"],
     ["INV-1", 46204, "C-1", "S-1", "ITEM-1", 6, "BTL", 100, 0, 100, 11, 111, "teks 1671-SOP-1 tambahan", "1. Penjualan Bruto"],
-    ["INV-2", 46204, "C-1", "S-1", "ITEM-2", 3, "TUBE", 200, 0, 200, 22, 222, "1671-SOP-2", "1. Penjualan Bruto"],
+    ["INV-2", 46204, "C-1", "S-1", "ITEM-2", 3, "TUBE", 210, 5, 205, 24, 228, "1671-SOP-2", "1. Penjualan Bruto"],
   ],
 });
 
@@ -49,10 +49,26 @@ const mapping = workbook({
 const synthetic = reconcileKinoSales(accurate, kino, mapping, { valueTolerance: 1 });
 assert.equal(synthetic.results.length, 2);
 assert.equal(synthetic.summary.MATCH, 1);
-assert.equal(synthetic.summary.QTY_MISMATCH, 1);
+assert.equal(synthetic.summary.QTY_AND_VALUE_MISMATCH, 1);
+assert.equal(synthetic.summary.QTY_MISMATCH, 0);
 assert.equal(synthetic.summary.INVALID_DATA, 0);
 assert.equal(synthetic.results.find((r) => r.internalProductCode === "ITEM-1")?.status, "MATCH");
-assert.equal(synthetic.results.find((r) => r.internalProductCode === "ITEM-2")?.quantityDifference, -1);
+const different = synthetic.results.find((row) => row.internalProductCode === "ITEM-2");
+assert.equal(different?.status, "QTY_AND_VALUE_MISMATCH");
+assert.equal(different?.quantityDifference, -1);
+assert.deepEqual(different?.amountDifferences, [
+  { component: "gross", accurate: 210, kino: 200, difference: 10 },
+  { component: "discount", accurate: 5, kino: 0, difference: 5 },
+  { component: "dpp", accurate: 205, kino: 200, difference: 5 },
+  { component: "tax", accurate: 24, kino: 22, difference: 2 },
+  { component: "net", accurate: 228, kino: 222, difference: 6 },
+]);
+assert.deepEqual(synthetic.results.find((row) => row.status === "MATCH")?.amountDifferences, []);
+
+const withinTolerance = reconcileKinoSales(accurate, kino, mapping, { valueTolerance: 10 });
+const tolerated = withinTolerance.results.find((row) => row.internalProductCode === "ITEM-2");
+assert.equal(tolerated?.status, "QTY_MISMATCH");
+assert.deepEqual(tolerated?.amountDifferences, []);
 
 const realPaths = process.argv.slice(2);
 if (realPaths.length) {

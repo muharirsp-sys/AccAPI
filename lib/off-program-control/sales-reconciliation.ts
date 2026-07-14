@@ -15,6 +15,14 @@ export type ReconciliationStatus =
   | "UNIT_CONVERSION_ERROR"
   | "INVALID_DATA";
 
+export type AmountComponent = "gross" | "discount" | "dpp" | "tax" | "net";
+export interface AmountDifference {
+  component: AmountComponent;
+  accurate: number;
+  kino: number;
+  difference: number;
+}
+
 type TransactionClass = "NORMAL" | "BONUS" | "RETURN";
 type MappingStatus = "OK" | "UNMAPPED_SKU" | "UNIT_CONVERSION_ERROR";
 type Row = unknown[];
@@ -52,6 +60,7 @@ export interface ReconciliationResult {
   accurateNet: number;
   principalNet: number;
   valueDifference: number;
+  amountDifferences: AmountDifference[];
   status: ReconciliationStatus;
   warnings: string[];
   accurateSourceRows: number[];
@@ -340,8 +349,19 @@ export function reconcileKinoSales(
     const left = accurate.get(key);
     const right = kino.get(key);
     const quantityDifference = (left?.quantity ?? 0) - (right?.quantity ?? 0);
-    const amountPairs = left && right ? [[left.gross, right.gross], [left.discount, right.discount], [left.dpp, right.dpp], [left.tax, right.tax], [left.net, right.net]] : [];
-    const valueMismatch = amountPairs.some(([a, b]) => Math.abs(a - b) > tolerance);
+    const amountPairs: Array<[AmountComponent, number, number]> = left && right ? [
+      ["gross", left.gross, right.gross], ["discount", left.discount, right.discount],
+      ["dpp", left.dpp, right.dpp], ["tax", left.tax, right.tax], ["net", left.net, right.net],
+    ] : [];
+    const amountDifferences = amountPairs
+      .filter(([, accurate, kino]) => Math.abs(accurate - kino) > tolerance)
+      .map(([component, accurate, kino]) => ({
+        component,
+        accurate: rupiah(accurate),
+        kino: rupiah(kino),
+        difference: rupiah(accurate - kino),
+      }));
+    const valueMismatch = amountDifferences.length > 0;
     let status: ReconciliationStatus;
     if (right?.mappingStatus === "UNMAPPED_SKU") status = "UNMAPPED_SKU";
     else if (right?.mappingStatus === "UNIT_CONVERSION_ERROR") status = "UNIT_CONVERSION_ERROR";
@@ -361,6 +381,7 @@ export function reconcileKinoSales(
       accurateNet: rupiah(left?.net ?? 0),
       principalNet: rupiah(right?.net ?? 0),
       valueDifference: rupiah((left?.net ?? 0) - (right?.net ?? 0)),
+      amountDifferences,
       status,
       warnings: [...new Set([...(left?.warnings ?? []), ...(right?.warnings ?? [])])],
       accurateSourceRows: left?.rows ?? [],
