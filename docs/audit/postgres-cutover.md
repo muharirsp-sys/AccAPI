@@ -3,7 +3,7 @@
 | Doc | Nilai |
 |---|---|
 | Status infra | ✅ SELESAI 2026-07-12 — PostgreSQL 16.14 jalan di VPS 43.156.118.114, container `accapi-postgres`, network `coolify` (internal-only, TANPA port publik), volume `accapi-pgdata`, kredensial di `/root/accapi-postgres.env` (chmod 600) |
-| Status kode | 🔶 GERBANG 1–3 LOLOS 2026-07-13 (branch `migrate-postgres`): schema 50 pgTable + adapter pg (tsc bersih, drizzle-kit push = 50 tabel di PG VPS); `scripts/migrate-data-to-pg.mjs` 50/50 COUNT+sampel OK; uji lokal vs PG: login, /api/auth/verify (+permissions), OPC list+create, claim workflow, insentif dashboard, FastAPI get_current_user via AUTH_VERIFY_URL — semua hijau. SISA: Gerbang 4–5 (switch production, tunggu jadwal freeze dari user) |
+| Status kode | ✅ SELESAI 2026-07-13 18:30 WITA — cutover production sukses (commit `c06faa3` di `main`). Production LIVE di Postgres: login OK, OPC/fitur OK (verifikasi user), cron sync-accurate OK (sales_invoice 180.002→180.014 baris via jalur pg baru). Insiden singkat saat cutover: init-db.mjs crash-loop ~15 menit (fix c06faa3) + Coolify sempat menimpa edit docker-compose.yml manual (diperbaiki via UI Environment Variables Coolify, bukan edit file). Detail insiden & root cause di handover berikutnya. |
 | Scheduler | ✅ `/etc/cron.d/accapi` terpasang (sync 4×/hari, cleanup harian) — teruji hit `cleanup-uploads` 200 |
 
 ## Prinsip
