@@ -2,7 +2,7 @@
  * Tujuan: Global style Tailwind dan token tema warm luxury untuk seluruh dashboard Smart ERP.
  * Caller: app/layout.tsx.
  * Dependensi: Tailwind CSS 4, ThemeSwitcher via atribut html[data-theme].
- * Main Functions: token CSS root, mapping tema, body baseline, remap utilitas warna existing.
+ * Main Functions: token CSS root, semantic cockpit layout/tab/panel/table/action/async-state classes, mapping tema, body baseline, focus-visible global, reduced-motion fallback, remap utilitas warna existing.
  * Side Effects: Mengubah tampilan global app; tidak ada DB/HTTP/file I/O.
  */
 @import "tailwindcss";
@@ -28,6 +28,19 @@
 html {
   scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
+}
+
+:where(
+  button,
+  a[href],
+  input,
+  select,
+  textarea,
+  summary,
+  [tabindex]:not([tabindex="-1"])
+):focus-visible {
+  outline: 2px solid var(--focus-ring, #2563eb);
+  outline-offset: 2px;
 }
 
 /* Prevent pull-to-refresh on mobile when scrolled to top */
@@ -90,6 +103,21 @@ body {
   animation-duration: 300ms;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* TV / large display optimizations */
 @media (min-width: 1920px) {
   html {
@@ -120,6 +148,13 @@ body {
   --font-geist-mono: "Cascadia Code", "Consolas", "SFMono-Regular", monospace;
   --background: #f7efe1;
   --foreground: #2d241b;
+  --focus-ring: #2563eb;
+  --ui-content-standard: 75rem;
+  --ui-content-wide: 112.5rem;
+  --ui-page-gutter: clamp(0.75rem, 2vw, 1.5rem);
+  --ui-section-gap: clamp(1rem, 1.8vw, 1.5rem);
+  --ui-panel-padding: clamp(1rem, 1.8vw, 1.5rem);
+  --ui-radius-panel: 1rem;
   /* Primary button (gold gradient) — single source of truth untuk seluruh web.
    * Pengecualian: rute /login tidak memakai .btn-primary. */
   --btn-primary-bg: linear-gradient(135deg, var(--luxury-gold-2), var(--luxury-gold) 52%, var(--luxury-bronze));
@@ -127,6 +162,348 @@ body {
   --btn-primary-border: rgba(242, 210, 138, 0.7);
   --btn-primary-shadow: 0 12px 26px rgba(199, 154, 63, 0.22);
   --btn-primary-shadow-hover: 0 16px 34px rgba(199, 154, 63, 0.28);
+}
+
+/* Semantic cockpit primitives: hierarchy and density shared across operational routes. */
+.ui-page-shell {
+  width: min(100%, var(--ui-content-standard));
+  margin-inline: auto;
+  padding: 0 var(--ui-page-gutter) 4rem;
+}
+
+.ui-page-shell--wide {
+  width: min(100%, var(--ui-content-wide));
+}
+
+.ui-page-header {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-block: 0.5rem 1.5rem;
+}
+
+.ui-page-heading {
+  min-width: 0;
+  max-width: 72ch;
+}
+
+.ui-page-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--luxury-text);
+  font-size: clamp(1.5rem, 2.2vw, 2rem);
+  font-weight: 850;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+.ui-page-description {
+  max-width: 68ch;
+  margin-top: 0.5rem;
+  color: var(--luxury-muted);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.ui-surface-panel {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--ui-radius-panel);
+  background: var(--surface);
+  box-shadow: 0 14px 36px rgba(122, 78, 32, 0.09);
+}
+
+.ui-panel-padding {
+  padding: var(--ui-panel-padding);
+}
+
+.ui-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  color: var(--luxury-text);
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.ui-tab-scroll {
+  margin-bottom: var(--ui-section-gap);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.ui-tab-strip {
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+  gap: 0.25rem;
+  padding: 0.375rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.875rem;
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgba(122, 78, 32, 0.07);
+}
+
+.ui-tab-button {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  border: 1px solid transparent;
+  border-radius: 0.625rem;
+  color: var(--luxury-muted);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.ui-tab-button:hover {
+  background: color-mix(in srgb, var(--luxury-gold-2) 18%, transparent);
+  color: var(--luxury-text);
+}
+
+.ui-tab-button[data-state="active"] {
+  border-color: color-mix(in srgb, var(--luxury-teal) 32%, transparent);
+  background: color-mix(in srgb, var(--luxury-teal) 12%, var(--surface));
+  color: var(--luxury-teal);
+  box-shadow: 0 6px 18px rgba(15, 118, 110, 0.1);
+}
+
+.ui-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: var(--ui-section-gap);
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.875rem;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+
+.ui-context-card {
+  display: flex;
+  min-width: 16.25rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.875rem;
+  background: var(--surface);
+}
+
+.ui-table-frame {
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--surface) 92%, white);
+}
+
+.ui-data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  color: var(--luxury-text);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-data-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: color-mix(in srgb, var(--surface-2) 92%, white);
+}
+
+.ui-data-table th {
+  padding: 0.6875rem 0.875rem;
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--luxury-subtle);
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ui-data-table td {
+  padding: 0.75rem 0.875rem;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: middle;
+}
+
+.ui-data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.ui-data-table tbody tr:hover {
+  background: color-mix(in srgb, var(--luxury-gold-2) 10%, transparent);
+}
+
+.ui-record-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--surface-2) 70%, white);
+  padding: 1rem;
+}
+
+.ui-button-primary,
+.ui-button-secondary,
+.ui-button-ghost,
+.ui-icon-button {
+  display: inline-flex;
+  min-height: 2.375rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.625rem;
+  font-size: 0.8125rem;
+  font-weight: 750;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, opacity 150ms ease;
+}
+
+.ui-button-primary {
+  border: 1px solid var(--luxury-teal);
+  background: var(--luxury-teal);
+  padding: 0.5rem 0.875rem;
+  color: #fffaf0;
+}
+
+.ui-button-primary:hover { background: #0b665f; }
+.ui-button-primary:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.ui-button-secondary {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  padding: 0.5rem 0.875rem;
+  color: var(--luxury-text);
+}
+
+.ui-button-secondary:hover { background: var(--surface-2); }
+
+.ui-button-ghost {
+  border: 1px solid transparent;
+  padding: 0.5rem 0.625rem;
+  color: var(--luxury-muted);
+}
+
+.ui-button-ghost:hover { background: var(--surface-2); color: var(--luxury-text); }
+
+.ui-icon-button {
+  width: 2.375rem;
+  padding: 0;
+  border: 1px solid transparent;
+  color: var(--luxury-muted);
+}
+
+.ui-icon-button:hover { border-color: var(--border-soft); background: var(--surface-2); color: var(--luxury-text); }
+
+.ui-button-primary:active,
+.ui-button-secondary:active,
+.ui-button-ghost:active,
+.ui-icon-button:active {
+  transform: translateY(1px);
+}
+
+.ui-state-panel {
+  width: 100%;
+  min-height: 12rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(1.25rem, 3vw, 2rem);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--ui-radius-panel);
+  background: var(--surface);
+}
+
+.ui-state-panel--embedded {
+  min-height: 6rem;
+  padding: 1rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.ui-state-panel--error {
+  border-color: color-mix(in srgb, #b42318 35%, var(--border-strong));
+  background: color-mix(in srgb, #fef3f2 72%, var(--surface));
+}
+
+.ui-state-panel--empty {
+  border-style: dashed;
+  text-align: center;
+  align-items: center;
+}
+
+.ui-state-title {
+  color: var(--luxury-text);
+  font-size: 0.9375rem;
+  font-weight: 800;
+}
+
+.ui-state-message {
+  max-width: 58ch;
+  margin-top: 0.375rem;
+  color: var(--luxury-muted);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.ui-skeleton-stack {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ui-skeleton {
+  display: block;
+  width: 100%;
+  height: 0.75rem;
+  border-radius: 0.375rem;
+  background: color-mix(in srgb, var(--luxury-gold-2) 22%, var(--surface-2));
+}
+
+.ui-skeleton--title {
+  width: min(16rem, 46%);
+  height: 1.125rem;
+  margin-bottom: 0.25rem;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ui-skeleton {
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--luxury-gold-2) 16%, var(--surface-2)) 20%,
+      color-mix(in srgb, var(--luxury-gold-2) 34%, var(--surface)) 42%,
+      color-mix(in srgb, var(--luxury-gold-2) 16%, var(--surface-2)) 64%
+    );
+    background-size: 240% 100%;
+    animation: ui-skeleton-shift 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes ui-skeleton-shift {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@media (min-width: 64rem) {
+  .ui-page-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 40rem) {
+  .ui-page-shell { padding-inline: 0.5rem; }
+  .ui-tab-button { min-height: 2.75rem; }
+  .ui-toolbar > select { flex: 1 1 9rem; }
 }
 
 .btn-primary {
@@ -2492,4 +2869,3 @@ html[data-theme="ios"] *::selection {
   background-color: rgba(67, 94, 190, 0.52);
   color: #111827;
 }
-

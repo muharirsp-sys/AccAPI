@@ -1,3 +1,10 @@
+<!--
+Tujuan: Peta navigasi arsitektur, alur fungsi, dan status modul utama repository.
+Caller: Developer/agent sebelum trace, analisis, atau perubahan kode.
+Dependensi: Struktur source repository dan flow runtime yang telah diverifikasi.
+Main Functions: Menunjukkan entry point, handler, business logic, data access, storage, dan test kunci.
+Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan saat flow berubah.
+-->
 # SYSTEM_MAP.md
 > Navigasi utama proyek — dibuat otomatis via trace-by-function/flow.
 > Update file ini setiap kali ada modul baru atau perubahan arsitektur signifikan.
@@ -172,65 +179,119 @@ Browser -> NEXT_PUBLIC_FASTAPI_BASE_URL (port 8000)
 ### 7. Dashboard Generator Desktop (Fase 2-8)
 ```
 User -> dashboard-generator/app.py [pywebview desktop window]
-  -> dashboard-generator/index.html [sidebar + upload UI]
+  -> dashboard-generator/index.html [sidebar terkelompok + upload UI]
+     -> Pembelian [Dashboard Pembelian, Retur Pembelian, dan Outstanding PO aktif]
+     -> Penjualan / Laba Rugi [Dashboard Penjualan, Laba Rugi, Retur, Outstanding SO]
+     -> Persediaan [Dashboard Posisi Stok, Analisa Stok]
+     -> Keuangan [Dashboard Umur Hutang dan Umur Piutang aktif]
+     -> Cross Analysis [Stok vs Analisa; Retur Jual vs Outs SO; Penjualan vs Laba Rugi; Kandidat Discontinue disembunyikan sementara, engine tetap ada]
 
 Single report:
-  -> Api.pick_file() [native Excel file dialog]
+  -> Api.pick_file() [native dialog XLS/XLSX/CSV/TSV untuk seluruh dashboard aktif]
   -> Api.generate(path, selected_type)
      -> detector.detect_report_type_from_file(path, preferred_jenis=selected_type)
-        [scan header semua sheet, kumpulkan semua sheet yang cocok dengan dashboard dipilih]
-     -> read_detected_sheets(path, result)
-        [pandas.read_excel per sheet cocok, baca kolom terpakai saja, concat jika >1 sheet]
-     -> module.generate_dashboard(df)
-        modules: penjualan, labarugi, stok, analisa, retur, outstanding, umur_piutang
+        [Excel: scan header semua sheet; CSV/TSV: baca header saja]
+     -> CSV/TSV atau XLSX >=64 MiB: pilih adapter large menurut jenis laporan
+        -> Penjualan: penjualan_large.build_data_from_file(path, sheet_names, header_rows)
+        -> Pembelian/LabaRugi/Retur Penjualan/Retur Pembelian/OutstandingSO: large_operational.build_data_from_file(...)
+        -> PosisiStok/AnalisaStok/OutstandingPO/UmurPiutang/UmurHutang: large_inventory_finance.build_data_from_file(...)
+        [DuckDB memory limit 1 GB; CSV/TSV out-of-core; XLSX streaming 50.000 baris -> DB temporer]
+     -> XLS/XLSX kecil: read_detected_sheets(path, result)
+        [pandas.read_excel memakai offset header masing-masing sheet, baca kolom terpakai saja, concat jika >1 sheet]
+     -> module.generate_dashboard(df) atau LARGE_RENDERERS[jenis](data)
+         modules: pembelian, penjualan, labarugi, stok, analisa, retur, retur_pembelian, outstanding, outstanding_po, umur_piutang, umur_hutang
   <- HTML preview in iframe + optional export_html()
 
-Cross-analysis (Fase 7):
-  -> Api.pick_files() [multi-file Excel dialog]
-  -> Api.generate_cross(paths)
+Cross-analysis + Data Alchemist (Fase 7+):
+  -> Api.pick_files() [multi-file XLS/XLSX/CSV/TSV]
+   -> Api.generate_cross(paths, cross_type)
      -> detector.detect_report_type_from_file(path) per file
      -> reject duplicate report type / unknown signature
-     -> reject cepat kombinasi tanpa pasangan detail aktif (tanpa baca full data)
-     -> read_detected_sheets(path, result) per detected report
-     -> cross_analysis.generate_dashboard({jenis: DataFrame})
-        -> overlap matrix first
-        -> detail sections only when overlap is real:
-           Posisi Stok x Analisa Stok, Retur x Outstanding SO, Penjualan x Laba Rugi
-  <- CrossAnalysis HTML preview + optional export_html()
+      -> reject cepat bila 2+ jenis file tidak sama dengan kebutuhan menu yang dipilih
+     -> bila salah satu CSV/TSV atau XLSX >=64 MiB:
+        -> cross_large.build_cross_data_from_files(report_infos, cross_type)
+        -> agregasi setiap sumber pada SKU/produk/customer di DuckDB sebelum join pandas
+     -> selain itu: read_detected_sheets(path, result)
+        -> CrossLifecycle: cross_lifecycle.build_data(...) -> render_html(...)
+        -> Cross 2-file lama: cross_analysis.build_data(...) -> render_html(...)
+         -> satu analisis spesifik per menu; CrossLifecycle memakai outer join tiga sumber pada Kode Barang
+         -> export_rows berisi seluruh hasil gabungan, bukan hanya ranking HTML
+  <- HTML preview + export_html()
+  -> Api.export_cross_excel()
+     -> cross_excel.write_cross_workbook(data, cross_type, path)
+     -> Ringkasan formula-driven + detail penuh + chart prioritas + Kamus Data
+  <- workbook .xlsx
 ```
 
 | File | Fungsi Utama | Peran |
 |---|---|---|
-| `dashboard-generator/app.py` | `READ_COLUMNS`, `read_detected_sheets`, `Api.generate`, `Api.generate_cross`, `main` | Entrypoint desktop pywebview; single-file dan multi-file workflow; gabungkan semua sheet sejenis dalam workbook sambil membaca hanya kolom terpakai; CrossAnalysis reject cepat kombinasi yang belum didukung |
-| `dashboard-generator/index.html` | sidebar, picker, preview iframe | UI lokal tanpa web server; tanpa hardcoded nama perusahaan; CrossAnalysis memakai multi-file picker + hint pasangan aktif; label user-facing: `Laba Rugi Penjualan`, `Retur Penjualan`, `Umur Piutang` |
-| `dashboard-generator/detector.py` | `detect_report_type_from_file`, `detect_report_sheets_from_file` | Signature kolom, bukan nama file; scan semua sheet header-only dan kembalikan `sheet_names` semua sheet cocok; Laba Rugi menerima alias HPP `JUM HPP`/`Nilai HPP`; prioritas UmurPiutang/Retur/Outstanding sebelum Penjualan |
+| `dashboard-generator/app.py` | `READ_COLUMNS`, `LARGE_RENDERERS`, `large_source_args`, `CROSS_REQUIREMENTS`, `Api.generate`, `Api.generate_cross`, `Api.export_cross_excel`, `main` | Entrypoint desktop; routing jalur kecil/besar, validasi kebutuhan 2+ laporan per Cross, simpan dataset Cross terakhir, export HTML/XLSX |
+| `dashboard-generator/index.html` | `MENU_GROUPS`, `CROSS_TYPES`, `CROSS_FILE_COUNTS`, sidebar, picker, export handlers | Lima kelompok client; 14 menu aktif ditampilkan; CrossLifecycle disembunyikan sementara tetapi konfigurasi/engine 3 file tetap ada |
+| `dashboard-generator/detector.py` | `detect_report_type_from_file`, `detect_report_sheets_from_file` | Signature kolom, bukan nama file; mengenali alias export Pembelian (`No.Jurnal`/Bruto/Pajak), PO langsung, Retur Pembelian, dan Umur Hutang; memilih sheet kanonik Pembelian/Master; header-offset per sheet; header-only CSV/TSV |
+| `dashboard-generator/pembelian.py` | `build_data`, `render_html`, `generate_dashboard` | Pembelian setelah PPN: `Nilai Bruto - Nilai Disc + Nilai Pajak` bila DPP tidak tersedia, atau DPP + PPN unik dokumen; alokasi PPN proporsional; GOL/JENIS/PCL opsional dan kosong diberi notifikasi |
+| `dashboard-generator/penjualan.py` | `build_data`, `render_html`, `generate_dashboard` | Penjualan setelah PPN (`Bruto - Diskon + Pajak`) untuk semua nilai; Ringkasan Market/Region/Gol/PCL; one-look dan formula hover |
+| `dashboard-generator/penjualan_large.py` | `should_use_large_reader`, `build_data_from_file` | Engine DuckDB/streaming Penjualan multi-GB; offset header per sheet; schema parity Ringkasan Market/Region/Gol/PCL; filter footer `No Invoice` |
+| `dashboard-generator/large_source.py` | `ColumnSpec`, `SourceMeta`, `open_large_source` | Reader bersama: CSV/TSV DuckDB out-of-core, XLSX read-only per 50.000 baris, XLS legacy fallback; DB temporer dan memory limit 1 GB |
+| `dashboard-generator/large_operational.py` | `build_data_from_file` | Adapter large Pembelian, Laba Rugi, Retur Penjualan/Pembelian, dan Outstanding SO; HPP satuan dihitung di query sebagai HPP x Qty tanpa materialisasi tabel 5 GB |
+| `dashboard-generator/large_inventory_finance.py` | `build_data_from_file` | Adapter large Posisi Stok, Analisa Stok, Outstanding PO, Umur Piutang, dan Umur Hutang; agregasi NULL-safe dan offset multi-sheet |
 | `dashboard-generator/shared.py` + `assets/echarts.min.js` | `inline_echarts` | Chart ECharts dibundel lokal dan diinjeksi inline agar preview/export jalan offline tanpa CDN |
-| `dashboard-generator/umur_piutang.py` | `build_data`, `generate_dashboard` | Dashboard Umur Piutang: aging bucket, customer exposure, prioritas collection, salesman, wilayah/job, tipe dokumen |
+| `dashboard-generator/hpp.py` | `normalise_hpp_frame`, `hpp_sql_expression`, `hpp_uses_unit` | Kontrak HPP bersama: `Nilai HPP x Qty`; `JUM HPP` menjadi kontrol/fallback total dan tidak pernah dikalikan ulang |
+| `dashboard-generator/labarugi.py` | `build_data`, `render_html`, `generate_dashboard` | Laba Rugi: `Nilai Jual - (HPP Satuan x Qty) - Biaya Lain = Laba`; rekonsiliasi ke HPP total sumber, Ringkasan Market/Gol, formula hover |
+| `dashboard-generator/stok.py` + `analisa.py` | `build_data`, `render_html`, `generate_dashboard` | Dashboard persediaan: rekonsiliasi snapshot/nilai/qty, insight satu-lihat, formula KPI/chart saat hover tanpa menciptakan harga per unit semu |
+| `dashboard-generator/retur.py` + `outstanding.py` | `build_data`, `render_html`, `generate_dashboard` | Retur memakai nilai setelah PPN (`Bruto - Disc + Pajak`); Outstanding SO menampilkan aging dari tanggal laporan dikurangi tanggal order; keduanya punya rekonsiliasi dan formula hover |
+| `dashboard-generator/retur_pembelian.py` | `build_data`, `render_html`, `generate_dashboard` | Retur Pembelian setelah PPN: `Nilai Bruto - Nilai Disc + Nilai Pajak`, supplier/item/jenis/gudang, dan formula hover |
+| `dashboard-generator/outstanding_po.py` | `build_data`, `render_html`, `generate_dashboard` | Outstanding PO menerima legacy `Sisa` + QC `Order-Kirim-Batal-Reject` atau export langsung `Qty Outstanding x Harga PO`; status PPN tidak diklaim tanpa kolom sumber |
+| `dashboard-generator/umur_piutang.py` | `build_data`, `generate_dashboard` | Dashboard Umur Piutang: `Debit - Kredit/Retur = Piutang Net`, rekonsiliasi 5 aging bucket, formula hover; tanggal laporan mode hanya diklaim konsisten bila semua baris sama |
+| `dashboard-generator/umur_hutang.py` | `build_data`, `render_html`, `generate_dashboard` | Dashboard Umur Hutang: `-Nilai` kredit sumber menjadi Hutang Net positif, rekonsiliasi 5 bucket aging, supplier/akun/kota, dan formula hover |
 | `dashboard-generator/test_umur_piutang.py` | `main` | Self-check Umur Piutang dengan sample XLS nyata dan validasi output offline |
-| `dashboard-generator/cross_analysis.py` | `has_supported_pair`, `build_data`, `generate_dashboard` | Fase 7 overlap-check, daftar pasangan detail aktif, dan render cross-analysis |
+| `dashboard-generator/cross_analysis.py` | `has_supported_pair`, `build_data`, `render_html` | Stok memakai union/overlap Kode SKU; Retur memakai nilai setelah PPN; Penjualan-vs-Laba Rugi memakai HPP grain-aware dan merupakan rekonsiliasi selisih dengan kontrol periode |
+| `dashboard-generator/cross_lifecycle.py` | `master_status_labels`, `build_data`, `build_from_aggregates`, `render_html` | Cross tiga sumber Penjualan × Posisi Stok × Master Barang; tujuh status item, guardrail periode 90 hari, formula hover, dan chart offline |
+| `dashboard-generator/cross_excel.py` | `build_cross_workbook`, `write_cross_workbook` | Workbook Data Alchemist 2+ sumber dengan formula detail/ringkasan, filter/table, conditional formatting, chart, dan kamus definisi |
+| `dashboard-generator/cross_large.py` | `should_use_large_cross`, `build_cross_data_from_files` | Cross multi-GB 2+ sumber; agregasi sebelum join, termasuk HPP satuan x Qty di DuckDB, dengan kontrak data sama untuk HTML/Excel |
+| `dashboard-generator/test_procurement_finance_exports.py` | `main` | Self-check deteksi, formula, render offline, adapter large, dan sample nyata empat export baru |
+| `dashboard-generator/PANDUAN_RUMUS_DASHBOARD.md` | panduan dashboard, mode multi-GB, roadmap Cross | Dokumen client untuk grain, rumus, status PPN, batas interpretasi, dan saran Data Alchemist |
 | `dashboard-generator/test_cross_analysis.py` | `demo` | Self-check Fase 7 dengan 6 sample XLS nyata |
+| `dashboard-generator/test_cross_excel.py` | `main` | Roundtrip tiga workbook Cross: detail penuh, formula audit, tabel, chart, dan sheet kamus |
+| `dashboard-generator/test_cross_lifecycle.py` | `main` | Self-check Cross tiga laporan: tujuh klasifikasi, outer join SKU, parity DuckDB, HTML offline, dan Excel formula-driven |
+| `dashboard-generator/test_pembelian.py` | `main` | Self-check PPN dokumen, dimensi opsional/notifikasi, formula setelah PPN, dan sample Faktur Pembelian nyata |
+| `dashboard-generator/test_large_operational.py` + `test_large_inventory_finance.py` | `main` | Parity adapter large untuk delapan dashboard non-Penjualan lewat CSV/TSV/XLS/XLSX dan offset header/multi-sheet |
+| `dashboard-generator/test_cross_large.py` + `test_large_app_routing.py` | `main` | Parity Cross large dan smoke routing API desktop untuk Cross dua maupun tiga laporan ke HTML/Excel-ready |
+| `dashboard-generator/test_outstanding_po.py` | `main` | Self-check Outstanding PO termasuk formula QC dan catatan PPN |
 | `dashboard-generator/test_multisheet_dashboard.py` | `demo` | Self-check workbook multi-sheet sejenis dibaca dan digabung ke dashboard |
 | `dashboard-generator/test_no_company_branding.py` | `main` | Self-check agar source/output dashboard generator tidak membawa hardcoded nama perusahaan internal |
-| `dashboard-generator/DashboardGenerator.spec` | PyInstaller build graph | Fase 8 build command: `python -m PyInstaller DashboardGenerator.spec --noconfirm --clean`; output `dist/DashboardGenerator.exe`; include `index.html` + `assets/echarts.min.js` |
+| `dashboard-generator/DashboardGenerator.spec` | PyInstaller build graph | Build satu-file `dist/DashboardGenerator.exe`; include UI/ECharts offline serta runtime pandas/xlrd/openpyxl/DuckDB untuk jalur file besar |
 
 ---
 
-## Summary Program — Determinisme Pipeline (FASE 1–5)
+## Summary Program — Determinisme Pipeline (FASE 1–6 + Pass 3)
 
 **Masalah:** surat program (foto/PDF scan) → Dataset Diskon (xlsx) + Form Summary (PDF) via OCR+LLM
 non-deterministik: dokumen SAMA bisa keluar hasil BEDA tiap run (tier bergeser, varian ditebak,
-baris ke-split). Solusi: buang keputusan LLM dari jalur yang harus pasti, ganti dgn lookup/parser
-deterministik + snapshot regresi. Semua modul additive (jalur lama tetap sbg fallback).
+baris ke-split, byte file beda). Solusi: buang keputusan LLM dari jalur yang harus pasti, ganti dgn
+lookup/parser deterministik + freeze cache + snapshot regresi + netralisir non-determinisme
+byte-level. Semua modul additive (jalur lama tetap sbg fallback). Refactor F10: logic ini semua
+hidup di `python_backend/routers/summary.py` (BUKAN `main.py`, yang kini 559 baris app-setup saja).
 
 ```
-surat (bytes)
+surat (bytes) + principle_name
+  │  parse_key = sha256(bytes + "|" + PRINCIPLE_UPPER)
+  ▼
+[FASE 1b] parse_cache.py ── cache hit? ── ya ─▶ rows FINAL BEKU (0 panggilan API sama sekali)
+  │ tidak:
   │  ocr_cache_key = sha256(bytes)
   ▼
-[FASE 1] ocr_cache.py ── cache hit? ── ya ─▶ teks OCR BEKU (Gemini 0 panggilan, determinis)
+  [FASE 1] ocr_cache.py ── cache hit? ── ya ─▶ teks OCR BEKU (Gemini 0 panggilan, determinis)
   │ tidak: OCR per-halaman (gemini) → simpan (freeze, tak pernah ditimpa)
   ▼
-LLM parse per-channel (gpt-4.1-mini)  →  rows  →  _apply_native_kelompok (match ke master)
-  │                                                    │
+LLM parse per-channel (gpt-4.1-mini, 1 chunk = 1 channel biar tak kehabisan max_tokens)
+  ▼
+Pass 3 self_correction.py :: verify_and_correct_rows  (SUMMARY_SELF_CORRECT=1 default)
+  editor QA PATCH-BASED: model HANYA boleh kirim {id, field, to, alasan} atas field di
+  _PATCHABLE_FIELDS (ketentuan/benefit/kelompok/variant/gramasi/...). DILARANG tambah/hapus
+  baris atau sentuh id/kode_barangs. Patch invalid/id asing/gagal apa pun → rows utuh (no-op).
+  Log SELALU (termasuk 0 patch) → "editor bersih" beda dari "editor gagal diam-diam".
+  ▼
+_apply_native_kelompok (match ke master)
   │                            [FASE 3b] variant_resolver.py + variant_mapping.json
   │                            resolusi varian via TABEL deklaratif (bukan tebakan LLM):
   │                            cth "Spray Cologne Series" → White+Black SR (GLASS excluded),
@@ -242,16 +303,24 @@ LLM parse per-channel (gpt-4.1-mini)  →  rows  →  _apply_native_kelompok (ma
   di-override & baris ber-tier sama DIGABUNG (fix Bellagio EDT & EDP Prestige ke-split).
   Ragu → kode TIDAK disentuh (no silent guess).
   ▼
+[FASE 1b] parse_cache_put(rows final) — freeze; run ke-2 dok+principle sama = 0 API total
+  ▼
 summary_manual_generate → excel_rows (single source of truth utk Excel + PDF)
   │  guard V3b (cross-check gramasi), V4 (buang duplikat lintas-tier)
   │
-  │  [FASE 4b] correction_store.py :: apply_corrections
+  │  [FASE 4b] correction_store.py :: apply_corrections (alias apply_stable_corrections)
   │  override koreksi manusia (tombol "Laporkan Salah") via STABLE KEY
   │  (kode_barang, channel, no_surat) — BUKAN index baris (aman walau urutan OCR beda).
-  │  Menang atas hasil apa pun.
+  │  Menang atas hasil apa pun. Sejak wiring endpoint report_correction: field yg berubah
+  │  di tabel edit disimpan otomatis ke sini (SELAIN hint lama parse_corrections.jsonl).
+  ▼
+[FASE 6] deterministic_output.py — netralisir non-determinisme BYTE-LEVEL (bukan cuma isi):
+  enable_pdf_determinism() sblm doc.build (ReportLab rl_config.invariant=1 → CreationDate/
+  doc-id reproducible). finalize_xlsx(path) setelah wb2.save (openpyxl timpa
+  docProps/core.xml modified=now() tiap save + timestamp entry-zip acak → dipaku tetap).
   ▼
 [FASE 5] golden_store.py :: golden_check_and_freeze
-  input_key = sig(rows murni) ; output_sig = sig(excel_rows).
+  input_key = sig(rows murni, SEBELUM mutasi apa pun) ; output_sig = sig(excel_rows).
   new = dibekukan | match = deterministik terbukti | drift = input SAMA output BEDA (regresi,
   dilaporkan, golden TIDAK ditimpa; refresh butuh approve_golden manual).
   response.determinism = new|match|drift
@@ -260,14 +329,19 @@ summary_manual_generate → excel_rows (single source of truth utk Excel + PDF)
 | File | Fungsi Utama | Peran |
 |---|---|---|
 | `python_backend/ocr_cache.py` | `ocr_cache_key`, `ocr_cache_get/put` | FASE 1: cache OCR by content-hash, freeze-on-first-write (run ke-2 dok sama = 0 panggilan Gemini) |
+| `python_backend/parse_cache.py` | `parse_cache_key`, `parse_cache_get/put` | FASE 1b: freeze rows FINAL per (doc_hash, principle) — run ke-2 = 0 panggilan API sama sekali (bukan cuma OCR) |
 | `python_backend/tier_parser.py` | `parse_positional_tables`, `match_item_to_tablerow`, `regroup_rows_by_tier` | FASE 2/2b: tier dari POSISI tabel OCR (no LLM); regroup baris LLM ke tier otoritatif; self-check `__main__` |
 | `python_backend/variant_resolver.py` + `variant_mapping.json` | `load_variant_mapping`, `resolve_variant` | FASE 3/3b: resolusi varian via tabel deklaratif; None = fallback; anti-halusinasi |
-| `python_backend/correction_store.py` | `save_correction`, `apply_corrections`, `correction_key` | FASE 4: koreksi manusia stable-key, override deterministik (bukan hint prompt) |
+| `python_backend/correction_store.py` | `save_correction`, `apply_corrections`, `correction_key` | FASE 4/4b: koreksi manusia stable-key, override deterministik (bukan hint prompt); ditulis otomatis dari endpoint `report_correction` |
 | `python_backend/golden_store.py` | `canonical_signature`, `golden_check_and_freeze`, `approve_golden` | FASE 5: snapshot determinisme; deteksi drift output utk input identik; self-check `__main__` |
+| `python_backend/deterministic_output.py` | `enable_pdf_determinism`, `finalize_xlsx` | FASE 6: paku non-determinisme BYTE-LEVEL (ReportLab doc-id/CreationDate; openpyxl zip-timestamp + `docProps/core.xml`). **Bug ditemukan+diperbaiki 2026-07-13**: `\1`/`\2` di replacement regex diikuti digit literal ditafsir Python `re` sbg backreference/octal → `docProps/core.xml` corrupt (file tak bisa dibuka) walau tetap "byte-identik" antar-run (self-check lama cuma cek hash, tak cek well-formed). Fix: `\g<1>`/`\g<2>`; self-check kini juga `load_workbook` ulang + parse XML. |
+| `python_backend/self_correction.py` | `verify_and_correct_rows` | Pass 3 (arsitektur ala Reducto): editor LLM QA PATCH-BASED atas hasil parse; whitelist field, dilarang sentuh id/kode_barangs/jumlah baris; gagal apa pun → no-op; `SUMMARY_SELF_CORRECT=0` utk nonaktifkan |
 
-Titik integrasi di `main.py`: import blok FASE 1–5 (~baris 41), `regroup_rows_by_tier` setelah
-`_apply_native_kelompok` di `summary_manual_parse_pdf_ai`, `apply_stable_corrections` + golden
-check di `summary_manual_generate`.
+Titik integrasi (F10: **BUKAN** `main.py`, lihat `python_backend/routers/summary.py`):
+import blok FASE 1/1b/2b/3b/4b/5/6 + Pass 3 di `shared.py` (~baris 19–25) & re-export ke router;
+`parse_cache_get` di awal + Pass 3 + `regroup_rows_by_tier` + `parse_cache_put` di akhir
+`summary_manual_parse_pdf_ai`; `apply_stable_corrections` + `enable_pdf_determinism`/`finalize_xlsx`
++ golden check di `summary_manual_generate`.
 
 ---
 
@@ -365,7 +439,7 @@ AccAPI/_github_clean/
 │                   └── members/route.ts # POST add / DELETE remove user dari group
 ├── components/
 │   ├── SidebarLayout.tsx               # Shell navigasi dashboard
-│   ├── DataTable.tsx                   # TanStack Table reusable
+│   ├── DataTable.tsx                   # TanStack Table reusable; caption, loading/live status, kolom, pagination aksesibel
 │   ├── AccessDenied.tsx                # Pesan "Akses ditolak" eksplisit (guard layout + page admin)
 │   ├── PWAInstallPrompt.tsx
 │   ├── ServiceWorkerRegistration.tsx
@@ -374,7 +448,7 @@ AccAPI/_github_clean/
 │   │   ├── OffBreadcrumb.tsx
 │   │   ├── OffGlobalSearch.tsx
 │   │   └── OffNotificationBell.tsx
-│   └── ui/                             # Input, Select, DatePickerField, AsyncSearchSelect
+│   └── ui/                             # Input, Select, DatePickerField (dialog kalender + keyboard), AsyncSearchSelect, Dialog native, AsyncState bersama
 ├── lib/
 │   ├── auth.ts                         # Konfigurasi Better Auth server
 │   ├── auth-client.ts                  # Better Auth client (browser)
@@ -392,6 +466,7 @@ AccAPI/_github_clean/
 │   ├── off-program-control/
 │   │   ├── index.ts                    # Re-export barrel
 │   │   ├── access.ts                   # resolveOffRole, canPerformOffAction
+│   │   ├── dev-fixtures.ts              # `?mock=N` development-only; generator maksimum 2.000 batch OFF in-memory
 │   │   ├── workflow.ts                 # canProcessFinancePayment, computeBatchProgress
 │   │   ├── data.ts                     # getBatchWithItems, findOffNoSuratConflicts
 │   │   ├── helpers.ts                  # requireOffSession, writeOffAudit, publicBatch
@@ -432,6 +507,9 @@ AccAPI/_github_clean/
 │   ├── migrate-local.mjs               # Migrasi lokal (dev)
 │   ├── migrate-opc-columns.mjs         # Migrasi kolom OPC
 │   ├── seed-opc-dummy.mjs              # Seed 1.275 dummy batch OPC (testing)
+│   ├── test-phase0-ui-guards.mjs        # Regression guard trust/persistence UI Fase 0
+│   ├── test-phase5-build-guards.mjs     # Guard dashboard dinamis + standalone tidak menyalin seluruh project root
+│   ├── test-phase7-interaction-guards.mjs # Guard target sentuh, keyboard kalender, dan shell Laporan Harian
 │   └── test-r7*.mjs                    # Test script Phase R7 claim workflow
 ├── config/                             # Konfigurasi static (principles, dll)
 ├── public/                             # Static assets, icons, SW
@@ -459,7 +537,7 @@ AccAPI/_github_clean/
 | `lib/rbac/registry.ts` | `PERMISSION_REGISTRY`, `allPermissionKeys`, `isValidPermissionKey` | **Sumber tunggal** 85 permission key (`module.action`). Zero import — pure data. Test-guard scan semua route.ts saat CI |
 | `lib/rbac/resolve.ts` | `getUserPermissions`, `requirePermission`, `requirePermissionH`, `resolveRequestPermissions`, `resolveRequestPermissionsH` | Union resolver: DB group + legacy role/permissions. Guard endpoint default-deny. `requirePermissionH` untuk route pakai `next/headers` |
 | `lib/rbac/registry.test.ts` | self-check script | Validasi integritas registry + scan semua route.ts: gagal jika ada key tidak terdaftar. Jalankan: `node --experimental-strip-types lib/rbac/registry.test.ts` |
-| `app/(dashboard)/layout.tsx` | `DashboardLayout` | Guard semua halaman dashboard: session check + RBAC path check |
+| `app/(dashboard)/layout.tsx` | `DashboardLayout`, `dynamic = "force-dynamic"` | Guard semua halaman dashboard: session check + RBAC path check; selalu render per request karena membaca header/session |
 | `app/(dashboard)/admin/users/` | `UserManagement` | UI kelola user internal, set role, set legacy custom permission |
 | `app/(dashboard)/admin/groups/` | `GroupManagement` | **UI Dynamic RBAC**: buat/edit Access Group, assign permission key per group, assign user ke group |
 | `app/api/auth/[...all]/route.ts` | Better Auth catch-all | Mount semua endpoint auth Better Auth |
@@ -486,7 +564,28 @@ AccAPI/_github_clean/
 | `app/api/off-program-control/batches/[id]/claim-review/route.ts` | `POST` | Review & approve Claim |
 | `app/api/off-program-control/batches/[id]/finance-payment/route.ts` | `POST` | Input pembayaran Finance |
 | `app/api/off-program-control/batches/[id]/refund/route.ts` | `POST` | Submit refund kelebihan bayar |
-| `app/(dashboard)/off-program-control/page.tsx` | `OffProgramControlPage` + tab components | Cockpit OPC full — semua role, semua tab, form/tabel per role |
+| `app/(dashboard)/off-program-control/page.tsx` | `OffProgramControlPage` + tab components | Cockpit OPC full; data runtime hanya dari API dan error tidak diganti fixture. Untuk stress test UI lokal, `?mock=N` mengaktifkan maksimum 2.000 batch sintetis in-memory hanya pada development; bulk SPV tetap mulai dari baris kosong. Tab dan detail batch tersinkron ke query URL, tab mendukung roving keyboard, overlay kritis memakai Dialog native bersama, hierarchy/density memakai semantic cockpit tokens, shell sesi memakai loading skeleton |
+
+### Form Kontrol
+
+| File | Fungsi Utama | Peran |
+|---|---|---|
+| `app/(dashboard)/form-kontrol/page.tsx` | `FormKontrolPage`, `loadScope`, `selectTab` | Memuat `/api/form-kontrol/my-scope` secara fail-closed; loading memakai skeleton, error punya retry, lalu tab dibuka sesuai role dan tersinkron ke query URL |
+| `app/(dashboard)/form-kontrol/visit/[custCode]/page.tsx` | `VisitWizardPage`, `PhotoInput` | Flow check-in -> status order -> simpan merchandising -> check-out; langkah hanya maju sesudah persistence sukses |
+| `components/form-kontrol/camera-capture.tsx` | `CameraCapture` | Kamera/pratinjau foto dalam Dialog native; tetap terbuka dan dapat retry sampai callback upload+persistence resolve |
+| `components/ui/Dialog.tsx` | `Dialog` | Primitive modal native bersama: focus trap/restoration browser, Escape, label/deskripsi, dan backdrop opsional |
+| `components/DataTable.tsx` | `DataTable` | Tabel generik dengan caption, status live, loading skeleton, empty state eksplisit, sorting semantik, kontrol kolom/pagination aksesibel, sticky header, dan density baris konsisten |
+| `components/off-program-control/OffGlobalSearch.tsx` | `OffGlobalSearch` | Quick jump OFF via Ctrl/Cmd+K; combobox/listbox mendukung Arrow, Home/End, Enter, dan Escape tanpa mengambil alih Ctrl/Cmd+F browser; hasil membuka deep-link batch di overview |
+| `components/off-program-control/OffNotificationBell.tsx` | `OffNotificationBell` | Ringkasan masalah SLA dengan progressive disclosure dan aksi langsung membuka batch terkait tanpa pencarian ulang |
+| `app/(dashboard)/insentif-sales/page.tsx` | `InsentifSalesPage`, `updateContext` | View serta filter principle/cabang tersinkron ke query URL; dashboard/finance memakai loading skeleton, error recovery, empty state reset, dan seluruh tabel memakai density semantic bersama |
+| `app/globals.css` | semantic cockpit classes | Sumber token lebar halaman, spacing, radius, page hierarchy, tab, toolbar, panel, tabel, dan action hierarchy untuk route operasional |
+| `components/ui/AsyncState.tsx` | `LoadingState`, `ErrorState`, `EmptyState` | Primitive feedback async bersama; skeleton mengikuti reduced-motion, error meneruskan retry, empty state dapat membawa recovery action |
+
+### Payments UI Safety
+
+| File | Fungsi Utama | Peran |
+|---|---|---|
+| `app/(dashboard)/payments/page.tsx` | `fetchData`, `handleSaveBulk`, `handleSubmitCart` | Refresh focus/visibility ditahan saat ada edit lokal; perubahan wajib tersimpan sebelum draft cart dibuat |
 
 ### Claim Workflow
 
@@ -643,6 +742,8 @@ permission_audit_log [siapa ubah group/permission siapa, kapan]
 
 ## Insentif Sales — Kalkulasi Insentif
 
+UI Finance di `app/(dashboard)/insentif-sales/page.tsx` memakai key seleksi `salesCode::principle`, memproses pembayaran dengan `Promise.allSettled`, mempertahankan pilihan yang gagal, dan membedakan error API dari status `belum`.
+
 Dua model insentif hidup berdampingan, dipisah oleh `channel`:
 
 | Model | Berlaku | Logic | File |
@@ -723,10 +824,10 @@ RBAC: module `sales_history` (`view`/`export`/`manage`) di `lib/rbac/registry.ts
 
 ---
 
-## Laporan Harian per SPV/SM (Daily Report Pipeline) — 🟠 IN PROGRESS (Tahap 0–4 selesai)
+## Laporan Harian per SPV/SM (Daily Report Pipeline) — IMPLEMENTED (Tahap 0–4)
 
-> Blueprint desain — belum ada kode. Menggantikan pipeline Excel lama (Power Query `2.3 To SPV dan SM New.xlsx` + `generate_laporan_from_sheets.exe` + `kirim_laporan_gui.exe`).
-> Tujuan: **1× upload → laporan per SPV/SM (email) + feed dashboard sales**, tanpa buka Excel.
+> UI dan API aktif pada route existing. Menggantikan pipeline Excel lama (Power Query `2.3 To SPV dan SM New.xlsx` + `generate_laporan_from_sheets.exe` + `kirim_laporan_gui.exe`).
+> Tujuan: **1 kali upload → laporan per SPV/SM (email) + feed dashboard sales**, tanpa buka Excel.
 
 **Masalah lama (terukur):** refresh Power Query ~15–20 mnt + generate ~15 mnt (~35 mnt total). Sebab utama audit:
 - Query `SalesBase` (baca `2. To Format Laporan.xlsx` = 132.120 baris × 63 kol; 8 `Table.NestedJoin` + 5 `Table.Group`) **dihitung ulang 22×** karena 22 query pakai `Source = SalesBase` **tanpa `Table.Buffer`**.
@@ -734,8 +835,8 @@ RBAC: module `sales_history` (`view`/`export`/`manage`) di `lib/rbac/registry.ts
 
 **Alur target:**
 ```
-UI: modul /laporan-harian (atau tab di /insentif-sales)
-  -> POST /api/laporan-harian/upload  (multipart: "1. Paste Data.xlsx", "3. Stock.xlsx")
+UI: modul /laporan-harian
+  -> POST /api/laporan-harian/upload  (multipart: penjualan wajib, retur dan stock opsional)
      -> requirePermission("laporan_harian.upload")
      -> teruskan ke python_backend FastAPI: POST /laporan-harian/process
         -> pandas replika logika Power Query SalesBase:
@@ -770,9 +871,8 @@ UI: tombol "Kirim" terpisah (gated, confirm:true) -> POST /api/laporan-harian/[r
 | **Phase R7 (Multi No Claim)** | Fitur `claim_submission` tabel (R7a+) masih dalam rollout bertahap. Phase R7b-R7k tercakup di `scripts/test-r7*.mjs` tapi belum semua route production-ready. |
 | **Webhook Accurate** | (Dikoreksi audit 2026-07-12) IP whitelist AKTIF & fail-closed (`route.ts:11-16`). Masalah sebenarnya: webhook hanya append `webhook_events.log` — tidak memicu proses apa pun (logger buntu). |
 | **`lib/sync.ts`** | (Fix F2/F3 2026-07-12) Hidup: registry 4 modul (item/customer/sales_invoice/sales_return), upsert `onConflictDoUpdate`, watermark `lastSyncTimestamp`. Dipicu `GET /api/cron/sync-accurate` (Bearer CRON_SECRET) via cron VPS 4×/hari. **Prasyarat: minimal 1 login OAuth Accurate di production** (`accurate_oauth_session` masih 0 baris) atau set `ACCURATE_SYNC_USER_ID`. |
-| **Modul `form-kontrol` tak terdokumentasi** | (Audit 2026-07-12) `app/api/form-kontrol/checkin|checkout|visit|jks` + tabel `jks_master`, `ao_control_daily` hidup dan terpakai, tapi tidak tercantum di peta ini. Perlu ditambahkan saat trace berikutnya. |
 | **`config/`** | Folder berisi data statik (principles, dll) — tidak ter-trace penuh karena bukan TypeScript eksportabel; kemungkinan JSON/YAML. |
-| **`runtime/` path** | Direktori file PDF dibuat dinamis saat runtime. Tidak ada cleanup otomatis; bisa membesar di production jika tidak ada cron/purge. |
+| **`runtime/` path** | `GET /api/cron/cleanup-runtime` membersihkan artefak regenerable dengan retensi terdaftar; arsip PDF OPC/claim sengaja dikecualikan. Production tetap memerlukan scheduler eksternal dan `CRON_SECRET`. |
 | **`app/(dashboard)/finance/page.tsx`** | Memanggil Python FastAPI backend langsung via `NEXT_PUBLIC_FASTAPI_BASE_URL`. Jika backend mati, halaman finance tidak berfungsi. |
 | **Docker vs dev** | `drizzle.config.ts` hardcode `file:sqlite.db` (bukan env). Perlu disesuaikan jika path container berbeda dari root. |
 | **`rekprinciple.xlsx`** | File Excel di root — tidak jelas apakah dipakai runtime atau hanya referensi manual. |

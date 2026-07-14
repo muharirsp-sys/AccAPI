@@ -1,6 +1,8 @@
 /*
  * Tujuan: Purge artefak runtime yang regenerable (Audit F6). PDF OPC/claim = arsip, TIDAK disentuh.
  * Caller: Scheduler eksternal (Coolify scheduled task) dengan Bearer CRON_SECRET.
+ * Dependensi: fs/promises, path, requireCronSecret, dan folder runtime lokal yang diizinkan.
+ * Main Functions: purgeDirRecursive, GET.
  * Side Effects: unlink file lebih tua dari retensi di folder yang terdaftar saja.
  */
 import { NextResponse } from "next/server";
@@ -10,17 +12,21 @@ import { requireCronSecret } from "@/lib/api-security";
 
 // ponytail: daftar eksplisit folder regenerable + retensi per folder. Folder arsip
 // (runtime/claim-workflow, runtime/off-program-control) sengaja TIDAK ada di sini.
-const TARGETS: Array<{ dir: string; retentionDays: number }> = [
-    { dir: "runtime/laporan-harian", retentionDays: 90 },
-    { dir: "runtime_logs", retentionDays: 90 },
+const TARGETS: Array<{ key: string; dir: string; retentionDays: number }> = [
+    { key: "runtime/laporan-harian", dir: path.join(/*turbopackIgnore: true*/ process.cwd(), "runtime", "laporan-harian"), retentionDays: 90 },
+    { key: "runtime_logs", dir: path.join(/*turbopackIgnore: true*/ process.cwd(), "runtime_logs"), retentionDays: 90 },
 ];
-const GLOB_PREFIX = { parent: "runtime", prefix: "sales-history-build", retentionDays: 30 };
+const GLOB_PREFIX = {
+    parent: path.join(/*turbopackIgnore: true*/ process.cwd(), "runtime"),
+    prefix: "sales-history-build",
+    retentionDays: 30,
+};
 
 async function purgeDirRecursive(dir: string, cutoff: number): Promise<{ deleted: number; errors: number }> {
     let deleted = 0, errors = 0;
     let entries;
     try {
-        entries = await readdir(dir, { withFileTypes: true });
+        entries = await readdir(/*turbopackIgnore: true*/ dir, { withFileTypes: true });
     } catch {
         return { deleted, errors }; // folder belum ada
     }
@@ -31,8 +37,8 @@ async function purgeDirRecursive(dir: string, cutoff: number): Promise<{ deleted
                 const sub = await purgeDirRecursive(full, cutoff);
                 deleted += sub.deleted; errors += sub.errors;
             } else {
-                const { mtimeMs } = await stat(full);
-                if (mtimeMs < cutoff) { await unlink(full); deleted++; }
+                const { mtimeMs } = await stat(/*turbopackIgnore: true*/ full);
+                if (mtimeMs < cutoff) { await unlink(/*turbopackIgnore: true*/ full); deleted++; }
             }
         } catch {
             errors++;
@@ -48,13 +54,13 @@ export async function GET(req: Request) {
     const results: Record<string, { deleted: number; errors: number; retentionDays: number }> = {};
     for (const t of TARGETS) {
         const cutoff = Date.now() - t.retentionDays * 24 * 60 * 60 * 1000;
-        results[t.dir] = { ...(await purgeDirRecursive(t.dir, cutoff)), retentionDays: t.retentionDays };
+        results[t.key] = { ...(await purgeDirRecursive(t.dir, cutoff)), retentionDays: t.retentionDays };
     }
 
     // runtime/sales-history-build* (folder build timestamped)
     try {
         const cutoff = Date.now() - GLOB_PREFIX.retentionDays * 24 * 60 * 60 * 1000;
-        const entries = await readdir(GLOB_PREFIX.parent, { withFileTypes: true });
+        const entries = await readdir(/*turbopackIgnore: true*/ GLOB_PREFIX.parent, { withFileTypes: true });
         for (const entry of entries) {
             if (entry.isDirectory() && entry.name.startsWith(GLOB_PREFIX.prefix)) {
                 const full = path.join(GLOB_PREFIX.parent, entry.name);

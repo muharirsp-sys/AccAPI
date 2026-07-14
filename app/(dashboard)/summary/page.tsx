@@ -400,7 +400,7 @@ export default function SummaryManualPage() {
                 after,
                 note,
             });
-            if (res.data.ok) toast.success("Koreksi tersimpan, akan dipakai AI di ekstraksi berikutnya.");
+            if (res.data.ok) toast.success("Koreksi tersimpan: jadi hint AI di ekstraksi berikutnya, DAN override pasti di generate berikutnya (kode barang sama).");
             else toast.error("Gagal simpan koreksi: " + res.data.error);
         } catch {
             toast.error("Error koneksi saat kirim koreksi.");

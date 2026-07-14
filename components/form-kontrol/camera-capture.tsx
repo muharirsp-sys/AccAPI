@@ -1,20 +1,20 @@
 /*
- * Tujuan: Modal kamera langsung (live preview + capture) untuk foto bukti kunjungan — pengganti file picker.
+ * Tujuan: Modal kamera langsung untuk mengambil, meninjau, dan mempersistenkan foto bukti kunjungan sebelum ditutup.
  * Caller: app/(dashboard)/form-kontrol/visit/[custCode]/page.tsx (PhotoInput).
- * Dependensi: getUserMedia native browser (zero dependency), lucide-react ikon.
+ * Dependensi: getUserMedia native browser, `Dialog` native bersama, lucide-react ikon.
  * Main Functions: CameraCapture (default export).
- * Side Effects: Membuka stream kamera (facingMode belakang/depan, bisa diganti); stream dihentikan saat modal ditutup.
+ * Side Effects: Membuka stream kamera, membuat object URL pratinjau, menunggu callback persistence, dan menghentikan stream saat modal ditutup.
  */
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { Camera, X, RotateCcw, Check, Loader2, ImageUp, SwitchCamera } from "lucide-react";
+import Dialog from "@/components/ui/Dialog";
 
 export default function CameraCapture({ open, onClose, onCapture }: {
     open: boolean;
     onClose: () => void;
-    onCapture: (blob: Blob) => void;
+    onCapture: (blob: Blob) => Promise<void>;
 }) {
     const videoRef  = useRef<HTMLVideoElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -23,10 +23,8 @@ export default function CameraCapture({ open, onClose, onCapture }: {
     const [preview, setPreview] = useState<string | null>(null); // object URL hasil capture
     const [blob, setBlob]       = useState<Blob | null>(null);
     const [starting, setStarting] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
     const [facing, setFacing]   = useState<"environment" | "user">("environment"); // belakang default
-    const [mounted, setMounted] = useState(false); // portal butuh document (client only)
-
-    useEffect(() => { setMounted(true); }, []);
 
     const stopStream = useCallback(() => {
         streamRef.current?.getTracks().forEach(t => t.stop());
@@ -79,10 +77,23 @@ export default function CameraCapture({ open, onClose, onCapture }: {
         startStream();
     }
 
-    function confirm() {
-        if (blob) onCapture(blob);
-        if (preview) URL.revokeObjectURL(preview);
-        onClose();
+    async function confirm() {
+        if (!blob || submitting) return;
+        setSubmitting(true);
+        setError(null);
+        try {
+            await onCapture(blob);
+            if (preview) URL.revokeObjectURL(preview);
+            onClose();
+        } catch (captureError) {
+            setError(
+                captureError instanceof Error
+                    ? captureError.message
+                    : "Foto belum berhasil disimpan. Coba lagi.",
+            );
+        } finally {
+            setSubmitting(false);
+        }
     }
 
     function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -93,22 +104,27 @@ export default function CameraCapture({ open, onClose, onCapture }: {
         e.target.value = "";
     }
 
-    if (!open || !mounted) return null;
-    // ponytail: portal ke body — hindari ancestor transform/filter/backdrop yang bikin
-    // position:fixed ter-contain ke ancestor (modal tak full-screen / "tak buka") di tema tertentu.
-    return createPortal(
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col">
+    return (
+        <Dialog
+            open={open}
+            onClose={() => { if (!submitting) { stopStream(); onClose(); } }}
+            labelledBy="camera-capture-title"
+            className="m-0 h-dvh w-screen max-h-none max-w-none bg-black text-white flex-col open:flex"
+        >
             <div className="flex items-center justify-between px-4 py-3 text-white">
-                <span className="text-sm font-semibold">Foto Bukti Kunjungan</span>
-                <button onClick={() => { stopStream(); onClose(); }} className="p-1.5 rounded-lg bg-white/10">
+                <span id="camera-capture-title" className="text-sm font-semibold">Foto Bukti Kunjungan</span>
+                <button disabled={submitting} onClick={() => { stopStream(); onClose(); }} className="p-1.5 rounded-lg bg-white/10 disabled:opacity-40" aria-label="Tutup kamera">
                     <X size={18} />
                 </button>
             </div>
 
             <div className="flex-1 relative flex items-center justify-center overflow-hidden">
                 {preview ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={preview} alt="Hasil foto" className="max-h-full max-w-full object-contain" />
+                    <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-4">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={preview} alt="Hasil foto" className="max-h-[calc(100%-4rem)] max-w-full object-contain" />
+                        {error && <p role="alert" className="text-center text-sm text-rose-300">{error}</p>}
+                    </div>
                 ) : error ? (
                     <div className="text-center px-6 space-y-3">
                         <Camera size={40} className="mx-auto text-slate-500" />
@@ -130,18 +146,21 @@ export default function CameraCapture({ open, onClose, onCapture }: {
             <div className="relative px-4 py-5 flex items-center justify-center gap-6">
                 {preview ? (
                     <>
-                        <button onClick={retake} className="flex flex-col items-center gap-1 text-slate-300">
+                        <button onClick={retake} disabled={submitting} className="flex flex-col items-center gap-1 text-slate-300 disabled:opacity-40">
                             <span className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center"><RotateCcw size={20} /></span>
                             <span className="text-xs">Ulang</span>
                         </button>
-                        <button onClick={confirm} className="flex flex-col items-center gap-1 text-emerald-400">
-                            <span className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center text-white"><Check size={28} /></span>
-                            <span className="text-xs">Gunakan</span>
+                        <button onClick={() => void confirm()} disabled={submitting} className="flex flex-col items-center gap-1 text-emerald-400 disabled:opacity-40">
+                            <span className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center text-white">
+                                {submitting ? <Loader2 size={28} className="animate-spin" /> : <Check size={28} />}
+                            </span>
+                            <span className="text-xs">{submitting ? "Menyimpan..." : "Gunakan"}</span>
                         </button>
                     </>
                 ) : !error && (
                     <>
                         <button onClick={capture} disabled={starting}
+                            aria-label="Ambil foto"
                             className="rounded-full border-4 border-white/80 p-1 disabled:opacity-40">
                             <span className="block rounded-full bg-white" style={{ width: 56, height: 56 }} />
                         </button>
@@ -156,7 +175,6 @@ export default function CameraCapture({ open, onClose, onCapture }: {
             </div>
 
             <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onPickFile} />
-        </div>,
-        document.body
+        </Dialog>
     );
 }

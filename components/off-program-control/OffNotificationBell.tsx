@@ -1,8 +1,8 @@
 // Tujuan: Notification panel inline untuk OFF Program Control — menampilkan alert pengajuan bermasalah berdasarkan SLA.
 // Caller: app/(dashboard)/off-program-control/page.tsx.
 // Dependensi: lucide-react, helper problematic.
-// Main Functions: OffNotificationBell.
-// Side Effects: Tidak ada — data diterima via props.
+// Main Functions: OffNotificationBell, aksi langsung membuka batch bermasalah.
+// Side Effects: Mutasi state dismiss/expand lokal dan callback onSelectBatch ke parent.
 "use client";
 
 import { useState } from "react";
@@ -17,9 +17,10 @@ const severityConfig: Record<ProblemSeverity, { icon: typeof Clock; color: strin
 
 interface OffNotificationBellProps {
     problems: ProblematicBatch[];
+    onSelectBatch?: (batchId: string) => void;
 }
 
-export default function OffNotificationBell({ problems }: OffNotificationBellProps) {
+export default function OffNotificationBell({ problems, onSelectBatch }: OffNotificationBellProps) {
     const [expanded, setExpanded] = useState(false);
     const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
@@ -88,14 +89,25 @@ export default function OffNotificationBell({ problems }: OffNotificationBellPro
                                 </span>
                             </div>
                         </div>
-                        <button
-                            type="button"
-                            onClick={() => dismiss(problem)}
-                            className="shrink-0 rounded-lg p-1 text-[var(--luxury-subtle)] hover:text-[var(--luxury-text)] hover:bg-black/10 transition-colors"
-                            aria-label="Hapus notifikasi"
-                        >
-                            <X size={14} />
-                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
+                            {onSelectBatch && (
+                                <button
+                                    type="button"
+                                    onClick={() => onSelectBatch(problem.batchId)}
+                                    className="ui-button-secondary"
+                                >
+                                    Buka pengajuan
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => dismiss(problem)}
+                                className="rounded-lg p-1 text-[var(--luxury-subtle)] hover:text-[var(--luxury-text)] hover:bg-black/10 transition-colors"
+                                aria-label={`Hapus notifikasi ${problem.noPengajuan}`}
+                            >
+                                <X size={14} />
+                            </button>
+                        </div>
                     </div>
                 );
             })}

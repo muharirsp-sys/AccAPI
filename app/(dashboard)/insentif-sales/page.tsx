@@ -1,20 +1,22 @@
-"use client";
-
 /*
- * Tujuan: Halaman Insentif Sales — dashboard performa & insentif strata.
+ * Tujuan: Halaman Insentif Sales untuk performa, kalkulasi insentif, dan verifikasi pembayaran dengan hasil batch yang eksplisit.
  * Caller: Next.js App Router route /insentif-sales.
- * Dependensi: lucide-react, sonner, ./data (helpers + constants), API routes /api/insentif-sales/*.
- * Main Functions: InsentifSalesPage + sub-view Sales/SPV/SM/Admin/Finance.
- * Side Effects: Fetch /api/insentif-sales/dashboard, /payments, POST /progress, PATCH /payments/[id].
+ * Dependensi: lucide-react, sonner, Next navigation, `AsyncState`, ./data (helpers + constants), API routes /api/insentif-sales/*.
+ * Main Functions: InsentifSalesPage + sub-view Sales/SPV/SM/Admin/Finance, `paymentSelectionKey`, `updateContext`, keyboard tab navigation, semantic cockpit/table layout dan feedback async.
+ * Side Effects: Fetch /api/insentif-sales/dashboard dan /payments, POST /progress, PATCH /payments/[id], sinkronisasi view/filter ke query URL; error dan partial failure dipertahankan di UI.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+"use client";
+
+import { Fragment, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import {
     Trophy, Filter, Clock, TrendingUp, BarChart3, ListChecks,
     Wallet, Upload, Target, Users, UserCog, DollarSign, CheckCircle2,
     AlertTriangle, FileUp, Save, Search, Loader2, RefreshCw, Download,
 } from "lucide-react";
 import { toast } from "sonner";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AsyncState";
 import {
     PRINCIPLES, BRANCHES, KPI_LABELS, MONTH_LABELS,
     getWorkdayProgress, paceStatus, pct, itemSuper, formatRp, formatShortRp,
@@ -52,6 +54,10 @@ interface PaymentRow {
     paymentStatus: "belum" | "lunas" | "tunggakan";
     paymentProofUrl: string | null;
     paymentDate: number | null;
+}
+
+function paymentSelectionKey(row: { salesCode: string; principle: string }) {
+    return `${row.salesCode}::${row.principle}`;
 }
 
 function apiRowToSalesman(row: ApiRow): Salesman {
@@ -271,9 +277,9 @@ function AchievementTable({ rows }: { rows: Salesman[] }) {
 
     return (
         <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-            <SectionTitle icon={ListChecks} no={2} title="Tabel Pencapaian" desc="Target / Realisasi / % per KPI — color tagging + insight pace vs Time Gone" />
+            <SectionTitle icon={ListChecks} no={2} title="Tabel Pencapaian" desc="Target, realisasi, persentase KPI, dan posisi terhadap progres waktu kerja" />
             <div className="overflow-x-auto">
-                <table className="w-full min-w-[1300px] text-xs text-left border-collapse">
+                <table className="ui-data-table min-w-[1300px]">
                     <thead>
                         <tr className="bg-black/60 text-[11px] font-bold uppercase tracking-wider">
                             <th className="px-3 py-2.5 text-slate-400 border-b border-r border-white/10" rowSpan={2}>Salesman</th>
@@ -384,7 +390,7 @@ function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
         <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
             <SectionTitle icon={Wallet} no={3} title="Tabel Insentif" desc="Skema GT/TT: Value (30%) + Aktif Outlet (70%). MT belum ada aturan." />
             <div className="overflow-x-auto">
-                <table className="w-full min-w-[640px] text-xs text-left">
+                <table className="ui-data-table min-w-[640px]">
                     <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
                         <tr className="whitespace-nowrap">
                             <th className="px-3 py-3">Salesman</th>
@@ -449,7 +455,7 @@ function SpvView({ rows }: { rows: Salesman[] }) {
         <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
             <SectionTitle icon={ListChecks} no={2} title="Tabel Pencapaian SPV" desc="Agregat tim per Supervisor" />
             <div className="overflow-x-auto">
-                <table className="w-full min-w-[920px] text-xs text-left">
+                <table className="ui-data-table min-w-[920px]">
                     <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
                         <tr className="whitespace-nowrap">
                             <th className="px-3 py-3">Nama SPV</th>
@@ -492,7 +498,7 @@ function SpvView({ rows }: { rows: Salesman[] }) {
                         <tr className="bg-black/50 border-t-2 border-indigo-500/30 font-bold">
                             <td className="px-3 py-3 uppercase text-[11px] tracking-wider text-indigo-300">Total ({tg.pct}% Time Gone)</td>
                             <td className="px-3 py-3 text-center"><PaceCell value={pct(rows.reduce((a, r) => a + r.realValue, 0), rows.reduce((a, r) => a + r.targetValue, 0))} /></td>
-                            <td className="px-3 py-3 text-center text-slate-400" colSpan={4}>—</td>
+                            <td className="px-3 py-3 text-center text-slate-400" colSpan={4}>-</td>
                         </tr>
                     </tfoot>
                 </table>
@@ -513,7 +519,7 @@ function SmView({ rows }: { rows: Salesman[] }) {
         <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
             <SectionTitle icon={ListChecks} no={2} title="Tabel Pencapaian SM" desc="Performa gabungan SPV per Principle" />
             <div className="overflow-x-auto">
-                <table className="w-full min-w-[980px] text-xs text-left">
+                <table className="ui-data-table min-w-[980px]">
                     <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
                         <tr className="whitespace-nowrap">
                             <th className="px-3 py-3">Nama SM</th>
@@ -599,14 +605,14 @@ function SpvIncentiveTable({ month, year }: { month: number; year: number }) {
 
     return (
         <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-            <SectionTitle icon={Wallet} no={3} title="Tabel Insentif SPV" desc="Strata berbasis Value — rate/principal berdasar jumlah principal valid yang dicover" />
+            <SectionTitle icon={Wallet} no={3} title="Tabel Insentif SPV" desc="Strata berbasis Value. Rate principal mengikuti jumlah principal valid yang ditangani." />
             {loading ? (
                 <div className="flex items-center justify-center py-8 gap-2 text-slate-500 text-sm">
                     <Loader2 size={18} className="animate-spin text-indigo-400" /> Memuat…
                 </div>
             ) : (
                 <div className="overflow-x-auto">
-                    <table className="w-full min-w-[700px] text-xs text-left">
+                    <table className="ui-data-table min-w-[700px]">
                         <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
                             <tr>
                                 <th className="px-3 py-3">Nama SPV</th>
@@ -866,7 +872,7 @@ function TargetInputSection() {
             ) : inputMethod === "manual" ? (
                 <>
                     <div className="overflow-x-auto">
-                        <table className="w-full min-w-[1200px] text-xs border-collapse">
+                        <table className="ui-data-table min-w-[1200px]">
                             <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
                                 <tr>
                                     <th className="px-2 py-2.5 text-left">Kode</th>
@@ -1084,10 +1090,10 @@ function AdminView({ rows }: { rows: Salesman[] }) {
             const payload = parsed.filter((r) => r.salesCode && r.principle && r.branch);
             const skipped = parsed.length - payload.length;
 
-            if (payload.length === 0) { toast.error("Tidak ada baris valid — pastikan kolom KODE_SALESMAN, PRINCIPAL, JENISPRODUK terisi."); return; }
+            if (payload.length === 0) { toast.error("Tidak ada baris valid. Pastikan kolom KODE_SALESMAN, PRINCIPAL, dan JENISPRODUK terisi."); return; }
 
             const data = await submitProgress(payload);
-            toast.success(`${data.inserted} baris diproses ke database.${skipped ? ` (${skipped} baris dilewati — kolom wajib kosong)` : ""}`);
+            toast.success(`${data.inserted} baris diproses ke database.${skipped ? ` (${skipped} baris dilewati karena kolom wajib kosong)` : ""}`);
         } catch (err) {
             toast.error(`Gagal upload: ${err instanceof Error ? err.message : "Error tidak dikenal"}`);
         } finally {
@@ -1103,7 +1109,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
         <div className="space-y-5">
             <TargetInputSection />
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-                <SectionTitle icon={Upload} no={2} title="Input Progress Harian" desc="Principal & Cabang dibaca per baris dari data — bukan dipilih global (1 file bisa berisi banyak principal)" />
+                <SectionTitle icon={Upload} no={2} title="Input Progress Harian" desc="Principal dan cabang dibaca per baris. Satu file dapat berisi beberapa principal." />
 
                 <div className="flex flex-wrap items-center gap-3 mb-4">
                     <Field label="Periode">
@@ -1135,7 +1141,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                 {progressMethod === "manual" ? (
                     <>
                         <div className="overflow-x-auto">
-                            <table className="w-full min-w-[900px] text-xs border-collapse">
+                            <table className="ui-data-table min-w-[900px]">
                                 <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
                                     <tr>
                                         <th className="px-2 py-2.5 text-left">Kode Salesman</th>
@@ -1197,9 +1203,9 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                 )}
             </div>
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-                <SectionTitle icon={Target} no={3} title="Preview Salesman Terdaftar" desc="Data dari DB — periode saat ini" />
+                <SectionTitle icon={Target} no={3} title="Preview Salesman Terdaftar" desc="Data database untuk periode saat ini" />
                 <div className="overflow-x-auto">
-                    <table className="w-full min-w-[760px] text-xs text-left">
+                    <table className="ui-data-table min-w-[760px]">
                         <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
                             <tr>
                                 <th className="px-3 py-3">KODE_SALESMAN</th>
@@ -1310,7 +1316,7 @@ function HierarchyAssignmentSection() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error ?? "Gagal simpan");
-            toast.success("Identitas tersimpan — scoping aktif untuk user ini.");
+            toast.success("Identitas tersimpan. Pembatasan akses aktif untuk pengguna ini.");
             setSelUserId(""); setSelName("");
             load();
         } catch (err) {
@@ -1327,7 +1333,7 @@ function HierarchyAssignmentSection() {
                 body: JSON.stringify({ userId, hierarchyRole: null, hierarchyName: null }),
             });
             if (!res.ok) throw new Error();
-            toast.success("Scoping dicabut — user kembali lihat semua data.");
+            toast.success("Pembatasan akses dicabut. Pengguna kembali melihat semua data.");
             load();
         } catch {
             toast.error("Gagal cabut identitas.");
@@ -1348,7 +1354,7 @@ function HierarchyAssignmentSection() {
             });
             const data = await res.json();
             if (res.status === 202) {
-                toast.info(`Salesman ${newSalesCode.trim()} sudah dipegang SPV lain — permintaan klaim dikirim, tunggu approval admin.`);
+                toast.info(`Salesman ${newSalesCode.trim()} sudah ditangani SPV lain. Permintaan klaim dikirim untuk persetujuan admin.`);
                 setNewSalesCode(""); setNewSpvName("");
                 return;
             }
@@ -1412,7 +1418,7 @@ function HierarchyAssignmentSection() {
     if (isSpvSelf) {
         return (
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-                <SectionTitle icon={Users} no={4} title="Tambahkan Salesman ke Tim Saya" desc={`Sebagai SPV "${myIdentity?.identity?.name}" — salesman baru langsung masuk tim Anda; kalau sudah dipegang SPV lain, dikirim sebagai permintaan klaim ke admin`} />
+                <SectionTitle icon={Users} no={4} title="Tambahkan Salesman ke Tim Saya" desc={`Sebagai SPV "${myIdentity?.identity?.name}", salesman baru langsung masuk tim Anda. Jika sudah ditangani SPV lain, permintaan klaim dikirim ke admin.`} />
                 <div className="flex gap-2 mb-3 max-w-md">
                     <input className={inputCls} placeholder="Kode Sales" value={newSalesCode} onChange={(e) => setNewSalesCode(e.target.value)} />
                     <button onClick={addSpvSales} disabled={saving} className="px-3 py-1.5 rounded bg-indigo-600/40 border border-indigo-500/40 text-indigo-200 text-xs disabled:opacity-50 shrink-0">+ Tambah</button>
@@ -1423,7 +1429,7 @@ function HierarchyAssignmentSection() {
 
     return (
         <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-            <SectionTitle icon={Users} no={4} title="Kelola Hierarki" desc="Assignment Sales → SPV → SM, dipakai grouping insentif SPV — scoping akses hanya aktif untuk user yang di-link di blok bawah" />
+            <SectionTitle icon={Users} no={4} title="Kelola Hierarki" desc="Assignment Sales → SPV → SM dipakai untuk pengelompokan insentif. Pembatasan akses hanya aktif untuk akun yang ditautkan." />
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-3">
                 <div>
                     <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Sales → SPV</div>
@@ -1485,7 +1491,7 @@ function HierarchyAssignmentSection() {
                 <p className="text-[11px] text-slate-500 mb-3">Setelah di-link, user ini HANYA lihat data timnya sendiri di Dashboard Sales/SPV/SM. Cabut untuk kembalikan ke lihat-semua (default).</p>
                 <div className="flex flex-wrap gap-2 mb-3">
                     <select className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-amber-500 w-56" value={selUserId} onChange={(e) => setSelUserId(e.target.value)}>
-                        <option value="">— Pilih user —</option>
+                        <option value="">Pilih pengguna</option>
                         {users.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
                     </select>
                     <select className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-amber-500 w-24" value={selRole} onChange={(e) => setSelRole(e.target.value as "spv" | "sm")}>
@@ -1497,10 +1503,10 @@ function HierarchyAssignmentSection() {
                 </div>
                 <div className="max-h-48 overflow-y-auto border border-white/10 rounded-lg divide-y divide-white/5">
                     {loading ? <div className="p-3 text-xs text-slate-500">Memuat…</div> : users.filter((u) => u.hierarchyRole).length === 0 ? (
-                        <div className="p-3 text-xs text-slate-500 italic">Belum ada user yang di-scope — semua user lihat semua data (default).</div>
+                        <div className="p-3 text-xs text-slate-500 italic">Belum ada pengguna yang dibatasi. Secara default semua pengguna melihat semua data.</div>
                     ) : users.filter((u) => u.hierarchyRole).map((u) => (
                         <div key={u.id} className="flex items-center justify-between px-3 py-2 text-xs">
-                            <span className="text-slate-300">{u.name} — <span className="text-amber-300 uppercase">{u.hierarchyRole}</span> <span className="text-indigo-300">{u.hierarchyName}</span></span>
+                            <span className="text-slate-300">{u.name}: <span className="text-amber-300 uppercase">{u.hierarchyRole}</span> <span className="text-indigo-300">{u.hierarchyName}</span></span>
                             <button onClick={() => unlinkIdentity(u.id)} className="text-slate-600 hover:text-rose-400" title="Cabut scoping">×</button>
                         </div>
                     ))}
@@ -1555,9 +1561,9 @@ function SupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRo
 
     return (
         <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-            <SectionTitle icon={DollarSign} no={0} title="Input Support Principle (GT)" desc="Support dari principle per salesman — konstanta insentif dikurangi nilai ini" />
+            <SectionTitle icon={DollarSign} no={0} title="Input Support Principle (GT)" desc="Support principal per salesman mengurangi konstanta insentif." />
             <div className="overflow-x-auto mt-3">
-                <table className="w-full text-sm">
+                <table className="ui-data-table">
                     <thead>
                         <tr className="text-left text-slate-400 border-b border-white/10">
                             <th className="px-3 py-2">Kode</th>
@@ -1604,28 +1610,54 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
     const [selectedMonth, setSelectedMonth] = useState(month);
     const [saving, setSaving] = useState(false);
     const [checked, setChecked] = useState<Record<string, boolean>>({});
+    const [paymentsLoading, setPaymentsLoading] = useState(true);
+    const [paymentsError, setPaymentsError] = useState("");
 
     // Fetch 12-month payment summary. Manual callback for refresh button + post-save reload.
     const fetchPayments = useCallback(async () => {
+        setPaymentsLoading(true);
+        setPaymentsError("");
         try {
             const res = await fetch(`/api/insentif-sales/payments?year=${year}`);
-            if (!res.ok) return;
+            if (!res.ok) throw new Error("Data pembayaran belum berhasil dimuat.");
             const data = await res.json();
             setPayments(data.rows ?? []);
-        } catch { /* silent — fallback ke empty */ }
+        } catch (error) {
+            setPaymentsError(
+                error instanceof Error
+                    ? error.message
+                    : "Data pembayaran belum berhasil dimuat.",
+            );
+        } finally {
+            setPaymentsLoading(false);
+        }
     }, [year]);
 
     // Inline fetch on year change — kept separate from fetchPayments to avoid
     // the set-state-in-effect lint rule that fires when an effect calls a setState-bearing callback.
     useEffect(() => {
+        let cancelled = false;
         (async () => {
+            setPaymentsLoading(true);
+            setPaymentsError("");
             try {
                 const res = await fetch(`/api/insentif-sales/payments?year=${year}`);
-                if (!res.ok) return;
+                if (!res.ok) throw new Error("Data pembayaran belum berhasil dimuat.");
                 const data = await res.json();
-                setPayments(data.rows ?? []);
-            } catch { /* silent — fallback ke empty */ }
+                if (!cancelled) setPayments(data.rows ?? []);
+            } catch (error) {
+                if (!cancelled) {
+                    setPaymentsError(
+                        error instanceof Error
+                            ? error.message
+                            : "Data pembayaran belum berhasil dimuat.",
+                    );
+                }
+            } finally {
+                if (!cancelled) setPaymentsLoading(false);
+            }
         })();
+        return () => { cancelled = true; };
     }, [year]);
 
     // Build monthly summary from payments rows
@@ -1658,15 +1690,18 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
             .map((p) => ({ salesCode: p.salesCode, salesName: p.salesName, principle: p.principle, total: p.totalIncentive, paymentId: p.id, status: p.paymentStatus }));
     }, [selectedMonth, month, apiRows, payments]);
 
-    const toggle = (code: string) => setChecked((p) => ({ ...p, [code]: !p[code] }));
-    const checkedList = detailRows.filter((r) => checked[r.salesCode]);
+    const toggle = (row: { salesCode: string; principle: string }) => {
+        const key = paymentSelectionKey(row);
+        setChecked((current) => ({ ...current, [key]: !current[key] }));
+    };
+    const checkedList = detailRows.filter((row) => checked[paymentSelectionKey(row)]);
 
     async function handleMarkLunas() {
         if (checkedList.length === 0) return;
         setSaving(true);
-        let ok = 0;
-        for (const row of checkedList) {
-            try {
+        try {
+            const results = await Promise.allSettled(
+                checkedList.map(async (row) => {
                 // Upsert payment record dulu jika belum ada
                 if (!row.paymentId) {
                     const upsertRes = await fetch("/api/insentif-sales/payments", {
@@ -1683,24 +1718,64 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                             paymentStatus: "lunas",
                         }),
                     });
-                    if (upsertRes.ok) ok++;
+                    if (!upsertRes.ok) throw new Error("Gagal membuat status pembayaran.");
                 } else {
                     const patchRes = await fetch(`/api/insentif-sales/payments/${row.paymentId}`, {
                         method: "PATCH",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ paymentStatus: "lunas" }),
                     });
-                    if (patchRes.ok) ok++;
+                    if (!patchRes.ok) throw new Error("Gagal memperbarui status pembayaran.");
                 }
-            } catch { /* skip individual failure */ }
+                return paymentSelectionKey(row);
+            }),
+            );
+            const succeededKeys = new Set(
+                results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []),
+            );
+            const failedCount = results.length - succeededKeys.size;
+            setChecked((current) => {
+                const next = { ...current };
+                succeededKeys.forEach((key) => delete next[key]);
+                return next;
+            });
+
+            if (failedCount === 0) {
+                toast.success(`${succeededKeys.size} pembayaran ditandai lunas.`);
+            } else if (succeededKeys.size === 0) {
+                toast.error(`Semua ${failedCount} pembayaran gagal diperbarui. Pilihan tetap dipertahankan.`);
+            } else {
+                toast.warning(`${succeededKeys.size} pembayaran berhasil, ${failedCount} gagal. Pilihan yang gagal tetap dipertahankan.`);
+            }
+            await fetchPayments();
+        } finally {
+            setSaving(false);
         }
-        toast.success(`${ok} dari ${checkedList.length} pembayaran ditandai lunas.`);
-        setChecked({});
-        fetchPayments();
-        setSaving(false);
     }
 
     const statusClasses = { lunas: "border-emerald-500/30 text-emerald-400", tunggakan: "border-rose-500/40 text-rose-400", belum: "border-white/10 text-slate-500" };
+
+    if (paymentsLoading) {
+        return (
+            <div className="space-y-5">
+                <SupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
+                <LoadingState label="Memuat status pembayaran" rows={3} />
+            </div>
+        );
+    }
+
+    if (paymentsError) {
+        return (
+            <div className="space-y-5">
+                <SupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
+                <ErrorState
+                    title={paymentsError}
+                    message="Status belum ditampilkan agar kegagalan tidak terlihat sebagai belum dibayar."
+                    onAction={() => void fetchPayments()}
+                />
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-5">
@@ -1708,7 +1783,7 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
             <SupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
             {/* 12-month strip */}
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-                <SectionTitle icon={DollarSign} no={1} title="Rekap Pembayaran Tahunan" desc="12 bulan dari DB — indikator tunggakan real-time" />
+                <SectionTitle icon={DollarSign} no={1} title="Rekap Pembayaran Tahunan" desc="Data 12 bulan dari database dengan indikator tunggakan aktual" />
                 <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
                     {monthlySummary.map((m) => {
                         const active = m.month === selectedMonth;
@@ -1721,7 +1796,7 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                                     {m.status === "tunggakan" && <AlertTriangle size={13} className="text-rose-400" />}
                                     {m.status === "lunas" && <CheckCircle2 size={13} className="text-emerald-400" />}
                                 </div>
-                                <div className="text-[11px] font-mono mt-1 text-slate-400">{m.total ? formatShortRp(m.total) : "—"}</div>
+                                <div className="text-[11px] font-mono mt-1 text-slate-400">{m.total ? formatShortRp(m.total) : "-"}</div>
                                 <div className="text-[9px] uppercase tracking-wider mt-0.5 font-bold">{m.status}</div>
                             </button>
                         );
@@ -1732,13 +1807,13 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
             {/* Detail per-salesman */}
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
                 <div className="flex items-center justify-between mb-4">
-                    <SectionTitle icon={Wallet} no={2} title={`Tabel Insentif — ${MONTH_LABELS[selectedMonth - 1]} ${year}`} desc="Centang → Simpan Lunas — real-time ke DB" />
+                    <SectionTitle icon={Wallet} no={2} title={`Tabel Insentif: ${MONTH_LABELS[selectedMonth - 1]} ${year}`} desc="Centang lalu simpan sebagai lunas. Perubahan langsung dicatat ke database." />
                     <button onClick={fetchPayments} className="text-slate-500 hover:text-slate-300 transition-colors p-1.5 rounded-lg hover:bg-white/5">
                         <RefreshCw size={14} />
                     </button>
                 </div>
                 <div className="overflow-x-auto">
-                    <table className="w-full min-w-[820px] text-xs text-left">
+                    <table className="ui-data-table min-w-[820px]">
                         <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
                             <tr>
                                 <th className="px-3 py-3 w-10"></th>
@@ -1751,15 +1826,16 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                         </thead>
                         <tbody className="divide-y divide-white/[0.1]">
                             {detailRows.map((r) => {
-                                const isChecked = !!checked[r.salesCode];
+                                const selectionKey = paymentSelectionKey(r);
+                                const isChecked = !!checked[selectionKey];
                                 const sc = r.status === "lunas" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
                                     : r.status === "tunggakan" ? "bg-rose-500/10 text-rose-400 border-rose-500/30"
                                         : "bg-white/5 text-slate-500 border-white/10";
                                 const slabel = r.status === "lunas" ? "Lunas" : r.status === "tunggakan" ? "Tunggakan" : "Belum";
                                 return (
-                                    <tr key={r.salesCode} className={`transition-colors hover:bg-white/[0.05] ${isChecked ? "bg-emerald-500/[0.07]" : "even:bg-white/[0.025]"}`}>
+                                    <tr key={selectionKey} className={`transition-colors hover:bg-white/[0.05] ${isChecked ? "bg-emerald-500/[0.07]" : "even:bg-white/[0.025]"}`}>
                                         <td className="px-3 py-3">
-                                            <input type="checkbox" checked={isChecked} onChange={() => toggle(r.salesCode)} className="w-4 h-4 accent-emerald-500 cursor-pointer" />
+                                            <input type="checkbox" checked={isChecked} onChange={() => toggle(r)} className="w-4 h-4 accent-emerald-500 cursor-pointer" />
                                         </td>
                                         <td className="px-3 py-3">
                                             <div className="font-semibold text-slate-200">{r.salesName}</div>
@@ -1771,7 +1847,7 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                                             <label className="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded px-2 py-1.5 text-slate-300 cursor-pointer hover:bg-white/10 text-[11px]">
                                                 <FileUp size={13} /> Upload
                                                 <input type="file" className="hidden" accept=".pdf,.jpg,.png"
-                                                    onChange={() => toast.info("Fitur upload bukti akan tersedia — hubungkan ke storage provider.")} />
+                                                    onChange={() => toast.info("Fitur upload bukti belum tersedia. Hubungkan aplikasi ke penyimpanan berkas.")} />
                                             </label>
                                         </td>
                                         <td className="px-3 py-3 text-center">
@@ -1806,18 +1882,34 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
 // ── Page shell ─────────────────────────────────────────────────────────────
 export default function InsentifSalesPage() {
     const now = new Date();
-    const [view, setView] = useState<ViewKey>("sales");
-    const [principle, setPrinciple] = useState("ALL");
-    const [branch, setBranch] = useState("ALL");
     const [apiRows, setApiRows] = useState<ApiRow[]>([]);
     const [loading, setLoading] = useState(true);
+    const [dashboardError, setDashboardError] = useState("");
     const [month] = useState(now.getMonth() + 1);
     const [year] = useState(now.getFullYear());
+    const pathname = usePathname();
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const requestedView = searchParams.get("view") as ViewKey | null;
+    const view = VIEWS.some((item) => item.key === requestedView) ? requestedView! : "sales";
+    const principle = searchParams.get("principle") || "ALL";
+    const branch = searchParams.get("branch") || "ALL";
+
+    const updateContext = useCallback((updates: Partial<{ view: ViewKey; principle: string; branch: string }>) => {
+        const params = new URLSearchParams(searchParams.toString());
+        for (const [key, value] of Object.entries(updates)) {
+            if (!value || value === "ALL") params.delete(key);
+            else params.set(key, value);
+        }
+        const query = params.toString();
+        router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    }, [pathname, router, searchParams]);
 
     const tg = getWorkdayProgress(now);
 
     const fetchDashboard = useCallback(async () => {
         setLoading(true);
+        setDashboardError("");
         try {
             const params = new URLSearchParams();
             if (principle !== "ALL") params.set("principle", principle);
@@ -1825,12 +1917,16 @@ export default function InsentifSalesPage() {
             params.set("month", String(month));
             params.set("year", String(year));
             const res = await fetch(`/api/insentif-sales/dashboard?${params}`);
-            if (!res.ok) throw new Error("API error");
+            if (!res.ok) throw new Error("Data insentif belum berhasil dimuat.");
             const data = await res.json();
             setApiRows(data.rows as ApiRow[]);
-        } catch {
-            toast.error("Gagal memuat data dari server.");
+        } catch (error) {
             setApiRows([]);
+            setDashboardError(
+                error instanceof Error
+                    ? error.message
+                    : "Data insentif belum berhasil dimuat.",
+            );
         } finally {
             setLoading(false);
         }
@@ -1841,18 +1937,32 @@ export default function InsentifSalesPage() {
     const salesmen = useMemo(() => apiRows.map(apiRowToSalesman), [apiRows]);
     const showFilters = view !== "admin";
 
+    const handleViewKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+        let nextIndex = index;
+        if (event.key === "ArrowRight") nextIndex = (index + 1) % VIEWS.length;
+        else if (event.key === "ArrowLeft") nextIndex = (index - 1 + VIEWS.length) % VIEWS.length;
+        else if (event.key === "Home") nextIndex = 0;
+        else if (event.key === "End") nextIndex = VIEWS.length - 1;
+        else return;
+
+        event.preventDefault();
+        const nextView = VIEWS[nextIndex];
+        updateContext({ view: nextView.key });
+        requestAnimationFrame(() => document.getElementById(`insentif-tab-${nextView.key}`)?.focus());
+    };
+
     return (
-        <div className="max-w-[1800px] mx-auto pb-12">
+        <div className="ui-page-shell ui-page-shell--wide">
             {/* Header */}
-            <div className="mb-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-3">
+            <div className="ui-page-header">
+                <div className="ui-page-heading">
+                    <h1 className="ui-page-title">
                         <Trophy className="text-amber-400" />
                         Insentif Sales
                     </h1>
-                    <p className="text-slate-400 mt-1 text-sm">Tracking performa, color tagging Time Gone, & insentif strata — data real dari DB.</p>
+                    <p className="ui-page-description">Pantau performa, progres waktu kerja, dan insentif berdasarkan data server.</p>
                 </div>
-                <div className="flex items-center gap-3 bg-[#1a1c23]/60 border border-white/10 rounded-xl px-4 py-3 min-w-[260px]">
+                <div className="ui-context-card">
                     <Clock className="text-indigo-400 shrink-0" size={22} />
                     <div className="flex-1">
                         <div className="flex items-center justify-between text-[11px] text-slate-400 font-semibold uppercase tracking-wider">
@@ -1867,50 +1977,68 @@ export default function InsentifSalesPage() {
             </div>
 
             {/* View tabs */}
-            <div className="flex items-center gap-2 mb-5 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
-                {VIEWS.map((v) => {
+            <div className="ui-tab-scroll">
+            <div role="tablist" aria-label="Tampilan Insentif Sales" className="ui-tab-strip">
+                {VIEWS.map((v, index) => {
                     const Icon = v.icon;
                     const active = view === v.key;
                     return (
-                        <button key={v.key} onClick={() => setView(v.key)}
-                            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold whitespace-nowrap border transition-all shrink-0 ${active
-                                ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/40"
-                                : "bg-white/5 text-slate-400 border-white/10 hover:bg-white/10 hover:text-slate-200"}`}>
+                        <button key={v.key} id={`insentif-tab-${v.key}`} type="button" role="tab"
+                            aria-selected={active}
+                            aria-controls="insentif-view-panel"
+                            tabIndex={active ? 0 : -1}
+                            data-state={active ? "active" : "inactive"}
+                            onKeyDown={(event) => handleViewKeyDown(event, index)}
+                            onClick={() => updateContext({ view: v.key })}
+                            className="ui-tab-button">
                             <Icon size={16} /> {v.label}
                         </button>
                     );
                 })}
             </div>
+            </div>
 
             {/* Filters */}
             {showFilters && (
-                <div className="flex flex-wrap items-center gap-3 mb-5 bg-[#1a1c23]/40 border border-white/10 rounded-xl px-4 py-3">
+                <div className="ui-toolbar">
                     <span className="flex items-center gap-2 text-xs font-semibold text-slate-400 uppercase tracking-wider"><Filter size={14} /> Filter</span>
-                    <select value={principle} onChange={(e) => setPrinciple(e.target.value)} className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500">
+                    <select aria-label="Filter principle" value={principle} onChange={(e) => updateContext({ principle: e.target.value })} className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500">
                         <option value="ALL">Semua Principle</option>
                         {PRINCIPLES.map((p) => <option key={p} value={p}>{p}</option>)}
                     </select>
-                    <select value={branch} onChange={(e) => setBranch(e.target.value)} className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500">
+                    <select aria-label="Filter cabang" value={branch} onChange={(e) => updateContext({ branch: e.target.value })} className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500">
                         <option value="ALL">Semua Cabang</option>
                         {BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
                     </select>
-                    <button onClick={fetchDashboard} className="ml-1 text-slate-500 hover:text-indigo-400 transition-colors p-1.5 rounded-lg hover:bg-white/5" title="Refresh data">
+                    <button type="button" onClick={fetchDashboard} className="ui-icon-button" title="Refresh data" aria-label="Refresh data insentif">
                         <RefreshCw size={14} />
                     </button>
+                    {(principle !== "ALL" || branch !== "ALL") && (
+                        <button type="button" onClick={() => updateContext({ principle: "ALL", branch: "ALL" })} className="ui-button-ghost">
+                            Reset filter
+                        </button>
+                    )}
                     <span className="text-[11px] text-slate-500 ml-auto">{salesmen.length} salesman</span>
                 </div>
             )}
 
             {/* Body */}
+            <div id="insentif-view-panel" role="tabpanel" aria-labelledby={`insentif-tab-${view}`} tabIndex={0}>
             {loading && view !== "admin" ? (
-                <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-12 text-center text-slate-500 flex flex-col items-center gap-3">
-                    <Loader2 size={28} className="animate-spin text-indigo-400" />
-                    <span className="text-sm">Memuat data dari server…</span>
-                </div>
+                <LoadingState label="Memuat data insentif" rows={6} />
+            ) : dashboardError && view !== "admin" ? (
+                <ErrorState
+                    title={dashboardError}
+                    message="Data kosong tidak ditampilkan karena server belum memberikan hasil yang valid."
+                    onAction={() => void fetchDashboard()}
+                />
             ) : salesmen.length === 0 && view !== "admin" && view !== "finance" ? (
-                <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-12 text-center text-slate-500 italic flex flex-col items-center gap-2">
-                    <Search size={28} /> Tidak ada data untuk filter ini.
-                </div>
+                <EmptyState
+                    title="Tidak ada data untuk filter ini"
+                    message="Ubah principle atau cabang, lalu periksa kembali hasilnya."
+                    actionLabel="Reset Filter"
+                    onAction={() => updateContext({ principle: "ALL", branch: "ALL" })}
+                />
             ) : (
                 <div className="space-y-5">
                     {view === "sales" && (
@@ -1939,6 +2067,7 @@ export default function InsentifSalesPage() {
                     {view === "finance" && <FinanceView apiRows={apiRows} month={month} year={year} onSaved={fetchDashboard} />}
                 </div>
             )}
+            </div>
         </div>
     );
 }

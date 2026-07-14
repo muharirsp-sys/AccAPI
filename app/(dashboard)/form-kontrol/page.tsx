@@ -1,10 +1,20 @@
+/*
+ * Tujuan: Shell Form Kontrol SUPER yang memuat scope pengguna secara fail-closed dan menampilkan tab sesuai RBAC.
+ * Caller: Next.js App Router route `/form-kontrol`.
+ * Dependensi: API `/api/form-kontrol/my-scope`, dynamic tab modules, Next navigation/Link, `AsyncState`, lucide-react.
+ * Main Functions: `FormKontrolPage`, `loadScope`, `selectTab`, `handleTabKeyDown`, semantic cockpit layout dan feedback async.
+ * Side Effects: HTTP read scope pengguna dan sinkronisasi tab ke query URL; kegagalan verifikasi akses ditampilkan dengan retry tanpa fallback role.
+ */
+
 "use client";
 
-import { useEffect, useState } from "react";
-import { ClipboardList, BarChart3, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useState, type KeyboardEvent } from "react";
+import { ClipboardList, BarChart3 } from "lucide-react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { type Scope, type TabKey, TABS } from "./shared";
+import { ErrorState, LoadingState } from "@/components/ui/AsyncState";
 
 const TabJks           = dynamic(() => import("./tabs/TabJks"),          { ssr: false });
 const TabAo            = dynamic(() => import("./tabs/TabAo"),           { ssr: false });
@@ -18,38 +28,95 @@ const TabHierarki      = dynamic(() => import("./tabs/TabHierarki"),     { ssr: 
 
 export default function FormKontrolPage() {
     const [scope, setScope] = useState<Scope | null>(null);
-    const [activeTab, setActiveTab] = useState<TabKey>("jks");
     const [scopeLoading, setScopeLoading] = useState(true);
+    const [scopeError, setScopeError] = useState("");
+    const pathname = usePathname();
+    const router = useRouter();
+    const searchParams = useSearchParams();
+
+    const loadScope = useCallback(async () => {
+        setScopeLoading(true);
+        setScopeError("");
+        try {
+            const response = await fetch("/api/form-kontrol/my-scope");
+            const data = await response.json().catch(() => null) as Scope | null;
+            if (!response.ok || !data || typeof data.role !== "string") {
+                throw new Error("Akses Form Kontrol belum dapat diverifikasi.");
+            }
+            setScope(data);
+        } catch (error) {
+            setScope(null);
+            setScopeError(
+                error instanceof Error
+                    ? error.message
+                    : "Akses Form Kontrol belum dapat diverifikasi.",
+            );
+        } finally {
+            setScopeLoading(false);
+        }
+    }, []);
 
     useEffect(() => {
-        fetch("/api/form-kontrol/my-scope")
-            .then(r => r.json())
-            .then((data: Scope) => { setScope(data); setScopeLoading(false); })
-            .catch(() => { setScope({ role: "admin", allowedSalesCodes: null }); setScopeLoading(false); });
-    }, []);
+        void loadScope();
+    }, [loadScope]);
 
     const visibleTabs = scope ? TABS.filter(t => t.roles.includes(scope.role)) : [];
     // Derive effective tab during render — avoids setState-in-effect cascade.
     // Falls back to first visible tab when the selected one isn't allowed for this scope.
-    const effectiveTab = visibleTabs.some(t => t.key === activeTab) ? activeTab : visibleTabs[0]?.key;
+    const requestedTab = searchParams.get("tab") as TabKey | null;
+    const effectiveTab = visibleTabs.some(t => t.key === requestedTab) ? requestedTab : visibleTabs[0]?.key;
+
+    const selectTab = useCallback((tab: TabKey) => {
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("tab", tab);
+        router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    }, [pathname, router, searchParams]);
+
+    const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+        let nextIndex = index;
+        if (event.key === "ArrowRight") nextIndex = (index + 1) % visibleTabs.length;
+        else if (event.key === "ArrowLeft") nextIndex = (index - 1 + visibleTabs.length) % visibleTabs.length;
+        else if (event.key === "Home") nextIndex = 0;
+        else if (event.key === "End") nextIndex = visibleTabs.length - 1;
+        else return;
+
+        event.preventDefault();
+        const nextTab = visibleTabs[nextIndex];
+        if (!nextTab) return;
+        selectTab(nextTab.key);
+        requestAnimationFrame(() => document.getElementById(`form-kontrol-tab-${nextTab.key}`)?.focus());
+    };
 
     if (scopeLoading) {
         return (
-            <div className="flex items-center justify-center min-h-[60vh] text-slate-400 gap-2">
-                <Loader2 size={20} className="animate-spin" /> Memuat Form Kontrol...
+            <div className="ui-page-shell">
+                <LoadingState label="Memuat Form Kontrol" rows={3} />
+            </div>
+        );
+    }
+
+    if (scopeError) {
+        return (
+            <div className="ui-page-shell">
+                <ErrorState
+                    title={scopeError}
+                    message="Tidak ada modul yang dibuka sampai akses berhasil diverifikasi."
+                    onAction={() => void loadScope()}
+                />
             </div>
         );
     }
 
     return (
-        <div className="max-w-[1200px] mx-auto pb-16 px-2 md:px-0">
-            <div className="mb-6 pt-2">
-                <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-3">
+        <div className="ui-page-shell">
+            <div className="ui-page-header">
+                <div className="ui-page-heading">
+                <h1 className="ui-page-title">
                     <ClipboardList className="text-indigo-400" size={26} />
                     Form Kontrol SUPER
                 </h1>
-                <p className="text-slate-400 mt-1 text-sm">
-                    Sistem Kontrol SUPER —{" "}
+                <p className="ui-page-description">
+                    Sistem Kontrol SUPER. {" "}
                     <span className="text-indigo-300 italic">AO 240 bukan untuk ditawar, AO 240 untuk dicapai</span>
                 </p>
                 <div className="mt-2 flex items-center gap-3 flex-wrap">
@@ -62,22 +129,29 @@ export default function FormKontrolPage() {
                     {scope && ["spv", "sm", "admin", "manager", "admin_sales"].includes(scope.role) && (
                         <Link
                             href="/form-kontrol/spv-dashboard"
-                            className="flex items-center gap-1.5 text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 px-3 py-1 rounded-lg transition-colors"
+                            className="ui-button-secondary"
                         >
                             <BarChart3 size={12} /> Dashboard SPV
                         </Link>
                     )}
                 </div>
+                </div>
             </div>
 
             {/* Tab bar */}
-            <div className="mb-5 overflow-x-auto">
-                <div className="flex gap-1 bg-[#1a1c23]/60 border border-white/10 rounded-xl p-1.5 min-w-max">
-                    {visibleTabs.map(tab => {
+            <div className="ui-tab-scroll">
+                <div role="tablist" aria-label="Modul Form Kontrol" className="ui-tab-strip">
+                    {visibleTabs.map((tab, index) => {
                         const Icon = tab.icon;
                         return (
-                            <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-                                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${effectiveTab === tab.key ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20" : "text-slate-400 hover:text-white hover:bg-white/5"}`}>
+                            <button key={tab.key} id={`form-kontrol-tab-${tab.key}`} type="button" role="tab"
+                                aria-selected={effectiveTab === tab.key}
+                                aria-controls="form-kontrol-panel"
+                                tabIndex={effectiveTab === tab.key ? 0 : -1}
+                                data-state={effectiveTab === tab.key ? "active" : "inactive"}
+                                onKeyDown={(event) => handleTabKeyDown(event, index)}
+                                onClick={() => selectTab(tab.key)}
+                                className="ui-tab-button">
                                 <Icon size={13} />
                                 {tab.label}
                             </button>
@@ -87,7 +161,7 @@ export default function FormKontrolPage() {
             </div>
 
             {/* Active tab content */}
-            <div className="bg-[#1a1c23]/40 border border-white/10 rounded-xl p-4 md:p-6">
+            <div id="form-kontrol-panel" role="tabpanel" aria-labelledby={effectiveTab ? `form-kontrol-tab-${effectiveTab}` : undefined} tabIndex={0} className="ui-surface-panel ui-panel-padding">
                 {visibleTabs.length === 0 && (
                     <p className="text-sm text-slate-400 text-center py-10">
                         Belum ada modul Form Kontrol yang tersedia untuk peran Anda. Hubungi admin bila ini keliru.

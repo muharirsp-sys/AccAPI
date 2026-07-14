@@ -1,8 +1,8 @@
 // Tujuan: Quick-jump search di halaman OFF Program Control — cari batch berdasarkan nomor pengajuan, principle, atau status.
 // Caller: app/(dashboard)/off-program-control/page.tsx.
-// Dependensi: React hooks, lucide-react.
-// Main Functions: OffGlobalSearch.
-// Side Effects: Tidak ada — callback onSelect untuk navigasi/filter.
+// Dependensi: React hooks, lucide-react, fuzzySearch.
+// Main Functions: OffGlobalSearch, shortcut Ctrl/Cmd+K, navigasi listbox dengan keyboard.
+// Side Effects: Listener keydown dokumen; callback onSelect untuk navigasi/filter.
 "use client";
 
 import { useState, useRef, useEffect, useId, useMemo } from "react";
@@ -26,6 +26,7 @@ interface OffGlobalSearchProps {
 export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari pengajuan..." }: OffGlobalSearchProps) {
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState("");
+    const [activeIndex, setActiveIndex] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
     const resultsId = useId();
     const hasResultsPopup = open && Boolean(query.trim());
@@ -41,14 +42,19 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
         ).slice(0, 10);
     }, [items, query]);
 
-    // Keyboard shortcut: Ctrl+F focuses search when on OFF page
+    const resolvedActiveIndex = filtered.length === 0
+        ? -1
+        : Math.min(activeIndex, filtered.length - 1);
+
+    // Ctrl/Cmd+K membuka quick jump tanpa mengambil alih pencarian native browser.
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === "f" && !e.shiftKey) {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && !e.shiftKey) {
                 // Only intercept if this component is visible
                 if (inputRef.current) {
                     e.preventDefault();
                     setOpen(true);
+                    setActiveIndex(0);
                     inputRef.current.focus();
                 }
             }
@@ -67,6 +73,26 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
         setQuery("");
     };
 
+    const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+        if (!hasResultsPopup || filtered.length === 0) return;
+        if (event.key === "ArrowDown") {
+            event.preventDefault();
+            setActiveIndex((current) => (current + 1) % filtered.length);
+        } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            setActiveIndex((current) => (current - 1 + filtered.length) % filtered.length);
+        } else if (event.key === "Home") {
+            event.preventDefault();
+            setActiveIndex(0);
+        } else if (event.key === "End") {
+            event.preventDefault();
+            setActiveIndex(filtered.length - 1);
+        } else if (event.key === "Enter" && resolvedActiveIndex >= 0) {
+            event.preventDefault();
+            handleSelect(filtered[resolvedActiveIndex].id);
+        }
+    };
+
     return (
         <div className="relative">
             {/* Search trigger / input */}
@@ -78,11 +104,14 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
                     aria-label="Cari pengajuan OFF"
                     aria-expanded={hasResultsPopup}
                     aria-controls={hasResultsPopup ? resultsId : undefined}
+                    aria-activedescendant={resolvedActiveIndex >= 0 ? `${resultsId}-option-${resolvedActiveIndex}` : undefined}
                     aria-autocomplete="list"
+                    aria-keyshortcuts="Control+K Meta+K"
                     role="combobox"
                     value={query}
-                    onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-                    onFocus={() => setOpen(true)}
+                    onChange={(e) => { setQuery(e.target.value); setOpen(true); setActiveIndex(0); }}
+                    onFocus={() => { setOpen(true); setActiveIndex(0); }}
+                    onKeyDown={handleInputKeyDown}
                     placeholder={placeholder}
                     className="flex-1 bg-transparent text-sm text-[var(--luxury-text)] placeholder:text-[var(--luxury-subtle)] outline-none min-w-0"
                 />
@@ -113,14 +142,17 @@ export default function OffGlobalSearch({ items, onSelect, placeholder = "Cari p
                                 Tidak ditemukan batch yang cocok
                             </div>
                         ) : (
-                            filtered.map((item) => (
+                            filtered.map((item, index) => (
                                 <button
                                     key={item.id}
+                                    id={`${resultsId}-option-${index}`}
                                     type="button"
+                                    tabIndex={-1}
                                     role="option"
-                                    aria-selected="false"
+                                    aria-selected={index === resolvedActiveIndex}
                                     onClick={() => handleSelect(item.id)}
-                                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[var(--luxury-gold-2)]/10 border-b border-[var(--border-soft)] last:border-b-0"
+                                    onMouseEnter={() => setActiveIndex(index)}
+                                    className={`flex w-full items-center gap-3 border-b border-[var(--border-soft)] px-4 py-2.5 text-left transition-colors last:border-b-0 hover:bg-[var(--luxury-gold-2)]/10 ${index === resolvedActiveIndex ? "bg-[var(--luxury-gold-2)]/10" : ""}`}
                                 >
                                     <div className="flex-1 min-w-0">
                                         <p className="text-sm font-semibold text-[var(--luxury-text)] truncate">

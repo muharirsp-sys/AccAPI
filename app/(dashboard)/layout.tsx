@@ -3,7 +3,7 @@
  * Caller: Semua route di grup `app/(dashboard)`.
  * Dependensi: Better Auth, getUserPermissions (union group ∪ legacy), helper RBAC, middleware header `x-current-path`.
  * Main Functions: DashboardLayout.
- * Side Effects: Redirect login/dashboard bila session atau permission halaman tidak valid.
+ * Side Effects: Membaca session/permission dan redirect login/dashboard bila akses halaman tidak valid.
  */
 import SidebarLayout from "@/components/SidebarLayout";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
@@ -14,6 +14,9 @@ import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { canAccessPathWithKeys, normalizeRole } from "@/lib/rbac";
 import { getUserPermissions } from "@/lib/rbac/resolve";
+
+// Session dan RBAC selalu bergantung pada header request; route dashboard tidak boleh diprerender statis.
+export const dynamic = "force-dynamic";
 
 export default async function DashboardLayout({
     children,

@@ -1,6 +1,14 @@
+/*
+ * Tujuan: Tabel data reusable dengan sorting, pencarian fuzzy, visibility kolom, pagination, dan feedback aksesibel.
+ * Caller: Route dashboard yang membutuhkan tabel TanStack generik.
+ * Dependensi: TanStack React Table, fuzzySearch internal, `AsyncState`, lucide-react.
+ * Main Functions: `DataTable`, semantic compact table layout dan feedback async.
+ * Side Effects: Mutasi state UI lokal dan listener sementara untuk Escape/outside click pada pemilih kolom.
+ */
+
 "use client";
 
-import React, { useId, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import {
     ColumnDef,
     flexRender,
@@ -14,6 +22,7 @@ import {
 } from "@tanstack/react-table";
 import { ChevronDown, ChevronUp, Search, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { fuzzyMatch } from "@/lib/fuzzySearch";
+import { EmptyState, LoadingState } from "@/components/ui/AsyncState";
 
 interface DataTableProps<TData, TValue> {
     columns: ColumnDef<TData, TValue>[];
@@ -21,19 +30,25 @@ interface DataTableProps<TData, TValue> {
     searchKey?: string; 
     searchPlaceholder?: string;
     isLoading?: boolean;
+    caption?: string;
+    emptyMessage?: string;
 }
 
 export function DataTable<TData, TValue>({
     columns,
     data,
     searchPlaceholder = "Cari semua kolom...",
-    isLoading = false
+    isLoading = false,
+    caption = "Tabel data",
+    emptyMessage = "Tidak ada hasil.",
 }: DataTableProps<TData, TValue>) {
     const [sorting, setSorting] = useState<SortingState>([]);
     const [globalFilter, setGlobalFilter] = useState("");
     const [rowSelection, setRowSelection] = useState({});
 
     const [isViewOpen, setIsViewOpen] = useState(false);
+    const columnPickerRef = useRef<HTMLDivElement>(null);
+    const columnPickerButtonRef = useRef<HTMLButtonElement>(null);
     const tableId = useId();
     const searchInputId = `${tableId}-search`;
     const columnMenuId = `${tableId}-column-menu`;
@@ -62,6 +77,28 @@ export function DataTable<TData, TValue>({
         },
     });
 
+    useEffect(() => {
+        if (!isViewOpen) return;
+
+        const handlePointerDown = (event: PointerEvent) => {
+            if (!columnPickerRef.current?.contains(event.target as Node)) {
+                setIsViewOpen(false);
+            }
+        };
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key !== "Escape") return;
+            setIsViewOpen(false);
+            columnPickerButtonRef.current?.focus();
+        };
+
+        document.addEventListener("pointerdown", handlePointerDown);
+        document.addEventListener("keydown", handleKeyDown);
+        return () => {
+            document.removeEventListener("pointerdown", handlePointerDown);
+            document.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [isViewOpen]);
+
     return (
         <div className="space-y-4">
             {/* Toolbar */}
@@ -78,12 +115,14 @@ export function DataTable<TData, TValue>({
                     />
                 </div>
                 
-                <div className="flex items-center gap-2 relative">
+                <div ref={columnPickerRef} className="flex items-center gap-2 relative">
                     <button
+                        ref={columnPickerButtonRef}
                         type="button"
                         onClick={() => setIsViewOpen(!isViewOpen)}
                         aria-expanded={isViewOpen}
                         aria-controls={columnMenuId}
+                        aria-haspopup="true"
                         className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg px-3 py-2 text-sm text-slate-300 transition-colors shadow-sm"
                     >
                         <SlidersHorizontal className="h-4 w-4" />
@@ -91,7 +130,7 @@ export function DataTable<TData, TValue>({
                     </button>
 
                     {isViewOpen && (
-                        <div id={columnMenuId} className="absolute right-0 top-full mt-2 w-48 bg-[#1a1c23] border border-white/5 rounded-lg shadow-xl shadow-black/50 z-50 p-2 py-3 backdrop-blur-xl">
+                        <div id={columnMenuId} role="group" aria-label="Tampilkan kolom" className="absolute right-0 top-full mt-2 w-48 bg-[#1a1c23] border border-white/5 rounded-lg shadow-xl shadow-black/50 z-50 p-2 py-3 backdrop-blur-xl">
                             <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-2 mb-2">Tampilkan Kolom</div>
                             <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
                                 {table.getAllLeafColumns().map(column => {
@@ -116,10 +155,17 @@ export function DataTable<TData, TValue>({
                 </div>
             </div>
 
+            <p role="status" aria-live="polite" className="sr-only">
+                {isLoading
+                    ? "Memuat data tabel."
+                    : `${table.getFilteredRowModel().rows.length} baris tersedia.`}
+            </p>
+
             {/* Table */}
-            <div className="rounded-xl border border-white/5 bg-[#16181d]/80 overflow-hidden backdrop-blur-md shadow-xl">
+            <div className="ui-table-frame">
                 <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left relative">
+                    <table aria-busy={isLoading} className="ui-data-table relative">
+                        <caption className="sr-only">{caption}</caption>
                         <thead className="text-xs text-slate-400 uppercase bg-black/20 border-b border-white/5">
                             {table.getHeaderGroups().map((headerGroup) => (
                                 <tr key={headerGroup.id}>
@@ -165,11 +211,8 @@ export function DataTable<TData, TValue>({
                         <tbody className="divide-y divide-white/5">
                             {isLoading ? (
                                 <tr>
-                                    <td colSpan={columns.length} className="h-24 text-center">
-                                        <div className="flex items-center justify-center gap-2 text-slate-400">
-                                            <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                                            Memuat data...
-                                        </div>
+                                    <td colSpan={table.getVisibleLeafColumns().length || 1} className="h-24 text-center">
+                                        <LoadingState label="Memuat data tabel" rows={3} embedded />
                                     </td>
                                 </tr>
                             ) : table.getRowModel().rows?.length ? (
@@ -188,8 +231,8 @@ export function DataTable<TData, TValue>({
                                 ))
                             ) : (
                                 <tr>
-                                    <td colSpan={columns.length} className="h-24 text-center text-slate-500">
-                                        Tidak ada hasil.
+                                    <td colSpan={table.getVisibleLeafColumns().length || 1} className="h-24 text-center text-slate-500">
+                                        <EmptyState title={emptyMessage} embedded />
                                     </td>
                                 </tr>
                             )}
@@ -229,6 +272,7 @@ export function DataTable<TData, TValue>({
                     </div>
                     <div className="flex items-center space-x-2">
                         <button
+                            type="button"
                             onClick={() => table.setPageIndex(0)}
                             disabled={!table.getCanPreviousPage()}
                             className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors"
@@ -237,6 +281,7 @@ export function DataTable<TData, TValue>({
                             <ChevronsLeft className="h-4 w-4" />
                         </button>
                         <button
+                            type="button"
                             onClick={() => table.previousPage()}
                             disabled={!table.getCanPreviousPage()}
                             className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors"
@@ -245,6 +290,7 @@ export function DataTable<TData, TValue>({
                             <ChevronLeft className="h-4 w-4" />
                         </button>
                         <button
+                            type="button"
                             onClick={() => table.nextPage()}
                             disabled={!table.getCanNextPage()}
                             className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors"
@@ -253,6 +299,7 @@ export function DataTable<TData, TValue>({
                             <ChevronRight className="h-4 w-4" />
                         </button>
                         <button
+                            type="button"
                             onClick={() => table.setPageIndex(table.getPageCount() - 1)}
                             disabled={!table.getCanNextPage()}
                             className="p-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-50 transition-colors"

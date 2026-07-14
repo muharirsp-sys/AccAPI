@@ -3,7 +3,7 @@
  * Caller: `next dev`, `next build`, dan runtime Next.js.
  * Dependensi: NextConfig dan working directory project.
  * Main Functions: `nextConfig`.
- * Side Effects: Mengarahkan root tracing/Turbopack ke folder project aktif; tidak ada DB/HTTP/file I/O.
+ * Side Effects: Mengarahkan root tracing/Turbopack ke folder project aktif dan mencegah route cleanup menyalin data runtime ke standalone.
  */
 import type { NextConfig } from "next";
 
@@ -13,7 +13,15 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
   outputFileTracingRoot: process.cwd(),
-  // turbopack only applies to `next dev --turbopack`, never to `next build`
+  // Route ini membaca folder runtime eksternal saat request; source/data root tidak dibutuhkan di standalone.
+  outputFileTracingExcludes: {
+    "/api/cron/cleanup-runtime": [
+      "./.env*",
+      "./*.{csv,xls,xlsx,rar,db,sqlite,sqlite3,log,jsonl,apl}",
+      "./{.agents,.claude,.claude-plugin,.codex,.git,.github,.vscode}/**/*",
+      "./{agency-agents,app,components,dashboard-generator,Data_Penjualan,db,docs,lib,master_barang_principle,outputs,ponytail,poster,public,python_backend,reference_surat_program,runtime,runtime_logs,scripts,tests,tmp}/**/*",
+    ],
+  },
   turbopack: {
     root: process.cwd(),
   },
