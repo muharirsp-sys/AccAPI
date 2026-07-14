@@ -31,8 +31,29 @@ const statusClasses: Record<ReconciliationStatus, string> = {
   UNIT_CONVERSION_ERROR: "bg-rose-500/10 text-rose-300",
   INVALID_DATA: "bg-rose-500/10 text-rose-300",
 };
+const amountLabels = { gross: "Nilai jual", discount: "Diskon", dpp: "DPP", tax: "Pajak", net: "Nilai bersih" } as const;
+const warningLabels: Record<string, string> = {
+  UNMAPPED_CUSTOMER: "Pelanggan KINO belum dipetakan.",
+  UNMAPPED_SALESMAN: "Salesman KINO belum dipetakan.",
+};
 const currency = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 2 });
 const number = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 });
+const money = (value: number) => `Rp${number.format(value)}`;
+const direction = (difference: number, formatted: string) => `Accurate ${difference < 0 ? "kurang" : "lebih"} ${formatted}`;
+
+function causeLines(row: ReconciliationResult): string[] {
+  if (row.status === "MATCH") return ["Tidak ada selisih."];
+  if (row.status === "MISSING_INTERNAL") return ["Data tidak ditemukan di Accurate."];
+  if (row.status === "MISSING_PRINCIPAL") return ["Data tidak ditemukan di KINO."];
+  if (row.status === "UNMAPPED_SKU") return ["SKU KINO belum memiliki pasangan produk Accurate."];
+  if (row.status === "UNIT_CONVERSION_ERROR") return ["Konversi satuan gagal; periksa master KINO dan baris sumber."];
+  if (row.status === "INVALID_DATA") return ["Data tidak dapat dibandingkan; periksa format sumber."];
+  const causes: string[] = [];
+  if (row.quantityDifference !== 0) causes.push(`Jumlah: Accurate ${number.format(row.accurateQuantity)}, KINO ${number.format(row.principalQuantity)} — ${direction(row.quantityDifference, number.format(Math.abs(row.quantityDifference)))}`);
+  for (const item of row.amountDifferences) causes.push(`${amountLabels[item.component]}: Accurate ${money(item.accurate)}, KINO ${money(item.kino)} — ${direction(item.difference, money(Math.abs(item.difference)))}`);
+  causes.push(...row.warnings.map((warning) => warningLabels[warning] ?? warning));
+  return causes;
+}
 
 function excelText(value: string): string {
   return /^[=+\-@]/.test(value) ? `'${value}` : value;
@@ -54,6 +75,7 @@ const columns: ColumnDef<ReconciliationResult>[] = [
   },
   { accessorKey: "orderNumber", header: "Order" },
   { accessorKey: "internalProductCode", header: "Produk internal" },
+  { id: "causes", header: "Penyebab selisih", cell: ({ row }) => <ul className="min-w-72 space-y-1">{causeLines(row.original).map((cause) => <li key={cause}>{cause}</li>)}</ul> },
   { accessorKey: "transactionClass", header: "Kelas transaksi" },
   { accessorKey: "accurateQuantity", header: "Qty Accurate", cell: ({ getValue }) => <span className="block text-right font-mono tabular-nums">{number.format(getValue<number>())}</span> },
   { accessorKey: "principalQuantity", header: "Qty prinsipal", cell: ({ getValue }) => <span className="block text-right font-mono tabular-nums">{number.format(getValue<number>())}</span> },
@@ -62,7 +84,7 @@ const columns: ColumnDef<ReconciliationResult>[] = [
   { accessorKey: "principalNet", header: "Net prinsipal", cell: ({ getValue }) => <span className="block text-right font-mono tabular-nums">{currency.format(getValue<number>())}</span> },
   { accessorKey: "valueDifference", header: "Selisih net", cell: ({ getValue }) => <span className="block text-right font-mono tabular-nums">{currency.format(getValue<number>())}</span> },
   { accessorKey: "warnings", header: "Peringatan", cell: ({ getValue }) => getValue<string[]>().join(", ") || "-" },
-  { id: "sourceRows", header: "Baris sumber", cell: ({ row }) => `Accurate: ${row.original.accurateSourceRows.join(", ") || "-"}; KINO: ${row.original.principalSourceRows.join(", ") || "-"}` },
+  { id: "sourceRows", header: "Baris sumber", cell: ({ row }) => `Accurate: ${row.original.accurateSourceRows.join(", ") || "-"} · KINO: ${row.original.principalSourceRows.join(", ") || "-"}` },
 ];
 
 export default function ReconciliationPage() {
@@ -104,7 +126,9 @@ export default function ReconciliationPage() {
       const response = await fetch("/api/reconciliation/kino/sales", { method: "POST", body: form });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Rekonsiliasi gagal diproses.");
-      setResult(payload as ReconciliationOutput);
+      const output = payload as ReconciliationOutput;
+      setResult(output);
+      setStatusFilter(output.results.some((row) => row.status !== "MATCH") ? "ISSUES_ONLY" : "ALL");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Rekonsiliasi gagal diproses.");
     } finally {
@@ -211,7 +235,7 @@ export default function ReconciliationPage() {
 
           <section className="min-w-0 space-y-4">
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div><h2 className="text-xl font-bold text-white">Hasil rekonsiliasi</h2><p className="text-sm text-slate-400">Filter hanya memengaruhi tabel, bukan file ekspor.</p></div>
+              <div><h2 className="text-xl font-bold text-white">{problematic > 0 ? "Temuan yang perlu diperiksa" : "Semua data cocok"}</h2><p className="text-sm text-slate-400">{problematic > 0 ? `Menampilkan ${number.format(problematic)} bermasalah dari ${number.format(total)} hasil.` : `Seluruh ${number.format(total)} data cocok.`}</p></div>
               <div className="flex w-full min-w-0 flex-col gap-3 sm:w-auto sm:flex-row sm:items-end">
                 <div className="min-w-0">
                   <label htmlFor="status-filter" className="mb-1 block text-xs font-semibold text-slate-300">Filter status</label>
@@ -228,7 +252,7 @@ export default function ReconciliationPage() {
             <DataTable
               columns={columns}
               data={filteredResults}
-              initialColumnVisibility={{ transactionClass: false, warnings: false, sourceRows: false }}
+              initialColumnVisibility={{ transactionClass: false, warnings: false, accurateQuantity: false, principalQuantity: false, quantityDifference: false, accurateNet: false, principalNet: false, valueDifference: false }}
               emptyMessage="Tidak ada hasil untuk filter ini."
               searchPlaceholder="Cari order, produk, atau status…"
             />
