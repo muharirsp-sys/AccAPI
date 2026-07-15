@@ -19,7 +19,7 @@ import type {
   ReconciliationStatus,
 } from "@/lib/off-program-control/sales-reconciliation";
 
-type Principal = "KINO" | "GODREJ";
+type Principal = "KINO" | "GODREJ" | "SHINZUI";
 type StatusFilter = "ALL" | "MATCH_ONLY" | "ISSUES_ONLY" | ReconciliationStatus;
 
 const statuses: ReconciliationStatus[] = [
@@ -390,6 +390,7 @@ export default function ReconciliationPage() {
             >
               <option value="KINO">KINO</option>
               <option value="GODREJ">GODREJ</option>
+              <option value="SHINZUI">SHINZUI</option>
             </select>
           </div>
         </div>
