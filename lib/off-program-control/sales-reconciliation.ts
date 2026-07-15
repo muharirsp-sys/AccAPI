@@ -713,6 +713,10 @@ export function parseGodrejSales(
         "IV_DISC1",
         sourceRowNumber,
       );
+    if (discountPercent < 0 || discountPercent > 100)
+      throw new Error(
+        `IV_DISC1 harus antara 0 dan 100 pada baris ${sourceRowNumber}`,
+      );
     if (quantity < 0 || price < 0 || fraction <= 0)
       throw new Error(`Nilai GDI tidak valid pada baris ${sourceRowNumber}`);
     const grossValue = (quantity * price) / fraction,
@@ -720,11 +724,7 @@ export function parseGodrejSales(
       gross = money(grossValue, "GROSS", sourceRowNumber),
       discount = money(discountValue, "DISKON", sourceRowNumber),
       dpp = gross - discount,
-      tax = money(
-        (grossValue - discountValue) * 0.11,
-        "PAJAK",
-        sourceRowNumber,
-      ),
+      tax = Number((BigInt(dpp) * 11n + 50n) / 100n),
       customer = requiredText(row, header.columns, "CS_NO", sourceRowNumber),
       salesman = requiredText(row, header.columns, "PS_NO", sourceRowNumber);
     output.push({
