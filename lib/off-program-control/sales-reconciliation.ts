@@ -687,9 +687,10 @@ export function parseGodrejSales(
         ? "UNMAPPED_SKU"
         : !mappedProduct
           ? "INVALID_DATA"
-          : !accurateUnits
-                .get(`${order}|${mappedProduct.internal}`)
-                ?.has(mappedProduct.unit)
+          : accurateUnits.has(`${order}|${mappedProduct.internal}`) &&
+              !accurateUnits
+                .get(`${order}|${mappedProduct.internal}`)!
+                .has(mappedProduct.unit)
             ? "UNIT_CONVERSION_ERROR"
             : "OK",
       quantity = finite(

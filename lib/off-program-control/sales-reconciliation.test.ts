@@ -277,6 +277,43 @@ const godrejUnitMismatch = reconcileGodrejSales(
   godrejWrongUnitMapping,
 );
 assert.equal(godrejUnitMismatch.results[0]?.status, "UNIT_CONVERSION_ERROR");
+const godrejWithoutAccurateCounterpart = workbook({
+  Sheet1: [
+    [
+      "IV_NO",
+      "IV_DATE",
+      "CS_NO",
+      "PS_NO",
+      "INV_NO",
+      "IV_TOTPCS",
+      "IV_PRICE",
+      "IV_DISC1",
+      "IV_FRA",
+    ],
+    [
+      "FK/BFG-10025411",
+      46216,
+      "FGC-1",
+      "FGM-1",
+      "40043482",
+      6,
+      1200,
+      5,
+      72,
+    ],
+  ],
+});
+const godrejMissingInternal = reconcileGodrejSales(
+  godrejAccurate,
+  godrejWithoutAccurateCounterpart,
+  godrejWrongUnitMapping,
+);
+assert.equal(
+  godrejMissingInternal.results.find(
+    (row) => row.orderNumber === "BFG-10025411",
+  )?.status,
+  "MISSING_INTERNAL",
+);
 const unsupportedAdjustment = workbook({
   Sheet1: [
     [
