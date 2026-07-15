@@ -9,7 +9,8 @@
 # Main Functions:
 #   load_lookups(f_format, f_spv) -> LookupTables
 #   process(paste_path, stock_path, lookups) -> dict {per_spv, per_sm, stock, progress, summary}
-# Side Effects: baca file Excel (read-only). TIDAK menulis file sumber. Tidak kirim email.
+#   build_report_frame(sb) / write_per_spv_files(...) -> output XLSX dengan kolom REPORT_COLUMNS.
+# Side Effects: Baca file sumber dan tulis XLSX hasil ke runtime; tidak mengubah file sumber/tidak kirim email.
 # Catatan parity (dikonfirmasi user): sumber penjualan = sheet "Paste Acc" (export Accurate),
 #   sheet "Paste Lap. Penj" lama sudah kosong -> tidak dipakai. Retur = "Paste Lap. Retur" (dinegasikan).
 from __future__ import annotations
@@ -382,7 +383,8 @@ def build_report_frame(sb: pd.DataFrame) -> pd.DataFrame:
         df[c] = pd.to_datetime(df[c], errors="coerce").dt.strftime("%Y-%m-%d")
     numcols = ["QTY","HARGA","POTONGAN","NILAI_JUAL","JUMLAH","DPP","Harga Sesuai Inputan",
                "Value Los","Qty Los","Value Retur Termasuk Batal (Exc.PPN)","QTY_SATUANKECIL","QTY_REF"]
-    out = df[REPORT_COLUMNS + ["GOLONGAN"]].copy() if "GOLONGAN" in df else df[REPORT_COLUMNS].copy()
+    # GOLONGAN sudah ada di REPORT_COLUMNS; duplikasi di sini menggeser seluruh nilai setelah kolom itu saat XLSX ditulis.
+    out = df[REPORT_COLUMNS].copy()
     for c in numcols:
         if c in out:
             out[c] = pd.to_numeric(out[c], errors="coerce").replace([np.inf, -np.inf], np.nan)
