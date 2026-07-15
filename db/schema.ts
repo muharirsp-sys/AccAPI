@@ -1,8 +1,8 @@
 /*
- * Tujuan: Skema Drizzle PostgreSQL untuk Better Auth, RBAC, cache master, dan idempotency lokal.
+ * Tujuan: Skema Drizzle PostgreSQL/libSQL untuk auth, RBAC, modul ERP, Insentif, dan Laporan Harian.
  * Caller: Better Auth adapter, route handler Next.js, script init-db, dan service cache lokal.
  * Dependensi: drizzle-orm/pg-core.
- * Main Functions: table `user`, `session`, `account`, `verification`, `syncState`, `item`, `customer`, `idempotencyLog`.
+ * Main Functions: Definisi tabel auth, operasional, assignment hierarki, reportRun, dan recipient.
  * Side Effects: Definisi schema untuk DB read/write PostgreSQL oleh caller.
  */
 import { pgTable, text, integer, bigint, doublePrecision, timestamp, boolean, jsonb, index, uniqueIndex, primaryKey } from "drizzle-orm/pg-core";
@@ -1002,7 +1002,7 @@ export const reportRecipient = pgTable("report_recipient", {
 export const reportRun = pgTable("report_run", {
     id: text("id").primaryKey(),
     reportDate: text("report_date").notNull(),     // YYYY-MM-DD periode laporan
-    status: text("status").notNull().default("dry_run"), // 'dry_run' | 'sent' | 'failed'
+    status: text("status").notNull().default("dry_run"), // 'dry_run' | 'sending' | 'sent' | 'failed'
     fileCount: integer("file_count").notNull().default(0),
     emailCount: integer("email_count").notNull().default(0),
     salesRows: integer("sales_rows").notNull().default(0),

@@ -31,7 +31,7 @@ export const PERMISSION_REGISTRY = {
     users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission", "manage"],
     // Modul yang sebelumnya TIDAK terdaftar di RBAC (temuan Fase 3 — page-guard gap):
     form_kontrol: ["view", "submit", "manage"],
-    insentif_sales: ["view", "manage", "upload_target", "upload_progress", "input_support", "manage_payment"],
+    insentif_sales: ["view", "manage", "upload_target", "upload_progress", "input_support", "manage_payment", "manage_hierarchy"],
     // History Penjualan (cascade No Faktur -> Detail). manage = upload/import CSV e-Faktur.
     sales_history: ["view", "export", "manage"],
     // Laporan Harian per SPV/SM (upload FIX -> feed dashboard + email). send = kirim email (gated).

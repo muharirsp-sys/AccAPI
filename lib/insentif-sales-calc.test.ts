@@ -1,6 +1,9 @@
 /*
- * Self-check kalkulasi insentif GT. Jalankan: node --experimental-strip-types lib/insentif-sales-calc.test.ts
- * Pure, tanpa DB. Gagal → exit non-zero.
+ * Tujuan: Self-check kalkulasi insentif GT dan pace periode dashboard.
+ * Caller: Developer/CI via node --experimental-strip-types lib/insentif-sales-calc.test.ts.
+ * Dependensi: node:assert, kalkulasi insentif, dan helper periode dashboard.
+ * Main Functions: Assertion threshold, exclusive/mix, normalisasi, dan periode.
+ * Side Effects: Tulis hasil ke stdout; gagal dengan exit non-zero.
  */
 import assert from "node:assert";
 import {
@@ -11,6 +14,7 @@ import {
     normalizeTipe,
     type MixPrincipalInput,
 } from "./insentif-sales-calc.ts";
+import { getPeriodWorkdayProgress } from "../app/(dashboard)/insentif-sales/data.ts";
 
 const approx = (a: number, b: number, msg: string) =>
     assert.ok(Math.abs(a - b) < 1e-6, `${msg}: ${a} != ${b}`);
@@ -133,5 +137,17 @@ assert.throws(() => normalizeStatus("xxx"), "status tak dikenal → throw");
 assert.strictEqual(normalizeTipe("Mix"), "mix", "norm mix");
 assert.strictEqual(normalizeTipe("Eksklusif"), "exclusive", "norm exclusive");
 assert.throws(() => normalizeTipe("zzz"), "tipe tak dikenal → throw");
+
+// --- periode dashboard ---
+assert.deepStrictEqual(
+    getPeriodWorkdayProgress(2026, 6, new Date(2026, 6, 15)),
+    { passed: 22, total: 22, pct: 100 },
+    "bulan lalu harus selesai 100%",
+);
+assert.deepStrictEqual(
+    getPeriodWorkdayProgress(2026, 8, new Date(2026, 6, 15)),
+    { passed: 0, total: 21, pct: 0 },
+    "bulan depan harus 0%",
+);
 
 console.log("OK — all insentif-sales-calc checks passed");
