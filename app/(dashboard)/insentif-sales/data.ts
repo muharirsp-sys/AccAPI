@@ -1,10 +1,9 @@
 /*
- * Tujuan: Sumber data dummy + helper kalkulasi (Time Gone, color tagging, taksiran insentif strata)
- *         untuk modul add-on Insentif Sales. Frontend-only — belum tersambung backend/DB.
+ * Tujuan: Tipe UI, konstanta tampilan, dan helper kalkulasi periode/pace Insentif Sales.
  * Caller: app/(dashboard)/insentif-sales/page.tsx dan komponen tampilan di dalamnya.
  * Dependensi: tidak ada (murni TS, dipakai di Client Component).
- * Main Functions: getWorkdayProgress, paceStatus, lookupTier, estimateIncentive.
- * Side Effects: Tidak ada I/O; semua data statis untuk demo UI.
+ * Main Functions: getWorkdayProgress, getPeriodWorkdayProgress, paceStatus, lookupTier, estimateIncentive.
+ * Side Effects: Tidak ada I/O.
  */
 
 // ====== Domain types ======
@@ -118,7 +117,9 @@ export const KPI_LABELS: Record<KpiType, string> = {
  * Time Gone: persentase hari kerja (Senin–Jumat) yang telah berlalu terhadap
  * total hari kerja pada bulan dari `ref`. Frontend-only, weekend dianggap libur.
  */
-export function getWorkdayProgress(ref: Date): { passed: number; total: number; pct: number } {
+export interface WorkdayProgress { passed: number; total: number; pct: number }
+
+export function getWorkdayProgress(ref: Date): WorkdayProgress {
     const year = ref.getFullYear();
     const month = ref.getMonth();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -132,6 +133,16 @@ export function getWorkdayProgress(ref: Date): { passed: number; total: number; 
     }
     const pctVal = total > 0 ? (passed / total) * 100 : 0;
     return { passed, total, pct: Math.round(pctVal) };
+}
+
+/** Progress hari kerja periode terpilih: bulan lalu 100%, bulan depan 0%, bulan ini aktual. */
+export function getPeriodWorkdayProgress(year: number, month: number, today = new Date()): WorkdayProgress {
+    const selectedKey = year * 12 + month;
+    const currentKey = today.getFullYear() * 12 + today.getMonth() + 1;
+    const fullMonth = getWorkdayProgress(new Date(year, month, 0));
+    if (selectedKey < currentKey) return fullMonth;
+    if (selectedKey > currentKey) return { passed: 0, total: fullMonth.total, pct: 0 };
+    return getWorkdayProgress(today);
 }
 
 export type PaceLevel = "green" | "yellow" | "red";

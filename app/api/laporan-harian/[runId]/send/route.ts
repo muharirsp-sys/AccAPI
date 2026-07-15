@@ -1,19 +1,24 @@
 /*
  * Tujuan: KIRIM email laporan per-SPV untuk 1 report_run — GATED.
- *         Hanya jalan bila body { confirm: true } DAN status run masih 'dry_run'.
- *         TIDAK auto-fire: tanpa confirm -> 400. Sudah 'sent' -> 409 (cegah dobel kirim).
+ *         Hanya jalan bila body { confirm: true }; run dry_run/failed diklaim atomik sebagai
+ *         'sending', lalu hanya penerima pending/failed yang diproses. Sudah sent/sending -> 409.
  * Caller: UI Laporan Harian (tombol "Kirim" setelah review preview).
- * Dependensi: requirePermission("laporan_harian.send"), lib/email (attachment),
+ * Dependensi: requirePermission("laporan_harian.send"), lib/email, lib/laporan-harian/send-state,
  *             FastAPI /laporan-harian/file (ambil file per-SPV run-scoped), db/schema.
- * Main Functions: POST (kirim + update status).
+ * Main Functions: POST (claim run, kirim/retry penerima, update status).
  * Side Effects: HTTP fetch file; kirim email (nodemailer); DB update report_run + report_run_recipient.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { reportRun, reportRunRecipient } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { sendEmail } from "@/lib/email";
+import {
+    canClaimReportRun,
+    finalReportRunStatus,
+    RETRYABLE_RECIPIENT_STATUSES,
+} from "@/lib/laporan-harian/send-state";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -40,17 +45,30 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
 
     const [run] = await db.select().from(reportRun).where(eq(reportRun.id, runId)).limit(1);
     if (!run) return NextResponse.json({ error: "Run tidak ditemukan" }, { status: 404 });
-    // GATE 2: cegah dobel kirim
-    if (run.status === "sent") {
-        return NextResponse.json({ error: "Run ini sudah pernah dikirim.", status: run.status }, { status: 409 });
+    // GATE 2: cegah dobel/concurrent send. Run gagal boleh di-retry.
+    if (!canClaimReportRun(run.status)) {
+        const error = run.status === "sent" ? "Run ini sudah pernah dikirim." : "Run ini sedang/tidak dapat dikirim.";
+        return NextResponse.json({ error, status: run.status }, { status: 409 });
+    }
+
+    const claimed = await db
+        .update(reportRun)
+        .set({ status: "sending" })
+        .where(and(eq(reportRun.id, runId), eq(reportRun.status, run.status)));
+    if (claimed.rowCount !== 1) {
+        return NextResponse.json({ error: "Status run berubah; muat ulang sebelum mengirim.", status: "conflict" }, { status: 409 });
     }
 
     const recips = await db
         .select()
         .from(reportRunRecipient)
-        .where(and(eq(reportRunRecipient.runId, runId), eq(reportRunRecipient.sendStatus, "pending")));
+        .where(and(
+            eq(reportRunRecipient.runId, runId),
+            inArray(reportRunRecipient.sendStatus, [...RETRYABLE_RECIPIENT_STATUSES]),
+        ));
     if (recips.length === 0) {
-        return NextResponse.json({ error: "Tidak ada penerima pending untuk run ini." }, { status: 400 });
+        await db.update(reportRun).set({ status: "failed" }).where(eq(reportRun.id, runId));
+        return NextResponse.json({ error: "Tidak ada penerima pending/gagal untuk run ini." }, { status: 400 });
     }
 
     // Group per fileName -> daftar email (1 email per file laporan, mirror alur lama)
@@ -78,7 +96,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
     }
 
     let sent = 0, failed = 0;
-    const now = new Date();
     for (const [fileName, grp] of byFile) {
         const file = await fetchFile(fileName);
         let ok = false, err: string | null = null;
@@ -105,7 +122,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
         if (ok) sent += grp.emails.length; else failed += grp.emails.length;
     }
 
-    const finalStatus = failed === 0 ? "sent" : (sent === 0 ? "failed" : "sent");
+    const finalStatus = finalReportRunStatus(failed);
     await db.update(reportRun).set({ status: finalStatus }).where(eq(reportRun.id, runId));
 
     return NextResponse.json({

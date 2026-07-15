@@ -2,7 +2,8 @@
  * Tujuan: Halaman Insentif Sales untuk performa, kalkulasi insentif, dan verifikasi pembayaran dengan hasil batch yang eksplisit.
  * Caller: Next.js App Router route /insentif-sales.
  * Dependensi: lucide-react, sonner, Next navigation, `AsyncState`, ./data (helpers + constants), API routes /api/insentif-sales/*.
- * Main Functions: InsentifSalesPage + sub-view Sales/SPV/SM/Admin/Finance, `paymentSelectionKey`, `updateContext`, keyboard tab navigation, semantic cockpit/table layout dan feedback async.
+ * Main Functions: InsentifSalesPage + sub-view Sales/SPV/SM/Admin/Finance, pemilih periode URL,
+ *   `paymentSelectionKey`, `updateContext`, keyboard tab navigation, dan feedback async.
  * Side Effects: Fetch /api/insentif-sales/dashboard dan /payments, POST /progress, PATCH /payments/[id], sinkronisasi view/filter ke query URL; error dan partial failure dipertahankan di UI.
  */
 
@@ -12,15 +13,15 @@ import { Fragment, useCallback, useEffect, useMemo, useState, type KeyboardEvent
 import {
     Trophy, Filter, Clock, TrendingUp, BarChart3, ListChecks,
     Wallet, Upload, Target, Users, UserCog, DollarSign, CheckCircle2,
-    AlertTriangle, FileUp, Save, Search, Loader2, RefreshCw, Download,
+    AlertTriangle, FileUp, Save, Loader2, RefreshCw, Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AsyncState";
 import {
     PRINCIPLES, BRANCHES, KPI_LABELS, MONTH_LABELS,
-    getWorkdayProgress, paceStatus, pct, itemSuper, formatRp, formatShortRp,
-    type Salesman, type PaceLevel, type ChannelType,
+    getPeriodWorkdayProgress, paceStatus, pct, itemSuper, formatRp, formatShortRp,
+    type Salesman, type PaceLevel, type ChannelType, type WorkdayProgress,
 } from "./data";
 
 // ── API types ──────────────────────────────────────────────────────────────
@@ -114,9 +115,8 @@ function SectionTitle({ icon: Icon, no, title, desc }: { icon: typeof Trophy; no
     );
 }
 
-function PaceCell({ value, real, target, suffix = "%" }: { value: number; real?: number; target?: number; suffix?: string }) {
-    const tg = getWorkdayProgress(new Date()).pct;
-    const level = paceStatus(value, tg);
+function PaceCell({ value, timeGonePct, real, target, suffix = "%" }: { value: number; timeGonePct: number; real?: number; target?: number; suffix?: string }) {
+    const level = paceStatus(value, timeGonePct);
     return (
         <span className={`inline-flex flex-col items-center min-w-[78px] px-2 py-1 rounded border font-bold text-xs ${paceClasses(level)}`}>
             <span>{value}{suffix}</span>
@@ -156,8 +156,7 @@ function SummaryBlock({ label, value, icon: Icon, tone }: { label: string; value
 }
 
 // ── Performance Block (grouped bar chart) ─────────────────────────────────
-function PerformanceBlock({ rows, apiRows }: { rows: Salesman[]; apiRows: ApiRow[] }) {
-    const tg = getWorkdayProgress(new Date());
+function PerformanceBlock({ rows, apiRows, progress: tg }: { rows: Salesman[]; apiRows: ApiRow[]; progress: WorkdayProgress }) {
     const totalReal = rows.reduce((a, r) => a + r.realValue, 0);
     const totalTarget = rows.reduce((a, r) => a + r.targetValue, 0);
     const totalPct = pct(totalReal, totalTarget);
@@ -253,8 +252,7 @@ function PerformanceBlock({ rows, apiRows }: { rows: Salesman[]; apiRows: ApiRow
 }
 
 // ── Achievement Table ──────────────────────────────────────────────────────
-function AchievementTable({ rows }: { rows: Salesman[] }) {
-    const tg = getWorkdayProgress(new Date());
+function AchievementTable({ rows, progress: tg }: { rows: Salesman[]; progress: WorkdayProgress }) {
     const totals = useMemo(() => ({
         realValue: rows.reduce((a, r) => a + r.realValue, 0),
         targetValue: rows.reduce((a, r) => a + r.targetValue, 0),
@@ -353,16 +351,16 @@ function AchievementTable({ rows }: { rows: Salesman[] }) {
                             <td className="px-3 py-3 uppercase tracking-wider text-indigo-300 border-r border-white/[0.06]">Grand Total / Tim</td>
                             <td className={tdNum + " text-slate-400"}>{formatShortRp(totals.targetValue)}</td>
                             <td className={tdNum + " text-slate-200"}>{formatShortRp(totals.realValue)}</td>
-                            <td className="px-2 py-3 text-center border-r border-white/[0.06]"><PaceCell value={pct(totals.realValue, totals.targetValue)} /></td>
+                        <td className="px-2 py-3 text-center border-r border-white/[0.06]"><PaceCell value={pct(totals.realValue, totals.targetValue)} timeGonePct={tg.pct} /></td>
                             <td className={tdNum + " text-slate-400"}>{totals.targetEc}</td>
                             <td className={tdNum + " text-slate-200"}>{totals.realEc}</td>
-                            <td className="px-2 py-3 text-center border-r border-white/[0.06]"><PaceCell value={pct(totals.realEc, totals.targetEc)} /></td>
+                        <td className="px-2 py-3 text-center border-r border-white/[0.06]"><PaceCell value={pct(totals.realEc, totals.targetEc)} timeGonePct={tg.pct} /></td>
                             <td className={tdNum + " text-slate-400"}>{totals.targetAo}</td>
                             <td className={tdNum + " text-slate-200"}>{totals.realAo}</td>
-                            <td className="px-2 py-3 text-center border-r border-white/[0.06]"><PaceCell value={pct(totals.realAo, totals.targetAo)} /></td>
+                        <td className="px-2 py-3 text-center border-r border-white/[0.06]"><PaceCell value={pct(totals.realAo, totals.targetAo)} timeGonePct={tg.pct} /></td>
                             <td className={tdNum + " text-slate-400"}>{totalIsqTgt.toFixed(2)}</td>
                             <td className={tdNum + " text-slate-200"}>{totalIsqReal.toFixed(2)}</td>
-                            <td className="px-2 py-3 text-center border-r border-white/[0.06]"><PaceCell value={totalIsqPct} /></td>
+                        <td className="px-2 py-3 text-center border-r border-white/[0.06]"><PaceCell value={totalIsqPct} timeGonePct={tg.pct} /></td>
                             <td className="px-3 py-3 text-center bg-indigo-500/10">
                                 <span className="text-sm font-extrabold text-indigo-300">{grandTotal}%</span>
                             </td>
@@ -443,8 +441,7 @@ function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
 }
 
 // ── SPV View ───────────────────────────────────────────────────────────────
-function SpvView({ rows }: { rows: Salesman[] }) {
-    const tg = getWorkdayProgress(new Date());
+function SpvView({ rows, progress: tg }: { rows: Salesman[]; progress: WorkdayProgress }) {
     const groups = useMemo(() => {
         const map = new Map<string, Salesman[]>();
         rows.forEach((r) => { const k = r.spv; if (!map.has(k)) map.set(k, []); map.get(k)!.push(r); });
@@ -485,8 +482,8 @@ function SpvView({ rows }: { rows: Salesman[] }) {
                                         <div className="font-semibold text-slate-200">{spv}</div>
                                         <div className="text-[10px] text-slate-500">{salesmanCount} salesman</div>
                                     </td>
-                                    <td className="px-3 py-3 text-center"><PaceCell value={pct(rv, tv)} real={rv} target={tv} /></td>
-                                    <td className="px-3 py-3 text-center"><PaceCell value={pct(aoTtReal, aoTtTarget)} /></td>
+                                <td className="px-3 py-3 text-center"><PaceCell value={pct(rv, tv)} timeGonePct={tg.pct} real={rv} target={tv} /></td>
+                                <td className="px-3 py-3 text-center"><PaceCell value={pct(aoTtReal, aoTtTarget)} timeGonePct={tg.pct} /></td>
                                     <td className="px-3 py-3 text-center text-slate-200 font-bold">{avgAo}</td>
                                     <td className="px-3 py-3 text-center text-slate-200 font-bold">{aveIaTt}</td>
                                     <td className="px-3 py-3 text-center text-slate-200 font-bold">{aveIaMt}</td>
@@ -497,7 +494,7 @@ function SpvView({ rows }: { rows: Salesman[] }) {
                     <tfoot>
                         <tr className="bg-black/50 border-t-2 border-indigo-500/30 font-bold">
                             <td className="px-3 py-3 uppercase text-[11px] tracking-wider text-indigo-300">Total ({tg.pct}% Time Gone)</td>
-                            <td className="px-3 py-3 text-center"><PaceCell value={pct(rows.reduce((a, r) => a + r.realValue, 0), rows.reduce((a, r) => a + r.targetValue, 0))} /></td>
+                            <td className="px-3 py-3 text-center"><PaceCell value={pct(rows.reduce((a, r) => a + r.realValue, 0), rows.reduce((a, r) => a + r.targetValue, 0))} timeGonePct={tg.pct} /></td>
                             <td className="px-3 py-3 text-center text-slate-400" colSpan={4}>-</td>
                         </tr>
                     </tfoot>
@@ -508,7 +505,7 @@ function SpvView({ rows }: { rows: Salesman[] }) {
 }
 
 // ── SM View ────────────────────────────────────────────────────────────────
-function SmView({ rows }: { rows: Salesman[] }) {
+function SmView({ rows, progress }: { rows: Salesman[]; progress: WorkdayProgress }) {
     const groups = useMemo(() => {
         const map = new Map<string, Salesman[]>();
         rows.forEach((r) => { const k = `${r.sm}__${r.principle}`; if (!map.has(k)) map.set(k, []); map.get(k)!.push(r); });
@@ -547,8 +544,8 @@ function SmView({ rows }: { rows: Salesman[] }) {
                                 <tr key={key} className="even:bg-white/[0.025] hover:bg-white/[0.05] transition-colors">
                                     <td className="px-3 py-3 font-semibold text-slate-200">{sm}</td>
                                     <td className="px-3 py-3"><span className="px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-[11px] font-bold">{principle}</span></td>
-                                    <td className="px-3 py-3 text-center"><PaceCell value={pct(rv, tv)} real={rv} target={tv} /></td>
-                                    <td className="px-3 py-3 text-center"><PaceCell value={pct(aoTtReal, aoTtTarget)} /></td>
+                                <td className="px-3 py-3 text-center"><PaceCell value={pct(rv, tv)} timeGonePct={progress.pct} real={rv} target={tv} /></td>
+                                <td className="px-3 py-3 text-center"><PaceCell value={pct(aoTtReal, aoTtTarget)} timeGonePct={progress.pct} /></td>
                                     <td className="px-3 py-3 text-center text-slate-200 font-bold">{avgAo}</td>
                                     <td className="px-3 py-3 text-center text-slate-200 font-bold">{aveIaTt}</td>
                                     <td className="px-3 py-3 text-center text-slate-200 font-bold">{aveIaMt}</td>
@@ -1885,17 +1882,21 @@ export default function InsentifSalesPage() {
     const [apiRows, setApiRows] = useState<ApiRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [dashboardError, setDashboardError] = useState("");
-    const [month] = useState(now.getMonth() + 1);
-    const [year] = useState(now.getFullYear());
     const pathname = usePathname();
     const router = useRouter();
     const searchParams = useSearchParams();
+    const requestedMonth = Number(searchParams.get("month"));
+    const requestedYear = Number(searchParams.get("year"));
+    const month = Number.isInteger(requestedMonth) && requestedMonth >= 1 && requestedMonth <= 12
+        ? requestedMonth : now.getMonth() + 1;
+    const year = Number.isInteger(requestedYear) && requestedYear >= 2020 && requestedYear <= 2100
+        ? requestedYear : now.getFullYear();
     const requestedView = searchParams.get("view") as ViewKey | null;
     const view = VIEWS.some((item) => item.key === requestedView) ? requestedView! : "sales";
     const principle = searchParams.get("principle") || "ALL";
     const branch = searchParams.get("branch") || "ALL";
 
-    const updateContext = useCallback((updates: Partial<{ view: ViewKey; principle: string; branch: string }>) => {
+    const updateContext = useCallback((updates: Partial<{ view: ViewKey; principle: string; branch: string; month: string; year: string }>) => {
         const params = new URLSearchParams(searchParams.toString());
         for (const [key, value] of Object.entries(updates)) {
             if (!value || value === "ALL") params.delete(key);
@@ -1905,7 +1906,7 @@ export default function InsentifSalesPage() {
         router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
     }, [pathname, router, searchParams]);
 
-    const tg = getWorkdayProgress(now);
+    const tg = getPeriodWorkdayProgress(year, month, now);
 
     const fetchDashboard = useCallback(async () => {
         setLoading(true);
@@ -1971,7 +1972,7 @@ export default function InsentifSalesPage() {
                         <div className="h-2 mt-1.5 bg-black/40 rounded-full overflow-hidden">
                             <div className="h-full bg-gradient-to-r from-indigo-500 to-amber-400 rounded-full" style={{ width: `${tg.pct}%` }} />
                         </div>
-                        <div className="text-[10px] text-slate-500 mt-1">{tg.passed} / {tg.total} hari kerja · {MONTH_LABELS[now.getMonth()]} {year}</div>
+                        <div className="text-[10px] text-slate-500 mt-1">{tg.passed} / {tg.total} hari kerja · {MONTH_LABELS[month - 1]} {year}</div>
                     </div>
                 </div>
             </div>
@@ -2002,6 +2003,16 @@ export default function InsentifSalesPage() {
             {showFilters && (
                 <div className="ui-toolbar">
                     <span className="flex items-center gap-2 text-xs font-semibold text-slate-400 uppercase tracking-wider"><Filter size={14} /> Filter</span>
+                    <input
+                        type="month"
+                        aria-label="Periode insentif"
+                        value={`${year}-${String(month).padStart(2, "0")}`}
+                        onChange={(event) => {
+                            const [nextYear, nextMonth] = event.target.value.split("-");
+                            if (nextYear && nextMonth) updateContext({ year: nextYear, month: String(Number(nextMonth)) });
+                        }}
+                        className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                    />
                     <select aria-label="Filter principle" value={principle} onChange={(e) => updateContext({ principle: e.target.value })} className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500">
                         <option value="ALL">Semua Principle</option>
                         {PRINCIPLES.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -2043,23 +2054,23 @@ export default function InsentifSalesPage() {
                 <div className="space-y-5">
                     {view === "sales" && (
                         <>
-                            <PerformanceBlock rows={salesmen} apiRows={apiRows} />
-                            <AchievementTable rows={salesmen} />
+                            <PerformanceBlock rows={salesmen} apiRows={apiRows} progress={tg} />
+                            <AchievementTable rows={salesmen} progress={tg} />
                             <IncentiveTable apiRows={apiRows} />
                         </>
                     )}
                     {view === "spv" && (
                         <>
-                            <PerformanceBlock rows={salesmen} apiRows={apiRows} />
-                            <SpvView rows={salesmen} />
+                            <PerformanceBlock rows={salesmen} apiRows={apiRows} progress={tg} />
+                            <SpvView rows={salesmen} progress={tg} />
                             <SpvIncentiveTable month={month} year={year} />
                             <IncentiveTable apiRows={apiRows} />
                         </>
                     )}
                     {view === "sm" && (
                         <>
-                            <PerformanceBlock rows={salesmen} apiRows={apiRows} />
-                            <SmView rows={salesmen} />
+                            <PerformanceBlock rows={salesmen} apiRows={apiRows} progress={tg} />
+                            <SmView rows={salesmen} progress={tg} />
                             <IncentiveTable apiRows={apiRows} />
                         </>
                     )}
