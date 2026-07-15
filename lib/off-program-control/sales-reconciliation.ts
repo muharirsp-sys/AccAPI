@@ -23,10 +23,7 @@ export interface AmountDifference {
 }
 type TransactionClass = "NORMAL" | "BONUS" | "RETURN";
 type MappingStatus =
-  | "OK"
-  | "UNMAPPED_SKU"
-  | "UNIT_CONVERSION_ERROR"
-  | "INVALID_DATA";
+  "OK" | "UNMAPPED_SKU" | "UNIT_CONVERSION_ERROR" | "INVALID_DATA";
 type Row = unknown[];
 
 export interface CanonicalSalesLine {
@@ -136,7 +133,8 @@ function orderNumber(value: unknown, label: string, row: number): string {
     godrej = [...normalized.matchAll(/(?:FK\/BFG|FK|BFG)-(\d+)/g)].map(
       (match) => `BFG-${match[1]}`,
     ),
-    matches = [...kino, ...godrej];
+    shinzui = normalized.match(/INVGTS\d+-\d+-\d+/g) ?? [],
+    matches = [...kino, ...godrej, ...shinzui];
   if (matches.length !== 1)
     throw new Error(
       `${label} harus memuat tepat satu nomor order pada baris ${row}`,
@@ -219,6 +217,16 @@ interface Mappings {
 }
 interface GodrejMappings {
   products: Map<string, Array<{ internal: string; unit: string }>>;
+}
+interface ShinzuiProductMapping {
+  internal: string;
+  unit: string;
+  caseSize: number | null;
+  caseSizeError: string | null;
+  sourceRowNumber: number;
+}
+interface ShinzuiMappings {
+  products: Map<string, ShinzuiProductMapping[]>;
 }
 function mappingRows(
   workbook: XLSX.WorkBook,
@@ -356,6 +364,75 @@ export function parseGodrejMappings(
       )
     )
       mapped.push({ internal, unit: smallestUnit });
+    products.set(principal, mapped);
+  }
+  return { products };
+}
+
+export function parseShinzuiMappings(
+  buffer: Buffer | Uint8Array,
+): ShinzuiMappings {
+  if (!buffer?.byteLength) throw new Error("File mapping kosong");
+  const workbook = XLSX.read(buffer, {
+      type: "buffer",
+      raw: true,
+      cellFormula: false,
+    }),
+    sheet = mappingRows(workbook, "Pvt Map 1", [
+      "KODE PCPL",
+      "KODE BARANG WIN2",
+      "SATUAN FIX WIN",
+      "ISI/CTN",
+    ]),
+    products = new Map<string, ShinzuiProductMapping[]>();
+  for (let index = sheet.start; index < sheet.rows.length; index++) {
+    const row = sheet.rows[index],
+      principal = text(value(row, sheet.columns, "KODE PCPL")),
+      internal = text(value(row, sheet.columns, "KODE BARANG WIN2")),
+      smallestUnit = unit(value(row, sheet.columns, "SATUAN FIX WIN")),
+      rawCaseSize = value(row, sheet.columns, "ISI/CTN"),
+      normalizedCaseSize = text(rawCaseSize),
+      entries = [principal, internal, smallestUnit, normalizedCaseSize];
+    if (
+      entries.every((entry) => !entry || entry === "(BLANK)" || entry === "0")
+    )
+      continue;
+    if (
+      [principal, internal, smallestUnit].some(
+        (entry) => !entry || entry === "(BLANK)" || entry === "0",
+      ) ||
+      !normalizedCaseSize ||
+      normalizedCaseSize === "(BLANK)"
+    )
+      throw new Error(`Pvt Map 1 tidak lengkap pada baris ${index + 1}`);
+    let caseSize: number | null = null,
+      caseSizeError: string | null = null;
+    try {
+      caseSize = finite(rawCaseSize, "ISI/CTN", index + 1);
+      if (caseSize <= 0) {
+        caseSize = null;
+        caseSizeError = `ISI/CTN harus positif pada baris ${index + 1}`;
+      }
+    } catch {
+      caseSizeError = `ISI/CTN tidak valid pada baris ${index + 1}`;
+    }
+    const mapped = products.get(principal) ?? [];
+    if (
+      !mapped.some(
+        (entry) =>
+          entry.internal === internal &&
+          entry.unit === smallestUnit &&
+          entry.caseSize === caseSize &&
+          entry.caseSizeError === caseSizeError,
+      )
+    )
+      mapped.push({
+        internal,
+        unit: smallestUnit,
+        caseSize,
+        caseSizeError,
+        sourceRowNumber: index + 1,
+      });
     products.set(principal, mapped);
   }
   return { products };
@@ -762,6 +839,196 @@ export function parseGodrejSales(
   return output;
 }
 
+const SHINZUI_DISCOUNT_COLUMNS = [
+  "DISC 1 INV",
+  "DISC 2A INV",
+  "DISC 2B (PROMO DIST.) INV",
+  "DISC 2B (MANUAL) INV",
+  "DISC 3 INV",
+  "DISC 4 (PROMO DIST.) INV",
+  "DISC 4 (MANUAL) INV",
+  "DISC 5 INV",
+];
+function requireScaledEqual(
+  actual: number,
+  expected: number,
+  label: string,
+  row: number,
+): void {
+  if (actual !== expected)
+    throw new Error(`${label} tidak konsisten pada baris ${row}`);
+}
+
+export function parseShinzuiSales(
+  buffer: Buffer | Uint8Array,
+  mappings: ShinzuiMappings,
+  accurateLines: CanonicalSalesLine[],
+): CanonicalSalesLine[] {
+  const rows = readRows(buffer, "PenjualanInvoice"),
+    required = [
+      "INV NUM",
+      "INV DATE",
+      "ID PRODUK",
+      "ID PELANGGAN",
+      "ID SALES",
+      "TIPE PENJUALAN",
+      "QTY TRX-INV",
+      "QTY SMALL",
+      "HARGA",
+      "VALUE EXCL DISC",
+      ...SHINZUI_DISCOUNT_COLUMNS,
+      "TOTAL DISC INV",
+      "DPP INV",
+      "PPN INV",
+      "TOTAL INV",
+    ],
+    header = headerIndex(rows, required),
+    accurateProducts = new Map<string, Set<string>>(),
+    accurateUnits = new Map<string, Set<string>>(),
+    output: CanonicalSalesLine[] = [];
+  for (const line of accurateLines) {
+    const products =
+      accurateProducts.get(line.orderNumber) ?? new Set<string>();
+    products.add(line.productCodeInternal);
+    accurateProducts.set(line.orderNumber, products);
+    const key = `${line.orderNumber}|${line.productCodeInternal}`,
+      units = accurateUnits.get(key) ?? new Set<string>();
+    units.add(line.unitSmallest);
+    accurateUnits.set(key, units);
+  }
+  for (let index = header.rowIndex + 1; index < rows.length; index++) {
+    const row = rows[index],
+      sourceRowNumber = index + 1;
+    if (!text(row.find((cell) => text(cell)))) continue;
+    const column = (name: string) => value(row, header.columns, name),
+      rawProduct = requiredText(
+        row,
+        header.columns,
+        "ID PRODUK",
+        sourceRowNumber,
+      ),
+      document = requiredText(row, header.columns, "INV NUM", sourceRowNumber),
+      order = orderNumber(document, "INV NUM", sourceRowNumber),
+      type = requiredText(
+        row,
+        header.columns,
+        "TIPE PENJUALAN",
+        sourceRowNumber,
+      );
+    if (type !== "JUAL" && type !== "PROMO" && type !== "RETUR")
+      throw new Error(
+        `TIPE PENJUALAN tidak valid pada baris ${sourceRowNumber}`,
+      );
+    const choices = mappings.products.get(rawProduct) ?? [],
+      matches = choices.filter((choice) =>
+        accurateProducts.get(order)?.has(choice.internal),
+      ),
+      mappedProduct =
+        choices.length === 1
+          ? choices[0]
+          : matches.length === 1
+            ? matches[0]
+            : undefined;
+    if (mappedProduct?.caseSizeError)
+      throw new Error(mappedProduct.caseSizeError);
+    const mappingStatus: MappingStatus = !choices.length
+        ? "UNMAPPED_SKU"
+        : !mappedProduct
+          ? "INVALID_DATA"
+          : accurateUnits.has(`${order}|${mappedProduct.internal}`) &&
+              !accurateUnits
+                .get(`${order}|${mappedProduct.internal}`)!
+                .has(mappedProduct.unit)
+            ? "UNIT_CONVERSION_ERROR"
+            : "OK",
+      quantityTransaction = finite(
+        column("QTY TRX-INV"),
+        "QTY TRX-INV",
+        sourceRowNumber,
+      ),
+      quantitySmall = finite(column("QTY SMALL"), "QTY SMALL", sourceRowNumber),
+      price = finite(column("HARGA"), "HARGA", sourceRowNumber),
+      gross = money(
+        column("VALUE EXCL DISC"),
+        "VALUE EXCL DISC",
+        sourceRowNumber,
+      ),
+      discount = money(
+        column("TOTAL DISC INV"),
+        "TOTAL DISC INV",
+        sourceRowNumber,
+      ),
+      dpp = money(column("DPP INV"), "DPP INV", sourceRowNumber),
+      tax = money(column("PPN INV"), "PPN INV", sourceRowNumber),
+      net = money(column("TOTAL INV"), "TOTAL INV", sourceRowNumber),
+      discountParts = SHINZUI_DISCOUNT_COLUMNS.reduce(
+        (total, name) => total + money(column(name), name, sourceRowNumber),
+        0,
+      );
+    requireScaledEqual(
+      gross,
+      money(quantityTransaction * price, "Value Excl Disc", sourceRowNumber),
+      "Value Excl Disc",
+      sourceRowNumber,
+    );
+    requireScaledEqual(
+      discount,
+      discountParts,
+      "Total Disc Inv",
+      sourceRowNumber,
+    );
+    requireScaledEqual(dpp, gross - discount, "DPP Inv", sourceRowNumber);
+    requireScaledEqual(
+      tax,
+      Math.round((dpp * 11) / 100),
+      "PPN Inv",
+      sourceRowNumber,
+    );
+    requireScaledEqual(net, dpp + tax, "Total Inv", sourceRowNumber);
+    if (
+      type !== "RETUR" &&
+      [quantityTransaction, quantitySmall, gross, discount, dpp, tax, net].some(
+        (entry) => entry < 0,
+      )
+    )
+      throw new Error(
+        `Tanda transaksi ${type} tidak valid pada baris ${sourceRowNumber}`,
+      );
+    const customer = requiredText(
+        row,
+        header.columns,
+        "ID PELANGGAN",
+        sourceRowNumber,
+      ),
+      salesman = requiredText(row, header.columns, "ID SALES", sourceRowNumber);
+    output.push({
+      source: "PRINCIPAL",
+      sourceRowNumber,
+      documentNumber: document,
+      orderNumber: order,
+      transactionDate: isoDate(column("INV DATE"), "INV DATE", sourceRowNumber),
+      customerCodeRaw: customer,
+      customerCodeInternal: customer,
+      salesmanCodeRaw: salesman,
+      salesmanCodeInternal: salesman,
+      productCodeRaw: rawProduct,
+      productCodeInternal:
+        mappedProduct?.internal ??
+        `${choices.length ? "INVALID" : "UNMAPPED"}:${rawProduct}`,
+      transactionClass: type === "RETUR" ? "RETURN" : "NORMAL",
+      quantitySmallest: quantitySmall,
+      unitSmallest: mappedProduct?.unit ?? "",
+      grossAmount: gross,
+      discountAmount: discount,
+      dppAmount: dpp,
+      taxAmount: tax,
+      netAmount: net,
+      mappingStatus,
+    });
+  }
+  return output;
+}
+
 interface Aggregate {
   orderNumber: string;
   productCode: string;
@@ -916,6 +1183,21 @@ export function reconcileGodrejSales(
       parseGodrejMappings(mappingBuffer),
       accurateLines,
     ),
+    options,
+  );
+}
+
+export function reconcileShinzuiSales(
+  accurateBuffer: Buffer | Uint8Array,
+  shinzuiBuffer: Buffer | Uint8Array,
+  mappingBuffer: Buffer | Uint8Array,
+  options: { valueTolerance?: number } = {},
+): ReconciliationOutput {
+  const accurateLines = parseAccurateSales(accurateBuffer),
+    mappings = parseShinzuiMappings(mappingBuffer);
+  return reconcileLines(
+    accurateLines,
+    parseShinzuiSales(shinzuiBuffer, mappings, accurateLines),
     options,
   );
 }
