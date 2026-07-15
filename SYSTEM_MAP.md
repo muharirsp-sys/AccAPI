@@ -852,6 +852,8 @@ UI: tombol "Kirim" terpisah (gated, confirm:true) -> POST /api/laporan-harian/[r
      -> requirePermission("laporan_harian.send") -> claim status `sending`
      -> ambil file per-SPV/SM dari backend -> kirim email (nodemailer)
      -> penerima `failed` dapat di-retry tanpa mengirim ulang penerima yang sudah `sent`
+UI: review file opsional -> GET /api/laporan-harian/[runId]/preview?file=...
+     -> proxy file run-scoped dari FastAPI, tampilkan maksimal 25 baris kunci atau unduh XLSX penuh
 ```
 
 State machine pure: `lib/laporan-harian/send-state.ts`; self-check:
