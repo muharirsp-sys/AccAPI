@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import * as XLSX from "xlsx";
 import {
   type CanonicalSalesLine,
@@ -379,5 +380,27 @@ const reconciled = reconcileShinzuiSales(
 );
 assert.equal(reconciled.summary.MATCH, 1);
 assert.deepEqual(reconciled.results[0]?.warnings, []);
+const [accuratePath, principalPath, mappingPath] = process.argv.slice(2);
+if (accuratePath && principalPath && mappingPath) {
+  const actual = reconcileShinzuiSales(
+    readFileSync(accuratePath),
+    readFileSync(principalPath),
+    readFileSync(mappingPath),
+    { valueTolerance: 1 },
+  );
+  assert.equal(actual.results.length, 181);
+  assert.equal(actual.summary.MATCH, 130);
+  assert.equal(actual.summary.VALUE_MISMATCH, 35);
+  assert.equal(actual.summary.QTY_AND_VALUE_MISMATCH, 1);
+  assert.equal(actual.summary.MISSING_INTERNAL, 15);
+  for (const status of [
+    "QTY_MISMATCH",
+    "MISSING_PRINCIPAL",
+    "UNMAPPED_SKU",
+    "UNIT_CONVERSION_ERROR",
+    "INVALID_DATA",
+  ] as const)
+    assert.equal(actual.summary[status], 0);
+}
 
 console.log("OK - parser dan rekonsiliasi SHINZUI tervalidasi.");

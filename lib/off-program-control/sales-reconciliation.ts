@@ -397,6 +397,7 @@ export function parseShinzuiMappings(
       entries.every((entry) => !entry || entry === "(BLANK)" || entry === "0")
     )
       continue;
+    if (!principal || principal === "(BLANK)" || principal === "0") continue;
     if (
       [principal, internal, smallestUnit].some(
         (entry) => !entry || entry === "(BLANK)" || entry === "0",
