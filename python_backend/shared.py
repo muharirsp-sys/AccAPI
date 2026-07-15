@@ -1,6 +1,8 @@
-# shared.py — module-level state, config, dan helper bersama hasil pemindahan mekanis dari main.py.
-# Tidak ada perubahan logic: seluruh isi dipindahkan apa adanya (byte-for-byte) dari main.py.
-# Diimpor oleh main.py dan routers/*.py. TIDAK boleh mengimpor main/routers (hindari circular import).
+# Tujuan: Menyediakan konfigurasi, state, dan helper bersama untuk runtime FastAPI.
+# Caller: main.py dan routers/*.py; modul ini tidak mengimpor main/routers agar tidak circular.
+# Dependensi: FastAPI, pandas/openpyxl, konfigurasi environment, dan modul domain backend.
+# Main Functions: Helper pemrosesan dokumen, pembayaran, serta laporan harian per SPV/SM.
+# Side Effects: Membaca/menulis data runtime, file hasil, cache, dan melakukan integrasi eksternal.
 
 from fastapi import FastAPI, UploadFile, File, Request, Form, Response, Cookie, BackgroundTasks
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse, ORJSONResponse
@@ -5147,5 +5149,7 @@ def _save_principles(data: dict):
 # Laporan Harian per SPV/SM — proses FIX LAP PENJ (Paste Acc only, retur sudah minus) -> agregat & split.
 # Dipanggil Next.js app/api/laporan-harian/upload. Tidak kirim email (email = gate terpisah di Next.js).
 # =======================================================================================================
-LH_RUNTIME_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "runtime", "laporan-harian")
-
+LH_RUNTIME_DIR = os.getenv(
+    "LH_RUNTIME_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "runtime", "laporan-harian"),
+)

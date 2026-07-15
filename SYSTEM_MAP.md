@@ -844,7 +844,8 @@ UI: modul /laporan-harian
         -> pandas replika logika Power Query SalesBase:
            merge flag AO/EC/IA, Nota Retur/Batal, map Golongan(SPV)+NAMA SM, Kategori Baru
         -> output: (a) rows per SPV & per SM, (b) rows stock per SPV, (c) agregat progress harian
-     -> tulis file per-SPV/SM ke runtime/laporan-harian/<tanggal>/
+     -> tulis file per-SPV/SM ke `LH_RUNTIME_DIR/<runId>/`
+        (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)
      -> normalisasi progress kosong salesCode -> `UNMAPPED:<branch>` + warning eksplisit (nilai tidak dibuang/tidak ditebak)
      -> feed dashboard: BULK replace ke sales_daily_progress (batch, hindari N+1)
   <- { ok, runId, ringkasan per SPV, daftar penerima (PREVIEW, belum kirim) }
