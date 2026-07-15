@@ -1,5 +1,8 @@
-# routers/laporan_harian.py — Endpoint laporan harian: /laporan-harian/*.
-# Dipindahkan mekanis dari main.py tanpa perubahan logic; hanya @app.* diganti @router.*.
+# Tujuan: Endpoint FastAPI untuk proses, penyimpanan, dan unduhan laporan harian per SPV.
+# Caller: Next.js app/api/laporan-harian/*.
+# Dependensi: shared runtime config serta laporan_harian pipeline dan writer XLSX.
+# Main Functions: laporan_harian_process() dan laporan_harian_file().
+# Side Effects: Membaca upload, menulis workbook runtime, dan mengirim file melalui HTTP.
 from fastapi import APIRouter
 
 from shared import (
@@ -74,20 +77,24 @@ async def laporan_harian_process(
                 "achievedAo": int(r["achievedAo"] or 0),
                 "achievedIa": int(r["achievedIa"] or 0),
             })
+        stock_by_spv = {}
         stock_spv = []
         if stock_path:
             try:
-                st = LH.build_stock(stock_path, sb, lk)
-                stock_spv = [k for k in st.keys() if k != "__error__"]
-            except Exception:
-                stock_spv = []
+                stock_by_spv = LH.build_stock(stock_path, sb, lk)
+                stock_spv = [k for k in stock_by_spv.keys() if k != "__error__"]
+            except Exception as exc:
+                return ORJSONResponse(
+                    {"ok": False, "error": f"Gagal memproses file stok: {exc}"},
+                    status_code=400,
+                )
         files_written = []
         if write_files and run_id:
             import re as _re, datetime as _dt
             safe_run = _re.sub(r"[^A-Za-z0-9_-]", "", str(run_id))[:64]
             rdate = report_date or _dt.date.today().strftime("%Y-%m-%d")
             out_dir = _os.path.join(LH_RUNTIME_DIR, safe_run)
-            files_written = LH.write_per_spv_files(sb, out_dir, rdate)
+            files_written = LH.write_per_spv_files(sb, out_dir, rdate, stock_by_spv)
 
         return ORJSONResponse({
             "ok": True,

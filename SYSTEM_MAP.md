@@ -845,7 +845,8 @@ UI: modul /laporan-harian
            merge flag AO/EC/IA, Nota Retur/Batal, map Golongan(SPV)+NAMA SM, Kategori Baru
         -> output: (a) rows per SPV & per SM, (b) rows stock per SPV, (c) agregat progress harian
      -> susun output 1:1 sesuai `REPORT_COLUMNS` (tanpa duplikasi `GOLONGAN`/pergeseran AO-EC-IA)
-     -> tulis file per-SPV/SM ke `LH_RUNTIME_DIR/<runId>/`
+     -> tulis file per-SPV ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
+        `<SPV>` (penjualan) + `<SPV> Stock` (stok hasil mapping KODE_BARANG -> GOLONGAN)
         (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)
      -> normalisasi progress kosong salesCode -> `UNMAPPED:<branch>` + warning eksplisit (nilai tidak dibuang/tidak ditebak)
      -> feed dashboard: BULK replace ke sales_daily_progress (batch, hindari N+1)

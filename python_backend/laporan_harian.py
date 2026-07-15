@@ -9,7 +9,7 @@
 # Main Functions:
 #   load_lookups(f_format, f_spv) -> LookupTables
 #   process(paste_path, stock_path, lookups) -> dict {per_spv, per_sm, stock, progress, summary}
-#   build_report_frame(sb) / write_per_spv_files(...) -> output XLSX dengan kolom REPORT_COLUMNS.
+#   build_stock(...) / write_per_spv_files(...) -> output XLSX penjualan dan sheet Stock per SPV.
 # Side Effects: Baca file sumber dan tulis XLSX hasil ke runtime; tidak mengubah file sumber/tidak kirim email.
 # Catatan parity (dikonfirmasi user): sumber penjualan = sheet "Paste Acc" (export Accurate),
 #   sheet "Paste Lap. Penj" lama sudah kosong -> tidak dipakai. Retur = "Paste Lap. Retur" (dinegasikan).
@@ -391,8 +391,9 @@ def build_report_frame(sb: pd.DataFrame) -> pd.DataFrame:
     return out.astype(object).where(pd.notna(out), None)
 
 
-def write_per_spv_files(sb: pd.DataFrame, out_dir: str, report_date: str) -> list:
-    """Tulis 1 file .xlsx per SPV (GOLONGAN) ke out_dir. Return [{spv, fileName, path, rows}]."""
+def write_per_spv_files(sb: pd.DataFrame, out_dir: str, report_date: str,
+                        stock_per_spv: Optional[dict] = None) -> list:
+    """Tulis 1 file .xlsx per SPV berisi sheet penjualan dan, bila ada, sheet '<SPV> Stock'."""
     import os
     from pyexcelerate import Workbook
     os.makedirs(out_dir, exist_ok=True)
@@ -407,10 +408,21 @@ def write_per_spv_files(sb: pd.DataFrame, out_dir: str, report_date: str) -> lis
         file_name = f"{report_date}_{safe}.xlsx"
         path = os.path.join(out_dir, file_name)
         wb = Workbook()
-        wb.new_sheet(str(spv)[:31].replace("/", "-").replace("&", "dan") or "NA",
+        sheet_base = str(spv).replace("/", "-").replace("\\", "-").replace("&", "dan") or "NA"
+        wb.new_sheet(sheet_base[:31],
                      data=[REPORT_COLUMNS] + g[REPORT_COLUMNS].values.tolist())
+        stock_df = (stock_per_spv or {}).get(spv)
+        stock_rows = 0
+        if stock_df is not None and not stock_df.empty:
+            stock_frame = stock_df.loc[:, ~stock_df.columns.duplicated()].copy()
+            stock_frame = stock_frame.astype(object).where(pd.notna(stock_frame), None)
+            stock_headers = [str(column) for column in stock_frame.columns]
+            stock_rows = int(len(stock_frame))
+            wb.new_sheet(f"{sheet_base[:25]} Stock"[:31],
+                         data=[stock_headers] + stock_frame.values.tolist())
         wb.save(path)
-        written.append({"spv": str(spv), "fileName": file_name, "path": path, "rows": int(len(g))})
+        written.append({"spv": str(spv), "fileName": file_name, "path": path,
+                        "rows": int(len(g)), "stockRows": stock_rows})
     return written
 
 
