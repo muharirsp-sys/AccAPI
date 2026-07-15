@@ -127,7 +127,7 @@ function isoDate(value: unknown, label: string, row: number): string {
     throw new Error(`${label} tidak valid pada baris ${row}`);
   return normalized;
 }
-function orderNumber(value: unknown, label: string, row: number): string {
+function orderNumber(value: unknown, label: string, row: number, noun = "order"): string {
   const normalized = text(value),
     kino = normalized.match(/1671-SOP-\d+/g) ?? [],
     godrej = [...normalized.matchAll(/(?:FK\/BFG|FK|BFG)-(\d+)/g)].map(
@@ -137,7 +137,7 @@ function orderNumber(value: unknown, label: string, row: number): string {
     matches = [...kino, ...godrej, ...shinzui];
   if (matches.length !== 1)
     throw new Error(
-      `${label} harus memuat tepat satu nomor order pada baris ${row}`,
+      `${label} harus memuat tepat satu nomor ${noun} pada baris ${row}`,
     );
   return matches[0];
 }
@@ -909,7 +909,7 @@ export function parseShinzuiSales(
         sourceRowNumber,
       ),
       document = requiredText(row, header.columns, "INV NUM", sourceRowNumber),
-      order = orderNumber(document, "INV NUM", sourceRowNumber),
+      order = orderNumber(document, "INV NUM", sourceRowNumber, "invoice"),
       type = requiredText(
         row,
         header.columns,

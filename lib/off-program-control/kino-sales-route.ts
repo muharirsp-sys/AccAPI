@@ -78,7 +78,7 @@ export function safeParserMessage(error: unknown): string | null {
       .map((header) => header.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
       .join("|"),
     shinzuiMessage = new RegExp(
-      `^(?:Header wajib tidak ditemukan: (?:${shinzuiHeaders})(?:, (?:${shinzuiHeaders}))*|INV NUM harus memuat tepat satu nomor invoice pada baris \\d+|ISI/CTN (?:tidak valid|harus positif) pada baris \\d+|TIPE PENJUALAN tidak valid pada baris \\d+|Tanda transaksi (?:JUAL|PROMO|RETUR) tidak valid pada baris \\d+|(?:Value Excl Disc|Total Disc Inv|DPP Inv|PPN Inv|Total Inv) tidak konsisten pada baris \\d+)$`,
+      `^(?:Header wajib tidak ditemukan: (?:${shinzuiHeaders})(?:, (?:${shinzuiHeaders}))*|(?:${shinzuiHeaders}) (?:kosong|negatif|tidak valid|terlalu besar) pada baris \\d+|INV NUM harus memuat tepat satu nomor invoice pada baris \\d+|ISI/CTN (?:tidak valid|harus positif) pada baris \\d+|TIPE PENJUALAN tidak valid pada baris \\d+|Tanda transaksi (?:JUAL|PROMO|RETUR) tidak valid pada baris \\d+|(?:Value Excl Disc|Total Disc Inv|DPP Inv|PPN Inv|Total Inv) tidak konsisten pada baris \\d+)$`,
     );
   return /^(?:File (?:XLSX|mapping) kosong|Sheet (?:mapping )?[\w ]+ tidak ditemukan atau kosong|Header wajib tidak ditemukan: [\w, ]+|(?:[\w_]+ (?:kosong|negatif|tidak valid|terlalu besar)|[\w_]+ harus [\w/ ]+|[\w_]+ harus memuat tepat satu nomor order) pada baris \d+|Mapping_[\w]+ (?:tidak lengkap pada baris \d+|memiliki mapping konflik untuk [\w.-]+)|Pvt Map 1 tidak lengkap pada baris \d+|(?:IV_DISC|IV_PPN|IV_STAMP|IV_DISREG|IV_DISADD|IV_DISCASH|IV_TOTDISC|IV_DISC2|IV_DISVALUE) belum memiliki aturan pada baris \d+|Nilai GDI tidak valid pada baris \d+)$/.test(error.message) ||
     shinzuiMessage.test(error.message)

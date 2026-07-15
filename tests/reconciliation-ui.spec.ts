@@ -61,7 +61,7 @@ const result = {
   ],
 };
 
-test("shows the progressive KINO reconciliation workflow", async ({
+test("shows the progressive reconciliation workflow", async ({
   page,
   baseURL,
 }) => {

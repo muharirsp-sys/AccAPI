@@ -296,6 +296,15 @@ assert.throws(
     ),
   /TIPE PENJUALAN tidak valid pada baris 5/,
 );
+assert.throws(
+  () =>
+    parseShinzuiSales(
+      principal(principalRow({ "INV Num": "INVALID" })),
+      parsed,
+      accurateLines,
+    ),
+  /INV NUM harus memuat tepat satu nomor invoice pada baris 5/,
+);
 
 const multiMapping = parseShinzuiMappings(
   workbook({

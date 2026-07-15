@@ -102,6 +102,10 @@ assert.deepEqual(await nonPositiveIsiResponse.json(), {
 });
 
 for (const message of [
+  "QTY TRX-INV tidak valid pada baris 5",
+  "VALUE EXCL DISC terlalu besar pada baris 5",
+  "INV DATE tidak valid pada baris 5",
+  "ID PRODUK kosong pada baris 5",
   "TIPE PENJUALAN tidak valid pada baris 5",
   "Tanda transaksi RETUR tidak valid pada baris 5",
   "Value Excl Disc tidak konsisten pada baris 5",
