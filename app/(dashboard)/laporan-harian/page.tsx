@@ -1,5 +1,6 @@
 /*
- * Tujuan: UI web modul Laporan Harian untuk upload FIX, memperbarui dashboard, meninjau penerima, lalu mengirim email setelah konfirmasi.
+ * Tujuan: UI web modul Laporan Harian untuk upload FIX, memperbarui dashboard, menandai progress tanpa kode salesman,
+ *         meninjau penerima, lalu mengirim email setelah konfirmasi.
  * Caller: menu sidebar "Laporan Harian" (/laporan-harian). Guard RBAC: laporan_harian.view.
  * Dependensi: POST /api/laporan-harian/upload, POST /api/laporan-harian/[runId]/send.
  * Main Functions: LaporanHarianPage, handleUpload, handleSend.
@@ -15,6 +16,7 @@ type UploadResult = {
     ok: boolean; runId: string; period: { month: number; year: number };
     dashboardFed: { inserted: number }; salesRows: number; netDpp: number;
     summary: Summary[]; recipientsPreview: Recipient[]; totalRecipients: number;
+    unmappedProgress?: { rows: number; achievedValueDpp: number; branches: string[] };
 };
 
 const rupiah = (n: number) => "Rp " + Math.round(n).toLocaleString("id-ID");
@@ -111,6 +113,13 @@ export default function LaporanHarianPage() {
                             {result.salesRows.toLocaleString("id-ID")} baris, Net DPP {rupiah(result.netDpp)},
                             dashboard di-update: {result.dashboardFed?.inserted?.toLocaleString("id-ID")} baris.
                         </p>
+                        {!!result.unmappedProgress?.rows && (
+                            <p className="text-sm text-amber-700" role="status">
+                                {result.unmappedProgress.rows.toLocaleString("id-ID")} baris progres agregat tanpa kode salesman
+                                ({rupiah(result.unmappedProgress.achievedValueDpp)}) disimpan sebagai UNMAPPED untuk {result.unmappedProgress.branches.join(", ")}.
+                                Nilainya belum dialokasikan ke pencapaian salesman sampai data sumber diperbaiki.
+                            </p>
+                        )}
                         <div className="ui-table-frame overflow-x-auto">
                             <table className="ui-data-table w-full text-sm">
                                 <caption className="sr-only">Ringkasan laporan harian per SPV</caption>

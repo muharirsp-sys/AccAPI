@@ -3,7 +3,7 @@
  *         (sales_daily_progress, batch) + catat report_run + PREVIEW penerima email (DRY-RUN).
  *         TIDAK mengirim email. Kirim email = endpoint terpisah /send (Tahap 4, gated).
  * Caller: UI modul Laporan Harian (browser, multipart).
- * Dependensi: requirePermission, FastAPI /laporan-harian/process, lib/laporan-harian/ingest,
+ * Dependensi: requirePermission, FastAPI /laporan-harian/process, normalisasi ingest,
  *             db/schema (reportRun, reportRecipient, reportRunRecipient).
  * Main Functions: POST (proses + dry-run).
  * Side Effects: HTTP call ke FastAPI; DB write (report_run, report_run_recipient, sales_daily_progress).
@@ -14,7 +14,11 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { reportRun, reportRecipient, reportRunRecipient } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
-import { replaceDailyProgressForPeriod, type DailyProgressRow } from "@/lib/laporan-harian/ingest";
+import {
+    normalizeDailyProgressRows,
+    type DailyProgressInputRow,
+} from "@/lib/laporan-harian/progress-normalize";
+import { replaceDailyProgressForPeriod } from "@/lib/laporan-harian/ingest";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -76,7 +80,8 @@ export async function POST(req: NextRequest) {
     }
 
     const { month, year } = (result.period ?? {}) as { month?: number; year?: number };
-    const progress: DailyProgressRow[] = Array.isArray(result.progress) ? result.progress : [];
+    const rawProgress: DailyProgressInputRow[] = Array.isArray(result.progress) ? result.progress : [];
+    const { rows: progress, unmapped: unmappedProgress } = normalizeDailyProgressRows(rawProgress);
     const spvList: string[] = Array.isArray(result.spv_list) ? result.spv_list : [];
 
     try {
@@ -110,7 +115,7 @@ export async function POST(req: NextRequest) {
             emailCount: totalEmails,
             salesRows: Number(result.sales_rows ?? 0),
             progressRows: progress.length,
-            note: `feed dashboard: +${fed.inserted} baris (periode ${month}/${year})`,
+            note: `feed dashboard: +${fed.inserted} baris (periode ${month}/${year}); unmapped sales: ${unmappedProgress.rows}`,
             uploadedBy: gate.session.user.id,
             createdAt: now,
         });
@@ -131,6 +136,7 @@ export async function POST(req: NextRequest) {
             message: "Proses selesai (DRY-RUN). Email BELUM dikirim. Review daftar penerima lalu panggil /send.",
             period: { month, year },
             dashboardFed: fed,
+            unmappedProgress,
             salesRows: result.sales_rows,
             netDpp: result.net_dpp,
             summary: result.summary,
