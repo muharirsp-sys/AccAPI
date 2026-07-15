@@ -724,7 +724,7 @@ export function parseGodrejSales(
       gross = money(grossValue, "GROSS", sourceRowNumber),
       discount = money(discountValue, "DISKON", sourceRowNumber),
       dpp = gross - discount,
-      tax = Number((BigInt(dpp) * 11n + 50n) / 100n),
+      tax = Math.floor(dpp / 100) * 11 + Math.round(((dpp % 100) * 11) / 100),
       customer = requiredText(row, header.columns, "CS_NO", sourceRowNumber),
       salesman = requiredText(row, header.columns, "PS_NO", sourceRowNumber);
     output.push({
