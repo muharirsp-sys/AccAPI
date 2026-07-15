@@ -83,6 +83,13 @@ export async function POST(req: NextRequest) {
     const rawProgress: DailyProgressInputRow[] = Array.isArray(result.progress) ? result.progress : [];
     const { rows: progress, unmapped: unmappedProgress } = normalizeDailyProgressRows(rawProgress);
     const spvList: string[] = Array.isArray(result.spv_list) ? result.spv_list : [];
+    const generatedFiles = Array.isArray(result.files)
+        ? (result.files as Array<Record<string, unknown>>).map((file) => ({
+            spv: String(file.spv ?? ""),
+            fileName: String(file.fileName ?? ""),
+            rows: Number(file.rows ?? 0),
+        })).filter((file) => file.fileName)
+        : [];
 
     try {
         // Feed dashboard (batch, replace-per-periode). Idempotent.
@@ -141,6 +148,7 @@ export async function POST(req: NextRequest) {
             netDpp: result.net_dpp,
             summary: result.summary,
             recipientsPreview: preview,
+            generatedFiles,
             totalRecipients: totalEmails,
         });
     } catch (e) {
