@@ -21,7 +21,7 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 |---|---|
 | Frontend/API | Next.js 16 (App Router), React 19, TypeScript |
 | Backend Sidecar | Python FastAPI (port 8000) |
-| Database | SQLite via libSQL (`@libsql/client`) |
+| Database | PostgreSQL via `pg` + Drizzle (D4 code cutover); Sales History tetap SQLite terpisah |
 | ORM | Drizzle ORM + drizzle-kit |
 | Auth | Better Auth 1.x (email/password, admin plugin, RBAC) |
 | PDF | pdf-lib |
@@ -37,9 +37,9 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 - **Next.js App Router monorepo** — satu repo, dua runtime (Next.js + Python FastAPI).
 - **Route Group** `(auth)` untuk halaman login/register, `(dashboard)` untuk seluruh halaman aplikasi yang dilindungi guard layout.
 - Layer `lib/*` memisahkan business logic dari route handler.
-- SQLite single-file sebagai database lokal (tidak cloud DB); opsi Turso/libSQL di production.
+- `lib/db.ts`, `lib/auth.ts`, `db/schema.ts`, dan `drizzle.config.ts` memakai PostgreSQL. `sqlite.db` adalah sumber/rollback migrasi lama, bukan runtime route Next.js.
 - RBAC tiga lapis: **Dynamic Permission-Group** (access_group + group_permission + user_group, default-deny) ∪ legacy **role global** (Better Auth) ∪ legacy **custom permissions** (user.permissions). Union resolver di `lib/rbac/resolve.ts`; sistem lama tetap berjalan selama transisi.
-- Permission key format: `"module.action"` (mis. `"off_program_control.sm_approve"`). Sumber tunggal: `lib/rbac/registry.ts` (85 key). Endpoint wajib pakai `requirePermission`/`requirePermissionH` — key tidak terdaftar → 403.
+- Permission key format: `"module.action"` (mis. `"off_program_control.sm_approve"`). Sumber tunggal: `lib/rbac/registry.ts` (92 key). Endpoint wajib pakai `requirePermission`/`requirePermissionH` — key tidak terdaftar → 403.
 - Email-domain role inference dihapus. OFF-specific role (`resolveOffRoleFromUser`) tetap ada untuk audit/state-machine, TIDAK untuk authz.
 
 ---
@@ -651,7 +651,7 @@ AccAPI/_github_clean/
 
 | Variabel | Fungsi |
 |---|---|
-| `DATABASE_URL` | Path SQLite (`file:sqlite.db` lokal / `file:/app/data/sqlite.db` Docker) |
+| `DATABASE_URL` | PostgreSQL connection URL (`postgres://...`) untuk runtime Next.js |
 | `BETTER_AUTH_URL` / `BETTER_AUTH_SECRET` | Base URL + secret Better Auth |
 | `NEXT_PUBLIC_APP_URL` | URL publik Next.js (browser) |
 | `NEXT_PUBLIC_FASTAPI_BASE_URL` | URL Python backend (browser) |
@@ -714,13 +714,14 @@ permission_audit_log [siapa ubah group/permission siapa, kapan]
 | `db/migrations/` | Output drizzle-kit (SQL migration files) |
 | `scripts/seed-opc-dummy.mjs` | 1.275 batch dummy OPC (51 batch x 25 principal, semua 12 problem code) |
 | `scripts/migrate-rbac-groups.mjs` | Buat tabel Dynamic RBAC (access_group, group_permission, user_group, permission_audit_log) — additive & idempotent |
-| `scripts/seed-rbac-presets.ts` | Seed 11 Access Group preset + backfill user_group dari user.role (`node --experimental-strip-types`) — backward-compat, idempotent |
+| `scripts/seed-rbac-presets.ts` | Sinkron preset Dynamic RBAC termasuk `manage_hierarchy` dan Laporan Harian + backfill user_group (`node --experimental-strip-types`) — PostgreSQL, idempotent |
+| `scripts/sync-insentif-hierarchy.mjs` | Upsert assignment SPV→Sales dan SM→SPV dari target periode terbaru; tidak menebak identitas akun login |
 
 ### Output & Runtime Artifacts
 
 | Path | Isi |
 |---|---|
-| `sqlite.db` | Database SQLite utama (+ WAL/SHM) |
+| `sqlite.db` | Snapshot/sumber migrasi dan rollback SQLite lama; bukan runtime route Next.js setelah D4 |
 | `runtime/off-program-control/` | PDF pengajuan OPC |
 | `runtime/claim-workflow/` | PDF surat klaim, summary, kwitansi, per-submission |
 | `runtime_logs/` | Log runtime (dipakai Python backend) |
@@ -777,14 +778,15 @@ Self-check: `node --experimental-strip-types lib/insentif-spv-calc.test.ts` (tot
 
 **Wiring:** [GET /api/insentif-sales/spv-dashboard](app/api/insentif-sales/spv-dashboard/route.ts) — group `sales_targets` per `spv_name` (teks bebas), SUM realisasi via `computeMtdByPrinciple`, panggil `calculateInsentifSPV`. Tampil di UI sebagai `SpvIncentiveTable` pada tab SPV (`page.tsx`, expand-per-principal).
 
-### Hierarki SM → SPV → Sales (Bagian C — dibangun, BELUM di-wire ke kalkulasi/RBAC)
+### Hierarki SM → SPV → Sales (Bagian C — aktif sebagai override/fallback)
 
 Tabel additive di `db/schema.ts`: `spvSalesAssignment` (`sales_code` UNIQUE → `spv_name`) dan `smSpvAssignment` (`spv_name` UNIQUE → `sm_name`). Key masih teks bebas (bukan FK ke `user.id`) — konsisten dgn `sales_targets.spv_name`/`sm_name` yang sudah ada, karena SPV/SM belum tentu punya akun login.
 
-- CRUD: [/api/insentif-sales/hierarchy/spv-sales](app/api/insentif-sales/hierarchy/spv-sales/route.ts), [/api/insentif-sales/hierarchy/sm-spv](app/api/insentif-sales/hierarchy/sm-spv/route.ts). GET pakai `insentif_sales.view`; POST/DELETE pakai permission baru **`insentif_sales.manage_hierarchy`** — key ini **tidak ada** di modul legacy (`appModules` di `lib/rbac.ts` tidak mencakup `insentif_sales`) dan **belum ditambahkan ke `group_permission` manapun**, jadi otomatis OFF untuk semua orang sampai sengaja diaktifkan lewat RBAC admin UI (P6).
+- CRUD: [/api/insentif-sales/hierarchy/spv-sales](app/api/insentif-sales/hierarchy/spv-sales/route.ts), [/api/insentif-sales/hierarchy/sm-spv](app/api/insentif-sales/hierarchy/sm-spv/route.ts). GET pakai `insentif_sales.view`; POST/DELETE pakai **`insentif_sales.manage_hierarchy`**, terdaftar di registry dan preset Admin/Admin Sales.
 - UI: `HierarchyAssignmentSection` di `AdminView` (page.tsx) — 2 mini-form assign + list + hapus.
-- **Belum digunakan** oleh `calculateInsentifSPV`/`computeExclusive`/`computeMix` maupun scoping row-level manapun. `SpvIncentiveTable` di atas masih group by `sales_targets.spv_name` langsung (bukan dari tabel assignment ini) — keduanya sengaja dibiarkan terpisah sampai ada keputusan migrasi.
-- **Gap yang belum diisi:** link `user.id` (akun login) → identitas SPV/SM (mis. kolom `hierarchyName` di `user`) — dibutuhkan nanti kalau mau enforce scoping "SPV cuma lihat sales bawahannya sendiri". Belum dibangun.
+- Dashboard SPV dan row-level scope membaca assignment sebagai override, lalu fallback ke `sales_targets.spv_name/sm_name`. `scripts/sync-insentif-hierarchy.mjs` mengisi assignment awal dari target terbaru secara idempotent.
+- Akun login dapat ditautkan melalui `user.hierarchyRole/hierarchyName`; null berarti belum discoping. Link akun tetap manual agar nama SPV/SM tidak ditebak.
+- Dashboard utama menerima periode `month/year` dari URL dan menyediakan input bulan; pace historis=100%, masa depan=0%, bulan aktif mengikuti hari kerja berjalan.
 
 ---
 
@@ -846,8 +848,13 @@ UI: modul /laporan-harian
      -> feed dashboard: BULK upsert ke sales_daily_progress (batch, hindari N+1)
   <- { ok, runId, ringkasan per SPV, daftar penerima (PREVIEW, belum kirim) }
 UI: tombol "Kirim" terpisah (gated, confirm:true) -> POST /api/laporan-harian/[runId]/send
-     -> requirePermission("laporan_harian.send") -> ambil file per-SPV/SM dari backend -> kirim email (nodemailer)
+     -> requirePermission("laporan_harian.send") -> claim status `sending`
+     -> ambil file per-SPV/SM dari backend -> kirim email (nodemailer)
+     -> penerima `failed` dapat di-retry tanpa mengirim ulang penerima yang sudah `sent`
 ```
+
+State machine pure: `lib/laporan-harian/send-state.ts`; self-check:
+`node --experimental-strip-types lib/laporan-harian/send-state.test.ts`.
 
 ---
 
@@ -874,7 +881,7 @@ UI: tombol "Kirim" terpisah (gated, confirm:true) -> POST /api/laporan-harian/[r
 | **`config/`** | Folder berisi data statik (principles, dll) — tidak ter-trace penuh karena bukan TypeScript eksportabel; kemungkinan JSON/YAML. |
 | **`runtime/` path** | `GET /api/cron/cleanup-runtime` membersihkan artefak regenerable dengan retensi terdaftar; arsip PDF OPC/claim sengaja dikecualikan. Production tetap memerlukan scheduler eksternal dan `CRON_SECRET`. |
 | **`app/(dashboard)/finance/page.tsx`** | Memanggil Python FastAPI backend langsung via `NEXT_PUBLIC_FASTAPI_BASE_URL`. Jika backend mati, halaman finance tidak berfungsi. |
-| **Docker vs dev** | `drizzle.config.ts` hardcode `file:sqlite.db` (bukan env). Perlu disesuaikan jika path container berbeda dari root. |
+| **D4 env/deploy belum sinkron** | Kode DB sudah PostgreSQL, tetapi `.env.local`, `.env.example`, Docker Compose, dan Dockerfile masih default `file:sqlite.db`. Local/deploy wajib memakai `DATABASE_URL=postgres://...`; tanpa itu route ber-DB tidak operasional. |
 | **`rekprinciple.xlsx`** | File Excel di root — tidak jelas apakah dipakai runtime atau hanya referensi manual. |
 | **Laporan Harian: stock Accurate & openpyxl** | File stock export Accurate tidak terbaca `openpyxl` (perlu `python-calamine` terpasang di server). |
 
