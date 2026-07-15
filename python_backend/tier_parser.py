@@ -188,6 +188,11 @@ def parse_positional_tables(ocr_text: str) -> List[TableRow]:
 _SYNONYMS = {
     "EDT": "EAU DE TOILETTE", "EDP": "EAU DE PARFUM", "PMD": "POMADE",
     "WTR": "WATER", "BAS": "BASED", "COL": "COLOGNE", "COLG": "COLOGNE", "SR": "SERIES",
+    # Brand-alias: surat pakai ejaan panjang, master pakai singkatan -> normalisasi ke
+    # token kanonik master supaya overlap tak jeblok (dulu 'CASABLANCA' != 'CSBNCA' bikin
+    # match gagal -> tier tak terkoreksi, terbukti 2026-07-15). Ejaan surat -> master:
+    "BELLAGIO": "BLAGIO", "CASABLANCA": "CSBNCA", "REGGAZZA": "REGAZZA", "REGZZA": "REGAZZA",
+    "EXCELLO": "EXCELO", "PARFUME": "PARFUM",
 }
 _STOPWORDS = {"DAN", "THE", "OF", "DE"}
 
@@ -208,23 +213,67 @@ def _gramasi_token(text: str) -> str:
 
 
 def match_item_to_tablerow(item: dict, table_rows: List[TableRow]) -> Optional[TableRow]:
-    """Cocokkan 1 item master ke 1 TableRow lewat overlap token signifikan + gramasi
-    identik (kalau ada di keduanya). Threshold confidence tinggi (>=0.5 overlap) --
-    caller WAJIB skip override kalau None, bukan menebak."""
+    """Cocokkan 1 item master ke 1 TableRow. Aturan:
+    - GRAMASI = filter KERAS: kalau dua-duanya punya gramasi & beda -> pasti bukan barang
+      sama (mis. Body Spray 65ml vs 100ml, walau teks lain identik). Ini yg memisahkan tier
+      antar-gramasi (bug #1: 65ml=Beli7 vs 100/200ml=Beli14).
+    - SKOR = COVERAGE token identitas TABLEROW (teks surat, ringkas) oleh token item master.
+      Directional -> TIDAK dihukum token noise nama master (BLANC/144/BTL/X) yg tak ada di
+      surat (dulu Jaccard simetris bikin overlap ~0.33 <0.5 -> semua gagal match). Brand-alias
+      (CASABLANCA->CSBNCA dll) via _SYNONYMS.
+    - Tiebreak: overlap ABSOLUT lebih besar menang (tablerow lebih spesifik, mis. '... Prestige'
+      unggul atas '... Parfume' utk item Prestige), lalu coverage.
+    - Ambiguitas tier: kalau >1 tablerow skor puncak IDENTIK (overlap & coverage sama) tapi
+      trigger/benefit BEDA -> None (no silent guess; akurasi finansial wajib). Caller WAJIB
+      skip override saat None."""
     item_tokens = _sig_tokens(f"{item.get('principle','')} {item.get('nama_barang','')}")
     item_gram = _gramasi_token(item.get("gramasi", "")) or _gramasi_token(item.get("nama_barang", ""))
-    best, best_score = None, 0.0
+    if not item_tokens:
+        return None
+    scored = []
     for tr in table_rows:
         tr_tokens = _sig_tokens(tr.group_item)
-        if not tr_tokens or not item_tokens:
+        if not tr_tokens:
             continue
         tr_gram = _gramasi_token(tr.group_item)
         if item_gram and tr_gram and item_gram != tr_gram:
-            continue  # gramasi beda -> pasti bukan barang yg sama walau teks lain mirip
-        overlap = len(item_tokens & tr_tokens) / max(len(item_tokens | tr_tokens), 1)
-        if overlap > best_score:
-            best_score, best = overlap, tr
-    return best if best_score >= 0.5 else None
+            continue  # gramasi beda -> bukan barang yg sama
+        overlap = len(item_tokens & tr_tokens)
+        coverage = overlap / len(tr_tokens)
+        scored.append((overlap, coverage, tr))
+    if not scored:
+        return None
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    best_overlap, best_cov, best = scored[0]
+    if best_cov < 0.6:
+        return None  # tak cukup yakin -> jangan tebak
+    # guard ambiguitas: kandidat lain skor puncak PERSIS sama tapi tier beda -> ragu -> None
+    top = [tr for ov, cov, tr in scored if ov == best_overlap and cov == best_cov]
+    tiers = {(tr.trigger_qty, tr.benefit_type, tr.benefit_value) for tr in top}
+    if len(tiers) > 1:
+        return None
+    return best
+
+
+def _item_in_surat(item: dict, table_rows: List[TableRow]) -> bool:
+    """True kalau item punya tablerow (di channel ini) dgn coverage >=0.6 -- artinya barang
+    ini MEMANG disebut surat. Beda dari match_item_to_tablerow: fungsi ini TIDAK peduli
+    ambiguitas tier (item in-surat tapi tier ambigu tetap True -> jangan di-drop, cukup tier
+    tak dikoreksi). Dipakai regroup utk membuang kode halusinasi/tak-disebut-surat (#3)."""
+    item_tokens = _sig_tokens(f"{item.get('principle','')} {item.get('nama_barang','')}")
+    if not item_tokens:
+        return True  # tak bisa dinilai -> jangan buang (konservatif)
+    item_gram = _gramasi_token(item.get("gramasi", "")) or _gramasi_token(item.get("nama_barang", ""))
+    for tr in table_rows:
+        tr_tokens = _sig_tokens(tr.group_item)
+        if not tr_tokens:
+            continue
+        tr_gram = _gramasi_token(tr.group_item)
+        if item_gram and tr_gram and item_gram != tr_gram:
+            continue
+        if len(item_tokens & tr_tokens) / len(tr_tokens) >= 0.6:
+            return True
+    return False
 
 
 def regroup_rows_by_tier(rows: List[dict], items: List[dict], ocr_text: str) -> Tuple[List[dict], List[dict]]:
@@ -244,58 +293,67 @@ def regroup_rows_by_tier(rows: List[dict], items: List[dict], ocr_text: str) -> 
     for tr in table_rows:
         tr_by_channel[_norm_channel(tr.channel)].append(tr)
 
-    kode_to_tier = {}  # kode_barang -> (chan_norm, trigger_qty, benefit_type, benefit_value)
-    for r in rows:
+    # NON-DESTRUKTIF: proses baris-per-baris, PERTAHANKAN urutan & pengelompokan per-brand
+    # (hasil _apply_native_kelompok). TIDAK menggabung antar-baris/antar-brand & TIDAK
+    # mengurut ulang -- versi lama melakukannya & merusak struktur surat (Camellia+Marie Jose
+    # kegabung, urutan channel teracak). Fungsi ini HANYA: (a) koreksi ketentuan/benefit tiap
+    # baris dari tier OTORITATIF tabel posisional; (b) kalau 1 baris berisi kode ber-tier BEDA
+    # (mis. Casablanca Body Spray 65ml=Beli7 vs 100/200ml=Beli14), PECAH jadi sub-baris di
+    # posisi yg sama (kelompok tetap). Kode tak ter-bridge -> ketentuan asli dipertahankan.
+    import uuid as _uuid
+
+    def _tiers_for_row(r):
         chan = _norm_channel(r.get("channel_gtmt", ""))
         cand_trs = next((v for k, v in tr_by_channel.items() if chan and (chan in k or k in chan)), None)
-        if not cand_trs:
-            continue
+        tmap = {}
         for kb in [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]:
-            if kb in kode_to_tier:
-                continue
             it = by_kode.get(kb)
-            if not it:
-                continue
-            tr = match_item_to_tablerow(it, cand_trs)
-            if tr is not None:
-                kode_to_tier[kb] = (chan, tr.trigger_qty, tr.benefit_type, tr.benefit_value)
+            tr = match_item_to_tablerow(it, cand_trs) if (it and cand_trs) else None
+            tmap[kb] = (tr.trigger_qty, tr.benefit_type, tr.benefit_value) if tr is not None else None
+        return tmap, chan, cand_trs
 
-    if not kode_to_tier:
-        return rows, []  # tak ada satu pun kode ter-bridge keyakinan tinggi -> jangan ubah apa pun
-
-    template_row_for_kode = {}
-    for r in rows:
-        for kb in [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]:
-            template_row_for_kode.setdefault(kb, r)
-
-    tier_groups: Dict[tuple, List[str]] = defaultdict(list)
-    leftover_rows = []
-    for r in rows:
-        kbs = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
-        untouched = [kb for kb in kbs if kb not in kode_to_tier]
-        for kb in kbs:
-            if kb in kode_to_tier:
-                tier_groups[kode_to_tier[kb]].append(kb)
-        if untouched or not kbs:
-            r2 = dict(r)
-            r2["kode_barangs"] = ", ".join(untouched)
-            leftover_rows.append(r2)
+    def _apply_tier(r2, kodes, tier, chan, log):
+        r2["kode_barangs"] = ", ".join(kodes)
+        if tier is not None:
+            tq, bt, bv = tier
+            mix = " Boleh Mix Kelompok dan Gramasi Barang Sama" if len(kodes) > 1 else ""
+            r2["ketentuan"] = f"Beli {tq}{mix}"
+            r2["benefit_type"] = bt
+            r2["benefit"] = bv
+            log.append({"channel": chan, "trigger_qty": tq, "benefit_type": bt, "benefit_value": bv, "kode_barangs": r2["kode_barangs"]})
+        return r2
 
     log: List[dict] = []
-    new_rows = []
-    for (chan, tq, bt, bv), kodes in tier_groups.items():
-        uniq_kodes = sorted(set(kodes))
-        template = template_row_for_kode[uniq_kodes[0]]
-        r2 = dict(template)
-        r2["kode_barangs"] = ", ".join(uniq_kodes)
-        mix_suffix = " Boleh Mix Kelompok dan Gramasi Barang Sama" if len(uniq_kodes) > 1 else ""
-        r2["ketentuan"] = f"Beli {tq}{mix_suffix}"
-        r2["benefit_type"] = bt
-        r2["benefit"] = bv
-        log.append({"channel": chan, "trigger_qty": tq, "benefit_type": bt, "benefit_value": bv, "kode_barangs": r2["kode_barangs"]})
-        new_rows.append(r2)
-
-    new_rows.extend(leftover_rows)
+    new_rows: List[dict] = []
+    for r in rows:
+        kbs = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
+        tmap, chan, cand_trs = _tiers_for_row(r)
+        # #3 over-inclusion: kalau channel PUNYA tabel posisional (cand_trs), buang kode yg
+        # TAK disebut surat channel ini (mis. "SPRAY COL GLASS", "EDP DE LUXE" yg dihalusinasi
+        # LLM / ditarik ekspansi tapi bukan bagian program). Channel tanpa tabel -> jangan
+        # buang (tak ada ground-truth posisional). Kode in-surat tapi tier ambigu TETAP disimpan.
+        if cand_trs:
+            _drop = [kb for kb in kbs if by_kode.get(kb) and not _item_in_surat(by_kode[kb], cand_trs)]
+            if _drop:
+                kbs = [kb for kb in kbs if kb not in _drop]
+                for kb in _drop:
+                    tmap.pop(kb, None)
+                log.append({"channel": chan, "dropped_not_in_surat": _drop})
+        by_tier: Dict[object, List[str]] = defaultdict(list)
+        for kb in kbs:
+            by_tier[tmap.get(kb)].append(kb)
+        if len(by_tier) <= 1:  # semua kode se-tier (atau tak ada kbs) -> koreksi di tempat
+            tier = next(iter(by_tier)) if by_tier else None
+            new_rows.append(_apply_tier(dict(r), kbs, tier, chan, log))
+            continue
+        # baris berisi tier campur -> pecah, urutan sub-baris = urutan kemunculan tier
+        first = True
+        for tier, gkodes in by_tier.items():
+            r2 = dict(r)
+            if not first:
+                r2["id"] = str(_uuid.uuid4())
+            first = False
+            new_rows.append(_apply_tier(r2, gkodes, tier, chan, log))
     return new_rows, log
 
 
@@ -350,9 +408,20 @@ if __name__ == "__main__":
     ]
     for _run in range(10):
         regrouped, log = regroup_rows_by_tier(llm_rows, master_items, sample)
-        assert len(regrouped) == 2, regrouped
-        merged = next(r for r in regrouped if set(r["kode_barangs"].split(", ")) == {"P1", "P2"})
-        assert merged["ketentuan"] == "Beli 7 Boleh Mix Kelompok dan Gramasi Barang Sama", merged
-        solo = next(r for r in regrouped if r["kode_barangs"] == "P3")
-        assert solo["ketentuan"] == "Beli 4", solo
-    print("regroup_rows_by_tier self-check PASSED (10x run, EDT+EDP Prestige ke-merge, trigger salah dikoreksi)")
+        # NON-DESTRUKTIF: tiap baris LLM tetap baris sendiri (TIDAK di-merge antar-baris) ->
+        # 3 baris masuk, 3 baris keluar, urutan terjaga. Yg dikoreksi: ketentuan tier.
+        assert len(regrouped) == 3, regrouped
+        assert [r["id"] for r in regrouped] == ["r1", "r2", "r3"], "urutan & identitas baris harus utuh"
+        by_kode = {r["kode_barangs"]: r for r in regrouped}
+        assert by_kode["P1"]["ketentuan"] == "Beli 7", by_kode["P1"]           # EDT 7+1, sudah benar
+        assert by_kode["P2"]["ketentuan"] == "Beli 7", by_kode["P2"]           # EDP Prestige: SALAH "Beli 4" -> DIKOREKSI ke 7
+        assert by_kode["P3"]["ketentuan"] == "Beli 4", by_kode["P3"]           # Roll On 4+1, tetap
+    print("regroup_rows_by_tier self-check PASSED (10x run, non-destruktif: baris tak di-merge, tier salah dikoreksi di tempat)")
+
+    # self-check PECAH: 1 baris berisi kode ber-tier BEDA harus dipecah (bukan di-lump ke 1 tier)
+    split_rows = [{"id": "s1", "channel_gtmt": "RETAIL", "kode_barangs": "P1,P3", "ketentuan": "Beli 4", "benefit_type": "BONUS_QTY", "benefit": "1 PCS"}]
+    out, _ = regroup_rows_by_tier(split_rows, master_items, sample)
+    assert len(out) == 2, out                                                  # P1(Beli7) & P3(Beli4) dipecah
+    kmap = {r["kode_barangs"]: r["ketentuan"] for r in out}
+    assert kmap["P1"] == "Beli 7" and kmap["P3"] == "Beli 4", kmap
+    print("regroup_rows_by_tier self-check PASSED (baris tier-campur dipecah tepat per tier)")

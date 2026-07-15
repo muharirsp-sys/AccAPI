@@ -110,4 +110,10 @@ if __name__ == "__main__":
         no_match = resolve_variant("Marie Jose Body Mist 100ml", master, mapping)
         assert no_match is None, no_match
 
+        # REGRESI 2026-07-15: pattern REGAZZA WAJIB brand-scoped. Kelompok brand LAIN yg
+        # kebetulan mengandung substring "EDT" (mis. Bellagio) TIDAK boleh membajak rule
+        # Regazza (dulu: 'BLAGIO HM - EDT' -> REGAZZA -> Bellagio EDT/EDP Prestige hilang).
+        hijack = resolve_variant("BLAGIO HM - EDP, BLAGIO HM - EDT, BLAGIO HM - ROLL ON", master, mapping)
+        assert hijack is None, ("REGAZZA rule membajak baris Bellagio!", hijack)
+
     print("variant_resolver self-check PASSED (10x run, resolusi 100% identik)")

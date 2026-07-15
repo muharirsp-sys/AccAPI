@@ -53,13 +53,20 @@ from shared import (
     read_upload_file_limited,
     regroup_rows_by_tier,
     s,
+    save_correction,
     user_has_permission,
     uuid,
     validate_csrf_request,
+    verify_and_correct_rows,
     write_summary_excel,
 )
 
 router = APIRouter()
+
+# Penanda baris surat yang TIDAK punya item cocok di master -> wajib direview manusia.
+# Dipakai BERSAMA oleh PDF (kolom Kelompok) & Excel (kolom NAMA_BARANG) supaya keduanya
+# tidak pernah drift: dulu PDF nulis flag ini tapi Excel dibiarkan KOSONG polos (silent).
+REVIEW_FLAG_TEXT = "(TIDAK ADA ITEM COCOK DI MASTER -- PERLU REVIEW MANUAL)"
 
 @router.post("/summary/manual")
 async def summary_manual_auto_generate(
@@ -583,7 +590,9 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             benefit_unit = unit_from_text(benefit_text) if benefit_text else ""
 
             if not matched_items:
-                excel_rows.append({"pdf_key": i, "channel": promo_group, "kode_barang": "", "nama_barang": "",
+                # kode_barang tetap KOSONG (dipakai guard V4 & PROMO_ACTIVE utk kenali "bukan SKU
+                # nyata"), tapi nama_barang diberi flag review -- simetris dgn PDF, tak lagi blank.
+                excel_rows.append({"pdf_key": i, "channel": promo_group, "kode_barang": "", "nama_barang": REVIEW_FLAG_TEXT,
                                     "promo_label": promo_label, "pg_id": promo_group_id, "periode": periode,
                                     "trig_qty": trig_qty, "trig_unit": trig_unit, "benefit_type": benefit_type,
                                     "benefit_text": benefit_text, "benefit_unit": benefit_unit})
@@ -610,28 +619,52 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                                         "trig_unit": trig_unit, "benefit_type": benefit_type, "benefit_text": benefit_text,
                                         "benefit_unit": benefit_unit})
 
-        # ponytail: guard V4 -- 1 kode fisik tidak boleh nyantol di >1 baris-surat (tier beda) dlm
-        # channel yg sama (terbukti live: "Pmd Wtr Bas" muncul di baris 4+1 DAN 7+1 sekaligus).
-        # Akurasi finansial wajib -> JANGAN menebak salah satu benar, buang dari SEMUA sisi (Excel
-        # & PDF) dan wajib direview manusia lewat tombol Laporkan Salah.
-        kode_channel_to_pdfkeys: Dict[Tuple[str, str], set] = {}
+        # ponytail: guard V4 -- 1 kode fisik nyantol di >1 baris-surat channel sama. DUA kasus:
+        #   (a) SEMUA kemunculan tier IDENTIK -> duplikat jinak: baris mega-merge LLM tumpang-tindih
+        #       yg SETELAH regroup ber-tier sama (mis. Bellagio Beli-4 dari row Beli-7-mega DAN row
+        #       Beli-4). Bukan ambiguitas -> DEDUP: simpan kemunculan pertama, buang sisanya. JANGAN
+        #       buang semua (dulu bug: 37 kode Beli-4 VALID hilang saat matching mulai jalan).
+        #   (b) tier BEDA -> ambigu (mis. "Pmd Wtr Bas" di 4+1 DAN 7+1): akurasi finansial wajib,
+        #       buang dari SEMUA sisi + flag review manusia (tombol Laporkan Salah).
+        def _tier_sig(er):
+            return (er.get("trig_qty", ""), er.get("benefit_type", ""), er.get("benefit_text", ""))
+        occ: Dict[Tuple[str, str], list] = {}
         for er in excel_rows:
             if er["kode_barang"]:
-                kode_channel_to_pdfkeys.setdefault((er["channel"], er["kode_barang"]), set()).add(er["pdf_key"])
-        conflicted = {k for k, v in kode_channel_to_pdfkeys.items() if len(v) > 1}
-        if conflicted:
+                occ.setdefault((er["channel"], er["kode_barang"]), []).append(er)
+        dedup_drop = set()          # id(er) duplikat jinak yg dibuang (sudah terwakili baris lain)
+        conflict_kodes: set = set()  # (channel, kode) ambigu tier
+        for ck, ers in occ.items():
+            if len({er["pdf_key"] for er in ers}) <= 1:
+                continue            # cuma 1 baris-surat -> tak ada isu
+            if len({_tier_sig(er) for er in ers}) == 1:
+                keep_key = min(er["pdf_key"] for er in ers)
+                for er in ers:
+                    if er["pdf_key"] != keep_key:
+                        dedup_drop.add(id(er))
+            else:
+                conflict_kodes.add(ck)
+        if dedup_drop or conflict_kodes:
             kept_excel_rows = []
             for er in excel_rows:
                 ck = (er["channel"], er["kode_barang"])
-                if er["kode_barang"] and ck in conflicted:
+                if er["kode_barang"] and ck in conflict_kodes:
                     flagged_conflicts.append({"kode_barang": er["kode_barang"], "nama_barang": er["nama_barang"],
                                                "channel": er["channel"], "pg_id": er["pg_id"]})
+                elif id(er) in dedup_drop:
+                    continue
                 else:
                     kept_excel_rows.append(er)
             excel_rows = kept_excel_rows
-            conflicted_kodes = {kb for (_, kb) in conflicted}
+            # Sinkronkan pdf_items ke excel_rows FINAL: item hanya tampil di PDF kalau kode-nya
+            # masih hidup di excel_rows utk pdf_key itu (buang duplikat jinak & konflik sekaligus).
+            surviving: Dict[int, set] = {}
+            for er in excel_rows:
+                if er["kode_barang"]:
+                    surviving.setdefault(er["pdf_key"], set()).add(er["kode_barang"])
             for i in pdf_items:
-                pdf_items[i] = [it for it in pdf_items[i] if str(it.get("kode_barang","")).strip() not in conflicted_kodes]
+                pdf_items[i] = [it for it in pdf_items[i]
+                                if str(it.get("kode_barang", "")).strip() in surviving.get(i, set())]
 
         for i in range(len(rows)):
             meta = pdf_meta[i]
@@ -650,7 +683,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             if kel_order:
                 kelompok_display = format_kelompoks_human_readable(" & ".join(kel_order))
             elif meta.get("kelompok_fallback",""):
-                kelompok_display = "(TIDAK ADA ITEM COCOK DI MASTER -- PERLU REVIEW MANUAL)"
+                kelompok_display = REVIEW_FLAG_TEXT
             else:
                 kelompok_display = ""
 
@@ -786,7 +819,9 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             excel_tier_counter[tkey] = excel_tier_counter.get(tkey, 0) + 1
             ws2.append([
                 er["kode_barang"], er["nama_barang"], er["promo_label"], er["pg_id"], er["channel"],
-                er["periode"], True, excel_tier_counter[tkey], er["trig_qty"], er["trig_unit"],
+                # PROMO_ACTIVE=False utk baris review-flag (kode kosong) -- jangan sampai
+                # ke-import ERP sbg promo aktif padahal belum ada SKU-nya (silent bad data).
+                er["periode"], bool(er["kode_barang"]), excel_tier_counter[tkey], er["trig_qty"], er["trig_unit"],
                 er["benefit_type"], er["benefit_text"], er["benefit_unit"], "PABRIK",
             ])
         wb2.save(dataset_path)
@@ -1223,7 +1258,10 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                     # Fix: pecah teks per section "N. ... CHANNEL ..." lalu parse tiap bagian terpisah
                     # (pola sama dgn fix OCR per-halaman) -> tiap panggilan dapat budget token penuh.
                     import re
-                    _hdr_re = re.compile(r'^\s*\d+\.\s*.{0,80}?channel', re.IGNORECASE | re.MULTILINE)
+                    # [\s*#>_-]* di depan: OCR kadang membungkus header dgn markdown (terbukti run
+                    # live 2026-07-14: "**3. ... CHANNEL GROSIR:**" -> header GROSIR TAK terdeteksi,
+                    # konten GROSIR ke-merge ke chunk lain & hilang). Toleransi markdown depan angka.
+                    _hdr_re = re.compile(r'^[\s*#>_-]*\d+\.\s*.{0,80}?channel', re.IGNORECASE | re.MULTILINE)
                     _hdrs = list(_hdr_re.finditer(combined_text))
                     if len(_hdrs) >= 2:
                         _preamble = combined_text[:_hdrs[0].start()]
@@ -1346,6 +1384,18 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                                 break
                         if _best_missing:
                             append_error_log("chunk_incomplete_brands", Exception("Brand tidak lengkap setelah retry"), {"chunk": _label, "missing_brands": _best_missing, "user": user})
+                        # Channel OTORITATIF dari HEADER chunk, BUKAN label LLM. Chunk displit per
+                        # "N. ... CHANNEL X" -> channel tiap chunk sudah pasti. Terbukti (run live
+                        # 2026-07-14): LLM kadang salah-label -- baris GROSIR ditulis "STAR OUTLET"
+                        # -> data pindah channel & Marie Jose hilang dari GROSIR. Paksa dari header
+                        # (kalau header tak terbaca, biarkan label LLM apa adanya -> aman).
+                        _hdr_line = _chunk.lstrip().splitlines()[0] if _chunk.strip() else ""
+                        _m_ch = re.search(r'channel\s*:?\s*(.+)', _hdr_line, re.IGNORECASE)
+                        # strip markdown/kolon di kedua ujung (header ter-OCR "GROSIR:**" dll).
+                        _chunk_channel = _m_ch.group(1).strip().strip("*:#_ ").strip() if _m_ch else ""
+                        if _chunk_channel:
+                            for _r in _best_rows:
+                                _r["channel_gtmt"] = _chunk_channel
                         all_rows.extend(_best_rows)
 
                     try:
@@ -1362,6 +1412,22 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                             row["id"] = str(uuid.uuid4())
                         if "no" not in row:
                             row["no"] = str(idx + 1)
+
+                    # PASS 3 (ala Reducto "VLMs make corrections"): editor QA LLM membandingkan
+                    # rows vs teks sumber OCR, ajukan PATCH per-field (tak boleh tambah/hapus
+                    # baris/sentuh kode_barangs). Dijalankan SEBELUM native mapping (koreksi
+                    # kelompok ikut ter-resolve) & SEBELUM parse_cache_put (yg dibekukan =
+                    # hasil terkoreksi). Gagal apa pun -> rows utuh. Off: SUMMARY_SELF_CORRECT=0.
+                    if os.getenv("SUMMARY_SELF_CORRECT", "1") != "0":
+                        async def _editor_post(_pl):
+                            _r = await client_http.post("https://ai.sumopod.com/v1/chat/completions", json=_pl, headers=headers)
+                            _r.raise_for_status()
+                            return _r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                        all_rows, _p3_patches = await verify_and_correct_rows(
+                            combined_text, all_rows, _editor_post, os.getenv("SUMOPOD_MODEL", "gpt-4.1-mini"))
+                        # ponytail: log SELALU (termasuk 0 patch) -- tanpa ini "editor bersih"
+                        # tak bisa dibedakan dari "editor gagal diam-diam" saat diagnosis.
+                        append_error_log("self_correction_patches", Exception(f"{len(_p3_patches)} patch editor"), {"patches": _p3_patches, "user": user})
 
                     # TAHAP 2: Native Master DB Mapping (Injects Kelompok perfectly)
                     all_rows = _apply_native_kelompok(all_rows, items)
@@ -1557,7 +1623,25 @@ async def summary_manual_report_correction(request: Request):
         _ensure_dir(os.path.join(BASE_DIR, "data"))
         with open(CORRECTIONS_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        return {"ok": True}
+
+        # FASE 4b: SELAIN hint lama di atas (JANGAN dihapus), simpan tiap field yg berubah
+        # ke correction_store dgn stable key (kode_barang, channel, no_surat) -- override
+        # deterministik di generate berikutnya, tak tergantung posisi baris/hasil AI.
+        channel = s(after.get("channel_gtmt", "") or before.get("channel_gtmt", ""))
+        no_surat = s(after.get("surat_program", "") or before.get("surat_program", ""))
+        kode_list = [k.strip() for k in str(after.get("kode_barangs", "") or "").split(",") if k.strip()]
+        stable_saved = 0
+        for field, correct_value in after.items():
+            if field in _CORRECTION_IGNORE_KEYS or field in ("kode_barangs", "channel_gtmt", "surat_program"):
+                continue
+            wrong_value = before.get(field)
+            if wrong_value == correct_value:
+                continue
+            for kode_barang in kode_list:
+                save_correction(kode_barang, channel, no_surat, field, wrong_value, correct_value,
+                                 corrected_by=user, note=entry["note"])
+                stable_saved += 1
+        return {"ok": True, "stable_corrections_saved": stable_saved}
     except Exception as e:
         append_error_log("summary_manual_report_correction", e, {"user": user})
         return {"ok": False, "error": "Gagal menyimpan koreksi."}

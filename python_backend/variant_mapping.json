@@ -6,15 +6,15 @@
     "note": "Casablanca Spray Cologne Series di surat = White SR (White/Red) + Black SR (Black/Blue) SEKALIGUS. GLASS/GLAS series TIDAK termasuk program. Dikonfirmasi manusia 2026-07-11."
   },
   "REGAZZA_EDT_SPORT": {
-    "match_pattern": "edt\\s*sport|eau\\s*de\\s*toilette\\s*sport",
+    "match_pattern": "^(?=.*reg+a?z+a).*(?:edt\\s*sport|eau\\s*de\\s*toilette\\s*sport)",
     "kelompok": "REGAZZA FM - EDT",
     "principle_contains": "SPORT",
-    "note": "Regazza EDT Sport = 4 varian Azzuro/Bianco/Nero/Rosso, dibedakan dari EDT biasa via kata 'Sport' di Nama Barang Principle master (SAMA kelompok 'REGAZZA FM - EDT', BUKAN kelompok terpisah). Dikonfirmasi manusia 2026-07-11."
+    "note": "Regazza EDT Sport = 4 varian Azzuro/Bianco/Nero/Rosso, dibedakan dari EDT biasa via kata 'Sport' di Nama Barang Principle master (SAMA kelompok 'REGAZZA FM - EDT', BUKAN kelompok terpisah). Dikonfirmasi manusia 2026-07-11. match_pattern WAJIB brand-scoped (lookahead reg+a?z+a: REGAZZA/REGGAZZA/REGZZA) -- tanpa itu substring 'EDT' membajak baris brand lain (mis. 'BLAGIO HM - EDT' -> Bellagio EDT/EDP Prestige hilang, terbukti 2026-07-15)."
   },
   "REGAZZA_EDT_REGULAR": {
-    "match_pattern": "\\bedt\\b|eau\\s*de\\s*toilette",
+    "match_pattern": "^(?=.*reg+a?z+a).*(?:\\bedt\\b|eau\\s*de\\s*toilette)",
     "kelompok": "REGAZZA FM - EDT",
     "principle_excludes": "SPORT",
-    "note": "Regazza EDT biasa (BUKAN Sport) = 6 varian Classy/Feminine/Glow/Passionate/Purity/Sophisticated. Rule ini HARUS dicek SETELAH REGAZZA_EDT_SPORT gagal match (match_pattern-nya lebih umum, sengaja fallback)."
+    "note": "Regazza EDT biasa (BUKAN Sport) = 6 varian Classy/Feminine/Glow/Passionate/Purity/Sophisticated. Rule ini HARUS dicek SETELAH REGAZZA_EDT_SPORT gagal match. match_pattern brand-scoped (lookahead reg+a?z+a) -- WAJIB agar substring 'EDT' tak membajak baris brand lain."
   }
 }

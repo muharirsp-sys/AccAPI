@@ -22,7 +22,18 @@ from tier_parser import regroup_rows_by_tier
 from golden_store import canonical_signature, golden_check_and_freeze
 from deterministic_output import enable_pdf_determinism, finalize_xlsx
 from parse_cache import parse_cache_key, parse_cache_get, parse_cache_put
+# PASS 3 self-correction ala Reducto: editor QA LLM memverifikasi rows vs teks sumber (patch-based).
+from self_correction import verify_and_correct_rows
 _VARIANT_MAPPING = load_variant_mapping()
+# Kelompok yg SELALU di-EXCLUDE dari promo (dari exclude_kelompok tiap rule variant_mapping,
+# mis. Casablanca Spray Cologne GLASS/GLAS -- aturan surat, dikonfirmasi user 2026-07-15).
+# LLM kadang mencantumkan kode GLASS langsung di kode_barangs -> lolos klist-match; drop-list
+# global ini menutup SEMUA jalur (klist, ekspansi, fallback), simetris dgn exclude banded (BND).
+_EXCLUDED_KELOMPOKS = {
+    " ".join(str(_k).strip().split()).upper()
+    for _rule in _VARIANT_MAPPING.values()
+    for _k in _rule.get("exclude_kelompok", [])
+}
 from typing import List, Dict, Tuple, Optional, Set, Any
 from urllib.parse import urlparse, unquote
 from auth import (
@@ -4570,7 +4581,19 @@ def _apply_native_kelompok(rows_to_check, master_items):
         import re
         return [x.strip() for x in re.split(r'[,&]', str(val or "")) if x.strip()]
 
+    # Kode master yg kelompoknya di exclude-list variant_mapping (mis. Spray Cologne GLASS).
+    # Distrip dari kode_barangs di AWAL tiap baris -> tak lolos jalur manapun, termasuk fallback
+    # "row tak ter-explode" (yg dulu mengembalikan r mentah ber-GLASS -> 6 GLASS bocor run live).
+    _excluded_codes = {str(it.get("kode_barang", "")).strip() for it in master_items
+                       if norm(it.get("kelompok")) in _EXCLUDED_KELOMPOKS} if _EXCLUDED_KELOMPOKS else set()
+
     for r in rows_to_check:
+        if _excluded_codes:
+            _kb = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
+            _kb2 = [k for k in _kb if k not in _excluded_codes]
+            if len(_kb2) != len(_kb):
+                r = dict(r)
+                r["kode_barangs"] = ",".join(_kb2)
         matched_items = []
         # FASE 3b: resolusi varian data-driven (variant_mapping.json) DULU, sebelum LLM/
         # kode_barangs manapun -- kasus terbukti: "Spray Cologne Series" harus jadi White SR
@@ -4586,6 +4609,48 @@ def _apply_native_kelompok(rows_to_check, master_items):
             for it in master_items:
                 if str(it.get("kode_barang", "")).strip() in klist:
                     matched_items.append(it)
+
+        # "All Variant": LLM sering under-enumerate kode di channel belakangan (terbukti
+        # debug_ai.txt 2026-07-13: STAR OUTLET "Marie Jose All Variant" cuma kirim 1 dari 8
+        # kode -> 7 varian hilang diam-diam). Perbaiki dgn ANCHOR ke item yg sudah cocok (seed):
+        # tarik SEMUA varian se-(kelompok, gramasi) dari master, non-banded. Dibatasi ke
+        # kelompok+gramasi seed -> TIDAK meledak (beda dgn fallback string-match di bawah yg bisa
+        # jatuh ke SELURUH master saat kelompok LLM tak persis cocok). Aturan surat: banded (BND)
+        # dikecualikan dari klaim promo.
+        # _variant_hit is None: JANGAN ekspansi hasil FASE 3b (variant_resolver sengaja membatasi
+        # varian, mis. Regazza EDT Sport = HANYA 4 -- ekspansi se-kelompok akan merusak batasan itu).
+        if matched_items and _variant_hit is None:
+            _vlist_probe = split_list(r.get("variant", ""))
+            _v_all_probe = (not _vlist_probe) or any(norm(x) == "ALL VARIANT" for x in _vlist_probe)
+            if _v_all_probe:
+                _seed_keys = {(norm(it.get("kelompok")), norm(it.get("gramasi"))) for it in matched_items}
+                _seen_codes = {str(it.get("kode_barang", "")).strip() for it in matched_items}
+                # #3 (2026-07-15): kelompok yg BERPASANGAN per variant_mapping -- mis. surat
+                # "Casablanca Spray Cologne Series" = White SR + Black SR SEKALIGUS (dikonfirmasi
+                # user; SR=Series, lihat variant_mapping CASABLANCA_SPRAY_COLOGNE_SERIES). Kalau
+                # seed masuk salah satu kelompok di resolve_to_kelompok sebuah rule, tarik JUGA
+                # kelompok pasangannya (di gramasi seed) MINUS exclude_kelompok (GLASS di-EXCLUDE).
+                # Additive & tak menyentuh resolve_variant -> baris mega-merge multi-kelompok tak
+                # kehilangan kelompok lain (beda dgn kalau resolve_variant yg fire).
+                _seed_kels = {norm(it.get("kelompok")) for it in matched_items}
+                _seed_grams = {norm(it.get("gramasi")) for it in matched_items}
+                for _rule in _VARIANT_MAPPING.values():
+                    _rk = {norm(k) for k in _rule.get("resolve_to_kelompok", [])}
+                    if not _rk or not (_seed_kels & _rk):
+                        continue
+                    _excl = {norm(k) for k in _rule.get("exclude_kelompok", [])}
+                    for _k in _rk - _excl:
+                        for _g in _seed_grams:
+                            _seed_keys.add((_k, _g))
+                for it in master_items:
+                    _kode = str(it.get("kode_barang", "")).strip()
+                    if _kode in _seen_codes:
+                        continue
+                    if "BND" in norm(it.get("nama_barang")).split():
+                        continue
+                    if (norm(it.get("kelompok")), norm(it.get("gramasi"))) in _seed_keys:
+                        matched_items.append(it)
+                        _seen_codes.add(_kode)
                     
         # Fallback Match: String matching if AI failed to provide API keys or "ALL VARIANT"
         if not matched_items:            
@@ -4652,9 +4717,22 @@ def _apply_native_kelompok(rows_to_check, master_items):
                             gramasi_match = True; break
                             
                 if not gramasi_match: continue
-                    
+
+                # Produk BANDED (nama ".. BTL BND") dikecualikan dari ekspansi promo -- aturan
+                # surat: "Untuk Klaim tidak berlaku Produk Banded". Master menaruh item banded
+                # di kelompok+gramasi+variant yg SAMA dgn non-banded (mis. Marie Jose ...011),
+                # jadi tanpa filter ini ekspansi All Variant akan keliru menambah SKU banded.
+                if "BND" in it_nama.split(): continue
+
                 matched_items.append(it)
                     
+        # EXCLUDE global: buang item ber-kelompok di exclude_kelompok variant_mapping (mis.
+        # Spray Cologne GLASS/GLAS) dari SEMUA jalur -- termasuk saat LLM mencantumkan kode GLASS
+        # langsung di kode_barangs (terbukti run live 2026-07-15: 18 baris GLASS bocor). Aturan
+        # surat: Spray Cologne Series = White SR + Black SR saja.
+        if _EXCLUDED_KELOMPOKS:
+            matched_items = [it for it in matched_items if norm(it.get("kelompok")) not in _EXCLUDED_KELOMPOKS]
+
         # Deterministic Kelompok String Builder strictly from Master DB
         # EXPLODE MAGIC: If a single AI row contains items from DIFFERENT Brand Prefixes (Nama KLPs),
         # we must split it into separate rows so the frontend and generator handle them cleanly!
