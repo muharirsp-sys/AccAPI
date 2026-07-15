@@ -845,7 +845,8 @@ UI: modul /laporan-harian
            merge flag AO/EC/IA, Nota Retur/Batal, map Golongan(SPV)+NAMA SM, Kategori Baru
         -> output: (a) rows per SPV & per SM, (b) rows stock per SPV, (c) agregat progress harian
      -> tulis file per-SPV/SM ke runtime/laporan-harian/<tanggal>/
-     -> feed dashboard: BULK upsert ke sales_daily_progress (batch, hindari N+1)
+     -> normalisasi progress kosong salesCode -> `UNMAPPED:<branch>` + warning eksplisit (nilai tidak dibuang/tidak ditebak)
+     -> feed dashboard: BULK replace ke sales_daily_progress (batch, hindari N+1)
   <- { ok, runId, ringkasan per SPV, daftar penerima (PREVIEW, belum kirim) }
 UI: tombol "Kirim" terpisah (gated, confirm:true) -> POST /api/laporan-harian/[runId]/send
      -> requirePermission("laporan_harian.send") -> claim status `sending`
@@ -855,6 +856,8 @@ UI: tombol "Kirim" terpisah (gated, confirm:true) -> POST /api/laporan-harian/[r
 
 State machine pure: `lib/laporan-harian/send-state.ts`; self-check:
 `node --experimental-strip-types lib/laporan-harian/send-state.test.ts`.
+Normalisasi progress pure: `lib/laporan-harian/progress-normalize.ts`; self-check:
+`node --experimental-strip-types lib/laporan-harian/progress-normalize.test.ts`.
 
 ---
 
