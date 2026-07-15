@@ -57,6 +57,9 @@ assert.deepEqual(await missingResponse.json(), { error: "Master mapping KINO tid
 
 for (const [message, expected] of [
   ["FLAG_BONUS harus Y/N pada baris 9", "FLAG_BONUS harus Y/N pada baris 9"],
+  ["Pvt Map 1 tidak lengkap pada baris 12", "Pvt Map 1 tidak lengkap pada baris 12"],
+  ["IV_DISC2 belum memiliki aturan pada baris 7", "IV_DISC2 belum memiliki aturan pada baris 7"],
+  ["Nilai GDI tidak valid pada baris 18", "Nilai GDI tidak valid pada baris 18"],
   ["C:\\secret\\stack internal", "Rekonsiliasi gagal diproses."],
 ] as const) {
   const handler = createKinoSalesPostHandler({ authorize: async () => null, readMapping: async () => new Uint8Array(), reconcile: () => { throw new Error(message); } });
