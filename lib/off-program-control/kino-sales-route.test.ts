@@ -14,6 +14,20 @@ function request(mutate?: (form: FormData) => void): Request {
 }
 
 assert.equal(safeParserMessage(new Error("FLAG_BONUS harus Y/N pada baris 9")), "FLAG_BONUS harus Y/N pada baris 9");
+assert.equal(
+  safeParserMessage(new Error("Tipe harus SD pada baris 2")),
+  "Tipe harus SD pada baris 2",
+);
+assert.equal(
+  safeParserMessage(
+    new Error("DISC. 1 harus antara 0 dan 100 pada baris 2"),
+  ),
+  "DISC. 1 harus antara 0 dan 100 pada baris 2",
+);
+assert.equal(
+  safeParserMessage(new Error("D:\\secret\\MOTASA.xlsx parser stack")),
+  null,
+);
 assert.equal(safeParserMessage(new Error("C:\\secret\\Kino.xlsx ENOENT")), null);
 assert.equal(safeParserMessage(new Error("stack or internal detail")), null);
 
