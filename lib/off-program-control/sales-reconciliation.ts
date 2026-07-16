@@ -134,7 +134,7 @@ function orderNumber(value: unknown, label: string, row: number, noun = "order")
       (match) => `BFG-${match[1]}`,
     ),
     shinzui = normalized.match(/INVGTS\d+-\d+-\d+/g) ?? [],
-    motasa = normalized.match(/MK\d{10}/g) ?? [],
+    motasa = normalized.match(/(?<![A-Z0-9])MK\d{10}(?![A-Z0-9])/g) ?? [],
     matches = [...kino, ...godrej, ...shinzui, ...motasa];
   if (matches.length !== 1)
     throw new Error(
@@ -241,19 +241,28 @@ function mappingRows(
   workbook: XLSX.WorkBook,
   sheetName: string,
   required: string[],
-  maxRows = 3,
+  headerRow?: number,
 ) {
   const sheet = workbook.Sheets[sheetName];
   if (!sheet?.["!ref"])
     throw new Error(`Sheet mapping ${sheetName} tidak ditemukan atau kosong`);
   const rows = XLSX.utils.sheet_to_json(sheet, {
-    header: 1,
-    raw: true,
-    defval: null,
-    blankrows: false,
-  }) as Row[];
-  const header = headerIndex(rows, required, maxRows);
-  return { rows, columns: header.columns, start: header.rowIndex + 1 };
+      header: 1,
+      raw: true,
+      defval: null,
+      blankrows: headerRow !== undefined,
+    }) as Row[],
+    offset = headerRow === undefined ? 0 : headerRow - 1,
+    header = headerIndex(
+      rows.slice(offset),
+      required,
+      headerRow === undefined ? 3 : 1,
+    );
+  return {
+    rows,
+    columns: header.columns,
+    start: header.rowIndex + offset + 1,
+  };
 }
 function makeUniqueMap(
   rows: Row[],
@@ -475,22 +484,26 @@ export function parseMotasaMappings(
     if (!internal)
       throw new Error(`KODE BARANG WIN2 kosong pada baris ${index + 1}`);
 
-    let caseSize: number | null = null;
-    let mappingStatus: MappingStatus = "OK";
+    let caseSize: number | null = null,
+      mappingStatus: MappingStatus =
+        smallestUnit === "KRT" || smallestUnit === "SCH"
+          ? "OK"
+          : "UNIT_CONVERSION_ERROR";
     try {
       caseSize = finite(rawCaseSize, "ISI/CTN", index + 1);
-      if (caseSize <= 0) mappingStatus = "UNIT_CONVERSION_ERROR";
     } catch {
-      mappingStatus = "UNIT_CONVERSION_ERROR";
+      if (smallestUnit === "KRT")
+        mappingStatus = "UNIT_CONVERSION_ERROR";
     }
-    if (!smallestUnit || smallestUnit === "0")
+    if (smallestUnit === "KRT" && (!caseSize || caseSize <= 0))
       mappingStatus = "UNIT_CONVERSION_ERROR";
 
     const next = { unit: smallestUnit, caseSize, mappingStatus },
       existing = products.get(internal);
     if (
       existing &&
-      (existing.unit !== next.unit || existing.caseSize !== next.caseSize)
+      (existing.unit !== next.unit ||
+        (smallestUnit === "KRT" && existing.caseSize !== next.caseSize))
     )
       products.set(internal, { ...existing, mappingStatus: "INVALID_DATA" });
     else if (!existing)
