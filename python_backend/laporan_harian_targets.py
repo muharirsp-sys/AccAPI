@@ -1,6 +1,6 @@
-"""Tujuan: Mendefinisikan alias keyword penerima untuk laporan Principal.
+"""Tujuan: Mendefinisikan alias keyword dan metadata Power Query laporan Principal.
 Caller: laporan_harian.load_lookups_json.
-Dependensi: Nama Principal kanonik dari laporan_harian_lookups.json.
+Dependensi: Nama Principal kanonik dan aturan di laporan_harian_principal.py.
 Main Functions: REPORT_TARGETS.
 Side Effects: Tidak ada.
 """

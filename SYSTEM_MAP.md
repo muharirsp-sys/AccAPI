@@ -847,6 +847,12 @@ UI: modul /laporan-harian
      -> susun output 1:1 sesuai `REPORT_COLUMNS` (tanpa duplikasi `GOLONGAN`/pergeseran AO-EC-IA)
      -> resolve keyword aktif dari `report_recipient`: SPV (`GOLONGAN`), SM (`NAMA_SM`),
         atau alias principal (`REPORT_TARGETS` di `laporan_harian_targets.py`)
+     -> untuk target Principal, terapkan parity Power Query di `laporan_harian_principal.py`:
+        FONTERRA exclude `C-TUN020` + stock `GD01`; MOTASA 1/2 berdasarkan prefix salesman;
+        RECKITT tambah `Devisi`; MUSTIKA RATU menghasilkan format khusus 20 kolom dengan
+        Market/HET/NET/DISC/BA; GODREJ/ENERGIZER/ABC/URC/HEINZ memakai filter Principal kanonik
+     -> referensi `PL_MR` dan `RECKITT LIST` disimpan sebagai CSV read-only di `python_backend/`;
+        Principal asli file stock dipertahankan agar item tanpa penjualan harian tidak hilang
      -> tulis file per keyword ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
         `<Keyword>` (penjualan) + `<Keyword> Stock` (cakupan target yang sama)
         (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)
@@ -865,7 +871,8 @@ State machine pure: `lib/laporan-harian/send-state.ts`; self-check:
 `node --experimental-strip-types lib/laporan-harian/send-state.test.ts`.
 Normalisasi progress pure: `lib/laporan-harian/progress-normalize.ts`; self-check:
 `node --experimental-strip-types lib/laporan-harian/progress-normalize.test.ts`.
-Alias Principal disimpan di `python_backend/laporan_harian_targets.py`. Sumber audit penerima ada di
+Alias Principal disimpan di `python_backend/laporan_harian_targets.py`; filter/formatter khusus ada di
+`python_backend/laporan_harian_principal.py`. Sumber audit penerima ada di
 `config/mapping_laporan.csv`; sinkronkan secara transaksional dengan
 `node scripts/sync-laporan-recipients.mjs` agar tepat 20 keyword aktif dan keyword lama dinonaktifkan.
 

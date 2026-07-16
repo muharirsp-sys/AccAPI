@@ -5,7 +5,8 @@
 #              (salesDailyProgress) untuk dashboard insentif-sales.
 # Caller     : python_backend/main.py endpoint /laporan-harian/process (dipanggil Next.js
 #              app/api/laporan-harian/upload). Juga dipakai parity test Tahap 0.
-# Dependensi : pandas, openpyxl, laporan_harian_lookups.json, laporan_harian_targets.py.
+# Dependensi : pandas, openpyxl, laporan_harian_lookups.json, laporan_harian_targets.py,
+#              dan laporan_harian_principal.py untuk parity Power Query Principal.
 #              python-calamine dipakai bila tersedia (baca cepat).
 # Main Functions:
 #   load_lookups(f_format, f_spv) -> LookupTables
@@ -21,6 +22,12 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from laporan_harian_targets import REPORT_TARGETS
+from laporan_harian_principal import (
+    apply_sales_rule,
+    apply_stock_rule,
+    build_principal_report,
+    build_principal_stock,
+)
 
 PENJ_LABEL = "1. Penjualan Bruto"
 RETUR_LABEL = "2. (-) Retur Penjualan"
@@ -293,7 +300,7 @@ def _read_stock(stock_path: str) -> pd.DataFrame:
 
 
 def build_stock_frame(stock_path: str, sb: pd.DataFrame) -> pd.DataFrame:
-    """Stock -> perkaya KODE_BARANG dengan PRINCIPAL, GOLONGAN, dan NAMA_SM dari sales."""
+    """Stock -> pertahankan Principal sumber, lalu perkaya assignment dari sales sebagai fallback."""
     st = _read_stock(stock_path)
     st.columns = [str(c).strip() for c in st.columns]
     kode_col = next((c for c in st.columns if c.lower() in ("kode barang", "kode") or "kode barang" in c.lower()),
@@ -311,7 +318,17 @@ def build_stock_frame(stock_path: str, sb: pd.DataFrame) -> pd.DataFrame:
                      .dropna(subset=["KODE_BARANG"])
                      .drop_duplicates("KODE_BARANG")
                      .set_index("KODE_BARANG"))
-    for column in ("PRINCIPAL", "GOLONGAN", "NAMA_SM"):
+    raw_principal = next(
+        (column for column in st.columns if _normal_text(column) in {"PRINCIPAL", "PRINCIPLE", "NAMA PRINCIPAL"}),
+        None,
+    )
+    mapped_principal = st["KODE_BARANG"].map(product_map["PRINCIPAL"])
+    if raw_principal:
+        source_principal = st[raw_principal].replace(r"^\s*$", pd.NA, regex=True)
+        st["PRINCIPAL"] = source_principal.combine_first(mapped_principal)
+    else:
+        st["PRINCIPAL"] = mapped_principal
+    for column in ("GOLONGAN", "NAMA_SM"):
         st[column] = st["KODE_BARANG"].map(product_map[column])
     return st
 
@@ -440,13 +457,17 @@ def resolve_report_groups(sb: pd.DataFrame, report_keywords: list, lk: LookupTab
         else:
             unmatched.append(keyword)
             continue
-        column = columns.get(group_type)
+        column = str(target.get("sales_column", "")) if target else ""
+        column = column or columns.get(group_type)
+        filter_values = [str(value) for value in target.get("sales_values", values)] if target else values
         if not column:
             unmatched.append(keyword)
             continue
-        normalized_values = {_normal_text(value) for value in values}
+        normalized_values = {_normal_text(value) for value in filter_values}
         mask = sb[column].map(_normal_text).isin(normalized_values)
         frame = sb[mask].copy()
+        if group_type == "principal":
+            frame = apply_sales_rule(keyword, frame)
         if frame.empty:
             unmatched.append(keyword)
             continue
@@ -455,6 +476,8 @@ def resolve_report_groups(sb: pd.DataFrame, report_keywords: list, lk: LookupTab
             "groupType": group_type,
             "column": column,
             "values": values,
+            "stockColumn": str(target.get("stock_column", "")) if target else "",
+            "stockValues": [str(value) for value in target.get("stock_values", values)] if target else values,
             "frame": frame,
         })
     return groups, unmatched
@@ -472,19 +495,35 @@ def write_report_files(sb: pd.DataFrame, out_dir: str, report_date: str,
     for target in groups:
         keyword = target["keyword"]
         data = target["frame"]
-        frame = build_report_frame(data)
+        frame = (
+            build_principal_report(keyword, data, REPORT_COLUMNS)
+            if target["groupType"] == "principal" else
+            pd.DataFrame()
+        )
+        if frame.empty and len(data):
+            frame = build_report_frame(data)
+        headers = [str(column) for column in frame.columns]
         safe = keyword.replace("/", "-").replace("\\", "-")
         file_name = f"{report_date}_{safe}.xlsx"
         path = os.path.join(out_dir, file_name)
         wb = Workbook()
         sheet_base = keyword.replace("/", "-").replace("\\", "-").replace("&", "dan") or "NA"
-        wb.new_sheet(sheet_base[:31],
-                     data=[REPORT_COLUMNS] + frame[REPORT_COLUMNS].values.tolist())
+        wb.new_sheet(sheet_base[:31], data=[headers] + frame.values.tolist())
         stock_rows = 0
         if stock_frame is not None and not stock_frame.empty:
-            normalized_values = {_normal_text(value) for value in target["values"]}
-            stock_mask = stock_frame[target["column"]].map(_normal_text).isin(normalized_values)
+            stock_column = target["stockColumn"] or target["column"]
+            stock_values = target["stockValues"]
+            if target["groupType"] == "principal":
+                stock_column = next(
+                    (column for column in ("Principal", "NAMA PRINCIPAL", "PRINCIPLE", stock_column)
+                     if column in stock_frame.columns),
+                    stock_column,
+                )
+            normalized_values = {_normal_text(value) for value in stock_values}
+            stock_mask = stock_frame[stock_column].map(_normal_text).isin(normalized_values)
             target_stock = stock_frame[stock_mask].loc[:, ~stock_frame.columns.duplicated()].copy()
+            if target["groupType"] == "principal":
+                target_stock = build_principal_stock(apply_stock_rule(keyword, target_stock))
             target_stock = target_stock.astype(object).where(pd.notna(target_stock), None)
             stock_headers = [str(column) for column in target_stock.columns]
             stock_rows = int(len(target_stock))
