@@ -1,6 +1,6 @@
-# Tujuan: Endpoint FastAPI untuk proses, penyimpanan, dan unduhan laporan harian per SPV.
+# Tujuan: Endpoint FastAPI untuk proses, penyimpanan, dan unduhan laporan harian per target.
 # Caller: Next.js app/api/laporan-harian/*.
-# Dependensi: shared runtime config serta laporan_harian pipeline dan writer XLSX.
+# Dependensi: shared runtime config, laporan_harian pipeline, resolver target, dan writer XLSX.
 # Main Functions: laporan_harian_process() dan laporan_harian_file().
 # Side Effects: Membaca upload, menulis workbook runtime, dan mengirim file melalui HTTP.
 from fastapi import APIRouter
@@ -27,6 +27,7 @@ async def laporan_harian_process(
     run_id: Optional[str] = Form(None),
     report_date: Optional[str] = Form(None),
     write_files: Optional[str] = Form(None),
+    report_keywords: Optional[str] = Form(None),
 ):
     import tempfile, os as _os
     import laporan_harian as LH
@@ -77,24 +78,39 @@ async def laporan_harian_process(
                 "achievedAo": int(r["achievedAo"] or 0),
                 "achievedIa": int(r["achievedIa"] or 0),
             })
-        stock_by_spv = {}
+        stock_frame = None
         stock_spv = []
         if stock_path:
             try:
-                stock_by_spv = LH.build_stock(stock_path, sb, lk)
-                stock_spv = [k for k in stock_by_spv.keys() if k != "__error__"]
+                stock_frame = LH.build_stock_frame(stock_path, sb)
+                stock_spv = [
+                    str(value)
+                    for value in stock_frame["GOLONGAN"].dropna().unique()
+                ]
             except Exception as exc:
                 return ORJSONResponse(
                     {"ok": False, "error": f"Gagal memproses file stok: {exc}"},
                     status_code=400,
                 )
         files_written = []
+        unmatched_report_keywords = []
         if write_files and run_id:
-            import re as _re, datetime as _dt
+            import json as _json, re as _re, datetime as _dt
             safe_run = _re.sub(r"[^A-Za-z0-9_-]", "", str(run_id))[:64]
             rdate = report_date or _dt.date.today().strftime("%Y-%m-%d")
             out_dir = _os.path.join(LH_RUNTIME_DIR, safe_run)
-            files_written = LH.write_per_spv_files(sb, out_dir, rdate, stock_by_spv)
+            try:
+                keywords = _json.loads(report_keywords or "[]")
+                if not isinstance(keywords, list):
+                    raise ValueError("report_keywords harus array")
+            except Exception as exc:
+                return ORJSONResponse(
+                    {"ok": False, "error": f"Keyword laporan tidak valid: {exc}"},
+                    status_code=400,
+                )
+            files_written, unmatched_report_keywords = LH.write_report_files(
+                sb, out_dir, rdate, keywords, lk, stock_frame,
+            )
 
         return ORJSONResponse({
             "ok": True,
@@ -110,6 +126,7 @@ async def laporan_harian_process(
             ],
             "progress": prog_records,
             "stock_spv": stock_spv,
+            "unmatched_report_keywords": unmatched_report_keywords,
         })
     except Exception as e:
         import traceback

@@ -826,10 +826,10 @@ RBAC: module `sales_history` (`view`/`export`/`manage`) di `lib/rbac/registry.ts
 
 ---
 
-## Laporan Harian per SPV/SM (Daily Report Pipeline) — IMPLEMENTED (Tahap 0–4)
+## Laporan Harian per SPV/SM/Principal (Daily Report Pipeline) — IMPLEMENTED (Tahap 0–4)
 
 > UI dan API aktif pada route existing. Menggantikan pipeline Excel lama (Power Query `2.3 To SPV dan SM New.xlsx` + `generate_laporan_from_sheets.exe` + `kirim_laporan_gui.exe`).
-> Tujuan: **1 kali upload → laporan per SPV/SM (email) + feed dashboard sales**, tanpa buka Excel.
+> Tujuan: **1 kali upload → laporan per SPV/SM/principal (email) + feed dashboard sales**, tanpa buka Excel.
 
 **Masalah lama (terukur):** refresh Power Query ~15–20 mnt + generate ~15 mnt (~35 mnt total). Sebab utama audit:
 - Query `SalesBase` (baca `2. To Format Laporan.xlsx` = 132.120 baris × 63 kol; 8 `Table.NestedJoin` + 5 `Table.Group`) **dihitung ulang 22×** karena 22 query pakai `Source = SalesBase` **tanpa `Table.Buffer`**.
@@ -845,8 +845,10 @@ UI: modul /laporan-harian
            merge flag AO/EC/IA, Nota Retur/Batal, map Golongan(SPV)+NAMA SM, Kategori Baru
         -> output: (a) rows per SPV & per SM, (b) rows stock per SPV, (c) agregat progress harian
      -> susun output 1:1 sesuai `REPORT_COLUMNS` (tanpa duplikasi `GOLONGAN`/pergeseran AO-EC-IA)
-     -> tulis file per-SPV ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
-        `<SPV>` (penjualan) + `<SPV> Stock` (stok hasil mapping KODE_BARANG -> GOLONGAN)
+     -> resolve keyword aktif dari `report_recipient`: SPV (`GOLONGAN`), SM (`NAMA_SM`),
+        atau alias principal (`REPORT_TARGETS` di `laporan_harian_targets.py`)
+     -> tulis file per keyword ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
+        `<Keyword>` (penjualan) + `<Keyword> Stock` (cakupan target yang sama)
         (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)
      -> normalisasi progress kosong salesCode -> `UNMAPPED:<branch>` + warning eksplisit (nilai tidak dibuang/tidak ditebak)
      -> feed dashboard: BULK replace ke sales_daily_progress (batch, hindari N+1)
@@ -863,6 +865,9 @@ State machine pure: `lib/laporan-harian/send-state.ts`; self-check:
 `node --experimental-strip-types lib/laporan-harian/send-state.test.ts`.
 Normalisasi progress pure: `lib/laporan-harian/progress-normalize.ts`; self-check:
 `node --experimental-strip-types lib/laporan-harian/progress-normalize.test.ts`.
+Alias Principal disimpan di `python_backend/laporan_harian_targets.py`. Sumber audit penerima ada di
+`config/mapping_laporan.csv`; sinkronkan secara transaksional dengan
+`node scripts/sync-laporan-recipients.mjs` agar tepat 20 keyword aktif dan keyword lama dinonaktifkan.
 
 ---
 

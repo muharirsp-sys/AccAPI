@@ -1,0 +1,28 @@
+# Tujuan: Sumber audit email aktif untuk laporan harian berbasis keyword SPV, SM, dan principal.
+# Caller: Operator/migration script saat sinkronisasi report_recipient.
+# Dependensi: Resolver target python_backend/laporan_harian_targets.py.
+# Main Functions: Kolom Keyword dan Email; keyword duplikat digabung saat seed.
+# Side Effects: Tidak ada; perubahan baru aktif setelah sinkronisasi ke database.
+Keyword,Email
+ABCPI,"nugraha.putra@abcpresident.com, herro.setiawan@abcpresident.com, hendrikrevo1971@gmail.com, parawangsa@abcpresident.com, billasmarthon@gmail.com, nurhidayah@abcpresident.com"
+ENERGIZER,"Nurifah.riry@yahoo.com, hendrikrevo1971@gmail.com, energizer_mks@yahoo.co.id, Nurifah.Nurifah@energizer.com"
+FONTERRA,"vebianti.nasir@fonterra.com, junaidsofyan74@gmail.com, adnan_adnanadam@yahoo.com, fadhilarc004@gmail.com, Swenty.karrang@fonterra.com, Wiliantotio.goh@fonterra.com, sitisolikah68@gmail.com, sandi.wibowo@fonterra.com"
+GODREJJ,"Reza.saputra@godrejcp.com, adnan_adnanadam@yahoo.com, heru.rianto@godrejcp.com, cancul00257@gmail.com"
+HEINZ,"adnan_adnanadam@yahoo.com, Muh.TasryThamrin@kraftheinz.com, andi.syahrullah77@gmail.com, eka.wahyunia@kraftheinz.com, zulkarnain16februari@gmail.com"
+MOTASA MKS 1,"admin_sales@motasaindonesia.com, hendrikrevo1971@gmail.com, nurahkzanilyas@gmail.com, acil.j@motasaindonesia.co.id, fendybutmawank@gmail.com, admin_sales3@motasaindonesia.co.id, martenpatarru@gmail.com, admin_sales1@motasaindonesia.co.id, ali.muqorrobin@motasaindonesia.co.id"
+MOTASA MKS 2,"admin_sales@motasaindonesia.com, hendrikrevo1971@gmail.com, nurahkzanilyas@gmail.com, acil.j@motasaindonesia.co.id, fendybutmawank@gmail.com, admin_sales3@motasaindonesia.co.id, martenpatarru@gmail.com, admin_sales1@motasaindonesia.co.id, ali.muqorrobin@motasaindonesia.co.id"
+MUSTIKA RATU,"hendrikrevo1971@gmail.com, evirianti_mrbi@yahoo.com"
+ADNAN,adnan_adnanadam@yahoo.com
+SOFYAN,junaidsofyan74@gmail.com
+HENDRIK,hendrikrevo1971@gmail.com
+SAHAR,oktavianitalo@gmail.com
+RAMLY,muhramlyramly00@gmail.com
+HENDRIK,hendrikrevo1971@gmail.com
+DENNY,"anthoniusdenny@gmail.com, atambua7373@gmail.com"
+SUMARTONO,billasmarthon@gmail.com
+SYAMSUL,cancul00257@gmail.com
+YUDI,martenpatarru@gmail.com
+RECKIT,"agustinus.tinaran2@reckitt.com, adnan_adnanadam@yahoo.com, Shanum22.andre22@gmail.com, sunyoto@rb.com, nyoto.rbi@gmail.com, sunyoto@reckitt.com, Septunius.wilson@reckitt.com"
+SAHAR,sahar.aries80@gmail.com
+URC,"muchlis.djama@urc.co.id, devi.komalasari@urc.co.id, ratna.susana@urc.co.id, salesreport@urc.co.id, muhramlyramly00@gmail.com"
+YARMAN,yarmanarmanarman@gmail.com

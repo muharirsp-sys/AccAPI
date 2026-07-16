@@ -5,11 +5,12 @@
 #              (salesDailyProgress) untuk dashboard insentif-sales.
 # Caller     : python_backend/main.py endpoint /laporan-harian/process (dipanggil Next.js
 #              app/api/laporan-harian/upload). Juga dipakai parity test Tahap 0.
-# Dependensi : pandas, openpyxl (baca lookup). python-calamine dipakai bila tersedia (baca cepat).
+# Dependensi : pandas, openpyxl, laporan_harian_lookups.json, laporan_harian_targets.py.
+#              python-calamine dipakai bila tersedia (baca cepat).
 # Main Functions:
 #   load_lookups(f_format, f_spv) -> LookupTables
 #   process(paste_path, stock_path, lookups) -> dict {per_spv, per_sm, stock, progress, summary}
-#   build_stock(...) / write_per_spv_files(...) -> output XLSX penjualan dan sheet Stock per SPV.
+#   build_stock_frame(...) / write_report_files(...) -> output XLSX dan Stock per target SPV/SM/principal.
 # Side Effects: Baca file sumber dan tulis XLSX hasil ke runtime; tidak mengubah file sumber/tidak kirim email.
 # Catatan parity (dikonfirmasi user): sumber penjualan = sheet "Paste Acc" (export Accurate),
 #   sheet "Paste Lap. Penj" lama sudah kosong -> tidak dipakai. Retur = "Paste Lap. Retur" (dinegasikan).
@@ -19,6 +20,7 @@ from dataclasses import dataclass
 from typing import Optional
 import numpy as np
 import pandas as pd
+from laporan_harian_targets import REPORT_TARGETS
 
 PENJ_LABEL = "1. Penjualan Bruto"
 RETUR_LABEL = "2. (-) Retur Penjualan"
@@ -53,6 +55,7 @@ class LookupTables:
     conca_to_spv: dict       # PRINCIPAL+JENISPRODUK -> NAMA SPV
     jp_map: dict             # kode jenis produk -> nama
     sm_map: dict             # PRINCIPLE -> NAMA SM
+    report_targets: dict = None  # keyword email -> {group_type, values}; alias principal non-exact
 
 
 # ---------- IO cepat ----------
@@ -90,7 +93,7 @@ def load_lookups(f_format: str, f_spv: str) -> LookupTables:
     jpm = dict(zip(jp["JENISPRODUK"].astype(str).str.strip(), jp["NAMA JENIS PRODUK"]))
     mp = sheet_df(f_spv, "Mapping")                 # PRINCIPLE, NAMA SPV, NAMA SM
     sm = dict(zip(mp["PRINCIPLE"].astype(str).str.strip(), mp["NAMA SM"]))
-    return LookupTables(p2s, c2s, jpm, sm)
+    return LookupTables(p2s, c2s, jpm, sm, {})
 
 
 # ---------- Stage A: Paste Data -> FIX ----------
@@ -289,8 +292,8 @@ def _read_stock(stock_path: str) -> pd.DataFrame:
     return df.loc[:, [c for c in df.columns if c != ""]]
 
 
-def build_stock(stock_path: str, sb: pd.DataFrame, lk: LookupTables) -> dict:
-    """Stock -> map KODE_BARANG->GOLONGAN dari sales -> split per SPV."""
+def build_stock_frame(stock_path: str, sb: pd.DataFrame) -> pd.DataFrame:
+    """Stock -> perkaya KODE_BARANG dengan PRINCIPAL, GOLONGAN, dan NAMA_SM dari sales."""
     st = _read_stock(stock_path)
     st.columns = [str(c).strip() for c in st.columns]
     kode_col = next((c for c in st.columns if c.lower() in ("kode barang", "kode") or "kode barang" in c.lower()),
@@ -303,9 +306,19 @@ def build_stock(stock_path: str, sb: pd.DataFrame, lk: LookupTables) -> dict:
     st = st.rename(columns=ren)
     st = st[st["KODE_BARANG"].notna()].copy()
     st["KODE_BARANG"] = st["KODE_BARANG"].astype("string").str.strip()
-    prod_spv = (sb.dropna(subset=["KODE_BARANG", "GOLONGAN"])
-                  .drop_duplicates("KODE_BARANG").set_index("KODE_BARANG")["GOLONGAN"].to_dict())
-    st["GOLONGAN"] = st["KODE_BARANG"].map(prod_spv)
+    mapping_cols = ["KODE_BARANG", "PRINCIPAL", "GOLONGAN", "NAMA_SM"]
+    product_map = (sb.reindex(columns=mapping_cols)
+                     .dropna(subset=["KODE_BARANG"])
+                     .drop_duplicates("KODE_BARANG")
+                     .set_index("KODE_BARANG"))
+    for column in ("PRINCIPAL", "GOLONGAN", "NAMA_SM"):
+        st[column] = st["KODE_BARANG"].map(product_map[column])
+    return st
+
+
+def build_stock(stock_path: str, sb: pd.DataFrame, lk: LookupTables) -> dict:
+    """Backward-compatible: stock dipisah per SPV untuk caller pipeline lama."""
+    st = build_stock_frame(stock_path, sb)
     return {name: g.copy() for name, g in st.dropna(subset=["GOLONGAN"]).groupby("GOLONGAN")}
 
 
@@ -341,7 +354,7 @@ def load_fix(fix_path: str, sheet: str = "FIX LAP PENJ") -> pd.DataFrame:
 
 def process_from_fix(fix_path: str, stock_path: Optional[str], sm_map: dict) -> dict:
     """Pipeline bila sumber = FIX LAP PENJ jadi. Hanya Stage B (SalesBase) + split + agregat."""
-    lk = LookupTables({}, {}, {}, sm_map)
+    lk = LookupTables({}, {}, {}, sm_map, {})
     fix = load_fix(fix_path)
     sb = build_salesbase(fix, lk)
     per_spv, per_sm = split_per_group(sb)
@@ -380,50 +393,128 @@ def build_report_frame(sb: pd.DataFrame) -> pd.DataFrame:
         if c not in df.columns:
             df[c] = np.nan
     for c in ("TANGGAL", "TGL_JT"):
-        df[c] = pd.to_datetime(df[c], errors="coerce").dt.strftime("%Y-%m-%d")
+        df = df.assign(**{c: pd.to_datetime(df[c], errors="coerce").dt.strftime("%Y-%m-%d")})
     numcols = ["QTY","HARGA","POTONGAN","NILAI_JUAL","JUMLAH","DPP","Harga Sesuai Inputan",
                "Value Los","Qty Los","Value Retur Termasuk Batal (Exc.PPN)","QTY_SATUANKECIL","QTY_REF"]
     # GOLONGAN sudah ada di REPORT_COLUMNS; duplikasi di sini menggeser seluruh nilai setelah kolom itu saat XLSX ditulis.
     out = df[REPORT_COLUMNS].copy()
     for c in numcols:
         if c in out:
-            out[c] = pd.to_numeric(out[c], errors="coerce").replace([np.inf, -np.inf], np.nan)
+            out = out.assign(**{
+                c: pd.to_numeric(out[c], errors="coerce").replace([np.inf, -np.inf], np.nan)
+            })
     return out.astype(object).where(pd.notna(out), None)
+
+
+def _normal_text(value) -> str:
+    return " ".join(str(value or "").strip().upper().split())
+
+
+def resolve_report_groups(sb: pd.DataFrame, report_keywords: list, lk: LookupTables) -> tuple:
+    """Resolve keyword penerima menjadi grup data SPV, SM, atau principal tanpa fuzzy filename matching."""
+    columns = {"spv": "GOLONGAN", "sm": "NAMA_SM", "principal": "PRINCIPAL"}
+    known = {
+        group_type: {
+            _normal_text(value): str(value)
+            for value in sb[column].dropna().unique()
+            if _normal_text(value)
+        }
+        for group_type, column in columns.items()
+    }
+    aliases = {
+        _normal_text(keyword): target
+        for keyword, target in (lk.report_targets or {}).items()
+    }
+    groups, unmatched = [], []
+    for raw_keyword in report_keywords:
+        keyword = str(raw_keyword).strip()
+        normalized = _normal_text(keyword)
+        target = aliases.get(normalized)
+        if target:
+            group_type = str(target.get("group_type", "")).lower()
+            values = [str(value) for value in target.get("values", [])]
+        elif normalized in known["spv"]:
+            group_type, values = "spv", [known["spv"][normalized]]
+        elif normalized in known["sm"]:
+            group_type, values = "sm", [known["sm"][normalized]]
+        else:
+            unmatched.append(keyword)
+            continue
+        column = columns.get(group_type)
+        if not column:
+            unmatched.append(keyword)
+            continue
+        normalized_values = {_normal_text(value) for value in values}
+        mask = sb[column].map(_normal_text).isin(normalized_values)
+        frame = sb[mask].copy()
+        if frame.empty:
+            unmatched.append(keyword)
+            continue
+        groups.append({
+            "keyword": keyword,
+            "groupType": group_type,
+            "column": column,
+            "values": values,
+            "frame": frame,
+        })
+    return groups, unmatched
+
+
+def write_report_files(sb: pd.DataFrame, out_dir: str, report_date: str,
+                       report_keywords: list, lk: LookupTables,
+                       stock_frame: Optional[pd.DataFrame] = None) -> tuple:
+    """Tulis file per keyword aktif; setiap file berisi data dan sheet Stock dengan cakupan yang sama."""
+    import os
+    from pyexcelerate import Workbook
+    os.makedirs(out_dir, exist_ok=True)
+    groups, unmatched = resolve_report_groups(sb, report_keywords, lk)
+    written = []
+    for target in groups:
+        keyword = target["keyword"]
+        data = target["frame"]
+        frame = build_report_frame(data)
+        safe = keyword.replace("/", "-").replace("\\", "-")
+        file_name = f"{report_date}_{safe}.xlsx"
+        path = os.path.join(out_dir, file_name)
+        wb = Workbook()
+        sheet_base = keyword.replace("/", "-").replace("\\", "-").replace("&", "dan") or "NA"
+        wb.new_sheet(sheet_base[:31],
+                     data=[REPORT_COLUMNS] + frame[REPORT_COLUMNS].values.tolist())
+        stock_rows = 0
+        if stock_frame is not None and not stock_frame.empty:
+            normalized_values = {_normal_text(value) for value in target["values"]}
+            stock_mask = stock_frame[target["column"]].map(_normal_text).isin(normalized_values)
+            target_stock = stock_frame[stock_mask].loc[:, ~stock_frame.columns.duplicated()].copy()
+            target_stock = target_stock.astype(object).where(pd.notna(target_stock), None)
+            stock_headers = [str(column) for column in target_stock.columns]
+            stock_rows = int(len(target_stock))
+        else:
+            target_stock = None
+        if target_stock is not None and stock_rows:
+            wb.new_sheet(f"{sheet_base[:25]} Stock"[:31],
+                         data=[stock_headers] + target_stock.values.tolist())
+        wb.save(path)
+        written.append({
+            "keyword": keyword,
+            "groupType": target["groupType"],
+            "fileName": file_name,
+            "path": path,
+            "rows": int(len(data)),
+            "stockRows": stock_rows,
+        })
+    return written, unmatched
 
 
 def write_per_spv_files(sb: pd.DataFrame, out_dir: str, report_date: str,
                         stock_per_spv: Optional[dict] = None) -> list:
-    """Tulis 1 file .xlsx per SPV berisi sheet penjualan dan, bila ada, sheet '<SPV> Stock'."""
-    import os
-    from pyexcelerate import Workbook
-    os.makedirs(out_dir, exist_ok=True)
-    frame = build_report_frame(sb)
-    gol = sb["GOLONGAN"].values
-    tmp = frame.assign(_g=gol)
-    written = []
-    for spv, g in tmp.groupby("_g"):
-        if spv is None or str(spv).strip() == "":
-            continue
-        safe = str(spv).replace("/", "-").replace("\\", "-")
-        file_name = f"{report_date}_{safe}.xlsx"
-        path = os.path.join(out_dir, file_name)
-        wb = Workbook()
-        sheet_base = str(spv).replace("/", "-").replace("\\", "-").replace("&", "dan") or "NA"
-        wb.new_sheet(sheet_base[:31],
-                     data=[REPORT_COLUMNS] + g[REPORT_COLUMNS].values.tolist())
-        stock_df = (stock_per_spv or {}).get(spv)
-        stock_rows = 0
-        if stock_df is not None and not stock_df.empty:
-            stock_frame = stock_df.loc[:, ~stock_df.columns.duplicated()].copy()
-            stock_frame = stock_frame.astype(object).where(pd.notna(stock_frame), None)
-            stock_headers = [str(column) for column in stock_frame.columns]
-            stock_rows = int(len(stock_frame))
-            wb.new_sheet(f"{sheet_base[:25]} Stock"[:31],
-                         data=[stock_headers] + stock_frame.values.tolist())
-        wb.save(path)
-        written.append({"spv": str(spv), "fileName": file_name, "path": path,
-                        "rows": int(len(g)), "stockRows": stock_rows})
-    return written
+    """Backward-compatible wrapper untuk test/caller lama yang masih meminta semua SPV."""
+    keywords = [str(value) for value in sb["GOLONGAN"].dropna().unique()]
+    stock_frame = None
+    if stock_per_spv:
+        stock_frame = pd.concat(stock_per_spv.values(), ignore_index=True)
+    files, _ = write_report_files(sb, out_dir, report_date, keywords,
+                                  LookupTables({}, {}, {}, {}, {}), stock_frame)
+    return files
 
 
 # ---------- Stage A (baru): bangun FIX dari 2 file mentah Accurate (penjualan + retur) ----------
@@ -438,7 +529,8 @@ def load_lookups_json(path: str = LOOKUPS_JSON) -> "LookupTables":
     Dipakai saat web membangun 2.ToFormat sendiri dari export Accurate (tanpa upload master)."""
     d = _json.load(open(path, encoding="utf-8"))
     return LookupTables(d.get("principal_to_spv", {}), d.get("conca_to_spv", {}),
-                        d.get("jp_map", {}), d.get("sm_map", {}))
+                        d.get("jp_map", {}), d.get("sm_map", {}),
+                        REPORT_TARGETS)
 
 
 def build_fix_from_accurate(penjualan_path: str, retur_path: Optional[str], lk: LookupTables) -> pd.DataFrame:

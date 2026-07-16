@@ -1,9 +1,9 @@
 /*
- * Tujuan: Upload FIX LAP PENJ (+stock opsional) -> proses di FastAPI -> feed dashboard
+ * Tujuan: Upload FIX LAP PENJ (+stock opsional) -> proses file SPV/SM/principal di FastAPI -> feed dashboard
  *         (sales_daily_progress, batch) + catat report_run + PREVIEW penerima email (DRY-RUN).
  *         TIDAK mengirim email. Kirim email = endpoint terpisah /send (Tahap 4, gated).
  * Caller: UI modul Laporan Harian (browser, multipart).
- * Dependensi: requirePermission, FastAPI /laporan-harian/process, normalisasi ingest,
+ * Dependensi: requirePermission, recipient aktif, FastAPI /laporan-harian/process, normalisasi ingest,
  *             db/schema (reportRun, reportRecipient, reportRunRecipient).
  * Main Functions: POST (proses + dry-run).
  * Side Effects: HTTP call ke FastAPI; DB write (report_run, report_run_recipient, sales_daily_progress).
@@ -54,11 +54,26 @@ export async function POST(req: NextRequest) {
         );
     }
 
-    // runId & tanggal dulu supaya FastAPI menyimpan file per-SPV run-scoped (dipakai saat /send)
+    // runId & tanggal dulu supaya FastAPI menyimpan file per-target run-scoped (dipakai saat /send)
     const runId = randomUUID();
     const reportDate = new Date().toISOString().slice(0, 10);
+    let recips: (typeof reportRecipient.$inferSelect)[];
+    try {
+        recips = await db.select().from(reportRecipient).where(eq(reportRecipient.active, true));
+    } catch (e) {
+        return NextResponse.json(
+            { error: "Gagal membaca mapping penerima laporan", detail: String(e) },
+            { status: 500 },
+        );
+    }
+    if (recips.length === 0) {
+        return NextResponse.json(
+            { error: "Mapping penerima laporan masih kosong. Sinkronkan mapping SPV, SM, dan Principal terlebih dahulu." },
+            { status: 422 },
+        );
+    }
 
-    // Teruskan ke FastAPI untuk diproses (pandas) + minta tulis file per-SPV
+    // Teruskan ke FastAPI untuk diproses (pandas) + minta tulis file per target.
     const fwd = new FormData();
     if (penjualan instanceof File) fwd.append("penjualan", penjualan, penjualan.name || "penjualan.xlsx");
     if (retur instanceof File) fwd.append("retur", retur, retur.name || "retur.xlsx");
@@ -67,6 +82,7 @@ export async function POST(req: NextRequest) {
     fwd.append("run_id", runId);
     fwd.append("report_date", reportDate);
     fwd.append("write_files", "1");
+    fwd.append("report_keywords", JSON.stringify(recips.map((recipient) => recipient.keyword)));
 
     let result: Record<string, unknown>;
     try {
@@ -82,14 +98,27 @@ export async function POST(req: NextRequest) {
     const { month, year } = (result.period ?? {}) as { month?: number; year?: number };
     const rawProgress: DailyProgressInputRow[] = Array.isArray(result.progress) ? result.progress : [];
     const { rows: progress, unmapped: unmappedProgress } = normalizeDailyProgressRows(rawProgress);
-    const spvList: string[] = Array.isArray(result.spv_list) ? result.spv_list : [];
     const generatedFiles = Array.isArray(result.files)
         ? (result.files as Array<Record<string, unknown>>).map((file) => ({
-            spv: String(file.spv ?? ""),
+            keyword: String(file.keyword ?? ""),
+            groupType: String(file.groupType ?? ""),
             fileName: String(file.fileName ?? ""),
             rows: Number(file.rows ?? 0),
+            stockRows: Number(file.stockRows ?? 0),
         })).filter((file) => file.fileName)
         : [];
+    const unmatchedReportKeywords = Array.isArray(result.unmatched_report_keywords)
+        ? result.unmatched_report_keywords.map(String)
+        : [];
+    if (generatedFiles.length === 0) {
+        return NextResponse.json(
+            {
+                error: "Tidak ada file laporan yang berhasil dibuat dari mapping aktif.",
+                unmatchedReportKeywords,
+            },
+            { status: 422 },
+        );
+    }
 
     try {
         // Feed dashboard (batch, replace-per-periode). Idempotent.
@@ -98,16 +127,20 @@ export async function POST(req: NextRequest) {
             fed = await replaceDailyProgressForPeriod(Number(month), Number(year), progress, gate.session.user.id);
         }
 
-        // Preview penerima (DRY-RUN): match keyword report_recipient ke nama file per SPV (mirror logika lama).
-        const recips = (await db.select().from(reportRecipient).where(eq(reportRecipient.active, true)));
-        const preview: { keyword: string; spv: string; fileName: string; emails: string[] }[] = [];
-        for (const spv of spvList) {
-            const fileName = `${reportDate}_${spv}.xlsx`;
-            const fnl = fileName.toLowerCase();
-            for (const r of recips) {
-                if (fnl.includes(r.keyword.toLowerCase())) {
-                    preview.push({ keyword: r.keyword, spv, fileName, emails: splitEmails(r.emails) });
-                }
+        // Exact keyword dari writer menghindari collision/typo alias seperti GODREJJ dan RECKIT.
+        const recipientsByKeyword = new Map(
+            recips.map((recipient) => [recipient.keyword.trim().toUpperCase(), recipient]),
+        );
+        const preview: { keyword: string; groupType: string; fileName: string; emails: string[] }[] = [];
+        for (const file of generatedFiles) {
+            const recipient = recipientsByKeyword.get(file.keyword.trim().toUpperCase());
+            if (recipient) {
+                preview.push({
+                    keyword: recipient.keyword,
+                    groupType: file.groupType,
+                    fileName: file.fileName,
+                    emails: splitEmails(recipient.emails),
+                });
             }
         }
         const totalEmails = new Set(preview.flatMap((p) => p.emails)).size;
@@ -118,7 +151,7 @@ export async function POST(req: NextRequest) {
             id: runId,
             reportDate,
             status: "dry_run",
-            fileCount: spvList.length,
+            fileCount: generatedFiles.length,
             emailCount: totalEmails,
             salesRows: Number(result.sales_rows ?? 0),
             progressRows: progress.length,
@@ -150,6 +183,7 @@ export async function POST(req: NextRequest) {
             recipientsPreview: preview,
             generatedFiles,
             totalRecipients: totalEmails,
+            unmatchedReportKeywords,
         });
     } catch (e) {
         return NextResponse.json(

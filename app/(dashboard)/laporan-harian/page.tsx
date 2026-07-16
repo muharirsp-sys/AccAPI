@@ -1,5 +1,5 @@
 /*
- * Tujuan: UI Laporan Harian untuk upload tiga sumber, ringkasan hasil, review file opsional, dan kirim email terkonfirmasi.
+ * Tujuan: UI Laporan Harian SPV/SM/principal untuk upload, ringkasan, review file opsional, dan kirim email.
  * Caller: menu sidebar "Laporan Harian" (/laporan-harian). Guard RBAC: laporan_harian.view.
  * Dependensi: POST /api/laporan-harian/upload, GET /api/laporan-harian/[runId]/preview,
  *             POST /api/laporan-harian/[runId]/send, lucide-react, semantic UI classes global.
@@ -21,8 +21,8 @@ import {
 } from "lucide-react";
 
 type Summary = { spv: string; rows: number; dpp: number; ao: number; ec: number; ia: number };
-type Recipient = { keyword: string; spv: string; fileName: string; emails: string[] };
-type GeneratedFile = { spv: string; fileName: string; rows: number };
+type Recipient = { keyword: string; groupType: string; fileName: string; emails: string[] };
+type GeneratedFile = { keyword: string; groupType: string; fileName: string; rows: number; stockRows: number };
 type ReviewSample = { fileName: string; sheetName: string; columns: string[]; rows: unknown[][] };
 type UploadResult = {
     ok: boolean;
@@ -35,6 +35,7 @@ type UploadResult = {
     recipientsPreview: Recipient[];
     totalRecipients: number;
     generatedFiles: GeneratedFile[];
+    unmatchedReportKeywords?: string[];
     unmappedProgress?: { rows: number; achievedValueDpp: number; branches: string[] };
 };
 
@@ -186,7 +187,7 @@ export default function LaporanHarianPage() {
         <main className="ui-page-shell ui-page-shell--standard space-y-5" aria-busy={busy}>
             <header className="ui-page-header">
                 <div className="ui-page-heading">
-                    <h1 className="ui-page-title">Laporan Harian per SPV</h1>
+                    <h1 className="ui-page-title">Laporan Harian SPV, SM, dan Principal</h1>
                     <p className="ui-page-description">
                         Unggah laporan Accurate, periksa ringkasan dan file hasil bila diperlukan, lalu kirim email setelah konfirmasi.
                     </p>
@@ -285,6 +286,19 @@ export default function LaporanHarianPage() {
                         </div>
                     )}
 
+                    {!!result.unmatchedReportKeywords?.length && (
+                        <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900" role="status">
+                            <AlertTriangle className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
+                            <div className="text-sm leading-6">
+                                <p className="font-bold">Ada target laporan yang belum dikenali</p>
+                                <p>
+                                    Periksa mapping keyword berikut: {result.unmatchedReportKeywords.join(", ")}.
+                                    File dan email untuk target tersebut belum disiapkan.
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
                     {reviewOpen && (
                         <section className="ui-surface-panel ui-panel-padding space-y-4" aria-labelledby="laporan-review-title">
                             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -301,7 +315,9 @@ export default function LaporanHarianPage() {
                                         className="min-h-11 min-w-64 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm text-[var(--luxury-text)]"
                                     >
                                         {result.generatedFiles.map((file) => (
-                                            <option key={file.fileName} value={file.fileName}>{file.spv} ({file.rows.toLocaleString("id-ID")} baris)</option>
+                                            <option key={file.fileName} value={file.fileName}>
+                                                {file.keyword} · {file.groupType.toUpperCase()} ({file.rows.toLocaleString("id-ID")} baris)
+                                            </option>
                                         ))}
                                     </select>
                                     {reviewFileName && (
@@ -375,12 +391,12 @@ export default function LaporanHarianPage() {
                             <div className="ui-table-frame max-h-80">
                                 <table className="ui-data-table min-w-[42rem]">
                                     <caption className="sr-only">Daftar file dan penerima email</caption>
-                                    <thead><tr><th className="text-left">File</th><th className="text-left">SPV</th><th className="text-left">Email</th></tr></thead>
+                                    <thead><tr><th className="text-left">File</th><th className="text-left">Target</th><th className="text-left">Email</th></tr></thead>
                                     <tbody>
                                         {result.recipientsPreview.map((recipient, index) => (
                                             <tr key={`${recipient.fileName}-${index}`}>
                                                 <td>{recipient.fileName}</td>
-                                                <td className="font-bold">{recipient.spv}</td>
+                                                <td className="font-bold">{recipient.keyword} · {recipient.groupType.toUpperCase()}</td>
                                                 <td>{recipient.emails.join(", ")}</td>
                                             </tr>
                                         ))}
