@@ -78,6 +78,14 @@ assert.equal(
   "UNIT_CONVERSION_ERROR",
 );
 
+const badUnitConflict = parseMotasaMappings(
+  formFix(["DUP-BAD", 12, "PCS"], ["DUP-BAD", 120, "PCS"]),
+);
+assert.equal(
+  badUnitConflict.products.get("DUP-BAD")?.mappingStatus,
+  "INVALID_DATA",
+);
+
 const conflict = parseMotasaMappings(
   formFix(["DUP", 12, "KRT"], ["DUP", 120, "KRT"]),
 );

@@ -503,7 +503,8 @@ export function parseMotasaMappings(
     if (
       existing &&
       (existing.unit !== next.unit ||
-        (smallestUnit === "KRT" && existing.caseSize !== next.caseSize))
+        ((existing.unit !== "SCH" || next.unit !== "SCH") &&
+          existing.caseSize !== next.caseSize))
     )
       products.set(internal, { ...existing, mappingStatus: "INVALID_DATA" });
     else if (!existing)
