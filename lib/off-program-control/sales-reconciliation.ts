@@ -1104,6 +1104,115 @@ export function parseShinzuiSales(
   return output;
 }
 
+const MOTASA_DISCOUNT_COLUMNS = [
+  "DISC. 1", "DISC. 2", "DISC. 3", "DISC. 4", "DISC. 5",
+] as const;
+
+export function parseMotasaSales(
+  buffer: Buffer | Uint8Array,
+  mappings: MotasaMappings,
+): CanonicalSalesLine[] {
+  const rows = readRows(buffer, "Sheet1"),
+    required = [
+      "TIPE", "NO.INV", "TGL.INV", "CODE CUST", "CODE SALES",
+      "KODE PRODUK", "PRD_QTY", "SATUAN", "HARGA",
+      ...MOTASA_DISCOUNT_COLUMNS, "FIX DISC. VALUE",
+    ],
+    header = headerIndex(rows, required),
+    output: CanonicalSalesLine[] = [];
+
+  for (let index = header.rowIndex + 1; index < rows.length; index++) {
+    const row = rows[index], sourceRowNumber = index + 1;
+    if (!text(row.find((cell) => text(cell)))) continue;
+    const read = (name: string) => value(row, header.columns, name),
+      type = requiredText(row, header.columns, "TIPE", sourceRowNumber);
+    if (type !== "SD")
+      throw new Error(`Tipe harus SD pada baris ${sourceRowNumber}`);
+
+    const quantity = finite(
+        requiredText(row, header.columns, "PRD_QTY", sourceRowNumber),
+        "PRD_QTY",
+        sourceRowNumber,
+      ),
+      price = finite(
+        requiredText(row, header.columns, "HARGA", sourceRowNumber),
+        "Harga",
+        sourceRowNumber,
+      ),
+      fixed = finite(
+        read("FIX DISC. VALUE"),
+        "FIX DISC. VALUE",
+        sourceRowNumber,
+      );
+    if (quantity < 0) throw new Error(`PRD_QTY negatif pada baris ${sourceRowNumber}`);
+    if (price < 0) throw new Error(`Harga negatif pada baris ${sourceRowNumber}`);
+    if (fixed < 0)
+      throw new Error(`FIX DISC. VALUE negatif pada baris ${sourceRowNumber}`);
+
+    const rates = MOTASA_DISCOUNT_COLUMNS.map((name) => {
+      const rate = finite(read(name), name, sourceRowNumber);
+      if (rate < 0 || rate > 100)
+        throw new Error(`${name} harus antara 0 dan 100 pada baris ${sourceRowNumber}`);
+      return rate;
+    });
+    const rawProduct = requiredText(
+        row, header.columns, "KODE PRODUK", sourceRowNumber,
+      ),
+      mapped = mappings.products.get(rawProduct),
+      sourceUnit = unit(requiredText(row, header.columns, "SATUAN", sourceRowNumber));
+
+    let mappingStatus: MappingStatus = mapped?.mappingStatus ?? "UNMAPPED_SKU";
+    let quantitySmallest = quantity;
+    if (mapped?.mappingStatus === "OK") {
+      if (sourceUnit === "KRT") quantitySmallest *= mapped.caseSize!;
+      else if (sourceUnit !== mapped.unit)
+        mappingStatus = "UNIT_CONVERSION_ERROR";
+    }
+
+    const roundedPrice = Math.round(price * 10) / 10,
+      grossValue = quantity * roundedPrice;
+    let dppValue = rates.reduce(
+      (balance, rate) => balance * (1 - rate / 100),
+      grossValue,
+    );
+    dppValue -= fixed;
+    if (dppValue < 0)
+      throw new Error(`DPP MOTASA negatif pada baris ${sourceRowNumber}`);
+
+    const gross = money(grossValue, "Gross MOTASA", sourceRowNumber),
+      dpp = money(dppValue, "DPP MOTASA", sourceRowNumber),
+      discount = gross - dpp,
+      tax = Math.round((dpp * 11) / 100),
+      customer = requiredText(row, header.columns, "CODE CUST", sourceRowNumber),
+      salesman = requiredText(row, header.columns, "CODE SALES", sourceRowNumber),
+      document = requiredText(row, header.columns, "NO.INV", sourceRowNumber);
+
+    output.push({
+      source: "PRINCIPAL",
+      sourceRowNumber,
+      documentNumber: document,
+      orderNumber: orderNumber(document, "No.INV", sourceRowNumber),
+      transactionDate: isoDate(read("TGL.INV"), "TGL.INV", sourceRowNumber),
+      customerCodeRaw: customer,
+      customerCodeInternal: customer,
+      salesmanCodeRaw: salesman,
+      salesmanCodeInternal: salesman,
+      productCodeRaw: rawProduct,
+      productCodeInternal: rawProduct,
+      transactionClass: "NORMAL",
+      quantitySmallest,
+      unitSmallest: mapped?.unit ?? sourceUnit,
+      grossAmount: gross,
+      discountAmount: discount,
+      dppAmount: dpp,
+      taxAmount: tax,
+      netAmount: dpp + tax,
+      mappingStatus,
+    });
+  }
+  return output;
+}
+
 interface Aggregate {
   orderNumber: string;
   productCode: string;
@@ -1230,6 +1339,21 @@ function reconcileLines(
   for (const result of results) summary[result.status]++;
   return { accurateLines, kinoLines: principalLines, results, summary };
 }
+export function reconcileMotasaSales(
+  accurateBuffer: Buffer | Uint8Array,
+  motasaBuffer: Buffer | Uint8Array,
+  mappingBuffer: Buffer | Uint8Array,
+  options: { valueTolerance?: number } = {},
+): ReconciliationOutput {
+  const accurateLines = parseAccurateSales(accurateBuffer),
+    mappings = parseMotasaMappings(mappingBuffer);
+  return reconcileLines(
+    accurateLines,
+    parseMotasaSales(motasaBuffer, mappings),
+    options,
+  );
+}
+
 export function reconcileKinoSales(
   accurateBuffer: Buffer | Uint8Array,
   kinoBuffer: Buffer | Uint8Array,

@@ -3,6 +3,8 @@ import * as XLSX from "xlsx";
 import {
   parseAccurateSales,
   parseMotasaMappings,
+  parseMotasaSales,
+  reconcileMotasaSales,
 } from "./sales-reconciliation.ts";
 
 function workbook(sheets: Record<string, unknown[][]>): Buffer {
@@ -123,5 +125,105 @@ for (const rem of [
     () => parseAccurateSales(accurate(rem)),
     /harus memuat tepat satu nomor order/,
   );
+
+const MOTASA_HEADERS = [
+  "Tipe", "No.INV", "TGL.INV", "CODE CUST", "CODE SALES", "KODE PRODUK",
+  "Kode Gudang", "PRD_QTY", "SATUAN", "Harga", "Disc. 1", "Disc. 2",
+  "Disc. 3", "Disc. 4", "Disc. 5", "FIX DISC. VALUE", "TAX_PERC1",
+] as const;
+type MotasaValues = Record<(typeof MOTASA_HEADERS)[number], unknown>;
+
+function motasaRow(overrides: Partial<MotasaValues> = {}): unknown[] {
+  const values: MotasaValues = {
+    Tipe: "SD",
+    "No.INV": "MK1260714001",
+    "TGL.INV": "2026-07-14",
+    "CODE CUST": "C-1",
+    "CODE SALES": "S-1",
+    "KODE PRODUK": "M4030000000010",
+    "Kode Gudang": "GD01",
+    PRD_QTY: 3,
+    SATUAN: "KRT",
+    Harga: 414414.414414414,
+    "Disc. 1": 0,
+    "Disc. 2": 0,
+    "Disc. 3": 1,
+    "Disc. 4": 0,
+    "Disc. 5": 0,
+    "FIX DISC. VALUE": 0,
+    TAX_PERC1: 0,
+    ...overrides,
+  };
+  return MOTASA_HEADERS.map((header) => values[header]);
+}
+
+function principal(...rows: unknown[][]): Buffer {
+  return workbook({ Sheet1: [[...MOTASA_HEADERS], ...rows] });
+}
+
+const parsedSales = parseMotasaSales(principal(motasaRow()), mappings);
+assert.equal(parsedSales[0]?.orderNumber, "MK1260714001");
+assert.equal(parsedSales[0]?.quantitySmallest, 1728);
+assert.equal(parsedSales[0]?.unitSmallest, "SCH");
+assert.equal(parsedSales[0]?.grossAmount, 12_432_432_000);
+assert.equal(parsedSales[0]?.discountAmount, 124_324_320);
+assert.equal(parsedSales[0]?.dppAmount, 12_308_107_680);
+assert.equal(parsedSales[0]?.taxAmount, 1_353_891_845);
+assert.equal(parsedSales[0]?.netAmount, 13_661_999_525);
+
+const sachet = parseMotasaSales(
+  principal(motasaRow({ PRD_QTY: 72, SATUAN: "SCH", Harga: 719.8198198, "Disc. 3": 0 })),
+  mappings,
+)[0];
+assert.equal(sachet?.quantitySmallest, 72);
+
+const cascading = parseMotasaSales(
+  principal(motasaRow({ PRD_QTY: 1, SATUAN: "SCH", Harga: 100, "Disc. 1": 10, "Disc. 2": 10, "Disc. 3": 0, "FIX DISC. VALUE": 5 })),
+  mappings,
+)[0];
+assert.equal(cascading?.grossAmount, 1_000_000);
+assert.equal(cascading?.discountAmount, 240_000);
+assert.equal(cascading?.dppAmount, 760_000);
+assert.equal(cascading?.taxAmount, 83_600);
+assert.equal(cascading?.netAmount, 843_600);
+
+for (const [overrides, message] of [
+  [{ Tipe: "LAIN" }, /Tipe harus SD pada baris 2/],
+  [{ "Disc. 1": 101 }, /DISC\. 1 harus antara 0 dan 100 pada baris 2/],
+  [{ "FIX DISC. VALUE": -1 }, /FIX DISC\. VALUE negatif pada baris 2/],
+  [{ PRD_QTY: -1 }, /PRD_QTY negatif pada baris 2/],
+  [{ PRD_QTY: null }, /PRD_QTY kosong pada baris 2/],
+  [{ Harga: null }, /HARGA kosong pada baris 2/],
+] as const)
+  assert.throws(
+    () => parseMotasaSales(principal(motasaRow(overrides)), mappings),
+    message,
+  );
+
+const [accuratePath, principalPath, mappingPath] = process.argv.slice(2);
+if (accuratePath && principalPath && mappingPath) {
+  const { readFileSync } = await import("node:fs");
+  const actual = reconcileMotasaSales(
+    readFileSync(accuratePath),
+    readFileSync(principalPath),
+    readFileSync(mappingPath),
+    { valueTolerance: 1 },
+  );
+  assert.equal(actual.accurateLines.length, 402);
+  assert.equal(actual.kinoLines.length, 14);
+  assert.equal(actual.results.length, 402);
+  assert.equal(actual.summary.MATCH, 14);
+  assert.equal(actual.summary.MISSING_PRINCIPAL, 388);
+  for (const status of [
+    "QTY_MISMATCH", "VALUE_MISMATCH", "QTY_AND_VALUE_MISMATCH",
+    "MISSING_INTERNAL", "UNMAPPED_SKU", "UNIT_CONVERSION_ERROR",
+    "INVALID_DATA",
+  ] as const)
+    assert.equal(actual.summary[status], 0);
+  for (const row of actual.results.filter((item) => item.status === "MATCH")) {
+    assert.equal(row.quantityDifference, 0);
+    assert.deepEqual(row.amountDifferences, []);
+  }
+}
 
 console.log("OK - token dan mapping MOTASA tervalidasi.");
