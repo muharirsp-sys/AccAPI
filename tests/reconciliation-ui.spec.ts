@@ -236,10 +236,39 @@ test("shows the progressive reconciliation workflow", async ({
     page.getByText("Accurate: 3 · SHINZUI: 6", { exact: true }),
   ).toBeVisible();
 
+  await page.reload();
+  await page.getByLabel("Prinsipal").selectOption("MOTASA");
+  await expect(
+    page.getByText(
+      "Bandingkan faktur Accurate dengan data penjualan prinsipal MOTASA.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByLabel("Sales Detail MOTASA")).toBeVisible();
+  await expect(page.getByLabel("Sales Detail SHINZUI")).toHaveCount(0);
+  await page.route("**/api/reconciliation/motasa/sales", (route) =>
+    route.fulfill({ json: result }),
+  );
+  await page
+    .getByLabel("Rincian Faktur Penjualan (Accurate)")
+    .setInputFiles(xlsx("accurate.xlsx"));
+  await page
+    .getByLabel("Sales Detail MOTASA")
+    .setInputFiles(xlsx("motasa.xlsx"));
+  await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
+  await expect(
+    page.getByText("Accurate: 3 · MOTASA: 6", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(
+    page.getByText("Jumlah: Accurate 3, MOTASA 6 — Accurate kurang 3", {
+      exact: true,
+    }),
+  ).toBeVisible();
+
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Ekspor XLSX" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(
-    /^hasil-rekonsiliasi-shinzui-\d{4}-\d{2}-\d{2}\.xlsx$/,
+    /^hasil-rekonsiliasi-motasa-\d{4}-\d{2}-\d{2}\.xlsx$/,
   );
 });
