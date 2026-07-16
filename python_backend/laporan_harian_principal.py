@@ -1,7 +1,8 @@
 """Tujuan: Mereplikasi filter dan format khusus Power Query laporan Principal.
 Caller: laporan_harian.resolve_report_groups dan write_report_files.
 Dependensi: pandas, laporan_harian_pl_mr.csv, laporan_harian_reckitt_items.csv.
-Main Functions: apply_sales_rule, apply_stock_rule, build_principal_report, build_principal_stock.
+Main Functions: apply_sales_rule, apply_stock_rule, build_principal_report, build_principal_stock,
+                serta normalisasi pandas.NA yang null-safe.
 Side Effects: Membaca dua CSV referensi lokal secara lazy; tidak menulis file.
 """
 
@@ -77,7 +78,9 @@ BA_CUSTOMERS = {
 
 
 def _normal(value) -> str:
-    return " ".join(str(value or "").strip().upper().split())
+    if value is None or pd.isna(value):
+        return ""
+    return " ".join(str(value).strip().upper().split())
 
 
 def _code(value) -> str:

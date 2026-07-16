@@ -1,7 +1,7 @@
 # Tujuan: Menjaga output SPV/SM dan parity Power Query Principal tetap benar.
 # Caller: Developer/CI melalui eksekusi Python langsung.
 # Dependensi: pandas, openpyxl, laporan_harian.resolve_report_groups, dan write_report_files.
-# Main Functions: main() memeriksa MOTASA, FONTERRA, Mustika, Reckitt, dan sheet Stock.
+# Main Functions: main() memeriksa pandas.NA, MOTASA, FONTERRA, Mustika, Reckitt, dan sheet Stock.
 # Side Effects: Membuat lalu menghapus workbook sementara.
 
 import tempfile
@@ -14,6 +14,9 @@ import laporan_harian as laporan
 
 
 def main() -> None:
+    assert laporan._normal_text(pd.NA) == ""
+    assert laporan._normal_text(None) == ""
+
     source = pd.DataFrame([
         {"GOLONGAN": "DENNY", "NAMA_SM": "HENDRIK", "PRINCIPAL": "ENERGIZER INDONESIA, PT",
          "KODE_BARANG": "SKU-1", "SALESMAN": "EN1_TEST", "AO": 7, "EC": 9, "IA": 11, "Item Aktif": 11},
@@ -24,7 +27,7 @@ def main() -> None:
         {"GOLONGAN": "SOFYAN", "NAMA_SM": "ADNAN", "PRINCIPAL": "FONTERRA BRANDS INDONESIA, PT",
          "KODE_BARANG": "SKU-F1", "KODE_CUST": "C-OK001", "SALESMAN": "FT1_TEST"},
         {"GOLONGAN": "SOFYAN", "NAMA_SM": "ADNAN", "PRINCIPAL": "FONTERRA BRANDS INDONESIA, PT",
-         "KODE_BARANG": "SKU-F2", "KODE_CUST": "C-TUN020", "SALESMAN": "FT1_TEST"},
+         "KODE_BARANG": "SKU-F2", "KODE_CUST": "C-TUN020", "SALESMAN": pd.NA},
         {"GOLONGAN": "DENNY", "NAMA_SM": "HENDRIK", "PRINCIPAL": "RECKITT BENCKISER, PT",
          "KODE_BARANG": "20010010100010", "SALESMAN": "RB1_TEST"},
         {"GOLONGAN": "DENNY", "NAMA_SM": "HENDRIK", "PRINCIPAL": "MUSTIKA RATUBUANA INTERNATIONAL",

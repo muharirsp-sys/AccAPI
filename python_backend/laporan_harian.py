@@ -12,6 +12,7 @@
 #   load_lookups(f_format, f_spv) -> LookupTables
 #   process(paste_path, stock_path, lookups) -> dict {per_spv, per_sm, stock, progress, summary}
 #   build_stock_frame(...) / write_report_files(...) -> output XLSX dan Stock per target SPV/SM/principal.
+#   _normal_text(...) -> normalisasi null-safe termasuk pandas.NA.
 # Side Effects: Baca file sumber dan tulis XLSX hasil ke runtime; tidak mengubah file sumber/tidak kirim email.
 # Catatan parity (dikonfirmasi user): sumber penjualan = sheet "Paste Acc" (export Accurate),
 #   sheet "Paste Lap. Penj" lama sudah kosong -> tidak dipakai. Retur = "Paste Lap. Retur" (dinegasikan).
@@ -424,7 +425,9 @@ def build_report_frame(sb: pd.DataFrame) -> pd.DataFrame:
 
 
 def _normal_text(value) -> str:
-    return " ".join(str(value or "").strip().upper().split())
+    if value is None or pd.isna(value):
+        return ""
+    return " ".join(str(value).strip().upper().split())
 
 
 def resolve_report_groups(sb: pd.DataFrame, report_keywords: list, lk: LookupTables) -> tuple:
