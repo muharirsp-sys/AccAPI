@@ -134,7 +134,8 @@ function orderNumber(value: unknown, label: string, row: number, noun = "order")
       (match) => `BFG-${match[1]}`,
     ),
     shinzui = normalized.match(/INVGTS\d+-\d+-\d+/g) ?? [],
-    matches = [...kino, ...godrej, ...shinzui];
+    motasa = normalized.match(/MK\d{10}/g) ?? [],
+    matches = [...kino, ...godrej, ...shinzui, ...motasa];
   if (matches.length !== 1)
     throw new Error(
       `${label} harus memuat tepat satu nomor ${noun} pada baris ${row}`,
@@ -228,10 +229,19 @@ interface ShinzuiProductMapping {
 interface ShinzuiMappings {
   products: Map<string, ShinzuiProductMapping[]>;
 }
+interface MotasaProductMapping {
+  unit: string;
+  caseSize: number | null;
+  mappingStatus: MappingStatus;
+}
+interface MotasaMappings {
+  products: Map<string, MotasaProductMapping>;
+}
 function mappingRows(
   workbook: XLSX.WorkBook,
   sheetName: string,
   required: string[],
+  maxRows = 3,
 ) {
   const sheet = workbook.Sheets[sheetName];
   if (!sheet?.["!ref"])
@@ -242,7 +252,7 @@ function mappingRows(
     defval: null,
     blankrows: false,
   }) as Row[];
-  const header = headerIndex(rows, required, 3);
+  const header = headerIndex(rows, required, maxRows);
   return { rows, columns: header.columns, start: header.rowIndex + 1 };
 }
 function makeUniqueMap(
@@ -435,6 +445,56 @@ export function parseShinzuiMappings(
         sourceRowNumber: index + 1,
       });
     products.set(principal, mapped);
+  }
+  return { products };
+}
+
+export function parseMotasaMappings(
+  buffer: Buffer | Uint8Array,
+): MotasaMappings {
+  if (!buffer?.byteLength) throw new Error("File mapping kosong");
+  const workbook = XLSX.read(buffer, {
+      type: "buffer",
+      raw: true,
+      cellFormula: false,
+    }),
+    sheet = mappingRows(
+      workbook,
+      "Form Fix",
+      ["KODE BARANG WIN2", "ISI/CTN", "SATUAN FIX WIN"],
+      5,
+    ),
+    products = new Map<string, MotasaProductMapping>();
+
+  for (let index = sheet.start; index < sheet.rows.length; index++) {
+    const row = sheet.rows[index],
+      internal = text(value(row, sheet.columns, "KODE BARANG WIN2")),
+      smallestUnit = unit(value(row, sheet.columns, "SATUAN FIX WIN")),
+      rawCaseSize = value(row, sheet.columns, "ISI/CTN");
+    if (!internal && !smallestUnit && !text(rawCaseSize)) continue;
+    if (!internal)
+      throw new Error(`KODE BARANG WIN2 kosong pada baris ${index + 1}`);
+
+    let caseSize: number | null = null;
+    let mappingStatus: MappingStatus = "OK";
+    try {
+      caseSize = finite(rawCaseSize, "ISI/CTN", index + 1);
+      if (caseSize <= 0) mappingStatus = "UNIT_CONVERSION_ERROR";
+    } catch {
+      mappingStatus = "UNIT_CONVERSION_ERROR";
+    }
+    if (!smallestUnit || smallestUnit === "0")
+      mappingStatus = "UNIT_CONVERSION_ERROR";
+
+    const next = { unit: smallestUnit, caseSize, mappingStatus },
+      existing = products.get(internal);
+    if (
+      existing &&
+      (existing.unit !== next.unit || existing.caseSize !== next.caseSize)
+    )
+      products.set(internal, { ...existing, mappingStatus: "INVALID_DATA" });
+    else if (!existing)
+      products.set(internal, next);
   }
   return { products };
 }
