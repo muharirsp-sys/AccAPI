@@ -1,7 +1,7 @@
 # Tujuan: Menjaga output SPV/SM dan parity Power Query Principal tetap benar.
 # Caller: Developer/CI melalui eksekusi Python langsung.
 # Dependensi: pandas, openpyxl, laporan_harian.resolve_report_groups, dan write_report_files.
-# Main Functions: main() memeriksa nama customer, tanggal laporan, pandas.NA, Principal, dan sheet Stock.
+# Main Functions: main() memeriksa nama customer, tanggal, Principal, dan kontrak tujuh kolom Stock.
 # Side Effects: Membuat lalu menghapus workbook sementara.
 
 import tempfile
@@ -109,10 +109,21 @@ def main() -> None:
         stock_sheet = workbook["DENNY Stock"]
         stock_headers = [cell.value for cell in stock_sheet[1]]
         stock_values = [cell.value for cell in stock_sheet[2]]
-        assert stock_values[stock_headers.index("KODE_BARANG")] == "SKU-1"
-        assert stock_values[stock_headers.index("QTY AKHIR")] == 25
+        assert stock_headers == laporan.build_principal_stock(stock).columns.tolist()
+        assert stock_headers == [
+            "Kode", "Nama Barang", "Kode Gudang", "Nama Gudang", "Satuan", "Principal", "Saldo Akhir",
+        ]
+        assert stock_values[stock_headers.index("Kode")] == "SKU-1"
+        assert stock_values[stock_headers.index("Saldo Akhir")] == 25
         assert next(item["stockRows"] for item in written if item["keyword"] == "DENNY") == 1
         workbook.close()
+
+        sm_workbook = openpyxl.load_workbook(
+            next(item["path"] for item in written if item["keyword"] == "HENDRIK"),
+            read_only=True, data_only=True,
+        )
+        assert [cell.value for cell in sm_workbook["HENDRIK Stock"][1]] == stock_headers
+        sm_workbook.close()
 
         motasa_1 = openpyxl.load_workbook(
             next(item["path"] for item in written if item["keyword"] == "MOTASA MKS 1"),
@@ -132,6 +143,7 @@ def main() -> None:
             next(item["path"] for item in written if item["keyword"] == "FONTERRA"),
             read_only=True, data_only=True,
         )
+        assert [cell.value for cell in fonterra["FONTERRA Stock"][1]] == stock_headers
         assert fonterra["FONTERRA Stock"]["C2"].value == "GD01"
         fonterra.close()
         assert next(item["rows"] for item in written if item["keyword"] == "FONTERRA") == 1

@@ -1,5 +1,5 @@
 """Tujuan: Mereplikasi filter dan format khusus Power Query laporan Principal.
-Caller: laporan_harian.resolve_report_groups dan write_report_files.
+Caller: laporan_harian.resolve_report_groups dan write_report_files untuk format penjualan serta Stock.
 Dependensi: pandas, laporan_harian_pl_mr.csv, laporan_harian_reckitt_items.csv.
 Main Functions: apply_sales_rule, apply_stock_rule, build_principal_report, build_principal_stock,
                 serta normalisasi pandas.NA yang null-safe.
@@ -231,7 +231,7 @@ def build_principal_report(keyword: str, frame: pd.DataFrame, default_columns: l
 
 
 def build_principal_stock(frame: pd.DataFrame) -> pd.DataFrame:
-    """Samakan tujuh kolom stock semua query Principal lama."""
+    """Samakan tujuh kolom stock semua query SPV, SM, dan Principal pada workbook 2.3."""
     aliases = {
         "Kode": ("KODE_BARANG", "Kode", "Kode Barang"),
         "Nama Barang": ("Nama Barang", "NAMA_BARANG"),

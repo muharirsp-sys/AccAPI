@@ -855,6 +855,9 @@ UI: modul /laporan-harian
         Principal asli file stock dipertahankan agar item tanpa penjualan harian tidak hilang
      -> nama customer memakai `Nama Pelanggan Faktur Penjualan` (fallback kode hanya bila nama kosong)
      -> tanggal run/nama file/subject memakai tanggal transaksi penjualan terakhir; retur lebih baru tidak menggesernya
+     -> mapping `GOLONGAN`/`NAMA_SM` pada Stock hanya dipakai untuk filter; output akhir mengikuti
+        `Table.SelectColumns` Power Query 2.3: `Kode`, `Nama Barang`, `Kode Gudang`, `Nama Gudang`,
+        `Satuan`, `Principal`, `Saldo Akhir`
      -> tulis file per keyword ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
         `<Keyword>` (penjualan) + `<Keyword> Stock` (cakupan target yang sama)
         (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)

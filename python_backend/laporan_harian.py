@@ -11,7 +11,7 @@
 # Main Functions:
 #   load_lookups(f_format, f_spv) -> LookupTables
 #   process(paste_path, stock_path, lookups) -> dict {per_spv, per_sm, stock, progress, summary}
-#   build_stock_frame(...) / write_report_files(...) -> output XLSX dan Stock per target SPV/SM/principal.
+#   build_stock_frame(...) / write_report_files(...) -> output XLSX dan Stock tujuh kolom per target.
 #   latest_sales_date(...) -> tanggal transaksi penjualan terakhir untuk nama file dan subject email.
 #   _normal_text(...) -> normalisasi null-safe termasuk pandas.NA.
 # Side Effects: Baca file sumber dan tulis XLSX hasil ke runtime; tidak mengubah file sumber/tidak kirim email.
@@ -511,7 +511,7 @@ def resolve_report_groups(sb: pd.DataFrame, report_keywords: list, lk: LookupTab
 def write_report_files(sb: pd.DataFrame, out_dir: str, report_date: str,
                        report_keywords: list, lk: LookupTables,
                        stock_frame: Optional[pd.DataFrame] = None) -> tuple:
-    """Tulis file per keyword aktif; setiap file berisi data dan sheet Stock dengan cakupan yang sama."""
+    """Tulis file per keyword aktif; sheet Stock mengikuti kontrak tujuh kolom Power Query 2.3."""
     import os
     from pyexcelerate import Workbook
     os.makedirs(out_dir, exist_ok=True)
@@ -548,7 +548,9 @@ def write_report_files(sb: pd.DataFrame, out_dir: str, report_date: str,
             stock_mask = stock_frame[stock_column].map(_normal_text).isin(normalized_values)
             target_stock = stock_frame[stock_mask].loc[:, ~stock_frame.columns.duplicated()].copy()
             if target["groupType"] == "principal":
-                target_stock = build_principal_stock(apply_stock_rule(keyword, target_stock))
+                target_stock = apply_stock_rule(keyword, target_stock)
+            # Mapping GOLONGAN/NAMA_SM hanya untuk filter; query akhir 2.3 selalu memilih tujuh kolom ini.
+            target_stock = build_principal_stock(target_stock)
             target_stock = target_stock.astype(object).where(pd.notna(target_stock), None)
             stock_headers = [str(column) for column in target_stock.columns]
             stock_rows = int(len(target_stock))
