@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Trash2, Plus, Upload, Play, FileText, Download, ChevronLeft, CalendarCheck2, Flag } from "lucide-react";
+import { Trash2, Plus, Upload, Play, FileText, Download, ChevronLeft, CalendarCheck2, Flag, Loader2, Inbox, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { resolveApiBase } from "@/lib/apiBase";
@@ -33,6 +33,9 @@ interface RowData {
     kode_barangs?: string;
     periode?: string;
     _original?: Record<string, any>;
+    /** Dari matcher deterministik Priskila: baris surat yang TIDAK ketemu di
+     *  master -- sengaja tidak ditebak, wajib direview manusia. */
+    _priskila_unmatched?: boolean;
 }
 
 // Emulating Axios for backwards compatibility with legacy codebase
@@ -97,7 +100,7 @@ const MultiSelect = ({
             <button
                 type="button"
                 onClick={() => setIsOpen(!isOpen)}
-                className="w-full text-left border border-white/10 rounded-lg px-2 py-1.5 bg-black/40 text-slate-300 truncate text-xs flex justify-between items-center outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full text-left border border-white/10 rounded-lg px-2 py-1.5 bg-black/40 text-slate-300 truncate text-xs flex justify-between items-center outline-none focus:ring-1 focus:ring-emerald-500"
             >
                 <span className="truncate">{displayText}</span>
                 <span className="text-[10px] ml-1">▼</span>
@@ -118,7 +121,7 @@ const MultiSelect = ({
                                                 type="checkbox"
                                                 checked={isSelected}
                                                 onChange={() => handleToggle(opt.value)}
-                                                className="rounded bg-black/50 border-white/10 text-blue-500 focus:ring-blue-500/50"
+                                                className="rounded bg-black/50 border-white/10 text-emerald-500 focus:ring-emerald-500/50"
                                             />
                                             <span className="text-[11px] text-slate-300 truncate">{opt.text}</span>
                                         </label>
@@ -433,22 +436,22 @@ export default function SummaryManualPage() {
             <div className="space-y-6">
                 {/* STEP 1: Master Setup */}
                 <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-white/10 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-3xl -mr-10 -mt-10"></div>
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl -mr-10 -mt-10"></div>
                     <div className="flex items-center gap-3 mb-6 relative">
-                        <div className="bg-blue-500/20 text-blue-400 w-8 h-8 rounded-full flex items-center justify-center font-bold border border-blue-500/30">1</div>
-                        <h2 className="text-xl font-bold text-white">Setup Master Barang</h2>
+                        <div className="bg-emerald-500/15 text-emerald-400 w-8 h-8 rounded-full flex items-center justify-center font-bold border border-emerald-500/30">1</div>
+                        <h2 className="text-xl font-bold text-white">Setup master barang</h2>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative">
                         <div className="p-4 bg-black/40 border border-white/5 rounded-xl">
                             <label className="block text-sm font-medium text-slate-300 mb-3">Pilih Principle Tersimpan</label>
                             <div className="flex gap-2">
-                                <select className="flex-1 bg-black/50 border border-white/10 rounded-lg text-sm text-white px-3 py-2 outline-none focus:ring-1 focus:ring-blue-500"
+                                <select className="flex-1 bg-black/50 border border-white/10 rounded-lg text-sm text-white px-3 py-2 outline-none focus:ring-1 focus:ring-emerald-500"
                                     value={selectedPrinciple} onChange={e => setSelectedPrinciple(e.target.value)}>
                                     <option value="" className="bg-black/80">-- Pilih Principle --</option>
                                     {Object.entries(principles).map(([id, p]) => <option key={id} value={id} className="bg-black/80">{p.name}</option>)}
                                 </select>
-                                <button onClick={handleUsePrinciple} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors">
+                                <button onClick={handleUsePrinciple} className="bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200">
                                     Gunakan
                                 </button>
                             </div>
@@ -456,7 +459,7 @@ export default function SummaryManualPage() {
 
                         <div className="p-4 bg-black/40 border border-white/5 rounded-xl">
                             <label className="block text-sm font-medium text-slate-300 mb-3">Unggah Excel Master Baru</label>
-                            <input type="file" accept=".xlsx,.xls" onChange={handleMasterUpload} className="text-sm block w-full file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-500/20 file:text-indigo-300 hover:file:bg-indigo-500/30 text-white/50 cursor-pointer" />
+                            <input type="file" accept=".xlsx,.xls" onChange={handleMasterUpload} className="text-sm block w-full file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-emerald-500/15 file:text-emerald-300 hover:file:bg-emerald-500/25 file:transition-colors text-white/50 cursor-pointer" />
                         </div>
                     </div>
                     {masterStatus && <p className="mt-4 text-sm font-medium text-emerald-400 bg-emerald-500/10 inline-block px-3 py-1.5 rounded-md border border-emerald-500/20">{masterStatus}</p>}
@@ -467,10 +470,10 @@ export default function SummaryManualPage() {
                     <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-emerald-500/20 relative overflow-hidden group">
                         <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl -mr-10 -mt-10 group-hover:bg-emerald-500/20 transition-all"></div>
                         <div className="flex items-center gap-3 mb-6 relative">
-                            <FileText className="text-emerald-500" size={26} />
+                            <div className="bg-emerald-500/15 text-emerald-400 w-8 h-8 rounded-full flex items-center justify-center font-bold border border-emerald-500/30">2</div>
                             <div>
-                                <h2 className="text-lg font-bold text-white">Ekstrak dari Dokumen PDF</h2>
-                                <p className="text-sm text-slate-400">Pilih metode ekstraksi PDF ke dalam tabel.</p>
+                                <h2 className="text-lg font-bold text-white">Ekstrak dari dokumen PDF</h2>
+                                <p className="text-sm text-slate-400">Unggah surat program, sistem mengisi tabel secara otomatis.</p>
                             </div>
                         </div>
                         <div className="flex flex-col gap-4 max-w-2xl relative">
@@ -478,12 +481,12 @@ export default function SummaryManualPage() {
                                 <input type="file" accept="application/pdf" onChange={e => setPdfFile(e.target.files?.[0] || null)} className="text-sm w-full sm:flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white/70" />
                                 
                                 <div className="flex gap-2 w-full sm:w-auto">
-                                    <button onClick={() => handlePdfExtract('regex')} disabled={!pdfFile || isPdfParsing} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-slate-700/50 hover:bg-slate-600 text-white px-4 py-2 border border-slate-600 rounded-lg text-sm font-semibold disabled:opacity-50 transition-colors">
-                                        Regex Manual
+                                    <button onClick={() => handlePdfExtract('regex')} disabled={!pdfFile || isPdfParsing} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 active:scale-[0.98] text-slate-300 hover:text-white px-4 py-2 border border-white/10 rounded-lg text-sm font-semibold disabled:opacity-50 disabled:pointer-events-none transition-all duration-200">
+                                        Regex manual
                                     </button>
-                                    
-                                    <button onClick={() => handlePdfExtract('ai')} disabled={!pdfFile || isPdfParsing} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 border border-emerald-500 rounded-lg text-sm font-semibold disabled:opacity-50 transition-colors">
-                                        {isPdfParsing ? "AI..." : "Ekstrak Cerdas"}
+
+                                    <button onClick={() => handlePdfExtract('ai')} disabled={!pdfFile || isPdfParsing} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white px-4 py-2 border border-emerald-500 rounded-lg text-sm font-semibold disabled:opacity-50 disabled:pointer-events-none transition-all duration-200">
+                                        {isPdfParsing ? (<><Loader2 size={15} className="animate-spin" /> Mengekstrak…</>) : "Ekstrak cerdas"}
                                     </button>
                                 </div>
                             </div>
@@ -497,16 +500,22 @@ export default function SummaryManualPage() {
                     <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-white/10 overflow-hidden relative">
                         <div className="flex justify-between items-center mb-6">
                             <div className="flex items-center gap-3">
-                                <div className="bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 w-8 h-8 rounded-full flex items-center justify-center font-bold">2</div>
-                                <h2 className="text-xl font-bold text-white">Data Summary Grid</h2>
+                                <div className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 w-8 h-8 rounded-full flex items-center justify-center font-bold">3</div>
+                                <h2 className="text-xl font-bold text-white">Data summary</h2>
+                                {rows.some(r => r._priskila_unmatched) && (
+                                    <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/25 px-2.5 py-1 rounded-md">
+                                        <AlertTriangle size={13} />
+                                        {rows.filter(r => r._priskila_unmatched).length} baris perlu review
+                                    </span>
+                                )}
                             </div>
-                            <button onClick={addRow} className="flex items-center gap-2 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white border border-white/10 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-                                <Plus size={16} /> Tambah Baris Kosong
+                            <button onClick={addRow} className="flex items-center gap-2 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white active:scale-[0.98] border border-white/10 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200">
+                                <Plus size={16} /> Tambah baris
                             </button>
                         </div>
 
                         <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/20">
-                            <table className="w-full text-xs text-left whitespace-nowrap min-w-max">
+                            <table className="w-full text-xs text-left whitespace-nowrap min-w-max [font-variant-numeric:tabular-nums]">
                                 <thead className="bg-black/60 border-b border-white/10 text-slate-400 uppercase tracking-tighter">
                                     <tr>
                                         <th className="px-3 py-3 font-semibold">No</th>
@@ -525,13 +534,16 @@ export default function SummaryManualPage() {
                                 </thead>
                                 <tbody className="divide-y divide-white/5">
                                     {rows.map((r) => (
-                                        <tr key={r.id} className="hover:bg-white/[0.02]">
-                                            <td className="px-2 py-2"><input type="text" value={r.no} onChange={e => updateRow(r.id, "no", e.target.value)} className="w-10 bg-black/40 border border-white/10 rounded px-1.5 py-1 text-slate-300 focus:ring-1 focus:ring-blue-500 outline-none" /></td>
-                                            <td className="px-2 py-2"><input type="text" value={r.principle} onChange={e => updateRow(r.id, "principle", e.target.value)} className="w-24 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 focus:ring-1 focus:ring-blue-500 outline-none" /></td>
-                                            <td className="px-2 py-2"><input type="text" value={r.surat_program} onChange={e => updateRow(r.id, "surat_program", e.target.value)} className="w-28 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 focus:ring-1 focus:ring-blue-500 outline-none" /></td>
-                                            <td className="px-2 py-2"><input type="text" value={r.nama_program} onChange={e => updateRow(r.id, "nama_program", e.target.value)} className="w-32 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 focus:ring-1 focus:ring-blue-500 outline-none" /></td>
+                                        <tr key={r.id} title={r._priskila_unmatched ? "Baris surat ini tidak ketemu di master -- sistem sengaja tidak menebak. Lengkapi kelompok/variant secara manual." : undefined}
+                                            className={r._priskila_unmatched
+                                                ? "bg-amber-500/[0.06] border-l-2 border-l-amber-500 hover:bg-amber-500/10 transition-colors"
+                                                : "hover:bg-white/[0.02] transition-colors"}>
+                                            <td className="px-2 py-2"><input type="text" value={r.no} onChange={e => updateRow(r.id, "no", e.target.value)} className="w-10 bg-black/40 border border-white/10 rounded px-1.5 py-1 text-slate-300 focus:ring-1 focus:ring-emerald-500 outline-none" /></td>
+                                            <td className="px-2 py-2"><input type="text" value={r.principle} onChange={e => updateRow(r.id, "principle", e.target.value)} className="w-24 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 focus:ring-1 focus:ring-emerald-500 outline-none" /></td>
+                                            <td className="px-2 py-2"><input type="text" value={r.surat_program} onChange={e => updateRow(r.id, "surat_program", e.target.value)} className="w-28 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 focus:ring-1 focus:ring-emerald-500 outline-none" /></td>
+                                            <td className="px-2 py-2"><input type="text" value={r.nama_program} onChange={e => updateRow(r.id, "nama_program", e.target.value)} className="w-32 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 focus:ring-1 focus:ring-emerald-500 outline-none" /></td>
                                             <td className="px-2 py-2">
-                                                <select value={r.channel_gtmt} onChange={e => updateRow(r.id, "channel_gtmt", e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-slate-300 focus:ring-1 focus:ring-blue-500 outline-none">
+                                                <select value={r.channel_gtmt} onChange={e => updateRow(r.id, "channel_gtmt", e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-slate-300 focus:ring-1 focus:ring-emerald-500 outline-none">
                                                     <option value="">-</option><option value="GT">GT</option><option value="MT">MT</option>
                                                 </select>
                                             </td>
@@ -544,15 +556,15 @@ export default function SummaryManualPage() {
                                             <td className="px-2 py-2">
                                                 <MultiSelect options={gramasiOptions[r.id] || []} value={r.gramasi} onChange={g => updateRow(r.id, "gramasi", g)} placeholder="- Gramasi -" />
                                             </td>
-                                            <td className="px-2 py-2"><input type="text" value={r.ketentuan} onChange={e => updateRow(r.id, "ketentuan", e.target.value)} className="w-20 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                                            <td className="px-2 py-2"><input type="text" value={r.ketentuan} onChange={e => updateRow(r.id, "ketentuan", e.target.value)} className="w-20 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 outline-none focus:ring-1 focus:ring-emerald-500" /></td>
                                             <td className="px-2 py-2">
-                                                <select value={r.benefit_type} onChange={e => updateRow(r.id, "benefit_type", e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-slate-300 outline-none focus:ring-1 focus:ring-blue-500">
+                                                <select value={r.benefit_type} onChange={e => updateRow(r.id, "benefit_type", e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-slate-300 outline-none focus:ring-1 focus:ring-emerald-500">
                                                     <option value="DISC_PCT">DISC_PCT (%)</option>
                                                     <option value="DISC_RP">DISC_RP (Rp)</option>
                                                     <option value="BONUS_QTY">BONUS_QTY (+)</option>
                                                 </select>
                                             </td>
-                                            <td className="px-2 py-2"><input type="text" value={r.benefit} onChange={e => updateRow(r.id, "benefit", e.target.value)} className="w-20 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                                            <td className="px-2 py-2"><input type="text" value={r.benefit} onChange={e => updateRow(r.id, "benefit", e.target.value)} className="w-20 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 outline-none focus:ring-1 focus:ring-emerald-500" /></td>
                                             <td className="px-2 py-2 text-center flex items-center justify-center gap-1">
                                                 <button onClick={() => handleReportWrong(r)} title="Laporkan baris ini salah, AI akan belajar dari koreksinya" className="text-amber-400 hover:text-amber-300 hover:bg-amber-500/20 p-1.5 rounded transition-colors">
                                                     <Flag size={16} />
@@ -565,8 +577,17 @@ export default function SummaryManualPage() {
                                     ))}
                                     {rows.length === 0 && (
                                         <tr>
-                                            <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
-                                                Belum ada data. Tambahkan baris kosong atau ekstrak dari PDF.
+                                            <td colSpan={12} className="px-4 py-16">
+                                                <div className="flex flex-col items-center gap-3 text-center">
+                                                    <div className="w-12 h-12 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
+                                                        <Inbox size={22} className="text-slate-500" />
+                                                    </div>
+                                                    <p className="text-sm text-slate-400 font-medium">Belum ada data promo</p>
+                                                    <p className="text-xs text-slate-500 max-w-xs [text-wrap:balance]">Unggah surat program PDF di langkah 2, atau tambah baris kosong untuk mengisi manual.</p>
+                                                    <button onClick={addRow} className="mt-1 flex items-center gap-2 text-xs font-semibold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/25 px-3 py-1.5 rounded-lg transition-colors">
+                                                        <Plus size={14} /> Tambah baris pertama
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     )}
@@ -578,32 +599,32 @@ export default function SummaryManualPage() {
                             <div className="mt-6 flex flex-col gap-4 p-6 bg-black/40 border border-white/5 rounded-xl justify-center items-center">
                                 {!downloadLinks ? (
                                     <>
-                                        <button onClick={handleGenerate} disabled={isGenerating} className="flex items-center gap-2 bg-blue-600 text-white px-8 py-3.5 rounded-xl font-bold hover:bg-blue-500 disabled:opacity-50 shadow-lg shadow-blue-500/20 transition-colors">
-                                            <Play size={18} /> {isGenerating ? "Memproses Data..." : "Generate Summary Final"}
+                                        <button onClick={handleGenerate} disabled={isGenerating} className="flex items-center gap-2 bg-emerald-600 text-white px-8 py-3.5 rounded-xl font-bold hover:bg-emerald-500 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none shadow-lg shadow-emerald-500/20 transition-all duration-200">
+                                            {isGenerating ? (<><Loader2 size={18} className="animate-spin" /> Memproses data…</>) : (<><Play size={18} /> Generate summary final</>)}
                                         </button>
-                                        {pollStatus && <span className="text-sm text-blue-400 font-medium animate-pulse">{pollStatus}</span>}
+                                        {pollStatus && <span className="text-sm text-emerald-400 font-medium animate-pulse">{pollStatus}</span>}
                                     </>
                                 ) : (
                                     <div className="flex flex-col gap-6 w-full max-w-2xl bg-slate-900 border border-emerald-500/30 p-6 rounded-xl items-center relative overflow-hidden">
-                                        <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-emerald-500 to-teal-500"></div>
+                                        <div className="absolute top-0 w-full h-1 bg-emerald-500"></div>
                                         <div className="flex flex-col sm:flex-row items-center gap-4 w-full justify-center">
-                                            <button onClick={() => handleDownload(downloadLinks.form, "Form_Summary_Program.pdf")} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-500 shadow-lg shadow-emerald-500/20">
+                                            <button onClick={() => handleDownload(downloadLinks.form, "Form_Summary_Program.pdf")} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-500 active:scale-[0.98] shadow-lg shadow-emerald-500/20 transition-all duration-200">
                                                 <Download size={18} /> Form PDF
                                             </button>
-                                            <button onClick={() => handleDownload(downloadLinks.dataset, "Dataset_Diskon_With_Channel.xlsx")} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-indigo-500 shadow-lg shadow-indigo-500/20">
-                                                <Download size={18} /> Excel Engine
+                                            <button onClick={() => handleDownload(downloadLinks.dataset, "Dataset_Diskon_With_Channel.xlsx")} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-white/5 text-slate-200 px-6 py-3 rounded-xl font-bold border border-white/10 hover:bg-white/10 hover:text-white active:scale-[0.98] transition-all duration-200">
+                                                <Download size={18} /> Excel engine
                                             </button>
                                         </div>
                                         <hr className="w-full border-white/10" />
                                         <div className="w-full">
-                                            <label className="block text-sm font-bold text-slate-300 mb-2">Automasi n8n: Kirim via Email</label>
+                                            <label className="block text-sm font-bold text-slate-300 mb-2">Kirim hasil via email</label>
                                             <div className="flex flex-col sm:flex-row gap-3 w-full">
-                                                <input type="email" value={emailTarget} onChange={e => setEmailTarget(e.target.value)} required placeholder="Masukkan email divisi..." className="flex-1 w-full text-sm border border-white/10 bg-black/50 text-white rounded-xl px-4 py-2.5 outline-none focus:ring-1 focus:ring-blue-500" />
-                                                <button type="button" onClick={handleSendEmail} disabled={!emailTarget} className="flex items-center justify-center gap-2 bg-sky-600 text-white font-bold px-6 py-2.5 rounded-xl text-sm hover:bg-sky-500 disabled:opacity-50 shadow-lg shadow-sky-500/20">
-                                                    Kirim Otomatis
+                                                <input type="email" value={emailTarget} onChange={e => setEmailTarget(e.target.value)} required placeholder="email divisi, mis. finance@perusahaan.co.id" className="flex-1 w-full text-sm border border-white/10 bg-black/50 text-white rounded-xl px-4 py-2.5 outline-none focus:ring-1 focus:ring-emerald-500" />
+                                                <button type="button" onClick={handleSendEmail} disabled={!emailTarget} className="flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold px-6 py-2.5 rounded-xl text-sm hover:bg-emerald-500 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none shadow-lg shadow-emerald-500/20 transition-all duration-200">
+                                                    Kirim otomatis
                                                 </button>
                                             </div>
-                                            {emailStatus && <div className="mt-3 text-sm text-sky-400 font-medium bg-sky-500/10 inline-block px-3 py-1.5 rounded-md border border-sky-500/20">{emailStatus}</div>}
+                                            {emailStatus && <div className="mt-3 text-sm text-emerald-400 font-medium bg-emerald-500/10 inline-block px-3 py-1.5 rounded-md border border-emerald-500/20">{emailStatus}</div>}
                                         </div>
                                     </div>
                                 )}
