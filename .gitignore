@@ -53,6 +53,7 @@ python_backend/data/*.json
 python_backend/data/*.jsonl
 python_backend/data/*.bak
 !python_backend/data/.gitkeep
+!python_backend/data/golden_priskila_expected.json
 
 # generated outputs, uploads, and runtime logs
 python_backend/output/

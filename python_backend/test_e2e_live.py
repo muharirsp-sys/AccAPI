@@ -57,7 +57,7 @@ def make_upload():
 
 async def parse_once():
     return await backend.summary_manual_parse_pdf_ai(
-        FakeRequest(), token=token, pdf=make_upload(), n8n_webhook="", principle_name="", ai_mode="split")
+        FakeRequest(), token=token, pdf=make_upload(), n8n_webhook="", principle_name="PT. PRISKILA PRIMA MAKMUR", ai_mode="split")
 
 def gen(rows):
     return backend.summary_manual_generate(FakeRequest(), token=token, rows_json=json.dumps(rows))

@@ -1,6 +1,8 @@
-# shared.py — module-level state, config, dan helper bersama hasil pemindahan mekanis dari main.py.
-# Tidak ada perubahan logic: seluruh isi dipindahkan apa adanya (byte-for-byte) dari main.py.
-# Diimpor oleh main.py dan routers/*.py. TIDAK boleh mengimpor main/routers (hindari circular import).
+# Tujuan: Menyediakan konfigurasi, state, dan helper bersama untuk runtime FastAPI.
+# Caller: main.py dan routers/*.py; modul ini tidak mengimpor main/routers agar tidak circular.
+# Dependensi: FastAPI, pandas/openpyxl, konfigurasi environment, dan modul domain backend.
+# Main Functions: Helper pemrosesan dokumen, pembayaran, serta laporan harian per SPV/SM.
+# Side Effects: Membaca/menulis data runtime, file hasil, cache, dan melakukan integrasi eksternal.
 
 from fastapi import FastAPI, UploadFile, File, Request, Form, Response, Cookie, BackgroundTasks
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse, ORJSONResponse
@@ -4573,6 +4575,27 @@ def _ensure_dir(p: str):
 
 
 def _apply_native_kelompok(rows_to_check, master_items):
+    # PRISKILA GUARD (deterministic matcher branch): the structure-only prompt
+    # (routers/summary.py, Priskila) emits rows carrying `group_item_text` -- that
+    # field is the unambiguous marker of the new path (the legacy prompt never
+    # emits it), so we route on its PRESENCE rather than on a principle string
+    # (the master's principle column is frequently blank). Those rows go to the
+    # offline-tested priskila_pipeline (surat line -> master SKUs, deterministic,
+    # renderer-ready). NON-Priskila rows fall straight through unchanged below.
+    try:
+        if any(r.get("group_item_text") for r in rows_to_check):
+            from priskila_pipeline import apply_priskila_matching
+            return apply_priskila_matching(rows_to_check, master_items)
+    except Exception as _prisk_err:
+        # Never let the Priskila branch break the shared endpoint; on any failure
+        # fall back to legacy matching -- but LOG it (a silent revert to the old
+        # buggy path would otherwise look like success at the PDF gate).
+        try:
+            append_error_log("priskila_pipeline_fallback", _prisk_err,
+                             {"n_rows": len(rows_to_check)})
+        except Exception:
+            pass
+
     final_rows_out = []
     def norm(x: object) -> str:
         return " ".join(str(x or "").strip().split()).upper()
@@ -5225,5 +5248,7 @@ def _save_principles(data: dict):
 # Laporan Harian per SPV/SM — proses FIX LAP PENJ (Paste Acc only, retur sudah minus) -> agregat & split.
 # Dipanggil Next.js app/api/laporan-harian/upload. Tidak kirim email (email = gate terpisah di Next.js).
 # =======================================================================================================
-LH_RUNTIME_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "runtime", "laporan-harian")
-
+LH_RUNTIME_DIR = os.getenv(
+    "LH_RUNTIME_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "runtime", "laporan-harian"),
+)

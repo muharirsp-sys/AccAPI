@@ -63,6 +63,15 @@ from shared import (
 
 router = APIRouter()
 
+
+def _is_priskila(principle_name) -> bool:
+    """True when the principle is Priskila (case-insensitive substring).
+    Priskila routes to the deterministic matcher: a structure-only LLM prompt
+    (below) + the ``priskila_pipeline`` matcher branch inside
+    ``_apply_native_kelompok``. Every other principle keeps the legacy path."""
+    return "PRISKILA" in str(principle_name or "").upper()
+
+
 # Penanda baris surat yang TIDAK punya item cocok di master -> wajib direview manusia.
 # Dipakai BERSAMA oleh PDF (kolom Kelompok) & Excel (kolom NAMA_BARANG) supaya keduanya
 # tidak pernah drift: dulu PDF nulis flag ini tapi Excel dibiarkan KOSONG polos (silent).
@@ -1152,6 +1161,43 @@ ATURAN PENGISIAN PROPERTI JSON (HURUF KECIL):
 
 SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
 """
+            # PRISKILA (Task 9): matching surat->master TIDAK lagi ditebak LLM. LLM CUKUP
+            # menyalin STRUKTUR surat (persepsi), lalu priskila_pipeline (matcher deterministik
+            # teruji) yang memetakan ke SKU master. Maka utk Priskila kita GANTI TOTAL skema baris
+            # di atas dengan skema struktur-saja: 1 object per BARIS GROUP ITEM surat, DILARANG
+            # menebak kelompok/variant/kode_barangs & DILARANG menggabung baris.
+            if _is_priskila(principle_name):
+                prompt = f"""
+Dokumen promosi ini milik principle: {principle_name.upper()}.
+Tugas Anda HANYA menyalin STRUKTUR tabel surat apa adanya ke ARRAY JSON. JANGAN mencocokkan
+ke daftar barang, JANGAN menebak kode/kelompok. Sistem lain yang akan mencocokkan ke master.
+
+ATURAN MUTLAK:
+1. Kembalikan HANYA JSON array valid (tanpa teks pembuka/penutup, tutup dengan `]`).
+2. SATU object JSON = SATU baris "GROUP ITEM" di tabel surat. DILARANG KERAS menggabungkan
+   beberapa baris/varian/merek menjadi satu object. Kalau tabel punya 20 baris GROUP ITEM,
+   keluarkan TEPAT 20 object.
+3. Salin teks sel "GROUP ITEM" APA ADANYA (verbatim) ke field "group_item_text" -- termasuk
+   kata merek, jenis, dan gramasi (mis. "Bellagio Eau de Toilette 100ml"). JANGAN diringkas,
+   JANGAN diubah ejaan/satuannya.
+4. DILARANG mengeluarkan field "kelompok", "variant", "gramasi", ATAU "kode_barangs".
+   Field-field itu akan diisi oleh sistem pencocokan, BUKAN oleh Anda.
+
+FIELD PER OBJECT (huruf kecil, HANYA field ini):
+- "channel_gtmt": (String) nama channel sesuai header tabel (Retail / MTI / Grosir / Star Outlet).
+- "brand": (String) merek utama di kolom BRAND baris itu (mis. "BELLAGIO"). Kalau sel BRAND
+  kosong karena rowspan, pakai merek yang sama dgn baris di atasnya.
+- "group_item_text": (String) sel GROUP ITEM verbatim (lihat aturan 3).
+- "paket": (String) sel PAKET verbatim (mis. "7+1", "4+1"). Kalau tabel cut-price MTI tanpa
+  kolom PAKET, isi angka CUT PRICE-nya saja (mis. "4700").
+- "cr": (String) nilai kolom CR / Cost Ratio kalau ada, selain itu "".
+- "principle": (String) nama principle.
+- "surat_program": (String) nomor surat program.
+- "nama_program": (String) nama program/promo.
+- "periode": (String) periode surat.
+
+SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
+"""
             # ponytail: "AI learning" dari koreksi manual user (tombol Laporkan Salah) -- bukan fine-tune
             # model, tapi few-shot: inject before->after koreksi lama ke prompt supaya kesalahan yg sama
             # tidak terulang utk principal yg sama.
@@ -1436,7 +1482,11 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                     # kode_barang yg terbukti (keyakinan tinggi) py trigger/benefit sama digabung jadi
                     # 1 baris (kasus nyata: Bellagio EDT & EDP Prestige ke-split LLM padahal 7+1 sama).
                     # Kode yg tak ter-bridge dgn keyakinan tinggi TIDAK disentuh (aman, no silent guess).
-                    all_rows, _tier_regroup_log = regroup_rows_by_tier(all_rows, items, ocr_text)
+                    # PRISKILA (Task 10): matcher deterministik SUDAH mengeluarkan baris 1:1 (sudah
+                    # ter-merge per (channel, prefix, tier) di priskila_pipeline) -- regroup tier
+                    # heuristik LLM/OCR di sini DILEWATI supaya tidak menggabung ulang / merusak.
+                    if not _is_priskila(principle_name):
+                        all_rows, _tier_regroup_log = regroup_rows_by_tier(all_rows, items, ocr_text)
 
                     # FASE 1b: bekukan rows hasil parse (freeze-on-first-write) -> run berikut
                     # dok+principle sama pakai ini, tanpa OCR/LLM lagi (deterministik + hemat).
