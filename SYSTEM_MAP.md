@@ -853,15 +853,18 @@ UI: modul /laporan-harian
         Market/HET/NET/DISC/BA; GODREJ/ENERGIZER/ABC/URC/HEINZ memakai filter Principal kanonik
      -> referensi `PL_MR` dan `RECKITT LIST` disimpan sebagai CSV read-only di `python_backend/`;
         Principal asli file stock dipertahankan agar item tanpa penjualan harian tidak hilang
+     -> nama customer memakai `Nama Pelanggan Faktur Penjualan` (fallback kode hanya bila nama kosong)
+     -> tanggal run/nama file/subject memakai tanggal transaksi penjualan terakhir; retur lebih baru tidak menggesernya
      -> tulis file per keyword ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
         `<Keyword>` (penjualan) + `<Keyword> Stock` (cakupan target yang sama)
         (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)
      -> normalisasi progress kosong salesCode -> `UNMAPPED:<branch>` + warning eksplisit (nilai tidak dibuang/tidak ditebak)
      -> feed dashboard: BULK replace ke sales_daily_progress (batch, hindari N+1)
   <- { ok, runId, ringkasan per SPV, daftar penerima (PREVIEW, belum kirim) }
-UI: tombol "Kirim" terpisah (gated, confirm:true) -> POST /api/laporan-harian/[runId]/send
+UI: tombol "Kirim" terpisah + pilihan `Laporan closing` (gated, confirm:true) -> POST /api/laporan-harian/[runId]/send
      -> requirePermission("laporan_harian.send") -> claim status `sending`
-     -> ambil file per-SPV/SM dari backend -> kirim email (nodemailer)
+     -> ambil file per-SPV/SM dari backend -> subject `[Laporan Harian|Laporan Closing] <tanggal transaksi terakhir>` -> kirim email (nodemailer)
+     -> mode harian/closing dicatat di `report_run.note` saat claim pertama agar retry tidak dapat mengganti jenis subject
      -> penerima `failed` dapat di-retry tanpa mengirim ulang penerima yang sudah `sent`
 UI: review file opsional -> GET /api/laporan-harian/[runId]/preview?file=...
      -> proxy file run-scoped dari FastAPI, tampilkan maksimal 25 baris kunci atau unduh XLSX penuh

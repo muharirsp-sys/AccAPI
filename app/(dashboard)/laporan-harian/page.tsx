@@ -3,7 +3,7 @@
  * Caller: menu sidebar "Laporan Harian" (/laporan-harian). Guard RBAC: laporan_harian.view.
  * Dependensi: POST /api/laporan-harian/upload, GET /api/laporan-harian/[runId]/preview,
  *             POST /api/laporan-harian/[runId]/send, lucide-react, semantic UI classes global.
- * Main Functions: LaporanHarianPage, FilePicker, handleUpload, loadReview, handleSend.
+ * Main Functions: LaporanHarianPage, FilePicker, handleUpload, loadReview, handleSend dengan pilihan closing.
  * Side Effects: HTTP upload/read/send; tidak menyimpan state di localStorage.
  */
 "use client";
@@ -27,6 +27,7 @@ type ReviewSample = { fileName: string; sheetName: string; columns: string[]; ro
 type UploadResult = {
     ok: boolean;
     runId: string;
+    reportDate: string;
     period: { month: number; year: number };
     dashboardFed: { inserted: number };
     salesRows: number;
@@ -99,6 +100,7 @@ export default function LaporanHarianPage() {
     const [reviewError, setReviewError] = useState<string | null>(null);
     const [reviewFileName, setReviewFileName] = useState("");
     const [review, setReview] = useState<ReviewSample | null>(null);
+    const [isClosing, setIsClosing] = useState(false);
 
     const busy = processing || sending;
 
@@ -112,6 +114,7 @@ export default function LaporanHarianPage() {
         setSendState(null);
         setReview(null);
         setReviewOpen(false);
+        setIsClosing(false);
         setProcessing(true);
         try {
             const form = new FormData();
@@ -161,14 +164,15 @@ export default function LaporanHarianPage() {
 
     async function handleSend() {
         if (!result) return;
-        if (!confirm(`Kirim ${result.totalRecipients} email untuk ${result.recipientsPreview.length} file?\nEmail akan benar-benar dikirim.`)) return;
+        const reportType = isClosing ? "laporan closing" : "laporan harian";
+        if (!confirm(`Kirim ${result.totalRecipients} email ${reportType} tanggal ${result.reportDate} untuk ${result.recipientsPreview.length} file?\nEmail akan benar-benar dikirim.`)) return;
         setSending(true);
         setError(null);
         try {
             const response = await fetch(`/api/laporan-harian/${result.runId}/send`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ confirm: true }),
+                body: JSON.stringify({ confirm: true, isClosing }),
             });
             const data = await response.json();
             if (!response.ok) {
@@ -232,7 +236,7 @@ export default function LaporanHarianPage() {
                                     <p className="mt-1 text-sm text-[var(--luxury-muted)]">Dashboard sudah diperbarui. Email belum dikirim.</p>
                                 </div>
                             </div>
-                            <div className="flex flex-wrap gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                                 <button
                                     onClick={() => reviewOpen ? setReviewOpen(false) : void loadReview(reviewFileName || result.generatedFiles?.[0]?.fileName)}
                                     disabled={!result.generatedFiles?.length || reviewBusy}
@@ -242,6 +246,16 @@ export default function LaporanHarianPage() {
                                     <FileSearch size={17} aria-hidden="true" />
                                     {reviewOpen ? "Tutup review" : "Review hasil"}
                                 </button>
+                                <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-bold text-[var(--luxury-text)]">
+                                    <input
+                                        type="checkbox"
+                                        checked={isClosing}
+                                        onChange={(event) => setIsClosing(event.target.checked)}
+                                        disabled={busy || sendState?.status === "sent"}
+                                        className="size-4 accent-[var(--luxury-teal)]"
+                                    />
+                                    Laporan closing
+                                </label>
                                 <button
                                     onClick={handleSend}
                                     disabled={busy || result.totalRecipients === 0 || sendState?.status === "sent"}

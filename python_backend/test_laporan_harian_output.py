@@ -1,7 +1,7 @@
 # Tujuan: Menjaga output SPV/SM dan parity Power Query Principal tetap benar.
 # Caller: Developer/CI melalui eksekusi Python langsung.
 # Dependensi: pandas, openpyxl, laporan_harian.resolve_report_groups, dan write_report_files.
-# Main Functions: main() memeriksa pandas.NA, MOTASA, FONTERRA, Mustika, Reckitt, dan sheet Stock.
+# Main Functions: main() memeriksa nama customer, tanggal laporan, pandas.NA, Principal, dan sheet Stock.
 # Side Effects: Membuat lalu menghapus workbook sementara.
 
 import tempfile
@@ -16,6 +16,23 @@ import laporan_harian as laporan
 def main() -> None:
     assert laporan._normal_text(pd.NA) == ""
     assert laporan._normal_text(None) == ""
+
+    raw_accurate = pd.DataFrame([{
+        "NO_NOTA": "INV-TEST", "TANGGAL": "2026-07-16", "MATA_UANG": "IDR",
+        "KODE PELANGGAN INDUK": "C-001", "CUSTOMER": "C-001",
+        "Nama Pelanggan Faktur Penjualan": "TOKO MAJU",
+        "PRINCIPLE": "TEST PRINCIPAL", "KODE_SALESMAN": "S-01", "KODE_BARANG": "SKU-01",
+        "NILAI JUAL": 1000, "QTY": 1,
+    }])
+    prepared = laporan._prep_acc(raw_accurate, laporan.LookupTables({}, {}, {}, {}, {}))
+    assert prepared.iloc[0]["CUSTOMER"] == "TOKO MAJU"
+
+    dated = pd.DataFrame([
+        {"TANGGAL": "2026-07-15", "JENIS_TRANSAKSI": laporan.PENJ_LABEL},
+        {"TANGGAL": "2026-07-16", "JENIS_TRANSAKSI": laporan.PENJ_LABEL},
+        {"TANGGAL": "2026-07-17", "JENIS_TRANSAKSI": laporan.RETUR_LABEL},
+    ])
+    assert laporan.latest_sales_date(dated) == "2026-07-16"
 
     source = pd.DataFrame([
         {"GOLONGAN": "DENNY", "NAMA_SM": "HENDRIK", "PRINCIPAL": "ENERGIZER INDONESIA, PT",

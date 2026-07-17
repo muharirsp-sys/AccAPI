@@ -1,11 +1,11 @@
 /*
  * Tujuan: KIRIM email laporan per-SPV untuk 1 report_run — GATED.
- *         Hanya jalan bila body { confirm: true }; run dry_run/failed diklaim atomik sebagai
+ *         Hanya jalan bila body { confirm: true, isClosing }; run dry_run/failed diklaim atomik sebagai
  *         'sending', lalu hanya penerima pending/failed yang diproses. Sudah sent/sending -> 409.
  * Caller: UI Laporan Harian (tombol "Kirim" setelah review preview).
  * Dependensi: requirePermission("laporan_harian.send"), lib/email, lib/laporan-harian/send-state,
  *             FastAPI /laporan-harian/file (ambil file per-SPV run-scoped), db/schema.
- * Main Functions: POST (claim run, kirim/retry penerima, update status).
+ * Main Functions: POST (claim run, bentuk subject harian/closing, kirim/retry penerima, update status).
  * Side Effects: HTTP fetch file; kirim email (nodemailer); DB update report_run + report_run_recipient.
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
     if (gate.response) return gate.response;
 
     const { runId } = await ctx.params;
-    let body: { confirm?: boolean } = {};
+    let body: { confirm?: boolean; isClosing?: boolean } = {};
     try { body = await req.json(); } catch { /* body opsional */ }
 
     // GATE 1: konfirmasi eksplisit wajib
@@ -45,6 +45,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
 
     const [run] = await db.select().from(reportRun).where(eq(reportRun.id, runId)).limit(1);
     if (!run) return NextResponse.json({ error: "Run tidak ditemukan" }, { status: 404 });
+    const storedMode = run.note?.match(/email_mode:(closing|daily)/)?.[1];
+    const requestedMode = body.isClosing === true ? "closing" : "daily";
+    if (storedMode && storedMode !== requestedMode) {
+        return NextResponse.json(
+            { error: `Run ini sebelumnya dikirim sebagai laporan ${storedMode}. Pilihan tidak boleh diubah saat retry.` },
+            { status: 409 },
+        );
+    }
+    const emailMode = storedMode ?? requestedMode;
     // GATE 2: cegah dobel/concurrent send. Run gagal boleh di-retry.
     if (!canClaimReportRun(run.status)) {
         const error = run.status === "sent" ? "Run ini sudah pernah dikirim." : "Run ini sedang/tidak dapat dikirim.";
@@ -53,7 +62,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
 
     const claimed = await db
         .update(reportRun)
-        .set({ status: "sending" })
+        .set({
+            status: "sending",
+            note: storedMode ? run.note : `${run.note ? `${run.note}; ` : ""}email_mode:${emailMode}`,
+        })
         .where(and(eq(reportRun.id, runId), eq(reportRun.status, run.status)));
     if (claimed.rowCount !== 1) {
         return NextResponse.json({ error: "Status run berubah; muat ulang sebelum mengirim.", status: "conflict" }, { status: 409 });
@@ -96,6 +108,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
     }
 
     let sent = 0, failed = 0;
+    const reportLabel = emailMode === "closing" ? "Laporan Closing" : "Laporan Harian";
     for (const [fileName, grp] of byFile) {
         const file = await fetchFile(fileName);
         let ok = false, err: string | null = null;
@@ -104,8 +117,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
         } else {
             ok = await sendEmail({
                 to: grp.emails,
-                subject: `[Laporan Harian] ${run.reportDate} - ${fileName}`,
-                text: `Halo,\n\nBerikut laporan harian: ${fileName}.\nDikirim otomatis oleh sistem AccAPI.\n\nTerima kasih.`,
+                subject: `[${reportLabel}] ${run.reportDate} - ${fileName}`,
+                text: `Halo,\n\nBerikut ${reportLabel.toLowerCase()} tanggal ${run.reportDate}: ${fileName}.\nDikirim otomatis oleh sistem AccAPI.\n\nTerima kasih.`,
                 attachments: [{
                     filename: fileName,
                     content: file,

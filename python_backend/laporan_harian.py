@@ -12,6 +12,7 @@
 #   load_lookups(f_format, f_spv) -> LookupTables
 #   process(paste_path, stock_path, lookups) -> dict {per_spv, per_sm, stock, progress, summary}
 #   build_stock_frame(...) / write_report_files(...) -> output XLSX dan Stock per target SPV/SM/principal.
+#   latest_sales_date(...) -> tanggal transaksi penjualan terakhir untuk nama file dan subject email.
 #   _normal_text(...) -> normalisasi null-safe termasuk pandas.NA.
 # Side Effects: Baca file sumber dan tulis XLSX hasil ke runtime; tidak mengubah file sumber/tidak kirim email.
 # Catatan parity (dikonfirmasi user): sumber penjualan = sheet "Paste Acc" (export Accurate),
@@ -106,26 +107,34 @@ def load_lookups(f_format: str, f_spv: str) -> LookupTables:
 
 # ---------- Stage A: Paste Data -> FIX ----------
 def _prep_acc(acc: pd.DataFrame, lk: LookupTables) -> pd.DataFrame:
-    # CUSTOMER asli di Paste Acc = KODE; nama asli ada di "Nama Pelanggan Faktur Penjualan".
-    # Buang kolom CUSTOMER(kode) agar rename bawa NAMA jadi CUSTOMER (bukan drop nama saat dedup).
+    # Simpan nama sebelum rename karena export Accurate juga dapat punya kolom CUSTOMER berisi kode.
+    customer_name = next((
+        acc[column]
+        for column in ("Nama Pelanggan Faktur Penjualan", "Nama Customer", "Nama Pelanggan")
+        if column in acc.columns
+    ), None)
     a = acc.rename(columns=REN_ACC)
-    a = a.loc[:, ~a.columns.duplicated()]  # buang kolom duplikat pasca-rename
-    if "KODE_CUST" in a.columns:
-        a["CUSTOMER"] = a["KODE_CUST"]   # per instruksi: CUSTOMER dari kolom F (KODE PELANGGAN INDUK)
-    a["QTYBONUS"] = 0
+    a = a.loc[:, ~a.columns.duplicated()].copy()  # buang kolom duplikat pasca-rename
+    if customer_name is not None:
+        names = customer_name.astype("string").str.strip()
+        fallback = a.get("KODE_CUST", pd.Series("", index=a.index)).astype("string").str.strip()
+        a.loc[:, "CUSTOMER"] = names.where(names.notna() & names.ne(""), fallback)
+    elif "CUSTOMER" not in a.columns and "KODE_CUST" in a.columns:
+        a.loc[:, "CUSTOMER"] = a["KODE_CUST"]
+    a.loc[:, "QTYBONUS"] = 0
     if "MARKET" in a.columns:
-        a["JENISMARKET"] = a["MARKET"]   # jenis market (TT/GT/MT) ada di kolom MARKET (AE) Paste Acc
+        a.loc[:, "JENISMARKET"] = a["MARKET"]   # jenis market (TT/GT/MT) ada di kolom MARKET (AE) Paste Acc
     a = a[a["NO_NOTA"].astype("string").str.strip().fillna("") != ""].copy()
     for c in ["PRINCIPAL", "KODE_SALESMAN", "KODE_CUST", "KODE_BARANG", "SATUAN", "REM", "CUSTOMER"]:
         if c in a:
-            a[c] = a[c].astype("string").str.strip()
-    a["JENIS_TRANSAKSI"] = np.where(
+            a.loc[:, c] = a[c].astype("string").str.strip()
+    a.loc[:, "JENIS_TRANSAKSI"] = np.where(
         a["NO_NOTA"].astype("string").str.upper().str.startswith("INV"), PENJ_LABEL, RETUR_LABEL)
-    a["NILAI_JUAL"] = _num(a.get("NILAI_JUAL"))
-    a["DPP"] = _num(a["DPP"]) if "DPP" in a else a["NILAI_JUAL"]
-    a["QTY"] = _num(a.get("QTY"))
-    a["Conca"] = a["PRINCIPAL"].fillna("") + a.get("JENISPRODUK", pd.Series("", index=a.index)).fillna("").astype(str)
-    a["GOLONGAN"] = a["Conca"].map(lk.conca_to_spv).fillna(a["PRINCIPAL"].map(lk.principal_to_spv)).fillna("YARMAN")
+    a.loc[:, "NILAI_JUAL"] = _num(a.get("NILAI_JUAL"))
+    a.loc[:, "DPP"] = _num(a["DPP"]) if "DPP" in a else a["NILAI_JUAL"]
+    a.loc[:, "QTY"] = _num(a.get("QTY"))
+    a.loc[:, "Conca"] = a["PRINCIPAL"].fillna("") + a.get("JENISPRODUK", pd.Series("", index=a.index)).fillna("").astype(str)
+    a.loc[:, "GOLONGAN"] = a["Conca"].map(lk.conca_to_spv).fillna(a["PRINCIPAL"].map(lk.principal_to_spv)).fillna("YARMAN")
     return a
 
 
@@ -249,6 +258,19 @@ def aggregate_progress(sb: pd.DataFrame) -> pd.DataFrame:
     out["periodMonth"] = pd.to_datetime(out["date"], errors="coerce").dt.month
     out["periodYear"] = pd.to_datetime(out["date"], errors="coerce").dt.year
     return out
+
+
+def latest_sales_date(sb: pd.DataFrame, fallback: Optional[str] = None) -> Optional[str]:
+    """Tanggal maksimum transaksi penjualan bruto; retur yang lebih baru tidak mengubah tanggal laporan."""
+    if "TANGGAL" not in sb.columns:
+        return fallback
+    dates = pd.to_datetime(sb["TANGGAL"], errors="coerce")
+    if "JENIS_TRANSAKSI" in sb.columns:
+        sales_mask = sb["JENIS_TRANSAKSI"].astype("string").eq(PENJ_LABEL).fillna(False)
+        sales_dates = dates[sales_mask]
+        if sales_dates.notna().any():
+            return sales_dates.max().strftime("%Y-%m-%d")
+    return dates.max().strftime("%Y-%m-%d") if dates.notna().any() else fallback
 
 
 def process(paste_path: str, stock_path: Optional[str], lookups: LookupTables) -> dict:
@@ -582,7 +604,7 @@ def build_fix_from_accurate(penjualan_path: str, retur_path: Optional[str], lk: 
     Menghasilkan tabel setara 'FIX LAP PENJ' (retur sudah minus)."""
     acc = _read_sheet(penjualan_path, RINCIAN_SHEET)
     acc.columns = [str(c).strip() for c in acc.columns]
-    a = _prep_acc(acc, lk)              # JENIS by prefix INV; CUSTOMER=KODE_CUST; JENISMARKET=MARKET; QTYBONUS=0
+    a = _prep_acc(acc, lk)              # JENIS by prefix INV; CUSTOMER=nama (fallback kode); JENISMARKET=MARKET; QTYBONUS=0
     frames = [a]
     if retur_path:
         rr_raw = _read_sheet(retur_path, RINCIAN_SHEET)

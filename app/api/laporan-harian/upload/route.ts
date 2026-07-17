@@ -5,7 +5,7 @@
  * Caller: UI modul Laporan Harian (browser, multipart).
  * Dependensi: requirePermission, recipient aktif, FastAPI /laporan-harian/process, normalisasi ingest,
  *             db/schema (reportRun, reportRecipient, reportRunRecipient).
- * Main Functions: POST (proses + dry-run).
+ * Main Functions: POST (proses + dry-run, simpan tanggal transaksi penjualan terakhir).
  * Side Effects: HTTP call ke FastAPI; DB write (report_run, report_run_recipient, sales_daily_progress).
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -110,6 +110,10 @@ export async function POST(req: NextRequest) {
     const unmatchedReportKeywords = Array.isArray(result.unmatched_report_keywords)
         ? result.unmatched_report_keywords.map(String)
         : [];
+    const processedReportDate = String(result.report_date ?? reportDate);
+    const effectiveReportDate = /^\d{4}-\d{2}-\d{2}$/.test(processedReportDate)
+        ? processedReportDate
+        : reportDate;
     if (generatedFiles.length === 0) {
         return NextResponse.json(
             {
@@ -149,7 +153,7 @@ export async function POST(req: NextRequest) {
         const now = new Date();
         await db.insert(reportRun).values({
             id: runId,
-            reportDate,
+            reportDate: effectiveReportDate,
             status: "dry_run",
             fileCount: generatedFiles.length,
             emailCount: totalEmails,
@@ -172,6 +176,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({
             ok: true,
             runId,
+            reportDate: effectiveReportDate,
             dryRun: true,
             message: "Proses selesai (DRY-RUN). Email BELUM dikirim. Review daftar penerima lalu panggil /send.",
             period: { month, year },

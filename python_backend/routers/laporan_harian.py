@@ -1,7 +1,7 @@
 # Tujuan: Endpoint FastAPI untuk proses, penyimpanan, dan unduhan laporan harian per target.
 # Caller: Next.js app/api/laporan-harian/*.
 # Dependensi: shared runtime config, laporan_harian pipeline, resolver target, dan writer XLSX.
-# Main Functions: laporan_harian_process() dan laporan_harian_file().
+# Main Functions: laporan_harian_process() menentukan tanggal transaksi terakhir, lalu laporan_harian_file().
 # Side Effects: Membaca upload, menulis workbook runtime, dan mengirim file melalui HTTP.
 from fastapi import APIRouter
 
@@ -56,6 +56,7 @@ async def laporan_harian_process(
         else:
             return ORJSONResponse({"ok": False, "error": "Wajib upload 'penjualan' (+retur) atau 'fix'."}, status_code=400)
         sb = LH.build_salesbase(fix_df, lk)
+        effective_report_date = LH.latest_sales_date(sb, report_date)
         progress = LH.aggregate_progress(sb)
         summary = (sb.groupby("GOLONGAN", dropna=True)
                      .agg(rows=("NO_NOTA", "size"), dpp=("DPP", "sum"),
@@ -97,7 +98,7 @@ async def laporan_harian_process(
         if write_files and run_id:
             import json as _json, re as _re, datetime as _dt
             safe_run = _re.sub(r"[^A-Za-z0-9_-]", "", str(run_id))[:64]
-            rdate = report_date or _dt.date.today().strftime("%Y-%m-%d")
+            rdate = effective_report_date or _dt.date.today().strftime("%Y-%m-%d")
             out_dir = _os.path.join(LH_RUNTIME_DIR, safe_run)
             try:
                 keywords = _json.loads(report_keywords or "[]")
@@ -115,6 +116,7 @@ async def laporan_harian_process(
         return ORJSONResponse({
             "ok": True,
             "files": files_written,
+            "report_date": effective_report_date,
             "sales_rows": int(len(sb)),
             "net_dpp": float(sb["DPP"].sum()),
             "period": {"month": pm, "year": py},
