@@ -72,6 +72,16 @@ def _is_priskila(principle_name) -> bool:
     return "PRISKILA" in str(principle_name or "").upper()
 
 
+def _is_urc(principle_name) -> bool:
+    """True when the principle is URC (case-insensitive substring). URC
+    routes to its own deterministic matcher: a structure-only LLM prompt
+    (below) + the ``urc_pipeline`` matcher branch inside
+    ``_apply_native_kelompok``. Checked separately from Priskila -- URC rows
+    carry a different marker field (``item_description``) so the two never
+    cross-route."""
+    return "URC" in str(principle_name or "").upper()
+
+
 # Penanda baris surat yang TIDAK punya item cocok di master -> wajib direview manusia.
 # Dipakai BERSAMA oleh PDF (kolom Kelompok) & Excel (kolom NAMA_BARANG) supaya keduanya
 # tidak pernah drift: dulu PDF nulis flag ini tapi Excel dibiarkan KOSONG polos (silent).
@@ -477,6 +487,10 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         header_style.textColor = colors.whitesmoke
         
         table_data = [[Paragraph(h, header_style) for h in headers_str]]
+        # Nilai TEKS mentah paralel dgn table_data (dipakai utk deteksi span di
+        # bawah -- Paragraph bukan string, jadi kesamaan konten harus dicek dari
+        # sini, bukan dari objek Paragraph-nya).
+        row_texts: List[List[str]] = []
 
         cell_style = styles["Normal"].clone("CellStyle")
         cell_style.fontSize = 6
@@ -733,21 +747,15 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                     gramasi_parts.append(",".join(gram_for_k))
             gramasi_display = join_human(gramasi_parts)
 
-            table_data.append([
-                Paragraph(str(meta["no"]), cell_style),
-                Paragraph(str(meta.get("surat_program","")), cell_style),
-                Paragraph(str(meta.get("nama_program","")), cell_style),
-                Paragraph(str(meta.get("channel_gtmt","")), cell_style),
-                Paragraph(str(meta.get("periode","")), cell_style),
-                Paragraph(kelompok_display, cell_style),
-                Paragraph(variant_display, cell_style),
-                Paragraph(gramasi_display, cell_style),
-                Paragraph(str(meta.get("ketentuan","")), cell_style),
-                Paragraph(benefit_display(meta), cell_style),
-                Paragraph(str(meta.get("syarat_claim","")), cell_style),
-                Paragraph(str(meta.get("keterangan","")), cell_style),
-            ])
-            
+            _row_vals = [
+                str(meta["no"]), str(meta.get("surat_program","")), str(meta.get("nama_program","")),
+                str(meta.get("channel_gtmt","")), str(meta.get("periode","")), kelompok_display,
+                variant_display, gramasi_display, str(meta.get("ketentuan","")), benefit_display(meta),
+                str(meta.get("syarat_claim","")), str(meta.get("keterangan","")),
+            ]
+            row_texts.append(_row_vals)
+            table_data.append([Paragraph(v, cell_style) for v in _row_vals])
+
         # Total A4 landscape width is ~842. Margins are 0.5cm each (approx 14 points each, total 28 pts margin)
         # Usable width = 842 - 28 = 814 points
         usable = landscape(A4)[0] - (1 * cm)
@@ -766,6 +774,27 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             usable * 0.06  # Keterangan
         ]
             
+        # Rowspan (SPAN) baris yang isinya SAMA PERSIS di kolom yang memang
+        # berlaku utk seluruh surat (Surat Program/Nama Program/Channel/
+        # Periode/Ketentuan/Benefit/Syarat Claim/Keterangan) -- mis. satu surat
+        # URC = satu benefit utk semua kelompok, jadi kolom itu tak perlu
+        # diulang tiap baris. Kolom No/Kelompok/Variant/Gramasi SENGAJA
+        # dikecualikan (permintaan user 2026-07-15/17): tiap kelompok barang
+        # harus tetap tampil sbg baris tersendiri utk audit trail, walau
+        # kebetulan isinya sama dgn kelompok lain.
+        SPANNABLE_COLS = {1, 2, 3, 4, 8, 9, 10, 11}
+        span_commands = []
+        for col in SPANNABLE_COLS:
+            r = 1  # table_data row 0 = header; data rows start at 1
+            while r < len(table_data):
+                val = row_texts[r - 1][col]
+                r2 = r
+                while r2 + 1 < len(table_data) and row_texts[r2][col] == val:
+                    r2 += 1
+                if val and r2 > r:
+                    span_commands.append(('SPAN', (col, r), (col, r2)))
+                r = r2 + 1
+
         t = Table(table_data, repeatRows=1, colWidths=cw)
         t.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#9E7C85')), # Match the brownish pink header color
@@ -778,7 +807,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             ('BACKGROUND', (0, 1), (-1, -1), colors.white),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
             ('WORDWRAP', (0, 0), (-1, -1), True),
-        ]))
+        ] + span_commands))
         elements.append(t)
         
         # Add the Footer Signatures
@@ -1073,11 +1102,12 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
             pdf_text = ""
             base64_images = []
             
+            ocr_labels = []
             with fitz.open(stream=file_bytes, filetype="pdf") as doc:
                 # ponytail: dulu doc[:10] -> halaman 11+ hilang diam-diam. Proses semua sampai cap longgar.
                 MAX_OCR_PAGES = int(os.getenv("SUMMARY_MAX_OCR_PAGES", "40"))
                 pages_total = doc.page_count
-                for page in doc[:MAX_OCR_PAGES]:
+                for _pg_no, page in enumerate(doc[:MAX_OCR_PAGES]):
                     txt = page.get_text()
                     pdf_text += txt + "\n"
                     # Compress the image so the Base64 string doesn't eat the token budget
@@ -1085,7 +1115,33 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
                     img_bytes = pix.tobytes("jpeg", 80)
                     b64 = base64.b64encode(img_bytes).decode("utf-8")
                     base64_images.append(b64)
-            pages_truncated = pages_total > len(base64_images)
+                    ocr_labels.append(f"HALAMAN {_pg_no + 1}")
+                    # Gambar TEMPELAN (mis. tabel Excel di-paste sbg PNG ke surat -- pola URC):
+                    # di render halaman 72-DPI di atas, tabel spt itu menciut sampai tak
+                    # terbaca dan vision OCR MEMBUANG seluruh tabel diam-diam (terbukti live,
+                    # surat URC 004; menaikkan zoom render pun tidak menolong). Ekstrak
+                    # gambar tempelannya secara NATIVE (resolusi penuh) sbg input OCR
+                    # tambahan. Ambang w>=300 & h>=60: tabel pendek 2-baris (563x88) ikut,
+                    # tanda tangan (~120x78/237x109) tersaring; logo kop (762x86) ikut
+                    # ter-OCR -- tak berbahaya, cuma jadi sebaris teks brand.
+                    _n_emb = 0
+                    for _im in page.get_images(full=True):
+                        try:
+                            _meta = doc.extract_image(_im[0])
+                            if _meta["width"] < 300 or _meta["height"] < 60:
+                                continue
+                            _epix = fitz.Pixmap(doc, _im[0])
+                            if _epix.alpha:
+                                _epix = fitz.Pixmap(_epix, 0)
+                            if _epix.colorspace and _epix.colorspace.n > 3:
+                                _epix = fitz.Pixmap(fitz.csRGB, _epix)
+                            base64_images.append(base64.b64encode(_epix.tobytes("jpeg", 80)).decode("utf-8"))
+                            _n_emb += 1
+                            ocr_labels.append(f"HALAMAN {_pg_no + 1} - GAMBAR TEMPELAN {_n_emb}")
+                        except Exception as _emb_err:
+                            append_error_log("embedded_image_extract_failed", _emb_err,
+                                             {"page": _pg_no + 1, "xref": _im[0]})
+            pages_truncated = pages_total > MAX_OCR_PAGES
                     
             if not pdf_text.strip() and not base64_images:
                 return {"ok": False, "error": "PDF kosong atau tidak memiliki halaman valid."}
@@ -1168,7 +1224,7 @@ ATURAN PENGISIAN PROPERTI JSON (HURUF KECIL):
 - "ketentuan": (String) Syarat Beli (Misal "Beli 7"). JIKA PROMO BERLAKU UNTUK GABUNGAN VARIAN/GRAMASI, WAJIB tambahkan kalimat " Boleh Mix Kelompok dan Gramasi Barang Sama" di akhir teks! (Contoh: "Beli 7 Boleh Mix Kelompok dan Gramasi Barang Sama").
 - "benefit_type": (String) DISC_RP, DISC_PCT, atau BONUS_QTY
 - "benefit": (String) KHUSUS BONUS QTY (Brg fisik), WAJIB TULIS SATUAN (Misal "1 PCS" / "1 Grt"). Jika DISC_RP/PCT biarkan angkanya saja.
-- "syarat_claim": (String) KOSONGKAN SAJA
+- "syarat_claim": (String) Ringkasan SINGKAT bagian syarat/mekanisme klaim di surat (mis. "Mekanisme Kontrol & klaim": batas waktu klaim + dokumen wajib). Jika surat TIDAK punya bagian syarat klaim, isi string kosong "".
 - "keterangan": (String) KOSONGKAN SAJA
 
 SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
@@ -1207,6 +1263,53 @@ FIELD PER OBJECT (huruf kecil, HANYA field ini):
 - "surat_program": (String) nomor surat program.
 - "nama_program": (String) nama program/promo.
 - "periode": (String) periode surat.
+- "syarat_claim": (String) ringkasan SINGKAT bagian syarat/mekanisme klaim di surat
+  (batas waktu klaim + dokumen wajib). Jika surat tidak punya bagian itu, isi "".
+
+SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
+"""
+            # URC (Task 6): sama filosofi dgn Priskila (Task 9) -- LLM CUKUP menyalin
+            # struktur surat, urc_pipeline (matcher deterministik + benefit parser teruji)
+            # yang memetakan ke SKU master. Beda dari Priskila: URC menyatakan benefit
+            # SEKALI di header "Nama Program" (bukan per baris "paket"), dan surat juga
+            # memuat tabel alokasi kuota per RD/bulan (Lampiran) yang SENGAJA DIABAIKAN --
+            # LLM tidak diminta membacanya sama sekali (keputusan user 2026-07-17).
+            elif _is_urc(principle_name):
+                prompt = f"""
+Dokumen promosi ini milik principle: {principle_name.upper()}.
+Tugas Anda HANYA menyalin STRUKTUR surat apa adanya ke ARRAY JSON. JANGAN mencocokkan ke daftar
+barang, JANGAN menebak kode/kelompok. Sistem lain yang akan mencocokkan ke master.
+
+ATURAN MUTLAK:
+1. Kembalikan HANYA JSON array valid (tanpa teks pembuka/penutup, tutup dengan `]`).
+2. SATU object JSON = SATU baris di tabel "Details SKU" (kolom Details SKU + Category).
+   Kalau tabelnya punya 20 baris, keluarkan TEPAT 20 object.
+3. Salin teks sel "Details SKU" APA ADANYA (verbatim) ke field "item_description" --
+   termasuk nama produk dan gramasi (mis. "Lexus Cheese 76g x 24"). JANGAN diringkas,
+   JANGAN diubah ejaan/satuannya.
+4. Field "nama_program" diambil dari baris "Nama Program" di header surat (satu nilai
+   yang SAMA untuk semua object -- surat ini hanya punya SATU program/benefit, dinyatakan
+   sekali di header, BUKAN per baris tabel).
+5. ABAIKAN SELURUH tabel lampiran/alokasi kuota per RD/kota/bulan (biasanya di halaman
+   setelah tabel "Details SKU", berjudul "Lampiran" dengan kolom Area/City/RD/QTY ED per
+   bulan). JANGAN membacanya, JANGAN mengekstrak isinya ke JSON manapun.
+6. DILARANG mengeluarkan field "kelompok", "variant", "gramasi", ATAU "kode_barangs".
+   Field-field itu akan diisi oleh sistem pencocokan, BUKAN oleh Anda.
+
+FIELD PER OBJECT (huruf kecil, HANYA field ini):
+- "nama_program": (String) isi baris "Nama Program" di header surat, verbatim.
+- "item_description": (String) sel "Details SKU" verbatim (lihat aturan 3).
+- "category": (String) sel "Category" pada baris yang sama (mis. "Small pack", "Medium pack").
+- "principle": (String) nama principle.
+- "surat_program": (String) nomor surat di kop surat (baris "No. ..." di bawah judul
+  AUTHORIZATION LETTER, mis. "004/178/URC/MT/VII/25").
+- "periode": (String) isi baris "Periode" di header surat, verbatim.
+- "channel_gtmt": (String) isi baris "Area Program" di header surat, ringkas (mis.
+  "National MTI" -- tanpa kalimat keterangan dalam kurung).
+- "syarat_claim": (String) ringkasan SINGKAT bagian "Mekanisme Kontrol & klaim": batas
+  waktu klaim + dokumen yang wajib dilampirkan (mis. "Klaim maks 45 hari setelah promo
+  berakhir; lampiran: AL, Cover Klaim URC, Faktur Pajak, Rekap Data Penjualan & print out
+  system; nilai dari DBP/RBP exc PPN"). Jika bagian itu TIDAK ADA di surat, isi "".
 
 SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
 """
@@ -1245,7 +1348,7 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                     _doc_hash = ocr_cache_key(file_bytes)
                     _cached_ocr = ocr_cache_get(_doc_hash)
                     ocr_chunks = []
-                    for _pg_idx, b64 in enumerate([] if _cached_ocr is not None else base64_images):
+                    for _pg_idx, (_pg_label, b64) in enumerate([] if _cached_ocr is not None else zip(ocr_labels, base64_images)):
                         ocr_payload = {
                             "model": ocr_model,
                             "messages": [
@@ -1295,10 +1398,10 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                                     await asyncio.sleep(3 * (_attempt + 1))
                                     continue
                         if _pg_text is not None:
-                            ocr_chunks.append(f"--- HALAMAN {_pg_idx+1} ---\n{_pg_text}")
+                            ocr_chunks.append(f"--- {_pg_label} ---\n{_pg_text}")
                         else:
-                            append_error_log("gemini_ocr_page_fail", _last_ocr_err or Exception("unknown"), {"page": _pg_idx + 1})
-                            ocr_chunks.append(f"--- HALAMAN {_pg_idx+1} (OCR GAGAL setelah 3x percobaan) ---")
+                            append_error_log("gemini_ocr_page_fail", _last_ocr_err or Exception("unknown"), {"page": _pg_label})
+                            ocr_chunks.append(f"--- {_pg_label} (OCR GAGAL setelah 3x percobaan) ---")
                     if _cached_ocr is not None:
                         ocr_text = _cached_ocr.get("ocr_text", "")  # cache hit: teks OCR beku, Gemini tak dipanggil
                     else:

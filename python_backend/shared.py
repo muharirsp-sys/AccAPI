@@ -4575,6 +4575,22 @@ def _ensure_dir(p: str):
 
 
 def _apply_native_kelompok(rows_to_check, master_items):
+    # URC GUARD (deterministic matcher branch): the structure-only prompt
+    # (routers/summary.py, URC) emits rows carrying `item_description` -- a
+    # marker field NEVER used by Priskila's rows (`group_item_text`) or the
+    # legacy path, so URC and Priskila rows can never cross-route into each
+    # other's matcher+master by accident. Checked BEFORE the Priskila guard.
+    try:
+        if any(r.get("item_description") for r in rows_to_check):
+            from urc_pipeline import apply_urc_matching
+            return apply_urc_matching(rows_to_check, master_items)
+    except Exception as _urc_err:
+        try:
+            append_error_log("urc_pipeline_fallback", _urc_err,
+                             {"n_rows": len(rows_to_check)})
+        except Exception:
+            pass
+
     # PRISKILA GUARD (deterministic matcher branch): the structure-only prompt
     # (routers/summary.py, Priskila) emits rows carrying `group_item_text` -- that
     # field is the unambiguous marker of the new path (the legacy prompt never
