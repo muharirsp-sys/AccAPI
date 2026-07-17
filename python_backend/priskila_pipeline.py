@@ -135,6 +135,7 @@ def apply_priskila_matching(rows: List[Dict], master: List[Dict], rules: Optiona
                     "benefit_type": benefit_type,
                     "benefit": benefit,
                     "kelompoks": [],       # ordered unique
+                    "kel_variant": {},     # kelompok -> "All Variant" | qualifier title ("Sport")
                     "kel_seen": set(),
                     "skus": [],            # ordered unique master items
                     "sku_seen": set(),
@@ -162,6 +163,14 @@ def apply_priskila_matching(rows: List[Dict], master: List[Dict], rules: Optiona
                 if k and k not in acc["kel_seen"]:
                     acc["kel_seen"].add(k)
                     acc["kelompoks"].append(k)
+                # Mode varian PER KELOMPOK (posisional, spt kolom gramasi):
+                # baris surat ber-qualifier (mis. "Sport") menandai kelompoknya
+                # dgn label itu; baris polos -> "All Variant". Kelompok yg dapat
+                # keduanya jatuh ke "All Variant".
+                if k:
+                    _mode = qualifier.title() if qualifier else "All Variant"
+                    _prev = acc["kel_variant"].get(k)
+                    acc["kel_variant"][k] = _mode if _prev in (None, _mode) else "All Variant"
                 kb = str(it.get("kode_barang", "")).strip()
                 if kb and kb not in acc["sku_seen"]:
                     acc["sku_seen"].add(kb)
@@ -172,12 +181,18 @@ def apply_priskila_matching(rows: List[Dict], master: List[Dict], rules: Optiona
         acc = merged[key]
         skus = acc["skus"]
 
-        # Variant: default 'All Variant'; if EVERY contributing line carried the
-        # same single qualifier (and none was plain), surface that qualifier.
-        if acc["qualifiers"] and not acc["any_plain"] and len(acc["qualifiers"]) == 1:
-            variant = next(iter(acc["qualifiers"])).title()
+        # Variant: label POSISIONAL per kelompok (searah kolom Kelompok/Gramasi).
+        # Kelompok hasil baris ber-qualifier tampil dgn qualifier-nya (mis. "Sport"),
+        # sisanya "All Variant". Semua polos -> collapse jadi satu "All Variant".
+        # (Permintaan user 2026-07-15: baris Regazza EDT Sport harus terbaca "Sport",
+        # bukan "All Variant".)
+        _vparts = [acc["kel_variant"].get(k, "All Variant") for k in acc["kelompoks"]]
+        if any(p != "All Variant" for p in _vparts):
+            variant = " & ".join(_vparts)
+            variant_locked = True
         else:
             variant = "All Variant"
+            variant_locked = False
 
         # Gramasi: unique values in SKU order (renderer re-derives per kelompok,
         # this is the human-visible parse cell).
@@ -202,6 +217,13 @@ def apply_priskila_matching(rows: List[Dict], master: List[Dict], rules: Optiona
             "promo_group_id": acc["promo_group_id"],
             "kelompok": " & ".join(acc["kelompoks"]),
             "variant": variant,
+            # Renderer: label ini FINAL (posisional per kelompok) -- jangan
+            # ditimpa daftar nama varian item (16 nama utk baris campuran).
+            # Peta kelompok->label ikut dikirim supaya renderer bisa menyusun
+            # ulang label mengikuti URUTAN TAMPILAN kelompok-nya sendiri
+            # (renderer mengurutkan kelompok berdasar urutan master, bukan surat).
+            "_priskila_variant_label": variant_locked,
+            "_priskila_kel_variant": dict(acc["kel_variant"]),
             "gramasi": gramasi,
             "ketentuan": ketentuan,
             "benefit_type": acc["benefit_type"],

@@ -528,6 +528,12 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 "benefit_type": r.get("benefit_type",""), "benefit": r.get("benefit",""),
                 "syarat_claim": r.get("syarat_claim",""), "keterangan": r.get("keterangan",""),
                 "variant_display": r.get("variant",""), "kelompok_fallback": r.get("kelompok",""),
+                # Priskila: label variant dari pipeline bersifat FINAL (posisional
+                # per kelompok, mis. "Sport & All Variant") -- jangan ditimpa.
+                # kel_variant = peta kelompok->label utk disusun ulang sesuai
+                # urutan tampilan kelompok renderer (kel_order).
+                "variant_locked": bool(r.get("_priskila_variant_label")),
+                "kel_variant": r.get("_priskila_kel_variant") or {},
             }
             pdf_items[i] = []
 
@@ -696,7 +702,13 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             else:
                 kelompok_display = ""
 
-            if not items_in_row or norm(meta.get("variant_display","")).replace(" ","") == "ALLVARIANT":
+            if meta.get("variant_locked") and kel_order:
+                # Priskila: susun label per kelompok MENGIKUTI urutan tampilan
+                # kel_order (urutan master), bukan urutan surat -- kolom Variant
+                # harus sejajar posisional dgn kolom Kelompok & Gramasi.
+                _kv = meta.get("kel_variant") or {}
+                variant_display = " & ".join(_kv.get(k, "All Variant") for k in kel_order)
+            elif not items_in_row or meta.get("variant_locked") or norm(meta.get("variant_display","")).replace(" ","") == "ALLVARIANT":
                 variant_display = meta.get("variant_display","")
             else:
                 seen_v, v_order = set(), []

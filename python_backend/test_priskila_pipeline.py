@@ -173,3 +173,19 @@ def test_variant_all_variant_for_blagio_edt():
     assert hits
     for r in hits:
         assert r["variant"] == "All Variant", r["variant"]
+
+
+def test_sport_variant_label_positional():
+    """User 2026-07-15: baris ber-kelompok hasil qualifier 'Sport' harus melabeli
+    kolom Variant secara posisional ('Sport & All Variant'), bukan 'All Variant'
+    rata; label ditandai _priskila_variant_label agar renderer tak menimpanya."""
+    out, _ = _pipeline_rows()
+    retail_b4 = [r for r in out if r["channel_gtmt"] == "RETAIL"
+                 and "REGAZZA" in r.get("kelompok", "") and "Sport" in r.get("variant", "")]
+    assert retail_b4, "baris RETAIL Regazza ber-label Sport tidak ditemukan"
+    r = retail_b4[0]
+    parts = [p.strip() for p in r["variant"].split("&")]
+    kels = [k.strip() for k in r["kelompok"].split("&")]
+    assert len(parts) == len(kels)                      # posisional 1:1 dgn kelompok
+    assert parts[kels.index("REGAZZA FM - EDT")] == "Sport"
+    assert r["_priskila_variant_label"] is True
