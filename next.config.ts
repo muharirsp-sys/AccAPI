@@ -3,8 +3,9 @@
  * Caller: `next dev`, `next build`, dan runtime Next.js.
  * Dependensi: NextConfig dan working directory project.
  * Main Functions: `nextConfig`.
- * Side Effects: Mengarahkan root tracing/Turbopack ke folder project aktif dan mencegah route cleanup menyalin data runtime ke standalone.
+ * Side Effects: Mengarahkan root tracing/Turbopack, membungkus build untuk source map Sentry, dan mencegah route cleanup menyalin data runtime ke standalone.
  */
+import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
@@ -99,4 +100,14 @@ const nextConfig: NextConfig = {
   ],
 };
 
-export default nextConfig;
+export default withSentryConfig(nextConfig, {
+  org: "muh-ari-ramadhan",
+  project: "javascript-nextjs",
+  // SENTRY_AUTH_TOKEN hanya digunakan oleh build CI untuk upload source map.
+  silent: !process.env.CI,
+  webpack: {
+    treeshake: {
+      removeDebugLogging: true,
+    },
+  },
+});
