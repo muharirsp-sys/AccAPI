@@ -95,6 +95,7 @@ export type MasterQc = {
     invalidCodeLength: number;
     lowConfidence: number;
     duplicateCodes: number;
+    gramasiNearDup: number;
     issues: QcIssue[];
 };
 
@@ -301,6 +302,40 @@ function buildQc(rows: FormFixRow[], codebook: CodebookEntry[], source: SourceIt
         if (entry.code.length !== codeWidths[entry.level]) issues.push({ severity: "error", code: "CODEBOOK_WIDTH", message: `Kamus ${entry.level} scope ${entry.scope}: kode ${entry.code || "(kosong)"} harus ${codeWidths[entry.level]} digit.` });
     }
     source.forEach((item, index) => (item.reviewNotes ?? []).forEach((message) => issues.push({ severity: "warning", code: "SOURCE_REVIEW", row: index + 1, message })));
+    // Deteksi item nama sama dengan gramasi mirip (beda <30%), mis. 850 vs 825 GR / 75 vs 68 GR.
+    // Perubahan gramasi produk lama sering terjadi; minta konfirmasi supaya bukan duplikat tak sengaja.
+    // Beda jauh (>=30%) dianggap SKU berbeda -> tidak diflag.
+    const gramUnit = /(\d+(?:[.,]\d+)?)\s*(KG|GR|G|ML|LTR|LT|L)\b/;
+    const gramValue = (value: string) => {
+        const m = upper(value).match(gramUnit);
+        if (!m) return null;
+        const n = Number(m[1].replace(",", "."));
+        if (!Number.isFinite(n) || n <= 0) return null;
+        const u = m[2];
+        if (u === "KG") return { n: n * 1000, fam: "W" };
+        if (u === "L" || u === "LTR" || u === "LT") return { n: n * 1000, fam: "V" };
+        if (u === "ML") return { n, fam: "V" };
+        return { n, fam: "W" }; // GR / G
+    };
+    const baseName = (value: string) => upper(value).replace(new RegExp(gramUnit, "g"), " ").replace(/\s+/g, " ").trim();
+    const gramGroups = new Map<string, Array<{ no: number; n: number; fam: string }>>();
+    for (const row of rows) {
+        const g = gramValue(String(row.namaGramasi ?? ""));
+        const base = baseName(String(row.namaBarangPrinciple ?? ""));
+        if (!g || !base) continue;
+        const key = `${normalizeKey(String(row.namaKlp ?? ""))}|${normalizeKey(base)}`;
+        const arr = gramGroups.get(key) ?? [];
+        arr.push({ no: row.no, n: g.n, fam: g.fam });
+        gramGroups.set(key, arr);
+    }
+    for (const arr of gramGroups.values()) {
+        for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) {
+            const a = arr[i], b = arr[j];
+            if (a.fam !== b.fam || a.n === b.n) continue;
+            const diff = Math.abs(a.n - b.n) / Math.max(a.n, b.n);
+            if (diff > 0 && diff < 0.30) issues.push({ severity: "warning", code: "GRAMASI_NEAR_DUP", row: a.no, message: `Baris ${a.no} & ${b.no}: gramasi beda ${Math.round(diff * 100)}% (mirip); konfirmasi apakah ini perubahan gramasi produk yang sama.` });
+        }
+    }
     return {
         errors: issues.filter((issue) => issue.severity === "error").length,
         warnings: issues.filter((issue) => issue.severity === "warning").length,
@@ -308,6 +343,7 @@ function buildQc(rows: FormFixRow[], codebook: CodebookEntry[], source: SourceIt
         invalidCodeLength: issues.filter((issue) => issue.code === "CODE_LENGTH").length,
         lowConfidence: issues.filter((issue) => issue.code === "LOW_CONFIDENCE").length,
         duplicateCodes: issues.filter((issue) => issue.code === "DUPLICATE_CODE").length,
+        gramasiNearDup: issues.filter((issue) => issue.code === "GRAMASI_NEAR_DUP").length,
         issues,
     };
 }

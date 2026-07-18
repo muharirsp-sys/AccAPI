@@ -35,6 +35,7 @@ type ConfirmationBucket = {
 export type ConfirmationState = {
     similarity?: ConfirmationBucket;
     len50?: ConfirmationBucket;
+    gramasi?: ConfirmationBucket;
 };
 
 export type MasterRecord = {
@@ -61,7 +62,7 @@ const CODEBOOK_LEVELS = new Set(["klp", "sub_klp", "sub_klp2", "aroma", "gramasi
 const asItems = (value: unknown) => Array.isArray(value) ? value as SourceItem[] : [];
 const asCodebook = (value: unknown) => Array.isArray(value) ? value as CodebookEntry[] : [];
 const asRows = (value: unknown) => Array.isArray(value) ? value as FormFixRow[] : [];
-const asQc = (value: unknown) => (value && typeof value === "object" ? value : { errors: 0, warnings: 0, over50: 0, invalidCodeLength: 0, lowConfidence: 0, duplicateCodes: 0, issues: [] }) as MasterQc;
+const asQc = (value: unknown) => (value && typeof value === "object" ? value : { errors: 0, warnings: 0, over50: 0, invalidCodeLength: 0, lowConfidence: 0, duplicateCodes: 0, gramasiNearDup: 0, issues: [] }) as MasterQc;
 const asConfirmations = (value: unknown) => value && typeof value === "object" && !Array.isArray(value) ? value as ConfirmationState : {};
 
 function toRecord(row: typeof masterBarang.$inferSelect): MasterRecord {
@@ -74,6 +75,18 @@ function toRecord(row: typeof masterBarang.$inferSelect): MasterRecord {
 
 function hash(value: unknown): string {
     return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+// Bangun ulang bucket konfirmasi bulk (len50 + gramasi mirip) dari hasil generate.
+// Dipakai di setiap jalur yang meregenerasi Form Fix (appendSource, updateCodebook)
+// supaya aturannya satu sumber. similarity di-preserve lewat spread prev.
+function qcConfirmations(prev: ConfirmationState, generated: { revisionHash: string; qc: MasterQc; formRows: FormFixRow[] }): ConfirmationState {
+    const nearDup = generated.qc.issues.filter((issue) => issue.code === "GRAMASI_NEAR_DUP");
+    return {
+        ...prev,
+        len50: generated.qc.over50 ? { revisionHash: generated.revisionHash, fingerprint: hash(generated.formRows.filter((item) => item.len50 > 50).map((item) => [item.no, item.namaWin])), count: 0, complete: false, bulk: true } : undefined,
+        gramasi: nearDup.length ? { revisionHash: generated.revisionHash, fingerprint: hash(nearDup.map((issue) => [issue.row, issue.message])), count: 0, complete: false, bulk: true } : undefined,
+    };
 }
 
 function safeFileName(value: string): string {
@@ -169,10 +182,7 @@ export async function appendSource(input: {
     if (duplicate) throw new Error("File sumber yang sama sudah pernah diupload ke master ini.");
     const generated = generateMasterBarang(current.principleName, current.principleCode, [...current.sourceItems, ...input.extractedItems], current.codebook);
     const nextRevision = current.revision + 1;
-    const confirmations: ConfirmationState = {
-        ...current.confirmationState,
-        len50: generated.qc.over50 ? { revisionHash: generated.revisionHash, fingerprint: hash(generated.formRows.filter((item) => item.len50 > 50).map((item) => [item.no, item.namaWin])), count: 0, complete: false, bulk: true } : undefined,
-    };
+    const confirmations = qcConfirmations(current.confirmationState, generated);
     const root = storageRoot();
     const masterDir = path.resolve(/*turbopackIgnore: true*/ root, input.masterId);
     if (!masterDir.startsWith(`${root}${path.sep}`)) throw new Error("Path storage sumber tidak valid.");
@@ -210,10 +220,7 @@ export async function updateCodebook(masterId: string, codebook: CodebookEntry[]
     }
     const generated = generateMasterBarang(current.principleName, current.principleCode, current.sourceItems, codebook.map((entry) => ({ ...entry, name: String(entry.name || "").trim().toUpperCase(), code: String(entry.code ?? "") })));
     const nextRevision = current.revision + 1;
-    const confirmationState: ConfirmationState = {
-        ...current.confirmationState,
-        len50: generated.qc.over50 ? { revisionHash: generated.revisionHash, fingerprint: hash(generated.formRows.filter((item) => item.len50 > 50).map((item) => [item.no, item.namaWin])), count: 0, complete: false, bulk: true } : undefined,
-    };
+    const confirmationState = qcConfirmations(current.confirmationState, generated);
     await db.transaction(async (tx) => {
         const updated = await tx.update(masterBarang).set({ revision: nextRevision, revisionHash: generated.revisionHash, codebook: generated.codebook, formRows: generated.formRows, qc: generated.qc, confirmationState, status: "review", updatedAt: new Date() })
             .where(and(eq(masterBarang.id, masterId), eq(masterBarang.revision, current.revision))).returning({ id: masterBarang.id });
@@ -223,7 +230,7 @@ export async function updateCodebook(masterId: string, codebook: CodebookEntry[]
     return getMasterDetail(masterId);
 }
 
-export async function confirmMasterOverride(masterId: string, kind: "similarity" | "len50", actorId: string) {
+export async function confirmMasterOverride(masterId: string, kind: "similarity" | "len50" | "gramasi", actorId: string) {
     return db.transaction(async (tx) => {
         const [row] = await tx.select().from(masterBarang).where(eq(masterBarang.id, masterId)).limit(1).for("update");
         if (!row) throw new Error("Master Barang tidak ditemukan.");
@@ -250,6 +257,9 @@ export async function finalizeMaster(masterId: string, actorId: string) {
         if (current.qc.errors > 0) throw new Error(`Masih ada ${current.qc.errors} error QC yang wajib diperbaiki lewat Kamus Kode.`);
         if (current.qc.over50 > 0 && (!current.confirmationState.len50?.complete || current.confirmationState.len50.revisionHash !== current.revisionHash)) {
             throw new Error(`Ada ${current.qc.over50} Nama Win lebih dari 50 karakter; jalankan konfirmasi bulk sampai 3 tahap.`);
+        }
+        if ((current.qc.gramasiNearDup ?? 0) > 0 && (!current.confirmationState.gramasi?.complete || current.confirmationState.gramasi.revisionHash !== current.revisionHash)) {
+            throw new Error(`Ada ${current.qc.gramasiNearDup} pasangan gramasi mirip (<30%); jalankan konfirmasi bulk sampai 3 tahap.`);
         }
         const now = new Date();
         await tx.update(masterBarang).set({ status: "ready", updatedAt: now }).where(eq(masterBarang.id, masterId));

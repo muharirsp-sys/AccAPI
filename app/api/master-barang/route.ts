@@ -124,8 +124,8 @@ export async function POST(request: NextRequest) {
             const codebook = Array.isArray(body.codebook) ? body.codebook as CodebookEntry[] : [];
             return NextResponse.json({ ok: true, master: await updateCodebook(masterId, codebook, actorId) });
         }
-        if (action === "confirm_similarity" || action === "confirm_len50") {
-            const kind = action === "confirm_similarity" ? "similarity" : "len50";
+        if (action === "confirm_similarity" || action === "confirm_len50" || action === "confirm_gramasi") {
+            const kind = action === "confirm_similarity" ? "similarity" : action === "confirm_len50" ? "len50" : "gramasi";
             return NextResponse.json({ ok: true, confirmation: await confirmMasterOverride(masterId, kind, actorId) });
         }
         if (action === "finalize") return NextResponse.json({ ok: true, master: await finalizeMaster(masterId, actorId) });
