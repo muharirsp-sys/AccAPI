@@ -12,6 +12,9 @@
 #   load_lookups(f_format, f_spv) -> LookupTables
 #   process(paste_path, stock_path, lookups) -> dict {per_spv, per_sm, stock, progress, summary}
 #   build_stock_frame(...) / write_report_files(...) -> output XLSX dan Stock tujuh kolom per target.
+#   Alias export Stock Accurate dipetakan eksplisit; assignment stock memakai Principal sumber agar item
+#   tanpa penjualan pada periode laporan tetap ikut ditulis. Retur membalik nilai jual/unit dan menyisakan
+#   nilai bonus/los kosong pada penjualan saat sumber referensinya tidak ada.
 #   latest_sales_date(...) -> tanggal transaksi penjualan terakhir untuk nama file dan subject email.
 #   _normal_text(...) -> normalisasi null-safe termasuk pandas.NA.
 # Side Effects: Baca file sumber dan tulis XLSX hasil ke runtime; tidak mengubah file sumber/tidak kirim email.
@@ -121,13 +124,12 @@ def _prep_acc(acc: pd.DataFrame, lk: LookupTables) -> pd.DataFrame:
         a.loc[:, "CUSTOMER"] = names.where(names.notna() & names.ne(""), fallback)
     elif "CUSTOMER" not in a.columns and "KODE_CUST" in a.columns:
         a.loc[:, "CUSTOMER"] = a["KODE_CUST"]
-    a.loc[:, "QTYBONUS"] = 0
-    if "MARKET" in a.columns:
-        a.loc[:, "JENISMARKET"] = a["MARKET"]   # jenis market (TT/GT/MT) ada di kolom MARKET (AE) Paste Acc
     a = a[a["NO_NOTA"].astype("string").str.strip().fillna("") != ""].copy()
     for c in ["PRINCIPAL", "KODE_SALESMAN", "KODE_CUST", "KODE_BARANG", "SATUAN", "REM", "CUSTOMER"]:
         if c in a:
             a.loc[:, c] = a[c].astype("string").str.strip()
+    jenis_produk = a.get("JENISPRODUK", pd.Series(pd.NA, index=a.index)).astype("string").str.strip()
+    a.loc[:, "JENISPRODUK"] = jenis_produk.map(lk.jp_map).fillna(jenis_produk)
     a.loc[:, "JENIS_TRANSAKSI"] = np.where(
         a["NO_NOTA"].astype("string").str.upper().str.startswith("INV"), PENJ_LABEL, RETUR_LABEL)
     a.loc[:, "NILAI_JUAL"] = _num(a.get("NILAI_JUAL"))
@@ -208,12 +210,18 @@ def build_salesbase(fix: pd.DataFrame, lk: LookupTables) -> pd.DataFrame:
     # Value Retur Termasuk Batal (Exc.PPN): |DPP| utk baris retur
     df["Value Retur Termasuk Batal (Exc.PPN)"] = np.where(~non_retur, df["DPP"].abs(), 0.0)
 
-    # Qty Los / Value Los butuh QTY_REF (tak ada di Paste Acc) -> 0 bila kolom absen
+    # Qty Los / Value Los hanya ada jika sumber benar-benar menyertakan QTY_REF.
+    # Jangan tulis nol sintetis: Power Query mempertahankan blank saat referensi tidak tersedia.
     qref_raw = pd.to_numeric(df["QTY_REF"], errors="coerce") if "QTY_REF" in df.columns else pd.Series(np.nan, index=df.index)
-    has_ref = qref_raw.notna() & (qref_raw != 0)   # tanpa QTY_REF -> Los = 0 (bukan -QTY)
+    has_ref = qref_raw.notna() & (qref_raw != 0)
     qn = _num(df.get("QTY")); hg = _num(df.get("HARGA"))
-    df["Qty Los"] = np.where(non_retur & has_ref, qref_raw.fillna(0) - qn, 0.0)
-    df["Value Los"] = np.where(non_retur & has_ref, (qref_raw.fillna(0) - qn) * hg, 0.0)
+    df["Qty Los"] = pd.Series(pd.NA, index=df.index, dtype="object")
+    df["Value Los"] = pd.Series(pd.NA, index=df.index, dtype="object")
+    los_mask = non_retur & has_ref
+    df.loc[los_mask, "Qty Los"] = (qref_raw[los_mask] - qn[los_mask]).to_numpy()
+    df.loc[los_mask, "Value Los"] = ((qref_raw[los_mask] - qn[los_mask]) * hg[los_mask]).to_numpy()
+    df["QTYBONUS"] = pd.Series(pd.NA, index=df.index, dtype="object")
+    df.loc[~non_retur, ["QTYBONUS", "Qty Los", "Value Los"]] = 0
 
     # Nota Batal (per nota, 1x): baris item-batal, unik per PRINCIPAL+SALESMAN+NO_NOTA+CUST
     keys_nota = ["PRINCIPAL", "KODE_SALESMAN", "NO_NOTA", "KODE_CUST"]
@@ -322,10 +330,18 @@ def _read_stock(stock_path: str) -> pd.DataFrame:
     return df.loc[:, [c for c in df.columns if c != ""]]
 
 
-def build_stock_frame(stock_path: str, sb: pd.DataFrame) -> pd.DataFrame:
-    """Stock -> pertahankan Principal sumber, lalu perkaya assignment dari sales sebagai fallback."""
+def build_stock_frame(stock_path: str, sb: pd.DataFrame, lk: Optional[LookupTables] = None) -> pd.DataFrame:
+    """Normalisasi Stock Accurate dan tetapkan SPV/SM dari Principal sumber sebelum fallback data sales."""
     st = _read_stock(stock_path)
     st.columns = [str(c).strip() for c in st.columns]
+    # Export Accurate menyisipkan kolom spacer. Setelah spacer dibuang, nama headernya tidak sama dengan
+    # isi bisnis: Nama Gudang = kode (GD01), Deskripsi Gudang = nama, Nama Satuan = satuan.
+    if "Nama Gudang" in st.columns:
+        st["Kode Gudang"] = st["Nama Gudang"]
+    if "Deskripsi Gudang" in st.columns:
+        st["Nama Gudang"] = st["Deskripsi Gudang"]
+    if "Nama Satuan" in st.columns and "Satuan" not in st.columns:
+        st["Satuan"] = st["Nama Satuan"]
     kode_col = next((c for c in st.columns if c.lower() in ("kode barang", "kode") or "kode barang" in c.lower()),
                     next((c for c in st.columns if "kode" in c.lower()), st.columns[0]))
     qty_col = next((c for c in st.columns if "kuantitas in pcs" in c.lower()
@@ -351,14 +367,21 @@ def build_stock_frame(stock_path: str, sb: pd.DataFrame) -> pd.DataFrame:
         st["PRINCIPAL"] = source_principal.combine_first(mapped_principal)
     else:
         st["PRINCIPAL"] = mapped_principal
-    for column in ("GOLONGAN", "NAMA_SM"):
-        st[column] = st["KODE_BARANG"].map(product_map[column])
+    source_key = st["PRINCIPAL"].map(_normal_text)
+    principal_to_spv = {
+        _normal_text(key): value for key, value in (lk.principal_to_spv if lk else {}).items()
+    }
+    sm_map = {
+        _normal_text(key): value for key, value in (lk.sm_map if lk else {}).items()
+    }
+    st["GOLONGAN"] = source_key.map(principal_to_spv).combine_first(st["KODE_BARANG"].map(product_map["GOLONGAN"]))
+    st["NAMA_SM"] = source_key.map(sm_map).combine_first(st["KODE_BARANG"].map(product_map["NAMA_SM"]))
     return st
 
 
 def build_stock(stock_path: str, sb: pd.DataFrame, lk: LookupTables) -> dict:
     """Backward-compatible: stock dipisah per SPV untuk caller pipeline lama."""
-    st = build_stock_frame(stock_path, sb)
+    st = build_stock_frame(stock_path, sb, lk)
     return {name: g.copy() for name, g in st.dropna(subset=["GOLONGAN"]).groupby("GOLONGAN")}
 
 
@@ -433,7 +456,7 @@ def build_report_frame(sb: pd.DataFrame) -> pd.DataFrame:
         if c not in df.columns:
             df[c] = np.nan
     for c in ("TANGGAL", "TGL_JT"):
-        df = df.assign(**{c: pd.to_datetime(df[c], errors="coerce").dt.strftime("%Y-%m-%d")})
+        df = df.assign(**{c: pd.to_datetime(df[c], errors="coerce").dt.to_pydatetime()})
     numcols = ["QTY","HARGA","POTONGAN","NILAI_JUAL","JUMLAH","DPP","Harga Sesuai Inputan",
                "Value Los","Qty Los","Value Retur Termasuk Batal (Exc.PPN)","QTY_SATUANKECIL","QTY_REF"]
     # GOLONGAN sudah ada di REPORT_COLUMNS; duplikasi di sini menggeser seluruh nilai setelah kolom itu saat XLSX ditulis.
@@ -606,16 +629,18 @@ def build_fix_from_accurate(penjualan_path: str, retur_path: Optional[str], lk: 
     Menghasilkan tabel setara 'FIX LAP PENJ' (retur sudah minus)."""
     acc = _read_sheet(penjualan_path, RINCIAN_SHEET)
     acc.columns = [str(c).strip() for c in acc.columns]
-    a = _prep_acc(acc, lk)              # JENIS by prefix INV; CUSTOMER=nama (fallback kode); JENISMARKET=MARKET; QTYBONUS=0
+    a = _prep_acc(acc, lk)              # JENIS by prefix INV; CUSTOMER=nama (fallback kode).
     frames = [a]
     if retur_path:
         rr_raw = _read_sheet(retur_path, RINCIAN_SHEET)
         rr_raw.columns = [str(c).strip() for c in rr_raw.columns]
         r = _prep_acc(rr_raw, lk)
         r["JENIS_TRANSAKSI"] = RETUR_LABEL   # file retur = semua RJN
-        for c in ("QTY", "DPP", "NILAI_JUAL", "POTONGAN", "JUMLAH", "NILAI_PAJAK"):
+        for c in ("QTY", "HARGA", "DPP", "NILAI_JUAL", "POTONGAN", "JUMLAH", "NILAI_PAJAK", "QTY_SATUANKECIL"):
             if c in r:
                 r[c] = -_num(r[c])           # nilai mentah positif -> minus
+        if "SATUAN_KECIL" in r:
+            r["SATUAN_KECIL"] = pd.NA       # Power Query mempertahankan satuan kecil retur kosong
         frames.append(r)
     for df in frames:
         df["TANGGAL"] = pd.to_datetime(df.get("TANGGAL"), errors="coerce")

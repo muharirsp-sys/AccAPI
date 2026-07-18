@@ -1,11 +1,12 @@
 # Tujuan: Menjaga output SPV/SM dan parity Power Query Principal tetap benar.
 # Caller: Developer/CI melalui eksekusi Python langsung.
 # Dependensi: pandas, openpyxl, laporan_harian.resolve_report_groups, dan write_report_files.
-# Main Functions: main() memeriksa nama customer, tanggal, Principal, dan kontrak tujuh kolom Stock.
+# Main Functions: main() memeriksa nama customer, tanggal, Principal, parsing Stock Accurate, dan kontrak tujuh kolom Stock.
 # Side Effects: Membuat lalu menghapus workbook sementara.
 
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import openpyxl
 import pandas as pd
@@ -26,6 +27,29 @@ def main() -> None:
     }])
     prepared = laporan._prep_acc(raw_accurate, laporan.LookupTables({}, {}, {}, {}, {}))
     assert prepared.iloc[0]["CUSTOMER"] == "TOKO MAJU"
+    assert pd.isna(prepared.iloc[0].get("QTYBONUS", pd.NA))
+    assert pd.isna(prepared.iloc[0].get("JENISMARKET", pd.NA))
+    mapped_product = laporan._prep_acc(
+        raw_accurate.assign(**{"JENIS PRODUK": "24MNF1"}),
+        laporan.LookupTables({}, {}, {"24MNF1": "MIX NON FOOD"}, {}, {}),
+    )
+    assert mapped_product.iloc[0]["JENISPRODUK"] == "MIX NON FOOD"
+
+    raw_stock = pd.DataFrame([{
+        "Kode Barang": "SKU-TIDAK-TERJUAL", "Nama Barang": "ITEM STOCK", "Nama Gudang": "GD01",
+        "Deskripsi Gudang": "GUDANG UTAMA", "Nama Satuan": "PCS", "Principle": "TEST PRINCIPAL",
+        "Kuantitas In Pcs": 12,
+    }])
+    stock_lookups = laporan.LookupTables(
+        {"TEST PRINCIPAL": "DENNY"}, {}, {}, {"TEST PRINCIPAL": "HENDRIK"}, {},
+    )
+    with patch.object(laporan, "_read_stock", return_value=raw_stock):
+        parsed_stock = laporan.build_stock_frame("ignored.xlsx", pd.DataFrame(columns=["KODE_BARANG"]), stock_lookups)
+    assert parsed_stock.iloc[0]["Kode Gudang"] == "GD01"
+    assert parsed_stock.iloc[0]["Nama Gudang"] == "GUDANG UTAMA"
+    assert parsed_stock.iloc[0]["Satuan"] == "PCS"
+    assert parsed_stock.iloc[0]["GOLONGAN"] == "DENNY"
+    assert parsed_stock.iloc[0]["NAMA_SM"] == "HENDRIK"
 
     dated = pd.DataFrame([
         {"TANGGAL": "2026-07-15", "JENIS_TRANSAKSI": laporan.PENJ_LABEL},

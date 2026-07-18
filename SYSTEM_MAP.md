@@ -46,6 +46,17 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 
 ## Core Logic Flow (Function-Level Flowchart)
 
+### 0. Laporan Harian Sales & Stock
+```
+UI upload laporan harian
+  -> python_backend/routers/laporan_harian.py
+  -> laporan_harian.build_fix_from_accurate() -> build_salesbase()
+  -> laporan_harian.build_stock_frame()
+       -> alias Stock Accurate: Nama Gudang=kode, Deskripsi Gudang=nama, Nama Satuan=satuan
+       -> mapping Principal sumber ke SPV/SM (fallback item penjualan bila Principal kosong)
+  -> laporan_harian.write_report_files() -> XLSX per SPV, SM, dan Principal
+```
+
 ### 1. Autentikasi & Guard Halaman
 ```
 Browser -> /login page

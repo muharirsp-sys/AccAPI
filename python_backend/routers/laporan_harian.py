@@ -1,7 +1,8 @@
 # Tujuan: Endpoint FastAPI untuk proses, penyimpanan, dan unduhan laporan harian per target.
 # Caller: Next.js app/api/laporan-harian/*.
 # Dependensi: shared runtime config, laporan_harian pipeline, resolver target, dan writer XLSX.
-# Main Functions: laporan_harian_process() menentukan tanggal transaksi terakhir, lalu laporan_harian_file().
+# Main Functions: laporan_harian_process() menentukan tanggal transaksi terakhir dan meneruskan lookup ke mapping Stock,
+#                 lalu laporan_harian_file().
 # Side Effects: Membaca upload, menulis workbook runtime, dan mengirim file melalui HTTP.
 from fastapi import APIRouter
 
@@ -83,7 +84,7 @@ async def laporan_harian_process(
         stock_spv = []
         if stock_path:
             try:
-                stock_frame = LH.build_stock_frame(stock_path, sb)
+                stock_frame = LH.build_stock_frame(stock_path, sb, lk)
                 stock_spv = [
                     str(value)
                     for value in stock_frame["GOLONGAN"].dropna().unique()
