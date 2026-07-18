@@ -1,9 +1,9 @@
 # main.py (PATCH v12) — Channel lookup uploader + Internal dataset optional + Required-file guard UI/API
-# Tujuan: FastAPI backend untuk validator, payments restore/SPPD, finance approval, RBAC, proof upload, dan helper export berformat.
+# Tujuan: FastAPI backend untuk validator, Master Barang, payments restore/SPPD, finance approval, RBAC, proof upload, dan helper export berformat.
 # Caller: Next.js dashboard routes, browser uploads, dan service local AccAPI.
 # Dependensi: FastAPI, pandas/openpyxl, payments.py, template DOCX SPPD, Better Auth SQLite DB, filesystem JSON/output, auth utilities.
-# Main Functions: render_sppd_docx, payments_upload, payments_update, payments_clear, parse_lpb_upload, payments_template_download, payments_sppd_settings_get/save/upload, payments_finance_data, payments_finance_proof, payments_finance_update.
-# Side Effects: HTTP response/download, file upload/read/write, payments.json backup/mutation, DOCX/XLSX generation with number/date formatting, audit logging.
+# Main Functions: master_barang_extract, render_sppd_docx, payments_upload/update/clear, SPPD/finance endpoints, dan router domain.
+# Side Effects: HTTP response/download, OCR/AI call, file upload/read/write, payments.json backup/mutation, DOCX/XLSX generation, audit logging.
 # =======================================================================================================
 # You requested:
 # 1) Engine reads program by channel using lookup "Data Channel by SUB" + data penjualan.
@@ -550,6 +550,7 @@ from routers.sppd import router as sppd_router
 from routers.finance import router as finance_router
 from routers.summary import router as summary_router
 from routers.laporan_harian import router as laporan_harian_router
+from routers.master_barang import router as master_barang_router
 
 app.include_router(payments_router)
 app.include_router(sppd_router)
@@ -557,3 +558,4 @@ app.include_router(finance_router)
 app.include_router(validator_router)
 app.include_router(summary_router)
 app.include_router(laporan_harian_router)
+app.include_router(master_barang_router)

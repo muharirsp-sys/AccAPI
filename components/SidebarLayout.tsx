@@ -1,4 +1,4 @@
-// Tujuan: Shell navigasi utama dashboard Smart ERP dengan filtering navigasi berdasarkan RBAC dan satu pintu fitur Accurate.
+// Tujuan: Shell navigasi utama dashboard Smart ERP dengan filtering RBAC, termasuk Master Barang, dan satu pintu fitur Accurate.
 // Caller: `app/(dashboard)/layout.tsx`.
 // Dependensi: `authClient`, pathname Next.js, ikon `lucide-react`, helper RBAC, ThemeSwitcher.
 // Main Functions: `SidebarLayout`, `handleSignOut`.
@@ -6,7 +6,7 @@
 "use client";
 
 import { useState } from "react";
-import { Menu, Home, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ShieldCheck, ClipboardCheck, ReceiptText, Trophy, ClipboardList, History, Send, X } from "lucide-react";
+import { Menu, Home, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ShieldCheck, ClipboardCheck, ReceiptText, Trophy, ClipboardList, History, Send, X, PackageSearch } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { usePathname } from "next/navigation";
 import { canAccessPathWithKeys } from "@/lib/rbac";
@@ -42,6 +42,7 @@ export default function SidebarLayout({ children, permKeys }: { children: React.
         { name: "OFF Program Control", icon: ClipboardCheck, href: "/off-program-control" },
         { name: "Claim Workflow", icon: ReceiptText, href: "/claim-workflow" },
         { name: "History Penjualan", icon: History, href: "/sales-history" },
+        { name: "Master Barang", icon: PackageSearch, href: "/master-barang" },
         { name: "Master Principle", icon: Database, href: "/principles" },
         { name: "User & RBAC", icon: Shield, href: "/admin/users" },
         { name: "Kelola Akses Group", icon: ShieldCheck, href: "/admin/groups" },

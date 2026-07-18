@@ -1,6 +1,6 @@
 /*
  * Tujuan: SUMBER TUNGGAL daftar permission key valid untuk Dynamic RBAC (Fase 2/4 — Opsi A).
- * Caller: lib/rbac/resolve.ts (guard route), UI admin RBAC (P6), registry.test.ts (guard test).
+ * Caller: lib/rbac/resolve.ts (guard route), UI admin RBAC termasuk Master Barang, registry.test.ts.
  * Main Functions: PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey.
  * Side Effects: Tidak ada; pure registry permission in-memory.
  * Dependensi: TIDAK ADA (pure data) — sengaja bebas import agar bisa di-test di mana saja.
@@ -17,6 +17,7 @@ export const PERMISSION_REGISTRY = {
     sppd: ["view", "edit_settings", "upload_excel", "generate", "download"],
     finance: ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"],
     principles: ["view", "upload", "delete"],
+    master_barang: ["view", "create", "upload", "edit", "generate", "export", "manage"],
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
     validator: ["view", "upload", "run", "download", "edit"],
     off_program_control: [

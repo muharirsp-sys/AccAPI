@@ -1,8 +1,8 @@
 /*
- * Tujuan: Skema Drizzle PostgreSQL/libSQL untuk auth, RBAC, modul ERP, Insentif, dan Laporan Harian.
+ * Tujuan: Skema Drizzle PostgreSQL untuk auth, RBAC, modul ERP, Insentif, Laporan Harian, dan Master Barang.
  * Caller: Better Auth adapter, route handler Next.js, script init-db, dan service cache lokal.
  * Dependensi: drizzle-orm/pg-core.
- * Main Functions: Definisi tabel auth, operasional, assignment hierarki, reportRun, dan recipient.
+ * Main Functions: Definisi tabel auth, operasional, assignment hierarki, reportRun, Master Barang, sumber, dan audit.
  * Side Effects: Definisi schema untuk DB read/write PostgreSQL oleh caller.
  */
 import { pgTable, text, integer, bigint, doublePrecision, timestamp, boolean, jsonb, index, uniqueIndex, primaryKey } from "drizzle-orm/pg-core";
@@ -1025,4 +1025,59 @@ export const reportRunRecipient = pgTable("report_run_recipient", {
     error: text("error"),
 }, (t) => ({
     runIdx: index("idx_rrr_run").on(t.runId),
+}));
+
+// --- Master Barang per Principal --- //
+// Satu row master menyimpan snapshot source-item, Kamus Kode, Form Fix, QC, dan state
+// konfirmasi. JSONB dipilih karena UI selalu membaca/mengganti satu revisi master utuh;
+// metadata pencarian/list tetap kolom typed + indexed agar tidak scan JSON.
+export const masterBarang = pgTable("master_barang", {
+    id: text("id").primaryKey(),
+    principleCode: text("principle_code").notNull(),
+    principleName: text("principle_name").notNull(),
+    principleNameNorm: text("principle_name_norm").notNull(),
+    status: text("status").notNull().default("draft"), // blocked_similarity | draft | review | ready
+    revision: integer("revision").notNull().default(1),
+    revisionHash: text("revision_hash").notNull().default(""),
+    sourceItems: jsonb("source_items").notNull().default([]),
+    codebook: jsonb("codebook").notNull().default([]),
+    formRows: jsonb("form_rows").notNull().default([]),
+    qc: jsonb("qc").notNull().default({}),
+    confirmationState: jsonb("confirmation_state").notNull().default({}),
+    legacyFileName: text("legacy_file_name"),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at").notNull(),
+    updatedAt: timestamp("updated_at").notNull(),
+}, (t) => ({
+    principleNormIdx: index("idx_master_barang_principle_norm").on(t.principleNameNorm),
+    updatedIdx: index("idx_master_barang_updated_at").on(t.updatedAt),
+    legacyUnique: uniqueIndex("uidx_master_barang_legacy_file").on(t.legacyFileName),
+}));
+
+export const masterBarangSource = pgTable("master_barang_source", {
+    id: text("id").primaryKey(),
+    masterId: text("master_id").notNull().references(() => masterBarang.id, { onDelete: "cascade" }),
+    fileName: text("file_name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    fileSize: integer("file_size").notNull(),
+    sha256: text("sha256").notNull(),
+    storagePath: text("storage_path").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    extraction: jsonb("extraction").notNull().default({}),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at").notNull(),
+}, (t) => ({
+    masterCreatedIdx: index("idx_master_barang_source_master_created").on(t.masterId, t.createdAt),
+    masterShaUnique: uniqueIndex("uidx_master_barang_source_sha").on(t.masterId, t.sha256),
+}));
+
+export const masterBarangAudit = pgTable("master_barang_audit", {
+    id: text("id").primaryKey(),
+    masterId: text("master_id").notNull().references(() => masterBarang.id, { onDelete: "cascade" }),
+    actorId: text("actor_id").notNull(),
+    action: text("action").notNull(),
+    detail: jsonb("detail").notNull().default({}),
+    createdAt: timestamp("created_at").notNull(),
+}, (t) => ({
+    masterCreatedIdx: index("idx_master_barang_audit_master_created").on(t.masterId, t.createdAt),
 }));

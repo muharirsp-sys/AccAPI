@@ -1,8 +1,8 @@
-// Tujuan: Inisialisasi/migrasi SQLite runtime untuk Better Auth, RBAC, cache master, dan idempotency.
+// Tujuan: Inisialisasi/migrasi SQLite legacy serta bootstrap additive tabel/RBAC Master Barang pada PostgreSQL.
 // Caller: Dockerfile.frontend startup command sebelum `next start`, juga dipanggil lokal via `node scripts/init-db.mjs`.
-// Dependensi: @libsql/client dan filesystem volume DATABASE_URL.
-// Main Functions: create table IF NOT EXISTS, migration ALTER TABLE, role/permission default update.
-// Side Effects: Membuat folder DB dan menjalankan DDL/DML SQLite.
+// Dependensi: @libsql/client, pg, dan filesystem volume DATABASE_URL.
+// Main Functions: create table IF NOT EXISTS, bootstrap Master Barang PostgreSQL, migration ALTER TABLE, role/permission update.
+// Side Effects: Membuat folder DB dan menjalankan DDL/DML additive pada SQLite/PostgreSQL.
 import { createClient } from "@libsql/client";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -30,6 +30,68 @@ function loadEnvFile() {
 loadEnvFile();
 
 const databaseUrl = process.env.DATABASE_URL || "file:/app/data/sqlite.db";
+
+if (!databaseUrl.startsWith("file:")) {
+  const { Pool } = await import("pg");
+  const pool = new Pool({ connectionString: databaseUrl });
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS master_barang (
+      id TEXT PRIMARY KEY, principle_code TEXT NOT NULL, principle_name TEXT NOT NULL,
+      principle_name_norm TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', revision INTEGER NOT NULL DEFAULT 1,
+      revision_hash TEXT NOT NULL DEFAULT '', source_items JSONB NOT NULL DEFAULT '[]'::jsonb,
+      codebook JSONB NOT NULL DEFAULT '[]'::jsonb, form_rows JSONB NOT NULL DEFAULT '[]'::jsonb,
+      qc JSONB NOT NULL DEFAULT '{}'::jsonb, confirmation_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+      legacy_file_name TEXT, created_by TEXT NOT NULL, created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_master_barang_principle_norm ON master_barang(principle_name_norm)`,
+    `CREATE INDEX IF NOT EXISTS idx_master_barang_updated_at ON master_barang(updated_at)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uidx_master_barang_legacy_file ON master_barang(legacy_file_name) WHERE legacy_file_name IS NOT NULL`,
+    `CREATE TABLE IF NOT EXISTS master_barang_source (
+      id TEXT PRIMARY KEY, master_id TEXT NOT NULL REFERENCES master_barang(id) ON DELETE CASCADE,
+      file_name TEXT NOT NULL, mime_type TEXT NOT NULL, file_size INTEGER NOT NULL, sha256 TEXT NOT NULL,
+      storage_path TEXT NOT NULL, source_kind TEXT NOT NULL, extraction JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_by TEXT NOT NULL, created_at TIMESTAMP NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_master_barang_source_master_created ON master_barang_source(master_id, created_at)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uidx_master_barang_source_sha ON master_barang_source(master_id, sha256)`,
+    `CREATE TABLE IF NOT EXISTS master_barang_audit (
+      id TEXT PRIMARY KEY, master_id TEXT NOT NULL REFERENCES master_barang(id) ON DELETE CASCADE,
+      actor_id TEXT NOT NULL, action TEXT NOT NULL, detail JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMP NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_master_barang_audit_master_created ON master_barang_audit(master_id, created_at)`,
+  ];
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const sql of statements) await client.query(sql);
+    const rbacTables = await client.query(
+      "SELECT to_regclass('public.group_permission') AS group_permission, to_regclass('public.access_group') AS access_group",
+    );
+    if (rbacTables.rows[0]?.group_permission && rbacTables.rows[0]?.access_group) {
+      const grants = {
+        Admin: ["view", "create", "upload", "edit", "generate", "export", "manage"],
+        Manager: ["view", "create", "upload", "edit", "generate", "export", "manage"],
+        Staff: ["view", "create", "upload", "edit", "generate", "export"],
+        Finance: ["view"], Viewer: ["view"],
+      };
+      for (const [groupName, actions] of Object.entries(grants)) {
+        for (const action of actions) {
+          await client.query(`INSERT INTO group_permission (group_id, permission_key)
+            SELECT id, $2 FROM access_group WHERE name = $1 ON CONFLICT DO NOTHING`, [groupName, `master_barang.${action}`]);
+        }
+      }
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+    await pool.end();
+  }
+  console.log("PostgreSQL Master Barang tables and preset permissions are ready.");
+  process.exit(0);
+}
 
 // D4 cutover: skema Postgres sudah dibuat via `drizzle-kit push` (50 pgTable) —
 // script ini murni DDL SQLite (@libsql/client tidak paham skema "postgres:").
@@ -1112,6 +1174,7 @@ const PERMISSION_REGISTRY = {
   sppd: ["view", "edit_settings", "upload_excel", "generate", "download"],
   finance: ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"],
   principles: ["view", "upload", "delete"],
+  master_barang: ["view", "create", "upload", "edit", "generate", "export", "manage"],
   summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
   validator: ["view", "upload", "run", "download", "edit"],
   off_program_control: ["view", "create", "update", "approve", "export", "create_batch", "edit_returned_batch", "submit_batch", "sm_approve", "sm_return", "claim_review", "claim_final", "om_approve", "om_cancel", "finance_payment", "submit_refund", "audit_read", "audit_export", "audit_correct", "period_close", "period_unlock", "discount_view", "discount_manage"],
@@ -1124,10 +1187,10 @@ const allPresetKeys = Object.entries(PERMISSION_REGISTRY).flatMap(([m, acts]) =>
 const kk = (mod, acts) => acts.map((a) => `${mod}.${a}`);
 const PRESETS = [
   { name: "Admin", desc: "Akses penuh semua modul", keys: allPresetKeys },
-  { name: "Manager", desc: "Manajer lintas modul", keys: [...kk("dashboard", ["view"]), ...kk("api_wrapper", ["view", "execute"]), ...kk("payments", ["view", "export", "submit", "edit", "update"]), ...kk("sppd", ["view", "generate", "download"]), ...kk("finance", ["view", "approve", "export", "update"]), ...kk("principles", ["view"]), ...kk("summary", ["view", "export"]), ...kk("validator", ["view", "download"]), ...kk("off_program_control", ["view", "update", "approve", "export"]), ...kk("claim_workflow", ["view", "approve", "export"]), ...kk("form_kontrol", ["view", "submit", "manage"]), ...kk("insentif_sales", ["view", "upload_target", "upload_progress"])] },
-  { name: "Finance", desc: "Keuangan / pembayaran", keys: [...kk("dashboard", ["view"]), ...kk("payments", ["view", "export"]), ...kk("sppd", ["view", "download"]), ...kk("finance", ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"]), ...kk("off_program_control", ["view", "update", "finance_payment", "submit_refund"]), ...kk("claim_workflow", ["view", "update", "export"]), ...kk("principles", ["view"]), ...kk("insentif_sales", ["view", "input_support", "manage_payment"])] },
-  { name: "Staff", desc: "Staf input operasional", keys: [...kk("dashboard", ["view"]), ...kk("payments", ["view", "create", "edit", "upload", "submit"]), ...kk("sppd", ["view", "generate", "download"]), ...kk("principles", ["view"]), ...kk("summary", ["view", "upload", "generate", "export", "edit", "update"]), ...kk("validator", ["view", "upload", "run", "download", "edit"]), ...kk("off_program_control", ["view", "create", "update"]), ...kk("claim_workflow", ["view"])] },
-  { name: "Viewer", desc: "Hanya lihat", keys: [...kk("dashboard", ["view"]), ...kk("payments", ["view"]), ...kk("sppd", ["view"]), ...kk("finance", ["view"]), ...kk("off_program_control", ["view"]), ...kk("claim_workflow", ["view"]), ...kk("summary", ["view"]), ...kk("validator", ["view"])] },
+  { name: "Manager", desc: "Manajer lintas modul", keys: [...kk("dashboard", ["view"]), ...kk("api_wrapper", ["view", "execute"]), ...kk("payments", ["view", "export", "submit", "edit", "update"]), ...kk("sppd", ["view", "generate", "download"]), ...kk("finance", ["view", "approve", "export", "update"]), ...kk("principles", ["view"]), ...kk("master_barang", ["view", "create", "upload", "edit", "generate", "export", "manage"]), ...kk("summary", ["view", "export"]), ...kk("validator", ["view", "download"]), ...kk("off_program_control", ["view", "update", "approve", "export"]), ...kk("claim_workflow", ["view", "approve", "export"]), ...kk("form_kontrol", ["view", "submit", "manage"]), ...kk("insentif_sales", ["view", "upload_target", "upload_progress"])] },
+  { name: "Finance", desc: "Keuangan / pembayaran", keys: [...kk("dashboard", ["view"]), ...kk("payments", ["view", "export"]), ...kk("sppd", ["view", "download"]), ...kk("finance", ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"]), ...kk("off_program_control", ["view", "update", "finance_payment", "submit_refund"]), ...kk("claim_workflow", ["view", "update", "export"]), ...kk("principles", ["view"]), ...kk("master_barang", ["view"]), ...kk("insentif_sales", ["view", "input_support", "manage_payment"])] },
+  { name: "Staff", desc: "Staf input operasional", keys: [...kk("dashboard", ["view"]), ...kk("payments", ["view", "create", "edit", "upload", "submit"]), ...kk("sppd", ["view", "generate", "download"]), ...kk("principles", ["view"]), ...kk("master_barang", ["view", "create", "upload", "edit", "generate", "export"]), ...kk("summary", ["view", "upload", "generate", "export", "edit", "update"]), ...kk("validator", ["view", "upload", "run", "download", "edit"]), ...kk("off_program_control", ["view", "create", "update"]), ...kk("claim_workflow", ["view"])] },
+  { name: "Viewer", desc: "Hanya lihat", keys: [...kk("dashboard", ["view"]), ...kk("payments", ["view"]), ...kk("sppd", ["view"]), ...kk("finance", ["view"]), ...kk("off_program_control", ["view"]), ...kk("claim_workflow", ["view"]), ...kk("master_barang", ["view"]), ...kk("summary", ["view"]), ...kk("validator", ["view"])] },
   { name: "SPV", desc: "Supervisor — OPC pengajuan + Form Kontrol tim", keys: [...kk("dashboard", ["view"]), ...kk("off_program_control", ["view", "create", "update", "create_batch", "edit_returned_batch", "submit_batch", "submit_refund", "discount_view", "discount_manage"]), ...kk("form_kontrol", ["view", "submit"]), ...kk("insentif_sales", ["view", "upload_progress"])] },
   { name: "SM", desc: "Sales Manager — approve OPC + Form Kontrol", keys: [...kk("dashboard", ["view"]), ...kk("off_program_control", ["view", "sm_approve", "sm_return", "submit_refund"]), ...kk("form_kontrol", ["view", "submit"]), ...kk("insentif_sales", ["view"])] },
   { name: "Claim", desc: "Tim Klaim — review & klaim", keys: [...kk("dashboard", ["view"]), ...kk("off_program_control", ["view", "export", "claim_review", "claim_final", "audit_read", "audit_export", "audit_correct", "period_close", "create_batch", "submit_batch", "edit_returned_batch"]), ...kk("claim_workflow", ["view", "create", "edit", "update", "submit", "approve", "export"])] },
