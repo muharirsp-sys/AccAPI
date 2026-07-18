@@ -564,19 +564,14 @@ export function parseCussonsMappings(
       rawCaseSize = value(row, sheet.columns, "ISI/CTN");
     let caseSize: number | null = null,
       mappingStatus: MappingStatus = "OK";
-    if (smallestUnit !== "EA")
-      try {
-        if (text(rawCaseSize))
-          caseSize = finite(rawCaseSize, "ISI/CTN", index + 1);
-      } catch {
-        mappingStatus = "UNIT_CONVERSION_ERROR";
-      }
+    try {
+      if (text(rawCaseSize))
+        caseSize = finite(rawCaseSize, "ISI/CTN", index + 1);
+    } catch {
+      // Pack hanya wajib saat baris CSV memakai CS.
+    }
     if (!productCodeInternal) mappingStatus = "INVALID_DATA";
-    else if (
-      (smallestUnit !== "EA" && smallestUnit !== "CS") ||
-      (smallestUnit === "CS" && (caseSize === null || caseSize <= 0))
-    )
-      mappingStatus = "UNIT_CONVERSION_ERROR";
+    else if (!smallestUnit) mappingStatus = "UNIT_CONVERSION_ERROR";
 
     const next = {
         productCodeInternal,
@@ -1003,6 +998,127 @@ export function parseGodrejSales(
   return output;
 }
 
+export function parseCussonsSales(
+  buffer: Buffer | Uint8Array,
+  mappings: CussonsMappings,
+): CanonicalSalesLine[] {
+  if (!buffer?.byteLength) throw new Error("File CSV kosong");
+  const workbook = XLSX.read(buffer, {
+      type: "buffer",
+      raw: true,
+      cellFormula: false,
+    }),
+    sheet = workbook.Sheets[workbook.SheetNames[0]],
+    rows = sheet?.["!ref"]
+      ? (XLSX.utils.sheet_to_json(sheet, {
+          header: 1,
+          raw: true,
+          defval: null,
+          blankrows: false,
+        }) as Row[])
+      : [];
+  if (!rows.length) throw new Error("File CSV kosong");
+  const required = [
+      "INVOICE NO", "CUSTOMER CODE", "ROUTE CODE", "PRODUCT CODE",
+      "PRODUCT DESCRIPTION",
+      "UOM CODE", "SELLING TYPE", "PRODUCT QUANTITY", "UOM LIST PRICE",
+      "GROSS AMOUNT", "DISCOUNT AMOUNT", "AMOUNT AFTER SKU DISC",
+      "CUSTOMER DISCOUNT", "TOTAL TAX AMOUNT", "TOTAL NET AMOUNT",
+      "TAX CODE", "TAX PERCENTAGE 1",
+    ],
+    header = headerIndex(rows, required),
+    output: CanonicalSalesLine[] = [];
+  for (let index = header.rowIndex + 1; index < rows.length; index++) {
+    const row = rows[index],
+      sourceRowNumber = index + 1;
+    if (!text(row.find((cell) => text(cell)))) continue;
+    const read = (name: string) => value(row, header.columns, name),
+      requiredNumber = (name: string) => {
+        const raw = read(name);
+        if (raw == null || text(raw) === "")
+          throw new Error(name + " kosong pada baris " + sourceRowNumber);
+        const parsed = finite(raw, name, sourceRowNumber);
+        if (parsed < 0)
+          throw new Error(name + " negatif pada baris " + sourceRowNumber);
+        return parsed;
+      },
+      rawProduct = requiredText(
+        row, header.columns, "PRODUCT CODE", sourceRowNumber,
+      ),
+      mapped = mappings.products.get(rawProduct),
+      sourceUnit = unit(requiredText(
+        row, header.columns, "UOM CODE", sourceRowNumber,
+      )),
+      quantity = requiredNumber("PRODUCT QUANTITY"),
+      price = requiredNumber("UOM LIST PRICE"),
+      gross = money(requiredNumber("GROSS AMOUNT"), "Gross Amount", sourceRowNumber),
+      skuDiscount = money(requiredNumber("DISCOUNT AMOUNT"), "Discount Amount", sourceRowNumber),
+      afterSku = money(requiredNumber("AMOUNT AFTER SKU DISC"), "Amount After SKU Disc", sourceRowNumber),
+      customerDiscount = money(requiredNumber("CUSTOMER DISCOUNT"), "Customer Discount", sourceRowNumber),
+      dpp = afterSku - customerDiscount,
+      tax = money(requiredNumber("TOTAL TAX AMOUNT"), "Total Tax Amount", sourceRowNumber),
+      net = money(requiredNumber("TOTAL NET AMOUNT"), "Total Net Amount", sourceRowNumber),
+      taxPercentage = requiredNumber("TAX PERCENTAGE 1"),
+      formulaInvalid =
+        Math.abs(gross - money(quantity * price, "Gross Amount", sourceRowNumber)) > 1 ||
+        Math.abs(afterSku - (gross - skuDiscount)) > 1 ||
+        Math.abs(tax - Math.round((dpp * taxPercentage) / 100)) > 1 ||
+        Math.abs(net - (dpp + tax)) > 1 ||
+        text(read("SELLING TYPE")) !== "S" ||
+        text(read("TAX CODE")) !== "PPN_OUTPUT" ||
+        Math.round(taxPercentage * MONEY_SCALE) !== 11 * MONEY_SCALE;
+    let mappingStatus: MappingStatus = mapped?.mappingStatus ?? "UNMAPPED_SKU";
+    if (
+      mappingStatus !== "INVALID_DATA" &&
+      (sourceUnit !== "EA" && sourceUnit !== "CS" ||
+        sourceUnit === "CS" &&
+          (mapped?.caseSize == null || mapped.caseSize <= 0))
+    )
+      mappingStatus = "UNIT_CONVERSION_ERROR";
+    if (formulaInvalid) mappingStatus = "INVALID_DATA";
+    const customer = requiredText(
+        row, header.columns, "CUSTOMER CODE", sourceRowNumber,
+      ),
+      salesman = requiredText(
+        row, header.columns, "ROUTE CODE", sourceRowNumber,
+      ),
+      document = requiredText(
+        row, header.columns, "INVOICE NO", sourceRowNumber,
+      );
+    output.push({
+      source: "PRINCIPAL",
+      sourceRowNumber,
+      documentNumber: document,
+      orderNumber: cussonsOrderNumber(
+        document, "Invoice No", sourceRowNumber,
+      ),
+      transactionDate: "",
+      customerCodeRaw: customer,
+      customerCodeInternal: customer,
+      salesmanCodeRaw: salesman,
+      salesmanCodeInternal: salesman,
+      productCodeRaw: rawProduct,
+      productCodeInternal:
+        !mapped || mapped.mappingStatus === "INVALID_DATA"
+          ? "CUSSONS_INVALID:" + rawProduct
+          : mapped.productCodeInternal,
+      transactionClass: "NORMAL",
+      quantitySmallest:
+        sourceUnit === "CS" && mapped?.caseSize
+          ? quantity * mapped.caseSize
+          : quantity,
+      unitSmallest: mapped?.unit ?? sourceUnit,
+      grossAmount: gross,
+      discountAmount: skuDiscount + customerDiscount,
+      dppAmount: dpp,
+      taxAmount: tax,
+      netAmount: net,
+      mappingStatus,
+    });
+  }
+  return output;
+}
+
 const SHINZUI_DISCOUNT_COLUMNS = [
   "DISC 1 INV",
   "DISC 2A INV",
@@ -1310,6 +1426,13 @@ export function parseMotasaSales(
   return output;
 }
 
+const MAPPING_STATUS_RANK: Record<MappingStatus, number> = {
+  OK: 0,
+  UNMAPPED_SKU: 1,
+  UNIT_CONVERSION_ERROR: 2,
+  INVALID_DATA: 3,
+};
+
 interface Aggregate {
   orderNumber: string;
   productCode: string;
@@ -1349,7 +1472,11 @@ function aggregate(lines: CanonicalSalesLine[]): Map<string, Aggregate> {
     current.tax += line.taxAmount;
     current.net += line.netAmount;
     current.rows.push(line.sourceRowNumber);
-    if (line.mappingStatus !== "OK") current.mappingStatus = line.mappingStatus;
+    if (
+      MAPPING_STATUS_RANK[line.mappingStatus] >
+      MAPPING_STATUS_RANK[current.mappingStatus]
+    )
+      current.mappingStatus = line.mappingStatus;
     if (line.source === "PRINCIPAL" && !line.customerCodeInternal)
       current.warnings.add("UNMAPPED_CUSTOMER");
     if (line.source === "PRINCIPAL" && !line.salesmanCodeInternal)
@@ -1480,6 +1607,22 @@ export function reconcileGodrejSales(
       accurateLines,
     ),
     options,
+  );
+}
+
+export function reconcileCussonsSales(
+  accurateBuffer: Buffer | Uint8Array,
+  cussonsBuffer: Buffer | Uint8Array,
+  mappingBuffer: Buffer | Uint8Array,
+  options: { valueTolerance?: number } = {},
+): ReconciliationOutput {
+  const accurateLines = parseAccurateSales(accurateBuffer, {
+    orderNumber: cussonsOrderNumber,
+  });
+  return reconcileLines(
+    accurateLines,
+    parseCussonsSales(cussonsBuffer, parseCussonsMappings(mappingBuffer)),
+    { valueTolerance: options.valueTolerance ?? 1 },
   );
 }
 
