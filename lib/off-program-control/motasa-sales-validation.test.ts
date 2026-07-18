@@ -177,6 +177,13 @@ const sachet = parseMotasaSales(
 )[0];
 assert.equal(sachet?.quantitySmallest, 72);
 
+const krtWithoutCaseSize = parseMotasaSales(
+  principal(motasaRow({ "KODE PRODUK": "SCH-EMPTY", SATUAN: "KRT" })),
+  schCaseSize,
+)[0];
+assert.equal(krtWithoutCaseSize?.mappingStatus, "UNIT_CONVERSION_ERROR");
+assert.equal(krtWithoutCaseSize?.quantitySmallest, 3);
+
 const cascading = parseMotasaSales(
   principal(motasaRow({ PRD_QTY: 1, SATUAN: "SCH", Harga: 100, "Disc. 1": 10, "Disc. 2": 10, "Disc. 3": 0, "FIX DISC. VALUE": 5 })),
   mappings,

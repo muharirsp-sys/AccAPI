@@ -1164,7 +1164,15 @@ export function parseMotasaSales(
     let mappingStatus: MappingStatus = mapped?.mappingStatus ?? "UNMAPPED_SKU";
     let quantitySmallest = quantity;
     if (mapped?.mappingStatus === "OK") {
-      if (sourceUnit === "KRT") quantitySmallest *= mapped.caseSize!;
+      if (sourceUnit === "KRT") {
+        if (
+          mapped.caseSize === null ||
+          !Number.isFinite(mapped.caseSize) ||
+          mapped.caseSize <= 0
+        )
+          mappingStatus = "UNIT_CONVERSION_ERROR";
+        else quantitySmallest *= mapped.caseSize;
+      }
       else if (sourceUnit !== mapped.unit)
         mappingStatus = "UNIT_CONVERSION_ERROR";
     }
