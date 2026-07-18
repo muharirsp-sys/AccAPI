@@ -73,9 +73,14 @@ function valueAt(row: unknown[], index: number): string {
 
 function addCodebook(target: Map<string, CodebookEntry>, level: CodebookLevel, scope: string, sourceName: string, name: string, code: string) {
     const normalizedName = upper(sourceName || name);
-    if (!normalizedName && !code) return;
+    // Kode legacy hanya "petunjuk": engine menomori ulang. Kode yang bukan 0-4 digit
+    // (mis. kode item 7 digit di kolom golongan RECKITT, atau kode promo alfanumerik
+    // "0B"/"1B" di PRISKILA/HEINZ) tidak bisa dipakai di Win-code numerik -> buang,
+    // biar engine assign otomatis. ponytail: drop-and-renumber, bukan longgarkan schema.
+    const safeCode = /^\d{0,4}$/.test(clean(code)) ? clean(code) : "";
+    if (!normalizedName && !safeCode) return;
     const key = codebookKey(level, scope, normalizedName);
-    if (!target.has(key)) target.set(key, { key, level, scope: upper(scope), sourceName: normalizedName, name: upper(name || sourceName), code: clean(code), generated: false });
+    if (!target.has(key)) target.set(key, { key, level, scope: upper(scope), sourceName: normalizedName, name: upper(name || sourceName), code: safeCode, generated: false });
 }
 
 function principleFromFile(fileName: string): string {
