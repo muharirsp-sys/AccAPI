@@ -272,6 +272,7 @@ function mappingRows(
       raw: true,
       defval: null,
       blankrows: headerRow !== undefined,
+      ...(headerRow === undefined ? {} : { range: 0 }),
     }) as Row[],
     offset = headerRow === undefined ? 0 : headerRow - 1,
     header = headerIndex(
@@ -560,20 +561,20 @@ export function parseCussonsMappings(
         value(row, sheet.columns, "KODE BARANG WIN2"),
       ),
       smallestUnit = unit(value(row, sheet.columns, "SATUAN FIX WIN")),
-      rawCaseSize = value(row, sheet.columns, "ISI/CTN"),
-      normalizedCaseSize = text(rawCaseSize);
+      rawCaseSize = value(row, sheet.columns, "ISI/CTN");
     let caseSize: number | null = null,
       mappingStatus: MappingStatus = "OK";
-    try {
-      if (normalizedCaseSize)
-        caseSize = finite(rawCaseSize, "ISI/CTN", index + 1);
-    } catch {
-      mappingStatus = "UNIT_CONVERSION_ERROR";
-    }
+    if (smallestUnit !== "EA")
+      try {
+        if (text(rawCaseSize))
+          caseSize = finite(rawCaseSize, "ISI/CTN", index + 1);
+      } catch {
+        mappingStatus = "UNIT_CONVERSION_ERROR";
+      }
     if (!productCodeInternal) mappingStatus = "INVALID_DATA";
     else if (
-      !smallestUnit ||
-      (smallestUnit !== "EA" && (caseSize === null || caseSize <= 0))
+      (smallestUnit !== "EA" && smallestUnit !== "CS") ||
+      (smallestUnit === "CS" && (caseSize === null || caseSize <= 0))
     )
       mappingStatus = "UNIT_CONVERSION_ERROR";
 

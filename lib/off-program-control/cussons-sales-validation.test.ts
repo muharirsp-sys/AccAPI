@@ -53,6 +53,16 @@ function formFixAtRow5(rows: unknown[][]): Buffer {
   return formFixAt(5, rows);
 }
 
+function formFixWithEmptyPreamble(rows: unknown[][]): Buffer {
+  const book = XLSX.utils.book_new(),
+    sheet: XLSX.WorkSheet = {};
+  XLSX.utils.sheet_add_aoa(sheet, [mappingHeader, ...rows], { origin: "A5" });
+  sheet["!ref"] = `A5:D${5 + rows.length}`;
+  assert.equal(sheet["!ref"], `A5:D${5 + rows.length}`);
+  XLSX.utils.book_append_sheet(book, sheet, "Form Fix");
+  return XLSX.write(book, { type: "buffer", bookType: "xlsx" });
+}
+
 const tiOptions = { orderNumber: cussonsOrderNumber };
 assert.equal(
   parseAccurateSales(accurateWithRem("TI125970"), tiOptions)[0]?.orderNumber,
@@ -83,7 +93,29 @@ assert.equal(
   "C1284002004510",
 );
 assert.equal(mapped.products.get("100113936")?.caseSize, 12);
-assert.equal(mapped.products.get("100113936")?.mappingStatus, "OK");
+assert.equal(
+  mapped.products.get("100113936")?.mappingStatus,
+  "UNIT_CONVERSION_ERROR",
+);
+const mappedWithoutPreambleCells = parseCussonsMappings(
+  formFixWithEmptyPreamble([["100113936", 12, "CS", "C1284002004510"]]),
+);
+assert.equal(
+  mappedWithoutPreambleCells.products.get("100113936")?.productCodeInternal,
+  "C1284002004510",
+);
+for (const [sku, unsupportedUnit] of [
+  ["100113939", "BOX"],
+  ["100113940", "ARBITRER"],
+]) {
+  const unsupported = parseCussonsMappings(
+    formFixAtRow5([[sku, 12, unsupportedUnit, `INTERNAL-${sku}`]]),
+  );
+  assert.equal(
+    unsupported.products.get(sku)?.mappingStatus,
+    "UNIT_CONVERSION_ERROR",
+  );
+}
 
 for (const headerRow of [4, 6])
   assert.throws(
@@ -128,11 +160,15 @@ assert.equal(
 );
 assert.equal(conflictingTarget.products.get("100113937")?.mappingStatus, "OK");
 
-const eaWithoutPack = parseCussonsMappings(
-  formFixAtRow5([["100113937", null, "EA", "C1284002004511"]]),
+const eaIgnoresPack = parseCussonsMappings(
+  formFixAtRow5([
+    ["100113937", "RUSAK", "EA", "C1284002004511"],
+    ["100113937", 999, "EA", "C1284002004511"],
+  ]),
 );
-assert.equal(eaWithoutPack.products.get("100113937")?.caseSize, null);
-assert.equal(eaWithoutPack.products.get("100113937")?.mappingStatus, "OK");
+assert.equal(eaIgnoresPack.products.size, 1);
+assert.equal(eaIgnoresPack.products.get("100113937")?.caseSize, null);
+assert.equal(eaIgnoresPack.products.get("100113937")?.mappingStatus, "OK");
 
 const csZeroPack = parseCussonsMappings(
   formFixAtRow5([["100113938", 0, "CS", "C1284002004512"]]),
