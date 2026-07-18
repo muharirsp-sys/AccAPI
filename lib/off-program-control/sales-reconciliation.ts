@@ -152,6 +152,18 @@ function godrejOrderNumber(value: unknown, label: string, row: number): string {
     );
   return matches[0];
 }
+export function cussonsOrderNumber(
+  value: unknown,
+  label: string,
+  row: number,
+): string {
+  const matches = text(value).match(/(?<![A-Z0-9])TI\d{6}(?![A-Z0-9])/g) ?? [];
+  if (matches.length !== 1)
+    throw new Error(
+      `${label} baris ${row} harus memiliki tepat satu nomor faktur TI`,
+    );
+  return matches[0];
+}
 function readRows(buffer: Buffer | Uint8Array, sheetName: string): Row[] {
   if (!buffer?.byteLength) throw new Error("File XLSX kosong");
   const workbook = XLSX.read(buffer, {
@@ -236,6 +248,15 @@ interface MotasaProductMapping {
 }
 interface MotasaMappings {
   products: Map<string, MotasaProductMapping>;
+}
+export interface CussonsProductMapping {
+  productCodeInternal: string;
+  unit: string;
+  caseSize: number | null;
+  mappingStatus: MappingStatus;
+}
+export interface CussonsMappings {
+  products: Map<string, CussonsProductMapping>;
 }
 function mappingRows(
   workbook: XLSX.WorkBook,
@@ -513,8 +534,75 @@ export function parseMotasaMappings(
   return { products };
 }
 
+export function parseCussonsMappings(
+  buffer: Buffer | Uint8Array,
+): CussonsMappings {
+  if (!buffer?.byteLength) throw new Error("File mapping kosong");
+  const workbook = XLSX.read(buffer, {
+      type: "buffer",
+      raw: true,
+      cellFormula: false,
+    }),
+    sheet = mappingRows(
+      workbook,
+      "Form Fix",
+      ["KODE PCPL", "ISI/CTN", "SATUAN FIX WIN", "KODE BARANG WIN2"],
+      5,
+    ),
+    products = new Map<string, CussonsProductMapping>();
+
+  for (let index = sheet.start; index < sheet.rows.length; index++) {
+    const row = sheet.rows[index],
+      principal = text(value(row, sheet.columns, "KODE PCPL"));
+    if (!principal || principal === "(BLANK)") continue;
+
+    const productCodeInternal = text(
+        value(row, sheet.columns, "KODE BARANG WIN2"),
+      ),
+      smallestUnit = unit(value(row, sheet.columns, "SATUAN FIX WIN")),
+      rawCaseSize = value(row, sheet.columns, "ISI/CTN"),
+      normalizedCaseSize = text(rawCaseSize);
+    let caseSize: number | null = null,
+      mappingStatus: MappingStatus = "OK";
+    try {
+      if (normalizedCaseSize)
+        caseSize = finite(rawCaseSize, "ISI/CTN", index + 1);
+    } catch {
+      mappingStatus = "UNIT_CONVERSION_ERROR";
+    }
+    if (!productCodeInternal) mappingStatus = "INVALID_DATA";
+    else if (
+      !smallestUnit ||
+      (smallestUnit !== "EA" && (caseSize === null || caseSize <= 0))
+    )
+      mappingStatus = "UNIT_CONVERSION_ERROR";
+
+    const next = {
+        productCodeInternal,
+        unit: smallestUnit,
+        caseSize,
+        mappingStatus,
+      },
+      existing = products.get(principal);
+    if (
+      existing &&
+      (existing.productCodeInternal !== next.productCodeInternal ||
+        existing.unit !== next.unit ||
+        existing.caseSize !== next.caseSize)
+    )
+      products.set(principal, { ...existing, mappingStatus: "INVALID_DATA" });
+    else if (!existing) products.set(principal, next);
+  }
+  return { products };
+}
+
+export type AccurateParseOptions = {
+  orderNumber?: (value: unknown, label: string, row: number) => string;
+};
+
 export function parseAccurateSales(
   buffer: Buffer | Uint8Array,
+  options: AccurateParseOptions = {},
 ): CanonicalSalesLine[] {
   const rows = readRows(buffer, "Rincian Faktur Penjualan");
   const required = [
@@ -570,7 +658,7 @@ export function parseAccurateSales(
         "NO_NOTA",
         sourceRowNumber,
       ),
-      orderNumber: orderNumber(
+      orderNumber: (options.orderNumber ?? orderNumber)(
         value(row, header.columns, "REM"),
         "REM",
         sourceRowNumber,
