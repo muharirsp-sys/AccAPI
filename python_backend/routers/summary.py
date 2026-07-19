@@ -783,36 +783,31 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         # harus tetap tampil sbg baris tersendiri utk audit trail, walau
         # kebetulan isinya sama dgn kelompok lain.
         SPANNABLE_COLS = {1, 2, 3, 4, 8, 9, 10, 11}
-        span_commands = []
-        for col in SPANNABLE_COLS:
-            r = 1  # table_data row 0 = header; data rows start at 1
-            while r < len(table_data):
-                val = row_texts[r - 1][col]
-                r2 = r
-                while r2 + 1 < len(table_data) and row_texts[r2][col] == val:
-                    r2 += 1
-                if val and r2 > r:
-                    span_commands.append(('SPAN', (col, r), (col, r2)))
-                r = r2 + 1
+        # SPAN yang membentang tanpa putus membuat tabel TIDAK BISA dipotong
+        # antar-halaman (ReportLab menolak split di tengah span -> error
+        # "flowable too large" begitu surat punya banyak baris, mis. 25 baris
+        # NATUR). Potong setiap run pada grid global tiap SPAN_SPLIT_EVERY
+        # baris: batas segmen jatuh di baris yang sama utk SEMUA kolom,
+        # sehingga selalu ada titik potong halaman yang bebas span.
+        def _span_cmds(split_every):
+            cmds = []
+            for col in SPANNABLE_COLS:
+                r = 1  # table_data row 0 = header; data rows start at 1
+                while r < len(table_data):
+                    val = row_texts[r - 1][col]
+                    r2 = r
+                    while r2 + 1 < len(table_data) and row_texts[r2][col] == val:
+                        r2 += 1
+                    if val and r2 > r and split_every:
+                        s = r
+                        while s <= r2:
+                            e = min(r2, ((s - 1) // split_every + 1) * split_every)
+                            if e > s:
+                                cmds.append(('SPAN', (col, s), (col, e)))
+                            s = e + 1
+                    r = r2 + 1
+            return cmds
 
-        t = Table(table_data, repeatRows=1, colWidths=cw)
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#9E7C85')), # Match the brownish pink header color
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-            ('TOPPADDING', (0, 0), (-1, 0), 6),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-            ('WORDWRAP', (0, 0), (-1, -1), True),
-        ] + span_commands))
-        elements.append(t)
-        
-        # Add the Footer Signatures
-        elements.append(Spacer(1, 25))
-        
         footer_style_left = styles["Normal"].clone("FooterLeft")
         footer_style_left.fontSize = 8
         footer_style_left.fontName = 'Helvetica-Bold'
@@ -822,27 +817,62 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         footer_style_right.fontName = 'Helvetica-Bold'
         footer_style_right.alignment = TA_RIGHT
 
-        sig_data = [
-            [Paragraph(f"Makassar , {dibuat_date}", footer_style_left), ""],
-            [Paragraph("Diajukan Oleh,", footer_style_left), Paragraph("Disetujui Oleh,", footer_style_right)],
-            [Spacer(1, 40), Spacer(1, 40)], # Space for signature
-            [Paragraph("SM<br/>(.................................................)", footer_style_left), 
-             Paragraph("OPERATIONAL MANAGER<br/>(.................................................)", footer_style_right)]
-        ]
-        
-        # Table takes up full usable width so left is left, right is right
-        sig_table = Table(sig_data, colWidths=[usable/2.0, usable/2.0])
-        sig_table.setStyle(TableStyle([
-            ('ALIGN', (0, 0), (0, -1), 'LEFT'),
-            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 0),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-        ]))
-        
-        elements.append(sig_table)
-        
-        doc.build(elements, onFirstPage=my_canvas, onLaterPages=my_canvas)
+        # ponytail: blok span berisi baris tinggi bisa melebihi tinggi frame ->
+        # ReportLab LayoutError "flowable too large" (terbukti live NATUR 4 surat,
+        # baris UNMATCHED/benefit panjang). Retry dgn span makin pendek; percobaan
+        # terakhir TANPA span (selalu bisa split per baris) -- konten identik,
+        # hanya visual-merge yang dikorbankan.
+        from reportlab.platypus.doctemplate import LayoutError
+        _base_elements = list(elements)
+        for _split_every in (12, 6, 3, 0):
+            elements = list(_base_elements)
+            t = Table(table_data, repeatRows=1, colWidths=cw)
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#9E7C85')), # Match the brownish pink header color
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+                ('TOPPADDING', (0, 0), (-1, 0), 6),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                ('WORDWRAP', (0, 0), (-1, -1), True),
+            ] + _span_cmds(_split_every)))
+            elements.append(t)
+
+            # Add the Footer Signatures
+            elements.append(Spacer(1, 25))
+            sig_data = [
+                [Paragraph(f"Makassar , {dibuat_date}", footer_style_left), ""],
+                [Paragraph("Diajukan Oleh,", footer_style_left), Paragraph("Disetujui Oleh,", footer_style_right)],
+                [Spacer(1, 40), Spacer(1, 40)], # Space for signature
+                [Paragraph("SM<br/>(.................................................)", footer_style_left),
+                 Paragraph("OPERATIONAL MANAGER<br/>(.................................................)", footer_style_right)]
+            ]
+            # Table takes up full usable width so left is left, right is right
+            sig_table = Table(sig_data, colWidths=[usable/2.0, usable/2.0])
+            sig_table.setStyle(TableStyle([
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ]))
+            elements.append(sig_table)
+
+            try:
+                doc.build(elements, onFirstPage=my_canvas, onLaterPages=my_canvas)
+                break
+            except LayoutError:
+                if _split_every == 0:
+                    raise
+                append_error_log("summary_pdf_span_retry",
+                                 Exception(f"LayoutError, retry span<={_split_every//2 or 'tanpa span'}"),
+                                 {"rows": len(table_data) - 1})
+                # doc yang gagal build tidak bisa dipakai ulang -> buat baru
+                doc = SimpleDocTemplate(form_path, pagesize=landscape(A4), rightMargin=0.5*cm,
+                                        leftMargin=0.5*cm, topMargin=2.2*cm, bottomMargin=0.5*cm)
 
         dataset_path = os.path.join(out_dir, f"{file_id}_Dataset_Diskon_With_Channel.xlsx")
         wb2 = openpyxl.Workbook()
@@ -1341,7 +1371,9 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json"
                     }
-                    ocr_model = os.getenv("SUMOPOD_OCR_MODEL", "gemini/gemini-2.5-flash")
+                    # gemini-2.5-flash DITARIK provider (404 "no longer available to new
+                    # users", terbukti live 2026-07-19) -> default ke generasi flash terbaru.
+                    ocr_model = os.getenv("SUMOPOD_OCR_MODEL", "gemini/gemini-3.5-flash")
                     # FASE 1: OCR cache by content hash -- surat byte-identik TIDAK di-OCR ulang
                     # (fondasi determinisme: run ke-2 ambil teks beku, Gemini 0 panggilan).
                     from ocr_cache import ocr_cache_key, ocr_cache_get, ocr_cache_put
@@ -1406,7 +1438,24 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                         ocr_text = _cached_ocr.get("ocr_text", "")  # cache hit: teks OCR beku, Gemini tak dipanggil
                     else:
                         ocr_text = "\n\n".join(ocr_chunks)
-                        ocr_cache_put(_doc_hash, getattr(pdf, "filename", "") or "", ocr_text, pages_total, len(base64_images))
+                        # Jangan BEKUKAN kegagalan: kalau tak ada satu pun halaman yang
+                        # sukses, cache-nya akan membuat run berikutnya "sukses kosong"
+                        # selamanya tanpa cara tahu kenapa.
+                        _ocr_ok = [c for c in ocr_chunks if "OCR GAGAL" not in c]
+                        if _ocr_ok or not ocr_chunks:
+                            ocr_cache_put(_doc_hash, getattr(pdf, "filename", "") or "", ocr_text, pages_total, len(base64_images))
+                        elif not pdf_text.strip():
+                            # Semua halaman gagal OCR & PDF tak punya teks native -> tidak ada
+                            # apa pun untuk di-parse. Berhenti SEBELUM memanggil LLM: dulu
+                            # tetap lanjut & retry parse 6x atas teks kosong (biaya terbakar
+                            # tanpa hasil, terbukti live 2026-07-19).
+                            append_error_log("ocr_all_pages_failed", Exception("semua halaman gagal OCR"),
+                                             {"file": getattr(pdf, "filename", ""), "pages": len(base64_images),
+                                              "model": ocr_model, "user": user})
+                            return {"ok": False, "error": (
+                                f"OCR gagal untuk SEMUA {len(base64_images)} halaman/gambar (model {ocr_model}) "
+                                "dan PDF tidak punya teks native. Cek ketersediaan model OCR / kunci API "
+                                "(lihat data/error_log.jsonl tag gemini_ocr_error). Tidak ada baris yang di-generate.")}
                     combined_text = pdf_text + "\n\n=== HASIL OCR DARI GAMBAR ===\n\n" + ocr_text
                     if pages_truncated:
                         combined_text += f"\n\n[PERINGATAN: surat {pages_total} halaman, hanya {len(base64_images)} halaman pertama diproses. Naikkan SUMMARY_MAX_OCR_PAGES.]"
