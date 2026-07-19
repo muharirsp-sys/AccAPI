@@ -117,9 +117,11 @@ export const FORM_FIX_COLUMNS: Array<{ key: keyof FormFixRow; label: string }> =
     { key: "satuanFixWin", label: "SATUAN Fix Win" },
     { key: "namaKelompokWin", label: "Nama Kelompok Win" },
     { key: "kodeKelompokWin", label: "Kode Kelompok Win" },
-    { key: "kodeBarangWin2", label: "Kode BARANG Win2" },
+    // Label ekspor = "Kode Barang"/"Nama Barang" (sama seperti master legacy) supaya file
+    // hasil ekspor langsung terbaca parser /summary. "Kode BARANG Win2"/"Nama Win" = nama lama.
+    { key: "kodeBarangWin2", label: "Kode Barang" },
     { key: "len15", label: "LEN 15" },
-    { key: "namaWin", label: "Nama Win" },
+    { key: "namaWin", label: "Nama Barang" },
     { key: "len50", label: "LEN 50" },
     { key: "namaPcpl", label: "Nama Pcpl" },
     { key: "kodePcplWin", label: "kode  2 Digit (hrf+No)" },

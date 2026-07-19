@@ -30,7 +30,7 @@ type Tab = "form" | "source" | "codebook" | "qc";
 const FORM_COLUMNS: Array<[string, string]> = [
     ["no", "NO"], ["kodePcpl", "Kode Pcpl"], ["kelompokPcpl", "Klp Brg Pcpl"], ["namaBarangPrinciple", "Nama Barang Principle"],
     ["isiCtn", "ISI/CTN"], ["ketTambahan", "Ket. Tambahan / Pembantu"], ["satuanFixWin", "SATUAN Fix Win"], ["namaKelompokWin", "Nama Kelompok Win"],
-    ["kodeKelompokWin", "Kode Kelompok Win"], ["kodeBarangWin2", "Kode BARANG Win2"], ["len15", "LEN 15"], ["namaWin", "Nama Win"], ["len50", "LEN 50"],
+    ["kodeKelompokWin", "Kode Kelompok Win"], ["kodeBarangWin2", "Kode Barang"], ["len15", "LEN 15"], ["namaWin", "Nama Barang"], ["len50", "LEN 50"],
     ["namaPcpl", "Nama Pcpl"], ["kodePcplWin", "Kode Principle Win"], ["namaKlp", "Nama KLP"], ["kodeKlp", "Kode KLP"],
     ["namaSubKlp", "Nama Sub KLP"], ["kodeSubKlp", "Kode Sub KLP"], ["namaSubKlp2", "Nama Sub KLP2"], ["kodeSubKlp2", "Kode Sub KLP2"],
     ["namaAroma", "Nama Aroma/Rasa"], ["kodeAroma", "Kode Aroma"], ["namaGramasi", "Nama Gramasi / Pack"], ["kodeGramasi", "Kode Gramasi"],

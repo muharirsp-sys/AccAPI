@@ -34,7 +34,8 @@ function findHeader(matrix: unknown[][]) {
         const keys = matrix[row].map(headerKey);
         const hasName = keys.some((key) => ["NAMABARANGPRINCIPLE", "NAMABARANG", "NAMAPRODUK", "PRODUK", "NAMAPADAPRINCIPLE", "PENULISANNAMABARANG", "NAMAWIN"].includes(key));
         if (!hasName) continue;
-        const score = ["KODEPCPL", "ISICTN", "NAMAPCPL", "KODEBARANGWIN2", "NAMAKLP", "GRAMASI", "VARIANT"]
+        // "KODEBARANG" cocok utk label baru sekaligus ekspor lama ("KODEBARANGWIN2") via includes().
+        const score = ["KODEPCPL", "ISICTN", "NAMAPCPL", "KODEBARANG", "NAMAKLP", "GRAMASI", "VARIANT"]
             .filter((needle) => keys.some((key) => key === needle || key.includes(needle))).length;
         if (!best || score > best.score) best = { row, score };
     }
