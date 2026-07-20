@@ -44,4 +44,25 @@ assert.deepStrictEqual(
     "kirim-ulang harus stabil (baris & kode identik)",
 );
 
-console.log("OK — dedup: kode+isi bila ada kode, kunci nama bila kode kosong, kirim-ulang stabil.");
+// Ekspor master Win: satu KDPRC bisa dipakai dua KDBRG yang memang beda item (baris bonus "B>").
+// Kode Win harus menang sebagai kunci, kalau tidak baris bonusnya hilang diam-diam.
+const winPair = generateMasterBarang("KNF", "K1", [
+    { kodeWin: "K1470003006510", kodePcpl: "FG11246.218.0065.P", namaBarang: "KNF SASHA PASTA WHITENING 65GR X 48 TUBE", isiCtn: "48" },
+    { kodeWin: "K1470003006510B", kodePcpl: "FG11246.218.0065.P", namaBarang: "B> KNF SASHA PASTA WHITENING 65GR X 48 TUBE", isiCtn: "48" },
+]);
+assert.strictEqual(winPair.formRows.length, 2, `KDBRG beda harus tetap 2 baris, dapat ${winPair.formRows.length}`);
+
+// KLP kosong pada item ber-kode Win = memang kosong; jangan ditebak dari 2 kata pertama nama
+// (dulu jadi "KNF OVALE", nama principal ikut terbawa jadi KLP).
+// Dua nama tanpa kata bersama di bawah satu kode KLP -> pembedah menyimpulkan KLP memang kosong.
+const klpKosong = generateMasterBarang("KNF", "K1", [
+    { kodeWin: "K1350001010010", namaBarang: "KNF OVALE MICELLAR WATER BRIGHTENING 100ML X 36 BTL", isiCtn: "36" },
+    { kodeWin: "K1350002010010", namaBarang: "KNF RESIK V GODOKAN SIRIH 100ML X 36 BTL", isiCtn: "36" },
+]);
+assert.deepStrictEqual(
+    klpKosong.formRows.map((r) => r.namaKlp),
+    ["", ""],
+    `KLP harus kosong, dapat ${JSON.stringify(klpKosong.formRows.map((r) => r.namaKlp))}`,
+);
+
+console.log("OK — dedup: kode+isi bila ada kode, kunci nama bila kode kosong, kode Win menang, kirim-ulang stabil.");

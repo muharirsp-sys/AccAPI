@@ -12,6 +12,9 @@ export type SourceItem = {
     sourceRow?: number;
     sourcePage?: number;
     kodePcpl?: string;
+    // Kode Barang Win dari ekspor master lama; dipisah dari kodePcpl karena satu baris bisa punya
+    // keduanya (KDBRG + KDPRC). Ini yang dibedah jadi struktur KLP/Sub/Aroma.
+    kodeWin?: string;
     kelompokPcpl?: string;
     namaBarang: string;
     isiCtn?: string | number;
@@ -238,6 +241,9 @@ function inferKemasan(item: SourceItem): string {
 function inferKlp(item: SourceItem): string {
     if (clean(item.klp)) return upper(item.klp);
     if (clean(item.kelompokPcpl)) return upper(item.kelompokPcpl);
+    // Item ber-kode Win sudah dibedah dari kodenya; KLP kosong berarti memang kosong. Tebakan
+    // "2 kata pertama" di bawah malah menaruh nama principal jadi KLP ("KNF OVALE").
+    if (isWinCode(item.kodeWin || item.kodePcpl || "")) return "";
     const name = upper(item.namaBarang);
     const category = ["SABUN", "LOTION", "SHAMPOO", "DETERGENT", "KECAP", "SAMBAL", "MINUMAN", "MAKANAN", "PARFUM", "TISSUE"]
         .find((word) => name.includes(word));
@@ -262,7 +268,9 @@ function canonicalSource(items: SourceItem[]): SourceItem[] {
             // Tanpa kode (banyak master hasil OCR), jatuh ke kunci nama lama.
             // Gramasi dinormalkan di kunci ("70 GR" == "70GR"): penyelaras menulis format donor
             // ke item tersimpan, jadi kiriman ulang item yang sama harus tetap terdeteksi kembar.
-            const kode = upper(item.kodePcpl);
+            // Kode Win menang atas kode principal: satu KDPRC bisa punya dua KDBRG yang memang
+            // beda item (mis. "...010" vs "...010B" untuk baris bonus "B>"), jangan dilebur.
+            const kode = upper(item.kodeWin) || upper(item.kodePcpl);
             const gram = inferGramasi(item);
             const key = kode
                 ? `${kode}|${clean(item.isiCtn)}`
@@ -277,10 +285,11 @@ function canonicalSource(items: SourceItem[]): SourceItem[] {
 // dibedah dulu jadi kolom struktur. Hanya kolom KOSONG yang diisi — struktur yang sudah ada di
 // sumber tetap menang, karena bisa jadi hasil kurasi manual.
 function enrichFromWinCode(items: SourceItem[], namePcpl: string): SourceItem[] {
-    const targets = items.filter((item) => isWinCode(item.kodePcpl ?? ""));
+    const winCode = (item: SourceItem) => item.kodeWin || item.kodePcpl || "";
+    const targets = items.filter((item) => isWinCode(winCode(item)));
     if (!targets.length) return items;
     // Dibedah sekaligus satu batch: batas kata KLP/aroma hanya bisa disimpulkan lintas baris.
-    const parsed = breakdownByCode(targets.map((item) => ({ kode: item.kodePcpl ?? "", nama: item.namaBarang })), namePcpl);
+    const parsed = breakdownByCode(targets.map((item) => ({ kode: winCode(item), nama: item.namaBarang })), namePcpl);
     const byItem = new Map(targets.map((item, i) => [item, parsed[i]]));
     return items.map((item) => {
         const hit = byItem.get(item);

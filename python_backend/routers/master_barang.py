@@ -35,11 +35,14 @@ def _header_key(value: Any) -> str:
 
 def _find_header(rows: List[List[Any]]) -> Tuple[int, Dict[str, int]]:
     aliases = {
-        "kodePcpl": {"KODEPCPL", "KODEPRINCIPLE", "ITEMCODE", "KODEBARANG", "SKU"},
+        # Ekspor master Win punya DUA kode: KDBRG (kode Win, bisa dibedah jadi struktur) dan
+        # KDPRC (kode principal). Dipisah supaya keduanya selamat; kodeWin yang dibedah engine.
+        "kodeWin": {"KDBRG", "KODEBARANGWIN"},
+        "kodePcpl": {"KODEPCPL", "KODEPRINCIPLE", "ITEMCODE", "KODEBARANG", "SKU", "KDPRC"},
         "kelompokPcpl": {"KLPBRGPCPL", "KELOMPOKPCPL", "KATEGORI", "CATEGORY"},
-        "namaBarang": {"NAMABARANGPRINCIPLE", "NAMABARANG", "NAMAPRODUK", "PRODUK", "PRODUCT", "ITEMDESCRIPTION", "DESCRIPTION"},
-        "isiCtn": {"ISICTN", "ISIKARTON", "PACKSIZE", "CTN", "QTYCTN"},
-        "satuan": {"SATUANFIXWIN", "SATUAN", "UOM", "UNIT"},
+        "namaBarang": {"NAMABARANGPRINCIPLE", "NAMABARANG", "NAMAPRODUK", "PRODUK", "PRODUCT", "ITEMDESCRIPTION", "DESCRIPTION", "NAMABRG"},
+        "isiCtn": {"ISICTN", "ISIKARTON", "PACKSIZE", "CTN", "QTYCTN", "ISI"},
+        "satuan": {"SATUANFIXWIN", "SATUAN", "UOM", "UNIT", "SAT"},
         "gramasi": {"NAMAGRAMASIATAUJUMLAHPACKPERCTN", "GRAMASI", "SIZE", "WEIGHT"},
         "kemasan": {"NAMAJENISKEMASAN", "KEMASAN", "PACKAGING"},
         "aroma": {"NAMAAROMARASA", "AROMARASA", "VARIANT", "VARIAN"},
@@ -92,7 +95,7 @@ def _rows_to_items(rows: List[List[Any]], header_no: int, mapping: Dict[str, int
             continue
         inferred = _infer_fields(name)
         items.append({
-            "sourceRow": row_no, "kodePcpl": val("kodePcpl"), "kelompokPcpl": val("kelompokPcpl"),
+            "sourceRow": row_no, "kodeWin": val("kodeWin"), "kodePcpl": val("kodePcpl"), "kelompokPcpl": val("kelompokPcpl"),
             "namaBarang": name, "isiCtn": val("isiCtn") or inferred["isiCtn"], "satuan": val("satuan"),
             "gramasi": val("gramasi") or inferred["gramasi"], "kemasan": val("kemasan") or inferred["kemasan"],
             "aroma": val("aroma"), "confidence": 0.98, "reviewNotes": [],
