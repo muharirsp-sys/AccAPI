@@ -6,6 +6,7 @@
  * Side Effects: Tidak ada pada flow normal; self-check hanya menulis hasil ke stdout.
  */
 import { createHash } from "node:crypto";
+import { breakdownByCode, isWinCode } from "./breakdown";
 
 export type SourceItem = {
     sourceRow?: number;
@@ -254,14 +255,52 @@ function canonicalSource(items: SourceItem[]): SourceItem[] {
     return items.map((item) => ({ ...item, namaBarang: upper(item.namaBarang) }))
         .filter((item) => {
             if (!item.namaBarang) return false;
+            // Keputusan user 2026-07-20: bila Kode Barang principal ada, dedup pakai kode+isi saja.
+            // Nama sengaja DIBUANG dari kunci — hasil ekstraksi legacy sering kotor untuk baris yang
+            // sama (ABC PI: "ABC BV NU ..." vs "ABC> BV NU ...") sehingga kembar lolos. Isi tetap
+            // ikut karena satu kode principal bisa punya kemasan berbeda (FON: isi 12 vs 120).
+            // Tanpa kode (banyak master hasil OCR), jatuh ke kunci nama lama.
             // Gramasi dinormalkan di kunci ("70 GR" == "70GR"): penyelaras menulis format donor
             // ke item tersimpan, jadi kiriman ulang item yang sama harus tetap terdeteksi kembar.
+            const kode = upper(item.kodePcpl);
             const gram = inferGramasi(item);
-            const key = `${upper(item.kodePcpl)}|${item.namaBarang}|${clean(item.isiCtn)}|${normGram(gram) || gram}`;
+            const key = kode
+                ? `${kode}|${clean(item.isiCtn)}`
+                : `|${item.namaBarang}|${clean(item.isiCtn)}|${normGram(gram) || gram}`;
             if (seen.has(key)) return false;
             seen.add(key);
             return true;
         });
+}
+
+// Item yang datang cuma sebagai "Kode Barang Win + Nama Win" (mis. master hasil ekspor To Win)
+// dibedah dulu jadi kolom struktur. Hanya kolom KOSONG yang diisi — struktur yang sudah ada di
+// sumber tetap menang, karena bisa jadi hasil kurasi manual.
+function enrichFromWinCode(items: SourceItem[], namePcpl: string): SourceItem[] {
+    const targets = items.filter((item) => isWinCode(item.kodePcpl ?? ""));
+    if (!targets.length) return items;
+    // Dibedah sekaligus satu batch: batas kata KLP/aroma hanya bisa disimpulkan lintas baris.
+    const parsed = breakdownByCode(targets.map((item) => ({ kode: item.kodePcpl ?? "", nama: item.namaBarang })), namePcpl);
+    const byItem = new Map(targets.map((item, i) => [item, parsed[i]]));
+    return items.map((item) => {
+        const hit = byItem.get(item);
+        if (!hit) return item;
+        // Label struktur (klp/sub/sub2/aroma) = SATU PAKET. Menambal sebagian saja membuat dua
+        // pembagian berbeda atas nama yang sama bercampur dan kata jadi dobel
+        // ("KECAP MANIS" + aroma "MANIS PCH" -> "KECAP MANIS MANIS PCH").
+        const adaLabel = [item.klp, item.subKlp, item.subKlp2, item.aroma].some((value) => clean(value));
+        return {
+            ...item,
+            klp: adaLabel ? item.klp : hit.klp,
+            subKlp: adaLabel ? item.subKlp : hit.subKlp,
+            subKlp2: adaLabel ? item.subKlp2 : hit.subKlp2,
+            aroma: adaLabel ? item.aroma : hit.aroma,
+            gramasi: clean(item.gramasi) || hit.gramasi,
+            isiCtn: clean(item.isiCtn) || hit.isiCtn,
+            kemasan: clean(item.kemasan) || hit.kemasan,
+            reviewNotes: hit.notes.length ? [...(item.reviewNotes ?? []), ...hit.notes] : item.reviewNotes,
+        };
+    });
 }
 
 export function codebookKey(level: CodebookLevel, scope: string, sourceName: string): string {
@@ -430,7 +469,7 @@ export function generateMasterBarang(principleName: string, principleCode: strin
     const codePcpl = upper(principleCode);
     if (!namePcpl) throw new Error("Nama Principle wajib diisi.");
     if (!/^[A-Z0-9]{2}$/.test(codePcpl)) throw new Error("Kode Principle Win wajib tepat 2 karakter huruf/angka.");
-    const sourceItems = alignSourceItems(canonicalSource(incoming));
+    const sourceItems = alignSourceItems(enrichFromWinCode(canonicalSource(incoming), namePcpl));
     const assigner = makeAssigner(seedCodebook);
     const formRows: FormFixRow[] = sourceItems.map((item, index) => {
         const klpSource = inferKlp(item);
