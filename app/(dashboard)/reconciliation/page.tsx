@@ -19,7 +19,7 @@ import type {
   ReconciliationStatus,
 } from "@/lib/off-program-control/sales-reconciliation";
 
-type Principal = "KINO" | "GODREJ" | "SHINZUI" | "MOTASA";
+type Principal = "KINO" | "GODREJ" | "SHINZUI" | "MOTASA" | "CUSSONS";
 type StatusFilter = "ALL" | "MATCH_ONLY" | "ISSUES_ONLY" | ReconciliationStatus;
 
 const statuses: ReconciliationStatus[] = [
@@ -392,6 +392,7 @@ export default function ReconciliationPage() {
               <option value="GODREJ">GODREJ</option>
               <option value="SHINZUI">SHINZUI</option>
               <option value="MOTASA">MOTASA</option>
+              <option value="CUSSONS">CUSSONS</option>
             </select>
           </div>
         </div>
@@ -408,10 +409,16 @@ export default function ReconciliationPage() {
         <div className="grid gap-6 p-6 md:grid-cols-2 md:p-8">
           {(["accurate", "principal"] as const).map((kind) => {
             const file = kind === "accurate" ? accurateFile : principalFile;
+            const isCussonsPrincipal =
+              kind === "principal" && principal === "CUSSONS";
             const label =
               kind === "accurate"
                 ? "Rincian Faktur Penjualan (Accurate)"
-                : `Sales Detail ${principal}`;
+                : `${isCussonsPrincipal ? "Detail" : "Sales Detail"} ${principal}`;
+            const accept = isCussonsPrincipal
+              ? ".csv,text/csv"
+              : ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            const helpText = `Format ${isCussonsPrincipal ? ".csv" : ".xlsx"}, maksimal 10 MB`;
             const cardClass =
               kind === "accurate"
                 ? "border-indigo-500/20 bg-indigo-500/10"
@@ -425,13 +432,13 @@ export default function ReconciliationPage() {
                   {label}
                 </label>
                 <p className="mb-4 mt-1 text-xs text-slate-400">
-                  Format .xlsx, maksimal 10 MB
+                  {helpText}
                 </p>
                 <input
                   key={`${kind}-${principal}`}
                   id={`${kind}-file`}
                   type="file"
-                  accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  accept={accept}
                   disabled={isRunning}
                   onChange={(event) =>
                     changeFile(kind, event.target.files?.[0] ?? null)

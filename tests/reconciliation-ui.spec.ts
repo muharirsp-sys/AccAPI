@@ -8,6 +8,11 @@ const xlsx = (name: string) => ({
   buffer: Buffer.from("PK\u0003\u0004"),
 });
 
+const csv = (name: string) => ({
+  name,
+  mimeType: "text/csv",
+  buffer: Buffer.from("Invoice Number,Product Code\nTI125941,8710908712345"),
+});
 const summary = {
   MATCH: 1,
   QTY_MISMATCH: 0,
@@ -265,10 +270,59 @@ test("shows the progressive reconciliation workflow", async ({
     }),
   ).toBeVisible();
 
+  await page.reload();
+  await expect(
+    page.getByLabel("Prinsipal").locator('option[value="CUSSONS"]'),
+  ).toHaveText("CUSSONS");
+  await page.getByLabel("Prinsipal").selectOption("CUSSONS");
+  const cussonsFile = page.getByLabel("Detail CUSSONS");
+  await expect(cussonsFile).toHaveAttribute("accept", /\.csv/);
+  await expect(
+    page.getByRole("button", { name: "Jalankan rekonsiliasi" }),
+  ).toBeDisabled();
+  await page
+    .getByLabel("Rincian Faktur Penjualan (Accurate)")
+    .setInputFiles(xlsx("accurate.xlsx"));
+  await expect(
+    page.getByRole("button", { name: "Jalankan rekonsiliasi" }),
+  ).toBeDisabled();
+  await cussonsFile.setInputFiles(csv("detail.csv"));
+  await expect(
+    page.getByRole("button", { name: "Jalankan rekonsiliasi" }),
+  ).toBeEnabled();
+  const cussonsResult = {
+    ...result,
+    summary: { ...summary, QTY_AND_VALUE_MISMATCH: 0, MISSING_PRINCIPAL: 1 },
+    results: [
+      result.results[0],
+      {
+        ...result.results[1],
+        orderNumber: "TI125941",
+        internalProductCode: "CUSSONS-DIFF",
+        principalQuantity: 0,
+        principalNet: 0,
+        status: "MISSING_PRINCIPAL",
+        warnings: [],
+        amountDifferences: [],
+      },
+    ],
+  };
+  await page.route("**/api/reconciliation/cussons/sales", (route) =>
+    route.fulfill({ json: cussonsResult }),
+  );
+  await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
+  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByText("TI125941", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Data tidak ditemukan di CUSSONS.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("KINO-OK", { exact: true })).toHaveCount(0);
+  await page.getByLabel("Filter status").selectOption("ALL");
+  await expect(page.getByText("KINO-OK", { exact: true })).toBeVisible();
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Ekspor XLSX" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(
-    /^hasil-rekonsiliasi-motasa-\d{4}-\d{2}-\d{2}\.xlsx$/,
+    /^hasil-rekonsiliasi-cussons-\d{4}-\d{2}-\d{2}\.xlsx$/,
   );
 });
