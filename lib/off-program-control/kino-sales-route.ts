@@ -4,7 +4,23 @@ const XLSX_MIMES = new Set([
   "application/octet-stream",
   "",
 ]);
+export const CSV_MIME_TYPES = [
+  "text/csv",
+  "application/csv",
+  "application/vnd.ms-excel",
+  "text/plain",
+  "application/octet-stream",
+  "",
+] as const;
 const FIELDS = ["accurateFile", "principalFile"] as const;
+
+type UploadContract =
+  | { kind: "xlsx" }
+  | {
+      kind: "csv";
+      extensions?: readonly string[];
+      mimeTypes?: readonly string[];
+    };
 
 export class UploadError extends Error {
   readonly status: 400 | 413 | 422;
@@ -14,23 +30,37 @@ export class UploadError extends Error {
   }
 }
 
-function validateFile(value: FormDataEntryValue, field: string): File {
+function validateFile(
+  value: FormDataEntryValue,
+  field: string,
+  contract: UploadContract,
+): File {
   if (!(value instanceof File))
     throw new UploadError(`${field} wajib berupa file.`, 400);
-  if (!value.name.toLowerCase().endsWith(".xlsx"))
-    throw new UploadError(`${field} harus berupa .xlsx.`, 400);
-  if (!XLSX_MIMES.has(value.type))
+  const extensions =
+      contract.kind === "csv" ? (contract.extensions ?? [".csv"]) : [".xlsx"],
+    mimeTypes =
+      contract.kind === "csv"
+        ? new Set(contract.mimeTypes ?? CSV_MIME_TYPES)
+        : XLSX_MIMES;
+  if (!extensions.some((extension) => value.name.toLowerCase().endsWith(extension)))
+    throw new UploadError(`${field} harus berupa ${extensions.join(" atau ")}.`, 400);
+  if (!mimeTypes.has(value.type))
     throw new UploadError(
       `${field} memiliki tipe file yang tidak didukung.`,
       400,
     );
-  if (!value.size) throw new UploadError(`${field} kosong.`, 400);
+  if (!value.size && contract.kind === "xlsx")
+    throw new UploadError(`${field} kosong.`, 400);
   if (value.size > MAX_FILE_BYTES)
     throw new UploadError(`${field} melebihi batas 10 MB.`, 413);
   return value;
 }
 
-export function validateUploadForm(form: FormData): [File, File] {
+export function validateUploadForm(
+  form: FormData,
+  principalUpload: UploadContract = { kind: "xlsx" },
+): [File, File] {
   for (const key of form.keys())
     if (!(FIELDS as readonly string[]).includes(key))
       throw new UploadError(`Field upload tidak dikenal: ${key}.`, 400);
@@ -41,6 +71,7 @@ export function validateUploadForm(form: FormData): [File, File] {
     return validateFile(
       values[0],
       key === "accurateFile" ? "File Accurate" : "File SALES_DETAIL",
+      key === "accurateFile" ? { kind: "xlsx" } : principalUpload,
     );
   }) as [File, File];
 }
@@ -91,9 +122,24 @@ export function safeParserMessage(error: unknown): string | null {
     motasaMessage = new RegExp(
       `^(?:Header wajib tidak ditemukan: (?:${motasaHeaders})(?:, (?:${motasaHeaders}))*|No\\.INV harus memuat tepat satu nomor order pada baris \\d+|Tipe harus SD pada baris \\d+|(?:DISC\\. [1-5]) (?:tidak valid|terlalu besar|harus antara 0 dan 100) pada baris \\d+|(?:PRD_QTY|Harga|FIX DISC\\. VALUE|Gross MOTASA|DPP MOTASA) (?:negatif|tidak valid|terlalu besar) pada baris \\d+|(?:PRD_QTY|HARGA|NO\\.INV|CODE CUST|CODE SALES|KODE PRODUK|SATUAN) kosong pada baris \\d+|TGL\\.INV tidak valid pada baris \\d+|DPP MOTASA negatif pada baris \\d+|KODE BARANG WIN2 kosong pada baris \\d+)$`,
     );
+  const cussonsHeaders = [
+      "INVOICE NO", "CUSTOMER CODE", "ROUTE CODE", "PRODUCT CODE",
+      "PRODUCT DESCRIPTION", "UOM CODE", "SELLING TYPE", "PRODUCT QUANTITY",
+      "UOM LIST PRICE", "GROSS AMOUNT", "DISCOUNT AMOUNT",
+      "AMOUNT AFTER SKU DISC", "CUSTOMER DISCOUNT", "TOTAL TAX AMOUNT",
+      "TOTAL NET AMOUNT", "TAX CODE", "TAX PERCENTAGE 1", "KODE PCPL",
+      "ISI/CTN", "SATUAN FIX WIN", "KODE BARANG WIN2",
+    ]
+      .map((header) => header.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|"),
+    cussonsMessage = new RegExp(
+      `^(?:File CSV kosong|Header wajib tidak ditemukan: (?:${cussonsHeaders})(?:, (?:${cussonsHeaders}))*|(?:${cussonsHeaders}) (?:kosong|negatif|tidak valid|terlalu besar) pada baris \\d+|Invoice No baris \\d+ harus memiliki tepat satu nomor faktur TI)$`,
+      "i",
+    );
   return /^(?:File (?:XLSX|mapping) kosong|Sheet (?:mapping )?[\w ]+ tidak ditemukan atau kosong|Header wajib tidak ditemukan: [\w, ]+|(?:[\w_]+ (?:kosong|negatif|tidak valid|terlalu besar)|[\w_]+ harus [\w/ ]+|[\w_]+ harus memuat tepat satu nomor order) pada baris \d+|Mapping_[\w]+ (?:tidak lengkap pada baris \d+|memiliki mapping konflik untuk [\w.-]+)|Pvt Map 1 tidak lengkap pada baris \d+|(?:IV_DISC|IV_PPN|IV_STAMP|IV_DISREG|IV_DISADD|IV_DISCASH|IV_TOTDISC|IV_DISC2|IV_DISVALUE) belum memiliki aturan pada baris \d+|Nilai GDI tidak valid pada baris \d+)$/.test(error.message) ||
     shinzuiMessage.test(error.message) ||
-    motasaMessage.test(error.message)
+    motasaMessage.test(error.message) ||
+    cussonsMessage.test(error.message)
     ? error.message
     : null;
 }
@@ -107,6 +153,7 @@ interface HandlerDependencies {
     mapping: Uint8Array,
   ): unknown;
   missingMappingMessage?: string;
+  principalUpload?: UploadContract;
 }
 
 function isZip(value: Uint8Array): boolean {
@@ -120,16 +167,25 @@ export function createKinoSalesPostHandler(deps: HandlerDependencies) {
     try {
       const [accurateFile, principalFile] = validateUploadForm(
         await request.formData(),
+        deps.principalUpload,
       );
       const [accurate, principal] = await Promise.all([
         accurateFile.arrayBuffer(),
         principalFile.arrayBuffer(),
       ]).then((values) => values.map((value) => new Uint8Array(value)));
-      if (!isZip(accurate) || !isZip(principal))
+      if (
+        !isZip(accurate) ||
+        (deps.principalUpload?.kind !== "csv" && !isZip(principal))
+      )
         throw new UploadError(
           "File upload bukan workbook XLSX yang valid.",
           422,
         );
+      if (deps.principalUpload?.kind === "csv") {
+        if (!principal.length) throw new UploadError("File CSV kosong", 422);
+        if (principal.includes(0))
+          throw new UploadError("File CSV mengandung karakter NUL.", 422);
+      }
       const mapping = await deps.readMapping();
       return Response.json(deps.reconcile(accurate, principal, mapping));
     } catch (error) {
