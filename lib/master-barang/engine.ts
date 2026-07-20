@@ -122,7 +122,7 @@ export const FORM_FIX_COLUMNS: Array<{ key: keyof FormFixRow; label: string }> =
     { key: "kodeBarangWin2", label: "Kode Barang" },
     { key: "len15", label: "LEN 15" },
     { key: "namaWin", label: "Nama Barang" },
-    { key: "len50", label: "LEN 50" },
+    { key: "len50", label: "LEN 55" },
     { key: "namaPcpl", label: "Nama Pcpl" },
     { key: "kodePcplWin", label: "kode  2 Digit (hrf+No)" },
     { key: "namaKlp", label: "Nama KLP" },
@@ -148,6 +148,10 @@ export const FORM_FIX_COLUMNS: Array<{ key: keyof FormFixRow; label: string }> =
 
 const clean = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
 const upper = (value: unknown) => clean(value).toUpperCase();
+
+// Batas panjang Nama Win. Dulu 50 (batas Win); Accurate menampung 255, jadi dinaikkan ke 55
+// demi keterbacaan nama. Ini ambang REVIEW, bukan pemotongan otomatis (lihat QC LEN50_REVIEW).
+export const NAMA_WIN_MAX = 55;
 
 export function normalizePrincipleName(value: string): string {
     return upper(value).replace(/\b(PT|CV|TBK|INDONESIA|INDO)\b/g, " ").replace(/[^A-Z0-9]+/g, " ").replace(/\s+/g, " ").trim();
@@ -250,7 +254,10 @@ function canonicalSource(items: SourceItem[]): SourceItem[] {
     return items.map((item) => ({ ...item, namaBarang: upper(item.namaBarang) }))
         .filter((item) => {
             if (!item.namaBarang) return false;
-            const key = `${upper(item.kodePcpl)}|${item.namaBarang}|${clean(item.isiCtn)}|${inferGramasi(item)}`;
+            // Gramasi dinormalkan di kunci ("70 GR" == "70GR"): penyelaras menulis format donor
+            // ke item tersimpan, jadi kiriman ulang item yang sama harus tetap terdeteksi kembar.
+            const gram = inferGramasi(item);
+            const key = `${upper(item.kodePcpl)}|${item.namaBarang}|${clean(item.isiCtn)}|${normGram(gram) || gram}`;
             if (seen.has(key)) return false;
             seen.add(key);
             return true;
@@ -259,6 +266,74 @@ function canonicalSource(items: SourceItem[]): SourceItem[] {
 
 export function codebookKey(level: CodebookLevel, scope: string, sourceName: string): string {
     return `${level}|${normalizeKey(scope)}|${normalizeKey(sourceName)}`;
+}
+
+// ---- Penyelaras item baru terhadap master yang sudah ada (deterministik, tanpa AI) ----
+// Item input manual biasanya cuma bawa nama ("HARMONY SABUN MANDI BUAH 70 GR (NEW) - PEACH
+// SAKURA"). Tanpa penyelaras, inferKlp jatuh ke kata kunci generik ("SABUN") dan struktur
+// kode menyimpang dari 144 item MSM yang sudah benar. Penyelaras mencari "donor": item lama
+// dengan batang nama sama (nama minus ekor aroma, gramasi, dan "(NEW)"), lalu mewarisi
+// KLP/sub/kemasan/isi/format-gramasi donor; ekor " - X" menjadi aroma, disingkat memakai
+// pasangan (ekor -> aroma) yang ditambang dari master itu sendiri.
+const GRAM_RE = /(?:\b|X)(\d+(?:[.,]\d+)?)\s*(KG|GR|G|ML|LTR|LT|L)\b/g;
+
+function normGram(value: string): string {
+    const match = upper(value).match(/(\d+(?:[.,]\d+)?)\s*(KG|GR|G|ML|LTR|LT|L)\b/);
+    if (!match) return "";
+    const unit = match[2] === "G" ? "GR" : match[2] === "LTR" || match[2] === "LT" ? "L" : match[2];
+    return `${Number(match[1].replace(",", "."))}${unit}`;
+}
+
+function stemOf(name: string): string {
+    const head = upper(name).split(/\s+-\s+/)[0];
+    return normalizeKey(head.replace(/\(NEW\)/g, " ").replace(GRAM_RE, " "));
+}
+
+function tailOf(name: string): string {
+    const parts = upper(name).split(/\s+-\s+/);
+    return parts.length > 1 ? normalizeKey(parts[parts.length - 1].replace(GRAM_RE, " ")) : "";
+}
+
+function alignSourceItems(items: SourceItem[]): SourceItem[] {
+    const donors = new Map<string, SourceItem>();
+    const abbrev = new Map<string, string>();
+    for (const item of items) {
+        if (!clean(item.klp) && !clean(item.kelompokPcpl)) continue;
+        const stem = stemOf(item.namaBarang);
+        if (stem && !donors.has(stem)) donors.set(stem, item);
+        // Tambang singkatan kata dari pasangan sejajar: "STRAWBERRY ALPINE" vs "STRAW ALP".
+        const tailWords = tailOf(item.namaBarang).split(" ").filter(Boolean);
+        const aromaWords = normalizeKey(String(item.aroma ?? "")).split(" ").filter(Boolean);
+        if (tailWords.length && tailWords.length === aromaWords.length) {
+            tailWords.forEach((word, index) => {
+                if (word.startsWith(aromaWords[index]) && !abbrev.has(word)) abbrev.set(word, aromaWords[index]);
+            });
+        }
+    }
+    if (!donors.size) return items;
+    return items.map((item) => {
+        if (clean(item.klp) || clean(item.kelompokPcpl)) return item;
+        const donor = donors.get(stemOf(item.namaBarang));
+        if (!donor) return item;
+        const aligned: SourceItem = { ...item };
+        aligned.kelompokPcpl = clean(donor.kelompokPcpl);
+        aligned.klp = clean(item.klp) || clean(donor.klp);
+        aligned.subKlp = clean(item.subKlp) || clean(donor.subKlp);
+        aligned.subKlp2 = clean(item.subKlp2) || clean(donor.subKlp2);
+        aligned.kemasan = clean(item.kemasan) || clean(donor.kemasan);
+        aligned.satuan = clean(item.satuan) || clean(donor.satuan);
+        aligned.isiCtn = clean(item.isiCtn) || clean(donor.isiCtn);
+        // Format gramasi ikut donor bila nilainya sama ("70 GR" -> "70GR") agar kode dipakai ulang.
+        const gram = normGram(inferGramasi(aligned));
+        if (gram && gram === normGram(inferGramasi(donor))) aligned.gramasi = clean(donor.gramasi) || inferGramasi(donor);
+        if (!clean(aligned.aroma)) {
+            const tail = tailOf(item.namaBarang);
+            // ponytail: kata ekor tak dikenal dibiarkan utuh (LEN50 review yang menangkap bila
+            // kepanjangan); singkatan AI bisa menyusul kalau kamus tambang terbukti kurang.
+            if (tail) aligned.aroma = tail.split(" ").map((word) => abbrev.get(word) ?? word).join(" ");
+        }
+        return aligned;
+    });
 }
 
 function makeAssigner(seed: CodebookEntry[]) {
@@ -286,7 +361,7 @@ function buildQc(rows: FormFixRow[], codebook: CodebookEntry[], source: SourceIt
     const codes = new Map<string, number[]>();
     rows.forEach((row) => {
         if (!row.namaBarangPrinciple) issues.push({ severity: "error", code: "NAME_REQUIRED", row: row.no, message: "Nama Barang Principle kosong." });
-        if (row.len50 > 50) issues.push({ severity: "warning", code: "LEN50_REVIEW", row: row.no, message: `Nama Win ${row.len50} karakter; perlu review/override bulk.` });
+        if (row.len50 > NAMA_WIN_MAX) issues.push({ severity: "warning", code: "LEN50_REVIEW", row: row.no, message: `Nama Win ${row.len50} karakter (maks ${NAMA_WIN_MAX}); perlu review/override bulk.` });
         if (row.len15 !== 15) issues.push({ severity: "warning", code: "CODE_LENGTH", row: row.no, message: `Kode barang ${row.len15} digit; target struktur 15.` });
         if (row.confidence < 0.8) issues.push({ severity: "warning", code: "LOW_CONFIDENCE", row: row.no, message: "Hasil ekstraksi dokumen perlu review." });
         const same = codes.get(row.kodeBarangWin2) ?? [];
@@ -355,7 +430,7 @@ export function generateMasterBarang(principleName: string, principleCode: strin
     const codePcpl = upper(principleCode);
     if (!namePcpl) throw new Error("Nama Principle wajib diisi.");
     if (!/^[A-Z0-9]{2}$/.test(codePcpl)) throw new Error("Kode Principle Win wajib tepat 2 karakter huruf/angka.");
-    const sourceItems = canonicalSource(incoming);
+    const sourceItems = alignSourceItems(canonicalSource(incoming));
     const assigner = makeAssigner(seedCodebook);
     const formRows: FormFixRow[] = sourceItems.map((item, index) => {
         const klpSource = inferKlp(item);
@@ -419,6 +494,14 @@ export function runMasterBarangSelfCheck(): void {
     ok(overflow.qc.issues.some((issue) => issue.code === "CODEBOOK_WIDTH"), "kapasitas kode 1 digit diblokir QC");
     ok(result.formRows.every((row) => row.kodePcplWin === "M9"), "kode principal konsisten");
     ok(principalSimilarity("PT MSM Indonesia", "MSM") > 0.9, "kemiripan principal terdeteksi");
+    // namaWin = "MSM <klp> 10 GR X 1 PCS" -> panjang tetap 18 + panjang klp; dipakai untuk
+    // menguji batas NAMA_WIN_MAX persis di 55/56, bukan sekadar pendek vs panjang.
+    const lenRow = (klpChars: number) => generateMasterBarang("MSM", "M9", [{ namaBarang: "Item Tes 10 GR", klp: "A".repeat(klpChars), kemasan: "PCS", isiCtn: 1 }]).formRows[0];
+    const atLimit = lenRow(NAMA_WIN_MAX - 18), overLimit = lenRow(NAMA_WIN_MAX - 17);
+    ok(atLimit.len50 === NAMA_WIN_MAX, `panjang batas harus ${NAMA_WIN_MAX}, dapat ${atLimit.len50}`);
+    ok(overLimit.len50 === NAMA_WIN_MAX + 1, `panjang lewat batas harus ${NAMA_WIN_MAX + 1}, dapat ${overLimit.len50}`);
+    ok(!generateMasterBarang("MSM", "M9", [{ namaBarang: "Item Tes 10 GR", klp: "A".repeat(NAMA_WIN_MAX - 18), kemasan: "PCS", isiCtn: 1 }]).qc.issues.some((issue) => issue.code === "LEN50_REVIEW"), `nama tepat ${NAMA_WIN_MAX} karakter tidak diflag`);
+    ok(generateMasterBarang("MSM", "M9", [{ namaBarang: "Item Tes 10 GR", klp: "A".repeat(NAMA_WIN_MAX - 17), kemasan: "PCS", isiCtn: 1 }]).qc.issues.some((issue) => issue.code === "LEN50_REVIEW"), `nama ${NAMA_WIN_MAX + 1} karakter diflag LEN50_REVIEW`);
     console.log("master-barang self-check OK");
 }
 

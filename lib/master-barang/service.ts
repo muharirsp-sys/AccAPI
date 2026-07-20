@@ -14,6 +14,7 @@ import { db } from "@/lib/db";
 import { masterBarang, masterBarangAudit, masterBarangSource } from "@/db/schema";
 import {
     FORM_FIX_COLUMNS,
+    NAMA_WIN_MAX,
     findSimilarPrinciples,
     generateMasterBarang,
     normalizePrincipleName,
@@ -84,7 +85,7 @@ function qcConfirmations(prev: ConfirmationState, generated: { revisionHash: str
     const nearDup = generated.qc.issues.filter((issue) => issue.code === "GRAMASI_NEAR_DUP");
     return {
         ...prev,
-        len50: generated.qc.over50 ? { revisionHash: generated.revisionHash, fingerprint: hash(generated.formRows.filter((item) => item.len50 > 50).map((item) => [item.no, item.namaWin])), count: 0, complete: false, bulk: true } : undefined,
+        len50: generated.qc.over50 ? { revisionHash: generated.revisionHash, fingerprint: hash(generated.formRows.filter((item) => item.len50 > NAMA_WIN_MAX).map((item) => [item.no, item.namaWin])), count: 0, complete: false, bulk: true } : undefined,
         gramasi: nearDup.length ? { revisionHash: generated.revisionHash, fingerprint: hash(nearDup.map((issue) => [issue.row, issue.message])), count: 0, complete: false, bulk: true } : undefined,
     };
 }
@@ -256,7 +257,7 @@ export async function finalizeMaster(masterId: string, actorId: string) {
         if (!current.formRows.length) throw new Error("Form Fix masih kosong.");
         if (current.qc.errors > 0) throw new Error(`Masih ada ${current.qc.errors} error QC yang wajib diperbaiki lewat Kamus Kode.`);
         if (current.qc.over50 > 0 && (!current.confirmationState.len50?.complete || current.confirmationState.len50.revisionHash !== current.revisionHash)) {
-            throw new Error(`Ada ${current.qc.over50} Nama Win lebih dari 50 karakter; jalankan konfirmasi bulk sampai 3 tahap.`);
+            throw new Error(`Ada ${current.qc.over50} Nama Win lebih dari ${NAMA_WIN_MAX} karakter; jalankan konfirmasi bulk sampai 3 tahap.`);
         }
         if ((current.qc.gramasiNearDup ?? 0) > 0 && (!current.confirmationState.gramasi?.complete || current.confirmationState.gramasi.revisionHash !== current.revisionHash)) {
             throw new Error(`Ada ${current.qc.gramasiNearDup} pasangan gramasi mirip (<30%); jalankan konfirmasi bulk sampai 3 tahap.`);
