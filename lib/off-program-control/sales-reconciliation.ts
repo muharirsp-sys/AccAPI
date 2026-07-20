@@ -1050,7 +1050,7 @@ export function parseCussonsSales(
         row, header.columns, "UOM CODE", sourceRowNumber,
       )),
       quantity = requiredNumber("PRODUCT QUANTITY"),
-      price = requiredNumber("UOM LIST PRICE"),
+      price = money(requiredNumber("UOM LIST PRICE"), "UOM List Price", sourceRowNumber),
       gross = money(requiredNumber("GROSS AMOUNT"), "Gross Amount", sourceRowNumber),
       skuDiscount = money(requiredNumber("DISCOUNT AMOUNT"), "Discount Amount", sourceRowNumber),
       afterSku = money(requiredNumber("AMOUNT AFTER SKU DISC"), "Amount After SKU Disc", sourceRowNumber),
@@ -1060,7 +1060,7 @@ export function parseCussonsSales(
       net = money(requiredNumber("TOTAL NET AMOUNT"), "Total Net Amount", sourceRowNumber),
       taxPercentage = requiredNumber("TAX PERCENTAGE 1"),
       formulaInvalid =
-        Math.abs(gross - money(quantity * price, "Gross Amount", sourceRowNumber)) > 1 ||
+        Math.abs(gross - Math.round(quantity * price)) > 1 ||
         Math.abs(afterSku - (gross - skuDiscount)) > 1 ||
         Math.abs(tax - Math.round((dpp * taxPercentage) / 100)) > 1 ||
         Math.abs(net - (dpp + tax)) > 1 ||

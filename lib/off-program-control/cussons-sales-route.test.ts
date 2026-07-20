@@ -49,6 +49,23 @@ assert.deepEqual([...buffers[0].slice(0, 4)], [80, 75, 3, 4]);
 assert.equal(new TextDecoder().decode(buffers[1]), csv);
 assert.deepEqual([...buffers[2]], [1, 2, 3]);
 
+for (const malformed of [
+  new Request("http://localhost/api/reconciliation/cussons/sales", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  }),
+  new Request("http://localhost/api/reconciliation/cussons/sales", {
+    method: "POST",
+    headers: { "content-type": "multipart/form-data; boundary=broken" },
+    body: "not-a-multipart-envelope",
+  }),
+]) {
+  const response = await handler(malformed);
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "Form upload tidak valid." });
+}
+
 let readAfterDenial = false;
 const denied = createKinoSalesPostHandler({
   authorize: async () => Response.json({ error: "Forbidden" }, { status: 403 }),

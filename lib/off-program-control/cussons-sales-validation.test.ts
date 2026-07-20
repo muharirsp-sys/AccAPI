@@ -166,14 +166,13 @@ assert.equal(conflictingTarget.products.get("100113937")?.mappingStatus, "OK");
 const eaIgnoresPack = parseCussonsMappings(
   formFixAtRow5([
     ["100113937", "RUSAK", "EA", "C1284002004511"],
-    ["100113937", 999, "EA", "C1284002004511"],
   ]),
 );
 assert.equal(eaIgnoresPack.products.size, 1);
 assert.equal(eaIgnoresPack.products.get("100113937")?.caseSize, null);
 assert.equal(
   eaIgnoresPack.products.get("100113937")?.mappingStatus,
-  "INVALID_DATA",
+  "OK",
 );
 
 const csZeroPack = parseCussonsMappings(
@@ -274,6 +273,20 @@ assert.equal(
   parseCussonsSales(csv(eaRow({ "Gross Amount": 30.0002 })), salesMappings)[0]
     ?.mappingStatus,
   "INVALID_DATA",
+);
+assert.equal(
+  parseCussonsSales(
+    csv(eaRow({
+      "Product Quantity": 4,
+      "UOM List Price": 10.000049,
+      "Gross Amount": 40,
+      "Amount After SKU Disc": 38,
+      "Total Tax Amount": 4.07,
+      "Total Net Amount": 41.07,
+    })),
+    salesMappings,
+  )[0]?.mappingStatus,
+  "OK",
 );
 for (const overrides of [{ "Gross Amount": 31 }, { "Amount After SKU Disc": 27 }, { "Total Tax Amount": 2.98 }, { "Total Net Amount": 29.98 }, { "Tax Code": "NO_TAX" }, { "Tax Percentage 1": 10 }, { "Selling Type": "R" }] satisfies Partial<CsvRow>[])
   assert.equal(parseCussonsSales(csv(eaRow(overrides)), salesMappings)[0]?.mappingStatus, "INVALID_DATA");

@@ -166,7 +166,9 @@ export function createKinoSalesPostHandler(deps: HandlerDependencies) {
     if (denied) return denied;
     try {
       const [accurateFile, principalFile] = validateUploadForm(
-        await request.formData(),
+        await request.formData().catch(() => {
+          throw new UploadError("Form upload tidak valid.", 400);
+        }),
         deps.principalUpload,
       );
       const [accurate, principal] = await Promise.all([
