@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import * as XLSX from "xlsx";
 
 const QA_EMAIL = "qa.admin@local.test";
 const QA_PASSWORD = "Admin123!";
@@ -277,6 +278,13 @@ test("shows the progressive reconciliation workflow", async ({
   await page.getByLabel("Prinsipal").selectOption("CUSSONS");
   const cussonsFile = page.getByLabel("Detail CUSSONS");
   await expect(cussonsFile).toHaveAttribute("accept", /\.csv/);
+  await expect(page.getByText("Format .csv, maksimal 10 MB")).toBeVisible();
+  await expect(
+    page.getByLabel("Rincian Faktur Penjualan (Accurate)"),
+  ).toHaveAttribute(
+    "accept",
+    ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
   await expect(
     page.getByRole("button", { name: "Jalankan rekonsiliasi" }),
   ).toBeDisabled();
@@ -290,6 +298,19 @@ test("shows the progressive reconciliation workflow", async ({
   await expect(
     page.getByRole("button", { name: "Jalankan rekonsiliasi" }),
   ).toBeEnabled();
+  await page.getByLabel("Prinsipal").selectOption("GODREJ");
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
+  await page
+    .getByLabel("Sales Detail GODREJ")
+    .setInputFiles(xlsx("gdi.xlsx"));
+  await expect(
+    page.getByRole("button", { name: "Jalankan rekonsiliasi" }),
+  ).toBeDisabled();
+  await page.getByLabel("Prinsipal").selectOption("CUSSONS");
+  await page
+    .getByLabel("Rincian Faktur Penjualan (Accurate)")
+    .setInputFiles(xlsx("accurate.xlsx"));
+  await page.getByLabel("Detail CUSSONS").setInputFiles(csv("detail.csv"));
   const cussonsResult = {
     ...result,
     summary: { ...summary, QTY_AND_VALUE_MISMATCH: 0, MISSING_PRINCIPAL: 1 },
@@ -317,12 +338,22 @@ test("shows the progressive reconciliation workflow", async ({
     page.getByText("Data tidak ditemukan di CUSSONS.", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText("KINO-OK", { exact: true })).toHaveCount(0);
-  await page.getByLabel("Filter status").selectOption("ALL");
-  await expect(page.getByText("KINO-OK", { exact: true })).toBeVisible();
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Ekspor XLSX" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(
     /^hasil-rekonsiliasi-cussons-\d{4}-\d{2}-\d{2}\.xlsx$/,
   );
+  const downloadPath = await download.path();
+  expect(downloadPath).not.toBeNull();
+  const workbook = XLSX.readFile(downloadPath!);
+  const detail = XLSX.utils.sheet_to_json<{ Order: string }>(
+    workbook.Sheets.Detail,
+  );
+  expect(detail.map((row) => row.Order)).toEqual([
+    "1671-SOP-260000001",
+    "TI125941",
+  ]);
+  await page.getByLabel("Filter status").selectOption("ALL");
+  await expect(page.getByText("KINO-OK", { exact: true })).toBeVisible();
 });

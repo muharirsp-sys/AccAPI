@@ -261,6 +261,7 @@ export default function ReconciliationPage() {
 
   function changePrincipal(next: Principal) {
     setPrincipal(next);
+    setAccurateFile(null);
     setPrincipalFile(null);
     setResult(null);
     setStatusFilter("ALL");
