@@ -4575,6 +4575,20 @@ def _ensure_dir(p: str):
 
 
 def _apply_native_kelompok(rows_to_check, master_items):
+    # GENERIC GUARD (FONTERRA/NATUR deterministic matcher): rows carry
+    # ``_gen_key`` -- stamped by routers/summary.py (BUKAN oleh LLM), so it
+    # can never appear on legacy/Priskila/URC rows. Checked first.
+    try:
+        if any(r.get("_gen_key") for r in rows_to_check):
+            from generic_promo_pipeline import apply_generic_matching
+            return apply_generic_matching(rows_to_check, master_items)
+    except Exception as _gen_err:
+        try:
+            append_error_log("generic_pipeline_fallback", _gen_err,
+                             {"n_rows": len(rows_to_check)})
+        except Exception:
+            pass
+
     # URC GUARD (deterministic matcher branch): the structure-only prompt
     # (routers/summary.py, URC) emits rows carrying `item_description` -- a
     # marker field NEVER used by Priskila's rows (`group_item_text`) or the

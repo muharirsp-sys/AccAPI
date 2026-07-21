@@ -42,8 +42,10 @@ def finalize_xlsx(path: str) -> None:
             data = src.read(name)
             if name == "docProps/core.xml":
                 # openpyxl memaksa modified=now() saat save -> paku ke nilai tetap.
-                data = _MODIFIED_RE.sub(rb'\1' + _FIXED_XML_TS.encode() + rb'\2', data)
-                data = _CREATED_RE.sub(rb'\1' + _FIXED_XML_TS.encode() + rb'\2', data)
+                # \g<1>/\g<2> (bukan \1/\2) -- \1 diikuti digit literal ("2020...")
+                # ditafsir re sebagai backreference \12/octal, bukan "\1"+teks -> XML corrupt.
+                data = _MODIFIED_RE.sub(rb'\g<1>' + _FIXED_XML_TS.encode() + rb'\g<2>', data)
+                data = _CREATED_RE.sub(rb'\g<1>' + _FIXED_XML_TS.encode() + rb'\g<2>', data)
             zi = zipfile.ZipInfo(name, _FIXED_ENTRY_DT)
             zi.compress_type = zipfile.ZIP_DEFLATED
             z.writestr(zi, data)
@@ -68,6 +70,15 @@ if __name__ == "__main__":
     h1 = hashlib.sha256(open(p1, "rb").read()).hexdigest()
     h2 = hashlib.sha256(open(p2, "rb").read()).hexdigest()
     assert h1 == h2, "xlsx harus byte-identik setelah finalize_xlsx"
+
+    # wajib: file hasil finalize_xlsx harus BISA DIBUKA (hash-sama tidak berarti valid --
+    # bug nyata pernah lolos self-check ini karena \1/\2 diikuti digit ditafsir re sbg
+    # backreference \12/octal, bikin docProps/core.xml corrupt tapi tetap "byte-identik").
+    import xml.dom.minidom as _minidom
+    reopened = openpyxl.load_workbook(p1)
+    assert reopened.active["A1"].value == "KODE", "xlsx hasil finalize_xlsx harus terbaca ulang"
+    with zipfile.ZipFile(p1) as _z:
+        _minidom.parseString(_z.read("docProps/core.xml"))  # raise kalau XML tak well-formed
 
     # idempotent: finalize lagi tak mengubah bytes
     finalize_xlsx(p1)

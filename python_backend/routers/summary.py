@@ -82,6 +82,22 @@ def _is_urc(principle_name) -> bool:
     return "URC" in str(principle_name or "").upper()
 
 
+def _generic_det_key(principle_name):
+    """Kunci RULES generic_promo_pipeline utk principle ber-matcher deterministik
+    generik (structure-only prompt + apply_generic_matching), atau None -> legacy.
+    NATUR mencakup merek AZALEA+HG (vendor GONDOWANGI, keputusan user)."""
+    p = str(principle_name or "").upper()
+    if "FONTERRA" in p:
+        return "FONTERRA"
+    if "NATUR" in p or "GONDOWANGI" in p:
+        return "NATUR"
+    if "ADNA" in p or "GUMINDO" in p:
+        return "ADNA"
+    if "FORISA" in p:
+        return "FORISA"
+    return None
+
+
 # Penanda baris surat yang TIDAK punya item cocok di master -> wajib direview manusia.
 # Dipakai BERSAMA oleh PDF (kolom Kelompok) & Excel (kolom NAMA_BARANG) supaya keduanya
 # tidak pernah drift: dulu PDF nulis flag ini tapi Excel dibiarkan KOSONG polos (silent).
@@ -1064,7 +1080,12 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
         
         # SANGAT PENTING: Filter context supaya API Proxy tidak memuntah/terpotong (Tokens Limit)
         # Hanya gunakan barang yang sesuai dengan Principle yang sedang diproses!
-        if principle_name and principle_name.strip():
+        # Generic deterministik (FONTERRA/NATUR): JANGAN filter master by keyword principal.
+        # Kasus nyata: "NATUR (GONDOWANGI)" -> keyword NATUR menyaring item AZALEA/HG keluar
+        # dari master -> semua baris AZALEA/HG salah jadi UNMATCHED (bug kelas sama dgn
+        # "AZALEA/HG hilang" di jalur legacy). Filter ini cuma perlu utk prompt legacy yg
+        # menyisipkan daftar barang ke LLM; prompt structure-only tidak.
+        if principle_name and principle_name.strip() and not _generic_det_key(principle_name):
             # ponytail: dulu dicocokkan ke kolom 'principle' (nama produk) -> "Priskila" tak pernah match -> 0.
             # Cocokkan tiap keyword principal (>=4 huruf) ke principle ATAU nama_barang; kosong -> pakai semua
             # (master per-principal itu normal; kolom 'Nama Pcpl' memang blank).
@@ -1340,6 +1361,139 @@ FIELD PER OBJECT (huruf kecil, HANYA field ini):
   waktu klaim + dokumen yang wajib dilampirkan (mis. "Klaim maks 45 hari setelah promo
   berakhir; lampiran: AL, Cover Klaim URC, Faktur Pajak, Rekap Data Penjualan & print out
   system; nilai dari DBP/RBP exc PPN"). Jika bagian itu TIDAK ADA di surat, isi "".
+
+SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
+"""
+            # FONTERRA/NATUR: filosofi sama dgn Priskila/URC -- LLM CUKUP menyalin
+            # struktur surat verbatim, generic_promo_pipeline (matcher deterministik,
+            # disetujui user via preview lokal) yang memetakan ke SKU master.
+            elif _generic_det_key(principle_name) == "FONTERRA":
+                prompt = f"""
+Dokumen promosi ini milik principle: {principle_name.upper()}.
+Tugas Anda HANYA menyalin STRUKTUR surat apa adanya ke ARRAY JSON. JANGAN mencocokkan ke daftar
+barang, JANGAN menebak kode/kelompok. Sistem lain yang akan mencocokkan ke master.
+
+ATURAN MUTLAK:
+1. Kembalikan HANYA JSON array valid (tanpa teks pembuka/penutup, tutup dengan `]`).
+2. SATU object JSON = SATU baris promo produk (baris bullet ">" berpola
+   "BELI N <PRODUK> <GRAMASI> ... GRATIS <HADIAH>"). Kalau surat punya 17 baris promo,
+   keluarkan TEPAT 17 object. JANGAN menggabung, JANGAN melewatkan baris.
+3. Salin baris promo VERBATIM (termasuk kata BELI, angka, gramasi, GRATIS, dan hadiahnya)
+   ke field "product_line_text". JANGAN diringkas, JANGAN diubah ejaan/satuannya.
+4. DILARANG mengeluarkan field "kelompok", "variant", "gramasi", ATAU "kode_barangs".
+   Field-field itu akan diisi oleh sistem pencocokan, BUKAN oleh Anda.
+
+FIELD PER OBJECT (huruf kecil, HANYA field ini):
+- "product_line_text": (String) baris promo verbatim (lihat aturan 3).
+- "principle": (String) nama principle.
+- "surat_program": (String) nomor/identitas surat program di kop.
+- "nama_program": (String) nama program/promo di header surat.
+- "periode": (String) periode program, verbatim.
+- "channel_gtmt": (String) channel program (mis. MTI / GT), ringkas.
+- "syarat_claim": (String) ringkasan SINGKAT syarat/mekanisme klaim (dokumen wajib +
+  batas waktu). Jika surat tidak punya bagian itu, isi "".
+
+SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
+"""
+            elif _generic_det_key(principle_name) == "ADNA":
+                prompt = f"""
+Dokumen promosi ini milik principle: {principle_name.upper()} (PT Gumindo Bogamanis, merek Kuaci Rebo).
+Tugas Anda HANYA menyalin STRUKTUR surat apa adanya ke ARRAY JSON. JANGAN mencocokkan ke daftar
+barang, JANGAN menebak kode/kelompok. Sistem lain yang akan mencocokkan ke master.
+
+ATURAN MUTLAK:
+1. Kembalikan HANYA JSON array valid (tanpa teks pembuka/penutup, tutup dengan `]`).
+2. SATU object JSON = SATU aturan pembelian produk di bagian "Mekanisme Program"
+   (kalimat berpola "Setiap pembelian <PRODUK+GRAMASI> (min N ctn) ... maka mendapatkan
+   disc <NILAI>"). Kalau ada 2 aturan produk, keluarkan TEPAT 2 object.
+   JANGAN membuat object untuk kalimat yang bukan aturan pembelian produk
+   (mis. syarat growth, cara klaim, penutup surat).
+3. Salin bagian PRODUK + GRAMASI verbatim ke "product_line_text", termasuk bila satu
+   aturan menyebut DUA gramasi (mis. "Kuaci Rebo 150 gr/ 140 gr"). JANGAN dipecah,
+   JANGAN diringkas, JANGAN diubah satuannya.
+4. DILARANG mengeluarkan field "kelompok", "variant", "gramasi", ATAU "kode_barangs".
+
+FIELD PER OBJECT (huruf kecil, HANYA field ini):
+- "product_line_text": (String) produk + gramasi verbatim (lihat aturan 3).
+- "minimal_order": (String) minimal pembelian berikut SATUANNYA, verbatim (mis. "2 ctn").
+  Jika tidak disebut, "".
+- "discount": (String) benefit baris itu verbatim (mis. "disc Rp. 24.500/ctn"). Jika tidak ada, "".
+- "principle": (String) nama principle.
+- "surat_program": (String) nomor surat di kop (mis. "0074/GBM/MKT/V/24-Rev1").
+- "nama_program": (String) isi baris "Hal" di kop surat, verbatim.
+- "periode": (String) isi baris "Berlaku", verbatim.
+- "channel_gtmt": (String) isi baris "Lokasi" (mis. "Nasional").
+- "syarat_claim": (String) ringkasan SINGKAT syarat klaim (dokumen wajib + batas waktu
+  klaim grosir/subdist). Jika bagian itu TIDAK ADA, isi "".
+
+SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
+"""
+            elif _generic_det_key(principle_name) == "NATUR":
+                prompt = f"""
+Dokumen promosi ini milik principle: {principle_name.upper()} (merek NATUR, AZALEA, HG).
+Tugas Anda HANYA menyalin STRUKTUR tabel surat apa adanya ke ARRAY JSON. JANGAN mencocokkan
+ke daftar barang, JANGAN menebak kode/kelompok. Sistem lain yang akan mencocokkan ke master.
+
+ATURAN MUTLAK:
+1. Kembalikan HANYA JSON array valid (tanpa teks pembuka/penutup, tutup dengan `]`).
+2. SATU object JSON = SATU baris produk/SKU di tabel promo surat. Kalau tabel punya 20
+   baris produk, keluarkan TEPAT 20 object. JANGAN menggabung, JANGAN melewatkan baris.
+3. Salin sel nama produk VERBATIM (termasuk merek dan gramasi, mis.
+   "NATUR SHAMPOO GINSENG 140ML") ke field "product_line_text". JANGAN diringkas,
+   JANGAN diubah ejaan/satuannya.
+4. DILARANG mengeluarkan field "kelompok", "variant", "gramasi", ATAU "kode_barangs".
+   Field-field itu akan diisi oleh sistem pencocokan, BUKAN oleh Anda.
+
+FIELD PER OBJECT (huruf kecil, HANYA field ini):
+- "product_line_text": (String) sel nama produk verbatim (lihat aturan 3).
+- "minimal_order": (String) nilai kolom minimal order/pembelian baris itu, verbatim
+  (mis. ">= 6", "6"). Jika tidak ada, "".
+- "discount": (String) nilai kolom diskon/benefit baris itu, verbatim
+  (mis. "5%", "add disc 5%", "1+1"). Jika tidak ada, "".
+- "principle": (String) nama principle.
+- "surat_program": (String) nomor surat program (biasanya diawali "PROID").
+- "nama_program": (String) isi bagian "Nama Program", verbatim.
+- "periode": (String) periode program, verbatim.
+- "channel_gtmt": (String) channel dari nomor surat: "/MTI/" -> "MTI", "/GT/" -> "GT",
+  "/ONLINE/" -> "ONLINE"; selain itu "".
+- "syarat_claim": (String) ringkasan SINGKAT syarat klaim (mis. kalimat "maksimal
+  diklaim ..."). Jika surat tidak punya bagian itu, isi "".
+
+SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
+"""
+            # Principle generik lain (mis. FORISA) yang belum punya prompt khusus:
+            # kontrak structure-only yang SAMA (product_line_text + minimal_order +
+            # discount), cukup tambah nama principle di _generic_det_key + RULES.
+            elif _generic_det_key(principle_name):
+                prompt = f"""
+Dokumen promosi ini milik principle: {principle_name.upper()}.
+Tugas Anda HANYA menyalin STRUKTUR surat apa adanya ke ARRAY JSON. JANGAN mencocokkan ke daftar
+barang, JANGAN menebak kode/kelompok. Sistem lain yang akan mencocokkan ke master.
+
+ATURAN MUTLAK:
+1. Kembalikan HANYA JSON array valid (tanpa teks pembuka/penutup, tutup dengan `]`).
+2. SATU object JSON = SATU baris produk/SKU pada tabel atau daftar promo di surat.
+   Kalau ada 20 baris produk, keluarkan TEPAT 20 object. JANGAN menggabung baris,
+   JANGAN melewatkan baris, JANGAN membuat object untuk kalimat yang bukan baris produk.
+3. Salin nama produk VERBATIM (termasuk merek, varian, dan gramasi/isi) ke
+   "product_line_text". JANGAN diringkas, JANGAN diubah ejaan/satuannya. Bila satu baris
+   menyebut dua ukuran (mis. "150 gr/ 140 gr"), salin apa adanya dalam satu field.
+4. DILARANG mengeluarkan field "kelompok", "variant", "gramasi", ATAU "kode_barangs".
+   Field-field itu akan diisi oleh sistem pencocokan, BUKAN oleh Anda.
+
+FIELD PER OBJECT (huruf kecil, HANYA field ini):
+- "product_line_text": (String) nama produk verbatim (lihat aturan 3).
+- "minimal_order": (String) syarat minimal pembelian baris itu BERIKUT SATUANNYA,
+  verbatim (mis. "2 ctn", ">= 6 pcs", "5 karton"). Jika tidak ada, "".
+- "discount": (String) benefit/diskon baris itu verbatim (mis. "5%", "add disc 3%",
+  "Rp 24.500/ctn", "1+1"). Jika tidak ada, "".
+- "principle": (String) nama principle.
+- "surat_program": (String) nomor/identitas surat program di kop.
+- "nama_program": (String) nama program/promo.
+- "periode": (String) periode program, verbatim.
+- "channel_gtmt": (String) channel program (mis. GT / MTI / Nasional), ringkas.
+- "syarat_claim": (String) ringkasan SINGKAT syarat/mekanisme klaim (dokumen wajib +
+  batas waktu). Jika surat TIDAK punya bagian itu, isi "".
 
 SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
 """
@@ -1640,6 +1794,12 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                         append_error_log("self_correction_patches", Exception(f"{len(_p3_patches)} patch editor"), {"patches": _p3_patches, "user": user})
 
                     # TAHAP 2: Native Master DB Mapping (Injects Kelompok perfectly)
+                    # Stempel _gen_key (FONTERRA/NATUR) -- router yang menentukan, bukan LLM,
+                    # supaya _apply_native_kelompok me-route ke generic_promo_pipeline.
+                    _gk = _generic_det_key(principle_name)
+                    if _gk:
+                        for _r in all_rows:
+                            _r["_gen_key"] = _gk
                     all_rows = _apply_native_kelompok(all_rows, items)
 
                     # FASE 2b: regroup baris berdasarkan tier OTORITATIF dari tabel OCR (bukan LLM) --
@@ -1649,7 +1809,8 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                     # PRISKILA (Task 10): matcher deterministik SUDAH mengeluarkan baris 1:1 (sudah
                     # ter-merge per (channel, prefix, tier) di priskila_pipeline) -- regroup tier
                     # heuristik LLM/OCR di sini DILEWATI supaya tidak menggabung ulang / merusak.
-                    if not _is_priskila(principle_name):
+                    # (generic FONTERRA/NATUR juga dilewati: barisnya sudah 1:1 deterministik)
+                    if not (_is_priskila(principle_name) or _gk):
                         all_rows, _tier_regroup_log = regroup_rows_by_tier(all_rows, items, ocr_text)
 
                     # FASE 1b: bekukan rows hasil parse (freeze-on-first-write) -> run berikut
