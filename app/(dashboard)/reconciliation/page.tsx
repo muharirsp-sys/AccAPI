@@ -363,8 +363,53 @@ export default function ReconciliationPage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-8 pb-12">
-      <header>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+      <header className="space-y-5">
+        <div>
+          <h1 className="flex items-center gap-3 text-3xl font-bold tracking-tight text-white">
+            <GitCompareArrows className="text-indigo-400" /> Rekonsiliasi Faktur
+          </h1>
+          <p className="mt-2 text-slate-400">
+            Bandingkan faktur Accurate dengan data penjualan prinsipal {principal}
+            .
+          </p>
+        </div>
+
+        <section
+          aria-labelledby="reconciliation-type-heading"
+          className="overflow-hidden rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-3 shadow-lg backdrop-blur-xl"
+        >
+          <h2
+            id="reconciliation-type-heading"
+            className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400"
+          >
+            Jenis Rekonsiliasi
+          </h2>
+          <ul className="grid list-none grid-cols-3 gap-2">
+            <li
+              aria-current="page"
+              className="min-w-0 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-2 py-3 text-center"
+            >
+              <span className="block text-sm font-semibold text-indigo-300">
+                Faktur
+              </span>
+              <span className="mt-1 block text-xs text-indigo-300">Aktif</span>
+            </li>
+            <li className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-2 py-3 text-center">
+              <span className="block text-sm font-semibold text-slate-300">
+                Pembelian
+              </span>
+              <span className="mt-1 block text-xs text-slate-400">Belum aktif</span>
+            </li>
+            <li className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-2 py-3 text-center">
+              <span className="block text-sm font-semibold text-slate-300">
+                Return
+              </span>
+              <span className="mt-1 block text-xs text-slate-400">Belum aktif</span>
+            </li>
+          </ul>
+        </section>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-indigo-500/10 px-3 py-1 text-xs font-semibold text-indigo-300">
               Faktur
@@ -397,13 +442,6 @@ export default function ReconciliationPage() {
             </select>
           </div>
         </div>
-        <h1 className="flex items-center gap-3 text-3xl font-bold tracking-tight text-white">
-          <GitCompareArrows className="text-indigo-400" /> Rekonsiliasi Faktur
-        </h1>
-        <p className="mt-2 text-slate-400">
-          Bandingkan faktur Accurate dengan data penjualan prinsipal {principal}
-          .
-        </p>
       </header>
 
       <section className="overflow-hidden rounded-3xl border border-white/10 bg-[#1a1c23]/60 shadow-xl backdrop-blur-xl">

@@ -67,6 +67,65 @@ const result = {
   ],
 };
 
+test("shows the available reconciliation types without fake controls", async ({
+  page,
+  baseURL,
+}) => {
+  const login = await page.request.post("/api/auth/sign-in/email", {
+    headers: { Origin: baseURL || "http://localhost:3000" },
+    data: { email: QA_EMAIL, password: QA_PASSWORD },
+  });
+  expect(login.ok()).toBeTruthy();
+
+  await page.goto("/reconciliation");
+  const types = page.getByRole("region", { name: "Jenis Rekonsiliasi" });
+  const current = types.locator('[aria-current="page"]');
+
+  await expect(types).toBeVisible();
+  await expect(current.getByText("Faktur", { exact: true })).toBeVisible();
+  await expect(current.getByText("Aktif", { exact: true })).toBeVisible();
+  await expect(types.getByText("Pembelian", { exact: true })).toBeVisible();
+  await expect(types.getByText("Return", { exact: true })).toBeVisible();
+  await expect(types.getByText("Belum aktif", { exact: true })).toHaveCount(2);
+  await expect(types.getByRole("button")).toHaveCount(0);
+  await expect(types.getByRole("link")).toHaveCount(0);
+  await expect(types.locator('[tabindex]:not([tabindex="-1"])')).toHaveCount(0);
+  expect(
+    await types
+      .getByText("Pembelian", { exact: true })
+      .locator("..")
+      .evaluate((element) => (element as HTMLElement).tabIndex),
+  ).toBe(-1);
+  expect(
+    await types
+      .getByText("Return", { exact: true })
+      .locator("..")
+      .evaluate((element) => (element as HTMLElement).tabIndex),
+  ).toBe(-1);
+
+  const themes = [
+    ["Office Calm", "office-calm"],
+    ["Neon HUD", "neon"],
+    ["iOS Liquid Glass", "ios"],
+  ] as const;
+
+  const themeToggle = page.getByRole("button", { name: "Ganti tema" });
+  for (const [label, key] of themes) {
+    await expect(async () => {
+      await themeToggle.click();
+      await expect(themeToggle).toHaveAttribute("aria-expanded", "true");
+    }).toPass();
+    await page.getByRole("button", { name: new RegExp(label) }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", key);
+    await expect(types).toBeVisible();
+  }
+
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(
+    await types.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+});
+
 test("shows the progressive reconciliation workflow", async ({
   page,
   baseURL,
