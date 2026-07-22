@@ -114,7 +114,7 @@ test("shows the available reconciliation types without fake controls", async ({
     await expect(async () => {
       await themeToggle.click();
       await expect(themeToggle).toHaveAttribute("aria-expanded", "true");
-    }).toPass();
+    }).toPass({ timeout: 10_000 });
     await page.getByRole("button", { name: new RegExp(label) }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", key);
     await expect(types).toBeVisible();
