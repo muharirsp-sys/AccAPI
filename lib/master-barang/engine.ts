@@ -29,6 +29,12 @@ export type SourceItem = {
     promo?: string;
     sachet?: string;
     golongan?: string;
+    // Harga (dari price list principal) + margin. Distributor = harga beli MSM; BUJ = harga jual customer.
+    hargaDistributorInclude?: number;
+    hargaDistributorExclude?: number;
+    hargaBujInclude?: number;
+    hargaBujExclude?: number;
+    marginPersen?: number; // % kategori (Note PDF): Sunco/Bumbue 9, Barsoap/Liquid Soap 10.
     confidence?: number;
     reviewNotes?: string[];
 };
@@ -80,6 +86,11 @@ export type FormFixRow = {
     ketTambahan2: string;
     ketGolongan: string;
     kodeGolongan: string;
+    hargaDistributorInclude: number;
+    hargaDistributorExclude: number;
+    hargaBujInclude: number;
+    hargaBujExclude: number;
+    marginPersen: number;
     sourceRow?: number;
     sourcePage?: number;
     confidence: number;
@@ -148,6 +159,11 @@ export const FORM_FIX_COLUMNS: Array<{ key: keyof FormFixRow; label: string }> =
     { key: "ketTambahan2", label: "KET TAMBAHAN2" },
     { key: "ketGolongan", label: "KET. GOLONGAN" },
     { key: "kodeGolongan", label: "kode  1 Digit (Nomor)" },
+    { key: "hargaDistributorInclude", label: "Harga Distributor (Incl PPN)" },
+    { key: "hargaDistributorExclude", label: "Harga Distributor (Excl PPN)" },
+    { key: "hargaBujInclude", label: "Harga BUJ/Customer (Incl PPN)" },
+    { key: "hargaBujExclude", label: "Harga BUJ/Customer (Excl PPN)" },
+    { key: "marginPersen", label: "Margin % (kategori)" },
 ];
 
 const clean = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
@@ -516,6 +532,13 @@ export function generateMasterBarang(principleName: string, principleCode: strin
             namaKemasan: kemasan.name, kodeKemasan: kemasan.code, namaPromo: promo.name, kodePromo: promo.code,
             namaSachet: sachet.name, kodeSachet: sachet.code, ketTambahan2: upper(item.ketTambahan),
             ketGolongan: golongan.name, kodeGolongan: golongan.code,
+            hargaDistributorInclude: Number(item.hargaDistributorInclude ?? 0) || 0,
+            hargaDistributorExclude: Number(item.hargaDistributorExclude ?? 0) || 0,
+            hargaBujInclude: Number(item.hargaBujInclude ?? 0) || 0,
+            hargaBujExclude: Number(item.hargaBujExclude ?? 0) || 0,
+            // Margin % kategori dari Note price list MSM: Sunco/Bumbue 9%, sisanya (Barsoap/Liquid Soap) 10%.
+            // ponytail: aturan kategori dari keterangan PDF; kalau sumber sudah kasih margin eksplisit, pakai itu.
+            marginPersen: Number(item.marginPersen ?? 0) || (/\b(SUNCO|BUMBUE|BUMBU)\b/.test(upper(`${item.namaBarang} ${item.klp ?? ""} ${item.kelompokPcpl ?? ""}`)) ? 9 : 10),
             sourceRow: item.sourceRow, sourcePage: item.sourcePage, confidence: Number(item.confidence ?? 1),
         };
     });

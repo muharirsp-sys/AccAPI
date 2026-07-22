@@ -40,6 +40,8 @@ const FORM_COLUMNS: Array<[string, string]> = [
     ["namaAroma", "Nama Aroma/Rasa"], ["kodeAroma", "Kode Aroma"], ["namaGramasi", "Nama Gramasi / Pack"], ["kodeGramasi", "Kode Gramasi"],
     ["namaKemasan", "Nama Jenis Kemasan"], ["kodeKemasan", "Kode Kemasan"], ["namaPromo", "Nama Promo"], ["kodePromo", "Kode Promo"],
     ["namaSachet", "Sachet"], ["kodeSachet", "Kode Sachet"], ["ketTambahan2", "KET TAMBAHAN2"], ["ketGolongan", "KET. GOLONGAN"], ["kodeGolongan", "Kode Golongan"],
+    ["hargaDistributorInclude", "Harga Distributor (Incl)"], ["hargaDistributorExclude", "Harga Distributor (Excl)"],
+    ["hargaBujInclude", "Harga BUJ (Incl)"], ["hargaBujExclude", "Harga BUJ (Excl)"], ["marginPersen", "Margin %"],
 ];
 
 // Status badge: teks -600 + tint -500/12 supaya lolos kontras di tema terang (cream) maupun gelap (neon).
