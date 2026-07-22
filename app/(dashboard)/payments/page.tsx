@@ -1,15 +1,14 @@
-"use client";
-
 /*
- * Tujuan: Halaman manajemen payments/SPPD untuk upload LPB/backup, entry manual, edit grid terpaginasikan dengan format nilai decimal 2 digit, clear data, refresh tab/focus, dan submit cart.
+ * Tujuan: Halaman manajemen payments/SPPD untuk upload LPB/backup, entry manual, edit grid terpaginasikan, penyimpanan perubahan terjaga, dan submit cart dari data server terbaru.
  * Caller: Next.js App Router route `/payments`.
- * Dependensi: FastAPI payments endpoints, Better Auth client, DatePickerField, lucide-react, sonner.
- * Main Functions: PaymentsPage, fetchData, handleUpload, handleManualAdd, handleSubmitCart, handleSaveBulk, handleInputChange, handleDelete, handleClearAll, backendConflictMessage.
- * Side Effects: HTTP call ke FastAPI, upload file Excel, update/delete/clear payments.json melalui backend, refresh data saat window focus/visibility kembali.
+ * Dependensi: FastAPI payments endpoints, Better Auth client, DatePickerField, Dialog native bersama, lucide-react, sonner.
+ * Main Functions: PaymentsPage, fetchData, handleUpload, handleManualAdd, handleSaveBulk, handleSubmitCart, handleInputChange, handleDelete, handleClearAll, backendConflictMessage.
+ * Side Effects: HTTP call ke FastAPI, upload file Excel, update/delete/clear payments.json melalui backend, refresh data saat window focus/visibility kembali hanya ketika tidak ada edit lokal.
  */
 
+"use client";
+
 import { useEffect, useState, useMemo } from "react";
-import { createPortal } from "react-dom";
 import { Wallet, Upload, FileSpreadsheet, Send, Plus, Search, Save, Trash2, DownloadCloud, Landmark, FileText, AlertTriangle, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
@@ -18,6 +17,7 @@ import { fuzzyMatch } from "@/lib/fuzzySearch";
 import { parseAnyDate } from "@/lib/dateFilter";
 import { resolveApiBase } from "@/lib/apiBase";
 import PrincipleFilterDropdown, { PrincipleOption } from "./PrincipleFilterDropdown";
+import Dialog from "@/components/ui/Dialog";
 
 // Kolom tanggal di Engine Filter Kolom Data: dipilih via kalender dan dicocokkan persis.
 const DATE_FILTER_KEYS = new Set([
@@ -236,18 +236,6 @@ export default function PaymentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // RC#2: Re-fetch saat user kembali ke tab ini agar data tidak stale
-    // jika ada perubahan dari komputer/tab lain sejak halaman dibuka.
-    useEffect(() => {
-        const handleVisibilityChange = () => {
-            if (document.visibilityState === "visible") {
-                fetchData({ showLoading: false });
-            }
-        };
-        document.addEventListener("visibilitychange", handleVisibilityChange);
-        return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-    }, []);
-
     const fetchData = async (options: { showLoading?: boolean; pageOverride?: number } = {}) => {
         const showLoading = options.showLoading !== false;
         const p = options.pageOverride ?? page;
@@ -281,6 +269,18 @@ export default function PaymentsPage() {
             window.removeEventListener("focus", refreshIfVisible);
             document.removeEventListener("visibilitychange", refreshIfVisible);
         };
+    // ponytail: listener hanya perlu diikat ulang saat dirty state berubah; fetchData membaca pagination aktif saat event terjadi.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pendingChanges]);
+
+    useEffect(() => {
+        if (Object.keys(pendingChanges).length === 0) return;
+        const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+            event.preventDefault();
+            event.returnValue = "";
+        };
+        window.addEventListener("beforeunload", warnBeforeUnload);
+        return () => window.removeEventListener("beforeunload", warnBeforeUnload);
     }, [pendingChanges]);
 
     const handleUpload = async (e: React.FormEvent) => {
@@ -336,7 +336,15 @@ export default function PaymentsPage() {
     const handleSubmitCart = async () => {
         const selectedIds = records.filter(r => r.ajukan).map(r => r.record_id || r.id);
         if (selectedIds.length === 0) return toast.error('Pilih minimal 1 data untuk diajukan kompilasi.');
-        
+
+        if (Object.keys(pendingChanges).length > 0) {
+            const saved = await handleSaveBulk();
+            if (!saved) {
+                toast.error("Keranjang belum dibuat karena masih ada perubahan yang gagal disimpan.");
+                return;
+            }
+        }
+
         // RC#3: Informasikan berapa record yang akan diproses agar user tahu
         // bahwa angka filter akan berubah setelah cart disubmit.
         const selectedCount = selectedIds.length;
@@ -351,11 +359,10 @@ export default function PaymentsPage() {
         finally { setIsSubmitting(false); }
     };
 
-    const handleSaveBulk = async () => {
+    async function handleSaveBulk(): Promise<boolean> {
         const dirtyIds = Object.keys(pendingChanges);
         if (dirtyIds.length === 0) {
-            toast.info("Tidak ada perubahan baru untuk disimpan.");
-            return;
+            return true;
         }
         setIsSaving(true);
         try {
@@ -385,7 +392,7 @@ export default function PaymentsPage() {
                 const skippedCount = Number(res.data.skipped ?? 0);
                 if (updatedCount === 0) {
                     toast.warning("Tidak ada baris yang berubah di server. Data lokal tetap dipertahankan.");
-                    return;
+                    return false;
                 }
                 if (skippedCount > 0) {
                     const updatedIds = new Set<string>(
@@ -397,23 +404,29 @@ export default function PaymentsPage() {
                         return next;
                     });
                     toast.warning(`${updatedCount} baris tersimpan, ${skippedCount} baris gagal ditemukan. Input lokal yang belum tersimpan tetap dipertahankan.`);
-                    return;
+                    return false;
                 }
 
                 toast.success(`Perubahan berhasil disimpan untuk ${updatedCount} baris.`);
+                setPendingChanges({});
                 const refreshed = await fetchData({ showLoading: false });
-                if (refreshed) {
-                    setPendingChanges({});
-                } else {
+                if (!refreshed) {
                     toast.warning("Data tersimpan, tetapi refresh gagal. Tampilan lokal tetap dipertahankan.");
                 }
+                return true;
             } else if (res.status === 409 || res.data.conflict) {
                 toast.warning(backendConflictMessage(res.data));
-                fetchData({ showLoading: false });
-            } else toast.error(res.data.error || "Gagal menyimpan perubahan tabel.");
-        } catch { toast.error("Kesalahan jaringan saat sinkronisasi grid batch."); } 
+                return false;
+            } else {
+                toast.error(res.data.error || "Gagal menyimpan perubahan tabel.");
+                return false;
+            }
+        } catch {
+            toast.error("Kesalahan jaringan saat sinkronisasi grid batch.");
+            return false;
+        }
         finally { setIsSaving(false); }
-    };
+    }
 
     const handleDelete = async () => {
         const selectedIds = records.filter(r => r.ajukan).map(r => r.record_id || r.id);
@@ -669,7 +682,7 @@ export default function PaymentsPage() {
                             <option value="NON_PANIN">Route: BNN (Bank Non Panin)</option>
                             <option value="BANK_PANIN">Route: BPA (Bank Panin Terkhusus)</option>
                         </select>
-                        <button onClick={handleSubmitCart} disabled={isSubmitting} className="flex items-center gap-2 bg-blue-600 text-white font-bold py-2.5 px-5 rounded-lg hover:bg-blue-500 shadow-lg transition-all disabled:opacity-50 text-sm whitespace-nowrap">
+                        <button onClick={handleSubmitCart} disabled={isSubmitting || isSaving} className="flex items-center gap-2 bg-blue-600 text-white font-bold py-2.5 px-5 rounded-lg hover:bg-blue-500 shadow-lg transition-all disabled:opacity-50 text-sm whitespace-nowrap">
                             Eksekusi Pengajuan <Send size={16} />
                         </button>
                     </div>
@@ -845,81 +858,38 @@ export default function PaymentsPage() {
                 .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(176, 125, 43, 0.45); }
             `}</style>
 
-            {uploadError && typeof document !== "undefined" && createPortal(
-            <>
-                <style>{`
-                    @keyframes _uploadErrIn {
-                        from { opacity: 0; transform: scale(0.86) translateY(16px); }
-                        to   { opacity: 1; transform: scale(1)    translateY(0);    }
-                    }
-                    @keyframes _uploadErrBg {
-                        from { opacity: 0; }
-                        to   { opacity: 1; }
-                    }
-                    ._upload-err-backdrop { animation: _uploadErrBg 0.18s ease both; }
-                    ._upload-err-card     { animation: _uploadErrIn 0.24s cubic-bezier(0.16,1,0.3,1) both; }
-                    ._upload-err-close:hover { background: rgba(255,255,255,0.1) !important; color: #fff !important; }
-                    ._upload-err-btn:hover   { filter: brightness(1.15); transform: translateY(-1px); box-shadow: var(--modal-err-btn-shadow) !important; }
-                    ._upload-err-btn:active  { transform: translateY(0); filter: brightness(1); }
-                `}</style>
-                <div
-                    className="_upload-err-backdrop"
-                    style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", background: "var(--modal-err-overlay-bg, rgba(0,0,0,0.82))", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)" }}
+            <Dialog
+                open={Boolean(uploadError)}
+                onClose={() => setUploadError(null)}
+                labelledBy="payments-upload-error-title"
+                describedBy="payments-upload-error-message"
+                closeOnBackdrop
+                className="slide-in-from-bottom-4 animate-in duration-200 w-full max-w-md overflow-hidden rounded-[20px] border border-[var(--modal-err-accent-border)] bg-[var(--modal-err-card-bg)] shadow-2xl"
+            >
+                <button
+                    type="button"
                     onClick={() => setUploadError(null)}
+                    aria-label="Tutup pesan upload"
+                    className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white"
                 >
-                    <div
-                        className="_upload-err-card"
-                        style={{ position: "relative", width: "100%", maxWidth: "25rem", background: "var(--modal-err-card-bg)", border: "1px solid var(--modal-err-accent-border)", borderRadius: "20px", boxShadow: "var(--modal-err-card-shadow)", backdropFilter: "var(--modal-err-card-filter, none)", WebkitBackdropFilter: "var(--modal-err-card-filter, none)", overflow: "hidden" }}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        {/* Top theme glow line */}
-                        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "1px", background: "linear-gradient(90deg, transparent 0%, var(--modal-err-glow-line) 50%, transparent 100%)" }} />
-
-                        {/* Close X */}
-                        <button
-                            className="_upload-err-close"
-                            onClick={() => setUploadError(null)}
-                            aria-label="Tutup"
-                            style={{ position: "absolute", top: "12px", right: "12px", width: "28px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "8px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", color: "#475569", cursor: "pointer", transition: "all 0.15s ease" }}
-                        >
-                            <X size={13} />
-                        </button>
-
-                        {/* Icon + Title */}
-                        <div style={{ padding: "2rem 1.5rem 1.25rem", textAlign: "center" }}>
-                            <div style={{ width: "64px", height: "64px", margin: "0 auto 1.125rem", borderRadius: "50%", background: "var(--modal-err-accent-subtle)", border: "1px solid var(--modal-err-accent-border)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 28px var(--modal-err-accent-subtle)" }}>
-                                <AlertTriangle size={28} style={{ color: "var(--modal-err-icon-color)" }} />
-                            </div>
-                            <h3 style={{ margin: "0 0 0.25rem", fontSize: "1.125rem", fontWeight: 700, color: "var(--modal-err-title)", letterSpacing: "-0.015em" }}>
-                                Upload Gagal
-                            </h3>
-                            <p style={{ margin: 0, fontSize: "0.75rem", color: "#475569", letterSpacing: "0.02em", textTransform: "uppercase", fontWeight: 500 }}>
-                                Validasi data ditolak
-                            </p>
-                        </div>
-
-                        {/* Error message box */}
-                        <div style={{ margin: "0 1.25rem 1.25rem", padding: "0.875rem 1rem", background: "var(--modal-err-accent-subtle)", border: "1px solid var(--modal-err-accent-border)", borderRadius: "12px" }}>
-                            <p style={{ margin: 0, fontSize: "0.8125rem", lineHeight: 1.65, color: "#cbd5e1", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                                {uploadError}
-                            </p>
-                        </div>
-
-                        {/* Footer */}
-                        <div style={{ padding: "0 1.25rem 1.375rem", display: "flex", justifyContent: "flex-end" }}>
-                            <button
-                                className="_upload-err-btn"
-                                onClick={() => setUploadError(null)}
-                                style={{ display: "inline-flex", alignItems: "center", gap: "0.375rem", padding: "0.5625rem 1.375rem", borderRadius: "10px", background: "var(--modal-err-btn-bg)", border: "1px solid var(--modal-err-btn-border)", color: "#fff", fontSize: "0.875rem", fontWeight: 600, cursor: "pointer", boxShadow: "var(--modal-err-btn-shadow)", transition: "all 0.15s ease", letterSpacing: "0.01em" }}
-                            >
-                                <X size={13} /> Mengerti
-                            </button>
-                        </div>
+                    <X size={14} />
+                </button>
+                <div className="px-6 pb-5 pt-8 text-center">
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-[var(--modal-err-accent-border)] bg-[var(--modal-err-accent-subtle)]">
+                        <AlertTriangle size={28} className="text-[var(--modal-err-icon-color)]" />
                     </div>
+                    <h3 id="payments-upload-error-title" className="text-lg font-bold text-[var(--modal-err-title)]">Upload Gagal</h3>
+                    <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Validasi data ditolak</p>
                 </div>
-            </>,
-            document.body
-        )}
+                <p id="payments-upload-error-message" role="alert" className="mx-5 mb-5 whitespace-pre-wrap break-words rounded-xl border border-[var(--modal-err-accent-border)] bg-[var(--modal-err-accent-subtle)] px-4 py-3 text-sm leading-relaxed text-slate-300">
+                    {uploadError}
+                </p>
+                <div className="flex justify-end px-5 pb-5">
+                    <button type="button" autoFocus onClick={() => setUploadError(null)} className="inline-flex items-center gap-2 rounded-lg bg-[var(--modal-err-btn-bg)] px-4 py-2 text-sm font-semibold text-white shadow-lg">
+                        <X size={14} /> Mengerti
+                    </button>
+                </div>
+            </Dialog>
         </div>
     );
 }

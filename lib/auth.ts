@@ -1,27 +1,22 @@
 /*
- * Tujuan: Konfigurasi Better Auth server untuk email/password internal, admin RBAC, trusted origin lokal, dan adapter SQLite.
+ * Tujuan: Konfigurasi Better Auth server untuk email/password internal, admin RBAC, trusted origin lokal, dan adapter PostgreSQL.
  * Caller: `app/api/auth/[...all]/route.ts`, dashboard layout, dan server-side auth checks.
- * Dependensi: Better Auth, Drizzle adapter, SQLite schema, email service, dan RBAC role access.
+ * Dependensi: Better Auth, Drizzle adapter, schema PostgreSQL, email service, dan RBAC role access.
  * Main Functions: `auth`.
- * Side Effects: DB read/write auth ke SQLite dan pengiriman email reset/verifikasi saat flow terkait dipanggil.
+ * Side Effects: DB read/write auth ke PostgreSQL dan pengiriman email reset/verifikasi saat flow terkait dipanggil.
  */
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { admin } from "better-auth/plugins";
-import { drizzle } from "drizzle-orm/libsql";
-import { createClient } from "@libsql/client";
-import { mkdirSync } from "node:fs";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
 import * as schema from "../db/schema";
 
 import { sendEmail } from "./email";
 import { defaultRole, roleAccess } from "./rbac";
 
-const databaseUrl = process.env.DATABASE_URL || "file:sqlite.db";
-const databaseFile = databaseUrl.startsWith("file:") ? databaseUrl.slice("file:".length) : null;
-if (databaseFile?.startsWith("/")) {
-    mkdirSync(databaseFile.replace(/\/[^/]*$/, ""), { recursive: true });
-}
-const authDb = drizzle(createClient({ url: databaseUrl }), { schema });
+// D4 cutover: PostgreSQL (pool terpisah dari lib/db.ts, paritas dengan struktur lama).
+const authDb = drizzle(new Pool({ connectionString: process.env.DATABASE_URL }), { schema });
 const baseURL = process.env.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
 function isAllowedTrustedOrigin(origin: string) {
@@ -62,7 +57,7 @@ export const auth = betterAuth({
         },
     },
     database: drizzleAdapter(authDb, {
-        provider: "sqlite",
+        provider: "pg",
         schema: {
             ...schema
         }

@@ -5,11 +5,19 @@
 #              (salesDailyProgress) untuk dashboard insentif-sales.
 # Caller     : python_backend/main.py endpoint /laporan-harian/process (dipanggil Next.js
 #              app/api/laporan-harian/upload). Juga dipakai parity test Tahap 0.
-# Dependensi : pandas, openpyxl (baca lookup). python-calamine dipakai bila tersedia (baca cepat).
+# Dependensi : pandas, openpyxl, laporan_harian_lookups.json, laporan_harian_targets.py,
+#              dan laporan_harian_principal.py untuk parity Power Query Principal.
+#              python-calamine dipakai bila tersedia (baca cepat).
 # Main Functions:
 #   load_lookups(f_format, f_spv) -> LookupTables
 #   process(paste_path, stock_path, lookups) -> dict {per_spv, per_sm, stock, progress, summary}
-# Side Effects: baca file Excel (read-only). TIDAK menulis file sumber. Tidak kirim email.
+#   build_stock_frame(...) / write_report_files(...) -> output XLSX dan Stock tujuh kolom per target.
+#   Alias export Stock Accurate dipetakan eksplisit; assignment stock memakai Principal sumber agar item
+#   tanpa penjualan pada periode laporan tetap ikut ditulis. Retur membalik nilai jual/unit dan menyisakan
+#   nilai bonus/los kosong pada penjualan saat sumber referensinya tidak ada.
+#   latest_sales_date(...) -> tanggal transaksi penjualan terakhir untuk nama file dan subject email.
+#   _normal_text(...) -> normalisasi null-safe termasuk pandas.NA.
+# Side Effects: Baca file sumber dan tulis XLSX hasil ke runtime; tidak mengubah file sumber/tidak kirim email.
 # Catatan parity (dikonfirmasi user): sumber penjualan = sheet "Paste Acc" (export Accurate),
 #   sheet "Paste Lap. Penj" lama sudah kosong -> tidak dipakai. Retur = "Paste Lap. Retur" (dinegasikan).
 from __future__ import annotations
@@ -18,6 +26,13 @@ from dataclasses import dataclass
 from typing import Optional
 import numpy as np
 import pandas as pd
+from laporan_harian_targets import REPORT_TARGETS
+from laporan_harian_principal import (
+    apply_sales_rule,
+    apply_stock_rule,
+    build_principal_report,
+    build_principal_stock,
+)
 
 PENJ_LABEL = "1. Penjualan Bruto"
 RETUR_LABEL = "2. (-) Retur Penjualan"
@@ -52,6 +67,7 @@ class LookupTables:
     conca_to_spv: dict       # PRINCIPAL+JENISPRODUK -> NAMA SPV
     jp_map: dict             # kode jenis produk -> nama
     sm_map: dict             # PRINCIPLE -> NAMA SM
+    report_targets: dict = None  # keyword email -> {group_type, values}; alias principal non-exact
 
 
 # ---------- IO cepat ----------
@@ -89,31 +105,38 @@ def load_lookups(f_format: str, f_spv: str) -> LookupTables:
     jpm = dict(zip(jp["JENISPRODUK"].astype(str).str.strip(), jp["NAMA JENIS PRODUK"]))
     mp = sheet_df(f_spv, "Mapping")                 # PRINCIPLE, NAMA SPV, NAMA SM
     sm = dict(zip(mp["PRINCIPLE"].astype(str).str.strip(), mp["NAMA SM"]))
-    return LookupTables(p2s, c2s, jpm, sm)
+    return LookupTables(p2s, c2s, jpm, sm, {})
 
 
 # ---------- Stage A: Paste Data -> FIX ----------
 def _prep_acc(acc: pd.DataFrame, lk: LookupTables) -> pd.DataFrame:
-    # CUSTOMER asli di Paste Acc = KODE; nama asli ada di "Nama Pelanggan Faktur Penjualan".
-    # Buang kolom CUSTOMER(kode) agar rename bawa NAMA jadi CUSTOMER (bukan drop nama saat dedup).
+    # Simpan nama sebelum rename karena export Accurate juga dapat punya kolom CUSTOMER berisi kode.
+    customer_name = next((
+        acc[column]
+        for column in ("Nama Pelanggan Faktur Penjualan", "Nama Customer", "Nama Pelanggan")
+        if column in acc.columns
+    ), None)
     a = acc.rename(columns=REN_ACC)
-    a = a.loc[:, ~a.columns.duplicated()]  # buang kolom duplikat pasca-rename
-    if "KODE_CUST" in a.columns:
-        a["CUSTOMER"] = a["KODE_CUST"]   # per instruksi: CUSTOMER dari kolom F (KODE PELANGGAN INDUK)
-    a["QTYBONUS"] = 0
-    if "MARKET" in a.columns:
-        a["JENISMARKET"] = a["MARKET"]   # jenis market (TT/GT/MT) ada di kolom MARKET (AE) Paste Acc
+    a = a.loc[:, ~a.columns.duplicated()].copy()  # buang kolom duplikat pasca-rename
+    if customer_name is not None:
+        names = customer_name.astype("string").str.strip()
+        fallback = a.get("KODE_CUST", pd.Series("", index=a.index)).astype("string").str.strip()
+        a.loc[:, "CUSTOMER"] = names.where(names.notna() & names.ne(""), fallback)
+    elif "CUSTOMER" not in a.columns and "KODE_CUST" in a.columns:
+        a.loc[:, "CUSTOMER"] = a["KODE_CUST"]
     a = a[a["NO_NOTA"].astype("string").str.strip().fillna("") != ""].copy()
     for c in ["PRINCIPAL", "KODE_SALESMAN", "KODE_CUST", "KODE_BARANG", "SATUAN", "REM", "CUSTOMER"]:
         if c in a:
-            a[c] = a[c].astype("string").str.strip()
-    a["JENIS_TRANSAKSI"] = np.where(
+            a.loc[:, c] = a[c].astype("string").str.strip()
+    jenis_produk = a.get("JENISPRODUK", pd.Series(pd.NA, index=a.index)).astype("string").str.strip()
+    a.loc[:, "JENISPRODUK"] = jenis_produk.map(lk.jp_map).fillna(jenis_produk)
+    a.loc[:, "JENIS_TRANSAKSI"] = np.where(
         a["NO_NOTA"].astype("string").str.upper().str.startswith("INV"), PENJ_LABEL, RETUR_LABEL)
-    a["NILAI_JUAL"] = _num(a.get("NILAI_JUAL"))
-    a["DPP"] = _num(a["DPP"]) if "DPP" in a else a["NILAI_JUAL"]
-    a["QTY"] = _num(a.get("QTY"))
-    a["Conca"] = a["PRINCIPAL"].fillna("") + a.get("JENISPRODUK", pd.Series("", index=a.index)).fillna("").astype(str)
-    a["GOLONGAN"] = a["Conca"].map(lk.conca_to_spv).fillna(a["PRINCIPAL"].map(lk.principal_to_spv)).fillna("YARMAN")
+    a.loc[:, "NILAI_JUAL"] = _num(a.get("NILAI_JUAL"))
+    a.loc[:, "DPP"] = _num(a["DPP"]) if "DPP" in a else a["NILAI_JUAL"]
+    a.loc[:, "QTY"] = _num(a.get("QTY"))
+    a.loc[:, "Conca"] = a["PRINCIPAL"].fillna("") + a.get("JENISPRODUK", pd.Series("", index=a.index)).fillna("").astype(str)
+    a.loc[:, "GOLONGAN"] = a["Conca"].map(lk.conca_to_spv).fillna(a["PRINCIPAL"].map(lk.principal_to_spv)).fillna("YARMAN")
     return a
 
 
@@ -187,12 +210,18 @@ def build_salesbase(fix: pd.DataFrame, lk: LookupTables) -> pd.DataFrame:
     # Value Retur Termasuk Batal (Exc.PPN): |DPP| utk baris retur
     df["Value Retur Termasuk Batal (Exc.PPN)"] = np.where(~non_retur, df["DPP"].abs(), 0.0)
 
-    # Qty Los / Value Los butuh QTY_REF (tak ada di Paste Acc) -> 0 bila kolom absen
+    # Qty Los / Value Los hanya ada jika sumber benar-benar menyertakan QTY_REF.
+    # Jangan tulis nol sintetis: Power Query mempertahankan blank saat referensi tidak tersedia.
     qref_raw = pd.to_numeric(df["QTY_REF"], errors="coerce") if "QTY_REF" in df.columns else pd.Series(np.nan, index=df.index)
-    has_ref = qref_raw.notna() & (qref_raw != 0)   # tanpa QTY_REF -> Los = 0 (bukan -QTY)
+    has_ref = qref_raw.notna() & (qref_raw != 0)
     qn = _num(df.get("QTY")); hg = _num(df.get("HARGA"))
-    df["Qty Los"] = np.where(non_retur & has_ref, qref_raw.fillna(0) - qn, 0.0)
-    df["Value Los"] = np.where(non_retur & has_ref, (qref_raw.fillna(0) - qn) * hg, 0.0)
+    df["Qty Los"] = pd.Series(pd.NA, index=df.index, dtype="object")
+    df["Value Los"] = pd.Series(pd.NA, index=df.index, dtype="object")
+    los_mask = non_retur & has_ref
+    df.loc[los_mask, "Qty Los"] = (qref_raw[los_mask] - qn[los_mask]).to_numpy()
+    df.loc[los_mask, "Value Los"] = ((qref_raw[los_mask] - qn[los_mask]) * hg[los_mask]).to_numpy()
+    df["QTYBONUS"] = pd.Series(pd.NA, index=df.index, dtype="object")
+    df.loc[~non_retur, ["QTYBONUS", "Qty Los", "Value Los"]] = 0
 
     # Nota Batal (per nota, 1x): baris item-batal, unik per PRINCIPAL+SALESMAN+NO_NOTA+CUST
     keys_nota = ["PRINCIPAL", "KODE_SALESMAN", "NO_NOTA", "KODE_CUST"]
@@ -237,6 +266,19 @@ def aggregate_progress(sb: pd.DataFrame) -> pd.DataFrame:
     out["periodMonth"] = pd.to_datetime(out["date"], errors="coerce").dt.month
     out["periodYear"] = pd.to_datetime(out["date"], errors="coerce").dt.year
     return out
+
+
+def latest_sales_date(sb: pd.DataFrame, fallback: Optional[str] = None) -> Optional[str]:
+    """Tanggal maksimum transaksi penjualan bruto; retur yang lebih baru tidak mengubah tanggal laporan."""
+    if "TANGGAL" not in sb.columns:
+        return fallback
+    dates = pd.to_datetime(sb["TANGGAL"], errors="coerce")
+    if "JENIS_TRANSAKSI" in sb.columns:
+        sales_mask = sb["JENIS_TRANSAKSI"].astype("string").eq(PENJ_LABEL).fillna(False)
+        sales_dates = dates[sales_mask]
+        if sales_dates.notna().any():
+            return sales_dates.max().strftime("%Y-%m-%d")
+    return dates.max().strftime("%Y-%m-%d") if dates.notna().any() else fallback
 
 
 def process(paste_path: str, stock_path: Optional[str], lookups: LookupTables) -> dict:
@@ -288,10 +330,18 @@ def _read_stock(stock_path: str) -> pd.DataFrame:
     return df.loc[:, [c for c in df.columns if c != ""]]
 
 
-def build_stock(stock_path: str, sb: pd.DataFrame, lk: LookupTables) -> dict:
-    """Stock -> map KODE_BARANG->GOLONGAN dari sales -> split per SPV."""
+def build_stock_frame(stock_path: str, sb: pd.DataFrame, lk: Optional[LookupTables] = None) -> pd.DataFrame:
+    """Normalisasi Stock Accurate dan tetapkan SPV/SM dari Principal sumber sebelum fallback data sales."""
     st = _read_stock(stock_path)
     st.columns = [str(c).strip() for c in st.columns]
+    # Export Accurate menyisipkan kolom spacer. Setelah spacer dibuang, nama headernya tidak sama dengan
+    # isi bisnis: Nama Gudang = kode (GD01), Deskripsi Gudang = nama, Nama Satuan = satuan.
+    if "Nama Gudang" in st.columns:
+        st["Kode Gudang"] = st["Nama Gudang"]
+    if "Deskripsi Gudang" in st.columns:
+        st["Nama Gudang"] = st["Deskripsi Gudang"]
+    if "Nama Satuan" in st.columns and "Satuan" not in st.columns:
+        st["Satuan"] = st["Nama Satuan"]
     kode_col = next((c for c in st.columns if c.lower() in ("kode barang", "kode") or "kode barang" in c.lower()),
                     next((c for c in st.columns if "kode" in c.lower()), st.columns[0]))
     qty_col = next((c for c in st.columns if "kuantitas in pcs" in c.lower()
@@ -302,9 +352,36 @@ def build_stock(stock_path: str, sb: pd.DataFrame, lk: LookupTables) -> dict:
     st = st.rename(columns=ren)
     st = st[st["KODE_BARANG"].notna()].copy()
     st["KODE_BARANG"] = st["KODE_BARANG"].astype("string").str.strip()
-    prod_spv = (sb.dropna(subset=["KODE_BARANG", "GOLONGAN"])
-                  .drop_duplicates("KODE_BARANG").set_index("KODE_BARANG")["GOLONGAN"].to_dict())
-    st["GOLONGAN"] = st["KODE_BARANG"].map(prod_spv)
+    mapping_cols = ["KODE_BARANG", "PRINCIPAL", "GOLONGAN", "NAMA_SM"]
+    product_map = (sb.reindex(columns=mapping_cols)
+                     .dropna(subset=["KODE_BARANG"])
+                     .drop_duplicates("KODE_BARANG")
+                     .set_index("KODE_BARANG"))
+    raw_principal = next(
+        (column for column in st.columns if _normal_text(column) in {"PRINCIPAL", "PRINCIPLE", "NAMA PRINCIPAL"}),
+        None,
+    )
+    mapped_principal = st["KODE_BARANG"].map(product_map["PRINCIPAL"])
+    if raw_principal:
+        source_principal = st[raw_principal].replace(r"^\s*$", pd.NA, regex=True)
+        st["PRINCIPAL"] = source_principal.combine_first(mapped_principal)
+    else:
+        st["PRINCIPAL"] = mapped_principal
+    source_key = st["PRINCIPAL"].map(_normal_text)
+    principal_to_spv = {
+        _normal_text(key): value for key, value in (lk.principal_to_spv if lk else {}).items()
+    }
+    sm_map = {
+        _normal_text(key): value for key, value in (lk.sm_map if lk else {}).items()
+    }
+    st["GOLONGAN"] = source_key.map(principal_to_spv).combine_first(st["KODE_BARANG"].map(product_map["GOLONGAN"]))
+    st["NAMA_SM"] = source_key.map(sm_map).combine_first(st["KODE_BARANG"].map(product_map["NAMA_SM"]))
+    return st
+
+
+def build_stock(stock_path: str, sb: pd.DataFrame, lk: LookupTables) -> dict:
+    """Backward-compatible: stock dipisah per SPV untuk caller pipeline lama."""
+    st = build_stock_frame(stock_path, sb, lk)
     return {name: g.copy() for name, g in st.dropna(subset=["GOLONGAN"]).groupby("GOLONGAN")}
 
 
@@ -340,7 +417,7 @@ def load_fix(fix_path: str, sheet: str = "FIX LAP PENJ") -> pd.DataFrame:
 
 def process_from_fix(fix_path: str, stock_path: Optional[str], sm_map: dict) -> dict:
     """Pipeline bila sumber = FIX LAP PENJ jadi. Hanya Stage B (SalesBase) + split + agregat."""
-    lk = LookupTables({}, {}, {}, sm_map)
+    lk = LookupTables({}, {}, {}, sm_map, {})
     fix = load_fix(fix_path)
     sb = build_salesbase(fix, lk)
     per_spv, per_sm = split_per_group(sb)
@@ -379,37 +456,154 @@ def build_report_frame(sb: pd.DataFrame) -> pd.DataFrame:
         if c not in df.columns:
             df[c] = np.nan
     for c in ("TANGGAL", "TGL_JT"):
-        df[c] = pd.to_datetime(df[c], errors="coerce").dt.strftime("%Y-%m-%d")
+        df = df.assign(**{c: pd.to_datetime(df[c], errors="coerce").dt.to_pydatetime()})
     numcols = ["QTY","HARGA","POTONGAN","NILAI_JUAL","JUMLAH","DPP","Harga Sesuai Inputan",
                "Value Los","Qty Los","Value Retur Termasuk Batal (Exc.PPN)","QTY_SATUANKECIL","QTY_REF"]
-    out = df[REPORT_COLUMNS + ["GOLONGAN"]].copy() if "GOLONGAN" in df else df[REPORT_COLUMNS].copy()
+    # GOLONGAN sudah ada di REPORT_COLUMNS; duplikasi di sini menggeser seluruh nilai setelah kolom itu saat XLSX ditulis.
+    out = df[REPORT_COLUMNS].copy()
     for c in numcols:
         if c in out:
-            out[c] = pd.to_numeric(out[c], errors="coerce").replace([np.inf, -np.inf], np.nan)
+            out = out.assign(**{
+                c: pd.to_numeric(out[c], errors="coerce").replace([np.inf, -np.inf], np.nan)
+            })
     return out.astype(object).where(pd.notna(out), None)
 
 
-def write_per_spv_files(sb: pd.DataFrame, out_dir: str, report_date: str) -> list:
-    """Tulis 1 file .xlsx per SPV (GOLONGAN) ke out_dir. Return [{spv, fileName, path, rows}]."""
+def _normal_text(value) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return " ".join(str(value).strip().upper().split())
+
+
+def resolve_report_groups(sb: pd.DataFrame, report_keywords: list, lk: LookupTables) -> tuple:
+    """Resolve keyword penerima menjadi grup data SPV, SM, atau principal tanpa fuzzy filename matching."""
+    columns = {"spv": "GOLONGAN", "sm": "NAMA_SM", "principal": "PRINCIPAL"}
+    known = {
+        group_type: {
+            _normal_text(value): str(value)
+            for value in sb[column].dropna().unique()
+            if _normal_text(value)
+        }
+        for group_type, column in columns.items()
+    }
+    aliases = {
+        _normal_text(keyword): target
+        for keyword, target in (lk.report_targets or {}).items()
+    }
+    groups, unmatched = [], []
+    for raw_keyword in report_keywords:
+        keyword = str(raw_keyword).strip()
+        normalized = _normal_text(keyword)
+        target = aliases.get(normalized)
+        if target:
+            group_type = str(target.get("group_type", "")).lower()
+            values = [str(value) for value in target.get("values", [])]
+        elif normalized in known["spv"]:
+            group_type, values = "spv", [known["spv"][normalized]]
+        elif normalized in known["sm"]:
+            group_type, values = "sm", [known["sm"][normalized]]
+        else:
+            unmatched.append(keyword)
+            continue
+        column = str(target.get("sales_column", "")) if target else ""
+        column = column or columns.get(group_type)
+        filter_values = [str(value) for value in target.get("sales_values", values)] if target else values
+        if not column:
+            unmatched.append(keyword)
+            continue
+        normalized_values = {_normal_text(value) for value in filter_values}
+        mask = sb[column].map(_normal_text).isin(normalized_values)
+        frame = sb[mask].copy()
+        if group_type == "principal":
+            frame = apply_sales_rule(keyword, frame)
+        if frame.empty:
+            unmatched.append(keyword)
+            continue
+        groups.append({
+            "keyword": keyword,
+            "groupType": group_type,
+            "column": column,
+            "values": values,
+            "stockColumn": str(target.get("stock_column", "")) if target else "",
+            "stockValues": [str(value) for value in target.get("stock_values", values)] if target else values,
+            "frame": frame,
+        })
+    return groups, unmatched
+
+
+def write_report_files(sb: pd.DataFrame, out_dir: str, report_date: str,
+                       report_keywords: list, lk: LookupTables,
+                       stock_frame: Optional[pd.DataFrame] = None) -> tuple:
+    """Tulis file per keyword aktif; sheet Stock mengikuti kontrak tujuh kolom Power Query 2.3."""
     import os
     from pyexcelerate import Workbook
     os.makedirs(out_dir, exist_ok=True)
-    frame = build_report_frame(sb)
-    gol = sb["GOLONGAN"].values
-    tmp = frame.assign(_g=gol)
+    groups, unmatched = resolve_report_groups(sb, report_keywords, lk)
     written = []
-    for spv, g in tmp.groupby("_g"):
-        if spv is None or str(spv).strip() == "":
-            continue
-        safe = str(spv).replace("/", "-").replace("\\", "-")
+    for target in groups:
+        keyword = target["keyword"]
+        data = target["frame"]
+        frame = (
+            build_principal_report(keyword, data, REPORT_COLUMNS)
+            if target["groupType"] == "principal" else
+            pd.DataFrame()
+        )
+        if frame.empty and len(data):
+            frame = build_report_frame(data)
+        headers = [str(column) for column in frame.columns]
+        safe = keyword.replace("/", "-").replace("\\", "-")
         file_name = f"{report_date}_{safe}.xlsx"
         path = os.path.join(out_dir, file_name)
         wb = Workbook()
-        wb.new_sheet(str(spv)[:31].replace("/", "-").replace("&", "dan") or "NA",
-                     data=[REPORT_COLUMNS] + g[REPORT_COLUMNS].values.tolist())
+        sheet_base = keyword.replace("/", "-").replace("\\", "-").replace("&", "dan") or "NA"
+        wb.new_sheet(sheet_base[:31], data=[headers] + frame.values.tolist())
+        stock_rows = 0
+        if stock_frame is not None and not stock_frame.empty:
+            stock_column = target["stockColumn"] or target["column"]
+            stock_values = target["stockValues"]
+            if target["groupType"] == "principal":
+                stock_column = next(
+                    (column for column in ("Principal", "NAMA PRINCIPAL", "PRINCIPLE", stock_column)
+                     if column in stock_frame.columns),
+                    stock_column,
+                )
+            normalized_values = {_normal_text(value) for value in stock_values}
+            stock_mask = stock_frame[stock_column].map(_normal_text).isin(normalized_values)
+            target_stock = stock_frame[stock_mask].loc[:, ~stock_frame.columns.duplicated()].copy()
+            if target["groupType"] == "principal":
+                target_stock = apply_stock_rule(keyword, target_stock)
+            # Mapping GOLONGAN/NAMA_SM hanya untuk filter; query akhir 2.3 selalu memilih tujuh kolom ini.
+            target_stock = build_principal_stock(target_stock)
+            target_stock = target_stock.astype(object).where(pd.notna(target_stock), None)
+            stock_headers = [str(column) for column in target_stock.columns]
+            stock_rows = int(len(target_stock))
+        else:
+            target_stock = None
+        if target_stock is not None and stock_rows:
+            wb.new_sheet(f"{sheet_base[:25]} Stock"[:31],
+                         data=[stock_headers] + target_stock.values.tolist())
         wb.save(path)
-        written.append({"spv": str(spv), "fileName": file_name, "path": path, "rows": int(len(g))})
-    return written
+        written.append({
+            "keyword": keyword,
+            "groupType": target["groupType"],
+            "fileName": file_name,
+            "path": path,
+            "rows": int(len(data)),
+            "stockRows": stock_rows,
+        })
+    return written, unmatched
+
+
+def write_per_spv_files(sb: pd.DataFrame, out_dir: str, report_date: str,
+                        stock_per_spv: Optional[dict] = None) -> list:
+    """Backward-compatible wrapper untuk test/caller lama yang masih meminta semua SPV."""
+    keywords = [str(value) for value in sb["GOLONGAN"].dropna().unique()]
+    stock_frame = None
+    if stock_per_spv:
+        stock_frame = pd.concat(stock_per_spv.values(), ignore_index=True)
+    files, _ = write_report_files(sb, out_dir, report_date, keywords,
+                                  LookupTables({}, {}, {}, {}, {}), stock_frame)
+    return files
 
 
 # ---------- Stage A (baru): bangun FIX dari 2 file mentah Accurate (penjualan + retur) ----------
@@ -424,7 +618,8 @@ def load_lookups_json(path: str = LOOKUPS_JSON) -> "LookupTables":
     Dipakai saat web membangun 2.ToFormat sendiri dari export Accurate (tanpa upload master)."""
     d = _json.load(open(path, encoding="utf-8"))
     return LookupTables(d.get("principal_to_spv", {}), d.get("conca_to_spv", {}),
-                        d.get("jp_map", {}), d.get("sm_map", {}))
+                        d.get("jp_map", {}), d.get("sm_map", {}),
+                        REPORT_TARGETS)
 
 
 def build_fix_from_accurate(penjualan_path: str, retur_path: Optional[str], lk: LookupTables) -> pd.DataFrame:
@@ -434,16 +629,18 @@ def build_fix_from_accurate(penjualan_path: str, retur_path: Optional[str], lk: 
     Menghasilkan tabel setara 'FIX LAP PENJ' (retur sudah minus)."""
     acc = _read_sheet(penjualan_path, RINCIAN_SHEET)
     acc.columns = [str(c).strip() for c in acc.columns]
-    a = _prep_acc(acc, lk)              # JENIS by prefix INV; CUSTOMER=KODE_CUST; JENISMARKET=MARKET; QTYBONUS=0
+    a = _prep_acc(acc, lk)              # JENIS by prefix INV; CUSTOMER=nama (fallback kode).
     frames = [a]
     if retur_path:
         rr_raw = _read_sheet(retur_path, RINCIAN_SHEET)
         rr_raw.columns = [str(c).strip() for c in rr_raw.columns]
         r = _prep_acc(rr_raw, lk)
         r["JENIS_TRANSAKSI"] = RETUR_LABEL   # file retur = semua RJN
-        for c in ("QTY", "DPP", "NILAI_JUAL", "POTONGAN", "JUMLAH", "NILAI_PAJAK"):
+        for c in ("QTY", "HARGA", "DPP", "NILAI_JUAL", "POTONGAN", "JUMLAH", "NILAI_PAJAK", "QTY_SATUANKECIL"):
             if c in r:
                 r[c] = -_num(r[c])           # nilai mentah positif -> minus
+        if "SATUAN_KECIL" in r:
+            r["SATUAN_KECIL"] = pd.NA       # Power Query mempertahankan satuan kecil retur kosong
         frames.append(r)
     for df in frames:
         df["TANGGAL"] = pd.to_datetime(df.get("TANGGAL"), errors="coerce")

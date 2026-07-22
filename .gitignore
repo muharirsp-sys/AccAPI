@@ -100,3 +100,22 @@ next-env.d.ts
 *.db-shm
 *.db-journal
 .worktrees/
+
+# dashboard-generator: source only, artefak build/output jangan masuk git
+dashboard-generator/build/
+dashboard-generator/dist/
+dashboard-generator/__pycache__/
+dashboard-generator/output_*.html
+dashboard-generator/samples/
+dashboard-generator/reference/
+
+# python_backend runtime debug artifacts
+python_backend/data/debug_ai.txt
+python_backend/data/e2e_live_output/
+
+# materi referensi bisnis (PDF surat program asli) & poster visi — bukan source code
+reference_surat_program/
+poster/
+
+# plugin lokal Claude (bukan bagian app)
+ponytail/

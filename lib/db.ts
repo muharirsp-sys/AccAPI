@@ -1,12 +1,6 @@
-import { drizzle } from 'drizzle-orm/libsql';
-import { createClient } from '@libsql/client';
-import { mkdirSync } from 'node:fs';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool } from 'pg';
 
-const databaseUrl = process.env.DATABASE_URL || 'file:sqlite.db';
-const databaseFile = databaseUrl.startsWith('file:') ? databaseUrl.slice('file:'.length) : null;
-if (databaseFile?.startsWith('/')) {
-  mkdirSync(databaseFile.replace(/\/[^/]*$/, ''), { recursive: true });
-}
-
-const client = createClient({ url: databaseUrl });
-export const db = drizzle(client);
+// D4 cutover: PostgreSQL. Rollback = kembalikan DATABASE_URL file:sqlite.db + revert branch.
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+export const db = drizzle(pool);

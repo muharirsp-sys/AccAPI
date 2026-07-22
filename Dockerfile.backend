@@ -1,8 +1,14 @@
+# Tujuan: Build image FastAPI AccAPI beserta dependensi dan direktori runtime persisten.
+# Caller: CI container build dan Docker Compose production.
+# Dependensi: python_backend/requirements.txt, source FastAPI, dan image python:3.12-slim.
+# Main Functions: Install dependensi, salin backend, siapkan output, dan jalankan Uvicorn.
+# Side Effects: Membuat image dan direktori output pembayaran serta laporan harian.
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    LH_RUNTIME_DIR=/app/python_backend/output/laporan-harian
 
 WORKDIR /app/python_backend
 
@@ -22,7 +28,9 @@ RUN pip install --upgrade pip \
 
 COPY python_backend/ ./
 
-RUN mkdir -p /app/python_backend/data /app/python_backend/output/payments/proofs
+RUN mkdir -p /app/python_backend/data \
+    /app/python_backend/output/payments/proofs \
+    /app/python_backend/output/laporan-harian
 
 EXPOSE 8000
 

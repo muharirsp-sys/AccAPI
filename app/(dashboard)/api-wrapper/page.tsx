@@ -1,7 +1,7 @@
 /**
  * Tujuan: UI API Wrapper Accurate termasuk parser Excel bulk yang membentuk payload transaksi manual/bulk-save.
  * Caller: App Router dashboard `app/(dashboard)/api-wrapper/page.tsx` dan interaksi user di halaman API Wrapper.
- * Dependensi: `accurateRoutes`, `accurateFetch`, parser workbook per-route, Accurate OAuth/session dari browser, parser `xlsx`, toast `sonner`, route idempotency Next, `DatePickerField`.
+ * Dependensi: `accurateRoutes`, `accurateFetch`, parser workbook per-route, Accurate OAuth/session dari browser, parser `xlsx`, toast `sonner`, route idempotency Next, `DatePickerField`, `Dialog` native bersama.
  * Main Functions: `Home`, `handleLoginAccurate`, `fetchDatabases`, `handleOpenDatabase`, `handleDownloadTemplate`, `handleExecute`.
  * Side Effects: HTTP call ke Accurate route handler/proxy, baca file Excel lokal, dispatch parser workbook khusus per route, deteksi format pelunasan walau `Total.Trx` kosong, normalisasi lookup invoice/retur termasuk variasi SRB tanpa spasi, susun payload bulk-save, keluarkan laporan manual follow-up untuk retur/pot.lain yang gagal diproses, preview/lock idempotency SQLite, cek histori sales receipt Accurate, konfirmasi hasil error ke histori Accurate, tampilkan review duplicate, logging debug ke response UI.
  */
@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { accurateRoutes } from "@/config/accurateRoutes";
 import { accurateFetch } from "@/lib/apiFetcher";
 import DatePickerField from "@/components/ui/DatePickerField";
+import Dialog from "@/components/ui/Dialog";
 import { workbookRouteParsers } from "./parsers";
 
 type RouteKey = keyof typeof accurateRoutes;
@@ -2828,12 +2829,18 @@ export default function Home() {
           </div>
         </div>
 
-        {duplicateReview && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-            <div className="w-full max-w-5xl rounded-2xl border border-amber-400/20 bg-[#15161f] shadow-2xl overflow-hidden">
+        <Dialog
+          open={Boolean(duplicateReview)}
+          onClose={() => setDuplicateReview(null)}
+          labelledBy="duplicate-review-title"
+          describedBy="duplicate-review-description"
+          className="w-full max-w-5xl overflow-hidden rounded-2xl border border-amber-400/20 bg-[#15161f] shadow-2xl"
+        >
+          {duplicateReview && (
+            <>
               <div className="px-6 py-4 border-b border-white/10 bg-amber-500/10">
-                <h3 className="text-lg font-semibold text-white">Review Potensi Pembayaran Ganda</h3>
-                <p className="text-sm text-white/60 mt-1">
+                <h3 id="duplicate-review-title" tabIndex={-1} autoFocus className="text-lg font-semibold text-white">Tinjau Potensi Pembayaran Ganda</h3>
+                <p id="duplicate-review-description" className="text-sm text-white/60 mt-1">
                   Sistem menemukan baris yang mirip dengan upload lain atau muncul lebih dari sekali di batch ini.
                   Centang baris yang tetap ingin diproses.
                 </p>
@@ -2865,6 +2872,7 @@ export default function Home() {
                               type="checkbox"
                               checked={!!duplicateReview.selections[item.reviewId]}
                               onChange={(e) => handleDuplicateSelectionChange(item.reviewId, e.target.checked)}
+                              aria-label={`Pilih ${item.customerNo || "customer tanpa kode"}, invoice ${item.invoiceNo || "tanpa nomor"}`}
                               className="h-4 w-4 rounded border-white/20 bg-black/40 text-amber-400 focus:ring-amber-400"
                             />
                           </td>
@@ -2933,9 +2941,9 @@ export default function Home() {
                   </button>
                 </div>
               </div>
-            </div>
-          </div>
-        )}
+            </>
+          )}
+        </Dialog>
 
       </div>
     </div>

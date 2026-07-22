@@ -1,20 +1,20 @@
 /*
  * seed-rbac-presets.ts
- * Seed Access Group preset (backward-compat) + backfill user_group dari user.role.
+ * Tujuan: Sinkronkan Access Group preset, termasuk akses Insentif Sales/Laporan Harian,
+ *         lalu backfill user_group dari user.role.
+ * Caller: Developer/admin saat inisialisasi atau sinkronisasi Dynamic RBAC lokal.
+ * Dependensi: pg, lib/rbac/registry.ts, PostgreSQL DATABASE_URL.
+ * Main Functions: transaksi sinkron preset dan backfill user_group.
+ * Side Effects: DB write pada access_group, group_permission, dan user_group.
  * Jalankan: node --experimental-strip-types scripts/seed-rbac-presets.ts
  *
  * ADDITIVE & IDEMPOTENT — legacy user.role/user.permissions TIDAK disentuh.
  * Preset diturunkan dari rolePermissionPresets (lib/rbac.ts) + allowedActions OPC
  * (lib/off-program-control/access.ts), dinyatakan sebagai permission key registry.
  */
-import Database from "better-sqlite3";
+import pg from "pg";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { allPermissionKeys, isValidPermissionKey } from "../lib/rbac/registry.ts";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.resolve(__dirname, "../sqlite.db");
 
 const k = (mod: string, actions: string[]) => actions.map((a) => `${mod}.${a}`);
 
@@ -104,7 +104,8 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
         name: "Admin Sales", desc: "Admin sales — kelola Form Kontrol & target insentif", keys: [
             ...k("dashboard", ["view"]),
             ...k("form_kontrol", ["view", "submit", "manage"]),
-            ...k("insentif_sales", ["view", "manage", "upload_target", "upload_progress", "input_support", "manage_payment"]),
+            ...k("insentif_sales", ["view", "manage", "upload_target", "upload_progress", "input_support", "manage_payment", "manage_hierarchy"]),
+            ...k("laporan_harian", ["view", "upload", "send"]),
         ],
     },
 ];
@@ -124,50 +125,55 @@ for (const p of PRESETS) {
     }
 }
 
-const db = new Database(DB_PATH);
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
-console.log("DB:", DB_PATH);
-
-const now = Date.now();
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl?.startsWith("postgres")) throw new Error("DATABASE_URL PostgreSQL wajib di-set.");
+const pool = new pg.Pool({ connectionString: databaseUrl, max: 2 });
+const client = await pool.connect();
+const now = new Date();
 const groupIdByName: Record<string, string> = {};
 
-const upsertGroup = db.transaction(() => {
+try {
+    await client.query("BEGIN");
     for (const p of PRESETS) {
-        const existing = db.prepare("SELECT id FROM access_group WHERE name = ?").get(p.name) as { id: string } | undefined;
-        let id: string;
-        if (existing) {
-            id = existing.id;
-            db.prepare("UPDATE access_group SET description = ?, is_preset = 1, updated_at = ? WHERE id = ?").run(p.desc, now, id);
-        } else {
-            id = randomUUID();
-            db.prepare("INSERT INTO access_group (id, name, description, is_preset, created_at, updated_at) VALUES (?,?,?,1,?,?)").run(id, p.name, p.desc, now, now);
-        }
+        const result = await client.query<{ id: string }>(`
+            INSERT INTO access_group (id, name, description, is_preset, created_at, updated_at)
+            VALUES ($1, $2, $3, TRUE, $4, $4)
+            ON CONFLICT (name) DO UPDATE SET
+                description = EXCLUDED.description, is_preset = TRUE, updated_at = EXCLUDED.updated_at
+            RETURNING id
+        `, [randomUUID(), p.name, p.desc, now]);
+        const id = result.rows[0].id;
         groupIdByName[p.name] = id;
         // Sync permission: hapus lalu isi ulang sesuai definisi (idempotent).
-        db.prepare("DELETE FROM group_permission WHERE group_id = ?").run(id);
-        const ins = db.prepare("INSERT OR IGNORE INTO group_permission (group_id, permission_key) VALUES (?, ?)");
-        for (const key of p.keys) ins.run(id, key);
+        await client.query("DELETE FROM group_permission WHERE group_id = $1", [id]);
+        await client.query(`
+            INSERT INTO group_permission (group_id, permission_key)
+            SELECT $1, permission_key FROM unnest($2::text[]) permission_key
+            ON CONFLICT DO NOTHING
+        `, [id, p.keys]);
     }
-});
-upsertGroup();
-console.log(`Preset group siap: ${PRESETS.length} group.`);
+    console.log(`Preset group siap: ${PRESETS.length} group.`);
 
-// Backfill user_group dari user.role.
-const users = db.prepare("SELECT id, email, role FROM user").all() as Array<{ id: string; email: string; role: string | null }>;
-let assigned = 0, skipped = 0;
-const assignTx = db.transaction(() => {
+    // Cardinality user kecil; upsert per akun menjaga mapping role mudah diaudit.
+    const users = (await client.query<{ id: string; email: string; role: string | null }>('SELECT id, email, role FROM "user"')).rows;
+    let assigned = 0, skipped = 0;
     for (const u of users) {
         const roleKey = String(u.role ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
         const groupName = ROLE_TO_GROUP[roleKey];
         if (!groupName) { console.warn(`  ? ${u.email}: role "${u.role}" tak punya preset — lewati`); skipped++; continue; }
-        const res = db.prepare("INSERT OR IGNORE INTO user_group (user_id, group_id, assigned_by, assigned_at) VALUES (?,?,?,?)")
-            .run(u.id, groupIdByName[groupName], "seed-rbac-presets", now);
-        if (res.changes > 0) { console.log(`  + ${u.email} -> ${groupName}`); assigned++; }
+        const result = await client.query(`
+            INSERT INTO user_group (user_id, group_id, assigned_by, assigned_at)
+            VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING user_id
+        `, [u.id, groupIdByName[groupName], "seed-rbac-presets", now]);
+        if (result.rowCount === 1) { console.log(`  + ${u.email} -> ${groupName}`); assigned++; }
     }
-});
-assignTx();
-
-console.log(`Backfill user_group: ${assigned} assignment baru, ${skipped} tanpa preset.`);
-console.log("Seed RBAC preset selesai (additive, idempotent).");
-db.close();
+    await client.query("COMMIT");
+    console.log(`Backfill user_group: ${assigned} assignment baru, ${skipped} tanpa preset.`);
+    console.log("Seed RBAC preset selesai (additive, idempotent).");
+} catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+} finally {
+    client.release();
+    await pool.end();
+}

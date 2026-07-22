@@ -1,0 +1,223 @@
+<!--
+Tujuan: UI desktop untuk memilih dashboard, upload Excel, preview, dan export HTML.
+Caller: app.py lewat pywebview.create_window.
+Dependensi: window.pywebview.api.pick_file/pick_files/generate/generate_cross/export_html.
+Main Functions: selectType + hint pasangan CrossAnalysis, updateGenBtn, generate button handler, export handler.
+Side Effects: Membuka dialog file native, render HTML ke iframe, export HTML via Python API; tanpa hardcoded nama perusahaan.
+-->
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dashboard Generator</title>
+<style>
+:root{--bg:#0a0e17;--card:#131a28;--bd:#1e293b;--tx:#e2e8f0;--mut:#94a3b8;--dim:#64748b;}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px}
+.shell{display:flex;min-height:100vh}
+.sidebar{width:260px;flex-shrink:0;background:var(--card);border-right:1px solid var(--bd);padding:20px}
+.sidebar h2{font-size:15px;margin-bottom:16px}
+.nav-item{display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;background:#0f1522;border:1px solid var(--bd);border-left:4px solid var(--ac,#334);color:var(--tx);padding:12px 14px;border-radius:8px;margin-bottom:8px;cursor:pointer;font-size:13px;font-weight:600}
+.nav-item:hover{border-color:var(--ac,#334)}
+.nav-item.selected{background:#161f30;box-shadow:0 0 0 1px var(--ac,#334) inset}
+.badge{font-size:9px;padding:3px 7px;border-radius:10px;font-weight:700;letter-spacing:.5px}
+.badge.on{background:#0e2a1a;color:#4ade80}
+.badge.soon{background:#2a2414;color:#94a3b8}
+main{flex:1;padding:36px;display:flex;align-items:center;justify-content:center}
+.panel{max-width:520px;width:100%}
+.panel h1{font-size:20px;margin-bottom:6px}
+.panel .hint{color:var(--dim);font-size:13px;margin-bottom:24px;line-height:1.6}
+.dropzone{border:2px dashed var(--bd);border-radius:14px;padding:36px;text-align:center;cursor:pointer;transition:.15s}
+.dropzone:hover,.dropzone.drag{border-color:var(--ac,#38bdf8);background:#0f1522}
+.dropzone .fname{margin-top:10px;font-size:12px;color:var(--mut)}
+button.primary{margin-top:18px;width:100%;background:var(--ac,#38bdf8);color:#08131f;border:none;padding:13px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer}
+button.primary:disabled{opacity:.4;cursor:not-allowed}
+.error{margin-top:16px;background:#2a1414;border-left:3px solid #f87171;color:#fca5a5;padding:12px 14px;border-radius:8px;font-size:13px;line-height:1.6}
+.hidden{display:none !important}
+#result-view{width:100%;height:100vh;display:flex;flex-direction:column}
+#result-toolbar{position:fixed;top:14px;left:14px;right:14px;z-index:10;display:flex;gap:8px}
+#result-toolbar button{background:#131a28;border:1px solid var(--bd);color:var(--tx);padding:8px 14px;border-radius:8px;cursor:pointer;font-size:12px}
+#export-btn{margin-left:auto;background:var(--ac,#38bdf8) !important;color:#08131f !important;font-weight:700;border:none !important}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#131a28;border:1px solid var(--bd);padding:10px 18px;border-radius:8px;font-size:12px;z-index:20}
+#result-frame{flex:1;width:100%;border:none;margin-top:44px}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid #08131f;border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;margin-right:8px;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div class="shell" id="shell-view">
+  <aside class="sidebar">
+    <h2>Pilih Jenis Dashboard</h2>
+    <div class="nav" id="nav"></div>
+  </aside>
+  <main>
+    <div class="panel">
+      <h1 id="p-title">Pilih dashboard di sebelah kiri</h1>
+      <div class="hint" id="p-hint">Klik salah satu jenis laporan, lalu upload file Excel sesuai template-nya. Jenis file akan diverifikasi otomatis dari kolomnya.</div>
+      <div class="dropzone" id="dropzone">
+        <div>Klik untuk pilih file .XLS / .XLSX</div>
+        <div class="fname" id="fname">Belum ada file dipilih</div>
+      </div>
+      <button class="primary" id="gen-btn" disabled>Pilih jenis dashboard dulu</button>
+      <div class="error hidden" id="error-box"></div>
+    </div>
+  </main>
+</div>
+
+<div id="result-view" class="hidden">
+  <div id="result-toolbar">
+    <button id="back-btn">&larr; Kembali</button>
+    <button id="export-btn">Export HTML</button>
+  </div>
+  <iframe id="result-frame"></iframe>
+</div>
+<div id="toast" class="hidden"></div>
+
+<script>
+const THEMES = {
+  "Penjualan": "#38bdf8",
+  "LabaRugi": "#f472b6",
+  "PosisiStokGudang": "#2dd4bf",
+  "AnalisaStok": "#fbbf24",
+  "Retur": "#fb7185",
+  "OutstandingSO": "#60a5fa",
+  "UmurPiutang": "#38bdf8",
+  "CrossAnalysis": "#c084fc",
+};
+const LABELS = {
+  "Penjualan": "Penjualan",
+  "LabaRugi": "Laba Rugi Penjualan",
+  "PosisiStokGudang": "Posisi Stok",
+  "AnalisaStok": "Analisa Stok",
+  "Retur": "Retur Penjualan",
+  "OutstandingSO": "Outstanding SO",
+  "UmurPiutang": "Umur Piutang",
+  "CrossAnalysis": "Cross Analysis",
+};
+const ACTIVE = new Set(["Penjualan", "LabaRugi", "PosisiStokGudang", "AnalisaStok", "Retur", "OutstandingSO", "UmurPiutang", "CrossAnalysis"]);
+const CROSS_TYPE = "CrossAnalysis";
+const CROSS_HINT = "Pilih minimal 2 file laporan berbeda. Pasangan detail aktif: Posisi Stok + Analisa Stok; Retur Penjualan + Outstanding SO; Penjualan + Laba Rugi Penjualan.";
+
+let selectedType = null;
+let selectedPath = null;
+let selectedPaths = [];
+let lastHtml = null;
+
+const nav = document.getElementById('nav');
+Object.keys(THEMES).forEach(jenis => {
+  const btn = document.createElement('button');
+  btn.className = 'nav-item';
+  btn.style.setProperty('--ac', THEMES[jenis]);
+  btn.dataset.jenis = jenis;
+  const active = ACTIVE.has(jenis);
+  btn.innerHTML = `<span>${LABELS[jenis] || jenis}</span><span class="badge ${active ? 'on' : 'soon'}">${active ? 'AKTIF' : 'SEGERA'}</span>`;
+  btn.onclick = () => selectType(jenis);
+  nav.appendChild(btn);
+});
+
+function selectType(jenis) {
+  selectedType = jenis;
+  selectedPath = null;
+  selectedPaths = [];
+  document.getElementById('fname').textContent = 'Belum ada file dipilih';
+  document.getElementById('error-box').classList.add('hidden');
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('selected', b.dataset.jenis === jenis));
+  document.getElementById('p-title').textContent = jenis === CROSS_TYPE ? 'Cross Analysis' : 'Dashboard ' + (LABELS[jenis] || jenis);
+  document.getElementById('p-hint').textContent = jenis === CROSS_TYPE
+    ? CROSS_HINT
+    : (ACTIVE.has(jenis)
+      ? `Pilih file Excel dengan template "${LABELS[jenis] || jenis}". Kolom akan dicek otomatis.`
+      : `Modul dashboard "${LABELS[jenis] || jenis}" belum tersedia (menyusul). Anda tetap bisa pilih file untuk verifikasi deteksi kolomnya.`);
+  document.querySelector('#dropzone > div:first-child').textContent = jenis === CROSS_TYPE
+    ? 'Klik untuk pilih beberapa file .XLS / .XLSX'
+    : 'Klik untuk pilih file .XLS / .XLSX';
+  document.getElementById('dropzone').style.setProperty('--ac', THEMES[jenis]);
+  document.querySelector('main .panel').style.setProperty('--ac', THEMES[jenis]);
+  updateGenBtn();
+}
+
+document.getElementById('dropzone').onclick = async () => {
+  if (!selectedType) return;
+  if (selectedType === CROSS_TYPE) {
+    const paths = await window.pywebview.api.pick_files();
+    if (paths && paths.length) {
+      selectedPaths = paths;
+      selectedPath = null;
+      const names = paths.map(p => p.split(/[\\/]/).pop());
+      document.getElementById('fname').textContent = `${paths.length} file: ` + names.join(', ');
+      updateGenBtn();
+    }
+  } else {
+    const path = await window.pywebview.api.pick_file();
+    if (path) {
+      selectedPath = path;
+      selectedPaths = [path];
+      document.getElementById('fname').textContent = path.split(/[\\/]/).pop();
+      updateGenBtn();
+    }
+  }
+};
+
+function updateGenBtn() {
+  const btn = document.getElementById('gen-btn');
+  if (!selectedType) { btn.disabled = true; btn.textContent = 'Pilih jenis dashboard dulu'; return; }
+  if (selectedType === CROSS_TYPE && selectedPaths.length < 2) { btn.disabled = true; btn.textContent = 'Pilih minimal 2 file'; return; }
+  if (selectedType !== CROSS_TYPE && !selectedPath) { btn.disabled = true; btn.textContent = 'Pilih file dulu'; return; }
+  btn.disabled = false;
+  btn.style.setProperty('--ac', THEMES[selectedType]);
+  btn.textContent = selectedType === CROSS_TYPE ? 'Generate Cross Analysis' : 'Generate Dashboard';
+}
+
+document.getElementById('gen-btn').onclick = async () => {
+  const btn = document.getElementById('gen-btn');
+  const errBox = document.getElementById('error-box');
+  errBox.classList.add('hidden');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>Memproses...';
+
+  try {
+    const res = selectedType === CROSS_TYPE
+      ? await window.pywebview.api.generate_cross(selectedPaths)
+      : await window.pywebview.api.generate(selectedPath, selectedType);
+    if (!res.ok) {
+      errBox.textContent = res.error;
+      errBox.classList.remove('hidden');
+      updateGenBtn();
+      return;
+    }
+    lastHtml = res.html;
+    document.querySelector('main .panel').style.setProperty('--ac', THEMES[res.jenis] || THEMES[selectedType]);
+    document.getElementById('export-btn').style.setProperty('--ac', THEMES[res.jenis] || THEMES[selectedType]);
+    document.getElementById('shell-view').classList.add('hidden');
+    document.getElementById('result-view').classList.remove('hidden');
+    document.getElementById('result-frame').srcdoc = res.html;
+  } catch (e) {
+    errBox.textContent = 'Gagal memproses: ' + e;
+    errBox.classList.remove('hidden');
+    updateGenBtn();
+  }
+};
+
+document.getElementById('back-btn').onclick = () => {
+  document.getElementById('result-view').classList.add('hidden');
+  document.getElementById('shell-view').classList.remove('hidden');
+};
+
+document.getElementById('export-btn').onclick = async () => {
+  if (!lastHtml) return;
+  const suggested = ((LABELS[selectedType] || selectedType || 'dashboard').replace(/\s+/g, '_')) + '.html';
+  const res = await window.pywebview.api.export_html(lastHtml, suggested);
+  if (res.ok) showToast('Tersimpan: ' + res.path);
+};
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.remove('hidden');
+  setTimeout(() => t.classList.add('hidden'), 3500);
+}
+</script>
+</body>
+</html>

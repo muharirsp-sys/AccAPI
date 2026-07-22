@@ -1,7 +1,7 @@
 /*
  * Tujuan: Kalkulasi insentif SPV — strata berbasis Value SAJA (bukan AO+Value seperti Sales).
  *         Rate per-principal ditentukan oleh jumlah principal valid yang dicover SPV.
- * Caller: (belum di-wire) — pure calc, konsisten dgn lib/insentif-sales-calc.ts sebelum di-wire ke route.
+ * Caller: app/api/insentif-sales/spv-dashboard (tetap pure dan tanpa I/O).
  * Dependensi: lib/insentif-sales-calc (reuse percentageMultiplier, isSchemePrincipal, StatusInsentif).
  * Main Functions: calculateInsentifSPV (group per principle + hitung), ratePerPrincipalSpv (tabel strata).
  * Side Effects: none (pure).

@@ -1,12 +1,12 @@
-﻿"use client";
-
 /*
  * Tujuan: Dashboard OFF Program Control bergaya warm luxury untuk cockpit admin, pengajuan, tinjauan, persetujuan, klaim, pembayaran, audit, dan tutup periode.
  * Caller: App Router dashboard `app/(dashboard)/off-program-control/page.tsx`.
- * Dependensi: `authClient`, helper akses OFF, workflow OFF, constants OFF, `DatePickerField`, route API OFF Program Control/periods.
- * Main Functions: `OffProgramControlPage`, `OverviewTab`, `AdminViewSelector`, `AdminHealthPanel`, `CompactFilterToolbar`, `CompactSubmissionTable`, `SummaryStrip`, `SupportTogglePanel`, `OverviewDetailDrawer`, form/table workflow per role.
- * Side Effects: HTTP read/write ke API OFF Program Control, baca session Better Auth, mutasi state workflow/filter/drawer/tutup periode UI.
+ * Dependensi: `authClient`, Next navigation, helper akses OFF, workflow OFF, constants OFF, fixture development eksplisit, `DatePickerField`, `Dialog`, `AsyncState`, route API OFF Program Control/periods.
+ * Main Functions: `OffProgramControlPage`, `replaceOffContext`, keyboard tab navigation, `OverviewTab`, `AdminViewSelector`, `AdminHealthPanel`, `CompactFilterToolbar`, `CompactSubmissionTable`, `SummaryStrip`, `SupportTogglePanel`, `OverviewDetailDrawer`, semantic cockpit/table layout dan feedback shell, form/table workflow per role dengan state data fail-closed.
+ * Side Effects: HTTP read/write ke API OFF Program Control, baca session Better Auth, sinkronisasi tab/detail ke query URL, mutasi state workflow/filter/drawer/tutup periode UI; query `mock` hanya mengganti list overview di development tanpa DB/HTTP detail dummy.
  */
+
+"use client";
 
 import {
   useEffect,
@@ -14,9 +14,10 @@ import {
   useRef,
   useState,
   type ElementType,
+  type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   ArrowRight,
@@ -70,10 +71,17 @@ import {
   type OffRole,
 } from "@/lib/off-program-control/access";
 import DatePickerField from "@/components/ui/DatePickerField";
+import Dialog from "@/components/ui/Dialog";
+import { LoadingState } from "@/components/ui/AsyncState";
 import OffBreadcrumb from "@/components/off-program-control/OffBreadcrumb";
 import OffNotificationBell from "@/components/off-program-control/OffNotificationBell";
 import OffGlobalSearch, { type OffSearchableItem } from "@/components/off-program-control/OffGlobalSearch";
 import { detectProblematicBatches, getProblemsForRole, type ProblemDetectionBatch } from "@/lib/off-program-control/problematic";
+import {
+  createOffDevBatches,
+  getOffDevBatchCount,
+  isOffDevBatchId,
+} from "@/lib/off-program-control/dev-fixtures";
 
 type TabKey =
   | "overview"
@@ -314,197 +322,6 @@ type MetricItem = {
   tone: string;
   icon: ElementType;
 };
-
-// --- Dummy Batches untuk fallback ketika API belum tersedia ---
-const dummyBatches: OffApiBatch[] = [
-  {
-    id: "demo-batch-1",
-    noPengajuan: "001/RB/06/2026",
-    gelombang: "001",
-    principleName: "RECKITT BENCKISER, PT",
-    principleCode: "RB",
-    bulan: "06",
-    tahun: "2026",
-    supervisorName: "Supervisor Area 1",
-    status: "Submitted to SM",
-    smStatus: "Waiting Review",
-    claimStatus: "Not Started",
-    omStatus: "Not Started",
-    financeStatus: "Not Started",
-    finalStatus: "Not Started",
-    locked: false,
-    createdAt: "2026-06-01T08:00:00.000Z",
-    updatedAt: "2026-06-02T10:00:00.000Z",
-    summary: { totalNominal: 12500000, totalRows: 3, transfer: 8100000, tunai: 4400000 },
-  },
-  {
-    id: "demo-batch-2",
-    noPengajuan: "002/GDI/06/2026",
-    gelombang: "002",
-    principleName: "GODREJ DISTRIBUSI INDONESIA, PT",
-    principleCode: "GDI",
-    bulan: "06",
-    tahun: "2026",
-    supervisorName: "Supervisor Area 2",
-    status: "Approved by SM",
-    smStatus: "Approved by SM",
-    claimStatus: "Not Started",
-    omStatus: "Not Started",
-    financeStatus: "Not Started",
-    finalStatus: "Not Started",
-    locked: true,
-    createdAt: "2026-05-28T09:00:00.000Z",
-    updatedAt: "2026-06-03T14:00:00.000Z",
-    summary: { totalNominal: 5150000, totalRows: 2, transfer: 5150000, tunai: 0 },
-  },
-  {
-    id: "demo-batch-3",
-    noPengajuan: "001/GDI/05/2026",
-    gelombang: "001",
-    principleName: "GODREJ DISTRIBUSI INDONESIA, PT",
-    principleCode: "GDI",
-    bulan: "05",
-    tahun: "2026",
-    supervisorName: "Supervisor Area 1",
-    status: "Paid",
-    smStatus: "Approved by SM",
-    claimStatus: "Approved",
-    omStatus: "Approved",
-    financeStatus: "Paid",
-    finalStatus: "Waiting Claim Final Verification",
-    locked: true,
-    paidAmount: 100000000,
-    verifiedAmount: 80000000,
-    noClaim: "CLM/GDI/05/001",
-    createdAt: "2026-05-10T09:00:00.000Z",
-    updatedAt: "2026-06-01T16:00:00.000Z",
-    summary: { totalNominal: 100000000, totalRows: 5, transfer: 100000000, tunai: 0 },
-    paymentSummary: { totalNominal: 100000000, totalPaid: 100000000, remainingAmount: 0, isFullyPaid: true },
-  },
-  {
-    id: "demo-batch-4",
-    noPengajuan: "003/RB/06/2026",
-    gelombang: "003",
-    principleName: "RECKITT BENCKISER, PT",
-    principleCode: "RB",
-    bulan: "06",
-    tahun: "2026",
-    supervisorName: "Supervisor Area 3",
-    status: "Draft",
-    smStatus: "Not Started",
-    claimStatus: "Not Started",
-    omStatus: "Not Started",
-    financeStatus: "Not Started",
-    finalStatus: "Not Started",
-    locked: false,
-    createdAt: "2026-06-04T07:30:00.000Z",
-    updatedAt: "2026-06-04T07:30:00.000Z",
-    summary: { totalNominal: 4775000, totalRows: 2, transfer: 2500000, tunai: 2275000 },
-  },
-  {
-    id: "demo-batch-5",
-    noPengajuan: "001/RB/05/2026",
-    gelombang: "001",
-    principleName: "RECKITT BENCKISER, PT",
-    principleCode: "RB",
-    bulan: "05",
-    tahun: "2026",
-    supervisorName: "Supervisor Area 1",
-    status: "Overpaid - Pending Refund",
-    smStatus: "Approved by SM",
-    claimStatus: "Approved",
-    omStatus: "Approved",
-    financeStatus: "Paid",
-    finalStatus: "Pending Refund",
-    locked: true,
-    paidAmount: 50000000,
-    verifiedAmount: 42000000,
-    noClaim: "CLM/RB/05/001",
-    createdAt: "2026-05-05T08:00:00.000Z",
-    updatedAt: "2026-06-03T11:00:00.000Z",
-    summary: { totalNominal: 50000000, totalRows: 4, transfer: 50000000, tunai: 0 },
-    paymentSummary: { totalNominal: 50000000, totalPaid: 50000000, remainingAmount: 0, isFullyPaid: true },
-  },
-];
-
-const initialBulkRows: SupervisorBulkRow[] = [
-  {
-    id: "row-1",
-    noSurat: "SP/OFF/051",
-    namaProgram: "Endcap Support",
-    periodeAwal: "2026-05-01",
-    periodeAkhir: "2026-05-31",
-    toko: "Toko Makmur",
-    barang: "Dettol",
-    nominal: "Rp 4.400.000",
-    caraBayar: "Transfer",
-    noRekening: "1234567890 BCA Toko Makmur",
-    type: "Display",
-    originalType: "Display",
-    typeIsLegacy: false,
-    pphExempt: false,
-    deadline: "2026-05-30",
-    kwt: true,
-    skp: false,
-    fp: true,
-    pc: false,
-    foto: true,
-    rekap: false,
-    others: true,
-    othersText: "Surat display tambahan outlet",
-  },
-  {
-    id: "row-2",
-    noSurat: "SP/OFF/052",
-    namaProgram: "Area Visibility",
-    periodeAwal: "2026-05-10",
-    periodeAkhir: "2026-05-24",
-    toko: "CV Prima",
-    barang: "Harpic",
-    nominal: "Rp 3.750.000",
-    caraBayar: "Tunai",
-    noRekening: "",
-    type: "Visibility",
-    originalType: "Visibility",
-    typeIsLegacy: false,
-    pphExempt: false,
-    deadline: "2026-06-03",
-    kwt: false,
-    skp: true,
-    fp: true,
-    pc: false,
-    foto: true,
-    rekap: true,
-    others: false,
-    othersText: "",
-  },
-  {
-    id: "row-3",
-    noSurat: "SP/OFF/053",
-    namaProgram: "Sampling Area",
-    periodeAwal: "2026-05-15",
-    periodeAkhir: "2026-05-30",
-    toko: "UD Maju",
-    barang: "Vanish",
-    nominal: "Rp 4.350.000",
-    caraBayar: "Tunai",
-    noRekening: "",
-    // #13: Perbaikan data sample — pakai tipe baku agar tidak memunculkan badge "Data Lama".
-    type: "Sample",
-    originalType: "Sample",
-    typeIsLegacy: false,
-    pphExempt: false,
-    deadline: "2026-06-05",
-    kwt: true,
-    skp: false,
-    fp: false,
-    pc: true,
-    foto: true,
-    rekap: false,
-    others: true,
-    othersText: "BA sampling",
-  },
-];
 
 const documentChecks = ["KWT", "SKP", "FP", "PC", "Foto", "Rekap", "Others"];
 
@@ -1635,9 +1452,9 @@ function CompactSubmissionTable({
   ];
 
   return (
-    <section className="rounded-2xl bg-[#1a1c23]/45 p-4 shadow-xl">
-      <div className="mb-6 flex items-center gap-3">
-        <h3 className="flex items-center gap-2 text-base font-bold text-white">
+    <section className="ui-surface-panel ui-panel-padding">
+      <div className="ui-section-heading">
+        <h3 className="flex items-center gap-2">
           <ReceiptText className="text-teal-300" size={18} /> {title}
         </h3>
       </div>
@@ -1649,7 +1466,7 @@ function CompactSubmissionTable({
             {batches.map((batch) => (
               <article
                 key={batch.id}
-                className={`rounded-xl p-4 ${
+                className={`ui-record-card ${
                   selectedBatchId === batch.id
                     ? "bg-teal-500/10"
                     : "bg-black/25"
@@ -1691,7 +1508,7 @@ function CompactSubmissionTable({
                   <button
                     type="button"
                     onClick={() => onSelect(batch)}
-                    className="flex-1 rounded-lg bg-teal-600 px-4 py-2 text-xs font-bold text-white hover:bg-teal-500"
+                    className="ui-button-primary flex-1"
                   >
                     {actionLabel(batch)}
                   </button>
@@ -1706,7 +1523,7 @@ function CompactSubmissionTable({
                         printingReceiptBatchId === batch.id
                       }
                       title="Cetak Kwitansi"
-                      className="rounded-lg border border-white/15 px-2 py-2 text-slate-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      className="ui-icon-button disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <ReceiptText size={15} />
                     </button>
@@ -1715,8 +1532,8 @@ function CompactSubmissionTable({
               </article>
             ))}
           </div>
-          <div className="hidden overflow-x-auto lg:block">
-            <table className="w-full min-w-[1040px] text-left text-sm">
+          <div className="ui-table-frame hidden lg:block">
+            <table className="ui-data-table min-w-[1040px]">
               <thead className="text-xs uppercase tracking-wider text-slate-500">
                 <tr>
                   {headers.map((header) => (
@@ -1779,7 +1596,7 @@ function CompactSubmissionTable({
                         <button
                           type="button"
                           onClick={() => onSelect(batch)}
-                          className="rounded-lg bg-teal-600 px-4 py-2 text-xs font-bold text-white hover:bg-teal-500"
+                          className="ui-button-primary"
                         >
                           {actionLabel(batch)}
                         </button>
@@ -1800,7 +1617,7 @@ function CompactSubmissionTable({
                                 ? OFF_KWITANSI_DISABLED_MESSAGE
                                 : "Cetak Kwitansi"
                             }
-                            className="rounded-lg border border-white/15 px-2 py-2 text-slate-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                            className="ui-icon-button disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <ReceiptText size={15} />
                           </button>
@@ -1985,8 +1802,8 @@ function Panel({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-white/5 bg-[#1a1c23]/55 p-6 shadow-xl">
-      <h2 className="mb-6 flex items-center gap-2 text-lg font-bold text-white">
+    <section className="ui-surface-panel ui-panel-padding">
+      <h2 className="ui-section-heading">
         <Icon className="text-teal-300" size={20} /> {title}
       </h2>
       {children}
@@ -2436,7 +2253,7 @@ function SummaryStrip({ metrics }: { metrics: MetricItem[] }) {
   const visibleMetrics = isExpanded ? metrics : metrics.slice(0, 3);
 
   return (
-    <section className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 px-4 py-3 shadow-xl">
+    <section className="ui-surface-panel p-3">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-3">
           {visibleMetrics.map((metric) => {
@@ -2482,13 +2299,15 @@ function AdminViewSelector({
   activeTab,
   accessibleTabKeys,
   onSelect,
+  onKeyDown,
 }: {
   activeTab: TabKey | undefined;
   accessibleTabKeys: TabKey[];
   onSelect: (tab: TabKey) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>, tab: TabKey) => void;
 }) {
   return (
-    <section className="mb-6 rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-xl">
+    <section role="tablist" aria-label="Bagian OFF Program Control" className="ui-surface-panel ui-panel-padding mb-6">
       <div className="mb-5 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <p className="text-sm font-bold text-white">Tinjau Berdasarkan Bagian</p>
         <span className="inline-flex w-fit items-center gap-2 rounded-xl border border-teal-500/30 bg-teal-500/10 px-3 py-2 text-xs font-bold text-teal-200">
@@ -2516,12 +2335,15 @@ function AdminViewSelector({
                     <button
                       key={key}
                       type="button"
+                      role="tab"
+                      aria-selected={activeTab === key}
+                      aria-controls="off-active-panel"
+                      tabIndex={activeTab === key ? 0 : -1}
+                      data-state={activeTab === key ? "active" : "inactive"}
+                      data-tab-key={key}
+                      onKeyDown={(event) => onKeyDown(event, key)}
                       onClick={() => onSelect(key)}
-                      className={`rounded-xl border px-3 py-2 text-xs font-bold transition-colors ${
-                        activeTab === key
-                          ? "border-teal-500/40 bg-teal-500/20 text-teal-100"
-                          : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"
-                      }`}
+                      className="ui-tab-button"
                     >
                       {key === "overview" ? "Admin" : tab.label}
                     </button>
@@ -2999,15 +2821,22 @@ function DuplicateNoSuratPrompt({
   const noSuratList = Object.keys(conflictsByNoSurat);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-3xl rounded-2xl border border-amber-400/20 bg-[#15161f] shadow-2xl overflow-hidden">
+    <Dialog
+      open
+      onClose={() => {
+        if (!isSubmitting) onCancel();
+      }}
+      labelledBy="off-duplicate-title"
+      describedBy="off-duplicate-description"
+      className="w-full max-w-3xl overflow-hidden rounded-2xl border border-amber-400/20 bg-[#15161f] text-slate-200 shadow-2xl"
+    >
         <div className="px-6 py-4 border-b border-white/10 bg-amber-500/10 flex items-start gap-3">
           <AlertTriangle className="text-amber-300 mt-0.5" size={22} />
           <div>
-            <h3 className="text-lg font-semibold text-white">
+            <h3 id="off-duplicate-title" className="text-lg font-semibold text-white">
               No Surat Sudah Pernah Dipakai
             </h3>
-            <p className="text-sm text-amber-100/80 mt-1">
+            <p id="off-duplicate-description" className="text-sm text-amber-100/80 mt-1">
               Pada principle {prompt.principleName}, beberapa No Surat di batch ini sudah
               tercatat di pengajuan lain. Pastikan ini bukan pengajuan ganda.
             </p>
@@ -3072,8 +2901,7 @@ function DuplicateNoSuratPrompt({
             {isSubmitting ? "Memproses..." : "Saya Yakin, Lanjutkan"}
           </button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -3113,7 +2941,9 @@ function SupervisorDashboard({
   // #6: SPV hanya bisa cetak PDF Surat setelah pengajuan di-approve CLAIM.
   const [editingClaimStatus, setEditingClaimStatus] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [rows, setRows] = useState<SupervisorBulkRow[]>(initialBulkRows);
+  const [rows, setRows] = useState<SupervisorBulkRow[]>([
+    createEmptyBulkRow(1),
+  ]);
   const [allSupervisorBatches, setAllSupervisorBatches] = useState<
     OffApiBatch[]
   >([]);
@@ -3258,16 +3088,14 @@ function SupervisorDashboard({
       );
       setReturnedSummaries(Object.fromEntries(entries));
     } catch (error) {
-      // Fallback: gunakan dummy data dari draf jika API tidak tersedia
-      const dummyReturned = dummyBatches.filter(
-        (batch) => batch.status === "Draft" || batch.status === "Returned by SM" || batch.status === "Returned by Claim"
+      setAllSupervisorBatches([]);
+      setReturnedBatches([]);
+      setReturnedSummaries({});
+      setReturnedStatus(
+        error instanceof Error
+          ? error.message
+          : "Daftar pengajuan belum berhasil dimuat. Silakan coba lagi.",
       );
-      setAllSupervisorBatches(dummyBatches);
-      setReturnedBatches(dummyReturned);
-      setReturnedSummaries(Object.fromEntries(
-        dummyReturned.map((batch) => [batch.id, { rowCount: batch.summary?.totalRows || 2, totalNominal: batch.summary?.totalNominal || 0 }])
-      ));
-      setReturnedStatus("");
     }
   };
 
@@ -3939,7 +3767,7 @@ function SupervisorDashboard({
         const selectedSelisihBatch = selisihBatches.find((b) => b.id === selisihBatchId) || null;
         return (
           <div className="space-y-6">
-            <Panel title="Data Selisih — Perlu Pengembalian Dana" icon={Wallet}>
+            <Panel title="Data Selisih: Perlu Pengembalian Dana" icon={Wallet}>
               <InfoNote>
                 Batch di bawah ini memiliki selisih antara nilai pembayaran Keuangan dan realisasi
                 klaim. Supervisor wajib mengajukan pengembalian dana agar alur batch dapat ditutup.
@@ -3964,7 +3792,7 @@ function SupervisorDashboard({
                             {batch.noPengajuan}
                           </p>
                           <p className="text-xs text-slate-400">
-                            {batch.principleName} ({batch.principleCode}) — {batch.bulan}/{batch.tahun}
+                            {batch.principleName} ({batch.principleCode}), {batch.bulan}/{batch.tahun}
                           </p>
                           <span className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-bold ${statusClass(batch.refundStatus || batch.status)}`}>
                             {displayStatusLabel(batch.refundStatus || batch.status)}
@@ -6088,7 +5916,7 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
               Panel Data Klaim
             </h3>
             <p className="mt-2 text-sm text-slate-400">
-              Input pengajuan versi CLAIM (Insentif, Diskon Reguler, Insentif Distributor, Retur) — data dari direksi.
+              Input pengajuan CLAIM untuk Insentif, Diskon Reguler, Insentif Distributor, dan Retur berdasarkan data direksi.
             </p>
             <button
               onClick={() => setClaimView("data-claim")}
@@ -7078,8 +6906,8 @@ function ClaimDashboard({ offRole }: OffDashboardProps) {
                           Selisih:{" "}
                           Rp {Math.abs(paidAmount - Number(finalVerifiedAmount)).toLocaleString("id-ID")}
                           {paidAmount > Number(finalVerifiedAmount)
-                            ? " — akan masuk Data Selisih (perlu refund)"
-                            : " — nilai fix lebih besar dari pembayaran"}
+                            ? ". Akan masuk Data Selisih dan memerlukan refund."
+                            : ". Nilai fix lebih besar dari pembayaran."}
                         </p>
                       </div>
                     )}
@@ -8602,13 +8430,11 @@ function FinanceDashboard({ offRole }: OffDashboardProps) {
         setFinanceNote("");
       }
     } catch (error) {
-      // Fallback: gunakan dummy data jika API tidak tersedia
-      const monitoringRows = dummyBatches.filter(isFinanceMonitoringBatch);
-      setFinanceBatches(monitoringRows.length > 0 ? monitoringRows : dummyBatches);
-      setFinanceMessage("");
-      setSelectedItems([]);
-      setSelectedPaymentItemIds([]);
-      setSelectedPayments([]);
+      setFinanceMessage(
+        error instanceof Error
+          ? error.message
+          : "Antrean Keuangan belum berhasil dimuat. Silakan coba lagi.",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -10007,12 +9833,22 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
         </table>
       </div>
 
-      {correctionTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#1a1c23] p-6 shadow-2xl">
-            <h3 className="text-lg font-black text-white">Koreksi Audit Log</h3>
+      <Dialog
+        open={Boolean(correctionTarget)}
+        onClose={() => {
+          if (!isSubmitting) setCorrectionTarget(null);
+        }}
+        labelledBy="off-correction-title"
+        describedBy="off-correction-warning"
+        className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#1a1c23] p-6 text-slate-200 shadow-2xl"
+      >
+        {correctionTarget && (
+          <>
+            <h3 id="off-correction-title" className="text-lg font-black text-white">
+              Koreksi Audit Log
+            </h3>
             <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
-              {AUDIT_CORRECTION_WARNING}
+              <span id="off-correction-warning">{AUDIT_CORRECTION_WARNING}</span>
             </div>
             <div className="mt-4 space-y-3">
               <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-400">
@@ -10070,9 +9906,9 @@ function AuditTimeline({ offRole }: OffDashboardProps) {
                 {isSubmitting ? "Menyimpan..." : "Simpan Koreksi"}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </Dialog>
     </Panel>
   );
 }
@@ -10327,30 +10163,23 @@ function OverviewDetailDrawer({
   isLoading: boolean;
   onClose: () => void;
 }) {
-  if (!batch && !isLoading) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/65 backdrop-blur-sm">
-      <button
-        type="button"
-        aria-label="Tutup detail batch"
-        className="absolute inset-0 h-full w-full cursor-default"
-        onClick={onClose}
-      />
-      <aside
-        aria-modal="true"
-        role="dialog"
-        className="relative z-10 flex h-full w-full max-w-5xl flex-col border-l border-white/10 bg-[#101219] shadow-2xl"
-      >
+    <Dialog
+      open={Boolean(batch || isLoading)}
+      onClose={onClose}
+      labelledBy="off-overview-detail-title"
+      describedBy="off-overview-detail-description"
+      className="m-0 ml-auto h-dvh w-full max-h-none max-w-5xl flex-col overflow-hidden border-l border-white/10 bg-[#101219] p-0 text-slate-200 shadow-2xl open:flex"
+    >
         <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4">
           <div className="min-w-0">
             <p className="text-xs font-bold uppercase tracking-wider text-teal-300">
               Detail Batch
             </p>
-            <h2 className="mt-1 truncate text-xl font-black text-white">
+            <h2 id="off-overview-detail-title" className="mt-1 truncate text-xl font-black text-white">
               {batch?.noPengajuan || "Memuat detail..."}
             </h2>
-            <p className="mt-1 text-sm text-slate-500">
+            <p id="off-overview-detail-description" className="mt-1 text-sm text-slate-500">
               Item, pembayaran, dan status lengkap hanya tampil di drawer ini.
             </p>
           </div>
@@ -10378,18 +10207,19 @@ function OverviewDetailDrawer({
             />
           )}
         </div>
-      </aside>
-    </div>
+    </Dialog>
   );
 }
 
 function OverviewTab({
   offRole,
   pendingBatchId,
-  onPendingBatchHandled,
+  onDetailChange,
+  devBatchCount = 0,
 }: OffDashboardProps & {
   pendingBatchId?: string;
-  onPendingBatchHandled?: () => void;
+  onDetailChange?: (batchId: string | null) => void;
+  devBatchCount?: number;
 }) {
   const [overviewBatches, setOverviewBatches] = useState<OffApiBatch[]>([]);
   const [overviewSearch, setOverviewSearch] = useState("");
@@ -10405,11 +10235,21 @@ function OverviewTab({
   const [isLoading, setIsLoading] = useState(true);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [error, setError] = useState("");
+  const handledPendingBatchRef = useRef("");
   const isAdminOverview = offRole === "admin";
+  const devBatches = useMemo(
+    () => createOffDevBatches(devBatchCount) as OffApiBatch[],
+    [devBatchCount],
+  );
 
   const loadOverview = async () => {
     setIsLoading(true);
     setError("");
+    if (devBatchCount > 0) {
+      setOverviewBatches(devBatches);
+      setIsLoading(false);
+      return;
+    }
     try {
       const response = await fetch("/api/off-program-control/batches", {
         credentials: "include",
@@ -10420,10 +10260,13 @@ function OverviewTab({
           String(data.error || "Data pengajuan belum berhasil dimuat. Silakan coba lagi."),
         );
       const batches = Array.isArray(data.batches) ? (data.batches as OffApiBatch[]) : [];
-      setOverviewBatches(batches.length > 0 ? batches : dummyBatches);
+      setOverviewBatches(batches);
     } catch (loadError) {
-      setError("");
-      setOverviewBatches(dummyBatches);
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Data ringkasan belum berhasil dimuat. Silakan coba lagi.",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -10431,6 +10274,7 @@ function OverviewTab({
 
   useEffect(() => {
     loadOverview();
+    if (devBatchCount > 0) return;
     // #7: Auto-refresh list-only (fokus tab + interval) tanpa memicu spinner.
     let active = true;
     const refreshList = async () => {
@@ -10461,26 +10305,36 @@ function OverviewTab({
       document.removeEventListener("visibilitychange", onFocus);
       window.clearInterval(interval);
     };
-  }, []);
+  }, [devBatchCount, devBatches]);
 
   // Buka drawer otomatis ketika parent mengirim pendingBatchId dari Global Search.
   useEffect(() => {
-    if (!pendingBatchId || overviewBatches.length === 0) return;
+    if (!pendingBatchId) {
+      handledPendingBatchRef.current = "";
+      return;
+    }
+    if (pendingBatchId === handledPendingBatchRef.current || overviewBatches.length === 0) return;
     const target = overviewBatches.find((b) => b.id === pendingBatchId);
     if (target) {
+      handledPendingBatchRef.current = pendingBatchId;
       openOverviewDetail(target);
-      onPendingBatchHandled?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingBatchId, overviewBatches]);
 
   const openOverviewDetail = async (batch: OffApiBatch) => {
+    handledPendingBatchRef.current = batch.id;
+    onDetailChange?.(batch.id);
     setIsDetailLoading(true);
     setError("");
     setSelectedBatch(batch);
     setSelectedItems([]);
     setSelectedPayments([]);
     setSelectedPaymentSummary(undefined);
+    if (isOffDevBatchId(batch.id)) {
+      setIsDetailLoading(false);
+      return;
+    }
     try {
       const response = await fetch(
         `/api/off-program-control/batches/${batch.id}`,
@@ -10518,6 +10372,8 @@ function OverviewTab({
   };
 
   const closeOverviewDetail = () => {
+    handledPendingBatchRef.current = "";
+    onDetailChange?.(null);
     setSelectedBatch(null);
     setSelectedItems([]);
     setSelectedPayments([]);
@@ -10589,6 +10445,11 @@ function OverviewTab({
 
   return (
     <div className="space-y-6">
+      {devBatchCount > 0 && (
+        <div role="status" className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+          Mode data uji aktif: {devBatchCount.toLocaleString("id-ID")} pengajuan sintetis. Data ini hanya ada di memori browser dan tidak tersimpan ke database.
+        </div>
+      )}
       {isLoading && (
         <div className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-slate-300">
           Memuat data ringkasan...
@@ -10701,15 +10562,28 @@ function OverviewTab({
 }
 
 export default function OffProgramControlPage() {
-  const [activeTab, setActiveTab] = useState<TabKey>("overview");
   // Cegah hydration mismatch: role berasal dari authClient.useSession() (client-only),
   // sehingga SSR (tanpa sesi) berbeda dgn render klien. Render shell stabil dulu,
   // baru tampilkan UI berbasis role setelah mount.
   const [mounted, setMounted] = useState(false);
   const [paidIncompleteCount, setPaidIncompleteCount] = useState(0);
   const [showAccessDetail, setShowAccessDetail] = useState(false);
-  const [pendingBatchId, setPendingBatchId] = useState("");
   const [globalSearchItems, setGlobalSearchItems] = useState<OffSearchableItem[]>([]);
+  const pathname = usePathname();
+  const pageRouter = useRouter();
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab") as TabKey | null;
+  const activeTab = tabs.some((tab) => tab.key === requestedTab) ? requestedTab! : "overview";
+  const devBatchCount = getOffDevBatchCount(searchParams.get("mock"));
+
+  const replaceOffContext = (tab: TabKey, batchId?: string | null) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", tab);
+    if (batchId) params.set("batch", batchId);
+    else params.delete("batch");
+    pageRouter.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+  const selectOffTab = (tab: TabKey) => replaceOffContext(tab, null);
   const { data: session } = authClient.useSession();
   const sessionUser = session?.user as
     | {
@@ -10742,7 +10616,32 @@ export default function OffProgramControlPage() {
   const effectiveActiveTab = accessibleTabKeys.includes(activeTab)
     ? activeTab
     : accessibleTabs[0]?.key;
+  const pendingBatchId = effectiveActiveTab === "overview"
+    ? searchParams.get("batch") || ""
+    : "";
   const isAdminMode = offRole === "admin";
+  const handleOffTabKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    currentTab: TabKey,
+  ) => {
+    const currentIndex = accessibleTabs.findIndex((tab) => tab.key === currentTab);
+    if (currentIndex < 0) return;
+
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % accessibleTabs.length;
+    else if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + accessibleTabs.length) % accessibleTabs.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = accessibleTabs.length - 1;
+    else return;
+
+    event.preventDefault();
+    const nextTab = accessibleTabs[nextIndex];
+    selectOffTab(nextTab.key);
+    const tabList = event.currentTarget.closest('[role="tablist"]');
+    requestAnimationFrame(() => {
+      tabList?.querySelector<HTMLButtonElement>(`[data-tab-key="${nextTab.key}"]`)?.focus();
+    });
+  };
   useEffect(() => setMounted(true), []);
   const mappingSummary = useMemo(
     () => `${PRINCIPLE_OPTIONS.length} mapping principle dimuat`,
@@ -10863,31 +10762,32 @@ export default function OffProgramControlPage() {
   // Shell stabil (SSR === render klien pertama) sampai sesi/role siap di klien.
   if (!mounted) {
     return (
-      <div className="max-w-[1800px] mx-auto pb-12">
+      <div className="ui-page-shell ui-page-shell--wide">
         <OffBreadcrumb />
         <div className="mb-6">
-          <h1 className="text-3xl font-black text-white tracking-tight">
-            Program OFF — Pengelolaan Klaim
+          <h1 className="ui-page-title">
+            Program OFF: Pengelolaan Klaim
           </h1>
         </div>
+        <LoadingState label="Menyiapkan akses OFF Program Control" rows={4} />
       </div>
     );
   }
 
   return (
-    <div className="max-w-[1800px] mx-auto pb-12">
+    <div className="ui-page-shell ui-page-shell--wide">
       {/* Breadcrumb */}
       <OffBreadcrumb />
 
-      <div className="mb-6 flex flex-col lg:flex-row lg:items-end justify-between gap-4">
-        <div>
+      <div className="ui-page-header">
+        <div className="ui-page-heading">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-teal-500/30 bg-teal-500/10 text-teal-300 text-xs font-bold uppercase tracking-widest mb-3">
             <ClipboardCheck size={14} /> OFF Control
           </div>
-          <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
-            Program OFF — Pengelolaan Klaim
+          <h1 className="ui-page-title">
+            Program OFF: Pengelolaan Klaim
           </h1>
-          <p className="text-slate-400 mt-2 text-sm sm:text-base">
+          <p className="ui-page-description">
             {isAdminMode
               ? "Pantau health system lebih dulu, lalu drill down ke role tertentu saat perlu."
               : "Pilih antrean, review masalah, lalu ambil aksi sesuai role."}
@@ -10904,7 +10804,7 @@ export default function OffProgramControlPage() {
             type="button"
             onClick={() => setShowAccessDetail((current) => !current)}
             aria-expanded={showAccessDetail}
-            className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 hover:bg-white/10"
+            className="ui-button-secondary"
           >
             Detail akses
             <ChevronDown
@@ -10968,15 +10868,17 @@ export default function OffProgramControlPage() {
             <OffGlobalSearch
               items={globalSearchItems}
               onSelect={(id) => {
-                setActiveTab("overview");
-                setPendingBatchId(id);
+                replaceOffContext("overview", id);
               }}
               placeholder="Cari pengajuan..."
             />
           </div>
 
           {/* Notification Bell - Pengajuan Bermasalah */}
-          <OffNotificationBell problems={offProblems} />
+          <OffNotificationBell
+            problems={offProblems}
+            onSelectBatch={(batchId) => replaceOffContext("overview", batchId)}
+          />
 
           <div className="mb-6">
             <SupportTogglePanel
@@ -10989,17 +10891,21 @@ export default function OffProgramControlPage() {
           </div>
 
           {/* Mobile: capsule scroll untuk semua user, termasuk admin */}
-          <div className="lg:hidden mb-6 overflow-x-auto rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2 shadow-xl">
-            <div className="flex min-w-max gap-2">
+          <div className="ui-tab-scroll lg:hidden">
+            <div role="tablist" aria-label="Bagian OFF Program Control" className="ui-tab-strip">
               {accessibleTabs.map((tab) => (
                 <button
                   key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
-                  className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
-                    effectiveActiveTab === tab.key
-                      ? "bg-teal-500/20 text-teal-200 border border-teal-500/30"
-                      : "text-slate-400 hover:text-white hover:bg-white/5 border border-transparent"
-                  }`}
+                  type="button"
+                  role="tab"
+                  aria-selected={effectiveActiveTab === tab.key}
+                  aria-controls="off-active-panel"
+                  tabIndex={effectiveActiveTab === tab.key ? 0 : -1}
+                  data-state={effectiveActiveTab === tab.key ? "active" : "inactive"}
+                  data-tab-key={tab.key}
+                  onKeyDown={(event) => handleOffTabKeyDown(event, tab.key)}
+                  onClick={() => selectOffTab(tab.key)}
+                  className="ui-tab-button"
                 >
                   {tab.label}
                 </button>
@@ -11013,20 +10919,25 @@ export default function OffProgramControlPage() {
               <AdminViewSelector
                 activeTab={effectiveActiveTab}
                 accessibleTabKeys={accessibleTabKeys}
-                onSelect={setActiveTab}
+                onSelect={selectOffTab}
+                onKeyDown={handleOffTabKeyDown}
               />
             ) : (
-              <div className="mb-6 overflow-x-auto rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-2 shadow-xl">
-                <div className="flex min-w-max gap-2">
+              <div className="ui-tab-scroll">
+                <div role="tablist" aria-label="Bagian OFF Program Control" className="ui-tab-strip">
                   {accessibleTabs.map((tab) => (
                     <button
                       key={tab.key}
-                      onClick={() => setActiveTab(tab.key)}
-                      className={`rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${
-                        effectiveActiveTab === tab.key
-                          ? "bg-teal-500/20 text-teal-200 border border-teal-500/30"
-                          : "text-slate-400 hover:text-white hover:bg-white/5 border border-transparent"
-                      }`}
+                      type="button"
+                      role="tab"
+                      aria-selected={effectiveActiveTab === tab.key}
+                      aria-controls="off-active-panel"
+                      tabIndex={effectiveActiveTab === tab.key ? 0 : -1}
+                      data-state={effectiveActiveTab === tab.key ? "active" : "inactive"}
+                      data-tab-key={tab.key}
+                      onKeyDown={(event) => handleOffTabKeyDown(event, tab.key)}
+                      onClick={() => selectOffTab(tab.key)}
+                      className="ui-tab-button"
                     >
                       {tab.label}
                     </button>
@@ -11036,11 +10947,13 @@ export default function OffProgramControlPage() {
             )}
           </div>
 
+          <div id="off-active-panel" role="tabpanel" aria-label={accessibleTabs.find((tab) => tab.key === effectiveActiveTab)?.label} tabIndex={0}>
           {effectiveActiveTab === "overview" && (
             <OverviewTab
               offRole={offRole}
               pendingBatchId={pendingBatchId}
-              onPendingBatchHandled={() => setPendingBatchId("")}
+              onDetailChange={(batchId) => replaceOffContext("overview", batchId)}
+              devBatchCount={devBatchCount}
             />
           )}
           {effectiveActiveTab === "supervisor" && (
@@ -11065,6 +10978,7 @@ export default function OffProgramControlPage() {
             <FinanceDashboard offRole={offRole} />
           )}
           {effectiveActiveTab === "audit" && <AuditTimeline offRole={offRole} />}
+          </div>
         </>
       )}
     </div>

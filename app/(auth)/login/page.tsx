@@ -320,7 +320,7 @@ export default function LoginPage() {
                                     onClick={(event) => {
                                         if (loading) event.preventDefault();
                                     }}
-                                    className="login-portal-forgot text-xs font-bold transition"
+                                    className="login-portal-forgot inline-flex min-h-11 items-center text-xs font-bold transition"
                                 >
                                     Lupa Password?
                                 </Link>

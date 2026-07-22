@@ -3,27 +3,15 @@
  *         Ganti pola N+1 (SELECT dedup + insert per baris) di /api/insentif-sales/progress dengan
  *         strategi replace-per-periode + bulk insert (minimum I/O, idempotent per bulan-tahun).
  * Caller: app/api/laporan-harian/upload/route.ts (Tahap 3).
- * Dependensi: lib/db (drizzle libsql), db/schema (salesDailyProgress).
+ * Dependensi: lib/db (Drizzle PostgreSQL), db/schema (salesDailyProgress), progress-normalize.
+ * Main Functions: replaceDailyProgressForPeriod.
  * Side Effects: DB delete (scoped periode) + bulk insert dalam 1 transaksi.
  */
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { salesDailyProgress } from "@/db/schema";
-
-export interface DailyProgressRow {
-    salesCode: string;
-    principle: string;
-    branch: string;
-    date: string;            // YYYY-MM-DD
-    periodMonth: number;
-    periodYear: number;
-    achievedValueDpp: number;
-    achievedEc: number;
-    achievedAo: number;
-    achievedIa: number;
-    invoiceNumber?: string | null;
-}
+import type { DailyProgressRow } from "./progress-normalize";
 
 const CHUNK = 400; // SQLite ~999 var limit; 11 kolom/baris -> aman di bawah batas
 

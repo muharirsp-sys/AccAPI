@@ -7,6 +7,14 @@
       "runtimeArgs": ["run", "dev", "--", "--port", "3001"],
       "port": 3001,
       "autoPort": false
+    },
+    {
+      "name": "accapi-backend",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"],
+      "port": 8000,
+      "autoPort": false,
+      "cwd": "python_backend"
     }
   ]
 }

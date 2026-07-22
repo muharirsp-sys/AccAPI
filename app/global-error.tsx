@@ -4,10 +4,11 @@
  *   Wajib me-render <html>/<body> sendiri karena menggantikan root layout saat error fatal.
  *   Tampilkan pesan rapi, JANGAN bocorkan stack/digest ke UI.
  * Caller: Next.js App Router otomatis saat error tidak tertangkap error boundary segmen.
- * Dependensi: react (useEffect untuk log console).
+ * Dependensi: react (useEffect) dan @sentry/nextjs.
  * Main Functions: GlobalError.
- * Side Effects: console.error(error); tidak ada I/O.
+ * Side Effects: console.error(error) dan pengiriman exception ter-sanitasi ke Sentry Cloud.
  */
+import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
 
 export default function GlobalError({
@@ -19,6 +20,7 @@ export default function GlobalError({
 }) {
     useEffect(() => {
         console.error(error);
+        Sentry.captureException(error);
     }, [error]);
 
     return (

@@ -1,3 +1,10 @@
+<!--
+Tujuan: Panduan operasi pipeline Laporan Harian per SPV/SM.
+Caller: Developer/admin saat setup, parallel-run, troubleshooting, atau pengiriman laporan.
+Dependensi: Next.js API, FastAPI laporan_harian, PostgreSQL, SMTP, dan file Accurate.
+Main Functions: Menjelaskan upload, dry-run, feed dashboard, send/retry, serta checklist go-live.
+Side Effects: Tidak ada; dokumentasi operasional.
+-->
 # Modul Laporan Harian per SPV/SM
 
 Menggantikan pipeline Excel lama (Power Query `2.3 To SPV dan SM New.xlsx` +
@@ -23,9 +30,9 @@ POST /api/laporan-harian/upload        (permission: laporan_harian.upload)
         ▼
 POST /api/laporan-harian/<runId>/send   (permission: laporan_harian.send)  ← GATED
   - WAJIB body { "confirm": true }; kalau tidak -> 400 (tidak kirim)
-  - cegah dobel-kirim (status 'sent' -> 409)
+  - claim atomik `dry_run|failed` -> `sending`; status `sent|sending` ditolak
   - ambil file per-SPV dari FastAPI /laporan-harian/file, kirim (nodemailer + attachment)
-  - update status per penerima + report_run.status
+  - update status per penerima + report_run.status; retry hanya penerima `failed`
 ```
 
 ## Sumber lookup master
@@ -38,16 +45,21 @@ regenerasi dari sheet GOLONGAN/JENIS PRODUK ("2. To Format") + Mapping ("2.3").
 
 ```bash
 cd AccAPI/_github_clean
-node scripts/migrate-laporan-harian.mjs      # buat tabel + seed report_recipient dari mapping_laporan.csv
+DATABASE_URL=postgres://... npx drizzle-kit push
+DATABASE_URL=postgres://... node --experimental-strip-types scripts/seed-rbac-presets.ts
+DATABASE_URL=postgres://... node scripts/sync-insentif-hierarchy.mjs
 # pastikan python_backend punya calamine (baca Excel cepat):
 pip install python-calamine pyexcelerate
 # SMTP di .env.local: SMTP_HOST/PORT/USER/PASSWORD/FROM  (email nol sebelum diisi)
 ```
 
+`report_recipient` ikut migrasi data D4 dari SQLite ke PostgreSQL. Untuk instalasi PostgreSQL
+kosong, isi mapping penerima melalui data migration/admin sebelum tombol Kirim dipakai.
+
 ## Tabel
 
 - `report_recipient` — keyword (SPV/principal) -> daftar email (pengganti mapping_laporan.csv).
-- `report_run` — audit tiap proses (dry_run|sent|failed, jumlah file/email/baris).
+- `report_run` — audit tiap proses (dry_run|sending|sent|failed, jumlah file/email/baris).
 - `report_run_recipient` — log per-email per run.
 
 ## Checklist go-live (parallel-run)

@@ -2,7 +2,7 @@
  * Tujuan: Kalkulasi insentif salesman model konstanta-bobot untuk channel GT.
  *         Hanya menghitung NOMINAL INSENTIF (porsi distributor). Pencapaian/achievement 4-KPI
  *         tetap di lib/insentif-sales.ts (lookupTierFromDb) — modul ini TIDAK menggantikannya.
- * Caller: (belum di-wire) — rencana: app/api/insentif-sales/dashboard untuk row channel === "GT".
+ * Caller: app/api/insentif-sales/dashboard untuk channel GT/TT.
  * Dependensi: tidak ada (pure functions, tanpa DB / I/O).
  * Main Functions: computeExclusive (1 principle), computeMix (banyak principle), normalizeStatus/Tipe.
  * Side Effects: none.

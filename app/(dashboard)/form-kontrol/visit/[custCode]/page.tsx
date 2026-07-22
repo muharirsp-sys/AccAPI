@@ -1,10 +1,18 @@
+/*
+ * Tujuan: Wizard kunjungan toko yang mempersistenkan check-in, status order, merchandising, dan check-out secara berurutan.
+ * Caller: Route Form Kontrol dari daftar JKS untuk customer terpilih.
+ * Dependensi: API Form Kontrol, upload foto, geolokasi browser, `CameraCapture`, Next navigation, sonner.
+ * Main Functions: `VisitWizardPage`, `PhotoInput`, `doCheckin`, `doSaveStatus`, `doSaveMerch`, `doCheckout`.
+ * Side Effects: HTTP upload/read/write kunjungan, akses kamera/lokasi, dan perubahan state wizard; langkah hanya maju setelah persistence sukses.
+ */
+
 "use client";
 
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
     ArrowLeft, Camera, CheckCircle2, XCircle, AlertTriangle,
-    Loader2, MapPin, Package, Star, Clock, Image as ImageIcon,
+    Loader2, MapPin, Package, Star, Image as ImageIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import CameraCapture from "@/components/form-kontrol/camera-capture";
@@ -55,7 +63,7 @@ async function uploadPhoto(file: File, meta: {
 }
 
 function PhotoInput({ onUploaded, existingUrl, label = "Upload Foto", size = "md", salesName, custName }: {
-    onUploaded: (url: string, coords: GeoCoords | null) => void;
+    onUploaded: (url: string, coords: GeoCoords | null) => Promise<void>;
     existingUrl?: string | null;
     label?: string;
     size?: "sm" | "md" | "lg";
@@ -72,9 +80,10 @@ function PhotoInput({ onUploaded, existingUrl, label = "Upload Foto", size = "md
             const coords = await getCurrentCoords();
             const file = new File([blob], "kunjungan.jpg", { type: "image/jpeg" });
             const url = await uploadPhoto(file, { salesName, custName, coords });
-            onUploaded(url, coords);
-            toast.success(coords ? "Foto + lokasi tercatat" : "Foto tercatat (lokasi tidak terdeteksi)");
-        } catch { toast.error("Gagal upload foto"); }
+            await onUploaded(url, coords);
+        } catch (error) {
+            throw error instanceof Error ? error : new Error("Gagal mengunggah dan menyimpan foto.");
+        }
         finally { setUploading(false); }
     }
 
@@ -144,6 +153,7 @@ export default function VisitWizardPage() {
     // ponytail: status WAJIB dikonfirmasi tiap kunjungan, walau toko sudah transaksi bulan ini.
     // Tidak auto-skip dari ao.status lama — true hanya jika dikonfirmasi sesi ini / visit sudah checkout.
     const [statusConfirmed, setStatusConfirmed] = useState(false);
+    const [merchPersisted, setMerchPersisted] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -171,6 +181,7 @@ export default function VisitWizardPage() {
                     dibersihkan: m.dibersihkan, ditataulang: m.ditataulang,
                     posisiMudah: m.posisiMudah, semuaSku: m.semuaSku });
                 if (m.stepPhotos) setStepPhotos(m.stepPhotos);
+                setMerchPersisted(true);
             }
             setReasons(rd.rows ?? []);
         } catch { toast.error("Gagal memuat data kunjungan"); }
@@ -188,7 +199,7 @@ export default function VisitWizardPage() {
 
     function currentStep(): 0|1|2|3|4 {
         if (checkoutDone) return 4;
-        if (checkinDone && statusDone && allMerchDone) return 3;
+        if (checkinDone && statusDone && allMerchDone && merchPersisted) return 3;
         if (checkinDone && statusDone) return 2;
         if (checkinDone) return 1;
         return 0;
@@ -205,7 +216,9 @@ export default function VisitWizardPage() {
             });
             if (!res.ok) throw new Error("Gagal check-in");
             setCheckinPhoto(url); toast.success("Check-in berhasil!");
-        } catch (e) { toast.error(e instanceof Error ? e.message : "Gagal"); }
+        } catch (e) {
+            throw e instanceof Error ? e : new Error("Gagal check-in");
+        }
         finally { setSaving(false); }
     }
 
@@ -221,8 +234,14 @@ export default function VisitWizardPage() {
                     noOrderNote: orderStatus === "not_order" ? reasonNote : null }),
             });
             if (!res.ok) throw new Error("Gagal simpan status");
+            setAo((current) => current ? {
+                ...current,
+                status: orderStatus,
+                noOrderReasonCode: orderStatus === "not_order" ? reasonCode : null,
+                noOrderNote: orderStatus === "not_order" ? reasonNote : null,
+            } : current);
             setStatusConfirmed(true);
-            toast.success("Status tersimpan — lanjut merchandising");
+            toast.success("Status tersimpan. Lanjutkan merchandising.");
         } catch (e) { toast.error(e instanceof Error ? e.message : "Gagal"); }
         finally { setSaving(false); }
     }
@@ -239,8 +258,11 @@ export default function VisitWizardPage() {
                     stepPhotos: Object.keys(stepPhotos).length > 0 ? stepPhotos : null, note: null }),
             });
             if (!res.ok) throw new Error("Gagal simpan merchandising");
-            toast.success("Merchandising selesai — lanjut check-out");
-        } catch (e) { toast.error(e instanceof Error ? e.message : "Gagal"); }
+            setMerchPersisted(true);
+            toast.success("Merchandising tersimpan. Lanjutkan check-out.");
+        } catch (e) {
+            throw e instanceof Error ? e : new Error("Gagal check-out");
+        }
         finally { setSaving(false); }
     }
 
@@ -384,7 +406,10 @@ export default function VisitWizardPage() {
                     {MERCH_STEPS.map(({ key, label }) => (
                         <div key={key} className={`bg-[#1a1c23]/60 border rounded-xl p-4 space-y-2 transition-colors ${merch[key] ? "border-emerald-500/30" : "border-white/10"}`}>
                             <label className="flex items-start gap-3 cursor-pointer">
-                                <button type="button" onClick={() => setMerch(p => ({ ...p, [key]: !p[key] }))}
+                                <button type="button" onClick={() => {
+                                    setMerchPersisted(false);
+                                    setMerch(p => ({ ...p, [key]: !p[key] }));
+                                }}
                                     className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center shrink-0 border-2 transition-colors ${
                                         merch[key] ? "bg-emerald-500 border-emerald-500" : "bg-black/30 border-white/20"}`}>
                                     {merch[key] && <CheckCircle2 size={12} className="text-white" />}
@@ -394,7 +419,8 @@ export default function VisitWizardPage() {
                             <div className="pl-4">
                                 <PhotoInput label="Foto Bukti" size="sm" existingUrl={stepPhotos[key]}
                                     salesName={store.salesName} custName={store.custName}
-                                    onUploaded={(url) => {
+                                    onUploaded={async (url) => {
+                                        setMerchPersisted(false);
                                         setStepPhotos(p => ({ ...p, [key]: url }));
                                         setMerch(p => ({ ...p, [key]: true })); // foto = bukti → auto-centang
                                     }} />
@@ -454,7 +480,7 @@ export default function VisitWizardPage() {
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-xs">
                         {[
-                            { label: "Status", value: ao?.status === "ordered" || ao?.status === "active" ? "ORDER ✓" : "TIDAK ORDER", color: ao?.status === "ordered" || ao?.status === "active" ? "text-emerald-400" : "text-rose-400" },
+                            { label: "Status", value: orderStatus === "ordered" ? "ORDER ✓" : "TIDAK ORDER", color: orderStatus === "ordered" ? "text-emerald-400" : "text-rose-400" },
                             { label: "Merchandising", value: "6/6 ✓", color: "text-emerald-400" },
                             { label: "Check-in", value: "Tercatat", color: "text-white" },
                             { label: "Check-out", value: "Tercatat", color: "text-white" },
