@@ -41,6 +41,9 @@ const FORM_COLUMNS: Array<[string, string]> = [
     ["namaKemasan", "Nama Jenis Kemasan"], ["kodeKemasan", "Kode Kemasan"], ["namaPromo", "Nama Promo"], ["kodePromo", "Kode Promo"],
     ["namaSachet", "Sachet"], ["kodeSachet", "Kode Sachet"], ["ketTambahan2", "KET TAMBAHAN2"], ["ketGolongan", "KET. GOLONGAN"], ["kodeGolongan", "Kode Golongan"],
     ["hargaDistributorInclude", "Harga Distributor (Incl)"], ["hargaDistributorExclude", "Harga Distributor (Excl)"],
+    ["hargaWholesalerInclude", "Harga Wholesaler (Incl)"], ["hargaWholesalerExclude", "Harga Wholesaler (Excl)"],
+    ["hargaRetailerInclude", "Harga Retailer (Incl)"], ["hargaRetailerExclude", "Harga Retailer (Excl)"],
+    ["hargaSupermarketInclude", "Harga Supermarket (Incl)"], ["hargaSupermarketExclude", "Harga Supermarket (Excl)"],
     ["hargaBujInclude", "Harga BUJ (Incl)"], ["hargaBujExclude", "Harga BUJ (Excl)"], ["marginPersen", "Margin %"],
 ];
 

@@ -32,6 +32,12 @@ export type SourceItem = {
     // Harga (dari price list principal) + margin. Distributor = harga beli MSM; BUJ = harga jual customer.
     hargaDistributorInclude?: number;
     hargaDistributorExclude?: number;
+    hargaWholesalerInclude?: number;
+    hargaWholesalerExclude?: number;
+    hargaRetailerInclude?: number;
+    hargaRetailerExclude?: number;
+    hargaSupermarketInclude?: number;
+    hargaSupermarketExclude?: number;
     hargaBujInclude?: number;
     hargaBujExclude?: number;
     marginPersen?: number; // % kategori (Note PDF): Sunco/Bumbue 9, Barsoap/Liquid Soap 10.
@@ -88,6 +94,12 @@ export type FormFixRow = {
     kodeGolongan: string;
     hargaDistributorInclude: number;
     hargaDistributorExclude: number;
+    hargaWholesalerInclude: number;
+    hargaWholesalerExclude: number;
+    hargaRetailerInclude: number;
+    hargaRetailerExclude: number;
+    hargaSupermarketInclude: number;
+    hargaSupermarketExclude: number;
     hargaBujInclude: number;
     hargaBujExclude: number;
     marginPersen: number;
@@ -161,6 +173,12 @@ export const FORM_FIX_COLUMNS: Array<{ key: keyof FormFixRow; label: string }> =
     { key: "kodeGolongan", label: "kode  1 Digit (Nomor)" },
     { key: "hargaDistributorInclude", label: "Harga Distributor (Incl PPN)" },
     { key: "hargaDistributorExclude", label: "Harga Distributor (Excl PPN)" },
+    { key: "hargaWholesalerInclude", label: "Harga Wholesaler (Incl PPN)" },
+    { key: "hargaWholesalerExclude", label: "Harga Wholesaler (Excl PPN)" },
+    { key: "hargaRetailerInclude", label: "Harga Retailer (Incl PPN)" },
+    { key: "hargaRetailerExclude", label: "Harga Retailer (Excl PPN)" },
+    { key: "hargaSupermarketInclude", label: "Harga Supermarket (Incl PPN)" },
+    { key: "hargaSupermarketExclude", label: "Harga Supermarket (Excl PPN)" },
     { key: "hargaBujInclude", label: "Harga BUJ/Customer (Incl PPN)" },
     { key: "hargaBujExclude", label: "Harga BUJ/Customer (Excl PPN)" },
     { key: "marginPersen", label: "Margin % (kategori)" },
@@ -534,6 +552,12 @@ export function generateMasterBarang(principleName: string, principleCode: strin
             ketGolongan: golongan.name, kodeGolongan: golongan.code,
             hargaDistributorInclude: Number(item.hargaDistributorInclude ?? 0) || 0,
             hargaDistributorExclude: Number(item.hargaDistributorExclude ?? 0) || 0,
+            hargaWholesalerInclude: Number(item.hargaWholesalerInclude ?? 0) || 0,
+            hargaWholesalerExclude: Number(item.hargaWholesalerExclude ?? 0) || 0,
+            hargaRetailerInclude: Number(item.hargaRetailerInclude ?? 0) || 0,
+            hargaRetailerExclude: Number(item.hargaRetailerExclude ?? 0) || 0,
+            hargaSupermarketInclude: Number(item.hargaSupermarketInclude ?? 0) || 0,
+            hargaSupermarketExclude: Number(item.hargaSupermarketExclude ?? 0) || 0,
             hargaBujInclude: Number(item.hargaBujInclude ?? 0) || 0,
             hargaBujExclude: Number(item.hargaBujExclude ?? 0) || 0,
             // Margin % kategori dari Note price list MSM: Sunco/Bumbue 9%, sisanya (Barsoap/Liquid Soap) 10%.
