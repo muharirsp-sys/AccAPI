@@ -538,7 +538,7 @@ export function generateMasterBarang(principleName: string, principleCode: strin
             hargaBujExclude: Number(item.hargaBujExclude ?? 0) || 0,
             // Margin % kategori dari Note price list MSM: Sunco/Bumbue 9%, sisanya (Barsoap/Liquid Soap) 10%.
             // ponytail: aturan kategori dari keterangan PDF; kalau sumber sudah kasih margin eksplisit, pakai itu.
-            marginPersen: Number(item.marginPersen ?? 0) || (/\b(SUNCO|BUMBUE|BUMBU)\b/.test(upper(`${item.namaBarang} ${item.klp ?? ""} ${item.kelompokPcpl ?? ""}`)) ? 9 : 10),
+            marginPersen: Number(item.marginPersen ?? 0) || (/\b(SUNCO|BUMBOE|BUMBUE|BUMBU)\b/.test(upper(`${item.namaBarang} ${item.klp ?? ""} ${item.kelompokPcpl ?? ""}`)) ? 9 : 10),
             sourceRow: item.sourceRow, sourcePage: item.sourcePage, confidence: Number(item.confidence ?? 1),
         };
     });
