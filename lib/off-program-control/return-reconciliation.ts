@@ -94,11 +94,16 @@ function finite(value: unknown, label: string, row: number): number {
 
 function readRows(buffer: Buffer | Uint8Array, sheetName: string): Row[] {
   if (!buffer?.byteLength) throw new Error("File XLSX kosong");
-  const workbook = XLSX.read(buffer, {
-    type: "buffer",
-    raw: true,
-    cellFormula: false,
-  });
+  let workbook: XLSX.WorkBook;
+  try {
+    workbook = XLSX.read(buffer, {
+      type: "buffer",
+      raw: true,
+      cellFormula: false,
+    });
+  } catch {
+    throw new Error("File XLSX rusak atau tidak valid.");
+  }
   const sheet = workbook.Sheets[sheetName];
   if (!sheet?.["!ref"])
     throw new Error(`Sheet ${sheetName} tidak ditemukan atau kosong`);
