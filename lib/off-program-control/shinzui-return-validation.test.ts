@@ -100,6 +100,7 @@ const output = reconcileShinzuiReturns(
     accurateRow({ REM: "INVGTS1-2607-000004", "KODE PELANGGAN INDUK": "C-4", KODE_BARANG: "I-4", QTY_SATUANKECIL: 2, DPP: 200 }),
     accurateRow({ REM: "INVGTS1-2607-000005", "KODE PELANGGAN INDUK": "C-5", KODE_BARANG: "I-5" }),
     accurateRow({ REM: "INVGTS1-2607-000006", "KODE PELANGGAN INDUK": "C-6", KODE_BARANG: "NO-MAP" }),
+    accurateRow({ REM: "INVGTS1-2607-000006", "KODE PELANGGAN INDUK": "C-6", KODE_BARANG: "NO-MAP", QTY_SATUANKECIL: 2, DPP: 200 }),
     accurateRow({ REM: "INVGTS1-2607-000007", "KODE PELANGGAN INDUK": "C-7", KODE_BARANG: "I-7" }),
     accurateRow({ REM: "INVGTS1-2607-000007", "KODE PELANGGAN INDUK": "C-8", KODE_BARANG: "I-7", QTY_SATUANKECIL: 2, DPP: 200 }),
     accurateRow({ REM: "INVGTS1-2607-999999", JENIS_TRANSAKSI: "Jual" }),
@@ -110,6 +111,7 @@ const output = reconcileShinzuiReturns(
     principalRow({ "INV Num": "INVGTS1-2607-000003", "Id Pelanggan Lama": "C-3", "Id Produk": "P-3", "Qty Small": -2, "DPP Inv": -202 }),
     principalRow({ "INV Num": "INVGTS1-2607-000004", "Id Pelanggan Lama": "C-4", "Id Produk": "P-4", "Qty Small": -3, "DPP Inv": -202 }),
     principalRow({ "INV Num": "INVGTS1-2607-000007", "Id Pelanggan Lama": "C-7", "Id Produk": "P-7" }),
+    principalRow({ "INV Num": "INVGTS1-2607-000007", "Id Pelanggan Lama": "C-8", "Id Produk": "OLD-P-7", "Qty Small": -2, "DPP Inv": -200 }),
     principalRow({ "INV Num": "INVGTS1-2607-000008", "Id Pelanggan Lama": "C-9", "Id Produk": "P-8" }),
     principalRow({ "INV Num": "INVGTS1-2607-999999", "Tipe Penjualan": "PROMO" }),
   ),
@@ -118,12 +120,12 @@ const output = reconcileShinzuiReturns(
 );
 
 assert.deepEqual(output.summary, {
-  MATCH: 2,
+  MATCH: 3,
   QTY_MISMATCH: 1,
   VALUE_MISMATCH: 1,
   QTY_AND_VALUE_MISMATCH: 1,
   MISSING_ACCURATE: 1,
-  MISSING_PRINCIPAL: 2,
+  MISSING_PRINCIPAL: 1,
   UNMAPPED: 1,
   INVALID_DATA: 0,
 });
@@ -131,17 +133,40 @@ const match = output.results.find((row) => row.invoiceNumber.endsWith("000001"))
 assert.equal(match?.accurateQuantity, 2);
 assert.equal(match?.accurateDpp, 100);
 assert.equal(match?.dppDifference, 0);
-assert.equal(output.accurateLines.length, 9);
-assert.equal(output.principalLines.length, 6);
+assert.equal(output.accurateLines.length, 10);
+assert.equal(output.principalLines.length, 7);
 assert.equal(
   output.results.find((row) => row.customerCode === "C-8")?.status,
-  "MISSING_PRINCIPAL",
+  "MATCH",
+);
+assert.equal(
+  output.results.find((row) => row.customerCode === "C-7")?.principalProductCode,
+  "P-7",
+);
+assert.equal(
+  output.results.find((row) => row.customerCode === "C-8")?.principalProductCode,
+  "OLD-P-7",
 );
 assert.equal(
   output.results.find((row) => row.status === "UNMAPPED")?.accurateProductCode,
   "NO-MAP",
 );
+const unmapped = output.results.find((row) => row.status === "UNMAPPED");
+assert.equal(unmapped?.accurateQuantity, 3);
+assert.equal(unmapped?.accurateDpp, 300);
+assert.deepEqual(unmapped?.accurateSourceRows, [8, 9]);
 
+const deepHeader = workbook({
+  "Rincian Faktur Penjualan": [
+    ...Array.from({ length: 11 }, () => ["PREAMBLE"]),
+    [...ACCURATE_HEADERS],
+    accurateRow({}),
+  ],
+});
+assert.equal(
+  reconcileShinzuiReturns(deepHeader, principal(principalRow({})), mappings).summary.MATCH,
+  1,
+);
 for (const rem of ["tanpa nomor", "INVGTS1-2607-000001 INVGTS1-2607-000002"])
   assert.throws(
     () => reconcileShinzuiReturns(accurate(accurateRow({ REM: rem })), principal(), mappings),

@@ -114,7 +114,7 @@ function findHeader(
   rows: Row[],
   required: string[],
 ): { rowIndex: number; columns: Map<string, number> } {
-  for (let rowIndex = 0; rowIndex < Math.min(rows.length, 10); rowIndex++) {
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
     const columns = new Map<string, number>();
     rows[rowIndex].forEach((entry, index) => {
       if (text(entry)) columns.set(text(entry), index);
@@ -197,7 +197,7 @@ function parseAccurate(
     lines: CanonicalReturnLine[] = [],
     principalKeys = new Set(
       principalLines.map(
-        (line) => `${line.invoiceNumber}|${line.principalProductCode}`,
+        (line) => `${line.invoiceNumber}|${line.principalProductCode}|${line.customerCode}`,
       ),
     );
   for (let index = header.rowIndex + 1; index < rows.length; index++) {
@@ -228,7 +228,7 @@ function parseAccurate(
       ),
       candidates = mappings.get(accurateProductCode) ?? [],
       matches = candidates.filter((principal) =>
-        principalKeys.has(`${invoiceNumber}|${principal}`),
+        principalKeys.has(`${invoiceNumber}|${principal}|${customerCode}`),
       );
     if (candidates.length > 1 && matches.length !== 1)
       throw new Error(`Mapping KODE BARANG ambigu pada baris ${sourceRowNumber}`);
@@ -289,7 +289,7 @@ function parsePrincipal(buffer: Buffer | Uint8Array): CanonicalReturnLine[] {
 }
 
 function key(line: CanonicalReturnLine): string {
-  return `${line.invoiceNumber}|${line.principalProductCode}|${line.customerCode}`;
+  return `${line.invoiceNumber}|${line.principalProductCode ?? line.accurateProductCode}|${line.customerCode}`;
 }
 
 function aggregate(lines: CanonicalReturnLine[]): Map<string, Aggregate> {
@@ -366,8 +366,10 @@ export function reconcileShinzuiReturns(
     principals = aggregate(principalLines),
     results: ReturnReconciliationResult[] = [];
 
-  for (const line of accurateLines.filter((entry) => entry.principalProductCode === null))
-    results.push(result(aggregate([line]).values().next().value, undefined, "UNMAPPED"));
+  for (const unmapped of aggregate(
+    accurateLines.filter((entry) => entry.principalProductCode === null),
+  ).values())
+    results.push(result(unmapped, undefined, "UNMAPPED"));
 
   for (const [id, accurate] of mappedAccurate) {
     const principal = principals.get(id);
