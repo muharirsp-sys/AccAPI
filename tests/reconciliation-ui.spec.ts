@@ -67,12 +67,13 @@ const result = {
   ],
 };
 
-const returnSummary = { MATCH: 1, QTY_MISMATCH: 1, VALUE_MISMATCH: 0, QTY_AND_VALUE_MISMATCH: 0, MISSING_ACCURATE: 0, MISSING_PRINCIPAL: 0, UNMAPPED: 0, INVALID_DATA: 0 };
+const returnSummary = { MATCH: 1, QTY_MISMATCH: 1, VALUE_MISMATCH: 1, QTY_AND_VALUE_MISMATCH: 0, MISSING_ACCURATE: 0, MISSING_PRINCIPAL: 0, UNMAPPED: 0, INVALID_DATA: 0 };
 const returnResult = {
   accurateLines: [], principalLines: [], summary: returnSummary,
   results: [
     { invoiceNumber: "INVGTS2505-0098-00876", customerCode: "CUST-01", accurateProductCode: "ACC-01", principalProductCode: "SHZ-01", accurateQuantity: 2, principalQuantity: 2, quantityDifference: 0, accurateDpp: 50000, principalDpp: 50000, dppDifference: 0, accurateTax: 5500, principalTax: 5500, accurateTotal: 55500, principalTotal: 55500, status: "MATCH", warnings: [], accurateSourceRows: [2], principalSourceRows: [4] },
-    { invoiceNumber: "INVGTS2505-0098-00877", customerCode: "CUST-02", accurateProductCode: "ACC-02", principalProductCode: "SHZ-02", accurateQuantity: 3, principalQuantity: 5, quantityDifference: -2, accurateDpp: 60000, principalDpp: 90000, dppDifference: -30000, accurateTax: 6600, principalTax: 9900, accurateTotal: 66600, principalTotal: 99900, status: "QTY_MISMATCH", warnings: ["QTY MISMATCH"], accurateSourceRows: [3], principalSourceRows: [5] },
+    { invoiceNumber: "INVGTS2505-0098-00877", customerCode: "CUST-02", accurateProductCode: "ACC-02", principalProductCode: "SHZ-02", accurateQuantity: 3, principalQuantity: 5, quantityDifference: -2, accurateDpp: 60000, principalDpp: 60000.5, dppDifference: -0.5, accurateTax: 6600, principalTax: 6600.05, accurateTotal: 66600, principalTotal: 66600.55, status: "QTY_MISMATCH", warnings: ["QTY MISMATCH"], accurateSourceRows: [3], principalSourceRows: [5] },
+    { invoiceNumber: "INVGTS2505-0098-00878", customerCode: "CUST-03", accurateProductCode: "ACC-03", principalProductCode: "SHZ-03", accurateQuantity: 1, principalQuantity: 1, quantityDifference: 0, accurateDpp: 60000, principalDpp: 90000, dppDifference: -30000, accurateTax: 6600, principalTax: 9900, accurateTotal: 66600, principalTotal: 99900, status: "VALUE_MISMATCH", warnings: ["VALUE MISMATCH"], accurateSourceRows: [6], principalSourceRows: [8] },
   ],
 };
 test("shows the available reconciliation types while Pembelian stays inactive", async ({
@@ -96,6 +97,8 @@ test("shows the available reconciliation types while Pembelian stays inactive", 
   await expect(types.getByText("Belum aktif", { exact: true })).toHaveCount(1);
   await expect(types.getByRole("button", { name: "Faktur" })).toBeVisible();
   await expect(types.getByRole("button", { name: "Return" })).toBeVisible();
+  await expect(types.getByRole("button", { name: "Faktur" })).toHaveAttribute("aria-pressed", "true");
+  await expect(types.getByRole("button", { name: "Return" })).toHaveAttribute("aria-pressed", "false");
   await expect(types.getByRole("button")).toHaveCount(2);
   await expect(types.getByRole("link")).toHaveCount(0);
   expect(
@@ -161,13 +164,38 @@ test("runs SHINZUI Return reconciliation with focused issues and export", async 
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
   await expect(page.getByText("CUST-02", { exact: true })).toBeVisible();
   await expect(page.getByText("ACC-02 / SHZ-02", { exact: true })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Pajak Accurate" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Pajak SHINZUI" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Total Accurate" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Total SHINZUI" })).toBeVisible();
   await expect(page.getByText("Qty: Accurate 3, SHINZUI 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("DPP: Accurate Rp60.000, SHINZUI Rp60.000,5 — Accurate kurang Rp0,5", { exact: true })).toHaveCount(0);
   await expect(page.getByText("DPP: Accurate Rp60.000, SHINZUI Rp90.000 — Accurate kurang Rp30.000", { exact: true })).toBeVisible();
+  const search = page.getByLabel("Cari tabel");
+  await search.fill("SHZ-02");
+  await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
+  await search.fill("ACC-02");
+  await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
+  await search.fill("");
+  await page.getByRole("button", { name: "Return" }).click();
+  await expect(page.getByText("accurate-return.xlsx", { exact: false })).toBeVisible();
+  await expect(page.getByLabel("Ringkasan hasil")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Return" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Ekspor XLSX" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^hasil-rekonsiliasi-return-shinzui-\d{4}-\d{2}-\d{2}\.xlsx$/);
+  const downloadPath = await download.path();
+  expect(downloadPath).not.toBeNull();
+  const returnWorkbook = XLSX.readFile(downloadPath!);
+  const returnDetail = XLSX.utils.sheet_to_json<Record<string, number>>(returnWorkbook.Sheets.Detail);
+  expect(returnDetail[1]).toMatchObject({
+    "Pajak Accurate": 6600,
+    "Pajak SHINZUI": 6600.05,
+    "Total Accurate": 66600,
+    "Total SHINZUI": 66600.55,
+  });
   await page.getByRole("button", { name: "Faktur" }).click();
   await expect(page.getByLabel("Prinsipal")).toHaveValue("KINO");
   await expect(page.getByLabel("Prinsipal")).toBeEnabled();

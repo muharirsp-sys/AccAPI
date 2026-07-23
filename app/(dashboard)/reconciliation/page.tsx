@@ -255,7 +255,7 @@ function returnCauseLines(row: ReturnReconciliationResult): string[] {
   else if (row.status === "UNMAPPED") causes.push("Produk Accurate belum memiliki mapping SHINZUI.");
   if (row.quantityDifference !== 0)
     causes.push(`Qty: Accurate ${number.format(row.accurateQuantity)}, SHINZUI ${number.format(row.principalQuantity)} — ${direction(row.quantityDifference, number.format(Math.abs(row.quantityDifference)))}`);
-  if (row.dppDifference !== 0)
+  if (Math.abs(row.dppDifference) > 1)
     causes.push(`DPP: Accurate ${money(row.accurateDpp)}, SHINZUI ${money(row.principalDpp)} — ${direction(row.dppDifference, money(Math.abs(row.dppDifference)))}`);
   return causes.length ? causes : row.warnings;
 }
@@ -269,8 +269,9 @@ function returnColumns(): ColumnDef<ReturnReconciliationResult>[] {
     { accessorKey: "invoiceNumber", header: "Invoice" },
     { accessorKey: "customerCode", header: "Pelanggan" },
     {
-      id: "product", header: "Produk",
-      cell: ({ row }) => `${row.original.accurateProductCode ?? "-"} / ${row.original.principalProductCode ?? "-"}`,
+      id: "product",
+      accessorFn: (row) => `${row.accurateProductCode ?? "-"} / ${row.principalProductCode ?? "-"}`,
+      header: "Produk",
     },
     {
       id: "causes", header: "Penyebab selisih",
@@ -280,6 +281,10 @@ function returnColumns(): ColumnDef<ReturnReconciliationResult>[] {
     { accessorKey: "principalQuantity", header: "Qty SHINZUI" },
     { accessorKey: "accurateDpp", header: "DPP Accurate" },
     { accessorKey: "principalDpp", header: "DPP SHINZUI" },
+    { accessorKey: "accurateTax", header: "Pajak Accurate", cell: ({ getValue }) => currency.format(getValue<number>()) },
+    { accessorKey: "principalTax", header: "Pajak SHINZUI", cell: ({ getValue }) => currency.format(getValue<number>()) },
+    { accessorKey: "accurateTotal", header: "Total Accurate", cell: ({ getValue }) => currency.format(getValue<number>()) },
+    { accessorKey: "principalTotal", header: "Total SHINZUI", cell: ({ getValue }) => currency.format(getValue<number>()) },
     {
       id: "sourceRows", header: "Baris sumber",
       cell: ({ row }) => `Accurate: ${row.original.accurateSourceRows.join(", ") || "-"} · SHINZUI: ${row.original.principalSourceRows.join(", ") || "-"}`,
@@ -328,6 +333,7 @@ export default function ReconciliationPage() {
   }
 
   function changeDivision(next: Division) {
+    if (next === division) return;
     resetReconciliation();
     setDivision(next);
     setPrincipal(next === "RETURN" ? "SHINZUI" : "KINO");
@@ -369,6 +375,8 @@ export default function ReconciliationPage() {
             "Produk Accurate": excelText(row.accurateProductCode ?? ""), "Produk SHINZUI": excelText(row.principalProductCode ?? ""),
             "Qty Accurate": row.accurateQuantity, "Qty SHINZUI": row.principalQuantity, "Selisih Qty": row.quantityDifference,
             "DPP Accurate": row.accurateDpp, "DPP SHINZUI": row.principalDpp, "Selisih DPP": row.dppDifference,
+            "Pajak Accurate": row.accurateTax, "Pajak SHINZUI": row.principalTax,
+            "Total Accurate": row.accurateTotal, "Total SHINZUI": row.principalTotal,
             "Baris Accurate": row.accurateSourceRows.join(", "), "Baris SHINZUI": row.principalSourceRows.join(", "),
           }))
         : (result.results as ReconciliationResult[]).map((row) => ({
@@ -422,7 +430,7 @@ export default function ReconciliationPage() {
           <ul className="grid list-none grid-cols-3 gap-2">
             {(["FAKTUR", "RETURN"] as const).map((item) => (
               <li key={item} aria-current={division === item ? "page" : undefined} className={division === item ? "min-w-0 rounded-xl border border-indigo-500/30 bg-indigo-500/10 text-center" : "min-w-0 rounded-xl border border-white/10 bg-white/5 text-center"}>
-                <button type="button" aria-label={item === "FAKTUR" ? "Faktur" : "Return"} disabled={isRunning} onClick={() => changeDivision(item)} className="min-h-11 w-full rounded-xl px-2 py-3 text-sm font-semibold text-slate-200 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70">
+                <button type="button" aria-label={item === "FAKTUR" ? "Faktur" : "Return"} aria-pressed={division === item} disabled={isRunning} onClick={() => changeDivision(item)} className="min-h-11 w-full rounded-xl px-2 py-3 text-sm font-semibold text-slate-200 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70">
                   {item === "FAKTUR" ? "Faktur" : "Return"}
                 </button>
               </li>
