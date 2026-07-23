@@ -143,9 +143,9 @@ test("runs SHINZUI Return reconciliation with focused issues and export", async 
   await page.getByLabel("Rincian Faktur Penjualan (Accurate)").setInputFiles(xlsx("accurate-old.xlsx"));
   await page.getByLabel("Sales Detail KINO").setInputFiles(xlsx("kino-old.xlsx"));
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
-  await expect(page.getByRole("alert")).toHaveText("Kesalahan Faktur lama.");
+  await expect(page.locator('p[role="alert"]')).toHaveText("Kesalahan Faktur lama.");
   await page.getByRole("button", { name: "Return" }).click();
-  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator('p[role="alert"]')).toHaveCount(0);
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByLabel("Prinsipal")).toHaveValue("SHINZUI");
