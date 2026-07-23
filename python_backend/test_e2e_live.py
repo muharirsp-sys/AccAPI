@@ -116,7 +116,8 @@ print("\nE2E LIVE GATE PASSED: dok sama -> rows identik (0 API run2) -> output 0
 import shutil
 insp = r"D:\AccAPI\_github_clean\python_backend\data\e2e_live_output"
 os.makedirs(insp, exist_ok=True)
-for _src, _name in ((out1["dataset"], "Dataset_Diskon.xlsx"), (out1["form"], "Form_Summary.pdf")):
+_suf = os.getenv("OUT_SUFFIX", "")  # mis. "_qwen37plus" utk A/B model OCR tanpa menimpa baseline gemini
+for _src, _name in ((out1["dataset"], f"Dataset_Diskon{_suf}.xlsx"), (out1["form"], f"Form_Summary{_suf}.pdf")):
     _dst = os.path.join(insp, _name)
     try:
         shutil.copy(_src, _dst)

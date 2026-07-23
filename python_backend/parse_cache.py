@@ -8,8 +8,8 @@
 #         kalau hit), freeze di akhir sebelum return rows.
 # Dependensi: json, os, hashlib (stdlib saja).
 # Main Functions:
-#   - parse_cache_key(pdf_bytes, principle_name) -> str   sha256(bytes)+principle (master beda
-#       principle -> rows beda -> key beda).
+#   - parse_cache_key(pdf_bytes, principle_name, namespace="") -> str
+#       sha256(bytes)+principle+namespace provider/pipeline opsional.
 #   - parse_cache_get(key) -> list | None
 #   - parse_cache_put(key, rows, nama_file="", principle_name="") -> None  (freeze, idempotent:
 #       kalau file sudah ada TIDAK ditimpa).
@@ -24,10 +24,14 @@ from typing import List, Optional
 _CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "parse_cache")
 
 
-def parse_cache_key(pdf_bytes: bytes, principle_name: str = "") -> str:
+def parse_cache_key(pdf_bytes: bytes, principle_name: str = "", namespace: str = "") -> str:
+    """Buat key stabil; namespace memisahkan eksperimen tanpa menggusur cache produksi."""
     h = hashlib.sha256(pdf_bytes)
     h.update(b"|")
     h.update(" ".join(str(principle_name or "").strip().upper().split()).encode("utf-8"))
+    if namespace:
+        h.update(b"|")
+        h.update(str(namespace).encode("utf-8"))
     return h.hexdigest()
 
 
@@ -76,6 +80,7 @@ if __name__ == "__main__":
         # principle beda -> key beda -> miss
         k2 = parse_cache_key(b, "Casablanca")
         assert parse_cache_get(k2) is None, "principle beda = key beda = miss"
+        assert k != parse_cache_key(b, "Priskila", "mistral-ocr-4-0:single-source-v1")
         print("parse_cache self-check PASSED (miss->put->hit, freeze, principle memisah key)")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

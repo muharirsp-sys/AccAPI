@@ -119,3 +119,6 @@ poster/
 
 # plugin lokal Claude (bukan bagian app)
 ponytail/
+
+# API key Mistral OCR — RAHASIA, jangan pernah commit
+python_backend/api_key_mistral.txt

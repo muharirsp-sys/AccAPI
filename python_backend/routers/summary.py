@@ -1,5 +1,22 @@
-# routers/summary.py — Endpoint summary program: /summary/* dan /summary_download/*.
-# Dipindahkan mekanis dari main.py tanpa perubahan logic; hanya @app.* diganti @router.*.
+# Tujuan: Endpoint dan business flow Summary Program (/summary/* dan download).
+# Caller: FastAPI router dari main.py dan runner E2E Summary Program.
+# Dependensi: shared pipeline, cache OCR/parse, Sumopod parser, adapter RapidOCR/Mistral,
+#             serta promo_grouping untuk identitas/deduplikasi/group ID stabil.
+# Main Functions: summary_manual_parse_pdf_ai, summary_manual_generate, endpoint download.
+# Side Effects: baca upload/master, panggilan API OCR/LLM, cache, serta output PDF/XLSX.
+import channel_map
+from generic_promo_pipeline import canonical_master_gram
+from promo_grouping import (
+    allows_legacy_master_fallback,
+    assign_stable_group_ids,
+    bridge_group_triggers,
+    canonical_promo_text,
+    consolidation_identity,
+    deduplicate_promo_rows,
+    program_identity,
+    propagate_table_benefits,
+    stable_sort_promo_rows,
+)
 from fastapi import APIRouter
 
 from shared import (
@@ -366,6 +383,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             return join_human(result_parts)
 
         # Row Consolidation Algorithm: Merge rows that share exactly the same Base Prefix, Ketentuan, Benefit, and Channel.
+        rows = propagate_table_benefits(rows)
         consolidated_rows_dict = {}
         idx_counter = 1
         
@@ -374,15 +392,19 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             raw_k = str(r.get("kelompok", "")).strip()
             prefix = raw_k.split(" - ")[0] if " - " in raw_k else raw_k
             
-            # The composite key dictates what gets merged together
+            # Generic pipeline sudah membawa hasil match deterministik. Jangan
+            # mega-merge hanya dari prefix (semua "NATUR - ..." akan menjadi
+            # satu baris bila model kebetulan konsisten menulis spasi benefit).
+            _generic_name = str(r.get("_gen_key") or r.get("principle") or "").upper()
+            generic_scope = consolidation_identity(r) if any(name in _generic_name for name in ("NATUR", "FONTERRA")) else prefix
             merge_key = (
                 r.get("surat_program", ""),
                 r.get("nama_program", ""),
                 r.get("channel_gtmt", ""),
                 r.get("periode", ""),
-                prefix,
+                generic_scope,
                 norm(r.get("ketentuan", "")),
-                norm(r.get("benefit", "")),
+                canonical_promo_text(r.get("benefit", "")),
                 norm(r.get("benefit_type", ""))
             )
             
@@ -529,7 +551,6 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         # hasil ini -- tidak ada lagi 2 pipeline independen yang bisa saling berbeda (akar
         # divergensi PDF vs Excel yg dilaporkan user).
         # ============================================================
-        channel_seq: Dict[str, int] = {}
         pdf_meta: Dict[int, dict] = {}
         pdf_items: Dict[int, list] = {}
         excel_rows: List[Dict[str, Any]] = []
@@ -549,12 +570,16 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             promo_group_id = str(r.get("promo_group_id","") or "").strip()
             promo_group = str(r.get("channel_gtmt","") or "").strip()
             periode = str(r.get("periode","") or "").strip()
+            program_key = program_identity(r)
             if not promo_group_id or promo_group_id.upper() == "NON_GROUP":
                 promo_group_id = promo_group
+            auto_group_id = not promo_group_id or promo_group_id.upper() == "NON_GROUP" or promo_group_id == promo_group
 
             pdf_meta[i] = {
                 "no": i + 1, "surat_program": r.get("surat_program",""), "nama_program": promo_label,
                 "channel_gtmt": promo_group, "periode": periode, "ketentuan": ket,
+                "program_key": program_key,
+                "master_gramasi_authoritative": not allows_legacy_master_fallback(r),
                 "benefit_type": r.get("benefit_type",""), "benefit": r.get("benefit",""),
                 "syarat_claim": r.get("syarat_claim",""), "keterangan": r.get("keterangan",""),
                 "variant_display": r.get("variant",""), "kelompok_fallback": r.get("kelompok",""),
@@ -579,7 +604,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 # "PMD KIDZ" gramasi 40gr krn AI cuma percaya kode_barangs GPT tanpa cross-check).
                 # Kalau gramasi master tidak muncul sama sekali di klaim surat -> buang & catat,
                 # JANGAN diam-diam dipakai (akurasi finansial wajib, bukan tebak-tebakan).
-                if not g_all and glist:
+                if not g_all and glist and allows_legacy_master_fallback(r):
                     _kept = []
                     for it in matched_items:
                         it_gram = norm(it.get("gramasi"))
@@ -593,7 +618,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                             })
                     matched_items = _kept
 
-            if not matched_items:
+            if not matched_items and allows_legacy_master_fallback(r):
                 fb_kelompok = kelompok
                 if fb_kelompok and any(skip in fb_kelompok.lower() for skip in ["- kelompok -", "bisa meleset"]):
                     fb_kelompok = ""
@@ -639,6 +664,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 # nyata"), tapi nama_barang diberi flag review -- simetris dgn PDF, tak lagi blank.
                 excel_rows.append({"pdf_key": i, "channel": promo_group, "kode_barang": "", "nama_barang": REVIEW_FLAG_TEXT,
                                     "promo_label": promo_label, "pg_id": promo_group_id, "periode": periode,
+                                    "program_key": program_key, "master_kel": "", "auto_group_id": auto_group_id,
                                     "trig_qty": trig_qty, "trig_unit": trig_unit, "benefit_type": benefit_type,
                                     "benefit_text": benefit_text, "benefit_unit": benefit_unit})
                 continue
@@ -651,58 +677,23 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 grouped_by_master_kel[str(it.get("kelompok","")).strip()].append(it)
 
             for master_kel, items_in_kel in grouped_by_master_kel.items():
-                current_pg_id = promo_group_id
-                if not current_pg_id or current_pg_id.upper() == "NON_GROUP" or current_pg_id == promo_group:
-                    prefix = "".join(e for e in promo_group if e.isalnum())
-                    if not prefix: prefix = "Retail"
-                    channel_seq[prefix] = channel_seq.get(prefix, 0) + 1
-                    current_pg_id = f"{prefix}_{channel_seq[prefix]}"
                 for it in items_in_kel:
                     excel_rows.append({"pdf_key": i, "channel": promo_group, "kode_barang": str(it.get("kode_barang","")),
                                         "nama_barang": str(it.get("nama_barang","")), "promo_label": promo_label,
-                                        "pg_id": current_pg_id, "periode": periode, "trig_qty": trig_qty,
+                                        "pg_id": promo_group_id, "periode": periode, "program_key": program_key,
+                                        "master_kel": master_kel, "auto_group_id": auto_group_id, "trig_qty": trig_qty,
                                         "trig_unit": trig_unit, "benefit_type": benefit_type, "benefit_text": benefit_text,
                                         "benefit_unit": benefit_unit})
 
-        # ponytail: guard V4 -- 1 kode fisik nyantol di >1 baris-surat channel sama. DUA kasus:
-        #   (a) SEMUA kemunculan tier IDENTIK -> duplikat jinak: baris mega-merge LLM tumpang-tindih
-        #       yg SETELAH regroup ber-tier sama (mis. Bellagio Beli-4 dari row Beli-7-mega DAN row
-        #       Beli-4). Bukan ambiguitas -> DEDUP: simpan kemunculan pertama, buang sisanya. JANGAN
-        #       buang semua (dulu bug: 37 kode Beli-4 VALID hilang saat matching mulai jalan).
-        #   (b) tier BEDA -> ambigu (mis. "Pmd Wtr Bas" di 4+1 DAN 7+1): akurasi finansial wajib,
-        #       buang dari SEMUA sisi + flag review manusia (tombol Laporkan Salah).
-        def _tier_sig(er):
-            return (er.get("trig_qty", ""), er.get("benefit_type", ""), er.get("benefit_text", ""))
-        occ: Dict[Tuple[str, str], list] = {}
-        for er in excel_rows:
-            if er["kode_barang"]:
-                occ.setdefault((er["channel"], er["kode_barang"]), []).append(er)
-        dedup_drop = set()          # id(er) duplikat jinak yg dibuang (sudah terwakili baris lain)
-        conflict_kodes: set = set()  # (channel, kode) ambigu tier
-        for ck, ers in occ.items():
-            if len({er["pdf_key"] for er in ers}) <= 1:
-                continue            # cuma 1 baris-surat -> tak ada isu
-            if len({_tier_sig(er) for er in ers}) == 1:
-                keep_key = min(er["pdf_key"] for er in ers)
-                for er in ers:
-                    if er["pdf_key"] != keep_key:
-                        dedup_drop.add(id(er))
-            else:
-                conflict_kodes.add(ck)
-        if dedup_drop or conflict_kodes:
-            kept_excel_rows = []
-            for er in excel_rows:
-                ck = (er["channel"], er["kode_barang"])
-                if er["kode_barang"] and ck in conflict_kodes:
-                    flagged_conflicts.append({"kode_barang": er["kode_barang"], "nama_barang": er["nama_barang"],
-                                               "channel": er["channel"], "pg_id": er["pg_id"]})
-                elif id(er) in dedup_drop:
-                    continue
-                else:
-                    kept_excel_rows.append(er)
-            excel_rows = kept_excel_rows
+        # Model berbeda boleh memecah rowspan tabel menjadi jumlah baris berbeda.
+        # Deduplikasi wajib scoped per identitas program; SKU program Oktober dan
+        # Februari tidak boleh lagi dianggap konflik hanya karena channel sama.
+        excel_rows = bridge_group_triggers(excel_rows)
+        excel_rows, _dedup_count = deduplicate_promo_rows(excel_rows)
+        excel_rows = assign_stable_group_ids(excel_rows)
+        if _dedup_count:
             # Sinkronkan pdf_items ke excel_rows FINAL: item hanya tampil di PDF kalau kode-nya
-            # masih hidup di excel_rows utk pdf_key itu (buang duplikat jinak & konflik sekaligus).
+            # masih hidup di excel_rows utk pdf_key itu (buang duplikat rowspan OCR).
             surviving: Dict[int, set] = {}
             for er in excel_rows:
                 if er["kode_barang"]:
@@ -756,7 +747,8 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 gram_for_k, seen_g = [], set()
                 for it in items_in_row:
                     if str(it.get("kelompok","")).strip() == k:
-                        g = str(it.get("gramasi","")).strip()
+                        g = (canonical_master_gram(it) if meta.get("master_gramasi_authoritative")
+                             else str(it.get("gramasi", "")).strip())
                         if g and g not in seen_g:
                             seen_g.add(g); gram_for_k.append(g)
                 if gram_for_k:
@@ -907,6 +899,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         for _er in excel_rows:
             _er["no_surat"] = pdf_meta.get(_er.get("pdf_key"), {}).get("surat_program", "")
         excel_rows, _correction_log = apply_stable_corrections(excel_rows, load_stable_corrections())
+        excel_rows = stable_sort_promo_rows(excel_rows)
 
         # excel_rows sudah dihitung SEKALI di atas (dipakai jg utk PDF) -- di sini cuma tulis ke sheet.
         excel_tier_counter: Dict[Tuple[str, str, str, str], int] = {}
@@ -1038,6 +1031,29 @@ async def summary_manual_parse_pdf_regex(request: Request, token: str = Form(...
     except Exception as e:
         import traceback; traceback.print_exc()
         return {"ok": False, "error": f"Regex Parser Error: {str(e)}"}
+
+
+def _channel_gate(rows, principle_name):
+    """Bakukan channel per principle (fail-closed). Return dict-error kalau ada channel di
+    luar mapping principle -> caller HARUS berhenti & minta user lengkapi mapping (keputusan
+    user 2026-07-21). Return None kalau aman (rows dibakukan in-place) ATAU principle belum
+    punya file mapping (fitur off utk principle itu -> perilaku lama)."""
+    cmap = channel_map.load(principle_name)
+    if cmap is None:
+        return None
+    unknown = channel_map.canonicalize_rows(rows, cmap)
+    if unknown:
+        _u = ", ".join(sorted(unknown))
+        return {"ok": False, "need_channel_mapping": True, "principle_name": principle_name,
+                "unknown_channels": sorted(unknown),
+                "error": (f"Channel berikut belum terdaftar di mapping principle "
+                          f"'{principle_name}': {_u}. Tambahkan alias->nama channel baku ke "
+                          f"data/channel_map/{channel_map.principle_slug(principle_name)}.json "
+                          f"lalu proses ulang. (Proses dihentikan agar channel tak salah baca "
+                          f"masuk ke hitungan program per channel.)")}
+    return None
+
+
 @router.post("/summary/manual/parse_pdf_ai")
 async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), pdf: UploadFile = File(...), n8n_webhook: str = Form(default=""), principle_name: str = Form(default=""), ai_mode: str = Form(default="split")):
     
@@ -1058,9 +1074,20 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
 
         # FASE 1b: hasil parse dibekukan per (dokumen, principle). Hit -> lewati OCR+LLM total
         # (0 biaya API) & rows IDENTIK dgn run pertama -> pipeline dok->rows deterministik penuh.
-        _parse_key = parse_cache_key(file_bytes, principle_name)
+        # Default produksi = Mistral OCR (terbukti setara Gemini di URC & Priskila:
+        # SKU set + SKU->benefit identik). Set SUMOPOD_OCR_MODEL=gemini/gemini-3.5-flash
+        # untuk kembali ke Gemini. Provider OCR eksplisit memakai satu sumber teks di
+        # namespace cache terpisah, jadi ganti default tidak mencampur cache lama.
+        ocr_model = os.getenv("SUMOPOD_OCR_MODEL", "mistral-ocr-4-0")
+        _use_rapid = ocr_model == "rapidocr"
+        _use_mistral = ocr_model.startswith("mistral-ocr-")
+        _explicit_ocr = _use_rapid or _use_mistral
+        _parse_namespace = f"{ocr_model}:single-source-v1" if _explicit_ocr else ""
+        _parse_key = parse_cache_key(file_bytes, principle_name, namespace=_parse_namespace)
         _cached_rows = parse_cache_get(_parse_key)
         if _cached_rows is not None:
+            _gate = _channel_gate(_cached_rows, principle_name)
+            if _gate: return _gate
             return {"ok": True, "rows": _cached_rows}
 
         # Direct Python native parsing via OpenAI SDK (Sumopod)
@@ -1527,14 +1554,19 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                     }
                     # gemini-2.5-flash DITARIK provider (404 "no longer available to new
                     # users", terbukti live 2026-07-19) -> default ke generasi flash terbaru.
-                    ocr_model = os.getenv("SUMOPOD_OCR_MODEL", "gemini/gemini-3.5-flash")
                     # FASE 1: OCR cache by content hash -- surat byte-identik TIDAK di-OCR ulang
                     # (fondasi determinisme: run ke-2 ambil teks beku, Gemini 0 panggilan).
                     from ocr_cache import ocr_cache_key, ocr_cache_get, ocr_cache_put
-                    _doc_hash = ocr_cache_key(file_bytes)
+                    # Provider eksperimen tidak boleh membaca cache Gemini untuk PDF sama.
+                    _mistral_table_format = os.getenv("MISTRAL_OCR_TABLE_FORMAT", "html").strip().lower()
+                    _cache_namespace = (
+                        f"{ocr_model}:{_mistral_table_format}" if _use_mistral
+                        else ocr_model if _use_rapid else ""
+                    )
+                    _doc_hash = ocr_cache_key(file_bytes, namespace=_cache_namespace)
                     _cached_ocr = ocr_cache_get(_doc_hash)
                     ocr_chunks = []
-                    for _pg_idx, (_pg_label, b64) in enumerate([] if _cached_ocr is not None else zip(ocr_labels, base64_images)):
+                    for _pg_idx, (_pg_label, b64) in enumerate([] if (_cached_ocr is not None or _use_rapid or _use_mistral) else zip(ocr_labels, base64_images)):
                         ocr_payload = {
                             "model": ocr_model,
                             "messages": [
@@ -1590,6 +1622,50 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                             ocr_chunks.append(f"--- {_pg_label} (OCR GAGAL setelah 3x percobaan) ---")
                     if _cached_ocr is not None:
                         ocr_text = _cached_ocr.get("ocr_text", "")  # cache hit: teks OCR beku, Gemini tak dipanggil
+                    elif _use_rapid:
+                        import rapidocr_adapter
+                        _valid_gramasi = rapidocr_adapter.build_gramasi_whitelist(
+                            MANUAL_MASTER_CACHE.get(token, {}).get("items", []))
+                        ocr_text = rapidocr_adapter.ocr_pdf_to_text(file_bytes, valid_gramasi=_valid_gramasi)
+                        if ocr_text.strip():
+                            ocr_cache_put(_doc_hash, getattr(pdf, "filename", "") or "", ocr_text, pages_total, len(base64_images))
+                        elif not pdf_text.strip():
+                            append_error_log("ocr_all_pages_failed", Exception("RapidOCR kosong"),
+                                             {"file": getattr(pdf, "filename", ""), "model": ocr_model, "user": user})
+                            return {"ok": False, "error": "RapidOCR tak menghasilkan teks & PDF tak punya teks native."}
+                    elif _use_mistral:
+                        import mistral_ocr_adapter
+                        _mistral_key = os.getenv("MISTRAL_API_KEY", "").strip()
+                        if not _mistral_key:
+                            return {"ok": False, "error": "MISTRAL_API_KEY belum dikonfigurasi."}
+                        try:
+                            ocr_text = await mistral_ocr_adapter.ocr_pdf_to_text(
+                                file_bytes,
+                                _mistral_key,
+                                model=ocr_model,
+                                page_count=min(pages_total, MAX_OCR_PAGES),
+                                table_format=_mistral_table_format,
+                                client=client_http,
+                            )
+                        except Exception as _mistral_error:
+                            append_error_log(
+                                "mistral_ocr_error",
+                                _mistral_error,
+                                {"file": getattr(pdf, "filename", "") or "", "model": ocr_model, "user": user},
+                            )
+                            # Provider eksplisit harus fail-closed. Fallback diam-diam ke
+                            # native text membuat E2E terlihat menguji Mistral padahal API gagal.
+                            return {"ok": False, "error": f"Mistral OCR gagal: {_mistral_error}"}
+                        if ocr_text.strip():
+                            ocr_cache_put(
+                                _doc_hash,
+                                getattr(pdf, "filename", "") or "",
+                                ocr_text,
+                                pages_total,
+                                min(pages_total, MAX_OCR_PAGES),
+                            )
+                        else:
+                            return {"ok": False, "error": "Mistral OCR tak menghasilkan teks; fallback native text dinonaktifkan untuk provider eksplisit."}
                     else:
                         ocr_text = "\n\n".join(ocr_chunks)
                         # Jangan BEKUKAN kegagalan: kalau tak ada satu pun halaman yang
@@ -1610,7 +1686,11 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
                                 f"OCR gagal untuk SEMUA {len(base64_images)} halaman/gambar (model {ocr_model}) "
                                 "dan PDF tidak punya teks native. Cek ketersediaan model OCR / kunci API "
                                 "(lihat data/error_log.jsonl tag gemini_ocr_error). Tidak ada baris yang di-generate.")}
-                    combined_text = pdf_text + "\n\n=== HASIL OCR DARI GAMBAR ===\n\n" + ocr_text
+                    # PDF Natur punya text layer lengkap; menambah OCR lagi membuat tabel 18 baris
+                    # tampil dua kali dan parser menghasilkan 36 object/tier silang. Untuk provider
+                    # OCR eksplisit, OCR adalah satu-satunya sumber parser. Jalur Gemini/default
+                    # dipertahankan agar perilaku produksi tidak berubah sebelum parity disetujui.
+                    combined_text = ocr_text if _explicit_ocr else pdf_text + "\n\n=== HASIL OCR DARI GAMBAR ===\n\n" + ocr_text
                     if pages_truncated:
                         combined_text += f"\n\n[PERINGATAN: surat {pages_total} halaman, hanya {len(base64_images)} halaman pertama diproses. Naikkan SUMMARY_MAX_OCR_PAGES.]"
 
@@ -1815,6 +1895,11 @@ SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSO
 
                     # FASE 1b: bekukan rows hasil parse (freeze-on-first-write) -> run berikut
                     # dok+principle sama pakai ini, tanpa OCR/LLM lagi (deterministik + hemat).
+                    # Channel gate (fail-closed per principle) SEBELUM freeze: channel di luar
+                    # mapping principle -> berhenti & minta user lengkapi mapping; JANGAN bekukan
+                    # hasil cacat (kalau dibekukan, run berikut replay channel salah dari cache).
+                    _gate = _channel_gate(all_rows, principle_name)
+                    if _gate: return _gate
                     parse_cache_put(_parse_key, all_rows, getattr(pdf, "filename", "") or "", principle_name)
 
                     # TAHAP 3: Return raw rows directly to frontend so the user can see/edit individual variants natively.
@@ -2051,4 +2136,3 @@ async def summary_manual_email(
         return JSONResponse({"ok": True})
     except Exception as e:
          return JSONResponse(status_code=500, content={"ok": False, "error": "Gagal memulai tugas pengiriman email."})
-

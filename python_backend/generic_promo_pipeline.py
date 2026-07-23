@@ -1,5 +1,10 @@
 ﻿"""
-generic_promo_pipeline.py
+Tujuan: Matcher deterministik generik (0 API) untuk principle Fonterra/Natur.
+Caller: ``shared._apply_native_kelompok`` pada pipeline parse Summary Program.
+Dependensi: Python standard library dan master barang yang sudah diparsing.
+Main Functions: ``match_line``, ``canonical_master_gram``, ``prepare_items``,
+dan ``apply_generic_matching``.
+Side Effects: tidak ada; dropped rows hanya ditambahkan ke list opsional caller.
 
 Matcher deterministik generik (0 API) utk principle FONTERRA & NATUR --
 mirror peran ``urc_pipeline.py``/``priskila_pipeline.py`` tapi memakai
@@ -47,17 +52,27 @@ RULES = {
     "NATUR": {"token_map": {
         "HAIR": "H", "SHAMPOO": "SHMP", "SHM": "SHMP", "SHP": "SHMP", "SHAMPO": "SHMP",
         "MEN": "MAN", "ZAITUN": "Z",
-        "ROSEHIP": "ROSHIP", "ROSESHIP": "ROSHIP",
+        "ROSEHIP": "ROSHIP", "ROSESHIP": "ROSHIP", "ROSENIP": "ROSHIP", "ROOFHP": "ROSHIP",
         "HABBATS": "HABBATUSAUDA", "HABBATUSSAUDA": "HABBATUSAUDA",
         "ALOEVERA": "ALOE", "ALOVERA": "ALOE", "VERA": "ALOE", "AVERA": "ALOE",
         "OLIVEOIL": "OLIVE", "EXTRACT": "EXT", "EXRACT": "EXT", "EXTRCT": "EXT",
         "FACIAL": "F",
-        "ANTIDANDRUFF": "DANDRUFF", "VITE": "VIT",
+        "ANTIDANDRUFF": "DANDRUFF", "ANTIDANORUFF": "DANDRUFF",
+        "DANORUFF": "DANDRUFF", "VITE": "VIT",
         # Singkatan varian HG di surat -> bentuk master (nilai boleh multi-token).
         "BRIGHTENGING": "BRIGHT", "BRIGHTENING": "BRIGHT",
         "CLEANSING": "CLEAN", "DEEP": "D",
         "DC": "D CLEAN", "OC": "OIL CONTROL",
     }, "phrase_map": [
+        # OCR 4 membaca "35GR" sebagai "350R" pada Smooth Foot Cream.
+        (r"\b350R\b", "35GR"),
+        # Salah-baca Mistral pada surat Februari; text layer PDF mengonfirmasi
+        # nilai/nama di kanan berikut, jadi koreksi dibatasi ke frasa terkait.
+        (r"\bHABBATS\s+130ML\b", "HABBATS 135ML"),
+        (r"\bOIL\s*&\s*ALDE\b", "OIL & ALOE"),
+        (r"\bZINJ\s+SHAMPOO\b", "2IN1 SHAMPOO"),
+        # OCR 4 menukar huruf B dengan angka 8 pada varian "VIT B5".
+        (r"\bVIT\s+85\b", "VIT B5"),
         # Master menyingkat Ginseng jadi "G." ("SHMP Z.OIL&G.EXRACT 180ML"). Tak bisa
         # lewat token_map: token "G" bentrok dgn satuan gram yang ada di STOP.
         (r"\bG\.\s*EX+T?RA?C?T\b", "GINSENG EXT"),
@@ -203,11 +218,14 @@ def toks(s, rules_or_tmap):
 
 def match_line(prod, rules, items):
     """items sudah ber-anotasi _toks/_gs (lihat prepare_items)."""
-    want = toks(prod, rules)
+    normalized_prod = prod or ""
+    for pat, rep in rules.get("phrase_map", []):
+        normalized_prod = re.sub(pat, rep, normalized_prod, flags=re.I)
+    want = toks(normalized_prod, rules)
     # Baris surat boleh menyebut lebih dari satu gramasi ("Kuaci 150 gr/ 140 gr")
     # -> semuanya sah untuk baris itu.
     grams = set()
-    for g in norm_gs(prod):
+    for g in norm_gs(normalized_prod):
         grams |= set(rules["gram_alias"].get(g, [g]))
     # Penanda lini yang HARUS ditolak utk baris ini (mis. "NUTRIJELL REGULER"
     # tidak mencakup Ekonomi/Yoghurt/Balanced Colour).
@@ -216,9 +234,27 @@ def match_line(prod, rules, items):
     for pat, bad in rules.get("exclude_if", []):
         if re.search(pat, _up):
             banned |= set(bad)
-    return [it for it in items
+    hits = [it for it in items
             if want and want <= it["_toks"] and (not grams or (grams & it["_gs"]))
             and not (banned & it["_toks"])]
+    # Bila surat menyebut ukuran alias/repack (contoh 135ML) tetapi master
+    # menetapkan gramasi utama 150ML, perluas ke seluruh SKU dengan identitas
+    # produk + gramasi utama master yang sama. Ini membuat SKU dan label output
+    # sama-sama mengikuti master, bukan hanya label PDF-nya.
+    canonical_grams = {it.get("_g") for it in hits if it.get("_g")}
+    if grams and len(canonical_grams) == 1 and canonical_grams != grams:
+        hits = [it for it in items
+                if want and want <= it["_toks"] and it.get("_g") in canonical_grams
+                and not (banned & it["_toks"])]
+    return hits
+
+
+def canonical_master_gram(item):
+    """Ambil label gramasi utama master; ``150/135ML`` menjadi ``150ML``."""
+    nama = str(item.get("nama_barang", "") or "")
+    master_gram = str(item.get("gramasi", "") or "")
+    pair = GRAM_PAIR_RE.search(master_gram) or GRAM_PAIR_RE.search(nama)
+    return _fmt_g(pair.group(1), pair.group(3)) if pair else (norm_g(master_gram) or norm_g(nama))
 
 
 def prepare_items(master, rules):
@@ -227,8 +263,19 @@ def prepare_items(master, rules):
         it2 = dict(it)
         nama = it2.get("nama_barang", "")
         it2["_toks"] = toks(nama, rules)
-        it2["_gs"] = norm_gs(nama) or norm_gs(str(it2.get("gramasi", "")))
-        it2["_g"] = norm_g(nama) or norm_g(str(it2.get("gramasi", "")))  # label tampilan
+        # Kolom gramasi master adalah otoritas. Nama barang hanya fallback
+        # ketika kolom kosong. Pengecualian aman: pasangan repack di nama
+        # (150/135ML) boleh menambah alias bila angka pertamanya sama dengan
+        # gramasi master; konflik bebas (nama 15ML, kolom 25G) tetap ditolak.
+        master_gs = norm_gs(str(it2.get("gramasi", "")))
+        name_pair = GRAM_PAIR_RE.search(str(nama or ""))
+        if master_gs and name_pair and _fmt_g(name_pair.group(1), name_pair.group(3)) in master_gs:
+            master_gs |= {_fmt_g(name_pair.group(1), name_pair.group(3)),
+                          _fmt_g(name_pair.group(2), name_pair.group(3))}
+        it2["_gs"] = master_gs or norm_gs(nama)
+        # Label utama master untuk pola repack "150/135ML" adalah angka
+        # pertama (150ML), sedangkan _gs tetap menyimpan keduanya untuk matching.
+        it2["_g"] = canonical_master_gram(it2)
         out.append(it2)
     return out
 
@@ -242,13 +289,10 @@ def build_row(no, meta, prod, hits, ketentuan, benefit):
                 "keterangan": "UNMATCHED -- tidak ditemukan di master, wajib review manual"}
     kel = hits[0].get("kelompok", "")
     variants = list(dict.fromkeys(str(h.get("variant", "")).strip() for h in hits if str(h.get("variant", "")).strip()))
-    # Gramasi yang ditampilkan: yang DIKLAIM surat bila kode master memang melayani
-    # gramasi itu (sel master repack "150ML /135ML" -> tampilkan 135ML saat surat 135ML),
-    # selain itu gramasi utama master.
-    _want_gs = norm_gs(prod)
-    grams = list(dict.fromkeys(
-        (sorted(_want_gs & h.get("_gs", set()))[0] if (_want_gs & h.get("_gs", set())) else h["_g"])
-        for h in hits if h.get("_g") or _want_gs))
+    # Master adalah otoritas label output: gramasi surat (mis. 135ML) boleh
+    # dipakai untuk menemukan SKU repack/alias, tetapi Form Summary tetap
+    # menampilkan gramasi utama master (mis. 150ML).
+    grams = list(dict.fromkeys(h["_g"] for h in hits if h.get("_g")))
     vlabel = ", ".join(variants) if len(variants) <= 3 else "All Variant"
     return {"id": str(uuid.uuid4()), "no": str(no), **meta,
             "kelompok": kel, "variant": vlabel,
@@ -275,15 +319,18 @@ def _parse_fonterra_line(body):
 def _ket_ben(row):
     """Ketentuan & benefit dari kolom minimal_order/discount surat.
     Satuan surat dipertahankan bila disebut (mis. "2 ctn"); bila hanya angka
-    (pola NATUR ">= 6") default ke pcs."""
+    (pola NATUR ">= 6") default ke pcs. Tabel bonus tanpa kolom minimal
+    order memakai angka pertama benefit ``X+Y`` sebagai trigger ``X pcs``."""
     mo = re.sub(r"^[≥>=\s]+", "", str(row.get("minimal_order", "") or "").strip()).strip()
     mo = norm_unit(mo)   # cs/ctn/dus -> KRT (samakan dgn master)
+    disc = " ".join(str(row.get("discount", "") or "").split())
     if re.search(r"[A-Za-z]", mo):
         ket = f"Min {' '.join(mo.split())}"
     else:
         d = re.sub(r"[^\d]", "", mo)
-        ket = f"Min {d} pcs" if d else "Beli 1"
-    disc = " ".join(str(row.get("discount", "") or "").split())
+        bonus_trigger = re.match(r"^\s*(\d+)\s*\+\s*\d+\s*$", disc)
+        ket = f"Min {d} pcs" if d else (
+            f"Min {bonus_trigger.group(1)} pcs" if bonus_trigger else "Beli 1")
     ben = disc if disc else "(diskon per SKU tidak terbaca dari surat -- review manual)"
     return ket, ben
 
@@ -353,4 +400,3 @@ def apply_generic_matching(rows, master, dropped=None):
             r["keterangan"] = "PERLU REVIEW MANUAL" + (
                 " -- TIDAK ADA ITEM COCOK DI MASTER" if r.get("_urc_unmatched") else "")
     return out
-

@@ -1,11 +1,11 @@
 # ======================================================================================
-# Tujuan: Cache hasil OCR surat program per-konten (SHA-256 byte file PDF). Surat yang
-#         SAMA (byte-identik) tidak pernah di-OCR dua kali -> jadi fondasi determinisme:
-#         run ke-2 mengambil teks OCR beku dari cache, TIDAK memanggil Gemini lagi.
-# Caller: python_backend/main.py -> summary_manual_parse_pdf_ai (fase OCR).
+# Tujuan: Cache hasil OCR surat program per-konten (SHA-256 byte file PDF), dengan
+#         namespace provider/model opsional untuk A/B tanpa mencampur hasil OCR.
+#         Default tanpa namespace tetap kompatibel dengan cache Gemini lama.
+# Caller: python_backend/routers/summary.py -> summary_manual_parse_pdf_ai (fase OCR).
 # Dependensi: hashlib, json, os, datetime (stdlib saja).
 # Main Functions:
-#   - ocr_cache_key(pdf_bytes)   -> str (sha256 hex)
+#   - ocr_cache_key(pdf_bytes, namespace="") -> str (sha256 hex)
 #   - ocr_cache_get(doc_hash)    -> dict | None (hasil OCR beku + metadata, None jika miss)
 #   - ocr_cache_put(doc_hash, nama_file_asli, ocr_text, pages_total, pages_processed)
 # Side Effects: baca/tulis file JSON di python_backend/data/ocr_cache/{hash}.json (persisten).
@@ -29,9 +29,11 @@ def _ensure_dir() -> None:
     os.makedirs(_CACHE_DIR, exist_ok=True)
 
 
-def ocr_cache_key(pdf_bytes: bytes) -> str:
-    """SHA-256 hex dari byte file surat PDF -- identitas konten, bukan nama file."""
-    return hashlib.sha256(pdf_bytes).hexdigest()
+def ocr_cache_key(pdf_bytes: bytes, namespace: str = "") -> str:
+    """SHA-256 konten; namespace opsional memisahkan provider/model eksperimen."""
+    if not namespace:
+        return hashlib.sha256(pdf_bytes).hexdigest()
+    return hashlib.sha256(namespace.encode("utf-8") + b"\0" + pdf_bytes).hexdigest()
 
 
 def _path_for(doc_hash: str) -> str:
@@ -90,6 +92,8 @@ if __name__ == "__main__":
         b = b"contoh isi pdf surat program"
         h = ocr_cache_key(b)
         assert h == ocr_cache_key(b), "hash tidak stabil"
+        assert h != ocr_cache_key(b, "mistral-ocr-4-0"), "namespace tidak memisahkan cache"
+        assert ocr_cache_key(b, "mistral-ocr-4-0") == ocr_cache_key(b, "mistral-ocr-4-0")
         assert ocr_cache_get(h) is None, "harusnya miss di awal"
         ocr_cache_put(h, "surat.pdf", "TEKS OCR HALAMAN 1", pages_total=3, pages_processed=3)
         got = ocr_cache_get(h)

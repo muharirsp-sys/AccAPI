@@ -1,8 +1,14 @@
-"""
-E2E LIVE FONTERRA + NATUR (biaya API nyata di RUN 1 tiap surat): surat asli ->
-parse (OCR+LLM live, structure-only) -> generic_promo_pipeline (matcher
-deterministik) -> generate via renderer produksi. RUN 2 -> parse HIT cache
-(0 API), rows identik, output byte-identik. Gate:
+"""Tujuan: E2E live pipeline Summary Program Fonterra/Natur.
+
+Caller: developer/CI manual; ``E2E_PRINCIPLES=NATUR`` membatasi run agar uji
+RapidOCR Natur tidak membayar parser Fonterra. Dependensi: router Summary,
+master XLSX, surat PDF referensi, cache OCR/parse, dan API parser Sumopod. Main
+Functions: ``load_master``, ``parse_once``, loop PLAN, generator output.
+Side Effects: panggilan API pada RUN 1, cache/output file, dan direktori temp.
+
+Surat asli -> parse (OCR+LLM live, structure-only) -> generic_promo_pipeline
+(matcher deterministik) -> generate via renderer produksi. RUN 2 -> parse HIT
+cache (0 API), rows identik, output byte-identik. Gate:
 - TIDAK ADA baris dibuang: tiap baris matched ATAU ber-flag _urc_unmatched
 - FONTERRA: SEMUA baris keterangan == "PERLU REVIEW MANUAL" (keputusan user)
 - perbandingan match-count vs baseline lokal 0-API dicetak (bukan hard-assert:
@@ -18,9 +24,12 @@ from starlette.datastructures import Headers, UploadFile
 
 _tmp = tempfile.mkdtemp(prefix="e2e_live_fn_")
 # OCR cache PERSISTEN: OCR bagian termahal & isinya tidak berubah oleh perubahan
-# matcher/prompt-parse, jadi rerun uji ini tidak membayar OCR dua kali.
-ocr_cache._CACHE_DIR = os.path.join(BASE := os.path.dirname(os.path.abspath(__file__)),
-                                    "data", "ocr_cache_pilot")
+# matcher/prompt-parse, jadi rerun uji ini tidak membayar OCR dua kali. Set
+# E2E_FRESH_OCR=1 utk paksa OCR ulang (mis. A/B model OCR beda -- kalau tidak,
+# surat yg sudah kecache dgn model lama TAK PERNAH benar2 dipanggil model baru).
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ocr_cache._CACHE_DIR = (os.path.join(_tmp, "ocr") if os.getenv("E2E_FRESH_OCR") == "1"
+                        else os.path.join(_BASE_DIR, "data", "ocr_cache_pilot"))
 parse_cache._CACHE_DIR = os.path.join(_tmp, "parse")
 golden_store._STORE_PATH = os.path.join(_tmp, "golden.jsonl")
 
@@ -52,6 +61,11 @@ PLAN = [
         ("surat program mix.pdf", 13, 15),
     ]),
 ]
+
+_only = {x.strip().upper() for x in os.getenv("E2E_PRINCIPLES", "").split(",") if x.strip()}
+if _only:
+    PLAN = [entry for entry in PLAN if entry[0] in _only]
+    assert PLAN, f"E2E_PRINCIPLES tidak cocok: {sorted(_only)}"
 
 
 def load_master(key):
@@ -125,12 +139,14 @@ for key, principle_name, letters in PLAN:
     g = backend.summary_manual_generate(FakeRequest(), token=token, rows_json=json.dumps(combined))
     assert g.get("ok"), g
     outs = shared.MANUAL_OUTPUTS[g["file_id"]]
-    pdf = os.path.join(insp, f"{key}_Form_Summary_LIVE.pdf")
-    xls = os.path.join(insp, f"{key}_Dataset_Diskon_LIVE.xlsx")
+    _suf = os.getenv("OUT_SUFFIX", "")  # mis. "_qwen37plus" utk A/B model OCR tanpa menimpa baseline gemini
+    pdf = os.path.join(insp, f"{key}_Form_Summary_LIVE{_suf}.pdf")
+    xls = os.path.join(insp, f"{key}_Dataset_Diskon_LIVE{_suf}.xlsx")
     shutil.copy(outs["form"], pdf); shutil.copy(outs["dataset"], xls)
     tot_m = sum(1 for r in combined if r.get("kode_barangs"))
     tot_u = sum(1 for r in combined if r.get("_urc_unmatched"))
     print(f"\n== {key}: {len(combined)} baris total, {tot_m} matched, {tot_u} unmatched(flag) ==")
     print("   ->", pdf); print("   ->", xls)
 
-print("\nE2E LIVE FONTERRA+NATUR GATE PASSED: 0 baris dibuang, cache run2 0-API, output tersalin.")
+print(f"\nE2E LIVE {','.join(key for key, _principle, _letters in PLAN)} GATE PASSED: "
+      "0 baris dibuang, cache run2 0-API, output tersalin.")
