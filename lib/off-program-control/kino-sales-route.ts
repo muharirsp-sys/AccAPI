@@ -139,7 +139,8 @@ export function safeParserMessage(error: unknown): string | null {
   return /^(?:File (?:XLSX|mapping) kosong|Sheet (?:mapping )?[\w ]+ tidak ditemukan atau kosong|Header wajib tidak ditemukan: [\w, ]+|(?:[\w_]+ (?:kosong|negatif|tidak valid|terlalu besar)|[\w_]+ harus [\w/ ]+|[\w_]+ harus memuat tepat satu nomor order) pada baris \d+|Mapping_[\w]+ (?:tidak lengkap pada baris \d+|memiliki mapping konflik untuk [\w.-]+)|Pvt Map 1 tidak lengkap pada baris \d+|(?:IV_DISC|IV_PPN|IV_STAMP|IV_DISREG|IV_DISADD|IV_DISCASH|IV_TOTDISC|IV_DISC2|IV_DISVALUE) belum memiliki aturan pada baris \d+|Nilai GDI tidak valid pada baris \d+)$/.test(error.message) ||
     shinzuiMessage.test(error.message) ||
     motasaMessage.test(error.message) ||
-    cussonsMessage.test(error.message)
+    cussonsMessage.test(error.message) ||
+    /^(?:REM harus memuat tepat satu nomor invoice|Mapping KODE BARANG ambigu) pada baris \d+$/.test(error.message)
     ? error.message
     : null;
 }
