@@ -1,8 +1,13 @@
 import { expect, test } from "@playwright/test";
 import * as XLSX from "xlsx";
 
-const QA_EMAIL = "qa.admin@local.test";
-const QA_PASSWORD = "Admin123!";
+const requiredEnv = (name: string) => {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} wajib diatur untuk tes UI rekonsiliasi.`);
+  return value;
+};
+const QA_EMAIL = requiredEnv("PLAYWRIGHT_AUTH_EMAIL");
+const QA_PASSWORD = requiredEnv("PLAYWRIGHT_AUTH_PASSWORD");
 const xlsx = (name: string) => ({
   name,
   mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
