@@ -18,11 +18,18 @@ import type {
   ReconciliationResult,
   ReconciliationStatus,
 } from "@/lib/off-program-control/sales-reconciliation";
+import type {
+  ReturnReconciliationOutput,
+  ReturnReconciliationResult,
+  ReturnStatus,
+} from "@/lib/off-program-control/return-reconciliation";
 
+type Division = "FAKTUR" | "RETURN";
+type UiStatus = ReconciliationStatus | ReturnStatus;
 type Principal = "KINO" | "GODREJ" | "SHINZUI" | "MOTASA" | "CUSSONS";
-type StatusFilter = "ALL" | "MATCH_ONLY" | "ISSUES_ONLY" | ReconciliationStatus;
+type StatusFilter = "ALL" | "MATCH_ONLY" | "ISSUES_ONLY" | UiStatus;
 
-const statuses: ReconciliationStatus[] = [
+const salesStatuses: ReconciliationStatus[] = [
   "MATCH",
   "QTY_MISMATCH",
   "VALUE_MISMATCH",
@@ -33,7 +40,11 @@ const statuses: ReconciliationStatus[] = [
   "UNIT_CONVERSION_ERROR",
   "INVALID_DATA",
 ];
-const fixedStatusLabels: Partial<Record<ReconciliationStatus, string>> = {
+const returnStatuses: ReturnStatus[] = [
+  "MATCH", "QTY_MISMATCH", "VALUE_MISMATCH", "QTY_AND_VALUE_MISMATCH",
+  "MISSING_ACCURATE", "MISSING_PRINCIPAL", "UNMAPPED", "INVALID_DATA",
+];
+const fixedStatusLabels: Partial<Record<UiStatus, string>> = {
   MATCH: "Cocok",
   QTY_MISMATCH: "Selisih jumlah",
   VALUE_MISMATCH: "Selisih nilai",
@@ -41,14 +52,16 @@ const fixedStatusLabels: Partial<Record<ReconciliationStatus, string>> = {
   MISSING_INTERNAL: "Data Accurate tidak ditemukan",
   INVALID_DATA: "Data tidak valid",
 };
-const statusClasses: Record<ReconciliationStatus, string> = {
+const statusClasses: Record<UiStatus, string> = {
   MATCH: "bg-emerald-500/10 text-emerald-300",
   QTY_MISMATCH: "bg-amber-500/10 text-amber-300",
   VALUE_MISMATCH: "bg-amber-500/10 text-amber-300",
   QTY_AND_VALUE_MISMATCH: "bg-amber-500/10 text-amber-300",
   MISSING_INTERNAL: "bg-rose-500/10 text-rose-300",
+  MISSING_ACCURATE: "bg-rose-500/10 text-rose-300",
   MISSING_PRINCIPAL: "bg-rose-500/10 text-rose-300",
   UNMAPPED_SKU: "bg-rose-500/10 text-rose-300",
+  UNMAPPED: "bg-rose-500/10 text-rose-300",
   UNIT_CONVERSION_ERROR: "bg-rose-500/10 text-rose-300",
   INVALID_DATA: "bg-rose-500/10 text-rose-300",
 };
@@ -70,12 +83,14 @@ const direction = (difference: number, formatted: string) =>
   `Accurate ${difference < 0 ? "kurang" : "lebih"} ${formatted}`;
 
 function statusLabel(
-  status: ReconciliationStatus,
+  status: UiStatus,
   principal: Principal,
 ): string {
+  if (status === "MISSING_ACCURATE") return "Data Accurate tidak ditemukan";
   if (status === "MISSING_PRINCIPAL")
     return `Data ${principal} tidak ditemukan`;
-  if (status === "UNMAPPED_SKU") return `SKU ${principal} belum dipetakan`;
+  if (status === "UNMAPPED_SKU" || status === "UNMAPPED")
+    return `SKU ${principal} belum dipetakan`;
   if (status === "UNIT_CONVERSION_ERROR") return "Konversi satuan gagal";
   return fixedStatusLabels[status] ?? status;
 }
@@ -232,25 +247,73 @@ function columnsFor(principal: Principal): ColumnDef<ReconciliationResult>[] {
   ];
 }
 
+function returnCauseLines(row: ReturnReconciliationResult): string[] {
+  if (row.status === "MATCH") return ["Tidak ada selisih."];
+  const causes: string[] = [];
+  if (row.status === "MISSING_ACCURATE") causes.push("Data tidak ditemukan di Accurate.");
+  else if (row.status === "MISSING_PRINCIPAL") causes.push("Data tidak ditemukan di SHINZUI.");
+  else if (row.status === "UNMAPPED") causes.push("Produk Accurate belum memiliki mapping SHINZUI.");
+  if (row.quantityDifference !== 0)
+    causes.push(`Qty: Accurate ${number.format(row.accurateQuantity)}, SHINZUI ${number.format(row.principalQuantity)} — ${direction(row.quantityDifference, number.format(Math.abs(row.quantityDifference)))}`);
+  if (row.dppDifference !== 0)
+    causes.push(`DPP: Accurate ${money(row.accurateDpp)}, SHINZUI ${money(row.principalDpp)} — ${direction(row.dppDifference, money(Math.abs(row.dppDifference)))}`);
+  return causes.length ? causes : row.warnings;
+}
+
+function returnColumns(): ColumnDef<ReturnReconciliationResult>[] {
+  return [
+    {
+      accessorKey: "status", header: "Status",
+      cell: ({ row }) => <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusClasses[row.original.status]}`}>{statusLabel(row.original.status, "SHINZUI")}</span>,
+    },
+    { accessorKey: "invoiceNumber", header: "Invoice" },
+    { accessorKey: "customerCode", header: "Pelanggan" },
+    {
+      id: "product", header: "Produk",
+      cell: ({ row }) => `${row.original.accurateProductCode ?? "-"} / ${row.original.principalProductCode ?? "-"}`,
+    },
+    {
+      id: "causes", header: "Penyebab selisih",
+      cell: ({ row }) => <ul className="min-w-72 space-y-1">{returnCauseLines(row.original).map((cause) => <li key={cause}>{cause}</li>)}</ul>,
+    },
+    { accessorKey: "accurateQuantity", header: "Qty Accurate" },
+    { accessorKey: "principalQuantity", header: "Qty SHINZUI" },
+    { accessorKey: "accurateDpp", header: "DPP Accurate" },
+    { accessorKey: "principalDpp", header: "DPP SHINZUI" },
+    {
+      id: "sourceRows", header: "Baris sumber",
+      cell: ({ row }) => `Accurate: ${row.original.accurateSourceRows.join(", ") || "-"} · SHINZUI: ${row.original.principalSourceRows.join(", ") || "-"}`,
+    },
+  ];
+}
 export default function ReconciliationPage() {
+  const [division, setDivision] = useState<Division>("FAKTUR");
   const [principal, setPrincipal] = useState<Principal>("KINO");
   const [accurateFile, setAccurateFile] = useState<File | null>(null);
   const [principalFile, setPrincipalFile] = useState<File | null>(null);
-  const [result, setResult] = useState<ReconciliationOutput | null>(null);
+  const [result, setResult] = useState<ReconciliationOutput | ReturnReconciliationOutput | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
-  const columns = useMemo(() => columnsFor(principal), [principal]);
+  const salesColumns = useMemo(() => columnsFor(principal), [principal]);
+  const returnTableColumns = useMemo(() => returnColumns(), []);
+  const currentStatuses = division === "RETURN" ? returnStatuses : salesStatuses;
 
   const filteredResults = useMemo(() => {
     const rows = result?.results ?? [];
     if (statusFilter === "ALL") return rows;
-    if (statusFilter === "MATCH_ONLY")
-      return rows.filter((row) => row.status === "MATCH");
-    if (statusFilter === "ISSUES_ONLY")
-      return rows.filter((row) => row.status !== "MATCH");
+    if (statusFilter === "MATCH_ONLY") return rows.filter((row) => row.status === "MATCH");
+    if (statusFilter === "ISSUES_ONLY") return rows.filter((row) => row.status !== "MATCH");
     return rows.filter((row) => row.status === statusFilter);
   }, [result, statusFilter]);
+
+  function resetReconciliation() {
+    setAccurateFile(null);
+    setPrincipalFile(null);
+    setResult(null);
+    setStatusFilter("ALL");
+    setError(null);
+  }
 
   function changeFile(kind: "accurate" | "principal", file: File | null) {
     if (kind === "accurate") setAccurateFile(file);
@@ -260,19 +323,18 @@ export default function ReconciliationPage() {
   }
 
   function changePrincipal(next: Principal) {
+    resetReconciliation();
     setPrincipal(next);
-    setAccurateFile(null);
-    setPrincipalFile(null);
-    setResult(null);
-    setStatusFilter("ALL");
-    setError(null);
+  }
+
+  function changeDivision(next: Division) {
+    resetReconciliation();
+    setDivision(next);
+    setPrincipal(next === "RETURN" ? "SHINZUI" : "KINO");
   }
 
   async function runReconciliation() {
-    if (!accurateFile || !principalFile) {
-      setError(`File Accurate dan ${principal} wajib diunggah.`);
-      return;
-    }
+    if (!accurateFile || !principalFile) return;
     setIsRunning(true);
     setResult(null);
     setStatusFilter("ALL");
@@ -281,26 +343,15 @@ export default function ReconciliationPage() {
       const form = new FormData();
       form.append("accurateFile", accurateFile);
       form.append("principalFile", principalFile);
-      const response = await fetch(
-        `/api/reconciliation/${principal.toLowerCase()}/sales`,
-        { method: "POST", body: form },
-      );
+      const endpoint = division === "RETURN" ? "returns" : "sales";
+      const response = await fetch(`/api/reconciliation/${principal.toLowerCase()}/${endpoint}`, { method: "POST", body: form });
       const payload = await response.json();
-      if (!response.ok)
-        throw new Error(payload.error || "Rekonsiliasi gagal diproses.");
-      const output = payload as ReconciliationOutput;
+      if (!response.ok) throw new Error(payload.error || "Rekonsiliasi gagal diproses.");
+      const output = payload as ReconciliationOutput | ReturnReconciliationOutput;
       setResult(output);
-      setStatusFilter(
-        output.results.some((row) => row.status !== "MATCH")
-          ? "ISSUES_ONLY"
-          : "ALL",
-      );
+      setStatusFilter(output.results.some((row) => row.status !== "MATCH") ? "ISSUES_ONLY" : "ALL");
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Rekonsiliasi gagal diproses.",
-      );
+      setError(caught instanceof Error ? caught.message : "Rekonsiliasi gagal diproses.");
     } finally {
       setIsRunning(false);
     }
@@ -311,66 +362,50 @@ export default function ReconciliationPage() {
     setError(null);
     try {
       const XLSX = await import("xlsx");
-      const summary = statuses.map((status) => ({
-        Status: excelText(status),
-        Jumlah: result.summary[status],
-      }));
-      const detail = result.results.map((row) => ({
-        Status: excelText(row.status),
-        Order: excelText(row.orderNumber),
-        "Produk Internal": excelText(row.internalProductCode),
-        "Kelas Transaksi": excelText(row.transactionClass),
-        "Qty Accurate": row.accurateQuantity,
-        "Qty Prinsipal": row.principalQuantity,
-        "Selisih Qty": row.quantityDifference,
-        "Net Accurate": row.accurateNet,
-        "Net Prinsipal": row.principalNet,
-        "Selisih Net": row.valueDifference,
-        Peringatan: excelText(row.warnings.join(", ")),
-        "Baris Accurate": row.accurateSourceRows.join(", "),
-        [`Baris ${principal}`]: row.principalSourceRows.join(", "),
-      }));
+      const summary = currentStatuses.map((status) => ({ Status: excelText(status), Jumlah: (result.summary as Record<string, number>)[status] ?? 0 }));
+      const detail = division === "RETURN"
+        ? (result.results as ReturnReconciliationResult[]).map((row) => ({
+            Status: excelText(row.status), Invoice: excelText(row.invoiceNumber), Pelanggan: excelText(row.customerCode),
+            "Produk Accurate": excelText(row.accurateProductCode ?? ""), "Produk SHINZUI": excelText(row.principalProductCode ?? ""),
+            "Qty Accurate": row.accurateQuantity, "Qty SHINZUI": row.principalQuantity, "Selisih Qty": row.quantityDifference,
+            "DPP Accurate": row.accurateDpp, "DPP SHINZUI": row.principalDpp, "Selisih DPP": row.dppDifference,
+            "Baris Accurate": row.accurateSourceRows.join(", "), "Baris SHINZUI": row.principalSourceRows.join(", "),
+          }))
+        : (result.results as ReconciliationResult[]).map((row) => ({
+            Status: excelText(row.status), Order: excelText(row.orderNumber), "Produk Internal": excelText(row.internalProductCode),
+            "Kelas Transaksi": excelText(row.transactionClass), "Qty Accurate": row.accurateQuantity, "Qty Prinsipal": row.principalQuantity,
+            "Selisih Qty": row.quantityDifference, "Net Accurate": row.accurateNet, "Net Prinsipal": row.principalNet,
+            "Selisih Net": row.valueDifference, Peringatan: excelText(row.warnings.join(", ")),
+            "Baris Accurate": row.accurateSourceRows.join(", "), [`Baris ${principal}`]: row.principalSourceRows.join(", "),
+          }));
       const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(
-        workbook,
-        XLSX.utils.json_to_sheet(summary),
-        "Ringkasan",
-      );
-      XLSX.utils.book_append_sheet(
-        workbook,
-        XLSX.utils.json_to_sheet(detail),
-        "Detail",
-      );
-      XLSX.writeFile(
-        workbook,
-        `hasil-rekonsiliasi-${principal.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.xlsx`,
-      );
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summary), "Ringkasan");
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detail), "Detail");
+      const prefix = division === "RETURN" ? "hasil-rekonsiliasi-return-shinzui" : `hasil-rekonsiliasi-${principal.toLowerCase()}`;
+      XLSX.writeFile(workbook, `${prefix}-${new Date().toISOString().slice(0, 10)}.xlsx`);
     } catch {
       setError("File hasil gagal diekspor. Silakan coba lagi.");
     }
   }
 
-  const matched = result?.summary.MATCH ?? 0;
+  const count = (status: UiStatus) => (result?.summary as Partial<Record<UiStatus, number>> | undefined)?.[status] ?? 0;
+  const matched = count("MATCH");
   const total = result?.results.length ?? 0;
   const problematic = total - matched;
-  const mismatch =
-    (result?.summary.QTY_MISMATCH ?? 0) +
-    (result?.summary.VALUE_MISMATCH ?? 0) +
-    (result?.summary.QTY_AND_VALUE_MISMATCH ?? 0);
-  const missing =
-    (result?.summary.MISSING_INTERNAL ?? 0) +
-    (result?.summary.MISSING_PRINCIPAL ?? 0);
+  const mismatch = count("QTY_MISMATCH") + count("VALUE_MISMATCH") + count("QTY_AND_VALUE_MISMATCH");
+  const missing = count("MISSING_PRINCIPAL") + (division === "RETURN" ? count("MISSING_ACCURATE") : count("MISSING_INTERNAL"));
 
   return (
     <div className="mx-auto max-w-7xl space-y-8 pb-12">
       <header className="space-y-5">
         <div>
           <h1 className="flex items-center gap-3 text-3xl font-bold tracking-tight text-white">
-            <GitCompareArrows className="text-indigo-400" /> Rekonsiliasi Faktur
+            <GitCompareArrows className="text-indigo-400" /> Rekonsiliasi {division === "RETURN" ? "Return" : "Faktur"}
           </h1>
           <p className="mt-2 text-slate-400">
-            Bandingkan faktur Accurate dengan data penjualan prinsipal {principal}
-            .
+            {division === "RETURN"
+              ? "Bandingkan retur Accurate dengan laporan PenjualanInvoice SHINZUI."
+              : `Bandingkan faktur Accurate dengan data penjualan prinsipal ${principal}.`}
           </p>
         </div>
 
@@ -385,25 +420,15 @@ export default function ReconciliationPage() {
             Jenis Rekonsiliasi
           </h2>
           <ul className="grid list-none grid-cols-3 gap-2">
-            <li
-              aria-current="page"
-              className="min-w-0 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-2 py-3 text-center"
-            >
-              <span className="block text-sm font-semibold text-indigo-300">
-                Faktur
-              </span>
-              <span className="mt-1 block text-xs text-indigo-300">Aktif</span>
-            </li>
+            {(["FAKTUR", "RETURN"] as const).map((item) => (
+              <li key={item} aria-current={division === item ? "page" : undefined} className={division === item ? "min-w-0 rounded-xl border border-indigo-500/30 bg-indigo-500/10 text-center" : "min-w-0 rounded-xl border border-white/10 bg-white/5 text-center"}>
+                <button type="button" aria-label={item === "FAKTUR" ? "Faktur" : "Return"} disabled={isRunning} onClick={() => changeDivision(item)} className="min-h-11 w-full rounded-xl px-2 py-3 text-sm font-semibold text-slate-200 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70">
+                  {item === "FAKTUR" ? "Faktur" : "Return"}
+                </button>
+              </li>
+            ))}
             <li className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-2 py-3 text-center">
-              <span className="block text-sm font-semibold text-slate-300">
-                Pembelian
-              </span>
-              <span className="mt-1 block text-xs text-slate-400">Belum aktif</span>
-            </li>
-            <li className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-2 py-3 text-center">
-              <span className="block text-sm font-semibold text-slate-300">
-                Return
-              </span>
+              <span className="block text-sm font-semibold text-slate-300">Pembelian</span>
               <span className="mt-1 block text-xs text-slate-400">Belum aktif</span>
             </li>
           </ul>
@@ -412,7 +437,7 @@ export default function ReconciliationPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-indigo-500/10 px-3 py-1 text-xs font-semibold text-indigo-300">
-              Faktur
+              {division === "RETURN" ? "Return" : "Faktur"}
             </span>
             <span className="rounded-full bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-300">
               {principal}
@@ -428,17 +453,23 @@ export default function ReconciliationPage() {
             <select
               id="principal-select"
               value={principal}
-              disabled={isRunning}
+              disabled={isRunning || division === "RETURN"}
               onChange={(event) =>
                 changePrincipal(event.target.value as Principal)
               }
               className="rounded-lg border border-white/10 bg-[#1a1c23] px-3 py-2 text-sm text-slate-200 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 disabled:opacity-50"
             >
-              <option value="KINO">KINO</option>
-              <option value="GODREJ">GODREJ</option>
-              <option value="SHINZUI">SHINZUI</option>
-              <option value="MOTASA">MOTASA</option>
-              <option value="CUSSONS">CUSSONS</option>
+              {division === "RETURN" ? (
+                <option value="SHINZUI">SHINZUI</option>
+              ) : (
+                <>
+                  <option value="KINO">KINO</option>
+                  <option value="GODREJ">GODREJ</option>
+                  <option value="SHINZUI">SHINZUI</option>
+                  <option value="MOTASA">MOTASA</option>
+                  <option value="CUSSONS">CUSSONS</option>
+                </>
+              )}
             </select>
           </div>
         </div>
@@ -450,8 +481,9 @@ export default function ReconciliationPage() {
             const file = kind === "accurate" ? accurateFile : principalFile;
             const isCussonsPrincipal =
               kind === "principal" && principal === "CUSSONS";
-            const label =
-              kind === "accurate"
+            const label = division === "RETURN"
+              ? kind === "accurate" ? "Retur Penjualan (Accurate)" : "PenjualanInvoice SHINZUI"
+              : kind === "accurate"
                 ? "Rincian Faktur Penjualan (Accurate)"
                 : `${isCussonsPrincipal ? "Detail" : "Sales Detail"} ${principal}`;
             const accept = isCussonsPrincipal
@@ -474,7 +506,7 @@ export default function ReconciliationPage() {
                   {helpText}
                 </p>
                 <input
-                  key={`${kind}-${principal}`}
+                  key={`${division}-${kind}-${principal}`}
                   id={`${kind}-file`}
                   type="file"
                   accept={accept}
@@ -587,12 +619,12 @@ export default function ReconciliationPage() {
                 ["Data tidak ditemukan", missing, TriangleAlert],
                 [
                   "SKU belum dipetakan",
-                  result.summary.UNMAPPED_SKU,
+                  count(division === "RETURN" ? "UNMAPPED" : "UNMAPPED_SKU"),
                   TriangleAlert,
                 ],
                 [
-                  "Konversi satuan gagal",
-                  result.summary.UNIT_CONVERSION_ERROR,
+                  division === "RETURN" ? "Data tidak valid" : "Konversi satuan gagal",
+                  count(division === "RETURN" ? "INVALID_DATA" : "UNIT_CONVERSION_ERROR"),
                   TriangleAlert,
                 ],
               ] as const
@@ -649,7 +681,7 @@ export default function ReconciliationPage() {
                     <option value="ALL">Semua status</option>
                     <option value="MATCH_ONLY">Hanya cocok</option>
                     <option value="ISSUES_ONLY">Hanya bermasalah</option>
-                    {statuses.map((status) => (
+                    {currentStatuses.map((status) => (
                       <option key={status} value={status}>
                         {statusLabel(status, principal)}
                       </option>
@@ -665,22 +697,23 @@ export default function ReconciliationPage() {
                 </button>
               </div>
             </div>
-            <DataTable
-              columns={columns}
-              data={filteredResults}
-              initialColumnVisibility={{
-                transactionClass: false,
-                warnings: false,
-                accurateQuantity: false,
-                principalQuantity: false,
-                quantityDifference: false,
-                accurateNet: false,
-                principalNet: false,
-                valueDifference: false,
-              }}
-              emptyMessage="Tidak ada hasil untuk filter ini."
-              searchPlaceholder="Cari order, produk, atau status…"
-            />
+            {division === "RETURN" ? (
+              <DataTable
+                columns={returnTableColumns}
+                data={filteredResults as ReturnReconciliationResult[]}
+                initialColumnVisibility={{ accurateQuantity: false, principalQuantity: false, accurateDpp: false, principalDpp: false }}
+                emptyMessage="Tidak ada hasil untuk filter ini."
+                searchPlaceholder="Cari invoice, pelanggan, produk, atau status…"
+              />
+            ) : (
+              <DataTable
+                columns={salesColumns}
+                data={filteredResults as ReconciliationResult[]}
+                initialColumnVisibility={{ transactionClass: false, warnings: false, accurateQuantity: false, principalQuantity: false, quantityDifference: false, accurateNet: false, principalNet: false, valueDifference: false }}
+                emptyMessage="Tidak ada hasil untuk filter ini."
+                searchPlaceholder="Cari order, produk, atau status…"
+              />
+            )}
           </section>
         </>
       )}

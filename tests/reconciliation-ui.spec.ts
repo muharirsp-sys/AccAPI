@@ -67,7 +67,15 @@ const result = {
   ],
 };
 
-test("shows the available reconciliation types without fake controls", async ({
+const returnSummary = { MATCH: 1, QTY_MISMATCH: 1, VALUE_MISMATCH: 0, QTY_AND_VALUE_MISMATCH: 0, MISSING_ACCURATE: 0, MISSING_PRINCIPAL: 0, UNMAPPED: 0, INVALID_DATA: 0 };
+const returnResult = {
+  accurateLines: [], principalLines: [], summary: returnSummary,
+  results: [
+    { invoiceNumber: "INVGTS2505-0098-00876", customerCode: "CUST-01", accurateProductCode: "ACC-01", principalProductCode: "SHZ-01", accurateQuantity: 2, principalQuantity: 2, quantityDifference: 0, accurateDpp: 50000, principalDpp: 50000, dppDifference: 0, accurateTax: 5500, principalTax: 5500, accurateTotal: 55500, principalTotal: 55500, status: "MATCH", warnings: [], accurateSourceRows: [2], principalSourceRows: [4] },
+    { invoiceNumber: "INVGTS2505-0098-00877", customerCode: "CUST-02", accurateProductCode: "ACC-02", principalProductCode: "SHZ-02", accurateQuantity: 3, principalQuantity: 5, quantityDifference: -2, accurateDpp: 60000, principalDpp: 90000, dppDifference: -30000, accurateTax: 6600, principalTax: 9900, accurateTotal: 66600, principalTotal: 99900, status: "QTY_MISMATCH", warnings: ["QTY MISMATCH"], accurateSourceRows: [3], principalSourceRows: [5] },
+  ],
+};
+test("shows the available reconciliation types while Pembelian stays inactive", async ({
   page,
   baseURL,
 }) => {
@@ -83,26 +91,19 @@ test("shows the available reconciliation types without fake controls", async ({
 
   await expect(types).toBeVisible();
   await expect(current.getByText("Faktur", { exact: true })).toBeVisible();
-  await expect(current.getByText("Aktif", { exact: true })).toBeVisible();
   await expect(types.getByText("Pembelian", { exact: true })).toBeVisible();
   await expect(types.getByText("Return", { exact: true })).toBeVisible();
-  await expect(types.getByText("Belum aktif", { exact: true })).toHaveCount(2);
-  await expect(types.getByRole("button")).toHaveCount(0);
+  await expect(types.getByText("Belum aktif", { exact: true })).toHaveCount(1);
+  await expect(types.getByRole("button", { name: "Faktur" })).toBeVisible();
+  await expect(types.getByRole("button", { name: "Return" })).toBeVisible();
+  await expect(types.getByRole("button")).toHaveCount(2);
   await expect(types.getByRole("link")).toHaveCount(0);
-  await expect(types.locator('[tabindex]:not([tabindex="-1"])')).toHaveCount(0);
   expect(
     await types
       .getByText("Pembelian", { exact: true })
       .locator("..")
       .evaluate((element) => (element as HTMLElement).tabIndex),
   ).toBe(-1);
-  expect(
-    await types
-      .getByText("Return", { exact: true })
-      .locator("..")
-      .evaluate((element) => (element as HTMLElement).tabIndex),
-  ).toBe(-1);
-
   const themes = [
     ["Office Calm", "office-calm"],
     ["Neon HUD", "neon"],
@@ -126,6 +127,54 @@ test("shows the available reconciliation types without fake controls", async ({
   ).toBe(true);
 });
 
+test("runs SHINZUI Return reconciliation with focused issues and export", async ({ page, baseURL }) => {
+  const login = await page.request.post("/api/auth/sign-in/email", { headers: { Origin: baseURL || "http://localhost:3000" }, data: { email: QA_EMAIL, password: QA_PASSWORD } });
+  expect(login.ok()).toBeTruthy();
+  await page.goto("/reconciliation");
+  await page.route("**/api/reconciliation/kino/sales", (route) => route.fulfill({ status: 422, json: { error: "Kesalahan Faktur lama." } }));
+  await page.getByLabel("Rincian Faktur Penjualan (Accurate)").setInputFiles(xlsx("accurate-old.xlsx"));
+  await page.getByLabel("Sales Detail KINO").setInputFiles(xlsx("kino-old.xlsx"));
+  await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Kesalahan Faktur lama.");
+  await page.getByRole("button", { name: "Return" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
+  await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
+  await expect(page.getByLabel("Prinsipal")).toHaveValue("SHINZUI");
+  await expect(page.getByLabel("Prinsipal")).toBeDisabled();
+  await expect(page.getByLabel("Retur Penjualan (Accurate)")).toBeVisible();
+  await expect(page.getByLabel("PenjualanInvoice SHINZUI")).toBeVisible();
+  let returnCalled = false;
+  await page.route("**/api/reconciliation/shinzui/returns", async (route) => {
+    returnCalled = true;
+    expect(route.request().method()).toBe("POST");
+    const body = await route.request().postDataBuffer();
+    expect(body?.toString()).toContain('name="accurateFile"');
+    expect(body?.toString()).toContain('name="principalFile"');
+    await route.fulfill({ json: returnResult });
+  });
+  await page.getByLabel("Retur Penjualan (Accurate)").setInputFiles(xlsx("accurate-return.xlsx"));
+  await page.getByLabel("PenjualanInvoice SHINZUI").setInputFiles(xlsx("penjualan-invoice.xlsx"));
+  await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
+  expect(returnCalled).toBe(true);
+  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
+  await expect(page.getByText("CUST-02", { exact: true })).toBeVisible();
+  await expect(page.getByText("ACC-02 / SHZ-02", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, SHINZUI 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByText("DPP: Accurate Rp60.000, SHINZUI Rp90.000 — Accurate kurang Rp30.000", { exact: true })).toBeVisible();
+  await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Ekspor XLSX" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^hasil-rekonsiliasi-return-shinzui-\d{4}-\d{2}-\d{2}\.xlsx$/);
+  await page.getByRole("button", { name: "Faktur" }).click();
+  await expect(page.getByLabel("Prinsipal")).toHaveValue("KINO");
+  await expect(page.getByLabel("Prinsipal")).toBeEnabled();
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
+  await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
+  await expect(page.getByText("Pembelian", { exact: true }).locator("..")).toContainText("Belum aktif");
+});
 test("shows the progressive reconciliation workflow", async ({
   page,
   baseURL,
