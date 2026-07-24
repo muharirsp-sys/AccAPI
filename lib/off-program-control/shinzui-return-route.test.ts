@@ -191,6 +191,20 @@ for (const [accurate, principal, mapping, message] of [
   assert.deepEqual(await response.json(), { error: message });
 }
 
+const principalWithoutLegacyCustomer = workbook("PenjualanInvoice", [
+  principalHeaders.filter((header) => header !== "ID PELANGGAN LAMA"),
+  ["INVGTS1-2607-000001", "P-1", "RETUR", -1, -100, -11, -111],
+]);
+const missingLegacyCustomer = await integratedResponse(
+  validAccurate,
+  principalWithoutLegacyCustomer,
+);
+assert.equal(missingLegacyCustomer.status, 422);
+assert.deepEqual(await missingLegacyCustomer.json(), {
+  error:
+    "Header wajib tidak ditemukan: INV NUM, ID PRODUK, ID PELANGGAN LAMA, TIPE PENJUALAN, QTY SMALL, DPP INV, PPN INV, TOTAL INV",
+});
+
 const corruptResponse = await integratedResponse(
   new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0xff]),
 );

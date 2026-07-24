@@ -143,6 +143,7 @@ export function safeParserMessage(error: unknown): string | null {
       "INV DATE",
       "ID PRODUK",
       "ID PELANGGAN",
+      "ID PELANGGAN LAMA",
       "ID SALES",
       "TIPE PENJUALAN",
       "QTY TRX-INV",
