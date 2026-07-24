@@ -74,6 +74,14 @@ for (const [message, expected] of [
   ["Pvt Map 1 tidak lengkap pada baris 12", "Pvt Map 1 tidak lengkap pada baris 12"],
   ["IV_DISC2 belum memiliki aturan pada baris 7", "IV_DISC2 belum memiliki aturan pada baris 7"],
   ["Nilai GDI tidak valid pada baris 18", "Nilai GDI tidak valid pada baris 18"],
+  [
+    "Header wajib tidak ditemukan: IV_NO, IV_DATE, CS_NO, PS_NO, INV_NO, IV_TOTPCS, IV_PRICE, IV_DISC1, IV_FRA",
+    "Header wajib tidak ditemukan: IV_NO, IV_DATE, CS_NO, PS_NO, INV_NO, IV_TOTPCS, IV_PRICE, IV_DISC1, IV_FRA",
+  ],
+  [
+    "Header wajib tidak ditemukan: DATABASE PASSWORD",
+    "Rekonsiliasi gagal diproses.",
+  ],
   ["C:\\secret\\stack internal", "Rekonsiliasi gagal diproses."],
 ] as const) {
   const handler = createKinoSalesPostHandler({ authorize: async () => null, readMapping: async () => new Uint8Array(), reconcile: () => { throw new Error(message); } });
