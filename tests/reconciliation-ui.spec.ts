@@ -149,7 +149,7 @@ test("runs SHINZUI Return reconciliation with focused issues and export", async 
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByLabel("Prinsipal")).toHaveValue("SHINZUI");
-  await expect(page.getByLabel("Prinsipal")).toBeDisabled();
+  await expect(page.getByLabel("Prinsipal")).toBeEnabled();
   await expect(page.getByLabel("Retur Penjualan (Accurate)")).toBeVisible();
   await expect(page.getByLabel("PenjualanInvoice SHINZUI")).toBeVisible();
   let returnCalled = false;
@@ -207,6 +207,47 @@ test("runs SHINZUI Return reconciliation with focused issues and export", async 
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByText("Pembelian", { exact: true }).locator("..")).toContainText("Belum aktif");
+});
+test("runs KINO Return reconciliation and resets when switching principal", async ({ page, baseURL }) => {
+  const login = await page.request.post("/api/auth/sign-in/email", { headers: { Origin: baseURL || "http://localhost:3000" }, data: { email: QA_EMAIL, password: QA_PASSWORD } });
+  expect(login.ok()).toBeTruthy();
+  await page.goto("/reconciliation");
+  await page.getByRole("button", { name: "Return" }).click();
+
+  await expect(page.getByLabel("Prinsipal").locator('option[value="SHINZUI"]')).toHaveText("SHINZUI");
+  await page.getByLabel("Prinsipal").selectOption("KINO");
+  await expect(page.getByLabel("Sales Detail KINO")).toBeVisible();
+
+  let returnCalled = false;
+  await page.route("**/api/reconciliation/kino/returns", async (route) => {
+    returnCalled = true;
+    expect(route.request().method()).toBe("POST");
+    await route.fulfill({ json: returnResult });
+  });
+  await page.getByLabel("Retur Penjualan (Accurate)").setInputFiles(xlsx("accurate-kino-return.xlsx"));
+  await page.getByLabel("Sales Detail KINO").setInputFiles(xlsx("kino-return.xlsx"));
+  await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
+
+  expect(returnCalled).toBe(true);
+  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
+  await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("columnheader", { name: "Pajak KINO" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Total KINO" })).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Ekspor XLSX" }).click();
+  expect((await downloadPromise).suggestedFilename()).toMatch(/^rekonsiliasi-return-kino-\d{4}-\d{2}-\d{2}\.xlsx$/);
+
+  await page.unroute("**/api/reconciliation/kino/returns");
+  await page.route("**/api/reconciliation/kino/returns", (route) => route.fulfill({ status: 422, json: { error: "Kesalahan Return KINO lama." } }));
+  await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
+  await expect(page.locator('p[role="alert"]')).toHaveText("Kesalahan Return KINO lama.");
+  await page.getByLabel("Prinsipal").selectOption("SHINZUI");
+  await expect(page.getByLabel("PenjualanInvoice SHINZUI")).toBeVisible();
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
+  await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
+  await expect(page.locator('p[role="alert"]')).toHaveCount(0);
 });
 test("shows the progressive reconciliation workflow", async ({
   page,

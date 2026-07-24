@@ -44,6 +44,7 @@ const returnStatuses: ReturnStatus[] = [
   "MATCH", "QTY_MISMATCH", "VALUE_MISMATCH", "QTY_AND_VALUE_MISMATCH",
   "MISSING_ACCURATE", "MISSING_PRINCIPAL", "UNMAPPED", "INVALID_DATA",
 ];
+const returnPrinciples = ["SHINZUI", "KINO"] as const;
 const fixedStatusLabels: Partial<Record<UiStatus, string>> = {
   MATCH: "Cocok",
   QTY_MISMATCH: "Selisih jumlah",
@@ -247,24 +248,24 @@ function columnsFor(principal: Principal): ColumnDef<ReconciliationResult>[] {
   ];
 }
 
-function returnCauseLines(row: ReturnReconciliationResult): string[] {
+function returnCauseLines(row: ReturnReconciliationResult, principal: Principal): string[] {
   if (row.status === "MATCH") return ["Tidak ada selisih."];
   const causes: string[] = [];
   if (row.status === "MISSING_ACCURATE") causes.push("Data tidak ditemukan di Accurate.");
-  else if (row.status === "MISSING_PRINCIPAL") causes.push("Data tidak ditemukan di SHINZUI.");
-  else if (row.status === "UNMAPPED") causes.push("Produk Accurate belum memiliki mapping SHINZUI.");
+  else if (row.status === "MISSING_PRINCIPAL") causes.push(`Data tidak ditemukan di ${principal}.`);
+  else if (row.status === "UNMAPPED") causes.push(`Produk Accurate belum memiliki mapping ${principal}.`);
   if (row.quantityDifference !== 0)
-    causes.push(`Qty: Accurate ${number.format(row.accurateQuantity)}, SHINZUI ${number.format(row.principalQuantity)} — ${direction(row.quantityDifference, number.format(Math.abs(row.quantityDifference)))}`);
+    causes.push(`Qty: Accurate ${number.format(row.accurateQuantity)}, ${principal} ${number.format(row.principalQuantity)} — ${direction(row.quantityDifference, number.format(Math.abs(row.quantityDifference)))}`);
   if (Math.abs(row.dppDifference) > 1)
-    causes.push(`DPP: Accurate ${money(row.accurateDpp)}, SHINZUI ${money(row.principalDpp)} — ${direction(row.dppDifference, money(Math.abs(row.dppDifference)))}`);
+    causes.push(`DPP: Accurate ${money(row.accurateDpp)}, ${principal} ${money(row.principalDpp)} — ${direction(row.dppDifference, money(Math.abs(row.dppDifference)))}`);
   return causes.length ? causes : row.warnings;
 }
 
-function returnColumns(): ColumnDef<ReturnReconciliationResult>[] {
+function returnColumns(principal: Principal): ColumnDef<ReturnReconciliationResult>[] {
   return [
     {
       accessorKey: "status", header: "Status",
-      cell: ({ row }) => <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusClasses[row.original.status]}`}>{statusLabel(row.original.status, "SHINZUI")}</span>,
+      cell: ({ row }) => <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusClasses[row.original.status]}`}>{statusLabel(row.original.status, principal)}</span>,
     },
     { accessorKey: "invoiceNumber", header: "Invoice" },
     { accessorKey: "customerCode", header: "Pelanggan" },
@@ -275,19 +276,19 @@ function returnColumns(): ColumnDef<ReturnReconciliationResult>[] {
     },
     {
       id: "causes", header: "Penyebab selisih",
-      cell: ({ row }) => <ul className="min-w-72 space-y-1">{returnCauseLines(row.original).map((cause) => <li key={cause}>{cause}</li>)}</ul>,
+      cell: ({ row }) => <ul className="min-w-72 space-y-1">{returnCauseLines(row.original, principal).map((cause) => <li key={cause}>{cause}</li>)}</ul>,
     },
     { accessorKey: "accurateQuantity", header: "Qty Accurate" },
-    { accessorKey: "principalQuantity", header: "Qty SHINZUI" },
+    { accessorKey: "principalQuantity", header: `Qty ${principal}` },
     { accessorKey: "accurateDpp", header: "DPP Accurate" },
-    { accessorKey: "principalDpp", header: "DPP SHINZUI" },
+    { accessorKey: "principalDpp", header: `DPP ${principal}` },
     { accessorKey: "accurateTax", header: "Pajak Accurate", cell: ({ getValue }) => currency.format(getValue<number>()) },
-    { accessorKey: "principalTax", header: "Pajak SHINZUI", cell: ({ getValue }) => currency.format(getValue<number>()) },
+    { accessorKey: "principalTax", header: `Pajak ${principal}`, cell: ({ getValue }) => currency.format(getValue<number>()) },
     { accessorKey: "accurateTotal", header: "Total Accurate", cell: ({ getValue }) => currency.format(getValue<number>()) },
-    { accessorKey: "principalTotal", header: "Total SHINZUI", cell: ({ getValue }) => currency.format(getValue<number>()) },
+    { accessorKey: "principalTotal", header: `Total ${principal}`, cell: ({ getValue }) => currency.format(getValue<number>()) },
     {
       id: "sourceRows", header: "Baris sumber",
-      cell: ({ row }) => `Accurate: ${row.original.accurateSourceRows.join(", ") || "-"} · SHINZUI: ${row.original.principalSourceRows.join(", ") || "-"}`,
+      cell: ({ row }) => `Accurate: ${row.original.accurateSourceRows.join(", ") || "-"} · ${principal}: ${row.original.principalSourceRows.join(", ") || "-"}`,
     },
   ];
 }
@@ -301,7 +302,7 @@ export default function ReconciliationPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const salesColumns = useMemo(() => columnsFor(principal), [principal]);
-  const returnTableColumns = useMemo(() => returnColumns(), []);
+  const returnTableColumns = useMemo(() => returnColumns(principal), [principal]);
   const currentStatuses = division === "RETURN" ? returnStatuses : salesStatuses;
 
   const filteredResults = useMemo(() => {
@@ -372,12 +373,12 @@ export default function ReconciliationPage() {
       const detail = division === "RETURN"
         ? (result.results as ReturnReconciliationResult[]).map((row) => ({
             Status: excelText(row.status), Invoice: excelText(row.invoiceNumber), Pelanggan: excelText(row.customerCode),
-            "Produk Accurate": excelText(row.accurateProductCode ?? ""), "Produk SHINZUI": excelText(row.principalProductCode ?? ""),
-            "Qty Accurate": row.accurateQuantity, "Qty SHINZUI": row.principalQuantity, "Selisih Qty": row.quantityDifference,
-            "DPP Accurate": row.accurateDpp, "DPP SHINZUI": row.principalDpp, "Selisih DPP": row.dppDifference,
-            "Pajak Accurate": row.accurateTax, "Pajak SHINZUI": row.principalTax,
-            "Total Accurate": row.accurateTotal, "Total SHINZUI": row.principalTotal,
-            "Baris Accurate": row.accurateSourceRows.join(", "), "Baris SHINZUI": row.principalSourceRows.join(", "),
+            "Produk Accurate": excelText(row.accurateProductCode ?? ""), [`Produk ${principal}`]: excelText(row.principalProductCode ?? ""),
+            "Qty Accurate": row.accurateQuantity, [`Qty ${principal}`]: row.principalQuantity, "Selisih Qty": row.quantityDifference,
+            "DPP Accurate": row.accurateDpp, [`DPP ${principal}`]: row.principalDpp, "Selisih DPP": row.dppDifference,
+            "Pajak Accurate": row.accurateTax, [`Pajak ${principal}`]: row.principalTax,
+            "Total Accurate": row.accurateTotal, [`Total ${principal}`]: row.principalTotal,
+            "Baris Accurate": row.accurateSourceRows.join(", "), [`Baris ${principal}`]: row.principalSourceRows.join(", "),
           }))
         : (result.results as ReconciliationResult[]).map((row) => ({
             Status: excelText(row.status), Order: excelText(row.orderNumber), "Produk Internal": excelText(row.internalProductCode),
@@ -389,7 +390,9 @@ export default function ReconciliationPage() {
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summary), "Ringkasan");
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detail), "Detail");
-      const prefix = division === "RETURN" ? "hasil-rekonsiliasi-return-shinzui" : `hasil-rekonsiliasi-${principal.toLowerCase()}`;
+      const prefix = division === "RETURN"
+        ? principal === "SHINZUI" ? "hasil-rekonsiliasi-return-shinzui" : "rekonsiliasi-return-kino"
+        : `hasil-rekonsiliasi-${principal.toLowerCase()}`;
       XLSX.writeFile(workbook, `${prefix}-${new Date().toISOString().slice(0, 10)}.xlsx`);
     } catch {
       setError("File hasil gagal diekspor. Silakan coba lagi.");
@@ -412,7 +415,7 @@ export default function ReconciliationPage() {
           </h1>
           <p className="mt-2 text-slate-400">
             {division === "RETURN"
-              ? "Bandingkan retur Accurate dengan laporan PenjualanInvoice SHINZUI."
+              ? `Bandingkan retur Accurate dengan laporan ${principal === "SHINZUI" ? "PenjualanInvoice" : "Sales Detail"} ${principal}.`
               : `Bandingkan faktur Accurate dengan data penjualan prinsipal ${principal}.`}
           </p>
         </div>
@@ -461,14 +464,14 @@ export default function ReconciliationPage() {
             <select
               id="principal-select"
               value={principal}
-              disabled={isRunning || division === "RETURN"}
+              disabled={isRunning}
               onChange={(event) =>
                 changePrincipal(event.target.value as Principal)
               }
               className="rounded-lg border border-white/10 bg-[#1a1c23] px-3 py-2 text-sm text-slate-200 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 disabled:opacity-50"
             >
               {division === "RETURN" ? (
-                <option value="SHINZUI">SHINZUI</option>
+                returnPrinciples.map((item) => <option key={item} value={item}>{item}</option>)
               ) : (
                 <>
                   <option value="KINO">KINO</option>
@@ -490,7 +493,7 @@ export default function ReconciliationPage() {
             const isCussonsPrincipal =
               kind === "principal" && principal === "CUSSONS";
             const label = division === "RETURN"
-              ? kind === "accurate" ? "Retur Penjualan (Accurate)" : "PenjualanInvoice SHINZUI"
+              ? kind === "accurate" ? "Retur Penjualan (Accurate)" : `${principal === "SHINZUI" ? "PenjualanInvoice" : "Sales Detail"} ${principal}`
               : kind === "accurate"
                 ? "Rincian Faktur Penjualan (Accurate)"
                 : `${isCussonsPrincipal ? "Detail" : "Sales Detail"} ${principal}`;
