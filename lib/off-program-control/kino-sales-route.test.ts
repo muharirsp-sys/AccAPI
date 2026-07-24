@@ -79,6 +79,18 @@ for (const [message, expected] of [
     "Header wajib tidak ditemukan: IV_NO, IV_DATE, CS_NO, PS_NO, INV_NO, IV_TOTPCS, IV_PRICE, IV_DISC1, IV_FRA",
   ],
   [
+    "Header wajib tidak ditemukan: KODE ITEM, KODE ALIAS, SATUAN",
+    "Header wajib tidak ditemukan: KODE ITEM, KODE ALIAS, SATUAN",
+  ],
+  [
+    "Header wajib tidak ditemukan: CODE KINO, CODE INTERNAL",
+    "Header wajib tidak ditemukan: CODE KINO, CODE INTERNAL",
+  ],
+  [
+    "Header wajib tidak ditemukan: SLSMAN_ID, CODE INTERNAL",
+    "Header wajib tidak ditemukan: SLSMAN_ID, CODE INTERNAL",
+  ],
+  [
     "Header wajib tidak ditemukan: DATABASE PASSWORD",
     "Rekonsiliasi gagal diproses.",
   ],

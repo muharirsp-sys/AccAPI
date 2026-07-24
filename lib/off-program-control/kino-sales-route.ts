@@ -127,6 +127,12 @@ export function safeParserMessage(error: unknown): string | null {
       "IV_PRICE",
       "IV_DISC1",
       "IV_FRA",
+      "KODE ITEM",
+      "KODE ALIAS",
+      "SATUAN",
+      "CODE KINO",
+      "CODE INTERNAL",
+      "SLSMAN_ID",
     ],
     shinzuiHeaders = [
       "KODE PCPL",
