@@ -192,6 +192,16 @@ assert.deepEqual(await hidden.json(), {
   error: "Rekonsiliasi gagal diproses.",
 });
 
+const forgedHeader = await handler({
+  reconcile: () => {
+    throw new Error("Header wajib tidak ditemukan: DATABASE PASSWORD");
+  },
+})(request());
+assert.equal(forgedHeader.status, 500);
+assert.deepEqual(await forgedHeader.json(), {
+  error: "Rekonsiliasi gagal diproses.",
+});
+
 const success = await handler()(request());
 assert.equal(success.status, 200);
 assert.deepEqual(

@@ -78,7 +78,48 @@ export function validateUploadForm(
 
 export function safeParserMessage(error: unknown): string | null {
   if (!(error instanceof Error)) return null;
-  const shinzuiHeaders = [
+  const kinoHeaders = [
+      "NO_NOTA",
+      "TANGGAL",
+      "KODE PELANGGAN INDUK",
+      "KODE_SALESMAN",
+      "KODE_BARANG",
+      "QTY_SATUANKECIL",
+      "SATUAN_KECIL",
+      "NILAI JUAL",
+      "POTONGAN",
+      "DPP",
+      "NILAI_PAJAK",
+      "JUMLAH",
+      "REM",
+      "JENIS_TRANSAKSI",
+      "CUSTCODE1",
+      "CUSTCODE2",
+      "ORDER_NO",
+      "INVOICE_NO",
+      "INVOICE_DATE",
+      "PRODUCT_CODE",
+      "SALESMAN_ID",
+      "FLAG_BONUS",
+      "INVOICE_QTY",
+      "INVOICE_GROSS",
+      "INVOICE_TOTALLINEDISC",
+      "INVOICE_PROMO",
+      "INVOICE_CASHDISC",
+      "INVOICE_TAX",
+      "INVOICE_NET",
+      "INVOICE_TYPE",
+      "PRD_UOM1",
+      "KODE PCPL",
+      "KODE BARANG WIN",
+      "KODE BARANG",
+      "PCPL KODE 1",
+      "PCPL KODE 2",
+      "PCPL KODE 3",
+      "PCPL KODE 4",
+      "PCPL KODE 5",
+    ],
+    shinzuiHeaders = [
       "KODE PCPL",
       "KODE BARANG WIN2",
       "SATUAN FIX WIN",
@@ -138,7 +179,14 @@ export function safeParserMessage(error: unknown): string | null {
     ),
     returnMessage =
       /^(?:File XLSX rusak atau tidak valid\.|(?:KODE PELANGGAN INDUK|KODE BARANG|INV NUM|ID PRODUK|ID PELANGGAN LAMA) kosong pada baris \d+|(?:QTY SMALL|DPP INV|PPN INV|TOTAL INV) tidak valid pada baris \d+|REM harus memuat tepat satu nomor invoice pada baris \d+|Mapping KODE BARANG ambigu pada baris \d+)$/;
-  return /^(?:File (?:XLSX|mapping) kosong|Sheet (?:mapping )?[\w ]+ tidak ditemukan atau kosong|Header wajib tidak ditemukan: [\w, ]+|(?:[\w_]+ (?:kosong|negatif|tidak valid|terlalu besar)|[\w_]+ harus [\w/ ]+|[\w_]+ harus memuat tepat satu nomor order) pada baris \d+|Mapping_[\w]+ (?:tidak lengkap pada baris \d+|memiliki mapping konflik untuk [\w.-]+)|Pvt Map 1 tidak lengkap pada baris \d+|(?:IV_DISC|IV_PPN|IV_STAMP|IV_DISREG|IV_DISADD|IV_DISCASH|IV_TOTDISC|IV_DISC2|IV_DISVALUE) belum memiliki aturan pada baris \d+|Nilai GDI tidak valid pada baris \d+)$/.test(error.message) ||
+  const headerMatch = /^Header wajib tidak ditemukan: (.+)$/.exec(error.message),
+    knownHeaders = new Set(kinoHeaders),
+    safeHeaderMessage =
+      headerMatch?.[1]
+        .split(", ")
+        .every((header) => knownHeaders.has(header)) === true;
+  return /^(?:File (?:XLSX|mapping) kosong|Sheet (?:mapping )?[\w ]+ tidak ditemukan atau kosong|(?:[\w_]+ (?:kosong|negatif|tidak valid|terlalu besar)|[\w_]+ harus [\w/ ]+|[\w_]+ harus memuat tepat satu nomor order) pada baris \d+|Mapping_[\w]+ (?:tidak lengkap pada baris \d+|memiliki mapping konflik untuk [\w.-]+)|Pvt Map 1 tidak lengkap pada baris \d+|(?:IV_DISC|IV_PPN|IV_STAMP|IV_DISREG|IV_DISADD|IV_DISCASH|IV_TOTDISC|IV_DISC2|IV_DISVALUE) belum memiliki aturan pada baris \d+|Nilai GDI tidak valid pada baris \d+)$/.test(error.message) ||
+    safeHeaderMessage ||
     shinzuiMessage.test(error.message) ||
     motasaMessage.test(error.message) ||
     cussonsMessage.test(error.message) ||
