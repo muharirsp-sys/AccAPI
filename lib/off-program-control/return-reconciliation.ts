@@ -92,6 +92,15 @@ function finite(value: unknown, label: string, row: number): number {
   return Math.abs(parsed);
 }
 
+function signed(value: unknown, label: string, row: number): number {
+  if (value == null || text(value) === "") return 0;
+  const parsed =
+    typeof value === "number" ? value : Number(String(value).replace(/,/g, ""));
+  if (!Number.isFinite(parsed))
+    throw new Error(`${label} tidak valid pada baris ${row}`);
+  return parsed;
+}
+
 function readRows(buffer: Buffer | Uint8Array, sheetName: string): Row[] {
   if (!buffer?.byteLength) throw new Error("File XLSX kosong");
   let workbook: XLSX.WorkBook;
@@ -178,6 +187,42 @@ function parseMappings(buffer: Buffer | Uint8Array): Map<string, string[]> {
       if (!existing.includes(principal)) existing.push(principal);
       mappings.set(internal, existing);
     }
+  }
+  return mappings;
+}
+
+function parseKinoReturnMappings(
+  buffer: Buffer | Uint8Array,
+): Map<string, string> {
+  const rows = readRows(buffer, "Table Pvt 1"),
+    header = findHeader(rows, ["KODE PCPL", "KODE BARANG WIN"]),
+    mappings = new Map<string, string>();
+  for (let index = header.rowIndex + 1; index < rows.length; index++) {
+    const principal = text(cell(rows[index], header.columns, "KODE PCPL")),
+      internal = text(cell(rows[index], header.columns, "KODE BARANG WIN"));
+    if (!principal && !internal) continue;
+    if (!principal || principal === "0") continue;
+    if (!internal)
+      throw new Error(`Table Pvt 1 tidak lengkap pada baris ${index + 1}`);
+    const existing = mappings.get(principal);
+    if (existing && existing !== internal)
+      throw new Error(`Mapping produk KINO konflik untuk ${principal}`);
+    mappings.set(principal, internal);
+  }
+  try {
+    for (const [internal, principals] of parseMappings(buffer))
+      for (const principal of principals) {
+        const existing = mappings.get(principal);
+        if (existing && existing !== internal)
+          throw new Error(`Mapping produk KINO konflik untuk ${principal}`);
+        mappings.set(principal, internal);
+      }
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      error.message !== "Sheet Fix Mapping tidak ditemukan atau kosong"
+    )
+      throw error;
   }
   return mappings;
 }
@@ -293,6 +338,197 @@ function parsePrincipal(buffer: Buffer | Uint8Array): CanonicalReturnLine[] {
   return lines;
 }
 
+function parseKinoPrincipal(
+  buffer: Buffer | Uint8Array,
+  mappings: Map<string, string>,
+): CanonicalReturnLine[] {
+  const rows = readRows(buffer, "Sheet1"),
+    required = [
+      "INVOICE_NO",
+      "CUSTCODE2",
+      "PRODUCT_CODE",
+      "INVOICE_QTY",
+      "INVOICE_GROSS",
+      "INVOICE_TOTALLINEDISC",
+      "INVOICE_PROMO",
+      "INVOICE_CASHDISC",
+      "INVOICE_TAX",
+      "INVOICE_NET",
+      "INVOICE_TYPE",
+    ],
+    header = findHeader(rows, required),
+    lines: CanonicalReturnLine[] = [];
+  for (let index = header.rowIndex + 1; index < rows.length; index++) {
+    const row = rows[index], sourceRowNumber = index + 1;
+    if (!row.some((entry) => text(entry))) continue;
+    const invoice = text(cell(row, header.columns, "INVOICE_NO"));
+    if (invoice.startsWith("TOTAL FOR") || invoice === "GRAND TOTAL") continue;
+    if (text(cell(row, header.columns, "INVOICE_TYPE")) !== "RET01") continue;
+    const principalProductCode = requiredText(
+        row,
+        header.columns,
+        "PRODUCT_CODE",
+        sourceRowNumber,
+      ),
+      gross = signed(
+        cell(row, header.columns, "INVOICE_GROSS"),
+        "INVOICE_GROSS",
+        sourceRowNumber,
+      ),
+      lineDiscount = signed(
+        cell(row, header.columns, "INVOICE_TOTALLINEDISC"),
+        "INVOICE_TOTALLINEDISC",
+        sourceRowNumber,
+      ),
+      promoDiscount = signed(
+        cell(row, header.columns, "INVOICE_PROMO"),
+        "INVOICE_PROMO",
+        sourceRowNumber,
+      ),
+      cashDiscount = signed(
+        cell(row, header.columns, "INVOICE_CASHDISC"),
+        "INVOICE_CASHDISC",
+        sourceRowNumber,
+      );
+    lines.push({
+      source: "PRINCIPAL",
+      sourceRowNumber,
+      invoiceNumber: requiredText(
+        row,
+        header.columns,
+        "INVOICE_NO",
+        sourceRowNumber,
+      ),
+      customerCode: requiredText(
+        row,
+        header.columns,
+        "CUSTCODE2",
+        sourceRowNumber,
+      ),
+      accurateProductCode: mappings.get(principalProductCode) ?? null,
+      principalProductCode,
+      quantity: finite(
+        cell(row, header.columns, "INVOICE_QTY"),
+        "INVOICE_QTY",
+        sourceRowNumber,
+      ),
+      dpp: Math.abs(
+        gross - lineDiscount - promoDiscount - cashDiscount,
+      ),
+      tax: finite(
+        cell(row, header.columns, "INVOICE_TAX"),
+        "INVOICE_TAX",
+        sourceRowNumber,
+      ),
+      total: finite(
+        cell(row, header.columns, "INVOICE_NET"),
+        "INVOICE_NET",
+        sourceRowNumber,
+      ),
+    });
+  }
+  return lines;
+}
+
+function parseKinoAccurate(
+  buffer: Buffer | Uint8Array,
+  mappings: Map<string, string>,
+  principalLines: CanonicalReturnLine[],
+): { lines: CanonicalReturnLine[]; invalidLines: CanonicalReturnLine[] } {
+  const rows = readRows(buffer, "Rincian Faktur Penjualan"),
+    required = [
+      "NO_NOTA",
+      "KODE PELANGGAN INDUK",
+      "KODE_BARANG",
+      "QTY_SATUANKECIL",
+      "DPP",
+      "NILAI_PAJAK",
+      "JUMLAH",
+      "REM",
+      "JENIS_TRANSAKSI",
+    ],
+    header = findHeader(rows, required),
+    lines: CanonicalReturnLine[] = [],
+    invalidLines: CanonicalReturnLine[] = [],
+    reverseMappings = new Map<string, string[]>();
+  for (const [principal, internal] of mappings) {
+    const values = reverseMappings.get(internal) ?? [];
+    values.push(principal);
+    reverseMappings.set(internal, values);
+  }
+  const principalKeys = new Set(
+    principalLines.map(
+      (line) =>
+        `${line.invoiceNumber}|${line.principalProductCode}|${line.customerCode}`,
+    ),
+  );
+  for (let index = header.rowIndex + 1; index < rows.length; index++) {
+    const row = rows[index], sourceRowNumber = index + 1;
+    if (!row.some((entry) => text(entry))) continue;
+    if (
+      !text(cell(row, header.columns, "JENIS_TRANSAKSI")).includes(
+        "RETUR PENJUALAN",
+      )
+    )
+      continue;
+    const accurateProductCode = requiredText(
+        row,
+        header.columns,
+        "KODE_BARANG",
+        sourceRowNumber,
+      ),
+      customerCode = requiredText(
+        row,
+        header.columns,
+        "KODE PELANGGAN INDUK",
+        sourceRowNumber,
+      ),
+      matches = text(cell(row, header.columns, "REM")).match(
+        /1671-SRI-\d+/g,
+      ) ?? [],
+      invoiceNumber =
+        matches.length === 1
+          ? matches[0]
+          : requiredText(row, header.columns, "NO_NOTA", sourceRowNumber),
+      candidates = reverseMappings.get(accurateProductCode) ?? [],
+      matchingCandidates = candidates.filter((principal) =>
+        principalKeys.has(`${invoiceNumber}|${principal}|${customerCode}`),
+      ),
+      principalProductCode =
+        matchingCandidates.length === 1
+          ? matchingCandidates[0]
+          : candidates.length === 1
+            ? candidates[0]
+            : null,
+      line: CanonicalReturnLine = {
+        source: "ACCURATE",
+        sourceRowNumber,
+        invoiceNumber,
+        customerCode,
+        accurateProductCode,
+        principalProductCode,
+        quantity: finite(
+          cell(row, header.columns, "QTY_SATUANKECIL"),
+          "QTY_SATUANKECIL",
+          sourceRowNumber,
+        ),
+        dpp: finite(cell(row, header.columns, "DPP"), "DPP", sourceRowNumber),
+        tax: finite(
+          cell(row, header.columns, "NILAI_PAJAK"),
+          "NILAI_PAJAK",
+          sourceRowNumber,
+        ),
+        total: finite(
+          cell(row, header.columns, "JUMLAH"),
+          "JUMLAH",
+          sourceRowNumber,
+        ),
+      };
+    (matches.length === 1 ? lines : invalidLines).push(line);
+  }
+  return { lines, invalidLines };
+}
+
 function key(line: CanonicalReturnLine): string {
   return `${line.invoiceNumber}|${line.principalProductCode ?? line.accurateProductCode}|${line.customerCode}`;
 }
@@ -353,28 +589,49 @@ function result(
   };
 }
 
-export function reconcileShinzuiReturns(
-  accurateBuffer: Buffer | Uint8Array,
-  principalBuffer: Buffer | Uint8Array,
-  mappingBuffer: Buffer | Uint8Array,
-  options: { dppTolerance?: number } = {},
-): ReturnReconciliationOutput {
-  const dppTolerance = options.dppTolerance ?? 1;
-  if (!Number.isFinite(dppTolerance) || dppTolerance < 0)
-    throw new Error("Toleransi DPP tidak valid");
-  const mappings = parseMappings(mappingBuffer),
-    principalLines = parsePrincipal(principalBuffer),
-    accurateLines = parseAccurate(accurateBuffer, mappings, principalLines),
-    mappedAccurate = aggregate(
-      accurateLines.filter((line) => line.principalProductCode !== null),
+function reconcileParsedReturns({
+  accurateLines,
+  matchableAccurateLines = accurateLines,
+  principalLines,
+  matchablePrincipalLines = principalLines,
+  invalidAccurateLines = [],
+  unmappedPrincipalLines = [],
+  dppTolerance,
+  unmappedAccurateStatus = () => "UNMAPPED",
+}: {
+  accurateLines: CanonicalReturnLine[];
+  matchableAccurateLines?: CanonicalReturnLine[];
+  principalLines: CanonicalReturnLine[];
+  matchablePrincipalLines?: CanonicalReturnLine[];
+  invalidAccurateLines?: CanonicalReturnLine[];
+  unmappedPrincipalLines?: CanonicalReturnLine[];
+  dppTolerance: number;
+  unmappedAccurateStatus?: (line: Aggregate) => ReturnStatus;
+}): ReturnReconciliationOutput {
+  const mappedAccurate = aggregate(
+      matchableAccurateLines.filter(
+        (line) => line.principalProductCode !== null,
+      ),
     ),
-    principals = aggregate(principalLines),
+    principals = aggregate(matchablePrincipalLines),
     results: ReturnReconciliationResult[] = [];
 
+  for (const invalid of invalidAccurateLines)
+    results.push(
+      result(
+        { ...invalid, sourceRows: [invalid.sourceRowNumber] },
+        undefined,
+        "INVALID_DATA",
+      ),
+    );
   for (const unmapped of aggregate(
-    accurateLines.filter((entry) => entry.principalProductCode === null),
+    matchableAccurateLines.filter(
+      (line) => line.principalProductCode === null,
+    ),
   ).values())
-    results.push(result(unmapped, undefined, "UNMAPPED"));
+    results.push(result(unmapped, undefined, unmappedAccurateStatus(unmapped)));
+  for (const unmapped of aggregate(unmappedPrincipalLines).values())
+    results.push(result(undefined, unmapped, "UNMAPPED"));
 
   for (const [id, accurate] of mappedAccurate) {
     const principal = principals.get(id);
@@ -397,7 +654,69 @@ export function reconcileShinzuiReturns(
   for (const principal of principals.values())
     results.push(result(undefined, principal, "MISSING_ACCURATE"));
 
-  const summary = Object.fromEntries(STATUSES.map((status) => [status, 0])) as Record<ReturnStatus, number>;
+  const summary = Object.fromEntries(
+    STATUSES.map((status) => [status, 0]),
+  ) as Record<ReturnStatus, number>;
   for (const row of results) summary[row.status]++;
   return { accurateLines, principalLines, results, summary };
+}
+
+export function reconcileShinzuiReturns(
+  accurateBuffer: Buffer | Uint8Array,
+  principalBuffer: Buffer | Uint8Array,
+  mappingBuffer: Buffer | Uint8Array,
+  options: { dppTolerance?: number } = {},
+): ReturnReconciliationOutput {
+  const dppTolerance = options.dppTolerance ?? 1;
+  if (!Number.isFinite(dppTolerance) || dppTolerance < 0)
+    throw new Error("Toleransi DPP tidak valid");
+  const mappings = parseMappings(mappingBuffer),
+    principalLines = parsePrincipal(principalBuffer),
+    accurateLines = parseAccurate(accurateBuffer, mappings, principalLines);
+  return reconcileParsedReturns({
+    accurateLines,
+    principalLines,
+    dppTolerance,
+  });
+}
+
+export function reconcileKinoReturns(
+  accurateBuffer: Buffer | Uint8Array,
+  principalBuffer: Buffer | Uint8Array,
+  mappingBuffer: Buffer | Uint8Array,
+  options: { dppTolerance?: number } = {},
+): ReturnReconciliationOutput {
+  const dppTolerance = options.dppTolerance ?? 1;
+  if (!Number.isFinite(dppTolerance) || dppTolerance < 0)
+    throw new Error("Toleransi DPP tidak valid");
+  const mappings = parseKinoReturnMappings(mappingBuffer),
+    principalLines = parseKinoPrincipal(principalBuffer, mappings),
+    parsedAccurate = parseKinoAccurate(
+      accurateBuffer,
+      mappings,
+      principalLines,
+    ),
+    accurateLines = [...parsedAccurate.lines, ...parsedAccurate.invalidLines],
+    principalScopes = new Set(
+      principalLines.map(
+        (line) => `${line.invoiceNumber}|${line.customerCode}`,
+      ),
+    );
+  return reconcileParsedReturns({
+    accurateLines,
+    matchableAccurateLines: parsedAccurate.lines,
+    principalLines,
+    matchablePrincipalLines: principalLines.filter(
+      (line) => line.accurateProductCode !== null,
+    ),
+    invalidAccurateLines: parsedAccurate.invalidLines,
+    unmappedPrincipalLines: principalLines.filter(
+      (line) => line.accurateProductCode === null,
+    ),
+    dppTolerance,
+    unmappedAccurateStatus: (line) =>
+      principalScopes.has(`${line.invoiceNumber}|${line.customerCode}`)
+        ? "UNMAPPED"
+        : "MISSING_PRINCIPAL",
+  });
 }
