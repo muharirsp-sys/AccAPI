@@ -237,16 +237,37 @@ test("runs KINO Return reconciliation and resets when switching principal", asyn
 
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Ekspor XLSX" }).click();
-  expect((await downloadPromise).suggestedFilename()).toMatch(/^rekonsiliasi-return-kino-\d{4}-\d{2}-\d{2}\.xlsx$/);
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^rekonsiliasi-return-kino-\d{4}-\d{2}-\d{2}\.xlsx$/);
+  const downloadPath = await download.path();
+  expect(downloadPath).not.toBeNull();
+  const workbook = XLSX.readFile(downloadPath!);
+  const detail = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets.Detail);
+  expect(detail[1]).toMatchObject({
+    "Produk KINO": "SHZ-02",
+    "Pajak KINO": 6600.05,
+    "Total KINO": 66600.55,
+    "Penyebab selisih": "Qty: Accurate 3, KINO 5 — Accurate kurang 2",
+    "Baris KINO": "5",
+  });
 
+  await expect(page.getByLabel("Ringkasan hasil")).toBeVisible();
+  await page.getByLabel("Prinsipal").selectOption("SHINZUI");
+  await expect(page.getByLabel("PenjualanInvoice SHINZUI")).toBeVisible();
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
+  await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
+  await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toHaveCount(0);
+
+  await page.getByLabel("Prinsipal").selectOption("KINO");
   await page.unroute("**/api/reconciliation/kino/returns");
   await page.route("**/api/reconciliation/kino/returns", (route) => route.fulfill({ status: 422, json: { error: "Kesalahan Return KINO lama." } }));
+  await page.getByLabel("Retur Penjualan (Accurate)").setInputFiles(xlsx("accurate-kino-error.xlsx"));
+  await page.getByLabel("Sales Detail KINO").setInputFiles(xlsx("kino-error.xlsx"));
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
   await expect(page.locator('p[role="alert"]')).toHaveText("Kesalahan Return KINO lama.");
   await page.getByLabel("Prinsipal").selectOption("SHINZUI");
   await expect(page.getByLabel("PenjualanInvoice SHINZUI")).toBeVisible();
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
-  await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.locator('p[role="alert"]')).toHaveCount(0);
 });
 test("shows the progressive reconciliation workflow", async ({

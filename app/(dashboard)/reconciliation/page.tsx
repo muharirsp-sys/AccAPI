@@ -378,6 +378,7 @@ export default function ReconciliationPage() {
             "DPP Accurate": row.accurateDpp, [`DPP ${principal}`]: row.principalDpp, "Selisih DPP": row.dppDifference,
             "Pajak Accurate": row.accurateTax, [`Pajak ${principal}`]: row.principalTax,
             "Total Accurate": row.accurateTotal, [`Total ${principal}`]: row.principalTotal,
+            "Penyebab selisih": excelText(returnCauseLines(row, principal).join("\n")),
             "Baris Accurate": row.accurateSourceRows.join(", "), [`Baris ${principal}`]: row.principalSourceRows.join(", "),
           }))
         : (result.results as ReconciliationResult[]).map((row) => ({
