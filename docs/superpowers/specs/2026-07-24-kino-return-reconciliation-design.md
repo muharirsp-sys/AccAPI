@@ -17,11 +17,14 @@ Master mapping disimpan internal dan tidak perlu diunggah setiap proses.
 - Mapping: salinan persis workbook
   `FIX_FORM MASTER BARANG - KINO NON FOOD.xlsx`, disimpan sebagai
   `data/reconciliation/KINO_RETURN.xlsx`.
-- Mapping produk KINO memakai sheet `Table Pvt 1`:
+- Mapping produk KINO memakai sheet `Table Pvt 1` sebagai sumber utama:
   - `Kode Pcpl` = `PRODUCT_CODE` KINO.
   - `Kode Barang Win` = `KODE_BARANG` Accurate.
   - `SATUAN Fix Win` dan `ISI/CTN` hanya informasi mapping; kuantitas laporan
     sampel sudah dalam unit kecil sehingga tidak dikalikan isi karton.
+- Kode principal yang tidak tersedia di `Table Pvt 1` dilengkapi dari
+  `Fix Mapping` (`PCPL KODE 1..5` ke `KODE BARANG`). Pasangan yang konflik
+  ditolak; parser tidak memilih kandidat pertama.
 
 ## Filter dan Normalisasi
 
@@ -76,9 +79,12 @@ Status memakai kontrak Return yang sudah ada:
 - `UNMAPPED`
 - `INVALID_DATA`
 
-Semua baris Accurate tetap diperiksa. Data Accurate yang invoicenya tidak ada
-di SALES_DETAIL KINO menjadi `MISSING_PRINCIPAL`; data tanpa nomor invoice KINO
-menjadi `INVALID_DATA`. Data tersebut tidak disembunyikan.
+Semua baris Accurate tetap diperiksa. Data Accurate yang pasangan
+invoice+pelanggannya tidak ada di SALES_DETAIL KINO menjadi
+`MISSING_PRINCIPAL` tanpa menebak produk. `UNMAPPED` hanya digunakan bila
+invoice+pelanggan tersedia di KINO tetapi produk tidak dapat dipetakan. Data
+tanpa nomor invoice KINO menjadi `INVALID_DATA`. Data tersebut tidak
+disembunyikan.
 
 ## API dan UI
 

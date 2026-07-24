@@ -15,6 +15,8 @@
 - Master mapping disimpan byte-for-byte sebagai `data/reconciliation/KINO_RETURN.xlsx`.
 - Accurate hanya `RETUR PENJUALAN`; KINO hanya `INVOICE_TYPE = RET01`.
 - Kunci normal adalah invoice `1671-SRI-\d+` dari Accurate `REM` + pelanggan + produk internal hasil mapping.
+- Mapping memakai `Table Pvt 1` sebagai sumber utama dan `Fix Mapping` hanya untuk kode principal yang hilang; mapping konflik tidak boleh ditebak.
+- Accurate tanpa kandidat produk menjadi `MISSING_PRINCIPAL` bila invoice+pelanggan tidak ada di KINO; `UNMAPPED` hanya bila invoice+pelanggan ada tetapi produk tidak dapat dipetakan.
 - Baris Accurate tanpa tepat satu invoice KINO menjadi `INVALID_DATA`, bukan menggagalkan seluruh proses.
 - Semua baris Accurate tetap diperiksa; invoice yang tidak ada di SALES_DETAIL menjadi `MISSING_PRINCIPAL`.
 - Qty dibandingkan exact; DPP memakai toleransi absolut Rp1.
@@ -87,6 +89,18 @@ function parseKinoReturnMappings(buffer: Buffer | Uint8Array): Map<string, strin
   return mappings;
 }
 ```
+
+Lengkapi map dari sheet `Fix Mapping` untuk principal yang belum ada:
+
+```ts
+for (const principal of principalCodesFromFixMapping) {
+  if (!mappings.has(principal.code))
+    mappings.set(principal.code, principal.internal);
+}
+```
+
+Jika satu principal menunjuk dua internal berbeda, lempar error mapping konflik.
+Jangan memilih kandidat pertama untuk mapping ambigu.
 
 Tambahkan parser principal yang:
 
