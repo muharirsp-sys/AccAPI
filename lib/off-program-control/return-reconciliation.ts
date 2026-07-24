@@ -21,6 +21,7 @@ export interface CanonicalReturnLine {
   dpp: number;
   tax: number;
   total: number;
+  invalidReason?: string | null;
 }
 
 export interface ReturnReconciliationResult {
@@ -39,6 +40,7 @@ export interface ReturnReconciliationResult {
   accurateTotal: number;
   principalTotal: number;
   status: ReturnStatus;
+  invalidReason: string | null;
   warnings: string[];
   accurateSourceRows: number[];
   principalSourceRows: number[];
@@ -62,6 +64,7 @@ type Aggregate = {
   tax: number;
   total: number;
   sourceRows: number[];
+  invalidReason?: string | null;
 };
 
 const STATUSES: ReturnStatus[] = [
@@ -515,6 +518,12 @@ function parseKinoAccurate(
           "JUMLAH",
           sourceRowNumber,
         ),
+        invalidReason:
+          matches.length === 0
+            ? "REM tidak memuat nomor invoice KINO 1671-SRI."
+            : matches.length > 1
+              ? "REM memuat lebih dari satu nomor invoice KINO 1671-SRI."
+              : null,
       };
     (matches.length === 1 ? lines : invalidLines).push(line);
   }
@@ -568,6 +577,7 @@ function aggregate(
         tax: line.tax,
         total: line.total,
         sourceRows: [line.sourceRowNumber],
+        invalidReason: line.invalidReason,
       });
     }
   }
@@ -597,7 +607,13 @@ function result(
     accurateTotal: accurate?.total ?? 0,
     principalTotal: principal?.total ?? 0,
     status,
-    warnings: status === "MATCH" ? [] : [status.replaceAll("_", " ")],
+    invalidReason: source.invalidReason ?? null,
+    warnings:
+      status === "MATCH"
+        ? []
+        : status === "INVALID_DATA" && source.invalidReason
+          ? [source.invalidReason]
+          : [status.replaceAll("_", " ")],
     accurateSourceRows: accurate?.sourceRows ?? [],
     principalSourceRows: principal?.sourceRows ?? [],
   };

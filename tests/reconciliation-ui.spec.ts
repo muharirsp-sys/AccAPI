@@ -218,11 +218,48 @@ test("runs KINO Return reconciliation and resets when switching principal", asyn
   await page.getByLabel("Prinsipal").selectOption("KINO");
   await expect(page.getByLabel("Sales Detail KINO")).toBeVisible();
 
+  const kinoReturnResult = {
+    ...returnResult,
+    summary: { ...returnSummary, UNMAPPED: 2, INVALID_DATA: 1 },
+    results: [
+      ...returnResult.results,
+      {
+        ...returnResult.results[1],
+        invoiceNumber: "BAD-REM",
+        accurateProductCode: "ACC-BAD",
+        principalProductCode: null,
+        accurateQuantity: 9,
+        principalQuantity: 0,
+        quantityDifference: 9,
+        accurateDpp: 90000,
+        principalDpp: 0,
+        dppDifference: 90000,
+        status: "INVALID_DATA",
+        invalidReason: "REM tidak memuat nomor invoice KINO 1671-SRI.",
+      },
+      {
+        ...returnResult.results[1],
+        invoiceNumber: "UNMAPPED-KINO",
+        accurateProductCode: null,
+        principalProductCode: "KINO-RAW",
+        status: "UNMAPPED",
+        invalidReason: null,
+      },
+      {
+        ...returnResult.results[1],
+        invoiceNumber: "UNMAPPED-ACCURATE",
+        accurateProductCode: "ACC-RAW",
+        principalProductCode: null,
+        status: "UNMAPPED",
+        invalidReason: null,
+      },
+    ],
+  };
   let returnCalled = false;
   await page.route("**/api/reconciliation/kino/returns", async (route) => {
     returnCalled = true;
     expect(route.request().method()).toBe("POST");
-    await route.fulfill({ json: returnResult });
+    await route.fulfill({ json: kinoReturnResult });
   });
   await page.getByLabel("Retur Penjualan (Accurate)").setInputFiles(xlsx("accurate-kino-return.xlsx"));
   await page.getByLabel("Sales Detail KINO").setInputFiles(xlsx("kino-return.xlsx"));
@@ -234,6 +271,10 @@ test("runs KINO Return reconciliation and resets when switching principal", asyn
   await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("columnheader", { name: "Pajak KINO" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Total KINO" })).toBeVisible();
+  await expect(page.getByText("REM tidak memuat nomor invoice KINO 1671-SRI.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Produk KINO-RAW belum memiliki mapping Accurate.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Produk ACC-RAW belum memiliki mapping KINO.", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Qty: Accurate 9, KINO 0/)).toHaveCount(0);
 
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Ekspor XLSX" }).click();
@@ -249,6 +290,15 @@ test("runs KINO Return reconciliation and resets when switching principal", asyn
     "Total KINO": 66600.55,
     "Penyebab selisih": "Qty: Accurate 3, KINO 5 — Accurate kurang 2",
     "Baris KINO": "5",
+  });
+  expect(detail.find((row) => row.Invoice === "BAD-REM")).toMatchObject({
+    "Penyebab selisih": "REM tidak memuat nomor invoice KINO 1671-SRI.",
+  });
+  expect(detail.find((row) => row.Invoice === "UNMAPPED-KINO")).toMatchObject({
+    "Penyebab selisih": "Produk KINO-RAW belum memiliki mapping Accurate.",
+  });
+  expect(detail.find((row) => row.Invoice === "UNMAPPED-ACCURATE")).toMatchObject({
+    "Penyebab selisih": "Produk ACC-RAW belum memiliki mapping KINO.",
   });
 
   await expect(page.getByLabel("Ringkasan hasil")).toBeVisible();

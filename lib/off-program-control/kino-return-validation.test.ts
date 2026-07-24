@@ -103,8 +103,11 @@ assert.equal(
 assert.deepEqual(
   output.results
     .filter((row) => row.status === "INVALID_DATA")
-    .map((row) => row.invoiceNumber),
-  ["BAD1", "BAD2"],
+    .map((row) => [row.invoiceNumber, row.invalidReason]),
+  [
+    ["BAD1", "REM tidak memuat nomor invoice KINO 1671-SRI."],
+    ["BAD2", "REM memuat lebih dari satu nomor invoice KINO 1671-SRI."],
+  ],
 );
 
 const fixMappingHeader = [

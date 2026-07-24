@@ -250,10 +250,23 @@ function columnsFor(principal: Principal): ColumnDef<ReconciliationResult>[] {
 
 function returnCauseLines(row: ReturnReconciliationResult, principal: Principal): string[] {
   if (row.status === "MATCH") return ["Tidak ada selisih."];
+  if (row.status === "INVALID_DATA")
+    return row.invalidReason
+      ? [row.invalidReason]
+      : row.warnings.length
+        ? row.warnings
+        : ["Data tidak valid."];
   const causes: string[] = [];
   if (row.status === "MISSING_ACCURATE") causes.push("Data tidak ditemukan di Accurate.");
   else if (row.status === "MISSING_PRINCIPAL") causes.push(`Data tidak ditemukan di ${principal}.`);
-  else if (row.status === "UNMAPPED") causes.push(`Produk Accurate belum memiliki mapping ${principal}.`);
+  else if (row.status === "UNMAPPED") {
+    if (row.principalProductCode && !row.accurateProductCode)
+      causes.push(`Produk ${row.principalProductCode} belum memiliki mapping Accurate.`);
+    else if (row.accurateProductCode && !row.principalProductCode)
+      causes.push(`Produk ${row.accurateProductCode} belum memiliki mapping ${principal}.`);
+    else causes.push(`Produk Accurate belum memiliki mapping ${principal}.`);
+    return causes;
+  }
   if (row.quantityDifference !== 0)
     causes.push(`Qty: Accurate ${number.format(row.accurateQuantity)}, ${principal} ${number.format(row.principalQuantity)} — ${direction(row.quantityDifference, number.format(Math.abs(row.quantityDifference)))}`);
   if (Math.abs(row.dppDifference) > 1)
