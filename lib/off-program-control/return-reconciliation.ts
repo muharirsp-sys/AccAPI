@@ -101,6 +101,18 @@ function signed(value: unknown, label: string, row: number): number {
   return parsed;
 }
 
+function requiredFinite(value: unknown, label: string, row: number): number {
+  if (value == null || text(value) === "")
+    throw new Error(`${label} kosong pada baris ${row}`);
+  return finite(value, label, row);
+}
+
+function requiredSigned(value: unknown, label: string, row: number): number {
+  if (value == null || text(value) === "")
+    throw new Error(`${label} kosong pada baris ${row}`);
+  return signed(value, label, row);
+}
+
 function readRows(buffer: Buffer | Uint8Array, sheetName: string): Row[] {
   if (!buffer?.byteLength) throw new Error("File XLSX kosong");
   let workbook: XLSX.WorkBook;
@@ -370,7 +382,7 @@ function parseKinoPrincipal(
         "PRODUCT_CODE",
         sourceRowNumber,
       ),
-      gross = signed(
+      gross = requiredSigned(
         cell(row, header.columns, "INVOICE_GROSS"),
         "INVOICE_GROSS",
         sourceRowNumber,
@@ -407,7 +419,7 @@ function parseKinoPrincipal(
       ),
       accurateProductCode: mappings.get(principalProductCode) ?? null,
       principalProductCode,
-      quantity: finite(
+      quantity: requiredFinite(
         cell(row, header.columns, "INVOICE_QTY"),
         "INVOICE_QTY",
         sourceRowNumber,
@@ -415,12 +427,12 @@ function parseKinoPrincipal(
       dpp: Math.abs(
         gross - lineDiscount - promoDiscount - cashDiscount,
       ),
-      tax: finite(
+      tax: requiredFinite(
         cell(row, header.columns, "INVOICE_TAX"),
         "INVOICE_TAX",
         sourceRowNumber,
       ),
-      total: finite(
+      total: requiredFinite(
         cell(row, header.columns, "INVOICE_NET"),
         "INVOICE_NET",
         sourceRowNumber,
@@ -432,8 +444,6 @@ function parseKinoPrincipal(
 
 function parseKinoAccurate(
   buffer: Buffer | Uint8Array,
-  mappings: Map<string, string>,
-  principalLines: CanonicalReturnLine[],
 ): { lines: CanonicalReturnLine[]; invalidLines: CanonicalReturnLine[] } {
   const rows = readRows(buffer, "Rincian Faktur Penjualan"),
     required = [
@@ -449,19 +459,7 @@ function parseKinoAccurate(
     ],
     header = findHeader(rows, required),
     lines: CanonicalReturnLine[] = [],
-    invalidLines: CanonicalReturnLine[] = [],
-    reverseMappings = new Map<string, string[]>();
-  for (const [principal, internal] of mappings) {
-    const values = reverseMappings.get(internal) ?? [];
-    values.push(principal);
-    reverseMappings.set(internal, values);
-  }
-  const principalKeys = new Set(
-    principalLines.map(
-      (line) =>
-        `${line.invoiceNumber}|${line.principalProductCode}|${line.customerCode}`,
-    ),
-  );
+    invalidLines: CanonicalReturnLine[] = [];
   for (let index = header.rowIndex + 1; index < rows.length; index++) {
     const row = rows[index], sourceRowNumber = index + 1;
     if (!row.some((entry) => text(entry))) continue;
@@ -490,35 +488,29 @@ function parseKinoAccurate(
         matches.length === 1
           ? matches[0]
           : requiredText(row, header.columns, "NO_NOTA", sourceRowNumber),
-      candidates = reverseMappings.get(accurateProductCode) ?? [],
-      matchingCandidates = candidates.filter((principal) =>
-        principalKeys.has(`${invoiceNumber}|${principal}|${customerCode}`),
-      ),
-      principalProductCode =
-        matchingCandidates.length === 1
-          ? matchingCandidates[0]
-          : candidates.length === 1
-            ? candidates[0]
-            : null,
       line: CanonicalReturnLine = {
         source: "ACCURATE",
         sourceRowNumber,
         invoiceNumber,
         customerCode,
         accurateProductCode,
-        principalProductCode,
-        quantity: finite(
+        principalProductCode: null,
+        quantity: requiredFinite(
           cell(row, header.columns, "QTY_SATUANKECIL"),
           "QTY_SATUANKECIL",
           sourceRowNumber,
         ),
-        dpp: finite(cell(row, header.columns, "DPP"), "DPP", sourceRowNumber),
-        tax: finite(
+        dpp: requiredFinite(
+          cell(row, header.columns, "DPP"),
+          "DPP",
+          sourceRowNumber,
+        ),
+        tax: requiredFinite(
           cell(row, header.columns, "NILAI_PAJAK"),
           "NILAI_PAJAK",
           sourceRowNumber,
         ),
-        total: finite(
+        total: requiredFinite(
           cell(row, header.columns, "JUMLAH"),
           "JUMLAH",
           sourceRowNumber,
@@ -529,20 +521,42 @@ function parseKinoAccurate(
   return { lines, invalidLines };
 }
 
-function key(line: CanonicalReturnLine): string {
-  return `${line.invoiceNumber}|${line.principalProductCode ?? line.accurateProductCode}|${line.customerCode}`;
+function key(
+  line: CanonicalReturnLine,
+  matchingProductCode?: (line: CanonicalReturnLine) => string | null,
+): string {
+  return `${line.invoiceNumber}|${
+    matchingProductCode?.(line) ??
+    line.principalProductCode ??
+    line.accurateProductCode
+  }|${line.customerCode}`;
 }
 
-function aggregate(lines: CanonicalReturnLine[]): Map<string, Aggregate> {
+function aggregate(
+  lines: CanonicalReturnLine[],
+  matchingProductCode?: (line: CanonicalReturnLine) => string | null,
+): Map<string, Aggregate> {
   const output = new Map<string, Aggregate>();
   for (const line of lines) {
-    const id = key(line), existing = output.get(id);
+    const id = key(line, matchingProductCode), existing = output.get(id);
     if (existing) {
       existing.quantity += line.quantity;
       existing.dpp += line.dpp;
       existing.tax += line.tax;
       existing.total += line.total;
       existing.sourceRows.push(line.sourceRowNumber);
+      if (
+        line.principalProductCode &&
+        !existing.principalProductCode
+          ?.split(", ")
+          .includes(line.principalProductCode)
+      )
+        existing.principalProductCode = [
+          existing.principalProductCode,
+          line.principalProductCode,
+        ]
+          .filter(Boolean)
+          .join(", ");
     } else {
       output.set(id, {
         invoiceNumber: line.invoiceNumber,
@@ -598,6 +612,8 @@ function reconcileParsedReturns({
   unmappedPrincipalLines = [],
   dppTolerance,
   unmappedAccurateStatus = () => "UNMAPPED",
+  matchingProductCode,
+  isAccurateMapped = (line) => line.principalProductCode !== null,
 }: {
   accurateLines: CanonicalReturnLine[];
   matchableAccurateLines?: CanonicalReturnLine[];
@@ -607,13 +623,14 @@ function reconcileParsedReturns({
   unmappedPrincipalLines?: CanonicalReturnLine[];
   dppTolerance: number;
   unmappedAccurateStatus?: (line: Aggregate) => ReturnStatus;
+  matchingProductCode?: (line: CanonicalReturnLine) => string | null;
+  isAccurateMapped?: (line: CanonicalReturnLine) => boolean;
 }): ReturnReconciliationOutput {
   const mappedAccurate = aggregate(
-      matchableAccurateLines.filter(
-        (line) => line.principalProductCode !== null,
-      ),
+      matchableAccurateLines.filter(isAccurateMapped),
+      matchingProductCode,
     ),
-    principals = aggregate(matchablePrincipalLines),
+    principals = aggregate(matchablePrincipalLines, matchingProductCode),
     results: ReturnReconciliationResult[] = [];
 
   for (const invalid of invalidAccurateLines)
@@ -625,9 +642,8 @@ function reconcileParsedReturns({
       ),
     );
   for (const unmapped of aggregate(
-    matchableAccurateLines.filter(
-      (line) => line.principalProductCode === null,
-    ),
+    matchableAccurateLines.filter((line) => !isAccurateMapped(line)),
+    matchingProductCode,
   ).values())
     results.push(result(unmapped, undefined, unmappedAccurateStatus(unmapped)));
   for (const unmapped of aggregate(unmappedPrincipalLines).values())
@@ -691,12 +707,9 @@ export function reconcileKinoReturns(
     throw new Error("Toleransi DPP tidak valid");
   const mappings = parseKinoReturnMappings(mappingBuffer),
     principalLines = parseKinoPrincipal(principalBuffer, mappings),
-    parsedAccurate = parseKinoAccurate(
-      accurateBuffer,
-      mappings,
-      principalLines,
-    ),
+    parsedAccurate = parseKinoAccurate(accurateBuffer),
     accurateLines = [...parsedAccurate.lines, ...parsedAccurate.invalidLines],
+    mappedAccurateCodes = new Set(mappings.values()),
     principalScopes = new Set(
       principalLines.map(
         (line) => `${line.invoiceNumber}|${line.customerCode}`,
@@ -713,6 +726,10 @@ export function reconcileKinoReturns(
     unmappedPrincipalLines: principalLines.filter(
       (line) => line.accurateProductCode === null,
     ),
+    matchingProductCode: (line) => line.accurateProductCode,
+    isAccurateMapped: (line) =>
+      line.accurateProductCode !== null &&
+      mappedAccurateCodes.has(line.accurateProductCode),
     dppTolerance,
     unmappedAccurateStatus: (line) =>
       principalScopes.has(`${line.invoiceNumber}|${line.customerCode}`)
