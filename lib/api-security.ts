@@ -29,6 +29,24 @@ export function requireCronSecret(request: NextRequest | Request) {
     return { response: null };
 }
 
+/**
+ * Gate untuk integrasi Web Sales (`/api/ext/*`). Token statis via
+ * `Authorization: Bearer <EXT_SALES_TOKEN>`. Fail-closed: env belum di-set → selalu tolak.
+ *
+ * ponytail: token statis, bukan HMAC per-request. Transport sudah dijaga VPN antar server
+ * (Internal tidak punya jalur publik) dan replay sudah ditutup oleh cursor keyset yang
+ * idempoten. Naikkan ke HMAC + timestamp kalau endpoint ini pernah diekspos ke internet.
+ */
+export function requireExtToken(request: NextRequest | Request) {
+    const token = process.env.EXT_SALES_TOKEN;
+    const deny = NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (!token) return { response: deny };
+    const header = request.headers.get("authorization");
+    const bearer = header?.startsWith("Bearer ") ? header.slice(7).trim() : null;
+    if (!bearer || bearer !== token) return { response: deny };
+    return { response: null };
+}
+
 export function isAllowedAccurateHost(rawHost: unknown): boolean {
     if (typeof rawHost !== "string" || rawHost.trim() === "") return false;
     try {

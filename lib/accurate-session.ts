@@ -119,3 +119,52 @@ export async function clearAccurateSession(userId: string) {
     await ensureAccurateSessionTable();
     await db.delete(accurateOAuthSession).where(eq(accurateOAuthSession.userId, userId));
 }
+
+/**
+ * X-Session-ID Accurate berumur pendek dan habis independen dari access token. Dulu ini hanya
+ * diisi lewat UI /api-wrapper (pilih database) — begitu login ulang me-null-kan session lama,
+ * cron sync berhenti total sampai ada orang membuka UI itu. Fungsi ini menutup celah tsb:
+ * refresh via open-db.do (kalau databaseId sudah tersimpan) atau db-list.do (ambil DB pertama
+ * kalau belum pernah dipilih sama sekali).
+ */
+export async function ensureFreshAccurateSession(userId: string) {
+    const session = await getAccurateSession(userId);
+    if (!session?.accessToken) return null;
+
+    let databaseId = session.databaseId;
+    let databaseAlias = session.databaseAlias;
+
+    if (!databaseId) {
+        const listRes = await fetch("https://account.accurate.id/api/db-list.do", {
+            headers: { Authorization: `Bearer ${session.accessToken}` },
+            signal: AbortSignal.timeout(30_000),
+        });
+        const listBody = await listRes.json().catch(() => null) as { s?: boolean; d?: Array<{ id: string; alias: string }> } | null;
+        const first = listBody?.d?.[0];
+        if (!listRes.ok || !listBody?.s || !first) return null;
+        databaseId = first.id;
+        databaseAlias = first.alias;
+    }
+
+    const openRes = await fetch(`https://account.accurate.id/api/open-db.do?id=${databaseId}`, {
+        headers: { Authorization: `Bearer ${session.accessToken}` },
+        signal: AbortSignal.timeout(30_000),
+    });
+    const openBody = await openRes.json().catch(() => null) as { host?: string; session?: string } | null;
+    if (!openRes.ok || !openBody?.host || !openBody?.session) return null;
+
+    await upsertAccurateSession(userId, {
+        sessionHost: openBody.host,
+        sessionId: openBody.session,
+        databaseId,
+        databaseAlias,
+    });
+
+    return {
+        ...session,
+        sessionHost: openBody.host,
+        sessionId: openBody.session,
+        databaseId,
+        databaseAlias,
+    };
+}
