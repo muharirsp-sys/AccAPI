@@ -3,16 +3,20 @@ import { auth } from '@/lib/auth';
 import { upsertAccurateSession } from '@/lib/accurate-session';
 
 export async function GET(request: Request) {
+    // request.url bisa berupa alamat internal container di belakang proxy (Coolify) — semua
+    // redirect di sini WAJIB pakai base URL publik, bukan request.url (lihat lib/auth.ts).
+    const publicBase = process.env.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin;
+
     const appSession = await auth.api.getSession({ headers: request.headers });
     if (!appSession) {
-        return NextResponse.redirect(new URL('/login?error=Accurate+login+requires+app+session', request.url));
+        return NextResponse.redirect(new URL('/login?error=Accurate+login+requires+app+session', publicBase));
     }
 
     const { searchParams } = new URL(request.url);
     const code = searchParams.get('code');
 
     if (!code) {
-        return NextResponse.redirect(new URL('/?error=No+Authorization+Code', request.url));
+        return NextResponse.redirect(new URL('/?error=No+Authorization+Code', publicBase));
     }
 
     const clientId = process.env.ACCURATE_CLIENT_ID;
@@ -21,7 +25,7 @@ export async function GET(request: Request) {
 
     if (!clientId || !clientSecret || !redirectUri) {
         console.error("Missing environment variables for Accurate OAuth");
-        return NextResponse.redirect(new URL('/?error=Server+Configuration+Error', request.url));
+        return NextResponse.redirect(new URL('/?error=Server+Configuration+Error', publicBase));
     }
 
     try {
@@ -44,7 +48,7 @@ export async function GET(request: Request) {
         if (!tokenResponse.ok) {
             const errText = await tokenResponse.text();
             console.error("Tukar Token Gagal:", errText);
-            return NextResponse.redirect(new URL(`/?error=Failed+to+exchange+token`, request.url));
+            return NextResponse.redirect(new URL(`/?error=Failed+to+exchange+token`, publicBase));
         }
 
         const tokenData = await tokenResponse.json();
@@ -58,13 +62,13 @@ export async function GET(request: Request) {
             databaseAlias: null,
         });
 
-        const redirectUrl = new URL('/api-wrapper', request.url);
+        const redirectUrl = new URL('/api-wrapper', publicBase);
         redirectUrl.searchParams.set("accurate", "connected");
 
         return NextResponse.redirect(redirectUrl);
 
     } catch (err: any) {
         console.error("OAuth Callback Exception:", err.message);
-        return NextResponse.redirect(new URL(`/?error=OAuth+Exception`, request.url));
+        return NextResponse.redirect(new URL(`/?error=OAuth+Exception`, publicBase));
     }
 }

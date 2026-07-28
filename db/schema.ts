@@ -82,9 +82,18 @@ export const item = pgTable("item", {
     itemType: text("itemType"),
     // Audit F3: real, bukan integer — harga desimal terpotong kalau integer (diubah selagi tabel kosong)
     unitPrice: doublePrecision("unitPrice"),
+    // Verifikasi live 2026-07-28 via /api/item/list-stock.do (endpoint terpisah dari item/list.do).
+    // Agregat semua gudang (dipanggil tanpa warehouseId) — bukan breakdown per gudang.
+    quantity: doublePrecision("quantity"),
+    quantityInAllUnit: text("quantity_in_all_unit"), // Cth: "0 PCS" — string, bukan angka
     rawData: jsonb("raw_data"), // Complete unprocessed payload
-    lastUpdate: text("last_update") // Accurate's modified timestamp
-});
+    lastUpdate: text("last_update"), // Accurate's modified timestamp
+    // Watermark LOKAL untuk delta feed ke Web Sales. lastUpdate tidak bisa dipakai:
+    // format-nya milik Accurate (dd/MM/yyyy) sehingga urutan leksikografis ≠ kronologis.
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow()
+}, (t) => [
+    index("idx_item_synced_at").on(t.syncedAt, t.id)
+]);
 
 export const customer = pgTable("customer", {
     id: bigint("id", { mode: "number" }).primaryKey(), // Accurate's internal numeric ID
@@ -92,9 +101,17 @@ export const customer = pgTable("customer", {
     name: text("name").notNull(),
     // Audit F3: real — saldo piutang bisa desimal
     balance: doublePrecision("balance"),
+    // Verifikasi live 2026-07-28 via /api/customer/list.do?fields=...
+    creditLimitEnabled: boolean("credit_limit_enabled"), // customerLimitAmount
+    creditLimitAmount: doublePrecision("credit_limit_amount"), // customerLimitAmountValue
+    creditAgeLimitEnabled: boolean("credit_age_limit_enabled"), // customerLimitAge
+    creditAgeLimitDays: integer("credit_age_limit_days"), // customerLimitAgeValue
     rawData: jsonb("raw_data"), // Complete unprocessed payload
-    lastUpdate: text("last_update") // Accurate's modified timestamp
-});
+    lastUpdate: text("last_update"), // Accurate's modified timestamp
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow()
+}, (t) => [
+    index("idx_customer_synced_at").on(t.syncedAt, t.id)
+]);
 
 // Audit F3 / PRD 02-03: cache faktur penjualan (sumber piutang/nota) dari Accurate.
 // Kolom typed nullable — hanya diisi bila field tersedia di respons list.do; rawData
@@ -106,13 +123,21 @@ export const salesInvoiceCache = pgTable("sales_invoice", {
     customerNo: text("customer_no"),
     customerName: text("customer_name"),
     totalAmount: doublePrecision("total_amount"),
+    // Verifikasi live 2026-07-28: /api/sales-invoice/list.do TIDAK punya field outstanding/
+    // outstandingAmount/remainingAmount/paidAmount (diterima Accurate tapi selalu kosong).
+    // Kolom ini dibiarkan ada untuk kompatibilitas tapi TIDAK PERNAH terisi dari list.do —
+    // presisi per-faktur (kalau ada pembayaran sebagian) butuh sales-invoice/detail.do.
     outstanding: doublePrecision("outstanding"),
-    status: text("status"),
+    status: text("status"), // diisi dari field Accurate `statusName` (mis. "Belum Lunas")
+    dueDate: text("due_date"),
+    age: integer("age"), // umur piutang (hari), field Accurate: age
     rawData: jsonb("raw_data"),
-    lastUpdate: text("last_update")
+    lastUpdate: text("last_update"),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow()
 }, (t) => [
     index("idx_sales_invoice_trans_date").on(t.transDate),
-    index("idx_sales_invoice_customer_no").on(t.customerNo)
+    index("idx_sales_invoice_customer_no").on(t.customerNo),
+    index("idx_sales_invoice_synced_at").on(t.syncedAt, t.id)
 ]);
 
 // Audit F3 / PRD 03: cache retur penjualan dari Accurate (bahan claim retur).
@@ -125,10 +150,12 @@ export const salesReturnCache = pgTable("sales_return", {
     totalAmount: doublePrecision("total_amount"),
     status: text("status"),
     rawData: jsonb("raw_data"),
-    lastUpdate: text("last_update")
+    lastUpdate: text("last_update"),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow()
 }, (t) => [
     index("idx_sales_return_trans_date").on(t.transDate),
-    index("idx_sales_return_customer_no").on(t.customerNo)
+    index("idx_sales_return_customer_no").on(t.customerNo),
+    index("idx_sales_return_synced_at").on(t.syncedAt, t.id)
 ]);
 
 export const idempotencyLog = pgTable("idempotency_log", {

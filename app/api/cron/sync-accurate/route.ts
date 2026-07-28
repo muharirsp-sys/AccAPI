@@ -9,7 +9,7 @@ import { desc } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accurateOAuthSession } from "@/db/schema";
 import { requireCronSecret } from "@/lib/api-security";
-import { getAccurateSession } from "@/lib/accurate-session";
+import { getAccurateSession, ensureFreshAccurateSession } from "@/lib/accurate-session";
 import { SYNC_MODULE_NAMES, syncModule, type SyncModuleName } from "@/lib/sync";
 
 export const maxDuration = 3600; // sync penuh bisa lama; jalan out-of-band, bukan request user
@@ -40,9 +40,17 @@ export async function GET(req: Request) {
     if (!userId) {
         return NextResponse.json({ ok: false, error: "Tidak ada sesi Accurate. Set ACCURATE_SYNC_USER_ID atau login Accurate dulu." }, { status: 503 });
     }
-    const session = await getAccurateSession(userId);
+    let session = await getAccurateSession(userId);
+    if (!session?.accessToken) {
+        return NextResponse.json({ ok: false, error: "Tidak ada access token Accurate. Login ulang di /api-wrapper." }, { status: 503 });
+    }
+    // X-Session-ID berumur pendek dan habis independen dari access token — refresh mandiri
+    // di sini menutup celah lama: dulu cron berhenti total sampai ada yang membuka UI.
+    if (!session.sessionHost || !session.sessionId) {
+        session = await ensureFreshAccurateSession(userId);
+    }
     if (!session?.sessionHost || !session.sessionId || !session.accessToken) {
-        return NextResponse.json({ ok: false, error: "Sesi Accurate belum lengkap (host/session/token)." }, { status: 503 });
+        return NextResponse.json({ ok: false, error: "Sesi Accurate tidak bisa di-refresh — access token kemungkinan sudah kadaluarsa. Login ulang di /api-wrapper." }, { status: 503 });
     }
 
     const creds = { sessionHost: session.sessionHost, sessionId: session.sessionId, apiKey: session.accessToken };

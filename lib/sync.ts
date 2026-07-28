@@ -79,10 +79,18 @@ const num = (v: unknown): number | null => {
     return Number.isFinite(n) ? n : null;
 };
 const str = (v: unknown): string | null => (v === undefined || v === null ? null : String(v));
+const bool = (v: unknown): boolean | null => (v === undefined || v === null ? null : Boolean(v));
 const nested = (row: Record<string, unknown>, key: string): Record<string, unknown> =>
     (row[key] && typeof row[key] === "object" ? row[key] as Record<string, unknown> : {});
 
-export type SyncModuleName = "item" | "customer" | "sales_invoice" | "sales_return";
+export type SyncModuleName = "item" | "item_stock" | "customer" | "sales_invoice" | "sales_return";
+
+// Watermark delta feed ke Web Sales. Sync ini full-resync tiap run, jadi synced_at HANYA
+// boleh maju kalau isi barisnya benar-benar berubah — kalau tidak, Web Sales menarik ulang
+// seluruh tabel tiap siklus. raw_data dipakai sebagai proxy hash: payload Accurate utuh,
+// jadi perubahan kolom apa pun ikut terdeteksi.
+const bumpSyncedAt = (table: string) =>
+    sql.raw(`CASE WHEN ${table}.raw_data IS DISTINCT FROM excluded.raw_data THEN now() ELSE ${table}.synced_at END`);
 
 // 2. Registry modul sync: endpoint + fields (WAJIB — list.do tanpa `fields` hanya
 // mengembalikan { id }, dibuktikan live production 2026-07-13) + upsert per halaman.
@@ -115,19 +123,49 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     unitPrice: sql`excluded."unitPrice"`,
                     rawData: sql`excluded."raw_data"`,
                     lastUpdate: sql`excluded."last_update"`,
+                    syncedAt: bumpSyncedAt("item"),
+                },
+            });
+        },
+    },
+    // Endpoint terpisah dari /item/list.do (dibuktikan live 2026-07-28) — tidak punya lastUpdate,
+    // hanya mengembalikan item yang punya stok tercatat. Upsert HANYA kolom stok: item module
+    // (di atas) tetap otoritas untuk name/unitPrice/itemType/rawData, supaya insert parsial dari
+    // sini (name/no saja, tanpa unitPrice/itemType) tidak menimpa data lebih lengkap yang sudah ada.
+    item_stock: {
+        endpoint: "/item/list-stock.do",
+        fields: "id,no,name,quantity,quantityInAllUnit",
+        upsertPage: async (rows) => {
+            const payloads = rows.map((row) => ({
+                id: Number(row.id),
+                no: String(row.no ?? ""),
+                name: String(row.name ?? ""),
+                quantity: num(row.quantity),
+                quantityInAllUnit: str(row.quantityInAllUnit),
+            }));
+            await db.insert(item).values(payloads).onConflictDoUpdate({
+                target: item.id,
+                set: {
+                    quantity: sql`excluded."quantity"`,
+                    quantityInAllUnit: sql`excluded."quantity_in_all_unit"`,
+                    syncedAt: sql`CASE WHEN "item"."quantity" IS DISTINCT FROM excluded."quantity" THEN now() ELSE "item"."synced_at" END`,
                 },
             });
         },
     },
     customer: {
         endpoint: "/customer/list.do",
-        fields: "id,customerNo,name,balance,lastUpdate",
+        fields: "id,customerNo,name,balance,customerLimitAmount,customerLimitAmountValue,customerLimitAge,customerLimitAgeValue,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
                 customerNo: String(row.customerNo ?? ""),
                 name: String(row.name ?? ""),
                 balance: num(row.balance),
+                creditLimitEnabled: bool(row.customerLimitAmount),
+                creditLimitAmount: num(row.customerLimitAmountValue),
+                creditAgeLimitEnabled: bool(row.customerLimitAge),
+                creditAgeLimitDays: num(row.customerLimitAgeValue),
                 rawData: JSON.stringify(row),
                 lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
             }));
@@ -137,27 +175,36 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     customerNo: sql`excluded."customerNo"`,
                     name: sql`excluded."name"`,
                     balance: sql`excluded."balance"`,
+                    creditLimitEnabled: sql`excluded."credit_limit_enabled"`,
+                    creditLimitAmount: sql`excluded."credit_limit_amount"`,
+                    creditAgeLimitEnabled: sql`excluded."credit_age_limit_enabled"`,
+                    creditAgeLimitDays: sql`excluded."credit_age_limit_days"`,
                     rawData: sql`excluded."raw_data"`,
                     lastUpdate: sql`excluded."last_update"`,
+                    syncedAt: bumpSyncedAt("customer"),
                 },
             });
         },
     },
     sales_invoice: {
         endpoint: "/sales-invoice/list.do",
-        // outstanding/status/customerName: nama field Accurate yang benar belum diketahui
-        // (diuji live 2026-07-13, tidak muncul di respons) — TBD saat PRD 02 Incaso dibangun.
-        fields: "id,number,customerNo,totalAmount,transDate,lastUpdate",
+        // Verifikasi live 2026-07-28: outstanding/outstandingAmount/remainingAmount/paidAmount/
+        // status/paymentTermName/customerName/branchName TIDAK ADA (diterima Accurate tapi selalu
+        // kosong). Nama field yang benar: statusName, age, dueDate, customer (objek bersarang).
+        fields: "id,number,customerNo,customer,totalAmount,transDate,dueDate,statusName,age,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
                 number: str(row.number ?? row.no),
                 transDate: str(row.transDate),
                 customerNo: str(nested(row, "customer").customerNo ?? row.customerNo),
-                customerName: str(nested(row, "customer").name ?? row.customerName),
+                customerName: str(nested(row, "customer").name),
                 totalAmount: num(row.totalAmount),
+                // outstanding: field ini tidak tersedia dari list.do — tetap null, lihat db/schema.ts.
                 outstanding: num(row.outstanding ?? row.outstandingAmount),
-                status: str(row.status ?? row.statusName),
+                status: str(row.statusName),
+                dueDate: str(row.dueDate),
+                age: num(row.age),
                 rawData: JSON.stringify(row),
                 lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
             }));
@@ -171,8 +218,11 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     totalAmount: sql`excluded."total_amount"`,
                     outstanding: sql`excluded."outstanding"`,
                     status: sql`excluded."status"`,
+                    dueDate: sql`excluded."due_date"`,
+                    age: sql`excluded."age"`,
                     rawData: sql`excluded."raw_data"`,
                     lastUpdate: sql`excluded."last_update"`,
+                    syncedAt: bumpSyncedAt("sales_invoice"),
                 },
             });
         },
@@ -204,6 +254,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     status: sql`excluded."status"`,
                     rawData: sql`excluded."raw_data"`,
                     lastUpdate: sql`excluded."last_update"`,
+                    syncedAt: bumpSyncedAt("sales_return"),
                 },
             });
         },
