@@ -284,6 +284,38 @@ function parseGodrejMappings(buffer: Buffer | Uint8Array): {
   return { codes, names };
 }
 
+function parseHeinzMappings(
+  buffer: Buffer | Uint8Array,
+): Map<string, string> {
+  const rows = readRows(buffer, "Fix Mapping"),
+    required = [
+      "KODE BARANG",
+      "PCPL KODE 1",
+      "PCPL KODE 2",
+      "PCPL KODE 3",
+      "PCPL KODE 4",
+      "PCPL KODE 5",
+    ],
+    header = findHeader(rows, required),
+    mappings = new Map<string, string>();
+  for (let index = header.rowIndex + 1; index < rows.length; index++) {
+    const internal = text(cell(rows[index], header.columns, "KODE BARANG")),
+      principals = required
+        .slice(1)
+        .map((name) => text(cell(rows[index], header.columns, name)))
+        .filter((value) => value && value !== "0");
+    if (!internal && !principals.length) continue;
+    if (!internal) throw new Error(`KODE BARANG kosong pada baris ${index + 1}`);
+    for (const principal of new Set(principals)) {
+      const existing = mappings.get(principal);
+      if (existing && existing !== internal)
+        throw new Error(`Mapping produk HEINZ konflik untuk ${principal}`);
+      mappings.set(principal, internal);
+    }
+  }
+  return mappings;
+}
+
 function cleanGodrejProductName(value: unknown, leadingCode = ""): string {
   let name = text(value).replace(/\s+/g, " ");
   if (leadingCode)
@@ -784,6 +816,230 @@ function parseGodrejPrincipal(
   return { lines, unmappedLines };
 }
 
+function parseHeinzAccurate(
+  buffer: Buffer | Uint8Array,
+): { lines: CanonicalReturnLine[]; invalidLines: CanonicalReturnLine[] } {
+  const rows = readRows(buffer, "Rincian Faktur Penjualan"),
+    required = [
+      "NO_NOTA",
+      "KODE PELANGGAN INDUK",
+      "KODE_BARANG",
+      "QTY_SATUANKECIL",
+      "DPP",
+      "NILAI_PAJAK",
+      "JUMLAH",
+      "REM",
+      "JENIS_TRANSAKSI",
+    ],
+    header = findHeader(rows, required),
+    lines: CanonicalReturnLine[] = [],
+    invalidLines: CanonicalReturnLine[] = [];
+  for (let index = header.rowIndex + 1; index < rows.length; index++) {
+    const row = rows[index], sourceRowNumber = index + 1;
+    if (!row.some((entry) => text(entry))) continue;
+    if (
+      !text(cell(row, header.columns, "JENIS_TRANSAKSI")).includes(
+        "RETUR PENJUALAN",
+      )
+    )
+      continue;
+    const matches =
+        text(cell(row, header.columns, "REM")).match(
+          /(?<![A-Z0-9])CN-\d+(?![A-Z0-9-])/g,
+        ) ?? [],
+      line: CanonicalReturnLine = {
+        source: "ACCURATE",
+        sourceRowNumber,
+        invoiceNumber:
+          matches.length === 1
+            ? matches[0]
+            : requiredText(row, header.columns, "NO_NOTA", sourceRowNumber),
+        customerCode: requiredText(
+          row,
+          header.columns,
+          "KODE PELANGGAN INDUK",
+          sourceRowNumber,
+        ),
+        accurateProductCode: requiredText(
+          row,
+          header.columns,
+          "KODE_BARANG",
+          sourceRowNumber,
+        ),
+        principalProductCode: null,
+        quantity: requiredFinite(
+          cell(row, header.columns, "QTY_SATUANKECIL"),
+          "QTY_SATUANKECIL",
+          sourceRowNumber,
+        ),
+        dpp: requiredFinite(
+          cell(row, header.columns, "DPP"),
+          "DPP",
+          sourceRowNumber,
+        ),
+        tax: requiredFinite(
+          cell(row, header.columns, "NILAI_PAJAK"),
+          "NILAI_PAJAK",
+          sourceRowNumber,
+        ),
+        total: requiredFinite(
+          cell(row, header.columns, "JUMLAH"),
+          "JUMLAH",
+          sourceRowNumber,
+        ),
+        invalidReason:
+          matches.length === 0
+            ? "REM tidak memuat nomor return HEINZ CN."
+            : matches.length > 1
+              ? "REM memuat lebih dari satu nomor return HEINZ CN."
+              : null,
+      };
+    (matches.length === 1 ? lines : invalidLines).push(line);
+  }
+  return { lines, invalidLines };
+}
+
+function parseHeinzPrincipal(
+  headerBuffer: Buffer | Uint8Array,
+  detailBuffer: Buffer | Uint8Array,
+  mappings: Map<string, string>,
+): {
+  lines: CanonicalReturnLine[];
+  unmappedLines: CanonicalReturnLine[];
+  invalidLines: CanonicalReturnLine[];
+} {
+  const headerRows = readRows(headerBuffer, "Sheet1"),
+    headerRequired = [
+      "CREDIT_NOTE_NUMBER",
+      "GOODS_RETURN_NOTE_NUMBER",
+      "SALES_REPRESENTATIVE_CODE",
+      "RETAILER_CODE",
+      "RETAILER_NAME",
+      "CREDIT_NOTE_DATE",
+      "INVOICE_NUMBER",
+      "REMARKS",
+      "LINE_COUNT",
+      "NET_VALUE",
+      "STATUS",
+    ],
+    header = findHeader(headerRows, headerRequired),
+    approved = new Map<
+      string,
+      { customerCode: string; lineCount: number }
+    >(),
+    seen = new Set<string>();
+  for (let index = header.rowIndex + 1; index < headerRows.length; index++) {
+    const row = headerRows[index], sourceRowNumber = index + 1;
+    if (!row.some((entry) => text(entry))) continue;
+    const creditNote = requiredText(
+      row,
+      header.columns,
+      "CREDIT_NOTE_NUMBER",
+      sourceRowNumber,
+    );
+    if (seen.has(creditNote))
+      throw new Error(`credit_note_number duplikat ${creditNote}`);
+    seen.add(creditNote);
+    if (text(cell(row, header.columns, "STATUS")) !== "APPROVED") continue;
+    const customerCode = exactlyOneToken(
+      cell(row, header.columns, "RETAILER_NAME"),
+      /(?<![A-Z0-9])C-[A-Z0-9]+$/g,
+      "retailer_name",
+      sourceRowNumber,
+    );
+    approved.set(creditNote, {
+      customerCode,
+      lineCount: requiredFinite(
+        cell(row, header.columns, "LINE_COUNT"),
+        "line_count",
+        sourceRowNumber,
+      ),
+    });
+  }
+
+  const detailRows = readRows(detailBuffer, "Sheet1"),
+    detailRequired = [
+      "CREDIT_NOTE_NUMBER",
+      "LINE_NUMBER",
+      "DISTRIBUTOR_STOCK_KEEPING_UNIT",
+      "UNIT_QUANTITY",
+      "UNIT",
+      "EACHES_QUANTITY",
+      "UNIT_PRICE",
+      "GROSS_VALUE",
+      "RETURN_CODE",
+    ],
+    detail = findHeader(detailRows, detailRequired),
+    grouped = new Map<string, CanonicalReturnLine[]>(),
+    invalidLines: CanonicalReturnLine[] = [];
+  for (let index = detail.rowIndex + 1; index < detailRows.length; index++) {
+    const row = detailRows[index], sourceRowNumber = index + 1;
+    if (!row.some((entry) => text(entry))) continue;
+    const creditNote = requiredText(
+        row,
+        detail.columns,
+        "CREDIT_NOTE_NUMBER",
+        sourceRowNumber,
+      ),
+      principalProductCode = requiredText(
+        row,
+        detail.columns,
+        "DISTRIBUTOR_STOCK_KEEPING_UNIT",
+        sourceRowNumber,
+      ),
+      accurateProductCode = mappings.get(principalProductCode) ?? null,
+      headerRow = approved.get(creditNote),
+      total = requiredFinite(
+        cell(row, detail.columns, "GROSS_VALUE"),
+        "gross_value",
+        sourceRowNumber,
+      ),
+      line: CanonicalReturnLine = {
+        source: "PRINCIPAL",
+        sourceRowNumber,
+        invoiceNumber: creditNote,
+        customerCode: headerRow?.customerCode ?? "",
+        accurateProductCode,
+        principalProductCode,
+        quantity: requiredFinite(
+          cell(row, detail.columns, "EACHES_QUANTITY"),
+          "eaches_quantity",
+          sourceRowNumber,
+        ),
+        dpp: total / 1.11,
+        tax: total - total / 1.11,
+        total,
+        invalidReason: headerRow
+          ? null
+          : `HEADER Approved tidak ditemukan untuk ${creditNote}`,
+      };
+    if (!headerRow) {
+      invalidLines.push(line);
+      continue;
+    }
+    const lines = grouped.get(creditNote) ?? [];
+    lines.push(line);
+    grouped.set(creditNote, lines);
+  }
+
+  const lines: CanonicalReturnLine[] = [],
+    unmappedLines: CanonicalReturnLine[] = [];
+  for (const [creditNote, creditNoteLines] of grouped) {
+    const expected = approved.get(creditNote)!.lineCount;
+    if (creditNoteLines.length !== expected) {
+      for (const line of creditNoteLines)
+        invalidLines.push({
+          ...line,
+          invalidReason: `line_count ${expected} tidak sama dengan ${creditNoteLines.length} detail untuk ${creditNote}`,
+        });
+      continue;
+    }
+    for (const line of creditNoteLines)
+      (line.accurateProductCode ? lines : unmappedLines).push(line);
+  }
+  return { lines, unmappedLines, invalidLines };
+}
+
 function key(
   line: CanonicalReturnLine,
   matchingProductCode?: (line: CanonicalReturnLine) => string | null,
@@ -879,6 +1135,7 @@ function reconcileParsedReturns({
   principalLines,
   matchablePrincipalLines = principalLines,
   invalidAccurateLines = [],
+  invalidPrincipalLines = [],
   unmappedPrincipalLines = [],
   dppTolerance,
   unmappedAccurateStatus = () => "UNMAPPED",
@@ -890,6 +1147,7 @@ function reconcileParsedReturns({
   principalLines: CanonicalReturnLine[];
   matchablePrincipalLines?: CanonicalReturnLine[];
   invalidAccurateLines?: CanonicalReturnLine[];
+  invalidPrincipalLines?: CanonicalReturnLine[];
   unmappedPrincipalLines?: CanonicalReturnLine[];
   dppTolerance: number;
   unmappedAccurateStatus?: (line: Aggregate) => ReturnStatus;
@@ -911,6 +1169,8 @@ function reconcileParsedReturns({
         "INVALID_DATA",
       ),
     );
+  for (const invalid of aggregate(invalidPrincipalLines).values())
+    results.push(result(undefined, invalid, "INVALID_DATA"));
   for (const unmapped of aggregate(
     matchableAccurateLines.filter((line) => !isAccurateMapped(line)),
     matchingProductCode,
@@ -1028,6 +1288,39 @@ export function reconcileGodrejReturns(
     principalLines,
     matchablePrincipalLines: principal.lines,
     invalidAccurateLines: accurate.invalidLines,
+    unmappedPrincipalLines: principal.unmappedLines,
+    matchingProductCode: (line) => line.accurateProductCode,
+    isAccurateMapped: () => true,
+    dppTolerance,
+  });
+}
+
+export function reconcileHeinzReturns(
+  accurateBuffer: Buffer | Uint8Array,
+  headerBuffer: Buffer | Uint8Array,
+  detailBuffer: Buffer | Uint8Array,
+  mappingBuffer: Buffer | Uint8Array,
+  options: { dppTolerance?: number } = {},
+): ReturnReconciliationOutput {
+  const dppTolerance = options.dppTolerance ?? 1;
+  if (!Number.isFinite(dppTolerance) || dppTolerance < 0)
+    throw new Error("Toleransi DPP tidak valid");
+  const mappings = parseHeinzMappings(mappingBuffer),
+    principal = parseHeinzPrincipal(headerBuffer, detailBuffer, mappings),
+    accurate = parseHeinzAccurate(accurateBuffer),
+    accurateLines = [...accurate.lines, ...accurate.invalidLines],
+    principalLines = [
+      ...principal.lines,
+      ...principal.unmappedLines,
+      ...principal.invalidLines,
+    ];
+  return reconcileParsedReturns({
+    accurateLines,
+    matchableAccurateLines: accurate.lines,
+    principalLines,
+    matchablePrincipalLines: principal.lines,
+    invalidAccurateLines: accurate.invalidLines,
+    invalidPrincipalLines: principal.invalidLines,
     unmappedPrincipalLines: principal.unmappedLines,
     matchingProductCode: (line) => line.accurateProductCode,
     isAccurateMapped: () => true,
