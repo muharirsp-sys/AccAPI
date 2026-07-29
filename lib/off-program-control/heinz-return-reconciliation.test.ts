@@ -218,6 +218,46 @@ assert.throws(
   /credit_note_number duplikat CN-1/,
 );
 
+const accurateEmpty = workbook({
+  "Rincian Faktur Penjualan": [
+    [
+      "NO_NOTA",
+      "KODE PELANGGAN INDUK",
+      "KODE_BARANG",
+      "QTY_SATUANKECIL",
+      "DPP",
+      "NILAI_PAJAK",
+      "JUMLAH",
+      "REM",
+      "JENIS_TRANSAKSI",
+    ],
+  ],
+});
+const joinOutput = reconcileHeinzReturns(
+  accurateEmpty,
+  csv([
+    headerColumns,
+    ["CN-10", "GRN-10", "S1", "OLD-10", "TOKO E C-E", "2026-07-22", "I10", "", 1, 111, "Approved"],
+    ["CN-11", "GRN-11", "S1", "OLD-11", "TOKO R C-R", "2026-07-22", "I11", "", 1, 111, "Rejected"],
+  ]),
+  csv([
+    detailColumns,
+    ["CN-11", 1, "P-1", 1, "PCS", 1, 111, 111, "R1"],
+  ]),
+  mapping(),
+);
+assert.equal(joinOutput.summary.INVALID_DATA, 1);
+assert.equal(joinOutput.results.length, 1);
+assert.equal(joinOutput.results[0].invoiceNumber, "CN-10");
+assert.match(
+  joinOutput.results[0].invalidReason ?? "",
+  /line_count 1 tidak sama dengan 0 detail/,
+);
+assert.equal(
+  joinOutput.principalLines.some((line) => line.invoiceNumber === "CN-11"),
+  false,
+);
+
 console.log(
   "OK - HEINZ Return exact mapping, Approved, agregasi, nilai, invalid, missing, dan konflik.",
 );

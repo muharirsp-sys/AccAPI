@@ -925,7 +925,7 @@ function parseHeinzPrincipal(
     header = findHeader(headerRows, headerRequired),
     approved = new Map<
       string,
-      { customerCode: string; lineCount: number }
+      { customerCode: string; lineCount: number; sourceRowNumber: number }
     >(),
     seen = new Set<string>();
   for (let index = header.rowIndex + 1; index < headerRows.length; index++) {
@@ -954,6 +954,7 @@ function parseHeinzPrincipal(
         "line_count",
         sourceRowNumber,
       ),
+      sourceRowNumber,
     });
   }
 
@@ -981,6 +982,9 @@ function parseHeinzPrincipal(
         "CREDIT_NOTE_NUMBER",
         sourceRowNumber,
       ),
+      headerRow = approved.get(creditNote);
+    if (!headerRow && seen.has(creditNote)) continue;
+    const
       principalProductCode = requiredText(
         row,
         detail.columns,
@@ -988,7 +992,6 @@ function parseHeinzPrincipal(
         sourceRowNumber,
       ),
       accurateProductCode = mappings.get(principalProductCode) ?? null,
-      headerRow = approved.get(creditNote),
       total = requiredFinite(
         cell(row, detail.columns, "GROSS_VALUE"),
         "gross_value",
@@ -1024,9 +1027,24 @@ function parseHeinzPrincipal(
 
   const lines: CanonicalReturnLine[] = [],
     unmappedLines: CanonicalReturnLine[] = [];
-  for (const [creditNote, creditNoteLines] of grouped) {
-    const expected = approved.get(creditNote)!.lineCount;
+  for (const [creditNote, headerRow] of approved) {
+    const creditNoteLines = grouped.get(creditNote) ?? [],
+      expected = headerRow.lineCount;
     if (creditNoteLines.length !== expected) {
+      if (!creditNoteLines.length)
+        invalidLines.push({
+          source: "PRINCIPAL",
+          sourceRowNumber: headerRow.sourceRowNumber,
+          invoiceNumber: creditNote,
+          customerCode: headerRow.customerCode,
+          accurateProductCode: null,
+          principalProductCode: null,
+          quantity: 0,
+          dpp: 0,
+          tax: 0,
+          total: 0,
+          invalidReason: `line_count ${expected} tidak sama dengan 0 detail untuk ${creditNote}`,
+        });
       for (const line of creditNoteLines)
         invalidLines.push({
           ...line,
