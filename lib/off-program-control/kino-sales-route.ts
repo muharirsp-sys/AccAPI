@@ -12,7 +12,12 @@ export const CSV_MIME_TYPES = [
   "application/octet-stream",
   "",
 ] as const;
-const FIELDS = ["accurateFile", "principalFile"] as const;
+const TWO_FILE_FIELDS = ["accurateFile", "principalFile"] as const;
+const THREE_FILE_FIELDS = [
+  "accurateFile",
+  "headerFile",
+  "principalFile",
+] as const;
 
 type UploadContract =
   | { kind: "xlsx" }
@@ -60,20 +65,30 @@ function validateFile(
 export function validateUploadForm(
   form: FormData,
   principalUpload: UploadContract = { kind: "xlsx" },
-): [File, File] {
+  headerUpload?: UploadContract,
+): [File, File] | [File, File, File] {
+  const fields = headerUpload ? THREE_FILE_FIELDS : TWO_FILE_FIELDS;
   for (const key of form.keys())
-    if (!(FIELDS as readonly string[]).includes(key))
+    if (!(fields as readonly string[]).includes(key))
       throw new UploadError(`Field upload tidak dikenal: ${key}.`, 400);
-  return FIELDS.map((key) => {
+  return fields.map((key) => {
     const values = form.getAll(key);
     if (values.length !== 1)
       throw new UploadError(`${key} wajib diunggah tepat satu kali.`, 400);
     return validateFile(
       values[0],
-      key === "accurateFile" ? "File Accurate" : "File SALES_DETAIL",
-      key === "accurateFile" ? { kind: "xlsx" } : principalUpload,
+      key === "accurateFile"
+        ? "File Accurate"
+        : key === "headerFile"
+          ? "File HEADER"
+          : "File SALES_DETAIL",
+      key === "accurateFile"
+        ? { kind: "xlsx" }
+        : key === "headerFile"
+          ? headerUpload!
+          : principalUpload,
     );
-  }) as [File, File];
+  }) as [File, File] | [File, File, File];
 }
 
 export function safeParserMessage(error: unknown): string | null {
@@ -204,6 +219,25 @@ export function safeParserMessage(error: unknown): string | null {
       "QUANTITY(UNITS)",
       "AMOUNT",
       "SALE RETURN STATE",
+      "CREDIT_NOTE_NUMBER",
+      "GOODS_RETURN_NOTE_NUMBER",
+      "SALES_REPRESENTATIVE_CODE",
+      "RETAILER_CODE",
+      "RETAILER_NAME",
+      "CREDIT_NOTE_DATE",
+      "INVOICE_NUMBER",
+      "REMARKS",
+      "LINE_COUNT",
+      "NET_VALUE",
+      "STATUS",
+      "LINE_NUMBER",
+      "DISTRIBUTOR_STOCK_KEEPING_UNIT",
+      "UNIT_QUANTITY",
+      "UNIT",
+      "EACHES_QUANTITY",
+      "UNIT_PRICE",
+      "GROSS_VALUE",
+      "RETURN_CODE",
     ]),
     safeHeaderMessage =
       headerMatch?.[1]
@@ -219,17 +253,35 @@ export function safeParserMessage(error: unknown): string | null {
     : null;
 }
 
-interface HandlerDependencies {
+interface CommonHandlerDependencies {
   authorize(request: Request): Promise<Response | null>;
   readMapping(): Promise<Uint8Array>;
+  missingMappingMessage?: string;
+  principalUpload?: UploadContract;
+}
+
+interface TwoFileHandlerDependencies extends CommonHandlerDependencies {
+  headerUpload?: undefined;
   reconcile(
     accurate: Uint8Array,
     principal: Uint8Array,
     mapping: Uint8Array,
   ): unknown;
-  missingMappingMessage?: string;
-  principalUpload?: UploadContract;
 }
+
+interface ThreeFileHandlerDependencies extends CommonHandlerDependencies {
+  headerUpload: UploadContract;
+  reconcile(
+    accurate: Uint8Array,
+    header: Uint8Array,
+    principal: Uint8Array,
+    mapping: Uint8Array,
+  ): unknown;
+}
+
+type HandlerDependencies =
+  | TwoFileHandlerDependencies
+  | ThreeFileHandlerDependencies;
 
 function isZip(value: Uint8Array): boolean {
   return value.length >= 4 && value[0] === 0x50 && value[1] === 0x4b;
@@ -240,31 +292,48 @@ export function createKinoSalesPostHandler(deps: HandlerDependencies) {
     const denied = await deps.authorize(request);
     if (denied) return denied;
     try {
-      const [accurateFile, principalFile] = validateUploadForm(
+      const files = validateUploadForm(
         await request.formData().catch(() => {
           throw new UploadError("Form upload tidak valid.", 400);
         }),
         deps.principalUpload,
+        deps.headerUpload,
       );
-      const [accurate, principal] = await Promise.all([
-        accurateFile.arrayBuffer(),
-        principalFile.arrayBuffer(),
-      ]).then((values) => values.map((value) => new Uint8Array(value)));
+      const buffers = await Promise.all(
+        files.map((file) => file.arrayBuffer()),
+      ).then((values) => values.map((value) => new Uint8Array(value)));
+      const [accurate] = buffers;
       if (
         !isZip(accurate) ||
-        (deps.principalUpload?.kind !== "csv" && !isZip(principal))
+        (!deps.headerUpload &&
+          deps.principalUpload?.kind !== "csv" &&
+          !isZip(buffers[1]))
       )
         throw new UploadError(
           "File upload bukan workbook XLSX yang valid.",
           422,
         );
-      if (deps.principalUpload?.kind === "csv") {
-        if (!principal.length) throw new UploadError("File CSV kosong", 422);
-        if (principal.includes(0))
+      const csvBuffers = deps.headerUpload
+        ? buffers.slice(1)
+        : deps.principalUpload?.kind === "csv"
+          ? buffers.slice(1)
+          : [];
+      for (const csv of csvBuffers) {
+        if (!csv.length) throw new UploadError("File CSV kosong", 422);
+        if (csv.includes(0))
           throw new UploadError("File CSV mengandung karakter NUL.", 422);
       }
       const mapping = await deps.readMapping();
-      return Response.json(deps.reconcile(accurate, principal, mapping));
+      return Response.json(
+        deps.headerUpload
+          ? deps.reconcile(
+              accurate,
+              buffers[1],
+              buffers[2],
+              mapping,
+            )
+          : deps.reconcile(accurate, buffers[1], mapping),
+      );
     } catch (error) {
       if (
         error &&
