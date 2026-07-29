@@ -30,9 +30,8 @@ The failure was the expected missing-feature failure.
   cleanup, direct `Pvt Map 1` code mapping, and exact-unique `Form Fix` name
   fallback.
 - Added strict single-token validation for customer/return identifiers,
-  per-line invalid Accurate REM handling, required non-negative finite GODREJ
-  numbers, 11% tax decomposition, unmapped handling, aggregation, and DPP
-  tolerance.
+  per-line invalid Accurate REM handling, required finite GODREJ magnitudes,
+  11% tax decomposition, unmapped handling, aggregation, and DPP tolerance.
 - Added synthetic coverage for all Task 1 cases and real three-file acceptance.
 - Copied the source master byte-for-byte to
   `data/reconciliation/GODREJ_RETURN.xlsx`.
@@ -98,3 +97,82 @@ PowerShell comparison returned `Equal: True`.
 - Existing validation scripts emit Node's pre-existing
   `MODULE_TYPELESS_PACKAGE_JSON` performance warning. It is non-fatal and was
   not addressed because changing package module mode is outside Task 1.
+
+## Reviewer Fix Round 1
+
+### Findings addressed
+
+1. GODREJ `Quantity(Units)` and `Amount` now accept either sign and normalize
+   with `Math.abs`; empty and non-finite values remain rejected.
+2. Product cleanup now removes only numeric packaging annotations matching
+   `(<digits>/<digits>)`. A descriptive parenthetical such as `(LEMON)` remains
+   part of the exact product name.
+3. The design spec and implementation plan now state those rules consistently.
+
+### TDD evidence
+
+Signed-magnitude test RED before the production edit:
+
+```text
+Exit code: 1
+Error: Amount tidak valid pada baris 2
+```
+
+After changing the shared GODREJ numeric parser:
+
+```text
+Exit code: 0
+GODREJ Return synthetic validation passed.
+```
+
+Descriptive-parenthetical test RED before tightening the cleanup regex:
+
+```text
+Exit code: 1
+AssertionError: Expected values to be strictly equal:
+0 !== 1
+```
+
+The failing assertion expected one `UNMAPPED` result for `SOAP (LEMON)`;
+the old parser incorrectly stripped `(LEMON)` and mapped it to `SOAP`.
+After restricting cleanup to `\(\d+/\d+\)`, the synthetic validation passed.
+The existing fallback test continues to prove that `(1/12)` is removed.
+
+### Fresh GREEN and regression evidence
+
+```powershell
+node --experimental-strip-types lib/off-program-control/godrej-return-validation.test.ts
+```
+
+```text
+Exit code: 0
+GODREJ Return synthetic validation passed.
+```
+
+```powershell
+node --experimental-strip-types lib/off-program-control/godrej-return-validation.test.ts "C:\Users\Fiqhi Fauzan\Downloads\godrej\rincian_faktur_penjualan_cvsuryaperkasa_260729083809.xlsx" "C:\Users\Fiqhi Fauzan\Downloads\godrej\Salereturns18.csv" "C:\Users\Fiqhi Fauzan\Downloads\godrej\FIX FORM MASTER BARANG - GDI.xlsx"
+```
+
+```text
+Exit code: 0
+GODREJ Return synthetic validation passed.
+GODREJ Return real-workbook validation passed.
+```
+
+```powershell
+node --experimental-strip-types lib/off-program-control/kino-return-validation.test.ts
+node --experimental-strip-types lib/off-program-control/shinzui-return-validation.test.ts
+npx tsc --noEmit
+git diff --check
+```
+
+```text
+Exit code: 0
+KINO Return synthetic validation passed.
+shinzui return reconciliation: ok
+TypeScript: no output (success).
+git diff --check: no whitespace errors.
+```
+
+Concern remains limited to the pre-existing non-fatal Node
+`MODULE_TYPELESS_PACKAGE_JSON` warning.

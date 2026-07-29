@@ -49,7 +49,8 @@ assert.equal(output.results[0].principalDpp, 11100 / 1.11);
 
 Tambahkan kasus RED untuk filter approved, customer bentuk kurung/suffix,
 mapping kode, fallback nama exact, nama ambigu/tidak ditemukan, REM nol/ganda,
-angka kosong/NaN/negatif, agregasi key, toleransi tepat Rp1 dan lebih dari Rp1.
+angka kosong/NaN, normalisasi negatif menjadi magnitudo, anotasi kemasan versus
+parenthetical deskriptif, agregasi key, toleransi tepat Rp1 dan lebih dari Rp1.
 Test nyata harus assert 33/6 lines, summary 6/27/0, qty 42, serta total acceptance
 dari Global Constraints.
 
@@ -281,4 +282,3 @@ git status --short
 
 Pastikan hanya `.codex/` dan workspace SDD yang tidak dilacak, server lokal
 tetap dapat diakses pada port 3000, dan tidak ada push.
-

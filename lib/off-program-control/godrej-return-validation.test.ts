@@ -127,6 +127,14 @@ const fallback = reconcileGodrejReturns(
 assert.equal(fallback.summary.MATCH, 1);
 assert.equal(fallback.principalLines[0].accurateProductCode, "WIN-F");
 
+const descriptiveParenthetical = reconcileGodrejReturns(
+  accurate(accurateRow({ KODE_BARANG: "WIN-SOAP" })),
+  principal(principalRow({ Skunit: "999 - SOAP (LEMON)" })),
+  mapping([], [["SOAP", "WIN-SOAP"]]),
+);
+assert.equal(descriptiveParenthetical.summary.UNMAPPED, 1);
+assert.equal(descriptiveParenthetical.summary.MISSING_PRINCIPAL, 1);
+
 const unmapped = reconcileGodrejReturns(
   accurate(accurateRow({ KODE_BARANG: "WIN-X" })),
   principal(principalRow({ Skunit: "999 - NOT IN MASTER" })),
@@ -181,10 +189,8 @@ assert.throws(
 for (const [name, value] of [
   ["Quantity(Units)", ""],
   ["Quantity(Units)", "NaN"],
-  ["Quantity(Units)", -1],
   ["Amount", ""],
   ["Amount", "NaN"],
-  ["Amount", -1],
 ] as const)
   assert.throws(
     () =>
@@ -195,6 +201,16 @@ for (const [name, value] of [
       ),
     new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*baris 2`),
   );
+
+const signed = reconcileGodrejReturns(
+  accurate(accurateRow()),
+  principal(principalRow({ "Quantity(Units)": -1, Amount: -11_100 })),
+  mapping(),
+);
+assert.equal(signed.results[0].principalQuantity, 1);
+assert.equal(signed.results[0].principalTotal, 11_100);
+assert.equal(signed.results[0].principalDpp, 10_000);
+assert.ok(Math.abs(signed.results[0].principalTax - 1_100) < 0.000001);
 
 const aggregated = reconcileGodrejReturns(
   accurate(

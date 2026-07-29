@@ -292,7 +292,7 @@ function cleanGodrejProductName(value: unknown, leadingCode = ""): string {
       "",
     );
   name = name
-    .replace(/\s*\([^)]*\)\s*$/, "")
+    .replace(/\s*\(\d+\/\d+\)\s*$/, "")
     .replace(/[.,;:|\-]+\s*$/, "")
     .trim();
   if (leadingCode)
@@ -320,9 +320,9 @@ function godrejNumber(value: unknown, label: string, row: number): number {
     throw new Error(`${label} kosong pada baris ${row}`);
   const parsed =
     typeof value === "number" ? value : Number(String(value).replace(/,/g, ""));
-  if (!Number.isFinite(parsed) || parsed < 0)
+  if (!Number.isFinite(parsed))
     throw new Error(`${label} tidak valid pada baris ${row}`);
-  return parsed;
+  return Math.abs(parsed);
 }
 
 function parseAccurate(

@@ -35,8 +35,9 @@ Urutan mapping:
 1. Gunakan mapping kode `Kode Pcpl -> Kode BARANG Win2` dari `Pvt Map 1` bila
    kode awal `Skunit` tersedia dan menghasilkan satu kandidat.
 2. Bila kode baru belum tersedia, bersihkan nama `Skunit` secara deterministik:
-   buang kode awal beserta pemisah, pengulangan kode di akhir, anotasi `(x/y)`,
-   tanda baca terminal, lalu normalisasi kapital dan spasi.
+   buang kode awal beserta pemisah, pengulangan kode di akhir, anotasi kemasan
+   `(<digits>/<digits>)`, tanda baca terminal, lalu normalisasi kapital dan spasi.
+   Parenthetical deskriptif seperti `(LEMON)` tetap bagian nama.
 3. Cocokkan secara exact ke `Nama Barang Principle -> Kode BARANG Win2` pada
    `Form Fix`.
 4. Nama yang tidak ditemukan menjadi `UNMAPPED`. Nama yang menunjuk ke lebih
@@ -73,8 +74,9 @@ multipart `accurateFile` untuk XLSX dan `principalFile` untuk CSV, permission
 
 Missing header GODREJ yang dikenal boleh dikembalikan sebagai error 422 yang
 informatif. Nama header asing atau sensitif seperti `DATABASE PASSWORD` harus
-tetap disamarkan sebagai error 500 umum. Input kosong, angka non-finite atau
-negatif, customer ambigu, dan mapping konflik wajib ditolak.
+tetap disamarkan sebagai error 500 umum. `Quantity(Units)` dan `Amount` negatif
+valid dan dinormalisasi menjadi magnitudo; input kosong, angka non-finite,
+customer ambigu, dan mapping konflik wajib ditolak.
 
 ## Acceptance nyata
 
@@ -93,4 +95,3 @@ Dengan tiga file yang diberikan:
 
 Regresi wajib menjaga Return SHINZUI/KINO, Faktur GODREJ/CUSSONS, Pembelian
 pasif, tiga tema, fokus masalah, aksesibilitas, dan ekspor existing.
-
