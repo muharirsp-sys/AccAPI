@@ -209,7 +209,7 @@ export function safeParserMessage(error: unknown): string | null {
       "i",
     ),
     returnMessage =
-      /^(?:File XLSX rusak atau tidak valid\.|(?:KODE PELANGGAN INDUK|KODE BARANG|INV NUM|ID PRODUK|ID PELANGGAN LAMA) kosong pada baris \d+|(?:QTY SMALL|DPP INV|PPN INV|TOTAL INV) tidak valid pada baris \d+|REM harus memuat tepat satu nomor invoice pada baris \d+|Mapping KODE BARANG ambigu pada baris \d+|(?:KODE PELANGGAN INDUK|SALE RETURN NO\.|CUSTOMER) harus memuat tepat satu token pada baris \d+|(?:Quantity\(Units\)|Amount) (?:kosong|tidak valid) pada baris \d+|Mapping produk GODREJ konflik: [A-Z0-9._/-]+(?:, [A-Z0-9._/-]+)*)$/;
+      /^(?:File XLSX rusak atau tidak valid\.|(?:KODE PELANGGAN INDUK|KODE BARANG|INV NUM|ID PRODUK|ID PELANGGAN LAMA) kosong pada baris \d+|(?:QTY SMALL|DPP INV|PPN INV|TOTAL INV) tidak valid pada baris \d+|REM harus memuat tepat satu nomor invoice pada baris \d+|Mapping KODE BARANG ambigu pada baris \d+|(?:KODE PELANGGAN INDUK|SALE RETURN NO\.|CUSTOMER) harus memuat tepat satu token pada baris \d+|(?:Quantity\(Units\)|Amount) (?:kosong|tidak valid) pada baris \d+|Mapping produk GODREJ konflik: [A-Z0-9._/-]+(?:, [A-Z0-9._/-]+)*|line_count harus bilangan bulat non-negatif pada baris \d+)$/;
   const headerMatch = /^Header wajib tidak ditemukan: (.+)$/.exec(error.message),
     knownHeaders = new Set([
       ...kinoHeaders,

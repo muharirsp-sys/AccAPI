@@ -323,6 +323,44 @@ async function main(): Promise<void> {
     error: "retailer_name harus memuat tepat satu token pada baris 2",
   });
 
+  for (const lineCount of [-1, 1.5]) {
+    const invalidLineCount = await withPermissions(
+      ["reconciliation.run"],
+      () =>
+        POST(
+          request((form) =>
+            form.set(
+              "headerFile",
+              file(
+                csv([
+                  headerColumns,
+                  [
+                    "CN-1",
+                    "GRN-1",
+                    "S1",
+                    "OLD-1",
+                    "TOKO A C-A",
+                    "2026-07-22",
+                    "I1",
+                    "",
+                    lineCount,
+                    111,
+                    "Approved",
+                  ],
+                ]),
+                "header.csv",
+                "text/csv",
+              ),
+            ),
+          ),
+        ),
+    );
+    assert.equal(invalidLineCount.status, 422);
+    assert.deepEqual(await invalidLineCount.json(), {
+      error: "line_count harus bilangan bulat non-negatif pada baris 2",
+    });
+  }
+
   const originalCwd = process.cwd;
   process.cwd = () => "D:\\definitely-missing-heinz-route-master";
   try {
