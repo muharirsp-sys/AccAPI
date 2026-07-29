@@ -44,7 +44,7 @@ const returnStatuses: ReturnStatus[] = [
   "MATCH", "QTY_MISMATCH", "VALUE_MISMATCH", "QTY_AND_VALUE_MISMATCH",
   "MISSING_ACCURATE", "MISSING_PRINCIPAL", "UNMAPPED", "INVALID_DATA",
 ];
-const returnPrinciples = ["SHINZUI", "KINO", "GODREJ", "HEINZ"] as const;
+const returnPrinciples = ["SHINZUI", "KINO", "GODREJ", "HEINZ", "CUSSONS"] as const;
 const fixedStatusLabels: Partial<Record<UiStatus, string>> = {
   MATCH: "Cocok",
   QTY_MISMATCH: "Selisih jumlah",
@@ -435,7 +435,7 @@ export default function ReconciliationPage() {
             {division === "RETURN"
               ? principal === "HEINZ"
                 ? "Bandingkan retur Accurate dengan laporan HEADER dan DETAIL HEINZ."
-                : `Bandingkan retur Accurate dengan laporan ${principal === "SHINZUI" ? "PenjualanInvoice" : principal === "GODREJ" ? "Sale Returns" : "Sales Detail"} ${principal}.`
+                : `Bandingkan retur Accurate dengan laporan ${principal === "SHINZUI" ? "PenjualanInvoice" : principal === "GODREJ" ? "Sale Returns" : principal === "CUSSONS" ? "TXN_NOTEPRD" : "Sales Detail"} ${principal}.`
               : `Bandingkan faktur Accurate dengan data penjualan prinsipal ${principal}.`}
           </p>
         </div>
@@ -514,7 +514,7 @@ export default function ReconciliationPage() {
           ).map((kind) => {
             const file = kind === "accurate" ? accurateFile : kind === "header" ? headerFile : principalFile;
             const isCsvPrincipal = kind === "principal" && (
-              (division === "RETURN" && (principal === "GODREJ" || principal === "HEINZ")) ||
+              (division === "RETURN" && (principal === "GODREJ" || principal === "HEINZ" || principal === "CUSSONS")) ||
               (division === "FAKTUR" && principal === "CUSSONS")
             );
             const isCsv = kind === "header" || isCsvPrincipal;
@@ -523,7 +523,7 @@ export default function ReconciliationPage() {
                 ? "Retur Penjualan (Accurate)"
                 : kind === "header"
                   ? "HEADER HEINZ"
-                  : `${principal === "SHINZUI" ? "PenjualanInvoice" : principal === "GODREJ" ? "Sale Returns" : principal === "HEINZ" ? "DETAIL" : "Sales Detail"} ${principal}`
+                  : `${principal === "SHINZUI" ? "PenjualanInvoice" : principal === "GODREJ" ? "Sale Returns" : principal === "HEINZ" ? "DETAIL" : principal === "CUSSONS" ? "TXN_NOTEPRD" : "Sales Detail"} ${principal}`
               : kind === "accurate"
                 ? "Rincian Faktur Penjualan (Accurate)"
                 : `${isCsvPrincipal ? "Detail" : "Sales Detail"} ${principal}`;

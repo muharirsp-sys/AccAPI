@@ -208,7 +208,7 @@ test("runs SHINZUI Return reconciliation with focused issues and export", async 
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByText("Pembelian", { exact: true }).locator("..")).toContainText("Belum aktif");
 });
-test("runs KINO and GODREJ Return reconciliation and resets when switching principal", async ({ page, baseURL }) => {
+test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switching principal", async ({ page, baseURL }) => {
   const login = await page.request.post("/api/auth/sign-in/email", { headers: { Origin: baseURL || "http://localhost:3000" }, data: { email: QA_EMAIL, password: QA_PASSWORD } });
   expect(login.ok()).toBeTruthy();
   await page.goto("/reconciliation");
@@ -377,6 +377,80 @@ test("runs KINO and GODREJ Return reconciliation and resets when switching princ
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toHaveCount(0);
+
+  await page.getByLabel("Prinsipal").selectOption("CUSSONS");
+  await expect(
+    page.getByText("Bandingkan retur Accurate dengan laporan TXN_NOTEPRD CUSSONS.", { exact: true }),
+  ).toBeVisible();
+  const cussonsFile = page.getByLabel("TXN_NOTEPRD CUSSONS");
+  await expect(cussonsFile).toHaveAttribute("accept", ".csv,text/csv,application/csv");
+  const runButton = page.getByRole("button", { name: "Jalankan rekonsiliasi" });
+  await expect(runButton).toBeDisabled();
+  await page.getByLabel("Retur Penjualan (Accurate)").setInputFiles(xlsx("accurate-cussons-return.xlsx"));
+  await expect(runButton).toBeDisabled();
+  await cussonsFile.setInputFiles(csv("txn-noteprd.csv"));
+  await expect(runButton).toBeEnabled();
+
+  const cussonsReturnResult = {
+    ...returnResult,
+    summary: { ...returnSummary, MATCH: 1, QTY_MISMATCH: 0, VALUE_MISMATCH: 0, MISSING_PRINCIPAL: 1 },
+    results: [
+      returnResult.results[0],
+      {
+        ...returnResult.results[1],
+        invoiceNumber: "CN26000123",
+        principalProductCode: null,
+        principalQuantity: 0,
+        principalDpp: 0,
+        principalTax: 0,
+        principalTotal: 0,
+        status: "MISSING_PRINCIPAL",
+        warnings: [],
+        principalSourceRows: [],
+      },
+    ],
+  };
+  let cussonsReturnCalled = false;
+  await page.route("**/api/reconciliation/cussons/returns", async (route) => {
+    cussonsReturnCalled = true;
+    expect(route.request().method()).toBe("POST");
+    const body = await route.request().postDataBuffer();
+    expect(body?.toString()).toContain('name="accurateFile"');
+    expect(body?.toString()).toContain('name="principalFile"');
+    expect(body?.toString()).toContain('filename="txn-noteprd.csv"');
+    expect(body?.toString()).not.toContain('name="headerFile"');
+    await route.fulfill({ json: cussonsReturnResult });
+  });
+  await runButton.click();
+
+  expect(cussonsReturnCalled).toBe(true);
+  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByText("CN26000123", { exact: true })).toBeVisible();
+  await expect(page.getByText("Data tidak ditemukan di CUSSONS.", { exact: true })).toBeVisible();
+  await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
+  const cussonsDownloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Ekspor XLSX" }).click();
+  const cussonsDownload = await cussonsDownloadPromise;
+  expect(cussonsDownload.suggestedFilename()).toMatch(/^rekonsiliasi-return-cussons-\d{4}-\d{2}-\d{2}\.xlsx$/);
+  const cussonsDownloadPath = await cussonsDownload.path();
+  expect(cussonsDownloadPath).not.toBeNull();
+  const cussonsWorkbook = XLSX.readFile(cussonsDownloadPath!);
+  const cussonsDetail = XLSX.utils.sheet_to_json<Record<string, string | number>>(cussonsWorkbook.Sheets.Detail);
+  expect(cussonsDetail[1]).toMatchObject({
+    Invoice: "CN26000123",
+    "Baris Accurate": "3",
+  });
+  expect(cussonsDetail[1]["Penyebab selisih"]).toContain("Data tidak ditemukan di CUSSONS.");
+  expect(cussonsDetail[1]["Penyebab selisih"]).toContain("Qty: Accurate 3, CUSSONS 0");
+
+  await page.getByLabel("Prinsipal").selectOption("HEINZ");
+  await expect(page.getByLabel("HEADER HEINZ")).toBeVisible();
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(3);
+  await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
+  await page.getByLabel("Prinsipal").selectOption("CUSSONS");
+  await expect(page.getByLabel("TXN_NOTEPRD CUSSONS")).toBeVisible();
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
+  await expect(runButton).toBeDisabled();
 });
 test("runs HEINZ Return with HEADER and DETAIL then resets all three files", async ({ page, baseURL }) => {
   const login = await page.request.post("/api/auth/sign-in/email", {
