@@ -1,4 +1,8 @@
 import * as XLSX from "xlsx";
+import {
+  parseCussonsMappings,
+  type CussonsMappings,
+} from "./sales-reconciliation";
 
 export type ReturnStatus =
   | "MATCH"
@@ -1062,24 +1066,324 @@ function parseHeinzPrincipal(
   return { lines, unmappedLines, invalidLines };
 }
 
+function cussonsNumber(value: unknown, label: string, row: number): number {
+  if (value == null || text(value) === "")
+    throw new Error(`${label} kosong pada baris ${row}`);
+  const parsed =
+    typeof value === "number" ? value : Number(String(value).replace(/,/g, ""));
+  if (!Number.isFinite(parsed) || parsed < 0)
+    throw new Error(`${label} tidak valid pada baris ${row}`);
+  return parsed;
+}
+
+function separateDuplicateCustomers(lines: CanonicalReturnLine[]): {
+  lines: CanonicalReturnLine[];
+  invalidLines: CanonicalReturnLine[];
+} {
+  const customers = new Map<string, Set<string>>();
+  for (const line of lines) {
+    const values = customers.get(line.invoiceNumber) ?? new Set<string>();
+    values.add(line.customerCode);
+    customers.set(line.invoiceNumber, values);
+  }
+  const ambiguous = new Set(
+      [...customers]
+        .filter(([, values]) => values.size > 1)
+        .map(([invoice]) => invoice),
+    ),
+    valid: CanonicalReturnLine[] = [],
+    invalidLines: CanonicalReturnLine[] = [];
+  for (const line of lines)
+    (ambiguous.has(line.invoiceNumber) ? invalidLines : valid).push(
+      ambiguous.has(line.invoiceNumber)
+        ? {
+            ...line,
+            invalidReason: `${line.invoiceNumber} memuat lebih dari satu customer`,
+          }
+        : line,
+    );
+  return { lines: valid, invalidLines };
+}
+
+function parseCussonsAccurate(
+  buffer: Buffer | Uint8Array,
+): { lines: CanonicalReturnLine[]; invalidLines: CanonicalReturnLine[] } {
+  const rows = readRows(buffer, "Rincian Faktur Penjualan"),
+    required = [
+      "NO_NOTA",
+      "KODE PELANGGAN INDUK",
+      "KODE_BARANG",
+      "QTY_SATUANKECIL",
+      "DPP",
+      "NILAI_PAJAK",
+      "JUMLAH",
+      "REM",
+      "JENIS_TRANSAKSI",
+    ],
+    header = findHeader(rows, required),
+    parsed: CanonicalReturnLine[] = [],
+    invalidLines: CanonicalReturnLine[] = [];
+  for (let index = header.rowIndex + 1; index < rows.length; index++) {
+    const row = rows[index], sourceRowNumber = index + 1;
+    if (!row.some((entry) => text(entry))) continue;
+    if (
+      !text(cell(row, header.columns, "JENIS_TRANSAKSI")).includes(
+        "RETUR PENJUALAN",
+      )
+    )
+      continue;
+    const matches =
+      text(cell(row, header.columns, "REM")).match(
+        /(?<![A-Z0-9])CN\d+(?![A-Z0-9])/g,
+      ) ?? [];
+    let invalidReason =
+      matches.length === 1
+        ? null
+        : `REM harus memuat tepat satu token CN pada baris ${sourceRowNumber}`;
+    const customerCode = text(
+        cell(row, header.columns, "KODE PELANGGAN INDUK"),
+      ),
+      accurateProductCode = text(cell(row, header.columns, "KODE_BARANG"));
+    if (!customerCode)
+      invalidReason ??= `KODE PELANGGAN INDUK kosong pada baris ${sourceRowNumber}`;
+    if (!accurateProductCode)
+      invalidReason ??= `KODE_BARANG kosong pada baris ${sourceRowNumber}`;
+    let quantity = 0, dpp = 0, tax = 0, total = 0;
+    try {
+      quantity = cussonsNumber(
+        cell(row, header.columns, "QTY_SATUANKECIL"),
+        "QTY_SATUANKECIL",
+        sourceRowNumber,
+      );
+      dpp = cussonsNumber(
+        cell(row, header.columns, "DPP"),
+        "DPP",
+        sourceRowNumber,
+      );
+      tax = cussonsNumber(
+        cell(row, header.columns, "NILAI_PAJAK"),
+        "NILAI_PAJAK",
+        sourceRowNumber,
+      );
+      total = cussonsNumber(
+        cell(row, header.columns, "JUMLAH"),
+        "JUMLAH",
+        sourceRowNumber,
+      );
+    } catch (error) {
+      invalidReason ??=
+        error instanceof Error ? error.message : "Nilai Accurate tidak valid";
+    }
+    const line: CanonicalReturnLine = {
+      source: "ACCURATE",
+      sourceRowNumber,
+      invoiceNumber:
+        matches[0] ??
+        text(cell(row, header.columns, "NO_NOTA")) ??
+        `BARIS-${sourceRowNumber}`,
+      customerCode,
+      accurateProductCode: accurateProductCode || null,
+      principalProductCode: null,
+      quantity,
+      dpp,
+      tax,
+      total,
+      invalidReason,
+    };
+    (invalidReason ? invalidLines : parsed).push(line);
+  }
+  const unique = separateDuplicateCustomers(parsed);
+  return {
+    lines: unique.lines,
+    invalidLines: [...invalidLines, ...unique.invalidLines],
+  };
+}
+
+function parseCussonsPrincipal(
+  buffer: Buffer | Uint8Array,
+  mappings: CussonsMappings,
+): {
+  lines: CanonicalReturnLine[];
+  unmappedLines: CanonicalReturnLine[];
+  invalidLines: CanonicalReturnLine[];
+} {
+  const rows = readRows(buffer, "Sheet1"),
+    required = [
+      "CREDIT NOTE NO",
+      "CUSTOMER CODE",
+      "ROUTE CODE",
+      "PRODUCT CODE",
+      "PRODUCT DESCRIPTION",
+      "UOM CODE",
+      "SELLING TYPE",
+      "PRD QTY",
+      "UOM LIST PRICE",
+      "GROSS AMOUNT",
+      "DISCOUNT AMOUNT",
+      "TOTAL AMOUNT AFTER SKU",
+      "CUSTOMER DISCOUNT AMOUNT",
+      "TOTAL TAX AMOUNT",
+      "TOTAL NET AMOUNT",
+      "TAX CODE",
+      "TAX PERCENTAGE 1",
+    ],
+    header = findHeader(rows, required),
+    parsed: CanonicalReturnLine[] = [],
+    invalidLines: CanonicalReturnLine[] = [];
+  for (let index = header.rowIndex + 1; index < rows.length; index++) {
+    const row = rows[index], sourceRowNumber = index + 1;
+    if (!row.some((entry) => text(entry))) continue;
+    const matches =
+        text(cell(row, header.columns, "CREDIT NOTE NO")).match(
+          /(?<![A-Z0-9])CN\d+(?![A-Z0-9])/g,
+        ) ?? [],
+      customerCode = text(cell(row, header.columns, "CUSTOMER CODE")),
+      principalProductCode = text(cell(row, header.columns, "PRODUCT CODE")),
+      mapping = mappings.products.get(principalProductCode);
+    let invalidReason =
+      matches.length === 1
+        ? null
+        : `Credit Note No harus memuat tepat satu token pada baris ${sourceRowNumber}`;
+    if (!customerCode)
+      invalidReason ??= `Customer Code kosong pada baris ${sourceRowNumber}`;
+    if (!principalProductCode)
+      invalidReason ??= `Product Code kosong pada baris ${sourceRowNumber}`;
+    let quantity = 0,
+      dpp = 0,
+      tax = 0,
+      total = 0,
+      conversionUnmapped = false;
+    try {
+      const principalQuantity = cussonsNumber(
+          cell(row, header.columns, "PRD QTY"),
+          "Prd Qty",
+          sourceRowNumber,
+        ),
+        price = cussonsNumber(
+          cell(row, header.columns, "UOM LIST PRICE"),
+          "UOM List Price",
+          sourceRowNumber,
+        ),
+        gross = cussonsNumber(
+          cell(row, header.columns, "GROSS AMOUNT"),
+          "Gross Amount",
+          sourceRowNumber,
+        ),
+        discount = cussonsNumber(
+          cell(row, header.columns, "DISCOUNT AMOUNT"),
+          "Discount Amount",
+          sourceRowNumber,
+        ),
+        afterSku = cussonsNumber(
+          cell(row, header.columns, "TOTAL AMOUNT AFTER SKU"),
+          "Total Amount After SKU",
+          sourceRowNumber,
+        ),
+        customerDiscount = cussonsNumber(
+          cell(row, header.columns, "CUSTOMER DISCOUNT AMOUNT"),
+          "Customer Discount Amount",
+          sourceRowNumber,
+        ),
+        taxPercentage = cussonsNumber(
+          cell(row, header.columns, "TAX PERCENTAGE 1"),
+          "Tax Percentage 1",
+          sourceRowNumber,
+        );
+      tax = cussonsNumber(
+        cell(row, header.columns, "TOTAL TAX AMOUNT"),
+        "Total Tax Amount",
+        sourceRowNumber,
+      );
+      total = cussonsNumber(
+        cell(row, header.columns, "TOTAL NET AMOUNT"),
+        "Total Net Amount",
+        sourceRowNumber,
+      );
+      dpp = afterSku - customerDiscount;
+      if (dpp < 0)
+        throw new Error(`DPP tidak valid pada baris ${sourceRowNumber}`);
+      const formula = (
+        actual: number,
+        expected: number,
+        label: string,
+      ) => {
+        if (Math.abs(actual - expected) > 1 + 1e-9)
+          throw new Error(`${label} tidak konsisten pada baris ${sourceRowNumber}`);
+      };
+      formula(gross, principalQuantity * price, "Gross Amount");
+      formula(afterSku, gross - discount, "Total Amount After SKU");
+      formula(tax, (dpp * taxPercentage) / 100, "Total Tax Amount");
+      formula(total, dpp + tax, "Total Net Amount");
+      if (text(cell(row, header.columns, "SELLING TYPE")) !== "S")
+        throw new Error(`Selling Type harus S pada baris ${sourceRowNumber}`);
+      if (text(cell(row, header.columns, "TAX CODE")) !== "PPN_OUTPUT")
+        throw new Error(`Tax Code harus PPN_Output pada baris ${sourceRowNumber}`);
+      if (Math.abs(taxPercentage - 11) > 1e-9)
+        throw new Error(`Tax Percentage 1 harus 11 pada baris ${sourceRowNumber}`);
+      const unit = text(cell(row, header.columns, "UOM CODE"));
+      if (unit === "EA") quantity = principalQuantity;
+      else if (unit === "CS") {
+        if (!mapping?.caseSize || mapping.caseSize <= 0) {
+          quantity = principalQuantity;
+          conversionUnmapped = true;
+        } else quantity = principalQuantity * mapping.caseSize;
+      } else
+        throw new Error(`UOM code harus EA atau CS pada baris ${sourceRowNumber}`);
+    } catch (error) {
+      invalidReason ??=
+        error instanceof Error ? error.message : "Nilai CUSSONS tidak valid";
+    }
+    const line: CanonicalReturnLine = {
+      source: "PRINCIPAL",
+      sourceRowNumber,
+      invoiceNumber: matches[0] ?? `BARIS-${sourceRowNumber}`,
+      customerCode,
+      accurateProductCode:
+        mapping?.mappingStatus === "OK" && !conversionUnmapped
+          ? mapping.productCodeInternal
+          : null,
+      principalProductCode: principalProductCode || null,
+      quantity,
+      dpp,
+      tax,
+      total,
+      invalidReason,
+    };
+    (invalidReason ? invalidLines : parsed).push(line);
+  }
+  const unique = separateDuplicateCustomers(parsed),
+    lines: CanonicalReturnLine[] = [],
+    unmappedLines: CanonicalReturnLine[] = [];
+  for (const line of unique.lines)
+    (line.accurateProductCode ? lines : unmappedLines).push(line);
+  return {
+    lines,
+    unmappedLines,
+    invalidLines: [...invalidLines, ...unique.invalidLines],
+  };
+}
+
 function key(
   line: CanonicalReturnLine,
   matchingProductCode?: (line: CanonicalReturnLine) => string | null,
+  matchingCustomerCode?: (line: CanonicalReturnLine) => string,
 ): string {
   return `${line.invoiceNumber}|${
     matchingProductCode?.(line) ??
     line.principalProductCode ??
     line.accurateProductCode
-  }|${line.customerCode}`;
+  }|${matchingCustomerCode?.(line) ?? line.customerCode}`;
 }
 
 function aggregate(
   lines: CanonicalReturnLine[],
   matchingProductCode?: (line: CanonicalReturnLine) => string | null,
+  matchingCustomerCode?: (line: CanonicalReturnLine) => string,
 ): Map<string, Aggregate> {
   const output = new Map<string, Aggregate>();
   for (const line of lines) {
-    const id = key(line, matchingProductCode), existing = output.get(id);
+    const id = key(line, matchingProductCode, matchingCustomerCode),
+      existing = output.get(id);
     if (existing) {
       existing.quantity += line.quantity;
       existing.dpp += line.dpp;
@@ -1162,6 +1466,7 @@ function reconcileParsedReturns({
   dppTolerance,
   unmappedAccurateStatus = () => "UNMAPPED",
   matchingProductCode,
+  matchingCustomerCode,
   isAccurateMapped = (line) => line.principalProductCode !== null,
 }: {
   accurateLines: CanonicalReturnLine[];
@@ -1174,13 +1479,19 @@ function reconcileParsedReturns({
   dppTolerance: number;
   unmappedAccurateStatus?: (line: Aggregate) => ReturnStatus;
   matchingProductCode?: (line: CanonicalReturnLine) => string | null;
+  matchingCustomerCode?: (line: CanonicalReturnLine) => string;
   isAccurateMapped?: (line: CanonicalReturnLine) => boolean;
 }): ReturnReconciliationOutput {
   const mappedAccurate = aggregate(
       matchableAccurateLines.filter(isAccurateMapped),
       matchingProductCode,
+      matchingCustomerCode,
     ),
-    principals = aggregate(matchablePrincipalLines, matchingProductCode),
+    principals = aggregate(
+      matchablePrincipalLines,
+      matchingProductCode,
+      matchingCustomerCode,
+    ),
     results: ReturnReconciliationResult[] = [];
 
   for (const invalid of invalidAccurateLines)
@@ -1196,6 +1507,7 @@ function reconcileParsedReturns({
   for (const unmapped of aggregate(
     matchableAccurateLines.filter((line) => !isAccurateMapped(line)),
     matchingProductCode,
+    matchingCustomerCode,
   ).values())
     results.push(result(unmapped, undefined, unmappedAccurateStatus(unmapped)));
   for (const unmapped of aggregate(unmappedPrincipalLines).values())
@@ -1346,6 +1658,39 @@ export function reconcileHeinzReturns(
     invalidPrincipalLines: principal.invalidLines,
     unmappedPrincipalLines: principal.unmappedLines,
     matchingProductCode: (line) => line.accurateProductCode,
+    isAccurateMapped: () => true,
+    dppTolerance,
+  });
+}
+
+export function reconcileCussonsReturns(
+  accurateBuffer: Buffer | Uint8Array,
+  principalBuffer: Buffer | Uint8Array,
+  mappingBuffer: Buffer | Uint8Array,
+  options: { dppTolerance?: number } = {},
+): ReturnReconciliationOutput {
+  const dppTolerance = options.dppTolerance ?? 1;
+  if (!Number.isFinite(dppTolerance) || dppTolerance < 0)
+    throw new Error("Toleransi DPP tidak valid");
+  const mappings = parseCussonsMappings(mappingBuffer),
+    accurate = parseCussonsAccurate(accurateBuffer),
+    principal = parseCussonsPrincipal(principalBuffer, mappings),
+    accurateLines = [...accurate.lines, ...accurate.invalidLines],
+    principalLines = [
+      ...principal.lines,
+      ...principal.unmappedLines,
+      ...principal.invalidLines,
+    ];
+  return reconcileParsedReturns({
+    accurateLines,
+    matchableAccurateLines: accurate.lines,
+    principalLines,
+    matchablePrincipalLines: principal.lines,
+    invalidAccurateLines: accurate.invalidLines,
+    invalidPrincipalLines: principal.invalidLines,
+    unmappedPrincipalLines: principal.unmappedLines,
+    matchingProductCode: (line) => line.accurateProductCode,
+    matchingCustomerCode: () => "",
     isAccurateMapped: () => true,
     dppTolerance,
   });
