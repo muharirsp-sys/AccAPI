@@ -396,9 +396,9 @@ test("runs HEINZ Return with HEADER and DETAIL then resets all three files", asy
   await expect(run).toBeDisabled();
 
   await page.getByLabel("Retur Penjualan (Accurate)").setInputFiles(xlsx("accurate-heinz-return.xlsx"));
-  await page.getByLabel("HEADER HEINZ").setInputFiles(csv("header-heinz.csv"));
-  await expect(run).toBeDisabled();
   await page.getByLabel("DETAIL HEINZ").setInputFiles(csv("detail-heinz.csv"));
+  await expect(run).toBeDisabled();
+  await page.getByLabel("HEADER HEINZ").setInputFiles(csv("header-heinz.csv"));
   await expect(run).toBeEnabled();
 
   const heinzResult = {
@@ -449,6 +449,13 @@ test("runs HEINZ Return with HEADER and DETAIL then resets all three files", asy
   await expect(page.getByLabel("Sales Detail KINO")).toBeVisible();
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
+
+  await page.getByLabel("Prinsipal").selectOption("HEINZ");
+  await expect(page.getByLabel("Retur Penjualan (Accurate)")).toHaveValue("");
+  await expect(page.getByLabel("HEADER HEINZ", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("DETAIL HEINZ", { exact: true })).toHaveValue("");
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(3);
+  await expect(run).toBeDisabled();
 });
 test("shows the progressive reconciliation workflow", async ({
   page,
