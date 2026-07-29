@@ -96,20 +96,7 @@ const accurate = workbook({
   detail = csv([
     detailColumns,
     ["CN-1", 1, "P-1", 1, "PCS", 1, 111, 111, "R1"],
-  ]),
-  mapping = workbook({
-    "Fix Mapping": [
-      [
-        "KODE BARANG",
-        "PCPL KODE 1",
-        "PCPL KODE 2",
-        "PCPL KODE 3",
-        "PCPL KODE 4",
-        "PCPL KODE 5",
-      ],
-      ["INT-1", "P-1", 0, "", "", ""],
-    ],
-  });
+  ]);
 
 function file(content: BlobPart, name: string, type: string): File {
   return new File([content], name, { type });

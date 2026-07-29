@@ -246,16 +246,83 @@ const joinOutput = reconcileHeinzReturns(
   ]),
   mapping(),
 );
-assert.equal(joinOutput.summary.INVALID_DATA, 1);
-assert.equal(joinOutput.results.length, 1);
-assert.equal(joinOutput.results[0].invoiceNumber, "CN-10");
+assert.equal(joinOutput.summary.INVALID_DATA, 2);
+assert.equal(joinOutput.results.length, 2);
+assert.equal(joinOutput.results[0].invoiceNumber, "CN-11");
+assert.deepEqual(joinOutput.results[0].principalSourceRows, [2]);
 assert.match(
   joinOutput.results[0].invalidReason ?? "",
+  /HEADER Approved tidak ditemukan/,
+);
+assert.equal(joinOutput.results[1].invoiceNumber, "CN-10");
+assert.match(
+  joinOutput.results[1].invalidReason ?? "",
   /line_count 1 tidak sama dengan 0 detail/,
 );
+
+for (const invalidLineCount of [-1, 1.5])
+  assert.throws(
+    () =>
+      reconcileHeinzReturns(
+        accurate,
+        csv([
+          headerColumns,
+          ["CN-1", "GRN-1", "S1", "OLD-1", "TOKO A C-A", "2026-07-22", "I1", "", invalidLineCount, 111, "Approved"],
+        ]),
+        csv([
+          detailColumns,
+          ["CN-1", 1, "P-1", 1, "PCS", 3, 111, 333, "R1"],
+        ]),
+        mapping(),
+      ),
+    /line_count harus bilangan bulat non-negatif pada baris 2/,
+  );
+
+function accurateDpp(dpp: number): Uint8Array {
+  return workbook({
+    "Rincian Faktur Penjualan": [
+      [
+        "NO_NOTA",
+        "KODE PELANGGAN INDUK",
+        "KODE_BARANG",
+        "QTY_SATUANKECIL",
+        "DPP",
+        "NILAI_PAJAK",
+        "JUMLAH",
+        "REM",
+        "JENIS_TRANSAKSI",
+      ],
+      ["RET-1", "C-A", "INT-1", 1, dpp, 11, 111, "CN-1", "Retur Penjualan"],
+    ],
+  });
+}
+const oneLineHeaders = csv([
+  headerColumns,
+  ["CN-1", "GRN-1", "S1", "OLD-1", "TOKO A C-A", "2026-07-22", "I1", "", 1, 111, "Approved"],
+]);
+const oneLineDetails = csv([
+  detailColumns,
+  ["CN-1", 1, "P-1", 1, "PCS", 1, 111, 111, "R1"],
+]);
 assert.equal(
-  joinOutput.principalLines.some((line) => line.invoiceNumber === "CN-11"),
-  false,
+  reconcileHeinzReturns(
+    accurateDpp(101),
+    oneLineHeaders,
+    oneLineDetails,
+    mapping(),
+    { dppTolerance: 1 },
+  ).summary.MATCH,
+  1,
+);
+assert.equal(
+  reconcileHeinzReturns(
+    accurateDpp(101.01),
+    oneLineHeaders,
+    oneLineDetails,
+    mapping(),
+    { dppTolerance: 1 },
+  ).summary.VALUE_MISMATCH,
+  1,
 );
 
 console.log(

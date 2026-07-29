@@ -942,18 +942,23 @@ function parseHeinzPrincipal(
     seen.add(creditNote);
     if (text(cell(row, header.columns, "STATUS")) !== "APPROVED") continue;
     const customerCode = exactlyOneToken(
-      cell(row, header.columns, "RETAILER_NAME"),
-      /(?<![A-Z0-9])C-[A-Z0-9]+$/g,
-      "retailer_name",
-      sourceRowNumber,
-    );
-    approved.set(creditNote, {
-      customerCode,
-      lineCount: requiredFinite(
+        cell(row, header.columns, "RETAILER_NAME"),
+        /(?<![A-Z0-9])C-[A-Z0-9]+$/g,
+        "retailer_name",
+        sourceRowNumber,
+      ),
+      lineCount = requiredSigned(
         cell(row, header.columns, "LINE_COUNT"),
         "line_count",
         sourceRowNumber,
-      ),
+      );
+    if (!Number.isInteger(lineCount) || lineCount < 0)
+      throw new Error(
+        `line_count harus bilangan bulat non-negatif pada baris ${sourceRowNumber}`,
+      );
+    approved.set(creditNote, {
+      customerCode,
+      lineCount,
       sourceRowNumber,
     });
   }
@@ -983,7 +988,6 @@ function parseHeinzPrincipal(
         sourceRowNumber,
       ),
       headerRow = approved.get(creditNote);
-    if (!headerRow && seen.has(creditNote)) continue;
     const
       principalProductCode = requiredText(
         row,
@@ -1205,7 +1209,8 @@ function reconcileParsedReturns({
     }
     principals.delete(id);
     const quantityMismatch = accurate.quantity !== principal.quantity,
-      valueMismatch = Math.abs(accurate.dpp - principal.dpp) > dppTolerance,
+      valueMismatch =
+        Math.abs(accurate.dpp - principal.dpp) > dppTolerance + 1e-9,
       status: ReturnStatus = quantityMismatch
         ? valueMismatch
           ? "QTY_AND_VALUE_MISMATCH"
