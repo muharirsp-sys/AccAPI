@@ -44,7 +44,7 @@ const returnStatuses: ReturnStatus[] = [
   "MATCH", "QTY_MISMATCH", "VALUE_MISMATCH", "QTY_AND_VALUE_MISMATCH",
   "MISSING_ACCURATE", "MISSING_PRINCIPAL", "UNMAPPED", "INVALID_DATA",
 ];
-const returnPrinciples = ["SHINZUI", "KINO"] as const;
+const returnPrinciples = ["SHINZUI", "KINO", "GODREJ"] as const;
 const fixedStatusLabels: Partial<Record<UiStatus, string>> = {
   MATCH: "Cocok",
   QTY_MISMATCH: "Selisih jumlah",
@@ -405,7 +405,7 @@ export default function ReconciliationPage() {
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summary), "Ringkasan");
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detail), "Detail");
       const prefix = division === "RETURN"
-        ? principal === "SHINZUI" ? "hasil-rekonsiliasi-return-shinzui" : "rekonsiliasi-return-kino"
+        ? principal === "SHINZUI" ? "hasil-rekonsiliasi-return-shinzui" : `rekonsiliasi-return-${principal.toLowerCase()}`
         : `hasil-rekonsiliasi-${principal.toLowerCase()}`;
       XLSX.writeFile(workbook, `${prefix}-${new Date().toISOString().slice(0, 10)}.xlsx`);
     } catch {
@@ -504,17 +504,19 @@ export default function ReconciliationPage() {
         <div className="grid gap-6 p-6 md:grid-cols-2 md:p-8">
           {(["accurate", "principal"] as const).map((kind) => {
             const file = kind === "accurate" ? accurateFile : principalFile;
-            const isCussonsPrincipal =
-              kind === "principal" && principal === "CUSSONS";
+            const isCsvPrincipal = kind === "principal" && (
+              (division === "RETURN" && principal === "GODREJ") ||
+              (division === "FAKTUR" && principal === "CUSSONS")
+            );
             const label = division === "RETURN"
-              ? kind === "accurate" ? "Retur Penjualan (Accurate)" : `${principal === "SHINZUI" ? "PenjualanInvoice" : "Sales Detail"} ${principal}`
+              ? kind === "accurate" ? "Retur Penjualan (Accurate)" : `${principal === "SHINZUI" ? "PenjualanInvoice" : principal === "GODREJ" ? "Sale Returns" : "Sales Detail"} ${principal}`
               : kind === "accurate"
                 ? "Rincian Faktur Penjualan (Accurate)"
-                : `${isCussonsPrincipal ? "Detail" : "Sales Detail"} ${principal}`;
-            const accept = isCussonsPrincipal
-              ? ".csv,text/csv"
+                : `${isCsvPrincipal ? "Detail" : "Sales Detail"} ${principal}`;
+            const accept = isCsvPrincipal
+              ? ".csv,text/csv,application/csv"
               : ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-            const helpText = `Format ${isCussonsPrincipal ? ".csv" : ".xlsx"}, maksimal 10 MB`;
+            const helpText = `Format ${isCsvPrincipal ? ".csv" : ".xlsx"}, maksimal 10 MB`;
             const cardClass =
               kind === "accurate"
                 ? "border-indigo-500/20 bg-indigo-500/10"

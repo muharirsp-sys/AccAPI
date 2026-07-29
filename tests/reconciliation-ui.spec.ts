@@ -208,7 +208,7 @@ test("runs SHINZUI Return reconciliation with focused issues and export", async 
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByText("Pembelian", { exact: true }).locator("..")).toContainText("Belum aktif");
 });
-test("runs KINO Return reconciliation and resets when switching principal", async ({ page, baseURL }) => {
+test("runs KINO and GODREJ Return reconciliation and resets when switching principal", async ({ page, baseURL }) => {
   const login = await page.request.post("/api/auth/sign-in/email", { headers: { Origin: baseURL || "http://localhost:3000" }, data: { email: QA_EMAIL, password: QA_PASSWORD } });
   expect(login.ok()).toBeTruthy();
   await page.goto("/reconciliation");
@@ -319,6 +319,61 @@ test("runs KINO Return reconciliation and resets when switching principal", asyn
   await expect(page.getByLabel("PenjualanInvoice SHINZUI")).toBeVisible();
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.locator('p[role="alert"]')).toHaveCount(0);
+
+  await page.getByLabel("Prinsipal").selectOption("GODREJ");
+  await expect(page.getByLabel("Sale Returns GODREJ")).toHaveAttribute(
+    "accept",
+    ".csv,text/csv,application/csv",
+  );
+
+  const godrejReturnResult = {
+    ...returnResult,
+    results: returnResult.results.map((row) => ({
+      ...row,
+      principalProductCode: row.principalProductCode?.replace("SHZ", "GOD"),
+    })),
+  };
+  let godrejReturnCalled = false;
+  await page.route("**/api/reconciliation/godrej/returns", async (route) => {
+    godrejReturnCalled = true;
+    expect(route.request().method()).toBe("POST");
+    const body = await route.request().postDataBuffer();
+    expect(body?.toString()).toContain('name="accurateFile"');
+    expect(body?.toString()).toContain('name="principalFile"');
+    expect(body?.toString()).toContain('filename="sale-returns.csv"');
+    await route.fulfill({ json: godrejReturnResult });
+  });
+  await page.getByLabel("Retur Penjualan (Accurate)").setInputFiles(xlsx("accurate-godrej-return.xlsx"));
+  await page.getByLabel("Sale Returns GODREJ").setInputFiles(csv("sale-returns.csv"));
+  await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
+
+  expect(godrejReturnCalled).toBe(true);
+  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
+  await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("columnheader", { name: "Pajak GODREJ" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Total GODREJ" })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, GODREJ 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+
+  const godrejDownloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Ekspor XLSX" }).click();
+  const godrejDownload = await godrejDownloadPromise;
+  expect(godrejDownload.suggestedFilename()).toMatch(/^rekonsiliasi-return-godrej-\d{4}-\d{2}-\d{2}\.xlsx$/);
+  const godrejDownloadPath = await godrejDownload.path();
+  expect(godrejDownloadPath).not.toBeNull();
+  const godrejWorkbook = XLSX.readFile(godrejDownloadPath!);
+  const godrejDetail = XLSX.utils.sheet_to_json<Record<string, string | number>>(godrejWorkbook.Sheets.Detail);
+  expect(godrejDetail[1]).toMatchObject({
+    "Produk GODREJ": "GOD-02",
+    "Penyebab selisih": "Qty: Accurate 3, GODREJ 5 — Accurate kurang 2",
+    "Baris GODREJ": "5",
+  });
+
+  await page.getByLabel("Prinsipal").selectOption("KINO");
+  await expect(page.getByLabel("Sales Detail KINO")).toBeVisible();
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
+  await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
+  await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toHaveCount(0);
 });
 test("shows the progressive reconciliation workflow", async ({
   page,
