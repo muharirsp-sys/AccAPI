@@ -321,6 +321,9 @@ test("runs KINO and GODREJ Return reconciliation and resets when switching princ
   await expect(page.locator('p[role="alert"]')).toHaveCount(0);
 
   await page.getByLabel("Prinsipal").selectOption("GODREJ");
+  await expect(
+    page.getByText("Bandingkan retur Accurate dengan laporan Sale Returns GODREJ.", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByLabel("Sale Returns GODREJ")).toHaveAttribute(
     "accept",
     ".csv,text/csv,application/csv",

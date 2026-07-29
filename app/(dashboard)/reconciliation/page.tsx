@@ -429,7 +429,7 @@ export default function ReconciliationPage() {
           </h1>
           <p className="mt-2 text-slate-400">
             {division === "RETURN"
-              ? `Bandingkan retur Accurate dengan laporan ${principal === "SHINZUI" ? "PenjualanInvoice" : "Sales Detail"} ${principal}.`
+              ? `Bandingkan retur Accurate dengan laporan ${principal === "SHINZUI" ? "PenjualanInvoice" : principal === "GODREJ" ? "Sale Returns" : "Sales Detail"} ${principal}.`
               : `Bandingkan faktur Accurate dengan data penjualan prinsipal ${principal}.`}
           </p>
         </div>
