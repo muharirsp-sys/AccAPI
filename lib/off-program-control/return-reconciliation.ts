@@ -317,12 +317,13 @@ function exactlyOneToken(
 }
 
 function godrejAccurateCustomer(value: unknown, row: number): string {
-  const customer = text(value);
-  if (!/^C-[A-Z0-9]+(?:-GD)?$/.test(customer))
-    throw new Error(
-      `KODE PELANGGAN INDUK harus memuat tepat satu token pada baris ${row}`,
-    );
-  return customer.replace(/-GD$/, "");
+  const customer = text(value),
+    suffixed = customer.match(/^(C-[A-Z0-9]+)-GD$/);
+  if (suffixed) return suffixed[1];
+  if (/^C-[A-Z0-9]+$/.test(customer)) return customer;
+  throw new Error(
+    `KODE PELANGGAN INDUK harus memuat tepat satu token pada baris ${row}`,
+  );
 }
 
 function godrejNumber(value: unknown, label: string, row: number): number {

@@ -103,3 +103,77 @@ git diff --check: no whitespace errors.
 
 The direct Node validation scripts retain the repository's pre-existing,
 non-fatal `MODULE_TYPELESS_PACKAGE_JSON` performance warning. No push was made.
+
+## Residual Accurate Customer Edge Fix
+
+### TDD RED
+
+Behavioral cases were added for:
+
+- `C-CI0001-GD` normalizing to `C-CI0001`;
+- valid unsuffixed `C-GD` remaining `C-GD`;
+- malformed `C--GD` remaining rejected.
+
+Before the production edit:
+
+```powershell
+node --experimental-strip-types lib/off-program-control/godrej-return-validation.test.ts
+```
+
+```text
+Exit code: 1
+AssertionError: Expected values to be strictly equal:
+0 !== 1
+```
+
+The old unconditional terminal replacement converted `C-GD` to `C`, so its
+otherwise matching principal row did not produce `MATCH`.
+
+### Minimal fix
+
+`godrejAccurateCustomer` now first matches the explicit suffixed form
+`^(C-[A-Z0-9]+)-GD$` and returns its captured valid base. If that does not
+match, it validates and preserves the unsuffixed `^C-[A-Z0-9]+$` form.
+
+### Fresh GREEN and regressions
+
+```powershell
+node --experimental-strip-types lib/off-program-control/godrej-return-validation.test.ts
+node --experimental-strip-types lib/off-program-control/godrej-return-validation.test.ts "C:\Users\Fiqhi Fauzan\Downloads\godrej\rincian_faktur_penjualan_cvsuryaperkasa_260729083809.xlsx" "C:\Users\Fiqhi Fauzan\Downloads\godrej\Salereturns18.csv" "C:\Users\Fiqhi Fauzan\Downloads\godrej\FIX FORM MASTER BARANG - GDI.xlsx"
+```
+
+```text
+Exit code: 0
+GODREJ Return synthetic validation passed.
+GODREJ Return synthetic validation passed.
+GODREJ Return real-workbook validation passed.
+```
+
+```powershell
+npx tsx lib/off-program-control/godrej-return-route.test.ts
+```
+
+```text
+Exit code: 0
+OK - actual POST GODREJ Return mencakup 401/403, XLSX+CSV, master, parser aman, masking, dan tolerance parity.
+```
+
+```powershell
+node --experimental-strip-types lib/off-program-control/kino-return-validation.test.ts
+node --experimental-strip-types lib/off-program-control/shinzui-return-validation.test.ts
+npx tsc --noEmit
+npx eslint lib/off-program-control/return-reconciliation.ts lib/off-program-control/godrej-return-validation.test.ts
+git diff --check
+```
+
+```text
+Exit code: 0
+KINO Return synthetic validation passed.
+shinzui return reconciliation: ok
+TypeScript: no output (success).
+Scoped ESLint: no output (success).
+git diff --check: no whitespace errors.
+```
+
+Concern remains the same pre-existing non-fatal Node module warning. No push
+was made.

@@ -196,7 +196,7 @@ for (const customer of ["C-ONE dan C-TWO", "XC-ONE", "C-ONE-BOGUS"])
       ),
     /CUSTOMER.*tepat satu/,
   );
-for (const customer of ["XC-ONE", "C-ONE-BOGUS"])
+for (const customer of ["XC-ONE", "C-ONE-BOGUS", "C--GD"])
   assert.throws(
     () =>
       reconcileGodrejReturns(
@@ -216,6 +216,23 @@ assert.equal(
   ).summary.MATCH,
   1,
 );
+assert.equal(
+  reconcileGodrejReturns(
+    accurate(
+      accurateRow({ "KODE PELANGGAN INDUK": "C-CI0001-GD" }),
+    ),
+    principal(principalRow({ CUSTOMER: "STORE (C-CI0001)" })),
+    mapping(),
+  ).results[0].customerCode,
+  "C-CI0001",
+);
+const gdCustomer = reconcileGodrejReturns(
+  accurate(accurateRow({ "KODE PELANGGAN INDUK": "C-GD" })),
+  principal(principalRow({ CUSTOMER: "STORE (C-GD)" })),
+  mapping(),
+);
+assert.equal(gdCustomer.summary.MATCH, 1);
+assert.equal(gdCustomer.results[0].customerCode, "C-GD");
 for (const [name, value] of [
   ["Quantity(Units)", ""],
   ["Quantity(Units)", "NaN"],
