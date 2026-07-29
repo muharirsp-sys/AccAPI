@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import * as XLSX from "xlsx";
 import { reconcileCussonsReturns } from "./return-reconciliation.ts";
 
@@ -222,26 +223,100 @@ assert.ok(
       row.invalidReason?.includes("UOM code"),
   ),
 );
-
-const real = reconcileCussonsReturns(
-  readFileSync(
-    "C:/Users/Fiqhi Fauzan/Downloads/cussons return/rincian_faktur_penjualan_cvsuryaperkasa_260729121643.xlsx",
-  ),
-  readFileSync(
-    "C:/Users/Fiqhi Fauzan/Downloads/cussons return/TXN_NOTEPRD_CPM.csv",
-  ),
-  readFileSync(
-    "C:/Users/Fiqhi Fauzan/Downloads/cussons return/FIX_FORM MASTER BARANG - CUSSONS.xlsx",
+assert.ok(
+  output.results.every(
+    (row) => row.accurateSourceRows.length + row.principalSourceRows.length > 0,
   ),
 );
-assert.equal(real.accurateLines.length, 28);
-assert.equal(real.principalLines.length, 21);
-assert.equal(real.results.length, 28);
-assert.equal(real.summary.MATCH, 21);
-assert.equal(real.summary.MISSING_PRINCIPAL, 7);
-for (const [status, count] of Object.entries(real.summary))
-  if (status !== "MATCH" && status !== "MISSING_PRINCIPAL")
-    assert.equal(count, 0, `${status} harus 0`);
+
+const duplicateAcrossValidity = reconcileCussonsReturns(
+  workbook({
+    "Rincian Faktur Penjualan": [
+      accurateHeader,
+      ["R1", "C-A", "INT-1", 1, 100, 11, 111, "CN300", "Retur Penjualan"],
+      ["R2", "C-B", "INT-1", -1, 100, 11, 111, "CN300", "Retur Penjualan"],
+      ["R3", "C-A", "INT-1", 1, 100, 11, 111, "CN301", "Retur Penjualan"],
+    ],
+  }),
+  (() => {
+    const invalid = principalRow("CN301", "CT-B", "P-1", 1, 100);
+    invalid[9] = 50;
+    return csv([
+      principalHeader,
+      principalRow("CN300", "CT-A", "P-1", 1, 100),
+      principalRow("CN301", "CT-A", "P-1", 1, 100),
+      invalid,
+    ]);
+  })(),
+  mapping(),
+);
+assert.equal(duplicateAcrossValidity.summary.MATCH, 0);
+assert.equal(duplicateAcrossValidity.summary.INVALID_DATA, 4);
+assert.equal(duplicateAcrossValidity.summary.MISSING_ACCURATE, 1);
+assert.equal(duplicateAcrossValidity.summary.MISSING_PRINCIPAL, 1);
+for (const cn of ["CN300", "CN301"])
+  assert.equal(
+    duplicateAcrossValidity.results.filter(
+      (row) => row.invoiceNumber === cn && row.status === "INVALID_DATA",
+    ).length,
+    2,
+  );
+
+const committedMaster = readFileSync(
+  resolve("data/reconciliation/CUSSONS_RETURN.xlsx"),
+);
+const committedMasterCheck = reconcileCussonsReturns(
+  workbook({
+    "Rincian Faktur Penjualan": [
+      accurateHeader,
+      [
+        "R1",
+        "C-A",
+        "C1011001000410",
+        1,
+        100,
+        11,
+        111,
+        "CN999",
+        "Retur Penjualan",
+      ],
+    ],
+  }),
+  csv([
+    principalHeader,
+    principalRow("CN999", "CT-A", "100000425", 1, 100),
+  ]),
+  committedMaster,
+);
+assert.equal(committedMasterCheck.summary.MATCH, 1);
+
+const realPaths = [
+  "C:/Users/Fiqhi Fauzan/Downloads/cussons return/rincian_faktur_penjualan_cvsuryaperkasa_260729121643.xlsx",
+  "C:/Users/Fiqhi Fauzan/Downloads/cussons return/TXN_NOTEPRD_CPM.csv",
+];
+if (realPaths.every(existsSync)) {
+  const real = reconcileCussonsReturns(
+    readFileSync(realPaths[0]),
+    readFileSync(realPaths[1]),
+    committedMaster,
+  );
+  assert.equal(real.accurateLines.length, 28);
+  assert.equal(real.principalLines.length, 21);
+  assert.equal(real.results.length, 28);
+  assert.equal(real.summary.MATCH, 21);
+  assert.equal(real.summary.MISSING_PRINCIPAL, 7);
+  for (const [status, count] of Object.entries(real.summary))
+    if (status !== "MATCH" && status !== "MISSING_PRINCIPAL")
+      assert.equal(count, 0, `${status} harus 0`);
+  assert.ok(
+    real.results.every(
+      (row) =>
+        row.accurateSourceRows.length + row.principalSourceRows.length > 0,
+    ),
+  );
+} else {
+  console.log("SKIP - acceptance file eksternal CUSSONS tidak tersedia.");
+}
 
 console.log(
   "OK - CUSSONS Return exact CN+produk, diskon, agregasi, toleransi, EA/CS, invalid, missing, dan data nyata.",

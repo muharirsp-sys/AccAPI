@@ -1076,12 +1076,16 @@ function cussonsNumber(value: unknown, label: string, row: number): number {
   return parsed;
 }
 
-function separateDuplicateCustomers(lines: CanonicalReturnLine[]): {
+function separateDuplicateCustomers(
+  lines: CanonicalReturnLine[],
+  invalidLines: CanonicalReturnLine[],
+  customerScopeLines: CanonicalReturnLine[],
+): {
   lines: CanonicalReturnLine[];
   invalidLines: CanonicalReturnLine[];
 } {
   const customers = new Map<string, Set<string>>();
-  for (const line of lines) {
+  for (const line of customerScopeLines) {
     const values = customers.get(line.invoiceNumber) ?? new Set<string>();
     values.add(line.customerCode);
     customers.set(line.invoiceNumber, values);
@@ -1091,18 +1095,21 @@ function separateDuplicateCustomers(lines: CanonicalReturnLine[]): {
         .filter(([, values]) => values.size > 1)
         .map(([invoice]) => invoice),
     ),
-    valid: CanonicalReturnLine[] = [],
-    invalidLines: CanonicalReturnLine[] = [];
-  for (const line of lines)
-    (ambiguous.has(line.invoiceNumber) ? invalidLines : valid).push(
-      ambiguous.has(line.invoiceNumber)
-        ? {
-            ...line,
-            invalidReason: `${line.invoiceNumber} memuat lebih dari satu customer`,
-          }
-        : line,
+    ambiguousLines = new Set(
+      customerScopeLines.filter((line) => ambiguous.has(line.invoiceNumber)),
     );
-  return { lines: valid, invalidLines };
+  return {
+    lines: lines.filter((line) => !ambiguousLines.has(line)),
+    invalidLines: [
+      ...invalidLines.filter((line) => !ambiguousLines.has(line)),
+      ...customerScopeLines
+        .filter((line) => ambiguousLines.has(line))
+        .map((line) => ({
+          ...line,
+          invalidReason: `${line.invoiceNumber} memuat lebih dari satu customer`,
+        })),
+    ],
+  };
 }
 
 function parseCussonsAccurate(
@@ -1122,7 +1129,8 @@ function parseCussonsAccurate(
     ],
     header = findHeader(rows, required),
     parsed: CanonicalReturnLine[] = [],
-    invalidLines: CanonicalReturnLine[] = [];
+    invalidLines: CanonicalReturnLine[] = [],
+    customerScopeLines: CanonicalReturnLine[] = [];
   for (let index = header.rowIndex + 1; index < rows.length; index++) {
     const row = rows[index], sourceRowNumber = index + 1;
     if (!row.some((entry) => text(entry))) continue;
@@ -1190,12 +1198,17 @@ function parseCussonsAccurate(
       total,
       invalidReason,
     };
+    if (matches.length === 1 && customerCode) customerScopeLines.push(line);
     (invalidReason ? invalidLines : parsed).push(line);
   }
-  const unique = separateDuplicateCustomers(parsed);
+  const unique = separateDuplicateCustomers(
+    parsed,
+    invalidLines,
+    customerScopeLines,
+  );
   return {
     lines: unique.lines,
-    invalidLines: [...invalidLines, ...unique.invalidLines],
+    invalidLines: unique.invalidLines,
   };
 }
 
@@ -1229,7 +1242,8 @@ function parseCussonsPrincipal(
     ],
     header = findHeader(rows, required),
     parsed: CanonicalReturnLine[] = [],
-    invalidLines: CanonicalReturnLine[] = [];
+    invalidLines: CanonicalReturnLine[] = [],
+    customerScopeLines: CanonicalReturnLine[] = [];
   for (let index = header.rowIndex + 1; index < rows.length; index++) {
     const row = rows[index], sourceRowNumber = index + 1;
     if (!row.some((entry) => text(entry))) continue;
@@ -1349,9 +1363,14 @@ function parseCussonsPrincipal(
       total,
       invalidReason,
     };
+    if (matches.length === 1 && customerCode) customerScopeLines.push(line);
     (invalidReason ? invalidLines : parsed).push(line);
   }
-  const unique = separateDuplicateCustomers(parsed),
+  const unique = separateDuplicateCustomers(
+      parsed,
+      invalidLines,
+      customerScopeLines,
+    ),
     lines: CanonicalReturnLine[] = [],
     unmappedLines: CanonicalReturnLine[] = [];
   for (const line of unique.lines)
@@ -1359,7 +1378,7 @@ function parseCussonsPrincipal(
   return {
     lines,
     unmappedLines,
-    invalidLines: [...invalidLines, ...unique.invalidLines],
+    invalidLines: unique.invalidLines,
   };
 }
 
