@@ -129,11 +129,18 @@ assert.equal(fallback.principalLines[0].accurateProductCode, "WIN-F");
 
 const descriptiveParenthetical = reconcileGodrejReturns(
   accurate(accurateRow({ KODE_BARANG: "WIN-SOAP" })),
-  principal(principalRow({ Skunit: "999 - SOAP (LEMON)" })),
+  principal(principalRow({ Skunit: "999 - SOAP (LEMON)." })),
   mapping([], [["SOAP", "WIN-SOAP"]]),
 );
 assert.equal(descriptiveParenthetical.summary.UNMAPPED, 1);
 assert.equal(descriptiveParenthetical.summary.MISSING_PRINCIPAL, 1);
+
+const punctuatedPackaging = reconcileGodrejReturns(
+  accurate(accurateRow({ KODE_BARANG: "WIN-PRODUCT" })),
+  principal(principalRow({ Skunit: "999 - PRODUCT (1/12)." })),
+  mapping([], [["PRODUCT", "WIN-PRODUCT"]]),
+);
+assert.equal(punctuatedPackaging.summary.MATCH, 1);
 
 const unmapped = reconcileGodrejReturns(
   accurate(accurateRow({ KODE_BARANG: "WIN-X" })),
@@ -167,24 +174,47 @@ const invalidRem = reconcileGodrejReturns(
       NO_NOTA: "BAD-2",
       REM: "RB/BFG-1 dan RB/BFG-2",
     }),
+    accurateRow({ NO_NOTA: "BAD-PREFIX", REM: "XRB/BFG-1" }),
+    accurateRow({ NO_NOTA: "BAD-SUFFIX", REM: "RB/BFG-1A" }),
   ),
   principal(),
   mapping(),
 );
-assert.equal(invalidRem.summary.INVALID_DATA, 2);
+assert.equal(invalidRem.summary.INVALID_DATA, 4);
 assert.deepEqual(
   invalidRem.results.map((row) => row.invoiceNumber),
-  ["BAD-0", "BAD-2"],
+  ["BAD-0", "BAD-2", "BAD-PREFIX", "BAD-SUFFIX"],
 );
 
-assert.throws(
-  () =>
-    reconcileGodrejReturns(
-      accurate(accurateRow()),
-      principal(principalRow({ CUSTOMER: "C-ONE dan C-TWO" })),
-      mapping(),
-    ),
-  /CUSTOMER.*tepat satu/,
+for (const customer of ["C-ONE dan C-TWO", "XC-ONE", "C-ONE-BOGUS"])
+  assert.throws(
+    () =>
+      reconcileGodrejReturns(
+        accurate(accurateRow()),
+        principal(principalRow({ CUSTOMER: customer })),
+        mapping(),
+      ),
+    /CUSTOMER.*tepat satu/,
+  );
+for (const customer of ["XC-ONE", "C-ONE-BOGUS"])
+  assert.throws(
+    () =>
+      reconcileGodrejReturns(
+        accurate(
+          accurateRow({ "KODE PELANGGAN INDUK": customer }),
+        ),
+        principal(principalRow()),
+        mapping(),
+      ),
+    /KODE PELANGGAN INDUK.*tepat satu/,
+  );
+assert.equal(
+  reconcileGodrejReturns(
+    accurate(accurateRow({ "KODE PELANGGAN INDUK": "C-ONE" })),
+    principal(principalRow({ CUSTOMER: "ONE STORE [C-ONE]" })),
+    mapping(),
+  ).summary.MATCH,
+  1,
 );
 for (const [name, value] of [
   ["Quantity(Units)", ""],

@@ -292,6 +292,7 @@ function cleanGodrejProductName(value: unknown, leadingCode = ""): string {
       "",
     );
   name = name
+    .replace(/[.,;:|\-]+\s*$/, "")
     .replace(/\s*\(\d+\/\d+\)\s*$/, "")
     .replace(/[.,;:|\-]+\s*$/, "")
     .trim();
@@ -313,6 +314,15 @@ function exactlyOneToken(
   if (matches.length !== 1)
     throw new Error(`${label} harus memuat tepat satu token pada baris ${row}`);
   return matches[0];
+}
+
+function godrejAccurateCustomer(value: unknown, row: number): string {
+  const customer = text(value);
+  if (!/^C-[A-Z0-9]+(?:-GD)?$/.test(customer))
+    throw new Error(
+      `KODE PELANGGAN INDUK harus memuat tepat satu token pada baris ${row}`,
+    );
+  return customer.replace(/-GD$/, "");
 }
 
 function godrejNumber(value: unknown, label: string, row: number): number {
@@ -641,7 +651,7 @@ function parseGodrejAccurate(
     )
       continue;
     const matches = text(cell(row, header.columns, "REM")).match(
-        /RB\/BFG-\d+/g,
+        /(?<![A-Z0-9])RB\/BFG-\d+(?![A-Z0-9])/g,
       ) ?? [],
       line: CanonicalReturnLine = {
         source: "ACCURATE",
@@ -650,10 +660,8 @@ function parseGodrejAccurate(
           matches.length === 1
             ? matches[0]
             : requiredText(row, header.columns, "NO_NOTA", sourceRowNumber),
-        customerCode: exactlyOneToken(
+        customerCode: godrejAccurateCustomer(
           cell(row, header.columns, "KODE PELANGGAN INDUK"),
-          /C-[A-Z0-9]+/g,
-          "KODE PELANGGAN INDUK",
           sourceRowNumber,
         ),
         accurateProductCode: requiredText(
@@ -749,13 +757,13 @@ function parseGodrejPrincipal(
         sourceRowNumber,
         invoiceNumber: exactlyOneToken(
           cell(row, header.columns, "SALE RETURN NO."),
-          /RB\/BFG-\d+/g,
+          /(?<![A-Z0-9])RB\/BFG-\d+(?![A-Z0-9])/g,
           "SALE RETURN NO.",
           sourceRowNumber,
         ),
         customerCode: exactlyOneToken(
           cell(row, header.columns, "CUSTOMER"),
-          /C-[A-Z0-9]+/g,
+          /(?<![A-Z0-9])C-[A-Z0-9]+(?![A-Z0-9-])/g,
           "CUSTOMER",
           sourceRowNumber,
         ),
