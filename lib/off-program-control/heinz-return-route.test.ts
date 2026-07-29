@@ -199,9 +199,20 @@ async function main(): Promise<void> {
   assert.deepEqual(await unauthenticated.json(), { error: "Unauthorized" });
   assert.equal(parsedMultipart, false);
 
-  const forbidden = await withPermissions([], () => POST(request()));
+  let forbiddenParsedMultipart = false;
+  const forbidden = await withPermissions([], () =>
+    POST(
+      Object.assign(new Request("http://localhost", { method: "POST" }), {
+        formData: async () => {
+          forbiddenParsedMultipart = true;
+          throw new Error("multipart tidak boleh dibaca");
+        },
+      }),
+    ),
+  );
   assert.equal(forbidden.status, 403);
   assert.deepEqual(await forbidden.json(), { error: "Forbidden" });
+  assert.equal(forbiddenParsedMultipart, false);
 
   for (const [mutate, status] of [
     [(form: FormData) => form.delete("accurateFile"), 400],
@@ -344,6 +355,27 @@ async function main(): Promise<void> {
       new URL("../../data/reconciliation/HEINZ_RETURN.xlsx", import.meta.url),
     ),
   );
+  const sensitiveForm = await request().formData(),
+    sensitiveFile = sensitiveForm.get("accurateFile");
+  assert.ok(sensitiveFile instanceof File);
+  Object.defineProperty(sensitiveFile, "arrayBuffer", {
+    configurable: true,
+    value: async () => {
+      throw new Error("D:\\secret\\DATABASE_PASSWORD=local route stack");
+    },
+  });
+  const actualRouteMasked = await withPermissions(["reconciliation.run"], () =>
+    POST(
+      Object.assign(new Request("http://localhost", { method: "POST" }), {
+        formData: async () => sensitiveForm,
+      }),
+    ),
+  );
+  assert.equal(actualRouteMasked.status, 500);
+  assert.deepEqual(await actualRouteMasked.json(), {
+    error: "Rekonsiliasi gagal diproses.",
+  });
+
   function sharedHandler(message: string) {
     return createKinoSalesPostHandler({
       authorize: async () => null,
