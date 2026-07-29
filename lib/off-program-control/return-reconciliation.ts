@@ -242,6 +242,89 @@ function parseKinoReturnMappings(
   return mappings;
 }
 
+function parseGodrejMappings(buffer: Buffer | Uint8Array): {
+  codes: Map<string, string[]>;
+  names: Map<string, string[]>;
+} {
+  const codeRows = readRows(buffer, "Pvt Map 1"),
+    codeHeader = findHeader(codeRows, ["KODE BARANG WIN2", "KODE PCPL"]),
+    codes = new Map<string, string[]>();
+  for (let index = codeHeader.rowIndex + 1; index < codeRows.length; index++) {
+    const principal = text(
+        cell(codeRows[index], codeHeader.columns, "KODE PCPL"),
+      ),
+      internal = text(
+        cell(codeRows[index], codeHeader.columns, "KODE BARANG WIN2"),
+      );
+    if (!principal || principal === "0" || principal === "(BLANK)" || !internal)
+      continue;
+    const candidates = codes.get(principal) ?? [];
+    if (!candidates.includes(internal)) candidates.push(internal);
+    codes.set(principal, candidates);
+  }
+
+  const nameRows = readRows(buffer, "Form Fix"),
+    nameHeader = findHeader(nameRows, [
+      "NAMA BARANG PRINCIPLE",
+      "KODE BARANG WIN2",
+    ]),
+    names = new Map<string, string[]>();
+  for (let index = nameHeader.rowIndex + 1; index < nameRows.length; index++) {
+    const name = cleanGodrejProductName(
+        cell(nameRows[index], nameHeader.columns, "NAMA BARANG PRINCIPLE"),
+      ),
+      internal = text(
+        cell(nameRows[index], nameHeader.columns, "KODE BARANG WIN2"),
+      );
+    if (!name || name === "0" || !internal) continue;
+    const candidates = names.get(name) ?? [];
+    if (!candidates.includes(internal)) candidates.push(internal);
+    names.set(name, candidates);
+  }
+  return { codes, names };
+}
+
+function cleanGodrejProductName(value: unknown, leadingCode = ""): string {
+  let name = text(value).replace(/\s+/g, " ");
+  if (leadingCode)
+    name = name.replace(
+      new RegExp(`^${leadingCode.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[-:]?\\s*`),
+      "",
+    );
+  name = name
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .replace(/[.,;:|\-]+\s*$/, "")
+    .trim();
+  if (leadingCode)
+    name = name.replace(
+      new RegExp(`\\s+${leadingCode.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
+      "",
+    );
+  return name.replace(/[.,;:|\-]+\s*$/, "").trim();
+}
+
+function exactlyOneToken(
+  value: unknown,
+  pattern: RegExp,
+  label: string,
+  row: number,
+): string {
+  const matches = text(value).match(pattern) ?? [];
+  if (matches.length !== 1)
+    throw new Error(`${label} harus memuat tepat satu token pada baris ${row}`);
+  return matches[0];
+}
+
+function godrejNumber(value: unknown, label: string, row: number): number {
+  if (value == null || text(value) === "")
+    throw new Error(`${label} kosong pada baris ${row}`);
+  const parsed =
+    typeof value === "number" ? value : Number(String(value).replace(/,/g, ""));
+  if (!Number.isFinite(parsed) || parsed < 0)
+    throw new Error(`${label} tidak valid pada baris ${row}`);
+  return parsed;
+}
+
 function parseAccurate(
   buffer: Buffer | Uint8Array,
   mappings: Map<string, string[]>,
@@ -530,6 +613,168 @@ function parseKinoAccurate(
   return { lines, invalidLines };
 }
 
+function parseGodrejAccurate(
+  buffer: Buffer | Uint8Array,
+): { lines: CanonicalReturnLine[]; invalidLines: CanonicalReturnLine[] } {
+  const rows = readRows(buffer, "Rincian Faktur Penjualan"),
+    required = [
+      "NO_NOTA",
+      "KODE PELANGGAN INDUK",
+      "KODE_BARANG",
+      "QTY_SATUANKECIL",
+      "DPP",
+      "NILAI_PAJAK",
+      "JUMLAH",
+      "REM",
+      "JENIS_TRANSAKSI",
+    ],
+    header = findHeader(rows, required),
+    lines: CanonicalReturnLine[] = [],
+    invalidLines: CanonicalReturnLine[] = [];
+  for (let index = header.rowIndex + 1; index < rows.length; index++) {
+    const row = rows[index], sourceRowNumber = index + 1;
+    if (!row.some((entry) => text(entry))) continue;
+    if (
+      !text(cell(row, header.columns, "JENIS_TRANSAKSI")).includes(
+        "RETUR PENJUALAN",
+      )
+    )
+      continue;
+    const matches = text(cell(row, header.columns, "REM")).match(
+        /RB\/BFG-\d+/g,
+      ) ?? [],
+      line: CanonicalReturnLine = {
+        source: "ACCURATE",
+        sourceRowNumber,
+        invoiceNumber:
+          matches.length === 1
+            ? matches[0]
+            : requiredText(row, header.columns, "NO_NOTA", sourceRowNumber),
+        customerCode: exactlyOneToken(
+          cell(row, header.columns, "KODE PELANGGAN INDUK"),
+          /C-[A-Z0-9]+/g,
+          "KODE PELANGGAN INDUK",
+          sourceRowNumber,
+        ),
+        accurateProductCode: requiredText(
+          row,
+          header.columns,
+          "KODE_BARANG",
+          sourceRowNumber,
+        ),
+        principalProductCode: null,
+        quantity: requiredFinite(
+          cell(row, header.columns, "QTY_SATUANKECIL"),
+          "QTY_SATUANKECIL",
+          sourceRowNumber,
+        ),
+        dpp: requiredFinite(
+          cell(row, header.columns, "DPP"),
+          "DPP",
+          sourceRowNumber,
+        ),
+        tax: requiredFinite(
+          cell(row, header.columns, "NILAI_PAJAK"),
+          "NILAI_PAJAK",
+          sourceRowNumber,
+        ),
+        total: requiredFinite(
+          cell(row, header.columns, "JUMLAH"),
+          "JUMLAH",
+          sourceRowNumber,
+        ),
+        invalidReason:
+          matches.length === 0
+            ? "REM tidak memuat nomor return GODREJ RB/BFG."
+            : matches.length > 1
+              ? "REM memuat lebih dari satu nomor return GODREJ RB/BFG."
+              : null,
+      };
+    (matches.length === 1 ? lines : invalidLines).push(line);
+  }
+  return { lines, invalidLines };
+}
+
+function parseGodrejPrincipal(
+  buffer: Buffer | Uint8Array,
+  mappings: ReturnType<typeof parseGodrejMappings>,
+): { lines: CanonicalReturnLine[]; unmappedLines: CanonicalReturnLine[] } {
+  const rows = readRows(buffer, "Sheet1"),
+    required = [
+      "SALE RETURN NO.",
+      "CUSTOMER",
+      "SKUNIT",
+      "QUANTITY(UNITS)",
+      "AMOUNT",
+      "SALE RETURN STATE",
+    ],
+    header = findHeader(rows, required),
+    lines: CanonicalReturnLine[] = [],
+    unmappedLines: CanonicalReturnLine[] = [];
+  for (let index = header.rowIndex + 1; index < rows.length; index++) {
+    const row = rows[index], sourceRowNumber = index + 1;
+    if (!row.some((entry) => text(entry))) continue;
+    if (text(cell(row, header.columns, "SALE RETURN STATE")) !== "APPROVED")
+      continue;
+    const sku = requiredText(row, header.columns, "SKUNIT", sourceRowNumber),
+      principalProductCode =
+        sku.match(/^([A-Z0-9-]+)\s+-\s+/)?.[1] ??
+        sku.match(/^[A-Z0-9]+/)?.[0] ??
+        sku,
+      name = cleanGodrejProductName(sku, principalProductCode),
+      codeCandidates = mappings.codes.get(principalProductCode) ?? [],
+      nameCandidates = mappings.names.get(name) ?? [],
+      accurateProductCode =
+        codeCandidates.length === 1
+          ? codeCandidates[0]
+          : nameCandidates.length === 1
+            ? nameCandidates[0]
+            : null;
+    if (codeCandidates.length > 1)
+      throw new Error(
+        `Mapping produk GODREJ konflik: ${codeCandidates.join(", ")}`,
+      );
+    if (nameCandidates.length > 1 && codeCandidates.length === 0)
+      throw new Error(
+        `Mapping produk GODREJ konflik: ${nameCandidates.join(", ")}`,
+      );
+    const total = godrejNumber(
+        cell(row, header.columns, "AMOUNT"),
+        "Amount",
+        sourceRowNumber,
+      ),
+      dpp = total / 1.11,
+      line: CanonicalReturnLine = {
+        source: "PRINCIPAL",
+        sourceRowNumber,
+        invoiceNumber: exactlyOneToken(
+          cell(row, header.columns, "SALE RETURN NO."),
+          /RB\/BFG-\d+/g,
+          "SALE RETURN NO.",
+          sourceRowNumber,
+        ),
+        customerCode: exactlyOneToken(
+          cell(row, header.columns, "CUSTOMER"),
+          /C-[A-Z0-9]+/g,
+          "CUSTOMER",
+          sourceRowNumber,
+        ),
+        accurateProductCode,
+        principalProductCode,
+        quantity: godrejNumber(
+          cell(row, header.columns, "QUANTITY(UNITS)"),
+          "Quantity(Units)",
+          sourceRowNumber,
+        ),
+        dpp,
+        tax: total - dpp,
+        total,
+      };
+    (accurateProductCode ? lines : unmappedLines).push(line);
+  }
+  return { lines, unmappedLines };
+}
+
 function key(
   line: CanonicalReturnLine,
   matchingProductCode?: (line: CanonicalReturnLine) => string | null,
@@ -751,5 +996,32 @@ export function reconcileKinoReturns(
       principalScopes.has(`${line.invoiceNumber}|${line.customerCode}`)
         ? "UNMAPPED"
         : "MISSING_PRINCIPAL",
+  });
+}
+
+export function reconcileGodrejReturns(
+  accurateBuffer: Buffer | Uint8Array,
+  principalBuffer: Buffer | Uint8Array,
+  mappingBuffer: Buffer | Uint8Array,
+  options: { dppTolerance?: number } = {},
+): ReturnReconciliationOutput {
+  const dppTolerance = options.dppTolerance ?? 1;
+  if (!Number.isFinite(dppTolerance) || dppTolerance < 0)
+    throw new Error("Toleransi DPP tidak valid");
+  const mappings = parseGodrejMappings(mappingBuffer),
+    principal = parseGodrejPrincipal(principalBuffer, mappings),
+    accurate = parseGodrejAccurate(accurateBuffer),
+    accurateLines = [...accurate.lines, ...accurate.invalidLines],
+    principalLines = [...principal.lines, ...principal.unmappedLines];
+  return reconcileParsedReturns({
+    accurateLines,
+    matchableAccurateLines: accurate.lines,
+    principalLines,
+    matchablePrincipalLines: principal.lines,
+    invalidAccurateLines: accurate.invalidLines,
+    unmappedPrincipalLines: principal.unmappedLines,
+    matchingProductCode: (line) => line.accurateProductCode,
+    isAccurateMapped: () => true,
+    dppTolerance,
   });
 }
