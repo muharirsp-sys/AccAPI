@@ -26,7 +26,7 @@ import type {
 
 type Division = "FAKTUR" | "RETURN";
 type UiStatus = ReconciliationStatus | ReturnStatus;
-type Principal = "KINO" | "GODREJ" | "SHINZUI" | "MOTASA" | "CUSSONS";
+type Principal = "KINO" | "GODREJ" | "SHINZUI" | "MOTASA" | "CUSSONS" | "HEINZ";
 type StatusFilter = "ALL" | "MATCH_ONLY" | "ISSUES_ONLY" | UiStatus;
 
 const salesStatuses: ReconciliationStatus[] = [
@@ -44,7 +44,7 @@ const returnStatuses: ReturnStatus[] = [
   "MATCH", "QTY_MISMATCH", "VALUE_MISMATCH", "QTY_AND_VALUE_MISMATCH",
   "MISSING_ACCURATE", "MISSING_PRINCIPAL", "UNMAPPED", "INVALID_DATA",
 ];
-const returnPrinciples = ["SHINZUI", "KINO", "GODREJ"] as const;
+const returnPrinciples = ["SHINZUI", "KINO", "GODREJ", "HEINZ"] as const;
 const fixedStatusLabels: Partial<Record<UiStatus, string>> = {
   MATCH: "Cocok",
   QTY_MISMATCH: "Selisih jumlah",
@@ -309,6 +309,7 @@ export default function ReconciliationPage() {
   const [division, setDivision] = useState<Division>("FAKTUR");
   const [principal, setPrincipal] = useState<Principal>("KINO");
   const [accurateFile, setAccurateFile] = useState<File | null>(null);
+  const [headerFile, setHeaderFile] = useState<File | null>(null);
   const [principalFile, setPrincipalFile] = useState<File | null>(null);
   const [result, setResult] = useState<ReconciliationOutput | ReturnReconciliationOutput | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -328,14 +329,16 @@ export default function ReconciliationPage() {
 
   function resetReconciliation() {
     setAccurateFile(null);
+    setHeaderFile(null);
     setPrincipalFile(null);
     setResult(null);
     setStatusFilter("ALL");
     setError(null);
   }
 
-  function changeFile(kind: "accurate" | "principal", file: File | null) {
+  function changeFile(kind: "accurate" | "header" | "principal", file: File | null) {
     if (kind === "accurate") setAccurateFile(file);
+    else if (kind === "header") setHeaderFile(file);
     else setPrincipalFile(file);
     setResult(null);
     setError(null);
@@ -354,7 +357,7 @@ export default function ReconciliationPage() {
   }
 
   async function runReconciliation() {
-    if (!accurateFile || !principalFile) return;
+    if (!accurateFile || !principalFile || (principal === "HEINZ" && !headerFile)) return;
     setIsRunning(true);
     setResult(null);
     setStatusFilter("ALL");
@@ -362,6 +365,7 @@ export default function ReconciliationPage() {
     try {
       const form = new FormData();
       form.append("accurateFile", accurateFile);
+      if (principal === "HEINZ" && headerFile) form.append("headerFile", headerFile);
       form.append("principalFile", principalFile);
       const endpoint = division === "RETURN" ? "returns" : "sales";
       const response = await fetch(`/api/reconciliation/${principal.toLowerCase()}/${endpoint}`, { method: "POST", body: form });
@@ -429,7 +433,9 @@ export default function ReconciliationPage() {
           </h1>
           <p className="mt-2 text-slate-400">
             {division === "RETURN"
-              ? `Bandingkan retur Accurate dengan laporan ${principal === "SHINZUI" ? "PenjualanInvoice" : principal === "GODREJ" ? "Sale Returns" : "Sales Detail"} ${principal}.`
+              ? principal === "HEINZ"
+                ? "Bandingkan retur Accurate dengan laporan HEADER dan DETAIL HEINZ."
+                : `Bandingkan retur Accurate dengan laporan ${principal === "SHINZUI" ? "PenjualanInvoice" : principal === "GODREJ" ? "Sale Returns" : "Sales Detail"} ${principal}.`
               : `Bandingkan faktur Accurate dengan data penjualan prinsipal ${principal}.`}
           </p>
         </div>
@@ -501,22 +507,30 @@ export default function ReconciliationPage() {
       </header>
 
       <section className="overflow-hidden rounded-3xl border border-white/10 bg-[#1a1c23]/60 shadow-xl backdrop-blur-xl">
-        <div className="grid gap-6 p-6 md:grid-cols-2 md:p-8">
-          {(["accurate", "principal"] as const).map((kind) => {
-            const file = kind === "accurate" ? accurateFile : principalFile;
+        <div className={`grid gap-6 p-6 md:p-8 ${division === "RETURN" && principal === "HEINZ" ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
+          {(division === "RETURN" && principal === "HEINZ"
+            ? (["accurate", "header", "principal"] as const)
+            : (["accurate", "principal"] as const)
+          ).map((kind) => {
+            const file = kind === "accurate" ? accurateFile : kind === "header" ? headerFile : principalFile;
             const isCsvPrincipal = kind === "principal" && (
-              (division === "RETURN" && principal === "GODREJ") ||
+              (division === "RETURN" && (principal === "GODREJ" || principal === "HEINZ")) ||
               (division === "FAKTUR" && principal === "CUSSONS")
             );
+            const isCsv = kind === "header" || isCsvPrincipal;
             const label = division === "RETURN"
-              ? kind === "accurate" ? "Retur Penjualan (Accurate)" : `${principal === "SHINZUI" ? "PenjualanInvoice" : principal === "GODREJ" ? "Sale Returns" : "Sales Detail"} ${principal}`
+              ? kind === "accurate"
+                ? "Retur Penjualan (Accurate)"
+                : kind === "header"
+                  ? "HEADER HEINZ"
+                  : `${principal === "SHINZUI" ? "PenjualanInvoice" : principal === "GODREJ" ? "Sale Returns" : principal === "HEINZ" ? "DETAIL" : "Sales Detail"} ${principal}`
               : kind === "accurate"
                 ? "Rincian Faktur Penjualan (Accurate)"
                 : `${isCsvPrincipal ? "Detail" : "Sales Detail"} ${principal}`;
-            const accept = isCsvPrincipal
+            const accept = isCsv
               ? ".csv,text/csv,application/csv"
               : ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-            const helpText = `Format ${isCsvPrincipal ? ".csv" : ".xlsx"}, maksimal 10 MB`;
+            const helpText = `Format ${isCsv ? ".csv" : ".xlsx"}, maksimal 10 MB`;
             const cardClass =
               kind === "accurate"
                 ? "border-indigo-500/20 bg-indigo-500/10"
@@ -582,13 +596,17 @@ export default function ReconciliationPage() {
                 Rekonsiliasi selesai. Periksa ringkasan di bawah.
               </p>
             ) : (
-              <p className="text-slate-400">Unggah kedua file untuk memulai.</p>
+              <p className="text-slate-400">
+                {division === "RETURN" && principal === "HEINZ"
+                  ? "Unggah ketiga file untuk memulai."
+                  : "Unggah kedua file untuk memulai."}
+              </p>
             )}
           </div>
           <button
             type="button"
             onClick={runReconciliation}
-            disabled={isRunning || !accurateFile || !principalFile}
+            disabled={isRunning || !accurateFile || !principalFile || (principal === "HEINZ" && !headerFile)}
             className="btn-primary flex w-full items-center justify-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 sm:w-auto"
           >
             {isRunning ? (

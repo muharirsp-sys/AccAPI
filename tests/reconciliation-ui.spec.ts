@@ -378,6 +378,78 @@ test("runs KINO and GODREJ Return reconciliation and resets when switching princ
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toHaveCount(0);
 });
+test("runs HEINZ Return with HEADER and DETAIL then resets all three files", async ({ page, baseURL }) => {
+  const login = await page.request.post("/api/auth/sign-in/email", {
+    headers: { Origin: baseURL || "http://localhost:3000" },
+    data: { email: QA_EMAIL, password: QA_PASSWORD },
+  });
+  expect(login.ok()).toBeTruthy();
+
+  await page.goto("/reconciliation");
+  await page.getByRole("button", { name: "Return" }).click();
+  await page.getByLabel("Prinsipal").selectOption("HEINZ");
+
+  const run = page.getByRole("button", { name: "Jalankan rekonsiliasi" });
+  await expect(page.getByText("Bandingkan retur Accurate dengan laporan HEADER dan DETAIL HEINZ.", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("HEADER HEINZ")).toHaveAttribute("accept", ".csv,text/csv,application/csv");
+  await expect(page.getByLabel("DETAIL HEINZ")).toHaveAttribute("accept", ".csv,text/csv,application/csv");
+  await expect(run).toBeDisabled();
+
+  await page.getByLabel("Retur Penjualan (Accurate)").setInputFiles(xlsx("accurate-heinz-return.xlsx"));
+  await page.getByLabel("HEADER HEINZ").setInputFiles(csv("header-heinz.csv"));
+  await expect(run).toBeDisabled();
+  await page.getByLabel("DETAIL HEINZ").setInputFiles(csv("detail-heinz.csv"));
+  await expect(run).toBeEnabled();
+
+  const heinzResult = {
+    ...returnResult,
+    results: returnResult.results.map((row) => ({
+      ...row,
+      invoiceNumber: row.invoiceNumber.replace("INVGTS2505-0098-008", "CN-0242"),
+      principalProductCode: row.principalProductCode?.replace("SHZ", "HEI"),
+    })),
+  };
+  let heinzCalled = false;
+  await page.route("**/api/reconciliation/heinz/returns", async (route) => {
+    heinzCalled = true;
+    const body = (await route.request().postDataBuffer())?.toString() ?? "";
+    expect(body).toContain('name="accurateFile"');
+    expect(body).toContain('name="headerFile"');
+    expect(body).toContain('name="principalFile"');
+    expect(body).toContain('filename="header-heinz.csv"');
+    expect(body).toContain('filename="detail-heinz.csv"');
+    await route.fulfill({ json: heinzResult });
+  });
+
+  await run.click();
+  expect(heinzCalled).toBe(true);
+  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByText("CN-024277", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, HEINZ 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Pajak HEINZ" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Total HEINZ" })).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Ekspor XLSX" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^rekonsiliasi-return-heinz-\d{4}-\d{2}-\d{2}\.xlsx$/);
+  const downloadPath = await download.path();
+  expect(downloadPath).not.toBeNull();
+  const workbook = XLSX.readFile(downloadPath!);
+  const detail = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets.Detail);
+  expect(detail[1]).toMatchObject({
+    "Produk HEINZ": "HEI-02",
+    "Pajak HEINZ": 6600.05,
+    "Total HEINZ": 66600.55,
+    "Baris HEINZ": "5",
+  });
+
+  await page.getByLabel("Prinsipal").selectOption("KINO");
+  await expect(page.getByLabel("HEADER HEINZ")).toHaveCount(0);
+  await expect(page.getByLabel("Sales Detail KINO")).toBeVisible();
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
+  await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
+});
 test("shows the progressive reconciliation workflow", async ({
   page,
   baseURL,
