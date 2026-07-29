@@ -252,10 +252,14 @@ git commit -m "feat(reconciliation): add godrej return UI"
 - [ ] **Step 1: Run all backend tests**
 
 ```powershell
-Get-ChildItem lib/off-program-control -Filter *.test.ts | ForEach-Object {
+Get-ChildItem lib/off-program-control -Filter *.test.ts |
+  Where-Object Name -ne 'godrej-return-route.test.ts' |
+  ForEach-Object {
   node --experimental-strip-types $_.FullName
   if ($LASTEXITCODE -ne 0) { throw "Test gagal: $($_.Name)" }
 }
+npx tsx lib/off-program-control/godrej-return-route.test.ts
+if ($LASTEXITCODE -ne 0) { throw "Test gagal: godrej-return-route.test.ts" }
 ```
 
 - [ ] **Step 2: Run type, lint, build, and UI**
