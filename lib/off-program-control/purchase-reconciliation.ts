@@ -12,6 +12,10 @@ type Mappings = {
   byName: Map<string, Mapping[]>;
   byCode: Map<string, Mapping>;
 };
+type ReckittMappings = {
+  byPrincipalCode: Map<string, Mapping[]>;
+  byWinCode: Map<string, Mapping>;
+};
 type Aggregate = {
   invoiceNumber: string;
   productCode: string | null;
@@ -62,7 +66,14 @@ function rows(buffer: Buffer | Uint8Array, preferredSheet?: string): Row[] {
   if (!buffer?.byteLength) throw new Error("File kosong");
   let book: XLSX.WorkBook;
   try {
-    book = XLSX.read(buffer, { type: "buffer", raw: true, cellFormula: false });
+    book = XLSX.read(buffer, {
+      type: "buffer",
+      raw: true,
+      cellFormula: false,
+      ...(Buffer.from(buffer).subarray(0, 200).includes(124)
+        ? { FS: "|" }
+        : {}),
+    });
   } catch {
     throw new Error("File rusak atau tidak valid");
   }
@@ -270,6 +281,228 @@ function parsePrincipal(
   return lines;
 }
 
+function parseReckittMappings(buffer: Buffer | Uint8Array): ReckittMappings {
+  const allRows = rows(buffer, "Pvt Map 1"),
+    required = ["Kode BARANG Win2", "Kode Pcpl", "ISI/CTN"],
+    { headerRow, indexes } = table(allRows, required),
+    unitsByWinCode = new Map<string, number>(),
+    byPrincipalCode = new Map<string, Mapping[]>(),
+    byWinCode = new Map<string, Mapping>();
+  for (let index = headerRow + 1; index < allRows.length; index++) {
+    const row = allRows[index],
+      code = text(row[indexes["Kode BARANG Win2"]]).toUpperCase(),
+      rawUnits = row[indexes["ISI/CTN"]];
+    if (!code || !rawUnits || text(rawUnits).toUpperCase() === "(BLANK)") continue;
+    const units = number(rawUnits, "ISI/CTN", index + 1);
+    if (!units)
+      throw new Error(`ISI/CTN harus lebih dari nol pada baris ${index + 1}`);
+    if (!unitsByWinCode.has(code)) unitsByWinCode.set(code, units);
+  }
+  for (let index = headerRow + 1; index < allRows.length; index++) {
+    const row = allRows[index],
+      code = text(row[indexes["Kode BARANG Win2"]]).toUpperCase(),
+      principalCode = text(row[indexes["Kode Pcpl"]]).toUpperCase();
+    if (!code && !principalCode) continue;
+    if (!code || !principalCode)
+      throw new Error(`Mapping parsial pada baris ${index + 1}`);
+    const rawUnits = row[indexes["ISI/CTN"]],
+      unitsPerCase =
+        rawUnits && text(rawUnits).toUpperCase() !== "(BLANK)"
+          ? number(rawUnits, "ISI/CTN", index + 1)
+          : unitsByWinCode.get(code);
+    if (!unitsPerCase)
+      throw new Error(`Mapping parsial pada baris ${index + 1}`);
+    const mapping = { code, unitsPerCase, name: principalCode },
+      principalMappings = byPrincipalCode.get(principalCode) ?? [];
+    if (!principalMappings.some((item) => item.code === code))
+      principalMappings.push(mapping);
+    byPrincipalCode.set(principalCode, principalMappings);
+    byWinCode.set(code, mapping);
+  }
+  return { byPrincipalCode, byWinCode };
+}
+
+function parseReckittAccurate(
+  buffer: Buffer | Uint8Array,
+  mappings: ReckittMappings,
+): CanonicalReturnLine[] {
+  const allRows = rows(buffer, "Rincian Faktur Pembelian"),
+    required = ["NO. PEMBELIAN", "KODE BARANG", "QTY", "SATUAN", "DPP", "PPN", "REM"],
+    { headerRow, indexes } = table(allRows, required),
+    lines: CanonicalReturnLine[] = [];
+  for (let index = headerRow + 1; index < allRows.length; index++) {
+    const row = allRows[index];
+    if (row.every((value) => text(value) === "")) continue;
+    const sourceRowNumber = index + 1,
+      productCode = text(row[indexes["KODE BARANG"]]).toUpperCase(),
+      invoiceMatches = [...text(row[indexes.REM]).matchAll(/\b210\d{7}\b/g)].map(
+        (match) => match[0],
+      ),
+      mapping = mappings.byWinCode.get(productCode),
+      quantity = number(row[indexes.QTY], "QTY", sourceRowNumber),
+      dpp = number(row[indexes.DPP], "DPP", sourceRowNumber),
+      documentTax = number(row[indexes.PPN], "PPN", sourceRowNumber);
+    let invalidReason =
+      invoiceMatches.length === 1
+        ? null
+        : `REM harus memuat tepat satu nomor 210 pada baris ${sourceRowNumber}`;
+    if (!invalidReason && text(row[indexes.SATUAN]).toUpperCase() !== "KRT")
+      invalidReason = `SATUAN harus KRT pada baris ${sourceRowNumber}`;
+    if (!invalidReason && !mapping)
+      invalidReason = `KODE BARANG tidak ada di mapping pada baris ${sourceRowNumber}: ${productCode}`;
+    lines.push({
+      source: "ACCURATE",
+      sourceRowNumber,
+      invoiceNumber:
+        invoiceMatches.length === 1
+          ? invoiceMatches[0]
+          : text(row[indexes["NO. PEMBELIAN"]]).toUpperCase(),
+      customerCode: "",
+      accurateProductCode: productCode || null,
+      principalProductCode: mapping?.name ?? null,
+      quantity,
+      dpp,
+      tax: documentTax,
+      total: dpp + documentTax,
+      invalidReason,
+    });
+  }
+  const documents = new Map<string, CanonicalReturnLine[]>();
+  for (const line of lines) {
+    const document = documents.get(line.invoiceNumber) ?? [];
+    document.push(line);
+    documents.set(line.invoiceNumber, document);
+  }
+  for (const document of documents.values()) {
+    const dpp = document.reduce((sum, line) => sum + line.dpp, 0),
+      taxes = new Set(document.map((line) => line.tax));
+    if (taxes.size !== 1) {
+      for (const line of document)
+        line.invalidReason ??= `PPN dokumen tidak konsisten untuk ${line.invoiceNumber}`;
+      continue;
+    }
+    const documentTax = document[0].tax;
+    for (const line of document) {
+      line.tax = dpp ? documentTax * line.dpp / dpp : 0;
+      line.total = line.dpp + line.tax;
+    }
+  }
+  return lines;
+}
+
+function parseReckittPrincipal(
+  buffer: Buffer | Uint8Array,
+  mappings: ReckittMappings,
+): CanonicalReturnLine[] {
+  const allRows = rows(buffer),
+    required = [
+      "Invoice No",
+      "Product Code",
+      "Received Product Quantity",
+      "Invoice Quantity UOM",
+      "Product List Price",
+      "Customer Discount Amount",
+      "Purchase Discount Amount",
+      "No Return Discount Amount",
+      "Discount Allowance Amount",
+      "Net Amount",
+      "Tax Percentage",
+      "Total Tax Amount",
+    ],
+    { headerRow, indexes } = table(allRows, required),
+    lines: CanonicalReturnLine[] = [];
+  for (let index = headerRow + 1; index < allRows.length; index++) {
+    const row = allRows[index];
+    if (row.every((value) => text(value) === "")) continue;
+    const sourceRowNumber = index + 1,
+      invoiceNumber = text(row[indexes["Invoice No"]]),
+      principalProductCode = text(row[indexes["Product Code"]]).toUpperCase(),
+      namedMappings = mappings.byPrincipalCode.get(principalProductCode) ?? [],
+      mapping = namedMappings.length === 1 ? namedMappings[0] : undefined;
+    let quantity = 0,
+      dpp = 0,
+      tax = 0,
+      invalidReason =
+        !/^210\d{7}$/.test(invoiceNumber)
+          ? `Invoice No tidak valid pada baris ${sourceRowNumber}`
+          : namedMappings.length > 1
+            ? `Mapping kode ambigu ${principalProductCode}: ${namedMappings.map((item) => item.code).join(", ")}`
+            : mapping
+              ? null
+              : `Produk tidak terpetakan: ${principalProductCode}`;
+    try {
+      const received = number(
+          row[indexes["Received Product Quantity"]],
+          "Received Product Quantity",
+          sourceRowNumber,
+        ),
+        listPrice = number(
+          row[indexes["Product List Price"]],
+          "Product List Price",
+          sourceRowNumber,
+        ),
+        discounts = [
+          "Customer Discount Amount",
+          "Purchase Discount Amount",
+          "No Return Discount Amount",
+          "Discount Allowance Amount",
+        ].reduce(
+          (sum, header) =>
+            sum + number(row[indexes[header]], header, sourceRowNumber),
+          0,
+        ),
+        taxPercentage = number(
+          row[indexes["Tax Percentage"]],
+          "Tax Percentage",
+          sourceRowNumber,
+        );
+      quantity = number(
+        row[indexes["Invoice Quantity UOM"]],
+        "Invoice Quantity UOM",
+        sourceRowNumber,
+      );
+      dpp = number(row[indexes["Net Amount"]], "Net Amount", sourceRowNumber);
+      tax = number(
+        row[indexes["Total Tax Amount"]],
+        "Total Tax Amount",
+        sourceRowNumber,
+      );
+      if (!invalidReason && received !== quantity)
+        invalidReason = `Received Product Quantity dan Invoice Quantity UOM tidak konsisten pada baris ${sourceRowNumber}`;
+      else if (
+        !invalidReason &&
+        Math.abs(quantity * listPrice - discounts - dpp) > 1 + 1e-9
+      )
+        invalidReason = `Formula Net Amount tidak konsisten pada baris ${sourceRowNumber}`;
+      else if (
+        !invalidReason &&
+        Math.abs(dpp * taxPercentage / 100 - tax) > 1 + 1e-9
+      )
+        invalidReason = `Formula pajak tidak konsisten pada baris ${sourceRowNumber}`;
+    } catch (error) {
+      if (!invalidReason)
+        invalidReason =
+          error instanceof Error
+            ? error.message
+            : `Data tidak valid pada baris ${sourceRowNumber}`;
+    }
+    lines.push({
+      source: "PRINCIPAL",
+      sourceRowNumber,
+      invoiceNumber,
+      customerCode: "",
+      accurateProductCode: mapping?.code ?? null,
+      principalProductCode: principalProductCode || null,
+      quantity,
+      dpp,
+      tax,
+      total: dpp + tax,
+      invalidReason,
+    });
+  }
+  return lines;
+}
+
 function aggregate(lines: CanonicalReturnLine[]): Map<string, Aggregate> {
   const output = new Map<string, Aggregate>();
   for (const line of lines) {
@@ -425,4 +658,21 @@ export function reconcileGodrejPurchases(
     accurateLines = parseAccurate(accurateBuffer, mappings),
     principalLines = parsePrincipal(principalBuffer, mappings);
   return reconcile(accurateLines, principalLines, dppTolerance);
+}
+
+export function reconcileReckittPurchases(
+  accurateBuffer: Buffer | Uint8Array,
+  principalBuffer: Buffer | Uint8Array,
+  mappingBuffer: Buffer | Uint8Array,
+  options: { dppTolerance?: number } = {},
+): ReturnReconciliationOutput {
+  const dppTolerance = options.dppTolerance ?? 1;
+  if (!Number.isFinite(dppTolerance) || dppTolerance < 0)
+    throw new Error("Toleransi DPP tidak valid");
+  const mappings = parseReckittMappings(mappingBuffer);
+  return reconcile(
+    parseReckittAccurate(accurateBuffer, mappings),
+    parseReckittPrincipal(principalBuffer, mappings),
+    dppTolerance,
+  );
 }
