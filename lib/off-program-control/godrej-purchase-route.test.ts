@@ -197,16 +197,40 @@ function parserResponse(message: string): Promise<Response> {
   })(request());
 }
 
-for (const message of [
-  "Header wajib tidak ditemukan: Invoice_Number, Bill_No, Approved, Amount_Uploaded, Quantity_in_Units, Quantity_Uploaded, Qty_Approved, Sku_Name",
-  "Invoice_Number dan Bill_No tidak konsisten pada baris 2",
-  "Kuantitas tidak konsisten pada baris 2",
-  "Amount_Uploaded harus angka finite non-negatif pada baris 2",
-] as const) {
-  const response = await parserResponse(message);
-  assert.equal(response.status, 422);
-  assert.deepEqual(await response.json(), { error: message });
-}
+const knownGodrejMessage =
+  "Invoice_Number dan Bill_No tidak konsisten pada baris 2";
+const malformedPrincipal = workbook("Sheet1", [
+  [
+    "Invoice_Number",
+    "Bill_No",
+    "Approved",
+    "Amount_Uploaded",
+    "Quantity_in_Units",
+    "Quantity_Uploaded",
+    "Qty_Approved",
+    "Sku_Name",
+  ],
+  ["1", "2", "Approved", 111, 144, 144, 144, "AUTOSOL Metal Polish 15 gr"],
+]);
+const godrejParserResponse = await withPermissions(
+  ["reconciliation.run"],
+  () =>
+    POST(
+      request((form) =>
+        form.set("principalFile", file(malformedPrincipal, "grn.xlsx")),
+      ),
+    ),
+);
+assert.equal(godrejParserResponse.status, 422);
+assert.deepEqual(await godrejParserResponse.json(), {
+  error: knownGodrejMessage,
+});
+
+const unrelatedResponse = await parserResponse(knownGodrejMessage);
+assert.equal(unrelatedResponse.status, 500);
+assert.deepEqual(await unrelatedResponse.json(), {
+  error: "Rekonsiliasi gagal diproses.",
+});
 
 for (const message of [
   "Header wajib tidak ditemukan: DATABASE_PASSWORD",
