@@ -1,5 +1,5 @@
 /*
- * Tujuan: Halaman Insentif Sales untuk performa, kalkulasi insentif, dan verifikasi pembayaran dengan hasil batch yang eksplisit.
+ * Tujuan: Halaman Insentif Sales untuk performa, status feed pencapaian, kalkulasi insentif, dan verifikasi pembayaran.
  * Caller: Next.js App Router route /insentif-sales.
  * Dependensi: lucide-react, sonner, Next navigation, `AsyncState`, ./data (helpers + constants), API routes /api/insentif-sales/*.
  * Main Functions: InsentifSalesPage + sub-view Sales/SPV/SM/Admin/Finance, pemilih periode URL,
@@ -41,6 +41,14 @@ interface ApiRow {
     pct: { value: number; ec: number; ao: number; isq: number; total: number };
     incentive: { value: number; ec: number; ao: number; isq: number; total: number };
     paymentStatus: string;
+}
+
+interface ProgressFeedStatus {
+    progressKeys: number;
+    targetKeys: number;
+    matchedKeys: number;
+    unmatchedKeys: number;
+    ready: boolean;
 }
 
 interface PaymentRow {
@@ -1880,6 +1888,7 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
 export default function InsentifSalesPage() {
     const now = new Date();
     const [apiRows, setApiRows] = useState<ApiRow[]>([]);
+    const [progressFeed, setProgressFeed] = useState<ProgressFeedStatus | null>(null);
     const [loading, setLoading] = useState(true);
     const [dashboardError, setDashboardError] = useState("");
     const pathname = usePathname();
@@ -1921,8 +1930,10 @@ export default function InsentifSalesPage() {
             if (!res.ok) throw new Error("Data insentif belum berhasil dimuat.");
             const data = await res.json();
             setApiRows(data.rows as ApiRow[]);
+            setProgressFeed(data.progressFeed as ProgressFeedStatus);
         } catch (error) {
             setApiRows([]);
+            setProgressFeed(null);
             setDashboardError(
                 error instanceof Error
                     ? error.message
@@ -2033,6 +2044,36 @@ export default function InsentifSalesPage() {
                 </div>
             )}
 
+            {!loading && !dashboardError && progressFeed && progressFeed.progressKeys > 0 && (
+                <div
+                    className={`mb-5 flex items-start gap-3 rounded-xl border p-4 ${
+                        progressFeed.ready
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                            : "border-amber-500/30 bg-amber-500/10 text-amber-100"
+                    }`}
+                    role="status"
+                >
+                    {progressFeed.ready
+                        ? <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-400" size={18} />
+                        : <AlertTriangle className="mt-0.5 shrink-0 text-amber-400" size={18} />}
+                    <div className="text-sm leading-6">
+                        <p className="font-bold">
+                            {progressFeed.ready
+                                ? "Pencapaian Laporan Harian sudah masuk"
+                                : "Pencapaian sudah diterima, target periode belum tersedia"}
+                        </p>
+                        <p className="text-xs opacity-80">
+                            {progressFeed.matchedKeys.toLocaleString("id-ID")} dari {progressFeed.progressKeys.toLocaleString("id-ID")} kombinasi salesman dan principal telah cocok dengan target.
+                            {!progressFeed.targetKeys
+                                ? " Unggah target periode ini agar dashboard dan perhitungan insentif dapat ditampilkan."
+                                : progressFeed.unmatchedKeys
+                                    ? ` Masih ada ${progressFeed.unmatchedKeys.toLocaleString("id-ID")} kombinasi tanpa target yang cocok.`
+                                    : ""}
+                        </p>
+                    </div>
+                </div>
+            )}
+
             {/* Body */}
             <div id="insentif-view-panel" role="tabpanel" aria-labelledby={`insentif-tab-${view}`} tabIndex={0}>
             {loading && view !== "admin" ? (
@@ -2045,10 +2086,16 @@ export default function InsentifSalesPage() {
                 />
             ) : salesmen.length === 0 && view !== "admin" && view !== "finance" ? (
                 <EmptyState
-                    title="Tidak ada data untuk filter ini"
-                    message="Ubah principle atau cabang, lalu periksa kembali hasilnya."
-                    actionLabel="Reset Filter"
-                    onAction={() => updateContext({ principle: "ALL", branch: "ALL" })}
+                    title={progressFeed?.progressKeys && !progressFeed.targetKeys
+                        ? "Target periode ini belum diunggah"
+                        : "Tidak ada data untuk filter ini"}
+                    message={progressFeed?.progressKeys && !progressFeed.targetKeys
+                        ? `${progressFeed.progressKeys.toLocaleString("id-ID")} kombinasi pencapaian sudah diterima. Unggah target agar performa dan insentif dapat dihitung.`
+                        : "Ubah principle atau cabang, lalu periksa kembali hasilnya."}
+                    actionLabel={progressFeed?.progressKeys && !progressFeed.targetKeys ? "Buka Input Penjualan" : "Reset Filter"}
+                    onAction={() => progressFeed?.progressKeys && !progressFeed.targetKeys
+                        ? updateContext({ view: "admin" })
+                        : updateContext({ principle: "ALL", branch: "ALL" })}
                 />
             ) : (
                 <div className="space-y-5">

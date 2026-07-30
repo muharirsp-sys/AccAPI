@@ -1,10 +1,10 @@
 /*
- * Tujuan: UI Laporan Harian SPV/SM/principal untuk upload, ringkasan, review file opsional, dan kirim email.
+ * Tujuan: UI Laporan Harian untuk upload, ringkasan, review, verifikasi feed insentif, dan trial email internal terpilih.
  * Caller: menu sidebar "Laporan Harian" (/laporan-harian). Guard RBAC: laporan_harian.view.
  * Dependensi: POST /api/laporan-harian/upload, GET /api/laporan-harian/[runId]/preview,
  *             POST /api/laporan-harian/[runId]/send, lucide-react, semantic UI classes global.
  * Main Functions: LaporanHarianPage, FilePicker, readJsonResponse, handleUpload, loadReview,
- *                 dan handleSend dengan pilihan closing.
+ *                 pemilihan file/penerima internal, dan handleSend dengan pilihan closing.
  * Side Effects: HTTP upload/read/send; tidak menyimpan state di localStorage.
  */
 "use client";
@@ -25,12 +25,21 @@ type Summary = { spv: string; rows: number; dpp: number; ao: number; ec: number;
 type Recipient = { keyword: string; groupType: string; fileName: string; emails: string[] };
 type GeneratedFile = { keyword: string; groupType: string; fileName: string; rows: number; stockRows: number };
 type ReviewSample = { fileName: string; sheetName: string; columns: string[]; rows: unknown[][] };
+type IncentiveFeed = {
+    progressKeys: number;
+    targetKeys: number;
+    matchedKeys: number;
+    unmatchedKeys: number;
+    ready: boolean;
+};
 type UploadResult = {
     ok: boolean;
     runId: string;
     reportDate: string;
     period: { month: number; year: number };
     dashboardFed: { inserted: number };
+    incentiveFeed: IncentiveFeed;
+    internalRecipients: string[];
     salesRows: number;
     netDpp: number;
     summary: Summary[];
@@ -112,8 +121,11 @@ export default function LaporanHarianPage() {
     const [reviewFileName, setReviewFileName] = useState("");
     const [review, setReview] = useState<ReviewSample | null>(null);
     const [isClosing, setIsClosing] = useState(false);
+    const [selectedFileNames, setSelectedFileNames] = useState<string[]>([]);
+    const [selectedInternalEmails, setSelectedInternalEmails] = useState<string[]>([]);
 
     const busy = processing || sending;
+    const trialEmailCount = selectedFileNames.length * selectedInternalEmails.length;
 
     async function handleUpload() {
         if (!penjualan) {
@@ -126,6 +138,8 @@ export default function LaporanHarianPage() {
         setReview(null);
         setReviewOpen(false);
         setIsClosing(false);
+        setSelectedFileNames([]);
+        setSelectedInternalEmails([]);
         setProcessing(true);
         try {
             const form = new FormData();
@@ -141,6 +155,8 @@ export default function LaporanHarianPage() {
             const uploaded = data as UploadResult;
             setResult(uploaded);
             setReviewFileName(uploaded.generatedFiles?.[0]?.fileName ?? "");
+            setSelectedFileNames(uploaded.recipientsPreview.map((recipient) => recipient.fileName));
+            setSelectedInternalEmails(uploaded.internalRecipients);
         } catch (uploadError) {
             setError(`Gagal upload atau memproses laporan: ${String(uploadError)}`);
         } finally {
@@ -175,15 +191,25 @@ export default function LaporanHarianPage() {
 
     async function handleSend() {
         if (!result) return;
+        if (!selectedFileNames.length || !selectedInternalEmails.length) {
+            setError("Pilih minimal satu laporan dan satu penerima internal.");
+            return;
+        }
         const reportType = isClosing ? "laporan closing" : "laporan harian";
-        if (!confirm(`Kirim ${result.totalRecipients} email ${reportType} tanggal ${result.reportDate} untuk ${result.recipientsPreview.length} file?\nEmail akan benar-benar dikirim.`)) return;
+        if (!confirm(`Uji coba: kirim ${selectedFileNames.length} file ${reportType} tanggal ${result.reportDate} ke ${selectedInternalEmails.length} alamat internal?\nPenerima eksternal tidak akan dikirimi email.`)) return;
         setSending(true);
         setError(null);
         try {
             const response = await fetch(`/api/laporan-harian/${result.runId}/send`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ confirm: true, isClosing }),
+                body: JSON.stringify({
+                    confirm: true,
+                    isClosing,
+                    deliveryMode: "trial",
+                    selectedFileNames,
+                    internalEmails: selectedInternalEmails,
+                }),
             });
             const data = await readJsonResponse<{
                 error?: string;
@@ -274,11 +300,11 @@ export default function LaporanHarianPage() {
                                 </label>
                                 <button
                                     onClick={handleSend}
-                                    disabled={busy || result.totalRecipients === 0 || sendState?.status === "sent"}
+                                    disabled={busy || trialEmailCount === 0 || sendState?.status === "sent"}
                                     className="ui-button-primary min-h-11 px-4"
                                 >
                                     <Send size={17} aria-hidden="true" />
-                                    {sending ? "Mengirim email..." : `Kirim ${result.totalRecipients} email`}
+                                    {sending ? "Mengirim email..." : `Kirim uji coba (${trialEmailCount})`}
                                 </button>
                             </div>
                         </div>
@@ -302,6 +328,34 @@ export default function LaporanHarianPage() {
                             </div>
                         </div>
                     </section>
+
+                    <div
+                        className={`flex items-start gap-3 rounded-xl border p-4 ${
+                            result.incentiveFeed.ready
+                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                : "border-amber-300 bg-amber-50 text-amber-900"
+                        }`}
+                        role="status"
+                    >
+                        {result.incentiveFeed.ready
+                            ? <CheckCircle2 className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
+                            : <AlertTriangle className="mt-0.5 shrink-0" size={18} aria-hidden="true" />}
+                        <div className="text-sm leading-6">
+                            <p className="font-bold">
+                                {result.incentiveFeed.ready
+                                    ? "Pencapaian tersambung ke Insentif Sales"
+                                    : "Pencapaian tersimpan, tetapi target periode belum cocok"}
+                            </p>
+                            <p>
+                                {result.incentiveFeed.matchedKeys.toLocaleString("id-ID")} dari {result.incentiveFeed.progressKeys.toLocaleString("id-ID")} kombinasi salesman dan principal cocok dengan target.
+                                {!result.incentiveFeed.targetKeys
+                                    ? " Target bulan ini masih kosong; unggah target agar pencapaian tampil dan insentif dapat dihitung."
+                                    : result.incentiveFeed.unmatchedKeys
+                                        ? ` Periksa ${result.incentiveFeed.unmatchedKeys.toLocaleString("id-ID")} kombinasi yang belum memiliki target.`
+                                        : ""}
+                            </p>
+                        </div>
+                    </div>
 
                     {!!result.unmappedProgress?.rows && (
                         <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900" role="status">
@@ -412,26 +466,65 @@ export default function LaporanHarianPage() {
                         </div>
                     </details>
 
-                    <details className="ui-surface-panel overflow-hidden">
+                    <details className="ui-surface-panel overflow-hidden" open>
                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-sm font-extrabold text-[var(--luxury-text)]">
-                            <span>Penerima email <span className="font-semibold text-[var(--luxury-muted)]">({result.totalRecipients} alamat, belum dikirim)</span></span>
+                            <span>Pengiriman uji coba internal <span className="font-semibold text-[var(--luxury-muted)]">({selectedFileNames.length} file dipilih)</span></span>
                             <ChevronDown size={18} className="text-[var(--luxury-muted)]" aria-hidden="true" />
                         </summary>
-                        <div className="border-t border-[var(--border-soft)] p-3 sm:p-5">
+                        <div className="space-y-4 border-t border-[var(--border-soft)] p-3 sm:p-5">
+                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+                                Mode trial aktif. Hanya alamat internal di bawah yang akan menerima email; {result.totalRecipients.toLocaleString("id-ID")} alamat pada mapping eksternal tetap belum dikirimi.
+                            </div>
+                            <fieldset className="space-y-2">
+                                <legend className="text-sm font-extrabold text-[var(--luxury-text)]">Kirim kepada</legend>
+                                <div className="flex flex-wrap gap-2">
+                                    {result.internalRecipients.map((email) => (
+                                        <label key={email} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--luxury-text)]">
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedInternalEmails.includes(email)}
+                                                onChange={(event) => setSelectedInternalEmails((current) =>
+                                                    event.target.checked
+                                                        ? [...new Set([...current, email])]
+                                                        : current.filter((item) => item !== email),
+                                                )}
+                                                className="size-4 accent-[var(--luxury-teal)]"
+                                            />
+                                            {email}
+                                        </label>
+                                    ))}
+                                    {!result.internalRecipients.length && (
+                                        <p className="text-sm text-red-700">Belum ada email internal. Isi LAPORAN_HARIAN_INTERNAL_EMAILS atau pastikan akun login memiliki email valid.</p>
+                                    )}
+                                </div>
+                            </fieldset>
                             <div className="ui-table-frame max-h-80">
                                 <table className="ui-data-table min-w-[42rem]">
-                                    <caption className="sr-only">Daftar file dan penerima email</caption>
-                                    <thead><tr><th className="text-left">File</th><th className="text-left">Target</th><th className="text-left">Email</th></tr></thead>
+                                    <caption className="sr-only">Pilih file laporan untuk uji coba internal</caption>
+                                    <thead><tr><th className="w-14 text-center">Pilih</th><th className="text-left">File</th><th className="text-left">Target</th><th className="text-left">Penerima mapping</th></tr></thead>
                                     <tbody>
                                         {result.recipientsPreview.map((recipient, index) => (
                                             <tr key={`${recipient.fileName}-${index}`}>
+                                                <td className="text-center">
+                                                    <input
+                                                        type="checkbox"
+                                                        aria-label={`Pilih ${recipient.fileName}`}
+                                                        checked={selectedFileNames.includes(recipient.fileName)}
+                                                        onChange={(event) => setSelectedFileNames((current) =>
+                                                            event.target.checked
+                                                                ? [...new Set([...current, recipient.fileName])]
+                                                                : current.filter((item) => item !== recipient.fileName),
+                                                        )}
+                                                        className="size-4 accent-[var(--luxury-teal)]"
+                                                    />
+                                                </td>
                                                 <td>{recipient.fileName}</td>
                                                 <td className="font-bold">{recipient.keyword} · {recipient.groupType.toUpperCase()}</td>
                                                 <td>{recipient.emails.join(", ")}</td>
                                             </tr>
                                         ))}
                                         {result.recipientsPreview.length === 0 && (
-                                            <tr><td colSpan={3} className="text-[var(--luxury-muted)]">Tidak ada penerima yang cocok. Periksa keyword penerima.</td></tr>
+                                            <tr><td colSpan={4} className="text-[var(--luxury-muted)]">Tidak ada penerima yang cocok. Periksa keyword penerima.</td></tr>
                                         )}
                                     </tbody>
                                 </table>

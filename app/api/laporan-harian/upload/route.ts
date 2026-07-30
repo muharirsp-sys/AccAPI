@@ -4,8 +4,9 @@
  *         TIDAK mengirim email. Kirim email = endpoint terpisah /send (Tahap 4, gated).
  * Caller: UI modul Laporan Harian (browser, multipart).
  * Dependensi: requirePermission, recipient aktif, FastAPI /laporan-harian/process, normalisasi ingest,
- *             db/schema (reportRun, reportRecipient, reportRunRecipient).
- * Main Functions: POST (proses + dry-run, simpan tanggal transaksi penjualan terakhir).
+ *             recipient-selection, db/schema (reportRun, reportRecipient, reportRunRecipient).
+ * Main Functions: POST (proses + dry-run, simpan tanggal transaksi terakhir, verifikasi feed insentif,
+ *                 dan kembalikan allowlist penerima trial internal).
  * Side Effects: HTTP call ke FastAPI; DB write (report_run, report_run_recipient, sales_daily_progress).
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -18,7 +19,12 @@ import {
     normalizeDailyProgressRows,
     type DailyProgressInputRow,
 } from "@/lib/laporan-harian/progress-normalize";
-import { replaceDailyProgressForPeriod } from "@/lib/laporan-harian/ingest";
+import {
+    getIncentiveFeedCoverage,
+    replaceDailyProgressForPeriod,
+    type IncentiveFeedCoverage,
+} from "@/lib/laporan-harian/ingest";
+import { internalRecipientAllowlist } from "@/lib/laporan-harian/recipient-selection";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -127,8 +133,16 @@ export async function POST(req: NextRequest) {
     try {
         // Feed dashboard (batch, replace-per-periode). Idempotent.
         let fed = { deleted: false, inserted: 0 };
+        let incentiveFeed: IncentiveFeedCoverage = {
+            progressKeys: 0,
+            targetKeys: 0,
+            matchedKeys: 0,
+            unmatchedKeys: 0,
+            ready: false,
+        };
         if (month && year && progress.length) {
             fed = await replaceDailyProgressForPeriod(Number(month), Number(year), progress, gate.session.user.id);
+            incentiveFeed = await getIncentiveFeedCoverage(Number(month), Number(year), progress);
         }
 
         // Exact keyword dari writer menghindari collision/typo alias seperti GODREJJ dan RECKIT.
@@ -181,6 +195,11 @@ export async function POST(req: NextRequest) {
             message: "Proses selesai (DRY-RUN). Email BELUM dikirim. Review daftar penerima lalu panggil /send.",
             period: { month, year },
             dashboardFed: fed,
+            incentiveFeed,
+            internalRecipients: internalRecipientAllowlist(
+                process.env.LAPORAN_HARIAN_INTERNAL_EMAILS,
+                gate.session.user.email,
+            ),
             unmappedProgress,
             salesRows: result.sales_rows,
             netDpp: result.net_dpp,
