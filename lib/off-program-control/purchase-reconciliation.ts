@@ -208,6 +208,7 @@ function parsePrincipal(
       "Approved",
       "Amount_Uploaded",
       "Quantity_in_Units",
+      "Quantity_in_Cases",
       "Quantity_Uploaded",
       "Qty_Approved",
       "Sku_Name",
@@ -217,46 +218,41 @@ function parsePrincipal(
   for (let index = headerRow + 1; index < allRows.length; index++) {
     const row = allRows[index];
     if (row.every((value) => text(value) === "")) continue;
-    if (text(row[indexes.Approved]).toUpperCase() !== "APPROVED") continue;
     const sourceRowNumber = index + 1,
       invoice = text(row[indexes.Invoice_Number]),
-      bill = text(row[indexes.Bill_No]);
-    if (!invoice || invoice !== bill)
-      throw new Error(
-        `Invoice_Number dan Bill_No tidak konsisten pada baris ${sourceRowNumber}`,
-      );
-    const approved = number(
-        row[indexes.Qty_Approved],
-        "Qty_Approved",
-        sourceRowNumber,
-      ),
-      inUnits = number(
-        row[indexes.Quantity_in_Units],
-        "Quantity_in_Units",
-        sourceRowNumber,
-      ),
-      uploaded = number(
-        row[indexes.Quantity_Uploaded],
-        "Quantity_Uploaded",
-        sourceRowNumber,
-      );
-    if (approved !== inUnits || approved !== uploaded)
-      throw new Error(`Kuantitas tidak konsisten pada baris ${sourceRowNumber}`);
-    const total = number(
-        row[indexes.Amount_Uploaded],
-        "Amount_Uploaded",
-        sourceRowNumber,
-      ),
+      bill = text(row[indexes.Bill_No]),
       name = normalized(row[indexes.Sku_Name]),
-      namedMappings = mappings.byName.get(name) ?? [],
-      dpp = total / 1.11;
+      namedMappings = mappings.byName.get(name) ?? [];
     const mapping = namedMappings.length === 1 ? namedMappings[0] : undefined,
-      invalidReason =
+      mappingReason =
         namedMappings.length > 1
           ? `Mapping nama ambigu ${name}: ${namedMappings.map((item) => item.code).join(", ")}`
           : mapping
             ? null
             : `Produk tidak terpetakan: ${name}`;
+    let approved = 0,
+      total = 0,
+      invalidReason =
+        text(row[indexes.Approved]).toUpperCase() !== "APPROVED"
+          ? `Status GRN harus Approved pada baris ${sourceRowNumber}`
+          : !invoice || invoice !== bill
+            ? `Invoice_Number dan Bill_No tidak konsisten pada baris ${sourceRowNumber}`
+            : mappingReason;
+    try {
+      approved = number(row[indexes.Qty_Approved], "Qty_Approved", sourceRowNumber);
+      const inUnits = number(row[indexes.Quantity_in_Units], "Quantity_in_Units", sourceRowNumber),
+        inCases = number(row[indexes.Quantity_in_Cases], "Quantity_in_Cases", sourceRowNumber),
+        uploaded = number(row[indexes.Quantity_Uploaded], "Quantity_Uploaded", sourceRowNumber);
+      total = number(row[indexes.Amount_Uploaded], "Amount_Uploaded", sourceRowNumber);
+      if (!invalidReason && mapping && Math.abs(inCases * mapping.unitsPerCase - approved) > 1e-9)
+        invalidReason = `Quantity_in_Cases × ISI/CTN tidak konsisten pada baris ${sourceRowNumber}`;
+      else if (!invalidReason && (approved !== inUnits || approved !== uploaded))
+        invalidReason = `Quantity_in_Units, Quantity_Uploaded, dan Qty_Approved tidak konsisten pada baris ${sourceRowNumber}`;
+    } catch (error) {
+      if (!invalidReason)
+        invalidReason = error instanceof Error ? error.message : `Kuantitas tidak konsisten pada baris ${sourceRowNumber}`;
+    }
+    const dpp = total / 1.11;
     lines.push({
       source: "PRINCIPAL",
       sourceRowNumber,
@@ -368,14 +364,16 @@ function reconcile(
       ),
     );
   for (const invalid of aggregate(
-    principalLines.filter((line) => line.invalidReason?.startsWith("Mapping nama ambigu")),
+    principalLines.filter(
+      (line) => line.invalidReason && !line.invalidReason.startsWith("Produk tidak terpetakan"),
+    ),
   ).values())
     results.push(result(undefined, invalid, "INVALID_DATA"));
   for (const unmapped of aggregate(
     principalLines.filter(
       (line) =>
         !line.accurateProductCode &&
-        !line.invalidReason?.startsWith("Mapping nama ambigu"),
+        line.invalidReason?.startsWith("Produk tidak terpetakan"),
     ),
   ).values())
     results.push(result(undefined, unmapped, "UNMAPPED"));

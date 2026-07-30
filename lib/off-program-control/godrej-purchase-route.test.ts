@@ -18,19 +18,20 @@ const accurate = workbook("Rincian Faktur Pembelian", [
   ["NO. PEMBELIAN", "KODE BARANG", "QTY", "SATUAN", "DPP", "REM"],
   ["LPB-1", "G1011000001510", 1, "KRT", 100, "DMS Bill 1"],
 ]);
-const principal = workbook("Sheet1", [
+const principal = Buffer.from(XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet([
   [
     "Invoice_Number",
     "Bill_No",
     "Approved",
     "Amount_Uploaded",
     "Quantity_in_Units",
+    "Quantity_in_Cases",
     "Quantity_Uploaded",
     "Qty_Approved",
     "Sku_Name",
   ],
-  ["1", "1", "Approved", 111, 144, 144, 144, "AUTOSOL Metal Polish 15 gr"],
-]);
+  ["1", "1", "Approved", 111, 144, 1, 144, 144, "AUTOSOL Metal Polish 15 gr"],
+])));
 
 function file(content: BlobPart, name: string, type = xlsxMime): File {
   return new File([content], name, { type });
@@ -39,7 +40,7 @@ function file(content: BlobPart, name: string, type = xlsxMime): File {
 function request(mutate?: (form: FormData) => void): Request {
   const form = new FormData();
   form.append("accurateFile", file(accurate, "accurate.xlsx"));
-  form.append("principalFile", file(principal, "grn.xlsx"));
+  form.append("principalFile", file(principal, "grn.csv", "text/csv"));
   mutate?.(form);
   return new Request("http://localhost/api/reconciliation/godrej/purchases", {
     method: "POST",
@@ -139,7 +140,7 @@ for (const [mutate, status] of [
   ],
   [
     (form: FormData) =>
-      form.set("principalFile", file(principal, "grn.csv")),
+      form.set("principalFile", file(principal, "grn.xlsx")),
     400,
   ],
   [
@@ -149,20 +150,20 @@ for (const [mutate, status] of [
   ],
   [
     (form: FormData) =>
-      form.set("principalFile", file(principal, "grn.xlsx", "text/csv")),
+      form.set("principalFile", file(principal, "grn.csv", xlsxMime)),
     400,
   ],
   [
     (form: FormData) =>
       form.set(
         "principalFile",
-        file(new Uint8Array(10 * 1024 * 1024 + 1), "grn.xlsx"),
+        file(new Uint8Array(10 * 1024 * 1024 + 1), "grn.csv", "text/csv"),
       ),
     413,
   ],
   [
     (form: FormData) =>
-      form.set("principalFile", file("not zip", "grn.xlsx")),
+      form.set("principalFile", file("", "grn.csv", "text/csv")),
     422,
   ],
 ] as const)
@@ -191,6 +192,7 @@ function parserResponse(message: string): Promise<Response> {
   return createKinoSalesPostHandler({
     authorize: async () => null,
     readMapping: async () => new Uint8Array(),
+    principalUpload: { kind: "csv" },
     reconcile: () => {
       throw new Error(message);
     },
@@ -199,31 +201,44 @@ function parserResponse(message: string): Promise<Response> {
 
 const knownGodrejMessage =
   "Invoice_Number dan Bill_No tidak konsisten pada baris 2";
-const malformedPrincipal = workbook("Sheet1", [
-  [
-    "Invoice_Number",
-    "Bill_No",
-    "Approved",
-    "Amount_Uploaded",
-    "Quantity_in_Units",
-    "Quantity_Uploaded",
-    "Qty_Approved",
-    "Sku_Name",
-  ],
-  ["1", "2", "Approved", 111, 144, 144, 144, "AUTOSOL Metal Polish 15 gr"],
-]);
+const malformedPrincipal = Buffer.from("Invoice_Number,Bill_No\n1,2");
 const godrejParserResponse = await withPermissions(
   ["reconciliation.run"],
   () =>
     POST(
       request((form) =>
-        form.set("principalFile", file(malformedPrincipal, "grn.xlsx")),
+        form.set("principalFile", file(malformedPrincipal, "grn.csv", "text/csv")),
       ),
     ),
 );
 assert.equal(godrejParserResponse.status, 422);
 assert.deepEqual(await godrejParserResponse.json(), {
-  error: knownGodrejMessage,
+  error:
+    "Header wajib tidak ditemukan: Invoice_Number, Bill_No, Approved, Amount_Uploaded, Quantity_in_Units, Quantity_in_Cases, Quantity_Uploaded, Qty_Approved, Sku_Name",
+});
+
+const malformedAccurate = workbook("Rincian Faktur Pembelian", [
+  ["NO. PEMBELIAN", "KODE BARANG"],
+  ["LPB-1", "G1011000001510"],
+]);
+const accurateParserResponse = await withPermissions(["reconciliation.run"], () =>
+  POST(request((form) => form.set("accurateFile", file(malformedAccurate, "accurate.xlsx")))),
+);
+assert.equal(accurateParserResponse.status, 422);
+assert.deepEqual(await accurateParserResponse.json(), {
+  error: "Header wajib tidak ditemukan: NO. PEMBELIAN, KODE BARANG, QTY, SATUAN, DPP, REM",
+});
+
+const secretAccurate = workbook("Rincian Faktur Pembelian", [
+  ["NO. PEMBELIAN", "KODE BARANG", "QTY", "SATUAN", "DPP", "REM"],
+  ["LPB-1", "D:\\secret\\mapping.xlsx", 1, "KRT", 100, "DMS Bill 1"],
+]);
+const secretResponse = await withPermissions(["reconciliation.run"], () =>
+  POST(request((form) => form.set("accurateFile", file(secretAccurate, "accurate.xlsx")))),
+);
+assert.equal(secretResponse.status, 500);
+assert.deepEqual(await secretResponse.json(), {
+  error: "Rekonsiliasi gagal diproses.",
 });
 
 const unrelatedResponse = await parserResponse(knownGodrejMessage);
@@ -257,7 +272,7 @@ assert.equal(body.results[0]?.accurateQuantity, 144);
 assert.equal(body.results[0]?.principalQuantity, 144);
 
 console.log(
-  "OK - POST GODREJ Purchase mencakup auth, upload XLSX, master, parser aman, dan respons engine.",
+  "OK - POST GODREJ Purchase mencakup auth, upload XLSX+CSV, master, parser aman, dan respons engine.",
 );
 }
 

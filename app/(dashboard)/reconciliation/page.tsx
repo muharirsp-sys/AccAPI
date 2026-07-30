@@ -274,14 +274,14 @@ function returnCauseLines(row: ReturnReconciliationResult, principal: Principal)
   return causes.length ? causes : row.warnings;
 }
 
-function returnColumns(principal: Principal): ColumnDef<ReturnReconciliationResult>[] {
+function returnColumns(principal: Principal, division: Exclude<Division, "FAKTUR">): ColumnDef<ReturnReconciliationResult>[] {
   return [
     {
       accessorKey: "status", header: "Status",
       cell: ({ row }) => <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusClasses[row.original.status]}`}>{statusLabel(row.original.status, principal)}</span>,
     },
-    { accessorKey: "invoiceNumber", header: "Invoice" },
-    { accessorKey: "customerCode", header: "Pelanggan" },
+    { accessorKey: "invoiceNumber", header: division === "PEMBELIAN" ? "Dokumen Pembelian" : "Invoice" },
+    { accessorKey: "customerCode", header: division === "PEMBELIAN" ? "Supplier" : "Pelanggan" },
     {
       id: "product",
       accessorFn: (row) => `${row.accurateProductCode ?? "-"} / ${row.principalProductCode ?? "-"}`,
@@ -316,7 +316,7 @@ export default function ReconciliationPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const salesColumns = useMemo(() => columnsFor(principal), [principal]);
-  const returnTableColumns = useMemo(() => returnColumns(principal), [principal]);
+  const returnTableColumns = useMemo(() => returnColumns(principal, division === "PEMBELIAN" ? "PEMBELIAN" : "RETURN"), [division, principal]);
   const currentStatuses = division === "FAKTUR" ? salesStatuses : returnStatuses;
 
   const filteredResults = useMemo(() => {
@@ -389,7 +389,9 @@ export default function ReconciliationPage() {
       const summary = currentStatuses.map((status) => ({ Status: excelText(status), Jumlah: (result.summary as Record<string, number>)[status] ?? 0 }));
       const detail = division !== "FAKTUR"
         ? (result.results as ReturnReconciliationResult[]).map((row) => ({
-            Status: excelText(row.status), Invoice: excelText(row.invoiceNumber), Pelanggan: excelText(row.customerCode),
+            Status: excelText(row.status),
+            [division === "PEMBELIAN" ? "Dokumen Pembelian" : "Invoice"]: excelText(row.invoiceNumber),
+            [division === "PEMBELIAN" ? "Supplier" : "Pelanggan"]: excelText(row.customerCode),
             "Produk Accurate": excelText(row.accurateProductCode ?? ""), [`Produk ${principal}`]: excelText(row.principalProductCode ?? ""),
             "Qty Accurate": row.accurateQuantity, [`Qty ${principal}`]: row.principalQuantity, "Selisih Qty": row.quantityDifference,
             "DPP Accurate": row.accurateDpp, [`DPP ${principal}`]: row.principalDpp, "Selisih DPP": row.dppDifference,
@@ -411,7 +413,7 @@ export default function ReconciliationPage() {
       const prefix = division === "RETURN"
         ? principal === "SHINZUI" ? "hasil-rekonsiliasi-return-shinzui" : `rekonsiliasi-return-${principal.toLowerCase()}`
         : division === "PEMBELIAN"
-          ? "hasil-rekonsiliasi-pembelian-godrej"
+          ? "rekonsiliasi-pembelian-godrej"
           : `hasil-rekonsiliasi-${principal.toLowerCase()}`;
       XLSX.writeFile(workbook, `${prefix}-${new Date().toISOString().slice(0, 10)}.xlsx`);
     } catch {
@@ -517,6 +519,7 @@ export default function ReconciliationPage() {
             const file = kind === "accurate" ? accurateFile : kind === "header" ? headerFile : principalFile;
             const isCsvPrincipal = kind === "principal" && (
               (division === "RETURN" && (principal === "GODREJ" || principal === "HEINZ" || principal === "CUSSONS")) ||
+              division === "PEMBELIAN" ||
               (division === "FAKTUR" && principal === "CUSSONS")
             );
             const isCsv = kind === "header" || isCsvPrincipal;

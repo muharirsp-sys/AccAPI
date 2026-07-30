@@ -121,7 +121,8 @@ test("runs GODREJ Pembelian reconciliation and keeps all themes", async ({
     await route.fulfill({ json: returnResult });
   });
   await page.getByLabel("Rincian Faktur Pembelian (Accurate)").setInputFiles(xlsx("accurate-purchase.xlsx"));
-  await page.getByLabel("GRN Status Report GODREJ").setInputFiles(xlsx("grn-status.xlsx"));
+  await expect(page.getByLabel("GRN Status Report GODREJ")).toHaveAttribute("accept", /text\/csv/);
+  await page.getByLabel("GRN Status Report GODREJ").setInputFiles(csv("grn-status.csv"));
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
   expect(purchaseCalled).toBe(true);
   await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
@@ -129,11 +130,14 @@ test("runs GODREJ Pembelian reconciliation and keeps all themes", async ({
   await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Qty: Accurate 3, GODREJ 5 — Accurate kurang 2", { exact: true })).toBeVisible();
 
+  await expect(page.getByRole("columnheader", { name: "Dokumen Pembelian" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Supplier" })).toBeVisible();
+
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Ekspor XLSX" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(
-    /^hasil-rekonsiliasi-pembelian-godrej-\d{4}-\d{2}-\d{2}\.xlsx$/,
+    /^rekonsiliasi-pembelian-godrej-\d{4}-\d{2}-\d{2}\.xlsx$/,
   );
 
   const themes = [

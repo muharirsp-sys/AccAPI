@@ -8,11 +8,12 @@ export const runtime = "nodejs";
 
 function safeGodrejPurchaseParserMessage(error: unknown): string | null {
   if (!(error instanceof Error)) return null;
-  return error.message ===
-    "Header wajib tidak ditemukan: Invoice_Number, Bill_No, Approved, Amount_Uploaded, Quantity_in_Units, Quantity_Uploaded, Qty_Approved, Sku_Name" ||
-    /^(?:Invoice_Number dan Bill_No tidak konsisten pada baris \d+|Kuantitas tidak konsisten pada baris \d+|(?:Amount_Uploaded|Quantity_in_Units|Quantity_Uploaded|Qty_Approved) (?:kosong|harus angka finite non-negatif) pada baris \d+)$/.test(
-      error.message,
-    )
+  const safeHeaders = new Set([
+    "Header wajib tidak ditemukan: NO. PEMBELIAN, KODE BARANG, QTY, SATUAN, DPP, REM",
+    "Header wajib tidak ditemukan: Invoice_Number, Bill_No, Approved, Amount_Uploaded, Quantity_in_Units, Quantity_in_Cases, Quantity_Uploaded, Qty_Approved, Sku_Name",
+  ]);
+  return safeHeaders.has(error.message) ||
+    /^(?:File (?:kosong|rusak atau tidak valid)|Sheet tidak ditemukan atau kosong|(?:QTY|DPP) (?:kosong|harus angka finite non-negatif) pada baris \d+|SATUAN harus KRT pada baris \d+|REM harus memuat tepat satu DMS Bill pada baris \d+)$/.test(error.message)
     ? error.message
     : null;
 }
@@ -34,5 +35,6 @@ export const POST = createKinoSalesPostHandler({
       dppTolerance: 1,
     }),
   missingMappingMessage: "Master mapping GODREJ Purchase tidak tersedia.",
+  principalUpload: { kind: "csv" },
   safeParserMessage: safeGodrejPurchaseParserMessage,
 });
