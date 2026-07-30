@@ -271,6 +271,52 @@ async function main(): Promise<void> {
     error: `Header wajib tidak ditemukan: ${principalHeaders.join(", ")}`,
   });
 
+  for (const [mutate, message] of [
+    [
+      (form: FormData) =>
+        form.set(
+          "accurateFile",
+          file(
+            workbook("Rincian Faktur Pembelian", [
+              [
+                "NO. PEMBELIAN",
+                "KODE BARANG",
+                "QTY",
+                "QTY",
+                "SATUAN",
+                "DPP",
+                "PPN",
+                "REM",
+              ],
+              ["LPB-1", "WIN-A", 1, 1, "KRT", 100, 11, "DO 100000001"],
+            ]),
+            "accurate.xlsx",
+          ),
+        ),
+      "Header duplikat: QTY",
+    ],
+    [
+      (form: FormData) =>
+        form.set(
+          "principalFile",
+          file(
+            Buffer.from(
+              [[...principalHeaders, "Invoice No"], [...principalHeaders.map(() => ""), ""]]
+                .map((row) => row.join(","))
+                .join("\r\n"),
+            ),
+            "detail.csv",
+            "text/csv",
+          ),
+        ),
+      "Header duplikat: Invoice No",
+    ],
+  ] as const) {
+    const response = await withMaster(mapping, () => post(mutate));
+    assert.equal(response.status, 422);
+    assert.deepEqual(await response.json(), { error: message });
+  }
+
   const originalCwd = process.cwd;
   process.cwd = () => "D:\\definitely-missing-cussons-purchase-master";
   try {
