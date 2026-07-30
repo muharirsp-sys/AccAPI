@@ -5,9 +5,18 @@ import type {
   ReturnReconciliationResult,
   ReturnStatus,
 } from "./return-reconciliation";
+import {
+  parseCussonsMappings,
+  type CussonsMappings,
+} from "./sales-reconciliation";
 
 type Row = unknown[];
-type Mapping = { code: string; unitsPerCase: number; name: string };
+type Mapping = {
+  code: string;
+  unitsPerCase: number;
+  name: string;
+  invalidReason?: string;
+};
 type Mappings = {
   byName: Map<string, Mapping[]>;
   byCode: Map<string, Mapping>;
@@ -15,6 +24,13 @@ type Mappings = {
 type ReckittMappings = {
   byPrincipalCode: Map<string, Mapping[]>;
   byWinCode: Map<string, Mapping>;
+};
+type CodeMappedPurchaseOptions = {
+  accurateInvoicePattern: RegExp;
+  accurateInvoiceLabel: string;
+  principalInvoicePattern: RegExp;
+  allowedUoms: string[];
+  allowedUomsLabel: string;
 };
 type Aggregate = {
   invoiceNumber: string;
@@ -38,6 +54,20 @@ const statuses: ReturnStatus[] = [
   "UNMAPPED",
   "INVALID_DATA",
 ];
+const reckittOptions: CodeMappedPurchaseOptions = {
+  accurateInvoicePattern: /\b210\d{7}\b/g,
+  accurateInvoiceLabel: "nomor 210",
+  principalInvoicePattern: /^210\d{7}$/,
+  allowedUoms: ["CAR", "PAC"],
+  allowedUomsLabel: "CAR atau PAC",
+};
+const cussonsOptions: CodeMappedPurchaseOptions = {
+  accurateInvoicePattern: /\b1\d{8}\b/g,
+  accurateInvoiceLabel: "nomor invoice CUSSONS",
+  principalInvoicePattern: /^1\d{8}$/,
+  allowedUoms: ["CS"],
+  allowedUomsLabel: "CS",
+};
 
 function text(value: unknown): string {
   return String(value ?? "").replace(/\u00a0/g, " ").trim();
@@ -329,6 +359,7 @@ function parseReckittMappings(buffer: Buffer | Uint8Array): ReckittMappings {
 function parseReckittAccurate(
   buffer: Buffer | Uint8Array,
   mappings: ReckittMappings,
+  options: CodeMappedPurchaseOptions = reckittOptions,
 ): CanonicalReturnLine[] {
   const allRows = rows(buffer, "Rincian Faktur Pembelian"),
     required = ["NO. PEMBELIAN", "KODE BARANG", "QTY", "SATUAN", "DPP", "PPN", "REM"],
@@ -340,9 +371,9 @@ function parseReckittAccurate(
     if (row.every((value) => text(value) === "")) continue;
     const sourceRowNumber = index + 1,
       productCode = text(row[indexes["KODE BARANG"]]).toUpperCase(),
-      invoiceMatches = [...text(row[indexes.REM]).matchAll(/\b210\d{7}\b/g)].map(
-        (match) => match[0],
-      ),
+      invoiceMatches = [
+        ...text(row[indexes.REM]).matchAll(options.accurateInvoicePattern),
+      ].map((match) => match[0]),
       mapping = mappings.byWinCode.get(productCode),
       quantity = number(row[indexes.QTY], "QTY", sourceRowNumber),
       dpp = number(row[indexes.DPP], "DPP", sourceRowNumber),
@@ -350,7 +381,7 @@ function parseReckittAccurate(
     let invalidReason =
       invoiceMatches.length === 1
         ? null
-        : `REM harus memuat tepat satu nomor 210 pada baris ${sourceRowNumber}`;
+        : `REM harus memuat tepat satu ${options.accurateInvoiceLabel} pada baris ${sourceRowNumber}`;
     if (!invalidReason && text(row[indexes.SATUAN]).toUpperCase() !== "KRT")
       invalidReason = `SATUAN harus KRT pada baris ${sourceRowNumber}`;
     if (!invalidReason && !mapping)
@@ -397,6 +428,7 @@ function parseReckittAccurate(
 function parseReckittPrincipal(
   buffer: Buffer | Uint8Array,
   mappings: ReckittMappings,
+  options: CodeMappedPurchaseOptions = reckittOptions,
 ): CanonicalReturnLine[] {
   const allRows = rows(buffer),
     required = [
@@ -429,17 +461,17 @@ function parseReckittPrincipal(
       dpp = 0,
       tax = 0,
       invalidReason =
-        !/^210\d{7}$/.test(invoiceNumber)
+        !options.principalInvoicePattern.test(invoiceNumber)
           ? `Invoice No tidak valid pada baris ${sourceRowNumber}`
           : namedMappings.length > 1
             ? `Mapping kode ambigu ${principalProductCode}: ${namedMappings.map((item) => item.code).join(", ")}`
             : mapping
-              ? null
+              ? mapping.invalidReason ?? null
               : `Produk tidak terpetakan: ${principalProductCode}`;
     const uom = text(row[indexes["UOM Code"]]).toUpperCase(),
       defaultUom = text(row[indexes["Default UOM"]]).toUpperCase();
-    if (!invalidReason && uom !== "CAR" && uom !== "PAC")
-      invalidReason = `UOM Code harus CAR atau PAC pada baris ${sourceRowNumber}`;
+    if (!invalidReason && !options.allowedUoms.includes(uom))
+      invalidReason = `UOM Code harus ${options.allowedUomsLabel} pada baris ${sourceRowNumber}`;
     if (!invalidReason && defaultUom !== "EA")
       invalidReason = `Default UOM harus EA pada baris ${sourceRowNumber}`;
     try {
@@ -686,6 +718,44 @@ export function reconcileReckittPurchases(
   return reconcile(
     parseReckittAccurate(accurateBuffer, mappings),
     parseReckittPrincipal(principalBuffer, mappings),
+    dppTolerance,
+  );
+}
+
+function cussonsCodeMappings(mappings: CussonsMappings): ReckittMappings {
+  const byPrincipalCode = new Map<string, Mapping[]>(),
+    byWinCode = new Map<string, Mapping>();
+  for (const [principalCode, mapped] of mappings.products) {
+    const mapping: Mapping = {
+      code: mapped.productCodeInternal,
+      unitsPerCase: mapped.caseSize ?? 1,
+      name: principalCode,
+      ...(mapped.mappingStatus === "OK"
+        ? {}
+        : {
+            invalidReason: `Mapping kode konflik atau invalid ${principalCode}`,
+          }),
+    };
+    byPrincipalCode.set(principalCode, [mapping]);
+    if (mapping.code && !byWinCode.has(mapping.code))
+      byWinCode.set(mapping.code, mapping);
+  }
+  return { byPrincipalCode, byWinCode };
+}
+
+export function reconcileCussonsPurchases(
+  accurateBuffer: Buffer | Uint8Array,
+  principalBuffer: Buffer | Uint8Array,
+  mappingBuffer: Buffer | Uint8Array,
+  options: { dppTolerance?: number } = {},
+): ReturnReconciliationOutput {
+  const dppTolerance = options.dppTolerance ?? 1;
+  if (!Number.isFinite(dppTolerance) || dppTolerance < 0)
+    throw new Error("Toleransi DPP tidak valid");
+  const mappings = cussonsCodeMappings(parseCussonsMappings(mappingBuffer));
+  return reconcile(
+    parseReckittAccurate(accurateBuffer, mappings, cussonsOptions),
+    parseReckittPrincipal(principalBuffer, mappings, cussonsOptions),
     dppTolerance,
   );
 }
