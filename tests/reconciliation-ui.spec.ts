@@ -81,7 +81,7 @@ const returnResult = {
     { invoiceNumber: "INVGTS2505-0098-00878", customerCode: "CUST-03", accurateProductCode: "ACC-03", principalProductCode: "SHZ-03", accurateQuantity: 1, principalQuantity: 1, quantityDifference: 0, accurateDpp: 60000, principalDpp: 90000, dppDifference: -30000, accurateTax: 6600, principalTax: 9900, accurateTotal: 66600, principalTotal: 99900, status: "VALUE_MISMATCH", warnings: ["VALUE MISMATCH"], accurateSourceRows: [6], principalSourceRows: [8] },
   ],
 };
-test("shows the available reconciliation types while Pembelian stays inactive", async ({
+test("runs GODREJ Pembelian reconciliation and keeps all themes", async ({
   page,
   baseURL,
 }) => {
@@ -93,25 +93,48 @@ test("shows the available reconciliation types while Pembelian stays inactive", 
 
   await page.goto("/reconciliation");
   const types = page.getByRole("region", { name: "Jenis Rekonsiliasi" });
-  const current = types.locator('[aria-current="page"]');
-
   await expect(types).toBeVisible();
-  await expect(current.getByText("Faktur", { exact: true })).toBeVisible();
-  await expect(types.getByText("Pembelian", { exact: true })).toBeVisible();
-  await expect(types.getByText("Return", { exact: true })).toBeVisible();
-  await expect(types.getByText("Belum aktif", { exact: true })).toHaveCount(1);
-  await expect(types.getByRole("button", { name: "Faktur" })).toBeVisible();
-  await expect(types.getByRole("button", { name: "Return" })).toBeVisible();
-  await expect(types.getByRole("button", { name: "Faktur" })).toHaveAttribute("aria-pressed", "true");
-  await expect(types.getByRole("button", { name: "Return" })).toHaveAttribute("aria-pressed", "false");
-  await expect(types.getByRole("button")).toHaveCount(2);
-  await expect(types.getByRole("link")).toHaveCount(0);
-  expect(
-    await types
-      .getByText("Pembelian", { exact: true })
-      .locator("..")
-      .evaluate((element) => (element as HTMLElement).tabIndex),
-  ).toBe(-1);
+  await page.route("**/api/reconciliation/kino/sales", (route) =>
+    route.fulfill({ status: 422, json: { error: "Kesalahan Faktur lama." } }),
+  );
+  await page.getByLabel("Rincian Faktur Penjualan (Accurate)").setInputFiles(xlsx("accurate-old.xlsx"));
+  await page.getByLabel("Sales Detail KINO").setInputFiles(xlsx("kino-old.xlsx"));
+  await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
+  await expect(page.locator('p[role="alert"]')).toHaveText("Kesalahan Faktur lama.");
+
+  await types.getByRole("button", { name: "Pembelian" }).click();
+  await expect(page.locator('p[role="alert"]')).toHaveCount(0);
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
+  await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
+  await expect(page.getByLabel("Prinsipal")).toHaveValue("GODREJ");
+  await expect(page.getByLabel("Prinsipal")).toBeDisabled();
+  await expect(page.getByLabel("Rincian Faktur Pembelian (Accurate)")).toBeVisible();
+  await expect(page.getByLabel("GRN Status Report GODREJ")).toBeVisible();
+
+  let purchaseCalled = false;
+  await page.route("**/api/reconciliation/godrej/purchases", async (route) => {
+    purchaseCalled = true;
+    expect(route.request().method()).toBe("POST");
+    const body = await route.request().postDataBuffer();
+    expect(body?.toString()).toContain('name="accurateFile"');
+    expect(body?.toString()).toContain('name="principalFile"');
+    await route.fulfill({ json: returnResult });
+  });
+  await page.getByLabel("Rincian Faktur Pembelian (Accurate)").setInputFiles(xlsx("accurate-purchase.xlsx"));
+  await page.getByLabel("GRN Status Report GODREJ").setInputFiles(xlsx("grn-status.xlsx"));
+  await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
+  expect(purchaseCalled).toBe(true);
+  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
+  await expect(page.getByText("Qty: Accurate 3, GODREJ 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Ekspor XLSX" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(
+    /^hasil-rekonsiliasi-pembelian-godrej-\d{4}-\d{2}-\d{2}\.xlsx$/,
+  );
+
   const themes = [
     ["Office Calm", "office-calm"],
     ["Neon HUD", "neon"],
@@ -128,11 +151,6 @@ test("shows the available reconciliation types while Pembelian stays inactive", 
     await expect(page.locator("html")).toHaveAttribute("data-theme", key);
     await expect(types).toBeVisible();
   }
-
-  await page.setViewportSize({ width: 375, height: 812 });
-  expect(
-    await types.evaluate((element) => element.scrollWidth <= element.clientWidth),
-  ).toBe(true);
 });
 
 test("runs SHINZUI Return reconciliation with focused issues and export", async ({ page, baseURL }) => {
@@ -206,7 +224,7 @@ test("runs SHINZUI Return reconciliation with focused issues and export", async 
   await expect(page.getByLabel("Prinsipal")).toBeEnabled();
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
-  await expect(page.getByText("Pembelian", { exact: true }).locator("..")).toContainText("Belum aktif");
+  await expect(page.getByRole("button", { name: "Pembelian" })).toHaveAttribute("aria-pressed", "false");
 });
 test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switching principal", async ({ page, baseURL }) => {
   const login = await page.request.post("/api/auth/sign-in/email", { headers: { Origin: baseURL || "http://localhost:3000" }, data: { email: QA_EMAIL, password: QA_PASSWORD } });

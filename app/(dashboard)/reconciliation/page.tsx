@@ -24,7 +24,7 @@ import type {
   ReturnStatus,
 } from "@/lib/off-program-control/return-reconciliation";
 
-type Division = "FAKTUR" | "RETURN";
+type Division = "FAKTUR" | "PEMBELIAN" | "RETURN";
 type UiStatus = ReconciliationStatus | ReturnStatus;
 type Principal = "KINO" | "GODREJ" | "SHINZUI" | "MOTASA" | "CUSSONS" | "HEINZ";
 type StatusFilter = "ALL" | "MATCH_ONLY" | "ISSUES_ONLY" | UiStatus;
@@ -317,7 +317,7 @@ export default function ReconciliationPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const salesColumns = useMemo(() => columnsFor(principal), [principal]);
   const returnTableColumns = useMemo(() => returnColumns(principal), [principal]);
-  const currentStatuses = division === "RETURN" ? returnStatuses : salesStatuses;
+  const currentStatuses = division === "FAKTUR" ? salesStatuses : returnStatuses;
 
   const filteredResults = useMemo(() => {
     const rows = result?.results ?? [];
@@ -353,7 +353,7 @@ export default function ReconciliationPage() {
     if (next === division) return;
     resetReconciliation();
     setDivision(next);
-    setPrincipal(next === "RETURN" ? "SHINZUI" : "KINO");
+    setPrincipal(next === "RETURN" ? "SHINZUI" : next === "PEMBELIAN" ? "GODREJ" : "KINO");
   }
 
   async function runReconciliation() {
@@ -367,7 +367,7 @@ export default function ReconciliationPage() {
       form.append("accurateFile", accurateFile);
       if (principal === "HEINZ" && headerFile) form.append("headerFile", headerFile);
       form.append("principalFile", principalFile);
-      const endpoint = division === "RETURN" ? "returns" : "sales";
+      const endpoint = division === "RETURN" ? "returns" : division === "PEMBELIAN" ? "purchases" : "sales";
       const response = await fetch(`/api/reconciliation/${principal.toLowerCase()}/${endpoint}`, { method: "POST", body: form });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Rekonsiliasi gagal diproses.");
@@ -387,7 +387,7 @@ export default function ReconciliationPage() {
     try {
       const XLSX = await import("xlsx");
       const summary = currentStatuses.map((status) => ({ Status: excelText(status), Jumlah: (result.summary as Record<string, number>)[status] ?? 0 }));
-      const detail = division === "RETURN"
+      const detail = division !== "FAKTUR"
         ? (result.results as ReturnReconciliationResult[]).map((row) => ({
             Status: excelText(row.status), Invoice: excelText(row.invoiceNumber), Pelanggan: excelText(row.customerCode),
             "Produk Accurate": excelText(row.accurateProductCode ?? ""), [`Produk ${principal}`]: excelText(row.principalProductCode ?? ""),
@@ -410,7 +410,9 @@ export default function ReconciliationPage() {
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detail), "Detail");
       const prefix = division === "RETURN"
         ? principal === "SHINZUI" ? "hasil-rekonsiliasi-return-shinzui" : `rekonsiliasi-return-${principal.toLowerCase()}`
-        : `hasil-rekonsiliasi-${principal.toLowerCase()}`;
+        : division === "PEMBELIAN"
+          ? "hasil-rekonsiliasi-pembelian-godrej"
+          : `hasil-rekonsiliasi-${principal.toLowerCase()}`;
       XLSX.writeFile(workbook, `${prefix}-${new Date().toISOString().slice(0, 10)}.xlsx`);
     } catch {
       setError("File hasil gagal diekspor. Silakan coba lagi.");
@@ -422,17 +424,19 @@ export default function ReconciliationPage() {
   const total = result?.results.length ?? 0;
   const problematic = total - matched;
   const mismatch = count("QTY_MISMATCH") + count("VALUE_MISMATCH") + count("QTY_AND_VALUE_MISMATCH");
-  const missing = count("MISSING_PRINCIPAL") + (division === "RETURN" ? count("MISSING_ACCURATE") : count("MISSING_INTERNAL"));
+  const missing = count("MISSING_PRINCIPAL") + (division === "FAKTUR" ? count("MISSING_INTERNAL") : count("MISSING_ACCURATE"));
 
   return (
     <div className="mx-auto max-w-7xl space-y-8 pb-12">
       <header className="space-y-5">
         <div>
           <h1 className="flex items-center gap-3 text-3xl font-bold tracking-tight text-white">
-            <GitCompareArrows className="text-indigo-400" /> Rekonsiliasi {division === "RETURN" ? "Return" : "Faktur"}
+            <GitCompareArrows className="text-indigo-400" /> Rekonsiliasi {division === "RETURN" ? "Return" : division === "PEMBELIAN" ? "Pembelian" : "Faktur"}
           </h1>
           <p className="mt-2 text-slate-400">
-            {division === "RETURN"
+            {division === "PEMBELIAN"
+              ? "Bandingkan faktur pembelian Accurate dengan GRN Status Report GODREJ."
+              : division === "RETURN"
               ? principal === "HEINZ"
                 ? "Bandingkan retur Accurate dengan laporan HEADER dan DETAIL HEINZ."
                 : `Bandingkan retur Accurate dengan laporan ${principal === "SHINZUI" ? "PenjualanInvoice" : principal === "GODREJ" ? "Sale Returns" : principal === "CUSSONS" ? "TXN_NOTEPRD" : "Sales Detail"} ${principal}.`
@@ -451,24 +455,20 @@ export default function ReconciliationPage() {
             Jenis Rekonsiliasi
           </h2>
           <ul className="grid list-none grid-cols-3 gap-2">
-            {(["FAKTUR", "RETURN"] as const).map((item) => (
+            {(["FAKTUR", "PEMBELIAN", "RETURN"] as const).map((item) => (
               <li key={item} aria-current={division === item ? "page" : undefined} className={division === item ? "min-w-0 rounded-xl border border-indigo-500/30 bg-indigo-500/10 text-center" : "min-w-0 rounded-xl border border-white/10 bg-white/5 text-center"}>
-                <button type="button" aria-label={item === "FAKTUR" ? "Faktur" : "Return"} aria-pressed={division === item} disabled={isRunning} onClick={() => changeDivision(item)} className="min-h-11 w-full rounded-xl px-2 py-3 text-sm font-semibold text-slate-200 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70">
-                  {item === "FAKTUR" ? "Faktur" : "Return"}
+                <button type="button" aria-label={item === "FAKTUR" ? "Faktur" : item === "PEMBELIAN" ? "Pembelian" : "Return"} aria-pressed={division === item} disabled={isRunning} onClick={() => changeDivision(item)} className="min-h-11 w-full rounded-xl px-2 py-3 text-sm font-semibold text-slate-200 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70">
+                  {item === "FAKTUR" ? "Faktur" : item === "PEMBELIAN" ? "Pembelian" : "Return"}
                 </button>
               </li>
             ))}
-            <li className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-2 py-3 text-center">
-              <span className="block text-sm font-semibold text-slate-300">Pembelian</span>
-              <span className="mt-1 block text-xs text-slate-400">Belum aktif</span>
-            </li>
           </ul>
         </section>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-indigo-500/10 px-3 py-1 text-xs font-semibold text-indigo-300">
-              {division === "RETURN" ? "Return" : "Faktur"}
+              {division === "RETURN" ? "Return" : division === "PEMBELIAN" ? "Pembelian" : "Faktur"}
             </span>
             <span className="rounded-full bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-300">
               {principal}
@@ -484,13 +484,15 @@ export default function ReconciliationPage() {
             <select
               id="principal-select"
               value={principal}
-              disabled={isRunning}
+              disabled={isRunning || division === "PEMBELIAN"}
               onChange={(event) =>
                 changePrincipal(event.target.value as Principal)
               }
               className="rounded-lg border border-white/10 bg-[#1a1c23] px-3 py-2 text-sm text-slate-200 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 disabled:opacity-50"
             >
-              {division === "RETURN" ? (
+              {division === "PEMBELIAN" ? (
+                <option value="GODREJ">GODREJ</option>
+              ) : division === "RETURN" ? (
                 returnPrinciples.map((item) => <option key={item} value={item}>{item}</option>)
               ) : (
                 <>
@@ -518,7 +520,11 @@ export default function ReconciliationPage() {
               (division === "FAKTUR" && principal === "CUSSONS")
             );
             const isCsv = kind === "header" || isCsvPrincipal;
-            const label = division === "RETURN"
+            const label = division === "PEMBELIAN"
+              ? kind === "accurate"
+                ? "Rincian Faktur Pembelian (Accurate)"
+                : "GRN Status Report GODREJ"
+              : division === "RETURN"
               ? kind === "accurate"
                 ? "Retur Penjualan (Accurate)"
                 : kind === "header"
@@ -664,12 +670,12 @@ export default function ReconciliationPage() {
                 ["Data tidak ditemukan", missing, TriangleAlert],
                 [
                   "SKU belum dipetakan",
-                  count(division === "RETURN" ? "UNMAPPED" : "UNMAPPED_SKU"),
+                  count(division === "FAKTUR" ? "UNMAPPED_SKU" : "UNMAPPED"),
                   TriangleAlert,
                 ],
                 [
-                  division === "RETURN" ? "Data tidak valid" : "Konversi satuan gagal",
-                  count(division === "RETURN" ? "INVALID_DATA" : "UNIT_CONVERSION_ERROR"),
+                  division === "FAKTUR" ? "Konversi satuan gagal" : "Data tidak valid",
+                  count(division === "FAKTUR" ? "UNIT_CONVERSION_ERROR" : "INVALID_DATA"),
                   TriangleAlert,
                 ],
               ] as const
@@ -742,7 +748,7 @@ export default function ReconciliationPage() {
                 </button>
               </div>
             </div>
-            {division === "RETURN" ? (
+            {division !== "FAKTUR" ? (
               <DataTable
                 columns={returnTableColumns}
                 data={filteredResults as ReturnReconciliationResult[]}
