@@ -116,6 +116,81 @@ assert.equal(mismatch.accurateQuantity, 12);
 assert.equal(mismatch.principalQuantity, 10);
 assert.ok(Math.abs(mismatch.principalDpp - 100) < 1e-9);
 
+const punctuatedNumericCode = reconcileGodrejPurchases(
+  accurate([
+    "LPB-1",
+    "WIN-A",
+    "ALPHA",
+    1,
+    "KRT",
+    100,
+    "DMS Bill 1",
+  ]),
+  principal(["1", "1", "Approved", 111, 12, 12, 12, "Product-Alpha-4002102."]),
+  mapping(["PRODUCT ALPHA", "WIN-A", 12]),
+);
+assert.equal(punctuatedNumericCode.summary.MATCH, 1);
+
+const exactTolerance = reconcileGodrejPurchases(
+  accurate([
+    "LPB-1",
+    "WIN-A",
+    "ALPHA",
+    1,
+    "KRT",
+    100,
+    "DMS Bill 1",
+  ]),
+  principal(["1", "1", "Approved", 112.11, 1, 1, 1, "PRODUCT ALPHA 1"]),
+  mapping(["PRODUCT ALPHA", "WIN-A", 1]),
+  { dppTolerance: 1 },
+);
+assert.equal(exactTolerance.summary.MATCH, 1);
+
+assert.throws(
+  () =>
+    reconcileGodrejPurchases(
+      accurate([
+        "LPB-1",
+        "WIN-A",
+        "ALPHA",
+        1,
+        "KRT",
+        1,
+        "DMS Bill 1",
+      ]),
+      principal(),
+      mapping(["PRODUCT ALPHA", "WIN-A", null]),
+    ),
+  /Mapping parsial.*baris 2/,
+);
+
+assert.throws(
+  () =>
+    reconcileGodrejPurchases(
+      accurate([
+        "LPB-1",
+        "WIN-A",
+        "ALPHA",
+        1,
+        "KRT",
+        1,
+        "DMS Bill 1",
+      ]),
+      principal(),
+      workbook("Form Fix", [
+        [
+          "Nama Barang Principle",
+          "Kode BARANG Win2",
+          "Kode BARANG Win2",
+          "ISI/CTN",
+        ],
+        ["PRODUCT ALPHA", "WIN-A", "WIN-B", 1],
+      ]),
+    ),
+  /Header duplikat.*Kode BARANG Win2/,
+);
+
 const ambiguous = reconcileGodrejPurchases(
   accurate([
     "LPB-1",

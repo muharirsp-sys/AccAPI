@@ -42,10 +42,11 @@ function text(value: unknown): string {
 function normalized(value: unknown): string {
   return text(value)
     .toUpperCase()
-    .replace(/(?:^|\s)\d+(?:\s*\([^)]*\))?\s*$/u, "")
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim()
-    .replace(/\s+/g, " ");
+    .replace(/\s+/g, " ")
+    .replace(/(?:^|\s)(?:\d+\s*)+$/u, "")
+    .trim();
 }
 
 function number(value: unknown, label: string, row: number): number {
@@ -83,13 +84,18 @@ function table(
 ): { headerRow: number; indexes: Record<string, number> } {
   for (let row = 0; row < allRows.length; row++) {
     const headers = allRows[row].map((value) => text(value));
-    if (required.every((header) => headers.includes(header)))
+    if (required.every((header) => headers.includes(header))) {
+      const duplicate = required.find(
+        (header) => headers.filter((value) => value === header).length > 1,
+      );
+      if (duplicate) throw new Error(`Header duplikat: ${duplicate}`);
       return {
         headerRow: row,
         indexes: Object.fromEntries(
           required.map((header) => [header, headers.indexOf(header)]),
         ),
       };
+    }
   }
   throw new Error(`Header wajib tidak ditemukan: ${required.join(", ")}`);
 }
@@ -98,27 +104,19 @@ function parseMappings(buffer: Buffer | Uint8Array): Mappings {
   const allRows = rows(buffer, "Form Fix"),
     required = ["Nama Barang Principle", "Kode BARANG Win2", "ISI/CTN"],
     { headerRow, indexes } = table(allRows, required),
-    unitsByCode = new Map<string, number>(),
     byName = new Map<string, Mapping[]>(),
     byCode = new Map<string, Mapping>();
   for (let index = headerRow + 1; index < allRows.length; index++) {
     const row = allRows[index],
-      code = text(row[indexes["Kode BARANG Win2"]]).toUpperCase(),
-      rawUnits = row[indexes["ISI/CTN"]];
-    if (!code || text(rawUnits) === "") continue;
-    const units = number(rawUnits, "ISI/CTN", index + 1),
-      existing = unitsByCode.get(code);
-    if (!units) throw new Error(`ISI/CTN harus lebih dari nol pada baris ${index + 1}`);
-    if (existing && existing !== units)
-      throw new Error(`ISI/CTN ambigu untuk ${code}: ${existing}, ${units}`);
-    unitsByCode.set(code, units);
-  }
-  for (let index = headerRow + 1; index < allRows.length; index++) {
-    const row = allRows[index],
       name = normalized(row[indexes["Nama Barang Principle"]]),
       code = text(row[indexes["Kode BARANG Win2"]]).toUpperCase(),
-      unitsPerCase = unitsByCode.get(code);
-    if (!name || !code || !unitsPerCase) continue;
+      rawUnits = row[indexes["ISI/CTN"]];
+    if (!name && !code && text(rawUnits) === "") continue;
+    if (!name || !code || text(rawUnits) === "")
+      throw new Error(`Mapping parsial pada baris ${index + 1}`);
+    const unitsPerCase = number(rawUnits, "ISI/CTN", index + 1);
+    if (!unitsPerCase)
+      throw new Error(`ISI/CTN harus lebih dari nol pada baris ${index + 1}`);
     const mapping = { code, unitsPerCase, name },
       named = byName.get(name) ?? [];
     if (!named.some((item) => item.code === code)) named.push(mapping);
