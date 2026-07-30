@@ -208,6 +208,8 @@ export function safeParserMessage(error: unknown): string | null {
       `^(?:File CSV kosong|Header wajib tidak ditemukan: (?:${cussonsHeaders})(?:, (?:${cussonsHeaders}))*|(?:${cussonsHeaders}) (?:kosong|negatif|tidak valid|terlalu besar) pada baris \\d+|Invoice No baris \\d+ harus memiliki tepat satu nomor faktur TI)$`,
       "i",
     ),
+    godrejPurchaseMessage =
+      /^(?:Invoice_Number dan Bill_No tidak konsisten pada baris \d+|Kuantitas tidak konsisten pada baris \d+|(?:Amount_Uploaded|Quantity_in_Units|Quantity_Uploaded|Qty_Approved) (?:kosong|harus angka finite non-negatif) pada baris \d+)$/,
     returnMessage =
       /^(?:File XLSX rusak atau tidak valid\.|(?:KODE PELANGGAN INDUK|KODE BARANG|INV NUM|ID PRODUK|ID PELANGGAN LAMA) kosong pada baris \d+|(?:QTY SMALL|DPP INV|PPN INV|TOTAL INV) tidak valid pada baris \d+|REM harus memuat tepat satu nomor invoice pada baris \d+|Mapping KODE BARANG ambigu pada baris \d+|(?:KODE PELANGGAN INDUK|SALE RETURN NO\.|CUSTOMER) harus memuat tepat satu token pada baris \d+|(?:Quantity\(Units\)|Amount) (?:kosong|tidak valid) pada baris \d+|Mapping produk GODREJ konflik: [A-Z0-9._/-]+(?:, [A-Z0-9._/-]+)*|line_count harus bilangan bulat non-negatif pada baris \d+)$/;
   const headerMatch = /^Header wajib tidak ditemukan: (.+)$/.exec(error.message),
@@ -255,6 +257,14 @@ export function safeParserMessage(error: unknown): string | null {
       "TOTAL NET AMOUNT",
       "TAX CODE",
       "TAX PERCENTAGE 1",
+      "Invoice_Number",
+      "Bill_No",
+      "Approved",
+      "Amount_Uploaded",
+      "Quantity_in_Units",
+      "Quantity_Uploaded",
+      "Qty_Approved",
+      "Sku_Name",
     ]),
     safeHeaderMessage =
       headerMatch?.[1]
@@ -265,6 +275,7 @@ export function safeParserMessage(error: unknown): string | null {
     shinzuiMessage.test(error.message) ||
     motasaMessage.test(error.message) ||
     cussonsMessage.test(error.message) ||
+    godrejPurchaseMessage.test(error.message) ||
     returnMessage.test(error.message)
     ? error.message
     : null;
