@@ -1,12 +1,10 @@
 /*
- * Tujuan: Kirim email laporan untuk 1 report_run secara gated.
- *         Mode trial hanya mengirim file terpilih ke allowlist internal tanpa mengubah penerima eksternal.
- *         Mode mapped mempertahankan state machine dry_run/failed -> sending -> sent/failed.
+ * Tujuan: Kirim email laporan untuk 1 report_run secara gated ke semua atau penerima mapping yang dipilih.
  * Caller: UI Laporan Harian (tombol "Kirim" setelah review preview).
- * Dependensi: requirePermission("laporan_harian.send"), lib/email, recipient-selection, send-state,
+ * Dependensi: requirePermission("laporan_harian.send"), lib/email, send-state,
  *             FastAPI /laporan-harian/file (ambil file run-scoped), db/schema.
- * Main Functions: POST (trial internal terpilih atau claim/kirim/retry penerima mapping).
- * Side Effects: HTTP fetch file; kirim email; mode mapped mengubah report_run + report_run_recipient.
+ * Main Functions: POST (claim, pilih semua/sebagian penerima mapping, kirim/retry, update status).
+ * Side Effects: HTTP fetch file; kirim email; DB update report_run + report_run_recipient.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, inArray } from "drizzle-orm";
@@ -19,11 +17,6 @@ import {
     finalReportRunStatus,
     RETRYABLE_RECIPIENT_STATUSES,
 } from "@/lib/laporan-harian/send-state";
-import {
-    internalRecipientAllowlist,
-    selectRequestedFiles,
-    validateInternalRecipients,
-} from "@/lib/laporan-harian/recipient-selection";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -40,9 +33,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
     let body: {
         confirm?: boolean;
         isClosing?: boolean;
-        deliveryMode?: "trial" | "mapped";
-        selectedFileNames?: string[];
-        internalEmails?: string[];
+        recipientMode?: "all" | "selected";
+        selectedRecipients?: Array<{ fileName?: unknown; email?: unknown }>;
     } = {};
     try { body = await req.json(); } catch { /* body opsional */ }
 
@@ -73,71 +65,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
         }
     }
 
-    if (body.deliveryMode === "trial") {
-        if (!canClaimReportRun(run.status)) {
-            return NextResponse.json(
-                { error: "Run ini sedang diproses atau sudah ditutup untuk pengiriman trial.", status: run.status },
-                { status: 409 },
-            );
-        }
-        const rows = await db
-            .select({ fileName: reportRunRecipient.fileName })
-            .from(reportRunRecipient)
-            .where(eq(reportRunRecipient.runId, runId));
-        const availableFiles = [...new Set(
-            rows.map((row) => row.fileName).filter((fileName): fileName is string => Boolean(fileName)),
-        )];
-        const selectedFiles = selectRequestedFiles(availableFiles, body.selectedFileNames);
-        const allowlist = internalRecipientAllowlist(
-            process.env.LAPORAN_HARIAN_INTERNAL_EMAILS,
-            gate.session.user.email,
-        );
-        const { recipients, rejected } = validateInternalRecipients(allowlist, body.internalEmails);
-        if (rejected.length) {
-            return NextResponse.json(
-                { error: `Alamat berikut bukan penerima internal yang diizinkan: ${rejected.join(", ")}` },
-                { status: 400 },
-            );
-        }
-        if (!selectedFiles.length || !recipients.length) {
-            return NextResponse.json(
-                { error: "Pilih minimal satu file dan satu penerima internal.", sent: 0 },
-                { status: 400 },
-            );
-        }
-
-        const reportLabel = body.isClosing === true ? "Laporan Closing" : "Laporan Harian";
-        let sent = 0, failed = 0;
-        const errors: string[] = [];
-        for (const fileName of selectedFiles) {
-            const file = await fetchFile(fileName);
-            const ok = !!file && await sendEmail({
-                to: recipients,
-                subject: `[Uji Coba Internal - ${reportLabel}] ${run.reportDate} - ${fileName}`,
-                text: `Uji coba internal.\n\nBerikut ${reportLabel.toLowerCase()} tanggal ${run.reportDate}: ${fileName}.\nPenerima eksternal belum dikirimi email.`,
-                attachments: file ? [{
-                    filename: fileName,
-                    content: file,
-                    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                }] : [],
-            });
-            if (ok) sent += recipients.length;
-            else {
-                failed += recipients.length;
-                errors.push(`${fileName}: ${file ? "gagal kirim (cek SMTP)" : "file tidak ditemukan"}`);
-            }
-        }
-        return NextResponse.json({
-            ok: failed === 0,
-            runId,
-            status: failed === 0 ? "trial_sent" : "trial_failed",
-            emailsSent: sent,
-            emailsFailed: failed,
-            files: selectedFiles.length,
-            errors,
-        }, { status: failed === 0 ? 200 : 502 });
-    }
-
     const storedMode = run.note?.match(/email_mode:(closing|daily)/)?.[1];
     const requestedMode = body.isClosing === true ? "closing" : "daily";
     if (storedMode && storedMode !== requestedMode) {
@@ -164,7 +91,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
         return NextResponse.json({ error: "Status run berubah; muat ulang sebelum mengirim.", status: "conflict" }, { status: 409 });
     }
 
-    const recips = await db
+    let recips = await db
         .select()
         .from(reportRunRecipient)
         .where(and(
@@ -174,6 +101,35 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
     if (recips.length === 0) {
         await db.update(reportRun).set({ status: "failed" }).where(eq(reportRun.id, runId));
         return NextResponse.json({ error: "Tidak ada penerima pending/gagal untuk run ini." }, { status: 400 });
+    }
+
+    let skipped = 0;
+    if (body.recipientMode === "selected") {
+        const requestedRecipients = (body.selectedRecipients ?? []).flatMap((recipient) =>
+            typeof recipient.fileName === "string" && typeof recipient.email === "string"
+                ? [{ fileName: recipient.fileName, email: recipient.email }]
+                : [],
+        );
+        const selectedKeys = new Set(
+            requestedRecipients
+                .map((recipient) => `${recipient.fileName}\u0000${recipient.email.trim().toLowerCase()}`),
+        );
+        const selected = recips.filter((recipient) =>
+            selectedKeys.has(`${recipient.fileName ?? ""}\u0000${recipient.email.trim().toLowerCase()}`),
+        );
+        if (selected.length === 0) {
+            await db.update(reportRun).set({ status: "failed" }).where(eq(reportRun.id, runId));
+            return NextResponse.json({ error: "Pilih minimal satu penerima dari daftar mapping email." }, { status: 400 });
+        }
+        const selectedIds = new Set(selected.map((recipient) => recipient.id));
+        const skippedIds = recips.filter((recipient) => !selectedIds.has(recipient.id)).map((recipient) => recipient.id);
+        if (skippedIds.length) {
+            await db.update(reportRunRecipient)
+                .set({ sendStatus: "skipped", error: "Tidak dipilih saat pengiriman" })
+                .where(inArray(reportRunRecipient.id, skippedIds));
+            skipped = skippedIds.length;
+        }
+        recips = selected;
     }
 
     // Group per fileName -> daftar email (1 email per file laporan, mirror alur lama)
@@ -223,6 +179,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
         status: finalStatus,
         emailsSent: sent,
         emailsFailed: failed,
+        emailsSkipped: skipped,
         files: byFile.size,
     });
 }

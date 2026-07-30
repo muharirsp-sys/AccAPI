@@ -877,12 +877,11 @@ UI: modul /laporan-harian
      -> verifikasi coverage exact-key `salesCode|principle` terhadap target periode Insentif Sales;
         UI Laporan Harian dan Insentif Sales menampilkan status masuk/belum cocok tanpa menyalin target lama
   <- { ok, runId, ringkasan per SPV, daftar penerima (PREVIEW, belum kirim) }
-UI: pilih file + penerima internal dari allowlist, tombol "Kirim uji coba" terpisah,
+UI: pilih `Semua penerima` atau `Pilih penerima tertentu` dari mapping email,
     dan pilihan `Laporan closing` (gated, confirm:true) -> POST /api/laporan-harian/[runId]/send
-     -> mode `trial`: server memvalidasi `LAPORAN_HARIAN_INTERNAL_EMAILS` + email akun login,
-        mengirim hanya file terpilih, tidak mengubah status penerima mapping eksternal
-     -> mode `mapped` (alur existing/API): claim status `sending` dan kirim penerima mapping
-     -> requirePermission("laporan_harian.send") -> claim status `sending`
+     -> server memvalidasi pilihan terhadap `report_run_recipient`, claim status `sending`,
+        mengirim hanya yang dipilih, dan menandai sisanya `skipped` agar tidak terkirim saat retry
+     -> requirePermission("laporan_harian.send")
      -> ambil file per-SPV/SM dari backend -> subject `[Laporan Harian|Laporan Closing] <tanggal transaksi terakhir>` -> kirim email (nodemailer)
      -> mode harian/closing dicatat di `report_run.note` saat claim pertama agar retry tidak dapat mengganti jenis subject
      -> penerima `failed` dapat di-retry tanpa mengirim ulang penerima yang sudah `sent`

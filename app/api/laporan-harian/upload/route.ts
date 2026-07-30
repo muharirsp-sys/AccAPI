@@ -4,9 +4,8 @@
  *         TIDAK mengirim email. Kirim email = endpoint terpisah /send (Tahap 4, gated).
  * Caller: UI modul Laporan Harian (browser, multipart).
  * Dependensi: requirePermission, recipient aktif, FastAPI /laporan-harian/process, normalisasi ingest,
- *             recipient-selection, db/schema (reportRun, reportRecipient, reportRunRecipient).
- * Main Functions: POST (proses + dry-run, simpan tanggal transaksi terakhir, verifikasi feed insentif,
- *                 dan kembalikan allowlist penerima trial internal).
+ *             db/schema (reportRun, reportRecipient, reportRunRecipient).
+ * Main Functions: POST (proses + dry-run, simpan tanggal transaksi terakhir, dan verifikasi feed insentif).
  * Side Effects: HTTP call ke FastAPI; DB write (report_run, report_run_recipient, sales_daily_progress).
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -24,7 +23,6 @@ import {
     replaceDailyProgressForPeriod,
     type IncentiveFeedCoverage,
 } from "@/lib/laporan-harian/ingest";
-import { internalRecipientAllowlist } from "@/lib/laporan-harian/recipient-selection";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -196,10 +194,6 @@ export async function POST(req: NextRequest) {
             period: { month, year },
             dashboardFed: fed,
             incentiveFeed,
-            internalRecipients: internalRecipientAllowlist(
-                process.env.LAPORAN_HARIAN_INTERNAL_EMAILS,
-                gate.session.user.email,
-            ),
             unmappedProgress,
             salesRows: result.sales_rows,
             netDpp: result.net_dpp,

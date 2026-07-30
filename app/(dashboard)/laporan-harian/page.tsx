@@ -1,10 +1,10 @@
 /*
- * Tujuan: UI Laporan Harian untuk upload, ringkasan, review, verifikasi feed insentif, dan trial email internal terpilih.
+ * Tujuan: UI Laporan Harian untuk upload, ringkasan, review, verifikasi feed insentif, dan pemilihan penerima mapping.
  * Caller: menu sidebar "Laporan Harian" (/laporan-harian). Guard RBAC: laporan_harian.view.
  * Dependensi: POST /api/laporan-harian/upload, GET /api/laporan-harian/[runId]/preview,
  *             POST /api/laporan-harian/[runId]/send, lucide-react, semantic UI classes global.
  * Main Functions: LaporanHarianPage, FilePicker, readJsonResponse, handleUpload, loadReview,
- *                 pemilihan file/penerima internal, dan handleSend dengan pilihan closing.
+ *                 pilihan semua/penerima tertentu, dan handleSend dengan pilihan closing.
  * Side Effects: HTTP upload/read/send; tidak menyimpan state di localStorage.
  */
 "use client";
@@ -39,7 +39,6 @@ type UploadResult = {
     period: { month: number; year: number };
     dashboardFed: { inserted: number };
     incentiveFeed: IncentiveFeed;
-    internalRecipients: string[];
     salesRows: number;
     netDpp: number;
     summary: Summary[];
@@ -60,6 +59,7 @@ type FilePickerProps = {
 };
 
 const rupiah = (value: number) => `Rp ${Math.round(value).toLocaleString("id-ID")}`;
+const recipientKey = (fileName: string, email: string) => `${fileName}\u0000${email.trim().toLowerCase()}`;
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
     const text = await response.text();
@@ -121,11 +121,13 @@ export default function LaporanHarianPage() {
     const [reviewFileName, setReviewFileName] = useState("");
     const [review, setReview] = useState<ReviewSample | null>(null);
     const [isClosing, setIsClosing] = useState(false);
-    const [selectedFileNames, setSelectedFileNames] = useState<string[]>([]);
-    const [selectedInternalEmails, setSelectedInternalEmails] = useState<string[]>([]);
+    const [recipientMode, setRecipientMode] = useState<"all" | "selected">("all");
+    const [selectedRecipientKeys, setSelectedRecipientKeys] = useState<string[]>([]);
 
     const busy = processing || sending;
-    const trialEmailCount = selectedFileNames.length * selectedInternalEmails.length;
+    const selectedRecipientCount = result
+        ? recipientMode === "all" ? result.totalRecipients : selectedRecipientKeys.length
+        : 0;
 
     async function handleUpload() {
         if (!penjualan) {
@@ -138,8 +140,8 @@ export default function LaporanHarianPage() {
         setReview(null);
         setReviewOpen(false);
         setIsClosing(false);
-        setSelectedFileNames([]);
-        setSelectedInternalEmails([]);
+        setRecipientMode("all");
+        setSelectedRecipientKeys([]);
         setProcessing(true);
         try {
             const form = new FormData();
@@ -155,8 +157,9 @@ export default function LaporanHarianPage() {
             const uploaded = data as UploadResult;
             setResult(uploaded);
             setReviewFileName(uploaded.generatedFiles?.[0]?.fileName ?? "");
-            setSelectedFileNames(uploaded.recipientsPreview.map((recipient) => recipient.fileName));
-            setSelectedInternalEmails(uploaded.internalRecipients);
+            setSelectedRecipientKeys(uploaded.recipientsPreview.flatMap((recipient) =>
+                recipient.emails.map((email) => recipientKey(recipient.fileName, email)),
+            ));
         } catch (uploadError) {
             setError(`Gagal upload atau memproses laporan: ${String(uploadError)}`);
         } finally {
@@ -191,12 +194,12 @@ export default function LaporanHarianPage() {
 
     async function handleSend() {
         if (!result) return;
-        if (!selectedFileNames.length || !selectedInternalEmails.length) {
-            setError("Pilih minimal satu laporan dan satu penerima internal.");
+        if (recipientMode === "selected" && !selectedRecipientKeys.length) {
+            setError("Pilih minimal satu penerima dari daftar mapping email.");
             return;
         }
         const reportType = isClosing ? "laporan closing" : "laporan harian";
-        if (!confirm(`Uji coba: kirim ${selectedFileNames.length} file ${reportType} tanggal ${result.reportDate} ke ${selectedInternalEmails.length} alamat internal?\nPenerima eksternal tidak akan dikirimi email.`)) return;
+        if (!confirm(`Kirim ${selectedRecipientCount} email ${reportType} tanggal ${result.reportDate}?`)) return;
         setSending(true);
         setError(null);
         try {
@@ -206,9 +209,13 @@ export default function LaporanHarianPage() {
                 body: JSON.stringify({
                     confirm: true,
                     isClosing,
-                    deliveryMode: "trial",
-                    selectedFileNames,
-                    internalEmails: selectedInternalEmails,
+                    recipientMode,
+                    selectedRecipients: recipientMode === "selected"
+                        ? result.recipientsPreview.flatMap((recipient) => recipient.emails
+                            .filter((email) => selectedRecipientKeys.includes(recipientKey(recipient.fileName, email)))
+                            .map((email) => ({ fileName: recipient.fileName, email })),
+                        )
+                        : undefined,
                 }),
             });
             const data = await readJsonResponse<{
@@ -300,11 +307,11 @@ export default function LaporanHarianPage() {
                                 </label>
                                 <button
                                     onClick={handleSend}
-                                    disabled={busy || trialEmailCount === 0 || sendState?.status === "sent"}
+                                    disabled={busy || selectedRecipientCount === 0 || sendState?.status === "sent"}
                                     className="ui-button-primary min-h-11 px-4"
                                 >
                                     <Send size={17} aria-hidden="true" />
-                                    {sending ? "Mengirim email..." : `Kirim uji coba (${trialEmailCount})`}
+                                    {sending ? "Mengirim email..." : `Kirim ${selectedRecipientCount} email`}
                                 </button>
                             </div>
                         </div>
@@ -468,59 +475,34 @@ export default function LaporanHarianPage() {
 
                     <details className="ui-surface-panel overflow-hidden" open>
                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-sm font-extrabold text-[var(--luxury-text)]">
-                            <span>Pengiriman uji coba internal <span className="font-semibold text-[var(--luxury-muted)]">({selectedFileNames.length} file dipilih)</span></span>
+                            <span>Penerima email <span className="font-semibold text-[var(--luxury-muted)]">({selectedRecipientCount} alamat dipilih)</span></span>
                             <ChevronDown size={18} className="text-[var(--luxury-muted)]" aria-hidden="true" />
                         </summary>
                         <div className="space-y-4 border-t border-[var(--border-soft)] p-3 sm:p-5">
-                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
-                                Mode trial aktif. Hanya alamat internal di bawah yang akan menerima email; {result.totalRecipients.toLocaleString("id-ID")} alamat pada mapping eksternal tetap belum dikirimi.
-                            </div>
                             <fieldset className="space-y-2">
                                 <legend className="text-sm font-extrabold text-[var(--luxury-text)]">Kirim kepada</legend>
                                 <div className="flex flex-wrap gap-2">
-                                    {result.internalRecipients.map((email) => (
-                                        <label key={email} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--luxury-text)]">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedInternalEmails.includes(email)}
-                                                onChange={(event) => setSelectedInternalEmails((current) =>
-                                                    event.target.checked
-                                                        ? [...new Set([...current, email])]
-                                                        : current.filter((item) => item !== email),
-                                                )}
-                                                className="size-4 accent-[var(--luxury-teal)]"
-                                            />
-                                            {email}
-                                        </label>
-                                    ))}
-                                    {!result.internalRecipients.length && (
-                                        <p className="text-sm text-red-700">Belum ada email internal. Isi LAPORAN_HARIAN_INTERNAL_EMAILS atau pastikan akun login memiliki email valid.</p>
-                                    )}
+                                    <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--luxury-text)]">
+                                        <input type="radio" name="recipient-mode" value="all" checked={recipientMode === "all"} onChange={() => setRecipientMode("all")} className="size-4 accent-[var(--luxury-teal)]" />
+                                        Semua penerima ({result.totalRecipients})
+                                    </label>
+                                    <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--luxury-text)]">
+                                        <input type="radio" name="recipient-mode" value="selected" checked={recipientMode === "selected"} onChange={() => setRecipientMode("selected")} className="size-4 accent-[var(--luxury-teal)]" />
+                                        Pilih penerima tertentu
+                                    </label>
                                 </div>
                             </fieldset>
                             <div className="ui-table-frame max-h-80">
                                 <table className="ui-data-table min-w-[42rem]">
-                                    <caption className="sr-only">Pilih file laporan untuk uji coba internal</caption>
-                                    <thead><tr><th className="w-14 text-center">Pilih</th><th className="text-left">File</th><th className="text-left">Target</th><th className="text-left">Penerima mapping</th></tr></thead>
+                                    <caption className="sr-only">Daftar penerima mapping email</caption>
+                                    <thead><tr><th className="w-14 text-center">Pilih</th><th className="text-left">File</th><th className="text-left">Target</th><th className="text-left">Email</th></tr></thead>
                                     <tbody>
-                                        {result.recipientsPreview.map((recipient, index) => (
-                                            <tr key={`${recipient.fileName}-${index}`}>
-                                                <td className="text-center">
-                                                    <input
-                                                        type="checkbox"
-                                                        aria-label={`Pilih ${recipient.fileName}`}
-                                                        checked={selectedFileNames.includes(recipient.fileName)}
-                                                        onChange={(event) => setSelectedFileNames((current) =>
-                                                            event.target.checked
-                                                                ? [...new Set([...current, recipient.fileName])]
-                                                                : current.filter((item) => item !== recipient.fileName),
-                                                        )}
-                                                        className="size-4 accent-[var(--luxury-teal)]"
-                                                    />
-                                                </td>
+                                        {result.recipientsPreview.flatMap((recipient) => recipient.emails.map((email) => ({ ...recipient, email }))).map((recipient) => (
+                                            <tr key={recipientKey(recipient.fileName, recipient.email)}>
+                                                <td className="text-center"><input type="checkbox" aria-label={`Pilih ${recipient.email}`} disabled={recipientMode === "all"} checked={selectedRecipientKeys.includes(recipientKey(recipient.fileName, recipient.email))} onChange={(event) => setSelectedRecipientKeys((current) => event.target.checked ? [...new Set([...current, recipientKey(recipient.fileName, recipient.email)])] : current.filter((key) => key !== recipientKey(recipient.fileName, recipient.email)))} className="size-4 accent-[var(--luxury-teal)]" /></td>
                                                 <td>{recipient.fileName}</td>
                                                 <td className="font-bold">{recipient.keyword} · {recipient.groupType.toUpperCase()}</td>
-                                                <td>{recipient.emails.join(", ")}</td>
+                                                <td>{recipient.email}</td>
                                             </tr>
                                         ))}
                                         {result.recipientsPreview.length === 0 && (
