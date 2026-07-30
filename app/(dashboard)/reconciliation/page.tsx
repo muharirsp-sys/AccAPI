@@ -26,7 +26,7 @@ import type {
 
 type Division = "FAKTUR" | "PEMBELIAN" | "RETURN";
 type UiStatus = ReconciliationStatus | ReturnStatus;
-type Principal = "KINO" | "GODREJ" | "SHINZUI" | "MOTASA" | "CUSSONS" | "HEINZ";
+type Principal = "KINO" | "GODREJ" | "RECKITT" | "SHINZUI" | "MOTASA" | "CUSSONS" | "HEINZ";
 type StatusFilter = "ALL" | "MATCH_ONLY" | "ISSUES_ONLY" | UiStatus;
 
 const salesStatuses: ReconciliationStatus[] = [
@@ -45,6 +45,7 @@ const returnStatuses: ReturnStatus[] = [
   "MISSING_ACCURATE", "MISSING_PRINCIPAL", "UNMAPPED", "INVALID_DATA",
 ];
 const returnPrinciples = ["SHINZUI", "KINO", "GODREJ", "HEINZ", "CUSSONS"] as const;
+const purchasePrinciples = ["GODREJ", "RECKITT"] as const;
 const fixedStatusLabels: Partial<Record<UiStatus, string>> = {
   MATCH: "Cocok",
   QTY_MISMATCH: "Selisih jumlah",
@@ -413,7 +414,7 @@ export default function ReconciliationPage() {
       const prefix = division === "RETURN"
         ? principal === "SHINZUI" ? "hasil-rekonsiliasi-return-shinzui" : `rekonsiliasi-return-${principal.toLowerCase()}`
         : division === "PEMBELIAN"
-          ? "rekonsiliasi-pembelian-godrej"
+          ? `rekonsiliasi-pembelian-${principal.toLowerCase()}`
           : `hasil-rekonsiliasi-${principal.toLowerCase()}`;
       XLSX.writeFile(workbook, `${prefix}-${new Date().toISOString().slice(0, 10)}.xlsx`);
     } catch {
@@ -437,7 +438,7 @@ export default function ReconciliationPage() {
           </h1>
           <p className="mt-2 text-slate-400">
             {division === "PEMBELIAN"
-              ? "Bandingkan faktur pembelian Accurate dengan GRN Status Report GODREJ."
+              ? `Bandingkan faktur pembelian Accurate dengan ${principal === "RECKITT" ? "TXN_COMPINV_DTL" : "GRN Status Report"} ${principal}.`
               : division === "RETURN"
               ? principal === "HEINZ"
                 ? "Bandingkan retur Accurate dengan laporan HEADER dan DETAIL HEINZ."
@@ -486,14 +487,14 @@ export default function ReconciliationPage() {
             <select
               id="principal-select"
               value={principal}
-              disabled={isRunning || division === "PEMBELIAN"}
+              disabled={isRunning}
               onChange={(event) =>
                 changePrincipal(event.target.value as Principal)
               }
               className="rounded-lg border border-white/10 bg-[#1a1c23] px-3 py-2 text-sm text-slate-200 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 disabled:opacity-50"
             >
               {division === "PEMBELIAN" ? (
-                <option value="GODREJ">GODREJ</option>
+                purchasePrinciples.map((item) => <option key={item} value={item}>{item}</option>)
               ) : division === "RETURN" ? (
                 returnPrinciples.map((item) => <option key={item} value={item}>{item}</option>)
               ) : (
@@ -526,7 +527,7 @@ export default function ReconciliationPage() {
             const label = division === "PEMBELIAN"
               ? kind === "accurate"
                 ? "Rincian Faktur Pembelian (Accurate)"
-                : "GRN Status Report GODREJ"
+                : `${principal === "RECKITT" ? "TXN_COMPINV_DTL" : "GRN Status Report"} ${principal}`
               : division === "RETURN"
               ? kind === "accurate"
                 ? "Retur Penjualan (Accurate)"

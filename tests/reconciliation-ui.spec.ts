@@ -81,7 +81,7 @@ const returnResult = {
     { invoiceNumber: "INVGTS2505-0098-00878", customerCode: "CUST-03", accurateProductCode: "ACC-03", principalProductCode: "SHZ-03", accurateQuantity: 1, principalQuantity: 1, quantityDifference: 0, accurateDpp: 60000, principalDpp: 90000, dppDifference: -30000, accurateTax: 6600, principalTax: 9900, accurateTotal: 66600, principalTotal: 99900, status: "VALUE_MISMATCH", warnings: ["VALUE MISMATCH"], accurateSourceRows: [6], principalSourceRows: [8] },
   ],
 };
-test("runs GODREJ Pembelian reconciliation and keeps all themes", async ({
+test("runs GODREJ and RECKITT Pembelian reconciliation, resets principal state, and keeps all themes", async ({
   page,
   baseURL,
 }) => {
@@ -107,7 +107,8 @@ test("runs GODREJ Pembelian reconciliation and keeps all themes", async ({
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByLabel("Prinsipal")).toHaveValue("GODREJ");
-  await expect(page.getByLabel("Prinsipal")).toBeDisabled();
+  await expect(page.getByLabel("Prinsipal")).toBeEnabled();
+  await expect(page.getByLabel("Prinsipal").locator('option[value="RECKITT"]')).toHaveText("RECKITT");
   await expect(page.getByLabel("Rincian Faktur Pembelian (Accurate)")).toBeVisible();
   await expect(page.getByLabel("GRN Status Report GODREJ")).toBeVisible();
 
@@ -139,6 +140,66 @@ test("runs GODREJ Pembelian reconciliation and keeps all themes", async ({
   expect(download.suggestedFilename()).toMatch(
     /^rekonsiliasi-pembelian-godrej-\d{4}-\d{2}-\d{2}\.xlsx$/,
   );
+
+  await page.getByLabel("Prinsipal").selectOption("RECKITT");
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
+  await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
+  await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Bandingkan faktur pembelian Accurate dengan TXN_COMPINV_DTL RECKITT.", { exact: true })).toBeVisible();
+  const reckittFile = page.getByLabel("TXN_COMPINV_DTL RECKITT");
+  await expect(reckittFile).toHaveAttribute("accept", ".csv,text/csv,application/csv");
+  await expect(page.getByText("Format .csv, maksimal 10 MB")).toBeVisible();
+
+  const reckittResult = {
+    ...returnResult,
+    results: returnResult.results.map((row) => ({
+      ...row,
+      invoiceNumber: row.invoiceNumber.replace("INVGTS2505-0098-008", "21000000"),
+      principalProductCode: row.principalProductCode?.replace("SHZ", "RCK"),
+    })),
+  };
+  let reckittCalled = false;
+  await page.route("**/api/reconciliation/reckitt/purchases", async (route) => {
+    reckittCalled = true;
+    expect(route.request().method()).toBe("POST");
+    const body = (await route.request().postDataBuffer())?.toString() ?? "";
+    expect(body).toContain('name="accurateFile"');
+    expect(body).toContain('name="principalFile"');
+    expect(body).toContain('filename="txn-compinv-dtl.csv"');
+    await route.fulfill({ json: reckittResult });
+  });
+  await page.getByLabel("Rincian Faktur Pembelian (Accurate)").setInputFiles(xlsx("accurate-reckitt-purchase.xlsx"));
+  await reckittFile.setInputFiles(csv("txn-compinv-dtl.csv"));
+  await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
+  expect(reckittCalled).toBe(true);
+  await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
+  await expect(page.getByText("2100000077", { exact: true })).toBeVisible();
+  await expect(page.getByText("2100000076", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Qty: Accurate 3, RECKITT 5 — Accurate kurang 2", { exact: true })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "DPP RECKITT" })).toBeVisible();
+
+  const reckittDownloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Ekspor XLSX" }).click();
+  const reckittDownload = await reckittDownloadPromise;
+  expect(reckittDownload.suggestedFilename()).toMatch(
+    /^rekonsiliasi-pembelian-reckitt-\d{4}-\d{2}-\d{2}\.xlsx$/,
+  );
+
+  await page.getByLabel("Prinsipal").selectOption("GODREJ");
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
+  await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
+  await page.unroute("**/api/reconciliation/godrej/purchases");
+  await page.route("**/api/reconciliation/godrej/purchases", (route) =>
+    route.fulfill({ status: 422, json: { error: "GRN tidak valid." } }),
+  );
+  await page.getByLabel("Rincian Faktur Pembelian (Accurate)").setInputFiles(xlsx("accurate-invalid.xlsx"));
+  await page.getByLabel("GRN Status Report GODREJ").setInputFiles(csv("grn-invalid.csv"));
+  await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
+  await expect(page.getByRole("alert")).toHaveText("GRN tidak valid.");
+  await page.getByLabel("Prinsipal").selectOption("RECKITT");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
+  await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
 
   const themes = [
     ["Office Calm", "office-calm"],
