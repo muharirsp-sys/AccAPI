@@ -126,6 +126,7 @@ test("runs GODREJ Pembelian reconciliation and keeps all themes", async ({
   expect(purchaseCalled).toBe(true);
   await expect(page.getByLabel("Filter status")).toHaveValue("ISSUES_ONLY");
   await expect(page.getByText("INVGTS2505-0098-00877", { exact: true })).toBeVisible();
+  await expect(page.getByText("INVGTS2505-0098-00876", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Qty: Accurate 3, GODREJ 5 — Accurate kurang 2", { exact: true })).toBeVisible();
 
   const downloadPromise = page.waitForEvent("download");
