@@ -881,7 +881,11 @@ UI: tombol "Kirim" terpisah + pilihan `Laporan closing` (gated, confirm:true) ->
      -> mode harian/closing dicatat di `report_run.note` saat claim pertama agar retry tidak dapat mengganti jenis subject
      -> penerima `failed` dapat di-retry tanpa mengirim ulang penerima yang sudah `sent`
 UI: review file opsional -> GET /api/laporan-harian/[runId]/preview?file=...
-     -> proxy file run-scoped dari FastAPI, tampilkan maksimal 25 baris kunci atau unduh XLSX penuh
+     -> preview: FastAPI /laporan-harian/preview membaca maksimal 26 baris dengan
+        python-calamine (openpyxl fallback)
+        -> Next.js memilih 10 kolom kunci dan mengirim JSON kecil (tidak parse XLSX via SheetJS)
+     -> download=1: Next.js meneruskan body FileResponse sebagai stream dan metadata range/size
+        (tidak menahan seluruh XLSX di memori)
 ```
 
 State machine pure: `lib/laporan-harian/send-state.ts`; self-check:

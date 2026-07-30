@@ -3,7 +3,8 @@
  * Caller: menu sidebar "Laporan Harian" (/laporan-harian). Guard RBAC: laporan_harian.view.
  * Dependensi: POST /api/laporan-harian/upload, GET /api/laporan-harian/[runId]/preview,
  *             POST /api/laporan-harian/[runId]/send, lucide-react, semantic UI classes global.
- * Main Functions: LaporanHarianPage, FilePicker, handleUpload, loadReview, handleSend dengan pilihan closing.
+ * Main Functions: LaporanHarianPage, FilePicker, readJsonResponse, handleUpload, loadReview,
+ *                 dan handleSend dengan pilihan closing.
  * Side Effects: HTTP upload/read/send; tidak menyimpan state di localStorage.
  */
 "use client";
@@ -50,6 +51,16 @@ type FilePickerProps = {
 };
 
 const rupiah = (value: number) => `Rp ${Math.round(value).toLocaleString("id-ID")}`;
+
+async function readJsonResponse<T>(response: Response): Promise<T> {
+    const text = await response.text();
+    if (!text) throw new Error(`Server tidak mengirim respons (HTTP ${response.status})`);
+    try {
+        return JSON.parse(text) as T;
+    } catch {
+        throw new Error(`Respons server bukan JSON (HTTP ${response.status})`);
+    }
+}
 
 function FilePicker({ id, label, helper, required, file, onChange }: FilePickerProps) {
     return (
@@ -122,7 +133,7 @@ export default function LaporanHarianPage() {
             if (retur) form.append("retur", retur);
             if (stock) form.append("stock", stock);
             const response = await fetch("/api/laporan-harian/upload", { method: "POST", body: form });
-            const data = await response.json();
+            const data = await readJsonResponse<UploadResult & { error?: string; detail?: string }>(response);
             if (!response.ok || !data.ok) {
                 setError([data.error, data.detail].filter(Boolean).join(": ") || "Proses gagal");
                 return;
@@ -147,7 +158,7 @@ export default function LaporanHarianPage() {
             const response = await fetch(
                 `/api/laporan-harian/${result.runId}/preview?file=${encodeURIComponent(fileName)}`,
             );
-            const data = await response.json();
+            const data = await readJsonResponse<ReviewSample & { error?: string }>(response);
             if (!response.ok) {
                 setReviewError(data.error || "Review file gagal dimuat");
                 setReview(null);
@@ -174,7 +185,12 @@ export default function LaporanHarianPage() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ confirm: true, isClosing }),
             });
-            const data = await response.json();
+            const data = await readJsonResponse<{
+                error?: string;
+                status: string;
+                emailsSent?: number;
+                emailsFailed?: number;
+            }>(response);
             if (!response.ok) {
                 setError(data.error || "Pengiriman email gagal");
                 return;
