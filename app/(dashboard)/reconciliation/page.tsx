@@ -45,7 +45,7 @@ const returnStatuses: ReturnStatus[] = [
   "MISSING_ACCURATE", "MISSING_PRINCIPAL", "UNMAPPED", "INVALID_DATA",
 ];
 const returnPrinciples = ["SHINZUI", "KINO", "GODREJ", "HEINZ", "CUSSONS"] as const;
-const purchasePrinciples = ["GODREJ", "RECKITT"] as const;
+const purchasePrinciples = ["GODREJ", "RECKITT", "CUSSONS"] as const;
 const fixedStatusLabels: Partial<Record<UiStatus, string>> = {
   MATCH: "Cocok",
   QTY_MISMATCH: "Selisih jumlah",
@@ -438,7 +438,7 @@ export default function ReconciliationPage() {
           </h1>
           <p className="mt-2 text-slate-400">
             {division === "PEMBELIAN"
-              ? `Bandingkan faktur pembelian Accurate dengan ${principal === "RECKITT" ? "TXN_COMPINV_DTL" : "GRN Status Report"} ${principal}.`
+              ? `Bandingkan faktur pembelian Accurate dengan ${principal === "RECKITT" || principal === "CUSSONS" ? "TXN_COMPINV_DTL" : "GRN Status Report"} ${principal}.`
               : division === "RETURN"
               ? principal === "HEINZ"
                 ? "Bandingkan retur Accurate dengan laporan HEADER dan DETAIL HEINZ."
@@ -527,7 +527,7 @@ export default function ReconciliationPage() {
             const label = division === "PEMBELIAN"
               ? kind === "accurate"
                 ? "Rincian Faktur Pembelian (Accurate)"
-                : `${principal === "RECKITT" ? "TXN_COMPINV_DTL" : "GRN Status Report"} ${principal}`
+                : `${principal === "RECKITT" || principal === "CUSSONS" ? "TXN_COMPINV_DTL" : "GRN Status Report"} ${principal}`
               : division === "RETURN"
               ? kind === "accurate"
                 ? "Retur Penjualan (Accurate)"
