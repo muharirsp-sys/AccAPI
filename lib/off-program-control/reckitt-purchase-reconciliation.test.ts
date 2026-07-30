@@ -53,8 +53,10 @@ const p = (
   taxPercentage = 11,
   tax = net * taxPercentage / 100,
   received = quantity,
+  uom = "CAR",
+  defaultUom = "EA",
 ) => [
-  invoice, product, "CAR", "EA", received, quantity, listPrice,
+  invoice, product, uom, defaultUom, received, quantity, listPrice,
   customerDiscount, 0, 0, 0, net, taxPercentage, tax,
 ];
 
@@ -115,6 +117,61 @@ const tolerance = reconcileReckittPurchases(
   { dppTolerance: 1 },
 );
 assert.equal(tolerance.summary.MATCH, 1);
+
+const receivedQuantityCanonical = reconcileReckittPurchases(
+  accurate(),
+  principal(p("2100000040", "PC-1", 1, 20, 0, 20, 11, 2.2, 2)),
+  mapping(["WIN-A", "PCS", "PC-1", 12]),
+);
+assert.equal(receivedQuantityCanonical.summary.INVALID_DATA, 1);
+assert.equal(receivedQuantityCanonical.principalLines[0].quantity, 2);
+
+const separateAccurateDocuments = reconcileReckittPurchases(
+  accurate(
+    ["LPB-30", "WIN-A", 1, "KRT", 60, 11, "2100000030"],
+    ["LPB-30", "WIN-A", 1, "KRT", 40, 11, "2100000030"],
+    ["LPB-31", "WIN-A", 1, "KRT", 30, 5.5, "2100000030"],
+    ["LPB-31", "WIN-A", 1, "KRT", 20, 5.5, "2100000030"],
+  ),
+  principal(
+    p("2100000030", "PC-1", 1, 60, 0, 60),
+    p("2100000030", "PC-1", 1, 40, 0, 40),
+    p("2100000030", "PC-1", 1, 30, 0, 30),
+    p("2100000030", "PC-1", 1, 20, 0, 20),
+  ),
+  mapping(["WIN-A", "PCS", "PC-1", 12]),
+);
+assert.equal(separateAccurateDocuments.summary.MATCH, 1);
+assert.equal(separateAccurateDocuments.results[0].accurateTax, 16.5);
+
+const blankOptionalNumbers = reconcileReckittPurchases(
+  accurate(["LPB-20", "WIN-A", 1, "KRT", 10, 0, "2100000020"]),
+  principal([
+    "2100000020", "PC-1", "CAR", "EA", 1, 1, 10,
+    "", "", "", "", 10, "", "",
+  ]),
+  mapping(["WIN-A", "PCS", "PC-1", 12]),
+);
+assert.equal(blankOptionalNumbers.summary.MATCH, 1);
+assert.equal(blankOptionalNumbers.principalLines[0].tax, 0);
+
+const invalidUom = reconcileReckittPurchases(
+  accurate(),
+  principal(
+    p("2100000010", "PC-1", 1, 10, 0, 10, 11, 1.1, 1, "BOX"),
+    p("2100000011", "PC-1", 1, 10, 0, 10, 11, 1.1, 1, "PAC", "KG"),
+  ),
+  mapping(["WIN-A", "PCS", "PC-1", 12]),
+);
+assert.equal(invalidUom.summary.INVALID_DATA, 2);
+assert.match(
+  invalidUom.results.find((row) => row.invoiceNumber === "2100000010")?.invalidReason ?? "",
+  /UOM Code/,
+);
+assert.match(
+  invalidUom.results.find((row) => row.invoiceNumber === "2100000011")?.invalidReason ?? "",
+  /Default UOM/,
+);
 
 const realPaths = process.argv.slice(2);
 if (realPaths.length) {

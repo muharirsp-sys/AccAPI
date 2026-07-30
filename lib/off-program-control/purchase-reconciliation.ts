@@ -62,6 +62,10 @@ function number(value: unknown, label: string, row: number): number {
   return parsed;
 }
 
+function optionalNumber(value: unknown, label: string, row: number): number {
+  return text(value) === "" ? 0 : number(value, label, row);
+}
+
 function rows(buffer: Buffer | Uint8Array, preferredSheet?: string): Row[] {
   if (!buffer?.byteLength) throw new Error("File kosong");
   let book: XLSX.WorkBook;
@@ -329,7 +333,8 @@ function parseReckittAccurate(
   const allRows = rows(buffer, "Rincian Faktur Pembelian"),
     required = ["NO. PEMBELIAN", "KODE BARANG", "QTY", "SATUAN", "DPP", "PPN", "REM"],
     { headerRow, indexes } = table(allRows, required),
-    lines: CanonicalReturnLine[] = [];
+    lines: CanonicalReturnLine[] = [],
+    documents = new Map<string, CanonicalReturnLine[]>();
   for (let index = headerRow + 1; index < allRows.length; index++) {
     const row = allRows[index];
     if (row.every((value) => text(value) === "")) continue;
@@ -350,7 +355,7 @@ function parseReckittAccurate(
       invalidReason = `SATUAN harus KRT pada baris ${sourceRowNumber}`;
     if (!invalidReason && !mapping)
       invalidReason = `KODE BARANG tidak ada di mapping pada baris ${sourceRowNumber}: ${productCode}`;
-    lines.push({
+    const line: CanonicalReturnLine = {
       source: "ACCURATE",
       sourceRowNumber,
       invoiceNumber:
@@ -365,13 +370,12 @@ function parseReckittAccurate(
       tax: documentTax,
       total: dpp + documentTax,
       invalidReason,
-    });
-  }
-  const documents = new Map<string, CanonicalReturnLine[]>();
-  for (const line of lines) {
-    const document = documents.get(line.invoiceNumber) ?? [];
+    };
+    lines.push(line);
+    const documentNumber = text(row[indexes["NO. PEMBELIAN"]]).toUpperCase(),
+      document = documents.get(documentNumber) ?? [];
     document.push(line);
-    documents.set(line.invoiceNumber, document);
+    documents.set(documentNumber, document);
   }
   for (const document of documents.values()) {
     const dpp = document.reduce((sum, line) => sum + line.dpp, 0),
@@ -398,6 +402,8 @@ function parseReckittPrincipal(
     required = [
       "Invoice No",
       "Product Code",
+      "UOM Code",
+      "Default UOM",
       "Received Product Quantity",
       "Invoice Quantity UOM",
       "Product List Price",
@@ -430,6 +436,12 @@ function parseReckittPrincipal(
             : mapping
               ? null
               : `Produk tidak terpetakan: ${principalProductCode}`;
+    const uom = text(row[indexes["UOM Code"]]).toUpperCase(),
+      defaultUom = text(row[indexes["Default UOM"]]).toUpperCase();
+    if (!invalidReason && uom !== "CAR" && uom !== "PAC")
+      invalidReason = `UOM Code harus CAR atau PAC pada baris ${sourceRowNumber}`;
+    if (!invalidReason && defaultUom !== "EA")
+      invalidReason = `Default UOM harus EA pada baris ${sourceRowNumber}`;
     try {
       const received = number(
           row[indexes["Received Product Quantity"]],
@@ -448,26 +460,27 @@ function parseReckittPrincipal(
           "Discount Allowance Amount",
         ].reduce(
           (sum, header) =>
-            sum + number(row[indexes[header]], header, sourceRowNumber),
+            sum + optionalNumber(row[indexes[header]], header, sourceRowNumber),
           0,
         ),
-        taxPercentage = number(
+        taxPercentage = optionalNumber(
           row[indexes["Tax Percentage"]],
           "Tax Percentage",
           sourceRowNumber,
-        );
-      quantity = number(
+        ),
+        invoiceQuantity = number(
         row[indexes["Invoice Quantity UOM"]],
         "Invoice Quantity UOM",
         sourceRowNumber,
       );
+      quantity = received;
       dpp = number(row[indexes["Net Amount"]], "Net Amount", sourceRowNumber);
-      tax = number(
+      tax = optionalNumber(
         row[indexes["Total Tax Amount"]],
         "Total Tax Amount",
         sourceRowNumber,
       );
-      if (!invalidReason && received !== quantity)
+      if (!invalidReason && received !== invoiceQuantity)
         invalidReason = `Received Product Quantity dan Invoice Quantity UOM tidak konsisten pada baris ${sourceRowNumber}`;
       else if (
         !invalidReason &&
