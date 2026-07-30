@@ -147,6 +147,42 @@ const exactTolerance = reconcileGodrejPurchases(
 );
 assert.equal(exactTolerance.summary.MATCH, 1);
 
+const namelessAlias = reconcileGodrejPurchases(
+  accurate([
+    "LPB-1",
+    "WIN-A",
+    "ALPHA",
+    1,
+    "KRT",
+    100,
+    "DMS Bill 1",
+  ]),
+  principal(["1", "1", "Approved", 111, 12, 12, 12, "PRODUCT ALPHA 1"]),
+  mapping(
+    ["PRODUCT ALPHA", "WIN-A", 12],
+    [null, "WIN-A", 12],
+  ),
+);
+assert.equal(namelessAlias.summary.MATCH, 1);
+
+const namedAliasWithKnownCaseSize = reconcileGodrejPurchases(
+  accurate([
+    "LPB-1",
+    "WIN-A",
+    "ALPHA",
+    1,
+    "KRT",
+    100,
+    "DMS Bill 1",
+  ]),
+  principal(["1", "1", "Approved", 111, 12, 12, 12, "PRODUCT ALPHA ALT 1"]),
+  mapping(
+    ["PRODUCT ALPHA", "WIN-A", 12],
+    ["PRODUCT ALPHA ALT", "WIN-A", null],
+  ),
+);
+assert.equal(namedAliasWithKnownCaseSize.summary.MATCH, 1);
+
 assert.throws(
   () =>
     reconcileGodrejPurchases(

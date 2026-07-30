@@ -104,19 +104,33 @@ function parseMappings(buffer: Buffer | Uint8Array): Mappings {
   const allRows = rows(buffer, "Form Fix"),
     required = ["Nama Barang Principle", "Kode BARANG Win2", "ISI/CTN"],
     { headerRow, indexes } = table(allRows, required),
+    unitsByCode = new Map<string, number>(),
     byName = new Map<string, Mapping[]>(),
     byCode = new Map<string, Mapping>();
   for (let index = headerRow + 1; index < allRows.length; index++) {
     const row = allRows[index],
+      name = normalized(row[indexes["Nama Barang Principle"]]);
+    if (!name) continue;
+    const code = text(row[indexes["Kode BARANG Win2"]]).toUpperCase(),
+      rawUnits = row[indexes["ISI/CTN"]];
+    if (!code) throw new Error(`Mapping parsial pada baris ${index + 1}`);
+    if (text(rawUnits) === "") continue;
+    const units = number(rawUnits, "ISI/CTN", index + 1),
+      existing = unitsByCode.get(code);
+    if (!units)
+      throw new Error(`ISI/CTN harus lebih dari nol pada baris ${index + 1}`);
+    if (existing && existing !== units)
+      throw new Error(`ISI/CTN ambigu untuk ${code}: ${existing}, ${units}`);
+    unitsByCode.set(code, units);
+  }
+  for (let index = headerRow + 1; index < allRows.length; index++) {
+    const row = allRows[index],
       name = normalized(row[indexes["Nama Barang Principle"]]),
       code = text(row[indexes["Kode BARANG Win2"]]).toUpperCase(),
-      rawUnits = row[indexes["ISI/CTN"]];
-    if (!name && !code && text(rawUnits) === "") continue;
-    if (!name || !code || text(rawUnits) === "")
+      unitsPerCase = unitsByCode.get(code);
+    if (!name) continue;
+    if (!code || !unitsPerCase)
       throw new Error(`Mapping parsial pada baris ${index + 1}`);
-    const unitsPerCase = number(rawUnits, "ISI/CTN", index + 1);
-    if (!unitsPerCase)
-      throw new Error(`ISI/CTN harus lebih dari nol pada baris ${index + 1}`);
     const mapping = { code, unitsPerCase, name },
       named = byName.get(name) ?? [];
     if (!named.some((item) => item.code === code)) named.push(mapping);
