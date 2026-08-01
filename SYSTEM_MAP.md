@@ -38,9 +38,9 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 - **Next.js App Router monorepo** — satu repo, dua runtime (Next.js + Python FastAPI).
 - **Route Group** `(auth)` untuk halaman login/register, `(dashboard)` untuk seluruh halaman aplikasi yang dilindungi guard layout.
 - Layer `lib/*` memisahkan business logic dari route handler.
-- `lib/db.ts`, `lib/auth.ts`, `db/schema.ts`, dan `drizzle.config.ts` sudah memakai PostgreSQL. `sqlite.db` adalah sumber/rollback migrasi lama, bukan runtime route Next.js pada kode ini.
+- `lib/db.ts`, `lib/auth.ts`, `db/schema.ts`, dan `drizzle.config.ts` memakai PostgreSQL. `sqlite.db` adalah sumber/rollback migrasi lama, bukan runtime route Next.js.
 - RBAC tiga lapis: **Dynamic Permission-Group** (access_group + group_permission + user_group, default-deny) ∪ legacy **role global** (Better Auth) ∪ legacy **custom permissions** (user.permissions). Union resolver di `lib/rbac/resolve.ts`; sistem lama tetap berjalan selama transisi.
-- Permission key format: `"module.action"` (mis. `"off_program_control.sm_approve"`). Sumber tunggal: `lib/rbac/registry.ts` (99 key). Endpoint wajib pakai `requirePermission`/`requirePermissionH` — key tidak terdaftar → 403.
+- Permission key format: `"module.action"` (mis. `"off_program_control.sm_approve"`). Sumber tunggal: `lib/rbac/registry.ts` (99 key, 16 modul). Endpoint wajib pakai `requirePermission`/`requirePermissionH` — key tidak terdaftar → 403.
 - Email-domain role inference dihapus. OFF-specific role (`resolveOffRoleFromUser`) tetap ada untuk audit/state-machine, TIDAK untuk authz.
 - Summary Program: provider OCR eksplisit (`rapidocr`/`mistral-ocr-*`) memberi satu sumber teks ke parser agar text layer PDF tidak menduplikasi tabel OCR; parse cache provider tersebut memakai namespace terpisah. Matcher Natur memakai kolom gramasi master sebagai otoritas (nama barang hanya fallback), alias OCR terverifikasi, dan benefit bonus `X+Y` sebagai trigger `X pcs`. **Default produksi = `mistral-ocr-4-0`** (sejak 2026-07-23, commit 8a8a32c); Gemini turun jadi alternatif dan cache-nya tetap ada di namespace terpisah.
 
@@ -699,7 +699,7 @@ AccAPI/_github_clean/
 
 | Variabel | Fungsi |
 |---|---|
-| `DATABASE_URL` | Path SQLite (`file:sqlite.db` lokal / `file:/app/data/sqlite.db` Docker) |
+| `DATABASE_URL` | PostgreSQL connection URL (`postgres://...`) untuk runtime Next.js |
 | `BETTER_AUTH_URL` / `BETTER_AUTH_SECRET` | Base URL + secret Better Auth |
 | `NEXT_PUBLIC_APP_URL` | URL publik Next.js (browser) |
 | `NEXT_PUBLIC_FASTAPI_BASE_URL` | URL Python backend (browser) |
@@ -766,7 +766,7 @@ master_barang ────< master_barang_source [file metadata + extraction; bi
 | `db/migrations/` | Output drizzle-kit (SQL migration files) |
 | `scripts/seed-opc-dummy.mjs` | 1.275 batch dummy OPC (51 batch x 25 principal, semua 12 problem code) |
 | `scripts/migrate-rbac-groups.mjs` | Buat tabel Dynamic RBAC (access_group, group_permission, user_group, permission_audit_log) — additive & idempotent |
-| `scripts/seed-rbac-presets.ts` | Sinkron preset Dynamic RBAC termasuk `manage_hierarchy` dan Laporan Harian + backfill user_group (`node --experimental-strip-types`) — idempotent |
+| `scripts/seed-rbac-presets.ts` | Sinkron preset Dynamic RBAC termasuk `manage_hierarchy` dan Laporan Harian + backfill user_group (`node --experimental-strip-types`) — PostgreSQL, idempotent |
 | `scripts/sync-insentif-hierarchy.mjs` | Upsert assignment SPV→Sales dan SM→SPV dari target periode terbaru; tidak menebak identitas akun login |
 
 ### Output & Runtime Artifacts
@@ -902,7 +902,7 @@ UI: modul /laporan-harian
            merge flag AO/EC/IA, Nota Retur/Batal, map Golongan(SPV)+NAMA SM, Kategori Baru
         -> output: (a) rows per SPV & per SM, (b) rows stock per SPV, (c) agregat progress harian
      -> susun output 1:1 sesuai `REPORT_COLUMNS` (tanpa duplikasi `GOLONGAN`/pergeseran AO-EC-IA)
-     -> tulis file per-SPV ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
+     -> tulis file per-SPV/SM ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
         `<SPV>` (penjualan) + `<SPV> Stock` (stok hasil mapping KODE_BARANG -> GOLONGAN)
         (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)
      -> normalisasi progress kosong salesCode -> `UNMAPPED:<branch>` + warning eksplisit (nilai tidak dibuang/tidak ditebak)

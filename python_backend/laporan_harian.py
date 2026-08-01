@@ -9,7 +9,8 @@
 # Main Functions:
 #   load_lookups(f_format, f_spv) -> LookupTables
 #   process(paste_path, stock_path, lookups) -> dict {per_spv, per_sm, stock, progress, summary}
-#   build_stock(...) / write_per_spv_files(...) -> output XLSX penjualan dan sheet Stock per SPV.
+#   build_report_frame(sb) -> kolom REPORT_COLUMNS; build_stock(...) -> stok per SPV;
+#   write_per_spv_files(...) -> XLSX penjualan + sheet Stock per SPV.
 # Side Effects: Baca file sumber dan tulis XLSX hasil ke runtime; tidak mengubah file sumber/tidak kirim email.
 # Catatan parity (dikonfirmasi user): sumber penjualan = sheet "Paste Acc" (export Accurate),
 #   sheet "Paste Lap. Penj" lama sudah kosong -> tidak dipakai. Retur = "Paste Lap. Retur" (dinegasikan).

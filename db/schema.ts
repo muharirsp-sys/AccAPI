@@ -2,7 +2,7 @@
  * Tujuan: Skema Drizzle PostgreSQL untuk auth, RBAC, modul ERP, Insentif, Laporan Harian, dan Master Barang.
  * Caller: Better Auth adapter, route handler Next.js, script init-db, dan service cache lokal.
  * Dependensi: drizzle-orm/pg-core.
- * Main Functions: Definisi tabel auth, operasional, assignment hierarki, reportRun, Master Barang, sumber, dan audit.
+ * Main Functions: Definisi tabel auth, operasional, assignment hierarki, reportRun, recipient, Master Barang, sumber, dan audit.
  * Side Effects: Definisi schema untuk DB read/write PostgreSQL oleh caller.
  */
 import { pgTable, text, integer, bigint, doublePrecision, timestamp, boolean, jsonb, index, uniqueIndex, primaryKey } from "drizzle-orm/pg-core";
