@@ -101,17 +101,35 @@ next-env.d.ts
 *.db-shm
 *.db-journal
 
-# dashboard-generator: source only, artefak build/output jangan masuk git
-dashboard-generator/build/
-dashboard-generator/dist/
-dashboard-generator/__pycache__/
-dashboard-generator/output_*.html
-dashboard-generator/samples/
-dashboard-generator/reference/
+# dashboard-generator: dibekukan 2026-08-01 — tidak ada file BARU yang masuk git.
+# Blanket ignore aman: 25 file yang sudah dilacak tidak terpengaruh aturan ini
+# (gitignore hanya berlaku untuk untracked), jadi riwayatnya utuh dan tetap bisa
+# di-commit manual kalau suatu saat dibutuhkan lagi — pakai `git add -f`.
+dashboard-generator/
 
 # python_backend runtime debug artifacts
 python_backend/data/debug_ai.txt
 python_backend/data/e2e_live_output/
+python_backend/.pytest_cache/
+# Cache OCR: mahal dibuat ulang (~$15/surat) tapi lokal — tetap di disk, jangan masuk git.
+python_backend/data/ocr_cache/
+python_backend/data/ocr_cache_pilot/
+python_backend/data/manual_cache/
+python_backend/data/channel_map/
+python_backend/data/e2e_batch_output/
+python_backend/data/e2e_live_fonterra_natur_output/
+python_backend/data/e2e_live_urc_output/
+python_backend/data/loop_master_report.txt
+
+# Scratch & hasil eksperimen — 14.600 file, ~77 MB, sebagian besar pdf.js ter-vendor.
+# Bukan sumber, tidak bisa dibersihkan dari history kalau sempat masuk.
+outputs/
+tmp/
+dashboard-generator/hasil_dashboard_data_laporan/
+dashboard-generator/data_laporan/
+master_barang_principle/
+summary_manual_creat/
+Data_Penjualan/
 
 # materi referensi bisnis (PDF surat program asli) & poster visi — bukan source code
 reference_surat_program/

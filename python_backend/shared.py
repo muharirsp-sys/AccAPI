@@ -1,8 +1,8 @@
 # Tujuan: Menyediakan konfigurasi, state, dan helper bersama untuk runtime FastAPI.
 # Caller: main.py dan routers/*.py; modul ini tidak mengimpor main/routers agar tidak circular.
 # Dependensi: FastAPI, pandas/openpyxl, konfigurasi environment, dan modul domain backend.
-# Main Functions: Helper pemrosesan dokumen, pembayaran, serta laporan harian per SPV/SM.
-# Side Effects: Membaca/menulis data runtime, file hasil, cache, dan melakukan integrasi eksternal.
+# Main Functions: Helper pemrosesan dokumen, pembayaran, Master Barang, serta laporan harian per SPV/SM.
+# Side Effects: Membaca/menulis data runtime, file hasil, cache, OCR/AI, dan melakukan integrasi eksternal.
 
 from fastapi import FastAPI, UploadFile, File, Request, Form, Response, Cookie, BackgroundTasks
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse, ORJSONResponse
@@ -129,6 +129,7 @@ PERMISSION_MODULES = [
     "sppd",
     "finance",
     "principles",
+    "master_barang",
     "summary",
     "validator",
     "users",
@@ -1247,6 +1248,7 @@ def user_has_permission(username: Optional[str], module: str, action: str) -> bo
             "sppd": {"view", "generate", "download"},
             "finance": {"view", "approve", "export"},
             "principles": {"view"},
+            "master_barang": {"view", "edit", "generate", "export", "manage"},
             "summary": {"view", "export"},
             "validator": {"view", "download"},
         },
@@ -1256,12 +1258,14 @@ def user_has_permission(username: Optional[str], module: str, action: str) -> bo
             "sppd": {"view", "download"},
             "finance": {"view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update", "edit"},
             "principles": {"view"},
+            "master_barang": {"view"},
         },
         "staff": {
             "dashboard": {"view"},
             "payments": {"view", "create", "edit", "update", "upload", "submit"},
             "sppd": {"view", "generate", "download"},
             "principles": {"view"},
+            "master_barang": {"view", "upload", "generate", "edit", "export"},
             "summary": {"view", "upload", "generate", "export", "edit", "update"},
             "validator": {"view", "upload", "run", "download", "edit"},
         },
@@ -1272,6 +1276,7 @@ def user_has_permission(username: Optional[str], module: str, action: str) -> bo
             "payments": {"view"},
             "sppd": {"view"},
             "finance": {"view"},
+            "master_barang": {"view"},
         },
     }
     perms, defined = get_user_permissions_info(username)

@@ -13,7 +13,7 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 
 ## Project Summary
 
-**Tujuan:** ERP internal CV. Surya Perkasa — distributor yang mengelola biaya promosi off-program (OPC), klaim ke principal, pembayaran, SPPD, validasi data penjualan, dan integrasi Accurate ERP.
+**Tujuan:** ERP internal CV. Surya Perkasa — distributor yang mengelola master barang otomatis, biaya promosi off-program (OPC), klaim ke principal, pembayaran, SPPD, validasi data penjualan, dan integrasi Accurate ERP.
 
 **Tech Stack Utama:**
 
@@ -21,26 +21,28 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 |---|---|
 | Frontend/API | Next.js 16 (App Router), React 19, TypeScript |
 | Backend Sidecar | Python FastAPI (port 8000) |
-| Database | SQLite via libSQL (`@libsql/client`) |
+| Database | PostgreSQL via `pg` + Drizzle (D4 code cutover); Sales History tetap SQLite terpisah |
 | ORM | Drizzle ORM + drizzle-kit |
 | Auth | Better Auth 1.x (email/password, admin plugin, RBAC) |
 | PDF | pdf-lib |
 | Excel | xlsx |
 | Email | nodemailer (SMTP) |
+| Error tracking | Sentry Cloud untuk Next.js browser/server/edge; tracing production 5% tanpa PII atau HTTP body |
 | Styling | Tailwind CSS 4 |
 | State/Form | React Hook Form, Zod, TanStack React Table |
 | Search (opsional) | Elasticsearch (fallback ke in-memory fuzzy) |
 | ERP Eksternal | Accurate Online API (OAuth2 + proxy) |
-| AI/OCR (opsional) | SumoPod API, OpenAI (Python backend) |
+| AI/OCR | Mistral `/v1/ocr` (default produksi Summary, butuh `MISTRAL_API_KEY`); SumoPod API + OpenAI untuk parse/vision (Python backend) |
 
 **Pola Arsitektur:**
 - **Next.js App Router monorepo** — satu repo, dua runtime (Next.js + Python FastAPI).
 - **Route Group** `(auth)` untuk halaman login/register, `(dashboard)` untuk seluruh halaman aplikasi yang dilindungi guard layout.
 - Layer `lib/*` memisahkan business logic dari route handler.
-- SQLite single-file sebagai database lokal (tidak cloud DB); opsi Turso/libSQL di production.
+- `lib/db.ts`, `lib/auth.ts`, `db/schema.ts`, dan `drizzle.config.ts` sudah memakai PostgreSQL. `sqlite.db` adalah sumber/rollback migrasi lama, bukan runtime route Next.js pada kode ini.
 - RBAC tiga lapis: **Dynamic Permission-Group** (access_group + group_permission + user_group, default-deny) ∪ legacy **role global** (Better Auth) ∪ legacy **custom permissions** (user.permissions). Union resolver di `lib/rbac/resolve.ts`; sistem lama tetap berjalan selama transisi.
-- Permission key format: `"module.action"` (mis. `"off_program_control.sm_approve"`). Sumber tunggal: `lib/rbac/registry.ts` (85 key). Endpoint wajib pakai `requirePermission`/`requirePermissionH` — key tidak terdaftar → 403.
+- Permission key format: `"module.action"` (mis. `"off_program_control.sm_approve"`). Sumber tunggal: `lib/rbac/registry.ts` (99 key). Endpoint wajib pakai `requirePermission`/`requirePermissionH` — key tidak terdaftar → 403.
 - Email-domain role inference dihapus. OFF-specific role (`resolveOffRoleFromUser`) tetap ada untuk audit/state-machine, TIDAK untuk authz.
+- Summary Program: provider OCR eksplisit (`rapidocr`/`mistral-ocr-*`) memberi satu sumber teks ke parser agar text layer PDF tidak menduplikasi tabel OCR; parse cache provider tersebut memakai namespace terpisah. Matcher Natur memakai kolom gramasi master sebagai otoritas (nama barang hanya fallback), alias OCR terverifikasi, dan benefit bonus `X+Y` sebagai trigger `X pcs`. **Default produksi = `mistral-ocr-4-0`** (sejak 2026-07-23, commit 8a8a32c); Gemini turun jadi alternatif dan cache-nya tetap ada di namespace terpisah.
 
 ---
 
@@ -184,7 +186,7 @@ User -> dashboard-generator/app.py [pywebview desktop window]
      -> Penjualan / Laba Rugi [Dashboard Penjualan, Laba Rugi, Retur, Outstanding SO]
      -> Persediaan [Dashboard Posisi Stok, Analisa Stok]
      -> Keuangan [Dashboard Umur Hutang dan Umur Piutang aktif]
-     -> Cross Analysis [Stok vs Analisa; Retur Jual vs Outs SO; Penjualan vs Laba Rugi; Kandidat Discontinue disembunyikan sementara, engine tetap ada]
+     -> Cross Analysis [11 menu aktif: 3 Cross lama, Kandidat Discontinue, dan 7 Cross operasional 3-6 sumber]
 
 Single report:
   -> Api.pick_file() [native dialog XLS/XLSX/CSV/TSV untuk seluruh dashboard aktif]
@@ -196,11 +198,15 @@ Single report:
         -> Pembelian/LabaRugi/Retur Penjualan/Retur Pembelian/OutstandingSO: large_operational.build_data_from_file(...)
         -> PosisiStok/AnalisaStok/OutstandingPO/UmurPiutang/UmurHutang: large_inventory_finance.build_data_from_file(...)
         [DuckDB memory limit 1 GB; CSV/TSV out-of-core; XLSX streaming 50.000 baris -> DB temporer]
-     -> XLS/XLSX kecil: read_detected_sheets(path, result)
-        [pandas.read_excel memakai offset header masing-masing sheet, baca kolom terpakai saja, concat jika >1 sheet]
+     -> XLS/XLSX kecil: read_detected_sheets(path, result) -> shared.normalise_optional_dimensions(...)
+        [pandas.read_excel memakai offset header masing-masing sheet, baca kolom terpakai saja, concat jika >1 sheet; kategori kosong/absen menjadi NA dan dilewati]
      -> module.generate_dashboard(df) atau LARGE_RENDERERS[jenis](data)
          modules: pembelian, penjualan, labarugi, stok, analisa, retur, retur_pembelian, outstanding, outstanding_po, umur_piutang, umur_hutang
-  <- HTML preview in iframe + optional export_html()
+  <- HTML preview in iframe (ECharts SVG) + optional export_html()
+     -> index.html [setTheme()] mode dark default, preferensi tersimpan lokal dan disinkronkan ke iframe
+     -> index.html [shareableStaticHtml()] serialisasi SVG yang sudah dirender, hapus skrip
+        -> modul dapat menyiapkan SVG alternatif untuk ponsel; tema aktif disalin ke HTML Universal; preview desktop dipulihkan setelah snapshot
+     -> HTML statis mandiri untuk browser/preview lampiran yang memblokir JavaScript
 
 Cross-analysis + Data Alchemist (Fase 7+):
   -> Api.pick_files() [multi-file XLS/XLSX/CSV/TSV]
@@ -210,11 +216,12 @@ Cross-analysis + Data Alchemist (Fase 7+):
       -> reject cepat bila 2+ jenis file tidak sama dengan kebutuhan menu yang dipilih
      -> bila salah satu CSV/TSV atau XLSX >=64 MiB:
         -> cross_large.build_cross_data_from_files(report_infos, cross_type)
-        -> agregasi setiap sumber pada SKU/produk/customer di DuckDB sebelum join pandas
+        -> cross_advanced_large untuk tujuh resep baru; agregasi SKU/customer/supplier/gudang di DuckDB sebelum join pandas
      -> selain itu: read_detected_sheets(path, result)
         -> CrossLifecycle: cross_lifecycle.build_data(...) -> render_html(...)
+        -> Cross lanjutan: cross_advanced.build_data(..., cross_type) -> cross_advanced_html.render_html(...)
         -> Cross 2-file lama: cross_analysis.build_data(...) -> render_html(...)
-         -> satu analisis spesifik per menu; CrossLifecycle memakai outer join tiga sumber pada Kode Barang
+         -> satu analisis spesifik per menu; join dilakukan setelah agregasi pada grain keputusan
          -> export_rows berisi seluruh hasil gabungan, bukan hanya ranking HTML
   <- HTML preview + export_html()
   -> Api.export_cross_excel()
@@ -225,18 +232,18 @@ Cross-analysis + Data Alchemist (Fase 7+):
 
 | File | Fungsi Utama | Peran |
 |---|---|---|
-| `dashboard-generator/app.py` | `READ_COLUMNS`, `LARGE_RENDERERS`, `large_source_args`, `CROSS_REQUIREMENTS`, `Api.generate`, `Api.generate_cross`, `Api.export_cross_excel`, `main` | Entrypoint desktop; routing jalur kecil/besar, validasi kebutuhan 2+ laporan per Cross, simpan dataset Cross terakhir, export HTML/XLSX |
-| `dashboard-generator/index.html` | `MENU_GROUPS`, `CROSS_TYPES`, `CROSS_FILE_COUNTS`, sidebar, picker, export handlers | Lima kelompok client; 14 menu aktif ditampilkan; CrossLifecycle disembunyikan sementara tetapi konfigurasi/engine 3 file tetap ada |
-| `dashboard-generator/detector.py` | `detect_report_type_from_file`, `detect_report_sheets_from_file` | Signature kolom, bukan nama file; mengenali alias export Pembelian (`No.Jurnal`/Bruto/Pajak), PO langsung, Retur Pembelian, dan Umur Hutang; memilih sheet kanonik Pembelian/Master; header-offset per sheet; header-only CSV/TSV |
+| `dashboard-generator/app.py` | `READ_COLUMNS`, `LARGE_RENDERERS`, `normalise_optional_dimensions`, `Api.generate`, `Api.generate_cross`, `Api.export_cross_excel`, `main` | Entrypoint desktop; routing jalur kecil/besar, normalisasi dan notifikasi kategori opsional, validasi kebutuhan 2+ laporan per Cross, export HTML/XLSX |
+| `dashboard-generator/index.html` | `MENU_GROUPS`, `CROSS_TYPES`, `CROSS_FILE_COUNTS`, `setTheme`, `waitForRenderedCharts`, `shareableStaticHtml`, sidebar, picker, export handlers | Shell enterprise minimal, dark-default dengan pilihan light; 11 Cross aktif termasuk Kandidat Discontinue serta tujuh resep 3-6 file; export HTML responsif/offline dan Excel Cross |
+| `dashboard-generator/detector.py` | `detect_report_type_from_file`, `detect_report_sheets_from_file` | Signature kolom, bukan nama file; mengenali export Master `Kode`/`Nama`/`Discontinue`, Pembelian, PO, Retur Pembelian, dan Umur Hutang; header-offset per sheet; header-only CSV/TSV |
 | `dashboard-generator/pembelian.py` | `build_data`, `render_html`, `generate_dashboard` | Pembelian setelah PPN: `Nilai Bruto - Nilai Disc + Nilai Pajak` bila DPP tidak tersedia, atau DPP + PPN unik dokumen; alokasi PPN proporsional; GOL/JENIS/PCL opsional dan kosong diberi notifikasi |
 | `dashboard-generator/penjualan.py` | `build_data`, `render_html`, `generate_dashboard` | Penjualan setelah PPN (`Bruto - Diskon + Pajak`) untuk semua nilai; Ringkasan Market/Region/Gol/PCL; one-look dan formula hover |
 | `dashboard-generator/penjualan_large.py` | `should_use_large_reader`, `build_data_from_file` | Engine DuckDB/streaming Penjualan multi-GB; offset header per sheet; schema parity Ringkasan Market/Region/Gol/PCL; filter footer `No Invoice` |
 | `dashboard-generator/large_source.py` | `ColumnSpec`, `SourceMeta`, `open_large_source` | Reader bersama: CSV/TSV DuckDB out-of-core, XLSX read-only per 50.000 baris, XLS legacy fallback; DB temporer dan memory limit 1 GB |
-| `dashboard-generator/large_operational.py` | `build_data_from_file` | Adapter large Pembelian, Laba Rugi, Retur Penjualan/Pembelian, dan Outstanding SO; HPP satuan dihitung di query sebagai HPP x Qty tanpa materialisasi tabel 5 GB |
-| `dashboard-generator/large_inventory_finance.py` | `build_data_from_file` | Adapter large Posisi Stok, Analisa Stok, Outstanding PO, Umur Piutang, dan Umur Hutang; agregasi NULL-safe dan offset multi-sheet |
-| `dashboard-generator/shared.py` + `assets/echarts.min.js` | `inline_echarts` | Chart ECharts dibundel lokal dan diinjeksi inline agar preview/export jalan offline tanpa CDN |
+| `dashboard-generator/large_operational.py` | `build_data_from_file` | Adapter large Pembelian, Laba Rugi, Retur Penjualan/Pembelian, dan Outstanding SO; kategori non-inti opsional dan HPP satuan dihitung di query sebagai HPP x Qty tanpa materialisasi tabel 5 GB |
+| `dashboard-generator/large_inventory_finance.py` | `build_data_from_file` | Adapter large Posisi Stok, Analisa Stok, Outstanding PO, Umur Piutang, dan Umur Hutang; kategori opsional, agregasi NULL-safe, dan offset multi-sheet |
+| `dashboard-generator/shared.py` + `assets/echarts.min.js` | `normalise_optional_dimensions`, `inline_echarts`, `DASHBOARD_SURFACE_CSS`, `MOBILE_LAYOUT_CSS` | Kategori opsional kosong/absen dinormalisasi ke NA dan diberi notifikasi tanpa mengubah nilai inti; Chart ECharts dibundel lokal/offline dan dipaksa ke SVG; token surface enterprise menyediakan dark default dan light alternatif, sementara CSS breakpoint ponsel merapatkan kartu, menumpuk grid, dan menskalakan SVG |
 | `dashboard-generator/hpp.py` | `normalise_hpp_frame`, `hpp_sql_expression`, `hpp_uses_unit` | Kontrak HPP bersama: `Nilai HPP x Qty`; `JUM HPP` menjadi kontrol/fallback total dan tidak pernah dikalikan ulang |
-| `dashboard-generator/labarugi.py` | `build_data`, `render_html`, `generate_dashboard` | Laba Rugi: `Nilai Jual - (HPP Satuan x Qty) - Biaya Lain = Laba`; rekonsiliasi ke HPP total sumber, Ringkasan Market/Gol, formula hover |
+| `dashboard-generator/labarugi.py` | `build_data`, `render_html`, `generate_dashboard`, `__dashboardPrepareUniversal` | Laba Rugi: `Nilai Jual - (HPP Satuan x Qty) - Biaya Lain = Laba`; rekonsiliasi ke HPP total sumber, Ringkasan Market/Gol, formula hover, serta SVG Top 5 khusus mobile pada HTML Universal |
 | `dashboard-generator/stok.py` + `analisa.py` | `build_data`, `render_html`, `generate_dashboard` | Dashboard persediaan: rekonsiliasi snapshot/nilai/qty, insight satu-lihat, formula KPI/chart saat hover tanpa menciptakan harga per unit semu |
 | `dashboard-generator/retur.py` + `outstanding.py` | `build_data`, `render_html`, `generate_dashboard` | Retur memakai nilai setelah PPN (`Bruto - Disc + Pajak`); Outstanding SO menampilkan aging dari tanggal laporan dikurangi tanggal order; keduanya punya rekonsiliasi dan formula hover |
 | `dashboard-generator/retur_pembelian.py` | `build_data`, `render_html`, `generate_dashboard` | Retur Pembelian setelah PPN: `Nilai Bruto - Nilai Disc + Nilai Pajak`, supplier/item/jenis/gudang, dan formula hover |
@@ -246,9 +253,14 @@ Cross-analysis + Data Alchemist (Fase 7+):
 | `dashboard-generator/test_umur_piutang.py` | `main` | Self-check Umur Piutang dengan sample XLS nyata dan validasi output offline |
 | `dashboard-generator/cross_analysis.py` | `has_supported_pair`, `build_data`, `render_html` | Stok memakai union/overlap Kode SKU; Retur memakai nilai setelah PPN; Penjualan-vs-Laba Rugi memakai HPP grain-aware dan merupakan rekonsiliasi selisih dengan kontrol periode |
 | `dashboard-generator/cross_lifecycle.py` | `master_status_labels`, `build_data`, `build_from_aggregates`, `render_html` | Cross tiga sumber Penjualan × Posisi Stok × Master Barang; tujuh status item, guardrail periode 90 hari, formula hover, dan chart offline |
-| `dashboard-generator/cross_excel.py` | `build_cross_workbook`, `write_cross_workbook` | Workbook Data Alchemist 2+ sumber dengan formula detail/ringkasan, filter/table, conditional formatting, chart, dan kamus definisi |
-| `dashboard-generator/cross_large.py` | `should_use_large_cross`, `build_cross_data_from_files` | Cross multi-GB 2+ sumber; agregasi sebelum join, termasuk HPP satuan x Qty di DuckDB, dengan kontrak data sama untuk HTML/Excel |
+| `dashboard-generator/cross_advanced.py` + `cross_advanced_html.py` | `ADVANCED_REQUIREMENTS`, `build_data`, `build_from_canonical`, `render_html` | Tujuh Cross 3-6 sumber: Supply/Stockout, Margin-Retur, Customer Cash, Portfolio 360, Procurement-Cash, Warehouse, ABC-XYZ; join grain-safe, formula hover, guardrail periode, HTML offline/mobile |
+| `dashboard-generator/cross_excel.py` + `cross_advanced_excel.py` | `build_cross_workbook`, `build_advanced_workbook`, `write_cross_workbook` | Workbook Data Alchemist 2-6 sumber dengan formula detail/ringkasan, filter/table, chart, dan kamus definisi |
+| `dashboard-generator/cross_large.py` + `cross_advanced_large.py` | `should_use_large_cross`, `build_cross_data_from_files` | Cross multi-GB 2-6 sumber; transaksi diagregasikan per grain di DuckDB sebelum join dengan memory limit 1 GB; parity KPI jalur kecil/besar |
+| `dashboard-generator/generate_data_laporan_outputs.py` | `generate_all` | Generator 10 HTML dashboard tunggal dan 11 pasang HTML/XLSX Cross dari `data_laporan` ke `hasil_dashboard_data_laporan` |
+| `dashboard-generator/test_cross_advanced.py` | `CrossAdvancedTest` | Self-check tujuh resep, HTML/Excel, parity DuckDB, dan visibilitas Kandidat Discontinue |
 | `dashboard-generator/test_procurement_finance_exports.py` | `main` | Self-check deteksi, formula, render offline, adapter large, dan sample nyata empat export baru |
+| `dashboard-generator/test_optional_dimensions.py` | `main` | Self-check kategori kosong/absen tidak menghasilkan KeyError dan tidak mengubah total nilai inti |
+| `dashboard-generator/test_shareable_static_export.py` | `main` | Self-check kontrak export HTML statis: SVG preview disalin dan skrip dibuang |
 | `dashboard-generator/PANDUAN_RUMUS_DASHBOARD.md` | panduan dashboard, mode multi-GB, roadmap Cross | Dokumen client untuk grain, rumus, status PPN, batas interpretasi, dan saran Data Alchemist |
 | `dashboard-generator/test_cross_analysis.py` | `demo` | Self-check Fase 7 dengan 6 sample XLS nyata |
 | `dashboard-generator/test_cross_excel.py` | `main` | Roundtrip tiga workbook Cross: detail penuh, formula audit, tabel, chart, dan sheet kamus |
@@ -280,8 +292,8 @@ surat (bytes) + principle_name
   │ tidak:
   │  ocr_cache_key = sha256(bytes)
   ▼
-  [FASE 1] ocr_cache.py ── cache hit? ── ya ─▶ teks OCR BEKU (Gemini 0 panggilan, determinis)
-  │ tidak: OCR per-halaman (gemini) → simpan (freeze, tak pernah ditimpa)
+  [FASE 1] ocr_cache.py ── cache hit? ── ya ─▶ teks OCR BEKU (0 panggilan OCR, determinis)
+  │ tidak: OCR per-halaman (provider aktif, default mistral-ocr-4-0) → simpan (freeze, tak pernah ditimpa)
   ▼
 LLM parse per-channel (gpt-4.1-mini, 1 chunk = 1 channel biar tak kehabisan max_tokens)
   ▼
@@ -328,7 +340,7 @@ summary_manual_generate → excel_rows (single source of truth utk Excel + PDF)
 
 | File | Fungsi Utama | Peran |
 |---|---|---|
-| `python_backend/ocr_cache.py` | `ocr_cache_key`, `ocr_cache_get/put` | FASE 1: cache OCR by content-hash, freeze-on-first-write (run ke-2 dok sama = 0 panggilan Gemini) |
+| `python_backend/ocr_cache.py` | `ocr_cache_key`, `ocr_cache_get/put` | FASE 1: cache OCR by content-hash, freeze-on-first-write (run ke-2 dok sama = 0 panggilan OCR berbayar); namespace per model+format |
 | `python_backend/parse_cache.py` | `parse_cache_key`, `parse_cache_get/put` | FASE 1b: freeze rows FINAL per (doc_hash, principle) — run ke-2 = 0 panggilan API sama sekali (bukan cuma OCR) |
 | `python_backend/tier_parser.py` | `parse_positional_tables`, `match_item_to_tablerow`, `regroup_rows_by_tier` | FASE 2/2b: tier dari POSISI tabel OCR (no LLM); regroup baris LLM ke tier otoritatif; self-check `__main__` |
 | `python_backend/variant_resolver.py` + `variant_mapping.json` | `load_variant_mapping`, `resolve_variant` | FASE 3/3b: resolusi varian via tabel deklaratif; None = fallback; anti-halusinasi |
@@ -342,6 +354,36 @@ import blok FASE 1/1b/2b/3b/4b/5/6 + Pass 3 di `shared.py` (~baris 19–25) & re
 `parse_cache_get` di awal + Pass 3 + `regroup_rows_by_tier` + `parse_cache_put` di akhir
 `summary_manual_parse_pdf_ai`; `apply_stable_corrections` + `enable_pdf_determinism`/`finalize_xlsx`
 + golden check di `summary_manual_generate`.
+
+### Guard akurasi layer matching (fix 2026-07-14)
+
+Dua bug akurasi ditemukan saat verifikasi manual output run live vs surat asli & diperbaiki:
+
+1. **Enumerasi "All Variant" dari master, bukan dari daftar LLM** (`shared.py::_apply_native_kelompok`).
+   Terbukti (debug_ai.txt run 2026-07-13): utk channel belakangan (MTI/GROSIR/STAR OUTLET) LLM
+   under-enumerate `kode_barangs` — mis. STAR OUTLET "Marie Jose ... All Variant" cuma kirim **1
+   dari 8** kode varian → 7 varian hilang diam-diam dari Excel/PDF. Fix: saat `variant`=All Variant,
+   kode LLM dipakai sbg **seed**, lalu SEMUA varian se-(kelompok, gramasi) ditarik dari master
+   (non-banded). Di-anchor ke item nyata → **bounded**, tidak jatuh ke seluruh master spt fallback
+   string-match (yg terbukti bikin ledakan 207→2866 SKU pd percobaan pertama). Produk **BANDED**
+   (nama "... BTL BND") dikecualikan (aturan surat: "Klaim tidak berlaku Produk Banded"). Hasil FASE 3b
+   (variant_resolver, mis. Regazza EDT Sport = 4 varian) TIDAK diekspansi (`_variant_hit is None`).
+2. **Simetri flag review PDF↔Excel** (`routers/summary.py`, konst. `REVIEW_FLAG_TEXT`).
+   Baris surat tanpa item cocok di master: PDF menandai "(TIDAK ADA ITEM COCOK ... PERLU REVIEW
+   MANUAL)" tapi Excel dulu KOSONG polos (silent) + `PROMO_ACTIVE=True`. Fix: Excel `NAMA_BARANG`
+   diberi flag yg sama + `PROMO_ACTIVE=False` (kode kosong = bukan SKU aktif, jangan ke-import ERP).
+3. **Tier bridging per-(channel, kode)** (`tier_parser.py::regroup_rows_by_tier`).
+   `kode_to_tier` dulu di-key GLOBAL per-kode. 1 kode fisik yg sama (mis. Marie Jose M1) muncul di
+   4 channel → cuma ter-bridge di channel PERTAMA, kemunculan di channel lain dilipat ke tier
+   channel pertama → hilang dari channel-nya sendiri. Terbukti: Marie Jose 8 kode/channel jadi
+   cuma 4. Fix: key `(chan_norm, kode)` di `kode_to_tier` + `template_row_for_kode` + loop regroup.
+   Setelah fix #1+#3: Marie Jose 8/8 di SEMUA channel (verifikasi offline via generate asli).
+
+Verifikasi gabungan (offline, tanpa API, pakai output LLM run live 2026-07-14 + master asli):
+LLM→`_apply_native_kelompok`→`regroup_rows_by_tier`→`summary_manual_generate` → Excel final
+Marie Jose = 8/8 di RETAIL/MTI/GROSIR/STAR OUTLET (sebelumnya 8/1→4 dari LLM, 8/8 stlh native,
+lalu terpangkas 4 di regroup). Catatan: file di `data/e2e_live_output/` dari run live SEBELUM fix #3
+→ masih 4/channel; butuh 1 run live lagi utk regenerasi artefak final.
 
 ---
 
@@ -375,6 +417,7 @@ AccAPI/_github_clean/
 │   │   │   └── parsers/                # Parser bulk sales receipt
 │   │   ├── finance/page.tsx
 │   │   ├── summary/page.tsx
+│   │   ├── master-barang/page.tsx       # Workspace 4-tab per principal: Form Fix, Sumber, Kamus Kode, QC
 │   │   ├── validator/page.tsx
 │   │   ├── principles/page.tsx
 │   │   ├── admin/users/                # User management + legacy RBAC editor
@@ -428,6 +471,7 @@ AccAPI/_github_clean/
 │       │   ├── lock/route.ts           # Kunci fingerprint bulk upload
 │       │   └── complete/route.ts
 │       ├── proxy/route.ts              # Proxy ke Accurate ERP API
+│       ├── master-barang/route.ts       # CRUD/action/upload/export/adaptasi Master Barang (RBAC)
 │       ├── webhook/accurate/route.ts   # Terima webhook dari Accurate
 │       └── admin/
 │           ├── bootstrap/route.ts      # One-time admin setup
@@ -454,10 +498,14 @@ AccAPI/_github_clean/
 │   ├── auth-client.ts                  # Better Auth client (browser)
 │   ├── rbac.ts                         # RBAC legacy (union layer selama transisi)
 │   ├── rbac/
-│   │   ├── registry.ts                 # PERMISSION_REGISTRY — sumber tunggal 87 key
+│   │   ├── registry.ts                 # PERMISSION_REGISTRY — sumber tunggal 99 key
 │   │   ├── resolve.ts                  # getUserPermissions, requirePermission/H, resolveRequestPermissions/H
 │   │   └── registry.test.ts            # Self-check: integritas registry + scan route.ts
 │   ├── db.ts                           # Drizzle client singleton
+│   ├── master-barang/
+│   │   ├── engine.ts                   # Generator Form Fix, Kamus kontekstual, QC, fuzzy principal
+│   │   ├── service.ts                  # PostgreSQL + source runtime + konfirmasi 3 tahap + XLSX 4 sheet
+│   │   └── legacy.ts                   # Adaptor 47 workbook format Form Fix/Form-B/generik
 │   ├── email.ts                        # nodemailer sendEmail
 │   ├── sync.ts                         # AccuratePaginator + syncModule
 │   ├── apiFetcher.ts                   # Fetch helper client-side
@@ -534,9 +582,9 @@ AccAPI/_github_clean/
 | `lib/auth.ts` | `auth` (betterAuth instance) | Konfigurasi server auth: email/password, admin plugin, SQLite adapter, email reset/verify |
 | `lib/auth-client.ts` | `authClient` | Client-side Better Auth hooks untuk browser |
 | `lib/rbac.ts` | `canAccess`, `canAccessPath`, `permissionMapForUser`, `normalizeRole` | RBAC legacy: preset per role, custom per-user — masih aktif sebagai legacy union layer |
-| `lib/rbac/registry.ts` | `PERMISSION_REGISTRY`, `allPermissionKeys`, `isValidPermissionKey` | **Sumber tunggal** 85 permission key (`module.action`). Zero import — pure data. Test-guard scan semua route.ts saat CI |
+| `lib/rbac/registry.ts` | `PERMISSION_REGISTRY`, `allPermissionKeys`, `isValidPermissionKey` | **Sumber tunggal** 99 permission key (`module.action`). Zero import — pure data. Test-guard scan semua route.ts saat CI |
 | `lib/rbac/resolve.ts` | `getUserPermissions`, `requirePermission`, `requirePermissionH`, `resolveRequestPermissions`, `resolveRequestPermissionsH` | Union resolver: DB group + legacy role/permissions. Guard endpoint default-deny. `requirePermissionH` untuk route pakai `next/headers` |
-| `lib/rbac/registry.test.ts` | self-check script | Validasi integritas registry + scan semua route.ts: gagal jika ada key tidak terdaftar. Jalankan: `node --experimental-strip-types lib/rbac/registry.test.ts` |
+| `lib/rbac/registry.test.ts` | self-check script | Validasi integritas registry + scan semua route.ts: gagal jika ada key tidak terdaftar. Jalankan: `npx tsx lib/rbac/registry.test.ts` |
 | `app/(dashboard)/layout.tsx` | `DashboardLayout`, `dynamic = "force-dynamic"` | Guard semua halaman dashboard: session check + RBAC path check; selalu render per request karena membaca header/session |
 | `app/(dashboard)/admin/users/` | `UserManagement` | UI kelola user internal, set role, set legacy custom permission |
 | `app/(dashboard)/admin/groups/` | `GroupManagement` | **UI Dynamic RBAC**: buat/edit Access Group, assign permission key per group, assign user ke group |
@@ -696,6 +744,10 @@ idempotency_log [fingerprint bulk upload]
 access_group ──── group_permission (group_id)   [permission_key = "module.action"]
   └──────────── user_group (group_id + user_id)  [akses user = UNION group]
 permission_audit_log [siapa ubah group/permission siapa, kapan]
+
+# Master Barang (satu snapshot JSONB per revisi; metadata list tetap typed/indexed)
+master_barang ────< master_barang_source [file metadata + extraction; binary di runtime]
+      └──────────< master_barang_audit  [create/upload/edit/confirm/finalize]
 ```
 
 **Status Lifecycle offBatch:**
@@ -714,15 +766,17 @@ permission_audit_log [siapa ubah group/permission siapa, kapan]
 | `db/migrations/` | Output drizzle-kit (SQL migration files) |
 | `scripts/seed-opc-dummy.mjs` | 1.275 batch dummy OPC (51 batch x 25 principal, semua 12 problem code) |
 | `scripts/migrate-rbac-groups.mjs` | Buat tabel Dynamic RBAC (access_group, group_permission, user_group, permission_audit_log) — additive & idempotent |
-| `scripts/seed-rbac-presets.ts` | Seed 11 Access Group preset + backfill user_group dari user.role (`node --experimental-strip-types`) — backward-compat, idempotent |
+| `scripts/seed-rbac-presets.ts` | Sinkron preset Dynamic RBAC termasuk `manage_hierarchy` dan Laporan Harian + backfill user_group (`node --experimental-strip-types`) — idempotent |
+| `scripts/sync-insentif-hierarchy.mjs` | Upsert assignment SPV→Sales dan SM→SPV dari target periode terbaru; tidak menebak identitas akun login |
 
 ### Output & Runtime Artifacts
 
 | Path | Isi |
 |---|---|
-| `sqlite.db` | Database SQLite utama (+ WAL/SHM) |
+| `sqlite.db` | Snapshot/sumber migrasi dan rollback SQLite lama; bukan runtime route Next.js setelah D4 |
 | `runtime/off-program-control/` | PDF pengajuan OPC |
 | `runtime/claim-workflow/` | PDF surat klaim, summary, kwitansi, per-submission |
+| `runtime/master-barang/{masterId}/` | File sumber upload bernama hash; metadata/hasil ekstraksi di PostgreSQL |
 | `runtime_logs/` | Log runtime (dipakai Python backend) |
 | `webhook_events.log` | Log event webhook Accurate (append-only) |
 
@@ -737,6 +791,10 @@ permission_audit_log [siapa ubah group/permission siapa, kapan]
 | **SMTP Email** | Outbound (nodemailer) | `lib/email.ts` <- `lib/auth.ts` (reset/verifikasi) |
 | **Elasticsearch** (opsional) | REST search index | `lib/off-program-control/search.ts` <- `app/api/off-program-control/batches/route.ts` |
 | **SumoPod AI / OpenAI** (opsional) | LLM/OCR API | `python_backend/main.py` (validator + dokumen) |
+| **Mistral OCR** | REST `/v1/ocr` (default produksi Summary) | `python_backend/mistral_ocr_adapter.py` <- `python_backend/routers/summary.py` |
+| **Web Sales** (outbound-pull) | Delta feed read-only, token bearer | `app/api/ext/changes/route.ts` -> `lib/api-security.ts::requireExtToken`, `lib/ext-sync.ts` |
+
+**`/api/ext/changes` — satu-satunya jalur data ke Web Sales.** Sales yang *menarik* (worker interval 15–30s via VPN), Internal tidak pernah push: tidak ada outbox, retry queue, atau event yang bisa hilang. Keyset pagination atas `(synced_at, id)`; Sales menyimpan `nextCursor` dan mengirimnya balik sebagai `since`, sehingga Sales yang mati seminggu menyusul sendiri dari cursor lama. Entitas dibatasi whitelist eksplisit (`item`, `customer`, `sales_invoice`, `sales_return`) dengan proyeksi kolom per entitas — mencegah `entity=` sembarang membocorkan tabel user/session dan menahan `raw_data` (payload Accurate utuh) agar tidak ikut keluar. `EXT_SALES_TOKEN` kosong = seluruh `/api/ext/*` tertutup (fail-closed).
 
 ---
 
@@ -777,14 +835,15 @@ Self-check: `node --experimental-strip-types lib/insentif-spv-calc.test.ts` (tot
 
 **Wiring:** [GET /api/insentif-sales/spv-dashboard](app/api/insentif-sales/spv-dashboard/route.ts) — group `sales_targets` per `spv_name` (teks bebas), SUM realisasi via `computeMtdByPrinciple`, panggil `calculateInsentifSPV`. Tampil di UI sebagai `SpvIncentiveTable` pada tab SPV (`page.tsx`, expand-per-principal).
 
-### Hierarki SM → SPV → Sales (Bagian C — dibangun, BELUM di-wire ke kalkulasi/RBAC)
+### Hierarki SM → SPV → Sales (Bagian C — aktif sebagai override/fallback)
 
 Tabel additive di `db/schema.ts`: `spvSalesAssignment` (`sales_code` UNIQUE → `spv_name`) dan `smSpvAssignment` (`spv_name` UNIQUE → `sm_name`). Key masih teks bebas (bukan FK ke `user.id`) — konsisten dgn `sales_targets.spv_name`/`sm_name` yang sudah ada, karena SPV/SM belum tentu punya akun login.
 
-- CRUD: [/api/insentif-sales/hierarchy/spv-sales](app/api/insentif-sales/hierarchy/spv-sales/route.ts), [/api/insentif-sales/hierarchy/sm-spv](app/api/insentif-sales/hierarchy/sm-spv/route.ts). GET pakai `insentif_sales.view`; POST/DELETE pakai permission baru **`insentif_sales.manage_hierarchy`** — key ini **tidak ada** di modul legacy (`appModules` di `lib/rbac.ts` tidak mencakup `insentif_sales`) dan **belum ditambahkan ke `group_permission` manapun**, jadi otomatis OFF untuk semua orang sampai sengaja diaktifkan lewat RBAC admin UI (P6).
+- CRUD: [/api/insentif-sales/hierarchy/spv-sales](app/api/insentif-sales/hierarchy/spv-sales/route.ts), [/api/insentif-sales/hierarchy/sm-spv](app/api/insentif-sales/hierarchy/sm-spv/route.ts). GET pakai `insentif_sales.view`; POST/DELETE pakai **`insentif_sales.manage_hierarchy`**, terdaftar di registry dan preset Admin/Admin Sales.
 - UI: `HierarchyAssignmentSection` di `AdminView` (page.tsx) — 2 mini-form assign + list + hapus.
-- **Belum digunakan** oleh `calculateInsentifSPV`/`computeExclusive`/`computeMix` maupun scoping row-level manapun. `SpvIncentiveTable` di atas masih group by `sales_targets.spv_name` langsung (bukan dari tabel assignment ini) — keduanya sengaja dibiarkan terpisah sampai ada keputusan migrasi.
-- **Gap yang belum diisi:** link `user.id` (akun login) → identitas SPV/SM (mis. kolom `hierarchyName` di `user`) — dibutuhkan nanti kalau mau enforce scoping "SPV cuma lihat sales bawahannya sendiri". Belum dibangun.
+- Dashboard SPV dan row-level scope membaca assignment sebagai override, lalu fallback ke `sales_targets.spv_name/sm_name`. `scripts/sync-insentif-hierarchy.mjs` mengisi assignment awal dari target terbaru secara idempotent.
+- Akun login dapat ditautkan melalui `user.hierarchyRole/hierarchyName`; null berarti belum discoping. Link akun tetap manual agar nama SPV/SM tidak ditebak.
+- Dashboard utama menerima periode `month/year` dari URL dan menyediakan input bulan; pace historis=100%, masa depan=0%, bulan aktif mengikuti hari kerja berjalan.
 
 ---
 
@@ -842,12 +901,25 @@ UI: modul /laporan-harian
         -> pandas replika logika Power Query SalesBase:
            merge flag AO/EC/IA, Nota Retur/Batal, map Golongan(SPV)+NAMA SM, Kategori Baru
         -> output: (a) rows per SPV & per SM, (b) rows stock per SPV, (c) agregat progress harian
-     -> tulis file per-SPV/SM ke runtime/laporan-harian/<tanggal>/
-     -> feed dashboard: BULK upsert ke sales_daily_progress (batch, hindari N+1)
+     -> susun output 1:1 sesuai `REPORT_COLUMNS` (tanpa duplikasi `GOLONGAN`/pergeseran AO-EC-IA)
+     -> tulis file per-SPV ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
+        `<SPV>` (penjualan) + `<SPV> Stock` (stok hasil mapping KODE_BARANG -> GOLONGAN)
+        (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)
+     -> normalisasi progress kosong salesCode -> `UNMAPPED:<branch>` + warning eksplisit (nilai tidak dibuang/tidak ditebak)
+     -> feed dashboard: BULK replace ke sales_daily_progress (batch, hindari N+1)
   <- { ok, runId, ringkasan per SPV, daftar penerima (PREVIEW, belum kirim) }
 UI: tombol "Kirim" terpisah (gated, confirm:true) -> POST /api/laporan-harian/[runId]/send
-     -> requirePermission("laporan_harian.send") -> ambil file per-SPV/SM dari backend -> kirim email (nodemailer)
+     -> requirePermission("laporan_harian.send") -> claim status `sending`
+     -> ambil file per-SPV/SM dari backend -> kirim email (nodemailer)
+     -> penerima `failed` dapat di-retry tanpa mengirim ulang penerima yang sudah `sent`
+UI: review file opsional -> GET /api/laporan-harian/[runId]/preview?file=...
+     -> proxy file run-scoped dari FastAPI, tampilkan maksimal 25 baris kunci atau unduh XLSX penuh
 ```
+
+State machine pure: `lib/laporan-harian/send-state.ts`; self-check:
+`node --experimental-strip-types lib/laporan-harian/send-state.test.ts`.
+Normalisasi progress pure: `lib/laporan-harian/progress-normalize.ts`; self-check:
+`node --experimental-strip-types lib/laporan-harian/progress-normalize.test.ts`.
 
 ---
 
@@ -874,9 +946,53 @@ UI: tombol "Kirim" terpisah (gated, confirm:true) -> POST /api/laporan-harian/[r
 | **`config/`** | Folder berisi data statik (principles, dll) — tidak ter-trace penuh karena bukan TypeScript eksportabel; kemungkinan JSON/YAML. |
 | **`runtime/` path** | `GET /api/cron/cleanup-runtime` membersihkan artefak regenerable dengan retensi terdaftar; arsip PDF OPC/claim sengaja dikecualikan. Production tetap memerlukan scheduler eksternal dan `CRON_SECRET`. |
 | **`app/(dashboard)/finance/page.tsx`** | Memanggil Python FastAPI backend langsung via `NEXT_PUBLIC_FASTAPI_BASE_URL`. Jika backend mati, halaman finance tidak berfungsi. |
-| **Docker vs dev** | `drizzle.config.ts` hardcode `file:sqlite.db` (bukan env). Perlu disesuaikan jika path container berbeda dari root. |
+| **D4 env/deploy belum sinkron** | Kode DB sudah PostgreSQL, tetapi `.env.local`, `.env.example`, Docker Compose, dan Dockerfile masih default `file:sqlite.db`. Local/deploy wajib memakai `DATABASE_URL=postgres://...`; tanpa itu route ber-DB tidak operasional. |
+| **Master Barang PDF scan/gambar** | Parser deterministik mencakup Excel/CSV/PDF teks. PDF scan/gambar memerlukan `SUMOPOD_API_KEY` untuk vision OCR; tanpa key upload ditolak jelas (tidak menghasilkan item kosong/tebakan). Semua hasil confidence rendah masuk QC review. |
 | **`rekprinciple.xlsx`** | File Excel di root — tidak jelas apakah dipakai runtime atau hanya referensi manual. |
 | **Laporan Harian: stock Accurate & openpyxl** | File stock export Accurate tidak terbaca `openpyxl` (perlu `python-calamine` terpasang di server). |
+
+---
+
+## Master Barang Automation — `/master-barang`
+
+Satu principal = satu workspace dengan empat tab: **Form Fix**, **Sumber PDF**, **Kamus Kode**, dan **QC**. Form Fix bersifat read-only dan selalu digenerasi ulang dari source items + Kamus Kode; koreksi struktur dilakukan di Kamus Kode agar tidak drift antar-item.
+
+```text
+Browser /master-barang
+  -> app/api/master-barang/route.ts [requirePermission master_barang.*]
+     -> create: fuzzy principal (Damerau + token/contains)
+        -> bila mirip: status blocked_similarity -> confirm 1/3 -> 2/3 -> 3/3 (server-side + audit)
+     -> upload PDF/image/Excel/CSV atau manual_items
+        -> FastAPI /master-barang/extract (Excel/CSV deterministik; PDF scan/gambar vision OCR)
+        -> lib/master-barang/engine.ts::generateMasterBarang
+           -> source normalization -> Kamus Kode -> Form Fix -> QC -> revisionHash
+        -> service.ts transaction: master snapshot + source metadata + audit
+     -> update_codebook: regenerate + revision++ + invalidasi konfirmasi LEN50 lama
+     -> LEN50 > 50: warning/review saja; override bulk 3 tahap per revisionHash
+     -> finalize: blok hanya QC error / konfirmasi aktif; status ready
+     -> export: workbook Form Fix + Sumber PDF + Kamus Kode + QC
+```
+
+Aturan kode kemasan: kamus **kontekstual per Nama KLP**, urutan dimulai `1` pada setiap KLP dan bukan nomor global. Adaptor legacy sengaja tidak membawa kode kemasan `00/01` lama; engine menomori ulang mengikuti aturan ini. Kode principal Win dapat diisi 2 karakter atau dikosongkan agar AccAPI memilih kombinasi huruf+angka yang belum dipakai. `Kode Pcpl` per-item tetap opsional.
+
+Export Form Fix mempertahankan **34 kolom A:AH** secara berurutan, termasuk dua header `kode 1 Digit (Nomor)` yang teksnya identik; export memakai matriks agar salah satu kolom tidak tertimpa. Docker frontend menyertakan 47 workbook legacy non-lock (sekitar 10,75 MB) untuk migrasi awal idempoten, sedangkan file sumber hasil upload disimpan persisten pada volume `/app/data/master-barang` melalui `MASTER_BARANG_STORAGE_DIR`.
+
+Persistence PostgreSQL: `master_barang` menyimpan snapshot JSONB satu revisi (source items, codebook, form rows, QC, confirmation state); `master_barang_source` menyimpan metadata/hash/path sumber; `master_barang_audit` menyimpan seluruh tindakan/konfirmasi. List/search memakai kolom typed dan index `principle_name_norm`/`updated_at`; detail membaca satu snapshot + dua query source/audit paralel, tanpa N+1 item.
+
+| File | Fungsi Utama | Peran |
+|---|---|---|
+| `app/(dashboard)/master-barang/page.tsx` | `MasterBarangPage` | UI create/select/upload/manual, 4 tab, editor Kamus, 3x confirmation, export/finalize |
+| `app/api/master-barang/route.ts` | `GET`, `POST` | Guard RBAC, list/detail/source/export, action create/upload/manual/edit/confirm/adapt/finalize |
+| `lib/master-barang/engine.ts` | `generateMasterBarang`, `findSimilarPrinciples` | Pure generator + contextual code assignment + QC + fuzzy; runnable self-check |
+| `lib/master-barang/service.ts` | persistence/action functions | Transaksi PostgreSQL, source runtime, revision/confirmation state, workbook 4-sheet |
+| `lib/master-barang/legacy.ts` | `parseLegacyWorkbook`, `adaptLegacyDirectory` | Adaptor idempoten `.xlsx/.xls`; audit lokal: 47/47 file non-lock terbaca, 8.741 baris sumber |
+| `python_backend/routers/master_barang.py` | `POST /master-barang/extract` | Ekstraksi Excel/CSV/PDF/image; auth `master_barang.upload`; OCR/AI opsional |
+| `db/schema.ts` | `masterBarang`, `masterBarangSource`, `masterBarangAudit` | Tabel/index Master Barang |
+| `scripts/init-db.mjs` | bootstrap Master Barang | DDL PostgreSQL additive + permission preset saat startup; SQLite legacy tetap dipertahankan |
+
+**Harga & margin per item** (commit 6ce9926, 9f2a72e): setiap item membawa empat tier harga — Distributor (harga beli MSM), Wholesaler, Retailer, Supermarket — masing-masing pasangan Include/Exclude PPN, plus `marginPersen` yang diturunkan dari kategori pada Note price list principal (Sunco/Bumbue 9%, Barsoap/Liquid Soap 10%). Deteksi kategori 9% menerima ejaan `BUMBOE` maupun `BUMBUE` (commit 38bca38). Tipe di `lib/master-barang/engine.ts`; harga TIDAK diekstrak oleh jalur OCR (prompt vision eksplisit mengabaikan harga) dan diisi dari price list/manual.
+
+RBAC module `master_barang`: `view`, `create`, `upload`, `edit`, `generate`, `export`, `manage`. Registry Next, preset role, sidebar, page permission, Python fallback permission, dan bootstrap Access Group disinkronkan.
 
 ---
 
@@ -887,8 +1003,20 @@ On-demand (bukan cron). UI `app/(dashboard)/summary/page.tsx` hanya proxy tampil
 | Endpoint (`python_backend/main.py`) | Peran |
 |---|---|
 | `POST /summary/manual/master/upload` (6727), `load_principle/{pid}` (7355) | Parse `MASTER BARANG` → kelompok/variant/gramasi/items |
-| `POST /summary/manual/parse_pdf_ai` (7584) | OCR gemini **per-halaman** → parse JSON deepseek → `_apply_native_kelompok` |
+| `POST /summary/manual/parse_pdf_ai` (7584) | OCR **per-halaman** via provider aktif (default `mistral-ocr-4-0`) → parse JSON via `SUMOPOD_MODEL` → `_apply_native_kelompok` |
 | `POST /summary/manual/parse_pdf_regex` (7403) | Regex `PROID-`; **guard**: PDF scan tanpa teks ditolak (bukan 0 baris diam) |
 | `POST /summary/manual/generate` (6805) | Match item→master (dedupe by kode), consolidate, build Form PDF + Dataset xlsx |
 
-**Audit 2026-07-08 (fix terpasang):** (4) dedupe Kode Barang kembar cegah baris/TIER_NO dobel; (2) filter principle diperbaiki (keyword match, bukan no-op); (5a) cap `doc[:10]`→`SUMMARY_MAX_OCR_PAGES`(40)+warning; (5b) OCR single-call (mentok `finish_reason=length`, buang ~12% teks) → **per-halaman** (finish=stop). Env: `SUMOPOD_OCR_MODEL` (default `gemini/gemini-2.5-flash`), `SUMOPOD_MODEL` parse (default `deepseek-v4-pro`).
+**Audit 2026-07-08 (fix terpasang):** (4) dedupe Kode Barang kembar cegah baris/TIER_NO dobel; (2) filter principle diperbaiki (keyword match, bukan no-op); (5a) cap `doc[:10]`→`SUMMARY_MAX_OCR_PAGES`(40)+warning; (5b) OCR single-call (mentok `finish_reason=length`, buang ~12% teks) → **per-halaman** (finish=stop). Env: `SUMOPOD_OCR_MODEL` (default **`mistral-ocr-4-0`** sejak 2026-07-23), `SUMOPOD_MODEL` parse (default `gpt-4.1-mini`). Catatan: `gemini/gemini-2.5-flash` sudah mati (404); alternatif Gemini yang valid = `gemini/gemini-3.5-flash`.
+
+Eksperimen RapidOCR tersedia hanya bila `SUMOPOD_OCR_MODEL=rapidocr`: `python_backend/rapidocr_adapter.py` merender PDF lokal, merekonstruksi tabel dari koordinat header/barcode, menormalkan `O/o` menjadi `0` hanya saat menempel digit, dan mengoreksi digit sisipan hanya jika kandidat gramasi master unik. RapidOCR **tetap eksperimen** dan tidak pernah jadi default; E2E Natur 2026-07-22 belum parity (SKU, benefit, channel, dan baris XLSX berbeda), sehingga RapidOCR tidak dirutekan otomatis untuk Natur. Check adapter: `python python_backend/rapidocr_adapter.py`; E2E terisolasi: `E2E_PRINCIPLES=NATUR` pada `python_backend/test_e2e_live_fonterra_natur.py`.
+
+**Mistral OCR 4 adalah jalur default produksi** (`SUMOPOD_OCR_MODEL` default `mistral-ocr-4-0`, `MISTRAL_API_KEY` WAJIB terisi di produksi — kosong = fail-closed, bukan fallback diam-diam ke native text): `python_backend/mistral_ocr_adapter.py` mengirim PDF asli ke `/v1/ocr`, meminta block bounding boxes + confidence per kata, menyisipkan kembali tabel ke teks halaman, lalu memakai parser/matcher/generator Summary yang sama. `MISTRAL_OCR_TABLE_FORMAT=html|markdown` (default `html`) memilih HTML dengan `rowspan` atau Markdown yang lebih dekat ke format parser lama. Jumlah halaman diambil dari page count PDF (bukan gambar tempelan) dan provider eksplisit fail-closed agar E2E tidak diam-diam memakai native text. Cache RapidOCR/Mistral diberi namespace model+format agar A/B tidak membaca cache Gemini/format lain. Check adapter: `python python_backend/mistral_ocr_adapter.py`.
+
+Normalisasi output lintas model berada di `python_backend/promo_grouping.py`: nomor surat menjadi scope program, duplikat rowspan generik (`Beli 1`) kalah dari kondisi minimum spesifik untuk SKU+benefit yang sama, group ID dibentuk dari signature bisnis, dan baris XLSX diurutkan kanonik. Dengan ini program berbeda pada channel/SKU sama tidak lagi saling dianggap konflik. Check: `python python_backend/test_promo_grouping.py`.
+
+Loop Natur 2026-07-22 juga mengunci: konsolidasi generic berdasarkan identitas SKU/product (bukan prefix `NATUR`), baris `_urc_unmatched` tidak boleh masuk fallback seluruh master, benefit/trigger rowspan dijembatani hanya ketika ada satu nilai spesifik, dan alias OCR nyata diuji di `test_generic_promo_matcher.py`. E2E Mistral final: 94 parsed, 87 matched, 7 review, run-2 0 API, PDF 6 halaman dan XLSX 106 baris. Dibanding output Gemini pasca-grouping: header/jumlah baris/benefit identik, tetapi masih 5 baris semantik dan 141 sel berbeda; dua SKU tambahan Mistral terkait pembacaan sumber (termasuk Z.Oil `135ML`, terverifikasi visual). Selisih itu kemudian dinilai setara/lebih baik pada URC + Priskila, sehingga **2026-07-23 (commit 8a8a32c) Mistral dipromosikan jadi default produksi** — parity exact terhadap Gemini tidak lagi jadi syarat.
+
+Kebijakan gramasi generic: teks surat tetap dipakai untuk memilih SKU/alias master, tetapi label gramasi pada Form Summary selalu memakai gramasi utama master (`_g`). Contoh Z.Oil `135ML` pada surat tetap ditampilkan `150ML` bila label utama master adalah `150ML`; normalisasi ini terjadi deterministik di `generic_promo_pipeline.build_row`, bukan oleh OCR atau GPT parser.
+
+Kebijakan SKU alias Natur: bila satu-satunya hit ukuran surat (mis. `135ML`) menunjuk gramasi utama master lain (`150ML`), matcher memperluas ke seluruh SKU dengan token produk dan gramasi utama master yang sama. Hasil generic matcher tidak dijatuhkan lagi oleh validasi gramasi legacy generator. Alias OCR kontekstual `VIT 85 -> VIT B5` mencegah varian Aloe Vera biasa ikut pada baris Vit.B5.
