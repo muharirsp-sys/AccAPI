@@ -1,10 +1,10 @@
 /*
- * Tujuan: UI Laporan Harian untuk upload tiga sumber, ringkasan hasil, review file opsional, dan kirim email terkonfirmasi.
+ * Tujuan: UI Laporan Harian untuk upload sumber, review/download arsip, memilih penerima, dan kirim email terkonfirmasi.
  * Caller: menu sidebar "Laporan Harian" (/laporan-harian). Guard RBAC: laporan_harian.view.
  * Dependensi: POST /api/laporan-harian/upload, GET /api/laporan-harian/[runId]/preview,
- *             POST /api/laporan-harian/[runId]/send, lucide-react, semantic UI classes global.
+ *             POST /api/laporan-harian/[runId]/send, halaman mapping, lucide-react, semantic UI global.
  * Main Functions: LaporanHarianPage, FilePicker, handleUpload, loadReview, handleSend.
- * Side Effects: HTTP upload/read/send; tidak menyimpan state di localStorage.
+ * Side Effects: HTTP upload/read/download/send; tidak menyimpan state di localStorage.
  */
 "use client";
 
@@ -17,6 +17,7 @@ import {
     FileSearch,
     FileSpreadsheet,
     Send,
+    Settings2,
     UploadCloud,
 } from "lucide-react";
 
@@ -35,6 +36,9 @@ type UploadResult = {
     recipientsPreview: Recipient[];
     totalRecipients: number;
     generatedFiles: GeneratedFile[];
+    reportDate: string;
+    toFormatFileName: string;
+    archiveFileName: string;
     unmappedProgress?: { rows: number; achievedValueDpp: number; branches: string[] };
 };
 
@@ -98,8 +102,14 @@ export default function LaporanHarianPage() {
     const [reviewError, setReviewError] = useState<string | null>(null);
     const [reviewFileName, setReviewFileName] = useState("");
     const [review, setReview] = useState<ReviewSample | null>(null);
+    const [recipientMode, setRecipientMode] = useState<"all" | "selected">("selected");
+    const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
 
     const busy = processing || sending;
+    const recipientEmails = result
+        ? Array.from(new Set(result.recipientsPreview.flatMap((recipient) => recipient.emails))).sort()
+        : [];
+    const sendCount = recipientMode === "all" ? recipientEmails.length : selectedEmails.length;
 
     async function handleUpload() {
         if (!penjualan) {
@@ -126,6 +136,8 @@ export default function LaporanHarianPage() {
             const uploaded = data as UploadResult;
             setResult(uploaded);
             setReviewFileName(uploaded.generatedFiles?.[0]?.fileName ?? "");
+            setRecipientMode("selected");
+            setSelectedEmails([]);
         } catch (uploadError) {
             setError(`Gagal upload atau memproses laporan: ${String(uploadError)}`);
         } finally {
@@ -160,14 +172,14 @@ export default function LaporanHarianPage() {
 
     async function handleSend() {
         if (!result) return;
-        if (!confirm(`Kirim ${result.totalRecipients} email untuk ${result.recipientsPreview.length} file?\nEmail akan benar-benar dikirim.`)) return;
+        if (!confirm(`Kirim ${sendCount} email untuk ${result.recipientsPreview.length} file?\nEmail akan benar-benar dikirim.`)) return;
         setSending(true);
         setError(null);
         try {
             const response = await fetch(`/api/laporan-harian/${result.runId}/send`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ confirm: true }),
+                body: JSON.stringify({ confirm: true, recipientMode, selectedEmails }),
             });
             const data = await response.json();
             if (!response.ok) {
@@ -186,11 +198,14 @@ export default function LaporanHarianPage() {
         <main className="ui-page-shell ui-page-shell--standard space-y-5" aria-busy={busy}>
             <header className="ui-page-header">
                 <div className="ui-page-heading">
-                    <h1 className="ui-page-title">Laporan Harian per SPV</h1>
+                    <h1 className="ui-page-title">Laporan Harian SPV, SM, dan Principle</h1>
                     <p className="ui-page-description">
-                        Unggah laporan Accurate, periksa ringkasan dan file hasil bila diperlukan, lalu kirim email setelah konfirmasi.
+                        Unggah laporan Accurate, review hasil per SPV/SM/principle, lalu pilih penerima sebelum konfirmasi email.
                     </p>
                 </div>
+                <a href="/laporan-harian/mapping" className="ui-button-secondary min-h-11">
+                    <Settings2 size={17} aria-hidden="true" /> Kelola mapping
+                </a>
             </header>
 
             <section className="ui-surface-panel ui-panel-padding" aria-labelledby="laporan-upload-title">
@@ -243,11 +258,11 @@ export default function LaporanHarianPage() {
                                 </button>
                                 <button
                                     onClick={handleSend}
-                                    disabled={busy || result.totalRecipients === 0 || sendState?.status === "sent"}
+                                    disabled={busy || sendCount === 0 || sendState?.status === "sent"}
                                     className="ui-button-primary min-h-11 px-4"
                                 >
                                     <Send size={17} aria-hidden="true" />
-                                    {sending ? "Mengirim email..." : `Kirim ${result.totalRecipients} email`}
+                                    {sending ? "Mengirim email..." : `Kirim ${sendCount} email`}
                                 </button>
                             </div>
                         </div>
@@ -312,6 +327,19 @@ export default function LaporanHarianPage() {
                                             <Download size={17} aria-hidden="true" /> Unduh Excel
                                         </a>
                                     )}
+                                    {result.toFormatFileName && (
+                                        <a
+                                            href={`/api/laporan-harian/${result.runId}/preview?file=${encodeURIComponent(result.toFormatFileName)}&download=1`}
+                                            className="ui-button-secondary min-h-11"
+                                        >
+                                            <Download size={17} aria-hidden="true" /> 2. To Format
+                                        </a>
+                                    )}
+                                    {result.archiveFileName && (
+                                        <a href={`/api/laporan-harian/${result.runId}/preview?download=all`} className="ui-button-primary min-h-11 px-4">
+                                            <Download size={17} aria-hidden="true" /> Unduh semua
+                                        </a>
+                                    )}
                                 </div>
                             </div>
 
@@ -372,6 +400,35 @@ export default function LaporanHarianPage() {
                             <ChevronDown size={18} className="text-[var(--luxury-muted)]" aria-hidden="true" />
                         </summary>
                         <div className="border-t border-[var(--border-soft)] p-3 sm:p-5">
+                            <div className="mb-4 rounded-xl border border-[var(--border-soft)] bg-[var(--surface-2)] p-4">
+                                <p className="text-sm font-extrabold text-[var(--luxury-text)]">Tujuan pengiriman</p>
+                                <div className="mt-3 flex flex-wrap gap-4 text-sm">
+                                    <label className="flex cursor-pointer items-center gap-2">
+                                        <input type="radio" name="recipient-mode" checked={recipientMode === "all"} onChange={() => setRecipientMode("all")} />
+                                        Semua penerima dari mapping
+                                    </label>
+                                    <label className="flex cursor-pointer items-center gap-2">
+                                        <input type="radio" name="recipient-mode" checked={recipientMode === "selected"} onChange={() => setRecipientMode("selected")} />
+                                        Pilih penerima tertentu
+                                    </label>
+                                </div>
+                                {recipientMode === "selected" && (
+                                    <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                                        {recipientEmails.map((email) => (
+                                            <label key={email} className="flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--border-soft)] bg-[var(--surface)] px-3 py-2 text-sm">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedEmails.includes(email)}
+                                                    onChange={(event) => setSelectedEmails((current) => event.target.checked
+                                                        ? Array.from(new Set([...current, email])).sort()
+                                                        : current.filter((item) => item !== email))}
+                                                />
+                                                <span className="truncate" title={email}>{email}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                             <div className="ui-table-frame max-h-80">
                                 <table className="ui-data-table min-w-[42rem]">
                                     <caption className="sr-only">Daftar file dan penerima email</caption>

@@ -2,8 +2,8 @@
  * Tujuan: Lihat detail run/penerima serta contoh atau unduhan file hasil sebelum email dikirim.
  * Caller: UI Laporan Harian (review opsional sebelum Send).
  * Dependensi: requirePermission, db/schema, FastAPI file endpoint, xlsx, file-review.
- * Main Functions: GET (ringkasan run, sample file, atau download file).
- * Side Effects: DB read dan HTTP read file; tidak mengubah data.
+ * Main Functions: GET (ringkasan run, sample file, download workbook, atau download arsip ZIP).
+ * Side Effects: DB read dan HTTP read workbook/arsip; tidak mengubah data.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
@@ -26,6 +26,22 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ runId: stri
     const { runId } = await ctx.params;
     const [run] = await db.select().from(reportRun).where(eq(reportRun.id, runId)).limit(1);
     if (!run) return NextResponse.json({ error: "Run tidak ditemukan" }, { status: 404 });
+
+    if (req.nextUrl.searchParams.get("download") === "all") {
+        const archiveName = `${run.reportDate}_Laporan_Harian_Arsip.zip`;
+        const archiveUrl = `${fastapiBase()}/laporan-harian/file?run=${encodeURIComponent(runId)}&name=${encodeURIComponent(archiveName)}`;
+        const archiveResponse = await fetch(archiveUrl);
+        if (!archiveResponse.ok) {
+            return NextResponse.json({ error: "Arsip hasil belum tersedia" }, { status: 404 });
+        }
+        return new NextResponse(Buffer.from(await archiveResponse.arrayBuffer()), {
+            headers: {
+                "Content-Type": "application/zip",
+                "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(archiveName)}`,
+                "Cache-Control": "private, no-store",
+            },
+        });
+    }
 
     const fileName = req.nextUrl.searchParams.get("file");
     if (fileName) {

@@ -1,6 +1,6 @@
 /*
  * seed-rbac-presets.ts
- * Tujuan: Sinkronkan Access Group preset, termasuk akses Insentif Sales/Laporan Harian,
+ * Tujuan: Sinkronkan Access Group preset, termasuk akses Insentif Sales/Laporan Harian beserta mapping,
  *         lalu backfill user_group dari user.role.
  * Caller: Developer/admin saat inisialisasi atau sinkronisasi Dynamic RBAC lokal.
  * Dependensi: pg, lib/rbac/registry.ts, PostgreSQL DATABASE_URL.
@@ -105,7 +105,7 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
             ...k("dashboard", ["view"]),
             ...k("form_kontrol", ["view", "submit", "manage"]),
             ...k("insentif_sales", ["view", "manage", "upload_target", "upload_progress", "input_support", "manage_payment", "manage_hierarchy"]),
-            ...k("laporan_harian", ["view", "upload", "send"]),
+            ...k("laporan_harian", ["view", "upload", "send", "manage"]),
         ],
     },
 ];

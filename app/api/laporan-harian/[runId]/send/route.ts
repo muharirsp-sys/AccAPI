@@ -1,11 +1,11 @@
 /*
  * Tujuan: KIRIM email laporan per-SPV untuk 1 report_run — GATED.
- *         Hanya jalan bila body { confirm: true }; run dry_run/failed diklaim atomik sebagai
+ *         Hanya jalan bila body { confirm: true }; pilihan all/selected divalidasi, lalu run dry_run/failed diklaim atomik sebagai
  *         'sending', lalu hanya penerima pending/failed yang diproses. Sudah sent/sending -> 409.
  * Caller: UI Laporan Harian (tombol "Kirim" setelah review preview).
  * Dependensi: requirePermission("laporan_harian.send"), lib/email, lib/laporan-harian/send-state,
  *             FastAPI /laporan-harian/file (ambil file per-SPV run-scoped), db/schema.
- * Main Functions: POST (claim run, kirim/retry penerima, update status).
+ * Main Functions: POST (validasi pilihan, claim run, tandai skipped, kirim/retry, update status).
  * Side Effects: HTTP fetch file; kirim email (nodemailer); DB update report_run + report_run_recipient.
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
     if (gate.response) return gate.response;
 
     const { runId } = await ctx.params;
-    let body: { confirm?: boolean } = {};
+    let body: { confirm?: boolean; recipientMode?: "all" | "selected"; selectedEmails?: unknown } = {};
     try { body = await req.json(); } catch { /* body opsional */ }
 
     // GATE 1: konfirmasi eksplisit wajib
@@ -41,6 +41,16 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
             { error: "Konfirmasi wajib. Kirim body { \"confirm\": true } untuk mengirim email.", sent: 0 },
             { status: 400 },
         );
+    }
+
+    const recipientMode = body.recipientMode === "selected" ? "selected" : "all";
+    const selectedEmails = new Set(
+        (Array.isArray(body.selectedEmails) ? body.selectedEmails : [])
+            .map((value) => String(value).trim().toLowerCase())
+            .filter(Boolean),
+    );
+    if (recipientMode === "selected" && selectedEmails.size === 0) {
+        return NextResponse.json({ error: "Pilih minimal satu alamat email." }, { status: 400 });
     }
 
     const [run] = await db.select().from(reportRun).where(eq(reportRun.id, runId)).limit(1);
@@ -59,13 +69,26 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
         return NextResponse.json({ error: "Status run berubah; muat ulang sebelum mengirim.", status: "conflict" }, { status: 409 });
     }
 
-    const recips = await db
+    const retryableRecipients = await db
         .select()
         .from(reportRunRecipient)
         .where(and(
             eq(reportRunRecipient.runId, runId),
             inArray(reportRunRecipient.sendStatus, [...RETRYABLE_RECIPIENT_STATUSES]),
         ));
+    const recips = recipientMode === "selected"
+        ? retryableRecipients.filter((recipient) => selectedEmails.has(recipient.email.trim().toLowerCase()))
+        : retryableRecipients;
+    const skippedIds = recipientMode === "selected"
+        ? retryableRecipients
+            .filter((recipient) => !selectedEmails.has(recipient.email.trim().toLowerCase()))
+            .map((recipient) => recipient.id)
+        : [];
+    if (skippedIds.length) {
+        await db.update(reportRunRecipient)
+            .set({ sendStatus: "skipped", error: null })
+            .where(inArray(reportRunRecipient.id, skippedIds));
+    }
     if (recips.length === 0) {
         await db.update(reportRun).set({ status: "failed" }).where(eq(reportRun.id, runId));
         return NextResponse.json({ error: "Tidak ada penerima pending/gagal untuk run ini." }, { status: 400 });

@@ -104,5 +104,45 @@
   "MOTASA INDONESIA, PT": "HENDRIK",
   "PURATOS, PT": "HENDRIK",
   "HEINZ ABC INDONESIA, PT": "ADNAN"
- }
+ },
+ "distribution_rules": [
+  {
+   "name": "ANI",
+   "sales_terms": ["MT", "OFFICE"],
+   "market_terms": ["NKA"],
+   "principals": [
+    "ENERGIZER INDONESIA, PT",
+    "GONDOWANGI TRADISIONAL KOSMETIK, PT",
+    "PRISKILA PRIMA MAKMUR, PT",
+    "UNITAMA SARI MAS, PT",
+    "FORISA NUSAPERSADA, PT",
+    "ABC PRESIDENT INDONESIA, PT",
+    "PZ CUSSONS INDONESIA, PT",
+    "VINDA INTERNATIONAL INDONESIA, PT",
+    "KINO INDONESIA. TBK, PT"
+   ],
+   "product_by_principal": {
+    "FORISA NUSAPERSADA, PT": ["FORISA - MT"]
+   }
+  },
+  {
+   "name": "JONAL",
+   "sales_terms": ["MT", "OFFICE"],
+   "market_terms": ["NKA"],
+   "principals": [
+    "MEGA SURYA MAS, PT",
+    "FKS FOOD SEJAHTERA, PT",
+    "FONTERRA BRANDS INDONESIA, PT",
+    "GUMINDO BOGAMANIS, PT",
+    "MARKETAMA INDAH, PT",
+    "PRIMARASA ABADI SEJAHTERA, PT",
+    "URC INDONESIA, PT",
+    "RECKITT BENCKISER, PT",
+    "GODREJ CONSUMER PRODUCTS INDONESIA, PT",
+    "DOLPHIN, PT",
+    "UNIVERSAL INDOFOOD PRODUCT, PT"
+   ],
+   "product_by_principal": {}
+  }
+ ]
 }

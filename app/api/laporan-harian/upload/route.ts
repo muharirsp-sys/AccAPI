@@ -1,11 +1,11 @@
 /*
- * Tujuan: Upload FIX LAP PENJ (+stock opsional) -> proses di FastAPI -> feed dashboard
+ * Tujuan: Upload sumber laporan -> proses di FastAPI -> feed dashboard dan siapkan artefak review/arsip
  *         (sales_daily_progress, batch) + catat report_run + PREVIEW penerima email (DRY-RUN).
  *         TIDAK mengirim email. Kirim email = endpoint terpisah /send (Tahap 4, gated).
  * Caller: UI modul Laporan Harian (browser, multipart).
  * Dependensi: requirePermission, FastAPI /laporan-harian/process, normalisasi ingest,
- *             db/schema (reportRun, reportRecipient, reportRunRecipient).
- * Main Functions: POST (proses + dry-run).
+ *             db/schema, default penerima laporan khusus.
+ * Main Functions: POST (proses, simpan progress, dry-run penerima, kembalikan artefak download).
  * Side Effects: HTTP call ke FastAPI; DB write (report_run, report_run_recipient, sales_daily_progress).
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -19,6 +19,7 @@ import {
     type DailyProgressInputRow,
 } from "@/lib/laporan-harian/progress-normalize";
 import { replaceDailyProgressForPeriod } from "@/lib/laporan-harian/ingest";
+import { withSpecialReportRecipients } from "@/lib/laporan-harian/default-recipients";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -82,7 +83,6 @@ export async function POST(req: NextRequest) {
     const { month, year } = (result.period ?? {}) as { month?: number; year?: number };
     const rawProgress: DailyProgressInputRow[] = Array.isArray(result.progress) ? result.progress : [];
     const { rows: progress, unmapped: unmappedProgress } = normalizeDailyProgressRows(rawProgress);
-    const spvList: string[] = Array.isArray(result.spv_list) ? result.spv_list : [];
     const generatedFiles = Array.isArray(result.files)
         ? (result.files as Array<Record<string, unknown>>).map((file) => ({
             spv: String(file.spv ?? ""),
@@ -90,6 +90,9 @@ export async function POST(req: NextRequest) {
             rows: Number(file.rows ?? 0),
         })).filter((file) => file.fileName)
         : [];
+
+    const toFormatFileName = String((result.to_format as Record<string, unknown> | null)?.fileName ?? "");
+    const archiveFileName = String((result.archive as Record<string, unknown> | null)?.fileName ?? "");
 
     try {
         // Feed dashboard (batch, replace-per-periode). Idempotent.
@@ -99,14 +102,16 @@ export async function POST(req: NextRequest) {
         }
 
         // Preview penerima (DRY-RUN): match keyword report_recipient ke nama file per SPV (mirror logika lama).
-        const recips = (await db.select().from(reportRecipient).where(eq(reportRecipient.active, true)));
+        const recips = withSpecialReportRecipients(
+            await db.select().from(reportRecipient).where(eq(reportRecipient.active, true)),
+        );
         const preview: { keyword: string; spv: string; fileName: string; emails: string[] }[] = [];
-        for (const spv of spvList) {
-            const fileName = `${reportDate}_${spv}.xlsx`;
-            const fnl = fileName.toLowerCase();
-            for (const r of recips) {
-                if (fnl.includes(r.keyword.toLowerCase())) {
-                    preview.push({ keyword: r.keyword, spv, fileName, emails: splitEmails(r.emails) });
+        for (const generated of generatedFiles) {
+            const { spv, fileName } = generated;
+            const normalizedFileName = fileName.toLowerCase();
+            for (const recipient of recips) {
+                if (normalizedFileName.includes(recipient.keyword.toLowerCase())) {
+                    preview.push({ keyword: recipient.keyword, spv, fileName, emails: splitEmails(recipient.emails) });
                 }
             }
         }
@@ -118,7 +123,7 @@ export async function POST(req: NextRequest) {
             id: runId,
             reportDate,
             status: "dry_run",
-            fileCount: spvList.length,
+            fileCount: generatedFiles.length,
             emailCount: totalEmails,
             salesRows: Number(result.sales_rows ?? 0),
             progressRows: progress.length,
@@ -149,6 +154,9 @@ export async function POST(req: NextRequest) {
             summary: result.summary,
             recipientsPreview: preview,
             generatedFiles,
+            toFormatFileName,
+            archiveFileName,
+            reportDate,
             totalRecipients: totalEmails,
         });
     } catch (e) {

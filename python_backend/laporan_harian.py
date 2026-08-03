@@ -10,8 +10,9 @@
 #   load_lookups(f_format, f_spv) -> LookupTables
 #   process(paste_path, stock_path, lookups) -> dict {per_spv, per_sm, stock, progress, summary}
 #   build_report_frame(sb) -> kolom REPORT_COLUMNS; build_stock(...) -> stok per SPV;
-#   write_per_spv_files(...) -> XLSX penjualan + sheet Stock per SPV.
-# Side Effects: Baca file sumber dan tulis XLSX hasil ke runtime; tidak mengubah file sumber/tidak kirim email.
+#   write_per_spv_files(...) -> workbook penjualan + sheet Stock; write_to_format_file(...) -> workbook FIX;
+#   create_run_archive(...) -> arsip ZIP; write_distribution_files(...) -> laporan khusus berbasis rule.
+# Side Effects: Baca file sumber dan tulis XLSX/ZIP hasil ke runtime; tidak mengubah file sumber/tidak kirim email.
 # Catatan parity (dikonfirmasi user): sumber penjualan = sheet "Paste Acc" (export Accurate),
 #   sheet "Paste Lap. Penj" lama sudah kosong -> tidak dipakai. Retur = "Paste Lap. Retur" (dinegasikan).
 from __future__ import annotations
@@ -427,12 +428,164 @@ def write_per_spv_files(sb: pd.DataFrame, out_dir: str, report_date: str,
     return written
 
 
+def _excel_safe(value):
+    """Normalisasi nilai pandas agar writer tidak menerima NaN/NA/inf."""
+    if value is None or value is pd.NA:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (pd.Timestamp,)):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value) if np.isfinite(value) else None
+    return value
+
+
+def write_to_format_file(fix: pd.DataFrame, out_dir: str, report_date: str) -> dict:
+    """Tulis snapshot download-only yang setara sheet ``FIX LAP PENJ``."""
+    import os
+    from pyexcelerate import Workbook
+
+    os.makedirs(out_dir, exist_ok=True)
+    file_name = f"{report_date}_2.To Format Laporan.xlsx"
+    path = os.path.join(out_dir, file_name)
+    frame = fix.loc[:, ~fix.columns.duplicated()].copy()
+    headers = [str(column) for column in frame.columns]
+    values = [[_excel_safe(value) for value in row] for row in frame.to_numpy(dtype=object)]
+    wb = Workbook()
+    wb.new_sheet("FIX LAP PENJ", data=[headers] + values)
+    wb.save(path)
+    return {"fileName": file_name, "path": path, "rows": int(len(frame))}
+
+
+def create_run_archive(out_dir: str, report_date: str) -> dict:
+    """Buat ZIP arsip internal berisi workbook laporan dan ``2.To Format``."""
+    import os
+    import zipfile
+
+    file_name = f"{report_date}_Laporan_Harian_Arsip.zip"
+    path = os.path.join(out_dir, file_name)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+        for name in sorted(os.listdir(out_dir)):
+            if name.lower().endswith((".xlsx", ".xlsm")):
+                archive.write(os.path.join(out_dir, name), arcname=name)
+    return {"fileName": file_name, "path": path}
+
+def write_dimension_files(sb: pd.DataFrame, out_dir: str, report_date: str,
+                          column: str, prefix: str,
+                          stock_per_spv: Optional[dict] = None) -> list:
+    """Tulis workbook per dimensi mapping (SM atau principal) untuk arsip/distribusi."""
+    import os
+    from pyexcelerate import Workbook
+
+    if column not in sb.columns:
+        return []
+    os.makedirs(out_dir, exist_ok=True)
+    frame = build_report_frame(sb)
+    values = sb[column].fillna("").astype(str).str.strip().values
+    tmp = frame.assign(_group=values)
+    all_stock = [value for key, value in (stock_per_spv or {}).items()
+                 if key != "__error__" and isinstance(value, pd.DataFrame) and not value.empty]
+    stock_frame = pd.concat(all_stock, ignore_index=True).drop_duplicates() if all_stock else pd.DataFrame()
+    written = []
+    for group, rows in tmp.groupby("_group"):
+        if not str(group).strip():
+            continue
+        safe = str(group).replace("/", "-").replace("\\", "-")
+        file_name = f"{report_date}_{prefix}-{safe}.xlsx"
+        path = os.path.join(out_dir, file_name)
+        wb = Workbook()
+        wb.new_sheet(safe.replace("&", "dan")[:31], data=[REPORT_COLUMNS] + rows[REPORT_COLUMNS].values.tolist())
+        stock_rows = 0
+        if not stock_frame.empty and "KODE_BARANG" in stock_frame.columns:
+            codes = set(sb.loc[rows.index, "KODE_BARANG"].dropna().astype(str).str.strip()) if "KODE_BARANG" in sb.columns else set()
+            selected_stock = stock_frame[stock_frame["KODE_BARANG"].astype(str).str.strip().isin(codes)].copy()
+            selected_stock = selected_stock.loc[:, ~selected_stock.columns.duplicated()].astype(object).where(pd.notna(selected_stock), None)
+            if not selected_stock.empty:
+                stock_rows = int(len(selected_stock))
+                wb.new_sheet(f"{safe[:25]} Stock"[:31], data=[list(map(str, selected_stock.columns))] + selected_stock.values.tolist())
+        wb.save(path)
+        written.append({"spv": f"{prefix}-{group}", "fileName": file_name, "path": path,
+                        "rows": int(len(rows)), "stockRows": stock_rows, "dimension": prefix})
+    return written
+
+def write_distribution_files(sb: pd.DataFrame, out_dir: str, report_date: str,
+                             rules: Optional[list] = None,
+                             stock_per_spv: Optional[dict] = None) -> list:
+    """Tulis laporan tambahan berbasis rule tanpa mengurangi file SPV reguler."""
+    import os
+    from pyexcelerate import Workbook
+
+    if not rules:
+        return []
+    os.makedirs(out_dir, exist_ok=True)
+    principal = sb.get("PRINCIPAL", pd.Series("", index=sb.index)).fillna("").astype(str).str.upper()
+    salesman = sb.get("SALESMAN", pd.Series("", index=sb.index)).fillna("").astype(str).str.upper()
+    market = sb.get("JENISMARKET", sb.get("MARKET", pd.Series("", index=sb.index))).fillna("").astype(str).str.upper()
+    product = sb.get("JENISPRODUK", pd.Series("", index=sb.index)).fillna("").astype(str).str.upper()
+    all_stock = [value for key, value in (stock_per_spv or {}).items()
+                 if key != "__error__" and isinstance(value, pd.DataFrame) and not value.empty]
+    stock_frame = pd.concat(all_stock, ignore_index=True).drop_duplicates() if all_stock else pd.DataFrame()
+    written = []
+    for rule in rules:
+        name = str(rule.get("name", "")).strip()
+        principals = {str(value).strip().upper() for value in rule.get("principals", []) if str(value).strip()}
+        sales_terms = [str(value).strip().upper() for value in rule.get("sales_terms", []) if str(value).strip()]
+        market_terms = [str(value).strip().upper() for value in rule.get("market_terms", []) if str(value).strip()]
+        if not name or not principals:
+            continue
+        mask = principal.isin(principals)
+        if sales_terms:
+            mask &= salesman.apply(lambda value: any(term in value for term in sales_terms))
+        if market_terms:
+            mask &= market.apply(lambda value: any(term in value for term in market_terms))
+        product_by_principal = rule.get("product_by_principal", {})
+        if isinstance(product_by_principal, dict):
+            for principal_name, allowed_products in product_by_principal.items():
+                p_name = str(principal_name).strip().upper()
+                allowed = {str(value).strip().upper() for value in allowed_products}
+                mask &= (principal != p_name) | product.isin(allowed)
+        rows = sb.loc[mask].copy()
+        if rows.empty:
+            continue
+        frame = build_report_frame(rows)
+        safe = name.replace("/", "-").replace("\\", "-")
+        file_name = f"{report_date}_{safe}.xlsx"
+        path = os.path.join(out_dir, file_name)
+        wb = Workbook()
+        wb.new_sheet(safe.replace("&", "dan")[:31], data=[REPORT_COLUMNS] + frame.values.tolist())
+        stock_rows = 0
+        if not stock_frame.empty and "KODE_BARANG" in stock_frame.columns:
+            item_codes = set(rows.get("KODE_BARANG", pd.Series(dtype=str)).dropna().astype(str).str.strip())
+            selected_stock = stock_frame[stock_frame["KODE_BARANG"].astype(str).str.strip().isin(item_codes)].copy()
+            selected_stock = selected_stock.loc[:, ~selected_stock.columns.duplicated()]
+            selected_stock = selected_stock.astype(object).where(pd.notna(selected_stock), None)
+            if not selected_stock.empty:
+                stock_rows = int(len(selected_stock))
+                wb.new_sheet(f"{safe[:25]} Stock"[:31], data=[list(map(str, selected_stock.columns))] + selected_stock.values.tolist())
+        wb.save(path)
+        written.append({"spv": name, "fileName": file_name, "path": path,
+                        "rows": int(len(rows)), "stockRows": stock_rows, "distributionRule": True})
+    return written
+
 # ---------- Stage A (baru): bangun FIX dari 2 file mentah Accurate (penjualan + retur) ----------
 import os as _os, json as _json
 
 RINCIAN_SHEET = "Rincian Faktur Penjualan"
 LOOKUPS_JSON = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "laporan_harian_lookups.json")
 
+
+def load_distribution_rules(path: str = LOOKUPS_JSON) -> list:
+    """Baca rule laporan tambahan (mis. ANI/JONAL) dari lookup yang sama."""
+    with open(path, encoding="utf-8") as handle:
+        data = _json.load(handle)
+    rules = data.get("distribution_rules", [])
+    return rules if isinstance(rules, list) else []
 
 def load_lookups_json(path: str = LOOKUPS_JSON) -> "LookupTables":
     """Master lookup (GOLONGAN/JENIS PRODUK/Mapping) dari JSON kecil yang di-commit.

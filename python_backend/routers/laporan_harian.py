@@ -1,6 +1,9 @@
-# routers/laporan_harian.py — Endpoint laporan harian: /laporan-harian/*.
-# Dipindahkan mekanis dari main.py tanpa perubahan logic; hanya @app.* diganti @router.*.
-from fastapi import APIRouter
+# Tujuan: Endpoint FastAPI untuk proses, penyimpanan, dan unduhan laporan harian per SPV.
+# Caller: Next.js app/api/laporan-harian/*.
+# Dependensi: shared runtime config serta laporan_harian pipeline dan writer XLSX/ZIP dan rule distribusi.
+# Main Functions: laporan_harian_process(), laporan_harian_file(), dan laporan_harian_mapping().
+# Side Effects: Membaca upload, menulis workbook/ZIP runtime, mengubah lookup backend, dan mengirim file melalui HTTP.
+from fastapi import APIRouter, Header
 
 from shared import (
     File,
@@ -74,24 +77,38 @@ async def laporan_harian_process(
                 "achievedAo": int(r["achievedAo"] or 0),
                 "achievedIa": int(r["achievedIa"] or 0),
             })
+        stock_by_spv = {}
         stock_spv = []
         if stock_path:
             try:
-                st = LH.build_stock(stock_path, sb, lk)
-                stock_spv = [k for k in st.keys() if k != "__error__"]
-            except Exception:
-                stock_spv = []
+                stock_by_spv = LH.build_stock(stock_path, sb, lk)
+                stock_spv = [k for k in stock_by_spv.keys() if k != "__error__"]
+            except Exception as exc:
+                return ORJSONResponse(
+                    {"ok": False, "error": f"Gagal memproses file stok: {exc}"},
+                    status_code=400,
+                )
         files_written = []
+        to_format = None
+        archive = None
         if write_files and run_id:
             import re as _re, datetime as _dt
             safe_run = _re.sub(r"[^A-Za-z0-9_-]", "", str(run_id))[:64]
             rdate = report_date or _dt.date.today().strftime("%Y-%m-%d")
             out_dir = _os.path.join(LH_RUNTIME_DIR, safe_run)
-            files_written = LH.write_per_spv_files(sb, out_dir, rdate)
-
+            files_written = LH.write_per_spv_files(sb, out_dir, rdate, stock_by_spv)
+            files_written += LH.write_dimension_files(sb, out_dir, rdate, "NAMA_SM", "SM", stock_by_spv)
+            files_written += LH.write_dimension_files(sb, out_dir, rdate, "PRINCIPAL", "PRINCIPLE", stock_by_spv)
+            files_written += LH.write_distribution_files(
+                sb, out_dir, rdate, LH.load_distribution_rules(), stock_by_spv
+            )
+            to_format = LH.write_to_format_file(fix_df, out_dir, rdate)
+            archive = LH.create_run_archive(out_dir, rdate)
         return ORJSONResponse({
             "ok": True,
             "files": files_written,
+            "to_format": to_format,
+            "archive": archive,
             "sales_rows": int(len(sb)),
             "net_dpp": float(sb["DPP"].sum()),
             "period": {"month": pm, "year": py},
@@ -125,5 +142,48 @@ async def laporan_harian_file(run: str, name: str):
     path = os.path.join(LH_RUNTIME_DIR, safe_run, name)
     if not os.path.isfile(path):
         return ORJSONResponse({"error": "file tidak ditemukan"}, status_code=404)
-    return FileResponse(path, filename=name,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    media_type = (
+        "application/zip" if name.lower().endswith(".zip")
+        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    return FileResponse(path, filename=name, media_type=media_type)
+
+
+@router.get("/laporan-harian/mapping")
+async def laporan_harian_mapping():
+    """Baca mapping yang dipakai pipeline laporan harian."""
+    import json as _json
+    import laporan_harian as LH
+    with open(LH.LOOKUPS_JSON, encoding="utf-8") as handle:
+        return ORJSONResponse(_json.load(handle))
+
+
+@router.put("/laporan-harian/mapping")
+async def laporan_harian_mapping_update(payload: dict, x_lh_mapping_token: Optional[str] = Header(None)):
+    """Simpan mapping secara atomik agar proses berikutnya memakai versi terbaru."""
+    import json as _json
+    import os as _os
+    import tempfile as _tempfile
+    import laporan_harian as LH
+
+    expected_token = _os.getenv("LH_MAPPING_TOKEN", "").strip()
+    runtime_env = _os.getenv("APP_ENV", "production").strip().lower()
+    if runtime_env in {"production", "prod"} and not expected_token:
+        return ORJSONResponse({"error": "Token mapping backend belum dikonfigurasi"}, status_code=503)
+    if expected_token and x_lh_mapping_token != expected_token:
+        return ORJSONResponse({"error": "Token mapping tidak valid"}, status_code=403)
+    required = ("principal_to_spv", "conca_to_spv", "jp_map", "sm_map")
+    if not all(isinstance(payload.get(key), dict) for key in required) or not isinstance(payload.get("distribution_rules"), list):
+        return ORJSONResponse({"error": "Format mapping tidak valid"}, status_code=400)
+    directory = _os.path.dirname(LH.LOOKUPS_JSON)
+    fd, temp_path = _tempfile.mkstemp(prefix="laporan_harian_", suffix=".json", dir=directory)
+    try:
+        with _os.fdopen(fd, "w", encoding="utf-8") as handle:
+            output = {key: payload[key] for key in required}
+            output["distribution_rules"] = payload["distribution_rules"]
+            _json.dump(output, handle, ensure_ascii=False, indent=2)
+        _os.replace(temp_path, LH.LOOKUPS_JSON)
+    finally:
+        if _os.path.exists(temp_path):
+            _os.unlink(temp_path)
+    return ORJSONResponse({"ok": True})

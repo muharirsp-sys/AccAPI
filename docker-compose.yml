@@ -26,6 +26,7 @@ services:
       LH_RUNTIME_DIR: /app/python_backend/output/laporan-harian
       SPPD_TEMPLATE_PATH: /app/python_backend/SPPD TGL 24 FEBRUARI 2026.docx
       BETTER_AUTH_DB_PATH: /app/data/sqlite.db
+      LH_MAPPING_TOKEN: ${LH_MAPPING_TOKEN:-}
     volumes:
       - accapi_backend_data:/app/python_backend/data
       - accapi_backend_output:/app/python_backend/output
@@ -49,6 +50,7 @@ services:
       NEXT_PUBLIC_ACCURATE_CLIENT_ID: ${NEXT_PUBLIC_ACCURATE_CLIENT_ID:-}
       NEXT_PUBLIC_ACCURATE_REDIRECT_URI: ${NEXT_PUBLIC_ACCURATE_REDIRECT_URI:-http://localhost:3000/api/auth/callback}
       MASTER_BARANG_STORAGE_DIR: ${MASTER_BARANG_STORAGE_DIR:-/app/data/master-barang}
+      LH_MAPPING_TOKEN: ${LH_MAPPING_TOKEN:-}
     volumes:
       - accapi_frontend_data:/app/data
     depends_on:

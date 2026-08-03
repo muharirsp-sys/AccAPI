@@ -902,19 +902,22 @@ UI: modul /laporan-harian
            merge flag AO/EC/IA, Nota Retur/Batal, map Golongan(SPV)+NAMA SM, Kategori Baru
         -> output: (a) rows per SPV & per SM, (b) rows stock per SPV, (c) agregat progress harian
      -> susun output 1:1 sesuai `REPORT_COLUMNS` (tanpa duplikasi `GOLONGAN`/pergeseran AO-EC-IA)
-     -> tulis file per-SPV/SM ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
-        `<SPV>` (penjualan) + `<SPV> Stock` (stok hasil mapping KODE_BARANG -> GOLONGAN)
+     -> tulis file per-SPV + per-SM + per-principle + file distribusi khusus ANI/JONAL ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
+        `<SPV>`, `SM-<nama>`, `PRINCIPLE-<nama>`, `<ANI>`, `<JONAL>` (penjualan) + sheet Stock hasil filter item; rule berada di `laporan_harian_lookups.json`
         (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)
+     -> tulis download-only `2.To Format Laporan.xlsx` + ZIP arsip seluruh workbook; file arsip tidak dikirim email
      -> normalisasi progress kosong salesCode -> `UNMAPPED:<branch>` + warning eksplisit (nilai tidak dibuang/tidak ditebak)
      -> feed dashboard: BULK replace ke sales_daily_progress (batch, hindari N+1)
-  <- { ok, runId, ringkasan per SPV, daftar penerima (PREVIEW, belum kirim) }
-UI: tombol "Kirim" terpisah (gated, confirm:true) -> POST /api/laporan-harian/[runId]/send
+  <- { ok, runId, ringkasan per SPV, daftar penerima (PREVIEW, belum kirim), artefak 2.To Format + arsip }
+UI: pilih `Semua penerima` atau email tertentu dari mapping, lalu tombol "Kirim" (gated, confirm:true) -> POST /api/laporan-harian/[runId]/send
      -> requirePermission("laporan_harian.send") -> claim status `sending`
-     -> ambil file per-SPV/SM dari backend -> kirim email (nodemailer)
-     -> penerima `failed` dapat di-retry tanpa mengirim ulang penerima yang sudah `sent`
+     -> ambil file per-SPV/SM/principle/khusus dari backend -> kirim email (nodemailer)
+     -> penerima yang tidak dipilih ditandai `skipped`; `failed` dapat di-retry tanpa mengirim ulang `sent`
 UI: review file opsional -> GET /api/laporan-harian/[runId]/preview?file=...
-     -> proxy file run-scoped dari FastAPI, tampilkan maksimal 25 baris kunci atau unduh XLSX penuh
+     -> proxy file run-scoped dari FastAPI, tampilkan maksimal 25 baris kunci, unduh workbook/ZIP arsip
 ```
+
+Admin mapping: `/laporan-harian/mapping` -> `app/api/laporan-harian/mapping/route.ts` -> DB `report_recipient` + FastAPI lookup JSON; permission `laporan_harian.manage`. PUT backend dapat dikunci dengan `LH_MAPPING_TOKEN` yang sama di container frontend dan backend; produksi fail-closed bila token belum diisi.
 
 State machine pure: `lib/laporan-harian/send-state.ts`; self-check:
 `node --experimental-strip-types lib/laporan-harian/send-state.test.ts`.

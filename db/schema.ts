@@ -1048,7 +1048,7 @@ export const reportRunRecipient = pgTable("report_run_recipient", {
     keyword: text("keyword").notNull(),
     email: text("email").notNull(),
     fileName: text("file_name"),
-    sendStatus: text("send_status").notNull().default("pending"), // 'pending' | 'sent' | 'failed'
+    sendStatus: text("send_status").notNull().default("pending"), // 'pending' | 'sent' | 'failed' | 'skipped'
     error: text("error"),
 }, (t) => ({
     runIdx: index("idx_rrr_run").on(t.runId),
