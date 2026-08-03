@@ -1,12 +1,10 @@
 /*
- * Tujuan: KIRIM email laporan per-SPV untuk 1 report_run — GATED.
- *         Hanya jalan bila body { confirm: true, isClosing }; run dry_run/failed diklaim atomik sebagai
- *         'sending', lalu hanya penerima pending/failed yang diproses. Sudah sent/sending -> 409.
+ * Tujuan: Kirim email laporan untuk 1 report_run secara gated ke semua atau penerima mapping yang dipilih.
  * Caller: UI Laporan Harian (tombol "Kirim" setelah review preview).
- * Dependensi: requirePermission("laporan_harian.send"), lib/email, lib/laporan-harian/send-state,
- *             FastAPI /laporan-harian/file (ambil file per-SPV run-scoped), db/schema.
- * Main Functions: POST (claim run, bentuk subject harian/closing, kirim/retry penerima, update status).
- * Side Effects: HTTP fetch file; kirim email (nodemailer); DB update report_run + report_run_recipient.
+ * Dependensi: requirePermission("laporan_harian.send"), lib/email, send-state,
+ *             FastAPI /laporan-harian/file (ambil file run-scoped), db/schema.
+ * Main Functions: POST (claim, pilih semua/sebagian penerima mapping, kirim/retry, update status).
+ * Side Effects: HTTP fetch file; kirim email; DB update report_run + report_run_recipient.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, inArray } from "drizzle-orm";
@@ -32,7 +30,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
     if (gate.response) return gate.response;
 
     const { runId } = await ctx.params;
-    let body: { confirm?: boolean; isClosing?: boolean } = {};
+    let body: {
+        confirm?: boolean;
+        isClosing?: boolean;
+        recipientMode?: "all" | "selected";
+        selectedRecipients?: Array<{ fileName?: unknown; email?: unknown }>;
+    } = {};
     try { body = await req.json(); } catch { /* body opsional */ }
 
     // GATE 1: konfirmasi eksplisit wajib
@@ -45,6 +48,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
 
     const [run] = await db.select().from(reportRun).where(eq(reportRun.id, runId)).limit(1);
     if (!run) return NextResponse.json({ error: "Run tidak ditemukan" }, { status: 404 });
+
+    const fileCache = new Map<string, Buffer | null>();
+    async function fetchFile(fileName: string): Promise<Buffer | null> {
+        if (fileCache.has(fileName)) return fileCache.get(fileName)!;
+        try {
+            const url = `${fastapiBase()}/laporan-harian/file?run=${encodeURIComponent(runId)}&name=${encodeURIComponent(fileName)}`;
+            const resp = await fetch(url);
+            if (!resp.ok) { fileCache.set(fileName, null); return null; }
+            const buf = Buffer.from(await resp.arrayBuffer());
+            fileCache.set(fileName, buf);
+            return buf;
+        } catch {
+            fileCache.set(fileName, null);
+            return null;
+        }
+    }
+
     const storedMode = run.note?.match(/email_mode:(closing|daily)/)?.[1];
     const requestedMode = body.isClosing === true ? "closing" : "daily";
     if (storedMode && storedMode !== requestedMode) {
@@ -71,7 +91,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
         return NextResponse.json({ error: "Status run berubah; muat ulang sebelum mengirim.", status: "conflict" }, { status: 409 });
     }
 
-    const recips = await db
+    let recips = await db
         .select()
         .from(reportRunRecipient)
         .where(and(
@@ -83,6 +103,35 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
         return NextResponse.json({ error: "Tidak ada penerima pending/gagal untuk run ini." }, { status: 400 });
     }
 
+    let skipped = 0;
+    if (body.recipientMode === "selected") {
+        const requestedRecipients = (body.selectedRecipients ?? []).flatMap((recipient) =>
+            typeof recipient.fileName === "string" && typeof recipient.email === "string"
+                ? [{ fileName: recipient.fileName, email: recipient.email }]
+                : [],
+        );
+        const selectedKeys = new Set(
+            requestedRecipients
+                .map((recipient) => `${recipient.fileName}\u0000${recipient.email.trim().toLowerCase()}`),
+        );
+        const selected = recips.filter((recipient) =>
+            selectedKeys.has(`${recipient.fileName ?? ""}\u0000${recipient.email.trim().toLowerCase()}`),
+        );
+        if (selected.length === 0) {
+            await db.update(reportRun).set({ status: "failed" }).where(eq(reportRun.id, runId));
+            return NextResponse.json({ error: "Pilih minimal satu penerima dari daftar mapping email." }, { status: 400 });
+        }
+        const selectedIds = new Set(selected.map((recipient) => recipient.id));
+        const skippedIds = recips.filter((recipient) => !selectedIds.has(recipient.id)).map((recipient) => recipient.id);
+        if (skippedIds.length) {
+            await db.update(reportRunRecipient)
+                .set({ sendStatus: "skipped", error: "Tidak dipilih saat pengiriman" })
+                .where(inArray(reportRunRecipient.id, skippedIds));
+            skipped = skippedIds.length;
+        }
+        recips = selected;
+    }
+
     // Group per fileName -> daftar email (1 email per file laporan, mirror alur lama)
     const byFile = new Map<string, { emails: string[]; ids: string[] }>();
     for (const r of recips) {
@@ -91,20 +140,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
         g.emails.push(r.email);
         g.ids.push(r.id);
         byFile.set(key, g);
-    }
-
-    // cache file per fileName supaya tidak fetch berulang
-    const fileCache = new Map<string, Buffer | null>();
-    async function fetchFile(fileName: string): Promise<Buffer | null> {
-        if (fileCache.has(fileName)) return fileCache.get(fileName)!;
-        try {
-            const url = `${fastapiBase()}/laporan-harian/file?run=${encodeURIComponent(runId)}&name=${encodeURIComponent(fileName)}`;
-            const resp = await fetch(url);
-            if (!resp.ok) { fileCache.set(fileName, null); return null; }
-            const buf = Buffer.from(await resp.arrayBuffer());
-            fileCache.set(fileName, buf);
-            return buf;
-        } catch { fileCache.set(fileName, null); return null; }
     }
 
     let sent = 0, failed = 0;
@@ -144,6 +179,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ runId: str
         status: finalStatus,
         emailsSent: sent,
         emailsFailed: failed,
+        emailsSkipped: skipped,
         files: byFile.size,
     });
 }

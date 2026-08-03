@@ -1,9 +1,10 @@
 /*
- * Tujuan: UI Laporan Harian SPV/SM/principal untuk upload, ringkasan, review file opsional, dan kirim email.
+ * Tujuan: UI Laporan Harian untuk upload, ringkasan, review, verifikasi feed insentif, dan pemilihan penerima mapping.
  * Caller: menu sidebar "Laporan Harian" (/laporan-harian). Guard RBAC: laporan_harian.view.
  * Dependensi: POST /api/laporan-harian/upload, GET /api/laporan-harian/[runId]/preview,
  *             POST /api/laporan-harian/[runId]/send, lucide-react, semantic UI classes global.
- * Main Functions: LaporanHarianPage, FilePicker, handleUpload, loadReview, handleSend dengan pilihan closing.
+ * Main Functions: LaporanHarianPage, FilePicker, readJsonResponse, handleUpload, loadReview,
+ *                 pilihan semua/penerima tertentu, dan handleSend dengan pilihan closing.
  * Side Effects: HTTP upload/read/send; tidak menyimpan state di localStorage.
  */
 "use client";
@@ -24,12 +25,20 @@ type Summary = { spv: string; rows: number; dpp: number; ao: number; ec: number;
 type Recipient = { keyword: string; groupType: string; fileName: string; emails: string[] };
 type GeneratedFile = { keyword: string; groupType: string; fileName: string; rows: number; stockRows: number };
 type ReviewSample = { fileName: string; sheetName: string; columns: string[]; rows: unknown[][] };
+type IncentiveFeed = {
+    progressKeys: number;
+    targetKeys: number;
+    matchedKeys: number;
+    unmatchedKeys: number;
+    ready: boolean;
+};
 type UploadResult = {
     ok: boolean;
     runId: string;
     reportDate: string;
     period: { month: number; year: number };
     dashboardFed: { inserted: number };
+    incentiveFeed: IncentiveFeed;
     salesRows: number;
     netDpp: number;
     summary: Summary[];
@@ -50,6 +59,17 @@ type FilePickerProps = {
 };
 
 const rupiah = (value: number) => `Rp ${Math.round(value).toLocaleString("id-ID")}`;
+const recipientKey = (fileName: string, email: string) => `${fileName}\u0000${email.trim().toLowerCase()}`;
+
+async function readJsonResponse<T>(response: Response): Promise<T> {
+    const text = await response.text();
+    if (!text) throw new Error(`Server tidak mengirim respons (HTTP ${response.status})`);
+    try {
+        return JSON.parse(text) as T;
+    } catch {
+        throw new Error(`Respons server bukan JSON (HTTP ${response.status})`);
+    }
+}
 
 function FilePicker({ id, label, helper, required, file, onChange }: FilePickerProps) {
     return (
@@ -101,8 +121,13 @@ export default function LaporanHarianPage() {
     const [reviewFileName, setReviewFileName] = useState("");
     const [review, setReview] = useState<ReviewSample | null>(null);
     const [isClosing, setIsClosing] = useState(false);
+    const [recipientMode, setRecipientMode] = useState<"all" | "selected">("all");
+    const [selectedRecipientKeys, setSelectedRecipientKeys] = useState<string[]>([]);
 
     const busy = processing || sending;
+    const selectedRecipientCount = result
+        ? recipientMode === "all" ? result.totalRecipients : selectedRecipientKeys.length
+        : 0;
 
     async function handleUpload() {
         if (!penjualan) {
@@ -115,6 +140,8 @@ export default function LaporanHarianPage() {
         setReview(null);
         setReviewOpen(false);
         setIsClosing(false);
+        setRecipientMode("all");
+        setSelectedRecipientKeys([]);
         setProcessing(true);
         try {
             const form = new FormData();
@@ -122,7 +149,7 @@ export default function LaporanHarianPage() {
             if (retur) form.append("retur", retur);
             if (stock) form.append("stock", stock);
             const response = await fetch("/api/laporan-harian/upload", { method: "POST", body: form });
-            const data = await response.json();
+            const data = await readJsonResponse<UploadResult & { error?: string; detail?: string }>(response);
             if (!response.ok || !data.ok) {
                 setError([data.error, data.detail].filter(Boolean).join(": ") || "Proses gagal");
                 return;
@@ -130,6 +157,9 @@ export default function LaporanHarianPage() {
             const uploaded = data as UploadResult;
             setResult(uploaded);
             setReviewFileName(uploaded.generatedFiles?.[0]?.fileName ?? "");
+            setSelectedRecipientKeys(uploaded.recipientsPreview.flatMap((recipient) =>
+                recipient.emails.map((email) => recipientKey(recipient.fileName, email)),
+            ));
         } catch (uploadError) {
             setError(`Gagal upload atau memproses laporan: ${String(uploadError)}`);
         } finally {
@@ -147,7 +177,7 @@ export default function LaporanHarianPage() {
             const response = await fetch(
                 `/api/laporan-harian/${result.runId}/preview?file=${encodeURIComponent(fileName)}`,
             );
-            const data = await response.json();
+            const data = await readJsonResponse<ReviewSample & { error?: string }>(response);
             if (!response.ok) {
                 setReviewError(data.error || "Review file gagal dimuat");
                 setReview(null);
@@ -164,17 +194,36 @@ export default function LaporanHarianPage() {
 
     async function handleSend() {
         if (!result) return;
+        if (recipientMode === "selected" && !selectedRecipientKeys.length) {
+            setError("Pilih minimal satu penerima dari daftar mapping email.");
+            return;
+        }
         const reportType = isClosing ? "laporan closing" : "laporan harian";
-        if (!confirm(`Kirim ${result.totalRecipients} email ${reportType} tanggal ${result.reportDate} untuk ${result.recipientsPreview.length} file?\nEmail akan benar-benar dikirim.`)) return;
+        if (!confirm(`Kirim ${selectedRecipientCount} email ${reportType} tanggal ${result.reportDate}?`)) return;
         setSending(true);
         setError(null);
         try {
             const response = await fetch(`/api/laporan-harian/${result.runId}/send`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ confirm: true, isClosing }),
+                body: JSON.stringify({
+                    confirm: true,
+                    isClosing,
+                    recipientMode,
+                    selectedRecipients: recipientMode === "selected"
+                        ? result.recipientsPreview.flatMap((recipient) => recipient.emails
+                            .filter((email) => selectedRecipientKeys.includes(recipientKey(recipient.fileName, email)))
+                            .map((email) => ({ fileName: recipient.fileName, email })),
+                        )
+                        : undefined,
+                }),
             });
-            const data = await response.json();
+            const data = await readJsonResponse<{
+                error?: string;
+                status: string;
+                emailsSent?: number;
+                emailsFailed?: number;
+            }>(response);
             if (!response.ok) {
                 setError(data.error || "Pengiriman email gagal");
                 return;
@@ -258,11 +307,11 @@ export default function LaporanHarianPage() {
                                 </label>
                                 <button
                                     onClick={handleSend}
-                                    disabled={busy || result.totalRecipients === 0 || sendState?.status === "sent"}
+                                    disabled={busy || selectedRecipientCount === 0 || sendState?.status === "sent"}
                                     className="ui-button-primary min-h-11 px-4"
                                 >
                                     <Send size={17} aria-hidden="true" />
-                                    {sending ? "Mengirim email..." : `Kirim ${result.totalRecipients} email`}
+                                    {sending ? "Mengirim email..." : `Kirim ${selectedRecipientCount} email`}
                                 </button>
                             </div>
                         </div>
@@ -286,6 +335,34 @@ export default function LaporanHarianPage() {
                             </div>
                         </div>
                     </section>
+
+                    <div
+                        className={`flex items-start gap-3 rounded-xl border p-4 ${
+                            result.incentiveFeed.ready
+                                ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                : "border-amber-300 bg-amber-50 text-amber-900"
+                        }`}
+                        role="status"
+                    >
+                        {result.incentiveFeed.ready
+                            ? <CheckCircle2 className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
+                            : <AlertTriangle className="mt-0.5 shrink-0" size={18} aria-hidden="true" />}
+                        <div className="text-sm leading-6">
+                            <p className="font-bold">
+                                {result.incentiveFeed.ready
+                                    ? "Pencapaian tersambung ke Insentif Sales"
+                                    : "Pencapaian tersimpan, tetapi target periode belum cocok"}
+                            </p>
+                            <p>
+                                {result.incentiveFeed.matchedKeys.toLocaleString("id-ID")} dari {result.incentiveFeed.progressKeys.toLocaleString("id-ID")} kombinasi salesman dan principal cocok dengan target.
+                                {!result.incentiveFeed.targetKeys
+                                    ? " Target bulan ini masih kosong; unggah target agar pencapaian tampil dan insentif dapat dihitung."
+                                    : result.incentiveFeed.unmatchedKeys
+                                        ? ` Periksa ${result.incentiveFeed.unmatchedKeys.toLocaleString("id-ID")} kombinasi yang belum memiliki target.`
+                                        : ""}
+                            </p>
+                        </div>
+                    </div>
 
                     {!!result.unmappedProgress?.rows && (
                         <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900" role="status">
@@ -396,26 +473,40 @@ export default function LaporanHarianPage() {
                         </div>
                     </details>
 
-                    <details className="ui-surface-panel overflow-hidden">
+                    <details className="ui-surface-panel overflow-hidden" open>
                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-sm font-extrabold text-[var(--luxury-text)]">
-                            <span>Penerima email <span className="font-semibold text-[var(--luxury-muted)]">({result.totalRecipients} alamat, belum dikirim)</span></span>
+                            <span>Penerima email <span className="font-semibold text-[var(--luxury-muted)]">({selectedRecipientCount} alamat dipilih)</span></span>
                             <ChevronDown size={18} className="text-[var(--luxury-muted)]" aria-hidden="true" />
                         </summary>
-                        <div className="border-t border-[var(--border-soft)] p-3 sm:p-5">
+                        <div className="space-y-4 border-t border-[var(--border-soft)] p-3 sm:p-5">
+                            <fieldset className="space-y-2">
+                                <legend className="text-sm font-extrabold text-[var(--luxury-text)]">Kirim kepada</legend>
+                                <div className="flex flex-wrap gap-2">
+                                    <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--luxury-text)]">
+                                        <input type="radio" name="recipient-mode" value="all" checked={recipientMode === "all"} onChange={() => setRecipientMode("all")} className="size-4 accent-[var(--luxury-teal)]" />
+                                        Semua penerima ({result.totalRecipients})
+                                    </label>
+                                    <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--luxury-text)]">
+                                        <input type="radio" name="recipient-mode" value="selected" checked={recipientMode === "selected"} onChange={() => setRecipientMode("selected")} className="size-4 accent-[var(--luxury-teal)]" />
+                                        Pilih penerima tertentu
+                                    </label>
+                                </div>
+                            </fieldset>
                             <div className="ui-table-frame max-h-80">
                                 <table className="ui-data-table min-w-[42rem]">
-                                    <caption className="sr-only">Daftar file dan penerima email</caption>
-                                    <thead><tr><th className="text-left">File</th><th className="text-left">Target</th><th className="text-left">Email</th></tr></thead>
+                                    <caption className="sr-only">Daftar penerima mapping email</caption>
+                                    <thead><tr><th className="w-14 text-center">Pilih</th><th className="text-left">File</th><th className="text-left">Target</th><th className="text-left">Email</th></tr></thead>
                                     <tbody>
-                                        {result.recipientsPreview.map((recipient, index) => (
-                                            <tr key={`${recipient.fileName}-${index}`}>
+                                        {result.recipientsPreview.flatMap((recipient) => recipient.emails.map((email) => ({ ...recipient, email }))).map((recipient) => (
+                                            <tr key={recipientKey(recipient.fileName, recipient.email)}>
+                                                <td className="text-center"><input type="checkbox" aria-label={`Pilih ${recipient.email}`} disabled={recipientMode === "all"} checked={selectedRecipientKeys.includes(recipientKey(recipient.fileName, recipient.email))} onChange={(event) => setSelectedRecipientKeys((current) => event.target.checked ? [...new Set([...current, recipientKey(recipient.fileName, recipient.email)])] : current.filter((key) => key !== recipientKey(recipient.fileName, recipient.email)))} className="size-4 accent-[var(--luxury-teal)]" /></td>
                                                 <td>{recipient.fileName}</td>
                                                 <td className="font-bold">{recipient.keyword} · {recipient.groupType.toUpperCase()}</td>
-                                                <td>{recipient.emails.join(", ")}</td>
+                                                <td>{recipient.email}</td>
                                             </tr>
                                         ))}
                                         {result.recipientsPreview.length === 0 && (
-                                            <tr><td colSpan={3} className="text-[var(--luxury-muted)]">Tidak ada penerima yang cocok. Periksa keyword penerima.</td></tr>
+                                            <tr><td colSpan={4} className="text-[var(--luxury-muted)]">Tidak ada penerima yang cocok. Periksa keyword penerima.</td></tr>
                                         )}
                                     </tbody>
                                 </table>

@@ -874,14 +874,23 @@ UI: modul /laporan-harian
         (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)
      -> normalisasi progress kosong salesCode -> `UNMAPPED:<branch>` + warning eksplisit (nilai tidak dibuang/tidak ditebak)
      -> feed dashboard: BULK replace ke sales_daily_progress (batch, hindari N+1)
+     -> verifikasi coverage exact-key `salesCode|principle` terhadap target periode Insentif Sales;
+        UI Laporan Harian dan Insentif Sales menampilkan status masuk/belum cocok tanpa menyalin target lama
   <- { ok, runId, ringkasan per SPV, daftar penerima (PREVIEW, belum kirim) }
-UI: tombol "Kirim" terpisah + pilihan `Laporan closing` (gated, confirm:true) -> POST /api/laporan-harian/[runId]/send
-     -> requirePermission("laporan_harian.send") -> claim status `sending`
+UI: pilih `Semua penerima` atau `Pilih penerima tertentu` dari mapping email,
+    dan pilihan `Laporan closing` (gated, confirm:true) -> POST /api/laporan-harian/[runId]/send
+     -> server memvalidasi pilihan terhadap `report_run_recipient`, claim status `sending`,
+        mengirim hanya yang dipilih, dan menandai sisanya `skipped` agar tidak terkirim saat retry
+     -> requirePermission("laporan_harian.send")
      -> ambil file per-SPV/SM dari backend -> subject `[Laporan Harian|Laporan Closing] <tanggal transaksi terakhir>` -> kirim email (nodemailer)
      -> mode harian/closing dicatat di `report_run.note` saat claim pertama agar retry tidak dapat mengganti jenis subject
      -> penerima `failed` dapat di-retry tanpa mengirim ulang penerima yang sudah `sent`
 UI: review file opsional -> GET /api/laporan-harian/[runId]/preview?file=...
-     -> proxy file run-scoped dari FastAPI, tampilkan maksimal 25 baris kunci atau unduh XLSX penuh
+     -> preview: FastAPI /laporan-harian/preview membaca maksimal 26 baris dengan
+        python-calamine (openpyxl fallback)
+        -> Next.js memilih 10 kolom kunci dan mengirim JSON kecil (tidak parse XLSX via SheetJS)
+     -> download=1: Next.js meneruskan body FileResponse sebagai stream dan metadata range/size
+        (tidak menahan seluruh XLSX di memori)
 ```
 
 State machine pure: `lib/laporan-harian/send-state.ts`; self-check:

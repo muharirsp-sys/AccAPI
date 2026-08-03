@@ -1,9 +1,10 @@
-# Tujuan: Endpoint FastAPI untuk proses, penyimpanan, dan unduhan laporan harian per target.
+# Tujuan: Endpoint FastAPI untuk proses, preview ringkas, penyimpanan, dan unduhan laporan harian per target.
 # Caller: Next.js app/api/laporan-harian/*.
-# Dependensi: shared runtime config, laporan_harian pipeline, resolver target, dan writer XLSX.
+# Dependensi: shared runtime config, laporan_harian pipeline, resolver target, writer XLSX,
+#             python-calamine, dan openpyxl sebagai fallback.
 # Main Functions: laporan_harian_process() menentukan tanggal transaksi terakhir dan meneruskan lookup ke mapping Stock,
-#                 lalu laporan_harian_file().
-# Side Effects: Membaca upload, menulis workbook runtime, dan mengirim file melalui HTTP.
+#                 lalu laporan_harian_preview() dan laporan_harian_file().
+# Side Effects: Membaca upload/workbook runtime, menulis workbook runtime, dan mengirim JSON/file melalui HTTP.
 from fastapi import APIRouter
 
 from shared import (
@@ -18,6 +19,18 @@ from shared import (
 )
 
 router = APIRouter()
+
+
+def _laporan_harian_path(run: str, name: str) -> str:
+    """Resolve file run-scoped tanpa mengizinkan traversal path."""
+    import re as _re
+
+    raw_run = str(run)
+    safe_run = _re.sub(r"[^A-Za-z0-9_-]", "", raw_run)[:64]
+    if not safe_run or safe_run != raw_run or "/" in name or "\\" in name or ".." in name:
+        raise ValueError("nama file tidak valid")
+    return os.path.join(LH_RUNTIME_DIR, safe_run, name)
+
 
 @router.post("/laporan-harian/process")
 async def laporan_harian_process(
@@ -142,14 +155,58 @@ async def laporan_harian_process(
 
 
 
+@router.get("/laporan-harian/preview")
+def laporan_harian_preview(run: str, name: str):
+    """Baca maksimal 26 baris sheet pertama untuk review tanpa mengirim XLSX penuh ke Next.js."""
+    from itertools import islice
+
+    try:
+        path = _laporan_harian_path(run, name)
+    except ValueError as exc:
+        return ORJSONResponse({"error": str(exc)}, status_code=400)
+    if not os.path.isfile(path):
+        return ORJSONResponse({"error": "file tidak ditemukan"}, status_code=404)
+
+    try:
+        from python_calamine import CalamineWorkbook
+
+        calamine_workbook = CalamineWorkbook.from_path(path)
+        sheet_name = calamine_workbook.sheet_names[0] if calamine_workbook.sheet_names else ""
+        matrix = (
+            calamine_workbook.get_sheet_by_name(sheet_name).to_python(nrows=26)
+            if sheet_name else
+            []
+        )
+        return ORJSONResponse({"fileName": name, "sheetName": sheet_name, "matrix": matrix})
+    except Exception:
+        pass
+
+    workbook = None
+    try:
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(path, read_only=True, data_only=True)
+        sheet_name = workbook.sheetnames[0] if workbook.sheetnames else ""
+        matrix = (
+            [list(row) for row in islice(workbook[sheet_name].iter_rows(values_only=True), 26)]
+            if sheet_name else
+            []
+        )
+        return ORJSONResponse({"fileName": name, "sheetName": sheet_name, "matrix": matrix})
+    except Exception:
+        return ORJSONResponse({"error": "Workbook hasil tidak dapat dibaca untuk review"}, status_code=422)
+    finally:
+        if workbook is not None:
+            workbook.close()
+
+
 @router.get("/laporan-harian/file")
 async def laporan_harian_file(run: str, name: str):
     """Stream 1 file laporan per-SPV (run-scoped). Guard path traversal."""
-    import re as _re
-    safe_run = _re.sub(r"[^A-Za-z0-9_-]", "", str(run))[:64]
-    if "/" in name or "\\" in name or ".." in name:
-        return ORJSONResponse({"error": "nama file tidak valid"}, status_code=400)
-    path = os.path.join(LH_RUNTIME_DIR, safe_run, name)
+    try:
+        path = _laporan_harian_path(run, name)
+    except ValueError as exc:
+        return ORJSONResponse({"error": str(exc)}, status_code=400)
     if not os.path.isfile(path):
         return ORJSONResponse({"error": "file tidak ditemukan"}, status_code=404)
     return FileResponse(path, filename=name,

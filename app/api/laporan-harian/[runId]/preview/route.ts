@@ -1,9 +1,9 @@
 /*
- * Tujuan: Lihat detail run/penerima serta contoh atau unduhan file hasil sebelum email dikirim.
+ * Tujuan: Lihat detail run/penerima, preview JSON ringkas, atau stream unduhan file sebelum email dikirim.
  * Caller: UI Laporan Harian (review opsional sebelum Send).
- * Dependensi: requirePermission, db/schema, FastAPI file endpoint, xlsx, file-review.
- * Main Functions: GET (ringkasan run, sample file, atau download file).
- * Side Effects: DB read dan HTTP read file; tidak mengubah data.
+ * Dependensi: requirePermission, db/schema, FastAPI preview/file endpoint, file-review.
+ * Main Functions: GET (ringkasan run, sample JSON, atau proxy download streaming/range).
+ * Side Effects: DB read dan HTTP streaming/read; tidak mengubah data.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
@@ -11,12 +11,20 @@ import { db } from "@/lib/db";
 import { reportRun, reportRunRecipient } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { buildReviewSample, isAllowedReviewFile } from "@/lib/laporan-harian/file-review";
-import * as XLSX from "xlsx";
 
 export const runtime = "nodejs";
 
 function fastapiBase(): string {
     return process.env.NEXT_PUBLIC_FASTAPI_BASE_URL || "http://localhost:8000";
+}
+
+async function backendError(response: Response): Promise<string | null> {
+    try {
+        const payload = await response.json() as { error?: unknown };
+        return typeof payload.error === "string" ? payload.error : null;
+    } catch {
+        return null;
+    }
 }
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ runId: string }> }) {
@@ -32,28 +40,56 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ runId: stri
         if (!isAllowedReviewFile(fileName, run.reportDate)) {
             return NextResponse.json({ error: "Nama file review tidak valid" }, { status: 400 });
         }
-        const fileUrl = `${fastapiBase()}/laporan-harian/file?run=${encodeURIComponent(runId)}&name=${encodeURIComponent(fileName)}`;
-        const fileResponse = await fetch(fileUrl);
-        if (!fileResponse.ok) {
-            return NextResponse.json({ error: "File hasil tidak ditemukan" }, { status: 404 });
-        }
-        const buffer = Buffer.from(await fileResponse.arrayBuffer());
-        if (req.nextUrl.searchParams.get("download") === "1") {
-            return new NextResponse(buffer, {
-                headers: {
+        const query = `run=${encodeURIComponent(runId)}&name=${encodeURIComponent(fileName)}`;
+        const isDownload = req.nextUrl.searchParams.get("download") === "1";
+        const endpoint = isDownload ? "file" : "preview";
+        const requestHeaders = new Headers();
+        const range = req.headers.get("range");
+        if (isDownload && range) requestHeaders.set("range", range);
+
+        try {
+            const response = await fetch(
+                `${fastapiBase()}/laporan-harian/${endpoint}?${query}`,
+                { cache: "no-store", headers: requestHeaders },
+            );
+            if (!response.ok) {
+                const detail = await backendError(response);
+                return NextResponse.json(
+                    { error: detail || (response.status === 404 ? "File hasil tidak ditemukan" : "Backend laporan tidak merespons dengan benar") },
+                    { status: response.status === 404 ? 404 : 502 },
+                );
+            }
+
+            if (isDownload) {
+                if (!response.body) {
+                    return NextResponse.json({ error: "Backend tidak mengirim isi file" }, { status: 502 });
+                }
+                const headers = new Headers({
                     "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
                     "Cache-Control": "private, no-store",
-                },
-            });
-        }
+                });
+                for (const header of ["content-length", "content-range", "accept-ranges", "etag", "last-modified"]) {
+                    const value = response.headers.get(header);
+                    if (value) headers.set(header, value);
+                }
+                return new NextResponse(response.body, { status: response.status, headers });
+            }
 
-        const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true, sheetRows: 26 });
-        const sheetName = workbook.SheetNames[0];
-        const matrix = sheetName
-            ? XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], { header: 1, defval: null, raw: false })
-            : [];
-        return NextResponse.json({ fileName, sheetName, ...buildReviewSample(matrix) });
+            const payload = await response.json() as { fileName?: string; sheetName?: string; matrix?: unknown[][] };
+            const matrix = Array.isArray(payload.matrix) ? payload.matrix : [];
+            return NextResponse.json({
+                fileName: payload.fileName || fileName,
+                sheetName: payload.sheetName || "",
+                ...buildReviewSample(matrix),
+            });
+        } catch (error) {
+            console.error("[laporan-harian/preview] Backend request gagal", error);
+            return NextResponse.json(
+                { error: "Review file gagal dimuat dari backend laporan" },
+                { status: 502 },
+            );
+        }
     }
 
     const recipients = await db.select().from(reportRunRecipient).where(eq(reportRunRecipient.runId, runId));

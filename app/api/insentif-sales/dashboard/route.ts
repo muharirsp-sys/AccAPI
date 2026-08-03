@@ -2,7 +2,8 @@
  * Tujuan: GET aggregated dashboard data Insentif Sales per periode.
  * Caller: app/(dashboard)/insentif-sales/page.tsx via fetch("/api/insentif-sales/dashboard").
  * Dependensi: lib/insentif-sales, lib/insentif-sales-calc, db/schema (incentivePayments, incentiveSupport).
- * Main Functions: GET — join targets (per principle) + MTD per principle + insentif.
+ * Main Functions: GET — join targets (per principle) + MTD per principle + insentif,
+ *   serta status feed progress yang belum/cocok dengan target.
  *   - channel GT: model konstanta-bobot (lib/insentif-sales-calc); mix dihitung per salesman, value dialokasikan proporsional.
  *   - channel non-GT: tetap strata-DB (lookupTierFromDb), 4 KPI.
  *   Pencapaian/achievement 4-KPI ditampilkan untuk semua channel.
@@ -44,7 +45,7 @@ export async function GET(req: NextRequest) {
     const branch = searchParams.get("branch") ?? undefined;
 
     const [rawTargets, realByPrinciple, supportRows, paymentRows, scope] = await Promise.all([
-        getTargetsForPeriod(month, year, principle, branch),
+        getTargetsForPeriod(month, year),
         computeMtdByPrinciple(month, year),
         db
             .select()
@@ -62,7 +63,24 @@ export async function GET(req: NextRequest) {
     ]);
     // scope null = tidak ada scoping (perilaku existing/default). Non-null = user SPV/SM
     // opt-in (lib/insentif-hierarchy-scope) — cuma lihat salesCode bawahannya sendiri.
-    const targets = scope === null ? rawTargets : rawTargets.filter((t) => scope.has(t.salesCode));
+    const scopedTargets = scope === null ? rawTargets : rawTargets.filter((t) => scope.has(t.salesCode));
+    const targets = scopedTargets.filter((target) =>
+        (!principle || principle === "ALL" || target.principle === principle)
+        && (!branch || branch === "ALL" || target.branch === branch),
+    );
+    const visibleProgress = [...realByPrinciple.values()].filter((row) => scope === null || scope.has(row.salesCode));
+    const targetKeys = new Set(scopedTargets.map((row) => `${row.salesCode}|${row.principle}`));
+    const matchedProgressKeys = visibleProgress.reduce(
+        (count, row) => count + (targetKeys.has(`${row.salesCode}|${row.principle}`) ? 1 : 0),
+        0,
+    );
+    const progressFeed = {
+        progressKeys: visibleProgress.length,
+        targetKeys: targetKeys.size,
+        matchedKeys: matchedProgressKeys,
+        unmatchedKeys: visibleProgress.length - matchedProgressKeys,
+        ready: targetKeys.size > 0 && matchedProgressKeys > 0,
+    };
 
     // Skema insentif konstanta-bobot berlaku untuk GT/TT (sinonim). MT: belum ada aturan → 0.
     const isSchemeChannel = (ch: string) => ch === "GT" || ch === "TT";
@@ -146,5 +164,5 @@ export async function GET(req: NextRequest) {
             };
     });
 
-    return NextResponse.json({ month, year, timeGone, rows });
+    return NextResponse.json({ month, year, timeGone, rows, progressFeed });
 }
