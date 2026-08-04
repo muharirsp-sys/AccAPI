@@ -284,6 +284,7 @@ interface TwoFileHandlerDependencies extends CommonHandlerDependencies {
     accurate: Uint8Array,
     principal: Uint8Array,
     mapping: Uint8Array,
+    principalFilename: string,
   ): unknown;
 }
 
@@ -350,7 +351,7 @@ export function createKinoSalesPostHandler(deps: HandlerDependencies) {
               buffers[2],
               mapping,
             )
-          : deps.reconcile(accurate, buffers[1], mapping),
+          : deps.reconcile(accurate, buffers[1], mapping, files[1].name),
       );
     } catch (error) {
       if (

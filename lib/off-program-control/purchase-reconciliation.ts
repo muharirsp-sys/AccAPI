@@ -4,11 +4,11 @@ import type {
   ReturnReconciliationOutput,
   ReturnReconciliationResult,
   ReturnStatus,
-} from "./return-reconciliation";
+} from "./return-reconciliation.ts";
 import {
   parseCussonsMappings,
   type CussonsMappings,
-} from "./sales-reconciliation";
+} from "./sales-reconciliation.ts";
 
 type Row = unknown[];
 type Mapping = {
@@ -24,6 +24,26 @@ type Mappings = {
 type ReckittMappings = {
   byPrincipalCode: Map<string, Mapping[]>;
   byWinCode: Map<string, Mapping>;
+};
+type KinoPurchaseMapping = {
+  code: string;
+  principalCode: string;
+  unitsPerCase: number;
+};
+type KinoPurchaseMappings = {
+  byWinCode: Map<string, KinoPurchaseMapping>;
+  byPrincipalCode: Map<string, KinoPurchaseMapping[]>;
+};
+type ForisaMapping = {
+  code: string;
+  principalCode: string;
+  name: string;
+};
+type ForisaMappings = {
+  byWinCode: Map<string, ForisaMapping[]>;
+  byPrincipalCode: Map<string, ForisaMapping[]>;
+  byExactName: Map<string, ForisaMapping[]>;
+  byLooseName: Map<string, ForisaMapping[]>;
 };
 type CodeMappedPurchaseOptions = {
   accurateInvoicePattern: RegExp;
@@ -68,6 +88,7 @@ const cussonsOptions: CodeMappedPurchaseOptions = {
   allowedUoms: ["CS"],
   allowedUomsLabel: "CS",
 };
+const kinoPurchasePrincipalDppDivisor = 1.0989;
 
 function text(value: unknown): string {
   return String(value ?? "").replace(/\u00a0/g, " ").trim();
@@ -354,6 +375,392 @@ function parseReckittMappings(buffer: Buffer | Uint8Array): ReckittMappings {
     byWinCode.set(code, mapping);
   }
   return { byPrincipalCode, byWinCode };
+}
+
+function parseKinoPurchaseMappings(buffer: Buffer | Uint8Array): KinoPurchaseMappings {
+  const allRows = rows(buffer, "Table Pvt 1"),
+    required = ["Kode Barang Win", "Kode Pcpl", "ISI/CTN"],
+    { headerRow, indexes } = table(allRows, required),
+    byWinCode = new Map<string, KinoPurchaseMapping>(),
+    byPrincipalCode = new Map<string, KinoPurchaseMapping[]>();
+  for (let index = headerRow + 1; index < allRows.length; index++) {
+    const row = allRows[index],
+      code = text(row[indexes["Kode Barang Win"]]).toUpperCase(),
+      principalCode = text(row[indexes["Kode Pcpl"]]).toUpperCase();
+    if (!code || !principalCode) continue;
+    const unitsPerCase = number(row[indexes["ISI/CTN"]], "ISI/CTN", index + 1);
+    if (!unitsPerCase)
+      throw new Error(`ISI/CTN harus lebih dari nol pada baris ${index + 1}`);
+    const mapping = { code, principalCode, unitsPerCase },
+      principalMappings = byPrincipalCode.get(principalCode) ?? [];
+    if (!principalMappings.some((item) => item.code === code))
+      principalMappings.push(mapping);
+    byPrincipalCode.set(principalCode, principalMappings);
+    byWinCode.set(code, mapping);
+  }
+  return { byWinCode, byPrincipalCode };
+}
+
+function parseKinoPurchaseDocument(value: unknown, row: number) {
+  const rem = text(value),
+    order = /No\.\s*Order:\s*([^\s|]+)/i.exec(rem)?.[1] ??
+      /\b(1671-PRO-\d+)\b/i.exec(rem)?.[1],
+    sj = /No\.\s*SJ:\s*(\d+)/i.exec(rem)?.[1] ??
+      /\((\d+)\)/.exec(rem)?.[1];
+  if (!order || !sj)
+    throw new Error(`REM harus memuat No. SJ dan No. Order pada baris ${row}`);
+  return { invoiceNumber: `${order}|${sj}`, order, sj };
+}
+
+function parseKinoPurchaseAccurate(
+  buffer: Buffer | Uint8Array,
+  mappings: KinoPurchaseMappings,
+): CanonicalReturnLine[] {
+  const allRows = rows(buffer, "Rincian Faktur Pembelian"),
+    required = ["NO. PEMBELIAN", "KODE BARANG", "QTY", "SATUAN", "DPP", "PPN", "REM"],
+    { headerRow, indexes } = table(allRows, required),
+    lines: CanonicalReturnLine[] = [];
+  for (let index = headerRow + 1; index < allRows.length; index++) {
+    const row = allRows[index];
+    if (row.every((value) => text(value) === "")) continue;
+    const sourceRowNumber = index + 1,
+      productCode = text(row[indexes["KODE BARANG"]]).toUpperCase(),
+      mapping = mappings.byWinCode.get(productCode),
+      quantity = number(row[indexes.QTY], "QTY", sourceRowNumber),
+      dpp = number(row[indexes.DPP], "DPP", sourceRowNumber),
+      tax = number(row[indexes.PPN], "PPN", sourceRowNumber);
+    let invalidReason: string | null = null,
+      invoiceNumber = text(row[indexes["NO. PEMBELIAN"]]).toUpperCase();
+    try {
+      invoiceNumber = parseKinoPurchaseDocument(row[indexes.REM], sourceRowNumber).invoiceNumber;
+    } catch (error) {
+      invalidReason = error instanceof Error ? error.message : `REM tidak valid pada baris ${sourceRowNumber}`;
+    }
+    if (!invalidReason && text(row[indexes.SATUAN]).toUpperCase() !== "KRT")
+      invalidReason = `SATUAN harus KRT pada baris ${sourceRowNumber}`;
+    if (!invalidReason && !mapping)
+      invalidReason = `KODE BARANG tidak ada di mapping KINO Purchase pada baris ${sourceRowNumber}: ${productCode}`;
+    lines.push({
+      source: "ACCURATE",
+      sourceRowNumber,
+      invoiceNumber,
+      customerCode: "",
+      accurateProductCode: productCode || null,
+      principalProductCode: mapping?.principalCode ?? null,
+      quantity: mapping ? quantity * mapping.unitsPerCase : quantity,
+      dpp,
+      tax,
+      total: dpp + tax,
+      invalidReason,
+    });
+  }
+  return lines;
+}
+
+function parseKinoPurchasePrincipal(
+  buffer: Buffer | Uint8Array,
+  mappings: KinoPurchaseMappings,
+): CanonicalReturnLine[] {
+  const allRows = rows(buffer),
+    required = ["No. Order", "No. SJ", "No. Item", "Kirim", "Price", "Total"],
+    { headerRow, indexes } = table(allRows, required),
+    lines: CanonicalReturnLine[] = [];
+  for (let index = headerRow + 1; index < allRows.length; index++) {
+    const row = allRows[index];
+    if (row.every((value) => text(value) === "")) continue;
+    const sourceRowNumber = index + 1,
+      order = text(row[indexes["No. Order"]]),
+      sj = text(row[indexes["No. SJ"]]),
+      principalCode = text(row[indexes["No. Item"]]).toUpperCase(),
+      namedMappings = mappings.byPrincipalCode.get(principalCode) ?? [],
+      mapping = namedMappings.length === 1 ? namedMappings[0] : undefined;
+    let quantity = 0,
+      total = 0,
+      invalidReason =
+        !order || !sj
+          ? `No. Order dan No. SJ wajib pada baris ${sourceRowNumber}`
+          : namedMappings.length > 1
+            ? `Mapping KINO Purchase ambigu ${principalCode}: ${namedMappings.map((item) => item.code).join(", ")}`
+            : mapping
+              ? null
+              : `Produk tidak terpetakan: ${principalCode}`;
+    try {
+      quantity = number(row[indexes.Kirim], "Kirim", sourceRowNumber);
+      number(row[indexes.Price], "Price", sourceRowNumber);
+      total = number(row[indexes.Total], "Total", sourceRowNumber);
+    } catch (error) {
+      if (!invalidReason)
+        invalidReason = error instanceof Error ? error.message : `Data KINO Purchase tidak valid pada baris ${sourceRowNumber}`;
+    }
+    const dpp = total / kinoPurchasePrincipalDppDivisor,
+      tax = total - dpp;
+    lines.push({
+      source: "PRINCIPAL",
+      sourceRowNumber,
+      invoiceNumber: `${order}|${sj}`,
+      customerCode: "",
+      accurateProductCode: mapping?.code ?? null,
+      principalProductCode: principalCode || null,
+      quantity,
+      dpp,
+      tax,
+      total,
+      invalidReason,
+    });
+  }
+  return lines;
+}
+
+export function reconcileKinoPurchases(
+  accurateBuffer: Buffer | Uint8Array,
+  principalBuffer: Buffer | Uint8Array,
+  mappingBuffer: Buffer | Uint8Array,
+  options: { dppTolerance?: number } = {},
+): ReturnReconciliationOutput {
+  const dppTolerance = options.dppTolerance ?? 250;
+  if (!Number.isFinite(dppTolerance) || dppTolerance < 0)
+    throw new Error("Toleransi DPP tidak valid");
+  const mappings = parseKinoPurchaseMappings(mappingBuffer);
+  return reconcile(
+    parseKinoPurchaseAccurate(accurateBuffer, mappings),
+    parseKinoPurchasePrincipal(principalBuffer, mappings),
+    dppTolerance,
+  );
+}
+
+function forisaName(value: unknown, loose = false): string {
+  const aliases: Record<string, string[]> = {
+    COKLAT: ["CHOCOLATE"],
+    CKLT: ["CHOCO"],
+    BISKUIT: ["BISCUIT"],
+    CAPCINO: ["CAPPUCINO"],
+    VANILALATTE: ["VANILLA", "LATTE"],
+    AVOCADO: ["ALPUKAT"],
+    MANGO: ["MANGGA"],
+  };
+  return normalized(value)
+    .split(" ")
+    .flatMap((token) => aliases[token] ?? [token])
+    .filter(
+      (token) =>
+        token &&
+        !["FS", "MT", "X", "REG", "RENCENG"].includes(token) &&
+        !/^(?:PI|TI|TS)\d+$/.test(token) &&
+        (!loose ||
+          (!["ES", "L"].includes(token) &&
+            !/^(?:\d+(?:GR|G|PCS|PCH|ML)?|(?:PCS|PCH)X\d+(?:GR|G|ML)|GR|G|PCS|PCH|ML)$/.test(token))),
+    )
+    .join(" ");
+}
+
+function addForisaMapping(
+  map: Map<string, ForisaMapping[]>,
+  key: string,
+  mapping: ForisaMapping,
+) {
+  const values = map.get(key) ?? [];
+  if (!values.some((value) => value.code === mapping.code && value.principalCode === mapping.principalCode))
+    values.push(mapping);
+  map.set(key, values);
+}
+
+function parseForisaMappings(buffer: Buffer | Uint8Array): ForisaMappings {
+  const allRows = rows(buffer, "Upload To Win"),
+    required = ["Kode Pcpl", "Kode BARANG Win2", "Nama Win", "ISI/CTN"],
+    { headerRow, indexes } = table(allRows, required),
+    mappings: ForisaMappings = {
+      byWinCode: new Map(),
+      byPrincipalCode: new Map(),
+      byExactName: new Map(),
+      byLooseName: new Map(),
+    };
+  for (let index = headerRow + 1; index < allRows.length; index++) {
+    const row = allRows[index],
+      principalCode = text(row[indexes["Kode Pcpl"]]).toUpperCase(),
+      code = text(row[indexes["Kode BARANG Win2"]]).toUpperCase(),
+      name = text(row[indexes["Nama Win"]]);
+    if (!principalCode && !code && !name) continue;
+    if (!principalCode || !code || !name)
+      throw new Error(`Mapping FORISA tidak lengkap pada baris ${index + 1}`);
+    const units = number(row[indexes["ISI/CTN"]], "ISI/CTN", index + 1);
+    if (!units) throw new Error(`ISI/CTN harus lebih dari nol pada baris ${index + 1}`);
+    const mapping = { principalCode, code, name },
+      exactName = forisaName(name),
+      looseName = forisaName(name, true);
+    addForisaMapping(mappings.byWinCode, code, mapping);
+    addForisaMapping(mappings.byPrincipalCode, principalCode, mapping);
+    addForisaMapping(mappings.byExactName, exactName, mapping);
+    addForisaMapping(mappings.byLooseName, looseName, mapping);
+  }
+  return mappings;
+}
+
+function uniqueForisaMapping(
+  candidates: ForisaMapping[],
+  label: string,
+): { mapping?: ForisaMapping; invalidReason?: string } {
+  return candidates.length === 1
+    ? { mapping: candidates[0] }
+    : candidates.length > 1
+      ? { invalidReason: `Mapping FORISA ambigu untuk ${label}` }
+      : {};
+}
+
+function resolveForisaAccurate(
+  productCode: string,
+  productName: string,
+  mappings: ForisaMappings,
+) {
+  const direct = uniqueForisaMapping(mappings.byWinCode.get(productCode) ?? [], productCode);
+  if (direct.mapping || direct.invalidReason) return direct;
+  const exactName = forisaName(productName),
+    exact = uniqueForisaMapping(mappings.byExactName.get(exactName) ?? [], productName);
+  if (exact.mapping || exact.invalidReason) return exact;
+  const looseName = forisaName(productName, true),
+    loose = uniqueForisaMapping(mappings.byLooseName.get(looseName) ?? [], productName);
+  return loose.mapping || loose.invalidReason
+    ? loose
+    : { invalidReason: `Produk Accurate tidak terpetakan: ${productCode || productName}` };
+}
+
+function forisaDocumentNumber(filename: string): string {
+  const matches = filename.match(/\b401\d{7}\b/g) ?? [];
+  if (matches.length !== 1)
+    throw new Error("Nama file principal harus memuat tepat satu nomor DO FORISA (format 401 + 7 digit)");
+  return matches[0];
+}
+
+function parseForisaAccurate(
+  buffer: Buffer | Uint8Array,
+  mappings: ForisaMappings,
+  documentNumber: string,
+): { lines: CanonicalReturnLine[]; actualCodes: Map<string, Set<string>> } {
+  const allRows = rows(buffer, "Rincian Faktur Pembelian"),
+    required = ["NO. PEMBELIAN", "KODE BARANG", "NAMA BARANG", "QTY", "SATUAN", "DPP", "PPN", "REM"],
+    { headerRow, indexes } = table(allRows, required),
+    lines: CanonicalReturnLine[] = [],
+    actualCodes = new Map<string, Set<string>>();
+  for (let index = headerRow + 1; index < allRows.length; index++) {
+    const row = allRows[index];
+    if (row.every((value) => text(value) === "")) continue;
+    const remDocuments: string[] = text(row[indexes.REM]).match(/\b401\d{7}\b/g) ?? [];
+    if (!remDocuments.includes(documentNumber)) continue;
+    const sourceRowNumber = index + 1,
+      productCode = text(row[indexes["KODE BARANG"]]).toUpperCase(),
+      productName = text(row[indexes["NAMA BARANG"]]),
+      resolved = resolveForisaAccurate(productCode, productName, mappings),
+      quantity = number(row[indexes.QTY], "QTY", sourceRowNumber),
+      dpp = number(row[indexes.DPP], "DPP", sourceRowNumber);
+    number(row[indexes.PPN], "PPN", sourceRowNumber);
+    let invalidReason =
+      remDocuments.length === 1
+        ? (resolved.invalidReason ?? null)
+        : `REM harus memuat tepat satu nomor DO FORISA pada baris ${sourceRowNumber}`;
+    if (!invalidReason && text(row[indexes.SATUAN]).toUpperCase() !== "KRT")
+      invalidReason = `SATUAN harus KRT pada baris ${sourceRowNumber}`;
+    if (resolved.mapping) {
+      const codes = actualCodes.get(resolved.mapping.principalCode) ?? new Set<string>();
+      codes.add(productCode);
+      actualCodes.set(resolved.mapping.principalCode, codes);
+    }
+    const tax = Math.round(dpp * 0.11);
+    lines.push({
+      source: "ACCURATE",
+      sourceRowNumber,
+      invoiceNumber: documentNumber,
+      customerCode: "",
+      accurateProductCode: productCode || null,
+      principalProductCode: resolved.mapping?.principalCode ?? null,
+      quantity,
+      dpp,
+      tax,
+      total: dpp + tax,
+      invalidReason,
+    });
+  }
+  return { lines, actualCodes };
+}
+
+function parseForisaPrincipal(
+  buffer: Buffer | Uint8Array,
+  mappings: ForisaMappings,
+  documentNumber: string,
+  actualCodes: Map<string, Set<string>>,
+): CanonicalReturnLine[] {
+  const allRows = rows(buffer),
+    required = ["Product Code", "Product Name", "Brand Name", "Qty (CB)", "Price", "Amount", "Discount", "Amount After Discount", "PPN", "Total Amount"],
+    { headerRow, indexes } = table(allRows, required),
+    lines: CanonicalReturnLine[] = [];
+  for (let index = headerRow + 1; index < allRows.length; index++) {
+    const row = allRows[index];
+    if (row.every((value) => text(value) === "")) continue;
+    const sourceRowNumber = index + 1,
+      principalCode = text(row[indexes["Product Code"]]).toUpperCase(),
+      mapped = uniqueForisaMapping(mappings.byPrincipalCode.get(principalCode) ?? [], principalCode),
+      actual = [...(actualCodes.get(principalCode) ?? [])],
+      accurateProductCode = actual.length === 1 ? actual[0] : mapped.mapping?.code ?? null;
+    let quantity = 0,
+      dpp = 0,
+      tax = 0,
+      total = 0,
+      invalidReason = mapped.invalidReason ?? (mapped.mapping ? null : `Produk tidak terpetakan: ${principalCode}`);
+    if (!invalidReason && actual.length > 1)
+      invalidReason = `Mapping FORISA ambigu untuk kode Accurate ${principalCode}`;
+    try {
+      quantity = number(row[indexes["Qty (CB)"]], "Qty (CB)", sourceRowNumber);
+      const price = number(row[indexes.Price], "Price", sourceRowNumber),
+        amount = number(row[indexes.Amount], "Amount", sourceRowNumber),
+        discount = number(row[indexes.Discount], "Discount", sourceRowNumber);
+      dpp = number(row[indexes["Amount After Discount"]], "Amount After Discount", sourceRowNumber);
+      tax = number(row[indexes.PPN], "PPN", sourceRowNumber);
+      total = number(row[indexes["Total Amount"]], "Total Amount", sourceRowNumber);
+      if (!invalidReason && Math.abs(quantity * price - amount) > 1 + 1e-9)
+        invalidReason = `Formula Amount tidak konsisten pada baris ${sourceRowNumber}`;
+      else if (!invalidReason && Math.abs(amount - discount - dpp) > 1 + 1e-9)
+        invalidReason = `Formula Amount After Discount tidak konsisten pada baris ${sourceRowNumber}`;
+      else if (!invalidReason && Math.abs(dpp + tax - total) > 1 + 1e-9)
+        invalidReason = `Formula Total Amount tidak konsisten pada baris ${sourceRowNumber}`;
+      else if (!invalidReason && Math.abs(Math.round(dpp * 0.11) - tax) > 1 + 1e-9)
+        invalidReason = `Formula PPN tidak konsisten pada baris ${sourceRowNumber}`;
+    } catch (error) {
+      if (!invalidReason)
+        invalidReason = error instanceof Error ? error.message : `Data FORISA tidak valid pada baris ${sourceRowNumber}`;
+    }
+    lines.push({
+      source: "PRINCIPAL",
+      sourceRowNumber,
+      invoiceNumber: documentNumber,
+      customerCode: "",
+      accurateProductCode,
+      principalProductCode: principalCode || null,
+      quantity,
+      dpp,
+      tax,
+      total,
+      invalidReason,
+    });
+  }
+  return lines;
+}
+
+export function reconcileForisaPurchases(
+  accurateBuffer: Buffer | Uint8Array,
+  principalBuffer: Buffer | Uint8Array,
+  mappingBuffer: Buffer | Uint8Array,
+  principalFilename: string,
+  options: { dppTolerance?: number } = {},
+): ReturnReconciliationOutput {
+  const dppTolerance = options.dppTolerance ?? 1;
+  if (!Number.isFinite(dppTolerance) || dppTolerance < 0)
+    throw new Error("Toleransi DPP tidak valid");
+  const documentNumber = forisaDocumentNumber(principalFilename),
+    mappings = parseForisaMappings(mappingBuffer),
+    accurate = parseForisaAccurate(accurateBuffer, mappings, documentNumber);
+  return reconcile(
+    accurate.lines,
+    parseForisaPrincipal(principalBuffer, mappings, documentNumber, accurate.actualCodes),
+    dppTolerance,
+  );
 }
 
 function parseReckittAccurate(
