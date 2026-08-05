@@ -11,7 +11,7 @@ import { requirePermission } from "@/lib/rbac/resolve";
 
 export const runtime = "nodejs";
 
-type Authorization = { response: Response | null; actor: ReconciliationActor | null };
+type Authorization = { response: Response | null; actor: ReconciliationActor | null; canManage: boolean };
 type Dependencies = {
   authorize(request: Request, permission: "reconciliation.view" | "reconciliation.manage"): Promise<Authorization>;
   listMappingVersions(division: ReconciliationDivision, principal: string): Promise<ReconciliationMappingMetadata[]>;
@@ -39,7 +39,7 @@ export function createMappingsHandlers(deps: Dependencies) {
       const key = registryKey(request);
       if (!key) return NextResponse.json({ error: "Kontrak rekonsiliasi tidak didukung." }, { status: 400 });
       const versions = await deps.listMappingVersions(key.division, key.principal);
-      return NextResponse.json({ active: versions.find((version) => version.isActive) ?? null, versions });
+      return NextResponse.json({ active: versions.find((version) => version.isActive) ?? null, versions, canManage: gate.canManage });
     },
 
     async POST(request: Request) {
@@ -81,10 +81,11 @@ export function createMappingsHandlers(deps: Dependencies) {
 
 const handlers = createMappingsHandlers({
   authorize: async (request, permission) => {
-    const { response, session } = await requirePermission(request, permission);
+    const gate = await requirePermission(request, permission);
     return {
-      response,
-      actor: session ? { id: session.user.id, name: session.user.name ?? session.user.email, email: session.user.email } : null,
+      response: gate.response,
+      actor: gate.session ? { id: gate.session.user.id, name: gate.session.user.name ?? gate.session.user.email, email: gate.session.user.email } : null,
+      canManage: gate.perms?.has("reconciliation.manage") === true,
     };
   },
   listMappingVersions: (division, principal) => reconciliationStore.listMappingVersions(division, principal),

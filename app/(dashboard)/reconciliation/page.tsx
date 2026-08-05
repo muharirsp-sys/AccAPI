@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   CheckCircle2,
@@ -23,11 +23,38 @@ import type {
   ReturnReconciliationResult,
   ReturnStatus,
 } from "@/lib/off-program-control/return-reconciliation";
+import {
+  RECONCILIATION_CONFIG,
+  getReconciliationConfig,
+  type ReconciliationInputConfig,
+} from "@/lib/off-program-control/reconciliation-config";
 
 type Division = "FAKTUR" | "PEMBELIAN" | "RETURN";
 type UiStatus = ReconciliationStatus | ReturnStatus;
 type Principal = "KINO" | "GODREJ" | "RECKITT" | "SHINZUI" | "MOTASA" | "CUSSONS" | "HEINZ" | "FORISA";
 type StatusFilter = "ALL" | "MATCH_ONLY" | "ISSUES_ONLY" | UiStatus;
+
+type MappingVersion = {
+  id: string;
+  version: number;
+  originalName: string;
+  uploadedByName: string;
+  createdAt: string;
+  isActive?: boolean;
+};
+type MappingResponse = { active: MappingVersion | null; versions: MappingVersion[]; canManage: boolean };
+type HistoryRun = {
+  id: string;
+  mappingVersionId: string;
+  status: "processing" | "success" | "failed";
+  uploadedByName: string;
+  inputFiles: { role: string; name: string }[];
+  summary: Record<string, number> | null;
+  issues: { status: string; [key: string]: unknown }[] | null;
+  error: string | null;
+  durationMs: number | null;
+  startedAt: string;
+};
 
 const salesStatuses: ReconciliationStatus[] = [
   "MATCH",
@@ -44,8 +71,10 @@ const returnStatuses: ReturnStatus[] = [
   "MATCH", "QTY_MISMATCH", "VALUE_MISMATCH", "QTY_AND_VALUE_MISMATCH",
   "MISSING_ACCURATE", "MISSING_PRINCIPAL", "UNMAPPED", "INVALID_DATA",
 ];
-const returnPrinciples = ["SHINZUI", "KINO", "GODREJ", "HEINZ", "CUSSONS"] as const;
-const purchasePrinciples = ["GODREJ", "RECKITT", "CUSSONS", "KINO", "FORISA"] as const;
+const divisionKeys = { FAKTUR: "sales", PEMBELIAN: "purchases", RETURN: "returns" } as const;
+const principlesFor = (division: Division) => Object.values(RECONCILIATION_CONFIG)
+  .filter((config) => config.division === divisionKeys[division])
+  .map((config) => config.principal as Principal);
 const fixedStatusLabels: Partial<Record<UiStatus, string>> = {
   MATCH: "Cocok",
   QTY_MISMATCH: "Selisih jumlah",
@@ -140,6 +169,16 @@ function fileSize(bytes: number): string {
   return bytes < 1_048_576
     ? `${number.format(bytes / 1024)} KB`
     : `${number.format(bytes / 1_048_576)} MB`;
+}
+
+const dateTime = new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short" });
+const historyStatus = { processing: "Diproses", success: "Berhasil", failed: "Gagal" } as const;
+
+function persistedCauses(issue: NonNullable<HistoryRun["issues"]>[number]): string[] {
+  const values = [issue.causes, issue.cause, issue.reason, issue.error, issue.warnings]
+    .flatMap((value) => Array.isArray(value) ? value : typeof value === "string" ? [value] : [])
+    .filter((value): value is string => typeof value === "string");
+  return values.length ? values : [issue.status];
 }
 
 function columnsFor(principal: Principal): ColumnDef<ReconciliationResult>[] {
@@ -316,9 +355,34 @@ export default function ReconciliationPage() {
   const [error, setError] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [mapping, setMapping] = useState<MappingResponse>({ active: null, versions: [], canManage: false });
+  const [mappingFile, setMappingFile] = useState<File | null>(null);
+  const [isMappingUploading, setIsMappingUploading] = useState(false);
+  const [history, setHistory] = useState<HistoryRun[]>([]);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
   const salesColumns = useMemo(() => columnsFor(principal), [principal]);
   const returnTableColumns = useMemo(() => returnColumns(principal, division === "PEMBELIAN" ? "PEMBELIAN" : "RETURN"), [division, principal]);
   const currentStatuses = division === "FAKTUR" ? salesStatuses : returnStatuses;
+  const apiDivision = divisionKeys[division];
+  const config = getReconciliationConfig(apiDivision, principal);
+  const fileFor = (role: ReconciliationInputConfig["role"]) => role === "accurateFile" ? accurateFile : role === "headerFile" ? headerFile : principalFile;
+  const filesReady = config.inputs.every((input) => fileFor(input.role));
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const query = new URLSearchParams({ division: apiDivision, principal });
+    Promise.all([
+      fetch(`/api/reconciliation/mappings?${query}`, { signal: controller.signal }).then(async (response) => response.ok ? response.json() as Promise<MappingResponse> : null),
+      fetch(`/api/reconciliation/history?${query}&page=${historyPage}&pageSize=20`, { signal: controller.signal }).then(async (response) => response.ok ? response.json() as Promise<{ items: HistoryRun[] }> : null),
+    ]).then(([mappingPayload, historyPayload]) => {
+      if (mappingPayload) setMapping(mappingPayload);
+      if (historyPayload) setHistory(historyPayload.items);
+    }).catch((caught) => {
+      if (!(caught instanceof DOMException && caught.name === "AbortError")) setHistory([]);
+    });
+    return () => controller.abort();
+  }, [apiDivision, principal, historyPage, historyRefresh]);
 
   const filteredResults = useMemo(() => {
     const rows = result?.results ?? [];
@@ -347,38 +411,67 @@ export default function ReconciliationPage() {
 
   function changePrincipal(next: Principal) {
     resetReconciliation();
+    setMapping({ active: null, versions: [], canManage: false });
+    setHistory([]);
+    setMappingFile(null);
+    setHistoryPage(1);
     setPrincipal(next);
   }
 
   function changeDivision(next: Division) {
     if (next === division) return;
     resetReconciliation();
+    setMapping({ active: null, versions: [], canManage: false });
+    setHistory([]);
+    setMappingFile(null);
+    setHistoryPage(1);
     setDivision(next);
-    setPrincipal(next === "RETURN" ? "SHINZUI" : next === "PEMBELIAN" ? "GODREJ" : "KINO");
+    setPrincipal(principlesFor(next)[0]);
   }
 
   async function runReconciliation() {
-    if (!accurateFile || !principalFile || (principal === "HEINZ" && !headerFile)) return;
+    if (!filesReady) return;
     setIsRunning(true);
     setResult(null);
     setStatusFilter("ALL");
     setError(null);
     try {
       const form = new FormData();
-      form.append("accurateFile", accurateFile);
-      if (principal === "HEINZ" && headerFile) form.append("headerFile", headerFile);
-      form.append("principalFile", principalFile);
-      const endpoint = division === "RETURN" ? "returns" : division === "PEMBELIAN" ? "purchases" : "sales";
-      const response = await fetch(`/api/reconciliation/${principal.toLowerCase()}/${endpoint}`, { method: "POST", body: form });
+      for (const input of config.inputs) form.append(input.role, fileFor(input.role)!);
+      const response = await fetch(`/${config.endpoint}`, { method: "POST", body: form });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Rekonsiliasi gagal diproses.");
       const output = payload as ReconciliationOutput | ReturnReconciliationOutput;
       setResult(output);
       setStatusFilter(output.results.some((row) => row.status !== "MATCH") ? "ISSUES_ONLY" : "ALL");
+      setHistoryPage(1);
+      setHistoryRefresh((value) => value + 1);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Rekonsiliasi gagal diproses.");
     } finally {
       setIsRunning(false);
+    }
+  }
+
+  async function activateMapping() {
+    if (!mappingFile || !mapping.canManage) return;
+    setIsMappingUploading(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("division", apiDivision);
+      form.append("principal", principal);
+      form.append("mappingFile", mappingFile);
+      const response = await fetch("/api/reconciliation/mappings", { method: "POST", body: form });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Mapping gagal diaktifkan.");
+      setMappingFile(null);
+      setHistoryPage(1);
+      setHistoryRefresh((value) => value + 1);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Mapping gagal diaktifkan.");
+    } finally {
+      setIsMappingUploading(false);
     }
   }
 
@@ -437,15 +530,7 @@ export default function ReconciliationPage() {
             <GitCompareArrows className="text-indigo-400" /> Rekonsiliasi {division === "RETURN" ? "Return" : division === "PEMBELIAN" ? "Pembelian" : "Faktur"}
           </h1>
           <p className="mt-2 text-slate-400">
-            {division === "PEMBELIAN"
-              ? principal === "FORISA"
-                ? "Bandingkan faktur pembelian Accurate dengan DO FORISA."
-                : `Bandingkan faktur pembelian Accurate dengan ${principal === "RECKITT" || principal === "CUSSONS" ? "TXN_COMPINV_DTL" : principal === "KINO" ? "PO Report" : "GRN Status Report"} ${principal}.`
-              : division === "RETURN"
-              ? principal === "HEINZ"
-                ? "Bandingkan retur Accurate dengan laporan HEADER dan DETAIL HEINZ."
-                : `Bandingkan retur Accurate dengan laporan ${principal === "SHINZUI" ? "PenjualanInvoice" : principal === "GODREJ" ? "Sale Returns" : principal === "CUSSONS" ? "TXN_NOTEPRD" : "Sales Detail"} ${principal}.`
-              : `Bandingkan faktur Accurate dengan data penjualan prinsipal ${principal}.`}
+            {config.description}
           </p>
         </div>
 
@@ -495,58 +580,46 @@ export default function ReconciliationPage() {
               }
               className="rounded-lg border border-white/10 bg-[#1a1c23] px-3 py-2 text-sm text-slate-200 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 disabled:opacity-50"
             >
-              {division === "PEMBELIAN" ? (
-                purchasePrinciples.map((item) => <option key={item} value={item}>{item}</option>)
-              ) : division === "RETURN" ? (
-                returnPrinciples.map((item) => <option key={item} value={item}>{item}</option>)
-              ) : (
-                <>
-                  <option value="KINO">KINO</option>
-                  <option value="GODREJ">GODREJ</option>
-                  <option value="SHINZUI">SHINZUI</option>
-                  <option value="MOTASA">MOTASA</option>
-                  <option value="CUSSONS">CUSSONS</option>
-                </>
-              )}
+              {principlesFor(division).map((item) => <option key={item} value={item}>{item}</option>)}
             </select>
           </div>
         </div>
       </header>
 
+      <section aria-labelledby="mapping-heading" className="rounded-2xl border border-white/10 bg-[#1a1c23]/60 p-5 shadow-lg backdrop-blur-xl">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 id="mapping-heading" className="text-sm font-semibold text-slate-200">Mapping aktif</h2>
+            {mapping.active ? (
+              <div aria-label="Stempel versi mapping" className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                <span className="rounded-md bg-indigo-500/15 px-2 py-1 font-semibold text-indigo-300">Versi {mapping.active.version}</span>
+                <span className="font-medium text-slate-200">{mapping.active.originalName}</span>
+                <span className="text-slate-400">{dateTime.format(new Date(mapping.active.createdAt))}</span>
+              </div>
+            ) : <p className="mt-2 text-sm text-slate-400">Belum ada mapping aktif.</p>}
+          </div>
+          {mapping.canManage && (
+            <div className="flex flex-col gap-2 sm:items-end">
+              <label htmlFor="mapping-file" className="text-xs font-semibold text-slate-300">Ganti mapping</label>
+              <div className="flex flex-wrap gap-2">
+                <input id="mapping-file" aria-label="Ganti mapping" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={isMappingUploading} onChange={(event) => setMappingFile(event.target.files?.[0] ?? null)} className="max-w-60 rounded-lg text-xs text-slate-400 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 file:mr-2 file:rounded-full file:border-0 file:bg-white/10 file:px-3 file:py-2 file:font-semibold file:text-slate-200" />
+                <button type="button" onClick={activateMapping} disabled={!mappingFile || isMappingUploading} className="btn-primary inline-flex items-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70">
+                  {isMappingUploading && <Loader2 className="animate-spin motion-reduce:animate-none" size={16} />} Aktifkan mapping
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
       <section className="overflow-hidden rounded-3xl border border-white/10 bg-[#1a1c23]/60 shadow-xl backdrop-blur-xl">
-        <div className={`grid gap-6 p-6 md:p-8 ${division === "RETURN" && principal === "HEINZ" ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
-          {(division === "RETURN" && principal === "HEINZ"
-            ? (["accurate", "header", "principal"] as const)
-            : (["accurate", "principal"] as const)
-          ).map((kind) => {
-            const file = kind === "accurate" ? accurateFile : kind === "header" ? headerFile : principalFile;
-            const isCsvPrincipal = kind === "principal" && (
-              (division === "RETURN" && (principal === "GODREJ" || principal === "HEINZ" || principal === "CUSSONS")) ||
-              (division === "PEMBELIAN" && principal !== "KINO" && principal !== "FORISA") ||
-              (division === "FAKTUR" && principal === "CUSSONS")
-            );
-            const isCsv = kind === "header" || isCsvPrincipal;
-            const label = division === "PEMBELIAN"
-              ? kind === "accurate"
-                ? "Rincian Faktur Pembelian (Accurate)"
-                : principal === "FORISA"
-                  ? "DO FORISA"
-                  : `${principal === "RECKITT" || principal === "CUSSONS" ? "TXN_COMPINV_DTL" : principal === "KINO" ? "PO Report" : "GRN Status Report"} ${principal}`
-              : division === "RETURN"
-              ? kind === "accurate"
-                ? "Retur Penjualan (Accurate)"
-                : kind === "header"
-                  ? "HEADER HEINZ"
-                  : `${principal === "SHINZUI" ? "PenjualanInvoice" : principal === "GODREJ" ? "Sale Returns" : principal === "HEINZ" ? "DETAIL" : principal === "CUSSONS" ? "TXN_NOTEPRD" : "Sales Detail"} ${principal}`
-              : kind === "accurate"
-                ? "Rincian Faktur Penjualan (Accurate)"
-                : `${isCsvPrincipal ? "Detail" : "Sales Detail"} ${principal}`;
-            const accept = isCsv
-              ? ".csv,text/csv,application/csv"
-              : ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-            const helpText = `Format ${isCsv ? ".csv" : ".xlsx"}, maksimal 10 MB`;
+        <div className={`grid gap-6 p-6 md:p-8 ${config.inputs.length === 3 ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
+          {config.inputs.map((input) => {
+            const kind = input.role.replace("File", "") as "accurate" | "header" | "principal";
+            const file = fileFor(input.role);
+            const helpText = `Format ${input.extension}, maksimal 10 MB`;
             const cardClass =
-              kind === "accurate"
+              input.role === "accurateFile"
                 ? "border-indigo-500/20 bg-indigo-500/10"
                 : "border-cyan-500/20 bg-cyan-500/10";
             return (
@@ -555,7 +628,7 @@ export default function ReconciliationPage() {
                   htmlFor={`${kind}-file`}
                   className="block font-bold text-slate-100"
                 >
-                  {label}
+                  {input.label}
                 </label>
                 <p className="mb-4 mt-1 text-xs text-slate-400">
                   {helpText}
@@ -564,7 +637,7 @@ export default function ReconciliationPage() {
                   key={`${division}-${kind}-${principal}`}
                   id={`${kind}-file`}
                   type="file"
-                  accept={accept}
+                  accept={input.accept}
                   disabled={isRunning}
                   onChange={(event) =>
                     changeFile(kind, event.target.files?.[0] ?? null)
@@ -586,7 +659,7 @@ export default function ReconciliationPage() {
                         if (input instanceof HTMLInputElement) input.value = "";
                         changeFile(kind, null);
                       }}
-                      aria-label={`Hapus ${label}`}
+                      aria-label={`Hapus ${input.label}`}
                       className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 outline-none hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-indigo-400/70 disabled:opacity-50"
                     >
                       <X size={16} />
@@ -611,7 +684,7 @@ export default function ReconciliationPage() {
               </p>
             ) : (
               <p className="text-slate-400">
-                {division === "RETURN" && principal === "HEINZ"
+                {config.inputs.length === 3
                   ? "Unggah ketiga file untuk memulai."
                   : "Unggah kedua file untuk memulai."}
               </p>
@@ -620,7 +693,7 @@ export default function ReconciliationPage() {
           <button
             type="button"
             onClick={runReconciliation}
-            disabled={isRunning || !accurateFile || !principalFile || (principal === "HEINZ" && !headerFile)}
+            disabled={isRunning || !filesReady}
             className="btn-primary flex w-full items-center justify-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 sm:w-auto"
           >
             {isRunning ? (
@@ -634,6 +707,52 @@ export default function ReconciliationPage() {
             Jalankan rekonsiliasi
           </button>
         </div>
+      </section>
+
+      <section aria-label="Riwayat rekonsiliasi" className="overflow-hidden rounded-2xl border border-white/10 bg-[#1a1c23]/60 shadow-lg backdrop-blur-xl">
+        <details open>
+          <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-slate-200 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400/70">Riwayat rekonsiliasi</summary>
+          <div className="border-t border-white/10">
+            {history.length ? history.map((run) => {
+              const totalCount = Object.values(run.summary ?? {}).reduce((sum, value) => sum + value, 0);
+              const matchCount = run.summary?.MATCH ?? 0;
+              const issueCount = totalCount - matchCount;
+              const version = mapping.versions.find((item) => item.id === run.mappingVersionId)?.version;
+              return (
+                <article key={run.id} className="border-b border-white/10 px-5 py-4 last:border-b-0">
+                  <div className="grid gap-2 text-sm text-slate-300 md:grid-cols-[auto_1fr_auto] md:items-center">
+                    <span className={`w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${run.status === "success" ? "bg-emerald-500/10 text-emerald-300" : run.status === "failed" ? "bg-rose-500/10 text-rose-300" : "bg-amber-500/10 text-amber-300"}`}>{historyStatus[run.status]}</span>
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-200"><span>{run.uploadedByName}</span> · <span>{version ? `Versi ${version}` : "Versi tidak tersedia"}</span></p>
+                      <p className="truncate text-xs text-slate-400">{run.inputFiles.map((file) => file.name).join(", ")}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs text-slate-400 md:justify-end">
+                      <span>{run.durationMs === null ? "Durasi -" : `${number.format(run.durationMs / 1000)} detik`}</span>
+                      <span>Total {totalCount}</span><span>Cocok {matchCount}</span><span>Masalah {issueCount}</span>
+                    </div>
+                  </div>
+                  <details className="mt-2">
+                    <summary aria-label={`Lihat rincian ${run.id}`} className="cursor-pointer text-xs font-semibold text-indigo-300 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70">Lihat penyebab</summary>
+                    <div className="mt-2 rounded-lg bg-black/20 p-3 text-xs text-slate-300">
+                      {run.error && <p>{run.error}</p>}
+                      {run.issues?.length ? run.issues.map((issue, index) => (
+                        <div key={`${run.id}-${index}`} className="mb-2 last:mb-0">
+                          <p className="font-semibold">{issue.status}</p>
+                          <ul className="list-disc pl-5">{persistedCauses(issue).map((cause) => <li key={cause}>{cause}</li>)}</ul>
+                        </div>
+                      )) : !run.error && <p>Tidak ada masalah tersimpan.</p>}
+                    </div>
+                  </details>
+                </article>
+              );
+            }) : <p className="px-5 py-6 text-sm text-slate-400">Belum ada riwayat untuk pilihan ini.</p>}
+            <div className="flex items-center justify-between border-t border-white/10 px-5 py-3">
+              <button type="button" aria-label="Halaman sebelumnya" disabled={historyPage === 1} onClick={() => setHistoryPage((page) => Math.max(1, page - 1))} className="inline-flex min-h-11 items-center rounded-lg px-3 text-sm text-slate-300 outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-indigo-400/70 disabled:opacity-40">Sebelumnya</button>
+              <span className="text-xs text-slate-400">Halaman {historyPage}</span>
+              <button type="button" aria-label="Halaman berikutnya" disabled={history.length < 20} onClick={() => setHistoryPage((page) => page + 1)} className="inline-flex min-h-11 items-center rounded-lg px-3 text-sm text-slate-300 outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-indigo-400/70 disabled:opacity-40">Berikutnya</button>
+            </div>
+          </div>
+        </details>
       </section>
 
       {result && (

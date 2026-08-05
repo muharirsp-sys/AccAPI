@@ -81,6 +81,84 @@ const returnResult = {
     { invoiceNumber: "INVGTS2505-0098-00878", customerCode: "CUST-03", accurateProductCode: "ACC-03", principalProductCode: "SHZ-03", accurateQuantity: 1, principalQuantity: 1, quantityDifference: 0, accurateDpp: 60000, principalDpp: 90000, dppDifference: -30000, accurateTax: 6600, principalTax: 9900, accurateTotal: 66600, principalTotal: 99900, status: "VALUE_MISMATCH", warnings: ["VALUE MISMATCH"], accurateSourceRows: [6], principalSourceRows: [8] },
   ],
 };
+
+test("uses the registry and shows mapping access plus paginated persisted history", async ({ page, baseURL }) => {
+  const login = await page.request.post("/api/auth/sign-in/email", {
+    headers: { Origin: baseURL || "http://localhost:3000" },
+    data: { email: QA_EMAIL, password: QA_PASSWORD },
+  });
+  if (!login.ok()) await page.context().addCookies([{ name: "local-dev-session", value: "qa-admin", url: baseURL || "http://localhost:3000" }]);
+
+  const historyRequests: string[] = [];
+  const mapping = {
+    id: "mapping-v3",
+    division: "sales",
+    principalCode: "KINO",
+    version: 3,
+    originalName: "mapping-kino-v3.xlsx",
+    uploadedByName: "Admin Mapping",
+    createdAt: "2026-08-05T02:30:00.000Z",
+    isActive: true,
+  };
+  await page.route("**/api/reconciliation/mappings?**", async (route) => {
+    const url = new URL(route.request().url());
+    const canManage = url.searchParams.get("principal") !== "GODREJ";
+    await route.fulfill({ json: { active: mapping, versions: [mapping], canManage } });
+  });
+  await page.route("**/api/reconciliation/history?**", async (route) => {
+    const url = new URL(route.request().url());
+    historyRequests.push(`${url.searchParams.get("page")}:${url.searchParams.get("pageSize")}`);
+    const pageNumber = Number(url.searchParams.get("page"));
+    const item = {
+      id: "run-1",
+      division: "sales",
+      principalCode: "KINO",
+      mappingVersionId: "mapping-v3",
+      status: "success",
+      uploadedByName: "Sari Faktur",
+      inputFiles: [
+        { role: "accurateFile", name: "accurate-agustus.xlsx" },
+        { role: "principalFile", name: "kino-agustus.xlsx" },
+      ],
+      summary: { MATCH: 18, QTY_MISMATCH: 2 },
+      issues: [{ status: "QTY_MISMATCH", causes: ["Selisih qty tersimpan"] }],
+      error: null,
+      durationMs: 1450,
+      startedAt: "2026-08-05T03:00:00.000Z",
+      finishedAt: "2026-08-05T03:00:01.450Z",
+    };
+    await route.fulfill({ json: { items: pageNumber === 1 ? Array.from({ length: 20 }, (_, index) => ({ ...item, id: `run-${index + 1}` })) : [], page: pageNumber, pageSize: 20 } });
+  });
+
+  await page.goto("/reconciliation");
+  await expect(page.getByLabel("Prinsipal").locator("option")).toHaveText(["KINO", "GODREJ", "SHINZUI", "MOTASA", "CUSSONS"]);
+  await page.getByRole("button", { name: "Pembelian" }).click();
+  await expect(page.getByLabel("Prinsipal").locator("option")).toHaveText(["GODREJ", "RECKITT", "CUSSONS", "KINO", "FORISA"]);
+  await expect(page.getByLabel("Ganti mapping")).toHaveCount(0);
+  await page.getByRole("button", { name: "Return" }).click();
+  await expect(page.getByLabel("Prinsipal").locator("option")).toHaveText(["SHINZUI", "KINO", "GODREJ", "HEINZ", "CUSSONS"]);
+  await page.getByRole("button", { name: "Faktur" }).click();
+
+  const mappingStatus = page.getByRole("region", { name: "Mapping aktif" });
+  await expect(mappingStatus.getByText("mapping-kino-v3.xlsx", { exact: true })).toBeVisible();
+  await expect(mappingStatus.getByText("Versi 3", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Ganti mapping")).toBeVisible();
+  const history = page.getByRole("region", { name: "Riwayat rekonsiliasi" });
+  await expect(history.getByText("Berhasil", { exact: true }).first()).toBeVisible();
+  await expect(history.getByText("Sari Faktur", { exact: true }).first()).toBeVisible();
+  await expect(history.getByText("Versi 3", { exact: true }).first()).toBeVisible();
+  await expect(history.getByText("accurate-agustus.xlsx, kino-agustus.xlsx", { exact: true }).first()).toBeVisible();
+  await expect(history.getByText("1,45 detik", { exact: true }).first()).toBeVisible();
+  await expect(history.getByText("Total 20", { exact: true }).first()).toBeVisible();
+  await expect(history.getByText("Cocok 18", { exact: true }).first()).toBeVisible();
+  await expect(history.getByText("Masalah 2", { exact: true }).first()).toBeVisible();
+  await history.locator('summary[aria-label="Lihat rincian run-1"]').click();
+  await expect(history.getByText("Selisih qty tersimpan", { exact: true }).first()).toBeVisible();
+  expect(historyRequests).toContain("1:20");
+  await history.getByRole("button", { name: "Halaman berikutnya" }).click();
+  await expect.poll(() => historyRequests).toContain("2:20");
+});
+
 test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets principal state, and keeps all themes", async ({
   page,
   baseURL,

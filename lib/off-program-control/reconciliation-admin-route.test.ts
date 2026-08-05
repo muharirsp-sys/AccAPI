@@ -22,8 +22,8 @@ async function main() {
     authorize: async (_request, permission) => {
       permissions.push(permission);
       return permission === "reconciliation.manage"
-        ? { response: forbidden, actor: null }
-        : { response: unauthorized, actor: null };
+        ? { response: forbidden, actor: null, canManage: false }
+        : { response: unauthorized, actor: null, canManage: false };
     },
     listMappingVersions: async () => [],
     activateMapping: async () => { throw new Error("must not activate"); },
@@ -34,7 +34,7 @@ async function main() {
   assert.deepEqual(permissions, ["reconciliation.view", "reconciliation.manage"]);
 
   const authorized = createMappingsHandlers({
-    authorize: async () => ({ response: null, actor }),
+    authorize: async () => ({ response: null, actor, canManage: true }),
     listMappingVersions: async () => [{ id: "m1", division: "sales", principalCode: "KINO", version: 1, isActive: true } as never],
     activateMapping: async (input) => ({ id: "m2", division: input.division, principalCode: input.principalCode, version: 2 }),
     validateMapping: (_division, _principal, workbook) => {
@@ -44,6 +44,7 @@ async function main() {
   assert.equal((await authorized.GET(new Request("http://localhost/api/reconciliation/mappings?division=sales&principal=NOPE"))).status, 400);
   const listed = await (await authorized.GET(new Request("http://localhost/api/reconciliation/mappings?division=sales&principal=KINO"))).json();
   assert.equal(listed.active.version, 1);
+  assert.equal(listed.canManage, true);
   assert.equal("workbook" in listed.active, false);
   assert.equal(listed.versions.length, 1);
   assert.equal((await authorized.POST(form(new File(["invalid"], "mapping.xlsx", { type: xlsxMime })))).status, 422);
