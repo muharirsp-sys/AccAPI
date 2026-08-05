@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "generate-icons": "node scripts/generate-icons.js",
+    "test:reconciliation": "tsx --test lib/off-program-control/*.test.ts",
     "test:payments-import": "playwright test tests/payments-import-invalid-date.spec.ts"
   },
   "dependencies": {

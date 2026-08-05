@@ -10,6 +10,8 @@ function workbook(sheetName: string, values: unknown[][]): Uint8Array {
   return XLSX.write(book, { bookType: "xlsx", type: "buffer" });
 }
 
+async function main() {
+
 const mapping = workbook("Upload To Win", [
   ["Kode Pcpl", "Kode BARANG Win2", "Nama Win", "ISI/CTN"],
   ["P1", "NEW1", "TOP CHOCO 100 GR", 12],
@@ -100,3 +102,9 @@ if (process.argv.length >= 5) {
 }
 
 console.log("forisa purchase reconciliation: ok");
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

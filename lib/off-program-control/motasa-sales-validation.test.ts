@@ -14,6 +14,8 @@ function workbook(sheets: Record<string, unknown[][]>): Buffer {
   return XLSX.write(book, { type: "buffer", bookType: "xlsx" });
 }
 
+async function main() {
+
 const motasaHeader = ["Kode BARANG Win2", "ISI/CTN", "SATUAN Fix Win"];
 
 function formFixAt(headerRow: number, ...rows: unknown[][]): Buffer {
@@ -234,3 +236,9 @@ if (accuratePath && principalPath && mappingPath) {
 }
 
 console.log("OK - token dan mapping MOTASA tervalidasi.");
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
