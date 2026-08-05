@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createKinoSalesPostHandler } from "./kino-sales-route.ts";
 
+async function main(): Promise<void> {
+
 const mime =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const mapping = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
@@ -142,3 +144,9 @@ assert.deepEqual(await successResponse.json(), expectedOutput);
 console.log(
   "OK - route SHINZUI mencakup izin, master, parser aman, masking, dan sukses.",
 );
+}
+
+main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});

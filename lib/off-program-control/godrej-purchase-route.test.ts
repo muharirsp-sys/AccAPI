@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { POST } from "../../app/api/reconciliation/godrej/purchases/route.ts";
 import { auth } from "../auth.ts";
 import { db } from "../db.ts";
 import { createKinoSalesPostHandler } from "./kino-sales-route.ts";
 import * as XLSX from "xlsx";
+import { reconciliationStore } from "./reconciliation-store.ts";
 
 const xlsxMime =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -107,6 +109,16 @@ async function withPermissions<T>(
 }
 
 async function main(): Promise<void> {
+const mapping = new Uint8Array(
+  await readFile(new URL("../../data/reconciliation/GODREJ_RETURN.xlsx", import.meta.url)),
+);
+let activeMapping: Uint8Array | null = mapping;
+Object.defineProperties(reconciliationStore, {
+  getActiveMapping: { configurable: true, value: async () => activeMapping ? { id: "mapping-v2", workbook: Buffer.from(activeMapping) } : null },
+  startReconciliationRun: { configurable: true, value: async () => "run-1" },
+  completeReconciliationRun: { configurable: true, value: async () => {} },
+  failReconciliationRun: { configurable: true, value: async () => {} },
+});
 let parsedMultipart = false;
 const unauthenticated = await POST(
   Object.assign(new Request("http://localhost", { method: "POST" }), {
@@ -174,18 +186,18 @@ for (const [mutate, status] of [
     status,
   );
 
-const originalCwd = process.cwd;
-process.cwd = () => "D:\\definitely-missing-godrej-purchase-master";
+const previousMapping = activeMapping;
+activeMapping = null;
 try {
   const response = await withPermissions(["reconciliation.run"], () =>
     POST(request()),
   );
-  assert.equal(response.status, 500);
+  assert.equal(response.status, 422);
   assert.deepEqual(await response.json(), {
     error: "Master mapping GODREJ Purchase tidak tersedia.",
   });
 } finally {
-  process.cwd = originalCwd;
+  activeMapping = previousMapping;
 }
 
 function parserResponse(message: string): Promise<Response> {

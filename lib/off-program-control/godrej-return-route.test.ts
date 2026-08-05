@@ -9,6 +9,7 @@ import {
   CSV_MIME_TYPES,
 } from "./kino-sales-route.ts";
 import { reconcileGodrejReturns } from "./return-reconciliation.ts";
+import { reconciliationStore } from "./reconciliation-store.ts";
 
 const xlsxMime =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -62,6 +63,13 @@ const masterPath = new URL(
 
 async function main(): Promise<void> {
 const mapping = new Uint8Array(await readFile(masterPath));
+let activeMapping: Uint8Array | null = mapping;
+Object.defineProperties(reconciliationStore, {
+  getActiveMapping: { configurable: true, value: async () => activeMapping ? { id: "mapping-v2", workbook: Buffer.from(activeMapping) } : null },
+  startReconciliationRun: { configurable: true, value: async () => "run-1" },
+  completeReconciliationRun: { configurable: true, value: async () => {} },
+  failReconciliationRun: { configurable: true, value: async () => {} },
+});
 
 function file(content: BlobPart, name: string, type: string): File {
   return new File([content], name, { type });
@@ -260,18 +268,18 @@ for (const [csv, error] of [
   assert.deepEqual(await response.json(), { error });
 }
 
-const originalCwd = process.cwd;
-process.cwd = () => "D:\\definitely-missing-godrej-route-master";
+const previousMapping = activeMapping;
+activeMapping = null;
 try {
   const missingMaster = await withPermissions(["reconciliation.run"], () =>
     POST(request()),
   );
-  assert.equal(missingMaster.status, 500);
+  assert.equal(missingMaster.status, 422);
   assert.deepEqual(await missingMaster.json(), {
     error: "Master mapping GODREJ Return tidak tersedia.",
   });
 } finally {
-  process.cwd = originalCwd;
+  activeMapping = previousMapping;
 }
 
 const invalidCustomer = await withPermissions(["reconciliation.run"], () =>

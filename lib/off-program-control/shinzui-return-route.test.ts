@@ -3,6 +3,8 @@ import * as XLSX from "xlsx";
 import { createKinoSalesPostHandler } from "./kino-sales-route.ts";
 import { reconcileShinzuiReturns } from "./return-reconciliation.ts";
 
+async function main(): Promise<void> {
+
 const mime =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
@@ -215,3 +217,9 @@ assert.deepEqual(await corruptResponse.json(), {
 console.log(
   "OK - route Return SHINZUI mencakup izin, field, master, parser aman, masking, integrasi parser nyata, dan sukses.",
 );
+}
+
+main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});

@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import * as XLSX from "xlsx";
 import { POST } from "../../app/api/reconciliation/cussons/purchases/route.ts";
 import { auth } from "../auth.ts";
 import { db } from "../db.ts";
 import { reconcileCussonsPurchases } from "./purchase-reconciliation.ts";
+import { reconciliationStore } from "./reconciliation-store.ts";
 
 const xlsxMime =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -53,6 +51,7 @@ const accurate = workbook("Rincian Faktur Pembelian", [
     ["KODE PCPL", "ISI/CTN", "SATUAN FIX WIN", "KODE BARANG WIN2"],
     ["PC-A", 1, "PCS", "WIN-A"],
   ]);
+let activeMapping: Uint8Array | null = mapping;
 
 function file(content: BlobPart, name: string, type = xlsxMime): File {
   return new File([content], name, { type });
@@ -128,19 +127,12 @@ async function withMaster<T>(
   content: Uint8Array,
   action: () => Promise<T>,
 ): Promise<T> {
-  const root = await mkdtemp(path.join(tmpdir(), "cussons-purchase-route-")),
-    originalCwd = process.cwd;
-  await mkdir(path.join(root, "data", "reconciliation"), { recursive: true });
-  await writeFile(
-    path.join(root, "data", "reconciliation", "CUSSONS_RETURN.xlsx"),
-    content,
-  );
-  process.cwd = () => root;
+  const previous = activeMapping;
+  activeMapping = content;
   try {
     return await action();
   } finally {
-    process.cwd = originalCwd;
-    await rm(root, { recursive: true, force: true });
+    activeMapping = previous;
   }
 }
 
@@ -149,6 +141,12 @@ async function post(mutate?: (form: FormData) => void): Promise<Response> {
 }
 
 async function main(): Promise<void> {
+  Object.defineProperties(reconciliationStore, {
+    getActiveMapping: { configurable: true, value: async () => activeMapping ? { id: "mapping-v2", workbook: Buffer.from(activeMapping) } : null },
+    startReconciliationRun: { configurable: true, value: async () => "run-1" },
+    completeReconciliationRun: { configurable: true, value: async () => {} },
+    failReconciliationRun: { configurable: true, value: async () => {} },
+  });
   let parsedMultipart = false;
   const unauthenticated = await POST(
     Object.assign(new Request("http://localhost", { method: "POST" }), {
@@ -317,16 +315,16 @@ async function main(): Promise<void> {
     assert.deepEqual(await response.json(), { error: message });
   }
 
-  const originalCwd = process.cwd;
-  process.cwd = () => "D:\\definitely-missing-cussons-purchase-master";
+  const previousMapping = activeMapping;
+  activeMapping = null;
   try {
     const missingMaster = await post();
-    assert.equal(missingMaster.status, 500);
+    assert.equal(missingMaster.status, 422);
     assert.deepEqual(await missingMaster.json(), {
       error: "Master mapping CUSSONS Purchase tidak tersedia.",
     });
   } finally {
-    process.cwd = originalCwd;
+    activeMapping = previousMapping;
   }
 
   for (const invalidMaster of [

@@ -1,4 +1,13 @@
+import { createHash } from "node:crypto";
+import { getReconciliationConfig, RECONCILIATION_CONFIG } from "./reconciliation-config";
+import type {
+  ReconciliationActor,
+  ReconciliationInputFile,
+  ReconciliationIssue,
+} from "./reconciliation-store";
+
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_TOTAL_FILE_BYTES = 30 * 1024 * 1024;
 const XLSX_MIMES = new Set([
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/octet-stream",
@@ -270,9 +279,38 @@ export function safeParserMessage(error: unknown): string | null {
     : null;
 }
 
+type ReconciliationOutput = {
+  summary: Record<string, number>;
+  results: ReconciliationIssue[];
+};
+
 interface CommonHandlerDependencies {
-  authorize(request: Request): Promise<Response | null>;
-  readMapping(): Promise<Uint8Array>;
+  reconciliationKey?: keyof typeof RECONCILIATION_CONFIG;
+  authorize(request: Request): Promise<
+    | Response
+    | null
+    | { response: Response | null; actor: ReconciliationActor | null }
+  >;
+  readMapping(): Promise<
+    { id: string; workbook: Uint8Array } | Uint8Array | null
+  >;
+  startReconciliationRun?(input: {
+    division: "sales" | "purchases" | "returns";
+    principalCode: string;
+    mappingVersionId: string;
+    actor: ReconciliationActor;
+    inputFiles: ReconciliationInputFile[];
+  }): Promise<string>;
+  completeReconciliationRun?(
+    id: string,
+    output: ReconciliationOutput,
+    durationMs: number,
+  ): Promise<void>;
+  failReconciliationRun?(
+    id: string,
+    error: string,
+    durationMs: number,
+  ): Promise<void>;
   missingMappingMessage?: string;
   principalUpload?: UploadContract;
   safeParserMessage?: (error: unknown) => string | null;
@@ -308,8 +346,41 @@ function isZip(value: Uint8Array): boolean {
 
 export function createKinoSalesPostHandler(deps: HandlerDependencies) {
   return async (request: Request): Promise<Response> => {
-    const denied = await deps.authorize(request);
-    if (denied) return denied;
+    let authorization: {
+      response: Response | null;
+      actor: ReconciliationActor | null;
+    };
+    try {
+      const result = await deps.authorize(request);
+      authorization = result instanceof Response || result === null
+        ? { response: result, actor: null }
+        : result;
+    } catch {
+      return Response.json(
+        { error: "Rekonsiliasi gagal diproses." },
+        { status: 500 },
+      );
+    }
+    if (authorization.response) return authorization.response;
+    const audited = Boolean(
+      deps.reconciliationKey &&
+      deps.startReconciliationRun &&
+      deps.completeReconciliationRun &&
+      deps.failReconciliationRun,
+    );
+    if (audited && !authorization.actor)
+      return Response.json(
+        { error: "Rekonsiliasi gagal diproses." },
+        { status: 500 },
+      );
+    const config = getReconciliationConfig(
+      ...((deps.reconciliationKey ?? "sales:KINO").split(":") as [
+        "sales" | "purchases" | "returns",
+        string,
+      ]),
+    );
+    const startedAt = Date.now();
+    let runId: string | null = null;
     try {
       const files = validateUploadForm(
         await request.formData().catch(() => {
@@ -318,6 +389,8 @@ export function createKinoSalesPostHandler(deps: HandlerDependencies) {
         deps.principalUpload,
         deps.headerUpload,
       );
+      if (files.reduce((total, file) => total + file.size, 0) > MAX_TOTAL_FILE_BYTES)
+        throw new UploadError("Total file upload melebihi batas 30 MB.", 413);
       const buffers = await Promise.all(
         files.map((file) => file.arrayBuffer()),
       ).then((values) => values.map((value) => new Uint8Array(value)));
@@ -342,18 +415,63 @@ export function createKinoSalesPostHandler(deps: HandlerDependencies) {
         if (csv.includes(0))
           throw new UploadError("File CSV mengandung karakter NUL.", 422);
       }
-      const mapping = await deps.readMapping();
-      return Response.json(
+      const mappingResult = await deps.readMapping();
+      const mapping = mappingResult instanceof Uint8Array
+        ? { id: "legacy", workbook: mappingResult }
+        : mappingResult;
+      if (!mapping)
+        throw new UploadError(
+          deps.missingMappingMessage ??
+            `Master mapping ${config.principal} untuk divisi ${config.division} tidak tersedia.`,
+          422,
+        );
+      const inputFiles = files.map((file, index) => ({
+        role: (deps.headerUpload ? THREE_FILE_FIELDS : TWO_FILE_FIELDS)[index],
+        name: file.name,
+        mimeType: file.type,
+        byteSize: file.size,
+        sha256: createHash("sha256").update(buffers[index]).digest("hex"),
+      }));
+      if (audited)
+        runId = await deps.startReconciliationRun!({
+          division: config.division,
+          principalCode: config.principal,
+          mappingVersionId: mapping.id,
+          actor: authorization.actor!,
+          inputFiles,
+        });
+      const output = (
         deps.headerUpload
           ? deps.reconcile(
               accurate,
               buffers[1],
               buffers[2],
-              mapping,
+              mapping.workbook,
             )
-          : deps.reconcile(accurate, buffers[1], mapping, files[1].name),
-      );
+          : deps.reconcile(
+              accurate,
+              buffers[1],
+              mapping.workbook,
+              files[1].name,
+            )
+      ) as ReconciliationOutput;
+      if (runId)
+        await deps.completeReconciliationRun!(runId, output, Date.now() - startedAt);
+      return Response.json(output);
     } catch (error) {
+      if (runId)
+        try {
+          await deps.failReconciliationRun!(
+            runId,
+            error instanceof Error ? error.message : "Rekonsiliasi gagal diproses.",
+            Date.now() - startedAt,
+          );
+        } catch {
+          return Response.json(
+            { error: "Rekonsiliasi gagal diproses." },
+            { status: 500 },
+          );
+        }
       if (
         error &&
         typeof error === "object" &&
@@ -361,11 +479,7 @@ export function createKinoSalesPostHandler(deps: HandlerDependencies) {
         error.code === "ENOENT"
       )
         return Response.json(
-          {
-            error:
-              deps.missingMappingMessage ??
-              "Master mapping KINO tidak tersedia.",
-          },
+          { error: deps.missingMappingMessage ?? "Master mapping KINO tidak tersedia." },
           { status: 500 },
         );
       const parserMessage =

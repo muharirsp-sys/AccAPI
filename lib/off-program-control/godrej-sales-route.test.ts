@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createKinoSalesPostHandler } from "./kino-sales-route.ts";
 
+async function main(): Promise<void> {
+
 const form = new FormData();
 const mime =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -35,3 +37,9 @@ assert.deepEqual(await response.json(), {
 console.log(
   "OK — handler Godrej memakai validasi upload bersama dan pesan master yang tepat.",
 );
+}
+
+main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});

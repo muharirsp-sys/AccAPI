@@ -1,6 +1,5 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { createKinoSalesPostHandler } from "@/lib/off-program-control/kino-sales-route";
+import { reconciliationStore } from "@/lib/off-program-control/reconciliation-store";
 import { reconcileForisaPurchases } from "@/lib/off-program-control/purchase-reconciliation";
 import { requirePermission } from "@/lib/rbac/resolve";
 
@@ -20,10 +19,17 @@ function safeForisaPurchaseParserMessage(error: unknown): string | null {
 }
 
 export const POST = createKinoSalesPostHandler({
-  authorize: async (request) =>
-    (await requirePermission(request, "reconciliation.run")).response,
-  readMapping: () =>
-    readFile(path.join(process.cwd(), "data", "reconciliation", "FORISA_PURCHASE.xlsx")),
+  reconciliationKey: "purchases:FORISA",
+  authorize: async (request) => {
+    const { response, session } = await requirePermission(request, "reconciliation.run");
+    return { response, actor: session ? { id: session.user.id, name: session.user.name ?? session.user.email, email: session.user.email } : null };
+  },
+  readMapping: () => reconciliationStore.getActiveMapping("purchases", "FORISA"),
+  startReconciliationRun: (input) => reconciliationStore.startReconciliationRun(input),
+  completeReconciliationRun: (id, output, durationMs) =>
+    reconciliationStore.completeReconciliationRun(id, output, durationMs),
+  failReconciliationRun: (id, error, durationMs) =>
+    reconciliationStore.failReconciliationRun(id, error, durationMs),
   reconcile: (accurate, principal, mapping, principalFilename) =>
     reconcileForisaPurchases(accurate, principal, mapping, principalFilename),
   missingMappingMessage: "Master mapping FORISA Purchase tidak tersedia.",

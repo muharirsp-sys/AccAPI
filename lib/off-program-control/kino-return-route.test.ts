@@ -4,6 +4,8 @@ import * as XLSX from "xlsx";
 import { createKinoSalesPostHandler } from "./kino-sales-route.ts";
 import { reconcileKinoReturns } from "./return-reconciliation.ts";
 
+async function main(): Promise<void> {
+
 const mime =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -216,9 +218,16 @@ const route = await readFile(
 assert.match(route, /export const runtime = "nodejs"/);
 assert.match(route, /export const POST = createKinoSalesPostHandler/);
 assert.match(route, /requirePermission\(request, "reconciliation\.run"\)/);
-assert.match(route, /"KINO_RETURN\.xlsx"/);
+assert.match(route, /reconciliationKey: "returns:KINO"/);
+assert.match(route, /reconciliationStore\.getActiveMapping\("returns", "KINO"\)/);
 assert.match(route, /reconcileKinoReturns\(accurate, principal, mapping/);
 
 console.log(
   "OK - route Return KINO mencakup izin, field, master, parser aman, masking, integrasi parser nyata, dan sukses.",
 );
+}
+
+main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});

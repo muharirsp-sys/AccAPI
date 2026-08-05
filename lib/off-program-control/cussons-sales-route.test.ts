@@ -4,6 +4,8 @@ import {
   CSV_MIME_TYPES,
 } from "./kino-sales-route.ts";
 
+async function main(): Promise<void> {
+
 const xlsxMime =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const csv = "Invoice No,Product Code\r\nTI125970,100113936\r\n";
@@ -169,3 +171,9 @@ assert.deepEqual(await maskedResponse.json(), {
 });
 
 console.log("OK - route CUSSONS memvalidasi XLSX + CSV dan menutup detail internal.");
+}
+
+main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});

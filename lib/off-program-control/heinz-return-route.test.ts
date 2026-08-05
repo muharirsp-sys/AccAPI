@@ -9,6 +9,7 @@ import {
   CSV_MIME_TYPES,
 } from "./kino-sales-route.ts";
 import { reconcileHeinzReturns } from "./return-reconciliation.ts";
+import { reconciliationStore } from "./reconciliation-store.ts";
 
 const xlsxMime =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -173,6 +174,16 @@ async function withPermissions<T>(
 }
 
 async function main(): Promise<void> {
+  const master = new Uint8Array(
+    await readFile(new URL("../../data/reconciliation/HEINZ_RETURN.xlsx", import.meta.url)),
+  );
+  let activeMapping: Uint8Array | null = master;
+  Object.defineProperties(reconciliationStore, {
+    getActiveMapping: { configurable: true, value: async () => activeMapping ? { id: "mapping-v2", workbook: Buffer.from(activeMapping) } : null },
+    startReconciliationRun: { configurable: true, value: async () => "run-1" },
+    completeReconciliationRun: { configurable: true, value: async () => {} },
+    failReconciliationRun: { configurable: true, value: async () => {} },
+  });
   let parsedMultipart = false;
   const unauthenticated = await POST(
     Object.assign(new Request("http://localhost", { method: "POST" }), {
@@ -361,25 +372,19 @@ async function main(): Promise<void> {
     });
   }
 
-  const originalCwd = process.cwd;
-  process.cwd = () => "D:\\definitely-missing-heinz-route-master";
+  const previousMapping = activeMapping;
+  activeMapping = null;
   try {
     const missingMaster = await withPermissions(["reconciliation.run"], () =>
       POST(request()),
     );
-    assert.equal(missingMaster.status, 500);
+    assert.equal(missingMaster.status, 422);
     assert.deepEqual(await missingMaster.json(), {
       error: "Master mapping HEINZ Return tidak tersedia.",
     });
   } finally {
-    process.cwd = originalCwd;
+    activeMapping = previousMapping;
   }
-
-  const master = new Uint8Array(
-    await readFile(
-      new URL("../../data/reconciliation/HEINZ_RETURN.xlsx", import.meta.url),
-    ),
-  );
   const sensitiveForm = await request().formData(),
     sensitiveFile = sensitiveForm.get("accurateFile");
   assert.ok(sensitiveFile instanceof File);
