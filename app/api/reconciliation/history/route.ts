@@ -19,8 +19,8 @@ export function createHistoryGetHandler(deps: Dependencies) {
       return NextResponse.json({ error: "Kontrak rekonsiliasi tidak didukung." }, { status: 400 });
     const requestedPage = Number(searchParams.get("page"));
     const requestedPageSize = Number(searchParams.get("pageSize"));
-    const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
-    const pageSize = Number.isInteger(requestedPageSize) && requestedPageSize > 0 ? Math.min(100, requestedPageSize) : 20;
+    const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const pageSize = Number.isSafeInteger(requestedPageSize) && requestedPageSize > 0 ? Math.min(100, requestedPageSize) : 20;
     const items = await deps.listReconciliationRuns({ division: division as ReconciliationDivision, principalCode: principal, page, pageSize });
     return NextResponse.json({ items, page, pageSize });
   };

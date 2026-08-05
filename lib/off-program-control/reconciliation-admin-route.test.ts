@@ -78,6 +78,9 @@ async function main() {
   const invalidPage = await history(new Request("http://localhost/api/reconciliation/history?division=sales&principal=KINO&page=Infinity&pageSize=1.5"));
   assert.deepEqual(await invalidPage.json(), { items: [{ id: "r1" }], page: 1, pageSize: 20 });
   assert.deepEqual(historyFilter, { division: "sales", principalCode: "KINO", page: 1, pageSize: 20 });
+  const unsafePage = await history(new Request("http://localhost/api/reconciliation/history?division=sales&principal=KINO&page=1e308&pageSize=1e308"));
+  assert.deepEqual(await unsafePage.json(), { items: [{ id: "r1" }], page: 1, pageSize: 20 });
+  assert.deepEqual(historyFilter, { division: "sales", principalCode: "KINO", page: 1, pageSize: 20 });
 }
 
 main().catch((error) => {
