@@ -6,7 +6,6 @@ import {
   type ReconciliationActor,
   type ReconciliationDivision,
   type ReconciliationMappingMetadata,
-  type ReconciliationMappingRow,
 } from "@/lib/off-program-control/reconciliation-store";
 import { requirePermission } from "@/lib/rbac/resolve";
 
@@ -15,7 +14,6 @@ export const runtime = "nodejs";
 type Authorization = { response: Response | null; actor: ReconciliationActor | null };
 type Dependencies = {
   authorize(request: Request, permission: "reconciliation.view" | "reconciliation.manage"): Promise<Authorization>;
-  getActiveMapping(division: ReconciliationDivision, principal: string): Promise<Omit<ReconciliationMappingRow, "isActive"> | null>;
   listMappingVersions(division: ReconciliationDivision, principal: string): Promise<ReconciliationMappingMetadata[]>;
   activateMapping(input: { division: ReconciliationDivision; principalCode: string; originalName: string; mimeType: string; workbook: Buffer; actor: ReconciliationActor }): Promise<ReconciliationMappingMetadata>;
   validateMapping(division: ReconciliationDivision, principal: string, workbook: Buffer): void;
@@ -40,13 +38,8 @@ export function createMappingsHandlers(deps: Dependencies) {
       if (gate.response) return gate.response;
       const key = registryKey(request);
       if (!key) return NextResponse.json({ error: "Kontrak rekonsiliasi tidak didukung." }, { status: 400 });
-      const [active, versions] = await Promise.all([
-        deps.getActiveMapping(key.division, key.principal),
-        deps.listMappingVersions(key.division, key.principal),
-      ]);
-      const { workbook: _workbook, ...activeMetadata } = active ?? {};
-      void _workbook;
-      return NextResponse.json({ active: active ? activeMetadata : null, versions });
+      const versions = await deps.listMappingVersions(key.division, key.principal);
+      return NextResponse.json({ active: versions.find((version) => version.isActive) ?? null, versions });
     },
 
     async POST(request: Request) {
@@ -94,7 +87,6 @@ const handlers = createMappingsHandlers({
       actor: session ? { id: session.user.id, name: session.user.name ?? session.user.email, email: session.user.email } : null,
     };
   },
-  getActiveMapping: (division, principal) => reconciliationStore.getActiveMapping(division, principal),
   listMappingVersions: (division, principal) => reconciliationStore.listMappingVersions(division, principal),
   activateMapping: (input) => reconciliationStore.activateMapping(input),
   validateMapping: validateReconciliationMapping,

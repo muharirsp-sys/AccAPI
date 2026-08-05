@@ -116,6 +116,7 @@ async function main() {
   const versions = await store.listMappingVersions("sales", "KINO");
   assert.deepEqual(versions.map((row) => row.version), [2, 1]);
   assert.ok(versions.every((row) => !("workbook" in row)));
+  assert.equal(versions.find((row) => row.isActive)?.version, 2);
 
   const active = await store.getActiveMapping("sales", "KINO");
   assert.equal(active?.version, 2);

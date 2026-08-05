@@ -25,7 +25,6 @@ async function main() {
         ? { response: forbidden, actor: null }
         : { response: unauthorized, actor: null };
     },
-    getActiveMapping: async () => null,
     listMappingVersions: async () => [],
     activateMapping: async () => { throw new Error("must not activate"); },
     validateMapping: () => undefined,
@@ -36,8 +35,7 @@ async function main() {
 
   const authorized = createMappingsHandlers({
     authorize: async () => ({ response: null, actor }),
-    getActiveMapping: async () => ({ id: "m1", division: "sales", principalCode: "KINO", version: 1, workbook: Buffer.from("secret") } as never),
-    listMappingVersions: async () => [{ id: "m1", division: "sales", principalCode: "KINO", version: 1 } as never],
+    listMappingVersions: async () => [{ id: "m1", division: "sales", principalCode: "KINO", version: 1, isActive: true } as never],
     activateMapping: async (input) => ({ id: "m2", division: input.division, principalCode: input.principalCode, version: 2 }),
     validateMapping: (_division, _principal, workbook) => {
       if (workbook.toString() === "invalid") throw new Error("Workbook mapping invalid");
