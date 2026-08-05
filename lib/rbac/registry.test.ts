@@ -26,6 +26,7 @@ assert.ok(isValidPermissionKey("off_program_control.sm_approve"), "key OPC valid
 assert.ok(!isValidPermissionKey("off_program_control.nope"), "key tak terdaftar harus ditolak");
 assert.ok(isValidPermissionKey("reconciliation.view"));
 assert.ok(isValidPermissionKey("reconciliation.run"));
+assert.ok(isValidPermissionKey("reconciliation.manage"));
 assert.deepEqual(getPagePermission("/reconciliation"), {
     prefix: "/reconciliation",
     module: "reconciliation",

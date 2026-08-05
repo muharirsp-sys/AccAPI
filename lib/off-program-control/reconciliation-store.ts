@@ -24,6 +24,8 @@ export type ReconciliationMappingRow = {
   createdAt: Date;
 };
 
+export type ReconciliationMappingMetadata = Omit<ReconciliationMappingRow, "workbook" | "isActive"> & { isActive?: boolean };
+
 export type ReconciliationInputFile = {
   role: string;
   name: string;
@@ -55,6 +57,7 @@ export type ReconciliationRunRow = {
 export interface ReconciliationDatabase {
   transaction<T>(callback: (database: ReconciliationDatabase) => Promise<T>): Promise<T>;
   findActiveMapping(division: string, principalCode: string): Promise<ReconciliationMappingRow | null>;
+  findMappings(division: string, principalCode: string): Promise<ReconciliationMappingMetadata[]>;
   nextMappingVersion(division: string, principalCode: string): Promise<number>;
   deactivateMappings(division: string, principalCode: string): Promise<void>;
   insertMapping(row: ReconciliationMappingRow): Promise<void>;
@@ -76,6 +79,26 @@ function createDrizzleDatabase(database: DrizzleExecutor): ReconciliationDatabas
         eq(reconciliationMappingVersion.isActive, true),
       )).limit(1);
       return (row as ReconciliationMappingRow | undefined) ?? null;
+    },
+    async findMappings(division, principalCode) {
+      return database.select({
+        id: reconciliationMappingVersion.id,
+        division: reconciliationMappingVersion.division,
+        principalCode: reconciliationMappingVersion.principalCode,
+        version: reconciliationMappingVersion.version,
+        originalName: reconciliationMappingVersion.originalName,
+        mimeType: reconciliationMappingVersion.mimeType,
+        byteSize: reconciliationMappingVersion.byteSize,
+        sha256: reconciliationMappingVersion.sha256,
+        uploadedBy: reconciliationMappingVersion.uploadedBy,
+        uploadedByName: reconciliationMappingVersion.uploadedByName,
+        uploadedByEmail: reconciliationMappingVersion.uploadedByEmail,
+        isActive: reconciliationMappingVersion.isActive,
+        createdAt: reconciliationMappingVersion.createdAt,
+      }).from(reconciliationMappingVersion).where(and(
+        eq(reconciliationMappingVersion.division, division),
+        eq(reconciliationMappingVersion.principalCode, principalCode),
+      )).orderBy(desc(reconciliationMappingVersion.version)) as Promise<ReconciliationMappingMetadata[]>;
     },
     async nextMappingVersion(division, principalCode) {
       const [row] = await database.select({ version: sql<number>`coalesce(max(${reconciliationMappingVersion.version}), 0) + 1` })
@@ -122,6 +145,10 @@ export function createReconciliationStore(database: ReconciliationDatabase) {
       const { isActive: _isActive, ...mapping } = row;
       void _isActive;
       return mapping;
+    },
+
+    listMappingVersions(division: ReconciliationDivision, principalCode: string) {
+      return database.findMappings(division, principalCode);
     },
 
     activateMapping(input: {

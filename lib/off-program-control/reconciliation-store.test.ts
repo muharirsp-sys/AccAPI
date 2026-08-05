@@ -33,6 +33,13 @@ class FakeDatabase implements ReconciliationDatabase {
     ) ?? null;
   }
 
+  async findMappings(division: string, principalCode: string) {
+    return this.mappings
+      .filter((row) => row.division === division && row.principalCode === principalCode)
+      .sort((left, right) => right.version - left.version)
+      .map(({ workbook: _workbook, ...row }) => row);
+  }
+
   async nextMappingVersion(division: string, principalCode: string) {
     return Math.max(
       0,
@@ -106,6 +113,9 @@ async function main() {
   assert.equal(next.sha256, "a6375ee99716acf4635ba3c192f7578a85ad4b479d09174e7d80d01aa91443af");
   assert.equal(fakeDb.activeVersions("sales", "KINO"), 1);
   assert.equal("workbook" in next, false);
+  const versions = await store.listMappingVersions("sales", "KINO");
+  assert.deepEqual(versions.map((row) => row.version), [2, 1]);
+  assert.ok(versions.every((row) => !("workbook" in row)));
 
   const active = await store.getActiveMapping("sales", "KINO");
   assert.equal(active?.version, 2);
