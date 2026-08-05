@@ -51,7 +51,9 @@ Perubahan schema dimulai dari migration SQL baru dan kemudian dicerminkan ke `db
 | `byte_size` | integer | Maksimal 10 MiB |
 | `sha256` | text | Hash hexadecimal 64 karakter |
 | `workbook` | bytea | Workbook asli |
-| `uploaded_by` | text | Foreign key ke `user.id`, delete restricted |
+| `uploaded_by` | text | Snapshot ID aktor, termasuk mode admin lokal |
+| `uploaded_by_name` | text | Snapshot nama aktor |
+| `uploaded_by_email` | text | Snapshot email aktor |
 | `is_active` | boolean | Tepat satu versi aktif per divisi-principle |
 | `created_at` | timestamp | Waktu unggah |
 
@@ -74,7 +76,9 @@ Aktivasi mapping dilakukan dalam satu transaksi: versi lama dinonaktifkan, versi
 | `principal_code` | text | Kode principle |
 | `mapping_version_id` | text | Foreign key restricted ke mapping yang digunakan |
 | `status` | text | `processing`, `success`, atau `failed` |
-| `uploaded_by` | text | Foreign key restricted ke `user.id` |
+| `uploaded_by` | text | Snapshot ID aktor, termasuk mode admin lokal |
+| `uploaded_by_name` | text | Snapshot nama aktor |
+| `uploaded_by_email` | text | Snapshot email aktor |
 | `input_files` | jsonb | Peran file, nama, MIME, ukuran, SHA-256 |
 | `summary` | jsonb | Ringkasan status dan jumlah baris |
 | `issues` | jsonb | Hanya hasil selain `MATCH` |
@@ -195,7 +199,7 @@ Migration tidak otomatis diterapkan ke database production. Penerapan production
 
 - **Database membesar:** mapping dibatasi 10 MiB dan immutable; hasil MATCH serta file input tidak disimpan.
 - **Dua mapping aktif:** dicegah transaksi dan partial unique index.
-- **Riwayat kehilangan referensi:** foreign key memakai delete restricted.
+- **Riwayat kehilangan identitas:** ID, nama, dan email aktor disimpan sebagai snapshot sehingga audit tetap terbaca jika akun berubah atau dihapus.
 - **Mapping salah:** parser principle dijalankan sebelum aktivasi.
 - **Route drift dari registry:** test memastikan 15 konfigurasi mempunyai route fisik.
 - **Regresi rumus:** mesin rekonsiliasi tidak direstrukturisasi; seluruh test lama tetap dijalankan.
