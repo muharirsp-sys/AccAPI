@@ -42,6 +42,9 @@ export const salesHistoryItem = sqliteTable(
         ppn: real("ppn").notNull(),
         sourceFile: text("source_file").notNull(),     // nama file asal -> re-import idempotent
         keterangan: text("keterangan").notNull().default(""), // kolom REM sumber — referensi PO/SO, format bebas per principal
+        batchId: integer("batch_id").notNull().default(0),
+        flags: text("flags").notNull().default(""),
+        published: integer("published").notNull().default(0),
     },
     (t) => [
         index("idx_shi_referensi").on(t.referensi),
@@ -69,6 +72,9 @@ export const invoiceMap = sqliteTable(
         kodeCust: text("kode_cust").notNull(),
         principal: text("principal").notNull(),
         tanggal: text("tanggal").notNull(),          // ISO yyyy-mm-dd
+        batchId: integer("batch_id").notNull().default(0),
+        principalNorm: text("principal_norm").notNull().default(""),
+        published: integer("published").notNull().default(0),
     },
     (t) => [
         index("idx_im_principal").on(t.principal),
@@ -112,6 +118,15 @@ export function ensureSalesHistorySchema(): Promise<void> {
             if (!itemColumns.rows.some((row) => String(row.name || "") === "keterangan")) {
                 await salesClient.execute("ALTER TABLE sales_history_item ADD COLUMN keterangan TEXT NOT NULL DEFAULT ''");
             }
+            if (!itemColumns.rows.some((row) => String(row.name || "") === "batch_id")) {
+                await salesClient.execute("ALTER TABLE sales_history_item ADD COLUMN batch_id INTEGER NOT NULL DEFAULT 0");
+            }
+            if (!itemColumns.rows.some((row) => String(row.name || "") === "flags")) {
+                await salesClient.execute("ALTER TABLE sales_history_item ADD COLUMN flags TEXT NOT NULL DEFAULT ''");
+            }
+            if (!itemColumns.rows.some((row) => String(row.name || "") === "published")) {
+                await salesClient.execute("ALTER TABLE sales_history_item ADD COLUMN published INTEGER NOT NULL DEFAULT 0");
+            }
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_shi_referensi ON sales_history_item(referensi)`);
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_shi_tanggal ON sales_history_item(tanggal)`);
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_shi_customer ON sales_history_item(customer_nama)`);
@@ -131,6 +146,16 @@ export function ensureSalesHistorySchema(): Promise<void> {
                 principal TEXT NOT NULL,
                 tanggal TEXT NOT NULL
             )`);
+            const invoiceMapColumns = await salesClient.execute("PRAGMA table_info(invoice_map)");
+            if (!invoiceMapColumns.rows.some((row) => String(row.name || "") === "batch_id")) {
+                await salesClient.execute("ALTER TABLE invoice_map ADD COLUMN batch_id INTEGER NOT NULL DEFAULT 0");
+            }
+            if (!invoiceMapColumns.rows.some((row) => String(row.name || "") === "principal_norm")) {
+                await salesClient.execute("ALTER TABLE invoice_map ADD COLUMN principal_norm TEXT NOT NULL DEFAULT ''");
+            }
+            if (!invoiceMapColumns.rows.some((row) => String(row.name || "") === "published")) {
+                await salesClient.execute("ALTER TABLE invoice_map ADD COLUMN published INTEGER NOT NULL DEFAULT 0");
+            }
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_im_principal ON invoice_map(principal)`);
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_im_kode_cust ON invoice_map(kode_cust)`);
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_im_principal_kode_cust ON invoice_map(principal, kode_cust)`);
