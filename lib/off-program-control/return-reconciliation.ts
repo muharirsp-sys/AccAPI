@@ -180,7 +180,7 @@ function invoiceFromRem(value: unknown, row: number): string {
   return matches[0];
 }
 
-function parseMappings(buffer: Buffer | Uint8Array): Map<string, string[]> {
+export function parseMappings(buffer: Buffer | Uint8Array): Map<string, string[]> {
   const rows = readRows(buffer, "Fix Mapping"),
     required = [
       "KODE BARANG",
@@ -210,7 +210,7 @@ function parseMappings(buffer: Buffer | Uint8Array): Map<string, string[]> {
   return mappings;
 }
 
-function parseKinoReturnMappings(
+export function parseKinoReturnMappings(
   buffer: Buffer | Uint8Array,
 ): Map<string, string> {
   const rows = readRows(buffer, "Table Pvt 1"),
@@ -246,7 +246,7 @@ function parseKinoReturnMappings(
   return mappings;
 }
 
-function parseGodrejMappings(buffer: Buffer | Uint8Array): {
+export function parseGodrejMappings(buffer: Buffer | Uint8Array): {
   codes: Map<string, string[]>;
   names: Map<string, string[]>;
 } {
@@ -288,7 +288,7 @@ function parseGodrejMappings(buffer: Buffer | Uint8Array): {
   return { codes, names };
 }
 
-function parseHeinzMappings(
+export function parseHeinzMappings(
   buffer: Buffer | Uint8Array,
 ): Map<string, string> {
   const rows = readRows(buffer, "Fix Mapping"),

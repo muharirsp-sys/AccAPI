@@ -166,7 +166,7 @@ function table(
   throw new Error(`Header wajib tidak ditemukan: ${required.join(", ")}`);
 }
 
-function parseMappings(buffer: Buffer | Uint8Array): Mappings {
+export function parseMappings(buffer: Buffer | Uint8Array): Mappings {
   const allRows = rows(buffer, "Form Fix"),
     required = ["Nama Barang Principle", "Kode BARANG Win2", "ISI/CTN"],
     { headerRow, indexes } = table(allRows, required),
@@ -336,7 +336,7 @@ function parsePrincipal(
   return lines;
 }
 
-function parseReckittMappings(buffer: Buffer | Uint8Array): ReckittMappings {
+export function parseReckittMappings(buffer: Buffer | Uint8Array): ReckittMappings {
   const allRows = rows(buffer, "Pvt Map 1"),
     required = ["Kode BARANG Win2", "Kode Pcpl", "ISI/CTN"],
     { headerRow, indexes } = table(allRows, required),
@@ -377,7 +377,7 @@ function parseReckittMappings(buffer: Buffer | Uint8Array): ReckittMappings {
   return { byPrincipalCode, byWinCode };
 }
 
-function parseKinoPurchaseMappings(buffer: Buffer | Uint8Array): KinoPurchaseMappings {
+export function parseKinoPurchaseMappings(buffer: Buffer | Uint8Array): KinoPurchaseMappings {
   const allRows = rows(buffer, "Table Pvt 1"),
     required = ["Kode Barang Win", "Kode Pcpl", "ISI/CTN"],
     { headerRow, indexes } = table(allRows, required),
@@ -564,7 +564,7 @@ function addForisaMapping(
   map.set(key, values);
 }
 
-function parseForisaMappings(buffer: Buffer | Uint8Array): ForisaMappings {
+export function parseForisaMappings(buffer: Buffer | Uint8Array): ForisaMappings {
   const allRows = rows(buffer, "Upload To Win"),
     required = ["Kode Pcpl", "Kode BARANG Win2", "Nama Win", "ISI/CTN"],
     { headerRow, indexes } = table(allRows, required),
