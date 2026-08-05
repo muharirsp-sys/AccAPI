@@ -5,7 +5,8 @@
  * Main Functions: Definisi tabel auth, operasional, assignment hierarki, reportRun, dan recipient.
  * Side Effects: Definisi schema untuk DB read/write PostgreSQL oleh caller.
  */
-import { pgTable, text, integer, bigint, doublePrecision, timestamp, boolean, jsonb, index, uniqueIndex, primaryKey } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, integer, bigint, doublePrecision, timestamp, boolean, jsonb, index, uniqueIndex, primaryKey, check, customType } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
     id: text("id").primaryKey(),
@@ -183,6 +184,60 @@ export const accurateOAuthSession = pgTable("accurate_oauth_session", {
 });
 
 // --- OFF Program Control --- //
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+    dataType: () => "bytea",
+});
+
+export const reconciliationMappingVersion = pgTable("reconciliation_mapping_version", {
+    id: text("id").primaryKey(),
+    division: text("division").notNull(),
+    principalCode: text("principal_code").notNull(),
+    version: integer("version").notNull(),
+    originalName: text("original_name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    sha256: text("sha256").notNull(),
+    workbook: bytea("workbook").notNull(),
+    uploadedBy: text("uploaded_by").notNull(),
+    uploadedByName: text("uploaded_by_name").notNull(),
+    uploadedByEmail: text("uploaded_by_email").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at").notNull(),
+}, (t) => [
+    check("reconciliation_mapping_version_division_check", sql`${t.division} IN ('sales', 'purchases', 'returns')`),
+    check("reconciliation_mapping_version_version_check", sql`${t.version} > 0`),
+    check("reconciliation_mapping_version_byte_size_check", sql`${t.byteSize} > 0 AND ${t.byteSize} <= 10485760`),
+    check("reconciliation_mapping_version_sha256_check", sql`length(${t.sha256}) = 64`),
+    uniqueIndex("reconciliation_mapping_version_key_idx").on(t.division, t.principalCode, t.version),
+    uniqueIndex("reconciliation_mapping_version_active_idx").on(t.division, t.principalCode).where(sql`${t.isActive} = true`),
+    index("reconciliation_mapping_version_lookup_idx").on(t.division, t.principalCode, t.createdAt),
+]);
+
+export const reconciliationRun = pgTable("reconciliation_run", {
+    id: text("id").primaryKey(),
+    division: text("division").notNull(),
+    principalCode: text("principal_code").notNull(),
+    mappingVersionId: text("mapping_version_id").notNull().references(() => reconciliationMappingVersion.id, { onDelete: "restrict" }),
+    status: text("status").notNull(),
+    uploadedBy: text("uploaded_by").notNull(),
+    uploadedByName: text("uploaded_by_name").notNull(),
+    uploadedByEmail: text("uploaded_by_email").notNull(),
+    inputFiles: jsonb("input_files").notNull(),
+    summary: jsonb("summary"),
+    issues: jsonb("issues"),
+    error: text("error"),
+    durationMs: integer("duration_ms"),
+    startedAt: timestamp("started_at").notNull(),
+    finishedAt: timestamp("finished_at"),
+}, (t) => [
+    check("reconciliation_run_division_check", sql`${t.division} IN ('sales', 'purchases', 'returns')`),
+    check("reconciliation_run_status_check", sql`${t.status} IN ('processing', 'success', 'failed')`),
+    check("reconciliation_run_duration_ms_check", sql`${t.durationMs} IS NULL OR ${t.durationMs} >= 0`),
+    index("reconciliation_run_lookup_idx").on(t.division, t.principalCode, t.startedAt),
+    index("reconciliation_run_uploader_idx").on(t.uploadedBy, t.startedAt),
+    index("reconciliation_run_mapping_version_idx").on(t.mappingVersionId),
+]);
 
 export const offBatch = pgTable("off_batch", {
     id: text("id").primaryKey(),
