@@ -26,8 +26,11 @@ for (const key of reconciliationKeys()) {
   assert.equal(config.inputs.length, key === "returns:HEINZ" ? 3 : 2, key);
 }
 
-for (const principal of ["KINO", "FORISA"])
-  assert.equal(getReconciliationConfig("purchases", principal).inputs[1].extension, ".xlsx");
+for (const principal of ["KINO", "FORISA"]) {
+  const principalInput = getReconciliationConfig("purchases", principal).inputs[1];
+  assert.equal(principalInput.extension, ".xlsx");
+  assert.equal(principalInput.accept, ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+}
 
 for (const key of [
   "sales:CUSSONS",
@@ -35,7 +38,9 @@ for (const key of [
   "returns:GODREJ", "returns:HEINZ", "returns:CUSSONS",
 ]) {
   const [division, principal] = key.split(":") as ["sales" | "purchases" | "returns", string];
-  assert.equal(getReconciliationConfig(division, principal).inputs.at(-1)?.extension, ".csv", key);
+  const principalInput = getReconciliationConfig(division, principal).inputs.at(-1);
+  assert.equal(principalInput?.extension, ".csv", key);
+  assert.equal(principalInput?.accept, ".csv,text/csv,application/csv", key);
 }
 
 function workbook(sheets: Record<string, unknown[][]>): Uint8Array {
