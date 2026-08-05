@@ -17,8 +17,10 @@ export function createHistoryGetHandler(deps: Dependencies) {
     const principal = searchParams.get("principal") ?? "";
     if (!reconciliationKeys().includes(`${division}:${principal}`))
       return NextResponse.json({ error: "Kontrak rekonsiliasi tidak didukung." }, { status: 400 });
-    const page = Math.max(1, Math.trunc(Number(searchParams.get("page"))) || 1);
-    const pageSize = Math.min(100, Math.max(1, Math.trunc(Number(searchParams.get("pageSize"))) || 20));
+    const requestedPage = Number(searchParams.get("page"));
+    const requestedPageSize = Number(searchParams.get("pageSize"));
+    const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const pageSize = Number.isInteger(requestedPageSize) && requestedPageSize > 0 ? Math.min(100, requestedPageSize) : 20;
     const items = await deps.listReconciliationRuns({ division: division as ReconciliationDivision, principalCode: principal, page, pageSize });
     return NextResponse.json({ items, page, pageSize });
   };

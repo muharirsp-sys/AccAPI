@@ -459,11 +459,17 @@ export function createKinoSalesPostHandler(deps: HandlerDependencies) {
         await deps.completeReconciliationRun!(runId, output, Date.now() - startedAt);
       return Response.json(output);
     } catch (error) {
+      const parserMessage =
+        safeParserMessage(error) ?? deps.safeParserMessage?.(error) ?? null;
+      const safeMessage =
+        error instanceof UploadError
+          ? error.message
+          : (parserMessage ?? "Rekonsiliasi gagal diproses.");
       if (runId)
         try {
           await deps.failReconciliationRun!(
             runId,
-            error instanceof Error ? error.message : "Rekonsiliasi gagal diproses.",
+            safeMessage,
             Date.now() - startedAt,
           );
         } catch {
@@ -482,15 +488,8 @@ export function createKinoSalesPostHandler(deps: HandlerDependencies) {
           { error: deps.missingMappingMessage ?? "Master mapping KINO tidak tersedia." },
           { status: 500 },
         );
-      const parserMessage =
-        safeParserMessage(error) ?? deps.safeParserMessage?.(error) ?? null;
       return Response.json(
-        {
-          error:
-            error instanceof UploadError
-              ? error.message
-              : (parserMessage ?? "Rekonsiliasi gagal diproses."),
-        },
+        { error: safeMessage },
         {
           status:
             error instanceof UploadError

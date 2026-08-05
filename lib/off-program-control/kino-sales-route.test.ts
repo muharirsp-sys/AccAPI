@@ -121,15 +121,19 @@ assert.equal(missingResponse.status, 422);
 assert.deepEqual(await missingResponse.json(), { error: "Master mapping KINO untuk divisi sales tidak tersedia." });
 
 let failedStatus = "processing";
+let persistedFailure = "";
 const reconciliationFailure = createKinoSalesPostHandler({
   ...audit,
   authorize: async () => ({ response: null, actor }),
   readMapping: async () => ({ id: "mapping-v2", workbook: new Uint8Array([80, 75, 3, 4]) }),
-  failReconciliationRun: async () => { failedStatus = "failed"; },
-  reconcile: () => { throw new Error("parser exploded"); },
+  failReconciliationRun: async (_runId, message) => { failedStatus = "failed"; persistedFailure = message; },
+  reconcile: () => { throw new Error("password=super-secret C:\\private\\mapping.xlsx"); },
 });
-assert.equal((await reconciliationFailure(request())).status, 500);
+const reconciliationFailureResponse = await reconciliationFailure(request());
+assert.equal(reconciliationFailureResponse.status, 500);
+assert.deepEqual(await reconciliationFailureResponse.json(), { error: "Rekonsiliasi gagal diproses." });
 assert.equal(failedStatus, "failed");
+assert.equal(persistedFailure, "Rekonsiliasi gagal diproses.");
 
 const auditFailure = createKinoSalesPostHandler({
   ...audit,

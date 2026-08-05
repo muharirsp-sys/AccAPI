@@ -103,7 +103,7 @@ test("uses the registry and shows mapping access plus paginated persisted histor
     const requestedPrincipal = url.searchParams.get("principal")!;
     const requestedMapping = { ...mapping, id: `mapping-${requestedPrincipal.toLowerCase()}`, principalCode: requestedPrincipal, originalName: `mapping-${requestedPrincipal.toLowerCase()}.xlsx` };
     const canManage = requestedPrincipal !== "GODREJ";
-    await route.fulfill({ json: { active: requestedMapping, versions: [requestedMapping], canManage } });
+    await route.fulfill({ json: { active: requestedMapping, versions: [requestedMapping, { ...requestedMapping, id: `${requestedMapping.id}-old`, version: 2, originalName: `mapping-${requestedPrincipal.toLowerCase()}-lama.xlsx`, uploadedByName: "Budi Admin", createdAt: "2026-08-01T02:30:00.000Z", isActive: false }], canManage } });
   });
   await page.route("**/api/reconciliation/history?**", async (route) => {
     const url = new URL(route.request().url());
@@ -134,16 +134,20 @@ test("uses the registry and shows mapping access plus paginated persisted histor
   await expect(page.getByLabel("Prinsipal").locator("option")).toHaveText(["KINO", "GODREJ", "SHINZUI", "MOTASA", "CUSSONS"]);
   await page.getByRole("button", { name: "Pembelian" }).click();
   await expect(page.getByLabel("Prinsipal").locator("option")).toHaveText(["GODREJ", "RECKITT", "CUSSONS", "KINO", "FORISA"]);
-  await expect(page.getByText("mapping-godrej.xlsx", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Stempel versi mapping").getByText("mapping-godrej.xlsx", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Ganti mapping")).toHaveCount(0);
   await page.getByRole("button", { name: "Return" }).click();
   await expect(page.getByLabel("Prinsipal").locator("option")).toHaveText(["SHINZUI", "KINO", "GODREJ", "HEINZ", "CUSSONS"]);
   await page.getByRole("button", { name: "Faktur" }).click();
 
-  await expect(page.getByText("mapping-kino.xlsx", { exact: true })).toBeVisible();
   const mappingStatus = page.getByRole("region", { name: "Mapping aktif" });
-  await expect(mappingStatus.getByText("mapping-kino.xlsx", { exact: true })).toBeVisible();
-  await expect(mappingStatus.getByText("Versi 3", { exact: true })).toBeVisible();
+  const mappingStamp = mappingStatus.getByLabel("Stempel versi mapping");
+  await expect(mappingStamp.getByText("mapping-kino.xlsx", { exact: true })).toBeVisible();
+  await expect(mappingStamp.getByText("Versi 3", { exact: true })).toBeVisible();
+  await expect(mappingStamp.getByText("Admin Mapping", { exact: true })).toBeVisible();
+  const mappingHistory = page.getByRole("region", { name: "Riwayat versi mapping" });
+  await expect(mappingHistory.getByText("mapping-kino-lama.xlsx", { exact: true })).toBeVisible();
+  await expect(mappingHistory.getByText("Budi Admin", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Ganti mapping")).toBeVisible();
   const history = page.getByRole("region", { name: "Riwayat rekonsiliasi" });
   await expect(history.getByText("Berhasil", { exact: true }).first()).toBeVisible();

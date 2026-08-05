@@ -593,6 +593,7 @@ export default function ReconciliationPage() {
               <div aria-label="Stempel versi mapping" className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                 <span className="rounded-md bg-indigo-500/15 px-2 py-1 font-semibold text-indigo-300">Versi {mapping.active.version}</span>
                 <span className="font-medium text-slate-200">{mapping.active.originalName}</span>
+                <span className="text-slate-300">{mapping.active.uploadedByName}</span>
                 <span className="text-slate-400">{dateTime.format(new Date(mapping.active.createdAt))}</span>
               </div>
             ) : <p className="mt-2 text-sm text-slate-400">Belum ada mapping aktif.</p>}
@@ -609,6 +610,20 @@ export default function ReconciliationPage() {
             </div>
           )}
         </div>
+        {mapping.versions.length > 0 && (
+          <div role="region" aria-label="Riwayat versi mapping" className="mt-4 border-t border-white/10 pt-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Riwayat versi</p>
+            <ul className="flex flex-wrap gap-2">
+              {mapping.versions.map((item) => (
+                <li key={item.id} className="rounded-lg bg-black/20 px-3 py-2 text-xs text-slate-300">
+                  <span className="font-semibold text-slate-200">Versi {item.version}</span>{" · "}
+                  <span>{item.originalName}</span>{" · "}<span>{item.uploadedByName}</span>{" · "}
+                  <span className="text-slate-400">{dateTime.format(new Date(item.createdAt))}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
 
       <section className="overflow-hidden rounded-3xl border border-white/10 bg-[#1a1c23]/60 shadow-xl backdrop-blur-xl">
