@@ -99,6 +99,16 @@ async function main() {
         kodeObjek: colIndex(header, "KODE_OBJEK", "KODE OBJEK"),
     };
 
+    const requiredCols = { ref: idx.ref, tanggal: idx.tanggal, principal: idx.principal, custKode: idx.custKode };
+    const missingCols = Object.entries(requiredCols)
+        .filter(([, i]) => i < 0)
+        .map(([name]) => name);
+    if (missingCols.length > 0) {
+        throw new Error(
+            `Kolom wajib tidak ditemukan di header: ${missingCols.join(", ")}. Header aktual: ${JSON.stringify(header)}`,
+        );
+    }
+
     let success = 0;
     let failed = 0;
     const seenInvoiceRefs = new Set();
@@ -147,7 +157,17 @@ async function main() {
         args: [success, failed, batchId],
     });
     console.log(`Batch #${batchId}: staging+mapping selesai — sukses=${success}, gagal_parse=${failed}`);
+    if (success === 0 && dataRows.length > 0) {
+        console.error(
+            `PERINGATAN: Batch #${batchId} — 0 baris sukses dari ${dataRows.length} baris. Cek apakah header/kolom cocok atau file memang tidak berisi referensi INV/.`,
+        );
+    }
     console.log(`Lanjut: node scripts/validate-sales-history-batch.mjs --batch ${batchId}`);
 }
 
-main().then(() => db.close());
+main()
+    .catch((error) => {
+        console.error(error);
+        process.exitCode = 1;
+    })
+    .finally(() => db.close());
