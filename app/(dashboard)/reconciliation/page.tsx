@@ -50,7 +50,7 @@ type HistoryRun = {
   uploadedByName: string;
   inputFiles: { role: string; name: string }[];
   summary: Record<string, number> | null;
-  issues: { status: string; [key: string]: unknown }[] | null;
+  issues: (ReconciliationResult | ReturnReconciliationResult)[] | null;
   error: string | null;
   durationMs: number | null;
   startedAt: string;
@@ -174,11 +174,10 @@ function fileSize(bytes: number): string {
 const dateTime = new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short" });
 const historyStatus = { processing: "Diproses", success: "Berhasil", failed: "Gagal" } as const;
 
-function persistedCauses(issue: NonNullable<HistoryRun["issues"]>[number]): string[] {
-  const values = [issue.causes, issue.cause, issue.reason, issue.error, issue.warnings]
-    .flatMap((value) => Array.isArray(value) ? value : typeof value === "string" ? [value] : [])
-    .filter((value): value is string => typeof value === "string");
-  return values.length ? values : [issue.status];
+function persistedCauseLines(issue: NonNullable<HistoryRun["issues"]>[number], division: Division, principal: Principal): string[] {
+  return division === "FAKTUR"
+    ? causeLines(issue as ReconciliationResult, principal)
+    : returnCauseLines(issue as ReturnReconciliationResult, principal);
 }
 
 function columnsFor(principal: Principal): ColumnDef<ReconciliationResult>[] {
@@ -738,7 +737,7 @@ export default function ReconciliationPage() {
                       {run.issues?.length ? run.issues.map((issue, index) => (
                         <div key={`${run.id}-${index}`} className="mb-2 last:mb-0">
                           <p className="font-semibold">{issue.status}</p>
-                          <ul className="list-disc pl-5">{persistedCauses(issue).map((cause) => <li key={cause}>{cause}</li>)}</ul>
+                          <ul className="list-disc pl-5">{persistedCauseLines(issue, division, principal).map((cause) => <li key={cause}>{cause}</li>)}</ul>
                         </div>
                       )) : !run.error && <p>Tidak ada masalah tersimpan.</p>}
                     </div>

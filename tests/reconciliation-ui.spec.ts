@@ -91,19 +91,19 @@ test("uses the registry and shows mapping access plus paginated persisted histor
 
   const historyRequests: string[] = [];
   const mapping = {
-    id: "mapping-v3",
     division: "sales",
     principalCode: "KINO",
     version: 3,
-    originalName: "mapping-kino-v3.xlsx",
     uploadedByName: "Admin Mapping",
     createdAt: "2026-08-05T02:30:00.000Z",
     isActive: true,
   };
   await page.route("**/api/reconciliation/mappings?**", async (route) => {
     const url = new URL(route.request().url());
-    const canManage = url.searchParams.get("principal") !== "GODREJ";
-    await route.fulfill({ json: { active: mapping, versions: [mapping], canManage } });
+    const requestedPrincipal = url.searchParams.get("principal")!;
+    const requestedMapping = { ...mapping, id: `mapping-${requestedPrincipal.toLowerCase()}`, principalCode: requestedPrincipal, originalName: `mapping-${requestedPrincipal.toLowerCase()}.xlsx` };
+    const canManage = requestedPrincipal !== "GODREJ";
+    await route.fulfill({ json: { active: requestedMapping, versions: [requestedMapping], canManage } });
   });
   await page.route("**/api/reconciliation/history?**", async (route) => {
     const url = new URL(route.request().url());
@@ -113,7 +113,7 @@ test("uses the registry and shows mapping access plus paginated persisted histor
       id: "run-1",
       division: "sales",
       principalCode: "KINO",
-      mappingVersionId: "mapping-v3",
+      mappingVersionId: `mapping-${url.searchParams.get("principal")?.toLowerCase()}`,
       status: "success",
       uploadedByName: "Sari Faktur",
       inputFiles: [
@@ -121,7 +121,7 @@ test("uses the registry and shows mapping access plus paginated persisted histor
         { role: "principalFile", name: "kino-agustus.xlsx" },
       ],
       summary: { MATCH: 18, QTY_MISMATCH: 2 },
-      issues: [{ status: "QTY_MISMATCH", causes: ["Selisih qty tersimpan"] }],
+      issues: [{ ...result.results[1], status: "QTY_AND_VALUE_MISMATCH" }],
       error: null,
       durationMs: 1450,
       startedAt: "2026-08-05T03:00:00.000Z",
@@ -134,13 +134,15 @@ test("uses the registry and shows mapping access plus paginated persisted histor
   await expect(page.getByLabel("Prinsipal").locator("option")).toHaveText(["KINO", "GODREJ", "SHINZUI", "MOTASA", "CUSSONS"]);
   await page.getByRole("button", { name: "Pembelian" }).click();
   await expect(page.getByLabel("Prinsipal").locator("option")).toHaveText(["GODREJ", "RECKITT", "CUSSONS", "KINO", "FORISA"]);
+  await expect(page.getByText("mapping-godrej.xlsx", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Ganti mapping")).toHaveCount(0);
   await page.getByRole("button", { name: "Return" }).click();
   await expect(page.getByLabel("Prinsipal").locator("option")).toHaveText(["SHINZUI", "KINO", "GODREJ", "HEINZ", "CUSSONS"]);
   await page.getByRole("button", { name: "Faktur" }).click();
 
+  await expect(page.getByText("mapping-kino.xlsx", { exact: true })).toBeVisible();
   const mappingStatus = page.getByRole("region", { name: "Mapping aktif" });
-  await expect(mappingStatus.getByText("mapping-kino-v3.xlsx", { exact: true })).toBeVisible();
+  await expect(mappingStatus.getByText("mapping-kino.xlsx", { exact: true })).toBeVisible();
   await expect(mappingStatus.getByText("Versi 3", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Ganti mapping")).toBeVisible();
   const history = page.getByRole("region", { name: "Riwayat rekonsiliasi" });
@@ -153,7 +155,7 @@ test("uses the registry and shows mapping access plus paginated persisted histor
   await expect(history.getByText("Cocok 18", { exact: true }).first()).toBeVisible();
   await expect(history.getByText("Masalah 2", { exact: true }).first()).toBeVisible();
   await history.locator('summary[aria-label="Lihat rincian run-1"]').click();
-  await expect(history.getByText("Selisih qty tersimpan", { exact: true }).first()).toBeVisible();
+  await expect(history.getByText("Jumlah: Accurate 3, KINO 6 — Accurate kurang 3", { exact: true }).first()).toBeVisible();
   expect(historyRequests).toContain("1:20");
   await history.getByRole("button", { name: "Halaman berikutnya" }).click();
   await expect.poll(() => historyRequests).toContain("2:20");
