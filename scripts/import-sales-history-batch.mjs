@@ -27,6 +27,12 @@ if (!FILE || !/^\d{4}-\d{2}$/.test(PERIOD)) {
 const clean = (v) => String(v ?? "").replace(/[\r\n]+/g, " ").trim();
 const stripCode = (name) => clean(name).replace(/\s*\{[^}]*\}\s*$/, "").trim();
 const isInvoiceRef = (ref) => clean(ref).toUpperCase().startsWith("INV/");
+// RJN dan SRT sama-sama Retur Penjualan (dikonfirmasi user 2026-08-06) — diimpor, ditandai jenis_transaksi='RETUR'.
+// Jenis referensi lain (di luar INV/RJN/SRT) tetap di-skip: bukan transaksi penjualan/retur.
+const isReturRef = (ref) => {
+    const r = clean(ref).toUpperCase();
+    return r.startsWith("RJN/") || r.startsWith("SRT/");
+};
 const num = (v) => {
     const n = Number(String(v ?? "").replace(/,/g, "").trim());
     return Number.isFinite(n) ? n : 0;
@@ -118,10 +124,12 @@ async function main() {
 
     let success = 0;
     let failed = 0;
+    let returCount = 0;
     const seenInvoiceRefs = new Set();
     for (const row of dataRows) {
         const referensi = clean(row[idx.ref]);
-        if (!isInvoiceRef(referensi)) continue; // RJN/SRT di-skip, konsisten dgn pipeline lama
+        const isRetur = isReturRef(referensi);
+        if (!isInvoiceRef(referensi) && !isRetur) continue; // hanya INV (jual) & RJN/SRT (retur) diimpor
 
         const tanggal = toIso(row[idx.tanggal]);
         const principalRaw = clean(row[idx.principal]);
@@ -147,23 +155,26 @@ async function main() {
         await db.execute({
             sql: `INSERT INTO sales_history_item
                   (referensi, nomor_faktur, tanggal, customer_nama, customer_npwp, kode_objek, nama_produk,
-                   qty, satuan, harga_satuan, harga_total, diskon_rp, dpp, ppn, source_file, batch_id, flags, published)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0)`,
+                   qty, satuan, harga_satuan, harga_total, diskon_rp, dpp, ppn, source_file, batch_id,
+                   jenis_transaksi, flags, published)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0)`,
             args: [
                 referensi, referensi, tanggal, kodeCust, clean(row[idx.npwp]), clean(row[idx.kodeObjek]),
                 stripCode(row[idx.produk]), num(row[idx.qty]), clean(row[idx.satuan]),
                 num(row[idx.hargaSatuan]), num(row[idx.hargaTotal]), num(row[idx.diskonRp]),
                 num(row[idx.dpp]), num(row[idx.ppn]), FILE, batchId,
+                isRetur ? "RETUR" : "PENJUALAN",
             ],
         });
         success++;
+        if (isRetur) returCount++;
     }
 
     await db.execute({
         sql: "UPDATE import_batch SET success_count = ?, fail_count = ? WHERE id = ?",
         args: [success, failed, batchId],
     });
-    console.log(`Batch #${batchId}: staging+mapping selesai — sukses=${success}, gagal_parse=${failed}`);
+    console.log(`Batch #${batchId}: staging+mapping selesai — sukses=${success} (retur=${returCount}), gagal_parse=${failed}`);
     if (success === 0 && dataRows.length > 0) {
         console.error(
             `PERINGATAN: Batch #${batchId} — 0 baris sukses dari ${dataRows.length} baris. Cek apakah header/kolom cocok atau file memang tidak berisi referensi INV/.`,

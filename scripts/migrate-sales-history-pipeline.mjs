@@ -61,8 +61,14 @@ async function main() {
     await addColumnIfMissing("sales_history_item", "batch_id", "batch_id INTEGER NOT NULL DEFAULT 0");
     await addColumnIfMissing("sales_history_item", "flags", "flags TEXT NOT NULL DEFAULT ''");
     await addColumnIfMissing("sales_history_item", "published", "published INTEGER NOT NULL DEFAULT 0");
+    // 'PENJUALAN' (referensi INV/) atau 'RETUR' (referensi RJN/ atau SRT/ -- keduanya sama secara bisnis:
+    // Retur Penjualan). Data lama (batch_id=0) tidak punya baris retur sama sekali (dulu di-skip saat
+    // impor), jadi default 'PENJUALAN' untuk baris lama aman -- bukan klaim bahwa baris lama tidak
+    // pernah retur, hanya bahwa retur lama tidak pernah masuk sama sekali ke tabel ini.
+    await addColumnIfMissing("sales_history_item", "jenis_transaksi", "jenis_transaksi TEXT NOT NULL DEFAULT 'PENJUALAN'");
     await db.execute(`CREATE INDEX IF NOT EXISTS idx_shi_batch ON sales_history_item(batch_id)`);
     await db.execute(`CREATE INDEX IF NOT EXISTS idx_shi_published ON sales_history_item(published)`);
+    await db.execute(`CREATE INDEX IF NOT EXISTS idx_shi_jenis ON sales_history_item(jenis_transaksi)`);
 
     // Sama seperti sales_history_item di atas: invoice_map.published juga default 0 untuk baris lama
     // (batch_id=0) -- perlu UPDATE manual yang sama untuk grandfathering.

@@ -45,6 +45,7 @@ export const salesHistoryItem = sqliteTable(
         batchId: integer("batch_id").notNull().default(0),
         flags: text("flags").notNull().default(""),
         published: integer("published").notNull().default(0),
+        jenisTransaksi: text("jenis_transaksi").notNull().default("PENJUALAN"), // 'PENJUALAN' | 'RETUR' (RJN/SRT)
     },
     (t) => [
         index("idx_shi_referensi").on(t.referensi),
@@ -53,6 +54,7 @@ export const salesHistoryItem = sqliteTable(
         index("idx_shi_nama_produk").on(t.namaProduk),
         index("idx_shi_kode_objek").on(t.kodeObjek),
         index("idx_shi_source").on(t.sourceFile),
+        index("idx_shi_jenis").on(t.jenisTransaksi),
     ],
 );
 
@@ -127,11 +129,15 @@ export function ensureSalesHistorySchema(): Promise<void> {
             if (!itemColumns.rows.some((row) => String(row.name || "") === "published")) {
                 await salesClient.execute("ALTER TABLE sales_history_item ADD COLUMN published INTEGER NOT NULL DEFAULT 0");
             }
+            if (!itemColumns.rows.some((row) => String(row.name || "") === "jenis_transaksi")) {
+                await salesClient.execute("ALTER TABLE sales_history_item ADD COLUMN jenis_transaksi TEXT NOT NULL DEFAULT 'PENJUALAN'");
+            }
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_shi_referensi ON sales_history_item(referensi)`);
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_shi_tanggal ON sales_history_item(tanggal)`);
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_shi_customer ON sales_history_item(customer_nama)`);
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_shi_nama_produk ON sales_history_item(nama_produk)`);
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_shi_kode_objek ON sales_history_item(kode_objek)`);
+            await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_shi_jenis ON sales_history_item(jenis_transaksi)`);
             await salesClient.execute(`CREATE INDEX IF NOT EXISTS idx_shi_source ON sales_history_item(source_file)`);
             await salesClient.execute(`CREATE TABLE IF NOT EXISTS customer_map (
                 kode TEXT PRIMARY KEY,
