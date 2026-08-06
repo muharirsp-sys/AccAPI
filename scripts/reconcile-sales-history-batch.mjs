@@ -57,6 +57,13 @@ async function main() {
          WHERE to_char(trans_date::date, 'YYYY-MM') = $1 AND customer_no = ANY($2)`,
         [period, custCodes],
     );
+    const accurateCustomersInPeriod = await pgPool.query(
+        `SELECT DISTINCT customer_no FROM sales_invoice WHERE to_char(trans_date::date, 'YYYY-MM') = $1`,
+        [period],
+    );
+    const missingCustomers = accurateCustomersInPeriod.rows
+        .map((r) => String(r.customer_no))
+        .filter((c) => !custCodes.includes(c));
 
     const ourFaktur = Number(ours.jumlah_faktur || 0);
     const ourNilai = Number(ours.nilai_bersih_pajak || 0);
@@ -68,9 +75,10 @@ async function main() {
         jumlah_faktur: { kita: ourFaktur, accurate: accFaktur, selisih: ourFaktur - accFaktur },
         nilai: { kita: ourNilai, accurate: accNilai, selisih: ourNilai - accNilai },
         retur_accurate_saja: accRetur,
+        missing_customers: missingCustomers,
     };
 
-    const cocok = diff.jumlah_faktur.selisih === 0 && Math.abs(diff.nilai.selisih) <= TOLERANCE_RP;
+    const cocok = diff.jumlah_faktur.selisih === 0 && Math.abs(diff.nilai.selisih) <= TOLERANCE_RP && missingCustomers.length === 0;
     const stage = cocok ? "reconciled" : "reconcile_failed";
 
     await salesDb.execute({
@@ -82,6 +90,9 @@ async function main() {
     console.log(`  Jumlah faktur — kita: ${ourFaktur}, Accurate: ${accFaktur}, selisih: ${diff.jumlah_faktur.selisih}`);
     console.log(`  Nilai bersih+pajak — kita: Rp${ourNilai.toLocaleString("id-ID")}, Accurate: Rp${accNilai.toLocaleString("id-ID")}, selisih: Rp${diff.nilai.selisih.toLocaleString("id-ID")}`);
     console.log(`  (Retur di Accurate periode ini: Rp${accRetur.toLocaleString("id-ID")} — cek manual, belum ada retur di sisi kita)`);
+    if (missingCustomers.length) {
+        console.log(`  Customer di Accurate tapi tidak ada di batch: ${missingCustomers.join(", ")}`);
+    }
     console.log(`-> stage=${stage}`);
     if (stage === "reconciled") {
         console.log(`Lanjut: node scripts/publish-sales-history-batch.mjs --batch ${batchId}`);
@@ -90,7 +101,10 @@ async function main() {
     }
 }
 
-main().finally(async () => {
+main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+}).finally(async () => {
     await salesDb.close();
     await pgPool.end();
 });
