@@ -19,6 +19,10 @@ async function main() {
         console.error(`Batch #${batchId} tidak ditemukan`);
         process.exit(1);
     }
+    if (batch.stage !== "staging" && batch.stage !== "validation_failed") {
+        console.error(`Batch #${batchId} stage='${batch.stage}' — validate hanya boleh jalan dari stage 'staging' atau 'validation_failed'.`);
+        process.exit(1);
+    }
 
     const items = (await db.execute({
         sql: "SELECT id, referensi, kode_objek, tanggal, qty, dpp, ppn, harga_total FROM sales_history_item WHERE batch_id = ?",

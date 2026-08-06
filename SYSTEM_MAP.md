@@ -833,6 +833,18 @@ Full rebuild besar memakai `scripts/build-sales-history-staging.mjs`: strategi l
 | `scripts/import-sales-mapping.mjs` | script | Legacy/incremental backfill customer_map, invoice_map, sales_history_item untuk referensi `INV/` saja, termasuk satuan item; opsional bulk index Elasticsearch. Bisa dibatasi dengan `SALES_HISTORY_IMPORT_YEAR` / `SALES_HISTORY_IMPORT_FILE`, tapi tidak dipakai untuk rebuild penuh jutaan baris. |
 | `app/(dashboard)/sales-history/page.tsx` | `SalesHistoryPage` | Cascade UI Tahun -> Principal -> Customer/Toko + search produk + tabel faktur INV + detail item fixed-layout qty+satuan |
 
+**Pipeline batch terstaging (Raw -> Staging/Mapping -> Validated -> Reconciled -> Published):** alternatif `build-sales-history-staging.mjs`/`import-sales-mapping.mjs` di atas untuk impor per-batch yang bisa diaudit dan ditolak sebelum tampil di dashboard. Urutan operator: jalankan `migrate-sales-history-pipeline.mjs` sekali (idempotent), lalu per batch berurutan `import` -> `validate` -> `reconcile` -> `publish`.
+
+| Script | Fungsi |
+|---|---|
+| `scripts/migrate-sales-history-pipeline.mjs` | Migrasi sekali: tabel `import_batch`/`sales_history_raw_item`/`principal_alias` + kolom `batch_id`/`flags`/`published` di `sales_history_item` dan `invoice_map` |
+| `scripts/import-sales-history-batch.mjs` | Raw -> Staging: baca file sumber, simpan raw JSON per baris, isi `sales_history_item`/`invoice_map` dengan `batch_id` baru, stage `staging` |
+| `scripts/validate-sales-history-batch.mjs` | Staging -> Validated: cek kualitas data (referensi tanpa header, customer tak dikenal, tanggal luar periode, qty=0, duplikat), tandai `flags` per baris, stage `validated`/`validation_failed` |
+| `scripts/reconcile-sales-history-batch.mjs` | Validated -> Reconciled: banding agregat batch vs cache Accurate (Postgres `sales_invoice`/`sales_return`) untuk periode sama, stage `reconciled`/`reconcile_failed` |
+| `scripts/publish-sales-history-batch.mjs` | Reconciled -> Published: satu-satunya cara `published=1` (tampil dashboard); menolak jika stage bukan `reconciled` atau bila ada referensi batch ini yang sudah published di batch_id lain (cegah invoice dobel-hitung) |
+
+`import_batch.stage` lifecycle: `raw -> staging -> validated|validation_failed -> reconciled|reconcile_failed -> published` (dari `validation_failed`/`reconcile_failed` boleh diulang setelah data diperbaiki). Grandfathering data lama `batch_id=0`: lihat komentar di `migrate-sales-history-pipeline.mjs` dan `lib/sales-history/service.ts`.
+
 RBAC: module `sales_history` (`view`/`export`/`manage`) di `lib/rbac/registry.ts` + `lib/rbac.ts` (appModules, pagePermissions `/sales-history`, preset), menu sidebar `History Penjualan`.
 
 ---

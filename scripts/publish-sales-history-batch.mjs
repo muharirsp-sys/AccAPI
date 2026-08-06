@@ -25,6 +25,22 @@ async function main() {
         process.exit(1);
     }
 
+    const overlap = (await db.execute({
+        sql: `SELECT im.referensi AS referensi, im2.batch_id AS other_batch_id
+              FROM invoice_map im
+              JOIN invoice_map im2 ON im2.referensi = im.referensi AND im2.batch_id != im.batch_id AND im2.published = 1
+              WHERE im.batch_id = ?`,
+        args: [batchId],
+    })).rows;
+    if (overlap.length > 0) {
+        console.error(`Batch #${batchId} ditolak: ${overlap.length} referensi sudah published di batch lain (kemungkinan re-run pipeline untuk file/periode yang sama):`);
+        for (const row of overlap) {
+            console.error(`  referensi=${row.referensi} sudah published di batch_id=${row.other_batch_id}`);
+        }
+        console.error("Tidak ada yang dipublish. Investigasi dulu sebelum mencoba publish batch ini lagi.");
+        process.exit(1);
+    }
+
     await db.execute({ sql: "UPDATE sales_history_item SET published = 1 WHERE batch_id = ?", args: [batchId] });
     await db.execute({ sql: "UPDATE invoice_map SET published = 1 WHERE batch_id = ?", args: [batchId] });
     await db.execute({ sql: "UPDATE import_batch SET stage = 'published' WHERE id = ?", args: [batchId] });
