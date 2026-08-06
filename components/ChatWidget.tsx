@@ -105,7 +105,7 @@ export default function ChatWidget() {
           role="dialog"
           aria-label="AI Assistant"
           aria-modal="false"
-          className="fixed bottom-24 right-4 z-[100] flex w-[360px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#1a1c23] shadow-2xl sm:right-6"
+          className="fixed bottom-24 right-4 z-[100] flex w-[360px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl border border-white/20 bg-[#111318] shadow-2xl sm:right-6"
           style={{ height: "min(500px, calc(100dvh - 140px))" }}
         >
           {/* Header */}
@@ -128,7 +128,7 @@ export default function ChatWidget() {
                   className={`max-w-[80%] rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap ${
                     msg.role === "user"
                       ? "bg-indigo-600 text-white"
-                      : "bg-white/5 text-slate-200"
+                      : "bg-white/10 text-slate-100"
                   }`}
                 >
                   {msg.text}
@@ -159,7 +159,7 @@ export default function ChatWidget() {
                 <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20">
                   <Bot size={14} className="text-indigo-400" />
                 </div>
-                <div className="rounded-xl bg-white/5 px-3 py-2">
+                <div className="rounded-xl bg-white/10 px-3 py-2">
                   <div className="flex gap-1">
                     <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:0ms]" />
                     <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:150ms]" />
