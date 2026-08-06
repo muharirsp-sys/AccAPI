@@ -26,10 +26,13 @@ async function main() {
     }
 
     const overlap = (await db.execute({
-        sql: `SELECT im.referensi AS referensi, im2.batch_id AS other_batch_id
-              FROM invoice_map im
-              JOIN invoice_map im2 ON im2.referensi = im.referensi AND im2.batch_id != im.batch_id AND im2.published = 1
-              WHERE im.batch_id = ?`,
+        sql: `SELECT DISTINCT shi.referensi AS referensi, shi2.batch_id AS other_batch_id
+              FROM sales_history_item shi
+              JOIN sales_history_item shi2
+                ON shi2.referensi = shi.referensi
+               AND shi2.batch_id != shi.batch_id
+               AND shi2.published = 1
+              WHERE shi.batch_id = ?`,
         args: [batchId],
     })).rows;
     if (overlap.length > 0) {
