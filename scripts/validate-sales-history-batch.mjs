@@ -53,11 +53,11 @@ async function main() {
 
         if (reasons.length) {
             failCount++;
-            await db.execute({
-                sql: "UPDATE sales_history_item SET flags = ? WHERE id = ?",
-                args: [JSON.stringify(reasons), item.id],
-            });
         }
+        await db.execute({
+            sql: "UPDATE sales_history_item SET flags = ? WHERE id = ?",
+            args: [reasons.length ? JSON.stringify(reasons) : "", item.id],
+        });
     }
 
     const stage = failCount === 0 ? "validated" : "validation_failed";
