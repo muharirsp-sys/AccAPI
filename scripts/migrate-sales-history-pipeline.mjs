@@ -50,12 +50,22 @@ async function main() {
     )`);
     console.log("OK: principal_alias (kosong — isi manual bila ada alias principal yang diketahui)");
 
+    // PENTING -- grandfathering data lama: kolom `published` di bawah ini default 0 untuk SEMUA baris
+    // yang sudah ada (batch_id=0 dari sebelum pipeline ini dibuat). Begitu filter published=1 di
+    // lib/sales-history/service.ts di-deploy, seluruh data lama itu langsung HILANG dari dashboard
+    // Sales History -- bukan bug, tapi juga TIDAK otomatis diperbaiki oleh script manapun (sengaja,
+    // supaya publish selalu lewat scripts/publish-sales-history-batch.mjs atau keputusan sadar).
+    // Contoh (jalankan manual, sekali, setelah menilai data lama sudah cukup dipercaya):
+    // UPDATE invoice_map SET published = 1 WHERE batch_id = 0;
+    // UPDATE sales_history_item SET published = 1 WHERE batch_id = 0;
     await addColumnIfMissing("sales_history_item", "batch_id", "batch_id INTEGER NOT NULL DEFAULT 0");
     await addColumnIfMissing("sales_history_item", "flags", "flags TEXT NOT NULL DEFAULT ''");
     await addColumnIfMissing("sales_history_item", "published", "published INTEGER NOT NULL DEFAULT 0");
     await db.execute(`CREATE INDEX IF NOT EXISTS idx_shi_batch ON sales_history_item(batch_id)`);
     await db.execute(`CREATE INDEX IF NOT EXISTS idx_shi_published ON sales_history_item(published)`);
 
+    // Sama seperti sales_history_item di atas: invoice_map.published juga default 0 untuk baris lama
+    // (batch_id=0) -- perlu UPDATE manual yang sama untuk grandfathering.
     await addColumnIfMissing("invoice_map", "batch_id", "batch_id INTEGER NOT NULL DEFAULT 0");
     await addColumnIfMissing("invoice_map", "principal_norm", "principal_norm TEXT NOT NULL DEFAULT ''");
     await addColumnIfMissing("invoice_map", "published", "published INTEGER NOT NULL DEFAULT 0");

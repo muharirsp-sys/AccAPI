@@ -7,6 +7,14 @@
  * Side Effects: DB read-only ke sales-history-inv.db.
  * Catatan: semua query membatasi referensi INV dan memakai range tanggal agar index tetap efektif.
  *   Pencarian produk: SQLite fuzzy (kamus + IN-clause berindeks), toleran typo.
+ * Gate publish: SETIAP query di file ini memfilter published = 1 (invoice_map DAN sales_history_item)
+ *   -- hanya batch yang sudah lolos validate -> reconcile -> publish (lihat scripts/publish-sales-history-batch.mjs)
+ *   yang terlihat. Data yang diimpor SEBELUM pipeline batch ini ada (batch_id = 0, dari migrasi
+ *   scripts/migrate-sales-history-pipeline.mjs) juga default published = 0 -- artinya begitu perubahan
+ *   ini deploy, dashboard bisa tampak kosong/hampir kosong sampai seseorang menjalankan UPDATE
+ *   grandfathering satu-kali secara manual (TIDAK otomatis oleh script manapun, sengaja):
+ *   UPDATE invoice_map SET published = 1 WHERE batch_id = 0;
+ *   UPDATE sales_history_item SET published = 1 WHERE batch_id = 0;
  */
 import { ensureSalesHistorySchema, salesClient } from "@/lib/sales-history/db";
 import { resolveFuzzyProduct } from "@/lib/sales-history/fuzzy";
