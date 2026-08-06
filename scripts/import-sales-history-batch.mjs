@@ -87,19 +87,26 @@ async function main() {
         tanggal: colIndex(header, "TANGGAL"),
         custKode: colIndex(header, "KODE_CUST", "KODE CUST"),
         principal: colIndex(header, "PRINCIPAL"),
-        produk: colIndex(header, "NAMA_PRODUK", "PRODUK"),
+        produk: colIndex(header, "NAMA_BARANG", "NAMA_PRODUK", "PRODUK"),
         qty: colIndex(header, "QTY"),
         satuan: colIndex(header, "SATUAN"),
-        hargaSatuan: colIndex(header, "HARGA_SATUAN", "HARGA SATUAN"),
-        hargaTotal: colIndex(header, "HARGA_TOTAL", "HARGA TOTAL"),
-        diskonRp: colIndex(header, "DISKON_RP", "DISKON"),
+        hargaSatuan: colIndex(header, "HARGA", "HARGA_SATUAN", "HARGA SATUAN"),
+        hargaTotal: colIndex(header, "NILAI_JUAL", "HARGA_TOTAL", "HARGA TOTAL"),
+        diskonRp: colIndex(header, "POTONGAN", "DISKON_RP", "DISKON"),
         dpp: colIndex(header, "DPP"),
-        ppn: colIndex(header, "PPN"),
+        ppn: colIndex(header, "NILAI_PAJAK", "PPN"),
         npwp: colIndex(header, "NPWP"),
-        kodeObjek: colIndex(header, "KODE_OBJEK", "KODE OBJEK"),
+        kodeObjek: colIndex(header, "KODE_BARANG", "KODE_OBJEK", "KODE OBJEK"),
     };
 
-    const requiredCols = { ref: idx.ref, tanggal: idx.tanggal, principal: idx.principal, custKode: idx.custKode };
+    // Nama kolom asli Accurate (dikonfirmasi dari Data_Penjualan/2022-2025 xlsx nyata, 2026-08-06):
+    // NAMA_BARANG (bukan NAMA_PRODUK), HARGA (bukan HARGA_SATUAN), NILAI_JUAL (bukan HARGA_TOTAL),
+    // POTONGAN (bukan DISKON_RP), NILAI_PAJAK (bukan PPN), KODE_BARANG (bukan KODE_OBJEK).
+    // Alias lama dipertahankan sebagai fallback kalau ada file dengan layout berbeda.
+    const requiredCols = {
+        ref: idx.ref, tanggal: idx.tanggal, principal: idx.principal, custKode: idx.custKode,
+        produk: idx.produk, kodeObjek: idx.kodeObjek,
+    };
     const missingCols = Object.entries(requiredCols)
         .filter(([, i]) => i < 0)
         .map(([name]) => name);
