@@ -88,7 +88,7 @@ function invoiceSelectSql(where: string) {
                    COALESCE(SUM(shi.dpp), 0)         AS totalDpp,
                    COALESCE(SUM(shi.ppn), 0)         AS totalPpn
             FROM filtered f
-            LEFT JOIN sales_history_item shi ON shi.referensi = f.referensi
+            LEFT JOIN sales_history_item shi ON shi.referensi = f.referensi AND shi.published = 1
             GROUP BY f.referensi, f.tanggal, f.principal, f.kodeCust, f.customerNama, f.alamat, f.kota
             ORDER BY f.tanggal DESC, f.referensi DESC`;
 }
@@ -247,6 +247,7 @@ async function sqliteProductRefs(where: string, args: Args, product: string, lim
                   SELECT 1
                   FROM sales_history_item shi
                   WHERE shi.referensi = im.referensi
+                    AND shi.published = 1
                     AND ${pc.cond}
               )
               ORDER BY im.tanggal DESC, im.referensi DESC
