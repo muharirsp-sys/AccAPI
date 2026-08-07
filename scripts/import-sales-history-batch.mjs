@@ -1,6 +1,11 @@
 // scripts/import-sales-history-batch.mjs
 // Tujuan: import SATU file Data_Penjualan (satu bulan) melalui tahap Raw -> Staging/Mapping,
 //   ditandai satu batch_id. Validasi/rekonsiliasi/publish adalah script terpisah (lihat Task 3-5).
+// Performa: pakai db.batch() (bulk, sama seperti scripts/build-sales-history-staging.mjs yang sudah
+//   terbukti lancar untuk rebuild 4 tahun), bukan db.execute() per baris -- versi awal script ini
+//   sequential-await per baris, 111k baris = 36 menit (diukur langsung 2026-08-06). Root cause: setiap
+//   baris minimal 1 round-trip (INSERT item) + kadang 2 lagi (lookup principal_alias, upsert invoice_map)
+//   = ~300ribu round-trip utk 1 file. db.batch() mengumpulkan banyak statement jadi sedikit round-trip.
 // Jalankan:
 //   node scripts/import-sales-history-batch.mjs --file "Data_Penjualan/2025/06 PENJUALAN JUNI 2025.xlsx" --period 2025-06
 import { createClient } from "@libsql/client";
@@ -11,6 +16,13 @@ const XLSX = require("xlsx");
 
 const DB_URL = process.env.SALES_HISTORY_DATABASE_URL || "file:sales-history-inv.db";
 const db = createClient({ url: DB_URL });
+const BATCH_SIZE = Math.max(Number(process.env.SALES_HISTORY_IMPORT_BATCH) || 2000, 100);
+
+async function batchWrite(statements) {
+    for (let i = 0; i < statements.length; i += BATCH_SIZE) {
+        await db.batch(statements.slice(i, i + BATCH_SIZE), "write");
+    }
+}
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -56,10 +68,14 @@ function colIndex(header, ...names) {
     return -1;
 }
 
-async function mapPrincipal(rawPrincipal) {
+// Dimuat sekali di awal (tabel kecil), bukan query per baris -- lihat catatan performa di atas.
+async function loadPrincipalAliasMap() {
+    const rows = (await db.execute("SELECT alias, principal FROM principal_alias")).rows;
+    return new Map(rows.map((r) => [String(r.alias), String(r.principal)]));
+}
+function mapPrincipal(aliasMap, rawPrincipal) {
     const alias = clean(rawPrincipal).toUpperCase();
-    const row = await db.execute({ sql: "SELECT principal FROM principal_alias WHERE alias = ?", args: [alias] });
-    return row.rows[0]?.principal ? String(row.rows[0].principal) : alias;
+    return aliasMap.get(alias) || alias;
 }
 
 async function main() {
@@ -78,12 +94,11 @@ async function main() {
     console.log(`Batch #${batchId} dibuat: ${FILE} (${dataRows.length} baris)`);
 
     // --- Stage: Raw (disimpan utuh, tidak diubah) ---
-    for (let i = 0; i < dataRows.length; i++) {
-        await db.execute({
-            sql: "INSERT INTO sales_history_raw_item (batch_id, source_file, row_index, raw_json) VALUES (?, ?, ?, ?)",
-            args: [batchId, FILE, i, JSON.stringify(dataRows[i])],
-        });
-    }
+    const rawStatements = dataRows.map((row, i) => ({
+        sql: "INSERT INTO sales_history_raw_item (batch_id, source_file, row_index, raw_json) VALUES (?, ?, ?, ?)",
+        args: [batchId, FILE, i, JSON.stringify(row)],
+    }));
+    await batchWrite(rawStatements);
     await db.execute({ sql: "UPDATE import_batch SET stage = 'staging' WHERE id = ?", args: [batchId] });
     console.log(`Batch #${batchId}: raw capture selesai (${dataRows.length} baris ke sales_history_raw_item)`);
 
@@ -122,10 +137,14 @@ async function main() {
         );
     }
 
+    const aliasMap = await loadPrincipalAliasMap();
+
     let success = 0;
     let failed = 0;
     let returCount = 0;
     const seenInvoiceRefs = new Set();
+    const invoiceStatements = [];
+    const itemStatements = [];
     for (const row of dataRows) {
         const referensi = clean(row[idx.ref]);
         const isRetur = isReturRef(referensi);
@@ -133,7 +152,7 @@ async function main() {
 
         const tanggal = toIso(row[idx.tanggal]);
         const principalRaw = clean(row[idx.principal]);
-        const principalNorm = await mapPrincipal(principalRaw);
+        const principalNorm = mapPrincipal(aliasMap, principalRaw);
         const kodeCust = stripCode(row[idx.custKode]);
 
         if (!tanggal || !kodeCust || !principalNorm) {
@@ -143,7 +162,7 @@ async function main() {
 
         if (!seenInvoiceRefs.has(referensi)) {
             seenInvoiceRefs.add(referensi);
-            await db.execute({
+            invoiceStatements.push({
                 sql: `INSERT INTO invoice_map (referensi, kode_cust, principal, tanggal, batch_id, principal_norm, published)
                       VALUES (?, ?, ?, ?, ?, ?, 0)
                       ON CONFLICT(referensi) DO UPDATE SET kode_cust=excluded.kode_cust, principal=excluded.principal,
@@ -152,7 +171,7 @@ async function main() {
             });
         }
 
-        await db.execute({
+        itemStatements.push({
             sql: `INSERT INTO sales_history_item
                   (referensi, nomor_faktur, tanggal, customer_nama, customer_npwp, kode_objek, nama_produk,
                    qty, satuan, harga_satuan, harga_total, diskon_rp, dpp, ppn, source_file, batch_id,
@@ -169,6 +188,9 @@ async function main() {
         success++;
         if (isRetur) returCount++;
     }
+
+    await batchWrite(invoiceStatements);
+    await batchWrite(itemStatements);
 
     await db.execute({
         sql: "UPDATE import_batch SET success_count = ?, fail_count = ? WHERE id = ?",
