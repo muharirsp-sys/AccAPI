@@ -10,13 +10,24 @@ import path from 'path';
 import { resolveSyncCredentials } from '@/lib/accurate-session';
 import { upsertSalesInvoiceById } from '@/lib/sync';
 
-// Bentuk payload Accurate belum pernah kita lihat langsung, jadi id dicari di beberapa nama
-// yang mungkin. Kalau tak ketemu, event dilewati dan raw payload tetap ada di log untuk dibaca.
-function extractInvoiceId(event: Record<string, unknown>): number | null {
-    const raw = event.id ?? event.objectId ?? event.transactionId
-        ?? (event.data as Record<string, unknown> | undefined)?.id;
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? n : null;
+// Bentuk payload dibuktikan live 2026-08-11 (webhook_events.log production): array envelope
+// { databaseId, type: "SALES_INVOICE", timestamp, uuid, data: [{ salesInvoiceId, salesInvoiceNo,
+// isDownPayment, salesInvoiceTotalAmount, action: "WRITE" }] } — BUKAN { eventType, module, id }
+// seperti tebakan awal. `data` adalah array (bisa >1 baris per envelope).
+function flattenSalesInvoiceIds(payload: unknown): number[] {
+    const envelopes = (Array.isArray(payload) ? payload : [payload]) as Array<{
+        type?: string;
+        data?: Array<{ salesInvoiceId?: unknown }>;
+    }>;
+    const ids: number[] = [];
+    for (const envelope of envelopes) {
+        if (envelope?.type !== "SALES_INVOICE") continue;
+        for (const record of envelope?.data ?? []) {
+            const id = Number(record?.salesInvoiceId);
+            if (Number.isFinite(id) && id > 0) ids.push(id);
+        }
+    }
+    return ids;
 }
 
 export async function POST(request: Request) {
@@ -37,9 +48,10 @@ export async function POST(request: Request) {
         console.log("----------------------------------------");
         console.log("[WEBHOOK ACCURATE DITERIMA]");
 
-        // process.cwd() (/app) TIDAK persisten — hanya /app/data yang di-mount volume. Ikut
-        // lokasi DB auth supaya log selamat dari redeploy; fallback cwd untuk dev lokal.
-        const logDir = process.env.BETTER_AUTH_DB_PATH ? path.dirname(process.env.BETTER_AUTH_DB_PATH) : process.cwd();
+        // process.cwd() (/app) TIDAK persisten — hanya /app/data yang di-mount volume (docker-compose.yml).
+        // BETTER_AUTH_DB_PATH terbukti TIDAK di-set di production (env kosong), jadi cek langsung
+        // keberadaan direktori volumenya daripada bergantung ke env yang mungkin tidak ada.
+        const logDir = fs.existsSync('/app/data') ? '/app/data' : process.cwd();
         const logFilePath = path.join(logDir, 'webhook_events.log');
         const timestamp = new Date().toISOString();
         const logEntry = {
@@ -54,10 +66,8 @@ export async function POST(request: Request) {
         fs.appendFileSync(logFilePath, (entry.length > 100_000 ? entry.slice(0, 100_000) : entry) + "\n", 'utf8');
         console.log(`[+] Disimpan ke webhook_events.log`);
 
-        const events: Array<Record<string, unknown>> = Array.isArray(payload) ? payload : [payload];
-        for (const event of events) {
-            console.log(`>> Event: ${event?.eventType || 'UNKNOWN'} | Modul: ${event?.module || 'N/A'}`);
-        }
+        const invoiceIds = flattenSalesInvoiceIds(payload);
+        console.log(`>> ${invoiceIds.length} faktur penjualan terdeteksi: ${invoiceIds.join(", ") || "(tidak ada — payload bukan tipe SALES_INVOICE atau kosong)"}`);
 
         const accurate = await resolveSyncCredentials();
         if (!accurate.creds) {
@@ -69,13 +79,8 @@ export async function POST(request: Request) {
         // "Faktur Penjualan" yang aktif — jadi burst-nya kecil. Pindah ke worker/outbox kalau
         // nanti batch per webhook membesar atau modul lain ikut diaktifkan.
         const processed: unknown[] = [];
-        const failed: Array<{ event: unknown; error: string }> = [];
-        for (const event of events) {
-            const id = extractInvoiceId(event);
-            if (id === null) {
-                failed.push({ event, error: "id faktur tidak ditemukan di payload" });
-                continue;
-            }
+        const failed: Array<{ id: number; error: string }> = [];
+        for (const id of invoiceIds) {
             try {
                 const summary = await upsertSalesInvoiceById(id, accurate.creds);
                 console.log(`[+] Faktur tersimpan: ${summary.number ?? id} | ${summary.customerName ?? '-'} | total ${summary.totalAmount} | sisa ${summary.outstanding} | ${summary.status ?? '-'}`);
@@ -83,7 +88,7 @@ export async function POST(request: Request) {
             } catch (e) {
                 const message = e instanceof Error ? e.message : String(e);
                 console.error(`[WEBHOOK] Gagal proses faktur ${id}: ${message}`);
-                failed.push({ event, error: message });
+                failed.push({ id, error: message });
             }
         }
 
