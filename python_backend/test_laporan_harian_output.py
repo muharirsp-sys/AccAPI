@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import openpyxl
 import pandas as pd
 
@@ -198,6 +199,27 @@ def main() -> None:
         assert reckitt_headers[-1] == "Devisi"
         assert reckitt_values[-1] == "RBI-HEALTH"
         reckitt.close()
+
+        fix = pd.DataFrame([
+            {"NO_NOTA": "INV-1", "TANGGAL": pd.Timestamp("2026-07-15"), "DPP": np.float64(1000.0), "QTY": np.int64(2)},
+            {"NO_NOTA": "INV-2", "TANGGAL": pd.NaT, "DPP": np.nan, "QTY": np.int64(1)},
+        ])
+        to_format = laporan.write_to_format_file(fix, temp_dir, "2026-07-15")
+        assert to_format["rows"] == 2
+        to_format_wb = openpyxl.load_workbook(to_format["path"], read_only=True, data_only=True)
+        to_format_sheet = to_format_wb["FIX LAP PENJ"]
+        assert [cell.value for cell in to_format_sheet[1]] == ["NO_NOTA", "TANGGAL", "DPP", "QTY"]
+        assert [cell.value for cell in to_format_sheet[2]] == ["INV-1", "2026-07-15", 1000.0, 2]
+        assert [cell.value for cell in to_format_sheet[3]] == ["INV-2", None, None, 1]
+        to_format_wb.close()
+
+        import zipfile
+        archive = laporan.create_run_archive(temp_dir, "2026-07-15")
+        with zipfile.ZipFile(archive["path"]) as zf:
+            names = zf.namelist()
+        assert to_format["fileName"] in names
+        assert any(name.endswith("DENNY.xlsx") for name in names)
+        assert archive["fileName"] not in names
 
     print("OK: parity Power Query Principal, SPV/SM, dan Stock sesuai")
 

@@ -130,7 +130,7 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     claim_workflow: ["view", "create", "edit", "update", "submit", "approve", "export"],
     users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission", "manage"],
     sales_history: ["view", "export", "manage"],
-    laporan_harian: ["view", "upload", "send"],
+    laporan_harian: ["view", "upload", "send", "manage"],
 };
 
 export type PermissionMap = Partial<Record<AppModule, PermissionAction[]>>;

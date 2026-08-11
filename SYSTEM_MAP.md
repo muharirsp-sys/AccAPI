@@ -872,6 +872,8 @@ UI: modul /laporan-harian
      -> tulis file per keyword ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
         `<Keyword>` (penjualan) + `<Keyword> Stock` (cakupan target yang sama)
         (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)
+     -> tulis juga download-only `<tanggal>_2.To Format Laporan.xlsx` (snapshot FIX LAP PENJ, tidak
+        pernah dikirim email) dan ZIP arsip `<tanggal>_Laporan_Harian_Arsip.zip` berisi seluruh workbook run
      -> normalisasi progress kosong salesCode -> `UNMAPPED:<branch>` + warning eksplisit (nilai tidak dibuang/tidak ditebak)
      -> feed dashboard: BULK replace ke sales_daily_progress (batch, hindari N+1)
      -> verifikasi coverage exact-key `salesCode|principle` terhadap target periode Insentif Sales;
@@ -890,8 +892,13 @@ UI: review file opsional -> GET /api/laporan-harian/[runId]/preview?file=...
         python-calamine (openpyxl fallback)
         -> Next.js memilih 10 kolom kunci dan mengirim JSON kecil (tidak parse XLSX via SheetJS)
      -> download=1: Next.js meneruskan body FileResponse sebagai stream dan metadata range/size
-        (tidak menahan seluruh XLSX di memori)
+        (tidak menahan seluruh XLSX di memori); `2.To Format`/arsip ZIP diunduh lewat jalur yang sama
 ```
+
+Admin mapping: `/laporan-harian/mapping` -> `app/api/laporan-harian/mapping/route.ts` -> CRUD
+`report_recipient` (keyword/emails/active) langsung dari Next.js, tanpa FastAPI. Permission
+`laporan_harian.manage`. Keyword tetap diresolusi otomatis ke SPV/SM/Principal oleh
+`resolve_report_groups` di backend -- halaman ini hanya mengatur siapa menerima email per keyword.
 
 State machine pure: `lib/laporan-harian/send-state.ts`; self-check:
 `node --experimental-strip-types lib/laporan-harian/send-state.test.ts`.

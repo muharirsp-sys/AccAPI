@@ -20,7 +20,7 @@ const REVIEW_COLUMNS = [
 
 export function isAllowedReviewFile(fileName: string, reportDate: string): boolean {
     return fileName.startsWith(`${reportDate}_`)
-        && fileName.toLowerCase().endsWith(".xlsx")
+        && (fileName.toLowerCase().endsWith(".xlsx") || fileName.toLowerCase().endsWith(".zip"))
         && !fileName.includes("/")
         && !fileName.includes("\\")
         && !fileName.includes("..");

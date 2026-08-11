@@ -606,6 +606,55 @@ def write_per_spv_files(sb: pd.DataFrame, out_dir: str, report_date: str,
     return files
 
 
+def _excel_safe(value):
+    """Normalisasi nilai pandas agar writer tidak menerima NaN/NA/inf."""
+    if value is None or value is pd.NA:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (pd.Timestamp,)):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value) if np.isfinite(value) else None
+    return value
+
+
+def write_to_format_file(fix: pd.DataFrame, out_dir: str, report_date: str) -> dict:
+    """Tulis snapshot download-only yang setara sheet ``FIX LAP PENJ`` (referensi lama '2.To Format')."""
+    import os
+    from pyexcelerate import Workbook
+
+    os.makedirs(out_dir, exist_ok=True)
+    file_name = f"{report_date}_2.To Format Laporan.xlsx"
+    path = os.path.join(out_dir, file_name)
+    frame = fix.loc[:, ~fix.columns.duplicated()].copy()
+    headers = [str(column) for column in frame.columns]
+    values = [[_excel_safe(value) for value in row] for row in frame.to_numpy(dtype=object)]
+    wb = Workbook()
+    wb.new_sheet("FIX LAP PENJ"[:31], data=[headers] + values)
+    wb.save(path)
+    return {"fileName": file_name, "path": path, "rows": int(len(frame))}
+
+
+def create_run_archive(out_dir: str, report_date: str) -> dict:
+    """Buat ZIP arsip berisi seluruh workbook run (tidak pernah dikirim email)."""
+    import os
+    import zipfile
+
+    file_name = f"{report_date}_Laporan_Harian_Arsip.zip"
+    path = os.path.join(out_dir, file_name)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+        for name in sorted(os.listdir(out_dir)):
+            if name.lower().endswith((".xlsx", ".xlsm")):
+                archive.write(os.path.join(out_dir, name), arcname=name)
+    return {"fileName": file_name, "path": path}
+
+
 # ---------- Stage A (baru): bangun FIX dari 2 file mentah Accurate (penjualan + retur) ----------
 import os as _os, json as _json
 

@@ -35,8 +35,8 @@ export const PERMISSION_REGISTRY = {
     insentif_sales: ["view", "manage", "upload_target", "upload_progress", "input_support", "manage_payment", "manage_hierarchy"],
     // History Penjualan (cascade No Faktur -> Detail). manage = upload/import CSV e-Faktur.
     sales_history: ["view", "export", "manage"],
-    // Laporan Harian per SPV/SM (upload FIX -> feed dashboard + email). send = kirim email (gated).
-    laporan_harian: ["view", "upload", "send"],
+    // Laporan Harian per SPV/SM (upload FIX -> feed dashboard + email). send = kirim email (gated); manage = ubah mapping penerima.
+    laporan_harian: ["view", "upload", "send", "manage"],
 } as const;
 
 export type PermissionModule = keyof typeof PERMISSION_REGISTRY;

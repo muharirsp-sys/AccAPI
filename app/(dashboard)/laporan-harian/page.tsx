@@ -18,6 +18,7 @@ import {
     FileSearch,
     FileSpreadsheet,
     Send,
+    Settings2,
     UploadCloud,
 } from "lucide-react";
 
@@ -47,6 +48,8 @@ type UploadResult = {
     generatedFiles: GeneratedFile[];
     unmatchedReportKeywords?: string[];
     unmappedProgress?: { rows: number; achievedValueDpp: number; branches: string[] };
+    toFormatFileName?: string | null;
+    archiveFileName?: string | null;
 };
 
 type FilePickerProps = {
@@ -245,6 +248,9 @@ export default function LaporanHarianPage() {
                         Unggah laporan Accurate, periksa ringkasan dan file hasil bila diperlukan, lalu kirim email setelah konfirmasi.
                     </p>
                 </div>
+                <a href="/laporan-harian/mapping" className="ui-button-secondary min-h-11">
+                    <Settings2 size={17} aria-hidden="true" /> Kelola mapping
+                </a>
             </header>
 
             <section className="ui-surface-panel ui-panel-padding" aria-labelledby="laporan-upload-title">
@@ -417,6 +423,22 @@ export default function LaporanHarianPage() {
                                             className="ui-button-secondary min-h-11"
                                         >
                                             <Download size={17} aria-hidden="true" /> Unduh Excel
+                                        </a>
+                                    )}
+                                    {result.toFormatFileName && (
+                                        <a
+                                            href={`/api/laporan-harian/${result.runId}/preview?file=${encodeURIComponent(result.toFormatFileName)}&download=1`}
+                                            className="ui-button-secondary min-h-11"
+                                        >
+                                            <Download size={17} aria-hidden="true" /> 2. To Format
+                                        </a>
+                                    )}
+                                    {result.archiveFileName && (
+                                        <a
+                                            href={`/api/laporan-harian/${result.runId}/preview?file=${encodeURIComponent(result.archiveFileName)}&download=1`}
+                                            className="ui-button-primary min-h-11 px-4"
+                                        >
+                                            <Download size={17} aria-hidden="true" /> Unduh semua
                                         </a>
                                     )}
                                 </div>

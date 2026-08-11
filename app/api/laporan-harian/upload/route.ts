@@ -114,6 +114,10 @@ export async function POST(req: NextRequest) {
     const unmatchedReportKeywords = Array.isArray(result.unmatched_report_keywords)
         ? result.unmatched_report_keywords.map(String)
         : [];
+    const toFormat = result.to_format as { fileName?: unknown } | null | undefined;
+    const archive = result.archive as { fileName?: unknown } | null | undefined;
+    const toFormatFileName = typeof toFormat?.fileName === "string" ? toFormat.fileName : null;
+    const archiveFileName = typeof archive?.fileName === "string" ? archive.fileName : null;
     const processedReportDate = String(result.report_date ?? reportDate);
     const effectiveReportDate = /^\d{4}-\d{2}-\d{2}$/.test(processedReportDate)
         ? processedReportDate
@@ -202,6 +206,8 @@ export async function POST(req: NextRequest) {
             generatedFiles,
             totalRecipients: totalEmails,
             unmatchedReportKeywords,
+            toFormatFileName,
+            archiveFileName,
         });
     } catch (e) {
         return NextResponse.json(

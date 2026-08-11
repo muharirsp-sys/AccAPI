@@ -11,6 +11,8 @@ import { buildReviewSample, isAllowedReviewFile } from "./file-review.ts";
 assert.equal(isAllowedReviewFile("2026-07-15_ZUL & ARUL.xlsx", "2026-07-15"), true);
 assert.equal(isAllowedReviewFile("2026-07-14_DENNY.xlsx", "2026-07-15"), false);
 assert.equal(isAllowedReviewFile("2026-07-15_../secret.xlsx", "2026-07-15"), false);
+assert.equal(isAllowedReviewFile("2026-07-15_Laporan_Harian_Arsip.zip", "2026-07-15"), true);
+assert.equal(isAllowedReviewFile("2026-07-15_bad.exe", "2026-07-15"), false);
 
 const sample = buildReviewSample([
     ["NO_NOTA", "CUSTOMER", "IGNORED", "DPP"],

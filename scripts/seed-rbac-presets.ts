@@ -105,7 +105,7 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
             ...k("dashboard", ["view"]),
             ...k("form_kontrol", ["view", "submit", "manage"]),
             ...k("insentif_sales", ["view", "manage", "upload_target", "upload_progress", "input_support", "manage_payment", "manage_hierarchy"]),
-            ...k("laporan_harian", ["view", "upload", "send"]),
+            ...k("laporan_harian", ["view", "upload", "send", "manage"]),
         ],
     },
 ];

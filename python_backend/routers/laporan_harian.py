@@ -109,6 +109,8 @@ async def laporan_harian_process(
                 )
         files_written = []
         unmatched_report_keywords = []
+        to_format = None
+        archive = None
         if write_files and run_id:
             import json as _json, re as _re, datetime as _dt
             safe_run = _re.sub(r"[^A-Za-z0-9_-]", "", str(run_id))[:64]
@@ -126,10 +128,14 @@ async def laporan_harian_process(
             files_written, unmatched_report_keywords = LH.write_report_files(
                 sb, out_dir, rdate, keywords, lk, stock_frame,
             )
+            to_format = LH.write_to_format_file(fix_df, out_dir, rdate)
+            archive = LH.create_run_archive(out_dir, rdate)
 
         return ORJSONResponse({
             "ok": True,
             "files": files_written,
+            "to_format": to_format,
+            "archive": archive,
             "report_date": effective_report_date,
             "sales_rows": int(len(sb)),
             "net_dpp": float(sb["DPP"].sum()),
@@ -209,5 +215,8 @@ async def laporan_harian_file(run: str, name: str):
         return ORJSONResponse({"error": str(exc)}, status_code=400)
     if not os.path.isfile(path):
         return ORJSONResponse({"error": "file tidak ditemukan"}, status_code=404)
-    return FileResponse(path, filename=name,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    media_type = (
+        "application/zip" if name.lower().endswith(".zip")
+        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    return FileResponse(path, filename=name, media_type=media_type)
