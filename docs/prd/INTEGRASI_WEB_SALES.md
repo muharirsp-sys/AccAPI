@@ -107,8 +107,19 @@ live ke DB `CV Surya Perkasa` (id 1742775) @ `iris.accurate.id` pada 2026-07-28 
 
 Konsekuensi: nilai outstanding per faktur tidak diekspos `list.do`. Untuk blokir kredit pakai
 kombinasi `customer.balance` + `customerLimitAmountValue` + daftar faktur `outstandingFilter=true`
-dengan `dueDate`/`age`/`totalAmount`. Itu cukup akurat kecuali ada pembayaran sebagian —
-kalau presisi per-faktur diperlukan, cek `sales-invoice/detail.do`.
+dengan `dueDate`/`age`/`totalAmount`. Itu cukup akurat kecuali ada pembayaran sebagian.
+
+**KOREKSI 2026-07-28 (probe `detail.do`):** `outstanding` **ADA** — di `sales-invoice/detail.do`
+(303 field), bersama `primeOwing`, `taxOwing`, `statusOutstanding`. Yang tidak ada hanyalah
+aksesnya lewat `list.do`. Jadi presisi per-faktur bisa didapat, tapi harganya satu panggilan
+`detail.do` per faktur — mahal untuk sinkronisasi massal. Strategi hemat: pakai `list.do`
+untuk penyaringan (`outstandingFilter=true`), lalu `detail.do` hanya untuk faktur yang
+benar-benar perlu angka presisi. (Diterapkan di jalur webhook Faktur Penjualan — lihat
+`lib/sync.ts:upsertSalesInvoiceById`: 1 event = 1 panggilan `detail.do`, harga yang wajar
+karena hanya faktur yang memang baru berubah.)
+
+Dua koreksi lain dari probe yang sama:
+- **Stok per gudang TERSEDIA** lewat `item/detail.do` → `detailWarehouseData[]`
 
 `lastUpdate` terbukti berformat `dd/MM/yyyy HH:mm:ss` (`"16/01/2026 09:49:13"`) — inilah alasan
 watermark feed WAJIB pakai kolom lokal `synced_at`, bukan `lastUpdate`.

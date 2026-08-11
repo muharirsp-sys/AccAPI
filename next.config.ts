@@ -1,9 +1,9 @@
 /*
- * Tujuan: Konfigurasi Next.js untuk checkout Smart ERP.
+ * Tujuan: Konfigurasi Next.js untuk checkout Smart ERP, termasuk cache guard halaman Master Barang.
  * Caller: `next dev`, `next build`, dan runtime Next.js.
  * Dependensi: NextConfig dan working directory project.
  * Main Functions: `nextConfig`.
- * Side Effects: Mengarahkan root tracing/Turbopack, membungkus build untuk source map Sentry, dan mencegah route cleanup menyalin data runtime ke standalone.
+ * Side Effects: Mengarahkan root tracing/Turbopack, membungkus build untuk source map Sentry, dan mencegah route filesystem menyalin seluruh workspace ke standalone.
  */
 import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
@@ -16,6 +16,20 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: process.cwd(),
   // Route ini membaca folder runtime eksternal saat request; source/data root tidak dibutuhkan di standalone.
   outputFileTracingExcludes: {
+    "/api/master-barang": [
+      "./.env*",
+      "./*.{csv,xls,xlsx,rar,db,sqlite,sqlite3,log,jsonl,apl}",
+      "./*.{md,html,tsbuildinfo}",
+      "./Dockerfile*",
+      "./docker-compose.yml",
+      "./package*.json",
+      "./{drizzle,eslint,next,playwright,postcss,sentry.edge,sentry.server}.config.*",
+      "./{instrumentation,instrumentation-client,proxy}.ts",
+      "./tsconfig*.json",
+      "./config/**/*",
+      "./{.agents,.claude,.claude-plugin,.codex,.git,.github,.vscode}/**/*",
+      "./{agency-agents,app,components,dashboard-generator,Data_Penjualan,db,docs,lib,master_barang_principle,outputs,ponytail,poster,public,python_backend,reference_surat_program,runtime,runtime_logs,scripts,tests,tmp}/**/*",
+    ],
     "/api/cron/cleanup-runtime": [
       "./.env*",
       "./*.{csv,xls,xlsx,rar,db,sqlite,sqlite3,log,jsonl,apl}",
@@ -80,7 +94,7 @@ const nextConfig: NextConfig = {
     },
     {
       // All authenticated dashboard routes — prevent bfcache serving stale content after logout
-      source: "/(principles|finance|payments|summary|validator|off-program-control|api-wrapper|insentif-sales|form-kontrol|claim-workflow|admin)/:path*",
+      source: "/(principles|master-barang|finance|payments|summary|validator|off-program-control|api-wrapper|insentif-sales|form-kontrol|claim-workflow|admin)/:path*",
       headers: [
         { key: "Cache-Control", value: "private, no-cache, no-store, must-revalidate" },
       ],
