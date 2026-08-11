@@ -21,14 +21,14 @@ export async function GET(req: Request) {
     }
 
     // webhook-history.do WAJIB parameter from/to (dibuktikan live: tanpa itu -> 500 "Parameter
-    // from is required"). Default 30 hari terakhir sesuai retensi riwayat webhook Accurate;
-    // ?from=dd/MM/yyyy&to=dd/MM/yyyy di query kita untuk override manual.
+    // from is required"), DAN rentang from-to maksimal 24 jam (dibuktikan live: 30 hari -> 500
+    // "Filter from-to cannot be greater than 24 hours") — meski retensi riwayat Accurate 1 bulan,
+    // filter per-panggilan cuma jendela 24 jam. Default hari ini saja; ?from=dd/MM/yyyy&to=dd/MM/yyyy
+    // untuk cek hari lain (satu hari per panggilan).
     const { searchParams } = new URL(req.url);
-    const now = new Date();
-    const monthAgo = new Date(now);
-    monthAgo.setDate(monthAgo.getDate() - 30);
-    const from = searchParams.get("from") || toAccurateDate(monthAgo);
-    const to = searchParams.get("to") || toAccurateDate(now);
+    const today = toAccurateDate(new Date());
+    const from = searchParams.get("from") || today;
+    const to = searchParams.get("to") || today;
 
     // Modul pengelolaan sesi (account.accurate.id) — sama host dengan db-list.do, hanya
     // butuh Bearer access token, bukan X-Session-ID per-database.
