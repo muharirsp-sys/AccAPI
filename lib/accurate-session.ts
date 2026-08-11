@@ -1,8 +1,9 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accurateOAuthSession } from "@/db/schema";
+import type { AccurateCredentials } from "@/lib/sync";
 
 const ALGORITHM = "aes-256-gcm";
 
@@ -113,6 +114,35 @@ export async function upsertAccurateSession(userId: string, update: AccurateSess
     } else {
         await db.insert(accurateOAuthSession).values(values);
     }
+}
+
+/**
+ * Kredensial Accurate untuk proses non-interaktif (cron sync, webhook) — tidak ada user
+ * yang sedang login saat kode ini jalan. userId dari ACCURATE_SYNC_USER_ID, fallback sesi
+ * OAuth terbaru. Mengembalikan { error } (bukan throw) supaya caller bisa memilih HTTP status.
+ */
+export async function resolveSyncCredentials(): Promise<
+    { creds: AccurateCredentials; error?: undefined } | { creds?: undefined; error: string }
+> {
+    let userId = (process.env.ACCURATE_SYNC_USER_ID || "").trim();
+    if (!userId) {
+        const [latest] = await db.select({ userId: accurateOAuthSession.userId })
+            .from(accurateOAuthSession)
+            .orderBy(desc(accurateOAuthSession.updatedAt))
+            .limit(1);
+        userId = latest?.userId ?? "";
+    }
+    if (!userId) return { error: "Tidak ada sesi Accurate. Set ACCURATE_SYNC_USER_ID atau login Accurate dulu." };
+
+    let session = await getAccurateSession(userId);
+    if (!session?.accessToken) return { error: "Tidak ada access token Accurate. Login ulang di /api-wrapper." };
+    // X-Session-ID berumur pendek dan habis independen dari access token.
+    if (!session.sessionHost || !session.sessionId) session = await ensureFreshAccurateSession(userId);
+    if (!session?.sessionHost || !session.sessionId || !session.accessToken) {
+        return { error: "Sesi Accurate tidak bisa di-refresh — access token kemungkinan sudah kadaluarsa. Login ulang di /api-wrapper." };
+    }
+
+    return { creds: { sessionHost: session.sessionHost, sessionId: session.sessionId, apiKey: session.accessToken } };
 }
 
 export async function clearAccurateSession(userId: string) {

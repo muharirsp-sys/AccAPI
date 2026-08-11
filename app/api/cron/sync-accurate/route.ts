@@ -5,24 +5,11 @@
  * Side Effects: tulis tabel item/customer/sales_invoice/sales_return + sync_state.
  */
 import { NextResponse } from "next/server";
-import { desc } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { accurateOAuthSession } from "@/db/schema";
 import { requireCronSecret } from "@/lib/api-security";
-import { getAccurateSession, ensureFreshAccurateSession } from "@/lib/accurate-session";
+import { resolveSyncCredentials } from "@/lib/accurate-session";
 import { SYNC_MODULE_NAMES, syncModule, type SyncModuleName } from "@/lib/sync";
 
 export const maxDuration = 3600; // sync penuh bisa lama; jalan out-of-band, bukan request user
-
-async function resolveSyncUserId(): Promise<string | null> {
-    const fromEnv = (process.env.ACCURATE_SYNC_USER_ID || "").trim();
-    if (fromEnv) return fromEnv;
-    const [latest] = await db.select({ userId: accurateOAuthSession.userId })
-        .from(accurateOAuthSession)
-        .orderBy(desc(accurateOAuthSession.updatedAt))
-        .limit(1);
-    return latest?.userId ?? null;
-}
 
 export async function GET(req: Request) {
     const gate = requireCronSecret(req);
@@ -36,24 +23,14 @@ export async function GET(req: Request) {
         return NextResponse.json({ ok: false, error: `modules tidak valid. Pilihan: ${SYNC_MODULE_NAMES.join(",")}` }, { status: 400 });
     }
 
-    const userId = await resolveSyncUserId();
-    if (!userId) {
-        return NextResponse.json({ ok: false, error: "Tidak ada sesi Accurate. Set ACCURATE_SYNC_USER_ID atau login Accurate dulu." }, { status: 503 });
-    }
-    let session = await getAccurateSession(userId);
-    if (!session?.accessToken) {
-        return NextResponse.json({ ok: false, error: "Tidak ada access token Accurate. Login ulang di /api-wrapper." }, { status: 503 });
-    }
-    // X-Session-ID berumur pendek dan habis independen dari access token — refresh mandiri
-    // di sini menutup celah lama: dulu cron berhenti total sampai ada yang membuka UI.
-    if (!session.sessionHost || !session.sessionId) {
-        session = await ensureFreshAccurateSession(userId);
-    }
-    if (!session?.sessionHost || !session.sessionId || !session.accessToken) {
-        return NextResponse.json({ ok: false, error: "Sesi Accurate tidak bisa di-refresh — access token kemungkinan sudah kadaluarsa. Login ulang di /api-wrapper." }, { status: 503 });
+    // Refresh X-Session-ID ikut ditangani di sini — dulu cron berhenti total sampai ada
+    // yang membuka UI /api-wrapper.
+    const accurate = await resolveSyncCredentials();
+    if (!accurate.creds) {
+        return NextResponse.json({ ok: false, error: accurate.error }, { status: 503 });
     }
 
-    const creds = { sessionHost: session.sessionHost, sessionId: session.sessionId, apiKey: session.accessToken };
+    const creds = accurate.creds;
     const results: Record<string, unknown> = {};
     // Sequential — hormati rate limit Accurate; durasi per modul dicatat sebagai bukti beban.
     for (const mod of modules) {
