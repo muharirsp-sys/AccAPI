@@ -17,6 +17,14 @@ export interface AccurateCredentials {
     apiKey: string;
 }
 
+const accurateHeaders = (creds: AccurateCredentials) => ({
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "User-Agent": "SmartERP-SyncAgent/1.0",
+    "Authorization": `Bearer ${creds.apiKey}`,
+    "X-Session-ID": creds.sessionId,
+});
+
 // 1. AccuratePaginator: Generator asinkron pagination + throttle rate limit.
 // Catatan: Accurate list.do TANPA parameter `fields` hanya mengembalikan { id } per baris
 // (dibuktikan production 2026-07-13: raw_data == {"id":2331}) — fields wajib eksplisit.
@@ -35,13 +43,7 @@ export async function* AccuratePaginator(
 
         const response = await fetch(url, {
             method: "GET",
-            headers: {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "User-Agent": "SmartERP-SyncAgent/1.0",
-                "Authorization": `Bearer ${creds.apiKey}`,
-                "X-Session-ID": creds.sessionId,
-            },
+            headers: accurateHeaders(creds),
             signal: AbortSignal.timeout(60_000),
         });
 
@@ -262,6 +264,34 @@ const SYNC_MODULES: Record<SyncModuleName, {
 };
 
 export const SYNC_MODULE_NAMES = Object.keys(SYNC_MODULES) as SyncModuleName[];
+
+// 2b. Refresh SATU faktur dari webhook "Faktur Penjualan".
+// detail.do terlalu mahal untuk sync massal (1 panggilan per faktur), tapi di jalur webhook
+// justru pas: 1 event = 1 faktur yang memang baru berubah. Bonusnya, hanya detail.do yang
+// mengekspos `outstanding`/`statusOutstanding` — list.do tidak (lihat db/schema.ts) — jadi
+// baris hasil webhook lebih presisi daripada hasil cron.
+// Idempoten: upsert by primary key, jadi retry webhook Accurate aman diulang.
+export async function upsertSalesInvoiceById(id: number, creds: AccurateCredentials) {
+    const url = `${creds.sessionHost}/accurate/api/sales-invoice/detail.do?id=${id}`;
+    const res = await fetch(url, { headers: accurateHeaders(creds), signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) throw new Error(`detail.do faktur ${id}: HTTP ${res.status}`);
+
+    const body = await res.json();
+    if (!body?.s || !body?.d) throw new Error(`detail.do faktur ${id}: ${body?.m || "respons tanpa data"}`);
+
+    const row = body.d as Record<string, unknown>;
+    await SYNC_MODULES.sales_invoice.upsertPage([row]);
+
+    // Ringkasan untuk log/response — bukti cepat bahwa baris yang benar yang tersimpan.
+    return {
+        id,
+        number: str(row.number),
+        customerName: str(nested(row, "customer").name),
+        totalAmount: num(row.totalAmount),
+        outstanding: num(row.outstanding),
+        status: str(row.statusName),
+    };
+}
 
 // 3. syncModule: orchestrator dengan checkpoint per halaman + watermark selesai.
 export async function syncModule(moduleName: SyncModuleName, creds: AccurateCredentials) {
