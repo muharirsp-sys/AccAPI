@@ -1,3 +1,10 @@
+/*
+ * Tujuan: UI admin untuk memuat dan mengelola access group, permission, serta member.
+ * Caller: Halaman dashboard `/admin/groups`.
+ * Dependensi: API `/api/admin/groups`, `/api/admin/users/permissions`, registry RBAC, dan Sonner.
+ * Main Functions: GroupManagement, requestJson.
+ * Side Effects: HTTP read/write data access group dan menampilkan notifikasi hasil operasi.
+ */
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -8,6 +15,21 @@ type Group = { id: string; name: string; description: string | null; isPreset: b
 type Member = { userId: string; userName: string; userEmail: string; assignedAt: number };
 type Detail = { group: Group; permissions: string[]; members: Member[] };
 type UserRow = { id: string; name: string; email: string };
+
+async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
+    try {
+        const response = await fetch(url, { credentials: "include", ...init });
+        const data = await response.json().catch(() => null) as ({ error?: string } & T) | null;
+        if (!response.ok) throw new Error(data?.error || `Permintaan gagal (${response.status})`);
+        if (data === null) throw new Error("Server mengirim respons yang tidak valid");
+        return data;
+    } catch (error) {
+        if (error instanceof TypeError) {
+            throw new Error("Tidak dapat menghubungi server. Periksa koneksi lalu coba lagi.");
+        }
+        throw error;
+    }
+}
 
 const MOD_LABELS: Record<string, string> = {
     dashboard: "Dashboard", api_wrapper: "API Wrapper", payments: "Payments",
@@ -32,38 +54,55 @@ export default function GroupManagement() {
     const [addUserId, setAddUserId] = useState("");
     const [newName, setNewName] = useState("");
     const [busy, setBusy] = useState(false);
+    const [loadError, setLoadError] = useState("");
 
     const loadGroups = useCallback(async () => {
-        const r = await fetch("/api/admin/groups", { credentials: "include" });
-        const d = await r.json();
+        const d = await requestJson<{ groups?: Group[] }>("/api/admin/groups");
         setGroups(d.groups ?? []);
     }, []);
 
     const loadUsers = useCallback(async () => {
-        const r = await fetch("/api/admin/users/permissions", { credentials: "include" });
-        const d = await r.json();
+        const d = await requestJson<{ users?: UserRow[] }>("/api/admin/users/permissions");
         setAllUsers(d.users ?? []);
     }, []);
 
-    useEffect(() => { loadGroups(); loadUsers(); }, [loadGroups, loadUsers]);
+    const handleInitialResults = useCallback((results: PromiseSettledResult<void>[]) => {
+        const failure = results.find((result) => result.status === "rejected");
+        if (failure?.status === "rejected") {
+            const message = failure.reason instanceof Error ? failure.reason.message : "Gagal memuat data admin";
+            setLoadError(message);
+            toast.error(message);
+        }
+    }, []);
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => {
+            void Promise.allSettled([loadGroups(), loadUsers()]).then(handleInitialResults);
+        }, 0);
+        return () => window.clearTimeout(timer);
+    }, [handleInitialResults, loadGroups, loadUsers]);
 
     const selectGroup = useCallback(async (id: string) => {
         setSelectedId(id);
         setDetail(null);
-        const r = await fetch(`/api/admin/groups/${id}`, { credentials: "include" });
-        const d = await r.json();
-        setDetail(d);
-        setEditName(d.group.name);
-        setEditDesc(d.group.description ?? "");
-        setEditPerms(new Set(d.permissions));
-        setAddUserId("");
+        try {
+            const d = await requestJson<Detail>(`/api/admin/groups/${id}`);
+            setDetail(d);
+            setEditName(d.group.name);
+            setEditDesc(d.group.description ?? "");
+            setEditPerms(new Set(d.permissions));
+            setAddUserId("");
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Gagal memuat detail group");
+        }
     }, []);
 
     async function apiFetch(url: string, body: object, method = "POST") {
-        const r = await fetch(url, { method, credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error || "Gagal");
-        return d;
+        return requestJson<Record<string, unknown>>(url, {
+            method,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
     }
 
     async function saveInfo() {
@@ -132,9 +171,7 @@ export default function GroupManagement() {
         if (!confirm(`Hapus group "${detail.group.name}"?`)) return;
         setBusy(true);
         try {
-            const r = await fetch(`/api/admin/groups/${selectedId}`, { method: "DELETE", credentials: "include" });
-            const d = await r.json();
-            if (!r.ok) throw new Error(d.error);
+            await requestJson(`/api/admin/groups/${selectedId}`, { method: "DELETE" });
             toast.success("Group dihapus");
             setSelectedId(null); setDetail(null);
             await loadGroups();
@@ -143,12 +180,22 @@ export default function GroupManagement() {
     }
 
     const togglePerm = (key: string) =>
-        setEditPerms((p) => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n; });
+        setEditPerms((p) => {
+            const n = new Set(p);
+            if (n.has(key)) n.delete(key);
+            else n.add(key);
+            return n;
+        });
 
     const toggleModule = (mod: string, actions: readonly string[]) => {
         const keys = actions.map((a) => `${mod}.${a}`);
         const allOn = keys.every((k) => editPerms.has(k));
-        setEditPerms((p) => { const n = new Set(p); allOn ? keys.forEach((k) => n.delete(k)) : keys.forEach((k) => n.add(k)); return n; });
+        setEditPerms((p) => {
+            const n = new Set(p);
+            if (allOn) keys.forEach((k) => n.delete(k));
+            else keys.forEach((k) => n.add(k));
+            return n;
+        });
     };
 
     const nonMembers = allUsers.filter((u) => !detail?.members.some((m) => m.userId === u.id));
@@ -157,6 +204,21 @@ export default function GroupManagement() {
         <div style={{ ...F, gap: 24, padding: 24 }}>
             {/* Left: group list */}
             <div style={{ width: 260, flexShrink: 0, ...COL, gap: 8 }}>
+                {loadError && (
+                    <div role="alert" style={{ padding: 8, borderRadius: 6, background: "#fff3f3", color: "#b42318", fontSize: 12 }}>
+                        <div>{loadError}</div>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setLoadError("");
+                                void Promise.allSettled([loadGroups(), loadUsers()]).then(handleInitialResults);
+                            }}
+                            style={{ marginTop: 6 }}
+                        >
+                            Coba lagi
+                        </button>
+                    </div>
+                )}
                 <div style={{ ...F, gap: 6 }}>
                     <input
                         placeholder="Nama group baru…"

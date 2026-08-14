@@ -2,8 +2,8 @@
  * Tujuan: Registrasi service worker untuk PWA Smart ERP.
  * Caller: app/(dashboard)/layout.tsx atau root layout.
  * Dependensi: navigator.serviceWorker API.
- * Main Functions: ServiceWorkerRegistration.
- * Side Effects: Register/update service worker, log status ke console.
+ * Main Functions: ServiceWorkerRegistration, pemeriksaan update terjadwal yang aman saat offline.
+ * Side Effects: Register/update service worker dan mencatat kegagalan sementara sebagai warning.
  */
 "use client";
 
@@ -39,7 +39,11 @@ export default function ServiceWorkerRegistration() {
         .then((registration) => {
           // Check for updates setiap 1 jam
           setInterval(() => {
-            registration.update();
+            if (!navigator.onLine) return;
+            void registration.update().catch((error) => {
+              // Kegagalan sementara saat deploy/offline bukan error aplikasi.
+              console.warn("[SW] Update check failed:", error);
+            });
           }, 60 * 60 * 1000);
 
           registration.addEventListener("updatefound", () => {
@@ -58,7 +62,7 @@ export default function ServiceWorkerRegistration() {
           });
         })
         .catch((error) => {
-          console.error("[SW] Registration failed:", error);
+          console.warn("[SW] Registration failed:", error);
         });
     }
   }, []);
