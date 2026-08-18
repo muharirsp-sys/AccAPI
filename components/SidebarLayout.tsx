@@ -8,6 +8,7 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { Menu, Home, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ShieldCheck, ClipboardCheck, ReceiptText, Trophy, ClipboardList, History, Send, GitCompareArrows, X } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { canAccessPathWithKeys } from "@/lib/rbac";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
@@ -174,9 +175,23 @@ export default function SidebarLayout({ children, permKeys }: { children: React.
                 const classes = getSidebarNavClasses(collapsed, isDesktop, active, isSidebarHydrated);
                 return (
                     <li key={item.name}>
-                        <a
+                        <Link
                             href={item.href}
-                            onClick={() => setIsMobileOpen(false)}
+                            onClick={(event) => {
+                                setIsMobileOpen(false);
+                                if (
+                                    isDesktop &&
+                                    !collapsed &&
+                                    !event.ctrlKey &&
+                                    !event.metaKey &&
+                                    !event.shiftKey &&
+                                    !event.altKey
+                                ) {
+                                    clearSidebarTooltips();
+                                    persistSidebarExpanded(window.localStorage, false, true);
+                                    setIsSidebarOpen(false);
+                                }
+                            }}
                             aria-current={active ? "page" : undefined}
                             aria-label={collapsed ? item.name : undefined}
                             className={classes.link}
@@ -194,7 +209,7 @@ export default function SidebarLayout({ children, permKeys }: { children: React.
                                 aria-hidden="true"
                             />
                             {classes.label && <span className={classes.label}>{item.name}</span>}
-                        </a>
+                        </Link>
                     </li>
                 );
             })}

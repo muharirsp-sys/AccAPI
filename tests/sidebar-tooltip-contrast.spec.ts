@@ -51,3 +51,33 @@ test("collapsed active icon follows each theme without recoloring inactive icons
         await expect(inactiveIcon).not.toHaveCSS("color", expected);
     }
 });
+
+test("desktop navigation keeps the sidebar collapsed after changing pages", async ({ page }) => {
+    await page.goto("/");
+    await page.evaluate(() => localStorage.setItem("smart-erp:sidebar-expanded", "true"));
+    await page.reload();
+
+    const toggle = page.getByRole("button", { name: "Buka/tutup sidebar" });
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await page.locator("aside").first().getByRole("link", { name: "Validator Diskon" }).click();
+
+    await expect(page).toHaveURL(/\/validator$/);
+    await expect(page.getByRole("button", { name: "Buka/tutup sidebar" })).toHaveAttribute("aria-expanded", "false");
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("smart-erp:sidebar-expanded"))).toBe("false");
+});
+
+test("collapsed desktop navigation does not reload and flash the expanded sidebar", async ({ page }) => {
+    await page.goto("/");
+    await page.evaluate(() => localStorage.setItem("smart-erp:sidebar-expanded", "false"));
+    await page.reload();
+
+    const toggle = page.getByRole("button", { name: "Buka/tutup sidebar" });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await page.evaluate(() => ((window as typeof window & { sidebarDocumentMarker?: boolean }).sidebarDocumentMarker = true));
+
+    await page.locator("aside").first().getByRole("link", { name: "Validator Diskon" }).click();
+
+    await expect(page).toHaveURL(/\/validator$/);
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect.poll(() => page.evaluate(() => (window as typeof window & { sidebarDocumentMarker?: boolean }).sidebarDocumentMarker)).toBe(true);
+});
