@@ -37,6 +37,7 @@ interface ProgressInput {
     periodMonth: number;
     periodYear: number;
     invoiceNumber?: string;
+    spvName?: string; // kolom GOLONGAN di file closing
     achievedValueDpp: number;
     achievedEc: number;
     achievedAo: number;
@@ -87,6 +88,7 @@ export async function POST(req: NextRequest) {
             periodMonth: p.periodMonth,
             periodYear: p.periodYear,
             invoiceNumber: p.invoiceNumber ?? null,
+            spvName: p.spvName?.trim() || null,
             achievedValueDpp: p.achievedValueDpp,
             achievedEc: p.achievedEc,
             achievedAo: p.achievedAo,

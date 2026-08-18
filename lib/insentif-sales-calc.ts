@@ -35,6 +35,11 @@ const KONSTANTA_MIX: Record<number, number> = {
     5: 1_500_000,
 };
 
+/** Konstanta pool untuk n principle (mix). n<2 → 0 (pakai exclusive); n>5 → cap 1,5jt. */
+export function konstantaMix(n: number): number {
+    return n < 2 ? 0 : (KONSTANTA_MIX[n] ?? KONSTANTA_MIX[5]);
+}
+
 export type StatusInsentif = "distributor_principle" | "distributor" | "principle";
 export type TipeSales = "mix" | "exclusive";
 
@@ -125,7 +130,7 @@ export function computeMix(principals: MixPrincipalInput[]): MixResult {
     const total_support = valid.reduce((s, p) => s + effectiveSupport(p.status, p.nilai_support_principal), 0);
 
     // ponytail: spec hanya 2..5. <2 → seharusnya exclusive; >5 → cap 1.5jt.
-    const konstanta = jumlah < 2 ? 0 : (KONSTANTA_MIX[jumlah] ?? KONSTANTA_MIX[5]);
+    const konstanta = konstantaMix(jumlah);
     const porsi_distributor = Math.max(0, konstanta - total_support);
 
     const empty = (): MixResult => ({
