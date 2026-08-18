@@ -181,15 +181,16 @@ export default function SidebarLayout({ children, permKeys }: { children: React.
                                 setIsMobileOpen(false);
                                 if (
                                     isDesktop &&
-                                    !collapsed &&
                                     !event.ctrlKey &&
                                     !event.metaKey &&
                                     !event.shiftKey &&
                                     !event.altKey
                                 ) {
                                     clearSidebarTooltips();
-                                    persistSidebarExpanded(window.localStorage, false, true);
-                                    setIsSidebarOpen(false);
+                                    if (!collapsed) {
+                                        persistSidebarExpanded(window.localStorage, false, true);
+                                        setIsSidebarOpen(false);
+                                    }
                                 }
                             }}
                             aria-current={active ? "page" : undefined}

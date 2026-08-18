@@ -81,3 +81,21 @@ test("collapsed desktop navigation does not reload and flash the expanded sideba
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await expect.poll(() => page.evaluate(() => (window as typeof window & { sidebarDocumentMarker?: boolean }).sidebarDocumentMarker)).toBe(true);
 });
+
+test("collapsed desktop tooltip closes after selecting an icon and leaving it", async ({ page }) => {
+    await page.goto("/");
+    await page.evaluate(() => localStorage.setItem("smart-erp:sidebar-expanded", "false"));
+    await page.reload();
+
+    const link = page.locator("aside").first().getByRole("link", { name: "OFF Program Control" });
+    const tooltip = page.locator('[role="tooltip"]');
+    await link.hover();
+    await expect(tooltip).toHaveText("OFF Program Control");
+
+    await link.click();
+    await page.mouse.move(400, 300);
+
+    await expect(page).toHaveURL(/\/off-program-control$/);
+    await expect(tooltip).toHaveAttribute("aria-hidden", "true");
+    await expect(tooltip).toHaveText("");
+});
