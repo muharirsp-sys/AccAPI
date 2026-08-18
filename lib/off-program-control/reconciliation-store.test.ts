@@ -19,10 +19,12 @@ class FakeDatabase implements ReconciliationDatabase {
 
   async transaction<T>(callback: (database: ReconciliationDatabase) => Promise<T>): Promise<T> {
     const mappings = structuredClone(this.mappings);
+    const runs = structuredClone(this.runs);
     try {
       return await callback(this);
     } catch (error) {
       this.mappings = mappings;
+      this.runs = runs;
       throw error;
     }
   }
@@ -37,7 +39,10 @@ class FakeDatabase implements ReconciliationDatabase {
     return this.mappings
       .filter((row) => row.division === division && row.principalCode === principalCode)
       .sort((left, right) => right.version - left.version)
-      .map(({ workbook: _workbook, ...row }) => row);
+      .map(({ workbook: _workbook, ...row }) => {
+        void _workbook;
+        return row;
+      });
   }
 
   async nextMappingVersion(division: string, principalCode: string) {
@@ -66,6 +71,17 @@ class FakeDatabase implements ReconciliationDatabase {
     const row = this.runs.find((candidate) => candidate.id === id);
     if (!row) throw new Error(`Unknown run ${id}`);
     Object.assign(row, changes);
+  }
+
+  async pruneRuns(division: string, principalCode: string, keep: number) {
+    const retainedIds = new Set(this.runs
+      .filter((row) => row.division === division && row.principalCode === principalCode)
+      .sort((left, right) => right.startedAt.getTime() - left.startedAt.getTime())
+      .slice(0, keep)
+      .map((row) => row.id));
+    this.runs = this.runs.filter(
+      (row) => row.division !== division || row.principalCode !== principalCode || retainedIds.has(row.id),
+    );
   }
 
   async findRuns(filter: { division?: string; principalCode?: string; limit: number; offset: number }) {
@@ -158,7 +174,7 @@ async function main() {
   assert.equal(failed?.durationMs, 9);
   assert.ok(failed?.finishedAt instanceof Date);
 
-  for (let index = 0; index < 105; index += 1) {
+  for (let index = 0; index < 55; index += 1) {
     await store.startReconciliationRun({
       division: "purchases",
       principalCode: "KINO",
@@ -170,8 +186,8 @@ async function main() {
   }
 
   assert.equal((await store.listReconciliationRuns({ division: "purchases", principalCode: "KINO" })).length, 20);
-  assert.equal((await store.listReconciliationRuns({ division: "purchases", page: 0, pageSize: 1000 })).length, 100);
-  assert.equal((await store.listReconciliationRuns({ division: "purchases", page: 2, pageSize: 3 }))[0]?.startedAt.getTime(), 101);
+  assert.equal((await store.listReconciliationRuns({ division: "purchases", page: 0, pageSize: 1000 })).length, 50, "keeps only 50 runs per division and principal");
+  assert.equal((await store.listReconciliationRuns({ division: "purchases", page: 2, pageSize: 3 }))[0]?.startedAt.getTime(), 51);
   assert.equal((await store.listReconciliationRuns({ division: "returns", pageSize: 0 })).length, 1);
 }
 

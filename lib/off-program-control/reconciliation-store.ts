@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, notInArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { reconciliationMappingVersion, reconciliationRun } from "@/db/schema";
 
 export type ReconciliationDivision = "sales" | "purchases" | "returns";
 export type ReconciliationActor = { id: string; name: string; email: string };
 export type ReconciliationRunStatus = "processing" | "success" | "failed";
+const RECONCILIATION_HISTORY_LIMIT = 50;
 
 export type ReconciliationMappingRow = {
   id: string;
@@ -62,11 +63,12 @@ export interface ReconciliationDatabase {
   deactivateMappings(division: string, principalCode: string): Promise<void>;
   insertMapping(row: ReconciliationMappingRow): Promise<void>;
   insertRun(row: ReconciliationRunRow): Promise<void>;
+  pruneRuns(division: string, principalCode: string, keep: number): Promise<void>;
   updateRun(id: string, changes: Partial<ReconciliationRunRow>): Promise<void>;
   findRuns(filter: { division?: string; principalCode?: string; limit: number; offset: number }): Promise<ReconciliationRunRow[]>;
 }
 
-type DrizzleExecutor = Pick<typeof db, "select" | "insert" | "update">;
+type DrizzleExecutor = Pick<typeof db, "select" | "insert" | "update" | "delete" | "execute">;
 
 function createDrizzleDatabase(database: DrizzleExecutor): ReconciliationDatabase {
   return {
@@ -118,6 +120,18 @@ function createDrizzleDatabase(database: DrizzleExecutor): ReconciliationDatabas
     },
     async insertRun(row) {
       await database.insert(reconciliationRun).values(row);
+    },
+    async pruneRuns(division, principalCode, keep) {
+      await database.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${division}:${principalCode}`}, 0))`);
+      const retained = database.select({ id: reconciliationRun.id }).from(reconciliationRun)
+        .where(and(eq(reconciliationRun.division, division), eq(reconciliationRun.principalCode, principalCode)))
+        .orderBy(desc(reconciliationRun.startedAt), desc(reconciliationRun.id))
+        .limit(keep);
+      await database.delete(reconciliationRun).where(and(
+        eq(reconciliationRun.division, division),
+        eq(reconciliationRun.principalCode, principalCode),
+        notInArray(reconciliationRun.id, retained),
+      ));
     },
     async updateRun(id, changes) {
       await database.update(reconciliationRun).set(changes).where(eq(reconciliationRun.id, id));
@@ -194,22 +208,25 @@ export function createReconciliationStore(database: ReconciliationDatabase) {
       inputFiles: ReconciliationInputFile[];
     }) {
       const id = randomUUID();
-      await database.insertRun({
-        id,
-        division: input.division,
-        principalCode: input.principalCode,
-        mappingVersionId: input.mappingVersionId,
-        status: "processing",
-        uploadedBy: input.actor.id,
-        uploadedByName: input.actor.name,
-        uploadedByEmail: input.actor.email,
-        inputFiles: input.inputFiles,
-        summary: null,
-        issues: null,
-        error: null,
-        durationMs: null,
-        startedAt: new Date(),
-        finishedAt: null,
+      await database.transaction(async (transaction) => {
+        await transaction.insertRun({
+          id,
+          division: input.division,
+          principalCode: input.principalCode,
+          mappingVersionId: input.mappingVersionId,
+          status: "processing",
+          uploadedBy: input.actor.id,
+          uploadedByName: input.actor.name,
+          uploadedByEmail: input.actor.email,
+          inputFiles: input.inputFiles,
+          summary: null,
+          issues: null,
+          error: null,
+          durationMs: null,
+          startedAt: new Date(),
+          finishedAt: null,
+        });
+        await transaction.pruneRuns(input.division, input.principalCode, RECONCILIATION_HISTORY_LIMIT);
       });
       return id;
     },
