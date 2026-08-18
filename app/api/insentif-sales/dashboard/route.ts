@@ -5,7 +5,7 @@
  * Main Functions: GET — join targets (per principle) + MTD per principle + insentif,
  *   serta status feed progress yang belum/cocok dengan target.
  *   - channel GT: model konstanta-bobot (lib/insentif-sales-calc); mix dihitung per salesman, value dialokasikan proporsional.
- *   - channel non-GT: tetap strata-DB (lookupTierFromDb), 4 KPI.
+ *   - channel MT: model 4 KPI bobot nominal (lib/insentif-mt-calc), penyebut = target baris.
  *   Pencapaian/achievement 4-KPI ditampilkan untuk semua channel.
  * Side Effects: DB read only.
  * Catatan perf: status pembayaran di-load 1 query grouped per periode (paymentMap),
@@ -32,6 +32,7 @@ import {
     type MixPrincipalInput,
     type MixLineDetail,
 } from "@/lib/insentif-sales-calc";
+import { computeMt, computeMtMix, type MtMixLineDetail, type MtMixPrincipalInput } from "@/lib/insentif-mt-calc";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
@@ -82,8 +83,9 @@ export async function GET(req: NextRequest) {
         ready: targetKeys.size > 0 && matchedProgressKeys > 0,
     };
 
-    // Skema insentif konstanta-bobot berlaku untuk GT/TT (sinonim). MT: belum ada aturan → 0.
+    // Skema konstanta-bobot 2-KPI berlaku untuk GT/TT (sinonim); MT punya skema 4-KPI sendiri.
     const isSchemeChannel = (ch: string) => ch === "GT" || ch === "TT";
+    const isMtChannel = (ch: string) => ch === "MT";
     const key = (salesCode: string, prin: string) => `${salesCode}|${prin}`;
     const supportMap = new Map(supportRows.map((s) => [key(s.salesCode, s.principle), s.supportAmount]));
     const paymentMap = new Map(paymentRows.map((p) => [key(p.salesCode, p.principle), p.status]));
@@ -109,6 +111,32 @@ export async function GET(req: NextRequest) {
     }
     for (const [salesCode, arr] of mixGroups) {
         for (const line of computeMix(arr).rincian) mixLineMap.set(key(salesCode, line.nama), line);
+    }
+
+    // Pra-hitung insentif MT-mix per salesman (pool dibagi rata per principle valid).
+    const mtMixLineMap = new Map<string, MtMixLineDetail>();
+    const mtMixGroups = new Map<string, MtMixPrincipalInput[]>();
+    for (const t of targets) {
+        if (!isMtChannel(t.channel) || t.tipeSales !== "mix") continue;
+        const r = realOf(t.salesCode, t.principle);
+        const arr = mtMixGroups.get(t.salesCode) ?? [];
+        arr.push({
+            nama: t.principle,
+            status: t.statusInsentif as StatusInsentif,
+            target_value: t.targetValue,
+            target_ec: t.targetEc,
+            target_ao: t.targetAo,
+            target_ia: t.targetIa,
+            realisasi_value: r.realValue,
+            realisasi_ec: r.realEc,
+            realisasi_ao: r.realAo,
+            realisasi_ia: r.realIa,
+            nilai_support_principal: supportMap.get(key(t.salesCode, t.principle)) ?? 0,
+        });
+        mtMixGroups.set(t.salesCode, arr);
+    }
+    for (const [salesCode, arr] of mtMixGroups) {
+        for (const line of computeMtMix(arr).rincian) mtMixLineMap.set(key(salesCode, line.nama), line);
     }
 
     const timeGone = getWorkdayProgress(new Date());
@@ -140,8 +168,31 @@ export async function GET(req: NextRequest) {
                     });
                     incentive = { value: ex.insentif_value, ec: 0, ao: ex.insentif_ao, isq: 0, total: ex.total };
                 }
+            } else if (isMtChannel(t.channel)) {
+                // MT: 4 KPI bobot nominal (Value 350rb, EC 150rb, OA 150rb, IA 350rb).
+                const mt = t.tipeSales === "mix"
+                    ? mtMixLineMap.get(key(t.salesCode, t.principle))
+                    : computeMt({
+                        status: t.statusInsentif as StatusInsentif,
+                        target_value: t.targetValue,
+                        target_ec: t.targetEc,
+                        target_ao: t.targetAo,
+                        target_ia: t.targetIa,
+                        realisasi_value: real.realValue,
+                        realisasi_ec: real.realEc,
+                        realisasi_ao: real.realAo,
+                        realisasi_ia: real.realIa,
+                        nilai_support_principal: supportMap.get(key(t.salesCode, t.principle)) ?? 0,
+                    });
+                incentive = {
+                    value: mt?.insentif_value ?? 0,
+                    ec: mt?.insentif_ec ?? 0,
+                    ao: mt?.insentif_ao ?? 0,
+                    isq: mt?.insentif_ia ?? 0,
+                    total: mt?.total ?? 0,
+                };
             } else {
-                // MT (dan channel lain): belum ada aturan insentif → 0.
+                // Channel lain (belum didefinisikan) → 0.
                 incentive = { value: 0, ec: 0, ao: 0, isq: 0, total: 0 };
             }
 

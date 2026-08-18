@@ -733,6 +733,8 @@ export const salesDailyProgress = pgTable("sales_daily_progress", {
     periodMonth: integer("period_month").notNull(),
     periodYear: integer("period_year").notNull(),
     invoiceNumber: text("invoice_number"),
+    // SPV dari file closing (kolom GOLONGAN). Dipakai deteksi ketidaksinkronan vs sales_targets.spv_name.
+    spvName: text("spv_name"),
     achievedValueDpp: doublePrecision("achieved_value_dpp").notNull().default(0),
     achievedEc: integer("achieved_ec").notNull().default(0),
     achievedAo: integer("achieved_ao").notNull().default(0),

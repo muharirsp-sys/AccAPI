@@ -15,6 +15,7 @@ import {
     Wallet, Upload, Target, Users, UserCog, DollarSign, CheckCircle2,
     AlertTriangle, FileUp, Save, Loader2, RefreshCw, Download,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AsyncState";
@@ -991,7 +992,7 @@ function TargetInputSection() {
     );
 }
 
-// ── Admin: input progress harian (manual atau upload CSV) ─────────────────
+// ── Admin: input progress harian (manual atau upload XLSX/CSV) ─────────────────
 interface ManualProgressRow {
     salesCode: string;
     principle: string;
@@ -1068,16 +1069,27 @@ function AdminView({ rows }: { rows: Salesman[] }) {
         if (!file) return;
         setUploading(true);
         try {
-            // Parse CSV client-side (comma or semicolon separated)
-            const text = await file.text();
-            const lines = text.trim().split(/\r?\n/);
-            const headers = lines[0].split(/[,;]/).map((h) => h.trim().toUpperCase());
-            const idx = (name: string) => headers.indexOf(name);
+            // Baca via XLSX — menangani .xlsx maupun .csv, termasuk field ber-koma di dalam
+            // tanda kutip ("ABC PRESIDENT INDONESIA, PT" / alamat) yang bikin split manual geser kolom.
+            const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+            const sheet = wb.Sheets[wb.SheetNames[0]];
+            const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+            // Nama kolom file closing tidak seragam antar export — terima alias, case-insensitive.
+            const norm = (k: string) => k.trim().toUpperCase();
 
             const [year, month] = period.split("-").map(Number);
-            const parsed = lines.slice(1).map((line) => {
-                const cols = line.split(/[,;]/);
-                const get = (name: string) => cols[idx(name)]?.trim() ?? "";
+            const parsed = rawRows.map((rowObj) => {
+                const byKey = new Map(Object.entries(rowObj).map(([k, v]) => [norm(k), v]));
+                const get = (...names: string[]) => {
+                    for (const n of names) {
+                        const v = byKey.get(norm(n));
+                        if (v !== undefined && v !== "") return String(v).trim();
+                    }
+                    return "";
+                };
+                // Buang pemisah ribuan tapi PERTAHANKAN tanda minus & desimal —
+                // baris retur bernilai negatif, kalau tandanya hilang retur malah menambah realisasi.
+                const num = (val: string) => parseFloat(val.replace(/[^\d.,-]/g, "").replace(/,/g, "")) || 0;
                 return {
                     salesCode: get("KODE_SALESMAN"),
                     principle: get("PRINCIPAL"),
@@ -1085,11 +1097,12 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                     date: `${year}-${String(month).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
                     periodMonth: month,
                     periodYear: year,
-                    invoiceNumber: get("NO_INVOICE") || undefined,
-                    achievedValueDpp: parseFloat(get("DPP").replace(/\D/g, "")) || 0,
-                    achievedEc: parseInt(get("EC")) || 0,
-                    achievedAo: parseInt(get("AO")) || 0,
-                    achievedIa: parseInt(get("IA")) || 0,
+                    invoiceNumber: get("NO_INVOICE", "NO_NOTA") || undefined,
+                    spvName: get("GOLONGAN") || undefined,
+                    achievedValueDpp: num(get("DPP")),
+                    achievedEc: num(get("EC")),
+                    achievedAo: num(get("AO")),
+                    achievedIa: num(get("IA", "ITEM AKTIF")),
                 };
             });
             const payload = parsed.filter((r) => r.salesCode && r.principle && r.branch);
@@ -1201,9 +1214,9 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                 ) : (
                     <label className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-xl py-10 cursor-pointer transition-colors ${uploading ? "border-indigo-500/60 bg-indigo-500/[0.04]" : "border-white/15 hover:border-indigo-500/40 hover:bg-white/[0.02]"}`}>
                         {uploading ? <Loader2 className="text-indigo-400 animate-spin" size={28} /> : <FileUp className="text-indigo-400" size={28} />}
-                        <span className="text-sm font-semibold text-slate-200">{uploading ? "Memproses…" : "Unggah CSV Laporan Penjualan Harian"}</span>
-                        <span className="text-[11px] text-slate-500 text-center px-4">Kolom: KODE_SALESMAN, PRINCIPAL, JENISPRODUK, DPP, AO, EC, IA (+ NO_INVOICE opsional)</span>
-                        <input type="file" accept=".csv" className="hidden" disabled={uploading} onChange={handleUpload} />
+                        <span className="text-sm font-semibold text-slate-200">{uploading ? "Memproses…" : "Unggah Laporan Penjualan (XLSX/CSV)"}</span>
+                        <span className="text-[11px] text-slate-500 text-center px-4">Kolom: KODE_SALESMAN, PRINCIPAL, JENISPRODUK, DPP, AO, EC, IA/Item Aktif (+ NO_NOTA & GOLONGAN opsional)</span>
+                        <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={uploading} onChange={handleUpload} />
                     </label>
                 )}
             </div>
@@ -1240,6 +1253,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                     </table>
                 </div>
             </div>
+            <SpvMismatchSection period={period} />
             <HierarchyAssignmentSection />
         </div>
     );
@@ -1516,6 +1530,109 @@ function HierarchyAssignmentSection() {
                         </div>
                     ))}
                 </div>
+            </div>
+        </div>
+    );
+}
+
+// ── Sinkronisasi SPV: target vs closing (kolom GOLONGAN) ──────────────────────
+// Sistem tidak menebak mana yang benar — semua kandidat ditampilkan, user memilih.
+interface SpvMismatchRow {
+    salesCode: string;
+    salesName: string;
+    principle: string;
+    spvTarget: string | null;
+    spvClosing: string[];
+}
+
+function SpvMismatchSection({ period }: { period: string }) {
+    const [rows, setRows] = useState<SpvMismatchRow[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [syncing, setSyncing] = useState<string | null>(null);
+    const [year, month] = useMemo(() => period.split("-").map(Number), [period]);
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const res = await fetch(`/api/insentif-sales/spv-mismatch?month=${month}&year=${year}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error ?? "Gagal memuat data SPV");
+            setRows(data.rows ?? []);
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal memuat data SPV");
+        }
+        setLoading(false);
+    }, [month, year]);
+
+    useEffect(() => { load(); }, [load]);
+
+    async function sync(r: SpvMismatchRow, spvName: string) {
+        const k = `${r.salesCode}|${r.principle}`;
+        setSyncing(k);
+        try {
+            const res = await fetch("/api/insentif-sales/spv-mismatch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ salesCode: r.salesCode, principle: r.principle, periodMonth: month, periodYear: year, spvName }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error ?? "Gagal sinkronkan SPV");
+            toast.success(`${r.salesCode} / ${r.principle} → SPV ${spvName}`);
+            await load();
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal sinkronkan SPV");
+        }
+        setSyncing(null);
+    }
+
+    if (!loading && rows.length === 0) return null;
+
+    return (
+        <div className="bg-[#1a1c23]/60 rounded-xl border border-rose-500/25 p-5">
+            <div className="flex items-center justify-between mb-3">
+                <div>
+                    <h3 className="text-sm font-semibold text-rose-200">SPV Tidak Sinkron ({rows.length})</h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                        SPV di file target berbeda dengan kolom GOLONGAN di file closing. Pilih mana yang benar —
+                        pilihan ikut memperbarui mapping hierarki.
+                    </p>
+                </div>
+                <button onClick={load} disabled={loading} className="px-3 py-1.5 rounded bg-white/5 border border-white/10 text-xs text-slate-300 disabled:opacity-50">
+                    {loading ? "Memuat…" : "Muat ulang"}
+                </button>
+            </div>
+            <div className="max-h-72 overflow-y-auto border border-white/10 rounded-lg divide-y divide-white/5">
+                {loading && rows.length === 0 ? (
+                    <div className="p-3 text-xs text-slate-500">Memuat…</div>
+                ) : rows.map((r) => {
+                    const k = `${r.salesCode}|${r.principle}`;
+                    const busy = syncing === k;
+                    return (
+                        <div key={k} className="flex flex-wrap items-center gap-2 px-3 py-2.5 text-xs">
+                            <span className="font-mono text-slate-400 w-20 shrink-0">{r.salesCode}</span>
+                            <span className="text-slate-300 flex-1 min-w-[10rem] truncate" title={`${r.salesName} — ${r.principle}`}>
+                                {r.salesName} <span className="text-slate-600">·</span> <span className="text-slate-500">{r.principle}</span>
+                            </span>
+                            <span className="text-slate-500 shrink-0">
+                                target: <span className={r.spvTarget ? "text-amber-300" : "text-rose-400 italic"}>{r.spvTarget ?? "kosong"}</span>
+                            </span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                                {r.spvTarget && (
+                                    <button onClick={() => sync(r, r.spvTarget!)} disabled={busy}
+                                        className="px-2 py-1 rounded bg-amber-600/30 border border-amber-500/40 text-amber-200 disabled:opacity-50">
+                                        pakai {r.spvTarget}
+                                    </button>
+                                )}
+                                {r.spvClosing.map((spv) => (
+                                    <button key={spv} onClick={() => sync(r, spv)} disabled={busy}
+                                        className="px-2 py-1 rounded bg-indigo-600/30 border border-indigo-500/40 text-indigo-200 disabled:opacity-50">
+                                        pakai {spv} <span className="text-indigo-400/70">(closing)</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );
