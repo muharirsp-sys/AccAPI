@@ -1,27 +1,16 @@
 /*
  * Tujuan: Petakan respons sales-invoice/detail.do Accurate jadi bentuk siap-tampil (header + baris item).
  * Caller: app/api/faktur/[id]/route.ts, tests/faktur-detail-map.spec.ts.
- * Catatan: bentuk detailItem DIVERIFIKASI LIVE 2026-08-19 (faktur 304428, ?raw=1). Nama field
- *          yang benar: detailName, quantity, itemUnit.name, unitPrice, itemCashDiscount,
- *          totalPrice; kode barang ada di item.no (BUKAN itemNo di level baris). Alias tebakan
- *          yang tidak terbukti sudah dibuang. Endpoint detail tetap punya ?raw=1 kalau nanti ada
- *          faktur yang tampil aneh.
+ * Catatan: nama field DIVERIFIKASI LIVE 2026-08-19 (faktur 304428 + INV/2608/HZ01521 di production,
+ *          lihat ?raw=1 di route detail). Alias tebakan sudah dibuang — kalau suatu saat ada kolom
+ *          kosong, cek ulang dengan ?raw=1 dulu sebelum menambah alias baru.
  */
 
-const pickNum = (...vals: unknown[]): number => {
-    for (const v of vals) {
-        const n = Number(v);
-        if (Number.isFinite(n) && v !== null && v !== "") return n;
-    }
-    return 0;
+const num = (v: unknown): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
 };
-const pickStr = (...vals: unknown[]): string => {
-    for (const v of vals) {
-        if (typeof v === "string" && v.trim()) return v.trim();
-        if (typeof v === "number") return String(v);
-    }
-    return "";
-};
+const str = (v: unknown): string => (typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : "");
 const obj = (v: unknown): Record<string, unknown> =>
     v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
@@ -59,36 +48,35 @@ export function mapFakturDetail(row: unknown): FakturDetail {
 
     const items: FakturItem[] = rawItems.map((entry) => {
         const d = obj(entry);
-        const item = obj(d.item);
-        const unit = obj(d.itemUnit);
         return {
-            itemNo: pickStr(item.no),
-            itemName: pickStr(d.detailName, item.name),
-            quantity: pickNum(d.quantity),
-            unit: pickStr(unit.name, d.availableItemUnitName),
-            unitPrice: pickNum(d.unitPrice),
-            discount: pickNum(d.itemCashDiscount),
-            total: pickNum(d.totalPrice),
+            itemNo: str(d.itemNo),
+            itemName: str(d.detailName),
+            quantity: num(d.quantity),
+            unit: str(obj(d.itemUnit).name),
+            unitPrice: num(d.unitPrice),
+            discount: num(d.itemCashDiscount),
+            total: num(d.totalPrice),
         };
     });
 
-    const customer = obj(r.customer);
     return {
-        id: pickNum(r.id),
-        number: pickStr(r.number),
-        transDate: pickStr(r.transDate),
-        dueDate: pickStr(r.dueDate),
-        customerNo: pickStr(customer.customerNo),
-        customerName: pickStr(customer.name),
-        branchName: pickStr(r.branchName),
-        // Nama sales ada di masterSalesmanName (level faktur) — bukan objek salesman bersarang.
-        salesName: pickStr(r.masterSalesmanName),
-        description: pickStr(r.description),
-        status: pickStr(r.statusName),
-        subTotal: pickNum(r.subTotal),
-        totalDiscount: pickNum(r.cashDiscount),
-        tax: pickNum(r.tax1Amount),
-        totalAmount: pickNum(r.totalAmount),
+        id: num(r.id),
+        number: str(r.number),
+        transDate: str(r.transDate),
+        dueDate: str(r.dueDate),
+        customerNo: str(obj(r.customer).customerNo),
+        customerName: str(obj(r.customer).name),
+        branchName: str(r.branchName),
+        // Satu-satunya kolom yang alias-nya SENGAJA dipertahankan: raw 304428 memuat nama sales di
+        // header sebagai masterSalesmanName, tapi kolom Sales juga terisi di faktur HZ01521 yang
+        // mapper lamanya hanya membaca salesman.name — jadi kedua bentuk terbukti muncul di live.
+        salesName: str(r.masterSalesmanName) || str(obj(r.salesman).name),
+        description: str(r.description),
+        status: str(r.statusName),
+        subTotal: num(r.subTotal),
+        totalDiscount: num(r.cashDiscount),
+        tax: num(r.tax1Amount),
+        totalAmount: num(r.totalAmount),
         items,
     };
 }

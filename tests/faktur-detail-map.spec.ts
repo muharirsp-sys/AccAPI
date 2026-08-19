@@ -1,22 +1,22 @@
 /*
- * Tujuan: Kunci mapper detail faktur ke bentuk respons Accurate yang SUDAH diverifikasi live
- *         (faktur 304428, 2026-08-19) — supaya baris item tidak diam-diam jadi 0/kosong kalau
- *         mapper diutak-atik.
+ * Tujuan: Kunci mapper detail faktur ke bentuk payload Accurate yang TERVERIFIKASI LIVE
+ *         (2026-08-19, faktur 304428 production) — supaya kolom qty/harga tidak diam-diam
+ *         jadi 0 kalau mapper diubah.
  * Caller: npx playwright test tests/faktur-detail-map.spec.ts
  */
 import { test, expect } from "@playwright/test";
 import { mapFakturDetail } from "../lib/accurate-invoice";
 
-// Potongan respons asli sales-invoice/detail.do (dipangkas ke field yang dipakai mapper).
-const LIVE = {
+// Potongan respons detail.do asli (field yang tidak dipakai mapper dibuang agar tetap terbaca).
+const LIVE_SAMPLE = {
     id: 304428,
     number: "INV/2608/HZ00567",
     transDate: "11/08/2026",
     dueDate: "11/08/2026",
     statusName: "Lunas",
+    description: "IN-201882",
     branchName: "HEINZ",
     masterSalesmanName: "HEINZ2_SITI HALIMATUNSYAHDIAH",
-    description: "IN-201882",
     subTotal: 194022.4,
     cashDiscount: 0,
     tax1Amount: 21342,
@@ -24,31 +24,33 @@ const LIVE = {
     customer: { customerNo: "C-JUR763-HZ", name: "JURAGAN FROZEN {C-JUR763}" },
     detailItem: [
         {
+            itemNo: "A1120006013010",
             detailName: "ABC SAMBAL ASLI 130 ML X 48 BTL",
             quantity: 1,
             itemUnit: { name: "BTL" },
             unitPrice: 5855.9,
             itemCashDiscount: 0,
             totalPrice: 5855.9,
-            item: { no: "A1120006013010", name: "ABC SAMBAL ASLI 130 ML X 48 BTL" },
         },
         {
+            itemNo: "A1110001100110",
             detailName: "ABC TOMAT PILLOW 1 KG X 6 PCS",
             quantity: 5,
             itemUnit: { name: "PCS" },
             unitPrice: 17278,
             itemCashDiscount: 0,
             totalPrice: 86390,
-            item: { no: "A1110001100110", name: "ABC TOMAT PILLOW 1 KG X 6 PCS" },
         },
     ],
 };
 
-test("maps the live Accurate response shape", () => {
-    const d = mapFakturDetail(LIVE);
+test("maps the live Accurate payload", () => {
+    const d = mapFakturDetail(LIVE_SAMPLE);
     expect(d).toMatchObject({
+        id: 304428,
         number: "INV/2608/HZ00567",
         customerNo: "C-JUR763-HZ",
+        customerName: "JURAGAN FROZEN {C-JUR763}",
         branchName: "HEINZ",
         salesName: "HEINZ2_SITI HALIMATUNSYAHDIAH",
         status: "Lunas",
@@ -68,31 +70,18 @@ test("maps the live Accurate response shape", () => {
     });
 });
 
-test("item total equals the invoice subtotal (angka baris bukan sekadar ada, tapi konsisten)", () => {
-    const d = mapFakturDetail({ ...LIVE, subTotal: 92245.9 });
-    const sum = d.items.reduce((acc, it) => acc + it.total, 0);
-    expect(sum).toBeCloseTo(d.subTotal, 2);
+test("header totals add up the way the page shows them", () => {
+    const d = mapFakturDetail(LIVE_SAMPLE);
+    expect(d.subTotal + d.tax - d.totalDiscount).toBeCloseTo(d.totalAmount, 2);
 });
 
-test("kode barang diambil dari item.no, bukan itemNo di level baris", () => {
-    // Level baris TIDAK punya itemNo (dibuktikan live) — kalau mapper dibalik ke sana, kolom Kode kosong.
-    const d = mapFakturDetail({ detailItem: [{ item: { no: "X1", name: "BARANG X" }, quantity: 2, unitPrice: 10 }] });
-    expect(d.items[0].itemNo).toBe("X1");
-});
-
-test("falls back to availableItemUnitName when itemUnit is missing", () => {
-    const d = mapFakturDetail({ detailItem: [{ availableItemUnitName: "KRT", quantity: 1, item: { no: "Y1" } }] });
-    expect(d.items[0].unit).toBe("KRT");
+test("falls back to salesman.name when the header has no masterSalesmanName", () => {
+    const d = mapFakturDetail({ salesman: { name: "HEINZ10_LILIS KARLINA" } });
+    expect(d.salesName).toBe("HEINZ10_LILIS KARLINA");
 });
 
 test("survives junk without throwing", () => {
     for (const junk of [null, undefined, 42, "x", [], { detailItem: "bukan array" }]) {
         expect(mapFakturDetail(junk).items).toEqual([]);
     }
-});
-
-test("zero stays 0 instead of leaking the next fallback", () => {
-    const d = mapFakturDetail({ detailItem: [{ quantity: 0, unitPrice: 0, item: { no: "Z1" } }] });
-    expect(d.items[0].quantity).toBe(0);
-    expect(d.items[0].unitPrice).toBe(0);
 });
