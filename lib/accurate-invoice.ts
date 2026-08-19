@@ -14,15 +14,21 @@ const str = (v: unknown): string => (typeof v === "string" ? v.trim() : typeof v
 const obj = (v: unknown): Record<string, unknown> =>
     v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
-// Accurate mengirim lastUpdate sebagai "dd/MM/yyyy HH:mm:ss" (bukan ISO). Parse manual: new Date()
-// membaca string itu sebagai MM/dd atau NaN tergantung mesin, jadi tidak bisa diandalkan.
+// Accurate mengirim lastUpdate sebagai "dd/MM/yyyy HH:mm:ss" (bukan ISO). Dua jebakan:
+//  1. new Date("19/08/2026") membacanya sebagai MM/dd atau NaN tergantung mesin.
+//  2. Zonanya UTC+7, BUKAN UTC dan bukan WITA — dibuktikan dari webhook_events.log:
+//     receivedAt "2026-08-19T09:07:44Z" berpasangan dengan timestamp "19/08/2026 16:07:43".
+//     Tanpa offset eksplisit, nilainya ikut zona server (UTC di container) dan geser 7 jam.
+const ACCURATE_UTC_OFFSET = "+07:00";
+
 export const parseAccurateDateTime = (value: unknown): Date | null => {
     const raw = typeof value === "string" ? value.trim() : "";
     if (!raw) return null;
     const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
     if (m) {
-        const [, d, mo, y, h = "0", mi = "0", sec = "0"] = m;
-        return new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec));
+        const [, d, mo, y, h = "00", mi = "00", sec = "00"] = m;
+        const parsed = new Date(`${y}-${mo}-${d}T${h}:${mi}:${sec}${ACCURATE_UTC_OFFSET}`);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
     }
     // Fallback ISO (nilai lama yang ditulis lib/sync.ts sendiri saat Accurate tidak kirim lastUpdate).
     const iso = new Date(raw);

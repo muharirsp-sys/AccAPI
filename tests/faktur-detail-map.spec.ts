@@ -100,20 +100,17 @@ test("survives junk without throwing", () => {
     }
 });
 
-test("parses Accurate lastUpdate as dd/MM/yyyy, not MM/dd", () => {
-    // 19/08/2026: kalau dibaca sebagai MM/dd, bulan 19 tidak ada dan Date jadi NaN/melar ke 2027.
-    const d = parseAccurateDateTime("19/08/2026 16:07:45");
-    expect(d).not.toBeNull();
-    expect(d!.getFullYear()).toBe(2026);
-    expect(d!.getMonth()).toBe(7); // Agustus
-    expect(d!.getDate()).toBe(19);
-    expect(d!.getHours()).toBe(16);
-    expect(d!.getMinutes()).toBe(7);
+test("parses Accurate lastUpdate as dd/MM/yyyy in UTC+7", () => {
+    // Dibuktikan dari webhook_events.log: "19/08/2026 16:07:43" == 2026-08-19T09:07:43Z.
+    // Dibandingkan sebagai ISO, bukan komponen lokal — hasilnya tidak boleh bergantung TZ mesin uji.
+    expect(parseAccurateDateTime("19/08/2026 16:07:43")!.toISOString()).toBe("2026-08-19T09:07:43.000Z");
+    // Kalau dibaca MM/dd, bulan 19 tidak ada dan hasilnya melar ke tahun berikutnya.
+    expect(parseAccurateDateTime("01/12/2025 00:00:00")!.toISOString()).toBe("2025-11-30T17:00:00.000Z");
 });
 
 test("accepts date without time, ISO fallback, and rejects junk", () => {
-    expect(parseAccurateDateTime("01/12/2025")!.getMonth()).toBe(11);
-    expect(parseAccurateDateTime("2026-08-19T09:07:46.000Z")!.getFullYear()).toBe(2026);
+    expect(parseAccurateDateTime("01/12/2025")!.toISOString()).toBe("2025-11-30T17:00:00.000Z");
+    expect(parseAccurateDateTime("2026-08-19T09:07:46.000Z")!.getUTCFullYear()).toBe(2026);
     for (const junk of ["", "   ", "bukan tanggal", null, undefined, 42]) {
         expect(parseAccurateDateTime(junk)).toBeNull();
     }
