@@ -39,6 +39,10 @@ export type FakturDetail = {
     totalDiscount: number;
     tax: number;
     totalAmount: number;
+    paid: number;
+    owing: number;
+    paymentTerm: string;
+    lastPaymentDate: string;
     items: FakturItem[];
 };
 
@@ -77,6 +81,14 @@ export function mapFakturDetail(row: unknown): FakturDetail {
         totalDiscount: num(r.cashDiscount),
         tax: num(r.tax1Amount),
         totalAmount: num(r.totalAmount),
+        // primeReceipt/primeOwing = sudah dibayar / sisa tagihan, dalam mata uang dasar. Ini
+        // SATU-SATUNYA sumber sisa piutang per faktur: list.do tidak punya outstanding sama
+        // sekali (terverifikasi 2026-07-28, lihat db/schema.ts), jadi kolom outstanding di DB
+        // selalu kosong dan angka di sini tidak bisa diambil dari cache.
+        paid: num(r.primeReceipt),
+        owing: num(r.primeOwing),
+        paymentTerm: str(obj(r.paymentTerm).name),
+        lastPaymentDate: str(r.lastPaymentDate),
         items,
     };
 }

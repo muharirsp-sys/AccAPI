@@ -21,6 +21,10 @@ const LIVE_SAMPLE = {
     cashDiscount: 0,
     tax1Amount: 21342,
     totalAmount: 215364.4,
+    primeReceipt: 215364.4,
+    primeOwing: 0,
+    paymentTerm: { name: "C.O.D" },
+    lastPaymentDate: "18/08/2026",
     customer: { customerNo: "C-JUR763-HZ", name: "JURAGAN FROZEN {C-JUR763}" },
     detailItem: [
         {
@@ -57,6 +61,10 @@ test("maps the live Accurate payload", () => {
         subTotal: 194022.4,
         tax: 21342,
         totalAmount: 215364.4,
+        paid: 215364.4,
+        owing: 0,
+        paymentTerm: "C.O.D",
+        lastPaymentDate: "18/08/2026",
     });
     expect(d.items).toHaveLength(2);
     expect(d.items[1]).toEqual({
@@ -73,6 +81,12 @@ test("maps the live Accurate payload", () => {
 test("header totals add up the way the page shows them", () => {
     const d = mapFakturDetail(LIVE_SAMPLE);
     expect(d.subTotal + d.tax - d.totalDiscount).toBeCloseTo(d.totalAmount, 2);
+});
+
+test("reads the outstanding balance that list.do never provides", () => {
+    const d = mapFakturDetail({ totalAmount: 500000, primeReceipt: 200000, primeOwing: 300000 });
+    expect(d.owing).toBe(300000);
+    expect(d.paid + d.owing).toBe(d.totalAmount);
 });
 
 test("falls back to salesman.name when the header has no masterSalesmanName", () => {

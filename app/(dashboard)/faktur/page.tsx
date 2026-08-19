@@ -29,7 +29,8 @@ type Item = { itemNo: string; itemName: string; quantity: number; unit: string; 
 type Detail = {
     number: string; transDate: string; dueDate: string; customerNo: string; customerName: string;
     branchName: string; salesName: string; description: string; status: string;
-    subTotal: number; totalDiscount: number; tax: number; totalAmount: number; items: Item[];
+    subTotal: number; totalDiscount: number; tax: number; totalAmount: number;
+    paid: number; owing: number; paymentTerm: string; lastPaymentDate: string; items: Item[];
 };
 
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 });
@@ -191,6 +192,8 @@ function DetailPanel({ id, cols }: { id: number; cols: ColDef<Item>[] }) {
         ["Cabang", detail.branchName],
         ["Sales", detail.salesName],
         ["Jatuh tempo", detail.dueDate],
+        ["Termin", detail.paymentTerm],
+        ["Bayar terakhir", detail.lastPaymentDate],
         ["Keterangan", detail.description],
     ].filter(([, v]) => v);
 
@@ -251,6 +254,20 @@ function DetailPanel({ id, cols }: { id: number; cols: ColDef<Item>[] }) {
                 ))}
                 <span style={{ color: "var(--luxury-subtle)" }}>
                     Total <span className="ml-1 font-semibold tabular-nums" style={{ color: "var(--luxury-gold)" }}>{rp(detail.totalAmount)}</span>
+                </span>
+                <span style={{ color: "var(--luxury-subtle)" }}>
+                    Dibayar <span className="ml-1 tabular-nums" style={{ color: "var(--luxury-text)" }}>{rp(detail.paid)}</span>
+                </span>
+                {/* Sisa tagihan hanya ada di detail.do (primeOwing) — list.do tidak punya outstanding,
+                    jadi angka ini tidak bisa ditarik dari cache DB. */}
+                <span style={{ color: "var(--luxury-subtle)" }}>
+                    Sisa tagihan{" "}
+                    <span
+                        className="ml-1 font-semibold tabular-nums"
+                        style={{ color: detail.owing > 0 ? "var(--luxury-bronze)" : "var(--luxury-teal)" }}
+                    >
+                        {rp(detail.owing)}
+                    </span>
                 </span>
             </div>
         </div>
