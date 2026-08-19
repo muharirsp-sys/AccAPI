@@ -626,7 +626,7 @@ AccAPI/_github_clean/
 | `lib/sync.ts` | `AccuratePaginator`, `syncModule` | Sync paginated data Accurate ke SQLite lokal (item/customer) dengan checkpoint |
 | `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening) |
 | `app/api/auth/callback/route.ts` | `GET` | OAuth2 callback dari Accurate (tukar code ke token) |
-| `app/api/webhook/accurate/route.ts` | `POST` | Terima event webhook dari Accurate (IP whitelist + simpan log) |
+| `app/api/webhook/accurate/route.ts` | `POST` | Terima event webhook Faktur Penjualan dari Accurate (IP whitelist fail-closed + log rotasi + upsert `sales_invoice`) |
 | `app/(dashboard)/api-wrapper/page.tsx` | UI | Antarmuka manual query/bulk-submit ke Accurate |
 | `app/(dashboard)/api-wrapper/parsers/` | `parsePurchaseReturnBulkSave` | Parse Excel ke payload bulk API Accurate |
 
@@ -929,7 +929,7 @@ Alias Principal disimpan di `python_backend/laporan_harian_targets.py`; filter/f
 | **Elasticsearch optional** | Jika env tidak di-set, search fallback ke in-memory fuzzy. Perilaku ini tidak eksplisit diuji di test script. |
 | **PPh HOLD** | Kolom PPh disiapkan di schema tapi perhitungan final ditahan (`// PPh HOLD` tersebar di beberapa file). Belum aktif secara bisnis. |
 | **Phase R7 (Multi No Claim)** | Fitur `claim_submission` tabel (R7a+) masih dalam rollout bertahap. Phase R7b-R7k tercakup di `scripts/test-r7*.mjs` tapi belum semua route production-ready. |
-| **Webhook Accurate** | (Dikoreksi audit 2026-07-12) IP whitelist AKTIF & fail-closed (`route.ts:11-16`). Masalah sebenarnya: webhook hanya append `webhook_events.log` — tidak memicu proses apa pun (logger buntu). |
+| **Webhook Accurate** | (Dikoreksi 2026-08-18) HIDUP, bukan lagi logger buntu. IP whitelist fail-closed; payload di-parse `lib/accurate-webhook.ts` (bentuk asli terbukti live 2026-08-11: array envelope `type: "SALES_INVOICE"` + `data[].salesInvoiceId`), tiap faktur di-`detail.do` lalu upsert lewat `upsertSalesInvoiceById`. Gagal sebagian -> 502 supaya Accurate retry (upsert idempoten). `webhook_events.log` dirotasi 1 slot pada 20 MB. Diagnostik: `GET /api/admin/accurate-webhook-history` (from/to wajib, jendela maks 24 jam). Perpanjangan masa aktif: `GET /api/cron/accurate-webhook-renew` (parameter `webhook-renew.do` belum diverifikasi live). Hanya modul Faktur Penjualan yang di-subscribe. |
 | **`lib/sync.ts`** | (Fix F2/F3 2026-07-12) Hidup: registry 4 modul (item/customer/sales_invoice/sales_return), upsert `onConflictDoUpdate`, watermark `lastSyncTimestamp`. Dipicu `GET /api/cron/sync-accurate` (Bearer CRON_SECRET) via cron VPS 4×/hari. **Prasyarat: minimal 1 login OAuth Accurate di production** (`accurate_oauth_session` masih 0 baris) atau set `ACCURATE_SYNC_USER_ID`. |
 | **`config/`** | Folder berisi data statik (principles, dll) — tidak ter-trace penuh karena bukan TypeScript eksportabel; kemungkinan JSON/YAML. |
 | **`runtime/` path** | `GET /api/cron/cleanup-runtime` membersihkan artefak regenerable dengan retensi terdaftar; arsip PDF OPC/claim sengaja dikecualikan. Production tetap memerlukan scheduler eksternal dan `CRON_SECRET`. |
