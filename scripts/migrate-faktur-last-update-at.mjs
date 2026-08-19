@@ -9,7 +9,10 @@
  *
  * Zona: nilai teks Accurate ada di UTC+7 (dibuktikan dari webhook_events.log — receivedAt
  * 09:07:44Z berpasangan dengan timestamp "19/08/2026 16:07:43"). to_timestamp() menafsirkan
- * input memakai zona server (UTC di container), jadi WAJIB di-AT TIME ZONE '+07:00'.
+ * input memakai zona server (UTC di container), jadi WAJIB di-AT TIME ZONE.
+ * JANGAN pakai offset numerik seperti '+07:00' di sini: Postgres memperlakukannya gaya POSIX
+ * dengan TANDA TERBALIK, dan nilainya jadi 14 jam melenceng (terbukti 2026-08-19). Pakai nama
+ * zona 'Asia/Jakarta'. Di JavaScript sebaliknya, offset ISO '+07:00' sudah benar.
  *
  * Catatan: indeks ekspresi `to_timestamp(...)` TIDAK bisa dipakai di Postgres — fungsinya STABLE,
  * bukan IMMUTABLE. Karena itu nilainya disimpan di kolom nyata (diisi lib/sync.ts saat upsert),
@@ -31,7 +34,7 @@ console.log("OK: sales_invoice.last_update_at");
 //   2) ISO — fallback lama di lib/sync.ts saat Accurate tidak mengirim lastUpdate.
 const dmy = await client.query(`
     UPDATE sales_invoice
-       SET last_update_at = to_timestamp(last_update, 'DD/MM/YYYY HH24:MI:SS')::timestamp AT TIME ZONE '+07:00'
+       SET last_update_at = to_timestamp(last_update, 'DD/MM/YYYY HH24:MI:SS')::timestamp AT TIME ZONE 'Asia/Jakarta'
      WHERE last_update_at IS NULL
        AND last_update ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2}$'
 `);
