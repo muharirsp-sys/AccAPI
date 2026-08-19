@@ -124,10 +124,9 @@ export const salesInvoiceCache = pgTable("sales_invoice", {
     customerNo: text("customer_no"),
     customerName: text("customer_name"),
     totalAmount: doublePrecision("total_amount"),
-    // Verifikasi live 2026-07-28: /api/sales-invoice/list.do TIDAK punya field outstanding/
-    // outstandingAmount/remainingAmount/paidAmount (diterima Accurate tapi selalu kosong).
-    // Kolom ini dibiarkan ada untuk kompatibilitas tapi TIDAK PERNAH terisi dari list.do —
-    // presisi per-faktur (kalau ada pembayaran sebagian) butuh sales-invoice/detail.do.
+    // Sisa tagihan. Nama field Accurate-nya `primeOwing`, BUKAN outstanding/outstandingAmount/
+    // remainingAmount/paidAmount (yang diterima Accurate tapi selalu kosong, verifikasi 2026-07-28).
+    // Sejak 2026-08-19 kolom ini terisi dari list.do (cron) maupun detail.do (webhook).
     outstanding: doublePrecision("outstanding"),
     status: text("status"), // diisi dari field Accurate `statusName` (mis. "Belum Lunas")
     dueDate: text("due_date"),

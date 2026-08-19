@@ -44,6 +44,7 @@ export async function GET(request: NextRequest) {
                 customerNo: salesInvoiceCache.customerNo,
                 customerName: salesInvoiceCache.customerName,
                 totalAmount: salesInvoiceCache.totalAmount,
+                outstanding: salesInvoiceCache.outstanding,
                 status: salesInvoiceCache.status,
                 dueDate: salesInvoiceCache.dueDate,
                 age: salesInvoiceCache.age,

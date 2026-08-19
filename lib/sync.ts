@@ -193,7 +193,10 @@ const SYNC_MODULES: Record<SyncModuleName, {
         // Verifikasi live 2026-07-28: outstanding/outstandingAmount/remainingAmount/paidAmount/
         // status/paymentTermName/customerName/branchName TIDAK ADA (diterima Accurate tapi selalu
         // kosong). Nama field yang benar: statusName, age, dueDate, customer (objek bersarang).
-        fields: "id,number,customerNo,customer,totalAmount,transDate,dueDate,statusName,age,lastUpdate",
+        // Verifikasi live 2026-08-19: sisa piutang ADA, namanya `primeOwing` (bukan `outstanding`)
+        // — terbukti terisi di list.do, mis. 396000.945944. Bentuk yang sama juga ada di detail.do,
+        // jadi jalur webhook (upsertSalesInvoiceById -> upsertPage ini) ikut mengisinya.
+        fields: "id,number,customerNo,customer,totalAmount,transDate,dueDate,statusName,age,lastUpdate,primeOwing,primeReceipt",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
@@ -202,8 +205,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
                 customerNo: str(nested(row, "customer").customerNo ?? row.customerNo),
                 customerName: str(nested(row, "customer").name),
                 totalAmount: num(row.totalAmount),
-                // outstanding: field ini tidak tersedia dari list.do — tetap null, lihat db/schema.ts.
-                outstanding: num(row.outstanding ?? row.outstandingAmount),
+                outstanding: num(row.primeOwing),
                 status: str(row.statusName),
                 dueDate: str(row.dueDate),
                 age: num(row.age),
@@ -267,9 +269,9 @@ export const SYNC_MODULE_NAMES = Object.keys(SYNC_MODULES) as SyncModuleName[];
 
 // 2b. Refresh SATU faktur dari webhook "Faktur Penjualan".
 // detail.do terlalu mahal untuk sync massal (1 panggilan per faktur), tapi di jalur webhook
-// justru pas: 1 event = 1 faktur yang memang baru berubah. Bonusnya, hanya detail.do yang
-// mengekspos `outstanding`/`statusOutstanding` — list.do tidak (lihat db/schema.ts) — jadi
-// baris hasil webhook lebih presisi daripada hasil cron.
+// justru pas: 1 event = 1 faktur yang memang baru berubah, plus baris item ikut terbawa.
+// Sisa tagihan sendiri kini juga ada di list.do lewat `primeOwing`, jadi cron tidak lagi
+// tertinggal soal itu (verifikasi live 2026-08-19).
 // Idempoten: upsert by primary key, jadi retry webhook Accurate aman diulang.
 export async function upsertSalesInvoiceById(id: number, creds: AccurateCredentials) {
     const url = `${creds.sessionHost}/accurate/api/sales-invoice/detail.do?id=${id}`;
@@ -288,7 +290,9 @@ export async function upsertSalesInvoiceById(id: number, creds: AccurateCredenti
         number: str(row.number),
         customerName: str(nested(row, "customer").name),
         totalAmount: num(row.totalAmount),
-        outstanding: num(row.outstanding),
+        // `outstanding` di detail.do itu BOOLEAN (true/false), bukan nominal — memakainya di sini
+        // membuat log webhook menulis "sisa 1" untuk faktur bernilai jutaan. Nominalnya primeOwing.
+        outstanding: num(row.primeOwing),
         status: str(row.statusName),
     };
 }

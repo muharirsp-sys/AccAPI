@@ -21,6 +21,7 @@ type Row = {
     customerNo: string | null;
     customerName: string | null;
     totalAmount: number | null;
+    outstanding: number | null;
     status: string | null;
     dueDate: string | null;
     age: number | null;
@@ -46,6 +47,14 @@ const INVOICE_COLUMNS: ColDef<Row>[] = [
     { key: "customerName", label: "Pelanggan", align: "left", cell: (r) => dash(r.customerName) },
     { key: "customerNo", label: "Kode Pelanggan", align: "left", cell: (r) => <span className="font-mono text-xs">{dash(r.customerNo)}</span> },
     { key: "totalAmount", label: "Total", align: "right", cell: (r) => <span className="tabular-nums">{rp(r.totalAmount)}</span> },
+    {
+        key: "outstanding", label: "Sisa Tagihan", align: "right",
+        // Terisi dari primeOwing lewat cron/webhook. Faktur lama yang belum kena sync sejak
+        // 2026-08-19 masih null — tampilkan "–", jangan Rp 0 yang menyesatkan sebagai lunas.
+        cell: (r) => r.outstanding === null || r.outstanding === undefined
+            ? <span style={{ color: "var(--luxury-subtle)" }}>–</span>
+            : <span className="tabular-nums" style={{ color: r.outstanding > 0 ? "var(--luxury-bronze)" : "var(--luxury-teal)" }}>{rp(r.outstanding)}</span>,
+    },
     { key: "status", label: "Status", align: "left", cell: (r) => <StatusPill value={r.status} /> },
     { key: "dueDate", label: "Jatuh Tempo", align: "left", cell: (r) => dash(r.dueDate) },
     { key: "age", label: "Umur (hari)", align: "right", cell: (r) => <span className="tabular-nums">{r.age ?? "–"}</span> },
@@ -61,7 +70,7 @@ const ITEM_COLUMNS: ColDef<Item>[] = [
     { key: "total", label: "Total", align: "right", cell: (i) => <span className="tabular-nums">{rp(i.total)}</span> },
 ];
 
-const DEFAULT_INVOICE_COLS = ["number", "transDate", "customerName", "totalAmount", "status"];
+const DEFAULT_INVOICE_COLS = ["number", "transDate", "customerName", "totalAmount", "outstanding", "status"];
 const DEFAULT_ITEM_COLS = ["itemNo", "itemName", "quantity", "unit", "unitPrice", "total"];
 const STORAGE_KEY = "faktur.columns.v1";
 
