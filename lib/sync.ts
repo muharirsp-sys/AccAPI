@@ -213,6 +213,9 @@ const SYNC_MODULES: Record<SyncModuleName, {
                 rawData: JSON.stringify(row),
                 lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
                 lastUpdateAt: parseAccurateDateTime(row.lastUpdate),
+                // createDate hanya dikirim detail.do (jalur webhook). Dari list.do nilainya null —
+                // COALESCE di set{} menjaga agar cron tidak menghapus yang sudah benar.
+                createdAt: parseAccurateDateTime(row.createDate),
             }));
             await db.insert(salesInvoiceCache).values(payloads).onConflictDoUpdate({
                 target: salesInvoiceCache.id,
@@ -231,6 +234,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     // COALESCE: kalau Accurate tidak mengirim lastUpdate di satu panggilan,
                     // jangan hapus nilai yang sudah benar (pelajaran dari raw_data yang tertimpa).
                     lastUpdateAt: sql`coalesce(excluded."last_update_at", sales_invoice.last_update_at)`,
+                    createdAt: sql`coalesce(excluded."created_at", sales_invoice.created_at)`,
                     syncedAt: bumpSyncedAt("sales_invoice"),
                 },
             });

@@ -54,6 +54,15 @@ await client.query(
 );
 console.log("OK: idx_sales_invoice_last_update_at");
 
+// created_at: waktu faktur DIBUAT. Tidak ada backfill — createDate hanya dikirim detail.do
+// (diuji live 2026-08-19: list.do menolak fields=createDate), jadi kolom ini terisi bertahap
+// lewat jalur webhook. Faktur lama tetap NULL dan halaman /faktur jatuh ke tanggal transaksi.
+await client.query(`ALTER TABLE sales_invoice ADD COLUMN IF NOT EXISTS created_at timestamptz`);
+await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_sales_invoice_created_at ON sales_invoice(created_at DESC, id DESC)`
+);
+console.log("OK: sales_invoice.created_at + idx_sales_invoice_created_at");
+
 const sisa = await client.query(`SELECT count(*) AS n FROM sales_invoice WHERE last_update_at IS NULL`);
 console.log(`Masih NULL (format tak dikenal / kosong): ${sisa.rows[0].n}`);
 

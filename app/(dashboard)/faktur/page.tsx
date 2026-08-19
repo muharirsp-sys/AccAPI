@@ -26,6 +26,7 @@ type Row = {
     dueDate: string | null;
     age: number | null;
     lastUpdateAt: string | null;
+    createdAt: string | null;
 };
 type Item = { itemNo: string; itemName: string; quantity: number; unit: string; unitPrice: number; discount: number; total: number };
 type Detail = {
@@ -38,6 +39,11 @@ type Detail = {
 const nf = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 });
 const rp = (n: number | null | undefined) => "Rp " + nf.format(Number(n || 0));
 const dash = (v: string | null | undefined) => (v && v.trim() ? v : "–");
+
+const WaktuCell = ({ value }: { value: string | null }) =>
+    value
+        ? <span className="tabular-nums text-xs">{new Date(value).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</span>
+        : <span style={{ color: "var(--luxury-subtle)" }}>–</span>;
 
 type Align = "left" | "right";
 type ColDef<T> = { key: string; label: string; align: Align; cell: (row: T) => React.ReactNode };
@@ -60,11 +66,15 @@ const INVOICE_COLUMNS: ColDef<Row>[] = [
     { key: "dueDate", label: "Jatuh Tempo", align: "left", cell: (r) => dash(r.dueDate) },
     { key: "age", label: "Umur (hari)", align: "right", cell: (r) => <span className="tabular-nums">{r.age ?? "–"}</span> },
     {
-        key: "lastUpdateAt", label: "Waktu Simpan", align: "left",
-        // Dasar pengurutan daftar ini — ditampilkan supaya bisa disandingkan langsung dgn Accurate.
-        cell: (r) => r.lastUpdateAt
-            ? <span className="tabular-nums text-xs">{new Date(r.lastUpdateAt).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</span>
-            : <span style={{ color: "var(--luxury-subtle)" }}>–</span>,
+        key: "createdAt", label: "Waktu Dibuat", align: "left",
+        // Dasar pengurutan daftar ini. Hanya terisi untuk faktur yang masuk lewat webhook —
+        // list.do tidak mengirim createDate, jadi faktur lama menampilkan "–".
+        cell: (r) => <WaktuCell value={r.createdAt} />,
+    },
+    {
+        key: "lastUpdateAt", label: "Waktu Perubahan", align: "left",
+        // BUKAN waktu faktur dibuat: nilainya ikut berubah saat faktur dilunasi.
+        cell: (r) => <WaktuCell value={r.lastUpdateAt} />,
     },
 ];
 
@@ -78,7 +88,7 @@ const ITEM_COLUMNS: ColDef<Item>[] = [
     { key: "total", label: "Total", align: "right", cell: (i) => <span className="tabular-nums">{rp(i.total)}</span> },
 ];
 
-const DEFAULT_INVOICE_COLS = ["number", "transDate", "customerName", "totalAmount", "outstanding", "status"];
+const DEFAULT_INVOICE_COLS = ["number", "transDate", "customerName", "totalAmount", "outstanding", "status", "createdAt"];
 const DEFAULT_ITEM_COLS = ["itemNo", "itemName", "quantity", "unit", "unitPrice", "total"];
 const STORAGE_KEY = "faktur.columns.v1";
 

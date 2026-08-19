@@ -137,9 +137,15 @@ export const salesInvoiceCache = pgTable("sales_invoice", {
     // diurutkan sebagai teks). Dipakai /faktur untuk mengurutkan menurut waktu simpan, sejajar
     // dengan tabel Accurate. Diisi di lib/sync.ts; backfill via scripts/migrate-faktur-last-update-at.mjs.
     lastUpdateAt: timestamp("last_update_at", { withTimezone: true }),
+    // Waktu faktur DIBUAT di Accurate (createDate). Hanya ada di detail.do — list.do menolak
+    // memberikannya (diuji live 2026-08-19: fields=createDate tidak dikembalikan). Jadi kolom ini
+    // hanya terisi lewat jalur webhook, dan faktur lama tetap NULL. Dipakai /faktur sebagai dasar
+    // urutan utama, karena lastUpdateAt ikut berubah saat faktur dilunasi.
+    createdAt: timestamp("created_at", { withTimezone: true }),
     syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow()
 }, (t) => [
     index("idx_sales_invoice_last_update_at").on(t.lastUpdateAt, t.id),
+    index("idx_sales_invoice_created_at").on(t.createdAt, t.id),
     index("idx_sales_invoice_trans_date").on(t.transDate),
     index("idx_sales_invoice_customer_no").on(t.customerNo),
     index("idx_sales_invoice_synced_at").on(t.syncedAt, t.id)

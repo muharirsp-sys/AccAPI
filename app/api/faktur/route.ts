@@ -49,13 +49,20 @@ export async function GET(request: NextRequest) {
                 dueDate: salesInvoiceCache.dueDate,
                 age: salesInvoiceCache.age,
                 lastUpdateAt: salesInvoiceCache.lastUpdateAt,
+                createdAt: salesInvoiceCache.createdAt,
             })
             .from(salesInvoiceCache)
             .where(filters.length ? and(...filters) : sql`true`)
-            // Urut WAKTU SIMPAN menurun, sejajar tabel Accurate (id bukan urutan waktu: nomor
-            // faktur bisa dibuat belakangan, terbukti FRMT00243 ber-id lebih tinggi dari FRMT00248).
-            // nulls last supaya baris tanpa last_update_at tidak menyumbat halaman pertama.
-            .orderBy(sql`${salesInvoiceCache.lastUpdateAt} DESC NULLS LAST`, desc(salesInvoiceCache.id))
+            // Urut WAKTU FAKTUR DIBUAT menurun, sejajar tabel Accurate. Tiga catatan:
+            //  - `id` bukan urutan waktu (terbukti live: FRMT00243 ber-id lebih tinggi dari FRMT00248).
+            //  - `last_update_at` juga salah untuk ini: nilainya ikut berubah saat faktur DILUNASI,
+            //    sehingga faktur lama naik ke puncak (terbukti: MS00336 bertanggal 05/08 di atas).
+            //  - `created_at` hanya terisi lewat webhook (list.do tidak mengirim createDate), jadi
+            //    faktur lama jatuh ke fallback tanggal transaksi.
+            .orderBy(
+                sql`coalesce(${salesInvoiceCache.createdAt}, to_timestamp(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')) DESC NULLS LAST`,
+                desc(salesInvoiceCache.id),
+            )
             .limit(PAGE_SIZE + 1)
             .offset((page - 1) * PAGE_SIZE);
 
