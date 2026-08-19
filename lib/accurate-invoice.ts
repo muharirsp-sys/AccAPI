@@ -14,6 +14,21 @@ const str = (v: unknown): string => (typeof v === "string" ? v.trim() : typeof v
 const obj = (v: unknown): Record<string, unknown> =>
     v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
+// Accurate mengirim lastUpdate sebagai "dd/MM/yyyy HH:mm:ss" (bukan ISO). Parse manual: new Date()
+// membaca string itu sebagai MM/dd atau NaN tergantung mesin, jadi tidak bisa diandalkan.
+export const parseAccurateDateTime = (value: unknown): Date | null => {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (!raw) return null;
+    const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (m) {
+        const [, d, mo, y, h = "0", mi = "0", sec = "0"] = m;
+        return new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec));
+    }
+    // Fallback ISO (nilai lama yang ditulis lib/sync.ts sendiri saat Accurate tidak kirim lastUpdate).
+    const iso = new Date(raw);
+    return Number.isNaN(iso.getTime()) ? null : iso;
+};
+
 export type FakturItem = {
     itemNo: string;
     itemName: string;

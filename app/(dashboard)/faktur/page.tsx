@@ -25,6 +25,7 @@ type Row = {
     status: string | null;
     dueDate: string | null;
     age: number | null;
+    lastUpdateAt: string | null;
 };
 type Item = { itemNo: string; itemName: string; quantity: number; unit: string; unitPrice: number; discount: number; total: number };
 type Detail = {
@@ -58,6 +59,13 @@ const INVOICE_COLUMNS: ColDef<Row>[] = [
     { key: "status", label: "Status", align: "left", cell: (r) => <StatusPill value={r.status} /> },
     { key: "dueDate", label: "Jatuh Tempo", align: "left", cell: (r) => dash(r.dueDate) },
     { key: "age", label: "Umur (hari)", align: "right", cell: (r) => <span className="tabular-nums">{r.age ?? "–"}</span> },
+    {
+        key: "lastUpdateAt", label: "Waktu Simpan", align: "left",
+        // Dasar pengurutan daftar ini — ditampilkan supaya bisa disandingkan langsung dgn Accurate.
+        cell: (r) => r.lastUpdateAt
+            ? <span className="tabular-nums text-xs">{new Date(r.lastUpdateAt).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })}</span>
+            : <span style={{ color: "var(--luxury-subtle)" }}>–</span>,
+    },
 ];
 
 const ITEM_COLUMNS: ColDef<Item>[] = [

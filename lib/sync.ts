@@ -7,6 +7,7 @@
  */
 import { db } from "./db";
 import { syncState, item, customer, salesInvoiceCache, salesReturnCache } from "../db/schema";
+import { parseAccurateDateTime } from "./accurate-invoice";
 import { eq, sql } from "drizzle-orm";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -211,6 +212,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
                 age: num(row.age),
                 rawData: JSON.stringify(row),
                 lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
+                lastUpdateAt: parseAccurateDateTime(row.lastUpdate),
             }));
             await db.insert(salesInvoiceCache).values(payloads).onConflictDoUpdate({
                 target: salesInvoiceCache.id,
@@ -226,6 +228,9 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     age: sql`excluded."age"`,
                     rawData: sql`excluded."raw_data"`,
                     lastUpdate: sql`excluded."last_update"`,
+                    // COALESCE: kalau Accurate tidak mengirim lastUpdate di satu panggilan,
+                    // jangan hapus nilai yang sudah benar (pelajaran dari raw_data yang tertimpa).
+                    lastUpdateAt: sql`coalesce(excluded."last_update_at", sales_invoice.last_update_at)`,
                     syncedAt: bumpSyncedAt("sales_invoice"),
                 },
             });

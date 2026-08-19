@@ -48,10 +48,14 @@ export async function GET(request: NextRequest) {
                 status: salesInvoiceCache.status,
                 dueDate: salesInvoiceCache.dueDate,
                 age: salesInvoiceCache.age,
+                lastUpdateAt: salesInvoiceCache.lastUpdateAt,
             })
             .from(salesInvoiceCache)
             .where(filters.length ? and(...filters) : sql`true`)
-            .orderBy(desc(salesInvoiceCache.id))
+            // Urut WAKTU SIMPAN menurun, sejajar tabel Accurate (id bukan urutan waktu: nomor
+            // faktur bisa dibuat belakangan, terbukti FRMT00243 ber-id lebih tinggi dari FRMT00248).
+            // nulls last supaya baris tanpa last_update_at tidak menyumbat halaman pertama.
+            .orderBy(sql`${salesInvoiceCache.lastUpdateAt} DESC NULLS LAST`, desc(salesInvoiceCache.id))
             .limit(PAGE_SIZE + 1)
             .offset((page - 1) * PAGE_SIZE);
 

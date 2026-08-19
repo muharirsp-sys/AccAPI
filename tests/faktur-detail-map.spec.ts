@@ -5,7 +5,7 @@
  * Caller: npx playwright test tests/faktur-detail-map.spec.ts
  */
 import { test, expect } from "@playwright/test";
-import { mapFakturDetail } from "../lib/accurate-invoice";
+import { mapFakturDetail, parseAccurateDateTime } from "../lib/accurate-invoice";
 
 // Potongan respons detail.do asli (field yang tidak dipakai mapper dibuang agar tetap terbaca).
 const LIVE_SAMPLE = {
@@ -97,5 +97,24 @@ test("falls back to salesman.name when the header has no masterSalesmanName", ()
 test("survives junk without throwing", () => {
     for (const junk of [null, undefined, 42, "x", [], { detailItem: "bukan array" }]) {
         expect(mapFakturDetail(junk).items).toEqual([]);
+    }
+});
+
+test("parses Accurate lastUpdate as dd/MM/yyyy, not MM/dd", () => {
+    // 19/08/2026: kalau dibaca sebagai MM/dd, bulan 19 tidak ada dan Date jadi NaN/melar ke 2027.
+    const d = parseAccurateDateTime("19/08/2026 16:07:45");
+    expect(d).not.toBeNull();
+    expect(d!.getFullYear()).toBe(2026);
+    expect(d!.getMonth()).toBe(7); // Agustus
+    expect(d!.getDate()).toBe(19);
+    expect(d!.getHours()).toBe(16);
+    expect(d!.getMinutes()).toBe(7);
+});
+
+test("accepts date without time, ISO fallback, and rejects junk", () => {
+    expect(parseAccurateDateTime("01/12/2025")!.getMonth()).toBe(11);
+    expect(parseAccurateDateTime("2026-08-19T09:07:46.000Z")!.getFullYear()).toBe(2026);
+    for (const junk of ["", "   ", "bukan tanggal", null, undefined, 42]) {
+        expect(parseAccurateDateTime(junk)).toBeNull();
     }
 });
