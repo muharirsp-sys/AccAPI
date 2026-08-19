@@ -1,10 +1,11 @@
 /*
  * Tujuan: Petakan respons sales-invoice/detail.do Accurate jadi bentuk siap-tampil (header + baris item).
  * Caller: app/api/faktur/[id]/route.ts, tests/faktur-detail-map.spec.ts.
- * Catatan: nama field detailItem BELUM diverifikasi live (repo ini sudah 2x kena tebakan field
- *          yang salah: fields list.do & parser webhook). Karena itu tiap kolom punya beberapa
- *          alias, dan endpoint detail menyediakan ?raw=1 untuk melihat bentuk asli sekali jalan.
- *          Begitu bentuknya terbukti, alias yang tidak terpakai boleh dibuang.
+ * Catatan: bentuk detailItem DIVERIFIKASI LIVE 2026-08-19 (faktur 304428, ?raw=1). Nama field
+ *          yang benar: detailName, quantity, itemUnit.name, unitPrice, itemCashDiscount,
+ *          totalPrice; kode barang ada di item.no (BUKAN itemNo di level baris). Alias tebakan
+ *          yang tidak terbukti sudah dibuang. Endpoint detail tetap punya ?raw=1 kalau nanti ada
+ *          faktur yang tampil aneh.
  */
 
 const pickNum = (...vals: unknown[]): number => {
@@ -54,41 +55,39 @@ export type FakturDetail = {
 
 export function mapFakturDetail(row: unknown): FakturDetail {
     const r = obj(row);
-    const rawItems = Array.isArray(r.detailItem) ? r.detailItem
-        : Array.isArray(r.detailItems) ? r.detailItems
-        : Array.isArray(r.detail) ? r.detail
-        : [];
+    const rawItems = Array.isArray(r.detailItem) ? r.detailItem : [];
 
     const items: FakturItem[] = rawItems.map((entry) => {
         const d = obj(entry);
         const item = obj(d.item);
         const unit = obj(d.itemUnit);
         return {
-            itemNo: pickStr(d.itemNo, item.no, item.number, d.no),
-            itemName: pickStr(d.detailName, d.itemName, item.name, d.name),
-            quantity: pickNum(d.quantity, d.qty, d.quantityUnit),
-            unit: pickStr(unit.name, d.unitName, d.itemUnitName, d.unit),
-            unitPrice: pickNum(d.unitPrice, d.price, d.itemPrice),
-            discount: pickNum(d.itemCashDiscount, d.cashDiscount, d.discAmount, d.itemDiscAmount),
-            total: pickNum(d.totalPrice, d.total, d.totalAmount, d.subTotal),
+            itemNo: pickStr(item.no),
+            itemName: pickStr(d.detailName, item.name),
+            quantity: pickNum(d.quantity),
+            unit: pickStr(unit.name, d.availableItemUnitName),
+            unitPrice: pickNum(d.unitPrice),
+            discount: pickNum(d.itemCashDiscount),
+            total: pickNum(d.totalPrice),
         };
     });
 
     const customer = obj(r.customer);
     return {
         id: pickNum(r.id),
-        number: pickStr(r.number, r.no),
+        number: pickStr(r.number),
         transDate: pickStr(r.transDate),
         dueDate: pickStr(r.dueDate),
-        customerNo: pickStr(customer.customerNo, r.customerNo),
-        customerName: pickStr(customer.name, r.customerName),
-        branchName: pickStr(obj(r.branch).name, r.branchName),
-        salesName: pickStr(obj(r.salesman).name, obj(r.sales).name, r.salesmanName),
-        description: pickStr(r.description, r.detailNotes),
-        status: pickStr(r.statusName, r.status),
-        subTotal: pickNum(r.subTotal, r.subTotalAmount),
-        totalDiscount: pickNum(r.cashDiscount, r.totalDiscount, r.discAmount),
-        tax: pickNum(r.tax1Amount, r.taxAmount, r.totalTax),
+        customerNo: pickStr(customer.customerNo),
+        customerName: pickStr(customer.name),
+        branchName: pickStr(r.branchName),
+        // Nama sales ada di masterSalesmanName (level faktur) — bukan objek salesman bersarang.
+        salesName: pickStr(r.masterSalesmanName),
+        description: pickStr(r.description),
+        status: pickStr(r.statusName),
+        subTotal: pickNum(r.subTotal),
+        totalDiscount: pickNum(r.cashDiscount),
+        tax: pickNum(r.tax1Amount),
         totalAmount: pickNum(r.totalAmount),
         items,
     };
