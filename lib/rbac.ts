@@ -260,6 +260,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/off-program-control", module: "off_program_control", action: "view" },
     { prefix: "/reconciliation", module: "reconciliation", action: "view" },
     { prefix: "/claim-workflow", module: "claim_workflow", action: "view" },
+    { prefix: "/faktur", module: "sales_history", action: "view" },
     { prefix: "/sales-history", module: "sales_history", action: "view" },
     { prefix: "/laporan-harian", module: "laporan_harian", action: "view" },
     { prefix: "/", module: "dashboard", action: "view" },

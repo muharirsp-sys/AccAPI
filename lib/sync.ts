@@ -17,7 +17,7 @@ export interface AccurateCredentials {
     apiKey: string;
 }
 
-const accurateHeaders = (creds: AccurateCredentials) => ({
+export const accurateHeaders = (creds: AccurateCredentials) => ({
     "Content-Type": "application/json",
     "Accept": "application/json",
     "User-Agent": "SmartERP-SyncAgent/1.0",

@@ -143,6 +143,7 @@ export default function SidebarLayout({ children, permKeys }: { children: React.
         { name: "OFF Program Control", icon: ClipboardCheck, href: "/off-program-control" },
         { name: "Rekonsiliasi", icon: GitCompareArrows, href: "/reconciliation" },
         { name: "Claim Workflow", icon: ReceiptText, href: "/claim-workflow" },
+        { name: "Faktur Penjualan", icon: ReceiptText, href: "/faktur" },
         { name: "History Penjualan", icon: History, href: "/sales-history" },
         { name: "Master Principle", icon: Database, href: "/principles" },
         { name: "User & RBAC", icon: Shield, href: "/admin/users" },
