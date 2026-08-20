@@ -14,7 +14,7 @@ export const OFF_THEME_STORAGE_KEY = "off-theme";
 export type OffThemeKey = "office-calm" | "neon" | "ios";
 
 export const OFF_THEMES: Array<{ key: OffThemeKey; label: string; hint: string; swatch: string }> = [
-  { key: "office-calm", label: "Office Calm", hint: "Hijau teduh untuk kerja lama (default)", swatch: "#232c2a" },
+  { key: "office-calm", label: "Office Calm", hint: "Cream hangat dan emas (default)", swatch: "#c89432" },
   { key: "neon", label: "Neon HUD", hint: "Sci-fi control tower", swatch: "#03060d" },
   { key: "ios", label: "iOS Liquid Glass", hint: "Frosted glass terang ala iOS terbaru", swatch: "#007AFF" },
 ];

@@ -92,7 +92,8 @@ export default function ChatWidget() {
       {/* Floating button */}
       <button
         onClick={() => setOpen(!open)}
-        className="fixed bottom-6 right-6 z-[100] flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white shadow-lg transition-all hover:bg-indigo-500 hover:scale-105 active:scale-95"
+        className="fixed bottom-24 right-6 z-[100] flex h-14 w-14 items-center justify-center rounded-full border border-[var(--btn-primary-border,var(--border-strong))] text-[var(--btn-primary-text)] shadow-[var(--btn-primary-shadow,var(--luxury-shadow))] transition-transform hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--luxury-gold)] md:bottom-6"
+        style={{ background: "var(--btn-primary-bg)" }}
         aria-label={open ? "Tutup chat" : "Buka chat"}
         aria-expanded={open}
       >
@@ -105,14 +106,17 @@ export default function ChatWidget() {
           role="dialog"
           aria-label="AI Assistant"
           aria-modal="false"
-          className="fixed bottom-24 right-4 z-[100] flex w-[360px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl border border-white/20 bg-[#111318] shadow-2xl sm:right-6"
-          style={{ height: "min(500px, calc(100dvh - 140px))" }}
+          className="fixed bottom-44 right-4 z-[100] flex w-[360px] max-w-[calc(100vw-32px)] [--chat-panel-gap:192px] flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] text-[var(--luxury-text)] shadow-[var(--luxury-shadow)] backdrop-blur-xl sm:right-6 md:bottom-24 md:[--chat-panel-gap:140px]"
+          style={{
+            height: "min(500px, calc(100dvh - var(--chat-panel-gap)))",
+            background: "color-mix(in srgb, var(--surface) 92%, var(--app-bg))",
+          }}
         >
           {/* Header */}
-          <div className="flex items-center gap-2 border-b border-white/5 bg-indigo-600/20 px-4 py-3">
-            <Bot size={18} className="text-indigo-400" />
-            <span className="text-sm font-semibold text-white">AI Assistant</span>
-            <span className="ml-auto text-[10px] text-slate-500">Rule-Based</span>
+          <div className="flex items-center gap-2 border-b border-[var(--border-soft)] bg-[var(--surface-2)] px-4 py-3">
+            <Bot size={18} className="text-[var(--luxury-soft)]" />
+            <span className="text-sm font-semibold text-[var(--luxury-text)]">AI Assistant</span>
+            <span className="ml-auto text-[10px] text-[var(--luxury-subtle)]">Rule-Based</span>
           </div>
 
           {/* Messages */}
@@ -120,15 +124,15 @@ export default function ChatWidget() {
             {messages.map((msg) => (
               <div key={msg.id} className={`flex gap-2 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                 {msg.role === "bot" && (
-                  <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20">
-                    <Bot size={14} className="text-indigo-400" />
+                  <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--surface-2)]">
+                    <Bot size={14} className="text-[var(--luxury-soft)]" />
                   </div>
                 )}
                 <div
                   className={`max-w-[80%] rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap ${
                     msg.role === "user"
-                      ? "bg-indigo-600 text-white"
-                      : "bg-white/10 text-slate-100"
+                      ? "border border-[var(--border-strong)] text-[var(--btn-primary-text)] [background:var(--btn-primary-bg)]"
+                      : "border border-[var(--border-soft)] bg-[var(--surface-2)] text-[var(--luxury-text)]"
                   }`}
                 >
                   {msg.text}
@@ -138,7 +142,7 @@ export default function ChatWidget() {
                         <a
                           key={link.href}
                           href={link.href}
-                          className="inline-flex items-center gap-1 rounded-md bg-indigo-500/20 px-2 py-1 text-xs text-indigo-300 transition-colors hover:bg-indigo-500/30"
+                          className="inline-flex items-center gap-1 rounded-md border border-[var(--border-soft)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--luxury-soft)] transition-colors hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--luxury-gold)]"
                         >
                           {link.label}
                           <ExternalLink size={10} />
@@ -148,18 +152,18 @@ export default function ChatWidget() {
                   )}
                 </div>
                 {msg.role === "user" && (
-                  <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-600/50">
-                    <User size={14} className="text-slate-400" />
+                  <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--surface-2)]">
+                    <User size={14} className="text-[var(--luxury-muted)]" />
                   </div>
                 )}
               </div>
             ))}
             {loading && (
               <div className="flex gap-2">
-                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-500/20">
-                  <Bot size={14} className="text-indigo-400" />
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--surface-2)]">
+                  <Bot size={14} className="text-[var(--luxury-soft)]" />
                 </div>
-                <div className="rounded-xl bg-white/10 px-3 py-2">
+                <div className="rounded-xl border border-[var(--border-soft)] bg-[var(--surface-2)] px-3 py-2">
                   <div className="flex gap-1">
                     <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:0ms]" />
                     <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:150ms]" />
@@ -171,7 +175,7 @@ export default function ChatWidget() {
           </div>
 
           {/* Input */}
-          <div className="border-t border-white/5 px-3 py-2">
+          <div className="border-t border-[var(--border-soft)] bg-[var(--surface-2)] px-3 py-2">
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -186,13 +190,14 @@ export default function ChatWidget() {
                 placeholder="Ketik pesan..."
                 maxLength={500}
                 disabled={loading}
-                className="flex-1 rounded-lg bg-white/5 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none transition-colors focus:bg-white/10 disabled:opacity-50"
+                className="flex-1 rounded-lg border border-[var(--control-border,var(--border-strong))] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--luxury-text)] outline-none transition-colors placeholder:text-[var(--luxury-subtle)] focus:border-[var(--luxury-gold)] focus:ring-2 focus:ring-[var(--luxury-gold)]/20 disabled:opacity-50"
                 aria-label="Pesan chatbot"
               />
               <button
                 type="submit"
                 disabled={!input.trim() || loading}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white transition-all hover:bg-indigo-500 disabled:opacity-30 disabled:hover:bg-indigo-600"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--btn-primary-border,var(--border-strong))] text-[var(--btn-primary-text)] shadow-sm transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--luxury-gold)] disabled:opacity-30"
+                style={{ background: "var(--btn-primary-bg)" }}
                 aria-label="Kirim pesan"
               >
                 <Send size={16} />

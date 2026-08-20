@@ -143,12 +143,22 @@ export default function GroupManagement() {
     }
 
     const togglePerm = (key: string) =>
-        setEditPerms((p) => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n; });
+        setEditPerms((p) => {
+            const n = new Set(p);
+            if (n.has(key)) n.delete(key);
+            else n.add(key);
+            return n;
+        });
 
     const toggleModule = (mod: string, actions: readonly string[]) => {
         const keys = actions.map((a) => `${mod}.${a}`);
         const allOn = keys.every((k) => editPerms.has(k));
-        setEditPerms((p) => { const n = new Set(p); allOn ? keys.forEach((k) => n.delete(k)) : keys.forEach((k) => n.add(k)); return n; });
+        setEditPerms((p) => {
+            const n = new Set(p);
+            if (allOn) keys.forEach((k) => n.delete(k));
+            else keys.forEach((k) => n.add(k));
+            return n;
+        });
     };
 
     const nonMembers = allUsers.filter((u) => !detail?.members.some((m) => m.userId === u.id));

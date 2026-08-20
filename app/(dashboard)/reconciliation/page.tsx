@@ -602,7 +602,7 @@ export default function ReconciliationPage() {
             <div className="flex flex-col gap-2 sm:items-end">
               <label htmlFor="mapping-file" className="text-xs font-semibold text-slate-300">Ganti mapping</label>
               <div className="flex flex-wrap gap-2">
-                <input id="mapping-file" aria-label="Ganti mapping" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={isMappingUploading} onChange={(event) => setMappingFile(event.target.files?.[0] ?? null)} className="max-w-60 rounded-lg text-xs text-slate-400 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 file:mr-2 file:rounded-full file:border-0 file:bg-white/10 file:px-3 file:py-2 file:font-semibold file:text-slate-200" />
+                <input id="mapping-file" aria-label="Ganti mapping" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={isMappingUploading} onChange={(event) => setMappingFile(event.target.files?.[0] ?? null)} className="max-w-60 rounded-lg text-xs text-slate-400 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 file:mr-2 file:rounded-full file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:font-semibold file:text-white hover:file:opacity-90" />
                 <button type="button" onClick={activateMapping} disabled={!mappingFile || isMappingUploading} className="btn-primary inline-flex items-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70">
                   {isMappingUploading && <Loader2 className="animate-spin motion-reduce:animate-none" size={16} />} Aktifkan mapping
                 </button>
@@ -656,7 +656,7 @@ export default function ReconciliationPage() {
                   onChange={(event) =>
                     changeFile(kind, event.target.files?.[0] ?? null)
                   }
-                  className="block w-full rounded-lg text-sm text-slate-400 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 file:mr-4 file:rounded-full file:border-0 file:bg-white/10 file:px-4 file:py-2 file:text-xs file:font-semibold file:text-slate-200 hover:file:bg-white/20 disabled:opacity-50"
+                  className="block w-full rounded-lg text-sm text-slate-400 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 file:mr-4 file:rounded-full file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:opacity-90 disabled:opacity-50"
                 />
                 <div className="mt-4 flex min-h-11 items-center justify-between gap-3 text-sm text-slate-300">
                   <span className="truncate">

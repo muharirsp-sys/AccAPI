@@ -258,10 +258,12 @@ export default function DatePickerField({
             <input
                 ref={inputRef}
                 type="text"
+                role="combobox"
                 readOnly
                 inputMode="none"
                 aria-label={ariaLabel}
                 aria-haspopup="dialog"
+                aria-autocomplete="none"
                 aria-expanded={open}
                 aria-controls={open ? calendarId : undefined}
                 value={formatDateForDisplay(value)}

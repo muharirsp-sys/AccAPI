@@ -8,7 +8,7 @@
  * Side Effects: HTTP read/write ke FastAPI dan update `payments.json`.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, CheckCircle2, AlertTriangle, FileText, RefreshCcw, Save, Settings2, Upload, Database } from "lucide-react";
 import { toast } from "sonner";
 import DatePickerField from "@/components/ui/DatePickerField";
@@ -152,12 +152,10 @@ function BankDataSection() {
     const [autoFixing, setAutoFixing] = useState(false);
     const [showTable, setShowTable] = useState(false);
 
-    const API = resolveApiBase();
-
-    const fetchBankData = async () => {
+    const fetchBankData = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API}/api/bank-data`, { credentials: "include" });
+            const res = await fetch(`${API_BASE}/api/bank-data`, { credentials: "include" });
             if (!res.ok) {
                 const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
                 toast.error(`Gagal memuat data rekening: ${errData.error || res.statusText}`);
@@ -168,12 +166,12 @@ function BankDataSection() {
         } catch (err: unknown) {
             toast.error(err instanceof Error ? `Koneksi gagal: ${err.message}` : "Tidak bisa terhubung ke backend.");
         } finally { setLoading(false); }
-    };
+    }, []);
 
     const fetchMatchReport = async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API}/api/bank-data/match-report`, { credentials: "include" });
+            const res = await fetch(`${API_BASE}/api/bank-data/match-report`, { credentials: "include" });
             if (!res.ok) {
                 const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
                 toast.error(`Gagal memuat report: ${errData.error || res.statusText}`);
@@ -194,7 +192,7 @@ function BankDataSection() {
         setReplacing(true);
         setReplaceResult(null);
         try {
-            const res = await fetch(`${API}/api/bank-data/replace-principle-name`, {
+            const res = await fetch(`${API_BASE}/api/bank-data/replace-principle-name`, {
                 method: "POST",
                 credentials: "include",
                 headers: { "Content-Type": "application/json" },
@@ -217,7 +215,7 @@ function BankDataSection() {
     const handleAutoFix = async (confirm: boolean) => {
         setAutoFixing(true);
         try {
-            const res = await fetch(`${API}/api/bank-data/auto-fix-names`, {
+            const res = await fetch(`${API_BASE}/api/bank-data/auto-fix-names`, {
                 method: "POST",
                 credentials: "include",
                 headers: { "Content-Type": "application/json" },
@@ -238,7 +236,7 @@ function BankDataSection() {
         }
     };
 
-    useEffect(() => { fetchBankData(); }, []);
+    useEffect(() => { fetchBankData(); }, [fetchBankData]);
 
     return (
         <section className="mt-5 border border-white/10 bg-black/30 rounded-lg p-5 space-y-5">
@@ -627,7 +625,7 @@ export default function PaymentsSppdSettingsPage() {
                             type="file"
                             accept=".xlsx,.xls"
                             onChange={(event) => setUploadFile(event.target.files?.[0] || null)}
-                            className="max-w-[280px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-600 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white"
+                            className="max-w-[280px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-blue-600 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white"
                         />
                         <button type="submit" disabled={uploading || !uploadFile} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-500 disabled:opacity-50">
                             <Upload size={16} /> {uploading ? "Uploading..." : "Upload"}

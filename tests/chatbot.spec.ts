@@ -44,7 +44,7 @@ test.describe("Chatbot E2E", () => {
     await page.locator('button[aria-label="Kirim pesan"]').click();
     await page.waitForTimeout(3000);
     const dialog = page.locator('[role="dialog"][aria-label="AI Assistant"]');
-    await expect(dialog).toContainText("Perintah data");
+    await expect(dialog).toContainText("Berikut yang bisa saya bantu");
   });
 
   test("escape closes dialog", async ({ page }) => {

@@ -1646,7 +1646,7 @@ html[data-theme="ios"] {
   --luxury-muted: var(--ios-body);
   --luxury-subtle: var(--ios-muted);
   --luxury-soft: var(--ios-primary);
-  --luxury-teal: #198754;
+  --luxury-teal: #146c43;
   --luxury-gold: var(--ios-primary);
   --luxury-gold-2: #6f86dd;
   --luxury-bronze: var(--ios-primary-dark);
@@ -1657,9 +1657,9 @@ html[data-theme="ios"] {
   --btn-primary-border: rgba(67, 94, 190, 0.42);
   --btn-primary-shadow: 0 8px 20px rgba(67, 94, 190, 0.24);
   --btn-primary-shadow-hover: 0 12px 26px rgba(67, 94, 190, 0.32);
-  --btn-preview-bg: rgba(59, 130, 246, 0.18);
-  --btn-preview-hover: rgba(59, 130, 246, 0.28);
-  --btn-preview-text: #93c5fd;
+  --btn-preview-bg: rgba(67, 94, 190, 0.10);
+  --btn-preview-hover: rgba(67, 94, 190, 0.18);
+  --btn-preview-text: #435ebe;
   /* Modal error — ios: aksen biru iOS */
   --modal-err-overlay-bg: rgba(0, 0, 0, 0.82);
   --modal-err-card-filter: none;

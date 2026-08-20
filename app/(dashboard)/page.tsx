@@ -96,7 +96,7 @@ export default async function DashboardLanding() {
                         <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-xs font-bold tracking-widest uppercase shadow-[0_10px_30px_rgba(199,154,63,0.14)]">
                             <ShieldCheck size={14} /> ERP Sistem Terpusat
                         </div>
-                        <h1 className="text-4xl md:text-5xl font-black text-blue-600 tracking-tight leading-tight">
+                        <h1 className="text-4xl md:text-5xl font-black text-[var(--luxury-text)] tracking-tight leading-tight">
                             Portal Internal <br className="hidden md:block"/>
                             <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#b77a25] via-[#d6a948] to-[#7a4e20]">
                                 CV. Surya Perkasa
@@ -110,7 +110,7 @@ export default async function DashboardLanding() {
                     <div className="hidden lg:flex shrink-0 w-64 h-64 bg-black/40 rounded-[1.75rem] shadow-xl items-center justify-center relative overflow-hidden group">
                         <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                         <div className="absolute inset-8 rounded-full bg-white/5"></div>
-                        <Cpu size={80} className="text-indigo-500/40 group-hover:text-indigo-400 transition-colors duration-500 group-hover:scale-110" />
+                        <Cpu size={80} className="text-[var(--luxury-gold)] opacity-40 transition-[opacity,transform] duration-500 group-hover:scale-110 group-hover:opacity-100" />
                     </div>
                 </div>
             </div>
@@ -140,7 +140,7 @@ export default async function DashboardLanding() {
                                     </p>
                                 </div>
                                 <div className="mt-auto flex items-center justify-between pt-4">
-                                    <span className={`text-[11px] font-bold uppercase tracking-wider ${mod.iconColor}`}>Akses Modul</span>
+                                    <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--luxury-bronze)]">Akses Modul</span>
                                     <ArrowRight size={16} className={`${mod.iconColor} opacity-50 group-hover:opacity-100 group-hover:translate-x-1 transition-all`} />
                                 </div>
                             </Link>

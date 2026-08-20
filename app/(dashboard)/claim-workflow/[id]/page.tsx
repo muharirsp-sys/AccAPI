@@ -997,20 +997,22 @@ export default function ClaimWorkflowDetailPage() {
     ? getNoClaimRuleVariants(excelPrincipalCode)
     : [];
   const excelHasVariants = excelVariants.length > 0;
+  const workflowId = workflow?.id;
+  const workflowPrincipleCode = workflow?.principleCode;
 
   // R7h — sinkronkan principal default dari workflow.principleCode (via rule).
   useEffect(() => {
-    if (!workflow) return;
-    const key = resolveNoClaimKeyFromRule(workflow.principleCode);
+    if (!workflowId || !workflowPrincipleCode) return;
+    const key = resolveNoClaimKeyFromRule(workflowPrincipleCode);
     setExcelPrincipalCode(key);
     // Set default variant jika rule punya variants.
-    const variants = getNoClaimRuleVariants(workflow.principleCode);
+    const variants = getNoClaimRuleVariants(workflowPrincipleCode);
     setExcelVariantKey((prev) => {
       if (variants.length === 0) return "";
       if (variants.some((variant) => variant.variantKey === prev)) return prev;
       return variants[0].variantKey;
     });
-  }, [workflow?.id, workflow?.principleCode]);
+  }, [workflowId, workflowPrincipleCode]);
 
   // R7h — initialize draft per item saat items berubah. Item baru / belum
   // pernah ter-init akan diisi dari current data + parsing No Claim.

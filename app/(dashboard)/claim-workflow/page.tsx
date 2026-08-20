@@ -82,6 +82,16 @@ function createdDate(value: string | Date) {
   }).format(date);
 }
 
+async function parseJsonResponse<T>(response: Response): Promise<T | null> {
+  const text = await response.text();
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
 // Status legacy PEKA (Waiting PEKA / EC Received / CN Received) ditampilkan
 // dengan tone "Submitted to Principal" karena flow PEKA sudah retired. UI
 // tidak menyediakan aksi transisi PEKA apapun lagi.
@@ -134,13 +144,13 @@ export default function ClaimWorkflowPage() {
         const response = await fetch("/api/claim-workflow", {
           cache: "no-store",
         });
-        const result = (await response.json()) as {
+        const result = await parseJsonResponse<{
           ok?: boolean;
           workflows?: ClaimWorkflowListRow[];
           error?: string;
-        };
-        if (!response.ok || !result.ok) {
-          throw new Error(result.error || "Gagal memuat Claim Workflow.");
+        }>(response);
+        if (!response.ok || !result?.ok) {
+          throw new Error(result?.error || "Gagal memuat Claim Workflow.");
         }
         if (active) setRows(result.workflows || []);
       } catch (loadError) {
@@ -168,14 +178,14 @@ export default function ClaimWorkflowPage() {
         const response = await fetch("/api/claim-workflow/outstanding", {
           cache: "no-store",
         });
-        const result = (await response.json()) as {
+        const result = await parseJsonResponse<{
           ok?: boolean;
           outstanding?: OutstandingRow[];
           summary?: OutstandingSummary;
           error?: string;
-        };
-        if (!response.ok || !result.ok) {
-          throw new Error(result.error || "Gagal memuat Outstanding.");
+        }>(response);
+        if (!response.ok || !result?.ok) {
+          throw new Error(result?.error || "Gagal memuat Outstanding.");
         }
         if (active) {
           setOutstanding(result.outstanding || []);
@@ -322,7 +332,7 @@ export default function ClaimWorkflowPage() {
           </div>
           <Link
             href="/claim-workflow/reports"
-            className="inline-flex items-center gap-2 rounded-lg border border-[#b9821f] bg-[#c6922e] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#a87518]"
+            className="btn-primary text-xs"
           >
             Reports / Export →
           </Link>

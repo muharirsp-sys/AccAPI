@@ -70,7 +70,7 @@ test("desktop motion stays isolated from mobile navigation", () => {
     assert.match(className, /ease-\[cubic-bezier\(0\.22,1,0\.36,1\)\]/);
     assert.match(className, /motion-reduce:transition-none/);
   }
-  assert.equal(mobile.link, "flex items-center py-2.5 hover:bg-indigo-500/20 hover:text-indigo-300 rounded-lg transition-colors group px-3 bg-indigo-500/15 text-indigo-300");
+  assert.equal(mobile.link, "flex items-center py-2.5 hover:bg-indigo-500/20 hover:text-indigo-300 rounded-lg transition-colors group px-3 bg-indigo-500/20 text-indigo-300");
   assert.equal(mobile.icon, "min-w-[20px]");
   assert.equal(mobile.label, "ml-3 text-sm font-medium whitespace-nowrap");
   assert.match(source, /className="absolute right-4 p-1 hover:bg-white\/10 focus-visible:bg-white\/10 rounded-md transition-colors"/);

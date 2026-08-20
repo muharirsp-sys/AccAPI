@@ -57,15 +57,15 @@ export function getSidebarNavClasses(
 ) {
     return {
         link: isDesktop
-            ? `relative flex items-center px-3 py-2.5 rounded-lg group transition-[background-color,color,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] hover:bg-indigo-500/20 hover:text-indigo-300 focus-visible:bg-indigo-500/20 focus-visible:text-indigo-300 before:absolute before:left-0 before:top-2 before:bottom-2 before:w-1 before:rounded-r-full before:bg-gradient-to-b before:from-indigo-400 before:to-indigo-600 before:transition-[opacity,transform] before:duration-200 before:ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none motion-reduce:transform-none motion-reduce:before:transition-none motion-reduce:before:transform-none ${
+            ? `relative flex items-center px-3 py-2.5 rounded-lg group transition-[background-color,color,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] hover:bg-indigo-500/20 hover:text-indigo-300 focus-visible:bg-indigo-500/20 focus-visible:text-indigo-300 before:absolute before:left-0 before:top-2 before:bottom-2 before:w-1 before:rounded-r-full before:bg-[var(--luxury-gold)] before:transition-[opacity,transform] before:duration-200 before:ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none motion-reduce:transform-none motion-reduce:before:transition-none motion-reduce:before:transform-none ${
                 collapsed ? "" : "hover:translate-x-[3px] focus-visible:translate-x-[3px]"
             } ${active
-                ? "bg-indigo-500/15 text-indigo-300 before:scale-y-100 before:opacity-100"
+                ? "bg-indigo-500/20 text-indigo-300 before:scale-y-100 before:opacity-100"
                 : "text-slate-300 before:scale-y-50 before:opacity-0"
             }`
             : `flex items-center py-2.5 hover:bg-indigo-500/20 hover:text-indigo-300 rounded-lg transition-colors group ${
                 collapsed ? "justify-center" : "px-3"
-            } ${active ? "bg-indigo-500/15 text-indigo-300" : "text-slate-300"}`,
+            } ${active ? "bg-indigo-500/20 text-indigo-300" : "text-slate-300"}`,
         icon: isDesktop
             ? `min-w-[20px] transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.04] group-focus-visible:scale-[1.04] motion-reduce:transition-none motion-reduce:transform-none ${collapsed && active ? "sidebar-active-icon" : ""}`
             : "min-w-[20px]",

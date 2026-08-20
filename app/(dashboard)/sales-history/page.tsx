@@ -58,13 +58,13 @@ function ItemHistoryTable({ rows, isLoading, hasQuery, frozen, showKeterangan }:
     // ponytail: freeze butuh scroll container SENDIRI (max-h + overflow-auto) — overflow-y:clip
     // di elemen yg juga overflow-x:auto ternyata didemosikan browser jadi "hidden" (scroll container asli),
     // sehingga sticky ngunci ke situ (yg tak pernah discroll) bukan ke halaman. Diverifikasi via repro terpisah.
-    const thFreeze = frozen ? "sticky top-0 z-20 bg-slate-100" : "";
-    const th1Freeze = frozen ? "sticky top-0 left-0 z-30 bg-slate-100" : "";
-    const td1Freeze = frozen ? "sticky left-0 z-10 bg-white group-hover:bg-slate-50" : "";
+    const thFreeze = frozen ? "sticky top-0 z-20 bg-[var(--surface-2)]" : "";
+    const th1Freeze = frozen ? "sticky top-0 left-0 z-30 bg-[var(--surface-2)]" : "";
+    const td1Freeze = frozen ? "sticky left-0 z-10 bg-[var(--surface)] group-hover:bg-[var(--surface-2)]" : "";
     const colCount = showKeterangan ? 11 : 10;
     const produkWidth = showKeterangan ? "w-[23%]" : "w-[33%]";
     return (
-        <div className="overflow-clip rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-clip rounded-xl border border-[var(--border-strong)] bg-[var(--surface)] shadow-sm">
             <div className="max-h-[70vh] overflow-auto">
                 <table className="w-full min-w-[1280px] table-fixed border-separate border-spacing-0 text-left text-sm">
                     <colgroup>
@@ -80,7 +80,7 @@ function ItemHistoryTable({ rows, isLoading, hasQuery, frozen, showKeterangan }:
                         <col className="w-[5%]" />
                         {showKeterangan && <col className="w-[10%]" />}
                     </colgroup>
-                    <thead className="border-b border-slate-200 bg-slate-100 text-xs font-semibold uppercase text-slate-600">
+                    <thead className="border-b border-[var(--border-strong)] bg-[var(--surface-2)] text-xs font-semibold uppercase text-[var(--luxury-muted)]">
                         <tr>
                             <th className={`px-4 py-3 ${th1Freeze}`}>No Faktur</th>
                             <th className={`px-4 py-3 ${thFreeze}`}>Tanggal</th>
@@ -95,39 +95,39 @@ function ItemHistoryTable({ rows, isLoading, hasQuery, frozen, showKeterangan }:
                             {showKeterangan && <th className={`px-4 py-3 ${thFreeze}`}>Keterangan</th>}
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                    <tbody className="divide-y divide-[var(--border-soft)] text-[var(--luxury-text)]">
                         {!hasQuery ? (
-                            <tr><td colSpan={colCount} className="h-32 px-4 text-center text-slate-500">Ketik nama atau kode produk untuk menampilkan history penjualan.</td></tr>
+                            <tr><td colSpan={colCount} className="h-32 px-4 text-center text-[var(--luxury-muted)]">Ketik nama atau kode produk untuk menampilkan history penjualan.</td></tr>
                         ) : isLoading ? (
-                            <tr><td colSpan={colCount} className="h-32 px-4 text-center text-slate-500">Memuat history item...</td></tr>
+                            <tr><td colSpan={colCount} className="h-32 px-4 text-center text-[var(--luxury-muted)]">Memuat history item...</td></tr>
                         ) : rows.length ? (
                             rows.map((row) => (
-                                <tr key={row.id} className="group hover:bg-slate-50">
-                                    <td className={`px-4 py-3 font-semibold text-slate-800 ${td1Freeze}`}>{row.referensi}</td>
+                                <tr key={row.id} className="group hover:bg-[var(--surface-2)]">
+                                    <td className={`px-4 py-3 font-semibold text-[var(--luxury-text)] ${td1Freeze}`}>{row.referensi}</td>
                                     <td className="px-4 py-3 tabular-nums">{row.tanggal}</td>
                                     <td className="px-4 py-3"><span className="block truncate" title={row.principal}>{row.principal}</span></td>
                                     <td className="px-4 py-3"><span className="block truncate font-medium" title={row.customerNama}>{row.customerNama}</span></td>
                                     <td className="px-4 py-3">
                                         <span className="block truncate font-medium" title={row.namaProduk}>{row.namaProduk}</span>
-                                        <span className="block truncate text-xs text-slate-500" title={row.kodeObjek}>{row.kodeObjek}</span>
+                                        <span className="block truncate text-xs text-[var(--luxury-muted)]" title={row.kodeObjek}>{row.kodeObjek}</span>
                                     </td>
                                     <td className="px-4 py-3 text-right tabular-nums">{Number(row.qty || 0).toLocaleString("id-ID")}</td>
-                                    <td className="px-4 py-3 text-slate-600">{row.satuan || "-"}</td>
+                                    <td className="px-4 py-3 text-[var(--luxury-muted)]">{row.satuan || "-"}</td>
                                     <td className="px-4 py-3 text-right tabular-nums">{rp(row.hargaSatuan)}</td>
                                     <td className="px-4 py-3 text-right tabular-nums">{rp(row.hargaTotal)}</td>
                                     <td className="px-4 py-3 text-right tabular-nums">
                                         <span className="block font-medium text-amber-600">{pct(row.diskonRp, row.hargaTotal).toFixed(1)}%</span>
-                                        <span className="block text-xs text-slate-500">{rp(row.diskonRp)}</span>
+                                        <span className="block text-xs text-[var(--luxury-muted)]">{rp(row.diskonRp)}</span>
                                     </td>
                                     {showKeterangan && (
                                         <td className="px-4 py-3">
-                                            <span className="block truncate text-xs text-slate-500" title={row.keterangan}>{row.keterangan || "-"}</span>
+                                            <span className="block truncate text-xs text-[var(--luxury-muted)]" title={row.keterangan}>{row.keterangan || "-"}</span>
                                         </td>
                                     )}
                                 </tr>
                             ))
                         ) : (
-                            <tr><td colSpan={colCount} className="h-32 px-4 text-center text-slate-500">Tidak ada item yang cocok dengan pencarian & filter ini.</td></tr>
+                            <tr><td colSpan={colCount} className="h-32 px-4 text-center text-[var(--luxury-muted)]">Tidak ada item yang cocok dengan pencarian & filter ini.</td></tr>
                         )}
                     </tbody>
                 </table>
@@ -325,22 +325,22 @@ export default function SalesHistoryPage() {
                 </div>
             )}
 
-            <div className="mb-6 rounded-2xl border border-white/10 bg-white p-6 shadow-xl">
+            <div className="mb-6 rounded-2xl border border-[var(--border-strong)] bg-[var(--surface)] p-6 shadow-xl">
                 <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                        <h2 className="text-lg font-bold text-slate-900">History Item</h2>
-                        <p className="text-sm text-slate-500">
+                        <h2 className="text-lg font-bold text-[var(--luxury-text)]">History Item</h2>
+                        <p className="text-sm text-[var(--luxury-muted)]">
                             {productQuery
                                 ? `${totalApprox ? "setidaknya " : ""}${total.toLocaleString("id-ID")} item - pencarian: ${searchBackend}`
                                 : "Ketik nama/kode produk untuk mulai."}
                         </p>
                     </div>
-                    <div className="flex items-center gap-2 text-sm text-slate-500">
+                    <div className="flex items-center gap-2 text-sm text-[var(--luxury-muted)]">
                         <button
                             type="button"
                             onClick={() => setFrozen((f) => !f)}
                             title={frozen ? "Nonaktifkan freeze pane" : "Aktifkan freeze pane (header + kolom No Faktur)"}
-                            className={`rounded-lg border px-3 py-1.5 text-xs font-medium ${frozen ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100" : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}
+                            className={`rounded-lg border px-3 py-1.5 text-xs font-medium ${frozen ? "border-[var(--border-strong)] bg-[var(--surface-2)] text-[var(--luxury-soft)]" : "border-[var(--border-strong)] text-[var(--luxury-muted)] hover:bg-[var(--surface-2)]"}`}
                         >
                             Freeze {frozen ? "✓" : ""}
                         </button>
@@ -348,7 +348,7 @@ export default function SalesHistoryPage() {
                             type="button"
                             onClick={() => setShowKeterangan((s) => !s)}
                             title={showKeterangan ? "Sembunyikan kolom Keterangan" : "Tampilkan kolom Keterangan (REM)"}
-                            className={`rounded-lg border px-3 py-1.5 text-xs font-medium ${showKeterangan ? "border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100" : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}
+                            className={`rounded-lg border px-3 py-1.5 text-xs font-medium ${showKeterangan ? "border-[var(--border-strong)] bg-[var(--surface-2)] text-[var(--luxury-soft)]" : "border-[var(--border-strong)] text-[var(--luxury-muted)] hover:bg-[var(--surface-2)]"}`}
                         >
                             Keterangan {showKeterangan ? "✓" : ""}
                         </button>
@@ -356,7 +356,7 @@ export default function SalesHistoryPage() {
                             type="button"
                             onClick={() => setPage((p) => Math.max(p - 1, 1))}
                             disabled={page <= 1 || loading || !productQuery}
-                            className="rounded-lg border border-slate-200 p-2 disabled:opacity-40"
+                            className="rounded-lg border border-[var(--border-strong)] p-2 disabled:opacity-40"
                         >
                             <ChevronLeft className="h-4 w-4" />
                         </button>
@@ -365,7 +365,7 @@ export default function SalesHistoryPage() {
                             type="button"
                             onClick={() => setPage((p) => Math.min(p + 1, pageCount))}
                             disabled={page >= pageCount || loading || !productQuery}
-                            className="rounded-lg border border-slate-200 p-2 disabled:opacity-40"
+                            className="rounded-lg border border-[var(--border-strong)] p-2 disabled:opacity-40"
                         >
                             <ChevronRight className="h-4 w-4" />
                         </button>

@@ -484,9 +484,9 @@ export default function FinancePage() {
             </div>
 
             {errorMsg && (
-                <div className="mb-4 p-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-3">
-                    <AlertCircle className="text-red-400 shrink-0" />
-                    <p className="text-red-200 text-sm font-medium">{errorMsg}</p>
+                <div className="ui-state-panel--error mb-4 flex items-start gap-3 rounded-lg border p-4">
+                    <AlertCircle className="shrink-0 text-[#b42318]" />
+                    <p className="text-sm font-medium text-[#b42318]">{errorMsg}</p>
                 </div>
             )}
 

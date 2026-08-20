@@ -9,10 +9,12 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ElementType,
   type KeyboardEvent,
   type ReactNode,
@@ -3030,7 +3032,7 @@ function SupervisorDashboard({
     return () => controller.abort();
   }, [batchCode, bulan, tahun, editingBatchId, editingOriginalNumber]);
 
-  const loadReturnedBatches = async () => {
+  const loadReturnedBatches = useCallback(async () => {
     try {
       const response = await fetch("/api/off-program-control/batches", {
         credentials: "include",
@@ -3097,7 +3099,7 @@ function SupervisorDashboard({
           : "Daftar pengajuan belum berhasil dimuat. Silakan coba lagi.",
       );
     }
-  };
+  }, [offRole, sessionUserId]);
 
   useEffect(() => {
     loadReturnedBatches();
@@ -3141,7 +3143,7 @@ function SupervisorDashboard({
       document.removeEventListener("visibilitychange", onFocus);
       window.clearInterval(interval);
     };
-  }, []);
+  }, [loadReturnedBatches]);
 
   const updateBatchPrinciple = (nextValue: string) => {
     setBatchPrinciple(nextValue);
@@ -7978,7 +7980,7 @@ function RefundPanel({
   const [receiverBank, setReceiverBank] = useState("");
   const [refundNote, setRefundNote] = useState("");
 
-  const loadRefunds = async () => {
+  const loadRefunds = useCallback(async () => {
     setIsLoading(true);
     try {
       const response = await fetch(`/api/off-program-control/batches/${batchId}/refund`, { credentials: "include" });
@@ -7991,9 +7993,9 @@ function RefundPanel({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [batchId]);
 
-  useEffect(() => { loadRefunds(); }, [batchId]);
+  useEffect(() => { loadRefunds(); }, [loadRefunds]);
 
   const submitRefund = async () => {
     setIsSubmitting(true);
@@ -10242,7 +10244,7 @@ function OverviewTab({
     [devBatchCount],
   );
 
-  const loadOverview = async () => {
+  const loadOverview = useCallback(async () => {
     setIsLoading(true);
     setError("");
     if (devBatchCount > 0) {
@@ -10270,7 +10272,7 @@ function OverviewTab({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [devBatchCount, devBatches]);
 
   useEffect(() => {
     loadOverview();
@@ -10305,7 +10307,7 @@ function OverviewTab({
       document.removeEventListener("visibilitychange", onFocus);
       window.clearInterval(interval);
     };
-  }, [devBatchCount, devBatches]);
+  }, [devBatchCount, loadOverview]);
 
   // Buka drawer otomatis ketika parent mengirim pendingBatchId dari Global Search.
   useEffect(() => {
@@ -10565,7 +10567,11 @@ export default function OffProgramControlPage() {
   // Cegah hydration mismatch: role berasal dari authClient.useSession() (client-only),
   // sehingga SSR (tanpa sesi) berbeda dgn render klien. Render shell stabil dulu,
   // baru tampilkan UI berbasis role setelah mount.
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false,
+  );
   const [paidIncompleteCount, setPaidIncompleteCount] = useState(0);
   const [showAccessDetail, setShowAccessDetail] = useState(false);
   const [globalSearchItems, setGlobalSearchItems] = useState<OffSearchableItem[]>([]);
@@ -10642,7 +10648,6 @@ export default function OffProgramControlPage() {
       tabList?.querySelector<HTMLButtonElement>(`[data-tab-key="${nextTab.key}"]`)?.focus();
     });
   };
-  useEffect(() => setMounted(true), []);
   const mappingSummary = useMemo(
     () => `${PRINCIPLE_OPTIONS.length} mapping principle dimuat`,
     [],

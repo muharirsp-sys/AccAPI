@@ -99,3 +99,24 @@ test("collapsed desktop tooltip closes after selecting an icon and leaving it", 
     await expect(tooltip).toHaveAttribute("aria-hidden", "true");
     await expect(tooltip).toHaveText("");
 });
+
+test("mobile chat controls stay clear of the bottom navigation", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+
+    const bottomNav = page.getByRole("navigation", { name: "Navigasi utama" });
+    const chatButton = page.getByRole("button", { name: /chat/ });
+    const overlaps = async (first: typeof bottomNav, second: typeof bottomNav) => {
+        const [a, b] = await Promise.all([first.boundingBox(), second.boundingBox()]);
+        if (!a || !b) throw new Error("Elemen yang diuji tidak terlihat");
+        return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+    };
+
+    await expect.poll(() => overlaps(bottomNav, chatButton)).toBe(false);
+    await chatButton.click();
+
+    const chatDialog = page.getByRole("dialog", { name: "AI Assistant" });
+    await expect(chatDialog).toBeVisible();
+    await expect.poll(() => overlaps(bottomNav, chatDialog)).toBe(false);
+    await expect.poll(() => overlaps(chatButton, chatDialog)).toBe(false);
+});

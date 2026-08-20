@@ -42,11 +42,13 @@ export default async function DashboardLayout({
     const allowed = canAccessPathWithKeys(currentPath, permKeys);
 
     return (
-        <SidebarLayout role={role} permKeys={permKeys}>
-            {allowed ? children : <AccessDenied />}
-            <ServiceWorkerRegistration />
-            <PWAInstallPrompt />
+        <>
+            <SidebarLayout role={role} permKeys={permKeys}>
+                {allowed ? children : <AccessDenied />}
+                <ServiceWorkerRegistration />
+                <PWAInstallPrompt />
+            </SidebarLayout>
             <ChatWidget />
-        </SidebarLayout>
+        </>
     );
 }
