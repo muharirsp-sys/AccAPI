@@ -169,6 +169,37 @@ export const salesReturnCache = pgTable("sales_return", {
     index("idx_sales_return_synced_at").on(t.syncedAt, t.id)
 ]);
 
+// Mirror read-only untuk BI (Metabase) dari sales-history-inv.db (SQLite terpisah, lihat
+// lib/sales-history/db.ts). HANYA baris published=1 (lolos Raw->Staging->Validated->Reconciled->
+// Published, lihat scripts/publish-sales-history-batch.mjs) yang boleh masuk sini -- disinkron oleh
+// scripts/sync-sales-history-to-postgres.mjs, TIDAK live/real-time. customer_npwp sengaja tidak
+// dimirror (tidak perlu untuk BI, hindari data sensitif tersebar ke tool lain).
+export const salesHistoryExport = pgTable("sales_history_export", {
+    itemId: integer("item_id").primaryKey(),           // dari sales_history_item.id (SQLite)
+    referensi: text("referensi").notNull(),
+    jenisTransaksi: text("jenis_transaksi").notNull(),  // 'PENJUALAN' | 'RETUR'
+    tanggal: text("tanggal").notNull(),                 // ISO yyyy-mm-dd
+    principal: text("principal").notNull(),
+    kodeCust: text("kode_cust").notNull(),
+    customerNama: text("customer_nama").notNull(),
+    kodeObjek: text("kode_objek").notNull(),
+    namaProduk: text("nama_produk").notNull(),
+    qty: doublePrecision("qty").notNull(),
+    satuan: text("satuan").notNull(),
+    hargaSatuan: doublePrecision("harga_satuan").notNull(),
+    hargaTotal: doublePrecision("harga_total").notNull(),
+    diskonRp: doublePrecision("diskon_rp").notNull(),
+    dpp: doublePrecision("dpp").notNull(),
+    ppn: doublePrecision("ppn").notNull(),
+    batchId: integer("batch_id").notNull(),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_she_tanggal").on(t.tanggal),
+    index("idx_she_principal").on(t.principal),
+    index("idx_she_kode_cust").on(t.kodeCust),
+    index("idx_she_jenis").on(t.jenisTransaksi),
+]);
+
 export const idempotencyLog = pgTable("idempotency_log", {
     key: text("key").primaryKey(), 
     status: text("status").notNull(), 
