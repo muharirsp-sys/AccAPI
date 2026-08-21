@@ -338,10 +338,10 @@ export default function SidebarLayout({ children, permKeys }: { children: React.
                     {children}
                 </main>
 
-                {/* Mobile floating capsule nav (< md) — swipeable, semua item */}
+                {/* Lima menu utama; rute lain tetap tersedia lewat drawer. */}
                 <nav aria-label="Navigasi utama" className="md:hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-32px)] max-w-sm rounded-2xl bg-[#1a1c23]/90 backdrop-blur-xl border border-white/5 shadow-[0_8px_32px_rgba(0,0,0,0.4)] overflow-hidden">
-                    <div className="flex items-center h-14 px-2 overflow-x-auto gap-1" style={{ scrollbarWidth: "none" }}>
-                        {navItems.map((item) => {
+                    <div className="grid h-14 grid-cols-5 items-center gap-1 px-2">
+                        {navItems.slice(0, 5).map((item) => {
                             const Icon = item.icon;
                             const active = isActive(item.href);
                             return (
@@ -350,7 +350,7 @@ export default function SidebarLayout({ children, permKeys }: { children: React.
                                     href={item.href}
                                     aria-current={active ? "page" : undefined}
                                     aria-label={item.name}
-                                    className={`flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 rounded-xl shrink-0 min-w-[52px] transition-all ${
+                                    className={`flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1.5 transition-all ${
                                         active ? "text-amber-400" : "text-slate-500 hover:text-slate-300"
                                     }`}
                                 >

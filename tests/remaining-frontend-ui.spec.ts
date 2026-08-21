@@ -125,3 +125,38 @@ test("Claim Workflow replaces empty API responses with user-facing errors", asyn
   await expect(page.getByText("Gagal memuat Outstanding.")).toBeVisible();
   await expect(page.getByText(/Unexpected end of JSON input/)).toHaveCount(0);
 });
+
+test("mobile Faktur keeps the empty state inside the visible panel", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.route("**/api/faktur**", (route) => route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, rows: [], hasMore: false }),
+    }));
+
+    await page.goto("/faktur");
+
+    const emptyState = page.getByText("Belum ada faktur di cache.");
+    await expect(emptyState).toBeVisible();
+    const box = await emptyState.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+});
+
+test("mobile navigation fits five primary links and keeps secondary links in the drawer", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+
+    const bottomNav = page.getByRole("navigation", { name: "Navigasi utama" });
+    const primaryLinks = bottomNav.getByRole("link");
+    await expect(primaryLinks).toHaveCount(5);
+    for (const name of ["Dashboard", "AOL Form Engine", "Validator Diskon", "Summary Promo", "Finance"]) {
+        await expect(bottomNav.getByRole("link", { name })).toBeVisible();
+    }
+    expect(await bottomNav.locator("div").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+
+    await page.getByRole("button", { name: "Buka menu navigasi" }).click();
+    const drawer = page.getByRole("dialog", { name: "Menu navigasi" });
+    await expect(drawer.getByRole("link", { name: "OFF Program Control" })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "Claim Workflow" })).toBeVisible();
+});

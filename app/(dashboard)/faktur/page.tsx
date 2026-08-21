@@ -423,21 +423,6 @@ export default function FakturPage() {
                                 </tr>
                             ))}
 
-                            {!loading && rows.length === 0 && (
-                                <tr>
-                                    <td colSpan={colCount} className="px-4 py-14 text-center">
-                                        <p className="text-sm font-medium" style={{ color: "var(--luxury-text)" }}>
-                                            {query ? `Tidak ada faktur yang cocok dengan "${query}".` : "Belum ada faktur di cache."}
-                                        </p>
-                                        <p className="mt-1 text-sm" style={{ color: "var(--luxury-muted)" }}>
-                                            {query
-                                                ? "Coba kata kunci lain, atau matikan filter “Hanya nomor INV” untuk memunculkan retur."
-                                                : "Faktur akan muncul otomatis begitu Accurate mengirim webhook atau sync berjalan."}
-                                        </p>
-                                    </td>
-                                </tr>
-                            )}
-
                             {!loading && rows.map((row) => {
                                 const open = openId === row.id;
                                 return (
@@ -481,6 +466,18 @@ export default function FakturPage() {
                         </tbody>
                     </table>
                 </div>
+                {!loading && rows.length === 0 && (
+                    <div className="px-4 py-14 text-center">
+                        <p className="text-sm font-medium" style={{ color: "var(--luxury-text)" }}>
+                            {query ? `Tidak ada faktur yang cocok dengan "${query}".` : "Belum ada faktur di cache."}
+                        </p>
+                        <p className="mt-1 text-sm" style={{ color: "var(--luxury-muted)" }}>
+                            {query
+                                ? "Coba kata kunci lain, atau matikan filter “Hanya nomor INV” untuk memunculkan retur."
+                                : "Faktur akan muncul otomatis begitu Accurate mengirim webhook atau sync berjalan."}
+                        </p>
+                    </div>
+                )}
             </div>
 
             <div className="flex items-center justify-between text-sm" style={{ color: "var(--luxury-muted)" }}>
