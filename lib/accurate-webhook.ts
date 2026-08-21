@@ -22,3 +22,17 @@ export function flattenSalesInvoiceIds(payload: unknown): number[] {
     }
     return ids;
 }
+
+// ponytail: regex global, BUKAN JSON.parse per baris. Alasannya bukan kemalasan — route webhook
+// memotong payload jumbo di 100.000 karakter, jadi sebagian baris memang JSON tidak lengkap dan
+// JSON.parse akan membuangnya utuh. Regex tetap menemukan id di baris terpotong.
+// Ceiling: seluruh isi log dibaca ke memori; kalau nanti melewati beberapa ratus MB, ganti ke
+// pembacaan per baris (readline).
+export function extractLoggedInvoiceIds(logText: string): number[] {
+    const ids = new Set<number>();
+    for (const m of logText.matchAll(/"salesInvoiceId":\s*(\d+)/g)) {
+        const id = Number(m[1]);
+        if (Number.isFinite(id) && id > 0) ids.add(id);
+    }
+    return [...ids];
+}

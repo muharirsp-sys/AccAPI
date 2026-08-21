@@ -4,7 +4,7 @@
  * Caller: npx playwright test tests/webhook-payload-parse.spec.ts
  */
 import { test, expect } from "@playwright/test";
-import { flattenSalesInvoiceIds } from "../lib/accurate-webhook";
+import { extractLoggedInvoiceIds, flattenSalesInvoiceIds } from "../lib/accurate-webhook";
 
 test("parses the real Accurate envelope shape (array + data array)", () => {
     const live = [
@@ -41,4 +41,18 @@ test("never throws on junk payloads", () => {
 
 test("keeps the old guessed shape unmatched (regression on e9bb7ec)", () => {
     expect(flattenSalesInvoiceIds({ eventType: "WRITE", module: "SALES_INVOICE", id: 55 })).toEqual([]);
+});
+
+test("extracts ids from a log with truncated lines", () => {
+    // Baris pertama utuh, baris kedua terpotong di tengah (route memotong payload di 100.000 char).
+    const log = [
+        '{"receivedAt":"2026-08-21T01:04:11.775Z","payload":[{"type":"SALES_INVOICE","data":[{"salesInvoiceId":314414,"salesInvoiceNo":"INV/2608/VI00275"}]}]}',
+        '{"receivedAt":"2026-08-21T01:07:00.000Z","payload":[{"type":"SALES_INVOICE","data":[{"salesInvoiceId": 314662,"salesInvoiceNo":"INV/2608/M2006',
+    ].join("\n");
+    expect(extractLoggedInvoiceIds(log)).toEqual([314414, 314662]);
+});
+
+test("dedupes repeated ids and ignores junk", () => {
+    expect(extractLoggedInvoiceIds('"salesInvoiceId":7 "salesInvoiceId":7 "salesInvoiceId":0 "salesInvoiceId":"x"')).toEqual([7]);
+    expect(extractLoggedInvoiceIds("")).toEqual([]);
 });
