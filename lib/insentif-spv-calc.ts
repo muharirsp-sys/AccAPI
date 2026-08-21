@@ -21,9 +21,12 @@
  * - Total_Insentif_SPV = sum(Insentif_n). TIDAK ada komponen AO — murni Value.
  *
  * Support principle utk SPV (dikonfirmasi user 2026-08-19):
- * - Principal yang support-nya MENUTUP penuh rate → keluar dari hitungan jumlah principal,
- *   persis seperti status "principle" di skema GT. Contoh: MARTEN pegang 3 principal, MOTASA
- *   support 4,17jt (jauh di atas rate n=3 = 600rb) → MOTASA keluar, n jadi 2, rate naik 800rb.
+ * - Principal yang support-nya LEBIH DARI rate → keluar dari hitungan jumlah principal,
+ *   persis seperti status "principle" di skema GT. Contoh: SPV pegang 3 principal → rate 600rb;
+ *   satu principal support > 600rb → dianggap pegang 2 principal saja → rate naik jadi 800rb.
+ *   Kasus nyata: MARTEN, MOTASA support 4,17jt → keluar, n 3→2.
+ * - Support TEPAT SAMA dengan rate tidak mengeluarkan principal (kriteria "lebih dari", bukan
+ *   "minimal"): ia tetap dihitung dan distributor bayar 0 untuknya.
  * - Support SEBAGIAN (< rate) → principal tetap dihitung, distributor bayar sisanya (rate − support),
  *   mengikuti pola GT. Contoh: YARMAN 1 principal (KINO) support 300rb, rate n=1 = 1,5jt →
  *   distributor bayar 1,2jt.
@@ -91,14 +94,11 @@ function groupByPrinciple(rows: SpvSalesRow[]): Map<string, PrincipleAgg> {
 
 /**
  * Cari himpunan principal yang benar-benar dibayar distributor, sekaligus rate-nya.
- * Titik tetap: buang SEMUA principal yang support-nya >= rate saat ini (serentak, bukan satu
- * per satu), hitung ulang rate, ulangi sampai tidak ada lagi yang tertutup.
- * Serentak dipilih supaya hasil tidak bergantung urutan pemeriksaan — nominal per orang tidak
- * boleh berubah karena urutan iterasi. Konsekuensinya: principal yang tertutup pada rate awal
- * tetap keluar walau pada rate final (yang lebih tinggi) ia hanya tertutup sebagian.
- * ponytail: contoh MARTEN dari user tidak membedakan batch vs satu-per-satu; kalau nanti
- * ternyata harus satu-per-satu, ubah `covered` jadi hanya elemen ber-support terbesar.
- * Himpunan hanya menyusut sehingga iterasi pasti berhenti; batas 20 sebagai jaring aman.
+ * Buang SEMUA principal yang support-nya melebihi rate saat ini (serentak), lalu hitung ulang rate.
+ * Satu lintasan sebenarnya cukup: rate(n) = 200rb + 1,2jt/n NAIK ketika n turun, jadi principal
+ * yang tadinya di bawah rate lama pasti masih di bawah rate baru yang lebih tinggi — tidak akan
+ * ada pengecualian gelombang kedua. Loop dipertahankan supaya sifat itu tidak perlu dipercaya
+ * begitu saja kalau tabel rate suatu saat diubah. Batas 20 sebagai jaring aman.
  */
 function resolveValidSet(
     candidates: string[],
@@ -111,7 +111,9 @@ function resolveValidSet(
     for (let i = 0; i < 20; i++) {
         rate = ratePerPrincipalSpv(valid.length);
         if (valid.length === 0) break;
-        const covered = valid.filter((p) => supportOf(p) >= rate);
+        // "lebih dari" (bukan >=): support tepat sama dengan rate TIDAK mengeluarkan principal —
+        // ia tetap dihitung, distributor cuma bayar 0 untuknya (rate − support = 0).
+        const covered = valid.filter((p) => supportOf(p) > rate);
         if (covered.length === 0) break;
         dikecualikan.push(...covered);
         valid = valid.filter((p) => !covered.includes(p));

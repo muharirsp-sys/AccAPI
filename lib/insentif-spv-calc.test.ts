@@ -75,6 +75,21 @@ for (const [n, expectedTotal] of [[1, 1_500_000], [2, 1_600_000], [3, 1_800_000]
 
 
 // ═══ Support principle utk SPV ═══════════════════════════════════════════════
+// Contoh persis dari user (2026-08-21): "1 spv pegang 3 principle, yang berlaku 600 per
+// principle. Cuma jika ada satu principle yang support-nya lebih dari 600 itu, maka dia
+// dianggap cuma pegang 2 principle saja, yang artinya cuma 800 per principle."
+{
+    const rows = [row("P1", 100, 100), row("P2", 100, 100), row("P3", 100, 100)];
+    // tanpa support: 3 principal -> 600rb per principal
+    approx(calculateInsentifSPV(rows).ratePerPrincipal, 600_000, "n=3 -> 600rb per principal");
+    // satu principal support 700rb (> 600rb) -> dianggap pegang 2 -> 800rb per principal
+    const r = calculateInsentifSPV(rows, new Map([["P1", 700_000]]));
+    assert.strictEqual(r.jumlahValid, 2, "dianggap pegang 2 principle");
+    approx(r.ratePerPrincipal, 800_000, "800rb per principle");
+    assert.deepStrictEqual(r.dikecualikan, ["P1"], "P1 yang keluar");
+    approx(r.total, 1_600_000, "2 x 800rb");
+}
+
 // Kasus MARTEN (dikonfirmasi user): 3 principal, MOTASA support 4,17jt.
 // rate n=3 = 600rb; 4,17jt >= 600rb -> MOTASA keluar -> n=2, rate 800rb.
 {
@@ -105,11 +120,21 @@ for (const [n, expectedTotal] of [[1, 1_500_000], [2, 1_600_000], [3, 1_800_000]
     approx(calculateInsentifSPV(rows, new Map()).total, 1_800_000, "peta support kosong sama saja");
 }
 
-// Support tepat SAMA dengan rate -> tertutup penuh, keluar dari hitungan.
+// Batas: kriteria "LEBIH DARI" rate, bukan "minimal". Support tepat sama dengan rate
+// TIDAK mengeluarkan principal — tetap dihitung, distributor bayar 0 untuknya.
 {
     const rows = [row("A", 100, 100), row("B", 100, 100)];
     const r = calculateInsentifSPV(rows, new Map([["A", 800_000]]));
-    assert.strictEqual(r.jumlahValid, 1, "support == rate -> keluar");
+    assert.strictEqual(r.jumlahValid, 2, "support == rate -> TETAP dihitung");
+    approx(r.ratePerPrincipal, 800_000, "rate tetap n=2");
+    approx(r.rincian.find((d) => d.principle === "A")!.insentif, 0, "A dibayar 0");
+    approx(r.total, 800_000, "hanya B yang dibayar");
+}
+// Sedikit di atas rate -> keluar.
+{
+    const rows = [row("A", 100, 100), row("B", 100, 100)];
+    const r = calculateInsentifSPV(rows, new Map([["A", 800_001]]));
+    assert.strictEqual(r.jumlahValid, 1, "support > rate -> keluar");
     approx(r.ratePerPrincipal, 1_500_000, "sisa 1 principal -> rate n=1");
 }
 
