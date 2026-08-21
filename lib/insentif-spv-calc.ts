@@ -19,6 +19,19 @@
  * - Insentif_n = rate × percentageMultiplier(realisasi, target) — threshold reuse dari Sales:
  *   <90%→0, 90-100%→aktual, >100%→cap 1.00.
  * - Total_Insentif_SPV = sum(Insentif_n). TIDAK ada komponen AO — murni Value.
+ *
+ * Support principle utk SPV (dikonfirmasi user 2026-08-19):
+ * - Principal yang support-nya MENUTUP penuh rate → keluar dari hitungan jumlah principal,
+ *   persis seperti status "principle" di skema GT. Contoh: MARTEN pegang 3 principal, MOTASA
+ *   support 4,17jt (jauh di atas rate n=3 = 600rb) → MOTASA keluar, n jadi 2, rate naik 800rb.
+ * - Support SEBAGIAN (< rate) → principal tetap dihitung, distributor bayar sisanya (rate − support),
+ *   mengikuti pola GT. Contoh: YARMAN 1 principal (KINO) support 300rb, rate n=1 = 1,5jt →
+ *   distributor bayar 1,2jt.
+ * - Karena rate bergantung pada n dan n bergantung pada siapa yang tertutup penuh, pengecualian
+ *   diulang sampai titik tetap: berhenti saat tidak ada lagi principal yang tertutup penuh pada
+ *   rate final. Iterasi selalu menyusut, jadi pasti berhenti.
+ * - Angka support SPV tidak bisa diturunkan dari support sales — rasionya beda per principal
+ *   (KINO 10%, MOTASA 50% dari total support sales-nya), jadi disimpan eksplisit di spv_support.
  */
 
 import { percentageMultiplier, isSchemePrincipal, type StatusInsentif } from "./insentif-sales-calc.ts";
@@ -36,6 +49,8 @@ export interface SpvPrincipalDetail {
     realisasiValue: number;
     pctValue: number;
     rate: number;
+    support: number;      // support principle utk SPV pada principal ini
+    porsiDistributor: number; // rate − support (floor 0)
     insentif: number;
 }
 
@@ -43,6 +58,8 @@ export interface SpvInsentifResult {
     jumlahValid: number;
     ratePerPrincipal: number;
     rincian: SpvPrincipalDetail[];
+    /** Principal yang keluar dari hitungan karena support principle menutup penuh rate. */
+    dikecualikan: string[];
     total: number;
 }
 
@@ -72,23 +89,72 @@ function groupByPrinciple(rows: SpvSalesRow[]): Map<string, PrincipleAgg> {
     return map;
 }
 
-/** Insentif SPV — agregat per principal dari seluruh sales bawahan, murni berbasis Value. */
-export function calculateInsentifSPV(rows: SpvSalesRow[]): SpvInsentifResult {
+/**
+ * Cari himpunan principal yang benar-benar dibayar distributor, sekaligus rate-nya.
+ * Titik tetap: buang SEMUA principal yang support-nya >= rate saat ini (serentak, bukan satu
+ * per satu), hitung ulang rate, ulangi sampai tidak ada lagi yang tertutup.
+ * Serentak dipilih supaya hasil tidak bergantung urutan pemeriksaan — nominal per orang tidak
+ * boleh berubah karena urutan iterasi. Konsekuensinya: principal yang tertutup pada rate awal
+ * tetap keluar walau pada rate final (yang lebih tinggi) ia hanya tertutup sebagian.
+ * ponytail: contoh MARTEN dari user tidak membedakan batch vs satu-per-satu; kalau nanti
+ * ternyata harus satu-per-satu, ubah `covered` jadi hanya elemen ber-support terbesar.
+ * Himpunan hanya menyusut sehingga iterasi pasti berhenti; batas 20 sebagai jaring aman.
+ */
+function resolveValidSet(
+    candidates: string[],
+    supportOf: (principle: string) => number,
+): { valid: string[]; rate: number; dikecualikan: string[] } {
+    let valid = [...candidates];
+    const dikecualikan: string[] = [];
+    let rate = ratePerPrincipalSpv(valid.length);
+
+    for (let i = 0; i < 20; i++) {
+        rate = ratePerPrincipalSpv(valid.length);
+        if (valid.length === 0) break;
+        const covered = valid.filter((p) => supportOf(p) >= rate);
+        if (covered.length === 0) break;
+        dikecualikan.push(...covered);
+        valid = valid.filter((p) => !covered.includes(p));
+    }
+    return { valid, rate: ratePerPrincipalSpv(valid.length), dikecualikan };
+}
+
+/**
+ * Insentif SPV — agregat per principal dari seluruh sales bawahan, murni berbasis Value.
+ * `supportByPrinciple` = support principle utk SPV ini per principal (opsional, default 0).
+ */
+export function calculateInsentifSPV(
+    rows: SpvSalesRow[],
+    supportByPrinciple?: Map<string, number>,
+): SpvInsentifResult {
     const grouped = groupByPrinciple(rows);
-    const valid = [...grouped.entries()].filter(([, g]) => g.hasScheme);
+    const supportOf = (p: string) => supportByPrinciple?.get(p) ?? 0;
+    const schemePrincipals = [...grouped.entries()].filter(([, g]) => g.hasScheme).map(([p]) => p);
+
+    const { valid, rate, dikecualikan } = resolveValidSet(schemePrincipals, supportOf);
     const jumlahValid = valid.length;
-    const rate = ratePerPrincipalSpv(jumlahValid);
 
     if (jumlahValid === 0 || rate <= 0) {
-        return { jumlahValid: 0, ratePerPrincipal: 0, rincian: [], total: 0 };
+        return { jumlahValid: 0, ratePerPrincipal: 0, rincian: [], dikecualikan, total: 0 };
     }
 
-    const rincian: SpvPrincipalDetail[] = valid.map(([principle, g]) => {
+    const rincian: SpvPrincipalDetail[] = valid.map((principle) => {
+        const g = grouped.get(principle)!;
         const pctValue = percentageMultiplier(g.realisasiValue, g.targetValue);
-        const insentif = rate * pctValue;
-        return { principle, targetValue: g.targetValue, realisasiValue: g.realisasiValue, pctValue, rate, insentif };
+        const support = supportOf(principle);
+        const porsiDistributor = Math.max(0, rate - support);
+        return {
+            principle,
+            targetValue: g.targetValue,
+            realisasiValue: g.realisasiValue,
+            pctValue,
+            rate,
+            support,
+            porsiDistributor,
+            insentif: porsiDistributor * pctValue,
+        };
     });
     const total = rincian.reduce((s, r) => s + r.insentif, 0);
 
-    return { jumlahValid, ratePerPrincipal: rate, rincian, total };
+    return { jumlahValid, ratePerPrincipal: rate, rincian, dikecualikan, total };
 }

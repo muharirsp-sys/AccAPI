@@ -1756,6 +1756,100 @@ function CodeMergeSection({ period }: { period: string }) {
     );
 }
 
+// ── Finance: input support principle untuk SPV (per SPV per principal) ────────
+// Support yang menutup penuh rate mengeluarkan principal itu dari hitungan jumlah
+// principal SPV (lib/insentif-spv-calc), jadi angkanya berpengaruh besar.
+function SpvSupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; month: number; year: number; onSaved?: () => void }) {
+    const pairs = useMemo(() => {
+        const seen = new Map<string, { spvName: string; principle: string }>();
+        for (const r of apiRows) {
+            if (!r.spvName) continue;
+            const k = `${r.spvName}|${r.principle}`;
+            if (!seen.has(k)) seen.set(k, { spvName: r.spvName, principle: r.principle });
+        }
+        return [...seen.values()].sort((a, b) =>
+            a.spvName.localeCompare(b.spvName) || a.principle.localeCompare(b.principle));
+    }, [apiRows]);
+
+    const [saved, setSaved] = useState<Record<string, number>>({});
+    const [draft, setDraft] = useState<Record<string, string>>({});
+    const [saving, setSaving] = useState(false);
+
+    const keyOf = (p: { spvName: string; principle: string }) => `${p.spvName}|${p.principle}`;
+
+    const load = useCallback(async () => {
+        try {
+            const res = await fetch(`/api/insentif-sales/spv-support?month=${month}&year=${year}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error ?? "Gagal memuat support SPV");
+            const map: Record<string, number> = {};
+            for (const r of data.rows ?? []) map[`${r.spvName}|${r.principle}`] = r.supportAmount;
+            setSaved(map);
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal memuat support SPV");
+        }
+    }, [month, year]);
+
+    useEffect(() => { load(); }, [load]);
+
+    async function save() {
+        setSaving(true);
+        try {
+            const payload = pairs.map((p) => ({
+                spvName: p.spvName, principle: p.principle,
+                periodMonth: month, periodYear: year,
+                supportAmount: Number(draft[keyOf(p)] ?? saved[keyOf(p)] ?? 0) || 0,
+            }));
+            const res = await fetch("/api/insentif-sales/spv-support", {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error ?? "Gagal simpan support SPV");
+            toast.success(`Support SPV tersimpan (${data.upserted} baris). Insentif SPV dihitung ulang.`);
+            setDraft({});
+            await load();
+            onSaved?.();
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal simpan support SPV");
+        }
+        setSaving(false);
+    }
+
+    if (pairs.length === 0) return null;
+
+    return (
+        <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
+            <div className="flex items-center justify-between mb-1">
+                <h3 className="text-sm font-semibold text-slate-200">Support Principle — SPV</h3>
+                <button onClick={save} disabled={saving} className="btn-primary disabled:opacity-50 text-xs px-3 py-1.5">
+                    {saving ? "Menyimpan…" : "Simpan Support SPV"}
+                </button>
+            </div>
+            <p className="text-[11px] text-slate-500 mb-3">
+                Support yang menutup penuh rate akan mengeluarkan principal itu dari hitungan jumlah
+                principal SPV — rate per principal naik dan principal tersebut tidak dibayar distributor.
+            </p>
+            <div className="max-h-72 overflow-y-auto border border-white/10 rounded-lg divide-y divide-white/5">
+                {pairs.map((p) => {
+                    const k = keyOf(p);
+                    return (
+                        <div key={k} className="flex items-center gap-2 px-3 py-2 text-xs">
+                            <span className="text-amber-300 w-28 shrink-0 truncate" title={p.spvName}>{p.spvName}</span>
+                            <span className="text-slate-400 flex-1 truncate" title={p.principle}>{p.principle}</span>
+                            <input
+                                type="number" min={0}
+                                className="bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-amber-500 w-32 text-right font-mono"
+                                value={draft[k] ?? String(saved[k] ?? 0)}
+                                onChange={(e) => setDraft((prev) => ({ ...prev, [k]: e.target.value }))}
+                            />
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
     return (
         <div>
@@ -2004,6 +2098,7 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
         return (
             <div className="space-y-5">
                 <SupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
+                <SpvSupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
                 <LoadingState label="Memuat status pembayaran" rows={3} />
             </div>
         );
@@ -2013,6 +2108,7 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
         return (
             <div className="space-y-5">
                 <SupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
+                <SpvSupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
                 <ErrorState
                     title={paymentsError}
                     message="Status belum ditampilkan agar kegagalan tidak terlihat sebagai belum dibayar."
@@ -2026,6 +2122,7 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
         <div className="space-y-5">
             {/* Support principle GT — diisi Finance saat payout */}
             <SupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
+                <SpvSupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
             {/* 12-month strip */}
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
                 <SectionTitle icon={DollarSign} no={1} title="Rekap Pembayaran Tahunan" desc="Data 12 bulan dari database dengan indikator tunggakan aktual" />

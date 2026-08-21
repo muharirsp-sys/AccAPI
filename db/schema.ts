@@ -795,6 +795,25 @@ export const incentivePayments = pgTable("incentive_payments", {
 
 // Support principle per salesman+principle+periode. Diisi Finance saat payout (setelah bulan tutup).
 // Dikurangkan dari konstanta insentif GT — lihat lib/insentif-sales-calc.
+// Support principle untuk SPV, per principal per periode. Tidak bisa diturunkan dari
+// support sales — rasionya beda per principal (KINO 10%, MOTASA 50% dari total support
+// sales-nya), jadi angkanya diinput eksplisit. Dipakai lib/insentif-spv-calc: support yang
+// menutup penuh rate mengeluarkan principal itu dari hitungan jumlah principal SPV.
+export const spvSupport = pgTable("spv_support", {
+    id: text("id").primaryKey(),
+    spvName: text("spv_name").notNull(),
+    principle: text("principle").notNull(),
+    periodMonth: integer("period_month").notNull(),
+    periodYear: integer("period_year").notNull(),
+    supportAmount: doublePrecision("support_amount").notNull().default(0),
+    inputBy: text("input_by"),
+    createdAt: timestamp("created_at").notNull(),
+    updatedAt: timestamp("updated_at").notNull(),
+}, (t) => ({
+    periodIdx: index("idx_spv_support_period").on(t.periodMonth, t.periodYear),
+    uniq: uniqueIndex("uq_spv_support").on(t.spvName, t.principle, t.periodMonth, t.periodYear),
+}));
+
 // Keputusan penggabungan kode sales (pergantian orang di tengah bulan).
 // Prefiks rute sama + kode beda -> user konfirmasi merge atau pisah. Keputusan disimpan
 // per periode karena pergantian personel terjadi per bulan.
