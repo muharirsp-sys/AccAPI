@@ -4,7 +4,7 @@
  * Caller: npx playwright test tests/webhook-payload-parse.spec.ts
  */
 import { test, expect } from "@playwright/test";
-import { extractLoggedInvoiceIds, flattenSalesInvoiceIds } from "../lib/accurate-webhook";
+import { extractLoggedInvoiceIds, extractLoggedInvoiceIdsSince, flattenSalesInvoiceIds } from "../lib/accurate-webhook";
 
 test("parses the real Accurate envelope shape (array + data array)", () => {
     const live = [
@@ -55,4 +55,15 @@ test("extracts ids from a log with truncated lines", () => {
 test("dedupes repeated ids and ignores junk", () => {
     expect(extractLoggedInvoiceIds('"salesInvoiceId":7 "salesInvoiceId":7 "salesInvoiceId":0 "salesInvoiceId":"x"')).toEqual([7]);
     expect(extractLoggedInvoiceIds("")).toEqual([]);
+});
+
+test("time-bounded extraction skips entries older than the cutoff", () => {
+    const log = [
+        '{"receivedAt":"2026-08-19T01:00:00.000Z","payload":[{"data":[{"salesInvoiceId":111}]}]}',
+        '{"receivedAt":"2026-08-21T01:04:11.775Z","payload":[{"data":[{"salesInvoiceId":314414}]}]}',
+        // Baris tanpa receivedAt tetap disertakan: lebih baik mencoba sekali daripada melewatkan.
+        '{"payload":[{"data":[{"salesInvoiceId":999}]}]}',
+    ].join("\n");
+    const cutoff = new Date("2026-08-20T00:00:00.000Z").getTime();
+    expect(extractLoggedInvoiceIdsSince(log, cutoff)).toEqual([314414, 999]);
 });

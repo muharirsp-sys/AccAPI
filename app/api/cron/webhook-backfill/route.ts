@@ -19,8 +19,8 @@ import { db } from "@/lib/db";
 import { salesInvoiceCache } from "@/db/schema";
 import { requireCronSecret } from "@/lib/api-security";
 import { resolveSyncCredentials } from "@/lib/accurate-session";
-import { extractLoggedInvoiceIds } from "@/lib/accurate-webhook";
-import { upsertSalesInvoiceById } from "@/lib/sync";
+import { extractLoggedInvoiceIdsSince } from "@/lib/accurate-webhook";
+import { AccurateInvoiceGoneError, upsertSalesInvoiceById } from "@/lib/sync";
 
 export const runtime = "nodejs";
 export const maxDuration = 3600;
@@ -29,12 +29,19 @@ export const maxDuration = 3600;
 // panggilan berikutnya (id yang sudah masuk otomatis tidak terhitung hilang lagi).
 const DEFAULT_LIMIT = 200;
 
+// Hanya event beberapa hari terakhir. Log menyimpan seluruh riwayat dan mayoritas id lama sudah
+// DIHAPUS di Accurate (1.189 dari 15.436 per 2026-08-21, semuanya balas "respons tanpa data"),
+// jadi tanpa batas ini penambal membakar panggilan API untuk faktur yang tidak akan pernah ada.
+// Faktur lama yang benar-benar hilang tetap tertangani cron sync penuh 4x/hari.
+const DEFAULT_HOURS = 48;
+
 export async function GET(req: Request) {
     const gate = requireCronSecret(req);
     if (gate.response) return gate.response;
 
     const { searchParams } = new URL(req.url);
     const checkOnly = searchParams.get("check") === "1";
+    const hours = Math.min(Math.max(Number(searchParams.get("hours")) || DEFAULT_HOURS, 1), 24 * 365);
     const limit = Math.min(Math.max(Number(searchParams.get("limit")) || DEFAULT_LIMIT, 1), 2000);
 
     // Sama seperti route webhook: hanya /app/data yang persisten (volume docker-compose).
@@ -47,7 +54,7 @@ export async function GET(req: Request) {
 
     const loggedIds = extractLoggedInvoiceIds(files.map((f) => fs.readFileSync(f, "utf8")).join("\n"));
     if (loggedIds.length === 0) {
-        return NextResponse.json({ ok: true, loggedIds: 0, missing: 0, processed: [], failed: [] });
+        return NextResponse.json({ ok: true, hours, loggedIds: 0, missing: 0, processed: [], failed: [] });
     }
 
     // Chunk 1000 id per query — batas parameter Postgres, bukan pilihan gaya.
@@ -65,6 +72,7 @@ export async function GET(req: Request) {
         return NextResponse.json({
             ok: true,
             checkOnly,
+            hours,
             loggedIds: loggedIds.length,
             missing: missing.length,
             missingIds: missing.slice(0, 50),
@@ -77,6 +85,7 @@ export async function GET(req: Request) {
     }
 
     const processed: unknown[] = [];
+    const gone: number[] = [];
     const failed: Array<{ id: number; error: string }> = [];
     for (const id of missing.slice(0, limit)) {
         try {
@@ -84,19 +93,28 @@ export async function GET(req: Request) {
             console.log(`[BACKFILL] Faktur ditambal: ${summary.number ?? id} | ${summary.customerName ?? "-"} | total ${summary.totalAmount} | sisa ${summary.outstanding}`);
             processed.push(summary);
         } catch (e) {
+            // Faktur yang sudah dihapus di Accurate BUKAN kegagalan — kondisi normal, dan
+            // menghitungnya sebagai error membuat cron berisik setiap jam tanpa ada yang bisa
+            // diperbaiki. Dipisah supaya `ok` hanya false kalau ada masalah sungguhan.
+            if (e instanceof AccurateInvoiceGoneError) {
+                gone.push(id);
+                continue;
+            }
             const message = e instanceof Error ? e.message : String(e);
             console.error(`[BACKFILL] Gagal menambal faktur ${id}: ${message}`);
             failed.push({ id, error: message });
         }
     }
 
-    console.log(`[BACKFILL] ${processed.length} ditambal, ${failed.length} gagal, ${Math.max(0, missing.length - limit)} sisa untuk run berikutnya`);
+    console.log(`[BACKFILL] ${processed.length} ditambal, ${gone.length} sudah dihapus di Accurate, ${failed.length} gagal, ${Math.max(0, missing.length - limit)} sisa`);
     return NextResponse.json({
         ok: failed.length === 0,
+        hours,
         loggedIds: loggedIds.length,
         missing: missing.length,
         remaining: Math.max(0, missing.length - limit),
         processed,
+        gone,
         failed,
     });
 }

@@ -36,3 +36,26 @@ export function extractLoggedInvoiceIds(logText: string): number[] {
     }
     return [...ids];
 }
+
+// Varian dengan batas waktu: hanya id dari entri log yang receivedAt-nya >= sinceMs.
+// Perlu karena log menyimpan SELURUH riwayat, dan mayoritas id lama sudah dihapus di Accurate
+// (1.189 dari 15.436 per 2026-08-21) — tanpa batas ini penambal mengejar hantu tiap jam.
+// Per baris, bukan seluruh teks: satu baris log = satu event dengan satu receivedAt.
+export function extractLoggedInvoiceIdsSince(logText: string, sinceMs: number): number[] {
+    const ids = new Set<number>();
+    for (const line of logText.split("\n")) {
+        if (!line) continue;
+        const stamp = line.match(/"receivedAt":"([^"]+)"/)?.[1];
+        // Baris tanpa receivedAt yang bisa dibaca: ikut disertakan, lebih baik mencoba sekali
+        // daripada melewatkan faktur yang benar-benar hilang.
+        if (stamp) {
+            const at = new Date(stamp).getTime();
+            if (Number.isFinite(at) && at < sinceMs) continue;
+        }
+        for (const m of line.matchAll(/"salesInvoiceId":\s*(\d+)/g)) {
+            const id = Number(m[1]);
+            if (Number.isFinite(id) && id > 0) ids.add(id);
+        }
+    }
+    return [...ids];
+}

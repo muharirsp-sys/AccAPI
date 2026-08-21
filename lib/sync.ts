@@ -282,13 +282,25 @@ export const SYNC_MODULE_NAMES = Object.keys(SYNC_MODULES) as SyncModuleName[];
 // Sisa tagihan sendiri kini juga ada di list.do lewat `primeOwing`, jadi cron tidak lagi
 // tertinggal soal itu (verifikasi live 2026-08-19).
 // Idempoten: upsert by primary key, jadi retry webhook Accurate aman diulang.
+// Dibedakan dari Error biasa supaya pemanggil bisa memisahkan "faktur sudah dihapus di Accurate"
+// (kondisi normal, tidak perlu dicoba lagi) dari kegagalan nyata seperti timeout atau sesi mati.
+export class AccurateInvoiceGoneError extends Error {
+    constructor(public readonly invoiceId: number) {
+        super(`Faktur ${invoiceId} tidak ada lagi di Accurate (detail.do: respons tanpa data)`);
+        this.name = "AccurateInvoiceGoneError";
+    }
+}
+
 export async function upsertSalesInvoiceById(id: number, creds: AccurateCredentials) {
     const url = `${creds.sessionHost}/accurate/api/sales-invoice/detail.do?id=${id}`;
     const res = await fetch(url, { headers: accurateHeaders(creds), signal: AbortSignal.timeout(30_000) });
     if (!res.ok) throw new Error(`detail.do faktur ${id}: HTTP ${res.status}`);
 
     const body = await res.json();
-    if (!body?.s || !body?.d) throw new Error(`detail.do faktur ${id}: ${body?.m || "respons tanpa data"}`);
+    // Accurate menjawab 200 dengan d kosong untuk faktur yang sudah dihapus — dibuktikan live
+    // 2026-08-21 pada 20 id dari webhook_events.log yang semuanya sudah tidak ada di Accurate.
+    if (!body?.d) throw new AccurateInvoiceGoneError(id);
+    if (!body?.s) throw new Error(`detail.do faktur ${id}: ${body?.m || "respons gagal"}`);
 
     const row = body.d as Record<string, unknown>;
     await SYNC_MODULES.sales_invoice.upsertPage([row]);
