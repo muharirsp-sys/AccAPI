@@ -795,6 +795,27 @@ export const incentivePayments = pgTable("incentive_payments", {
 
 // Support principle per salesman+principle+periode. Diisi Finance saat payout (setelah bulan tutup).
 // Dikurangkan dari konstanta insentif GT — lihat lib/insentif-sales-calc.
+// Keputusan penggabungan kode sales (pergantian orang di tengah bulan).
+// Prefiks rute sama + kode beda -> user konfirmasi merge atau pisah. Keputusan disimpan
+// per periode karena pergantian personel terjadi per bulan.
+// decision "merge" -> pencapaian fromSalesCode dilipat ke toSalesCode saat agregasi MTD.
+// decision "separate" -> jangan tanya lagi utk periode ini.
+export const salesCodeMerge = pgTable("sales_code_merge", {
+    id: text("id").primaryKey(),
+    periodMonth: integer("period_month").notNull(),
+    periodYear: integer("period_year").notNull(),
+    prefix: text("prefix").notNull(),
+    fromSalesCode: text("from_sales_code").notNull(),
+    toSalesCode: text("to_sales_code"), // null saat decision = "separate"
+    decision: text("decision").notNull(), // "merge" | "separate"
+    decidedBy: text("decided_by"),
+    createdAt: timestamp("created_at").notNull(),
+    updatedAt: timestamp("updated_at").notNull(),
+}, (t) => ({
+    periodIdx: index("idx_sales_code_merge_period").on(t.periodMonth, t.periodYear),
+    fromUniq: uniqueIndex("uq_sales_code_merge_from").on(t.periodMonth, t.periodYear, t.fromSalesCode),
+}));
+
 export const incentiveSupport = pgTable("incentive_support", {
     id: text("id").primaryKey(),
     salesCode: text("sales_code").notNull(),

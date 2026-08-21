@@ -1253,6 +1253,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                     </table>
                 </div>
             </div>
+            <CodeMergeSection period={period} />
             <SpvMismatchSection period={period} />
             <HierarchyAssignmentSection />
         </div>
@@ -1638,6 +1639,123 @@ function SpvMismatchSection({ period }: { period: string }) {
     );
 }
 
+// ── Konfirmasi penggabungan kode sales (pergantian orang di tengah bulan) ─────
+// Prefiks rute sama + kode beda. TIDAK otomatis: FS1_GITO (GT) vs FS1_MT_SYAHRUL (MT)
+// prefiksnya sama tapi orang & channel beda — user yang memutuskan.
+interface MergeMember { salesCode: string; salesName: string }
+interface MergeGroup { prefix: string; members: MergeMember[] }
+
+function CodeMergeSection({ period }: { period: string }) {
+    const [groups, setGroups] = useState<MergeGroup[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [busy, setBusy] = useState<string | null>(null);
+    const [target, setTarget] = useState<Record<string, string>>({});
+    const [year, month] = useMemo(() => period.split("-").map(Number), [period]);
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const res = await fetch(`/api/insentif-sales/code-merge?month=${month}&year=${year}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error ?? "Gagal memuat kandidat merge");
+            setGroups(data.groups ?? []);
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal memuat kandidat merge");
+        }
+        setLoading(false);
+    }, [month, year]);
+
+    useEffect(() => { load(); }, [load]);
+
+    async function decide(g: MergeGroup, payload: { fromSalesCode: string; toSalesCode?: string; decision: "merge" | "separate" }[]) {
+        setBusy(g.prefix);
+        try {
+            const res = await fetch("/api/insentif-sales/code-merge", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload.map((p) => ({ ...p, prefix: g.prefix, periodMonth: month, periodYear: year }))),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error ?? "Gagal simpan keputusan");
+            toast.success(`${g.prefix}: ${data.saved} keputusan tersimpan.`);
+            await load();
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal simpan keputusan");
+        }
+        setBusy(null);
+    }
+
+    if (!loading && groups.length === 0) return null;
+
+    return (
+        <div className="bg-[#1a1c23]/60 rounded-xl border border-amber-500/25 p-5">
+            <div className="flex items-center justify-between mb-3">
+                <div>
+                    <h3 className="text-sm font-semibold text-amber-200">Konfirmasi Penggabungan Sales ({groups.length})</h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                        Beberapa kode sales memakai nomor rute yang sama — biasanya tanda pergantian orang di
+                        tengah bulan. Pilih kode tujuan kalau pencapaiannya harus digabung, atau tandai
+                        Pisah kalau memang dua orang berbeda.
+                    </p>
+                </div>
+                <button onClick={load} disabled={loading} className="px-3 py-1.5 rounded bg-white/5 border border-white/10 text-xs text-slate-300 disabled:opacity-50 shrink-0">
+                    {loading ? "Memuat…" : "Muat ulang"}
+                </button>
+            </div>
+            <div className="space-y-2.5 max-h-96 overflow-y-auto">
+                {loading && groups.length === 0 ? (
+                    <div className="p-3 text-xs text-slate-500">Memuat…</div>
+                ) : groups.map((g) => {
+                    const to = target[g.prefix] ?? "";
+                    const working = busy === g.prefix;
+                    return (
+                        <div key={g.prefix} className="border border-white/10 rounded-lg p-3">
+                            <div className="flex items-center gap-2 mb-2">
+                                <span className="font-mono text-amber-300 text-xs font-semibold">{g.prefix}</span>
+                                <span className="text-[11px] text-slate-500">{g.members.length} kode</span>
+                            </div>
+                            <div className="space-y-1 mb-2.5">
+                                {g.members.map((m) => (
+                                    <div key={m.salesCode} className="flex items-center gap-2 text-xs">
+                                        <span className="font-mono text-slate-400 w-20 shrink-0">{m.salesCode}</span>
+                                        <span className="text-slate-300 truncate">{m.salesName}</span>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 border-t border-white/5 pt-2.5">
+                                <span className="text-[11px] text-slate-500">Gabung semua ke:</span>
+                                <select
+                                    className="bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-amber-500"
+                                    value={to}
+                                    onChange={(e) => setTarget((prev) => ({ ...prev, [g.prefix]: e.target.value }))}
+                                >
+                                    <option value="">pilih kode tujuan</option>
+                                    {g.members.map((m) => (
+                                        <option key={m.salesCode} value={m.salesCode}>{m.salesCode} — {m.salesName}</option>
+                                    ))}
+                                </select>
+                                <button
+                                    disabled={working || !to}
+                                    onClick={() => decide(g, g.members.filter((m) => m.salesCode !== to)
+                                        .map((m) => ({ fromSalesCode: m.salesCode, toSalesCode: to, decision: "merge" as const })))}
+                                    className="px-2.5 py-1 rounded bg-emerald-600/30 border border-emerald-500/40 text-emerald-200 text-xs disabled:opacity-40">
+                                    Gabung
+                                </button>
+                                <button
+                                    disabled={working}
+                                    onClick={() => decide(g, g.members.map((m) => ({ fromSalesCode: m.salesCode, decision: "separate" as const })))}
+                                    className="px-2.5 py-1 rounded bg-white/5 border border-white/10 text-slate-300 text-xs disabled:opacity-40">
+                                    Pisah (orang berbeda)
+                                </button>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
     return (
         <div>
@@ -1648,9 +1766,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 // ── Finance View — fetch payments API + PATCH mark lunas ──────────────────
-// ── Finance: input support principle per salesman (channel GT) ────────────────
+// ── Finance: input support principle per salesman (channel GT/TT & MT) ───────
+// MT juga perlu: computeMt mengurangi support dari pool 1jt sama seperti GT, jadi
+// baris MT harus bisa diisi — kalau tidak, support principle utk sales MT tak pernah masuk.
 function SupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; month: number; year: number; onSaved?: () => void }) {
-    const gtRows = useMemo(() => apiRows.filter((r) => r.channel === "GT"), [apiRows]);
+    const gtRows = useMemo(
+        () => apiRows.filter((r) => r.channel === "GT" || r.channel === "TT" || r.channel === "MT"),
+        [apiRows],
+    );
     const [draft, setDraft] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
 
