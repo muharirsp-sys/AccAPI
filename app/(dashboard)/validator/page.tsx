@@ -166,7 +166,7 @@ export default function ValidatorPage() {
                 </div>
 
                 <div className="bg-black/60 border-t border-white/5 p-6 flex flex-col md:flex-row items-center justify-between gap-4">
-                    <p className="text-xs text-slate-500 max-w-sm">Proses sinkronisasi dan komputasi Validasi Excel dapat memakan waktu sesuai kapasitas jumlah baris di mesin Python.</p>
+                    <p className="office-calm-contrast-text text-xs text-slate-500 max-w-sm">Proses sinkronisasi dan komputasi Validasi Excel dapat memakan waktu sesuai kapasitas jumlah baris di mesin Python.</p>
                     <button
                         onClick={handleValidate}
                         disabled={isProcessing}

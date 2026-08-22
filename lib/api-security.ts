@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
 
 export async function requireApiSession(request: NextRequest | Request) {
+    if (isLocalAuthBypassEnabled(request.headers)) {
+        return {
+            session: { user: { id: "local-dev-admin", email: "local-admin@localhost.invalid", name: "LOCAL Admin", role: "admin" } },
+            response: null,
+        };
+    }
     const session = await auth.api.getSession({ headers: request.headers });
     if (!session) {
         return {

@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
+import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
 import { db } from "@/lib/db";
 import { offAuditLog, offBatch, offBatchItem, offPayment, offPeriodClosure } from "@/db/schema";
 import type { OffActor, OffBatchRow } from "./types";
@@ -134,7 +135,11 @@ export async function getNextOffBatchNumber(input: {
 }
 
 export async function requireOffSession() {
-    const session = await auth.api.getSession({ headers: await headers() });
+    const requestHeaders = await headers();
+    if (isLocalAuthBypassEnabled(requestHeaders)) {
+        return { id: "local-dev-admin", name: "LOCAL Admin", role: "admin" as const };
+    }
+    const session = await auth.api.getSession({ headers: requestHeaders });
     if (!session) return null;
     const user = session.user as typeof session.user & {
         userRole?: unknown;

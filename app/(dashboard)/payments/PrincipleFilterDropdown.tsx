@@ -114,7 +114,7 @@ export default function PrincipleFilterDropdown({
         }`}
       >
         <Filter size={12} className={count > 0 ? "text-emerald-400" : "text-slate-500"} />
-        <span>Filter</span>
+        <span className="office-calm-contrast-text">Filter</span>
         {count > 0 && (
           <span className="ml-auto rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] text-emerald-300">
             {count}

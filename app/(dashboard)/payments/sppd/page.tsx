@@ -298,10 +298,10 @@ function BankDataSection() {
             {/* Replace All Section */}
             <div className="border border-white/10 rounded-lg p-4 bg-black/20">
                 <div className="text-sm font-semibold text-slate-300 mb-3">Replace Nama Principle (Semua Record)</div>
-                <p className="text-xs text-slate-500 mb-3">Ganti nama principle yang salah/tidak sesuai data rekening. Semua record di payments yang cocok akan diupdate.</p>
+                <p className="office-calm-contrast-text text-xs text-slate-500 mb-3">Ganti nama principle yang salah/tidak sesuai data rekening. Semua record di payments yang cocok akan diupdate.</p>
                 <div className="grid sm:grid-cols-[1fr_1fr_auto] gap-2 items-end">
                     <label className="block">
-                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Nama Lama (di Web)</span>
+                        <span className="office-calm-contrast-text text-[10px] uppercase tracking-wide text-slate-500">Nama Lama (di Web)</span>
                         <input
                             value={replaceOld}
                             onChange={(e) => setReplaceOld(e.target.value)}
@@ -310,7 +310,7 @@ function BankDataSection() {
                         />
                     </label>
                     <label className="block">
-                        <span className="text-[10px] uppercase tracking-wide text-slate-500">Nama Baru (sesuai Rekening)</span>
+                        <span className="office-calm-contrast-text text-[10px] uppercase tracking-wide text-slate-500">Nama Baru (sesuai Rekening)</span>
                         <input
                             value={replaceNew}
                             onChange={(e) => setReplaceNew(e.target.value)}
@@ -338,7 +338,7 @@ function BankDataSection() {
             {/* Auto-Fix Section */}
             <div className="border border-white/10 rounded-lg p-4 bg-black/20">
                 <div className="text-sm font-semibold text-slate-300 mb-2">Auto-Fix Nama Principle</div>
-                <p className="text-xs text-slate-500 mb-3">
+                <p className="office-calm-contrast-text text-xs text-slate-500 mb-3">
                     Otomatis cocokkan semua nama principle di web ke format yang benar (sesuai file daftar rekening).
                     Preview dulu, baru eksekusi.
                 </p>
@@ -562,25 +562,25 @@ export default function PaymentsSppdSettingsPage() {
                 <section className="border border-white/10 bg-black/30 rounded-lg p-5">
                     <div className="grid md:grid-cols-2 gap-4">
                         <label className="block">
-                            <span className="text-xs uppercase tracking-wide text-slate-500">Nomor Surat Terakhir</span>
+                            <span className="office-calm-contrast-text text-xs uppercase tracking-wide text-slate-500">Nomor Surat Terakhir</span>
                             <input type="number" min={0} value={settings.last_sequence} onChange={(e) => updateSetting("last_sequence", e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white outline-none focus:border-emerald-500" />
                         </label>
                         <label className="block">
-                            <span className="text-xs uppercase tracking-wide text-slate-500">Tanggal Jaminan</span>
+                            <span className="office-calm-contrast-text text-xs uppercase tracking-wide text-slate-500">Tanggal Jaminan</span>
                             <div className="mt-2">
                                 <DatePickerField value={settings.fixed_jaminan_date} onChange={(value) => updateSetting("fixed_jaminan_date", value)} className="text-white focus:border-emerald-500" ariaLabel="Tanggal jaminan" />
                             </div>
                         </label>
                         <label className="block md:col-span-2">
-                            <span className="text-xs uppercase tracking-wide text-slate-500">Format Nomor</span>
+                            <span className="office-calm-contrast-text text-xs uppercase tracking-wide text-slate-500">Format Nomor</span>
                             <input value={settings.number_template} onChange={(e) => updateSetting("number_template", e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white outline-none focus:border-emerald-500" />
                         </label>
                         <label className="block">
-                            <span className="text-xs uppercase tracking-wide text-slate-500">Jatuh Tempo Bank</span>
+                            <span className="office-calm-contrast-text text-xs uppercase tracking-wide text-slate-500">Jatuh Tempo Bank</span>
                             <input type="number" min={1} max={24} value={settings.maturity_months} onChange={(e) => updateSetting("maturity_months", e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white outline-none focus:border-emerald-500" />
                         </label>
                         <label className="block">
-                            <span className="text-xs uppercase tracking-wide text-slate-500">Transfer per Halaman</span>
+                            <span className="office-calm-contrast-text text-xs uppercase tracking-wide text-slate-500">Transfer per Halaman</span>
                             <input type="number" min={1} max={20} value={settings.items_per_page} onChange={(e) => updateSetting("items_per_page", e.target.value)} className="mt-2 w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white outline-none focus:border-emerald-500" />
                         </label>
                     </div>
@@ -593,7 +593,7 @@ export default function PaymentsSppdSettingsPage() {
                     </div>
                     <div className="space-y-3 text-sm">
                         <label className="block">
-                            <span className="text-xs uppercase tracking-wide text-slate-500">Tanggal Makassar</span>
+                            <span className="office-calm-contrast-text-inverse text-xs uppercase tracking-wide text-slate-500">Tanggal Makassar</span>
                             <div className="mt-2">
                                 <DatePickerField value={previewDate} onChange={setPreviewDate} className="text-white focus:border-emerald-500" ariaLabel="Tanggal Makassar" />
                             </div>

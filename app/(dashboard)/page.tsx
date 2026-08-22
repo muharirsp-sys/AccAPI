@@ -8,8 +8,9 @@ import { Percent, CalendarCheck2, DollarSign, Wallet, Database, ArrowRight, Sett
 import Link from "next/link";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
-import { canAccessPathWithKeys } from "@/lib/rbac";
+import { canAccessPathWithKeys, rolePermissionPresets } from "@/lib/rbac";
 import { getUserPermissions } from "@/lib/rbac/resolve";
+import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
 
 const MODULES = [
     {
@@ -78,10 +79,13 @@ const MODULES = [
 ];
 
 export default async function DashboardLanding() {
-    const session = await auth.api.getSession({ headers: await headers() });
+    const requestHeaders = await headers();
+    const session = await auth.api.getSession({ headers: requestHeaders }).catch(() => null);
     const userId = String(session?.user?.id || "");
     // Union group ∪ legacy — konsisten dengan guard layout & API.
-    const permKeys = userId ? await getUserPermissions(userId) : new Set<string>();
+    const permKeys = isLocalAuthBypassEnabled(requestHeaders)
+        ? new Set(Object.entries(rolePermissionPresets.admin).flatMap(([moduleName, actions]) => (actions || []).map((action) => `${moduleName}.${action}`)))
+        : userId ? await getUserPermissions(userId) : new Set<string>();
     const visibleModules = MODULES.filter((mod) => canAccessPathWithKeys(mod.href, permKeys));
 
     return (

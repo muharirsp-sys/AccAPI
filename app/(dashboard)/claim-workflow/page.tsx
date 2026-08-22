@@ -318,7 +318,7 @@ export default function ClaimWorkflowPage() {
       <div className="rounded-3xl border border-[#e7c98f] bg-gradient-to-br from-[#fff7e6] to-[#f1dfbd] p-7 shadow-lg">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#b9821f]">
+            <p className="office-calm-contrast-text text-xs font-bold uppercase tracking-[0.24em] text-[#b9821f]">
               After OFF Program Control
             </p>
             <h1 className="mt-3 text-3xl font-black tracking-tight text-[#1f1408]">

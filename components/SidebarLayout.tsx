@@ -5,7 +5,7 @@
 // Side Effects: Sign-out Better Auth dan navigasi browser; tidak melakukan DB/file I/O langsung.
 "use client";
 
-import { useEffect, useLayoutEffect, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useState } from "react";
 import { Menu, Home, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ShieldCheck, ClipboardCheck, ReceiptText, Trophy, ClipboardList, History, Send, GitCompareArrows, X } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import Link from "next/link";
@@ -15,6 +15,11 @@ import ThemeSwitcher from "@/components/ThemeSwitcher";
 
 const SIDEBAR_STORAGE_KEY = "smart-erp:sidebar-expanded";
 type SidebarTooltip = { label: string; top: number } | null;
+const LocalAuthRoleContext = createContext<string | null>(null);
+
+export function useLocalAuthRole() {
+    return useContext(LocalAuthRoleContext);
+}
 
 export function parseSidebarExpanded(value: string | null): boolean {
     if (value === "true") return true;
@@ -80,7 +85,7 @@ export function getSidebarNavClasses(
     };
 }
 
-export default function SidebarLayout({ children, permKeys }: { children: React.ReactNode; role?: string | null; permKeys: string[] }) {
+export default function SidebarLayout({ children, localAuthRole, permKeys }: { children: React.ReactNode; localAuthRole?: string | null; permKeys: string[] }) {
     // Desktop: sidebar collapse/expand. Mobile: drawer open/close (hamburger).
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isSidebarHydrated, setIsSidebarHydrated] = useState(false);
@@ -335,7 +340,9 @@ export default function SidebarLayout({ children, permKeys }: { children: React.
 
                 {/* Page Content */}
                 <main className="flex-1 overflow-y-auto p-4 md:p-6 relative pb-20 md:pb-6">
-                    {children}
+                    <LocalAuthRoleContext.Provider value={localAuthRole ?? null}>
+                        {children}
+                    </LocalAuthRoleContext.Provider>
                 </main>
 
                 {/* Lima menu utama; rute lain tetap tersedia lewat drawer. */}

@@ -66,6 +66,7 @@ import {
   hasMinimalFinalChecklist,
 } from "@/lib/off-program-control/workflow";
 import { authClient } from "@/lib/auth-client";
+import { useLocalAuthRole } from "@/components/SidebarLayout";
 import {
   canPerformOffAction,
   getOffAccessibleTabs,
@@ -2230,14 +2231,14 @@ function SupportTogglePanel({
         className="flex w-full flex-col gap-3 text-left sm:flex-row sm:items-center sm:justify-between"
       >
         <span className="flex items-start gap-3">
-          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#d4ad61]/35 bg-[#f7ead0]/80 shadow-[0_8px_22px_rgba(122,78,32,0.10)]">
+          <span className="support-toggle-icon mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#d4ad61]/35 bg-[#f7ead0]/80 shadow-[0_8px_22px_rgba(122,78,32,0.10)]">
             <Icon className="text-[#00877b]" size={18} />
           </span>
           <span>
             <span className="block text-sm font-bold text-[#2d241b]">{title}</span>
           </span>
         </span>
-        <span className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#d4ad61]/40 bg-gradient-to-r from-[#f7d989]/80 to-[#d6a948]/70 px-3 py-2 text-xs font-bold text-[#006d65] shadow-[0_10px_24px_rgba(183,122,37,0.16)] hover:from-[#f2d28a] hover:to-[#c99631]">
+        <span className="support-toggle-action inline-flex items-center justify-center gap-2 rounded-xl border border-[#d4ad61]/40 bg-gradient-to-r from-[#f7d989]/80 to-[#d6a948]/70 px-3 py-2 text-xs font-bold text-[#006d65] shadow-[0_10px_24px_rgba(183,122,37,0.16)] hover:from-[#f2d28a] hover:to-[#c99631]">
           {isOpen ? "Sembunyikan" : actionLabel}
           <ChevronDown
             size={14}
@@ -10564,9 +10565,8 @@ function OverviewTab({
 }
 
 export default function OffProgramControlPage() {
-  // Cegah hydration mismatch: role berasal dari authClient.useSession() (client-only),
-  // sehingga SSR (tanpa sesi) berbeda dgn render klien. Render shell stabil dulu,
-  // baru tampilkan UI berbasis role setelah mount.
+  // Cegah hydration mismatch: sesi nyata berasal dari client, sedangkan bypass
+  // localhost menerima role efektif dari layout server.
   const mounted = useSyncExternalStore(
     () => () => undefined,
     () => true,
@@ -10581,6 +10581,7 @@ export default function OffProgramControlPage() {
   const requestedTab = searchParams.get("tab") as TabKey | null;
   const activeTab = tabs.some((tab) => tab.key === requestedTab) ? requestedTab! : "overview";
   const devBatchCount = getOffDevBatchCount(searchParams.get("mock"));
+  const localAuthRole = useLocalAuthRole();
 
   const replaceOffContext = (tab: TabKey, batchId?: string | null) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -10604,7 +10605,7 @@ export default function OffProgramControlPage() {
       }
     | undefined;
   const roleInfo = resolveOffRole({
-    role: sessionUser?.role,
+    role: sessionUser?.role ?? localAuthRole,
     userRole: sessionUser?.userRole,
     type: sessionUser?.type,
     position: sessionUser?.position,

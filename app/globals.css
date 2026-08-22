@@ -622,6 +622,18 @@ html[data-theme="office-calm"] .sidebar-active-icon {
   color: #c89432;
 }
 
+html[data-theme="office-calm"] .office-calm-contrast-text {
+  color: #3D2814 !important;
+}
+
+html[data-theme="office-calm"] .office-calm-contrast-text-inverse {
+  display: inline-block;
+  color: #FFF8EB !important;
+  background-color: #3D2814;
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.25rem;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -1652,7 +1664,7 @@ html[data-theme="ios"] {
   --luxury-bronze: var(--ios-primary-dark);
   --luxury-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.06);
 
-  --btn-primary-bg: linear-gradient(135deg, #5a73d8, #435ebe);
+  --btn-primary-bg: linear-gradient(135deg, #526BCF, #435ebe);
   --btn-primary-text: #ffffff;
   --btn-primary-border: rgba(67, 94, 190, 0.42);
   --btn-primary-shadow: 0 8px 20px rgba(67, 94, 190, 0.24);
@@ -2191,6 +2203,32 @@ html[data-theme="ios"] .text-\[\#2d241b\] {
 }
 
 html[data-theme="ios"] .hover\:bg-\[\#f2d28a\]\/20:hover {
+  background-color: rgba(67, 94, 190, 0.06) !important;
+}
+
+/* Kontrol alur memakai primary treatment setiap tema, bukan warna warm hardcoded. */
+html[data-theme="ios"] .support-toggle-action {
+  background: var(--btn-primary-bg) !important;
+  border-color: var(--btn-primary-border) !important;
+  color: var(--btn-primary-text) !important;
+  box-shadow: var(--btn-primary-shadow) !important;
+}
+
+html[data-theme="ios"] .support-toggle-action:hover {
+  box-shadow: var(--btn-primary-shadow-hover) !important;
+}
+
+html[data-theme="ios"] .support-toggle-icon {
+  background-color: var(--ios-primary-soft) !important;
+  border-color: var(--ios-border) !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="ios"] .support-toggle-icon > svg {
+  color: var(--ios-primary) !important;
+}
+
+html[data-theme="ios"] .hover\:bg-\[\#f7ead1\]:hover {
   background-color: rgba(67, 94, 190, 0.06) !important;
 }
 

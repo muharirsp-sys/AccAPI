@@ -340,7 +340,7 @@ export default function SalesHistoryPage() {
                             type="button"
                             onClick={() => setFrozen((f) => !f)}
                             title={frozen ? "Nonaktifkan freeze pane" : "Aktifkan freeze pane (header + kolom No Faktur)"}
-                            className={`rounded-lg border px-3 py-1.5 text-xs font-medium ${frozen ? "border-[var(--border-strong)] bg-[var(--surface-2)] text-[var(--luxury-soft)]" : "border-[var(--border-strong)] text-[var(--luxury-muted)] hover:bg-[var(--surface-2)]"}`}
+                            className={`office-calm-contrast-text rounded-lg border px-3 py-1.5 text-xs font-medium ${frozen ? "border-[var(--border-strong)] bg-[var(--surface-2)] text-[var(--luxury-soft)]" : "border-[var(--border-strong)] text-[var(--luxury-muted)] hover:bg-[var(--surface-2)]"}`}
                         >
                             Freeze {frozen ? "✓" : ""}
                         </button>

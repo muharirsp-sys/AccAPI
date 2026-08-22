@@ -8,16 +8,19 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
 import AccessDenied from "@/components/AccessDenied";
 import UserManagement from "./UserManagement";
 
 export default async function AdminUsersPage() {
-    const session = await auth.api.getSession({ headers: await headers() });
-    if (!session) {
+    const requestHeaders = await headers();
+    const session = await auth.api.getSession({ headers: requestHeaders });
+    const isLocalDev = isLocalAuthBypassEnabled(requestHeaders);
+    if (!session && !isLocalDev) {
         redirect("/login");
     }
 
-    if (session.user.role !== "admin") {
+    if (!isLocalDev && session?.user.role !== "admin") {
         return <AccessDenied message="Halaman ini khusus untuk admin." />;
     }
 

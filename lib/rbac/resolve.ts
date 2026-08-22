@@ -16,7 +16,12 @@ import { eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { user, userGroup, groupPermission } from "@/db/schema";
-import { permissionMapForUser } from "@/lib/rbac";
+import { permissionMapForUser, rolePermissionPresets } from "@/lib/rbac";
+import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
+
+function adminPermissionKeys() {
+    return new Set(Object.entries(rolePermissionPresets.admin).flatMap(([moduleName, actions]) => (actions || []).map((action) => `${moduleName}.${action}`)));
+}
 
 /** Permission key efektif user (Set "module.action"). Group jika ada; legacy hanya jika belum punya group. */
 export async function getUserPermissions(userId: string): Promise<Set<string>> {
@@ -60,6 +65,13 @@ export async function getUserPermissions(userId: string): Promise<Set<string>> {
  *         if (gate.response) return gate.response;`
  */
 export async function requirePermission(request: Request, key: string) {
+    if (isLocalAuthBypassEnabled(request.headers)) {
+        const perms = adminPermissionKeys();
+        return perms.has(key)
+            ? { response: null, session: { user: { id: "local-dev-admin", email: "local-admin@localhost.invalid", role: "admin", name: "LOCAL Admin" } }, perms }
+            : { response: NextResponse.json({ error: "Forbidden" }, { status: 403 }), session: null, perms: null };
+    }
+
     const session = await auth.api.getSession({ headers: request.headers });
     if (!session) {
         return { response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }), session: null, perms: null };
@@ -85,6 +97,14 @@ export async function requirePermissionH(key: string) {
  * Tetap default-deny: 401 bila tanpa sesi.
  */
 export async function resolveRequestPermissions(request: Request) {
+    if (isLocalAuthBypassEnabled(request.headers)) {
+        return {
+            response: null,
+            session: { user: { id: "local-dev-admin", email: "local-admin@localhost.invalid", role: "admin", name: "LOCAL Admin" } },
+            perms: adminPermissionKeys(),
+        };
+    }
+
     const session = await auth.api.getSession({ headers: request.headers });
     if (!session) {
         return { response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }), session: null, perms: null as Set<string> | null };

@@ -6,8 +6,13 @@
  * Side Effects: Menambah header internal `x-current-path` pada request downstream.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
 
 export function proxy(request: NextRequest) {
+    if (request.nextUrl.pathname === "/login" && isLocalAuthBypassEnabled(request.headers)) {
+        return NextResponse.redirect(new URL("/", request.url));
+    }
+
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set("x-current-path", request.nextUrl.pathname);
     return NextResponse.next({

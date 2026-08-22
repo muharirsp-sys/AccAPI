@@ -6,12 +6,13 @@
  */
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
 import { matchFaq } from "@/lib/chatbot/matcher";
 import { tryCommand, getCommandHelp } from "@/lib/chatbot/commands";
 
 export async function POST(request: Request) {
   const session = await auth.api.getSession({ headers: request.headers });
-  if (!session) {
+  if (!session && !isLocalAuthBypassEnabled(request.headers)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

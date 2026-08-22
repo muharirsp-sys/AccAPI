@@ -477,7 +477,7 @@ export default function FinancePage() {
                     <button onClick={() => fetchData(dateFilter)} className="flex items-center gap-2 bg-white/5 border border-white/10 text-slate-300 px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-white/10">
                         <RefreshCcw size={16} /> Refresh
                     </button>
-                    <button onClick={handleExport} className="flex items-center gap-2 bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-emerald-500/30">
+                    <button onClick={handleExport} className="office-calm-contrast-text flex items-center gap-2 bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-emerald-500/30">
                         <Download size={16} /> Export Excel
                     </button>
                 </div>
@@ -501,7 +501,7 @@ export default function FinancePage() {
                         <div className="p-12 text-center text-slate-400 animate-pulse">Memuat integrasi data Finance...</div>
                     ) : (
                         <table className="w-full min-w-[1900px] text-xs text-left">
-                            <thead className="bg-black/60 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
+                            <thead className="office-calm-contrast-text bg-black/60 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
                                 <tr className="whitespace-nowrap">
                                     <th className="px-4 py-3">Draft</th>
                                     <th className="px-4 py-3">Principle</th>

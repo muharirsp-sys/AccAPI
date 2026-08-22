@@ -197,7 +197,7 @@ export default function GroupManagement() {
 
             {/* Right: detail */}
             <div style={{ flex: 1 }}>
-                {!detail && <p style={{ color: "#888", fontSize: 13 }}>Pilih group di kiri untuk mengelola.</p>}
+                {!detail && <p className="office-calm-contrast-text" style={{ color: "#888", fontSize: 13 }}>Pilih group di kiri untuk mengelola.</p>}
                 {detail && (
                     <div style={{ ...COL, gap: 28 }}>
                         <section>

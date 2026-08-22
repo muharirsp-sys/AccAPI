@@ -10,6 +10,7 @@
 import { headers } from "next/headers";
 import { and, eq, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
+import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
 import { db } from "@/lib/db";
 import { incentiveTiers, salesCodeMerge, salesDailyProgress, salesTargets } from "@/db/schema";
 import { applyMergeMap } from "./sales-code-merge";
@@ -17,7 +18,11 @@ import { applyMergeMap } from "./sales-code-merge";
 export type KpiType = "value" | "ec" | "ao" | "ia";
 
 export async function requireSalesSession() {
-    const session = await auth.api.getSession({ headers: await headers() });
+    const requestHeaders = await headers();
+    if (isLocalAuthBypassEnabled(requestHeaders)) {
+        return { id: "local-dev-admin", name: "LOCAL Admin", role: "admin" };
+    }
+    const session = await auth.api.getSession({ headers: requestHeaders });
     if (!session) return null;
     return {
         id: session.user.id,
