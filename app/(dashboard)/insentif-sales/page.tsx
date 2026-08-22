@@ -1072,7 +1072,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
         try {
             // Baca via XLSX — menangani .xlsx maupun .csv, termasuk field ber-koma di dalam
             // tanda kutip ("ABC PRESIDENT INDONESIA, PT" / alamat) yang bikin split manual geser kolom.
-            const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+            const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
             const sheet = wb.Sheets[wb.SheetNames[0]];
             const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
             // Nama kolom file closing tidak seragam antar export — terima alias, case-insensitive.
@@ -1095,25 +1095,96 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                     salesCode: get("KODE_SALESMAN"),
                     principle: get("PRINCIPAL"),
                     branch: get("JENISPRODUK"),
-                    date: `${year}-${String(month).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
-                    periodMonth: month,
-                    periodYear: year,
+                    tanggal: get("TANGGAL"),
                     invoiceNumber: get("NO_INVOICE", "NO_NOTA") || undefined,
                     spvName: get("GOLONGAN") || undefined,
-                    // VINDA / KINO NON FOOD / MIX NON FOOD memakai NILAI_JUAL, sisanya DPP.
-                    achievedValueDpp: realisasiValue(get("JENISPRODUK"), num(get("DPP")), num(get("NILAI_JUAL"))),
-                    achievedEc: num(get("EC")),
-                    achievedAo: num(get("AO")),
-                    achievedIa: num(get("IA", "ITEM AKTIF")),
+                    dpp: num(get("DPP")),
+                    nilaiJual: num(get("NILAI_JUAL")),
+                    ec: num(get("EC")),
+                    ao: num(get("AO")),
+                    ia: num(get("IA", "ITEM AKTIF")),
                 };
             });
-            const payload = parsed.filter((r) => r.salesCode && r.principle && r.branch);
-            const skipped = parsed.length - payload.length;
 
-            if (payload.length === 0) { toast.error("Tidak ada baris valid. Pastikan kolom KODE_SALESMAN, PRINCIPAL, dan JENISPRODUK terisi."); return; }
+            // Cabang kadang kosong (retur di file ADNAN: 2.508 baris, -533 jt). Kalau dibuang,
+            // retur hilang dan realisasi jadi lebih tinggi dari seharusnya. Jadi cabang
+            // diturunkan dari PRINCIPAL memakai baris LAIN di file yang sama yang cabangnya terisi.
+            const branchByPrincipal = new Map<string, Map<string, number>>();
+            for (const r of parsed) {
+                if (!r.principle || !r.branch) continue;
+                const inner = branchByPrincipal.get(r.principle) ?? new Map<string, number>();
+                inner.set(r.branch, (inner.get(r.branch) ?? 0) + 1);
+                branchByPrincipal.set(r.principle, inner);
+            }
+            const ambigu = new Set<string>();
+            const branchOf = (principle: string, branch: string) => {
+                if (branch) return branch;
+                const inner = branchByPrincipal.get(principle);
+                if (!inner || inner.size === 0) return "";
+                if (inner.size > 1) ambigu.add(principle);
+                // terbanyak menang — deterministik, dan principal ambigu dilaporkan ke user
+                return [...inner.entries()].sort((a, b) => b[1] - a[1])[0][0];
+            };
+
+            // Tanggal transaksi asli dari file. XLSX dibaca dgn cellDates sehingga TANGGAL
+            // berupa Date; kalau gagal dibaca, jatuh ke tanggal 1 periode itu (bukan hari ini,
+            // supaya upload ulang di hari berbeda tetap menghasilkan baris yang sama).
+            const isoDate = (raw: string) => {
+                const d = new Date(raw);
+                if (!Number.isNaN(d.getTime())) {
+                    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                }
+                return `${year}-${String(month).padStart(2, "0")}-01`;
+            };
+
+            // AGREGASI sebelum kirim. File closing berada di level baris barang (135 ribu baris
+            // untuk 2 SM); sistem hanya memakai jumlah per periode, jadi menjumlahkan per
+            // (sales, principal, cabang, tanggal) memberi angka identik dengan payload jauh
+            // lebih kecil — sekaligus menghapus kebutuhan dedup per nota yang dulu salah.
+            const bucket = new Map<string, {
+                salesCode: string; principle: string; branch: string; date: string;
+                periodMonth: number; periodYear: number; spvName?: string;
+                achievedValueDpp: number; achievedEc: number; achievedAo: number; achievedIa: number;
+            }>();
+            let dibuang = 0;
+            let nilaiDibuang = 0;
+            for (const r of parsed) {
+                const branch = branchOf(r.principle, r.branch);
+                if (!r.salesCode || !r.principle || !branch) {
+                    dibuang++;
+                    nilaiDibuang += r.dpp;
+                    continue;
+                }
+                const date = isoDate(r.tanggal);
+                const k = `${r.salesCode}|${r.principle}|${branch}|${date}`;
+                const cur = bucket.get(k) ?? {
+                    salesCode: r.salesCode, principle: r.principle, branch, date,
+                    periodMonth: month, periodYear: year, spvName: r.spvName,
+                    achievedValueDpp: 0, achievedEc: 0, achievedAo: 0, achievedIa: 0,
+                };
+                // VINDA / KINO NON FOOD / MIX NON FOOD memakai NILAI_JUAL, sisanya DPP.
+                cur.achievedValueDpp += realisasiValue(branch, r.dpp, r.nilaiJual);
+                cur.achievedEc += r.ec;
+                cur.achievedAo += r.ao;
+                cur.achievedIa += r.ia;
+                if (!cur.spvName && r.spvName) cur.spvName = r.spvName;
+                bucket.set(k, cur);
+            }
+            const payload = [...bucket.values()];
+
+            if (payload.length === 0) { toast.error("Tidak ada baris valid. Pastikan kolom KODE_SALESMAN dan PRINCIPAL terisi."); return; }
 
             const data = await submitProgress(payload);
-            toast.success(`${data.inserted} baris diproses ke database.${skipped ? ` (${skipped} baris dilewati karena kolom wajib kosong)` : ""}`);
+            toast.success(
+                `${parsed.length.toLocaleString("id-ID")} baris file diringkas jadi ${data.inserted.toLocaleString("id-ID")} baris harian` +
+                (data.replaced ? `, mengganti ${data.replaced.toLocaleString("id-ID")} baris lama` : "") + ".",
+            );
+            if (dibuang > 0) {
+                toast.warning(`${dibuang.toLocaleString("id-ID")} baris dilewati (kode sales/principal kosong), total nilai Rp ${Math.round(nilaiDibuang).toLocaleString("id-ID")}.`);
+            }
+            if (ambigu.size > 0) {
+                toast.warning(`Cabang diturunkan dari principal yang punya lebih dari satu cabang: ${[...ambigu].join(", ")}. Periksa hasilnya.`);
+            }
         } catch (err) {
             toast.error(`Gagal upload: ${err instanceof Error ? err.message : "Error tidak dikenal"}`);
         } finally {

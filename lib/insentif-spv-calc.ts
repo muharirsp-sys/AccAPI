@@ -13,7 +13,11 @@
  *   (distributor/distributor_principle) — bukan seluruhnya "principle" (full principle, spt Motasa/Heinz).
  * - Rate per principal (strata):
  *     n=1            → flat Rp 1.500.000 (kasus khusus, di luar garis)
- *     n>=2 (& n>6)   → Total(n) = 1.200.000 + 200.000×n, rate = Total(n)/n
+ *     n=2..6         → Total(n) = 1.200.000 + 200.000×n, rate = Total(n)/n
+ *     n>6            → rate DITAHAN di 400.000 (nilai n=6), tidak turun lagi.
+ *                      Dikonfirmasi user 2026-08-21 utk kasus SPV ANI yang pegang 10 principal.
+ *                      Konsekuensi: total SPV naik terus seiring jumlah principal (n=10 → 4jt),
+ *                      berbeda dari formula yang kalau diekstrapolasi memberi 3,2jt.
  *   Terverifikasi cocok persis ke tabel given: n=2→800rb, 3→600rb, 4→500rb, 5→440rb, 6→400rb.
  *   n>6 ekstrapolasi otomatis dari formula yang sama (mendekati 200rb, tak pernah negatif).
  * - Insentif_n = rate × percentageMultiplier(realisasi, target) — threshold reuse dari Sales:
@@ -66,11 +70,16 @@ export interface SpvInsentifResult {
     total: number;
 }
 
-/** Rate per principal berdasar jumlah principal valid. n=1 flat 1.5jt; n>=2 pakai Total(n)/n, ekstrapolasi otomatis untuk n>6. */
+/**
+ * Rate per principal berdasar jumlah principal valid.
+ * n=1 flat 1,5jt; n=2..6 pakai Total(n)/n; n>6 ditahan di 400rb (nilai n=6) — tidak turun lagi.
+ * Math.max menangani penahanan itu sekaligus: formula 200rb + 1,2jt/n turun di bawah 400rb
+ * tepat setelah n=6, jadi tidak perlu cabang khusus.
+ */
 export function ratePerPrincipalSpv(n: number): number {
     if (n <= 0) return 0;
     if (n === 1) return 1_500_000;
-    return 200_000 + 1_200_000 / n;
+    return Math.max(400_000, 200_000 + 1_200_000 / n);
 }
 
 interface PrincipleAgg {

@@ -15,9 +15,10 @@ approx(ratePerPrincipalSpv(3), 600_000, "rate n=3");
 approx(ratePerPrincipalSpv(4), 500_000, "rate n=4");
 approx(ratePerPrincipalSpv(5), 440_000, "rate n=5");
 approx(ratePerPrincipalSpv(6), 400_000, "rate n=6");
-// --- ekstrapolasi n>6 (formula sama, Total(n)=1.2jt+200rb*n, rate=Total/n) ---
-approx(ratePerPrincipalSpv(7), 2_600_000 / 7, "rate n=7");
-approx(ratePerPrincipalSpv(10), 3_200_000 / 10, "rate n=10");
+// --- n>6: rate DITAHAN di 400rb (nilai n=6), tidak turun lagi ---
+approx(ratePerPrincipalSpv(7), 400_000, "rate n=7 ditahan 400rb");
+approx(ratePerPrincipalSpv(10), 400_000, "rate n=10 ditahan 400rb (kasus SPV ANI)");
+approx(ratePerPrincipalSpv(20), 400_000, "rate n=20 tetap 400rb");
 assert.strictEqual(ratePerPrincipalSpv(0), 0, "rate n=0 → 0");
 
 const row = (principle: string, target: number, real: number, status: SpvSalesRow["statusInsentif"] = "distributor"): SpvSalesRow =>
@@ -29,6 +30,15 @@ for (const [n, expectedTotal] of [[1, 1_500_000], [2, 1_600_000], [3, 1_800_000]
     const r = calculateInsentifSPV(rows);
     assert.strictEqual(r.jumlahValid, n, `n=${n} jumlahValid`);
     approx(r.total, expectedTotal, `n=${n} total (tabel given)`);
+}
+
+// === n>6: rate ditahan 400rb → total naik linier. Kasus nyata SPV ANI (10 principal). ===
+{
+    const rows10 = Array.from({ length: 10 }, (_, i) => row(`P${i}`, 100, 100));
+    const r = calculateInsentifSPV(rows10);
+    assert.strictEqual(r.jumlahValid, 10, "10 principal valid");
+    approx(r.ratePerPrincipal, 400_000, "rate ditahan 400rb");
+    approx(r.total, 4_000_000, "ANI n=10 → 10 × 400rb = 4jt");
 }
 
 // === n=0: semua principal status "principle" (full) → tidak ada yang valid ===
