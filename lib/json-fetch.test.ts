@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { jsonOrThrow } from "./json-fetch";
+import { jsonOrThrow, getJson } from "./json-fetch";
 
 const res = (body: string, status = 200, type = "application/json") =>
     new Response(body, { status, headers: { "Content-Type": type } });
@@ -23,4 +23,24 @@ test("error JSON dari server dipakai sebagai pesan", async () => {
 
 test("200 tapi body kosong tetap dianggap gagal", async () => {
     await assert.rejects(jsonOrThrow(res("", 200)), /HTTP 200/);
+});
+
+test("getJson: gagal jadi result, tidak throw", async () => {
+    const orig = globalThis.fetch;
+    globalThis.fetch = async () => res("", 500);
+    try {
+        const r = await getJson("/x");
+        assert.equal(r.ok, false);
+        assert.match(r.ok === false ? r.error : "", /HTTP 500/);
+    } finally { globalThis.fetch = orig; }
+});
+
+test("getJson: fetch reject pun jadi result", async () => {
+    const orig = globalThis.fetch;
+    globalThis.fetch = async () => { throw new Error("ECONNREFUSED"); };
+    try {
+        const r = await getJson("/x");
+        assert.equal(r.ok, false);
+        assert.match(r.ok === false ? r.error : "", /ECONNREFUSED/);
+    } finally { globalThis.fetch = orig; }
 });

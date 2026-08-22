@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { PERMISSION_REGISTRY } from "@/lib/rbac/registry";
-import { jsonOrThrow, errMsg as msg } from "@/lib/json-fetch";
+import { jsonOrThrow, getJson } from "@/lib/json-fetch";
 
 type Group = { id: string; name: string; description: string | null; isPreset: boolean | number; permCount: number; memberCount: number };
 type Member = { userId: string; userName: string; userEmail: string; assignedAt: number };
@@ -35,32 +35,31 @@ export default function GroupManagement() {
     const [busy, setBusy] = useState(false);
 
     const loadGroups = useCallback(async () => {
-        try {
-            const d = await jsonOrThrow<{ groups?: Group[] }>(await fetch("/api/admin/groups", { credentials: "include" }));
-            setGroups(d.groups ?? []);
-        } catch (e) { toast.error(`Gagal memuat group: ${msg(e)}`); }
+        const res = await getJson<{ groups?: Group[] }>("/api/admin/groups");
+        if (!res.ok) { toast.error(`Gagal memuat group: ${res.error}`); return; }
+        setGroups(res.data.groups ?? []);
     }, []);
 
     const loadUsers = useCallback(async () => {
-        try {
-            const d = await jsonOrThrow<{ users?: UserRow[] }>(await fetch("/api/admin/users/permissions", { credentials: "include" }));
-            setAllUsers(d.users ?? []);
-        } catch (e) { toast.error(`Gagal memuat user: ${msg(e)}`); }
+        const res = await getJson<{ users?: UserRow[] }>("/api/admin/users/permissions");
+        if (!res.ok) { toast.error(`Gagal memuat user: ${res.error}`); return; }
+        setAllUsers(res.data.users ?? []);
     }, []);
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- muat data awal saat mount; setState terjadi setelah await.
     useEffect(() => { loadGroups(); loadUsers(); }, [loadGroups, loadUsers]);
 
     const selectGroup = useCallback(async (id: string) => {
         setSelectedId(id);
         setDetail(null);
-        try {
-            const d = await jsonOrThrow<Detail>(await fetch(`/api/admin/groups/${id}`, { credentials: "include" }));
-            setDetail(d);
-            setEditName(d.group.name);
-            setEditDesc(d.group.description ?? "");
-            setEditPerms(new Set(d.permissions));
-            setAddUserId("");
-        } catch (e) { toast.error(`Gagal memuat detail group: ${msg(e)}`); }
+        const res = await getJson<Detail>(`/api/admin/groups/${id}`);
+        if (!res.ok) { toast.error(`Gagal memuat detail group: ${res.error}`); return; }
+        const d = res.data;
+        setDetail(d);
+        setEditName(d.group.name);
+        setEditDesc(d.group.description ?? "");
+        setEditPerms(new Set(d.permissions));
+        setAddUserId("");
     }, []);
 
     async function apiFetch(url: string, body: object, method = "POST") {
