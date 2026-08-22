@@ -16,6 +16,7 @@ import {
     AlertTriangle, FileUp, Save, Loader2, RefreshCw, Download,
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { realisasiValue } from "@/lib/insentif-value-source";
 import { toast } from "sonner";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AsyncState";
@@ -1099,7 +1100,8 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                     periodYear: year,
                     invoiceNumber: get("NO_INVOICE", "NO_NOTA") || undefined,
                     spvName: get("GOLONGAN") || undefined,
-                    achievedValueDpp: num(get("DPP")),
+                    // VINDA / KINO NON FOOD / MIX NON FOOD memakai NILAI_JUAL, sisanya DPP.
+                    achievedValueDpp: realisasiValue(get("JENISPRODUK"), num(get("DPP")), num(get("NILAI_JUAL"))),
                     achievedEc: num(get("EC")),
                     achievedAo: num(get("AO")),
                     achievedIa: num(get("IA", "ITEM AKTIF")),
