@@ -52,7 +52,13 @@ export async function GET(req: Request) {
         return NextResponse.json({ ok: false, error: `webhook_events.log tidak ditemukan di ${logDir}` }, { status: 404 });
     }
 
-    const loggedIds = extractLoggedInvoiceIds(files.map((f) => fs.readFileSync(f, "utf8")).join("\n"));
+    // Batasi ke jendela `hours`: log menyimpan seluruh riwayat dan mayoritas id lama sudah
+    // dihapus di Accurate, jadi tanpa batas ini penambal mengejar faktur yang tidak ada lagi.
+    const sinceMs = Date.now() - hours * 60 * 60 * 1000;
+    const loggedIds = extractLoggedInvoiceIdsSince(
+        files.map((f) => fs.readFileSync(f, "utf8")).join("\n"),
+        sinceMs,
+    );
     if (loggedIds.length === 0) {
         return NextResponse.json({ ok: true, hours, loggedIds: 0, missing: 0, processed: [], failed: [] });
     }

@@ -1031,7 +1031,8 @@ function AdminView({ rows }: { rows: Salesman[] }) {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Server error");
-        return data as { inserted: number };
+        // replaced/skipped hanya dikirim jalur upload (mode ganti); input manual tidak memakainya.
+        return data as { inserted: number; replaced?: number; skipped?: number };
     }
 
     async function handleSaveManual() {
