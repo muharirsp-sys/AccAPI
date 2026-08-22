@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { PERMISSION_REGISTRY } from "@/lib/rbac/registry";
+import { jsonOrThrow, errMsg as msg } from "@/lib/json-fetch";
 
 type Group = { id: string; name: string; description: string | null; isPreset: boolean | number; permCount: number; memberCount: number };
 type Member = { userId: string; userName: string; userEmail: string; assignedAt: number };
@@ -34,15 +35,17 @@ export default function GroupManagement() {
     const [busy, setBusy] = useState(false);
 
     const loadGroups = useCallback(async () => {
-        const r = await fetch("/api/admin/groups", { credentials: "include" });
-        const d = await r.json();
-        setGroups(d.groups ?? []);
+        try {
+            const d = await jsonOrThrow<{ groups?: Group[] }>(await fetch("/api/admin/groups", { credentials: "include" }));
+            setGroups(d.groups ?? []);
+        } catch (e) { toast.error(`Gagal memuat group: ${msg(e)}`); }
     }, []);
 
     const loadUsers = useCallback(async () => {
-        const r = await fetch("/api/admin/users/permissions", { credentials: "include" });
-        const d = await r.json();
-        setAllUsers(d.users ?? []);
+        try {
+            const d = await jsonOrThrow<{ users?: UserRow[] }>(await fetch("/api/admin/users/permissions", { credentials: "include" }));
+            setAllUsers(d.users ?? []);
+        } catch (e) { toast.error(`Gagal memuat user: ${msg(e)}`); }
     }, []);
 
     useEffect(() => { loadGroups(); loadUsers(); }, [loadGroups, loadUsers]);
@@ -50,20 +53,19 @@ export default function GroupManagement() {
     const selectGroup = useCallback(async (id: string) => {
         setSelectedId(id);
         setDetail(null);
-        const r = await fetch(`/api/admin/groups/${id}`, { credentials: "include" });
-        const d = await r.json();
-        setDetail(d);
-        setEditName(d.group.name);
-        setEditDesc(d.group.description ?? "");
-        setEditPerms(new Set(d.permissions));
-        setAddUserId("");
+        try {
+            const d = await jsonOrThrow<Detail>(await fetch(`/api/admin/groups/${id}`, { credentials: "include" }));
+            setDetail(d);
+            setEditName(d.group.name);
+            setEditDesc(d.group.description ?? "");
+            setEditPerms(new Set(d.permissions));
+            setAddUserId("");
+        } catch (e) { toast.error(`Gagal memuat detail group: ${msg(e)}`); }
     }, []);
 
     async function apiFetch(url: string, body: object, method = "POST") {
         const r = await fetch(url, { method, credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error || "Gagal");
-        return d;
+        return jsonOrThrow<Record<string, unknown>>(r);
     }
 
     async function saveInfo() {
@@ -132,9 +134,7 @@ export default function GroupManagement() {
         if (!confirm(`Hapus group "${detail.group.name}"?`)) return;
         setBusy(true);
         try {
-            const r = await fetch(`/api/admin/groups/${selectedId}`, { method: "DELETE", credentials: "include" });
-            const d = await r.json();
-            if (!r.ok) throw new Error(d.error);
+            await jsonOrThrow(await fetch(`/api/admin/groups/${selectedId}`, { method: "DELETE", credentials: "include" }));
             toast.success("Group dihapus");
             setSelectedId(null); setDetail(null);
             await loadGroups();
