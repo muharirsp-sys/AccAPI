@@ -126,7 +126,17 @@ export interface MtdProgress {
     realIa: number;
 }
 
-/** Aggregate daily_progress MTD untuk satu periode. AO/IA diambil MAX (snapshot harian, bukan kumulatif). */
+/**
+ * Aggregate daily_progress MTD untuk satu periode. SEMUA KPI dijumlahkan (SUM).
+ *
+ * Dulu AO & IA memakai MAX dengan alasan "snapshot harian, bukan kumulatif". Itu benar untuk
+ * bentuk input lama di mana tiap baris harian membawa angka kumulatif. Sejak ingesti file
+ * closing, AO/EC/Item Aktif adalah FLAG 0/1 per baris transaksi yang diagregasi per hari saat
+ * upload — sehingga MAX mengembalikan puncak satu hari, bukan total bulan.
+ * Buktinya ada di skala: target AO GT = 240 dan realisasi hasil SUM berkisar 150–256,
+ * sedangkan puncak harian hanya belasan. Dengan MAX, pengali AO nol dan komponen 70% hangus
+ * untuk hampir semua sales.
+ */
 export async function computeMtdProgress(
     month: number,
     year: number,
@@ -149,8 +159,8 @@ export async function computeMtdProgress(
             salesCode: salesDailyProgress.salesCode,
             realValue: sql<number>`SUM(${salesDailyProgress.achievedValueDpp})`,
             realEc: sql<number>`SUM(${salesDailyProgress.achievedEc})`,
-            realAo: sql<number>`MAX(${salesDailyProgress.achievedAo})`,
-            realIa: sql<number>`MAX(${salesDailyProgress.achievedIa})`,
+            realAo: sql<number>`SUM(${salesDailyProgress.achievedAo})`,
+            realIa: sql<number>`SUM(${salesDailyProgress.achievedIa})`,
         })
         .from(salesDailyProgress)
         .where(and(...conditions))
@@ -178,7 +188,10 @@ export async function computeMtdProgress(
     );
 }
 
-/** Aggregate MTD per salesCode+principle. Untuk insentif GT (AO per principle). Key: `${salesCode}|${principle}`. */
+/**
+ * Aggregate MTD per salesCode+principle. Untuk insentif GT/MT (AO per principle).
+ * Key: `${salesCode}|${principle}`. Semua KPI dijumlahkan — lihat alasan di computeMtdProgress.
+ */
 export async function computeMtdByPrinciple(
     month: number,
     year: number,
@@ -189,8 +202,8 @@ export async function computeMtdByPrinciple(
             principle: salesDailyProgress.principle,
             realValue: sql<number>`SUM(${salesDailyProgress.achievedValueDpp})`,
             realEc: sql<number>`SUM(${salesDailyProgress.achievedEc})`,
-            realAo: sql<number>`MAX(${salesDailyProgress.achievedAo})`,
-            realIa: sql<number>`MAX(${salesDailyProgress.achievedIa})`,
+            realAo: sql<number>`SUM(${salesDailyProgress.achievedAo})`,
+            realIa: sql<number>`SUM(${salesDailyProgress.achievedIa})`,
         })
         .from(salesDailyProgress)
         .where(and(eq(salesDailyProgress.periodMonth, month), eq(salesDailyProgress.periodYear, year)))
