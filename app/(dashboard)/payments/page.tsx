@@ -142,7 +142,7 @@ function hasOwnField<T extends object>(source: T, field: keyof T): boolean {
 async function getBackendCsrfToken(forceRefresh = false): Promise<string> {
     if (cachedCsrfToken && !forceRefresh) return cachedCsrfToken;
     try {
-        const res = await fetch(`${API_BASE}/api/me`, { credentials: "include" });
+        const res = await fetch(`${API_BASE}/api/me`, { credentials: "include", signal: AbortSignal.timeout(15_000) });
         const data = await res.json().catch(() => ({}));
         if (res.ok && data.csrf_token) {
             cachedCsrfToken = String(data.csrf_token);
@@ -152,10 +152,19 @@ async function getBackendCsrfToken(forceRefresh = false): Promise<string> {
     return cachedCsrfToken || "";
 }
 
+// ponytail: tanpa timeout, backend yang menggantung membuat `finally` tidak pernah jalan
+// sehingga spinner abadi. Ceiling: angka tetap, bukan adaptif — cukup untuk memutus hang.
+const GET_TIMEOUT_MS = 45_000;
+const POST_TIMEOUT_MS = 180_000; // upload/submit ikut generate Excel, jauh lebih lama
+
+function isTimeoutError(e: unknown): boolean {
+    return e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError");
+}
+
 const api = {
     get: async (url: string) => {
         const fetchUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
-        const res = await fetch(fetchUrl, { credentials: "include" });
+        const res = await fetch(fetchUrl, { credentials: "include", signal: AbortSignal.timeout(GET_TIMEOUT_MS) });
         if (!res.ok) throw new Error("Fetch failed");
         return { data: await res.json(), status: res.status, ok: res.ok };
     },
@@ -167,7 +176,8 @@ const api = {
             method: "POST",
             credentials: "include",
             body: isFormData ? data : JSON.stringify(data),
-            headers: isFormData ? { "X-CSRF-Token": token } : { "Content-Type": "application/json", "X-CSRF-Token": token }
+            headers: isFormData ? { "X-CSRF-Token": token } : { "Content-Type": "application/json", "X-CSRF-Token": token },
+            signal: AbortSignal.timeout(POST_TIMEOUT_MS),
         });
         let res = await fetch(fetchUrl, requestInit(csrfToken));
         if (res.status === 403) {
@@ -249,8 +259,10 @@ export default function PaymentsPage() {
             } else {
                 toast.error(res.data.error || "Gagal memuat data pembayaran.");
             }
-        } catch {
-            toast.error("Koneksi ke server Python terputus. Pastikan backend FastAPI aktif.");
+        } catch (e) {
+            toast.error(isTimeoutError(e)
+                ? "Server Python tidak menjawab dalam 45 detik (kemungkinan sedang sibuk memproses upload). Coba muat ulang."
+                : "Koneksi ke server Python terputus. Pastikan backend FastAPI aktif.");
         } finally {
             if (showLoading) setLoading(false);
         }

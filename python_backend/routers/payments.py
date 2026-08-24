@@ -1,6 +1,7 @@
 # routers/payments.py — Endpoint payments: /payments/* (data, upload, update, cart, submit, files, dll).
 # Dipindahkan mekanis dari main.py tanpa perubahan logic; hanya @app.* diganti @router.*.
 from fastapi import APIRouter
+import asyncio
 
 from shared import (
     Any,
@@ -208,14 +209,14 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
             allowed_exts=(".xlsx", ".xls"),
             label="File LPB",
         )
-        preview_df = pd.read_excel(io.BytesIO(content), nrows=1)
+        preview_df = await asyncio.to_thread(pd.read_excel, io.BytesIO(content), nrows=1)
         preview_cols = {str(c).strip().upper(): c for c in preview_df.columns}
         if looks_like_payments_backup(preview_cols):
             restore_rows = parse_payments_backup_upload(content)
             if not restore_rows:
                 return JSONResponse(status_code=400, content={"ok": False, "error": "Data backup PAYMENTS kosong."})
             async with _PAYMENTS_DB_LOCK:
-                db = load_payments_db()
+                db = await asyncio.to_thread(load_payments_db)
                 conflicts = validate_backup_restore_conflicts(db, restore_rows)
                 if conflicts:
                     return JSONResponse(status_code=400, content={"ok": False, "error": "Restore backup dibatalkan: " + "; ".join(conflicts[:5])})
@@ -225,7 +226,7 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
                 max_seq = max_sppd_sequence_from_records([rec for _, rec in restore_rows])
                 if max_seq:
                     db["sppd_seq"] = max(int(db.get("sppd_seq", 0) or 0), max_seq)
-                save_payments_db(db)
+                await asyncio.to_thread(save_payments_db, db)
             append_audit_log(user, "payments_restore_backup", "lpb", {"added": len(restore_rows), "max_sppd_seq": max_seq})
             return JSONResponse({"ok": True, "added": len(restore_rows), "mode": "restore_backup", "message": f"Restore backup berhasil: {len(restore_rows)} record."})
 
@@ -234,7 +235,7 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
             return JSONResponse(status_code=400, content={"ok": False, "error": "Data LPB kosong."})
         now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
         async with _PAYMENTS_DB_LOCK:
-            db = load_payments_db()
+            db = await asyncio.to_thread(load_payments_db)
             dups = []
             for r in rows:
                 no_lpb = s(r.get("no_lpb", ""))
@@ -272,7 +273,7 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
                     "created_at": now,
                     "created_by": user,
                 }
-            save_payments_db(db)
+            await asyncio.to_thread(save_payments_db, db)
         append_audit_log(user, "payments_upload", "lpb", {"added": len(rows)})
         return JSONResponse({"ok": True, "added": len(rows)})
     except ValueError as e:
@@ -316,7 +317,7 @@ async def payments_manual_add(request: Request):
 
     now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
     async with _PAYMENTS_DB_LOCK:
-      db = load_payments_db()
+      db = await asyncio.to_thread(load_payments_db)
       if no_lpb and find_lpb_duplicate_key(db, no_lpb):
           return JSONResponse(status_code=400, content={"ok": False, "error": f"No. LPB {no_lpb} sudah ada di sistem."})
       if no_lpb:
@@ -358,7 +359,7 @@ async def payments_manual_add(request: Request):
           "created_at": now,
           "created_by": user,
       }
-      save_payments_db(db)
+      await asyncio.to_thread(save_payments_db, db)
     append_audit_log(user, "payments_manual_add", "lpb", {"record_id": key, "tipe_pengajuan": tipe})
     return JSONResponse({"ok": True, "record_id": key})
 
@@ -382,7 +383,7 @@ async def payments_update(request: Request):
     updated = []
     skipped = []
     async with _PAYMENTS_DB_LOCK:
-        db = load_payments_db()
+        db = await asyncio.to_thread(load_payments_db)
         for item in items:
             if not isinstance(item, dict):
                 skipped.append("")
@@ -451,7 +452,7 @@ async def payments_update(request: Request):
                 rec["gap_nilai"] = 0.0
             if changed:
                 updated.append(key)
-        save_payments_db(db)
+        await asyncio.to_thread(save_payments_db, db)
     append_audit_log(user, "payments_update", "lpb", {"count": len(updated), "samples": updated[:10], "skipped": skipped[:10]})
     return JSONResponse({"ok": True, "updated": len(updated), "updated_ids": updated, "skipped": len(skipped)})
 
@@ -473,14 +474,20 @@ async def payments_delete(request: Request):
     if not isinstance(record_ids, list) or not record_ids:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Data belum dipilih."})
 
-    db = load_payments_db()
-    deleted = 0
-    for row_id in record_ids:
-        key = resolve_payment_record_key(db, s(row_id))
-        if key in db.get("lpb", {}):
-            del db["lpb"][key]
-            deleted += 1
-    save_payments_db(db)
+    # ponytail: to_thread menambah titik await, jadi read-modify-write ini
+    # WAJIB dikunci — pola sama dengan route mutation lain di file ini.
+    await _PAYMENTS_DB_LOCK.acquire()
+    try:
+        db = await asyncio.to_thread(load_payments_db)
+        deleted = 0
+        for row_id in record_ids:
+            key = resolve_payment_record_key(db, s(row_id))
+            if key in db.get("lpb", {}):
+                del db["lpb"][key]
+                deleted += 1
+        await asyncio.to_thread(save_payments_db, db)
+    finally:
+        _PAYMENTS_DB_LOCK.release()
     append_audit_log(user, "payments_delete", "lpb", {"count": deleted, "samples": [s(n) for n in record_ids][:10]})
     return JSONResponse({"ok": True, "deleted": deleted})
 
@@ -506,7 +513,7 @@ async def payments_clear(request: Request):
     backup_name = ""
     try:
         async with _PAYMENTS_DB_LOCK:
-            db = load_payments_db()
+            db = await asyncio.to_thread(load_payments_db)
             before_counts = {
                 "lpb": len(db.get("lpb", {}) or {}),
                 "submissions": len(db.get("submissions", {}) or {}),
@@ -518,9 +525,9 @@ async def payments_clear(request: Request):
                 ts = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
                 backup_path = f"{PAYMENTS_DB_PATH}.backup_before_clear_{ts}"
                 import shutil
-                shutil.copy2(PAYMENTS_DB_PATH, backup_path)
+                await asyncio.to_thread(shutil.copy2, PAYMENTS_DB_PATH, backup_path)
                 backup_name = os.path.basename(backup_path)
-            save_payments_db(empty_payments_db_preserving_config(db))
+            await asyncio.to_thread(save_payments_db, empty_payments_db_preserving_config(db))
         append_audit_log(user, "payments_clear_all", "payments", {"backup": backup_name, "before": before_counts})
         return JSONResponse({
             "ok": True,
@@ -557,7 +564,7 @@ async def payments_cart_create(request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "error": "Data belum dipilih."})
 
     async with _PAYMENTS_DB_LOCK:
-      db = load_payments_db()
+      db = await asyncio.to_thread(load_payments_db)
       selected = []
       for row_id in record_ids:
           key = resolve_payment_record_key(db, s(row_id))
@@ -638,7 +645,7 @@ async def payments_cart_create(request: Request):
     draft_id = str(uuid.uuid4())[:8]
     now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
     async with _PAYMENTS_DB_LOCK:
-        db2 = load_payments_db()
+        db2 = await asyncio.to_thread(load_payments_db)
         db2["drafts"][draft_id] = {
             "id": draft_id,
             "created_at": now,
@@ -648,7 +655,7 @@ async def payments_cart_create(request: Request):
             "record_ids": [s(r.get("record_id", "")) for r in selected],
             "items": items,
         }
-        save_payments_db(db2)
+        await asyncio.to_thread(save_payments_db, db2)
     append_audit_log(user, "payments_cart_create", "draft", {"draft_id": draft_id, "count": len(selected), "types": sorted({normalize_pengajuan_type(x.get("tipe_pengajuan", "")) for x in selected})})
     return JSONResponse({"ok": True, "draft_id": draft_id})
 
@@ -754,7 +761,7 @@ async def payments_cart_submit(request: Request):
 
     # Lock mulai dari sini — semua read-modify-write dilindungi satu lock
     async with _PAYMENTS_DB_LOCK:
-        db = load_payments_db()
+        db = await asyncio.to_thread(load_payments_db)
         draft = db.get("drafts", {}).get(draft_id)
         if not draft or not _can_access_draft(user, draft):
             return JSONResponse(status_code=404, content={"ok": False, "error": "Draft tidak ditemukan."})
@@ -829,7 +836,7 @@ async def payments_cart_submit(request: Request):
         }]
         fname = f"invoice_{submission_id}_{slugify(principle)}_{slugify(tipe)}.xlsx"
         out_path = os.path.join(PAYMENTS_FILES_DIR, fname)
-        write_invoice_excel(rows, out_path)
+        await asyncio.to_thread(write_invoice_excel, rows, out_path)
         files.append({"label": f"Invoice {principle} ({tipe})", "url": f"/payments/files/{fname}"})
 
     sppd_file = None
@@ -885,7 +892,7 @@ async def payments_cart_submit(request: Request):
 
     # Tulis semua perubahan ke DB di dalam lock
     async with _PAYMENTS_DB_LOCK:
-        db = load_payments_db()
+        db = await asyncio.to_thread(load_payments_db)
         for rec in selected:
             key = s(rec.get("record_id", ""))
             if key in db.get("lpb", {}):
@@ -922,7 +929,7 @@ async def payments_cart_submit(request: Request):
         }
         if draft_id in db.get("drafts", {}):
             del db["drafts"][draft_id]
-        save_payments_db(db)
+        await asyncio.to_thread(save_payments_db, db)
     append_audit_log(
         user,
         "payments_cart_submit",
@@ -953,107 +960,113 @@ async def payments_submit(request: Request):
     if not isinstance(no_lpbs, list) or not no_lpbs:
         return JSONResponse(status_code=400, content={"ok": False, "error": "LPB belum dipilih."})
 
-    db = load_payments_db()
-    selected = []
-    for no in no_lpbs:
-        key = normalize_lpb_no(s(no))
-        rec = db.get("lpb", {}).get(key)
-        if rec:
-            selected.append(rec)
-    if not selected:
-        return JSONResponse(status_code=400, content={"ok": False, "error": "Data LPB tidak ditemukan."})
+    # ponytail: to_thread menambah titik await, jadi read-modify-write ini
+    # WAJIB dikunci — pola sama dengan route mutation lain di file ini.
+    await _PAYMENTS_DB_LOCK.acquire()
+    try:
+        db = await asyncio.to_thread(load_payments_db)
+        selected = []
+        for no in no_lpbs:
+            key = normalize_lpb_no(s(no))
+            rec = db.get("lpb", {}).get(key)
+            if rec:
+                selected.append(rec)
+        if not selected:
+            return JSONResponse(status_code=400, content={"ok": False, "error": "Data LPB tidak ditemukan."})
 
-    for rec in selected:
-        tgl_invoice = s(rec.get("tgl_invoice", "")) or s(rec.get("tgl_inv", ""))
-        jt_invoice = s(rec.get("jt_invoice", "")) or s(rec.get("tgl_jtempo_pcp", ""))
-        invoice_no = s(rec.get("invoice_no", ""))
-        nilai_invoice = parse_number_id(rec.get("nilai_invoice", rec.get("nilai_principle", 0)))
-        if not tgl_invoice or not jt_invoice:
-            return JSONResponse(status_code=400, content={"ok": False, "error": f"Lengkapi tanggal invoice & jatuh tempo invoice untuk LPB {rec.get('no_lpb','')}"})
-        if not invoice_no:
-            return JSONResponse(status_code=400, content={"ok": False, "error": f"Nomor Invoice kosong untuk LPB {rec.get('no_lpb','')}"})
-        if float(nilai_invoice or 0) <= 0:
-            return JSONResponse(status_code=400, content={"ok": False, "error": f"Nilai Invoice kosong untuk LPB {rec.get('no_lpb','')}"})
+        for rec in selected:
+            tgl_invoice = s(rec.get("tgl_invoice", "")) or s(rec.get("tgl_inv", ""))
+            jt_invoice = s(rec.get("jt_invoice", "")) or s(rec.get("tgl_jtempo_pcp", ""))
+            invoice_no = s(rec.get("invoice_no", ""))
+            nilai_invoice = parse_number_id(rec.get("nilai_invoice", rec.get("nilai_principle", 0)))
+            if not tgl_invoice or not jt_invoice:
+                return JSONResponse(status_code=400, content={"ok": False, "error": f"Lengkapi tanggal invoice & jatuh tempo invoice untuk LPB {rec.get('no_lpb','')}"})
+            if not invoice_no:
+                return JSONResponse(status_code=400, content={"ok": False, "error": f"Nomor Invoice kosong untuk LPB {rec.get('no_lpb','')}"})
+            if float(nilai_invoice or 0) <= 0:
+                return JSONResponse(status_code=400, content={"ok": False, "error": f"Nilai Invoice kosong untuk LPB {rec.get('no_lpb','')}"})
 
-    submission_id = str(uuid.uuid4())[:8]
-    submit_dt = pd.Timestamp.now()
-    now = submit_dt.strftime("%Y-%m-%d %H:%M:%S")
-    groups: Dict[str, List[Dict[str, Any]]] = {}
-    for rec in selected:
-        key = s(rec.get("principle", ""))
-        groups.setdefault(key, []).append(rec)
+        submission_id = str(uuid.uuid4())[:8]
+        submit_dt = pd.Timestamp.now()
+        now = submit_dt.strftime("%Y-%m-%d %H:%M:%S")
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for rec in selected:
+            key = s(rec.get("principle", ""))
+            groups.setdefault(key, []).append(rec)
 
-    files = []
-    for principle, recs in groups.items():
-        inv_list = [s(r.get("invoice_no", "")) for r in recs if s(r.get("invoice_no", ""))]
-        total = sum(parse_number_id(r.get("nilai_invoice", r.get("nilai_principle", 0))) for r in recs)
-        rows = [{
-            "No": 1,
-            "Principle": principle,
-            "Nilai Invoice (Total)": total,
-            "No. Invoice": ", ".join(inv_list),
-            "Potongan": 0.0,
-            "Nilai Pembayaran": total,
-            "Jenis Pembayaran": "NON PANIN" if method == "NON_PANIN" else "BANK PANIN",
-            "Keterangan": "",
-        }]
-        fname = f"invoice_{submission_id}_{slugify(principle)}.xlsx"
-        out_path = os.path.join(PAYMENTS_FILES_DIR, fname)
-        write_invoice_excel(rows, out_path)
-        files.append({"label": f"Invoice {principle}", "url": f"/payments/files/{fname}"})
-
-    sppd_file = None
-    sppd_no = None
-    if method == "BANK_PANIN":
-        bank_map, norm_keys = load_bank_map_with_normalized_keys()
-        transfer_items = []
-        total_all = 0.0
+        files = []
         for principle, recs in groups.items():
-            info, match_status = find_best_match(principle, bank_map, norm_keys)
-            if not info or match_status == "ambiguous":
-                return JSONResponse(status_code=400, content={"ok": False, "error": f"Data rekening untuk principle '{principle}' tidak ditemukan. Status: {match_status}"})
-            amount = sum(parse_number_id(r.get("nilai_invoice", r.get("nilai_principle", 0))) for r in recs)
-            total_all += amount
-            transfer_items.append(
-                {
-                    "principle": info["principle"],
-                    "bank": info["bank"],
-                    "rekening": info["rekening"],
-                    "penerima": info["penerima"],
-                    "amount": amount,
-                }
-            )
-        _, sppd_no, sppd_settings = next_sppd_number(db, submit_dt)
-        sppd_name = f"sppd_{submission_id}.docx"
-        sppd_path = os.path.join(PAYMENTS_FILES_DIR, sppd_name)
-        render_sppd_docx(SPPD_TEMPLATE_PATH, sppd_path, submit_dt, sppd_no, transfer_items, sppd_settings)
-        files.append({"label": "SPPD Bank Panin", "url": f"/payments/files/{sppd_name}"})
-        sppd_file = sppd_name
+            inv_list = [s(r.get("invoice_no", "")) for r in recs if s(r.get("invoice_no", ""))]
+            total = sum(parse_number_id(r.get("nilai_invoice", r.get("nilai_principle", 0))) for r in recs)
+            rows = [{
+                "No": 1,
+                "Principle": principle,
+                "Nilai Invoice (Total)": total,
+                "No. Invoice": ", ".join(inv_list),
+                "Potongan": 0.0,
+                "Nilai Pembayaran": total,
+                "Jenis Pembayaran": "NON PANIN" if method == "NON_PANIN" else "BANK PANIN",
+                "Keterangan": "",
+            }]
+            fname = f"invoice_{submission_id}_{slugify(principle)}.xlsx"
+            out_path = os.path.join(PAYMENTS_FILES_DIR, fname)
+            await asyncio.to_thread(write_invoice_excel, rows, out_path)
+            files.append({"label": f"Invoice {principle}", "url": f"/payments/files/{fname}"})
 
-    for rec in selected:
-        key = normalize_lpb_no(rec.get("no_lpb", ""))
-        if key in db.get("lpb", {}):
-            db["lpb"][key]["payment_method"] = "Bank Panin" if method == "BANK_PANIN" else "Non Panin"
-            db["lpb"][key]["status_pembayaran"] = "Belum Transfer"
-            db["lpb"][key]["submitted_at"] = now
-            db["lpb"][key]["submitted_by"] = user
-            db["lpb"][key]["submission_id"] = submission_id
-            db["lpb"][key]["potongan"] = 0.0
-            db["lpb"][key]["nilai_pembayaran"] = parse_number_id(db["lpb"][key].get("nilai_invoice", db["lpb"][key].get("nilai_principle", 0)))
-            if sppd_no:
-                db["lpb"][key]["sppd_no"] = sppd_no
+        sppd_file = None
+        sppd_no = None
+        if method == "BANK_PANIN":
+            bank_map, norm_keys = load_bank_map_with_normalized_keys()
+            transfer_items = []
+            total_all = 0.0
+            for principle, recs in groups.items():
+                info, match_status = find_best_match(principle, bank_map, norm_keys)
+                if not info or match_status == "ambiguous":
+                    return JSONResponse(status_code=400, content={"ok": False, "error": f"Data rekening untuk principle '{principle}' tidak ditemukan. Status: {match_status}"})
+                amount = sum(parse_number_id(r.get("nilai_invoice", r.get("nilai_principle", 0))) for r in recs)
+                total_all += amount
+                transfer_items.append(
+                    {
+                        "principle": info["principle"],
+                        "bank": info["bank"],
+                        "rekening": info["rekening"],
+                        "penerima": info["penerima"],
+                        "amount": amount,
+                    }
+                )
+            _, sppd_no, sppd_settings = next_sppd_number(db, submit_dt)
+            sppd_name = f"sppd_{submission_id}.docx"
+            sppd_path = os.path.join(PAYMENTS_FILES_DIR, sppd_name)
+            render_sppd_docx(SPPD_TEMPLATE_PATH, sppd_path, submit_dt, sppd_no, transfer_items, sppd_settings)
+            files.append({"label": "SPPD Bank Panin", "url": f"/payments/files/{sppd_name}"})
+            sppd_file = sppd_name
 
-    db["submissions"][submission_id] = {
-        "id": submission_id,
-        "created_at": now,
-        "created_by": user,
-        "method": method,
-        "lpb": [normalize_lpb_no(r.get("no_lpb", "")) for r in selected],
-        "files": files,
-        "sppd_file": sppd_file,
-        "sppd_no": sppd_no,
-    }
-    save_payments_db(db)
+        for rec in selected:
+            key = normalize_lpb_no(rec.get("no_lpb", ""))
+            if key in db.get("lpb", {}):
+                db["lpb"][key]["payment_method"] = "Bank Panin" if method == "BANK_PANIN" else "Non Panin"
+                db["lpb"][key]["status_pembayaran"] = "Belum Transfer"
+                db["lpb"][key]["submitted_at"] = now
+                db["lpb"][key]["submitted_by"] = user
+                db["lpb"][key]["submission_id"] = submission_id
+                db["lpb"][key]["potongan"] = 0.0
+                db["lpb"][key]["nilai_pembayaran"] = parse_number_id(db["lpb"][key].get("nilai_invoice", db["lpb"][key].get("nilai_principle", 0)))
+                if sppd_no:
+                    db["lpb"][key]["sppd_no"] = sppd_no
+
+        db["submissions"][submission_id] = {
+            "id": submission_id,
+            "created_at": now,
+            "created_by": user,
+            "method": method,
+            "lpb": [normalize_lpb_no(r.get("no_lpb", "")) for r in selected],
+            "files": files,
+            "sppd_file": sppd_file,
+            "sppd_no": sppd_no,
+        }
+        await asyncio.to_thread(save_payments_db, db)
+    finally:
+        _PAYMENTS_DB_LOCK.release()
     append_audit_log(
         user,
         "payments_submit",
