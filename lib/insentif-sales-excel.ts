@@ -26,20 +26,41 @@ export function parseTargetExcel(arrayBuffer: ArrayBuffer): Array<Record<string,
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
 
-    return data.map((row) => ({
-        salesCode: String(row["Kode Salesman"] || "").trim(),
-        salesName: String(row["Nama Salesman"] || "").trim(),
-        principle: String(row["Principal"] || "NESTLE").trim(),
-        branch: String(row["Cabang"] || "BANDUNG").trim(),
-        channel: String(row["Channel"] || "TT").trim(),
-        spvName: String(row["SPV"] || "").trim(),
-        smName: String(row["SM"] || "").trim(),
-        targetValue: Number(row["Target Value (Rp)"] || 0),
-        targetEc: Number(row["Target EC"] || 0),
-        targetAo: Number(row["Target AO"] || 0),
-        targetIa: Number(row["Target IA"] || 0),
-        splmValue: Number(row["SPLM Value"] || 0),
-        tipeSales: String(row["Tipe Sales"] || "Exclusive").trim(),
-        statusInsentif: String(row["Status Insentif"] || "Distributor+Principle").trim(),
-    }));
+    // Header dicocokkan case/whitespace-insensitive, BUKAN string persis. Excel bisa menyimpan
+    // representasi "terformat" (w) yang berbeda dari nilai mentah (v) pada cell header —
+    // misalnya berspasi di awal/akhir kalau kolom itu pernah diberi format angka — sehingga
+    // SheetJS membaca kunci objek berbeda dari teks yang terlihat di Excel. String persis
+    // (row["Target EC"]) gagal cocok pada kunci " Target EC " dan diam-diam jatuh ke default 0
+    // untuk SELURUH file (nyata terjadi 2026-08-24, lihat AUDIT_INSENTIF_SALES_2026-08-24.md H5).
+    const norm = (k: string) => k.trim().toUpperCase();
+    return data.map((row) => {
+        const byKey = new Map(Object.entries(row).map(([k, v]) => [norm(k), v]));
+        const raw = (name: string) => byKey.get(norm(name));
+        const str = (name: string, fallback = "") => {
+            const v = raw(name);
+            return v === undefined || v === null || v === "" ? fallback : String(v).trim();
+        };
+        const num = (name: string) => {
+            const v = raw(name);
+            if (v === undefined || v === null || v === "") return 0;
+            const n = typeof v === "number" ? v : Number(String(v).replace(/[^\d.-]/g, ""));
+            return Number.isFinite(n) ? n : 0;
+        };
+        return {
+            salesCode: str("Kode Salesman"),
+            salesName: str("Nama Salesman"),
+            principle: str("Principal", "NESTLE"),
+            branch: str("Cabang", "BANDUNG"),
+            channel: str("Channel", "TT"),
+            spvName: str("SPV"),
+            smName: str("SM"),
+            targetValue: num("Target Value (Rp)"),
+            targetEc: num("Target EC"),
+            targetAo: num("Target AO"),
+            targetIa: num("Target IA"),
+            splmValue: num("SPLM Value"),
+            tipeSales: str("Tipe Sales", "Exclusive"),
+            statusInsentif: str("Status Insentif", "Distributor+Principle"),
+        };
+    });
 }

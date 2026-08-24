@@ -782,9 +782,12 @@ interface TargetRow {
     statusInsentif?: string;
 }
 
+// principle/branch dibiarkan KOSONG, bukan PRINCIPLES[0]/BRANCHES[0] — konstanta itu data demo
+// (NESTLE/BANDUNG), dan mengisinya sebagai default membuat baris baru tampak sudah valid padahal
+// principal-nya salah. Kosong akan ditolak validator sebelum simpan.
 const EMPTY_ROW: TargetRow = {
-    salesCode: "", salesName: "", principle: PRINCIPLES[0], branch: BRANCHES[0],
-    channel: "TT", spvName: "", smName: "",
+    salesCode: "", salesName: "", principle: "", branch: "",
+    channel: "GT", spvName: "", smName: "",
     targetValue: 0, targetEc: 0, targetAo: 0, targetIa: 0, splmValue: 0,
 };
 
@@ -826,6 +829,18 @@ function TargetInputSection() {
 
     useEffect(() => { fetchTargets(); }, [fetchTargets]);
 
+    // Saran untuk input Principal/Cabang: nilai yang benar-benar ada di periode ini, ditambah
+    // konstanta demo sebagai cadangan saat periode masih kosong. PRINCIPLES/BRANCHES sendiri
+    // TIDAK cukup — isinya data dummy (NESTLE/BANDUNG), bukan principal produksi.
+    const principleOptions = useMemo(
+        () => [...new Set([...rows.map((r) => r.principle), ...PRINCIPLES])].filter(Boolean).sort(),
+        [rows],
+    );
+    const branchOptions = useMemo(
+        () => [...new Set([...rows.map((r) => r.branch), ...BRANCHES])].filter(Boolean).sort(),
+        [rows],
+    );
+
     function setCell<K extends keyof TargetRow>(idx: number, key: K, val: TargetRow[K]) {
         setRows((prev) => prev.map((r, i) => i === idx ? { ...r, [key]: val } : r));
     }
@@ -836,6 +851,10 @@ function TargetInputSection() {
     async function handleSave() {
         const invalid = rows.filter((r) => !r.salesCode.trim() || !r.salesName.trim());
         if (invalid.length) { toast.error("Kode & nama salesman wajib diisi di semua baris."); return; }
+        // principle ikut kunci upsert (salesCode+principle+periode) — kosong berarti baris ini
+        // menimpa baris lain yang principle-nya juga kosong, bukan menyimpan data baru.
+        const noPrinciple = rows.filter((r) => !r.principle.trim() || !r.branch.trim());
+        if (noPrinciple.length) { toast.error(`${noPrinciple.length} baris belum punya Principal/Cabang.`); return; }
         setSaving(true);
         try {
             const payload = rows.map((r) => ({ ...r, periodMonth: month, periodYear: year }));
@@ -901,6 +920,13 @@ function TargetInputSection() {
             const invalid = parsed.filter((r) => !r.salesCode?.trim() || !r.salesName?.trim());
             if (invalid.length) {
                 toast.error(`${invalid.length} baris tidak punya kode/nama salesman`);
+                setExcelUploading(false);
+                return;
+            }
+            // Kalau SEMUA baris bertarget 0, hampir pasti header kolomnya tidak terbaca —
+            // bukan target yang benar-benar nol. Tolak daripada menimpa target lama dengan nol.
+            if (parsed.length > 0 && parsed.every((r) => !r.targetValue)) {
+                toast.error("Semua baris bertarget 0 — cek nama kolom 'Target Value (Rp)' di file. Upload dibatalkan.");
                 setExcelUploading(false);
                 return;
             }
@@ -1005,19 +1031,19 @@ function TargetInputSection() {
                                     <tr key={i} className="even:bg-white/[0.015] hover:bg-white/[0.04] transition-colors">
                                         <td className="px-2 py-2"><input className={inp} value={r.salesCode} onChange={(e) => setCell(i, "salesCode", e.target.value)} placeholder="SLS-001" /></td>
                                         <td className="px-2 py-2"><input className={inp + " min-w-[120px]"} value={r.salesName} onChange={(e) => setCell(i, "salesName", e.target.value)} placeholder="Nama Salesman" /></td>
+                                        {/* Input bebas + datalist, BUKAN select: principal/cabang nyata
+                                            ("ABC PRESIDENT INDONESIA, PT") tidak ada di konstanta demo
+                                            PRINCIPLES/BRANCHES, dan select akan menampilkan opsi pertama
+                                            (NESTLE/BANDUNG) lalu menimpa nilai asli begitu disentuh. */}
                                         <td className="px-2 py-2">
-                                            <select className={inp} value={r.principle} onChange={(e) => setCell(i, "principle", e.target.value)}>
-                                                {PRINCIPLES.map((p) => <option key={p}>{p}</option>)}
-                                            </select>
+                                            <input className={inp + " min-w-[140px]"} list="target-principle-options" value={r.principle} onChange={(e) => setCell(i, "principle", e.target.value)} placeholder="Principal" />
                                         </td>
                                         <td className="px-2 py-2">
-                                            <select className={inp} value={r.branch} onChange={(e) => setCell(i, "branch", e.target.value)}>
-                                                {BRANCHES.map((b) => <option key={b}>{b}</option>)}
-                                            </select>
+                                            <input className={inp} list="target-branch-options" value={r.branch} onChange={(e) => setCell(i, "branch", e.target.value)} placeholder="Cabang" />
                                         </td>
                                         <td className="px-2 py-2 text-center">
-                                            <select className={inp + " w-14 text-center"} value={r.channel} onChange={(e) => setCell(i, "channel", e.target.value)}>
-                                                <option>TT</option><option>MT</option>
+                                            <select className={inp + " w-16 text-center"} value={r.channel} onChange={(e) => setCell(i, "channel", e.target.value)}>
+                                                <option>GT</option><option>TT</option><option>MT</option>
                                             </select>
                                         </td>
                                         <td className="px-2 py-2"><input className={inp} value={r.spvName} onChange={(e) => setCell(i, "spvName", e.target.value)} placeholder="Nama SPV" /></td>
@@ -1034,6 +1060,13 @@ function TargetInputSection() {
                                 ))}
                             </tbody>
                         </table>
+                        {/* Saran diambil dari data periode yang sedang dimuat, bukan konstanta demo. */}
+                        <datalist id="target-principle-options">
+                            {principleOptions.map((p) => <option key={p} value={p} />)}
+                        </datalist>
+                        <datalist id="target-branch-options">
+                            {branchOptions.map((b) => <option key={b} value={b} />)}
+                        </datalist>
                     </div>
                     <div className="mt-3 flex items-center justify-between flex-wrap gap-3 border-t border-white/5 pt-3">
                         <button onClick={addRow} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs text-slate-300 hover:bg-white/10 transition-colors">
