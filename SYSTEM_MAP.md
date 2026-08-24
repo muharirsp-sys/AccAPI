@@ -756,40 +756,137 @@ permission_audit_log [siapa ubah group/permission siapa, kapan]
 
 ## Insentif Sales — Kalkulasi Insentif
 
-UI Finance di `app/(dashboard)/insentif-sales/page.tsx` memakai key seleksi `salesCode::principle`, memproses pembayaran dengan `Promise.allSettled`, mempertahankan pilihan yang gagal, dan membedakan error API dari status `belum`.
+> Diperbarui 2026-08-24 (audit modul). Sebelumnya tertulis "MT belum ada aturan insentif" dan
+> "SPV belum di-wire" — keduanya sudah tidak benar.
 
-Dua model insentif hidup berdampingan, dipisah oleh `channel`:
+### Peta layer (trace-by-flow)
 
-| Model | Berlaku | Logic | File |
+| Layer | Lokasi |
+|---|---|
+| **Entry point UI** | `app/(dashboard)/insentif-sales/page.tsx` — tab `sales`/`spv`/`sm`/`admin`(Input Penjualan)/`finance` lewat `?view=` |
+| **Handler/route** | `app/api/insentif-sales/*/route.ts` (18 route, daftar di bawah) |
+| **Business logic (pure)** | `lib/insentif-sales-calc.ts` (GT), `lib/insentif-mt-calc.ts` (MT), `lib/insentif-spv-calc.ts` (SPV), `lib/insentif-sm-calc.ts` (SM), `lib/insentif-value-source.ts`, `lib/sales-code-merge.ts`, `lib/insentif-payee.ts` |
+| **Data access** | `lib/insentif-sales.ts` (`getTargetsForPeriod`, `computeMtdProgress`, `computeMtdByPrinciple`, `getMergeMap`), `lib/insentif-hierarchy-scope.ts` (row-level scope) |
+| **Parser Excel** | `lib/insentif-sales-excel.ts` (`parseTargetExcel`), agregasi closing di browser (`page.tsx`) |
+| **DB** | `sales_targets`, `sales_daily_progress`, `incentive_support`, `spv_support`, `incentive_payments`, `incentive_tiers`, `sales_code_merge`, `spv_sales_assignment`, `sm_spv_assignment`, `spv_sales_claim_request` |
+
+Route: `dashboard`, `spv-dashboard`, `sm-dashboard`, `progress`, `targets`, `targets/template`,
+`support`, `spv-support`, `payments`, `payments/[id]`, `tiers`, `code-merge`, `spv-mismatch`,
+`hierarchy/{spv-sales,spv-sales/requests,sm-spv,user-identity,my-identity}`.
+
+### Empat skema insentif, dipisah peran + channel
+
+| Skema | Berlaku | Logic | File |
 |---|---|---|---|
-| **Strata-DB** (4 KPI: Value/EC/AO/IA, rata-rata) | tidak dipakai lagi untuk insentif (achievement 4-KPI tetap jalan) | `lookupTierFromDb` (tabel `incentive_tiers`) | `lib/insentif-sales.ts` |
-| **Konstanta-bobot** (2 KPI: AO 70% + Value 30%) | channel **GT dan TT** (sinonim) | `computeExclusive` / `computeMix` (pure) | `lib/insentif-sales-calc.ts` |
-| MT (belum ada aturan insentif) | channel **MT** | insentif selalu 0 | `dashboard/route.ts` |
+| **GT/TT** — 2 KPI: AO 70% + Value 30%, pool konstanta | channel `GT`/`TT` | `computeExclusive` / `computeMix` | `lib/insentif-sales-calc.ts` |
+| **MT** — 4 KPI bobot nominal: VALUE 350rb, EC 150rb, OA 150rb, IA 350rb | channel `MT` | `calculateInsentifMT` | `lib/insentif-mt-calc.ts` |
+| **SPV** — murni Value, rate per principal | per `spv_name` | `calculateInsentifSPV` | `lib/insentif-spv-calc.ts` |
+| **SM** — murni Value, strata FLAT (nominal, tidak dikali %) | per `sm_name`, whitelist | `calculateInsentifSM` | `lib/insentif-sm-calc.ts` |
+| **Strata-DB** (4 KPI rata-rata) | **tidak dipakai lagi** untuk insentif; achievement 4-KPI tetap jalan | `lookupTierFromDb` (`incentive_tiers`) | `lib/insentif-sales.ts` |
 
-Konstanta-bobot (GT):
-- Pengali %: `<0.90→0`, `0.90–1.00→aktual`, `>1.00→cap 1.00`. Target AO konstan **240**.
-- Distributor bayar = `konstanta − total_support` (floor 0), split 70/30 × pencapaian.
-- **Exclusive** (1 principle): konstanta 1jt. **Mix** (n principle): 2=1jt, 3=1.2jt, 4=1.4jt, 5=1.5jt (cap). Value mix global → dialokasikan proporsional `target_value` per principle.
-- **Status Insentif** (`distributor_principle`/`distributor`/`principle`): hanya 2 pertama ikut skema & masuk count; `principle` (full principle, mis. Motasa/Heinz) tidak dihitung. **Tipe Sales** (`mix`/`exclusive`) di kolom target.
-- Kolom DB: `sales_targets.tipe_sales`, `sales_targets.status_insentif`. Support per `salesCode+principle+period` di tabel **`incentive_support`** (diisi Finance saat payout).
+**GT/TT:** pengali `<0.90→0`, `0.90–1.00→aktual`, `>1.00→cap 1.00`. Target AO konstan **240**
+(khusus GT, bukan kolom AO target). Distributor bayar = `konstanta − total_support` (floor 0),
+split 70/30 × pencapaian. Exclusive 1jt; mix n=2→1jt, 3→1.2jt, 4→1.4jt, 5→1.5jt, **n>5 cap 1.5jt**.
+Value mix global dialokasikan proporsional `target_value` per principle.
 
-Alur: target Excel (kolom Tipe Sales + Status Insentif, kunci upsert `salesCode+principle+period`) → `dashboard/route.ts` (GT pakai calc baru, non-GT strata; achievement 4-KPI tetap untuk semua) → Finance input support (`/api/insentif-sales/support`) → dashboard hitung ulang.
+**MT:** target OA diambil dari kolom AO file target per baris (bukan 240). **IA dinilai per outlet**
+(`realisasi_ia / realisasi_ao` dibanding `target_ia`) — asumsi yang belum dikonfirmasi user.
+MT mix memakai KONSTANTA_MIX milik GT, pool dibagi rata.
 
-Self-check: `node --experimental-strip-types lib/insentif-sales-calc.test.ts` (Case 1 exclusive=300rb, Case 2 mix=500rb sebagai angka acuan).
+**SPV:** rate n=1 → flat 1.5jt; n=2..6 → `200rb + 1.2jt/n`; **n>6 DITAHAN 400rb** (tidak turun lagi).
+Principal valid = minimal 1 baris sales bawahan berstatus skema. Support principle SPV yang
+**LEBIH DARI** rate mengeluarkan principal itu dari hitungan n (pengecualian serentak, `resolveValidSet`).
+Support sebagian → distributor bayar `rate − support`.
 
-### Insentif SPV — Strata Value (`lib/insentif-spv-calc.ts`)
+**SM:** `<90%→0`, `90–99,99%→1.5jt`, `100–109,99%→2.5jt`, `≥110%→3.5jt`. Whitelist
+`SM_BERHAK_INSENTIF = ["HENDRIK"]` (substring, case-insensitive). **Semua status principal
+dihitung, termasuk `principle`/ENERGIZER** — beda dari GT/MT/SPV. Baris `_OFFICE` dibuang
+(`isOfficeRow`), dipakai juga oleh `spv-dashboard`.
 
-Terpisah dari insentif Sales — **murni berbasis Value** (tidak ada komponen AO). Pure calc, **belum di-wire** ke route/UI manapun (belum ada tabel/route target-SPV — SPV tidak punya target sendiri, dihitung on-the-fly dari agregat sales bawahan via `spv_name` teks bebas di `sales_targets`, lihat catatan hierarki di bawah).
+### Acuan Value & normalisasi input
 
-- `calculateInsentifSPV(rows: SpvSalesRow[])`: group baris sales per `principle`, SUM `targetValue`/`realisasiValue` lintas channel (GT/TT/MT — cakupan bisnis SPV, bukan skema insentif per-Sales).
-- Principal valid (masuk count) jika **minimal 1 baris sales bawahan** berstatus skema (`distributor`/`distributor_principle`, reuse `isSchemePrincipal` dari `lib/insentif-sales-calc.ts`) — bukan seluruhnya `principle` (full principle).
-- Rate per principal (`ratePerPrincipalSpv`): n=1 → flat Rp1.500.000 (kasus khusus). n≥2 (termasuk ekstrapolasi n>6) → `Total(n) = 1.200.000 + 200.000×n`, `rate = Total(n)/n`. Cocok persis ke tabel given n=1..6 (1.5jt/800rb/600rb/500rb/440rb/400rb per principal).
-- Threshold pencapaian: reuse `percentageMultiplier` (sama seperti Sales) — `<0.90→0`, `0.90–1.00→aktual`, `>1.00→cap 1.00`.
-- Insentif_n = rate × pctValue; Total = sum(Insentif_n).
+- `lib/insentif-value-source.ts` — default **DPP**; cabang **VINDA, KINO NON FOOD, MIX NON FOOD**
+  pakai **NILAI_JUAL**. Jebakan yang dijaga test: `MIX FOOD` ≠ `MIX NON FOOD`, `KINO` ≠ `KINO NON FOOD`.
+- `lib/sales-code-merge.ts` — pergantian orang meninggalkan 2 kode dengan prefiks rute sama.
+  Penggabungan **tidak pernah otomatis**: keputusan `gabung`/`pisah` per periode di `sales_code_merge`,
+  diterapkan saat agregasi MTD (`foldMerged`), jadi bisa diubah tanpa upload ulang.
+- `AO`/`EC`/`Item Aktif` di file closing adalah **flag 0/1 per baris transaksi** → **SUM**, bukan MAX
+  (diperbaiki di `5320b79`). Upload sudah mengagregasi per `(salesCode, principle, branch, tanggal)`
+  di browser, POST `progress` idempoten per `(salesCode, principle, periode)`.
 
-Self-check: `node --experimental-strip-types lib/insentif-spv-calc.test.ts` (total n=1..6 tervalidasi ke tabel given, n=7/10 ekstrapolasi, SUM lintas sales, exclude campur status).
+### Status Insentif & Tipe Sales
 
-**Wiring:** [GET /api/insentif-sales/spv-dashboard](app/api/insentif-sales/spv-dashboard/route.ts) — group `sales_targets` per `spv_name` (teks bebas), SUM realisasi via `computeMtdByPrinciple`, panggil `calculateInsentifSPV`. Tampil di UI sebagai `SpvIncentiveTable` pada tab SPV (`page.tsx`, expand-per-principal).
+`status_insentif` ∈ `distributor_principle` (default) | `distributor` | `principle`.
+Untuk GT/MT/SPV hanya 2 pertama ikut skema (`isSchemePrincipal`); `principle` (mis. ENERGIZER)
+tidak dihitung. SM mengabaikan aturan ini. `tipe_sales` ∈ `mix` | `exclusive`.
+Keduanya divalidasi di route lewat `normalizeStatus` / `normalizeTipe` (trust boundary → 400).
+
+### Support
+
+| Tabel | Untuk | Route | Kunci |
+|---|---|---|---|
+| `incentive_support` | Sales (GT & MT) | `/api/insentif-sales/support` | `salesCode + principle + period` |
+| `spv_support` | SPV | `/api/insentif-sales/spv-support` | `spvName + principle + period` |
+
+Support SPV **tidak bisa diturunkan** dari support sales (rasionya beda per principal) → input manual.
+SM belum punya konsep support.
+
+### Pembayaran (Finance)
+
+`incentive_payments`, kunci upsert `sales_code + principle + period`. **SPV & SM dititipkan ke tabel
+yang sama** lewat prefiks `sales_code`: `SPV:<nama>` / `SM:<nama>`, `principle` = `-`
+(`lib/insentif-payee.ts` — `payeeCode` / `parsePayee` / `PAYEE_PRINCIPLE_ALL`). Tidak ada migrasi DB.
+`GET /payments` menerima `month` **opsional** — tanpa `month` = seluruh tahun (dipakai strip 12 bulan).
+UI Finance memakai key seleksi `salesCode::principle`, memproses dengan `Promise.allSettled`,
+mempertahankan pilihan yang gagal, dan membedakan error API dari status `belum`.
+
+### ⚠ `sales_daily_progress` punya DUA penulis dengan cakupan hapus BERBEDA
+
+Belum diselesaikan — butuh keputusan user (audit 2026-08-24).
+
+| Penulis | Cakupan DELETE | Isi `spv_name`? |
+|---|---|---|
+| `app/api/insentif-sales/progress/route.ts:86` | per `(salesCode, principle, periode)` — sengaja, agar upload SM lain tidak terhapus | ya |
+| `lib/laporan-harian/ingest.ts:31` (`replaceDailyProgressForPeriod`, dipanggil `app/api/laporan-harian/upload/route.ts:146`) | **seluruh periode** (`period_month` + `period_year` saja) | **tidak** — NULL |
+
+Akibat: upload Laporan Harian untuk bulan yang sama memusnahkan seluruh data closing Insentif
+Sales periode itu, tanpa error. Deteksi `/spv-mismatch` juga mati senyap karena `spv_name` NULL.
+Arah sebaliknya: upload closing per-SM menimpa sebagian baris laporan-harian → satu periode berisi
+campuran dua sumber. Jangan diselesaikan diam-diam di kode: tentukan dulu tabel ini milik siapa.
+
+Catatan terkait: **tidak satu pun** dari 18 route `insentif-sales` menyetel `maxDuration`, padahal
+konvensi repo menaikkannya untuk route unggah berat (`app/api/laporan-harian/upload/route.ts:28`
+dan `app/api/sales-history/import/route.ts:22` = 300). `POST /targets` (~570 statement berurutan,
+di luar transaksi) dan `POST /progress` berjalan pada default.
+
+### Alur end-to-end
+
+```
+Excel target (parseTargetExcel)  ─┐
+                                  ├─> POST /targets ──> sales_targets
+Excel closing (agregasi browser) ─┴─> POST /progress ─> sales_daily_progress
+                                                            │
+        getTargetsForPeriod + computeMtdProgress/ByPrinciple │ (+ getMergeMap → foldMerged)
+                                                            ▼
+   GET /dashboard (GT+MT per sales) · GET /spv-dashboard · GET /sm-dashboard
+                                                            │
+        Finance input support (incentive_support, spv_support)│
+                                                            ▼
+                        POST /payments (Sales + SPV + SM) ─> incentive_payments
+```
+
+### Self-check (semua pure, tanpa DB)
+
+```bash
+for t in insentif-sales-calc insentif-mt-calc insentif-spv-calc insentif-sm-calc \
+         insentif-payee insentif-value-source sales-code-merge; do
+  node --experimental-strip-types lib/$t.test.ts
+done
+```
+
+Typecheck/lint lokal di working dir **tidak bisa dipercaya** (`.next/dev/types/routes.d.ts` bisa
+terpotong dan membuat `tsc` berhenti sebelum memeriksa kode asli). Verifikasi wajib di worktree
+bersih; acuan: lint **255 warning, 0 error**, `tsc --noEmit` exit 0.
 
 ### Hierarki SM → SPV → Sales (Bagian C — aktif sebagai override/fallback)
 

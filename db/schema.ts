@@ -732,6 +732,11 @@ export const salesTargets = pgTable("sales_targets", {
 }, (t) => ({
     periodIdx: index("idx_sales_targets_period").on(t.periodMonth, t.periodYear),
     codeIdx: index("idx_sales_targets_code").on(t.salesCode),
+    // Kunci upsert (targets/route.ts) hanya dijaga cek aplikasi sebelumnya — dua request
+    // paralel/retry bisa membuat baris duplikat yang mengubah `n` mix diam-diam (audit
+    // 2026-08-24, docs/handover/AUDIT_INSENTIF_SALES_2026-08-24.md, temuan C2). Constraint
+    // ini belum aktif di produksi — lihat docs/handover/DDL_UNIQUE_INSENTIF_2026-08-24.sql.
+    uniq: uniqueIndex("uq_sales_targets_key").on(t.salesCode, t.principle, t.periodMonth, t.periodYear),
 }));
 
 export const salesDailyProgress = pgTable("sales_daily_progress", {
@@ -791,6 +796,8 @@ export const incentivePayments = pgTable("incentive_payments", {
     periodIdx: index("idx_inc_payments_period").on(t.periodMonth, t.periodYear),
     codeIdx: index("idx_inc_payments_code").on(t.salesCode),
     statusIdx: index("idx_inc_payments_status").on(t.paymentStatus),
+    // Lihat catatan di uq_sales_targets_key — constraint belum aktif di produksi.
+    uniq: uniqueIndex("uq_incentive_payments_key").on(t.salesCode, t.principle, t.periodMonth, t.periodYear),
 }));
 
 // Support principle per salesman+principle+periode. Diisi Finance saat payout (setelah bulan tutup).
@@ -848,6 +855,10 @@ export const incentiveSupport = pgTable("incentive_support", {
 }, (t) => ({
     periodIdx: index("idx_inc_support_period").on(t.periodMonth, t.periodYear),
     codeIdx: index("idx_inc_support_code").on(t.salesCode),
+    // Lihat catatan di uq_sales_targets_key — constraint belum aktif di produksi. Tanpa ini,
+    // baris duplikat dibaca lewat `new Map()` tanpa ORDER BY di dashboard/route.ts: baris
+    // terakhir menang secara ACAK, support bisa beda antar refresh halaman yang sama.
+    uniq: uniqueIndex("uq_incentive_support_key").on(t.salesCode, t.principle, t.periodMonth, t.periodYear),
 }));
 
 // ── Hierarki pelaporan SM → SPV → Sales (Bagian C) ──────────────────────────

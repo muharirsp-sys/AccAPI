@@ -2,7 +2,10 @@
  * Tujuan: GET list + POST create payment records Insentif Sales.
  * Caller: app/(dashboard)/insentif-sales/page.tsx untuk tabel insentif.
  * Dependensi: db/schema (incentivePayments), lib/insentif-sales (requireSalesSession).
- * Main Functions: GET list payments per periode; POST create/update payment record.
+ * Main Functions: GET list payments per periode (month opsional — tanpa month = seluruh tahun,
+ *   dipakai strip "Rekap Pembayaran Tahunan"); POST create/update payment record.
+ *   Baris SPV & SM ikut di tabel yang sama, ditandai sales_code berprefiks "SPV:"/"SM:"
+ *   (lihat lib/insentif-payee.ts) — tanpa migrasi DB.
  * Side Effects: DB read + write.
  */
 
@@ -19,15 +22,16 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = req.nextUrl;
     const now = new Date();
-    const month = parseInt(searchParams.get("month") ?? String(now.getMonth() + 1), 10);
+    // month OPSIONAL. Dulu absen → default bulan berjalan, sehingga strip 12 bulan yang cuma
+    // mengirim ?year= selalu balik 1 bulan saja dan 11 bulan lain tampak "belum ada data".
+    const monthParam = searchParams.get("month");
+    const month = monthParam === null ? null : parseInt(monthParam, 10);
     const year = parseInt(searchParams.get("year") ?? String(now.getFullYear()), 10);
     const principle = searchParams.get("principle") ?? undefined;
     const branch = searchParams.get("branch") ?? undefined;
 
-    const conditions = [
-        eq(incentivePayments.periodMonth, month),
-        eq(incentivePayments.periodYear, year),
-    ];
+    const conditions = [eq(incentivePayments.periodYear, year)];
+    if (month !== null) conditions.push(eq(incentivePayments.periodMonth, month));
     if (principle) conditions.push(eq(incentivePayments.principle, principle));
     if (branch) conditions.push(eq(incentivePayments.branch, branch));
 

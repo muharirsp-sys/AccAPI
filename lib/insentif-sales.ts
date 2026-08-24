@@ -157,10 +157,14 @@ export async function computeMtdProgress(
     const rows = await db
         .select({
             salesCode: salesDailyProgress.salesCode,
-            realValue: sql<number>`SUM(${salesDailyProgress.achievedValueDpp})`,
-            realEc: sql<number>`SUM(${salesDailyProgress.achievedEc})`,
-            realAo: sql<number>`SUM(${salesDailyProgress.achievedAo})`,
-            realIa: sql<number>`SUM(${salesDailyProgress.achievedIa})`,
+            // Cast eksplisit: achievedEc/Ao/Ia adalah integer, SUM(integer) di Postgres
+            // menghasilkan bigint (OID 20) yang tidak punya type parser di node-postgres —
+            // tanpa cast, nilainya kembali sebagai STRING dan foldMerged() di bawah
+            // mengonkatenasi bukan menjumlahkan.
+            realValue: sql<number>`SUM(${salesDailyProgress.achievedValueDpp})::double precision`,
+            realEc: sql<number>`SUM(${salesDailyProgress.achievedEc})::double precision`,
+            realAo: sql<number>`SUM(${salesDailyProgress.achievedAo})::double precision`,
+            realIa: sql<number>`SUM(${salesDailyProgress.achievedIa})::double precision`,
         })
         .from(salesDailyProgress)
         .where(and(...conditions))
@@ -200,10 +204,11 @@ export async function computeMtdByPrinciple(
         .select({
             salesCode: salesDailyProgress.salesCode,
             principle: salesDailyProgress.principle,
-            realValue: sql<number>`SUM(${salesDailyProgress.achievedValueDpp})`,
-            realEc: sql<number>`SUM(${salesDailyProgress.achievedEc})`,
-            realAo: sql<number>`SUM(${salesDailyProgress.achievedAo})`,
-            realIa: sql<number>`SUM(${salesDailyProgress.achievedIa})`,
+            // Cast — lihat komentar di computeMtdProgress di atas untuk alasannya.
+            realValue: sql<number>`SUM(${salesDailyProgress.achievedValueDpp})::double precision`,
+            realEc: sql<number>`SUM(${salesDailyProgress.achievedEc})::double precision`,
+            realAo: sql<number>`SUM(${salesDailyProgress.achievedAo})::double precision`,
+            realIa: sql<number>`SUM(${salesDailyProgress.achievedIa})::double precision`,
         })
         .from(salesDailyProgress)
         .where(and(eq(salesDailyProgress.periodMonth, month), eq(salesDailyProgress.periodYear, year)))

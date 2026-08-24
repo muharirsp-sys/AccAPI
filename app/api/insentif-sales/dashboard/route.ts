@@ -25,6 +25,7 @@ import {
 } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
+import { isOfficeRow } from "@/lib/insentif-sm-calc";
 import {
     computeExclusive,
     computeMix,
@@ -66,7 +67,11 @@ export async function GET(req: NextRequest) {
     // opt-in (lib/insentif-hierarchy-scope) — cuma lihat salesCode bawahannya sendiri.
     const scopedTargets = scope === null ? rawTargets : rawTargets.filter((t) => scope.has(t.salesCode));
     const targets = scopedTargets.filter((target) =>
-        (!principle || principle === "ALL" || target.principle === principle)
+        // Baris _OFFICE bukan salesman — pos target kantor, bukan orang. Tanpa filter ini,
+        // baris itu ikut dihitung insentif dan bisa ditandai Lunas di tab Finance
+        // (audit 2026-08-24, docs/handover/AUDIT_INSENTIF_SALES_2026-08-24.md, temuan C3).
+        !isOfficeRow(target.salesCode, target.salesName)
+        && (!principle || principle === "ALL" || target.principle === principle)
         && (!branch || branch === "ALL" || target.branch === branch),
     );
     const visibleProgress = [...realByPrinciple.values()].filter((row) => scope === null || scope.has(row.salesCode));

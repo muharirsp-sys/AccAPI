@@ -21,6 +21,7 @@ import { getTargetsForPeriod, computeMtdByPrinciple } from "@/lib/insentif-sales
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
 import { calculateInsentifSPV, type SpvSalesRow } from "@/lib/insentif-spv-calc";
+import { isOfficeRow } from "@/lib/insentif-sm-calc";
 import type { StatusInsentif } from "@/lib/insentif-sales-calc";
 
 export async function GET(req: NextRequest) {
@@ -57,6 +58,10 @@ export async function GET(req: NextRequest) {
 
     const bySpv = new Map<string, SpvSalesRow[]>();
     for (const t of targets) {
+        // Baris _OFFICE bukan salesman — pos target kantor. Kalau ikut, principal bisa nyangkut ke
+        // SPV yang tidak membawahinya: MTS1/MTS2_OFFICE (SPV=ANI di file target Juli 2026) membuat
+        // MOTASA masuk hitungan ANI padahal 10 salesman MOTASA semuanya di bawah MARTEN.
+        if (isOfficeRow(t.salesCode, t.salesName)) continue;
         const spvName = assignedSpvOf.get(t.salesCode) ?? t.spvName;
         if (!spvName) continue;
         const real = realByPrinciple.get(`${t.salesCode}|${t.principle}`);

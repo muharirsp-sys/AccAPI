@@ -1,11 +1,19 @@
 /*
  * Tujuan: Ingestion batch hasil pipeline Laporan Harian ke sales_daily_progress (feed dashboard).
- *         Ganti pola N+1 (SELECT dedup + insert per baris) di /api/insentif-sales/progress dengan
- *         strategi replace-per-periode + bulk insert (minimum I/O, idempotent per bulan-tahun).
+ *         Replace-per-scope + bulk insert (minimum I/O, idempotent per kombinasi).
  * Caller: app/api/laporan-harian/upload/route.ts (Tahap 3).
  * Dependensi: lib/db (Drizzle PostgreSQL), db/schema (salesDailyProgress), progress-normalize.
  * Main Functions: replaceDailyProgressForPeriod, getIncentiveFeedCoverage.
  * Side Effects: DB delete/insert progress dalam transaksi dan DB read target periode.
+ *
+ * PENTING: sales_daily_progress punya penulis lain — app/api/insentif-sales/progress/route.ts
+ * (upload closing per-SM) — yang menghapus per (salesCode, principle, periode), BUKAN seluruh
+ * periode, supaya upload file SM lain tidak ikut terhapus. Fungsi ini dulu menghapus seluruh
+ * (month, year) tanpa filter salesCode/principle, sehingga upload Laporan Harian untuk periode
+ * yang sama memusnahkan seluruh data closing Insentif Sales periode itu tanpa error (audit
+ * 2026-08-24, docs/handover/AUDIT_INSENTIF_SALES_2026-08-24.md, temuan C1). Sekarang disamakan:
+ * cakupan hapus dibatasi ke kombinasi (salesCode, principle, periode) yang benar-benar ada di
+ * `rows` — pola yang sama dengan progress/route.ts.
  */
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -26,10 +34,30 @@ export async function replaceDailyProgressForPeriod(
     uploadedBy?: string,
 ): Promise<{ deleted: boolean; inserted: number }> {
     const now = new Date();
+
+    // Cakupan yang akan diganti: per (salesCode, principle, periode) yang muncul di `rows` —
+    // bukan seluruh (month, year). Lihat komentar header untuk alasannya.
+    const scopes = new Map<string, { salesCode: string; principle: string; periodMonth: number; periodYear: number }>();
+    for (const r of rows) {
+        const k = `${r.salesCode}|${r.principle}|${r.periodMonth}|${r.periodYear}`;
+        if (!scopes.has(k)) {
+            scopes.set(k, { salesCode: r.salesCode, principle: r.principle, periodMonth: r.periodMonth, periodYear: r.periodYear });
+        }
+    }
+
     return db.transaction(async (tx) => {
-        await tx
-            .delete(salesDailyProgress)
-            .where(and(eq(salesDailyProgress.periodMonth, month), eq(salesDailyProgress.periodYear, year)));
+        for (const sc of scopes.values()) {
+            await tx
+                .delete(salesDailyProgress)
+                .where(
+                    and(
+                        eq(salesDailyProgress.salesCode, sc.salesCode),
+                        eq(salesDailyProgress.principle, sc.principle),
+                        eq(salesDailyProgress.periodMonth, sc.periodMonth),
+                        eq(salesDailyProgress.periodYear, sc.periodYear),
+                    ),
+                );
+        }
 
         let inserted = 0;
         for (let i = 0; i < rows.length; i += CHUNK) {

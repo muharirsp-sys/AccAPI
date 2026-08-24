@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { realisasiValue } from "@/lib/insentif-value-source";
+import { payeeCode, parsePayee, PAYEE_PRINCIPLE_ALL, type PayeeRole } from "@/lib/insentif-payee";
 import { toast } from "sonner";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AsyncState";
@@ -65,6 +66,12 @@ interface PaymentRow {
     paymentStatus: "belum" | "lunas" | "tunggakan";
     paymentProofUrl: string | null;
     paymentDate: number | null;
+}
+
+function payeeRoleBadge(role: PayeeRole) {
+    if (role === "spv") return { label: "SPV", cls: "bg-sky-500/10 text-sky-300 border-sky-500/30" };
+    if (role === "sm") return { label: "SM", cls: "bg-violet-500/10 text-violet-300 border-violet-500/30" };
+    return { label: "Sales", cls: "bg-white/5 text-slate-400 border-white/10" };
 }
 
 function paymentSelectionKey(row: { salesCode: string; principle: string }) {
@@ -569,6 +576,91 @@ function SmView({ rows, progress }: { rows: Salesman[]; progress: WorkdayProgres
     );
 }
 
+// ── Tabel Insentif SM — strata flat Value (lib/insentif-sm-calc), fetch mandiri ──
+interface SmIncentiveRow {
+    smName: string;
+    jumlahBaris: number;
+    targetValue: number;
+    realisasiValue: number;
+    pctValue: number;
+    berhak: boolean;
+    total: number;
+}
+
+function SmIncentiveTable({ month, year }: { month: number; year: number }) {
+    const [rows, setRows] = useState<SmIncentiveRow[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            setLoading(true);
+            try {
+                const res = await fetch(`/api/insentif-sales/sm-dashboard?month=${month}&year=${year}`);
+                const data = await res.json();
+                if (!cancelled) setRows(res.ok ? (data.rows ?? []) : []);
+            } catch {
+                if (!cancelled) { toast.error("Gagal memuat insentif SM."); setRows([]); }
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [month, year]);
+
+    const grandTotal = rows.reduce((a, r) => a + r.total, 0);
+
+    return (
+        <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
+            <SectionTitle icon={Wallet} no={3} title="Tabel Insentif SM" desc="Strata flat berbasis Value: <90% Rp 0 · 90–99,99% Rp 1,5jt · 100–109,99% Rp 2,5jt · ≥110% Rp 3,5jt. Hanya SM tertentu yang ikut skema." />
+            {loading ? (
+                <div className="flex items-center justify-center py-8 gap-2 text-slate-500 text-sm">
+                    <Loader2 size={18} className="animate-spin text-indigo-400" /> Memuat…
+                </div>
+            ) : (
+                <div className="overflow-x-auto">
+                    <table className="ui-data-table min-w-[760px]">
+                        <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
+                            <tr>
+                                <th className="px-3 py-3">Nama SM</th>
+                                <th className="px-3 py-3 text-right">Target Value</th>
+                                <th className="px-3 py-3 text-right">Realisasi Value</th>
+                                <th className="px-3 py-3 text-center">Pencapaian</th>
+                                <th className="px-3 py-3 text-right bg-amber-500/10">Total Insentif</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/[0.1]">
+                            {rows.map((r) => (
+                                <tr key={r.smName} className="even:bg-white/[0.025] hover:bg-white/[0.05] transition-colors">
+                                    <td className="px-3 py-3">
+                                        <div className="font-semibold text-slate-200">{r.smName}</div>
+                                        <div className="text-[10px] text-slate-500">
+                                            {r.jumlahBaris} baris sales{!r.berhak && " · tidak ikut skema insentif SM"}
+                                        </div>
+                                    </td>
+                                    <td className="px-3 py-3 text-right font-mono text-slate-400">{formatRp(r.targetValue)}</td>
+                                    <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.realisasiValue)}</td>
+                                    <td className="px-3 py-3 text-center font-bold text-slate-200">{(r.pctValue * 100).toFixed(1)}%</td>
+                                    <td className="px-3 py-3 text-right bg-amber-500/5 font-mono font-bold text-amber-400">{formatRp(r.total)}</td>
+                                </tr>
+                            ))}
+                            {rows.length === 0 && (
+                                <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-500 italic">Belum ada data SM untuk periode ini.</td></tr>
+                            )}
+                        </tbody>
+                        <tfoot>
+                            <tr className="bg-black/50 border-t-2 border-amber-500/30 font-bold">
+                                <td className="px-3 py-3 uppercase text-[11px] tracking-wider text-amber-300" colSpan={4}>Grand Total</td>
+                                <td className="px-3 py-3 text-right bg-amber-500/10 font-mono text-amber-300 text-sm">{formatRp(grandTotal)}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            )}
+        </div>
+    );
+}
+
 // ── Tabel Insentif SPV — strata Value (lib/insentif-spv-calc), fetch mandiri ──
 interface SpvIncentiveDetail {
     principle: string;
@@ -684,6 +776,10 @@ interface TargetRow {
     targetAo: number;
     targetIa: number;
     splmValue: number;
+    /* Diisi hanya lewat upload Excel (kolom "Tipe Sales" / "Status Insentif"). Baris manual
+     * membiarkannya undefined supaya server memakai default lamanya. */
+    tipeSales?: string;
+    statusInsentif?: string;
 }
 
 const EMPTY_ROW: TargetRow = {
@@ -714,6 +810,9 @@ function TargetInputSection() {
                     spvName: r.spvName ?? "", smName: r.smName ?? "",
                     targetValue: r.targetValue, targetEc: r.targetEc,
                     targetAo: r.targetAo, targetIa: r.targetIa, splmValue: r.splmValue ?? 0,
+                    // Dibawa balik supaya Save manual tidak mereset status yang sudah benar
+                    // (mis. ENERGIZER = principle) ke default server.
+                    tipeSales: r.tipeSales, statusInsentif: r.statusInsentif,
                 })));
             } else {
                 setRows([{ ...EMPTY_ROW }]);
@@ -793,6 +892,10 @@ function TargetInputSection() {
                 targetAo: Number(r.targetAo || 0),
                 targetIa: Number(r.targetIa || 0),
                 splmValue: Number(r.splmValue || 0),
+                // Dulu dua kolom ini di-parse lalu dibuang di sini, jadi ENERGIZER tidak pernah
+                // bisa di-set "principle" lewat upload — server selalu jatuh ke default.
+                tipeSales: String(r.tipeSales || "exclusive"),
+                statusInsentif: String(r.statusInsentif || "distributor_principle"),
             })) as TargetRow[];
 
             const invalid = parsed.filter((r) => !r.salesCode?.trim() || !r.salesName?.trim());
@@ -2025,6 +2128,32 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
     const [checked, setChecked] = useState<Record<string, boolean>>({});
     const [paymentsLoading, setPaymentsLoading] = useState(true);
     const [paymentsError, setPaymentsError] = useState("");
+    // Insentif SPV & SM ikut dibayar dari tabel yang sama — diambil dari endpoint hitungannya
+    // masing-masing, karena apiRows hanya berisi baris per-sales.
+    const [spvPayees, setSpvPayees] = useState<{ name: string; total: number }[]>([]);
+    const [smPayees, setSmPayees] = useState<{ name: string; total: number }[]>([]);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const [spvRes, smRes] = await Promise.all([
+                    fetch(`/api/insentif-sales/spv-dashboard?month=${month}&year=${year}`),
+                    fetch(`/api/insentif-sales/sm-dashboard?month=${month}&year=${year}`),
+                ]);
+                const spv = spvRes.ok ? await spvRes.json() : { rows: [] };
+                const sm = smRes.ok ? await smRes.json() : { rows: [] };
+                if (cancelled) return;
+                setSpvPayees((spv.rows ?? []).map((r: { spvName: string; total: number }) => ({ name: r.spvName, total: r.total })));
+                // SM di luar whitelist total-nya 0 — jangan bikin baris pembayaran kosong.
+                setSmPayees((sm.rows ?? []).filter((r: { total: number }) => r.total > 0)
+                    .map((r: { smName: string; total: number }) => ({ name: r.smName, total: r.total })));
+            } catch {
+                if (!cancelled) { setSpvPayees([]); setSmPayees([]); }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [month, year]);
 
     // Fetch 12-month payment summary. Manual callback for refresh button + post-save reload.
     const fetchPayments = useCallback(async () => {
@@ -2090,18 +2219,31 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
         });
     }, [payments]);
 
-    // Per-salesman table for selected month — merge apiRows (current month) with payments
+    // Baris pembayaran untuk bulan terpilih. Bulan berjalan dihitung ulang dari dashboard
+    // (Sales + SPV + SM); bulan lain dibaca dari incentive_payments — di sana baris SPV/SM
+    // sudah ikut tersimpan dengan sales_code berprefiks, jadi tidak butuh cabang tambahan.
     const detailRows = useMemo(() => {
+        const findPay = (salesCode: string, principle: string) =>
+            payments.find((p) => p.salesCode === salesCode && p.principle === principle && p.periodMonth === selectedMonth);
         if (selectedMonth === month) {
-            return apiRows.map((r) => {
-                const pay = payments.find((p) => p.salesCode === r.salesCode && p.principle === r.principle && p.periodMonth === selectedMonth);
-                return { salesCode: r.salesCode, salesName: r.salesName, principle: r.principle, total: r.incentive.total, paymentId: pay?.id ?? null, status: (pay?.paymentStatus ?? r.paymentStatus) as string };
+            const sales = apiRows.map((r) => {
+                const pay = findPay(r.salesCode, r.principle);
+                return { role: "sales" as PayeeRole, salesCode: r.salesCode, salesName: r.salesName, principle: r.principle, total: r.incentive.total, paymentId: pay?.id ?? null, status: (pay?.paymentStatus ?? r.paymentStatus) as string };
             });
+            const extra = [
+                ...spvPayees.map((r) => ({ role: "spv" as PayeeRole, name: r.name, total: r.total })),
+                ...smPayees.map((r) => ({ role: "sm" as PayeeRole, name: r.name, total: r.total })),
+            ].map((r) => {
+                const salesCode = payeeCode(r.role, r.name);
+                const pay = findPay(salesCode, PAYEE_PRINCIPLE_ALL);
+                return { role: r.role, salesCode, salesName: r.name, principle: PAYEE_PRINCIPLE_ALL, total: r.total, paymentId: pay?.id ?? null, status: (pay?.paymentStatus ?? "belum") as string };
+            });
+            return [...sales, ...extra];
         }
         return payments
             .filter((p) => p.periodMonth === selectedMonth)
-            .map((p) => ({ salesCode: p.salesCode, salesName: p.salesName, principle: p.principle, total: p.totalIncentive, paymentId: p.id, status: p.paymentStatus }));
-    }, [selectedMonth, month, apiRows, payments]);
+            .map((p) => ({ role: parsePayee(p.salesCode).role, salesCode: p.salesCode, salesName: p.salesName, principle: p.principle, total: p.totalIncentive, paymentId: p.id, status: p.paymentStatus }));
+    }, [selectedMonth, month, apiRows, payments, spvPayees, smPayees]);
 
     const toggle = (row: { salesCode: string; principle: string }) => {
         const key = paymentSelectionKey(row);
@@ -2124,7 +2266,7 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                             salesCode: row.salesCode,
                             salesName: row.salesName,
                             principle: row.principle,
-                            branch: "",
+                            branch: row.role === "sales" ? "" : PAYEE_PRINCIPLE_ALL,
                             periodMonth: selectedMonth,
                             periodYear: year,
                             totalIncentive: row.total,
@@ -2233,7 +2375,8 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                         <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
                             <tr>
                                 <th className="px-3 py-3 w-10"></th>
-                                <th className="px-3 py-3">Salesman</th>
+                                <th className="px-3 py-3">Penerima</th>
+                                <th className="px-3 py-3 text-center">Peran</th>
                                 <th className="px-3 py-3">Principle</th>
                                 <th className="px-3 py-3 text-right">Total Insentif</th>
                                 <th className="px-3 py-3">Bukti Bayar</th>
@@ -2257,6 +2400,9 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                                             <div className="font-semibold text-slate-200">{r.salesName}</div>
                                             <div className="text-[10px] text-slate-500 font-mono">{r.salesCode}</div>
                                         </td>
+                                        <td className="px-3 py-3 text-center">
+                                            <span className={`inline-flex px-2 py-0.5 rounded border font-bold text-[10px] ${payeeRoleBadge(r.role).cls}`}>{payeeRoleBadge(r.role).label}</span>
+                                        </td>
                                         <td className="px-3 py-3 text-slate-300">{r.principle}</td>
                                         <td className="px-3 py-3 text-right font-mono font-bold text-amber-400">{formatRp(r.total)}</td>
                                         <td className="px-3 py-3">
@@ -2275,14 +2421,14 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                                 );
                             })}
                             {detailRows.length === 0 && (
-                                <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-500 italic">Belum ada data untuk bulan ini.</td></tr>
+                                <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-500 italic">Belum ada data untuk bulan ini.</td></tr>
                             )}
                         </tbody>
                     </table>
                 </div>
                 <div className="mt-4 flex items-center justify-between flex-wrap gap-3 border-t border-white/5 pt-4">
                     <span className="text-xs text-slate-400">
-                        {checkedList.length} salesman dipilih · Total: <span className="font-mono font-bold text-amber-400">{formatRp(checkedList.reduce((a, r) => a + r.total, 0))}</span>
+                        {checkedList.length} penerima dipilih · Total: <span className="font-mono font-bold text-amber-400">{formatRp(checkedList.reduce((a, r) => a + r.total, 0))}</span>
                     </span>
                     <button disabled={checkedList.length === 0 || saving} onClick={handleMarkLunas}
                         className="btn-primary disabled:opacity-50 flex items-center gap-2">
@@ -2529,6 +2675,7 @@ export default function InsentifSalesPage() {
                         <>
                             <PerformanceBlock rows={salesmen} apiRows={apiRows} progress={tg} />
                             <SmView rows={salesmen} progress={tg} />
+                            <SmIncentiveTable month={month} year={year} />
                             <IncentiveTable apiRows={apiRows} />
                         </>
                     )}
