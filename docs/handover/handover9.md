@@ -1,6 +1,6 @@
 # MASTER HANDOVER CONTEXT — handover9.md (Modul Insentif Sales: MT, SPV, Support, Upload Closing)
 
-> Penerus `handover8.md`. Fokus = **modul Insentif Sales** (`/insentif-sales`). Dibuat 2026-08-22. Branch `main`, HEAD saat dokumen ini dibuat `2de8e19` (sudah di origin). Semua angka, hash, dan nama kolom di dokumen ini diverifikasi ke git, file Excel sumber, dan Postgres produksi — bukan ingatan.
+> Penerus `handover8.md`. Fokus = **modul Insentif Sales** (`/insentif-sales`). Dibuat 2026-08-22. Branch `main`, HEAD `5320b79` (sudah di origin). Diperbarui 2026-08-22 setelah perbaikan `MAX`→`SUM`. Semua angka, hash, dan nama kolom di dokumen ini diverifikasi ke git, file Excel sumber, dan Postgres produksi — bukan ingatan.
 
 ---
 
@@ -80,6 +80,8 @@ Semua sudah dikonfirmasi user dan **dikunci sebagai test**. Jangan ubah tanpa in
 | `a5e4fa7` | VINDA/KINO NON FOOD/MIX NON FOOD pakai NILAI_JUAL |
 | `38bed3a` | **Fix bug upload buang 70% realisasi** + rate SPV n>6 ditahan 400rb |
 | `0d398a5` | Fix 2 error tipe yang membuat `main` gagal build |
+| `21d63fd` | Handover ini |
+| `5320b79` | **AO & IA dijumlahkan (SUM), bukan MAX** — komponen 70% GT tidak lagi hangus |
 
 ### File baru
 - `lib/insentif-mt-calc.ts` + `.test.ts`
@@ -217,16 +219,13 @@ Cross-check target vs closing:
 3. **Sumber kebenaran SPV** — file target atau kolom GOLONGAN closing. Panel sudah ada, keputusan per baris belum diambil.
 4. **Aturan mix khusus MT** kalau tidak mau memakai KONSTANTA_MIX milik GT.
 
-### BLOCKER — harus diselesaikan sebelum angka produksi dipercaya
+### Sudah selesai sesi ini (dulu blocker)
 
-5. **`MAX` untuk AO & IA membuat komponen AO nyaris selalu 0.**
-   `lib/insentif-sales.ts:152-153` (`computeMtdProgress`) dan `:192-193` (`computeMtdByPrinciple`) memakai `MAX(achieved_ao)` dan `MAX(achieved_ia)`, sementara Value & EC memakai `SUM`. Komentar aslinya bilang "AO/IA diambil MAX (snapshot harian, bukan kumulatif)" — asumsi itu berlaku untuk bentuk input lama di mana tiap baris harian membawa snapshot kumulatif. **Dengan ingesti file closing, asumsi itu salah:** `AO`/`EC` adalah flag 0/1 per baris transaksi, dan upload sekarang menjumlahkannya per hari.
+5. **`MAX` → `SUM` untuk AO & IA.** `lib/insentif-sales.ts` (`computeMtdProgress` & `computeMtdByPrinciple`) dulu memakai `MAX(achieved_ao)` dan `MAX(achieved_ia)` sementara Value & EC memakai `SUM`. Komentar aslinya "snapshot harian, bukan kumulatif" benar untuk bentuk input lama, tapi salah sejak ingesti file closing: AO/EC/Item Aktif adalah flag 0/1 per baris transaksi yang sudah diagregasi per hari saat upload, sehingga `MAX` mengembalikan puncak satu hari.
 
-   Akibatnya `MAX` mengembalikan **puncak satu hari**, bukan total bulan. Untuk GT dengan target AO 240, realisasi jadi belasan → pengali AO 0 → **komponen 70% hangus untuk hampir semua sales**.
+   Akibat sebelum perbaikan: target AO GT 240 vs puncak harian belasan → pengali AO nol → **komponen bobot 70% hangus untuk hampir semua sales**. Skala membuktikan `SUM` yang benar (realisasi SUM berkisar 150–256).
 
-   **Angka di §9 dihitung dengan SUM**, bukan MAX. Jadi output sistem yang ter-deploy saat ini akan **jauh lebih rendah** dari Rp 12.488.220 / Rp 7.188.347 yang dilaporkan. Skala membuktikan SUM yang benar: realisasi AO hasil SUM berkisar 150–256 terhadap target 240; MAX harian tidak sebanding dengan skala target mana pun.
-
-   Perbaikan yang diusulkan: ubah keduanya jadi `SUM`. Perlu konfirmasi pemilik aturan dulu karena menyentuh nominal — tapi tanpa ini angka AO tidak bisa dipakai.
+   Diperbaiki di commit `5320b79`. Angka di §9 (GT Rp 12.488.220, MT Rp 7.188.347) dihitung dengan SUM, jadi **sekarang konsisten dengan perilaku sistem**. Perbaikan ini juga membuat `foldMerged` bermakna: saat dua kode sales digabung, jumlah outlet keduanya ditambahkan.
 
 ### Utang teknis yang ditemukan tapi belum disentuh
 6. **Kolom achievement ISQ salah.** `app/api/insentif-sales/dashboard/route.ts` menghitung `isqTgt = itemSuper(targetIa, targetAo)` → untuk GT 6/240 = 0,025, sementara rasio realisasi sekitar 5, sehingga persentasenya meledak. Bug tampilan lama, berlaku semua channel. Sengaja tidak diubah karena mengubah angka yang mungkin sudah dipakai orang.
@@ -235,8 +234,6 @@ Cross-check target vs closing:
 ## 11. LANGKAH PEMAKAIAN (untuk user)
 
 Di `https://web-super.online/insentif-sales`:
-
-> **JANGAN pakai angka insentif dari sistem sebelum blocker §10.5 (`MAX` vs `SUM` untuk AO) diputuskan.** Upload dan panel konfirmasi aman dijalankan; yang belum bisa dipercaya adalah nominal komponen AO.
 
 1. **Tab Input Penjualan** → set periode **Juli 2026** (default bulan berjalan!) → mode Upload → drop `.xlsx` HENDRIK. Toast harusnya melaporkan sekitar **64.392 baris diringkas jadi ~2.068 baris harian**. Kalau jauh berbeda, ada yang salah.
 2. Ulangi untuk ADNAN. **Jangan digabung jadi satu file** — kolom `Mapping_PIC.NAMA SM` sudah membedakan, upload idempoten per kombinasi, dan kalau gagal jadi tahu file mana.
