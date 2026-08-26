@@ -2680,29 +2680,14 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
     }, [year]);
 
     // Build monthly summary from payments rows
-    const monthlySummary = useMemo(() => {
-        return Array.from({ length: 12 }, (_, i) => {
-            const m = i + 1;
-            const monthPayments = payments.filter((p) => p.periodMonth === m);
-            const total = monthPayments.reduce((a, p) => a + p.totalIncentive, 0);
-            const hasLunas = monthPayments.some((p) => p.paymentStatus === "lunas");
-            const hasTunggakan = monthPayments.some((p) => p.paymentStatus === "tunggakan");
-            const status: "lunas" | "tunggakan" | "belum" =
-                monthPayments.length === 0 ? "belum"
-                    : hasTunggakan ? "tunggakan"
-                        : hasLunas ? "lunas"
-                            : "belum";
-            return { month: m, label: MONTH_LABELS[i], total, status };
-        });
-    }, [payments]);
 
     // Baris pembayaran untuk bulan terpilih. Bulan berjalan dihitung ulang dari dashboard
     // (Sales + SPV + SM); bulan lain dibaca dari incentive_payments — di sana baris SPV/SM
     // sudah ikut tersimpan dengan sales_code berprefiks, jadi tidak butuh cabang tambahan.
-    const detailRows = useMemo(() => {
+    const rowsForMonth = useCallback((bulan: number) => {
         const findPay = (salesCode: string, principle: string) =>
-            payments.find((p) => p.salesCode === salesCode && p.principle === principle && p.periodMonth === selectedMonth);
-        if (selectedMonth === month) {
+            payments.find((p) => p.salesCode === salesCode && p.principle === principle && p.periodMonth === bulan);
+        if (bulan === month) {
             // Baris LUNAS menampilkan angka yang BENAR-BENAR dibayar (snapshot di
             // incentive_payments), bukan hasil hitung-ulang. Kalau support/target diubah
             // setelah pembayaran, keduanya berbeda — selisihnya ditandai supaya Finance tahu
@@ -2733,9 +2718,38 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
             return [...sales, ...extra];
         }
         return payments
-            .filter((p) => p.periodMonth === selectedMonth)
+            .filter((p) => p.periodMonth === bulan)
             .map((p) => ({ role: parsePayee(p.salesCode).role, salesCode: p.salesCode, salesName: p.salesName, principle: p.principle, branch: p.branch, total: p.totalIncentive, drift: 0, paymentId: p.id, status: p.paymentStatus }));
-    }, [selectedMonth, month, apiRows, payments, spvPayees, smPayees]);
+    }, [month, apiRows, payments, spvPayees, smPayees]);
+
+    const detailRows = useMemo(() => rowsForMonth(selectedMonth), [rowsForMonth, selectedMonth]);
+
+    // Periode berjalan dihitung ULANG dari dashboard, bukan dibaca dari incentive_payments.
+    // Baris di tabel itu baru ada setelah seseorang menandai lunas, jadi bulan yang insentifnya
+    // sudah dihitung tapi belum dibayar sepeser pun tampil "-" — persis kebalikan dari yang
+    // dicari Finance di strip ini, yaitu berapa yang MASIH HARUS dibayar (dilaporkan user
+    // 2026-08-26). Bulan lain tetap dari catatan pembayaran: hitungan hidup untuk bulan lampau
+    // tidak tersedia (target/realisasinya bukan periode yang sedang dimuat).
+    const monthlySummary = useMemo(() => {
+        return Array.from({ length: 12 }, (_, i) => {
+            const m = i + 1;
+            const monthPayments = payments.filter((p) => p.periodMonth === m);
+            const rows = m === month ? rowsForMonth(m) : [];
+            const total = m === month
+                ? rows.reduce((a, r) => a + r.total, 0)
+                : monthPayments.reduce((a, p) => a + p.totalIncentive, 0);
+            const belumDibayar = m === month
+                ? rows.filter((r) => r.status !== "lunas").reduce((a, r) => a + r.total, 0)
+                : monthPayments.filter((p) => p.paymentStatus !== "lunas").reduce((a, p) => a + p.totalIncentive, 0);
+            const hasLunas = monthPayments.some((p) => p.paymentStatus === "lunas");
+            const hasTunggakan = monthPayments.some((p) => p.paymentStatus === "tunggakan");
+            const status: "lunas" | "tunggakan" | "belum" =
+                hasTunggakan ? "tunggakan"
+                    : hasLunas && belumDibayar === 0 ? "lunas"
+                        : "belum";
+            return { month: m, label: MONTH_LABELS[i], total, belumDibayar, status };
+        });
+    }, [payments, month, rowsForMonth]);
 
     // Pilihan filter dibangun dari principal yang BENAR-BENAR ada di bulan terpilih, bukan dari
     // konstanta master: bulan lama bisa memuat principal yang sudah tidak dipakai lagi.
@@ -2854,7 +2868,7 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                 <SpvSupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
             {/* 12-month strip */}
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-                <SectionTitle icon={DollarSign} no={1} title="Rekap Pembayaran Tahunan" desc="Data 12 bulan dari database dengan indikator tunggakan aktual" />
+                <SectionTitle icon={DollarSign} no={1} title="Rekap Pembayaran Tahunan" desc={`Total insentif per bulan dan sisa yang belum dibayar. ${MONTH_LABELS[month - 1]} dihitung ulang dari dashboard; bulan lain dari catatan pembayaran.`} />
                 <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
                     {monthlySummary.map((m) => {
                         const active = m.month === selectedMonth;
@@ -2867,7 +2881,10 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                                     {m.status === "tunggakan" && <AlertTriangle size={13} className="text-rose-400" />}
                                     {m.status === "lunas" && <CheckCircle2 size={13} className="text-emerald-400" />}
                                 </div>
-                                <div className="text-[11px] font-mono mt-1 text-slate-400">{m.total ? formatShortRp(m.total) : "-"}</div>
+                                <div className="text-[11px] font-mono mt-1 text-slate-300">{m.total ? formatShortRp(m.total) : "-"}</div>
+                                {m.belumDibayar > 0 && (
+                                    <div className="text-[10px] font-mono text-amber-400/90">belum: {formatShortRp(m.belumDibayar)}</div>
+                                )}
                                 <div className="text-[9px] uppercase tracking-wider mt-0.5 font-bold">{m.status}</div>
                             </button>
                         );
