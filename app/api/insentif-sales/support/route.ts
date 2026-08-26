@@ -73,38 +73,27 @@ export async function POST(req: NextRequest) {
     // PASS 2: tulis seluruhnya dalam satu transaksi — gagal di tengah = rollback penuh.
     let upserted = 0;
     await db.transaction(async (tx) => {
-        for (const { s, amount } of prepared) {
-            const [existing] = await tx
-                .select({ id: incentiveSupport.id })
-                .from(incentiveSupport)
-                .where(
-                    and(
-                        eq(incentiveSupport.salesCode, s.salesCode),
-                        eq(incentiveSupport.principle, s.principle),
-                        eq(incentiveSupport.periodMonth, s.periodMonth),
-                        eq(incentiveSupport.periodYear, s.periodYear),
-                    ),
-                )
-                .limit(1);
-
-            if (existing) {
-                await tx
-                    .update(incentiveSupport)
-                    .set({ supportAmount: amount, inputBy: actorName, updatedAt: now })
-                    .where(eq(incentiveSupport.id, existing.id));
-            } else {
-                await tx.insert(incentiveSupport).values({
+        for (const { s: row, amount } of prepared) {
+            // uq_incentive_support_key menegakkan kunci ini di DB sejak 2026-08-24. Sebelumnya
+            // duplikat bisa lolos lewat race, lalu dashboard membacanya dengan new Map() tanpa
+            // ORDER BY — baris terakhir menang secara ACAK, jadi support yang dipakai untuk
+            // mengurangi konstanta insentif bisa beda antar refresh (audit temuan C2).
+            await tx.insert(incentiveSupport)
+                .values({
                     id: randomUUID(),
-                    salesCode: s.salesCode,
-                    principle: s.principle,
-                    periodMonth: s.periodMonth,
-                    periodYear: s.periodYear,
+                    salesCode: row.salesCode,
+                    principle: row.principle,
+                    periodMonth: row.periodMonth,
+                    periodYear: row.periodYear,
                     supportAmount: amount,
                     inputBy: actorName,
                     createdAt: now,
                     updatedAt: now,
+                })
+                .onConflictDoUpdate({
+                    target: [incentiveSupport.salesCode, incentiveSupport.principle, incentiveSupport.periodMonth, incentiveSupport.periodYear],
+                    set: { supportAmount: amount, inputBy: actorName, updatedAt: now },
                 });
-            }
             upserted++;
         }
     });

@@ -1,8 +1,8 @@
 # AUDIT MODUL INSENTIF SALES — 2026-08-24
 
 > Audit read-only saat ditulis. **Perbaikan menyusul** — lihat baris "Status" di tiap temuan.
-> Ringkasan status per 2026-08-24: C0/C1/C3 FIXED; C2 & M1 & M7 menunggu DDL dijalankan di VPS;
-> H1-H7 FIXED; M2-M6, M8, M9, M11-M13 FIXED; M10 sebagian; L1/L2 belum disentuh.
+> Ringkasan status per 2026-08-24: C0-C3 FIXED (DDL sudah jalan di produksi);
+> H1-H7 FIXED; M1-M9, M11-M13 FIXED; M10 sebagian; L1/L2 belum disentuh.
 > Metode: 4 sub-agent paralel (kalkulasi, query/DBA, validasi & akses, konsistensi lintas layer)
 > atas branch `main` HEAD `3ef1702` + perubahan uncommitted sesi ini. Setiap temuan di bawah sudah
 > di-spot-check ulang langsung ke kode; yang tidak terbukti dipindah ke §3.
@@ -93,19 +93,12 @@ Jangan diselesaikan diam-diam di kode.
 
 ### C2 · CRITICAL · Tiga tabel uang tanpa UNIQUE constraint pada kunci upsert-nya
 
-> **Status: SEBAGIAN** (2026-08-24). `db/schema.ts` sudah punya definisi
-> `uq_sales_targets_key` / `uq_incentive_payments_key` / `uq_incentive_support_key`, dan DDL-nya
-> ada di `docs/handover/DDL_UNIQUE_INSENTIF_2026-08-24.sql` (cek duplikat dulu, lalu
-> `CREATE UNIQUE INDEX CONCURRENTLY`). **Sengaja BELUM dijalankan ke produksi** — repo ini tidak
-> punya migration runner (drizzle-kit push manual, DDL dijalankan manual via `docker exec`, sama
-> seperti tabel lain), dan saya tidak punya akses ke Postgres produksi untuk memverifikasi tidak
-> ada duplikat lebih dulu. **Kode 3 handler (`targets`/`payments`/`support`) juga sengaja BELUM
-> diubah ke `onConflictDoUpdate`** — kalau diubah sekarang, ketiga POST itu akan error 500 sampai
-> DDL dijalankan di produksi (`ON CONFLICT` butuh constraint yang cocok, dan constraint itu belum
-> ada di sana). Urutan yang aman: (1) jalankan DDL di VPS, (2) baru migrasi kode ke
-> `onConflictDoUpdate` di sesi terpisah. Sampai itu terjadi, race yang mendasari tetap ada di
-> kode aplikasi — DDL sendirian, begitu dijalankan, minimal mengubah "silently jadi duplikat"
-> menjadi "gagal dengan error unique-violation yang jelas".
+> **Status: FIXED** (2026-08-24). DDL sudah dijalankan di produksi oleh user — cek duplikat
+> bersih (0 rows di ketiga tabel), lalu `uq_sales_targets_key`, `uq_incentive_payments_key`,
+> `uq_incentive_support_key` terpasang dan `indisvalid = t`. Setelah itu 5 handler diubah ke
+> `onConflictDoUpdate`: `targets`, `payments`, `support`, `spv-support`, `code-merge`
+> (+ `onConflictDoNothing` untuk klaim `spv_sales_assignment`). Race SELECT-cek-lalu-INSERT
+> hilang sepenuhnya, dan round-trip DB per baris turun dari 2 jadi 1.
 
 **Apa:** asimetri yang jelas tidak disengaja di `db/schema.ts:710-851`.
 
@@ -224,6 +217,8 @@ transaksi (H1) timeout meninggalkan setengah data.
 
 ### H3 · HIGH · `handleMarkLunas` menembak ~100 POST paralel ke handler tanpa unique
 
+> **Status: FIXED** — tertutup oleh C2: `uq_incentive_payments_key` + `onConflictDoUpdate` di `POST /payments`. UI tidak perlu diubah.
+
 **Apa:** `page.tsx:2258` — `Promise.allSettled` atas seluruh `checkedList`, satu HTTP POST per baris
 terpilih secara serentak. Pool: `lib/db.ts:5` + `lib/auth.ts:19` = 20 koneksi.
 
@@ -262,7 +257,7 @@ tambah `<option>GT</option>`.
 
 ### M1 · MEDIUM-HIGH · `DELETE` di `POST /progress` tanpa index yang cocok
 
-> **Status: SEBAGIAN — index ada di schema.ts; DDL menunggu dijalankan (DDL_AUDIT_INSENTIF_2026-08-24.sql).**
+> **Status: FIXED — index idx_sdp_code_prin_period_date sudah terpasang di produksi (indisvalid = t).**
 
 **Apa:** predikat `sales_code` + `principle` + `period_month` + `period_year`
 (`progress/route.ts:87-97`); index yang ada hanya `(period_month, period_year)`, `(sales_code)`,
@@ -386,7 +381,7 @@ lunas **tidak akan muncul di filter cabang mana pun**.
 
 ### M7 · MEDIUM · Tidak ada jejak siapa mengubah target & nominal pembayaran
 
-> **Status: SEBAGIAN — kolom updated_by ada di schema.ts + diisi route; DDL menunggu dijalankan.**
+> **Status: FIXED — kolom updated_by sudah ada di produksi dan diisi di semua jalur tulis.**
 
 **Apa:** `incentive_support.inputBy` dan `spv_support.inputBy` ada; `sales_targets` dan
 `incentive_payments` tidak punya `createdBy`/`updatedBy`. `paidBy` hanya terisi saat status jadi

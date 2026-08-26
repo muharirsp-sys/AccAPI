@@ -120,31 +120,19 @@ export async function POST(req: NextRequest) {
     let saved = 0;
     await db.transaction(async (tx) => {
       for (const { d, to } of prepared) {
-        const [existing] = await tx
-            .select({ id: salesCodeMerge.id })
-            .from(salesCodeMerge)
-            .where(
-                and(
-                    eq(salesCodeMerge.periodMonth, d.periodMonth),
-                    eq(salesCodeMerge.periodYear, d.periodYear),
-                    eq(salesCodeMerge.fromSalesCode, d.fromSalesCode),
-                ),
-            )
-            .limit(1);
-
-        if (existing) {
-            await tx.update(salesCodeMerge)
-                .set({ toSalesCode: to, decision: d.decision, prefix: d.prefix, decidedBy: gate.session.user.id, updatedAt: now })
-                .where(eq(salesCodeMerge.id, existing.id));
-        } else {
-            await tx.insert(salesCodeMerge).values({
+        // uq_sales_code_merge_from sudah ada di produksi sejak 2026-08-21.
+        await tx.insert(salesCodeMerge)
+            .values({
                 id: randomUUID(),
                 periodMonth: d.periodMonth, periodYear: d.periodYear,
                 prefix: d.prefix, fromSalesCode: d.fromSalesCode, toSalesCode: to,
                 decision: d.decision, decidedBy: gate.session.user.id,
                 createdAt: now, updatedAt: now,
+            })
+            .onConflictDoUpdate({
+                target: [salesCodeMerge.periodMonth, salesCodeMerge.periodYear, salesCodeMerge.fromSalesCode],
+                set: { toSalesCode: to, decision: d.decision, prefix: d.prefix, decidedBy: gate.session.user.id, updatedAt: now },
             });
-        }
         saved++;
       }
     });

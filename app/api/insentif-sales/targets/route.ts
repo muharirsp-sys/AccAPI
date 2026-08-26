@@ -13,7 +13,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { salesTargets, spvSalesAssignment } from "@/db/schema";
 import { getTargetsForPeriod } from "@/lib/insentif-sales";
@@ -168,56 +167,24 @@ export async function POST(req: NextRequest) {
     let upserted = 0;
     await db.transaction(async (tx) => {
         for (const salesCode of claims) {
-            const [existingAssignment] = await tx
-                .select({ id: spvSalesAssignment.id })
-                .from(spvSalesAssignment)
-                .where(eq(spvSalesAssignment.salesCode, salesCode))
-                .limit(1);
-            if (!existingAssignment) {
-                await tx.insert(spvSalesAssignment).values({
-                    id: randomUUID(), salesCode, spvName: identity!.name, createdAt: now, updatedAt: now,
-                });
-            }
+            // spv_sales_assignment.sales_code sudah UNIQUE di produksi — klaim yang sudah ada
+            // dibiarkan apa adanya (DoNothing), bukan ditimpa: kepemilikan sudah diverifikasi
+            // di PASS 2, dan menimpanya akan menghapus assignment manual admin.
+            await tx.insert(spvSalesAssignment)
+                .values({ id: randomUUID(), salesCode, spvName: identity!.name, createdAt: now, updatedAt: now })
+                .onConflictDoNothing({ target: spvSalesAssignment.salesCode });
         }
 
         for (const p of prepared) {
             const t = p.input;
-            // Kunci unik = salesCode + principle + periode (mix → 1 baris per principle).
-            const [existing] = await tx
-                .select({ id: salesTargets.id })
-                .from(salesTargets)
-                .where(
-                    and(
-                        eq(salesTargets.salesCode, t.salesCode),
-                        eq(salesTargets.principle, t.principle),
-                        eq(salesTargets.periodMonth, t.periodMonth),
-                        eq(salesTargets.periodYear, t.periodYear),
-                    ),
-                )
-                .limit(1);
-
-            if (existing) {
-                await tx
-                    .update(salesTargets)
-                    .set({
-                        salesName: t.salesName,
-                        branch: t.branch,
-                        channel: t.channel ?? "TT",
-                        spvName: p.spvName,
-                        smName: p.smName,
-                        targetValue: t.targetValue,
-                        targetEc: t.targetEc,
-                        targetAo: t.targetAo,
-                        targetIa: t.targetIa,
-                        splmValue: t.splmValue ?? 0,
-                        tipeSales: p.tipeSales,
-                        statusInsentif: p.statusInsentif,
-                        updatedBy: actor,
-                        updatedAt: now,
-                    })
-                    .where(eq(salesTargets.id, existing.id));
-            } else {
-                await tx.insert(salesTargets).values({
+            // Kunci unik = salesCode + principle + periode (mix → 1 baris per principle),
+            // ditegakkan oleh uq_sales_targets_key di DB sejak 2026-08-24. Pola lama
+            // SELECT-cek-lalu-INSERT bisa kecolongan saat dua request paralel: dua-duanya
+            // SELECT-miss lalu dua-duanya INSERT → baris kembar yang menaikkan `n` mix dan
+            // mengubah nominal insentif tanpa error (audit temuan C2).
+            await tx
+                .insert(salesTargets)
+                .values({
                     id: randomUUID(),
                     salesCode: t.salesCode,
                     salesName: t.salesName,
@@ -238,8 +205,27 @@ export async function POST(req: NextRequest) {
                     updatedBy: actor,
                     createdAt: now,
                     updatedAt: now,
+                })
+                .onConflictDoUpdate({
+                    target: [salesTargets.salesCode, salesTargets.principle, salesTargets.periodMonth, salesTargets.periodYear],
+                    set: {
+                        salesName: t.salesName,
+                        branch: t.branch,
+                        channel: t.channel ?? "TT",
+                        spvName: p.spvName,
+                        smName: p.smName,
+                        targetValue: t.targetValue,
+                        targetEc: t.targetEc,
+                        targetAo: t.targetAo,
+                        targetIa: t.targetIa,
+                        splmValue: t.splmValue ?? 0,
+                        tipeSales: p.tipeSales,
+                        statusInsentif: p.statusInsentif,
+                        updatedBy: actor,
+                        updatedAt: now,
+                        // createdAt sengaja TIDAK di-set — baris lama mempertahankan waktu buatnya.
+                    },
                 });
-            }
             upserted++;
         }
     });

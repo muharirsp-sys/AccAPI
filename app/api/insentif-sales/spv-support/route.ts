@@ -77,31 +77,18 @@ export async function POST(req: NextRequest) {
     let upserted = 0;
     await db.transaction(async (tx) => {
         for (const p of prepared) {
-            const [existing] = await tx
-                .select({ id: spvSupport.id })
-                .from(spvSupport)
-                .where(
-                    and(
-                        eq(spvSupport.spvName, p.spvName),
-                        eq(spvSupport.principle, p.principle),
-                        eq(spvSupport.periodMonth, p.periodMonth),
-                        eq(spvSupport.periodYear, p.periodYear),
-                    ),
-                )
-                .limit(1);
-
-            if (existing) {
-                await tx.update(spvSupport)
-                    .set({ supportAmount: p.amount, inputBy: gate.session.user.id, updatedAt: now })
-                    .where(eq(spvSupport.id, existing.id));
-            } else {
-                await tx.insert(spvSupport).values({
+            // uq_spv_support sudah ada di produksi sejak awal — pakai langsung.
+            await tx.insert(spvSupport)
+                .values({
                     id: randomUUID(), spvName: p.spvName, principle: p.principle,
                     periodMonth: p.periodMonth, periodYear: p.periodYear,
                     supportAmount: p.amount, inputBy: gate.session.user.id,
                     createdAt: now, updatedAt: now,
+                })
+                .onConflictDoUpdate({
+                    target: [spvSupport.spvName, spvSupport.principle, spvSupport.periodMonth, spvSupport.periodYear],
+                    set: { supportAmount: p.amount, inputBy: gate.session.user.id, updatedAt: now },
                 });
-            }
             upserted++;
         }
     });

@@ -82,58 +82,48 @@ export async function POST(req: NextRequest) {
     const actorName = gate.session.user.name ?? null;
     const markingLunas = body.paymentStatus === "lunas";
 
-    // Kunci = salesCode + principle + period (mix → 1 payment per principle).
-    const [existing] = await db
-        .select({ id: incentivePayments.id })
-        .from(incentivePayments)
-        .where(
-            and(
-                eq(incentivePayments.salesCode, body.salesCode),
-                eq(incentivePayments.principle, body.principle),
-                eq(incentivePayments.periodMonth, body.periodMonth),
-                eq(incentivePayments.periodYear, body.periodYear),
-            ),
-        )
-        .limit(1);
-
-    if (existing) {
-        await db
-            .update(incentivePayments)
-            .set({
+    // Kunci = salesCode + principle + period (mix → 1 payment per principle), ditegakkan oleh
+    // uq_incentive_payments_key di DB sejak 2026-08-24. Ini penting justru karena UI menembak
+    // satu POST PER BARIS secara paralel (Promise.allSettled di handleMarkLunas): dengan pola
+    // SELECT-cek-lalu-INSERT yang lama, dua request untuk key yang sama bisa lolos berbarengan
+    // dan menghasilkan DUA baris pembayaran untuk satu orang (audit temuan C2 + H3).
+    const [row] = await db
+        .insert(incentivePayments)
+        .values({
+            id: randomUUID(),
+            salesCode: body.salesCode,
+            salesName: body.salesName,
+            principle: body.principle,
+            branch: body.branch,
+            periodMonth: body.periodMonth,
+            periodYear: body.periodYear,
+            totalIncentive,
+            paymentStatus: body.paymentStatus ?? "belum",
+            paymentProofUrl: body.paymentProofUrl ?? null,
+            paymentDate: markingLunas ? now : null,
+            paidBy: markingLunas ? actor : null,
+            paidByName: markingLunas ? actorName : null,
+            updatedBy: actor,
+            createdAt: now,
+            updatedAt: now,
+        })
+        .onConflictDoUpdate({
+            target: [incentivePayments.salesCode, incentivePayments.principle, incentivePayments.periodMonth, incentivePayments.periodYear],
+            set: {
                 salesName: body.salesName,
                 totalIncentive,
                 paymentStatus: body.paymentStatus ?? "belum",
                 paymentProofUrl: body.paymentProofUrl ?? null,
-                // Cabang ini terjangkau saat cache klien basi (paymentId masih null padahal
-                // barisnya sudah ada). Dulu tidak mengisi paidBy/paymentDate sama sekali,
-                // berbeda dari PATCH — pembayaran jadi "lunas" tanpa jejak siapa/kapan.
+                // Diisi hanya saat menandai lunas — dulu cabang UPDATE tidak mengisinya sama
+                // sekali (berbeda dari PATCH), jadi pembayaran bisa jadi "lunas" tanpa jejak.
                 ...(markingLunas ? { paymentDate: now, paidBy: actor, paidByName: actorName } : {}),
                 updatedBy: actor,
                 updatedAt: now,
-            })
-            .where(eq(incentivePayments.id, existing.id));
-        return NextResponse.json({ id: existing.id, action: "updated" });
-    }
+                // createdAt sengaja TIDAK di-set.
+            },
+        })
+        .returning({ id: incentivePayments.id, createdAt: incentivePayments.createdAt });
 
-    const id = randomUUID();
-    await db.insert(incentivePayments).values({
-        id,
-        salesCode: body.salesCode,
-        salesName: body.salesName,
-        principle: body.principle,
-        branch: body.branch,
-        periodMonth: body.periodMonth,
-        periodYear: body.periodYear,
-        totalIncentive,
-        paymentStatus: body.paymentStatus ?? "belum",
-        paymentProofUrl: body.paymentProofUrl ?? null,
-        paymentDate: markingLunas ? now : null,
-        paidBy: markingLunas ? actor : null,
-        paidByName: markingLunas ? actorName : null,
-        updatedBy: actor,
-        createdAt: now,
-        updatedAt: now,
-    });
-
-    return NextResponse.json({ id, action: "created" }, { status: 201 });
+    const action = row.createdAt.getTime() === now.getTime() ? "created" : "updated";
+    return NextResponse.json({ id: row.id, action }, { status: action === "created" ? 201 : 200 });
 }
