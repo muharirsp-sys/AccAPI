@@ -20,6 +20,7 @@ import { realisasiValue } from "@/lib/insentif-value-source";
 import { payeeCode, parsePayee, PAYEE_PRINCIPLE_ALL, type PayeeRole } from "@/lib/insentif-payee";
 import { toast } from "sonner";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import type { SupportTemplateRow } from "@/lib/insentif-sales-excel";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AsyncState";
 import {
     PRINCIPLES, BRANCHES, KPI_LABELS, MONTH_LABELS,
@@ -2009,6 +2010,94 @@ function CodeMergeSection({ period }: { period: string }) {
 // ── Finance: input support principle untuk SPV (per SPV per principal) ────────
 // Support yang menutup penuh rate mengeluarkan principal itu dari hitungan jumlah
 // principal SPV (lib/insentif-spv-calc), jadi angkanya berpengaruh besar.
+// ── Support principle: unduh template terisi + unggah Excel ──────────────────
+// Finance mengisi support untuk ratusan pasangan sales/SPV x principal. Mengetiknya satu per
+// satu di layar itu sumber salah ketik, dan support memotong pool insentif — salah angka =
+// salah bayar. Template sengaja SUDAH berisi pasangan periode itu beserta nilai tersimpan,
+// jadi yang diketik hanya kolom nominal. Hasil unggah masuk ke draft, BUKAN langsung ditulis:
+// Finance tetap melihat angkanya di tabel lalu menekan Simpan, memakai jalur validasi yang sama.
+function SupportExcelBar({ kind, templateRows, fileName, knownKeys, onLoaded }: {
+    kind: "sales" | "spv";
+    templateRows: SupportTemplateRow[];
+    fileName: string;
+    knownKeys: Set<string>;
+    onLoaded: (values: Record<string, string>) => void;
+}) {
+    const [busy, setBusy] = useState(false);
+
+    async function download() {
+        setBusy(true);
+        try {
+            const { generateSupportTemplate } = await import("@/lib/insentif-sales-excel");
+            const data = generateSupportTemplate(kind, templateRows);
+            const url = URL.createObjectURL(new Blob([new Uint8Array(data)], {
+                type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            }));
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = fileName;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal membuat template");
+        }
+        setBusy(false);
+    }
+
+    async function upload(e: React.ChangeEvent<HTMLInputElement>) {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setBusy(true);
+        try {
+            const { parseSupportExcel } = await import("@/lib/insentif-sales-excel");
+            const parsed = parseSupportExcel(await file.arrayBuffer(), kind);
+
+            // Nominal tidak masuk akal ditolak SEBELUM apa pun terisi. Nol itu sah (mencabut
+            // support), negatif tidak — dan diam-diam membulatkannya ke 0 akan membayar lebih.
+            const bad = parsed.filter((r) => !Number.isFinite(r.supportAmount) || r.supportAmount < 0);
+            if (bad.length) {
+                toast.error(`${bad.length} baris bernilai support tidak valid (mis. ${bad[0].key}/${bad[0].principle}). Tidak ada yang diubah.`);
+                return;
+            }
+
+            const values: Record<string, string> = {};
+            const unknown: string[] = [];
+            for (const r of parsed) {
+                const k = `${r.key}|${r.principle}`;
+                if (knownKeys.has(k)) values[k] = String(r.supportAmount);
+                else unknown.push(k);
+            }
+            if (Object.keys(values).length === 0) {
+                toast.error("Tidak ada baris yang cocok dengan periode ini. Cek kolom kunci & Principal, atau unduh templatenya dulu.");
+                return;
+            }
+            onLoaded(values);
+            toast.success(
+                `${Object.keys(values).length} baris terisi dari Excel — periksa lalu tekan Simpan.`
+                + (unknown.length ? ` ${unknown.length} baris dilewati (tidak ada di periode ini).` : ""),
+            );
+        } catch (err) {
+            toast.error(`Gagal baca Excel: ${err instanceof Error ? err.message : "Error"}`);
+        } finally {
+            setBusy(false);
+            e.target.value = "";
+        }
+    }
+
+    return (
+        <div className="flex items-center gap-2">
+            <button onClick={download} disabled={busy}
+                className="text-xs px-3 py-1.5 rounded-lg border border-white/15 text-slate-300 hover:bg-white/5 disabled:opacity-50">
+                Unduh Template
+            </button>
+            <label className={`text-xs px-3 py-1.5 rounded-lg border border-white/15 text-slate-300 hover:bg-white/5 cursor-pointer ${busy ? "opacity-50 pointer-events-none" : ""}`}>
+                Upload Excel
+                <input type="file" accept=".xlsx,.xls" onChange={upload} className="hidden" />
+            </label>
+        </div>
+    );
+}
+
 function SpvSupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; month: number; year: number; onSaved?: () => void }) {
     const pairs = useMemo(() => {
         const seen = new Map<string, { spvName: string; principle: string }>();
@@ -2069,11 +2158,23 @@ function SpvSupportInputSection({ apiRows, month, year, onSaved }: { apiRows: Ap
 
     return (
         <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-            <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
                 <h3 className="text-sm font-semibold text-slate-200">Support Principle — SPV</h3>
-                <button onClick={save} disabled={saving} className="btn-primary disabled:opacity-50 text-xs px-3 py-1.5">
-                    {saving ? "Menyimpan…" : "Simpan Support SPV"}
-                </button>
+                <div className="flex items-center gap-2">
+                    <SupportExcelBar
+                        kind="spv"
+                        fileName={`support_spv_${month}_${year}.xlsx`}
+                        templateRows={pairs.map((p) => ({
+                            key: p.spvName, principle: p.principle,
+                            supportAmount: Number(draft[keyOf(p)] ?? saved[keyOf(p)] ?? 0) || 0,
+                        }))}
+                        knownKeys={new Set(pairs.map(keyOf))}
+                        onLoaded={(values) => setDraft((prev) => ({ ...prev, ...values }))}
+                    />
+                    <button onClick={save} disabled={saving} className="btn-primary disabled:opacity-50 text-xs px-3 py-1.5">
+                        {saving ? "Menyimpan…" : "Simpan Support SPV"}
+                    </button>
+                </div>
             </div>
             <p className="text-[11px] text-slate-500 mb-3">
                 Support yang menutup penuh rate akan mengeluarkan principal itu dari hitungan jumlah
@@ -2150,7 +2251,19 @@ function SupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRo
 
     return (
         <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-            <SectionTitle icon={DollarSign} no={0} title="Input Support Principle (GT)" desc="Support principal per salesman mengurangi konstanta insentif." />
+            <div className="flex items-start justify-between gap-2 flex-wrap">
+                <SectionTitle icon={DollarSign} no={0} title="Input Support Principle (GT)" desc="Support principal per salesman mengurangi konstanta insentif." />
+                <SupportExcelBar
+                    kind="sales"
+                    fileName={`support_sales_${month}_${year}.xlsx`}
+                    templateRows={gtRows.map((r) => ({
+                        key: r.salesCode, label: r.salesName, principle: r.principle,
+                        supportAmount: Number(valueOf(r)) || 0,
+                    }))}
+                    knownKeys={new Set(gtRows.map(keyOf))}
+                    onLoaded={(values) => setDraft((prev) => ({ ...prev, ...values }))}
+                />
+            </div>
             <div className="overflow-x-auto mt-3">
                 <table className="ui-data-table">
                     <thead>
