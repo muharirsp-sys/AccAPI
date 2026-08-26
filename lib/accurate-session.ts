@@ -1,6 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
-import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accurateOAuthSession } from "@/db/schema";
 import type { AccurateCredentials } from "@/lib/sync";
@@ -45,24 +44,12 @@ function decryptSecret(value: string) {
     return decrypted.toString("utf8");
 }
 
-async function ensureAccurateSessionTable() {
-    await db.execute(sql`
-        CREATE TABLE IF NOT EXISTS accurate_oauth_session (
-            user_id TEXT PRIMARY KEY NOT NULL,
-            access_token TEXT NOT NULL,
-            session_host TEXT,
-            session_id TEXT,
-            database_id TEXT,
-            database_alias TEXT,
-            created_at TIMESTAMP NOT NULL,
-            updated_at TIMESTAMP NOT NULL,
-            FOREIGN KEY (user_id) REFERENCES "user"(id)
-        )
-    `);
-}
+// DDL runtime (CREATE TABLE IF NOT EXISTS) DIHAPUS: role aplikasi `accapi_app` sengaja
+// bukan owner dan tidak punya hak CREATE di schema public (runbook L1g, handover11).
+// Akibatnya DDL itu melempar "permission denied for schema public" pada SETIAP panggilan
+// dan mematikan fitur yang tabelnya sebenarnya sudah ada. Skema dikelola lewat db/schema.ts + DDL manual.
 
 export async function getAccurateSession(userId: string) {
-    await ensureAccurateSessionTable();
     const [row] = await db
         .select()
         .from(accurateOAuthSession)
@@ -84,7 +71,6 @@ export async function getAccurateSession(userId: string) {
 }
 
 export async function upsertAccurateSession(userId: string, update: AccurateSessionUpdate) {
-    await ensureAccurateSessionTable();
     const existing = await getAccurateSession(userId);
     const now = new Date();
 
@@ -146,7 +132,6 @@ export async function resolveSyncCredentials(): Promise<
 }
 
 export async function clearAccurateSession(userId: string) {
-    await ensureAccurateSessionTable();
     await db.delete(accurateOAuthSession).where(eq(accurateOAuthSession.userId, userId));
 }
 

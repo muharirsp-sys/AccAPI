@@ -8,7 +8,7 @@
 
 import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
-import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
 import { db } from "@/lib/db";
@@ -178,31 +178,12 @@ export async function getBatchWithItems(batchId: string) {
     return { batch, items, payments };
 }
 
-async function ensurePeriodClosureTable() {
-    await db.execute(sql`
-        CREATE TABLE IF NOT EXISTS off_period_closure (
-            id TEXT PRIMARY KEY,
-            principle_code TEXT NOT NULL,
-            principle_name TEXT NOT NULL,
-            bulan TEXT NOT NULL,
-            tahun TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Terbuka',
-            total_submitted DOUBLE PRECISION NOT NULL DEFAULT 0,
-            total_claimed DOUBLE PRECISION NOT NULL DEFAULT 0,
-            submitted_count INTEGER NOT NULL DEFAULT 0,
-            claimed_count INTEGER NOT NULL DEFAULT 0,
-            closed_by TEXT,
-            closed_at TIMESTAMP,
-            unlocked_by TEXT,
-            unlocked_at TIMESTAMP,
-            created_at TIMESTAMP NOT NULL,
-            updated_at TIMESTAMP NOT NULL
-        )
-    `);
-}
+// DDL runtime (CREATE TABLE IF NOT EXISTS) DIHAPUS: role aplikasi `accapi_app` sengaja
+// bukan owner dan tidak punya hak CREATE di schema public (runbook L1g, handover11).
+// Akibatnya DDL itu melempar "permission denied for schema public" pada SETIAP panggilan
+// dan mematikan fitur yang tabelnya sebenarnya sudah ada. Skema dikelola lewat db/schema.ts + DDL manual.
 
 export async function isOffPeriodClosedForBatch(batch: Pick<OffBatchRow, "principleCode" | "bulan" | "tahun">) {
-    await ensurePeriodClosureTable();
     const [period] = await db
         .select({ status: offPeriodClosure.status })
         .from(offPeriodClosure)
