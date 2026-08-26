@@ -719,9 +719,13 @@ export const salesTargets = pgTable("sales_targets", {
     periodMonth: integer("period_month").notNull(),
     periodYear: integer("period_year").notNull(),
     targetValue: doublePrecision("target_value").notNull().default(0),
-    targetEc: integer("target_ec").notNull().default(0),
-    targetAo: integer("target_ao").notNull().default(0),
-    targetIa: integer("target_ia").notNull().default(0),
+    // EC/AO/IA target BUKAN integer: file target nyata berisi pecahan (mis. Target IA 204,8 —
+    // hasil bagi target tahunan). Kolom integer membuat Postgres menolak SELURUH upload dengan
+    // "invalid input syntax for type integer: 204.8". Realisasi (achieved_*) tetap integer
+    // karena itu memang cacahan. Produksi: docs/handover/DDL_TARGET_DECIMAL_2026-08-26.sql.
+    targetEc: doublePrecision("target_ec").notNull().default(0),
+    targetAo: doublePrecision("target_ao").notNull().default(0),
+    targetIa: doublePrecision("target_ia").notNull().default(0),
     splmValue: doublePrecision("splm_value").notNull().default(0),
     // Insentif GT (lib/insentif-sales-calc): "mix" | "exclusive".
     tipeSales: text("tipe_sales").notNull().default("exclusive"),

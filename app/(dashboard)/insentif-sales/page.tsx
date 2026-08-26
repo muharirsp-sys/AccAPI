@@ -68,6 +68,21 @@ interface PaymentRow {
     paymentDate: number | null;
 }
 
+/**
+ * Baca respons API dengan aman. `res.json()` langsung akan meledak jadi
+ * "Unexpected token 'B', \"Bad Gateway\" is not valid JSON" ketika yang balik BUKAN dari
+ * aplikasi kita — 502/504 dari proxy, halaman login, atau HTML error Next. Pesan itu
+ * menyembunyikan status HTTP yang sebenarnya, yaitu satu-satunya petunjuk yang berguna.
+ */
+async function readApi(res: Response): Promise<Record<string, unknown>> {
+    const text = await res.text();
+    try {
+        return JSON.parse(text) as Record<string, unknown>;
+    } catch {
+        throw new Error(`HTTP ${res.status} ${res.statusText} — ${text.slice(0, 120).trim() || "respons kosong"}`);
+    }
+}
+
 function payeeRoleBadge(role: PayeeRole) {
     if (role === "spv") return { label: "SPV", cls: "bg-sky-500/10 text-sky-300 border-sky-500/30" };
     if (role === "sm") return { label: "SM", cls: "bg-violet-500/10 text-violet-300 border-violet-500/30" };
@@ -949,8 +964,8 @@ function TargetInputSection() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error ?? "Server error");
+            const data = await readApi(res);
+            if (!res.ok) throw new Error(String(data.error ?? "Server error"));
             toast.success(`${data.upserted} target dari Excel berhasil disimpan.`);
             setInputMethod("manual");
             fetchTargets();

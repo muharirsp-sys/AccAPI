@@ -195,6 +195,12 @@ export async function POST(req: NextRequest) {
     }
 
     // ── PASS 3: tulis, seluruhnya dalam SATU transaksi ───────────────────────────
+    // Jejak permanen: upload target adalah dasar perhitungan uang, dan saat 502 muncul di
+    // browser (2026-08-26) tidak ada satu pun baris log yang bisa memastikan request-nya
+    // sampai ke sini atau tidak. Dua baris ini yang membedakan "aplikasi diam" dari
+    // "request tidak pernah tiba".
+    const t0 = Date.now();
+    console.log(`[TARGETS] mulai tulis ${prepared.length} baris, ${claims.length} klaim, oleh ${actor}`);
     let upserted = 0;
     await db.transaction(async (tx) => {
         for (const salesCode of claims) {
@@ -261,5 +267,6 @@ export async function POST(req: NextRequest) {
         }
     });
 
+    console.log(`[TARGETS] selesai ${upserted} baris dalam ${Date.now() - t0} ms`);
     return NextResponse.json({ upserted });
 }
