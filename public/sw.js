@@ -1,6 +1,6 @@
 // Service Worker AccAPI — VERSION-based cache invalidation, no API caching.
 // Increment VERSION on every deploy to auto-purge stale caches.
-const VERSION = "accapi-v3";
+const VERSION = "accapi-v4";
 const STATIC_CACHE = `${VERSION}-static`;
 const PAGE_CACHE = `${VERSION}-pages`;
 
@@ -49,6 +49,10 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+function offlineResponse() {
+  return new Response("Offline", { status: 503, statusText: "Offline" });
+}
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
@@ -69,9 +73,14 @@ self.addEventListener("fetch", (event) => {
             if (res.ok) cache.put(req, res.clone());
             return res;
           })
-          .catch(() => hit);
+          // ponytail: respondWith WAJIB dapat Response. undefined = "FetchEvent resulted in
+          // a network error response" di console, menutupi error asli.
+          .catch(() => hit || offlineResponse());
         return hit || fetchPromise;
-      }),
+      })
+        // Cache storage bisa gagal dibuka (quota / private mode) — jangan sampai
+        // promise-nya reject, respondWith akan jadi network error.
+        .catch(() => fetch(req)),
     );
     return;
   }
@@ -86,11 +95,16 @@ self.addEventListener("fetch", (event) => {
           caches.open(PAGE_CACHE).then((c) => c.put(req, clone));
           return res;
         })
-        .catch(async () => (await caches.match(req)) || (await caches.match("/offline.html"))),
+        .catch(
+          async () =>
+            (await caches.match(req)) ||
+            (await caches.match("/offline.html")) ||
+            offlineResponse(),
+        ),
     );
     return;
   }
 
-  // Everything else: network-first, fallback to cache.
-  event.respondWith(fetch(req).catch(() => caches.match(req)));
+  // Everything else: biarkan browser yang menangani — tanpa respondWith, error jaringan
+  // muncul apa adanya, bukan disamarkan jadi "network error response" dari SW.
 });
