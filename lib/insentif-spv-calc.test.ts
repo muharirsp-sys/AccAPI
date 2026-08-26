@@ -185,4 +185,31 @@ for (const [n, expectedTotal] of [[1, 1_500_000], [2, 1_600_000], [3, 1_800_000]
 
 console.log("OK support SPV");
 
+
+// === Ambang 100% SPV (dikonfirmasi user 2026-08-26): di bawah 100% tidak dapat apa pun ===
+{
+    // 99,99% BUKAN 100%. Di skema Sales angka ini masih dibayar proporsional; SPV tidak.
+    const r = calculateInsentifSPV([row("P0", 100, 99.99)]);
+    approx(r.rincian[0].pctValue, 0, "99,99% → 0");
+    approx(r.total, 0, "n=1 tapi belum 100% → tidak dibayar");
+}
+{
+    const r = calculateInsentifSPV([row("P0", 100, 100)]);
+    approx(r.total, 1_500_000, "tepat 100% → rate penuh");
+}
+{
+    // Ambang per principal: yang tembus dibayar penuh, yang tidak dibayar nol. Rate tetap
+    // n=3 karena principal yang gagal target tetap dihitung sebagai principal yang dipegang.
+    const r = calculateInsentifSPV([row("A", 100, 120), row("B", 100, 95), row("C", 100, 100)]);
+    approx(r.ratePerPrincipal, 600_000, "n=3 → rate 600rb");
+    approx(r.total, 1_200_000, "A dan C dibayar, B tidak → 2 × 600rb");
+}
+{
+    // Support sebagian tetap dipotong dari rate, lalu ambang 100% berlaku ke sisanya.
+    const r = calculateInsentifSPV([row("P0", 100, 100)], new Map([["P0", 300_000]]));
+    approx(r.total, 1_200_000, "rate 1,5jt − support 300rb, pencapaian 100%");
+    const gagal = calculateInsentifSPV([row("P0", 100, 80)], new Map([["P0", 300_000]]));
+    approx(gagal.total, 0, "support tidak menolong kalau target tidak tercapai");
+}
+
 console.log("OK — all insentif-spv-calc checks passed");

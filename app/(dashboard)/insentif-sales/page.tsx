@@ -288,6 +288,11 @@ function SalesBreakdown({ r }: { r: ApiRow }) {
 
 /** Rincian per principal untuk satu SPV. Target & realisasi ikut, tanpa itu persentasenya tak bisa ditelusuri. */
 function SpvBreakdown({ rincian }: { rincian: SpvIncentiveDetail[] }) {
+    // pctValue SPV adalah PENGALI (0 atau 1 sejak ambang 100% berlaku), bukan pencapaian.
+    // Menampilkannya apa adanya membuat setiap baris terbaca 0% atau 100% dan pencapaian
+    // sebenarnya hilang, justru di tempat orang mencarinya.
+    const pencapaian = (d: SpvIncentiveDetail) =>
+        d.targetValue > 0 ? (d.realisasiValue / d.targetValue) * 100 : 0;
     return (
         <table className="w-full text-[11px]">
             <thead className="text-slate-500 uppercase tracking-wider">
@@ -306,9 +311,11 @@ function SpvBreakdown({ rincian }: { rincian: SpvIncentiveDetail[] }) {
                         <td className="py-2 text-slate-300">{d.principle}</td>
                         <td className="py-2 text-right font-mono text-slate-400">{formatRp(d.targetValue)}</td>
                         <td className="py-2 text-right font-mono text-slate-300">{formatRp(d.realisasiValue)}</td>
-                        <td className="py-2 text-right font-mono text-slate-300">{(d.pctValue * 100).toFixed(1)}%</td>
+                        <td className="py-2 text-right font-mono text-slate-300">{formatPctText(pencapaian(d))}</td>
                         <td className="py-2 text-right font-mono text-slate-400">{formatRp(d.rate)}</td>
-                        <td className="py-2 text-right font-mono text-amber-400/90">{formatRp(d.insentif)}</td>
+                        <td className={`py-2 text-right font-mono ${d.insentif > 0 ? "text-amber-400/90" : "text-slate-500"}`}>
+                            {d.insentif > 0 ? formatRp(d.insentif) : "Rp 0 · belum 100%"}
+                        </td>
                     </tr>
                 ))}
                 {rincian.length === 0 && (
@@ -996,7 +1003,7 @@ function SpvIncentiveTable({ month, year }: { month: number; year: number }) {
 
     return (
         <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-            <SectionTitle icon={Wallet} no={3} title="Tabel Insentif SPV" desc="Strata berbasis Value. Rate principal mengikuti jumlah principal valid yang ditangani." />
+            <SectionTitle icon={Wallet} no={3} title="Tabel Insentif SPV" desc="Berbasis Value. Principal dibayar penuh hanya bila pencapaiannya 100% atau lebih; di bawah itu Rp 0. Rate per principal mengikuti jumlah principal valid yang ditangani." />
             {loading ? (
                 <div className="flex items-center justify-center py-8 gap-2 text-slate-500 text-sm">
                     <Loader2 size={18} className="animate-spin text-indigo-400" /> Memuat…

@@ -20,8 +20,9 @@
  *                      berbeda dari formula yang kalau diekstrapolasi memberi 3,2jt.
  *   Terverifikasi cocok persis ke tabel given: n=2→800rb, 3→600rb, 4→500rb, 5→440rb, 6→400rb.
  *   n>6 ekstrapolasi otomatis dari formula yang sama (mendekati 200rb, tak pernah negatif).
- * - Insentif_n = rate × percentageMultiplier(realisasi, target) — threshold reuse dari Sales:
- *   <90%→0, 90-100%→aktual, >100%→cap 1.00.
+ * - Insentif_n = rate × spvMultiplier(realisasi, target): <100% → 0, ≥100% → rate PENUH.
+ *   Ambang dinilai PER PRINCIPAL, bukan dari total wilayah SPV (dikonfirmasi user 2026-08-26).
+ *   Beda dari Sales/SM yang memakai percentageMultiplier (90-100% dibayar proporsional).
  * - Total_Insentif_SPV = sum(Insentif_n). TIDAK ada komponen AO — murni Value.
  *
  * Support principle utk SPV (dikonfirmasi user 2026-08-19):
@@ -41,7 +42,20 @@
  *   (KINO 10%, MOTASA 50% dari total support sales-nya), jadi disimpan eksplisit di spv_support.
  */
 
-import { percentageMultiplier, isSchemePrincipal, type StatusInsentif } from "./insentif-sales-calc.ts";
+import { roundRatio, isSchemePrincipal, type StatusInsentif } from "./insentif-sales-calc.ts";
+
+/**
+ * Pengali SPV: semua atau tidak sama sekali pada ambang 100% (dikonfirmasi user 2026-08-26).
+ * SENGAJA tidak memakai percentageMultiplier milik Sales/MT: di sana 90-100% dibayar
+ * proporsional, dan menumpang di fungsi yang sama berarti mengubah aturan SPV ikut mengubah
+ * nominal Sales. Rasio dibulatkan lebih dulu (roundRatio) supaya 0,9999999999 hasil SUM
+ * double precision tidak menjatuhkan seluruh rate ke nol dan berubah antar refresh.
+ */
+export function spvMultiplier(realisasi: number, target: number): number {
+    if (!Number.isFinite(target) || target <= 0) return 0;
+    if (!Number.isFinite(realisasi)) return 0;
+    return roundRatio(realisasi / target) >= 1 ? 1 : 0;
+}
 
 export interface SpvSalesRow {
     principle: string;
@@ -151,7 +165,7 @@ export function calculateInsentifSPV(
 
     const rincian: SpvPrincipalDetail[] = valid.map((principle) => {
         const g = grouped.get(principle)!;
-        const pctValue = percentageMultiplier(g.realisasiValue, g.targetValue);
+        const pctValue = spvMultiplier(g.realisasiValue, g.targetValue);
         const support = supportOf(principle);
         const porsiDistributor = Math.max(0, rate - support);
         return {
