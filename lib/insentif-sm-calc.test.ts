@@ -22,11 +22,23 @@ assert.ok(isSmBerhak(" hendrik "), "case & spasi tidak menggagalkan match");
 assert.ok(isSmBerhak("PAK HENDRIK"), "prefiks gelar tetap kena");
 assert.ok(!isSmBerhak("ADNAN"), "ADNAN TIDAK ikut skema");
 assert.ok(!isSmBerhak(""), "nama kosong tidak berhak");
+// L2d — pencocokan KATA UTUH, bukan substring. Nama lain yang kebetulan diawali "HENDRIK"
+// TIDAK boleh otomatis berhak sampai Rp 3,5 juta tanpa keputusan siapa pun.
+assert.ok(!isSmBerhak("HENDRIKUS"), "HENDRIKUS bukan HENDRIK");
+assert.ok(!isSmBerhak("HENDRIKA SARI"), "HENDRIKA bukan HENDRIK");
+assert.ok(isSmBerhak("HENDRIK S."), "titik di belakang tetap kena");
+assert.ok(isSmBerhak("BAPAK HENDRIK WIJAYA"), "nama panjang tetap kena");
 
 // --- baris _OFFICE bukan salesman ---
 assert.ok(isOfficeRow("M-FN_OFFICE", "OFFICE"), "kode _OFFICE kena");
 assert.ok(isOfficeRow("M-XX1", "Office Support"), "nama saja pun kena");
 assert.ok(!isOfficeRow("FS1", "GITO ADAM SAPUTRA"), "salesman biasa tidak kena");
+// Terverifikasi ke file target Juli 2026: ke-16 baris _OFFICE tetap tertangkap setelah
+// pindah dari substring ke kata utuh, termasuk yang berkata di kedua sisi.
+assert.ok(isOfficeRow("M-SP37", "FS_MT_OFFICE_HRK"), "OFFICE di tengah underscore tetap kena");
+assert.ok(isOfficeRow("M-SP1", "EN_OFFICE"), "pola X_OFFICE tetap kena");
+// Kata utuh: salesman yang namanya cuma MENGANDUNG "office" tidak ikut dibuang.
+assert.ok(!isOfficeRow("M-OFC", "OFFICER RAHMAN"), "OFFICER bukan OFFICE");
 
 let seq = 0;
 const row = (target: number, real: number, status: SmSalesRow["statusInsentif"] = "distributor_principle"): SmSalesRow =>

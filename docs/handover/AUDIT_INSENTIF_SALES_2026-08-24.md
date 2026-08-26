@@ -2,7 +2,7 @@
 
 > Audit read-only saat ditulis. **Perbaikan menyusul** — lihat baris "Status" di tiap temuan.
 > Ringkasan status per 2026-08-24: C0-C3 FIXED (DDL sudah jalan di produksi);
-> H1-H7 FIXED; M1-M9, M11-M13 FIXED; M10 FIXED; L1c/L2b FIXED; sisa L1b/L1d/L1e/L1f/L2d + L1g menunggu dijalankan di VPS.
+> H1-H7 FIXED; M1-M9, M11-M13 FIXED; M10 FIXED; L1c/L2b FIXED; L2d FIXED; sisa L1b/L1d/L1e/L1f + L1g menunggu dijalankan di VPS.
 > Metode: 4 sub-agent paralel (kalkulasi, query/DBA, validasi & akses, konsistensi lintas layer)
 > atas branch `main` HEAD `3ef1702` + perubahan uncommitted sesi ini. Setiap temuan di bawah sudah
 > di-spot-check ulang langsung ke kode; yang tidak terbukti dipindah ke §3.
@@ -603,7 +603,7 @@ komentarnya dan buat toast eksplisit. Kalau "ganti per hari", tambahkan `date` k
 
 ### L2 · LOW · Sisa dari audit kalkulasi
 
-> **Status: SEBAGIAN — L2a FIXED (ikut M4), L2c FIXED (ikut M7), L2b FIXED: penjualan bersih <= 0 tidak dapat komponen AO/EC/IA sama sekali (dikonfirmasi user). L2d belum disentuh.**
+> **Status: SEBAGIAN — L2a FIXED (ikut M4), L2c FIXED (ikut M7), L2b FIXED: penjualan bersih <= 0 tidak dapat komponen AO/EC/IA sama sekali (dikonfirmasi user). L2d FIXED: pencocokan kata utuh (containsWord), diverifikasi ke file target Juli 2026 — ke-16 baris _OFFICE tetap tertangkap, "HENDRIKUS" tidak lagi lolos whitelist.**
 
 | # | Temuan | Lokasi | Rekomendasi |
 |---|---|---|---|

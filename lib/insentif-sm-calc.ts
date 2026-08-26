@@ -30,16 +30,29 @@
 import { roundRatio, type StatusInsentif } from "./insentif-sales-calc.ts";
 
 /**
- * SM yang ikut skema insentif SM. Dicocokkan sebagai substring pada nama ter-normalisasi,
- * supaya "PAK HENDRIK" / "HENDRIK S." tetap kena.
+ * Cocokkan sebagai KATA UTUH, bukan substring. Pemisah kata di data ini bermacam-macam
+ * (spasi, underscore, tanda hubung, titik), jadi apa pun yang bukan huruf/angka dianggap
+ * pemisah: "PAK HENDRIK", "HENDRIK S.", "M-FN_OFFICE", "FS_MT_OFFICE_HRK" semuanya terurai
+ * dengan benar.
+ *
+ * Substring TIDAK dipakai karena terlalu longgar untuk konsekuensinya (audit temuan L2d):
+ * "HENDRIKUS" akan lolos whitelist SM dan otomatis berhak sampai Rp 3,5 juta tanpa keputusan
+ * siapa pun, dan salesman yang namanya kebetulan mengandung "OFFICE" akan dibuang dari
+ * agregasi SM/SPV.
+ */
+function containsWord(haystack: string, word: string): boolean {
+    return haystack.toUpperCase().split(/[^A-Z0-9]+/).includes(word);
+}
+
+/**
+ * SM yang ikut skema insentif SM.
  * ponytail: whitelist literal, bukan tabel DB — baru 1 nama dan perubahannya butuh keputusan
  * user. Pindah ke DB kalau daftarnya mulai berubah per periode.
  */
 export const SM_BERHAK_INSENTIF = ["HENDRIK"] as const;
 
 export function isSmBerhak(smName: string): boolean {
-    const n = smName.trim().toUpperCase();
-    return SM_BERHAK_INSENTIF.some((s) => n.includes(s));
+    return SM_BERHAK_INSENTIF.some((s) => containsWord(smName, s));
 }
 
 /**
@@ -47,7 +60,7 @@ export function isSmBerhak(smName: string): boolean {
  * kode MAUPUN nama karena penulisannya tidak konsisten di file target.
  */
 export function isOfficeRow(salesCode: string, salesName: string): boolean {
-    return `${salesCode} ${salesName}`.toUpperCase().includes("OFFICE");
+    return containsWord(`${salesCode} ${salesName}`, "OFFICE");
 }
 
 export interface SmSalesRow {
