@@ -2,7 +2,7 @@
 
 > Audit read-only saat ditulis. **Perbaikan menyusul** — lihat baris "Status" di tiap temuan.
 > Ringkasan status per 2026-08-24: C0-C3 FIXED (DDL sudah jalan di produksi);
-> H1-H7 FIXED; M1-M9, M11-M13 FIXED; M10 sebagian; L1/L2 belum disentuh.
+> H1-H7 FIXED; M1-M9, M11-M13 FIXED; M10 FIXED; sisa L1/L2 (semuanya LOW).
 > Metode: 4 sub-agent paralel (kalkulasi, query/DBA, validasi & akses, konsistensi lintas layer)
 > atas branch `main` HEAD `3ef1702` + perubahan uncommitted sesi ini. Setiap temuan di bawah sudah
 > di-spot-check ulang langsung ke kode; yang tidak terbukti dipindah ke §3.
@@ -514,7 +514,7 @@ Datanya sudah ada di `payments`; nol tabel/kolom baru.
 
 ### M10 · MEDIUM · Default `"NESTLE"`/`"BANDUNG"` bocor dari template demo; target bertipe teks jadi 0 diam-diam
 
-> **Status: SEBAGIAN (be5580d) — EMPTY_ROW & validator diperbaiki; default "NESTLE" di parseTargetExcel MASIH ADA.**
+> **Status: FIXED** — default `"NESTLE"`/`"BANDUNG"` dicabut dari `parseTargetExcel`; baris tanpa Principal/Cabang DITOLAK di 3 lapis (parser, validator upload, POST /targets). Dikonfirmasi user 2026-08-24. Default `Channel = "TT"` dipertahankan karena sama dengan default kolom di `db/schema.ts`.
 
 **Apa:** `insentif-sales-excel.ts:32-34` — `Principal` kosong → `"NESTLE"`, `Cabang` kosong →
 `"BANDUNG"`, `Channel` kosong → `"TT"` (= masuk skema GT berbayar). Untuk angka,

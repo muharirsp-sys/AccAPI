@@ -923,6 +923,18 @@ function TargetInputSection() {
                 setExcelUploading(false);
                 return;
             }
+            // Principal ikut kunci upsert (salesCode+principle+periode) dan Cabang menentukan
+            // acuan Value (DPP vs NILAI_JUAL, lib/insentif-value-source). Keduanya tidak boleh
+            // ditebak — baris tanpa Principal biasanya baris pemisah/subtotal di Excel.
+            const noPrinciple = parsed.filter((r) => !r.principle?.trim() || !r.branch?.trim());
+            if (noPrinciple.length) {
+                const contoh = noPrinciple.slice(0, 3).map((r) => r.salesCode).join(", ");
+                toast.error(
+                    `${noPrinciple.length} baris tidak punya Principal/Cabang (${contoh}${noPrinciple.length > 3 ? ", …" : ""}). Upload dibatalkan.`,
+                );
+                setExcelUploading(false);
+                return;
+            }
             // Kalau SEMUA baris bertarget 0, hampir pasti header kolomnya tidak terbaca —
             // bukan target yang benar-benar nol. Tolak daripada menimpa target lama dengan nol.
             if (parsed.length > 0 && parsed.every((r) => !r.targetValue)) {

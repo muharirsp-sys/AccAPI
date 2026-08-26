@@ -106,6 +106,15 @@ export async function POST(req: NextRequest) {
     const prepared: PreparedRow[] = [];
 
     for (const t of rows) {
+        // principle ikut KUNCI UPSERT — kosong berarti baris ini menimpa baris lain yang
+        // principle-nya juga kosong, bukan menyimpan data baru. branch menentukan acuan Value
+        // (DPP vs NILAI_JUAL). Keduanya tidak boleh ditebak dari default.
+        if (!t.principle?.trim() || !t.branch?.trim()) {
+            return NextResponse.json(
+                { error: `Baris ${t.salesCode}: Principal & Cabang wajib diisi.` },
+                { status: 400 },
+            );
+        }
         for (const [field, label] of NUMERIC_FIELDS) {
             const raw = t[field];
             if (raw === undefined || raw === null) continue;

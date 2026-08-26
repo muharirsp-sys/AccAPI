@@ -49,8 +49,15 @@ export function parseTargetExcel(arrayBuffer: ArrayBuffer): Array<Record<string,
         return {
             salesCode: str("Kode Salesman"),
             salesName: str("Nama Salesman"),
-            principle: str("Principal", "NESTLE"),
-            branch: str("Cabang", "BANDUNG"),
+            // TANPA default. "NESTLE"/"BANDUNG" adalah data DEMO (lihat PRINCIPLES/BRANCHES di
+            // app/(dashboard)/insentif-sales/data.ts, ditandai "Master data dummy"). Sebagai
+            // default, keduanya membuat baris pemisah/subtotal di Excel berubah jadi target
+            // NESTLE hantu — menambah `n` pada grup mix salesman itu (konstanta 1,2jt → 1,4jt)
+            // dan memunculkan baris penerima yang bisa ditandai Lunas. Kosong ditolak validator.
+            principle: str("Principal"),
+            branch: str("Cabang"),
+            // Channel tetap punya default: "TT" sama dengan default kolom di db/schema.ts,
+            // jadi ini bukan nilai karangan melainkan perilaku yang memang sudah didefinisikan.
             channel: str("Channel", "TT"),
             spvName: str("SPV"),
             smName: str("SM"),
