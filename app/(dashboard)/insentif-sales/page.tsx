@@ -228,7 +228,120 @@ function useExpandableRows() {
         },
         className: "even:bg-white/[0.025] hover:bg-white/[0.05] transition-colors cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400",
     });
-    return { open, rowProps };
+    return { open, toggle, rowProps };
+}
+
+/**
+ * Rincian satu baris salesman. SATU definisi dipakai tabel Insentif dan tabel pembayaran
+ * Finance: kalau keduanya punya salinan sendiri, cepat atau lambat yang satu menampilkan
+ * dasar perhitungan yang berbeda dari yang lain untuk baris yang sama.
+ */
+function SalesBreakdown({ r }: { r: ApiRow }) {
+    return (
+        <div className="grid gap-5 md:grid-cols-3">
+            <BreakdownGroup title="Value" items={[
+                { label: "Target", value: formatRp(r.target.value) },
+                { label: "Realisasi", value: formatRp(r.real.value) },
+                { label: "Pencapaian", value: formatPctText(r.pct.value) },
+            ]} />
+            <BreakdownGroup title="Aktif Outlet (AO)" items={[
+                { label: "Target", value: formatQty(r.target.ao) },
+                { label: "Realisasi", value: formatQty(r.real.ao) },
+                { label: "Pencapaian", value: formatPctText(r.pct.ao) },
+            ]} />
+            <BreakdownGroup title="EC & ISQ" items={[
+                { label: "Target EC", value: formatQty(r.target.ec) },
+                { label: "Realisasi EC", value: formatQty(r.real.ec) },
+                { label: "Pencapaian EC", value: formatPctText(r.pct.ec) },
+                { label: "Target ISQ", value: formatQty(r.target.isq) },
+                { label: "Realisasi ISQ", value: formatQty(r.real.isq) },
+                { label: "Pencapaian ISQ", value: formatPctText(r.pct.isq) },
+            ]} />
+            <BreakdownGroup title="Dasar perhitungan" items={[
+                { label: "Tipe sales", value: r.tipeSales ?? "-", tone: "muted" },
+                { label: "Status insentif", value: r.statusInsentif ?? "-", tone: "muted" },
+                { label: "Support principle", value: formatRp(r.support ?? 0) },
+            ]} />
+            <BreakdownGroup title="Komponen insentif" items={[
+                { label: "Value (30%)", value: formatRp(r.incentive.value) },
+                { label: "AO (70%)", value: formatRp(r.incentive.ao) },
+                { label: "Total", value: formatRp(r.incentive.total), tone: "amber" },
+            ]} />
+            <BreakdownGroup title="Wilayah" items={[
+                { label: "Cabang", value: r.branch, tone: "muted" },
+                { label: "Channel", value: r.channel, tone: "muted" },
+                { label: "SPV / SM", value: `${r.spvName ?? "-"} / ${r.smName ?? "-"}`, tone: "muted" },
+            ]} />
+        </div>
+    );
+}
+
+/** Rincian per principal untuk satu SPV. Target & realisasi ikut, tanpa itu persentasenya tak bisa ditelusuri. */
+function SpvBreakdown({ rincian }: { rincian: SpvIncentiveDetail[] }) {
+    return (
+        <table className="w-full text-[11px]">
+            <thead className="text-slate-500 uppercase tracking-wider">
+                <tr>
+                    <th className="text-left font-semibold pb-2">Principal</th>
+                    <th className="text-right font-semibold pb-2">Target</th>
+                    <th className="text-right font-semibold pb-2">Realisasi</th>
+                    <th className="text-right font-semibold pb-2">Pencapaian</th>
+                    <th className="text-right font-semibold pb-2">Rate</th>
+                    <th className="text-right font-semibold pb-2">Insentif</th>
+                </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+                {rincian.map((d) => (
+                    <tr key={d.principle}>
+                        <td className="py-2 text-slate-300">{d.principle}</td>
+                        <td className="py-2 text-right font-mono text-slate-400">{formatRp(d.targetValue)}</td>
+                        <td className="py-2 text-right font-mono text-slate-300">{formatRp(d.realisasiValue)}</td>
+                        <td className="py-2 text-right font-mono text-slate-300">{(d.pctValue * 100).toFixed(1)}%</td>
+                        <td className="py-2 text-right font-mono text-slate-400">{formatRp(d.rate)}</td>
+                        <td className="py-2 text-right font-mono text-amber-400/90">{formatRp(d.insentif)}</td>
+                    </tr>
+                ))}
+                {rincian.length === 0 && (
+                    <tr><td colSpan={6} className="py-3 text-slate-500 italic">Tidak ada principal valid untuk SPV ini.</td></tr>
+                )}
+            </tbody>
+        </table>
+    );
+}
+
+/** Rincian satu SM: strata FLAT, jadi yang perlu dijelaskan adalah strata mana yang kena dan kenapa. */
+function SmBreakdown({ r }: { r: SmIncentiveRow }) {
+    // Rasio dibulatkan sama persis seperti rateSm (roundRatio 1e-6) sebelum dicocokkan ke
+    // strata. Tanpa itu 0,8999999997 di layar jatuh ke "< 90%" padahal yang dibayar server
+    // Rp 1,5jt: rincian yang membantah nominalnya sendiri.
+    const capaian = (Math.round(r.pctValue * 1e6) / 1e6) * 100;
+    const strata = SM_STRATA.find((t) => capaian >= t.min) ?? SM_STRATA[SM_STRATA.length - 1];
+    const selisih = r.realisasiValue - r.targetValue;
+    return (
+        <>
+            <div className="grid gap-5 md:grid-cols-3">
+                <BreakdownGroup title="Value wilayah" items={[
+                    { label: "Target", value: formatRp(r.targetValue) },
+                    { label: "Realisasi", value: formatRp(r.realisasiValue) },
+                    { label: selisih >= 0 ? "Surplus" : "Kurang", value: formatRp(Math.abs(selisih)) },
+                ]} />
+                <BreakdownGroup title="Dasar perhitungan" items={[
+                    { label: "Pencapaian", value: `${capaian.toFixed(1)}%` },
+                    { label: "Strata", value: strata.label },
+                    { label: "Baris sales dihitung", value: formatQty(r.jumlahBaris) },
+                ]} />
+                <BreakdownGroup title="Hasil" items={[
+                    { label: "Nominal strata", value: formatRp(strata.nominal) },
+                    { label: "Ikut skema", value: r.berhak ? "Ya" : "Tidak", tone: "muted" },
+                    { label: "Dibayar", value: formatRp(r.total), tone: "amber" },
+                ]} />
+            </div>
+            <p className="text-[11px] text-slate-500 mt-4">
+                Strata FLAT: nominal tidak dikali persentase. Semua status principal ikut
+                dihitung, termasuk principle. Baris _OFFICE dibuang.
+            </p>
+        </>
+    );
 }
 
 /** Penanda baris bisa diklik. Chevron ikut berputar saat terbuka. */
@@ -575,41 +688,7 @@ function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
                                     {open[key] && (
                                         <tr className="bg-black/30">
                                             <td colSpan={6} className="px-4 py-4">
-                                                <div className="grid gap-5 md:grid-cols-3">
-                                                    <BreakdownGroup title="Value" items={[
-                                                        { label: "Target", value: formatRp(r.target.value) },
-                                                        { label: "Realisasi", value: formatRp(r.real.value) },
-                                                        { label: "Pencapaian", value: formatPctText(r.pct.value) },
-                                                    ]} />
-                                                    <BreakdownGroup title="Aktif Outlet (AO)" items={[
-                                                        { label: "Target", value: formatQty(r.target.ao) },
-                                                        { label: "Realisasi", value: formatQty(r.real.ao) },
-                                                        { label: "Pencapaian", value: formatPctText(r.pct.ao) },
-                                                    ]} />
-                                                    <BreakdownGroup title="EC & ISQ" items={[
-                                                        { label: "Target EC", value: formatQty(r.target.ec) },
-                                                        { label: "Realisasi EC", value: formatQty(r.real.ec) },
-                                                        { label: "Pencapaian EC", value: formatPctText(r.pct.ec) },
-                                                        { label: "Target ISQ", value: formatQty(r.target.isq) },
-                                                        { label: "Realisasi ISQ", value: formatQty(r.real.isq) },
-                                                        { label: "Pencapaian ISQ", value: formatPctText(r.pct.isq) },
-                                                    ]} />
-                                                    <BreakdownGroup title="Dasar perhitungan" items={[
-                                                        { label: "Tipe sales", value: r.tipeSales ?? "-", tone: "muted" },
-                                                        { label: "Status insentif", value: r.statusInsentif ?? "-", tone: "muted" },
-                                                        { label: "Support principle", value: formatRp(r.support ?? 0) },
-                                                    ]} />
-                                                    <BreakdownGroup title="Komponen insentif" items={[
-                                                        { label: "Value (30%)", value: formatRp(r.incentive.value) },
-                                                        { label: "AO (70%)", value: formatRp(r.incentive.ao) },
-                                                        { label: "Total", value: formatRp(r.incentive.total), tone: "amber" },
-                                                    ]} />
-                                                    <BreakdownGroup title="Wilayah" items={[
-                                                        { label: "Cabang", value: r.branch, tone: "muted" },
-                                                        { label: "Channel", value: r.channel, tone: "muted" },
-                                                        { label: "SPV / SM", value: `${r.spvName ?? "-"} / ${r.smName ?? "-"}`, tone: "muted" },
-                                                    ]} />
-                                                </div>
+                                                <SalesBreakdown r={r} />
                                             </td>
                                         </tr>
                                     )}
@@ -817,12 +896,7 @@ function SmIncentiveTable({ month, year }: { month: number; year: number }) {
                         </thead>
                         <tbody className="divide-y divide-white/[0.1]">
                             {rows.map((r) => {
-                                // Rasio dibulatkan sama persis seperti rateSm (roundRatio 1e-6) sebelum
-                                // dicocokkan ke strata. Tanpa itu 0,8999999997 di layar jatuh ke "< 90%"
-                                // padahal yang dibayar server Rp 1,5jt — rincian yang membantah nominalnya sendiri.
                                 const capaian = (Math.round(r.pctValue * 1e6) / 1e6) * 100;
-                                const strata = SM_STRATA.find((t) => capaian >= t.min) ?? SM_STRATA[SM_STRATA.length - 1];
-                                const selisih = r.realisasiValue - r.targetValue;
                                 return (
                                     <Fragment key={r.smName}>
                                         <tr {...rowProps(r.smName)}>
@@ -841,27 +915,7 @@ function SmIncentiveTable({ month, year }: { month: number; year: number }) {
                                         {open[r.smName] && (
                                             <tr className="bg-black/30">
                                                 <td colSpan={6} className="px-4 py-4">
-                                                    <div className="grid gap-5 md:grid-cols-3">
-                                                        <BreakdownGroup title="Value wilayah" items={[
-                                                            { label: "Target", value: formatRp(r.targetValue) },
-                                                            { label: "Realisasi", value: formatRp(r.realisasiValue) },
-                                                            { label: selisih >= 0 ? "Surplus" : "Kurang", value: formatRp(Math.abs(selisih)) },
-                                                        ]} />
-                                                        <BreakdownGroup title="Dasar perhitungan" items={[
-                                                            { label: "Pencapaian", value: `${capaian.toFixed(1)}%` },
-                                                            { label: "Strata", value: strata.label },
-                                                            { label: "Baris sales dihitung", value: formatQty(r.jumlahBaris) },
-                                                        ]} />
-                                                        <BreakdownGroup title="Hasil" items={[
-                                                            { label: "Nominal strata", value: formatRp(strata.nominal) },
-                                                            { label: "Ikut skema", value: r.berhak ? "Ya" : "Tidak", tone: "muted" },
-                                                            { label: "Dibayar", value: formatRp(r.total), tone: "amber" },
-                                                        ]} />
-                                                    </div>
-                                                    <p className="text-[11px] text-slate-500 mt-4">
-                                                        Strata FLAT: nominal tidak dikali persentase. Semua status principal ikut
-                                                        dihitung, termasuk principle. Baris _OFFICE dibuang.
-                                                    </p>
+                                                    <SmBreakdown r={r} />
                                                 </td>
                                             </tr>
                                         )}
@@ -959,35 +1013,7 @@ function SpvIncentiveTable({ month, year }: { month: number; year: number }) {
                                     {open[r.spvName] && (
                                         <tr className="bg-black/30">
                                             <td colSpan={5} className="px-4 py-4">
-                                                {/* Rincian per principal: target dan realisasi ikut ditampilkan, karena
-                                                    tanpa keduanya angka pencapaian tidak bisa ditelusuri asalnya. */}
-                                                <table className="w-full text-[11px]">
-                                                    <thead className="text-slate-500 uppercase tracking-wider">
-                                                        <tr>
-                                                            <th className="text-left font-semibold pb-2">Principal</th>
-                                                            <th className="text-right font-semibold pb-2">Target</th>
-                                                            <th className="text-right font-semibold pb-2">Realisasi</th>
-                                                            <th className="text-right font-semibold pb-2">Pencapaian</th>
-                                                            <th className="text-right font-semibold pb-2">Rate</th>
-                                                            <th className="text-right font-semibold pb-2">Insentif</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-white/5">
-                                                        {r.rincian.map((d) => (
-                                                            <tr key={`${r.spvName}-${d.principle}`}>
-                                                                <td className="py-2 text-slate-300">{d.principle}</td>
-                                                                <td className="py-2 text-right font-mono text-slate-400">{formatRp(d.targetValue)}</td>
-                                                                <td className="py-2 text-right font-mono text-slate-300">{formatRp(d.realisasiValue)}</td>
-                                                                <td className="py-2 text-right font-mono text-slate-300">{(d.pctValue * 100).toFixed(1)}%</td>
-                                                                <td className="py-2 text-right font-mono text-slate-400">{formatRp(d.rate)}</td>
-                                                                <td className="py-2 text-right font-mono text-amber-400/90">{formatRp(d.insentif)}</td>
-                                                            </tr>
-                                                        ))}
-                                                        {r.rincian.length === 0 && (
-                                                            <tr><td colSpan={6} className="py-3 text-slate-500 italic">Tidak ada principal valid untuk SPV ini.</td></tr>
-                                                        )}
-                                                    </tbody>
-                                                </table>
+                                                <SpvBreakdown rincian={r.rincian} />
                                             </td>
                                         </tr>
                                     )}
@@ -2558,8 +2584,15 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
     const [paymentsError, setPaymentsError] = useState("");
     // Insentif SPV & SM ikut dibayar dari tabel yang sama — diambil dari endpoint hitungannya
     // masing-masing, karena apiRows hanya berisi baris per-sales.
-    const [spvPayees, setSpvPayees] = useState<{ name: string; total: number }[]>([]);
-    const [smPayees, setSmPayees] = useState<{ name: string; total: number }[]>([]);
+    // Baris SPV/SM disimpan UTUH, bukan diringkas jadi nama+total: rincian pencapaiannya
+    // dipakai baris rincian di tabel pembayaran, dan meringkasnya di sini berarti Finance
+    // melihat nominal tanpa dasar perhitungannya.
+    const [spvPayees, setSpvPayees] = useState<SpvIncentiveRow[]>([]);
+    const [smPayees, setSmPayees] = useState<SmIncentiveRow[]>([]);
+    const [principleFilter, setPrincipleFilter] = useState("ALL");
+    // `toggle` di komponen ini sudah dipakai untuk centang pembayaran; rincian pakai nama lain
+    // supaya satu klik tidak pernah bisa salah jatuh ke penandaan uang.
+    const { open, toggle: toggleRincian } = useExpandableRows();
 
     useEffect(() => {
         let cancelled = false;
@@ -2572,10 +2605,9 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                 const spv = spvRes.ok ? await spvRes.json() : { rows: [] };
                 const sm = smRes.ok ? await smRes.json() : { rows: [] };
                 if (cancelled) return;
-                setSpvPayees((spv.rows ?? []).map((r: { spvName: string; total: number }) => ({ name: r.spvName, total: r.total })));
+                setSpvPayees((spv.rows ?? []) as SpvIncentiveRow[]);
                 // SM di luar whitelist total-nya 0 — jangan bikin baris pembayaran kosong.
-                setSmPayees((sm.rows ?? []).filter((r: { total: number }) => r.total > 0)
-                    .map((r: { smName: string; total: number }) => ({ name: r.smName, total: r.total })));
+                setSmPayees(((sm.rows ?? []) as SmIncentiveRow[]).filter((r) => r.total > 0));
             } catch {
                 if (!cancelled) { setSpvPayees([]); setSmPayees([]); }
             }
@@ -2673,8 +2705,8 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                 return { role: "sales" as PayeeRole, salesCode: r.salesCode, salesName: r.salesName, principle: r.principle, branch: r.branch, total, drift, paymentId: pay?.id ?? null, status: (pay?.paymentStatus ?? r.paymentStatus) as string };
             });
             const extra = [
-                ...spvPayees.map((r) => ({ role: "spv" as PayeeRole, name: r.name, total: r.total })),
-                ...smPayees.map((r) => ({ role: "sm" as PayeeRole, name: r.name, total: r.total })),
+                ...spvPayees.map((r) => ({ role: "spv" as PayeeRole, name: r.spvName, total: r.total })),
+                ...smPayees.map((r) => ({ role: "sm" as PayeeRole, name: r.smName, total: r.total })),
             ].map((r) => {
                 const salesCode = payeeCode(r.role, r.name);
                 const pay = findPay(salesCode, PAYEE_PRINCIPLE_ALL);
@@ -2687,6 +2719,27 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
             .filter((p) => p.periodMonth === selectedMonth)
             .map((p) => ({ role: parsePayee(p.salesCode).role, salesCode: p.salesCode, salesName: p.salesName, principle: p.principle, branch: p.branch, total: p.totalIncentive, drift: 0, paymentId: p.id, status: p.paymentStatus }));
     }, [selectedMonth, month, apiRows, payments, spvPayees, smPayees]);
+
+    // Pilihan filter dibangun dari principal yang BENAR-BENAR ada di bulan terpilih, bukan dari
+    // konstanta master: bulan lama bisa memuat principal yang sudah tidak dipakai lagi.
+    const principleOptions = useMemo(
+        () => [...new Set(detailRows.map((r) => r.principle))].filter((v) => v && v !== PAYEE_PRINCIPLE_ALL).sort(),
+        [detailRows],
+    );
+    const visibleRows = useMemo(
+        () => principleFilter === "ALL" ? detailRows : detailRows.filter((r) => r.principle === principleFilter),
+        [detailRows, principleFilter],
+    );
+
+    // Rincian hanya ada untuk periode berjalan, karena bulan lain dibaca dari snapshot
+    // incentive_payments yang menyimpan nominal saja, bukan target/realisasinya.
+    const salesByKey = useMemo(() => {
+        const m = new Map<string, ApiRow>();
+        for (const r of apiRows) m.set(`${r.salesCode}|${r.principle}`, r);
+        return m;
+    }, [apiRows]);
+    const spvByName = useMemo(() => new Map(spvPayees.map((r) => [r.spvName, r])), [spvPayees]);
+    const smByName = useMemo(() => new Map(smPayees.map((r) => [r.smName, r])), [smPayees]);
 
     const toggle = (row: { salesCode: string; principle: string }) => {
         const key = paymentSelectionKey(row);
@@ -2809,9 +2862,27 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
                 <div className="flex items-center justify-between mb-4">
                     <SectionTitle icon={Wallet} no={2} title={`Tabel Insentif: ${MONTH_LABELS[selectedMonth - 1]} ${year}`} desc="Centang lalu simpan sebagai lunas. Perubahan langsung dicatat ke database." />
-                    <button onClick={fetchPayments} className="text-slate-500 hover:text-slate-300 transition-colors p-1.5 rounded-lg hover:bg-white/5">
-                        <RefreshCw size={14} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <select
+                            aria-label="Filter principle pembayaran"
+                            value={principleFilter}
+                            onChange={(e) => setPrincipleFilter(e.target.value)}
+                            className="bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                        >
+                            <option value="ALL">Semua principle ({detailRows.length})</option>
+                            {principleOptions.map((pr) => (
+                                <option key={pr} value={pr}>{pr} ({detailRows.filter((r) => r.principle === pr).length})</option>
+                            ))}
+                            {detailRows.some((r) => r.principle === PAYEE_PRINCIPLE_ALL) && (
+                                <option value={PAYEE_PRINCIPLE_ALL}>
+                                    SPV & SM ({detailRows.filter((r) => r.principle === PAYEE_PRINCIPLE_ALL).length})
+                                </option>
+                            )}
+                        </select>
+                        <button onClick={fetchPayments} aria-label="Muat ulang status pembayaran" className="text-slate-500 hover:text-slate-300 transition-colors p-1.5 rounded-lg hover:bg-white/5">
+                            <RefreshCw size={14} />
+                        </button>
+                    </div>
                 </div>
                 <div className="overflow-x-auto">
                     <table className="ui-data-table min-w-[820px]">
@@ -2824,18 +2895,25 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                                 <th className="px-3 py-3 text-right">Total Insentif</th>
                                 <th className="px-3 py-3">Bukti Bayar</th>
                                 <th className="px-3 py-3 text-center">Status</th>
+                                <th className="px-3 py-3 w-8"><span className="sr-only">Rincian</span></th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-white/[0.1]">
-                            {detailRows.map((r) => {
+                            {visibleRows.map((r) => {
                                 const selectionKey = paymentSelectionKey(r);
+                                const sales = r.role === "sales" ? salesByKey.get(`${r.salesCode}|${r.principle}`) : undefined;
+                                const spv = r.role === "spv" ? spvByName.get(r.salesName) : undefined;
+                                const sm = r.role === "sm" ? smByName.get(r.salesName) : undefined;
                                 const isChecked = !!checked[selectionKey];
                                 const sc = r.status === "lunas" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
                                     : r.status === "tunggakan" ? "bg-rose-500/10 text-rose-400 border-rose-500/30"
                                         : "bg-white/5 text-slate-500 border-white/10";
                                 const slabel = r.status === "lunas" ? "Lunas" : r.status === "tunggakan" ? "Tunggakan" : "Belum";
                                 return (
-                                    <tr key={selectionKey} className={`transition-colors hover:bg-white/[0.05] ${isChecked ? "bg-emerald-500/[0.07]" : "even:bg-white/[0.025]"}`}>
+                                    <Fragment key={selectionKey}>
+                                    <tr className={`transition-colors hover:bg-white/[0.05] ${isChecked ? "bg-emerald-500/[0.07]" : "even:bg-white/[0.025]"}`}>
+                                        {/* Checkbox TIDAK ikut membuka rincian: satu klik di kolom ini harus
+                                            berarti satu hal saja, karena hal itu adalah menandai uang dibayar. */}
                                         <td className="px-3 py-3">
                                             <input type="checkbox" checked={isChecked} onChange={() => toggle(r)} className="w-4 h-4 accent-emerald-500 cursor-pointer" />
                                         </td>
@@ -2867,18 +2945,63 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                                                 {isChecked ? "Akan Dibayar" : slabel}
                                             </span>
                                         </td>
+                                        <td className="px-3 py-3">
+                                            <button
+                                                type="button"
+                                                aria-expanded={!!open[selectionKey]}
+                                                aria-label={`Rincian ${r.salesName}`}
+                                                onClick={() => toggleRincian(selectionKey)}
+                                                className="text-slate-500 hover:text-slate-200 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400"
+                                            >
+                                                <ChevronDown
+                                                    size={14}
+                                                    className={`transition-transform duration-200 motion-reduce:transition-none ${open[selectionKey] ? "rotate-180" : ""}`}
+                                                />
+                                            </button>
+                                        </td>
                                     </tr>
+                                    {open[selectionKey] && (
+                                        <tr className="bg-black/30">
+                                            <td colSpan={8} className="px-4 py-4">
+                                                {sales ? <SalesBreakdown r={sales} />
+                                                    : spv ? <SpvBreakdown rincian={spv.rincian} />
+                                                        : sm ? <SmBreakdown r={sm} />
+                                                            : (
+                                                                <p className="text-[11px] text-slate-500">
+                                                                    Rincian hanya tersedia untuk periode yang dihitung ulang
+                                                                    ({MONTH_LABELS[month - 1]} {year}). Bulan lain dibaca dari
+                                                                    catatan pembayaran yang menyimpan nominalnya saja, bukan
+                                                                    target dan realisasinya.
+                                                                </p>
+                                                            )}
+                                            </td>
+                                        </tr>
+                                    )}
+                                    </Fragment>
                                 );
                             })}
-                            {detailRows.length === 0 && (
-                                <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-500 italic">Belum ada data untuk bulan ini.</td></tr>
+                            {visibleRows.length === 0 && (
+                                <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-500 italic">
+                                    {detailRows.length === 0
+                                        ? "Belum ada data untuk bulan ini."
+                                        : `Tidak ada penerima untuk principle "${principleFilter}" di bulan ini.`}
+                                </td></tr>
                             )}
                         </tbody>
                     </table>
                 </div>
                 <div className="mt-4 flex items-center justify-between flex-wrap gap-3 border-t border-white/5 pt-4">
+                    {/* Centang di luar filter TETAP ikut dibayar — menyembunyikannya tanpa
+                        memberi tahu berarti Finance menekan Simpan untuk uang yang tidak
+                        dilihatnya. Jumlahnya disebutkan, bukan dibuang diam-diam. */}
                     <span className="text-xs text-slate-400">
                         {checkedList.length} penerima dipilih · Total: <span className="font-mono font-bold text-amber-400">{formatRp(checkedList.reduce((a, r) => a + r.total, 0))}</span>
+                        {(() => {
+                            const hidden = checkedList.filter((row) => !visibleRows.includes(row)).length;
+                            return hidden > 0 ? (
+                                <span className="text-amber-400/80"> ({hidden} di luar filter, tetap ikut disimpan)</span>
+                            ) : null;
+                        })()}
                     </span>
                     <button disabled={checkedList.length === 0 || saving} onClick={handleMarkLunas}
                         className="btn-primary disabled:opacity-50 flex items-center gap-2">
