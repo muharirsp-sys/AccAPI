@@ -13,7 +13,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState, type KeyboardEvent
 import {
     Trophy, Filter, Clock, TrendingUp, BarChart3, ListChecks,
     Wallet, Upload, Target, Users, UserCog, DollarSign, CheckCircle2,
-    AlertTriangle, FileUp, Save, Loader2, RefreshCw, Download,
+    AlertTriangle, FileUp, Save, Loader2, RefreshCw, Download, ChevronDown,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { realisasiValue } from "@/lib/insentif-value-source";
@@ -130,6 +130,118 @@ function paceClasses(level: PaceLevel) {
     if (level === "green") return "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 neon-text-success";
     if (level === "yellow") return "bg-amber-500/10 text-amber-400 border-amber-500/30 neon-text-warn";
     return "bg-rose-500/10 text-rose-400 border-rose-500/30 neon-text-danger";
+}
+
+/**
+ * Panel yang terlipat, pakai <details> native: keyboard, screen reader, dan tombol
+ * Cari-di-halaman browser bekerja tanpa satu baris JS pun. Panel input support memakai ini
+ * karena ia berisi ratusan baris form yang hanya dipakai Finance saat payout — terbuka
+ * permanen, ia mendorong tabel yang dibaca setiap hari keluar layar.
+ */
+function CollapsiblePanel({ icon: Icon, no, title, desc, badge, children }: {
+    icon: typeof Trophy;
+    /** Nomor langkah, kalau panel ini bagian dari alur bernomor. */
+    no?: number;
+    title: string;
+    desc?: string;
+    badge?: string;
+    children: React.ReactNode;
+}) {
+    return (
+        <details className="group bg-[#1a1c23]/60 rounded-xl border border-white/10">
+            <summary className="flex items-center gap-3 p-5 cursor-pointer list-none [&::-webkit-details-marker]:hidden rounded-xl hover:bg-white/[0.02] focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400">
+                <div className="w-9 h-9 rounded-lg bg-black/40 border border-white/10 flex items-center justify-center shrink-0">
+                    <Icon className="text-indigo-400" size={18} />
+                </div>
+                <div className="min-w-0 flex-1">
+                    <h2 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
+                        {no !== undefined && <span className="text-indigo-400 font-mono">{no}.</span>} {title}
+                        {badge && (
+                            <span className="text-[10px] font-mono font-normal text-slate-400 bg-white/5 border border-white/10 rounded px-1.5 py-0.5">
+                                {badge}
+                            </span>
+                        )}
+                    </h2>
+                    {desc && <p className="text-xs text-slate-400 mt-0.5">{desc}</p>}
+                </div>
+                <ChevronDown
+                    size={18}
+                    aria-hidden
+                    className="text-slate-500 shrink-0 transition-transform duration-200 group-open:rotate-180 motion-reduce:transition-none"
+                />
+            </summary>
+            <div className="px-5 pb-5">{children}</div>
+        </details>
+    );
+}
+
+/** Persentase dari API sudah berskala 0-100 (lib/insentif-sales.pct), bukan rasio. */
+function formatPctText(v: number) {
+    return `${v.toFixed(1)}%`;
+}
+
+/** Cacahan EC/AO/IA. Target boleh pecahan (mis. IA 204,8), realisasi selalu bulat. */
+function formatQty(n: number) {
+    return n.toLocaleString("id-ID", { maximumFractionDigits: 1 });
+}
+
+/** Satu angka + labelnya di dalam baris rincian. Angka selalu mono supaya kolom sejajar. */
+function BreakdownItem({ label, value, tone }: { label: string; value: string; tone?: "amber" | "muted" }) {
+    return (
+        <div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
+            <div className={`text-xs font-mono mt-0.5 ${tone === "amber" ? "text-amber-400 font-bold" : tone === "muted" ? "text-slate-400" : "text-slate-200"}`}>
+                {value}
+            </div>
+        </div>
+    );
+}
+
+/** Kelompok rincian: judul kecil + grid angka. Dipakai baris rincian Sales, SPV, dan SM. */
+function BreakdownGroup({ title, items }: { title: string; items: Array<{ label: string; value: string; tone?: "amber" | "muted" }> }) {
+    return (
+        <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-300/70 mb-2">{title}</div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-3">
+                {items.map((it) => <BreakdownItem key={it.label} {...it} />)}
+            </div>
+        </div>
+    );
+}
+
+/**
+ * State buka/tutup baris rincian + prop baris yang aksesibilitasnya sudah lengkap.
+ * Baris tabel yang hanya punya onClick tidak bisa dicapai keyboard sama sekali; di layar
+ * yang dipakai Finance untuk memverifikasi nominal, itu berarti sebagian orang tidak bisa
+ * melihat dasar perhitungannya.
+ */
+function useExpandableRows() {
+    const [open, setOpen] = useState<Record<string, boolean>>({});
+    const toggle = (key: string) => setOpen((p) => ({ ...p, [key]: !p[key] }));
+    const rowProps = (key: string) => ({
+        role: "button" as const,
+        tabIndex: 0,
+        "aria-expanded": !!open[key],
+        onClick: () => toggle(key),
+        onKeyDown: (e: KeyboardEvent<HTMLTableRowElement>) => {
+            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(key); }
+        },
+        className: "even:bg-white/[0.025] hover:bg-white/[0.05] transition-colors cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400",
+    });
+    return { open, rowProps };
+}
+
+/** Penanda baris bisa diklik. Chevron ikut berputar saat terbuka. */
+function ExpandCell({ open }: { open: boolean }) {
+    return (
+        <td className="px-3 py-3 text-center">
+            <ChevronDown
+                size={14}
+                aria-hidden
+                className={`inline text-slate-500 transition-transform duration-200 motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
+            />
+        </td>
+    );
 }
 
 function SectionTitle({ icon: Icon, no, title, desc }: { icon: typeof Trophy; no: number; title: string; desc?: string }) {
@@ -407,6 +519,7 @@ function AchievementTable({ rows, progress: tg }: { rows: Salesman[]; progress: 
 
 // ── Incentive Table — pakai data incentive dari API ────────────────────────
 function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
+    const { open, rowProps } = useExpandableRows();
     const grand = apiRows.reduce(
         (acc, r) => {
             acc.value += r.incentive.value;
@@ -429,6 +542,7 @@ function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
                             <th className="px-3 py-3 text-right">{KPI_LABELS.ao}</th>
                             <th className="px-3 py-3 text-right bg-amber-500/10">Total Insentif</th>
                             <th className="px-3 py-3 text-center">Status</th>
+                            <th className="px-3 py-3 w-8"><span className="sr-only">Rincian</span></th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-white/[0.1]">
@@ -440,21 +554,66 @@ function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
                             };
                             const statusLabel: Record<string, string> = { lunas: "Lunas", tunggakan: "Tunggakan", belum: "Belum" };
                             const sc = statusMap[r.paymentStatus] ?? statusMap.belum;
+                            const key = `${r.salesCode}|${r.principle}`;
                             return (
-                                <tr key={r.salesCode} className="even:bg-white/[0.025] hover:bg-white/[0.05] transition-colors">
-                                    <td className="px-3 py-3">
-                                        <div className="font-semibold text-slate-200">{r.salesName}</div>
-                                        <div className="text-[10px] text-slate-500 font-mono">{r.salesCode}</div>
-                                    </td>
-                                    <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.incentive.value)}</td>
-                                    <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.incentive.ao)}</td>
-                                    <td className="px-3 py-3 text-right bg-amber-500/5 font-mono font-bold text-amber-400">{formatRp(r.incentive.total)}</td>
-                                    <td className="px-3 py-3 text-center">
-                                        <span className={`inline-block px-2 py-0.5 rounded border text-[10px] font-bold ${sc}`}>
-                                            {statusLabel[r.paymentStatus] ?? "Belum"}
-                                        </span>
-                                    </td>
-                                </tr>
+                                <Fragment key={key}>
+                                    <tr {...rowProps(key)}>
+                                        <td className="px-3 py-3">
+                                            <div className="font-semibold text-slate-200">{r.salesName}</div>
+                                            <div className="text-[10px] text-slate-500 font-mono">{r.salesCode} · {r.principle}</div>
+                                        </td>
+                                        <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.incentive.value)}</td>
+                                        <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.incentive.ao)}</td>
+                                        <td className="px-3 py-3 text-right bg-amber-500/5 font-mono font-bold text-amber-400">{formatRp(r.incentive.total)}</td>
+                                        <td className="px-3 py-3 text-center">
+                                            <span className={`inline-block px-2 py-0.5 rounded border text-[10px] font-bold ${sc}`}>
+                                                {statusLabel[r.paymentStatus] ?? "Belum"}
+                                            </span>
+                                        </td>
+                                        <ExpandCell open={!!open[key]} />
+                                    </tr>
+                                    {open[key] && (
+                                        <tr className="bg-black/30">
+                                            <td colSpan={6} className="px-4 py-4">
+                                                <div className="grid gap-5 md:grid-cols-3">
+                                                    <BreakdownGroup title="Value" items={[
+                                                        { label: "Target", value: formatRp(r.target.value) },
+                                                        { label: "Realisasi", value: formatRp(r.real.value) },
+                                                        { label: "Pencapaian", value: formatPctText(r.pct.value) },
+                                                    ]} />
+                                                    <BreakdownGroup title="Aktif Outlet (AO)" items={[
+                                                        { label: "Target", value: formatQty(r.target.ao) },
+                                                        { label: "Realisasi", value: formatQty(r.real.ao) },
+                                                        { label: "Pencapaian", value: formatPctText(r.pct.ao) },
+                                                    ]} />
+                                                    <BreakdownGroup title="EC & ISQ" items={[
+                                                        { label: "Target EC", value: formatQty(r.target.ec) },
+                                                        { label: "Realisasi EC", value: formatQty(r.real.ec) },
+                                                        { label: "Pencapaian EC", value: formatPctText(r.pct.ec) },
+                                                        { label: "Target ISQ", value: formatQty(r.target.isq) },
+                                                        { label: "Realisasi ISQ", value: formatQty(r.real.isq) },
+                                                        { label: "Pencapaian ISQ", value: formatPctText(r.pct.isq) },
+                                                    ]} />
+                                                    <BreakdownGroup title="Dasar perhitungan" items={[
+                                                        { label: "Tipe sales", value: r.tipeSales ?? "-", tone: "muted" },
+                                                        { label: "Status insentif", value: r.statusInsentif ?? "-", tone: "muted" },
+                                                        { label: "Support principle", value: formatRp(r.support ?? 0) },
+                                                    ]} />
+                                                    <BreakdownGroup title="Komponen insentif" items={[
+                                                        { label: "Value (30%)", value: formatRp(r.incentive.value) },
+                                                        { label: "AO (70%)", value: formatRp(r.incentive.ao) },
+                                                        { label: "Total", value: formatRp(r.incentive.total), tone: "amber" },
+                                                    ]} />
+                                                    <BreakdownGroup title="Wilayah" items={[
+                                                        { label: "Cabang", value: r.branch, tone: "muted" },
+                                                        { label: "Channel", value: r.channel, tone: "muted" },
+                                                        { label: "SPV / SM", value: `${r.spvName ?? "-"} / ${r.smName ?? "-"}`, tone: "muted" },
+                                                    ]} />
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )}
+                                </Fragment>
                             );
                         })}
                     </tbody>
@@ -464,6 +623,7 @@ function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
                             <td className="px-3 py-3 text-right font-mono text-slate-200">{formatRp(grand.value)}</td>
                             <td className="px-3 py-3 text-right font-mono text-slate-200">{formatRp(grand.ao)}</td>
                             <td className="px-3 py-3 text-right bg-amber-500/10 font-mono text-amber-300 text-sm">{formatRp(grand.total)}</td>
+                            <td />
                             <td />
                         </tr>
                     </tfoot>
@@ -603,9 +763,18 @@ interface SmIncentiveRow {
     total: number;
 }
 
+/** Strata FLAT insentif SM (lib/insentif-sm-calc). Ditampilkan supaya angka Rp punya alasan. */
+const SM_STRATA: Array<{ min: number; label: string; nominal: number }> = [
+    { min: 110, label: "≥ 110%", nominal: 3_500_000 },
+    { min: 100, label: "100 - 109,99%", nominal: 2_500_000 },
+    { min: 90, label: "90 - 99,99%", nominal: 1_500_000 },
+    { min: 0, label: "< 90%", nominal: 0 },
+];
+
 function SmIncentiveTable({ month, year }: { month: number; year: number }) {
     const [rows, setRows] = useState<SmIncentiveRow[]>([]);
     const [loading, setLoading] = useState(true);
+    const { open, rowProps } = useExpandableRows();
 
     useEffect(() => {
         let cancelled = false;
@@ -643,31 +812,71 @@ function SmIncentiveTable({ month, year }: { month: number; year: number }) {
                                 <th className="px-3 py-3 text-right">Realisasi Value</th>
                                 <th className="px-3 py-3 text-center">Pencapaian</th>
                                 <th className="px-3 py-3 text-right bg-amber-500/10">Total Insentif</th>
+                                <th className="px-3 py-3 w-8"><span className="sr-only">Rincian</span></th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-white/[0.1]">
-                            {rows.map((r) => (
-                                <tr key={r.smName} className="even:bg-white/[0.025] hover:bg-white/[0.05] transition-colors">
-                                    <td className="px-3 py-3">
-                                        <div className="font-semibold text-slate-200">{r.smName}</div>
-                                        <div className="text-[10px] text-slate-500">
-                                            {r.jumlahBaris} baris sales{!r.berhak && " · tidak ikut skema insentif SM"}
-                                        </div>
-                                    </td>
-                                    <td className="px-3 py-3 text-right font-mono text-slate-400">{formatRp(r.targetValue)}</td>
-                                    <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.realisasiValue)}</td>
-                                    <td className="px-3 py-3 text-center font-bold text-slate-200">{(r.pctValue * 100).toFixed(1)}%</td>
-                                    <td className="px-3 py-3 text-right bg-amber-500/5 font-mono font-bold text-amber-400">{formatRp(r.total)}</td>
-                                </tr>
-                            ))}
+                            {rows.map((r) => {
+                                // Rasio dibulatkan sama persis seperti rateSm (roundRatio 1e-6) sebelum
+                                // dicocokkan ke strata. Tanpa itu 0,8999999997 di layar jatuh ke "< 90%"
+                                // padahal yang dibayar server Rp 1,5jt — rincian yang membantah nominalnya sendiri.
+                                const capaian = (Math.round(r.pctValue * 1e6) / 1e6) * 100;
+                                const strata = SM_STRATA.find((t) => capaian >= t.min) ?? SM_STRATA[SM_STRATA.length - 1];
+                                const selisih = r.realisasiValue - r.targetValue;
+                                return (
+                                    <Fragment key={r.smName}>
+                                        <tr {...rowProps(r.smName)}>
+                                            <td className="px-3 py-3">
+                                                <div className="font-semibold text-slate-200">{r.smName}</div>
+                                                <div className="text-[10px] text-slate-500">
+                                                    {r.jumlahBaris} baris sales{!r.berhak && " · tidak ikut skema insentif SM"}
+                                                </div>
+                                            </td>
+                                            <td className="px-3 py-3 text-right font-mono text-slate-400">{formatRp(r.targetValue)}</td>
+                                            <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.realisasiValue)}</td>
+                                            <td className="px-3 py-3 text-center font-bold text-slate-200">{capaian.toFixed(1)}%</td>
+                                            <td className="px-3 py-3 text-right bg-amber-500/5 font-mono font-bold text-amber-400">{formatRp(r.total)}</td>
+                                            <ExpandCell open={!!open[r.smName]} />
+                                        </tr>
+                                        {open[r.smName] && (
+                                            <tr className="bg-black/30">
+                                                <td colSpan={6} className="px-4 py-4">
+                                                    <div className="grid gap-5 md:grid-cols-3">
+                                                        <BreakdownGroup title="Value wilayah" items={[
+                                                            { label: "Target", value: formatRp(r.targetValue) },
+                                                            { label: "Realisasi", value: formatRp(r.realisasiValue) },
+                                                            { label: selisih >= 0 ? "Surplus" : "Kurang", value: formatRp(Math.abs(selisih)) },
+                                                        ]} />
+                                                        <BreakdownGroup title="Dasar perhitungan" items={[
+                                                            { label: "Pencapaian", value: `${capaian.toFixed(1)}%` },
+                                                            { label: "Strata", value: strata.label },
+                                                            { label: "Baris sales dihitung", value: formatQty(r.jumlahBaris) },
+                                                        ]} />
+                                                        <BreakdownGroup title="Hasil" items={[
+                                                            { label: "Nominal strata", value: formatRp(strata.nominal) },
+                                                            { label: "Ikut skema", value: r.berhak ? "Ya" : "Tidak", tone: "muted" },
+                                                            { label: "Dibayar", value: formatRp(r.total), tone: "amber" },
+                                                        ]} />
+                                                    </div>
+                                                    <p className="text-[11px] text-slate-500 mt-4">
+                                                        Strata FLAT: nominal tidak dikali persentase. Semua status principal ikut
+                                                        dihitung, termasuk principle. Baris _OFFICE dibuang.
+                                                    </p>
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </Fragment>
+                                );
+                            })}
                             {rows.length === 0 && (
-                                <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-500 italic">Belum ada data SM untuk periode ini.</td></tr>
+                                <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-500 italic">Belum ada data SM untuk periode ini.</td></tr>
                             )}
                         </tbody>
                         <tfoot>
                             <tr className="bg-black/50 border-t-2 border-amber-500/30 font-bold">
                                 <td className="px-3 py-3 uppercase text-[11px] tracking-wider text-amber-300" colSpan={4}>Grand Total</td>
                                 <td className="px-3 py-3 text-right bg-amber-500/10 font-mono text-amber-300 text-sm">{formatRp(grandTotal)}</td>
+                                <td />
                             </tr>
                         </tfoot>
                     </table>
@@ -697,7 +906,7 @@ interface SpvIncentiveRow {
 function SpvIncentiveTable({ month, year }: { month: number; year: number }) {
     const [rows, setRows] = useState<SpvIncentiveRow[]>([]);
     const [loading, setLoading] = useState(true);
-    const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+    const { open, rowProps } = useExpandableRows();
 
     useEffect(() => {
         let cancelled = false;
@@ -740,24 +949,48 @@ function SpvIncentiveTable({ month, year }: { month: number; year: number }) {
                         <tbody className="divide-y divide-white/[0.1]">
                             {rows.map((r) => (
                                 <Fragment key={r.spvName}>
-                                    <tr
-                                        className="even:bg-white/[0.025] hover:bg-white/[0.05] transition-colors cursor-pointer"
-                                        onClick={() => setExpanded((p) => ({ ...p, [r.spvName]: !p[r.spvName] }))}>
+                                    <tr {...rowProps(r.spvName)}>
                                         <td className="px-3 py-3 font-semibold text-slate-200">{r.spvName}</td>
                                         <td className="px-3 py-3 text-center text-slate-300">{r.jumlahValid}</td>
                                         <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.ratePerPrincipal)}</td>
                                         <td className="px-3 py-3 text-right bg-amber-500/5 font-mono font-bold text-amber-400">{formatRp(r.total)}</td>
-                                        <td className="px-3 py-3 text-center text-slate-500">{expanded[r.spvName] ? "▲" : "▼"}</td>
+                                        <ExpandCell open={!!open[r.spvName]} />
                                     </tr>
-                                    {expanded[r.spvName] && r.rincian.map((d) => (
-                                        <tr key={`${r.spvName}-${d.principle}`} className="bg-black/20 text-[11px]">
-                                            <td className="px-3 py-2 pl-8 text-slate-400">{d.principle}</td>
-                                            <td className="px-3 py-2 text-center text-slate-500">{Math.round(d.pctValue * 100)}%</td>
-                                            <td className="px-3 py-2 text-right font-mono text-slate-500">{formatRp(d.rate)}</td>
-                                            <td className="px-3 py-2 text-right font-mono text-slate-400">{formatRp(d.insentif)}</td>
-                                            <td />
+                                    {open[r.spvName] && (
+                                        <tr className="bg-black/30">
+                                            <td colSpan={5} className="px-4 py-4">
+                                                {/* Rincian per principal: target dan realisasi ikut ditampilkan, karena
+                                                    tanpa keduanya angka pencapaian tidak bisa ditelusuri asalnya. */}
+                                                <table className="w-full text-[11px]">
+                                                    <thead className="text-slate-500 uppercase tracking-wider">
+                                                        <tr>
+                                                            <th className="text-left font-semibold pb-2">Principal</th>
+                                                            <th className="text-right font-semibold pb-2">Target</th>
+                                                            <th className="text-right font-semibold pb-2">Realisasi</th>
+                                                            <th className="text-right font-semibold pb-2">Pencapaian</th>
+                                                            <th className="text-right font-semibold pb-2">Rate</th>
+                                                            <th className="text-right font-semibold pb-2">Insentif</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-white/5">
+                                                        {r.rincian.map((d) => (
+                                                            <tr key={`${r.spvName}-${d.principle}`}>
+                                                                <td className="py-2 text-slate-300">{d.principle}</td>
+                                                                <td className="py-2 text-right font-mono text-slate-400">{formatRp(d.targetValue)}</td>
+                                                                <td className="py-2 text-right font-mono text-slate-300">{formatRp(d.realisasiValue)}</td>
+                                                                <td className="py-2 text-right font-mono text-slate-300">{(d.pctValue * 100).toFixed(1)}%</td>
+                                                                <td className="py-2 text-right font-mono text-slate-400">{formatRp(d.rate)}</td>
+                                                                <td className="py-2 text-right font-mono text-amber-400/90">{formatRp(d.insentif)}</td>
+                                                            </tr>
+                                                        ))}
+                                                        {r.rincian.length === 0 && (
+                                                            <tr><td colSpan={6} className="py-3 text-slate-500 italic">Tidak ada principal valid untuk SPV ini.</td></tr>
+                                                        )}
+                                                    </tbody>
+                                                </table>
+                                            </td>
                                         </tr>
-                                    ))}
+                                    )}
                                 </Fragment>
                             ))}
                             {rows.length === 0 && (
@@ -2156,10 +2389,16 @@ function SpvSupportInputSection({ apiRows, month, year, onSaved }: { apiRows: Ap
 
     if (pairs.length === 0) return null;
 
+    const terisi = pairs.filter((p) => Number(draft[keyOf(p)] ?? saved[keyOf(p)] ?? 0) > 0).length;
+
     return (
-        <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-            <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
-                <h3 className="text-sm font-semibold text-slate-200">Support Principle — SPV</h3>
+        <CollapsiblePanel
+            icon={DollarSign}
+            title="Input Support Principle - SPV"
+            desc="Support yang menutup penuh rate mengeluarkan principal itu dari hitungan jumlah principal SPV: rate per principal naik dan principal tersebut tidak dibayar distributor."
+            badge={`${pairs.length} pasangan · ${terisi} bersupport`}
+        >
+            <div className="flex items-center justify-end gap-2 mb-3 flex-wrap">
                 <div className="flex items-center gap-2">
                     <SupportExcelBar
                         kind="spv"
@@ -2176,10 +2415,6 @@ function SpvSupportInputSection({ apiRows, month, year, onSaved }: { apiRows: Ap
                     </button>
                 </div>
             </div>
-            <p className="text-[11px] text-slate-500 mb-3">
-                Support yang menutup penuh rate akan mengeluarkan principal itu dari hitungan jumlah
-                principal SPV — rate per principal naik dan principal tersebut tidak dibayar distributor.
-            </p>
             <div className="max-h-72 overflow-y-auto border border-white/10 rounded-lg divide-y divide-white/5">
                 {pairs.map((p) => {
                     const k = keyOf(p);
@@ -2197,7 +2432,7 @@ function SpvSupportInputSection({ apiRows, month, year, onSaved }: { apiRows: Ap
                     );
                 })}
             </div>
-        </div>
+        </CollapsiblePanel>
     );
 }
 
@@ -2249,10 +2484,17 @@ function SupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRo
 
     if (gtRows.length === 0) return null;
 
+    const terisi = gtRows.filter((r) => Number(valueOf(r)) > 0).length;
+
     return (
-        <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-            <div className="flex items-start justify-between gap-2 flex-wrap">
-                <SectionTitle icon={DollarSign} no={0} title="Input Support Principle (GT)" desc="Support principal per salesman mengurangi konstanta insentif." />
+        <CollapsiblePanel
+            icon={DollarSign}
+            no={0}
+            title="Input Support Principle"
+            desc="Support principal per salesman memotong pool insentif sebelum persentase pencapaian dikalikan."
+            badge={`${gtRows.length} baris · ${terisi} bersupport`}
+        >
+            <div className="flex items-start justify-end gap-2 flex-wrap">
                 <SupportExcelBar
                     kind="sales"
                     fileName={`support_sales_${month}_${year}.xlsx`}
@@ -2303,7 +2545,7 @@ function SupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRo
                     {saving ? "Menyimpan…" : "Simpan Support & Hitung Ulang"}
                 </button>
             </div>
-        </div>
+        </CollapsiblePanel>
     );
 }
 
