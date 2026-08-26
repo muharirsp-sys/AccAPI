@@ -146,6 +146,28 @@ export async function POST(req: NextRequest) {
         });
     }
 
+    // Satu kode sales TIDAK boleh muncul dua kali untuk principle yang sama dalam satu upload
+    // (dikonfirmasi user 2026-08-24). Kode sama dengan principle BERBEDA justru sah — itu
+    // sales mix. Tanpa cek ini, baris kedua diam-diam menimpa yang pertama lewat
+    // onConflictDoUpdate, dan karena `branch` ikut ditimpa, acuan Value (DPP vs NILAI_JUAL,
+    // lib/insentif-value-source) bisa berubah tanpa ada yang tahu (audit temuan L1c).
+    const seen = new Map<string, string>();
+    for (const { input: t } of prepared) {
+        const k = `${t.salesCode}|${t.principle}`;
+        const before = seen.get(k);
+        if (before !== undefined) {
+            return NextResponse.json(
+                {
+                    error: `Baris ganda: ${t.salesCode} muncul lebih dari sekali untuk principal "${t.principle}"`
+                        + (before === t.branch ? "." : ` (cabang "${before}" dan "${t.branch}").`)
+                        + " Satu kode sales hanya boleh punya satu baris per principal.",
+                },
+                { status: 400 },
+            );
+        }
+        seen.set(k, t.branch);
+    }
+
     // ── PASS 2: cek kepemilikan scope, sekali jalan pakai peta yang dihitung SEKALI ──
     // getCurrentSpvOwner di dalam loop = 2 full-scan sales_targets PER BARIS.
     const claims: string[] = [];

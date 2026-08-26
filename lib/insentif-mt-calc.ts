@@ -25,6 +25,7 @@ import {
     isSchemePrincipal,
     konstantaMix,
     RP_1JT,
+    hasPositiveNetSales,
     type StatusInsentif,
 } from "./insentif-sales-calc.ts";
 
@@ -65,6 +66,11 @@ function effectiveSupport(status: StatusInsentif, support: number | undefined): 
  */
 function fromPool(pool: number, input: MtInput): MtResult {
     if (pool <= 0) return ZERO;
+    // Penjualan bersih <= 0 → tidak ada komponen apa pun, termasuk EC/OA/IA. Dikonfirmasi
+    // user 2026-08-24 untuk AO; logikanya sama untuk ketiga KPI aktivitas lain — semuanya
+    // dihitung dari transaksi, jadi mustahil ada tanpa penjualan bersih positif.
+    // Lihat hasPositiveNetSales di lib/insentif-sales-calc.ts (audit temuan L2b).
+    if (!hasPositiveNetSales(input.realisasi_value)) return ZERO;
     const scale = pool / RP_1JT;
     const insentif_value = MT_BOBOT.value * scale * percentageMultiplier(input.realisasi_value, input.target_value);
     const insentif_ec = MT_BOBOT.ec * scale * percentageMultiplier(input.realisasi_ec, input.target_ec);

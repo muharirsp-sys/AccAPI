@@ -91,9 +91,25 @@ export interface InsentifResult {
 
 const ZERO: InsentifResult = { insentif_ao: 0, insentif_value: 0, total: 0 };
 
+/**
+ * Penjualan bersih harus POSITIF sebelum komponen aktivitas (AO/EC/IA) berhak dibayar.
+ * Dikonfirmasi user 2026-08-24: "tidak mungkin ada AO tanpa adanya penjualan bersih positif".
+ *
+ * Dua KPI dulu dihitung sepenuhnya independen: Value memakai realisasi (negatif → pengali 0,
+ * benar), tapi AO memakai konstanta 240 sebagai penyebut dan TIDAK melihat Value sama sekali.
+ * Akibatnya sales dengan realisasi bersih MINUS — retur murni tanpa penjualan, kasus nyata
+ * MOTASA target Rp 700jt realisasi −Rp 21,4jt — tetap dibayar 70% dari pool (Rp 700.000)
+ * selama AO ≥ 216 (audit temuan L2b).
+ */
+export function hasPositiveNetSales(realisasiValue: number): boolean {
+    return Number.isFinite(realisasiValue) && realisasiValue > 0;
+}
+
 /** Insentif untuk 1 principle (eksklusif). */
 export function computeExclusive(input: ExclusiveInput): InsentifResult {
     if (!isSchemePrincipal(input.status)) return ZERO;
+    // Penjualan bersih <= 0 → tidak ada komponen apa pun, termasuk AO.
+    if (!hasPositiveNetSales(input.realisasi_value)) return ZERO;
 
     const support = effectiveSupport(input.status, input.nilai_support_principal);
     const K = Math.max(0, RP_1JT - support); // porsi distributor
@@ -166,6 +182,12 @@ export function computeMix(principals: MixPrincipalInput[]): MixResult {
     const budgetAo = (WEIGHT_AO * K) / jumlah;
 
     const rincian: MixLineDetail[] = valid.map((p) => {
+        // Principal dengan penjualan bersih <= 0 tidak dapat apa pun — baik AO maupun porsi
+        // Value-nya. Alokasi Value memakai share target (bukan realisasi), jadi tanpa guard
+        // ini principal yang realisasinya minus tetap kebagian potongan Value global.
+        if (!hasPositiveNetSales(p.realisasi_value)) {
+            return { nama: p.nama, insentif_ao: 0, insentif_value: 0, total: 0 };
+        }
         const insentif_ao = budgetAo * percentageMultiplier(p.realisasi_ao, TARGET_AO_MIN);
         // Value global dialokasikan proporsional ke target_value (rata bila total target 0).
         const share = totalTarget > 0 ? p.target_value / totalTarget : 1 / jumlah;

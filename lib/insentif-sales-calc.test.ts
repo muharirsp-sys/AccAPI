@@ -152,6 +152,39 @@ assert.strictEqual(percentageMultiplier(50, 0), 0, "target 0 → 0");
 assert.strictEqual(percentageMultiplier(NaN, 100), 0, "realisasi NaN → 0, bukan NaN menjalar");
 assert.strictEqual(percentageMultiplier(100, NaN), 0, "target NaN → 0");
 
+// === L2b: penjualan bersih harus POSITIF sebelum komponen AO dibayar ===
+// Dikonfirmasi user 2026-08-24: "tidak mungkin ada AO tanpa adanya penjualan bersih positif".
+// Kasus nyata MOTASA: target Rp 700jt, realisasi -Rp 21,4jt (retur murni, tanpa penjualan).
+{
+    const r = computeExclusive({
+        status: "distributor_principle",
+        target_value: 700_000_000, realisasi_value: -21_400_000, realisasi_ao: 240,
+    });
+    assert.strictEqual(r.insentif_ao, 0, "AO tidak dibayar saat penjualan bersih minus");
+    assert.strictEqual(r.total, 0, "dulu Rp 700.000 dibayar karena AO dihitung terpisah dari Value");
+}
+// Realisasi tepat 0 (tidak ada transaksi sama sekali) juga tidak dapat apa-apa.
+assert.strictEqual(
+    computeExclusive({ status: "distributor", target_value: 100, realisasi_value: 0, realisasi_ao: 240 }).total,
+    0, "realisasi 0 -> tidak ada insentif");
+// Penjualan positif normal tetap dibayar seperti biasa (guard tidak boleh kelewat agresif).
+approx(
+    computeExclusive({ status: "distributor", target_value: 100, realisasi_value: 100, realisasi_ao: 240 }).total,
+    1_000_000, "penjualan positif 100% tetap penuh");
+
+// Mix: principal yang realisasinya minus tidak dapat AO MAUPUN porsi Value global.
+{
+    const r = computeMix([
+        { nama: "KINO", status: "distributor", target_value: 100, realisasi_value: 100, realisasi_ao: 240 },
+        { nama: "MOTASA", status: "distributor", target_value: 100, realisasi_value: -50, realisasi_ao: 240 },
+    ]);
+    const motasa = r.rincian.find((x) => x.nama === "MOTASA")!;
+    assert.strictEqual(motasa.total, 0, "MOTASA minus -> Rp 0");
+    assert.strictEqual(motasa.insentif_value, 0, "porsi Value global juga tidak dialokasikan ke sana");
+    assert.ok(r.rincian.find((x) => x.nama === "KINO")!.total > 0, "KINO tetap dibayar");
+    assert.strictEqual(r.jumlah_valid, 2, "MOTASA tetap masuk hitungan n (statusnya skema)");
+}
+
 // --- normalisasi Excel ---
 assert.strictEqual(normalizeStatus("Distributor+Principle"), "distributor_principle", "norm D+P");
 assert.strictEqual(normalizeStatus(" principle "), "principle", "norm principle");
