@@ -27,7 +27,7 @@
  *   Juli 2026), jadi kalau ikut dijumlahkan pencapaian SM ikut terdistorsi.
  */
 
-import type { StatusInsentif } from "./insentif-sales-calc.ts";
+import { roundRatio, type StatusInsentif } from "./insentif-sales-calc.ts";
 
 /**
  * SM yang ikut skema insentif SM. Dicocokkan sebagai substring pada nama ter-normalisasi,
@@ -70,11 +70,17 @@ export interface SmInsentifResult {
     total: number;
 }
 
-/** Strata flat berbasis rasio realisasi/target. Tidak dikali apa pun. */
+/**
+ * Strata flat berbasis rasio realisasi/target. Tidak dikali apa pun.
+ * Rasio dibulatkan ke 6 desimal dulu — lihat roundRatio di lib/insentif-sales-calc.ts.
+ * Tanpa itu, 0,9999999999 vs 1,0000000001 = beda Rp 1 juta dan bisa berubah antar refresh.
+ */
 export function rateSm(ratio: number): number {
-    if (ratio >= 1.1) return 3_500_000;
-    if (ratio >= 1.0) return 2_500_000;
-    if (ratio >= 0.9) return 1_500_000;
+    if (!Number.isFinite(ratio)) return 0;
+    const r = roundRatio(ratio);
+    if (r >= 1.1) return 3_500_000;
+    if (r >= 1.0) return 2_500_000;
+    if (r >= 0.9) return 1_500_000;
     return 0;
 }
 

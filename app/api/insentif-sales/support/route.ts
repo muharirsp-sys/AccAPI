@@ -51,46 +51,63 @@ export async function POST(req: NextRequest) {
     }
 
     const now = new Date();
-    let upserted = 0;
 
-    for (const s of body) {
-        if (!s.salesCode || !s.principle || !s.periodMonth || !s.periodYear) continue;
-        const amount = Number(s.supportAmount) || 0;
-        if (amount < 0) return NextResponse.json({ error: `Support negatif: ${s.salesCode}/${s.principle}` }, { status: 400 });
-
-        const [existing] = await db
-            .select({ id: incentiveSupport.id })
-            .from(incentiveSupport)
-            .where(
-                and(
-                    eq(incentiveSupport.salesCode, s.salesCode),
-                    eq(incentiveSupport.principle, s.principle),
-                    eq(incentiveSupport.periodMonth, s.periodMonth),
-                    eq(incentiveSupport.periodYear, s.periodYear),
-                ),
-            )
-            .limit(1);
-
-        if (existing) {
-            await db
-                .update(incentiveSupport)
-                .set({ supportAmount: amount, inputBy: actorName, updatedAt: now })
-                .where(eq(incentiveSupport.id, existing.id));
-        } else {
-            await db.insert(incentiveSupport).values({
-                id: randomUUID(),
-                salesCode: s.salesCode,
-                principle: s.principle,
-                periodMonth: s.periodMonth,
-                periodYear: s.periodYear,
-                supportAmount: amount,
-                inputBy: actorName,
-                createdAt: now,
-                updatedAt: now,
-            });
+    // PASS 1: validasi seluruh payload sebelum menyentuh DB. Dulu `return 400` terjadi di
+    // tengah loop tulis, sehingga "setengah support masuk" — dan karena support dikurangkan
+    // dari konstanta insentif, itu berarti nominal SEBAGIAN orang salah tanpa ada yang tahu.
+    const rows = body.filter((s) => s.salesCode && s.principle && s.periodMonth && s.periodYear);
+    const prepared: Array<{ s: SupportInput; amount: number }> = [];
+    for (const s of rows) {
+        const amount = Number(s.supportAmount);
+        // Number(x) || 0 lama meloloskan Infinity (Infinity > 0), lalu "konstanta − Infinity"
+        // ter-floor jadi 0 → insentif sales itu hilang tanpa error ke Finance.
+        if (!Number.isFinite(amount) || amount < 0) {
+            return NextResponse.json(
+                { error: `Support tidak valid: ${s.salesCode}/${s.principle} (${String(s.supportAmount)})` },
+                { status: 400 },
+            );
         }
-        upserted++;
+        prepared.push({ s, amount });
     }
+
+    // PASS 2: tulis seluruhnya dalam satu transaksi — gagal di tengah = rollback penuh.
+    let upserted = 0;
+    await db.transaction(async (tx) => {
+        for (const { s, amount } of prepared) {
+            const [existing] = await tx
+                .select({ id: incentiveSupport.id })
+                .from(incentiveSupport)
+                .where(
+                    and(
+                        eq(incentiveSupport.salesCode, s.salesCode),
+                        eq(incentiveSupport.principle, s.principle),
+                        eq(incentiveSupport.periodMonth, s.periodMonth),
+                        eq(incentiveSupport.periodYear, s.periodYear),
+                    ),
+                )
+                .limit(1);
+
+            if (existing) {
+                await tx
+                    .update(incentiveSupport)
+                    .set({ supportAmount: amount, inputBy: actorName, updatedAt: now })
+                    .where(eq(incentiveSupport.id, existing.id));
+            } else {
+                await tx.insert(incentiveSupport).values({
+                    id: randomUUID(),
+                    salesCode: s.salesCode,
+                    principle: s.principle,
+                    periodMonth: s.periodMonth,
+                    periodYear: s.periodYear,
+                    supportAmount: amount,
+                    inputBy: actorName,
+                    createdAt: now,
+                    updatedAt: now,
+                });
+            }
+            upserted++;
+        }
+    });
 
     return NextResponse.json({ upserted });
 }

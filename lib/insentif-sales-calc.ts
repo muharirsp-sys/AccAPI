@@ -54,10 +54,22 @@ function effectiveSupport(status: StatusInsentif, support: number | undefined): 
     return support ?? 0;
 }
 
+/**
+ * Bulatkan rasio ke 6 desimal (presisi 0,0001%) sebelum dibandingkan ke ambang.
+ * Nilai uang disimpan sebagai double precision dan SUM() di Postgres tidak deterministik
+ * terhadap urutan baris — tanpa pembulatan, rasio bisa jatuh di 0,9999999999 vs 1,0000000001
+ * dan menghasilkan strata berbeda (beda Rp 1 juta untuk SM) yang BERUBAH antar refresh.
+ * 1e-6 jauh di bawah ketelitian bisnis apa pun, jauh di atas galat float.
+ */
+export function roundRatio(r: number): number {
+    return Math.round(r * 1e6) / 1e6;
+}
+
 /** Pengali persentase pencapaian: <0.90→0, 0.90–1.00→aktual, >1.00→cap 1.00. */
 export function percentageMultiplier(realisasi: number, target: number): number {
-    if (target <= 0) return 0;
-    const r = realisasi / target;
+    if (!Number.isFinite(target) || target <= 0) return 0;
+    if (!Number.isFinite(realisasi)) return 0;
+    const r = roundRatio(realisasi / target);
     if (r < 0.9) return 0;
     if (r > 1) return 1;
     return r;
@@ -129,8 +141,12 @@ export function computeMix(principals: MixPrincipalInput[]): MixResult {
 
     const total_support = valid.reduce((s, p) => s + effectiveSupport(p.status, p.nilai_support_principal), 0);
 
-    // ponytail: spec hanya 2..5. <2 → seharusnya exclusive; >5 → cap 1.5jt.
-    const konstanta = konstantaMix(jumlah);
+    // n=1 → pakai konstanta exclusive (Rp 1jt), BUKAN 0. Dikonfirmasi user 2026-08-24:
+    // sales bertipe "mix" yang principle valid-nya tinggal 1 (sisanya berstatus "principle")
+    // TETAP dapat insentif. Sebelumnya konstantaMix(1)=0 membuat insentifnya Rp 0 diam-diam,
+    // sementara computeMtMix (MT) sudah punya fallback yang sama sejak awal.
+    // >5 → cap 1,5jt (di dalam konstantaMix).
+    const konstanta = jumlah === 1 ? RP_1JT : konstantaMix(jumlah);
     const porsi_distributor = Math.max(0, konstanta - total_support);
 
     const empty = (): MixResult => ({

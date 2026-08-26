@@ -8,6 +8,7 @@
 import assert from "node:assert";
 import {
     percentageMultiplier,
+    roundRatio,
     computeExclusive,
     computeMix,
     normalizeStatus,
@@ -127,7 +128,29 @@ approx(computeMix(mk(3)).konstanta, 1_200_000, "K(3)");
 approx(computeMix(mk(4)).konstanta, 1_400_000, "K(4)");
 approx(computeMix(mk(5)).konstanta, 1_500_000, "K(5)");
 approx(computeMix(mk(6)).konstanta, 1_500_000, "K(6) cap 1.5jt");
-assert.strictEqual(computeMix(mk(1)).total, 0, "mix <2 valid → 0");
+// n=1 valid → konstanta exclusive (Rp 1jt), BUKAN 0. Dikonfirmasi user 2026-08-24: sales
+// bertipe "mix" yang principle valid-nya tinggal 1 TETAP dapat insentif. Sejajar computeMtMix.
+approx(computeMix(mk(1)).konstanta, 1_000_000, "K(1) → pakai konstanta exclusive");
+approx(computeMix(mk(1)).total, 1_000_000, "mix 1 valid, capaian 100% → Rp 1jt penuh");
+// n=0 tetap 0 — tidak ada principle yang ikut skema sama sekali.
+assert.strictEqual(computeMix(mk(0)).total, 0, "mix 0 valid → 0");
+
+// Kasus nyata H6: mix pegang KINO (skema) + ENERGIZER (full principle) → valid tinggal 1.
+{
+    const r = computeMix([
+        { nama: "KINO", status: "distributor_principle", target_value: 300e6, realisasi_value: 300e6, realisasi_ao: 240 },
+        { nama: "ENERGIZER", status: "principle", target_value: 100e6, realisasi_value: 100e6, realisasi_ao: 240 },
+    ]);
+    assert.strictEqual(r.jumlah_valid, 1, "ENERGIZER tidak masuk hitungan");
+    approx(r.total, 1_000_000, "dulu Rp 0 diam-diam, sekarang Rp 1jt");
+}
+
+// --- roundRatio: ambang tidak boleh goyah karena galat float ---
+approx(roundRatio(0.9999999999), 1, "0,9999999999 dibulatkan ke 1");
+approx(percentageMultiplier(99.99999999, 100), 1, "praktis 100% → cap 1,00, bukan 0,9999");
+assert.strictEqual(percentageMultiplier(50, 0), 0, "target 0 → 0");
+assert.strictEqual(percentageMultiplier(NaN, 100), 0, "realisasi NaN → 0, bukan NaN menjalar");
+assert.strictEqual(percentageMultiplier(100, NaN), 0, "target NaN → 0");
 
 // --- normalisasi Excel ---
 assert.strictEqual(normalizeStatus("Distributor+Principle"), "distributor_principle", "norm D+P");

@@ -41,7 +41,7 @@ export async function PATCH(
     }
 
     const now = new Date();
-    const updateSet: Record<string, unknown> = { updatedAt: now };
+    const updateSet: Record<string, unknown> = { updatedAt: now, updatedBy: gate.session.user.id };
 
     if (body.paymentStatus) updateSet.paymentStatus = body.paymentStatus;
     if (body.paymentProofUrl) updateSet.paymentProofUrl = body.paymentProofUrl;

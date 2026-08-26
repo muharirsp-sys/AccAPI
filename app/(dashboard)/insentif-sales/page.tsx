@@ -484,7 +484,7 @@ function SpvView({ rows, progress: tg }: { rows: Salesman[]; progress: WorkdayPr
                         {groups.map(([spv, list]) => {
                             const rv = list.reduce((a, r) => a + r.realValue, 0);
                             const tv = list.reduce((a, r) => a + r.targetValue, 0);
-                            const ttList = list.filter((r) => r.channel === "TT");
+                            const ttList = list.filter((r) => r.channel === "TT" || r.channel === "GT");
                             const mtList = list.filter((r) => r.channel === "MT");
                             const aoTtReal = ttList.reduce((a, r) => a + r.realAo, 0);
                             const aoTtTarget = ttList.reduce((a, r) => a + r.targetAo, 0);
@@ -550,7 +550,7 @@ function SmView({ rows, progress }: { rows: Salesman[]; progress: WorkdayProgres
                             const [sm, principle] = key.split("__");
                             const rv = list.reduce((a, r) => a + r.realValue, 0);
                             const tv = list.reduce((a, r) => a + r.targetValue, 0);
-                            const ttList = list.filter((r) => r.channel === "TT");
+                            const ttList = list.filter((r) => r.channel === "TT" || r.channel === "GT");
                             const mtList = list.filter((r) => r.channel === "MT");
                             const aoTtReal = ttList.reduce((a, r) => a + r.realAo, 0);
                             const aoTtTarget = ttList.reduce((a, r) => a + r.targetAo, 0);
@@ -1227,7 +1227,20 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                 };
                 // Buang pemisah ribuan tapi PERTAHANKAN tanda minus & desimal —
                 // baris retur bernilai negatif, kalau tandanya hilang retur malah menambah realisasi.
-                const num = (val: string) => parseFloat(val.replace(/[^\d.,-]/g, "").replace(/,/g, "")) || 0;
+                // Dua format ribuan beredar di file closing: Inggris (1,234,567.89) dan
+                // Indonesia (1.234.567,89). Deteksi dari polanya — kalau dipaksa satu format,
+                // "-533.000.000" terbaca -533 dan realisasi satu principal menguap.
+                const num = (val: string) => {
+                    const cleaned = val.replace(/[^\d.,-]/g, "");
+                    if (!cleaned) return 0;
+                    // Format Indonesia: titik sebagai pemisah ribuan (selalu 3 digit), koma desimal.
+                    const idFormat = /^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(cleaned);
+                    const normalized = idFormat
+                        ? cleaned.replace(/\./g, "").replace(",", ".")
+                        : cleaned.replace(/,/g, "");
+                    const n = parseFloat(normalized);
+                    return Number.isFinite(n) ? n : 0;
+                };
                 return {
                     salesCode: get("KODE_SALESMAN"),
                     principle: get("PRINCIPAL"),
@@ -2259,9 +2272,23 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
         const findPay = (salesCode: string, principle: string) =>
             payments.find((p) => p.salesCode === salesCode && p.principle === principle && p.periodMonth === selectedMonth);
         if (selectedMonth === month) {
+            // Baris LUNAS menampilkan angka yang BENAR-BENAR dibayar (snapshot di
+            // incentive_payments), bukan hasil hitung-ulang. Kalau support/target diubah
+            // setelah pembayaran, keduanya berbeda — selisihnya ditandai supaya Finance tahu
+            // ada kelebihan/kekurangan bayar, bukan diam-diam menampilkan angka baru dengan
+            // badge "lunas" (audit temuan M9).
+            const settle = (live: number, pay: PaymentRow | undefined) => {
+                const isLunas = pay?.paymentStatus === "lunas";
+                const paid = pay?.totalIncentive ?? 0;
+                return {
+                    total: isLunas ? paid : live,
+                    drift: isLunas && Math.abs(paid - live) >= 1 ? live - paid : 0,
+                };
+            };
             const sales = apiRows.map((r) => {
                 const pay = findPay(r.salesCode, r.principle);
-                return { role: "sales" as PayeeRole, salesCode: r.salesCode, salesName: r.salesName, principle: r.principle, total: r.incentive.total, paymentId: pay?.id ?? null, status: (pay?.paymentStatus ?? r.paymentStatus) as string };
+                const { total, drift } = settle(r.incentive.total, pay);
+                return { role: "sales" as PayeeRole, salesCode: r.salesCode, salesName: r.salesName, principle: r.principle, branch: r.branch, total, drift, paymentId: pay?.id ?? null, status: (pay?.paymentStatus ?? r.paymentStatus) as string };
             });
             const extra = [
                 ...spvPayees.map((r) => ({ role: "spv" as PayeeRole, name: r.name, total: r.total })),
@@ -2269,13 +2296,14 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
             ].map((r) => {
                 const salesCode = payeeCode(r.role, r.name);
                 const pay = findPay(salesCode, PAYEE_PRINCIPLE_ALL);
-                return { role: r.role, salesCode, salesName: r.name, principle: PAYEE_PRINCIPLE_ALL, total: r.total, paymentId: pay?.id ?? null, status: (pay?.paymentStatus ?? "belum") as string };
+                const { total, drift } = settle(r.total, pay);
+                return { role: r.role, salesCode, salesName: r.name, principle: PAYEE_PRINCIPLE_ALL, branch: PAYEE_PRINCIPLE_ALL, total, drift, paymentId: pay?.id ?? null, status: (pay?.paymentStatus ?? "belum") as string };
             });
             return [...sales, ...extra];
         }
         return payments
             .filter((p) => p.periodMonth === selectedMonth)
-            .map((p) => ({ role: parsePayee(p.salesCode).role, salesCode: p.salesCode, salesName: p.salesName, principle: p.principle, total: p.totalIncentive, paymentId: p.id, status: p.paymentStatus }));
+            .map((p) => ({ role: parsePayee(p.salesCode).role, salesCode: p.salesCode, salesName: p.salesName, principle: p.principle, branch: p.branch, total: p.totalIncentive, drift: 0, paymentId: p.id, status: p.paymentStatus }));
     }, [selectedMonth, month, apiRows, payments, spvPayees, smPayees]);
 
     const toggle = (row: { salesCode: string; principle: string }) => {
@@ -2299,10 +2327,10 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                             salesCode: row.salesCode,
                             salesName: row.salesName,
                             principle: row.principle,
-                            branch: row.role === "sales" ? "" : PAYEE_PRINCIPLE_ALL,
+                            branch: row.branch || PAYEE_PRINCIPLE_ALL,
                             periodMonth: selectedMonth,
                             periodYear: year,
-                            totalIncentive: row.total,
+                            totalIncentive: Math.round(row.total),
                             paymentStatus: "lunas",
                         }),
                     });
@@ -2437,7 +2465,14 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                                             <span className={`inline-flex px-2 py-0.5 rounded border font-bold text-[10px] ${payeeRoleBadge(r.role).cls}`}>{payeeRoleBadge(r.role).label}</span>
                                         </td>
                                         <td className="px-3 py-3 text-slate-300">{r.principle}</td>
-                                        <td className="px-3 py-3 text-right font-mono font-bold text-amber-400">{formatRp(r.total)}</td>
+                                        <td className="px-3 py-3 text-right font-mono font-bold text-amber-400">
+                                            {formatRp(r.total)}
+                                            {r.drift !== 0 && (
+                                                <div className="text-[10px] font-normal text-rose-400" title="Angka dibayar berbeda dari hasil hitung ulang — support/target berubah setelah pembayaran.">
+                                                    hitung ulang: {formatRp(r.total + r.drift)}
+                                                </div>
+                                            )}
+                                        </td>
                                         <td className="px-3 py-3">
                                             <label className="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded px-2 py-1.5 text-slate-300 cursor-pointer hover:bg-white/10 text-[11px]">
                                                 <FileUp size={13} /> Upload

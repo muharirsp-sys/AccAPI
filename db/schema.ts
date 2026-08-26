@@ -727,6 +727,9 @@ export const salesTargets = pgTable("sales_targets", {
     tipeSales: text("tipe_sales").notNull().default("exclusive"),
     // "distributor_principle" | "distributor" | "principle" (full principle → tak ikut skema).
     statusInsentif: text("status_insentif").notNull().default("distributor_principle"),
+    // Jejak siapa terakhir mengubah target — target adalah dasar perhitungan uang, dan
+    // sebelumnya perubahan tidak tercatat sama sekali (audit 2026-08-24, temuan M7).
+    updatedBy: text("updated_by"),
     createdAt: timestamp("created_at").notNull(),
     updatedAt: timestamp("updated_at").notNull(),
 }, (t) => ({
@@ -760,6 +763,11 @@ export const salesDailyProgress = pgTable("sales_daily_progress", {
     periodIdx: index("idx_sdp_period").on(t.periodMonth, t.periodYear),
     codeIdx: index("idx_sdp_code").on(t.salesCode),
     dateIdx: index("idx_sdp_date").on(t.date),
+    // DELETE saat upload closing memfilter (sales_code, principle, periode, date) — tanpa
+    // index komposit, planner memakai idx_sdp_code lalu memfilter sisanya di heap, dan jumlah
+    // baris per sales_code TUMBUH linier dengan riwayat (audit temuan M1).
+    // Belum aktif di produksi — lihat docs/handover/DDL_AUDIT_INSENTIF_2026-08-24.sql.
+    scopeIdx: index("idx_sdp_code_prin_period_date").on(t.salesCode, t.principle, t.periodYear, t.periodMonth, t.date),
 }));
 
 export const incentiveTiers = pgTable("incentive_tiers", {
@@ -790,6 +798,9 @@ export const incentivePayments = pgTable("incentive_payments", {
     paymentDate: timestamp("payment_date"),
     paidBy: text("paid_by"),
     paidByName: text("paid_by_name"),
+    // paidBy hanya terisi saat status jadi "lunas". updatedBy mencatat SETIAP perubahan
+    // nominal/status, termasuk sebelum lunas (audit 2026-08-24, temuan M7).
+    updatedBy: text("updated_by"),
     createdAt: timestamp("created_at").notNull(),
     updatedAt: timestamp("updated_at").notNull(),
 }, (t) => ({

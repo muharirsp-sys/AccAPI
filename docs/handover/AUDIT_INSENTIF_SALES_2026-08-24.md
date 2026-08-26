@@ -1,6 +1,8 @@
 # AUDIT MODUL INSENTIF SALES — 2026-08-24
 
-> Audit read-only. **Tidak ada perbaikan yang dieksekusi** — dokumen ini rencana + temuan.
+> Audit read-only saat ditulis. **Perbaikan menyusul** — lihat baris "Status" di tiap temuan.
+> Ringkasan status per 2026-08-24: C0/C1/C3 FIXED; C2 & M1 & M7 menunggu DDL dijalankan di VPS;
+> H1-H7 FIXED; M2-M6, M8, M9, M11-M13 FIXED; M10 sebagian; L1/L2 belum disentuh.
 > Metode: 4 sub-agent paralel (kalkulasi, query/DBA, validasi & akses, konsistensi lintas layer)
 > atas branch `main` HEAD `3ef1702` + perubahan uncommitted sesi ini. Setiap temuan di bawah sudah
 > di-spot-check ulang langsung ke kode; yang tidak terbukti dipindah ke §3.
@@ -175,6 +177,8 @@ membuat catatan pembayaran insentif untuk entitas yang bukan orang. Data nyata J
 
 ### H1 · HIGH · Hanya 1 dari 7 POST yang atomik; `POST /targets` bisa `return` di tengah tulis
 
+> **Status: FIXED — db.transaction + validasi pre-pass di targets/support/spv-support/code-merge.**
+
 ```
 progress      db.transaction  OK   <- satu-satunya
 targets  0    support  0    spv-support  0
@@ -198,6 +202,8 @@ pass terpisah **sebelum** loop tulis. ~5 baris per route, nol DDL.
 ---
 
 ### H2 · HIGH · N+1 dengan full-scan di dalamnya pada `POST /targets`
+
+> **Status: FIXED — getSpvOwnerMap() dihitung sekali di luar loop POST /targets.**
 
 **Apa:** `targets/route.ts:87` memanggil `getCurrentSpvOwner` **di dalam** `for (const t of body)`.
 Fungsi itu → `lib/insentif-hierarchy-scope.ts:69` → `effectiveSpvBySalesCode` (`:28-37`) yang
@@ -233,6 +239,8 @@ mengubah UI-nya.
 
 ### H4 · HIGH · Channel `GT` diperlakukan tidak konsisten di 3 tempat
 
+> **Status: FIXED — GT ditambahkan ke ChannelType, 2 filter ttList, dan dropdown channel.**
+
 ```
 dashboard/route.ts:87   isSchemeChannel = (ch) => ch === "GT" || ch === "TT"   OK
 page.tsx:2045           r.channel === "GT" || "TT" || "MT"                     OK
@@ -253,6 +261,8 @@ tambah `<option>GT</option>`.
 ---
 
 ### M1 · MEDIUM-HIGH · `DELETE` di `POST /progress` tanpa index yang cocok
+
+> **Status: SEBAGIAN — index ada di schema.ts; DDL menunggu dijalankan (DDL_AUDIT_INSENTIF_2026-08-24.sql).**
 
 **Apa:** predikat `sales_code` + `principle` + `period_month` + `period_year`
 (`progress/route.ts:87-97`); index yang ada hanya `(period_month, period_year)`, `(sales_code)`,
@@ -280,6 +290,8 @@ Ganti juga `.returning({ id })` → `rowCount`.
 
 ### M2 · MEDIUM · `getScopeForUser` non-deterministik — masalah kebenaran, bukan performa
 
+> **Status: FIXED — periode diteruskan ke getScopeForUser di 6 call-site.**
+
 **Apa:** `lib/insentif-hierarchy-scope.ts:31` dan `:42` — `db.select().from(salesTargets)` tanpa
 `WHERE`, membangun peta dari **seluruh riwayat**. Tanpa `ORDER BY`, `map.set` di `:34` membiarkan
 baris terakhir yang dibaca menang, dan urutan seq-scan bisa berubah setelah `VACUUM`/update.
@@ -296,6 +308,8 @@ sudah cocok. Satu parameter tambahan di 5 call-site.
 ---
 
 ### M3 · MEDIUM · Validasi numerik bolong — dan polanya sudah ada di repo sendiri
+
+> **Status: FIXED — Number.isFinite di targets/support/payments/progress.**
 
 ```
 support/route.ts:58      const amount = Number(s.supportAmount) || 0;   <- Infinity lolos
@@ -315,6 +329,8 @@ ke total.
 ---
 
 ### M4 · MEDIUM · `double precision` untuk uang + ambang dibandingkan langsung ke float
+
+> **Status: FIXED — roundRatio(1e-6) di percentageMultiplier & rateSm.**
 
 **Apa:** `db/schema.ts` `:721 :725 :748 :767 :782 :808 :844` semua `doublePrecision`. Konsumen:
 `insentif-sm-calc.ts:75-77` (`ratio >= 1.1 / >= 1.0 / >= 0.9`) dan `insentif-sales-calc.ts:61`
@@ -338,6 +354,8 @@ hilang karena drift-nya ~1e-9. **Migrasi kolom ke `numeric` TIDAK direkomendasik
 
 ### M5 · MEDIUM · Scope tim tidak diterapkan di `code-merge` & `spv-mismatch` GET
 
+> **Status: FIXED — getScopeForUser diterapkan di code-merge & spv-mismatch GET.**
+
 **Apa:** `grep -c getScopeForUser` = **0** di kedua file, sementara `dashboard/route.ts` = 2.
 Permission-nya sama (`insentif_sales.view`).
 
@@ -350,6 +368,8 @@ dapat daftar **seluruh kode sales + nama SPV/SM se-perusahaan**, lintas tim.
 ---
 
 ### M6 · MEDIUM · `POST /payments` selalu menulis `branch: ""` untuk baris Sales
+
+> **Status: FIXED — branch: r.branch diteruskan ke POST /payments.**
 
 **Apa:** `ApiRow` punya `branch` dan tersedia di `r`, tapi tidak disalin ke objek `sales`
 (`page.tsx:2231`), lalu `:2269` mengirim `branch: ""`. Kolom `notNull` (`db/schema.ts:779`).
@@ -366,6 +386,8 @@ lunas **tidak akan muncul di filter cabang mana pun**.
 
 ### M7 · MEDIUM · Tidak ada jejak siapa mengubah target & nominal pembayaran
 
+> **Status: SEBAGIAN — kolom updated_by ada di schema.ts + diisi route; DDL menunggu dijalankan.**
+
 **Apa:** `incentive_support.inputBy` dan `spv_support.inputBy` ada; `sales_targets` dan
 `incentive_payments` tidak punya `createdBy`/`updatedBy`. `paidBy` hanya terisi saat status jadi
 `lunas` (`payments/[id]/route.ts:48-51`). Nilai lama tidak disimpan di mana pun — upsert menimpa.
@@ -380,6 +402,8 @@ Rp X ke Rp Y dan kapan. Hanya `updatedAt` yang berubah. Untuk data uang, ini tem
 ---
 
 ### M8 · MEDIUM · `POST /progress` & `POST /targets` tanpa `maxDuration`
+
+> **Status: FIXED — maxDuration = 300 di progress & targets.**
 
 **Apa:** konvensi repo menaikkan batas untuk route unggah berat —
 `app/api/laporan-harian/upload/route.ts:28` dan `app/api/sales-history/import/route.ts:22` keduanya
@@ -408,6 +432,8 @@ Memperburuk H1: `POST /targets` yang kena timeout **tidak** rollback.
 
 ### H5 · HIGH · Header "Tipe Sales"/"Status Insentif" dicocokkan string persis — salah ejaan = seluruh file jatuh ke default berbayar
 
+> **Status: FIXED (be5580d) — pencocokan header case/whitespace-insensitive.**
+
 **Apa:** `lib/insentif-sales-excel.ts:36-42` mengakses `row["Tipe Sales"]` dan
 `row["Status Insentif"]` dengan kunci literal — tanpa normalisasi, **berbeda dari parser closing**
 yang punya `norm()` case-insensitive (`page.tsx:1185`). Header `"TIPE SALES"` atau `"Tipe sales"` →
@@ -427,6 +453,8 @@ silent** untuk 2 kolom itu: kalau kolomnya tidak ada sama sekali, tolak file den
 
 ### H6 · HIGH · GT mix dengan 1 principal valid dibayar Rp 0 — MT tidak
 
+> **Status: FIXED — konstantaMix(1) jatuh ke RP_1JT. Dikonfirmasi user: mix 1 principal TETAP dapat insentif.**
+
 **Apa:** komentar `konstantaMix` (`insentif-sales-calc.ts:39-41`) menulis "n<2 → 0 (pakai
 exclusive)", tapi **tidak ada satu pun tempat yang melakukan fallback itu**. `computeMix`
 mengembalikan `rincian: []`, dan route menerjemahkannya lewat `line?.total ?? 0` → Rp 0 tanpa
@@ -444,6 +472,8 @@ itu memang aturannya — tapi "Rp 0 diam-diam" hampir pasti bukan.
 ---
 
 ### H7 · HIGH · `spv_name`/`sm_name` teks bebas tanpa `trim()` → grup pecah, rate naik, support SPV hilang
+
+> **Status: FIXED — trim() spvName/smName di titik tulis POST /targets.**
 
 **Apa:** `targets/route.ts:144-145` dan `:164-165` menyimpan `spvName: t.spvName ?? null` **tanpa
 `trim()`**, lalu nama itu dipakai **langsung sebagai kunci `Map`** grouping
@@ -470,6 +500,8 @@ untuk `smName` (4 tempat di `targets/route.ts`). Jangan sebar normalisasi ke pem
 
 ### M9 · MEDIUM · Snapshot `total_incentive` tidak diperbarui, UI menampilkan angka hitung-ulang di sebelah badge "lunas"
 
+> **Status: FIXED — baris lunas menampilkan snapshot + penanda selisih hitung-ulang.**
+
 **Apa:** `payments/[id]/route.ts:44-52` — PATCH tidak menyentuh `totalIncentive`. Untuk bulan
 berjalan `detailRows` memakai `r.incentive.total` (hitung-ulang, `page.tsx:2231`); untuk bulan lain
 memakai `p.totalIncentive` (snapshot, `:2245`).
@@ -486,6 +518,8 @@ Datanya sudah ada di `payments`; nol tabel/kolom baru.
 ---
 
 ### M10 · MEDIUM · Default `"NESTLE"`/`"BANDUNG"` bocor dari template demo; target bertipe teks jadi 0 diam-diam
+
+> **Status: SEBAGIAN (be5580d) — EMPTY_ROW & validator diperbaiki; default "NESTLE" di parseTargetExcel MASIH ADA.**
 
 **Apa:** `insentif-sales-excel.ts:32-34` — `Principal` kosong → `"NESTLE"`, `Cabang` kosong →
 `"BANDUNG"`, `Channel` kosong → `"TT"` (= masuk skema GT berbayar). Untuk angka,
@@ -504,6 +538,8 @@ tapi `Number()` menghasilkan `NaN` — jangan `|| 0`.
 ---
 
 ### M11 · MEDIUM · Parser angka closing hancur untuk format ribuan bertitik
+
+> **Status: FIXED — num() mendeteksi format ribuan Indonesia vs Inggris.**
 
 **Apa:** `page.tsx:1196` —
 `parseFloat(val.replace(/[^\d.,-]/g,"").replace(/,/g,"")) || 0` mengasumsikan format Inggris
@@ -531,6 +567,8 @@ mengurangi realisasi.
 
 ### M12 · MEDIUM · Tidak ada pembulatan ke rupiah di sepanjang jalur bayar
 
+> **Status: FIXED — Math.round di batas bayar (POST /payments + UI).**
+
 **Apa:** seluruh perkalian (`WEIGHT_AO * K * pAo`, `porsiDistributor * pctValue`) menghasilkan
 `double` dan tidak pernah dibulatkan sebelum masuk `incentive_payments.total_incentive`.
 Contoh nyata: `computeMix().total = 1154100.0003456` — nilai itulah yang masuk DB dan diekspor.
@@ -546,6 +584,8 @@ komponen ≠ total.
 ---
 
 ### M13 · MEDIUM · "Idempoten per (salesCode, principle, periode)" menghapus upload sebelumnya kalau principal beririsan
+
+> **Status: FIXED — date masuk kunci hapus di progress/route.ts DAN laporan-harian/ingest.ts. Dikonfirmasi user: closing yang sudah masuk tidak boleh hilang karena upload berikutnya.**
 
 **Apa:** klaim di komentar `progress/route.ts:8-10` ("upload file SM lain tidak menyentuh data SM
 ini") hanya benar kalau himpunan `(salesCode, principle)` antar file **tidak beririsan**. DELETE-nya

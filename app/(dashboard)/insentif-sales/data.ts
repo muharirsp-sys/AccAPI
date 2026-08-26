@@ -8,7 +8,10 @@
 
 // ====== Domain types ======
 export type KpiType = "value" | "ec" | "ao" | "ia";
-export type ChannelType = "TT" | "MT";
+// GT dan TT adalah SINONIM di sisi skema insentif (lihat isSchemeChannel di
+// app/api/insentif-sales/dashboard/route.ts). Keduanya harus ada di tipe ini — kalau tidak,
+// nilai GT dari DB masuk lewat cast diam-diam dan filter yang mencocokkan literal jadi meleset.
+export type ChannelType = "GT" | "TT" | "MT";
 
 export interface Salesman {
     code: string;

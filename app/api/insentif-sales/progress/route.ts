@@ -5,9 +5,15 @@
  * Main Functions: GET aggregate MTD; POST simpan progress harian (mode ganti-per-kombinasi).
  * Side Effects: DB read + write.
  *
- * POST bersifat IDEMPOTEN: baris untuk setiap kombinasi (salesCode, principle, periode) yang
- * ada di payload DIHAPUS lebih dulu, lalu payload disisipkan. Upload dua kali tidak menggandakan
- * angka, dan upload file SM lain tidak menyentuh data SM ini.
+ * POST bersifat IDEMPOTEN PER HARI: baris untuk setiap kombinasi
+ * (salesCode, principle, periode, TANGGAL) yang ada di payload DIHAPUS lebih dulu, lalu payload
+ * disisipkan. Upload dua kali tidak menggandakan angka, upload file SM lain tidak menyentuh data
+ * SM ini, dan upload closing berkala TIDAK menghapus hari-hari yang sudah masuk sebelumnya.
+ *
+ * `date` masuk kunci hapus sejak 2026-08-24 (audit temuan M13). Sebelumnya cakupannya hanya
+ * (salesCode, principle, periode) tanpa tanggal, sehingga upload closing minggu ke-2 MENGHAPUS
+ * seluruh data minggu ke-1 untuk sales & principal yang sama — realisasi MTD tinggal separuh,
+ * pengali jatuh di bawah 0,9, insentif jadi Rp 0, tanpa pesan error apa pun.
  *
  * Riwayat: dulu dedup memakai (salesCode, invoiceNumber, periode) dan meng-skip baris duplikat.
  * Itu salah karena file closing berada di level BARIS BARANG — satu nota berisi banyak produk
@@ -23,6 +29,10 @@ import { db } from "@/lib/db";
 import { salesDailyProgress } from "@/db/schema";
 import { computeMtdProgress } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
+
+// Upload closing ~2.000 baris + ratusan DELETE dalam satu transaksi. Konvensi repo:
+// route unggah berat menaikkan batas ini (laporan-harian/upload & sales-history/import = 300).
+export const maxDuration = 300;
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
@@ -69,15 +79,32 @@ export async function POST(req: NextRequest) {
     const valid = body.filter((p) => p.salesCode && p.date && p.periodMonth && p.periodYear);
     if (valid.length === 0) return NextResponse.json({ inserted: 0, replaced: 0 });
 
+    // Angka realisasi adalah dasar perhitungan insentif — tolak NaN/Infinity di trust boundary.
+    // (Negatif SAH: baris retur memang bernilai minus.)
+    for (const p of valid) {
+        for (const [field, label] of [
+            ["achievedValueDpp", "DPP"], ["achievedEc", "EC"],
+            ["achievedAo", "AO"], ["achievedIa", "IA"],
+        ] as const) {
+            if (!Number.isFinite(Number(p[field]))) {
+                return NextResponse.json(
+                    { error: `Baris ${p.salesCode}/${p.principle} ${p.date}: ${label} tidak valid (${String(p[field])}).` },
+                    { status: 400 },
+                );
+            }
+        }
+    }
+
     const now = new Date();
 
-    // Kombinasi yang akan diganti. Cakupannya per (salesCode, principle, periode) — bukan
-    // seluruh periode — supaya upload file SM lain tidak ikut terhapus.
-    const scopes = new Map<string, { salesCode: string; principle: string; periodMonth: number; periodYear: number }>();
+    // Kombinasi yang akan diganti. Cakupannya per (salesCode, principle, periode, TANGGAL) —
+    // bukan seluruh periode, dan bukan pula seluruh bulan untuk kombinasi itu. Tanpa `date`,
+    // upload closing minggu ke-2 menghapus data minggu ke-1 (audit temuan M13).
+    const scopes = new Map<string, { salesCode: string; principle: string; periodMonth: number; periodYear: number; date: string }>();
     for (const p of valid) {
-        const k = `${p.salesCode}|${p.principle}|${p.periodMonth}|${p.periodYear}`;
+        const k = `${p.salesCode}|${p.principle}|${p.periodMonth}|${p.periodYear}|${p.date}`;
         if (!scopes.has(k)) {
-            scopes.set(k, { salesCode: p.salesCode, principle: p.principle, periodMonth: p.periodMonth, periodYear: p.periodYear });
+            scopes.set(k, { salesCode: p.salesCode, principle: p.principle, periodMonth: p.periodMonth, periodYear: p.periodYear, date: p.date });
         }
     }
 
@@ -92,10 +119,10 @@ export async function POST(req: NextRequest) {
                         eq(salesDailyProgress.principle, sc.principle),
                         eq(salesDailyProgress.periodMonth, sc.periodMonth),
                         eq(salesDailyProgress.periodYear, sc.periodYear),
+                        eq(salesDailyProgress.date, sc.date),
                     ),
-                )
-                .returning({ id: salesDailyProgress.id });
-            replaced += del.length;
+                );
+            replaced += del.rowCount ?? 0;
         }
 
         // Sisip borongan. Dipotong per 1000 baris supaya satu statement tidak melewati

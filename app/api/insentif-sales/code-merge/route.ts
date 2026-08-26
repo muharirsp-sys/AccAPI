@@ -18,6 +18,7 @@ import { db } from "@/lib/db";
 import { salesCodeMerge, salesDailyProgress, salesTargets } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { groupByPrefix, type CodeNamePair } from "@/lib/sales-code-merge";
+import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
@@ -30,7 +31,7 @@ export async function GET(req: NextRequest) {
 
     // Nama salesman diambil dari targets (sumber nama paling rapi). Kode yang hanya ada di
     // progress (belum punya target) tetap disertakan supaya pergantian orang tak terlewat.
-    const [targetRows, progressCodes, decided] = await Promise.all([
+    const [targetRows, progressCodes, decided, scope] = await Promise.all([
         db
             .selectDistinct({ salesCode: salesTargets.salesCode, salesName: salesTargets.salesName })
             .from(salesTargets)
@@ -43,12 +44,18 @@ export async function GET(req: NextRequest) {
             .select({ from: salesCodeMerge.fromSalesCode, to: salesCodeMerge.toSalesCode, decision: salesCodeMerge.decision })
             .from(salesCodeMerge)
             .where(and(eq(salesCodeMerge.periodMonth, month), eq(salesCodeMerge.periodYear, year))),
+        getScopeForUser(gate.session.user.id, { month, year }),
     ]);
 
-    const nameByCode = new Map(targetRows.map((r) => [r.salesCode, r.salesName]));
+    // scope null = lihat semua (default). Non-null = user SPV/SM opt-in — tanpa filter ini,
+    // dua endpoint ini membocorkan SELURUH kode sales + nama SPV/SM se-perusahaan ke user
+    // yang secara desain hanya boleh melihat timnya sendiri (audit temuan M5).
+    const inScope = (salesCode: string) => scope === null || scope.has(salesCode);
+
+    const nameByCode = new Map(targetRows.filter((r) => inScope(r.salesCode)).map((r) => [r.salesCode, r.salesName]));
     const pairs: CodeNamePair[] = [...nameByCode].map(([salesCode, salesName]) => ({ salesCode, salesName }));
     // Kode di progress tanpa target: tanpa nama, prefiks tak bisa dibaca → dilaporkan terpisah.
-    const orphanCodes = progressCodes.map((p) => p.salesCode).filter((c) => !nameByCode.has(c));
+    const orphanCodes = progressCodes.map((p) => p.salesCode).filter((c) => inScope(c) && !nameByCode.has(c));
 
     const decidedFrom = new Set(decided.map((d) => d.from));
     const groups = groupByPrefix(pairs)
@@ -61,7 +68,7 @@ export async function GET(req: NextRequest) {
         count: groups.length,
         groups,
         orphanCodes,
-        decided,
+        decided: decided.filter((d) => inScope(d.from)),
     });
 }
 
@@ -87,8 +94,11 @@ export async function POST(req: NextRequest) {
     }
 
     const now = new Date();
-    let saved = 0;
 
+    // PASS 1: validasi seluruh payload sebelum menulis. Keputusan merge mengubah cara
+    // pencapaian dilipat saat agregasi MTD — separuh keputusan tersimpan berarti sebagian
+    // sales dilipat dan sebagian tidak, tanpa ada yang tahu.
+    const prepared: Array<{ d: MergeDecisionInput; to: string | null }> = [];
     for (const d of body) {
         if (!d.fromSalesCode || !d.prefix || !d.periodMonth || !d.periodYear) continue;
         if (d.decision !== "merge" && d.decision !== "separate") {
@@ -103,8 +113,14 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ error: `${d.fromSalesCode}: tujuan merge tidak boleh kode itu sendiri` }, { status: 400 });
             }
         }
+        prepared.push({ d, to });
+    }
 
-        const [existing] = await db
+    // PASS 2: satu transaksi.
+    let saved = 0;
+    await db.transaction(async (tx) => {
+      for (const { d, to } of prepared) {
+        const [existing] = await tx
             .select({ id: salesCodeMerge.id })
             .from(salesCodeMerge)
             .where(
@@ -117,11 +133,11 @@ export async function POST(req: NextRequest) {
             .limit(1);
 
         if (existing) {
-            await db.update(salesCodeMerge)
+            await tx.update(salesCodeMerge)
                 .set({ toSalesCode: to, decision: d.decision, prefix: d.prefix, decidedBy: gate.session.user.id, updatedAt: now })
                 .where(eq(salesCodeMerge.id, existing.id));
         } else {
-            await db.insert(salesCodeMerge).values({
+            await tx.insert(salesCodeMerge).values({
                 id: randomUUID(),
                 periodMonth: d.periodMonth, periodYear: d.periodYear,
                 prefix: d.prefix, fromSalesCode: d.fromSalesCode, toSalesCode: to,
@@ -130,7 +146,8 @@ export async function POST(req: NextRequest) {
             });
         }
         saved++;
-    }
+      }
+    });
 
     return NextResponse.json({ saved });
 }

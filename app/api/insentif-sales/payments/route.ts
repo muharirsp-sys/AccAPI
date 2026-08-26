@@ -69,8 +69,18 @@ export async function POST(req: NextRequest) {
     if (!body.salesCode || !body.periodMonth || !body.periodYear) {
         return NextResponse.json({ error: "salesCode, periodMonth, periodYear required" }, { status: 400 });
     }
+    // Nominal adalah uang yang akan dibayarkan — tolak NaN/Infinity/negatif di trust boundary.
+    if (!Number.isFinite(Number(body.totalIncentive)) || Number(body.totalIncentive) < 0) {
+        return NextResponse.json({ error: "totalIncentive tidak valid" }, { status: 400 });
+    }
+    // Dibulatkan ke rupiah: transfer bank tidak bisa berisi sen, dan total rekap yang
+    // dijumlahkan dari nilai pecahan tidak akan sama dengan jumlah baris yang ditampilkan.
+    const totalIncentive = Math.round(Number(body.totalIncentive));
 
     const now = new Date();
+    const actor = gate.session.user.id;
+    const actorName = gate.session.user.name ?? null;
+    const markingLunas = body.paymentStatus === "lunas";
 
     // Kunci = salesCode + principle + period (mix → 1 payment per principle).
     const [existing] = await db
@@ -91,9 +101,14 @@ export async function POST(req: NextRequest) {
             .update(incentivePayments)
             .set({
                 salesName: body.salesName,
-                totalIncentive: body.totalIncentive,
+                totalIncentive,
                 paymentStatus: body.paymentStatus ?? "belum",
                 paymentProofUrl: body.paymentProofUrl ?? null,
+                // Cabang ini terjangkau saat cache klien basi (paymentId masih null padahal
+                // barisnya sudah ada). Dulu tidak mengisi paidBy/paymentDate sama sekali,
+                // berbeda dari PATCH — pembayaran jadi "lunas" tanpa jejak siapa/kapan.
+                ...(markingLunas ? { paymentDate: now, paidBy: actor, paidByName: actorName } : {}),
+                updatedBy: actor,
                 updatedAt: now,
             })
             .where(eq(incentivePayments.id, existing.id));
@@ -109,12 +124,13 @@ export async function POST(req: NextRequest) {
         branch: body.branch,
         periodMonth: body.periodMonth,
         periodYear: body.periodYear,
-        totalIncentive: body.totalIncentive,
+        totalIncentive,
         paymentStatus: body.paymentStatus ?? "belum",
         paymentProofUrl: body.paymentProofUrl ?? null,
-        paymentDate: null,
-        paidBy: null,
-        paidByName: null,
+        paymentDate: markingLunas ? now : null,
+        paidBy: markingLunas ? actor : null,
+        paidByName: markingLunas ? actorName : null,
+        updatedBy: actor,
         createdAt: now,
         updatedAt: now,
     });

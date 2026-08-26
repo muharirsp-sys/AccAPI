@@ -21,14 +21,35 @@
  * spv-dashboard/route.ts, supaya konsisten begitu admin mulai isi Kelola Hierarki.
  */
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { user, salesTargets, spvSalesAssignment, smSpvAssignment } from "@/db/schema";
 
-async function effectiveSpvBySalesCode(): Promise<Map<string, string>> {
+/** Periode yang sedang dilihat. Menyempitkan peta hierarki ke bulan itu saja. */
+export interface Period { month: number; year: number }
+
+/** idx_sales_targets_period sudah cocok — tidak perlu index baru. */
+function periodWhere(period?: Period) {
+    return period
+        ? and(eq(salesTargets.periodMonth, period.month), eq(salesTargets.periodYear, period.year))
+        : undefined;
+}
+
+/**
+ * Periode opsional. TANPA periode, peta dibangun dari SELURUH riwayat sales_targets — dan
+ * karena tidak ada ORDER BY, salesCode yang pernah pindah SPV antar bulan hasilnya
+ * NON-DETERMINISTIK (map.set membiarkan baris terakhir yang dibaca menang, dan urutan
+ * seq-scan bisa berubah setelah VACUUM). Gejalanya: SPV kadang melihat kadang tidak melihat
+ * salesman lama, berubah antar refresh tanpa ada data yang diubah (audit temuan M2).
+ * Pemanggil yang tahu periodenya WAJIB mengirimkannya.
+ */
+async function effectiveSpvBySalesCode(period?: Period): Promise<Map<string, string>> {
     const [assignments, targets] = await Promise.all([
         db.select().from(spvSalesAssignment),
-        db.select({ salesCode: salesTargets.salesCode, spvName: salesTargets.spvName }).from(salesTargets),
+        db
+            .select({ salesCode: salesTargets.salesCode, spvName: salesTargets.spvName })
+            .from(salesTargets)
+            .where(periodWhere(period)),
     ]);
     const map = new Map<string, string>();
     for (const t of targets) if (t.spvName) map.set(t.salesCode, t.spvName);
@@ -36,10 +57,13 @@ async function effectiveSpvBySalesCode(): Promise<Map<string, string>> {
     return map;
 }
 
-async function effectiveSmBySpvName(): Promise<Map<string, string>> {
+async function effectiveSmBySpvName(period?: Period): Promise<Map<string, string>> {
     const [assignments, targets] = await Promise.all([
         db.select().from(smSpvAssignment),
-        db.select({ spvName: salesTargets.spvName, smName: salesTargets.smName }).from(salesTargets),
+        db
+            .select({ spvName: salesTargets.spvName, smName: salesTargets.smName })
+            .from(salesTargets)
+            .where(periodWhere(period)),
     ]);
     const map = new Map<string, string>();
     for (const t of targets) if (t.spvName && t.smName) map.set(t.spvName, t.smName);
@@ -71,8 +95,17 @@ export async function getCurrentSpvOwner(salesCode: string): Promise<string | nu
     return spvOf.get(salesCode) ?? null;
 }
 
+/**
+ * Peta salesCode → SPV pemilik, dihitung SEKALI untuk dipakai berulang.
+ * Dipakai POST /targets yang memeriksa kepemilikan per baris: memanggil getCurrentSpvOwner
+ * di dalam loop membuat 2 full-scan `sales_targets` PER BARIS (upload 88 baris = 176 scan).
+ */
+export async function getSpvOwnerMap(period?: Period): Promise<Map<string, string>> {
+    return effectiveSpvBySalesCode(period);
+}
+
 /** null = tidak ada scoping (lihat semua) — default untuk semua user yang belum di-assign. */
-export async function getScopeForUser(userId: string): Promise<Set<string> | null> {
+export async function getScopeForUser(userId: string, period?: Period): Promise<Set<string> | null> {
     const [row] = await db
         .select({ hierarchyRole: user.hierarchyRole, hierarchyName: user.hierarchyName })
         .from(user)
@@ -80,7 +113,7 @@ export async function getScopeForUser(userId: string): Promise<Set<string> | nul
         .limit(1);
     if (!row?.hierarchyRole || !row.hierarchyName) return null;
 
-    const spvOf = await effectiveSpvBySalesCode();
+    const spvOf = await effectiveSpvBySalesCode(period);
 
     if (row.hierarchyRole === "spv") {
         const codes = new Set<string>();
@@ -89,7 +122,7 @@ export async function getScopeForUser(userId: string): Promise<Set<string> | nul
     }
 
     if (row.hierarchyRole === "sm") {
-        const smOf = await effectiveSmBySpvName();
+        const smOf = await effectiveSmBySpvName(period);
         const spvNames = new Set<string>();
         for (const [spv, sm] of smOf) if (sm === row.hierarchyName) spvNames.add(spv);
         const codes = new Set<string>();

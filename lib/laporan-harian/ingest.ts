@@ -35,13 +35,15 @@ export async function replaceDailyProgressForPeriod(
 ): Promise<{ deleted: boolean; inserted: number }> {
     const now = new Date();
 
-    // Cakupan yang akan diganti: per (salesCode, principle, periode) yang muncul di `rows` —
-    // bukan seluruh (month, year). Lihat komentar header untuk alasannya.
-    const scopes = new Map<string, { salesCode: string; principle: string; periodMonth: number; periodYear: number }>();
+    // Cakupan yang akan diganti: per (salesCode, principle, periode, TANGGAL) yang muncul di
+    // `rows` — bukan seluruh (month, year). Lihat komentar header untuk alasannya. `date` ikut
+    // kunci supaya upload berkala tidak menghapus hari-hari yang sudah masuk sebelumnya,
+    // sama persis dengan app/api/insentif-sales/progress/route.ts.
+    const scopes = new Map<string, { salesCode: string; principle: string; periodMonth: number; periodYear: number; date: string }>();
     for (const r of rows) {
-        const k = `${r.salesCode}|${r.principle}|${r.periodMonth}|${r.periodYear}`;
+        const k = `${r.salesCode}|${r.principle}|${r.periodMonth}|${r.periodYear}|${r.date}`;
         if (!scopes.has(k)) {
-            scopes.set(k, { salesCode: r.salesCode, principle: r.principle, periodMonth: r.periodMonth, periodYear: r.periodYear });
+            scopes.set(k, { salesCode: r.salesCode, principle: r.principle, periodMonth: r.periodMonth, periodYear: r.periodYear, date: r.date });
         }
     }
 
@@ -55,6 +57,7 @@ export async function replaceDailyProgressForPeriod(
                         eq(salesDailyProgress.principle, sc.principle),
                         eq(salesDailyProgress.periodMonth, sc.periodMonth),
                         eq(salesDailyProgress.periodYear, sc.periodYear),
+                        eq(salesDailyProgress.date, sc.date),
                     ),
                 );
         }

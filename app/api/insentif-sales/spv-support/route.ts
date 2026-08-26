@@ -54,8 +54,10 @@ export async function POST(req: NextRequest) {
     }
 
     const now = new Date();
-    let upserted = 0;
 
+    // PASS 1: validasi seluruh payload dulu — `return 400` di tengah loop tulis meninggalkan
+    // sebagian support sudah commit, dan support memengaruhi nominal insentif SPV.
+    const prepared: Array<{ spvName: string; principle: string; periodMonth: number; periodYear: number; amount: number }> = [];
     for (const s of body) {
         const spvName = s.spvName?.trim();
         const principle = s.principle?.trim();
@@ -68,34 +70,41 @@ export async function POST(req: NextRequest) {
                 { status: 400 },
             );
         }
-
-        const [existing] = await db
-            .select({ id: spvSupport.id })
-            .from(spvSupport)
-            .where(
-                and(
-                    eq(spvSupport.spvName, spvName),
-                    eq(spvSupport.principle, principle),
-                    eq(spvSupport.periodMonth, s.periodMonth),
-                    eq(spvSupport.periodYear, s.periodYear),
-                ),
-            )
-            .limit(1);
-
-        if (existing) {
-            await db.update(spvSupport)
-                .set({ supportAmount: amount, inputBy: gate.session.user.id, updatedAt: now })
-                .where(eq(spvSupport.id, existing.id));
-        } else {
-            await db.insert(spvSupport).values({
-                id: randomUUID(), spvName, principle,
-                periodMonth: s.periodMonth, periodYear: s.periodYear,
-                supportAmount: amount, inputBy: gate.session.user.id,
-                createdAt: now, updatedAt: now,
-            });
-        }
-        upserted++;
+        prepared.push({ spvName, principle, periodMonth: s.periodMonth, periodYear: s.periodYear, amount });
     }
+
+    // PASS 2: satu transaksi.
+    let upserted = 0;
+    await db.transaction(async (tx) => {
+        for (const p of prepared) {
+            const [existing] = await tx
+                .select({ id: spvSupport.id })
+                .from(spvSupport)
+                .where(
+                    and(
+                        eq(spvSupport.spvName, p.spvName),
+                        eq(spvSupport.principle, p.principle),
+                        eq(spvSupport.periodMonth, p.periodMonth),
+                        eq(spvSupport.periodYear, p.periodYear),
+                    ),
+                )
+                .limit(1);
+
+            if (existing) {
+                await tx.update(spvSupport)
+                    .set({ supportAmount: p.amount, inputBy: gate.session.user.id, updatedAt: now })
+                    .where(eq(spvSupport.id, existing.id));
+            } else {
+                await tx.insert(spvSupport).values({
+                    id: randomUUID(), spvName: p.spvName, principle: p.principle,
+                    periodMonth: p.periodMonth, periodYear: p.periodYear,
+                    supportAmount: p.amount, inputBy: gate.session.user.id,
+                    createdAt: now, updatedAt: now,
+                });
+            }
+            upserted++;
+        }
+    });
 
     return NextResponse.json({ upserted });
 }

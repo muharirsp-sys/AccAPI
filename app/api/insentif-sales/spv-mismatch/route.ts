@@ -16,6 +16,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { salesDailyProgress, salesTargets, spvSalesAssignment } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
+import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
 
 export interface SpvMismatchRow {
     salesCode: string;
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
     const month = parseInt(searchParams.get("month") ?? String(now.getMonth() + 1), 10);
     const year = parseInt(searchParams.get("year") ?? String(now.getFullYear()), 10);
 
-    const [targets, closing] = await Promise.all([
+    const [targets, closing, scope] = await Promise.all([
         db
             .select({
                 salesCode: salesTargets.salesCode,
@@ -58,7 +59,12 @@ export async function GET(req: NextRequest) {
                     isNotNull(salesDailyProgress.spvName),
                 ),
             ),
+        getScopeForUser(gate.session.user.id, { month, year }),
     ]);
+
+    // scope null = lihat semua (default). Non-null = user SPV/SM opt-in — tanpa filter ini
+    // panel ini membocorkan pasangan sales x SPV se-perusahaan (audit temuan M5).
+    const inScope = (salesCode: string) => scope === null || scope.has(salesCode);
 
     const closingMap = new Map<string, string[]>();
     for (const c of closing) {
@@ -71,6 +77,7 @@ export async function GET(req: NextRequest) {
 
     const rows: SpvMismatchRow[] = [];
     for (const t of targets) {
+        if (!inScope(t.salesCode)) continue;
         const spvClosing = closingMap.get(`${t.salesCode}|${t.principle}`);
         if (!spvClosing || spvClosing.length === 0) continue; // closing belum punya data SPV → bukan mismatch
         // Sinkron kalau SPV target ada di daftar SPV closing dan closing cuma menyebut satu nama.
@@ -89,6 +96,9 @@ interface SyncInput {
     spvName: string; // nama SPV yang dipilih sebagai benar
 }
 
+/** Dipakai untuk membatalkan transaksi saat baris target tidak ada (bukan error server). */
+class NotFoundError extends Error {}
+
 export async function POST(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.manage_hierarchy");
     if (gate.response) return gate.response;
@@ -106,9 +116,16 @@ export async function POST(req: NextRequest) {
     }
 
     const now = new Date();
-    const updated = await db
+    // Dua tabel ini justru ADA supaya konsisten satu sama lain — kalau proses mati di antara
+    // keduanya, sales_targets.spv_name sudah berubah tapi spv_sales_assignment belum. Karena
+    // assignment adalah OVERRIDE, dashboard memakai nama lama sementara target memakai nama
+    // baru: persis mismatch yang route ini seharusnya menghapus, dan tidak muncul lagi di GET
+    // karena target sudah "benar" (audit temuan L1a). Satu transaksi.
+    let syncedCount = 0;
+    await db.transaction(async (tx) => {
+    const updated = await tx
         .update(salesTargets)
-        .set({ spvName, updatedAt: now })
+        .set({ spvName, updatedBy: gate.session.user.id, updatedAt: now })
         .where(
             and(
                 eq(salesTargets.salesCode, body.salesCode),
@@ -119,23 +136,30 @@ export async function POST(req: NextRequest) {
         )
         .returning({ id: salesTargets.id });
 
-    if (updated.length === 0) {
-        return NextResponse.json({ error: "Baris target tidak ditemukan" }, { status: 404 });
-    }
+    if (updated.length === 0) throw new NotFoundError();
+    syncedCount = updated.length;
 
     // Ikutkan mapping hierarki supaya scope SPV/SM (lib/insentif-hierarchy-scope) konsisten.
-    const [existing] = await db
+    const [existing] = await tx
         .select({ id: spvSalesAssignment.id })
         .from(spvSalesAssignment)
         .where(eq(spvSalesAssignment.salesCode, body.salesCode))
         .limit(1);
     if (existing) {
-        await db.update(spvSalesAssignment).set({ spvName, updatedAt: now }).where(eq(spvSalesAssignment.id, existing.id));
+        await tx.update(spvSalesAssignment).set({ spvName, updatedAt: now }).where(eq(spvSalesAssignment.id, existing.id));
     } else {
-        await db.insert(spvSalesAssignment).values({
+        await tx.insert(spvSalesAssignment).values({
             id: randomUUID(), salesCode: body.salesCode, spvName, createdAt: now, updatedAt: now,
         });
     }
+    }).catch((e) => {
+        if (e instanceof NotFoundError) return;
+        throw e;
+    });
 
-    return NextResponse.json({ synced: updated.length, spvName });
+    if (syncedCount === 0) {
+        return NextResponse.json({ error: "Baris target tidak ditemukan" }, { status: 404 });
+    }
+
+    return NextResponse.json({ synced: syncedCount, spvName });
 }
