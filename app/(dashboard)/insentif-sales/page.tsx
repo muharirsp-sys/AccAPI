@@ -347,12 +347,15 @@ function SmBreakdown({ r }: { r: SmIncentiveRow }) {
 /** Penanda baris bisa diklik. Chevron ikut berputar saat terbuka. */
 function ExpandCell({ open }: { open: boolean }) {
     return (
-        <td className="px-3 py-3 text-center">
-            <ChevronDown
-                size={14}
-                aria-hidden
-                className={`inline text-slate-500 transition-transform duration-200 motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
-            />
+        <td className="px-3 py-3 text-center whitespace-nowrap">
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                {open ? "Tutup" : "Rincian"}
+                <ChevronDown
+                    size={12}
+                    aria-hidden
+                    className={`transition-transform duration-200 motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
+                />
+            </span>
         </td>
     );
 }
@@ -655,7 +658,7 @@ function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
                             <th className="px-3 py-3 text-right">{KPI_LABELS.ao}</th>
                             <th className="px-3 py-3 text-right bg-amber-500/10">Total Insentif</th>
                             <th className="px-3 py-3 text-center">Status</th>
-                            <th className="px-3 py-3 w-8"><span className="sr-only">Rincian</span></th>
+                            <th className="px-3 py-3 text-center">Rincian</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-white/[0.1]">
@@ -891,7 +894,7 @@ function SmIncentiveTable({ month, year }: { month: number; year: number }) {
                                 <th className="px-3 py-3 text-right">Realisasi Value</th>
                                 <th className="px-3 py-3 text-center">Pencapaian</th>
                                 <th className="px-3 py-3 text-right bg-amber-500/10">Total Insentif</th>
-                                <th className="px-3 py-3 w-8"><span className="sr-only">Rincian</span></th>
+                                <th className="px-3 py-3 text-center">Rincian</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-white/[0.1]">
@@ -997,7 +1000,7 @@ function SpvIncentiveTable({ month, year }: { month: number; year: number }) {
                                 <th className="px-3 py-3 text-center">Jumlah Principal</th>
                                 <th className="px-3 py-3 text-right">Rate/Principal</th>
                                 <th className="px-3 py-3 text-right bg-amber-500/10">Total Insentif</th>
-                                <th className="px-3 py-3 w-8"></th>
+                                <th className="px-3 py-3 text-center">Rincian</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-white/[0.1]">
@@ -2885,7 +2888,7 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                     </div>
                 </div>
                 <div className="overflow-x-auto">
-                    <table className="ui-data-table min-w-[820px]">
+                    <table className="ui-data-table min-w-[900px]">
                         <thead className="bg-black/50 text-slate-400 font-bold uppercase tracking-wider border-b border-white/10">
                             <tr>
                                 <th className="px-3 py-3 w-10"></th>
@@ -2895,7 +2898,7 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                                 <th className="px-3 py-3 text-right">Total Insentif</th>
                                 <th className="px-3 py-3">Bukti Bayar</th>
                                 <th className="px-3 py-3 text-center">Status</th>
-                                <th className="px-3 py-3 w-8"><span className="sr-only">Rincian</span></th>
+                                <th className="px-3 py-3 text-center">Rincian</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-white/[0.1]">
@@ -2945,16 +2948,17 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                                                 {isChecked ? "Akan Dibayar" : slabel}
                                             </span>
                                         </td>
-                                        <td className="px-3 py-3">
+                                        <td className="px-3 py-3 text-center">
                                             <button
                                                 type="button"
                                                 aria-expanded={!!open[selectionKey]}
                                                 aria-label={`Rincian ${r.salesName}`}
                                                 onClick={() => toggleRincian(selectionKey)}
-                                                className="text-slate-500 hover:text-slate-200 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400"
+                                                className="inline-flex items-center gap-1 px-2 py-1 rounded border border-white/10 bg-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400"
                                             >
+                                                {open[selectionKey] ? "Tutup" : "Rincian"}
                                                 <ChevronDown
-                                                    size={14}
+                                                    size={12}
                                                     className={`transition-transform duration-200 motion-reduce:transition-none ${open[selectionKey] ? "rotate-180" : ""}`}
                                                 />
                                             </button>
