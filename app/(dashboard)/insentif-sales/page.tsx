@@ -21,6 +21,7 @@ import { payeeCode, parsePayee, PAYEE_PRINCIPLE_ALL, type PayeeRole } from "@/li
 import { toast } from "sonner";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SupportTemplateRow } from "@/lib/insentif-sales-excel";
+import { excelDateToIso } from "@/lib/excel-date";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AsyncState";
 import {
     PRINCIPLES, BRANCHES, KPI_LABELS, MONTH_LABELS,
@@ -185,6 +186,15 @@ function formatQty(n: number) {
     return n.toLocaleString("id-ID", { maximumFractionDigits: 1 });
 }
 
+/**
+ * ISQ = item per outlet (itemSuper), rasio kecil, BUKAN cacahan. Dengan 1 desimal, target
+ * 0,04 tampil "0" lalu pencapaian 11.450% terbaca sebagai kesalahan hitung padahal cuma
+ * pembulatan tampilan: angka yang membantah angka di sebelahnya.
+ */
+function formatRatio(n: number) {
+    return n.toLocaleString("id-ID", { maximumFractionDigits: 2 });
+}
+
 /** Satu angka + labelnya di dalam baris rincian. Angka selalu mono supaya kolom sejajar. */
 function BreakdownItem({ label, value, tone }: { label: string; value: string; tone?: "amber" | "muted" }) {
     return (
@@ -253,8 +263,8 @@ function SalesBreakdown({ r }: { r: ApiRow }) {
                 { label: "Target EC", value: formatQty(r.target.ec) },
                 { label: "Realisasi EC", value: formatQty(r.real.ec) },
                 { label: "Pencapaian EC", value: formatPctText(r.pct.ec) },
-                { label: "Target ISQ", value: formatQty(r.target.isq) },
-                { label: "Realisasi ISQ", value: formatQty(r.real.isq) },
+                { label: "Target ISQ", value: formatRatio(r.target.isq) },
+                { label: "Realisasi ISQ", value: formatRatio(r.real.isq) },
                 { label: "Pencapaian ISQ", value: formatPctText(r.pct.isq) },
             ]} />
             <BreakdownGroup title="Dasar perhitungan" items={[
@@ -1570,11 +1580,8 @@ function AdminView({ rows }: { rows: Salesman[] }) {
             // berupa Date; kalau gagal dibaca, jatuh ke tanggal 1 periode itu (bukan hari ini,
             // supaya upload ulang di hari berbeda tetap menghasilkan baris yang sama).
             const isoDate = (raw: string) => {
-                const d = new Date(raw);
-                if (!Number.isNaN(d.getTime())) {
-                    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-                }
-                return `${year}-${String(month).padStart(2, "0")}-01`;
+                const d = excelDateToIso(raw);
+                return d ?? `${year}-${String(month).padStart(2, "0")}-01`;
             };
 
             // AGREGASI sebelum kirim. File closing berada di level baris barang (135 ribu baris
