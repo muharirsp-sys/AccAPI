@@ -19,19 +19,29 @@
 -- ============================================================
 -- PRASYARAT
 -- ============================================================
--- - Ganti '<PASSWORD_BARU>' di bawah dengan password acak yang kuat. JANGAN pakai password
---   yang sama dengan user accapi.
 -- - Lakukan saat TIDAK ADA yang sedang upload (langkah 3 butuh redeploy = aplikasi restart).
--- - Simpan password barunya sebelum menutup terminal — tidak bisa dibaca ulang dari Postgres.
+--
+-- PASSWORD: generate di VPS, JANGAN ketik manual dan JANGAN kirim lewat chat/email —
+-- password yang lewat kanal itu harus dianggap sudah bocor. Simpan ke variabel shell dulu,
+-- lalu pakai variabelnya di langkah-langkah berikut:
+--
+--   APP_PW="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)"; echo "$APP_PW"
+--
+-- Huruf/angka saja (tanpa / + =) supaya aman dipakai di dalam URL koneksi tanpa encoding.
+-- $APP_PW hanya hidup di terminal itu. Kalau hilang sebelum sempat ditempel ke Coolify,
+-- tidak perlu mengulang dari awal — cukup set ulang:
+--
+--   ALTER ROLE accapi_app PASSWORD '<yang baru>';
 
 -- ============================================================
 -- LANGKAH 1 — buat role + beri hak DML atas objek yang SUDAH ada
 -- ============================================================
---   docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 <<'SQL'
+--   docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 <<SQL
 --   ...isi blok di bawah...
 --   SQL
 
-CREATE ROLE accapi_app LOGIN PASSWORD '<PASSWORD_BARU>';
+-- Heredoc-nya <<SQL TANPA kutip supaya ${APP_PW} terisi shell.
+CREATE ROLE accapi_app LOGIN PASSWORD '${APP_PW}';
 
 GRANT CONNECT ON DATABASE accapi TO accapi_app;
 GRANT USAGE   ON SCHEMA public   TO accapi_app;
@@ -52,10 +62,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 -- ============================================================
 -- Jalankan sebagai role baru. Yang pertama HARUS berhasil, yang kedua HARUS ditolak.
 --
---   docker exec -i accapi-postgres psql "postgresql://accapi_app:<PASSWORD_BARU>@localhost/accapi" -c "SELECT count(*) FROM sales_targets;"
+--   docker exec -i accapi-postgres psql "postgresql://accapi_app:${APP_PW}@localhost/accapi" -c "SELECT count(*) FROM sales_targets;"
 --     -> harus keluar angka
 --
---   docker exec -i accapi-postgres psql "postgresql://accapi_app:<PASSWORD_BARU>@localhost/accapi" -c "CREATE TABLE coba_hapus_saya (x int);"
+--   docker exec -i accapi-postgres psql "postgresql://accapi_app:${APP_PW}@localhost/accapi" -c "CREATE TABLE coba_hapus_saya (x int);"
 --     -> HARUS gagal: "permission denied for schema public"
 --
 -- Kalau CREATE TABLE malah BERHASIL, role-nya masih terlalu kuat — hentikan, jangan lanjut
@@ -68,7 +78,8 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 -- LEWAT UI COOLIFY, BUKAN dengan mengedit docker-compose.yml — file itu DIREGENERASI setiap
 -- redeploy, jadi perubahan manual di sana akan hilang tanpa jejak.
 --
---   DATABASE_URL=postgresql://accapi_app:<PASSWORD_BARU>@accapi-postgres:5432/accapi
+-- Cetak nilai finalnya dulu, lalu salin SELURUH barisnya:
+--   echo "DATABASE_URL=postgresql://accapi_app:${APP_PW}@accapi-postgres:5432/accapi"
 --
 -- (host `accapi-postgres` = nama container, sama seperti nilai lama; yang berubah hanya
 --  user dan password.)
