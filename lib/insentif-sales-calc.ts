@@ -78,6 +78,12 @@ export function percentageMultiplier(realisasi: number, target: number): number 
 export interface ExclusiveInput {
     status: StatusInsentif;
     target_value: number;
+    /**
+     * Ambang AO. Kosong = TARGET_AO_MIN (240), yaitu perilaku sejak awal. Diisi ketika
+     * setelan `insentif_gt_ao_target` = "file", supaya AO dinilai terhadap target baris itu.
+     * Parameter, bukan konstanta impor, agar aturannya bisa diubah tanpa menyentuh kalkulasi.
+     */
+    target_ao?: number;
     realisasi_value: number;
     realisasi_ao: number;
     nilai_support_principal?: number; // default 0
@@ -115,7 +121,7 @@ export function computeExclusive(input: ExclusiveInput): InsentifResult {
     const K = Math.max(0, RP_1JT - support); // porsi distributor
     if (K <= 0) return ZERO;
 
-    const pAo = percentageMultiplier(input.realisasi_ao, TARGET_AO_MIN);
+    const pAo = percentageMultiplier(input.realisasi_ao, input.target_ao ?? TARGET_AO_MIN);
     const pValue = percentageMultiplier(input.realisasi_value, input.target_value);
 
     const insentif_ao = WEIGHT_AO * K * pAo;
@@ -127,6 +133,8 @@ export interface MixPrincipalInput {
     nama: string;
     status: StatusInsentif;
     target_value: number;
+    /** Lihat ExclusiveInput.target_ao — kosong = ambang 240. */
+    target_ao?: number;
     realisasi_value: number;
     realisasi_ao: number;
     nilai_support_principal?: number;
@@ -188,7 +196,7 @@ export function computeMix(principals: MixPrincipalInput[]): MixResult {
         if (!hasPositiveNetSales(p.realisasi_value)) {
             return { nama: p.nama, insentif_ao: 0, insentif_value: 0, total: 0 };
         }
-        const insentif_ao = budgetAo * percentageMultiplier(p.realisasi_ao, TARGET_AO_MIN);
+        const insentif_ao = budgetAo * percentageMultiplier(p.realisasi_ao, p.target_ao ?? TARGET_AO_MIN);
         // Value global dialokasikan proporsional ke target_value (rata bila total target 0).
         const share = totalTarget > 0 ? p.target_value / totalTarget : 1 / jumlah;
         const line_value = insentif_value * share;

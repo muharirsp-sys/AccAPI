@@ -206,4 +206,31 @@ assert.deepStrictEqual(
     "bulan depan harus 0%",
 );
 
+// === Ambang AO bisa diganti target baris (setelan insentif_gt_ao_target = "file") ===
+{
+    const dasar = {
+        status: "distributor" as const,
+        target_value: 100,
+        realisasi_value: 100,   // Value 100% → komponen Value penuh
+        realisasi_ao: 130,
+    };
+    // Ambang bawaan 240: 130/240 = 54% → di bawah 90% → komponen AO nol.
+    const bawaan = computeExclusive(dasar);
+    approx(bawaan.insentif_ao, 0, "ambang 240 → AO nol");
+    approx(bawaan.insentif_value, 300_000, "Value 100% → 30% pool");
+
+    // Ambang dari file (130): tepat 100% → komponen AO penuh 70% pool.
+    const pakaiFile = computeExclusive({ ...dasar, target_ao: 130 });
+    approx(pakaiFile.insentif_ao, 700_000, "ambang file → AO penuh");
+    approx(pakaiFile.total, 1_000_000, "total penuh");
+
+    // Mix: ambang diteruskan per principal, tidak lagi mengunci 240.
+    const mix = computeMix([
+        { nama: "A", status: "distributor", target_value: 100, realisasi_value: 100, realisasi_ao: 130, target_ao: 130 },
+        { nama: "B", status: "distributor", target_value: 100, realisasi_value: 100, realisasi_ao: 130 },
+    ]);
+    assert.ok(mix.rincian[0].insentif_ao > 0, "A pakai ambang file → dapat AO");
+    approx(mix.rincian[1].insentif_ao, 0, "B tanpa ambang → tetap 240 → nol");
+}
+
 console.log("OK — all insentif-sales-calc checks passed");

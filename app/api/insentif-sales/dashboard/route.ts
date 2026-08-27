@@ -24,6 +24,7 @@ import {
     getTargetsForPeriod,
 } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
+import { getGtAoTargetMode } from "@/lib/insentif-settings";
 import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
 import { isOfficeRow } from "@/lib/insentif-sm-calc";
 import {
@@ -46,7 +47,7 @@ export async function GET(req: NextRequest) {
     const principle = searchParams.get("principle") ?? undefined;
     const branch = searchParams.get("branch") ?? undefined;
 
-    const [rawTargets, realByPrinciple, supportRows, paymentRows, scope] = await Promise.all([
+    const [rawTargets, realByPrinciple, supportRows, paymentRows, scope, gtAoMode] = await Promise.all([
         getTargetsForPeriod(month, year),
         computeMtdByPrinciple(month, year),
         db
@@ -62,6 +63,7 @@ export async function GET(req: NextRequest) {
             .from(incentivePayments)
             .where(and(eq(incentivePayments.periodMonth, month), eq(incentivePayments.periodYear, year))),
         getScopeForUser(gate.session.user.id, { month, year }),
+        getGtAoTargetMode(),
     ]);
     // scope null = tidak ada scoping (perilaku existing/default). Non-null = user SPV/SM
     // opt-in (lib/insentif-hierarchy-scope) — cuma lihat salesCode bawahannya sendiri.
@@ -88,6 +90,11 @@ export async function GET(req: NextRequest) {
         ready: targetKeys.size > 0 && matchedProgressKeys > 0,
     };
 
+    // Ambang AO GT/TT. "fixed240" = ambang tetap 240 untuk semua (perilaku sejak awal);
+    // "file" = target AO baris itu. Setelan ini MENGUBAH NOMINAL, jadi nilainya dibaca dari
+    // app_setting dan defaultnya perilaku lama (lib/insentif-settings.ts).
+    const aoTargetOf = (targetAo: number) => gtAoMode === "file" ? targetAo : undefined;
+
     // Skema konstanta-bobot 2-KPI berlaku untuk GT/TT (sinonim); MT punya skema 4-KPI sendiri.
     const isSchemeChannel = (ch: string) => ch === "GT" || ch === "TT";
     const isMtChannel = (ch: string) => ch === "MT";
@@ -108,6 +115,7 @@ export async function GET(req: NextRequest) {
             nama: t.principle,
             status: t.statusInsentif as StatusInsentif,
             target_value: t.targetValue,
+            target_ao: aoTargetOf(t.targetAo),
             realisasi_value: r.realValue,
             realisasi_ao: r.realAo,
             nilai_support_principal: supportMap.get(key(t.salesCode, t.principle)) ?? 0,
@@ -172,6 +180,7 @@ export async function GET(req: NextRequest) {
                     const ex = computeExclusive({
                         status: t.statusInsentif as StatusInsentif,
                         target_value: t.targetValue,
+                        target_ao: aoTargetOf(t.targetAo),
                         realisasi_value: real.realValue,
                         realisasi_ao: real.realAo,
                         nilai_support_principal: supportMap.get(key(t.salesCode, t.principle)) ?? 0,
@@ -225,5 +234,5 @@ export async function GET(req: NextRequest) {
             };
     });
 
-    return NextResponse.json({ month, year, timeGone, rows, progressFeed });
+    return NextResponse.json({ month, year, timeGone, rows, progressFeed, gtAoMode });
 }

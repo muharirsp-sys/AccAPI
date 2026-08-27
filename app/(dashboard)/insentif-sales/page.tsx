@@ -246,8 +246,11 @@ function useExpandableRows() {
  * Finance: kalau keduanya punya salinan sendiri, cepat atau lambat yang satu menampilkan
  * dasar perhitungan yang berbeda dari yang lain untuk baris yang sama.
  */
-function SalesBreakdown({ r, semuaBaris }: { r: ApiRow; semuaBaris?: ApiRow[] }) {
+function SalesBreakdown({ r, semuaBaris, gtAoMode }: { r: ApiRow; semuaBaris?: ApiRow[]; gtAoMode?: "fixed240" | "file" }) {
     const isMt = r.channel === "MT";
+    // Ambang AO yang dipakai membayar. Menuliskan 240 mati di sini berbahaya: setelah toggle
+    // dimatikan, layar akan mengklaim angka yang tidak lagi dipakai menghitung.
+    const ambangAo = isMt || gtAoMode === "file" ? r.target.ao : 240;
 
     // MT membayar 4 KPI (Value 350rb, EC 150rb, OA 150rb, IA 350rb); GT/TT hanya 2 (Value 30%,
     // AO 70%). Menampilkan dua komponen untuk semua channel membuat baris MT memperlihatkan
@@ -294,9 +297,9 @@ function SalesBreakdown({ r, semuaBaris }: { r: ApiRow; semuaBaris?: ApiRow[] })
                 // GT/TT membayar AO terhadap ambang tetap 240 (TARGET_AO_MIN), BUKAN target di
                 // file target. Tanpa baris ini, pencapaian 18% di layar tidak akan pernah cocok
                 // dengan nominal yang dibayar.
-                ...(isMt ? [] : [
-                    { label: "Ambang skema", value: "240", tone: "muted" as const },
-                    { label: "Pencapaian dibayar", value: formatPctText(r.target.ao > 0 ? (r.real.ao / 240) * 100 : 0) },
+                ...(isMt || gtAoMode === "file" ? [] : [
+                    { label: "Ambang skema", value: formatQty(ambangAo), tone: "muted" as const },
+                    { label: "Pencapaian dibayar", value: formatPctText(ambangAo > 0 ? (r.real.ao / ambangAo) * 100 : 0) },
                 ]),
             ]} />
             <BreakdownGroup title="EC & ISQ" items={[
@@ -699,7 +702,7 @@ function AchievementTable({ rows, progress: tg }: { rows: Salesman[]; progress: 
 }
 
 // ── Incentive Table — pakai data incentive dari API ────────────────────────
-function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
+function IncentiveTable({ apiRows, gtAoMode }: { apiRows: ApiRow[]; gtAoMode?: "fixed240" | "file" }) {
     const { open, rowProps } = useExpandableRows();
     const grand = apiRows.reduce(
         (acc, r) => {
@@ -756,7 +759,7 @@ function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
                                     {open[key] && (
                                         <tr className="bg-black/30">
                                             <td colSpan={6} className="px-4 py-4">
-                                                <SalesBreakdown r={r} semuaBaris={apiRows} />
+                                                <SalesBreakdown r={r} semuaBaris={apiRows} gtAoMode={gtAoMode} />
                                             </td>
                                         </tr>
                                     )}
@@ -1484,6 +1487,87 @@ function TargetInputSection() {
     );
 }
 
+/**
+ * Ambang Target AO untuk skema GT/TT. Ini SATU-SATUNYA kontrol di halaman ini yang mengubah
+ * nominal yang dibayar, jadi ia tidak disembunyikan di balik ikon: statusnya tertulis, sebabnya
+ * tertulis, dan penggantiannya minta konfirmasi. Default "fixed240" = perilaku sejak awal.
+ */
+function GtAoTargetToggle() {
+    const [mode, setMode] = useState<"fixed240" | "file" | null>(null);
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await fetch("/api/insentif-sales/settings");
+                const data = await res.json();
+                if (!cancelled && res.ok) setMode(data.gtAoMode);
+            } catch {
+                if (!cancelled) toast.error("Gagal memuat setelan ambang AO.");
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
+    async function ganti(next: "fixed240" | "file") {
+        if (next === mode) return;
+        const pesan = next === "fixed240"
+            ? "Ubah ambang AO GT/TT ke 240 untuk SEMUA sales? Nominal insentif AO akan dihitung ulang."
+            : "Ubah ambang AO GT/TT ke Target AO di file target? Nominal insentif AO akan dihitung ulang.";
+        if (!window.confirm(pesan)) return;
+        setSaving(true);
+        try {
+            const res = await fetch("/api/insentif-sales/settings", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ gtAoMode: next }),
+            });
+            const data = await readApi(res);
+            if (!res.ok) throw new Error(String(data.error ?? "Gagal menyimpan setelan"));
+            setMode(next);
+            toast.success("Ambang AO diperbarui. Muat ulang dashboard untuk melihat nominal baru.");
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal menyimpan setelan");
+        }
+        setSaving(false);
+    }
+
+    const aktif = mode === "fixed240";
+    return (
+        <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
+            <SectionTitle icon={Target} no={0} title="Ambang Target AO (GT/TT)" desc="Menentukan pembagi pencapaian AO pada skema GT/TT. Mengubahnya mengubah nominal yang dibayar." />
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div className="text-xs text-slate-400 max-w-xl">
+                    {mode === null ? "Memuat setelan…" : aktif ? (
+                        <>
+                            <span className="text-emerald-400 font-semibold">ON</span> — semua sales GT/TT dinilai
+                            terhadap <span className="font-mono text-slate-200">240</span>. Target AO di file target
+                            diabaikan untuk perhitungan (tetap tampil sebagai pembanding).
+                        </>
+                    ) : (
+                        <>
+                            <span className="text-amber-400 font-semibold">OFF</span> — tiap sales dinilai terhadap
+                            Target AO barisnya sendiri di file target.
+                        </>
+                    )}
+                </div>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={aktif}
+                    aria-label="Ambang AO tetap 240"
+                    disabled={mode === null || saving}
+                    onClick={() => ganti(aktif ? "file" : "fixed240")}
+                    className={`relative inline-flex h-7 w-14 shrink-0 items-center rounded-full border transition-colors disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400 ${aktif ? "bg-emerald-500/30 border-emerald-500/50" : "bg-white/5 border-white/15"}`}
+                >
+                    <span className={`inline-block h-5 w-5 rounded-full bg-slate-200 transition-transform motion-reduce:transition-none ${aktif ? "translate-x-8" : "translate-x-1"}`} />
+                </button>
+            </div>
+        </div>
+    );
+}
+
 // ── Admin: input progress harian (manual atau upload XLSX/CSV) ─────────────────
 interface ManualProgressRow {
     salesCode: string;
@@ -1700,6 +1784,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
 
     return (
         <div className="space-y-5">
+            <GtAoTargetToggle />
             <TargetInputSection />
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
                 <SectionTitle icon={Upload} no={2} title="Input Progress Harian" desc="Principal dan cabang dibaca per baris. Satu file dapat berisi beberapa principal." />
@@ -2640,7 +2725,7 @@ function SupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRo
     );
 }
 
-function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; month: number; year: number; onSaved?: () => void }) {
+function FinanceView({ apiRows, month, year, onSaved, gtAoMode }: { apiRows: ApiRow[]; month: number; year: number; onSaved?: () => void; gtAoMode?: "fixed240" | "file" }) {
     const [payments, setPayments] = useState<PaymentRow[]>([]);
     const [selectedMonth, setSelectedMonth] = useState(month);
     const [saving, setSaving] = useState(false);
@@ -3046,7 +3131,7 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                                     {open[selectionKey] && (
                                         <tr className="bg-black/30">
                                             <td colSpan={8} className="px-4 py-4">
-                                                {sales ? <SalesBreakdown r={sales} semuaBaris={apiRows} />
+                                                {sales ? <SalesBreakdown r={sales} semuaBaris={apiRows} gtAoMode={gtAoMode} />
                                                     : spv ? <SpvBreakdown rincian={spv.rincian} />
                                                         : sm ? <SmBreakdown r={sm} />
                                                             : (
@@ -3102,6 +3187,9 @@ export default function InsentifSalesPage() {
     const now = new Date();
     const [apiRows, setApiRows] = useState<ApiRow[]>([]);
     const [progressFeed, setProgressFeed] = useState<ProgressFeedStatus | null>(null);
+    // Ambang AO yang dipakai server menghitung baris-baris ini. Diteruskan ke rincian supaya
+    // layar tidak pernah mengklaim ambang yang berbeda dari yang dipakai membayar.
+    const [gtAoMode, setGtAoMode] = useState<"fixed240" | "file">("fixed240");
     const [loading, setLoading] = useState(true);
     const [dashboardError, setDashboardError] = useState("");
     const pathname = usePathname();
@@ -3144,6 +3232,7 @@ export default function InsentifSalesPage() {
             const data = await res.json();
             setApiRows(data.rows as ApiRow[]);
             setProgressFeed(data.progressFeed as ProgressFeedStatus);
+            setGtAoMode(data.gtAoMode === "file" ? "file" : "fixed240");
         } catch (error) {
             setApiRows([]);
             setProgressFeed(null);
@@ -3316,7 +3405,7 @@ export default function InsentifSalesPage() {
                         <>
                             <PerformanceBlock rows={salesmen} apiRows={apiRows} progress={tg} />
                             <AchievementTable rows={salesmen} progress={tg} />
-                            <IncentiveTable apiRows={apiRows} />
+                            <IncentiveTable apiRows={apiRows} gtAoMode={gtAoMode} />
                         </>
                     )}
                     {view === "spv" && (
@@ -3324,7 +3413,7 @@ export default function InsentifSalesPage() {
                             <PerformanceBlock rows={salesmen} apiRows={apiRows} progress={tg} />
                             <SpvView rows={salesmen} progress={tg} />
                             <SpvIncentiveTable month={month} year={year} />
-                            <IncentiveTable apiRows={apiRows} />
+                            <IncentiveTable apiRows={apiRows} gtAoMode={gtAoMode} />
                         </>
                     )}
                     {view === "sm" && (
@@ -3332,11 +3421,11 @@ export default function InsentifSalesPage() {
                             <PerformanceBlock rows={salesmen} apiRows={apiRows} progress={tg} />
                             <SmView rows={salesmen} progress={tg} />
                             <SmIncentiveTable month={month} year={year} />
-                            <IncentiveTable apiRows={apiRows} />
+                            <IncentiveTable apiRows={apiRows} gtAoMode={gtAoMode} />
                         </>
                     )}
                     {view === "admin" && <AdminView rows={salesmen} />}
-                    {view === "finance" && <FinanceView apiRows={apiRows} month={month} year={year} onSaved={fetchDashboard} />}
+                    {view === "finance" && <FinanceView apiRows={apiRows} month={month} year={year} onSaved={fetchDashboard} gtAoMode={gtAoMode} />}
                 </div>
             )}
             </div>

@@ -707,6 +707,18 @@ export const salesProfile = pgTable("sales_profile", {
     userIdx: index("idx_sales_profile_user").on(t.userId),
 }));
 
+/**
+ * Setelan aplikasi berumur panjang, satu baris per kunci. Dipakai untuk aturan yang boleh
+ * diubah operasional tanpa deploy — sekarang: ambang Target AO untuk skema GT.
+ * DDL produksi: docs/handover/DDL_APP_SETTING_2026-08-27.sql (role app tidak boleh CREATE).
+ */
+export const appSetting = pgTable("app_setting", {
+    key: text("key").primaryKey(),
+    value: text("value").notNull(),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at").notNull(),
+});
+
 export const salesTargets = pgTable("sales_targets", {
     id: text("id").primaryKey(),
     salesCode: text("sales_code").notNull(),
