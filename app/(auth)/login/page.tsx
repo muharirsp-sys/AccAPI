@@ -1,7 +1,7 @@
 /*
  * Tujuan: Halaman login internal Better Auth email/password bergaya portal CV. Surya Perkasa.
  * Caller: Route auth `/login`.
- * Dependensi: `authClient`, router Next.js, toast Sonner, lucide-react.
+ * Dependensi: `authClient`, navigasi browser, toast Sonner, lucide-react.
  * Main Functions: `LoginPage`, `isEmailVerificationError`.
  * Side Effects: HTTP sign-in ke Better Auth dan navigasi browser setelah session berhasil.
  */
@@ -10,7 +10,6 @@
 import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { AlertCircle, BarChart3, Eye, EyeOff, Lock, Mail, ShieldCheck, UsersRound } from "lucide-react";
 import { toast } from "sonner";
@@ -63,7 +62,6 @@ const FEATURE_ITEMS: FeatureItem[] = [
 ];
 
 export default function LoginPage() {
-    const router = useRouter();
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [showPassword, setShowPassword] = useState(false);
@@ -112,8 +110,10 @@ export default function LoginPage() {
                 setLoading(false);
             } else {
                 toast.success("Login berhasil.");
-                router.push("/");
-                router.refresh();
+                // ponytail: hard navigation, bukan router.push. router.push bergantung pada
+                // RSC fetch yang bisa menggantung tanpa reject — tombol terkunci "Memproses..."
+                // selamanya karena jalur sukses memang tidak pernah setLoading(false).
+                window.location.assign("/");
             }
         } catch {
             setErrors({ general: "Terjadi kesalahan. Coba lagi." });
