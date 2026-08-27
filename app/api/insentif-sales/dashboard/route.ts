@@ -153,7 +153,12 @@ export async function GET(req: NextRequest) {
             const pEc = pct(real.realEc, t.targetEc);
             const pAo = pct(real.realAo, t.targetAo);
             const isqReal = itemSuper(real.realIa, real.realAo);
-            const isqTgt = itemSuper(t.targetIa, t.targetAo);
+            // Target IA di file target SUDAH berupa item aktif PER OUTLET (rata-rata), bukan
+            // total: lihat lib/insentif-mt-calc.ts yang membandingkan realisasi_ia/realisasi_ao
+            // langsung ke target_ia. Membaginya lagi dengan target AO membuat penyebutnya
+            // mengecil puluhan kali dan pencapaian ISQ tampil 6.103% (M-FN) atau 10.133% (M-RDR).
+            // Jalur uang MT tidak terpengaruh — ini murni salah tampil (dilaporkan user 2026-08-26).
+            const isqTgt = t.targetIa;
             const pIsq = pct(isqReal, isqTgt);
             const totalAchieve = Math.round(((pVal + pEc + pAo + pIsq) / 4) * 10) / 10;
 

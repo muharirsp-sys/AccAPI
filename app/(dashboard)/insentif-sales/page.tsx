@@ -246,7 +246,40 @@ function useExpandableRows() {
  * Finance: kalau keduanya punya salinan sendiri, cepat atau lambat yang satu menampilkan
  * dasar perhitungan yang berbeda dari yang lain untuk baris yang sama.
  */
-function SalesBreakdown({ r }: { r: ApiRow }) {
+function SalesBreakdown({ r, semuaBaris }: { r: ApiRow; semuaBaris?: ApiRow[] }) {
+    const isMt = r.channel === "MT";
+
+    // MT membayar 4 KPI (Value 350rb, EC 150rb, OA 150rb, IA 350rb); GT/TT hanya 2 (Value 30%,
+    // AO 70%). Menampilkan dua komponen untuk semua channel membuat baris MT memperlihatkan
+    // Rp 500.000 di bawah total Rp 986.403 — rincian yang tidak menjumlah ke totalnya sendiri
+    // (dilaporkan user 2026-08-26).
+    const komponen = isMt
+        ? [
+            { label: "Value", value: formatRp(r.incentive.value) },
+            { label: "EC", value: formatRp(r.incentive.ec) },
+            { label: "Aktif Outlet", value: formatRp(r.incentive.ao) },
+            { label: "Item Aktif", value: formatRp(r.incentive.isq) },
+            { label: "Total", value: formatRp(r.incentive.total), tone: "amber" as const },
+        ]
+        : [
+            { label: "Value (30%)", value: formatRp(r.incentive.value) },
+            { label: "AO (70%)", value: formatRp(r.incentive.ao) },
+            { label: "Total", value: formatRp(r.incentive.total), tone: "amber" as const },
+        ];
+
+    // Sales "mix": komponen Value dinilai dari GABUNGAN seluruh principal yang ikut skema,
+    // lalu dibagi ke tiap principal menurut porsi targetnya. Tanpa angka gabungan ini, baris
+    // dengan pencapaian 55% terlihat dibayar tanpa sebab (dilaporkan user 2026-08-26).
+    const gabungan = (() => {
+        if (r.tipeSales !== "mix" || !semuaBaris) return null;
+        const anggota = semuaBaris.filter((x) =>
+            x.salesCode === r.salesCode && x.statusInsentif !== "principle");
+        if (anggota.length <= 1) return null;
+        const target = anggota.reduce((a, x) => a + x.target.value, 0);
+        const real = anggota.reduce((a, x) => a + x.real.value, 0);
+        return { jumlah: anggota.length, target, real, pct: target > 0 ? (real / target) * 100 : 0 };
+    })();
+
     return (
         <div className="grid gap-5 md:grid-cols-3">
             <BreakdownGroup title="Value" items={[
@@ -255,9 +288,16 @@ function SalesBreakdown({ r }: { r: ApiRow }) {
                 { label: "Pencapaian", value: formatPctText(r.pct.value) },
             ]} />
             <BreakdownGroup title="Aktif Outlet (AO)" items={[
-                { label: "Target", value: formatQty(r.target.ao) },
+                { label: isMt ? "Target" : "Target (file)", value: formatQty(r.target.ao) },
                 { label: "Realisasi", value: formatQty(r.real.ao) },
                 { label: "Pencapaian", value: formatPctText(r.pct.ao) },
+                // GT/TT membayar AO terhadap ambang tetap 240 (TARGET_AO_MIN), BUKAN target di
+                // file target. Tanpa baris ini, pencapaian 18% di layar tidak akan pernah cocok
+                // dengan nominal yang dibayar.
+                ...(isMt ? [] : [
+                    { label: "Ambang skema", value: "240", tone: "muted" as const },
+                    { label: "Pencapaian dibayar", value: formatPctText(r.target.ao > 0 ? (r.real.ao / 240) * 100 : 0) },
+                ]),
             ]} />
             <BreakdownGroup title="EC & ISQ" items={[
                 { label: "Target EC", value: formatQty(r.target.ec) },
@@ -272,11 +312,14 @@ function SalesBreakdown({ r }: { r: ApiRow }) {
                 { label: "Status insentif", value: r.statusInsentif ?? "-", tone: "muted" },
                 { label: "Support principle", value: formatRp(r.support ?? 0) },
             ]} />
-            <BreakdownGroup title="Komponen insentif" items={[
-                { label: "Value (30%)", value: formatRp(r.incentive.value) },
-                { label: "AO (70%)", value: formatRp(r.incentive.ao) },
-                { label: "Total", value: formatRp(r.incentive.total), tone: "amber" },
-            ]} />
+            <BreakdownGroup title={isMt ? "Komponen insentif (MT)" : "Komponen insentif"} items={komponen} />
+            {gabungan && (
+                <BreakdownGroup title={`Dasar Value gabungan (${gabungan.jumlah} principal)`} items={[
+                    { label: "Target gabungan", value: formatRp(gabungan.target) },
+                    { label: "Realisasi gabungan", value: formatRp(gabungan.real) },
+                    { label: "Pencapaian dipakai", value: formatPctText(gabungan.pct) },
+                ]} />
+            )}
             <BreakdownGroup title="Wilayah" items={[
                 { label: "Cabang", value: r.branch, tone: "muted" },
                 { label: "Channel", value: r.channel, tone: "muted" },
@@ -544,7 +587,12 @@ function AchievementTable({ rows, progress: tg }: { rows: Salesman[]; progress: 
 
     const pace = (achievePct: number) => Math.round((achievePct - tg.pct) * 10) / 10;
     const totalIsqReal = itemSuper(totals.realIa, totals.realAo);
-    const totalIsqTgt = itemSuper(totals.targetIa, totals.targetAo);
+    // Target IA per baris SUDAH rata-rata per outlet, jadi menjumlahkannya lalu membagi AO
+    // (cara lama) menghasilkan angka yang bukan apa-apa. Gabungannya adalah rata-rata
+    // tertimbang terhadap target AO: outlet yang lebih banyak menyumbang lebih besar.
+    const totalIsqTgt = totals.targetAo > 0
+        ? Math.round((rows.reduce((a, r) => a + r.targetIa * r.targetAo, 0) / totals.targetAo) * 100) / 100
+        : 0;
     const totalIsqPct = totalIsqTgt > 0 ? pct(totalIsqReal, totalIsqTgt) : 0;
     const grandTotal = Math.round(((pct(totals.realValue, totals.targetValue) + pct(totals.realEc, totals.targetEc) + pct(totals.realAo, totals.targetAo) + totalIsqPct) / 4) * 10) / 10;
 
@@ -586,7 +634,7 @@ function AchievementTable({ rows, progress: tg }: { rows: Salesman[]; progress: 
                             const pEc = pct(r.realEc, r.targetEc);
                             const pAo = pct(r.realAo, r.targetAo);
                             const isqReal = itemSuper(r.realIa, r.realAo);
-                            const isqTgt = itemSuper(r.targetIa, r.targetAo);
+                            const isqTgt = r.targetIa; // sudah per outlet, lihat catatan di totalIsqTgt
                             const pIsq = isqTgt > 0 ? pct(isqReal, isqTgt) : 0;
                             const totalAch = Math.round(((pVal + pEc + pAo + pIsq) / 4) * 10) / 10;
                             const totalLevel = paceStatus(totalAch, tg.pct);
@@ -708,7 +756,7 @@ function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
                                     {open[key] && (
                                         <tr className="bg-black/30">
                                             <td colSpan={6} className="px-4 py-4">
-                                                <SalesBreakdown r={r} />
+                                                <SalesBreakdown r={r} semuaBaris={apiRows} />
                                             </td>
                                         </tr>
                                     )}
@@ -2998,7 +3046,7 @@ function FinanceView({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; mon
                                     {open[selectionKey] && (
                                         <tr className="bg-black/30">
                                             <td colSpan={8} className="px-4 py-4">
-                                                {sales ? <SalesBreakdown r={sales} />
+                                                {sales ? <SalesBreakdown r={sales} semuaBaris={apiRows} />
                                                     : spv ? <SpvBreakdown rincian={spv.rincian} />
                                                         : sm ? <SmBreakdown r={sm} />
                                                             : (
