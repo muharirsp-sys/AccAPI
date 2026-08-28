@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
 
     const [rawRows, scope] = await Promise.all([
         getTargetsForPeriod(month, year, principle, branch),
-        getScopeForUser(gate.session.user.id, { month, year }),
+        getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
     ]);
     const rows = scope === null ? rawRows : rawRows.filter((r) => scope.has(r.salesCode));
     return NextResponse.json({ month, year, rows });
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
     // Periode diambil dari payload — semua baris satu upload selalu satu periode.
     const period = body.find((t) => t.periodMonth && t.periodYear);
     const scopePeriod = period ? { month: period.periodMonth, year: period.periodYear } : undefined;
-    const scope = await getScopeForUser(gate.session.user.id, scopePeriod);
+    const scope = await getScopeForUser(gate.session.user.id, scopePeriod, gate.perms);
     const identity = scope !== null ? await getUserHierarchyIdentity(gate.session.user.id) : null;
 
     const now = new Date();

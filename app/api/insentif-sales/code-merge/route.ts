@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
             .select({ from: salesCodeMerge.fromSalesCode, to: salesCodeMerge.toSalesCode, decision: salesCodeMerge.decision })
             .from(salesCodeMerge)
             .where(and(eq(salesCodeMerge.periodMonth, month), eq(salesCodeMerge.periodYear, year))),
-        getScopeForUser(gate.session.user.id, { month, year }),
+        getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
     ]);
 
     // scope null = lihat semua (default). Non-null = user SPV/SM opt-in — tanpa filter ini,

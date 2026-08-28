@@ -23,6 +23,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { parsePayee } from "@/lib/insentif-payee";
 import { user, salesTargets, spvSalesAssignment, smSpvAssignment } from "@/db/schema";
 
 /** Periode yang sedang dilihat. Menyempitkan peta hierarki ke bulan itu saja. */
@@ -72,7 +73,7 @@ async function effectiveSmBySpvName(period?: Period): Promise<Map<string, string
 }
 
 export interface HierarchyIdentity {
-    role: "spv" | "sm";
+    role: "spv" | "sm" | "sales";
     name: string;
 }
 
@@ -83,10 +84,28 @@ export async function getUserHierarchyIdentity(userId: string): Promise<Hierarch
         .from(user)
         .where(eq(user.id, userId))
         .limit(1);
-    if ((row?.hierarchyRole === "spv" || row?.hierarchyRole === "sm") && row.hierarchyName) {
+    if ((row?.hierarchyRole === "spv" || row?.hierarchyRole === "sm" || row?.hierarchyRole === "sales") && row.hierarchyName) {
         return { role: row.hierarchyRole, name: row.hierarchyName };
     }
     return null;
+}
+
+/**
+ * Boleh melihat baris penerima ini? Menangani ketiga bentuk `sales_code` di incentive_payments:
+ * kode sales biasa, `SPV:<nama>`, dan `SM:<nama>`. Dipisah jadi helper karena tiga endpoint
+ * memerlukannya dan menyalin logikanya berarti tiga kesempatan untuk berbeda.
+ */
+export function payeeInScope(
+    scope: Set<string> | null,
+    identity: HierarchyIdentity | null,
+    payeeSalesCode: string,
+): boolean {
+    if (scope === null) return true;
+    const { role, name } = parsePayee(payeeSalesCode);
+    if (role === "sales") return scope.has(payeeSalesCode);
+    // Baris SPV/SM hanya boleh dilihat oleh orangnya sendiri (atau pemegang izin kelola, yang
+    // sudah pulang lebih dulu lewat scope === null di atas).
+    return !!identity && identity.role === role && identity.name === name;
 }
 
 /** Nama SPV pemilik salesCode saat ini (assignment override, fallback sales_targets.spv_name). null = belum ada yang klaim. */
@@ -105,7 +124,41 @@ export async function getSpvOwnerMap(period?: Period): Promise<Map<string, strin
 }
 
 /** null = tidak ada scoping (lihat semua) — default untuk semua user yang belum di-assign. */
-export async function getScopeForUser(userId: string, period?: Period): Promise<Set<string> | null> {
+/**
+ * Izin yang berarti "boleh melihat seluruh perusahaan". Sengaja diturunkan dari izin KELOLA yang
+ * sudah dimiliki Admin/Finance, bukan permission baru — menambah key baru berarti tidak ada satu
+ * pun group produksi yang memilikinya pada saat deploy, dan semua orang terkunci keluar.
+ * `insentif_sales.view_all` ikut diterima supaya bisa diberikan eksplisit nanti tanpa ubah kode.
+ */
+const LIHAT_SEMUA_KEYS = [
+    "insentif_sales.view_all",
+    "insentif_sales.manage",
+    "insentif_sales.manage_payment",
+    "insentif_sales.manage_hierarchy",
+];
+
+export function canSeeAllInsentif(perms: Set<string> | null | undefined): boolean {
+    return !!perms && LIHAT_SEMUA_KEYS.some((k) => perms.has(k));
+}
+
+/**
+ * Cakupan baris yang boleh dilihat/disentuh user. `null` = seluruh perusahaan.
+ *
+ * FAIL-CLOSED (2026-08-29, audit C3): user yang tidak punya izin kelola DAN belum diisi identitas
+ * hierarkinya mendapat cakupan KOSONG, bukan "lihat semua". Sebelumnya default `null` berarti satu
+ * SPV yang lupa dikonfigurasi menerima target, realisasi, support, dan nominal insentif seluruh
+ * perusahaan tanpa error dan tanpa tanda apa pun.
+ *
+ * `perms` WAJIB (dari `requirePermission(...).perms`, tanpa query tambahan) supaya keputusan
+ * "lihat semua" tidak bisa terjadi karena call-site lupa meneruskannya.
+ */
+export async function getScopeForUser(
+    userId: string,
+    period: Period | undefined,
+    perms: Set<string> | null | undefined,
+): Promise<Set<string> | null> {
+    if (canSeeAllInsentif(perms)) return null;
+
     const [row] = await db
         .select({ hierarchyRole: user.hierarchyRole, hierarchyName: user.hierarchyName })
         .from(user)
@@ -119,6 +172,13 @@ export async function getScopeForUser(userId: string, period?: Period): Promise<
         const codes = new Set<string>();
         for (const [code, spv] of spvOf) if (spv === row.hierarchyName) codes.add(code);
         return codes;
+    }
+
+    // Peran "sales": cakupannya kode sales dirinya sendiri. Sebelumnya tidak ada peran ini sama
+    // sekali, jadi seorang salesman yang diberi izin melihat insentifnya SELALU melihat insentif
+    // seluruh rekannya — tidak ada cara membatasinya.
+    if (row.hierarchyRole === "sales") {
+        return new Set([row.hierarchyName]);
     }
 
     if (row.hierarchyRole === "sm") {

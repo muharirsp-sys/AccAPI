@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
             })
             .from(incentivePayments)
             .where(and(eq(incentivePayments.periodMonth, month), eq(incentivePayments.periodYear, year))),
-        getScopeForUser(gate.session.user.id, { month, year }),
+        getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
         getGtAoTargetMode(),
     ]);
     // scope null = tidak ada scoping (perilaku existing/default). Non-null = user SPV/SM

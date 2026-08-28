@@ -29,6 +29,7 @@ import { db } from "@/lib/db";
 import { salesDailyProgress } from "@/db/schema";
 import { computeMtdProgress } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
+import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
 
 // Upload closing ~2.000 baris + ratusan DELETE dalam satu transaksi. Konvensi repo:
 // route unggah berat menaikkan batas ini (laporan-harian/upload & sales-history/import = 300).
@@ -45,7 +46,13 @@ export async function GET(req: NextRequest) {
     const principle = searchParams.get("principle") ?? undefined;
     const branch = searchParams.get("branch") ?? undefined;
 
-    const rows = await computeMtdProgress(month, year, principle, branch);
+    // Realisasi MTD per salesman juga data insentif: digabung dengan /support ia cukup untuk
+    // menghitung sendiri insentif orang lain (audit 2026-08-28, M2).
+    const [allRows, scope] = await Promise.all([
+        computeMtdProgress(month, year, principle, branch),
+        getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
+    ]);
+    const rows = scope === null ? allRows : allRows.filter((r) => scope.has(r.salesCode));
     return NextResponse.json({ month, year, rows });
 }
 

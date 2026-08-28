@@ -2051,7 +2051,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
 // scoping "SPV/SM cuma lihat bawahan sendiri" secara opt-in per user ──────────────
 interface SpvSalesAssignmentRow { id: string; salesCode: string; spvName: string; }
 interface SmSpvAssignmentRow { id: string; spvName: string; smName: string; }
-interface UserIdentityRow { id: string; name: string; email: string; hierarchyRole: "spv" | "sm" | null; hierarchyName: string | null; }
+interface UserIdentityRow { id: string; name: string; email: string; hierarchyRole: "spv" | "sm" | "sales" | null; hierarchyName: string | null; }
 interface MyIdentity { identity: { role: "spv" | "sm"; name: string } | null; isAdmin: boolean; }
 interface ClaimRequestRow { id: string; salesCode: string; requestedBySpvName: string; previousSpvName: string | null; }
 
@@ -2067,7 +2067,7 @@ function HierarchyAssignmentSection() {
     const [newSpvName2, setNewSpvName2] = useState("");
     const [newSmName, setNewSmName] = useState("");
     const [selUserId, setSelUserId] = useState("");
-    const [selRole, setSelRole] = useState<"spv" | "sm">("spv");
+    const [selRole, setSelRole] = useState<"spv" | "sm" | "sales">("spv");
     const [selName, setSelName] = useState("");
     const [saving, setSaving] = useState(false);
 
@@ -2301,11 +2301,17 @@ function HierarchyAssignmentSection() {
                         <option value="">Pilih pengguna</option>
                         {users.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
                     </select>
-                    <select className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-amber-500 w-24" value={selRole} onChange={(e) => setSelRole(e.target.value as "spv" | "sm")}>
+                    <select className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-amber-500 w-24" value={selRole} onChange={(e) => setSelRole(e.target.value as "spv" | "sm" | "sales")}>
                         <option value="spv">SPV</option>
                         <option value="sm">SM</option>
+                        <option value="sales">Sales</option>
                     </select>
-                    <input className={inputCls} placeholder="Nama identitas (persis spv_name/sm_name)" value={selName} onChange={(e) => setSelName(e.target.value)} />
+                    <input
+                        className={inputCls}
+                        placeholder={selRole === "sales" ? "KODE SALES (mis. M-FS)" : "Nama identitas (persis spv_name/sm_name)"}
+                        value={selName}
+                        onChange={(e) => setSelName(e.target.value)}
+                    />
                     <button onClick={linkIdentity} disabled={saving} className="px-3 py-1.5 rounded bg-amber-600/40 border border-amber-500/40 text-amber-200 text-xs disabled:opacity-50 shrink-0">+ Link</button>
                 </div>
                 <div className="max-h-48 overflow-y-auto border border-white/10 rounded-lg divide-y divide-white/5">

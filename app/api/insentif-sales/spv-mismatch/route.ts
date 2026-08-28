@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
                     isNotNull(salesDailyProgress.spvName),
                 ),
             ),
-        getScopeForUser(gate.session.user.id, { month, year }),
+        getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
     ]);
 
     // scope null = lihat semua (default). Non-null = user SPV/SM opt-in — tanpa filter ini

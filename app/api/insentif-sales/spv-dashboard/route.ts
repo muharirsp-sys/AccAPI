@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
             .select({ spvName: spvSupport.spvName, principle: spvSupport.principle, amount: spvSupport.supportAmount })
             .from(spvSupport)
             .where(and(eq(spvSupport.periodMonth, month), eq(spvSupport.periodYear, year))),
-        getScopeForUser(gate.session.user.id, { month, year }),
+        getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
     ]);
     // support[spvName][principle] — dipakai calculateInsentifSPV utk mengeluarkan principal
     // yang sudah ditanggung penuh principle.

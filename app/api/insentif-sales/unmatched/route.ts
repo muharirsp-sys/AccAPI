@@ -17,6 +17,7 @@ import { db } from "@/lib/db";
 import { salesDailyProgress, salesTargets } from "@/db/schema";
 import { getMergeMap } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
+import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
     const month = parseInt(searchParams.get("month") ?? String(now.getMonth() + 1), 10);
     const year = parseInt(searchParams.get("year") ?? String(now.getFullYear()), 10);
 
-    const [progress, targets, mergeMap] = await Promise.all([
+    const [progress, targets, mergeMap, scope] = await Promise.all([
         db
             .select({
                 salesCode: salesDailyProgress.salesCode,
@@ -53,6 +54,7 @@ export async function GET(req: NextRequest) {
             .from(salesTargets)
             .where(and(eq(salesTargets.periodMonth, month), eq(salesTargets.periodYear, year))),
         getMergeMap(month, year),
+        getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
     ]);
 
     // Target 0 = tidak ada target. Sejak 2026-08-29 baris seperti itu tidak dibayar sama sekali
@@ -68,6 +70,8 @@ export async function GET(req: NextRequest) {
     // di bawah kode tujuan. Tanpa cek ini, setiap penggabungan yang sudah diputuskan akan
     // muncul lagi di daftar "perlu dipetakan".
     const rows = progress
+        // Kode sales + nilai + nomor nota: sama sensitifnya dengan baris dashboard.
+        .filter((p) => scope === null || scope.has(p.salesCode))
         .filter((p) => {
             const tujuan = mergeMap.get(p.salesCode) ?? p.salesCode;
             return !punyaTarget.has(`${p.salesCode}|${p.principle}`)

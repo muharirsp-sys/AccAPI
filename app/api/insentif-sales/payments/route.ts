@@ -15,6 +15,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { incentivePayments } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
+import { getScopeForUser, getUserHierarchyIdentity, payeeInScope } from "@/lib/insentif-hierarchy-scope";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
@@ -35,10 +36,18 @@ export async function GET(req: NextRequest) {
     if (principle) conditions.push(eq(incentivePayments.principle, principle));
     if (branch) conditions.push(eq(incentivePayments.branch, branch));
 
-    const rows = await db
-        .select()
-        .from(incentivePayments)
-        .where(and(...conditions));
+    // Filter kepemilikan setara Finance. Ini endpoint REKAP — celah paling umum adalah filter
+    // benar di /dashboard tapi lupa di sini, dan isinya justru nominal uang 12 bulan untuk
+    // semua sales, semua SPV, dan semua SM (audit 2026-08-28, H1).
+    // Scope dihitung per bulan yang diminta; untuk rekap tahunan dipakai bulan berjalan sebagai
+    // acuan keanggotaan tim (kepemilikan salesCode bisa berpindah antar bulan).
+    const acuan = month ?? new Date().getMonth() + 1;
+    const [allRows, scope, identity] = await Promise.all([
+        db.select().from(incentivePayments).where(and(...conditions)),
+        getScopeForUser(gate.session.user.id, { month: acuan, year }, gate.perms),
+        getUserHierarchyIdentity(gate.session.user.id),
+    ]);
+    const rows = allRows.filter((r) => payeeInScope(scope, identity, r.salesCode));
 
     return NextResponse.json({ month, year, rows });
 }

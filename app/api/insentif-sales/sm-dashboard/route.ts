@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
         computeMtdByPrinciple(month, year),
         db.select().from(spvSalesAssignment),
         db.select().from(smSpvAssignment),
-        getScopeForUser(gate.session.user.id, { month, year }),
+        getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
     ]);
 
     const assignedSpvOf = new Map(spvAssignments.map((a) => [a.salesCode, a.spvName]));

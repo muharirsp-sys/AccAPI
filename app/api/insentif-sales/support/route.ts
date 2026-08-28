@@ -12,6 +12,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { incentiveSupport } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
+import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
@@ -22,10 +23,15 @@ export async function GET(req: NextRequest) {
     const month = parseInt(searchParams.get("month") ?? String(now.getMonth() + 1), 10);
     const year = parseInt(searchParams.get("year") ?? String(now.getFullYear()), 10);
 
-    const rows = await db
-        .select()
-        .from(incentiveSupport)
-        .where(and(eq(incentiveSupport.periodMonth, month), eq(incentiveSupport.periodYear, year)));
+    // Nominal support per salesman = uang. Tanpa filter ini, seorang SPV bisa menggabungkannya
+    // dengan /progress untuk merekonstruksi insentif personal setiap orang meski /dashboard
+    // sudah memfilter (audit 2026-08-28, M2).
+    const [allRows, scope] = await Promise.all([
+        db.select().from(incentiveSupport)
+            .where(and(eq(incentiveSupport.periodMonth, month), eq(incentiveSupport.periodYear, year))),
+        getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
+    ]);
+    const rows = scope === null ? allRows : allRows.filter((r) => scope.has(r.salesCode));
     return NextResponse.json({ month, year, rows });
 }
 
@@ -68,6 +74,27 @@ export async function POST(req: NextRequest) {
             );
         }
         prepared.push({ s, amount });
+    }
+
+    // PASS 1b: kepemilikan. Support MEMOTONG pool insentif, jadi menulis support untuk kode
+    // sales orang lain = menolkan insentif orang itu. Sebelumnya route ini hanya memeriksa
+    // permission, bukan data siapa yang disentuh (audit 2026-08-28, H3).
+    const periode = prepared[0]?.s;
+    if (periode) {
+        const scope = await getScopeForUser(
+            gate.session.user.id,
+            { month: periode.periodMonth, year: periode.periodYear },
+            gate.perms,
+        );
+        if (scope !== null) {
+            const luar = prepared.find(({ s }) => !scope.has(s.salesCode));
+            if (luar) {
+                return NextResponse.json(
+                    { error: `Baris ${luar.s.salesCode}: di luar cakupan tim Anda.` },
+                    { status: 403 },
+                );
+            }
+        }
     }
 
     // PASS 2: tulis seluruhnya dalam satu transaksi — gagal di tengah = rollback penuh.

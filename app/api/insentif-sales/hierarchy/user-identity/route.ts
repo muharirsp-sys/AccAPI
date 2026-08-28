@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
 
 interface IdentityInput {
     userId?: string;
-    hierarchyRole?: "spv" | "sm" | null;
+    hierarchyRole?: "spv" | "sm" | "sales" | null;
     hierarchyName?: string | null;
 }
 
@@ -45,7 +45,9 @@ export async function POST(req: NextRequest) {
 
     const clearing = !body.hierarchyRole;
     if (!clearing) {
-        if (body.hierarchyRole !== "spv" && body.hierarchyRole !== "sm") {
+        // "sales" ditambahkan 2026-08-29: tanpa peran ini seorang salesman tidak bisa dibatasi
+        // ke datanya sendiri sama sekali — hierarchyName-nya adalah KODE SALES, bukan nama.
+        if (body.hierarchyRole !== "spv" && body.hierarchyRole !== "sm" && body.hierarchyRole !== "sales") {
             return NextResponse.json({ error: "hierarchyRole harus 'spv' atau 'sm'" }, { status: 400 });
         }
         if (!body.hierarchyName?.trim()) {

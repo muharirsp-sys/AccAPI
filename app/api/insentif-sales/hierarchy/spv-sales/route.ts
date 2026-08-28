@@ -18,13 +18,20 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { spvSalesAssignment, spvSalesClaimRequest } from "@/db/schema";
 import { requirePermission, resolveRequestPermissions } from "@/lib/rbac/resolve";
-import { getUserHierarchyIdentity, getCurrentSpvOwner } from "@/lib/insentif-hierarchy-scope";
+import { getUserHierarchyIdentity, getCurrentSpvOwner, getScopeForUser } from "@/lib/insentif-hierarchy-scope";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
     if (gate.response) return gate.response;
 
-    const rows = await db.select().from(spvSalesAssignment);
+    // Peta kepemilikan salesman se-perusahaan adalah justru input yang dibutuhkan untuk
+    // menyalahgunakan endpoint tulis (perlu tahu kode sales orang lain). M5 memperbaiki
+    // code-merge & spv-mismatch tapi melewatkan route ini (audit 2026-08-28, M3).
+    const [allRows, scope] = await Promise.all([
+        db.select().from(spvSalesAssignment),
+        getScopeForUser(gate.session.user.id, undefined, gate.perms),
+    ]);
+    const rows = scope === null ? allRows : allRows.filter((r) => scope.has(r.salesCode));
     return NextResponse.json({ rows });
 }
 

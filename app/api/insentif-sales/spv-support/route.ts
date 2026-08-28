@@ -15,6 +15,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { spvSupport } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
+import { getScopeForUser, getUserHierarchyIdentity, canSeeAllInsentif } from "@/lib/insentif-hierarchy-scope";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
@@ -25,10 +26,18 @@ export async function GET(req: NextRequest) {
     const month = parseInt(searchParams.get("month") ?? String(now.getMonth() + 1), 10);
     const year = parseInt(searchParams.get("year") ?? String(now.getFullYear()), 10);
 
-    const rows = await db
-        .select()
-        .from(spvSupport)
-        .where(and(eq(spvSupport.periodMonth, month), eq(spvSupport.periodYear, year)));
+    // Support SPV dikunci per orang: SPV hanya melihat barisnya sendiri, SM melihat SPV di
+    // bawahnya (lewat scope kode sales tim SPV itu tidak cukup — di sini kuncinya nama SPV,
+    // jadi dipakai identitas). Pemegang izin kelola melihat semua (scope === null).
+    const [allRows, scope, identity] = await Promise.all([
+        db.select().from(spvSupport)
+            .where(and(eq(spvSupport.periodMonth, month), eq(spvSupport.periodYear, year))),
+        getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
+        getUserHierarchyIdentity(gate.session.user.id),
+    ]);
+    const rows = scope === null
+        ? allRows
+        : allRows.filter((r) => identity?.role === "spv" && identity.name === r.spvName);
 
     return NextResponse.json({ month, year, rows });
 }
@@ -71,6 +80,20 @@ export async function POST(req: NextRequest) {
             );
         }
         prepared.push({ spvName, principle, periodMonth: s.periodMonth, periodYear: s.periodYear, amount });
+    }
+
+    // PASS 1b: kepemilikan. Support SPV yang menutup penuh rate MENGELUARKAN principal dari
+    // hitungan, jadi menulisnya atas nama SPV lain mengubah nominal orang itu
+    // (audit 2026-08-28, H3).
+    if (!canSeeAllInsentif(gate.perms)) {
+        const identity = await getUserHierarchyIdentity(gate.session.user.id);
+        const luar = prepared.find((p) => !(identity?.role === "spv" && identity.name === p.spvName));
+        if (luar) {
+            return NextResponse.json(
+                { error: `Support SPV ${luar.spvName}: di luar cakupan Anda.` },
+                { status: 403 },
+            );
+        }
     }
 
     // PASS 2: satu transaksi.

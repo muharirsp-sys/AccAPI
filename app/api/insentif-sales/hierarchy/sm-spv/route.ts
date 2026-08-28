@@ -13,12 +13,23 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { smSpvAssignment } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
+import { getUserHierarchyIdentity, canSeeAllInsentif } from "@/lib/insentif-hierarchy-scope";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
     if (gate.response) return gate.response;
 
-    const rows = await db.select().from(smSpvAssignment);
+    // Struktur SM lengkap: sama seperti spv-sales, ini peta yang tidak perlu dilihat semua
+    // orang. SPV/SM tanpa izin kelola hanya melihat barisnya sendiri.
+    const [allRows, identity] = await Promise.all([
+        db.select().from(smSpvAssignment),
+        getUserHierarchyIdentity(gate.session.user.id),
+    ]);
+    const rows = canSeeAllInsentif(gate.perms)
+        ? allRows
+        : allRows.filter((r) =>
+            (identity?.role === "sm" && identity.name === r.smName)
+            || (identity?.role === "spv" && identity.name === r.spvName));
     return NextResponse.json({ rows });
 }
 
