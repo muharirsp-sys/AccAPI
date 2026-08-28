@@ -9,14 +9,15 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { admin } from "better-auth/plugins";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
 import * as schema from "../db/schema";
+import { pool } from "./db";
 
 import { sendEmail } from "./email";
 import { defaultRole, roleAccess } from "./rbac";
 
-// D4 cutover: PostgreSQL (pool terpisah dari lib/db.ts, paritas dengan struktur lama).
-const authDb = drizzle(new Pool({ connectionString: process.env.DATABASE_URL }), { schema });
+// D4 cutover: PostgreSQL. Pool dipakai bersama lib/db.ts — pool kedua hanya menggandakan
+// koneksi ke DB yang sama dan menggandakan peluang kehabisan slot.
+const authDb = drizzle(pool, { schema });
 const baseURL = process.env.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
 function isAllowedTrustedOrigin(origin: string) {
