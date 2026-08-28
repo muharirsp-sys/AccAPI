@@ -233,4 +233,36 @@ assert.deepStrictEqual(
     approx(mix.rincian[1].insentif_ao, 0, "B tanpa ambang → tetap 240 → nol");
 }
 
+// === TIDAK ADA TARGET = TIDAK ADA INSENTIF (keputusan user 2026-08-29) ===
+{
+    const tanpaTarget = computeExclusive({
+        status: "distributor_principle",
+        target_value: 0,
+        realisasi_value: 120_000_000,
+        realisasi_ao: 240,
+    });
+    approx(tanpaTarget.total, 0, "target 0 -> nol, dulu dibayar 700rb dari komponen AO");
+
+    // Di mix, baris tanpa target juga tidak boleh menaikkan n: dua principal bertarget + satu
+    // baris hantu harus tetap dihitung sebagai n=2 (konstanta 1jt), bukan n=3 (1,2jt).
+    const isi = (nama: string, target: number): MixPrincipalInput =>
+        ({ nama, status: "distributor", target_value: target, realisasi_value: 100, realisasi_ao: 240 });
+    const duaNormal = computeMix([isi("A", 100), isi("B", 100)]);
+    const plusHantu = computeMix([isi("A", 100), isi("B", 100), isi("HANTU", 0)]);
+    assert.strictEqual(plusHantu.jumlah_valid, 2, "baris tanpa target tidak menambah n");
+    approx(plusHantu.total, duaNormal.total, "total tidak berubah karena baris hantu");
+    assert.strictEqual(plusHantu.rincian.find((r) => r.nama === "HANTU"), undefined, "baris hantu tidak dibayar");
+}
+
+// === total mix = jumlah rincian, meski ada principal berrealisasi minus ===
+{
+    const r = computeMix([
+        { nama: "A", status: "distributor", target_value: 100, realisasi_value: 100, realisasi_ao: 240 },
+        { nama: "B", status: "distributor", target_value: 100, realisasi_value: 100, realisasi_ao: 240 },
+        { nama: "C", status: "distributor", target_value: 100, realisasi_value: -50, realisasi_ao: 240 },
+    ]);
+    const jumlahRincian = r.rincian.reduce((s, x) => s + x.total, 0);
+    approx(r.total, jumlahRincian, "total tidak melebihkan porsi Value principal minus");
+}
+
 console.log("OK — all insentif-sales-calc checks passed");

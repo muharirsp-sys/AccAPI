@@ -114,6 +114,11 @@ export function hasPositiveNetSales(realisasiValue: number): boolean {
 /** Insentif untuk 1 principle (eksklusif). */
 export function computeExclusive(input: ExclusiveInput): InsentifResult {
     if (!isSchemePrincipal(input.status)) return ZERO;
+    // TIDAK ADA TARGET = TIDAK ADA INSENTIF (dikonfirmasi user 2026-08-29).
+    // Sebelumnya komponen AO memakai penyebut 240 dan tidak melihat target Value sama sekali,
+    // jadi baris yang targetnya belum diisi tetap berhak 70% pool (Rp 700.000). Itu membayar
+    // target yang tidak ada. Baris seperti ini muncul di daftar peringatan /unmatched.
+    if (!(input.target_value > 0)) return ZERO;
     // Penjualan bersih <= 0 → tidak ada komponen apa pun, termasuk AO.
     if (!hasPositiveNetSales(input.realisasi_value)) return ZERO;
 
@@ -160,7 +165,11 @@ export interface MixResult {
 
 /** Insentif untuk banyak principle (mix). Count hanya principle yang ikut skema (status != "principle"). */
 export function computeMix(principals: MixPrincipalInput[]): MixResult {
-    const valid = principals.filter((p) => isSchemePrincipal(p.status));
+    // Principal tanpa target TIDAK dihitung sebagai anggota grup mix (keputusan user 2026-08-29,
+    // sejalan dengan computeExclusive). Dampaknya dua arah dan dua-duanya benar: principal itu
+    // tidak dibayar, DAN ia tidak lagi menaikkan `n` sehingga konstanta pool anggota lain tidak
+    // ikut membengkak karena baris yang targetnya lupa diisi.
+    const valid = principals.filter((p) => isSchemePrincipal(p.status) && p.target_value > 0);
     const jumlah = valid.length;
 
     const total_support = valid.reduce((s, p) => s + effectiveSupport(p.status, p.nilai_support_principal), 0);
@@ -203,10 +212,14 @@ export function computeMix(principals: MixPrincipalInput[]): MixResult {
         return { nama: p.nama, insentif_ao, insentif_value: line_value, total: insentif_ao + line_value };
     });
     const total_ao = rincian.reduce((s, r) => s + r.insentif_ao, 0);
+    // Jumlah dari rincian, BUKAN insentif_value global: porsi Value principal yang realisasinya
+    // <= 0 memang dinolkan di atas, jadi total yang memakai angka global akan melebihkan.
+    // `insentif_value` tetap dilaporkan apa adanya sebagai angka gabungan sebelum alokasi.
+    const total_value_dibayar = rincian.reduce((s, r) => s + r.insentif_value, 0);
 
     return {
         jumlah_valid: jumlah, konstanta, total_support, porsi_distributor,
-        rincian, total_ao, insentif_value, total: total_ao + insentif_value,
+        rincian, total_ao, insentif_value, total: total_ao + total_value_dibayar,
     };
 }
 

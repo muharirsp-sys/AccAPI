@@ -212,4 +212,14 @@ console.log("OK support SPV");
     approx(gagal.total, 0, "support tidak menolong kalau target tidak tercapai");
 }
 
+// === Principal tanpa target tidak menghitung n (keputusan user 2026-08-29) ===
+{
+    // A target 0 (pasti tidak dibayar) + B target tercapai. Dulu: n=2, rate 800rb, total 800rb.
+    const r = calculateInsentifSPV([row("A", 0, 500), row("B", 100, 100)]);
+    assert.strictEqual(r.jumlahValid, 1, "hanya B yang dihitung");
+    approx(r.ratePerPrincipal, 1_500_000, "rate n=1");
+    approx(r.total, 1_500_000, "SPV tidak dirugikan target yang lupa diisi");
+    assert.strictEqual(r.rincian.find((d) => d.principle === "A"), undefined, "A tidak dibayar");
+}
+
 console.log("OK — all insentif-spv-calc checks passed");

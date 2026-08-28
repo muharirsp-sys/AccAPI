@@ -45,13 +45,25 @@ export async function GET(req: NextRequest) {
             .where(and(eq(salesDailyProgress.periodMonth, month), eq(salesDailyProgress.periodYear, year)))
             .groupBy(salesDailyProgress.salesCode, salesDailyProgress.principle),
         db
-            .select({ salesCode: salesTargets.salesCode, principle: salesTargets.principle })
+            .select({
+                salesCode: salesTargets.salesCode,
+                principle: salesTargets.principle,
+                targetValue: salesTargets.targetValue,
+            })
             .from(salesTargets)
             .where(and(eq(salesTargets.periodMonth, month), eq(salesTargets.periodYear, year))),
         getMergeMap(month, year),
     ]);
 
-    const punyaTarget = new Set(targets.map((t) => `${t.salesCode}|${t.principle}`));
+    // Target 0 = tidak ada target. Sejak 2026-08-29 baris seperti itu tidak dibayar sama sekali
+    // (keputusan user), jadi ia harus muncul di daftar peringatan ini — bukan diam-diam
+    // dianggap "sudah punya target" hanya karena barisnya ada.
+    const punyaTarget = new Set(
+        targets.filter((t) => t.targetValue > 0).map((t) => `${t.salesCode}|${t.principle}`),
+    );
+    const targetNol = new Set(
+        targets.filter((t) => !(t.targetValue > 0)).map((t) => `${t.salesCode}|${t.principle}`),
+    );
     // Kode yang sudah digabungkan ke kode lain BUKAN yatim: realisasinya memang dihitung
     // di bawah kode tujuan. Tanpa cek ini, setiap penggabungan yang sudah diputuskan akan
     // muncul lagi di daftar "perlu dipetakan".
@@ -61,7 +73,13 @@ export async function GET(req: NextRequest) {
             return !punyaTarget.has(`${p.salesCode}|${p.principle}`)
                 && !punyaTarget.has(`${tujuan}|${p.principle}`);
         })
-        .map((p) => ({ ...p, contohNota: p.contohNota ?? [] }))
+        .map((p) => ({
+            ...p,
+            contohNota: p.contohNota ?? [],
+            sebab: targetNol.has(`${p.salesCode}|${p.principle}`)
+                ? ("target 0" as const)
+                : ("tanpa baris target" as const),
+        }))
         .sort((a, b) => b.dpp - a.dpp);
 
     return NextResponse.json({ month, year, rows });

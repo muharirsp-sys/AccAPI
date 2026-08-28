@@ -154,7 +154,12 @@ export function calculateInsentifSPV(
 ): SpvInsentifResult {
     const grouped = groupByPrinciple(rows);
     const supportOf = (p: string) => supportByPrinciple?.get(p) ?? 0;
-    const schemePrincipals = [...grouped.entries()].filter(([, g]) => g.hasScheme).map(([p]) => p);
+    // Principal tanpa target tidak ikut menghitung `n` (keputusan user 2026-08-29). Ia pasti
+    // tidak dibayar (pengali terhadap target 0 = 0), jadi membiarkannya masuk hitungan hanya
+    // mengencerkan rate anggota lain: n=2 rate 800rb padahal seharusnya n=1 rate 1,5jt.
+    const schemePrincipals = [...grouped.entries()]
+        .filter(([, g]) => g.hasScheme && g.targetValue > 0)
+        .map(([p]) => p);
 
     const { valid, rate, dikecualikan } = resolveValidSet(schemePrincipals, supportOf);
     const jumlahValid = valid.length;

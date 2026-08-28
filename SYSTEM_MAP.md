@@ -272,6 +272,63 @@ Cross-analysis + Data Alchemist (Fase 7+):
 | `dashboard-generator/test_no_company_branding.py` | `main` | Self-check agar source/output dashboard generator tidak membawa hardcoded nama perusahaan internal |
 | `dashboard-generator/DashboardGenerator.spec` | PyInstaller build graph | Build satu-file `dist/DashboardGenerator.exe`; include UI/ECharts offline serta runtime pandas/xlrd/openpyxl/DuckDB untuk jalur file besar |
 
+### 8. Rekapan Nota (Wave-Based Picking)
+```
+--- 8.1 Upload export Accurate (menggantikan paste manual) ---
+UI /rekapan-nota -> upload "Rincian Faktur Penjualan" (.xlsx dari Accurate)
+  -> POST /api/rekapan-nota/upload
+     -> requirePermission("rekapan_nota.manage")
+     -> lib/rekapan-nota/parse.ts : parseAccurateExport()
+          * petakan per NAMA HEADER yang dinormalkan, bukan huruf kolom
+            (export menyisipkan 1 kolom kosong di antara tiap kolom data)
+          * filter JENIS_TRANSAKSI = "1. Penjualan Bruto"   (retur tidak masuk)
+          * filter TANGGAL yang dipilih   (satu file memuat rentang, bukan 1 hari)
+          * agregasi per (NO_NOTA, KODE_BARANG); turunkan konv_tersirat = QTY_SATUANKECIL / QTY
+     -> sha256 file -> uq_rekap_upload_sha (upload ulang file sama = ditolak, pool tidak ganda)
+     -> tulis rekap_upload + wave_line_pool + upsert pick_group dimensi jenis_produk
+  <- { uploadId, tanggal, jumlahNota, jumlahBaris, principal[], tanggalTersedia[] }
+
+--- 8.2 Menyusun & merilis wave ---
+UI /rekapan-nota/wave/[id]
+  -> GET  /api/rekapan-nota/pool?tanggal=...   (anti-join ke wave_assignment)
+       * buang outlet ber-area NON / LUAR KOTA, buang nota bertanda kanvas
+  -> POST /api/rekapan-nota/wave/[id]/nota     INSERT ... ON CONFLICT DO NOTHING RETURNING
+       * uq_nota_aktif menolak nota yang sudah aktif di wave lain -> 409 + identitas pemiliknya
+       * simpan snapshot: snap_grup_all, snap_grup_gdi, snap_area, snap_pareto, snap_total_krt
+  -> PATCH /api/rekapan-nota/wave/[id] { aksi: "release" }
+       -> lib/rekapan-nota/exception.ts : deteksiException()  (set-based, ON CONFLICT DO NOTHING)
+       -> lib/rekapan-nota/wave-state.ts : transisiWave()     (release boleh dengan exception open;
+                                                               confirm ditolak selama KONVERSI_* open)
+
+--- 8.3 Cetak (menggantikan 29+ sheet Print) ---
+UI pilih pick_group -> /rekapan-nota/wave/[id]/cetak?grup=...   (server component, grup (cetak))
+  -> lib/rekapan-nota/query.ts : buildRekapan()
+       SATU CTE `baris`, DUA proyeksi:
+         withdrawal : GROUP BY kode_barang  -> Total, Konv, Krt Desimal, Sat Bsr, Sat Kcl
+         allocation : GROUP BY no_nota      -> Nomor Nota & Rayon
+       (balance dijamin struktural: sumbernya satu)
+       grup sedimensi di-OR, antar-dimensi di-AND (HNZ1 = Area 1/10/PGU DAN Non Pareto)
+  -> window.print(); kaki halaman memuat wave, grup, jumlah SKU, total pcs, waktu cetak
+
+--- 8.4 TTF (Tanda Terima Faktur) ---
+/rekapan-nota/wave/[id]/ttf  -> lib/rekapan-nota/query.ts : buildTtf()
+  -> agregasi per NO_NOTA atas wave yang sama
+  -> Lembar = CEILING(jumlah_baris_nota / app_setting["rekapan.baris_per_lembar_faktur"])
+  -> kolom SRB / Batal / Paraf / Tgl Antr dicetak KOSONG (diisi tangan di kertas)
+
+--- 8.5 Take-out berapproval ---
+PATCH /api/rekapan-nota/wave/[id]/nota { aksi: "takeout" }  -> butuh rekapan_nota.approve_takeout
+  -> UPDATE wave_assignment SET dilepas=true, dilepas_alasan/at/by   (ck_takeout memaksa terisi)
+  -> nota kembali ke pool; wave_event: wave.nota_released
+
+--- 8.6 Usulan mapping area ---
+GET /api/rekapan-nota/area
+  -> lib/rekapan-nota/area-suggest.ts : usulkanArea()
+       1. Kel./Kec. di alamat -> area mayoritas di master  (LOO terukur 87,1%)
+       2. fallback kemiripan token alamat+nama -> memakai damerau() dari lib/sales-history/fuzzy.ts
+  -> POST .../area  (terima satuan atau massal untuk keyakinan TINGGI)
+```
+
 ---
 
 ## Summary Program — Determinisme Pipeline (FASE 1–6 + Pass 3)
@@ -652,6 +709,35 @@ AccAPI/_github_clean/
 | `lib/pdf-text.ts` | `uppercasePageText` | Uppercase teks untuk header PDF |
 | `lib/off-program-control/holidays.ts` | `isHoliday`, `getNextWorkday` | Kalender hari libur untuk kalkulasi deadline |
 
+### Rekapan Nota
+
+| File | Fungsi Utama | Peran |
+|---|---|---|
+| `lib/rekapan-nota/parse.ts` | `parseAccurateExport`, `normalizeHeader`, `deriveKonvTersirat` | Parser export Accurate, pure. Uji regresi: 131 nota HEINZ ABC 21 Agu 2026 vs `Paste Data Sore` -> 131/131 nota, 776 baris, nol selisih |
+| `lib/rekapan-nota/classify.ts` | `resolveKlasifikasi`, `isAreaDikecualikan`, `hitungPareto`, `klasifikasiSirup`, `isiPerKarton` | Aturan grup/area/pareto/sirup + eksklusi NON/LUAR KOTA. Pure |
+| `lib/rekapan-nota/query.ts` | `buildRekapan`, `buildTtf`, `notaPool`, `ambilPickGroup`, `ambilSetting` | Satu CTE, dua proyeksi (withdrawal + allocation); pool anti-join; TTF |
+| `lib/rekapan-nota/exception.ts` | `deteksiException`, `hitungExceptionOpen` | Deteksi set-based sekali per release, idempoten lewat `uq_wave_exception` |
+| `lib/rekapan-nota/area-suggest.ts` | `parseKelKec`, `bangunIndeks`, `usulkanArea`, `usulkanSemua` | Usulan area; memakai `lib/sales-history/fuzzy.ts`, tidak menulis matcher baru |
+| `lib/rekapan-nota/wave-state.ts` | `transisiWave` | State machine draft->released->confirmed/cancelled. Pure |
+| `lib/rekapan-nota/parse.test.ts` + `rules.test.ts` + `area-suggest.test.ts` | 13 self-check | `npm run test:rekapan`. Uji file-based SKIP (bukan lulus diam-diam) kalau sumbernya tidak ada |
+| `app/api/rekapan-nota/upload/route.ts` | `POST` | Upload + parse + isi pool, idempoten per sha256. Guard `rekapan_nota.manage` |
+| `app/api/rekapan-nota/pool/route.ts` | `GET` | Nota tersedia per tanggal. Guard `rekapan_nota.view` |
+| `app/api/rekapan-nota/wave/route.ts` | `GET`,`POST` | Daftar wave per tanggal; buat wave (N wave/hari, bukan 2 hardcode) |
+| `app/api/rekapan-nota/wave/[id]/route.ts` | `GET`,`PATCH` | Detail wave; release/confirm/cancel; pilih pick_group |
+| `app/api/rekapan-nota/wave/[id]/nota/route.ts` | `POST`,`PATCH` | Tambah nota (409 + identitas pemilik), ubah prioritas, take-out berapproval |
+| `app/api/rekapan-nota/area/route.ts` | `GET`,`POST` | Antrean mapping area + usulan; terima satuan/massal |
+| `app/(dashboard)/rekapan-nota/page.tsx` | `RekapanNotaPage` | Wave monitor + upload export |
+| `app/(dashboard)/rekapan-nota/wave/[id]/page.tsx` | `WavePage` | Susun wave dari pool, pilih grup cetak, rilis/konfirmasi |
+| `app/(dashboard)/rekapan-nota/area/page.tsx` | `AreaMappingPage` | Antrean mapping area + terima massal TINGGI |
+| `app/(cetak)/layout.tsx` + `TombolCetak.tsx` | `CetakLayout` | Grup route cetak: tanpa sidebar, guard `rekapan_nota.print` sendiri, CSS `@page`/`@media print` |
+| `app/(cetak)/rekapan-nota/wave/[id]/cetak/page.tsx` | `CetakRekapanPage` | SATU template lembar rekapan berparameter grup (server component) |
+| `app/(cetak)/rekapan-nota/wave/[id]/ttf/page.tsx` | `CetakTtfPage` | SATU template TTF berparameter wave |
+
+RBAC: module `rekapan_nota` (`view`/`manage`/`print`/`approve_takeout`) di `lib/rbac/registry.ts`
++ `lib/rbac.ts` (appModules, moduleLabels, moduleActions, pagePermissions `/rekapan-nota`, preset manager),
+menu sidebar `Rekapan Nota`.
+
+
 ---
 
 ## Data & Config
@@ -717,6 +803,38 @@ permission_audit_log [siapa ubah group/permission siapa, kapan]
 **Status Lifecycle claimWorkflow:**
 `Draft -> In Progress -> Submitted -> Paid -> Partially Paid -> Closed / Overpaid`
 
+**Rekapan Nota (modul baru):**
+
+```
+rekap_upload ──── wave_line_pool (upload_id)      [sumber baris nota, dari export Accurate]
+nota_kanvas [penanda manual; berkunci no_nota, selamat dari upload ulang]
+
+wave ──── wave_assignment (wave_id)               [uq_nota_aktif: 1 nota = 1 penugasan aktif]
+  │        └─ FK komposit (wave_id, wave_tipe) -> wave(id, tipe)
+  │           + CHECK snap_kanvas = (wave_tipe = 'kanvas')
+  ├──────── wave_pick_group (wave_id + pick_group_id)
+  ├──────── wave_exception (wave_id)
+  └──────── wave_event (wave_id)                  [append-only audit trail]
+
+pick_group ──── pick_group_member (pick_group_id)
+  dimensi: outlet_all | outlet_gdi | area | volume | jenis_produk | sirup
+  17 grup di-seed migrasi; grup `jenis_produk` di-upsert dari data tiap upload
+
+Kolom tambahan pada tabel existing (aditif):
+  item.isi_per_karton, item.satuan_besar
+  customer.area, customer.grup_all, customer.grup_gdi
+
+Parameter di app_setting (tabel existing, bukan tabel baru):
+  rekapan.ambang_pareto_karton    = 50
+  rekapan.baris_per_lembar_faktur = 13
+  rekapan.area_dikecualikan       = NON,LUAR KOTA
+
+Status Lifecycle wave:
+  Draft -> Released -> Confirmed / Cancelled
+  (Released boleh jalan dengan exception open; Confirmed tidak, selama ada KONVERSI_* open)
+```
+
+
 ### Migrasi & Seed
 
 | File | Fungsi |
@@ -728,6 +846,9 @@ permission_audit_log [siapa ubah group/permission siapa, kapan]
 | `scripts/seed-opc-dummy.mjs` | 1.275 batch dummy OPC (51 batch x 25 principal, semua 12 problem code) |
 | `scripts/migrate-rbac-groups.mjs` | Buat tabel Dynamic RBAC (access_group, group_permission, user_group, permission_audit_log) — additive & idempotent |
 | `scripts/seed-rbac-presets.ts` | Sinkron preset Dynamic RBAC termasuk `manage_hierarchy` dan Laporan Harian + backfill user_group (`node --experimental-strip-types`) — PostgreSQL, idempotent |
+| `db/migrations/0002_rekapan_nota.sql` | DDL modul Rekapan Nota (10 tabel + 6 enum + kolom item/customer) + seed 17 pick_group & 3 app_setting; idempoten |
+| `scripts/apply-rekapan-migration.mjs` | Terapkan 0002 ke PostgreSQL LOKAL dalam satu transaksi (guard hostname; produksi manual dengan role ber-DDL) |
+| `scripts/import-rekapan-master.mjs` | Impor sekali `Konversi`/`Master Area Heinz`/`Pemisah` dari workbook ke item & customer; melaporkan yang tidak cocok, tidak menelannya |
 | `scripts/sync-insentif-hierarchy.mjs` | Upsert assignment SPV→Sales dan SM→SPV dari target periode terbaru; tidak menebak identitas akun login |
 
 ### Output & Runtime Artifacts
@@ -756,23 +877,41 @@ permission_audit_log [siapa ubah group/permission siapa, kapan]
 
 ## Insentif Sales — Kalkulasi Insentif
 
-> Diperbarui 2026-08-24 (audit modul). Sebelumnya tertulis "MT belum ada aturan insentif" dan
-> "SPV belum di-wire" — keduanya sudah tidak benar.
+> Diperbarui 2026-08-28 (audit modul kedua, 4 agent paralel). Temuan lengkap:
+> [docs/handover/AUDIT_INSENTIF_SALES_2026-08-28.md](docs/handover/AUDIT_INSENTIF_SALES_2026-08-28.md).
+> Sebelumnya tertulis "MT belum ada aturan insentif" dan "SPV belum di-wire" — keduanya sudah tidak benar.
+>
+> **Belum diperbaiki (menunggu persetujuan, lihat dokumen audit):** filter Principal/Cabang mengubah
+> nominal mix (C1); default demo `NESTLE`/`BANDUNG` masih dipasang klien di `page.tsx:1250` sehingga
+> M10 terbuka lagi untuk jalur upload Excel (C2); `getScopeForUser` fail-open untuk user tanpa
+> `hierarchyRole` (C3); dan 4 endpoint uang tanpa row-level scope pada jalur tulis.
 
 ### Peta layer (trace-by-flow)
 
 | Layer | Lokasi |
 |---|---|
 | **Entry point UI** | `app/(dashboard)/insentif-sales/page.tsx` — tab `sales`/`spv`/`sm`/`admin`(Input Penjualan)/`finance` lewat `?view=` |
-| **Handler/route** | `app/api/insentif-sales/*/route.ts` (18 route, daftar di bawah) |
-| **Business logic (pure)** | `lib/insentif-sales-calc.ts` (GT), `lib/insentif-mt-calc.ts` (MT), `lib/insentif-spv-calc.ts` (SPV), `lib/insentif-sm-calc.ts` (SM), `lib/insentif-value-source.ts`, `lib/sales-code-merge.ts`, `lib/insentif-payee.ts` |
+| **Handler/route** | `app/api/insentif-sales/*/route.ts` (20 route, daftar di bawah) |
+| **Business logic (pure)** | `lib/insentif-sales-calc.ts` (GT), `lib/insentif-mt-calc.ts` (MT), `lib/insentif-spv-calc.ts` (SPV), `lib/insentif-sm-calc.ts` (SM), `lib/insentif-value-source.ts`, `lib/sales-code-merge.ts`, `lib/insentif-payee.ts`, `lib/excel-date.ts` (tanggal Excel, anti geser 1 hari) |
+| **Setelan aturan** | `lib/insentif-settings.ts` + tabel `app_setting` — ambang Target AO GT/TT (`fixed240` \| `file`), diubah lewat `PATCH /api/insentif-sales/settings` (izin `manage`). Gagal baca jatuh ke `fixed240`, bukan melempar. |
 | **Data access** | `lib/insentif-sales.ts` (`getTargetsForPeriod`, `computeMtdProgress`, `computeMtdByPrinciple`, `getMergeMap`), `lib/insentif-hierarchy-scope.ts` (row-level scope) |
 | **Parser Excel** | `lib/insentif-sales-excel.ts` (`parseTargetExcel`), agregasi closing di browser (`page.tsx`) |
-| **DB** | `sales_targets`, `sales_daily_progress`, `incentive_support`, `spv_support`, `incentive_payments`, `incentive_tiers`, `sales_code_merge`, `spv_sales_assignment`, `sm_spv_assignment`, `spv_sales_claim_request` |
+| **DB** | `sales_targets`, `sales_daily_progress`, `incentive_support`, `spv_support`, `incentive_payments`, `incentive_tiers`, `sales_code_merge`, `spv_sales_assignment`, `sm_spv_assignment`, `spv_sales_claim_request`, `app_setting` |
 
 Route: `dashboard`, `spv-dashboard`, `sm-dashboard`, `progress`, `targets`, `targets/template`,
 `support`, `spv-support`, `payments`, `payments/[id]`, `tiers`, `code-merge`, `spv-mismatch`,
-`hierarchy/{spv-sales,spv-sales/requests,sm-spv,user-identity,my-identity}`.
+`settings`, `unmatched`, `hierarchy/{spv-sales,spv-sales/requests,sm-spv,user-identity,my-identity}`.
+
+**Aturan yang berubah sejak 2026-08-26:**
+- **SPV: ambang 100% per principal.** `spvMultiplier` (`lib/insentif-spv-calc.ts`) menggantikan
+  `percentageMultiplier`: di bawah 100% principal itu Rp 0, ≥100% dibayar rate penuh. Principal yang
+  gagal target tetap dihitung sebagai principal yang dipegang. Fungsi terpisah dengan sengaja —
+  berbagi dengan Sales/MT berarti mengubah aturan SPV ikut mengubah nominal Sales.
+- **Target EC/AO/IA `sales_targets` kini `double precision`** (file target nyata berisi 204,8).
+  `achieved_ec/ao/ia` di `sales_daily_progress` **masih `integer`** — risiko yang sama belum ditutup.
+- **Target IA adalah rata-rata per outlet**, bukan total. Jangan dibagi lagi dengan target AO;
+  `lib/insentif-mt-calc.ts` membandingkan `realisasi_ia/realisasi_ao` langsung ke `target_ia`.
+- **Ambang AO GT/TT bisa dipindah** antara 240 dan Target AO file lewat setelan di atas.
 
 ### Empat skema insentif, dipisah peran + channel
 
@@ -840,24 +979,52 @@ yang sama** lewat prefiks `sales_code`: `SPV:<nama>` / `SM:<nama>`, `principle` 
 UI Finance memakai key seleksi `salesCode::principle`, memproses dengan `Promise.allSettled`,
 mempertahankan pilihan yang gagal, dan membedakan error API dari status `belum`.
 
-### ⚠ `sales_daily_progress` punya DUA penulis dengan cakupan hapus BERBEDA
+### ⚠ `sales_daily_progress` punya DUA penulis — cakupan hapus sudah disamakan, sisanya belum
 
-Belum diselesaikan — butuh keputusan user (audit 2026-08-24).
+Cakupan DELETE kedua penulis sekarang **identik**: per `(salesCode, principle, periode, TANGGAL)`
+(C1/M13 selesai). Akibatnya keduanya tidak lagi saling menghapus — mereka **berdampingan** dalam satu
+periode, dan itu memunculkan masalah yang berbeda:
 
-| Penulis | Cakupan DELETE | Isi `spv_name`? |
+| Penulis | Isi `spv_name`? | Periode diturunkan dari |
 |---|---|---|
-| `app/api/insentif-sales/progress/route.ts:86` | per `(salesCode, principle, periode)` — sengaja, agar upload SM lain tidak terhapus | ya |
-| `lib/laporan-harian/ingest.ts:31` (`replaceDailyProgressForPeriod`, dipanggil `app/api/laporan-harian/upload/route.ts:146`) | **seluruh periode** (`period_month` + `period_year` saja) | **tidak** — NULL |
+| `app/api/insentif-sales/progress/route.ts` (upload closing, agregasi di browser) | ya (kolom GOLONGAN) | **dropdown UI**, bukan dari `date` — risiko salah bulan |
+| `lib/laporan-harian/ingest.ts` (dipanggil `app/api/laporan-harian/upload/route.ts`) | **tidak** — NULL | dari `date` (python backend) |
 
-Akibat: upload Laporan Harian untuk bulan yang sama memusnahkan seluruh data closing Insentif
-Sales periode itu, tanpa error. Deteksi `/spv-mismatch` juga mati senyap karena `spv_name` NULL.
-Arah sebaliknya: upload closing per-SM menimpa sebagian baris laporan-harian → satu periode berisi
-campuran dua sumber. Jangan diselesaikan diam-diam di kode: tentukan dulu tabel ini milik siapa.
+Konsekuensi yang masih terbuka: baris dari Laporan Harian tak pernah muncul di `/spv-mismatch`
+(`isNotNull(spvName)`), jadi panel itu melaporkan "0 ketidaksinkronan" untuk jalur yang justru dipakai
+bersamaan. Dan tabel ini **tidak punya UNIQUE index**, sehingga retry upload setelah 502 bisa
+menggandakan realisasi tanpa error (audit 2026-08-28, H5).
 
-Catatan terkait: **tidak satu pun** dari 18 route `insentif-sales` menyetel `maxDuration`, padahal
-konvensi repo menaikkannya untuk route unggah berat (`app/api/laporan-harian/upload/route.ts:28`
-dan `app/api/sales-history/import/route.ts:22` = 300). `POST /targets` (~570 statement berurutan,
-di luar transaksi) dan `POST /progress` berjalan pada default.
+`maxDuration = 300` sudah dipasang di `POST /targets` dan `POST /progress`. Yang belum: keduanya masih
+mengeksekusi satu statement per baris di dalam satu transaksi (~2.000 DELETE per upload closing).
+
+**Upload ulang periode lama: HAPUS DULU.** `lib/excel-date.ts` (2026-08-27) memperbaiki tanggal yang
+sebelumnya tersimpan mundur satu hari. Untuk file yang sama, `date` yang dihasilkan sekarang berbeda,
+jadi upload ulang **menambah** alih-alih menimpa. Juli & Agustus 2026 sudah dihapus manual; Juni 2026
+masih memuat 6 baris dari jalur lama.
+
+### Prinsip WAJIB: data insentif diperlakukan seketat data Finance
+
+Ditetapkan 2026-08-28. Ini bukan preferensi, ini standar penerimaan untuk setiap perubahan di modul ini.
+
+1. **Row-level & column-level filter berbasis kepemilikan.** Sales/SPV/SM hanya boleh melihat data
+   miliknya/timnya. Filter WAJIB berada di layer service/query (`getScopeForUser`), **bukan** di UI.
+   Filter yang hanya menyembunyikan di layar adalah bug keamanan, bukan fitur.
+2. **Least privilege per peran.** Siapa menghitung ulang, siapa meng-approve/menandai lunas, siapa
+   hanya melihat — dibedakan permission, bukan satu peran generik.
+3. **Audit trail untuk setiap perubahan angka**: siapa, kapan, **sebelum/sesudah**. Kolom
+   "penulis terakhir" tidak memenuhi ini karena nilainya ditimpa. Modul lain sudah punya polanya
+   (`offAuditLog`, `claimAuditLog`, `kontrolAuditLog`, `permissionAuditLog`); insentif belum.
+4. **Agregat tidak boleh bisa di-drill-down** jadi angka personal orang lain tanpa otorisasi. Endpoint
+   realisasi + support yang tak ter-scope memungkinkan rekonstruksi manual meski dashboard sudah
+   memfilter — itu tetap pelanggaran.
+5. **Filter harus konsisten di SEMUA entry point**, termasuk rekap, export, dan cetak. Celah paling
+   umum: benar di endpoint dashboard, lupa di endpoint rekap. Di modul ini celahnya adalah
+   `GET /payments`.
+
+Status kepatuhan per endpoint: lihat tabel di
+[AUDIT_INSENTIF_SALES_2026-08-28.md](docs/handover/AUDIT_INSENTIF_SALES_2026-08-28.md) bagian
+"Filter data setara Finance".
 
 ### Alur end-to-end
 
@@ -1034,6 +1201,12 @@ Alias Principal disimpan di `python_backend/laporan_harian_targets.py`; filter/f
 | **`runtime/` path** | `GET /api/cron/cleanup-runtime` membersihkan artefak regenerable dengan retensi terdaftar; arsip PDF OPC/claim sengaja dikecualikan. Production tetap memerlukan scheduler eksternal dan `CRON_SECRET`. |
 | **`app/(dashboard)/finance/page.tsx`** | Memanggil Python FastAPI backend langsung via `NEXT_PUBLIC_FASTAPI_BASE_URL`. Jika backend mati, halaman finance tidak berfungsi. |
 | **D4 env/deploy belum sinkron** | Kode DB sudah PostgreSQL, tetapi `.env.local`, `.env.example`, Docker Compose, dan Dockerfile masih default `file:sqlite.db`. Local/deploy wajib memakai `DATABASE_URL=postgres://...`; tanpa itu route ber-DB tidak operasional. |
+| **Rekapan Nota: sumber baris nota** | UPLOAD MANUAL export Accurate, bukan sync live. Kalau admin lupa upload, pool kosong dan wave tidak bisa disusun — gagalnya kelihatan, bukan diam-diam. Jalur upgrade: `sales-invoice/detail.do` per faktur (mahal, ~850 nota/hari). |
+| **Rekapan Nota: master konversi** | Diimpor sekali dari sheet `Konversi` (8.173 SKU); export tidak membawa `QTYKONV`. Yang menjaga master tetap benar adalah `konv_tersirat` tiap upload (baseline: cocok 65/65 SKU). Item ganti kemasan -> exception `KONVERSI_BEDA_DENGAN_EXPORT`, bukan orang. |
+| **Rekapan Nota: mapping area** | `Master Area Heinz` belum lengkap. Per 21 Agu 2026, 19 dari 131 nota Heinz tidak muncul di lembar HNZ mana pun karena outletnya belum dipetakan. Mesin usulan menutup ~79% (133/168) dengan LOO 87,1%; sisanya tetap antrean kerja manual, dan tidak ada yang dikarang. |
+| **Rekapan Nota: nota kanvas** | Tabel `nota_kanvas` + constraint sudah ada (nota kanvas mustahil masuk wave reguler), tetapi UI penandaannya BELUM dibuat — sementara ditandai lewat SQL. Kalau lupa ditandai, notanya ikut rekapan reguler padahal barangnya sudah keluar lewat pemindahan gudang. |
+| **Rekapan Nota: belum dibangun** | `wave_rekonsiliasi` + `ck_neraca` (PRD §3.7) dan `wave_print_log` + preset cetak (§3.8) sengaja ditunda. Neraca two-step tetap dijamin struktural (satu CTE), tapi rekonsiliasi terhadap file upload belum ada. |
+| **Rekapan Nota: `item.no` tanpa index** | Cek `EXPLAIN` pada join `wave_line_pool -> item` sebelum menambah `ix_item_no`; jangan menambah index tanpa bukti. |
 | **`rekprinciple.xlsx`** | File Excel di root — tidak jelas apakah dipakai runtime atau hanya referensi manual. |
 | **Laporan Harian: stock Accurate & openpyxl** | File stock export Accurate tidak terbaca `openpyxl` (perlu `python-calamine` terpasang di server). |
 

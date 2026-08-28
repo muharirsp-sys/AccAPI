@@ -53,6 +53,8 @@ interface ProgressFeedStatus {
     targetKeys: number;
     matchedKeys: number;
     unmatchedKeys: number;
+    /** Kombinasi yang punya baris target tapi nilainya 0 — tidak dibayar sama sekali. */
+    zeroTargetKeys: number;
     ready: boolean;
 }
 
@@ -1577,6 +1579,7 @@ interface UnmatchedRow {
     tanggalAwal: string;
     tanggalAkhir: string;
     contohNota: string[];
+    sebab: "tanpa baris target" | "target 0";
 }
 
 /**
@@ -1608,8 +1611,8 @@ function UnmatchedProgressList({ month, year }: { month: number; year: number })
 
     function salin() {
         if (!rows?.length) return;
-        const teks = ["Kode\tPrincipal\tCabang\tBaris\tDPP\tContoh Nota"]
-            .concat(rows.map((r) => [r.salesCode, r.principle, r.branch, r.baris, Math.round(r.dpp), r.contohNota.join(" ")].join("\t")))
+        const teks = ["Kode\tPrincipal\tCabang\tSebab\tBaris\tDPP\tContoh Nota"]
+            .concat(rows.map((r) => [r.salesCode, r.principle, r.branch, r.sebab, r.baris, Math.round(r.dpp), r.contohNota.join(" ")].join("\t")))
             .join("\n");
         navigator.clipboard.writeText(teks)
             .then(() => toast.success(`${rows.length} baris disalin, siap ditempel ke Excel.`))
@@ -1646,6 +1649,7 @@ function UnmatchedProgressList({ month, year }: { month: number; year: number })
                                         <th className="text-left font-semibold py-1.5 px-2">Kode</th>
                                         <th className="text-left font-semibold py-1.5 px-2">Principal</th>
                                         <th className="text-left font-semibold py-1.5 px-2">Cabang</th>
+                                        <th className="text-left font-semibold py-1.5 px-2">Sebab</th>
                                         <th className="text-right font-semibold py-1.5 px-2">Nilai (DPP)</th>
                                         <th className="text-right font-semibold py-1.5 px-2">Baris</th>
                                         <th className="text-left font-semibold py-1.5 px-2">Periode</th>
@@ -1658,6 +1662,11 @@ function UnmatchedProgressList({ month, year }: { month: number; year: number })
                                             <td className="py-1.5 px-2 font-mono text-slate-200">{r.salesCode}</td>
                                             <td className="py-1.5 px-2 text-slate-300">{r.principle}</td>
                                             <td className="py-1.5 px-2 text-slate-400">{r.branch}</td>
+                                            <td className="py-1.5 px-2">
+                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${r.sebab === "target 0" ? "border-amber-500/40 text-amber-300" : "border-white/15 text-slate-400"}`}>
+                                                    {r.sebab}
+                                                </span>
+                                            </td>
                                             <td className="py-1.5 px-2 text-right font-mono text-slate-200">{formatRp(Math.round(r.dpp))}</td>
                                             <td className="py-1.5 px-2 text-right font-mono text-slate-400">{formatQty(r.baris)}</td>
                                             <td className="py-1.5 px-2 font-mono text-slate-500">{r.tanggalAwal} s/d {r.tanggalAkhir}</td>
@@ -3462,13 +3471,13 @@ export default function InsentifSalesPage() {
             {!loading && !dashboardError && progressFeed && progressFeed.progressKeys > 0 && (
                 <div
                     className={`mb-5 flex items-start gap-3 rounded-xl border p-4 ${
-                        progressFeed.ready
+                        progressFeed.ready && progressFeed.zeroTargetKeys === 0 && progressFeed.unmatchedKeys === 0
                             ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
                             : "border-amber-500/30 bg-amber-500/10 text-amber-100"
                     }`}
                     role="status"
                 >
-                    {progressFeed.ready
+                    {progressFeed.ready && progressFeed.zeroTargetKeys === 0 && progressFeed.unmatchedKeys === 0
                         ? <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-400" size={18} />
                         : <AlertTriangle className="mt-0.5 shrink-0 text-amber-400" size={18} />}
                     <div className="text-sm leading-6">
@@ -3484,8 +3493,17 @@ export default function InsentifSalesPage() {
                                 : progressFeed.unmatchedKeys
                                     ? ` Masih ada ${progressFeed.unmatchedKeys.toLocaleString("id-ID")} kombinasi tanpa target yang cocok.`
                                     : ""}
+                            {/* Target 0 = tidak dibayar sama sekali sejak 2026-08-29. Tanpa baris ini,
+                                Finance melihat "semua cocok" untuk data yang justru tidak menghasilkan
+                                insentif apa pun. */}
+                            {progressFeed.zeroTargetKeys > 0 && (
+                                <> <span className="font-semibold">
+                                    {progressFeed.zeroTargetKeys.toLocaleString("id-ID")} kombinasi punya penjualan
+                                    tapi targetnya Rp 0 — tidak menghasilkan insentif sampai targetnya diisi.
+                                </span></>
+                            )}
                         </p>
-                        {progressFeed.unmatchedKeys > 0 && <UnmatchedProgressList month={month} year={year} />}
+                        {(progressFeed.unmatchedKeys > 0 || progressFeed.zeroTargetKeys > 0) && <UnmatchedProgressList month={month} year={year} />}
                     </div>
                 </div>
             )}

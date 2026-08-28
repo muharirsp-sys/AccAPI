@@ -78,8 +78,17 @@ export async function GET(req: NextRequest) {
     );
     const visibleProgress = [...realByPrinciple.values()].filter((row) => scope === null || scope.has(row.salesCode));
     const targetKeys = new Set(scopedTargets.map((row) => `${row.salesCode}|${row.principle}`));
+    // Baris target yang nilainya 0 tidak dibayar sama sekali (keputusan user 2026-08-29), jadi
+    // ia dihitung terpisah: "cocok dengan target" tapi tetap perlu ditindaklanjuti.
+    const zeroTargetKeys = new Set(
+        scopedTargets.filter((row) => !(row.targetValue > 0)).map((row) => `${row.salesCode}|${row.principle}`),
+    );
     const matchedProgressKeys = visibleProgress.reduce(
         (count, row) => count + (targetKeys.has(`${row.salesCode}|${row.principle}`) ? 1 : 0),
+        0,
+    );
+    const zeroTargetMatched = visibleProgress.reduce(
+        (count, row) => count + (zeroTargetKeys.has(`${row.salesCode}|${row.principle}`) ? 1 : 0),
         0,
     );
     const progressFeed = {
@@ -87,13 +96,18 @@ export async function GET(req: NextRequest) {
         targetKeys: targetKeys.size,
         matchedKeys: matchedProgressKeys,
         unmatchedKeys: visibleProgress.length - matchedProgressKeys,
+        zeroTargetKeys: zeroTargetMatched,
         ready: targetKeys.size > 0 && matchedProgressKeys > 0,
     };
 
     // Ambang AO GT/TT. "fixed240" = ambang tetap 240 untuk semua (perilaku sejak awal);
     // "file" = target AO baris itu. Setelan ini MENGUBAH NOMINAL, jadi nilainya dibaca dari
     // app_setting dan defaultnya perilaku lama (lib/insentif-settings.ts).
-    const aoTargetOf = (targetAo: number) => gtAoMode === "file" ? targetAo : undefined;
+    // Target AO 0 = kolom tidak diisi, BUKAN "ambangnya nol". Skema GT selama ini memakai
+    // konstanta 240 sehingga kolom itu memang sering kosong; meneruskan 0 akan membuat pengali
+    // AO nol dan menghapus komponen 70% (Rp 700.000/baris) hanya karena toggle dipindah.
+    const aoTargetOf = (targetAo: number) =>
+        gtAoMode === "file" && targetAo > 0 ? targetAo : undefined;
 
     // Skema konstanta-bobot 2-KPI berlaku untuk GT/TT (sinonim); MT punya skema 4-KPI sendiri.
     const isSchemeChannel = (ch: string) => ch === "GT" || ch === "TT";
