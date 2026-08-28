@@ -20,13 +20,26 @@ export const GT_AO_TARGET_KEY = "insentif_gt_ao_target";
  */
 export type GtAoTargetMode = "fixed240" | "file";
 
+/**
+ * Kegagalan baca TIDAK dilempar. Dashboard insentif memanggil ini di jalur utamanya, dan
+ * setelan yang tak terbaca (tabel belum dibuat di produksi, hak akses dicabut) pernah
+ * mematikan SELURUH halaman — terjadi 2026-08-27, tepat setelah tabel ini diperkenalkan.
+ * Jatuh ke perilaku lama (ambang 240) jauh lebih baik daripada layar kosong: nominalnya
+ * sama dengan sebelum toggle ada. Kegagalannya dicatat, bukan ditelan diam-diam.
+ */
 export async function getGtAoTargetMode(): Promise<GtAoTargetMode> {
-    const [row] = await db
-        .select({ value: appSetting.value })
-        .from(appSetting)
-        .where(eq(appSetting.key, GT_AO_TARGET_KEY))
-        .limit(1);
-    return row?.value === "file" ? "file" : "fixed240";
+    try {
+        const [row] = await db
+            .select({ value: appSetting.value })
+            .from(appSetting)
+            .where(eq(appSetting.key, GT_AO_TARGET_KEY))
+            .limit(1);
+        return row?.value === "file" ? "file" : "fixed240";
+    } catch (e) {
+        console.warn(`[insentif-settings] gagal baca ${GT_AO_TARGET_KEY}, pakai ambang 240:`,
+            e instanceof Error ? e.message : e);
+        return "fixed240";
+    }
 }
 
 export async function setGtAoTargetMode(mode: GtAoTargetMode, actor: string | null) {
