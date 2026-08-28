@@ -1249,8 +1249,13 @@ function TargetInputSection() {
             const parsed = parseTargetExcel(arrayBuffer).map((r: Record<string, unknown>) => ({
                 salesCode: String(r.salesCode || ""),
                 salesName: String(r.salesName || ""),
-                principle: String(r.principle || "NESTLE"),
-                branch: String(r.branch || "BANDUNG"),
+                // TANPA default. "NESTLE"/"BANDUNG" adalah data demo, dan memasangnya di sini
+                // membuat tiga lapis validasi di bawah memeriksa nilai yang sudah dipalsukan:
+                // baris pemisah/subtotal Excel lolos jadi target hantu, menaikkan `n` mix dan
+                // memunculkan penerima yang bisa ditandai Lunas (audit 2026-08-28, C2 — M10
+                // ternyata hanya tertutup di parser, tidak di jalur upload).
+                principle: String(r.principle || ""),
+                branch: String(r.branch || ""),
                 channel: String(r.channel || "TT"),
                 spvName: String(r.spvName || ""),
                 smName: String(r.smName || ""),

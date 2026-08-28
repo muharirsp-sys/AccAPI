@@ -68,6 +68,14 @@ export async function GET(req: NextRequest) {
     // scope null = tidak ada scoping (perilaku existing/default). Non-null = user SPV/SM
     // opt-in (lib/insentif-hierarchy-scope) — cuma lihat salesCode bawahannya sendiri.
     const scopedTargets = scope === null ? rawTargets : rawTargets.filter((t) => scope.has(t.salesCode));
+    // Grup mix HARUS dibangun dari seluruh principal salesman itu, bukan dari daftar yang sudah
+    // difilter untuk tampilan: konstanta pool mix ditentukan jumlah anggota grup, jadi filter
+    // Principal/Cabang akan mengecilkan `n` dan MENAIKKAN nominal yang dibayar. Terukur: baris
+    // A pada salesman 3 principal = Rp 400.000 tanpa filter vs Rp 1.000.000 dengan ?principle=A,
+    // dan angka itulah yang ditulis Finance ke incentive_payments (audit 2026-08-28, C1).
+    const groupTargets = scopedTargets.filter(
+        (target) => !isOfficeRow(target.salesCode, target.salesName),
+    );
     const targets = scopedTargets.filter((target) =>
         // Baris _OFFICE bukan salesman — pos target kantor, bukan orang. Tanpa filter ini,
         // baris itu ikut dihitung insentif dan bisa ditandai Lunas di tab Finance
@@ -121,7 +129,7 @@ export async function GET(req: NextRequest) {
     // Pra-hitung insentif GT-mix per salesman (value global → alokasi per principle).
     const mixLineMap = new Map<string, MixLineDetail>();
     const mixGroups = new Map<string, MixPrincipalInput[]>();
-    for (const t of targets) {
+    for (const t of groupTargets) {
         if (!isSchemeChannel(t.channel) || t.tipeSales !== "mix") continue;
         const r = realOf(t.salesCode, t.principle);
         const arr = mixGroups.get(t.salesCode) ?? [];
@@ -143,7 +151,7 @@ export async function GET(req: NextRequest) {
     // Pra-hitung insentif MT-mix per salesman (pool dibagi rata per principle valid).
     const mtMixLineMap = new Map<string, MtMixLineDetail>();
     const mtMixGroups = new Map<string, MtMixPrincipalInput[]>();
-    for (const t of targets) {
+    for (const t of groupTargets) {
         if (!isMtChannel(t.channel) || t.tipeSales !== "mix") continue;
         const r = realOf(t.salesCode, t.principle);
         const arr = mtMixGroups.get(t.salesCode) ?? [];
