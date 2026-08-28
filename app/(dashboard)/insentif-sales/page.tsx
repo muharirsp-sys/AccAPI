@@ -1568,6 +1568,112 @@ function GtAoTargetToggle() {
     );
 }
 
+interface UnmatchedRow {
+    salesCode: string;
+    principle: string;
+    branch: string;
+    baris: number;
+    dpp: number;
+    tanggalAwal: string;
+    tanggalAkhir: string;
+    contohNota: string[];
+}
+
+/**
+ * Kombinasi kode sales x principal yang punya penjualan tapi tidak punya target. Nomor nota
+ * ikut ditampilkan karena tanpa itu "22 kombinasi tanpa target" tidak bisa ditindaklanjuti:
+ * yang dibutuhkan orang untuk memetakan adalah nota yang bisa dibuka di Accurate.
+ * Diambil hanya saat daftar dibuka — query agregasi nota tidak perlu dibayar setiap
+ * pemuatan dashboard.
+ */
+function UnmatchedProgressList({ month, year }: { month: number; year: number }) {
+    const [rows, setRows] = useState<UnmatchedRow[] | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
+
+    async function muat() {
+        if (rows || loading) return;
+        setLoading(true);
+        setError("");
+        try {
+            const res = await fetch(`/api/insentif-sales/unmatched?month=${month}&year=${year}`);
+            const data = await readApi(res);
+            if (!res.ok) throw new Error(String(data.error ?? "Gagal memuat daftar"));
+            setRows((data.rows ?? []) as UnmatchedRow[]);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Gagal memuat daftar");
+        }
+        setLoading(false);
+    }
+
+    function salin() {
+        if (!rows?.length) return;
+        const teks = ["Kode\tPrincipal\tCabang\tBaris\tDPP\tContoh Nota"]
+            .concat(rows.map((r) => [r.salesCode, r.principle, r.branch, r.baris, Math.round(r.dpp), r.contohNota.join(" ")].join("\t")))
+            .join("\n");
+        navigator.clipboard.writeText(teks)
+            .then(() => toast.success(`${rows.length} baris disalin, siap ditempel ke Excel.`))
+            .catch(() => toast.error("Gagal menyalin ke clipboard."));
+    }
+
+    return (
+        <details className="mt-2 group" onToggle={(e) => { if ((e.currentTarget as HTMLDetailsElement).open) void muat(); }}>
+            <summary className="cursor-pointer text-xs font-semibold underline underline-offset-2 list-none [&::-webkit-details-marker]:hidden inline-flex items-center gap-1">
+                Lihat kombinasi tanpa target
+                <ChevronDown size={12} className="transition-transform group-open:rotate-180 motion-reduce:transition-none" />
+            </summary>
+            <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3">
+                {loading && <p className="text-xs opacity-80">Memuat daftar…</p>}
+                {error && <p className="text-xs text-rose-300">{error}</p>}
+                {rows && rows.length === 0 && (
+                    <p className="text-xs opacity-80">Semua kombinasi sudah punya target.</p>
+                )}
+                {rows && rows.length > 0 && (
+                    <>
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                            <span className="text-[11px] opacity-80">
+                                Diurut dari nilai terbesar. Nota di kolom terakhir bisa dibuka di Accurate untuk
+                                memastikan salesman sebenarnya.
+                            </span>
+                            <button onClick={salin} className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded border border-white/15 hover:bg-white/10">
+                                Salin
+                            </button>
+                        </div>
+                        <div className="overflow-x-auto max-h-80">
+                            <table className="w-full text-[11px]">
+                                <thead className="text-slate-400 uppercase tracking-wider sticky top-0 bg-[#151820]">
+                                    <tr>
+                                        <th className="text-left font-semibold py-1.5 px-2">Kode</th>
+                                        <th className="text-left font-semibold py-1.5 px-2">Principal</th>
+                                        <th className="text-left font-semibold py-1.5 px-2">Cabang</th>
+                                        <th className="text-right font-semibold py-1.5 px-2">Nilai (DPP)</th>
+                                        <th className="text-right font-semibold py-1.5 px-2">Baris</th>
+                                        <th className="text-left font-semibold py-1.5 px-2">Periode</th>
+                                        <th className="text-left font-semibold py-1.5 px-2">Contoh nota</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                    {rows.map((r) => (
+                                        <tr key={`${r.salesCode}|${r.principle}`}>
+                                            <td className="py-1.5 px-2 font-mono text-slate-200">{r.salesCode}</td>
+                                            <td className="py-1.5 px-2 text-slate-300">{r.principle}</td>
+                                            <td className="py-1.5 px-2 text-slate-400">{r.branch}</td>
+                                            <td className="py-1.5 px-2 text-right font-mono text-slate-200">{formatRp(Math.round(r.dpp))}</td>
+                                            <td className="py-1.5 px-2 text-right font-mono text-slate-400">{formatQty(r.baris)}</td>
+                                            <td className="py-1.5 px-2 font-mono text-slate-500">{r.tanggalAwal} s/d {r.tanggalAkhir}</td>
+                                            <td className="py-1.5 px-2 font-mono text-slate-400">{r.contohNota.join(", ") || "-"}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </>
+                )}
+            </div>
+        </details>
+    );
+}
+
 // ── Admin: input progress harian (manual atau upload XLSX/CSV) ─────────────────
 interface ManualProgressRow {
     salesCode: string;
@@ -1729,7 +1835,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
             // lebih kecil — sekaligus menghapus kebutuhan dedup per nota yang dulu salah.
             const bucket = new Map<string, {
                 salesCode: string; principle: string; branch: string; date: string;
-                periodMonth: number; periodYear: number; spvName?: string;
+                periodMonth: number; periodYear: number; spvName?: string; invoiceNumber?: string;
                 achievedValueDpp: number; achievedEc: number; achievedAo: number; achievedIa: number;
             }>();
             let dibuang = 0;
@@ -1746,6 +1852,12 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                 const cur = bucket.get(k) ?? {
                     salesCode: r.salesCode, principle: r.principle, branch, date,
                     periodMonth: month, periodYear: year, spvName: r.spvName,
+                    // Satu nota PERWAKILAN per ember (sales x principal x cabang x tanggal).
+                    // Peringkasan lama membuang nomor nota sama sekali, sehingga baris yang
+                    // kode sales-nya tidak dikenali tidak bisa ditelusuri ke Accurate — daftar
+                    // "kombinasi tanpa target" cuma bisa bilang ada masalah, tidak menunjukkan
+                    // di mana. Satu nota per tanggal sudah cukup untuk membuka jejaknya.
+                    invoiceNumber: r.invoiceNumber,
                     achievedValueDpp: 0, achievedEc: 0, achievedAo: 0, achievedIa: 0,
                 };
                 // VINDA / KINO NON FOOD / MIX NON FOOD memakai NILAI_JUAL, sisanya DPP.
@@ -1754,6 +1866,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                 cur.achievedAo += r.ao;
                 cur.achievedIa += r.ia;
                 if (!cur.spvName && r.spvName) cur.spvName = r.spvName;
+                if (!cur.invoiceNumber && r.invoiceNumber) cur.invoiceNumber = r.invoiceNumber;
                 bucket.set(k, cur);
             }
             const payload = [...bucket.values()];
@@ -3372,6 +3485,7 @@ export default function InsentifSalesPage() {
                                     ? ` Masih ada ${progressFeed.unmatchedKeys.toLocaleString("id-ID")} kombinasi tanpa target yang cocok.`
                                     : ""}
                         </p>
+                        {progressFeed.unmatchedKeys > 0 && <UnmatchedProgressList month={month} year={year} />}
                     </div>
                 </div>
             )}
