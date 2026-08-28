@@ -13,9 +13,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { incentivePayments } from "@/db/schema";
+import { incentivePayments, salesTargets } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser, getUserHierarchyIdentity, payeeInScope } from "@/lib/insentif-hierarchy-scope";
+import { parsePayee } from "@/lib/insentif-payee";
+import { isOfficeRow } from "@/lib/insentif-sm-calc";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
@@ -86,6 +88,59 @@ export async function POST(req: NextRequest) {
     // dijumlahkan dari nilai pecahan tidak akan sama dengan jumlah baris yang ditampilkan.
     const totalIncentive = Math.round(Number(body.totalIncentive));
 
+    // Status ditolak kalau nilainya asing, bukan dijatuhkan ke default: "Lunas" berkapital
+    // tersimpan apa adanya lalu dibaca sebagai "belum" di tiga tempat berbeda — satu baris uang
+    // dengan tiga tafsir (audit 2026-08-28, M5).
+    const STATUS_SAH = ["belum", "lunas", "tunggakan"] as const;
+    if (body.paymentStatus !== undefined && !STATUS_SAH.includes(body.paymentStatus)) {
+        return NextResponse.json(
+            { error: `paymentStatus harus salah satu dari: ${STATUS_SAH.join(", ")}` },
+            { status: 400 },
+        );
+    }
+
+    // Penerima harus SAH untuk periode itu. Sebelumnya `salesCode` adalah teks bebas: penerima
+    // fiktif, baris _OFFICE (pos kantor, bukan orang), atau kode di luar cakupan bisa dicatat
+    // lunas dengan nominal karangan (audit 2026-08-28, H4).
+    const payee = parsePayee(body.salesCode);
+    if (payee.role === "sales") {
+        if (isOfficeRow(body.salesCode, body.salesName ?? "")) {
+            return NextResponse.json(
+                { error: `${body.salesCode} adalah baris _OFFICE, bukan penerima insentif.` },
+                { status: 400 },
+            );
+        }
+        const [target] = await db
+            .select({ id: salesTargets.id })
+            .from(salesTargets)
+            .where(and(
+                eq(salesTargets.salesCode, body.salesCode),
+                eq(salesTargets.principle, body.principle),
+                eq(salesTargets.periodMonth, body.periodMonth),
+                eq(salesTargets.periodYear, body.periodYear),
+            ))
+            .limit(1);
+        if (!target) {
+            return NextResponse.json(
+                { error: `${body.salesCode}/${body.principle}: tidak ada target periode ini, jadi bukan penerima yang sah.` },
+                { status: 400 },
+            );
+        }
+    }
+
+    const scope = await getScopeForUser(
+        gate.session.user.id,
+        { month: body.periodMonth, year: body.periodYear },
+        gate.perms,
+    );
+    const identity = await getUserHierarchyIdentity(gate.session.user.id);
+    if (!payeeInScope(scope, identity, body.salesCode)) {
+        return NextResponse.json(
+            { error: `${body.salesCode}: di luar cakupan Anda.` },
+            { status: 403 },
+        );
+    }
+
     const now = new Date();
     const actor = gate.session.user.id;
     const actorName = gate.session.user.name ?? null;
@@ -121,8 +176,13 @@ export async function POST(req: NextRequest) {
             set: {
                 salesName: body.salesName,
                 totalIncentive,
-                paymentStatus: body.paymentStatus ?? "belum",
-                paymentProofUrl: body.paymentProofUrl ?? null,
+                // HANYA ditimpa kalau memang dikirim. Sebelumnya `?? "belum"` dan `?? null` ada di
+                // dalam blok UPDATE, jadi satu POST tanpa field itu (skrip rekap, retry, pemakaian
+                // ulang endpoint upsert) MERESET baris yang sudah lunas jadi "belum" dan menghapus
+                // bukti bayarnya — uang yang sudah ditransfer muncul kembali sebagai utang
+                // (audit 2026-08-28, M5).
+                ...(body.paymentStatus !== undefined ? { paymentStatus: body.paymentStatus } : {}),
+                ...(body.paymentProofUrl !== undefined ? { paymentProofUrl: body.paymentProofUrl } : {}),
                 // Diisi hanya saat menandai lunas — dulu cabang UPDATE tidak mengisinya sama
                 // sekali (berbeda dari PATCH), jadi pembayaran bisa jadi "lunas" tanpa jejak.
                 ...(markingLunas ? { paymentDate: now, paidBy: actor, paidByName: actorName } : {}),
