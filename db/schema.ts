@@ -6,7 +6,7 @@
  * Side Effects: Definisi schema untuk DB read/write PostgreSQL oleh caller.
  */
 import { sql } from "drizzle-orm";
-import { pgTable, text, integer, bigint, doublePrecision, timestamp, boolean, jsonb, index, uniqueIndex, primaryKey, check, customType } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, bigint, bigserial, smallint, numeric, date, doublePrecision, timestamp, boolean, jsonb, index, uniqueIndex, primaryKey, check, customType, pgEnum } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
     id: text("id").primaryKey(),
@@ -87,6 +87,9 @@ export const item = pgTable("item", {
     // Agregat semua gudang (dipanggil tanpa warehouseId) — bukan breakdown per gudang.
     quantity: doublePrecision("quantity"),
     quantityInAllUnit: text("quantity_in_all_unit"), // Cth: "0 PCS" — string, bukan angka
+    // Kolom modul Rekapan Nota (diisi dari sheet `Konversi`, bukan dari sync Accurate)
+    isiPerKarton: integer("isi_per_karton"),
+    satuanBesar: text("satuan_besar"),
     rawData: jsonb("raw_data"), // Complete unprocessed payload
     lastUpdate: text("last_update"), // Accurate's modified timestamp
     // Watermark LOKAL untuk delta feed ke Web Sales. lastUpdate tidak bisa dipakai:
@@ -103,6 +106,11 @@ export const customer = pgTable("customer", {
     // Audit F3: real — saldo piutang bisa desimal
     balance: doublePrecision("balance"),
     // Verifikasi live 2026-07-28 via /api/customer/list.do?fields=...
+    // Kolom modul Rekapan Nota (lihat db/migrations/0002_rekapan_nota.sql)
+    area: text("area"),
+    grupAll: text("grup_all"),
+    grupGdi: text("grup_gdi"),
+    alamat: text("alamat"),
     creditLimitEnabled: boolean("credit_limit_enabled"), // customerLimitAmount
     creditLimitAmount: doublePrecision("credit_limit_amount"), // customerLimitAmountValue
     creditAgeLimitEnabled: boolean("credit_age_limit_enabled"), // customerLimitAge
@@ -1201,4 +1209,174 @@ export const reportRunRecipient = pgTable("report_run_recipient", {
     error: text("error"),
 }, (t) => ({
     runIdx: index("idx_rrr_run").on(t.runId),
+}));
+
+// =====================================================================
+// Modul Rekapan Nota (wave-based picking) — PRD v1.2 §4.3.
+// DDL sebenarnya di db/migrations/0002_rekapan_nota.sql (role accapi_app
+// tidak boleh DDL). Definisi di sini HANYA untuk query Drizzle — jangan
+// dipakai untuk `drizzle-kit push`.
+// =====================================================================
+export const waveStatusEnum = pgEnum("wave_status", ["draft", "released", "confirmed", "cancelled"]);
+export const waveTipeEnum = pgEnum("wave_tipe", ["reguler", "kanvas"]);
+export const wavePrioritasEnum = pgEnum("wave_prioritas", ["normal", "urgent"]);
+export const pickDimensiEnum = pgEnum("pick_dimensi", [
+    "outlet_all", "outlet_gdi", "area", "volume", "jenis_produk", "sirup",
+]);
+export const waveExceptionJenisEnum = pgEnum("wave_exception_jenis", [
+    "KONVERSI_TIDAK_ADA", "KONVERSI_NOL", "SATUAN_TIDAK_KONSISTEN",
+    "KONVERSI_BEDA_DENGAN_EXPORT", "PRINCIPAL_BELUM_MASUK",
+    "OUTLET_TANPA_AREA", "REKONSILIASI_SELISIH",
+]);
+export const waveExceptionStatusEnum = pgEnum("wave_exception_status", ["open", "diabaikan", "selesai"]);
+
+// Satu baris per file export Accurate yang di-upload. sha256 = idempotensi.
+export const rekapUpload = pgTable("rekap_upload", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    namaFile: text("nama_file").notNull(),
+    sha256: text("sha256").notNull(),
+    tanggalData: date("tanggal_data").notNull(),
+    barisTotal: integer("baris_total").notNull(),
+    barisMasuk: integer("baris_masuk").notNull(),
+    principal: text("principal").array().notNull(),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    uploadedBy: text("uploaded_by").notNull().references(() => user.id),
+});
+
+// Pengganti `nota_line` yang ternyata tidak ada di Postgres. Diisi sekali per
+// upload — BUKAN per wave, supaya withdrawal & allocation selalu satu sumber.
+export const waveLinePool = pgTable("wave_line_pool", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    uploadId: bigint("upload_id", { mode: "number" }).notNull().references(() => rekapUpload.id, { onDelete: "cascade" }),
+    tanggal: date("tanggal").notNull(),
+    noNota: text("no_nota").notNull(),
+    kodeCust: text("kode_cust").notNull(),
+    customer: text("customer"),
+    kodeSalesman: text("kode_salesman"),
+    salesman: text("salesman"),
+    kodeBarang: text("kode_barang").notNull(),
+    namaBarang: text("nama_barang"),
+    qty: numeric("qty"),
+    satuan: text("satuan"),
+    qtyPcs: numeric("qty_pcs"),
+    satuanKecil: text("satuan_kecil"),
+    konvTersirat: integer("konv_tersirat"),
+    jenisproduk: text("jenisproduk"),
+    principal: text("principal"),
+    region: text("region"),
+    alamat: text("alamat"),
+    kota: text("kota"),
+}, (t) => ({
+    uq: uniqueIndex("uq_wave_line_pool").on(t.uploadId, t.noNota, t.kodeBarang),
+    notaIdx: index("ix_wave_line_pool_nota").on(t.noNota),
+    tanggalIdx: index("ix_wave_line_pool_tanggal").on(t.tanggal, t.noNota),
+}));
+
+export const wave = pgTable("wave", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tanggal: date("tanggal").notNull(),
+    urutan: smallint("urutan").notNull(), // 1 Pagi, 2 Siang (urgent), 3 Sore, ...
+    nama: text("nama").notNull(),
+    tipe: waveTipeEnum("tipe").notNull().default("reguler"),
+    status: waveStatusEnum("status").notNull().default("draft"),
+    catatan: text("catatan"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    releasedBy: text("released_by").references(() => user.id),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    confirmedBy: text("confirmed_by").references(() => user.id),
+}, (t) => ({
+    uq: uniqueIndex("uq_wave_tanggal_urutan").on(t.tanggal, t.urutan),
+}));
+
+// Inti eksklusivitas: uq_nota_aktif (no_nota) WHERE dilepas = false.
+// Partial unique index tidak dapat diekspresikan di sini — lihat migration.
+export const waveAssignment = pgTable("wave_assignment", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    waveId: bigint("wave_id", { mode: "number" }).notNull().references(() => wave.id),
+    waveTipe: waveTipeEnum("wave_tipe").notNull().default("reguler"),
+    noNota: text("no_nota").notNull(),
+    tanggalWave: date("tanggal_wave").notNull(),
+    prioritas: wavePrioritasEnum("prioritas").notNull().default("normal"),
+    dilepas: boolean("dilepas").notNull().default(false),
+    dilepasAlasan: text("dilepas_alasan"),
+    dilepasAt: timestamp("dilepas_at", { withTimezone: true }),
+    dilepasBy: text("dilepas_by").references(() => user.id),
+    snapGrupAll: text("snap_grup_all").notNull().default("Gabung"),
+    snapGrupGdi: text("snap_grup_gdi").notNull().default("Gabung"),
+    snapArea: text("snap_area"),
+    snapPareto: boolean("snap_pareto"),
+    snapTotalKrt: numeric("snap_total_krt"),
+    snapKanvas: boolean("snap_kanvas").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: text("created_by").notNull().references(() => user.id),
+}, (t) => ({
+    waveIdx: index("ix_wave_assignment_wave").on(t.waveId),
+}));
+
+// Tanda melekat pada NO_NOTA, bukan pada baris pool: pool ditulis ulang tiap
+// upload sore (yang memuat nota pagi + sore), tanda tidak boleh ikut terhapus.
+export const notaKanvas = pgTable("nota_kanvas", {
+    noNota: text("no_nota").primaryKey(),
+    catatan: text("catatan"),
+    ditandaiAt: timestamp("ditandai_at", { withTimezone: true }).notNull().defaultNow(),
+    ditandaiBy: text("ditandai_by").notNull().references(() => user.id),
+});
+
+export const pickGroup = pgTable("pick_group", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    kode: text("kode").notNull(),
+    nama: text("nama").notNull(),
+    dimensi: pickDimensiEnum("dimensi").notNull(),
+    urutanCetak: smallint("urutan_cetak").notNull().default(100),
+    aktif: boolean("aktif").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+    uq: uniqueIndex("uq_pick_group_kode").on(t.kode),
+}));
+
+export const pickGroupMember = pgTable("pick_group_member", {
+    pickGroupId: bigint("pick_group_id", { mode: "number" }).notNull().references(() => pickGroup.id, { onDelete: "cascade" }),
+    nilai: text("nilai").notNull(),
+}, (t) => ({
+    pk: primaryKey({ columns: [t.pickGroupId, t.nilai] }),
+}));
+
+export const wavePickGroup = pgTable("wave_pick_group", {
+    waveId: bigint("wave_id", { mode: "number" }).notNull().references(() => wave.id, { onDelete: "cascade" }),
+    pickGroupId: bigint("pick_group_id", { mode: "number" }).notNull().references(() => pickGroup.id),
+    dicetakAt: timestamp("dicetak_at", { withTimezone: true }),
+    dicetakBy: text("dicetak_by").references(() => user.id),
+}, (t) => ({
+    pk: primaryKey({ columns: [t.waveId, t.pickGroupId] }),
+}));
+
+// Pengganti sel "salah conversi" yang rusak: exception punya status dan pemilik.
+export const waveException = pgTable("wave_exception", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    waveId: bigint("wave_id", { mode: "number" }).notNull().references(() => wave.id, { onDelete: "cascade" }),
+    jenis: waveExceptionJenisEnum("jenis").notNull(),
+    refTipe: text("ref_tipe").notNull(), // item | customer | nota
+    refKode: text("ref_kode").notNull(),
+    keterangan: text("keterangan"),
+    status: waveExceptionStatusEnum("status").notNull().default("open"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: text("resolved_by").references(() => user.id),
+}, (t) => ({
+    uq: uniqueIndex("uq_wave_exception").on(t.waveId, t.jenis, t.refTipe, t.refKode),
+}));
+
+// Append-only. `wave.nota_add_rejected` menjawab "kenapa nota ini tidak ada di
+// rekapan sore?" dalam satu query — hal yang hari ini mustahil dijawab.
+export const waveEvent = pgTable("wave_event", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    waveId: bigint("wave_id", { mode: "number" }).notNull().references(() => wave.id, { onDelete: "cascade" }),
+    event: text("event").notNull(),
+    aktorId: text("aktor_id").notNull().references(() => user.id),
+    payload: jsonb("payload").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+    waveIdx: index("ix_wave_event_wave").on(t.waveId, t.createdAt),
 }));
