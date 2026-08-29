@@ -184,6 +184,11 @@ export default function SidebarLayout({ children, localAuthRole, permKeys }: { c
                     <li key={item.name}>
                         <Link
                             href={item.href}
+                            // ponytail: prefetch dimatikan. renderNavList dipanggil dua kali
+                            // (desktop + drawer), jadi ~20 menu = ~40 Link yang memicu render
+                            // server penuh untuk route force-dynamic + query DB yang tak pernah
+                            // dibuka user. Di HTTP/1.1 (6 koneksi) itulah sumber antrean pending.
+                            prefetch={false}
                             onClick={(event) => {
                                 setIsMobileOpen(false);
                                 if (
