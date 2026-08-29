@@ -123,14 +123,28 @@ type ViewKey = "sales" | "spv" | "sm" | "admin" | "finance";
 // `hidden` menyembunyikan tombol tab-nya saja, bukan menghapus view-nya: kodenya tetap
 // hidup dan masih bisa dibuka lewat ?view=sales / ?view=spv. User minta keduanya
 // disembunyikan "dulu" (2026-08-29), jadi ini sengaja bukan penghapusan.
-const VIEWS: { key: ViewKey; label: string; icon: typeof Trophy; hidden?: boolean }[] = [
-    { key: "sales", label: "Dashboard Sales", icon: Trophy, hidden: true },
-    { key: "spv", label: "Dashboard SPV", icon: Users, hidden: true },
-    { key: "sm", label: "Dashboard SM", icon: UserCog },
-    { key: "admin", label: "Input Penjualan", icon: Upload },
-    { key: "finance", label: "Verifikasi Finance", icon: Wallet },
+//
+// `izin` = salah satu key ini cukup untuk melihat tabnya. `manage` selalu ikut disertakan
+// supaya Admin yang sudah punya izin itu tidak kehilangan tab saat key baru diperkenalkan.
+// INI UX, BUKAN KEAMANAN — endpoint di baliknya tetap memeriksa izinnya sendiri.
+const VIEWS: { key: ViewKey; label: string; icon: typeof Trophy; hidden?: boolean; izin: string[] }[] = [
+    { key: "sales", label: "Dashboard Sales", icon: Trophy, hidden: true, izin: ["view_dashboard", "manage"] },
+    { key: "spv", label: "Dashboard SPV", icon: Users, hidden: true, izin: ["view_dashboard", "manage"] },
+    { key: "sm", label: "Dashboard SM", icon: UserCog, izin: ["view_dashboard", "manage"] },
+    { key: "admin", label: "Input Penjualan", icon: Upload, izin: ["upload_progress", "upload_target", "manage"] },
+    { key: "finance", label: "Verifikasi Finance", icon: Wallet, izin: ["manage_payment", "manage"] },
 ];
-const VIEWS_TERLIHAT = VIEWS.filter((v) => !v.hidden);
+
+/**
+ * Tab yang boleh dilihat user ini. Sebelum izin selesai dimuat (`izin` kosong) seluruh tab
+ * non-hidden ditampilkan: menyembunyikan dulu lalu memunculkan bikin tab berkedip tiap
+ * halaman dibuka, dan datanya toh tetap 403 kalau memang tidak berhak.
+ */
+function viewsTerlihat(izin: ReadonlySet<string>): typeof VIEWS {
+    const semua = VIEWS.filter((v) => !v.hidden);
+    if (izin.size === 0) return semua;
+    return semua.filter((v) => v.izin.some((k) => izin.has(`insentif_sales.${k}`)));
+}
 
 // Spanduk status pencocokan Laporan Harian (berapa kombinasi cocok/tanpa target).
 // Disembunyikan atas permintaan user 2026-08-29 — "dulu", jadi saklarnya dibiarkan di sini
@@ -2930,9 +2944,18 @@ function SupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRo
     );
 }
 
-function FinanceView({ apiRows, month, year, gtAoMode }: { apiRows: ApiRow[]; month: number; year: number; gtAoMode?: "fixed240" | "file" }) {
+function FinanceView({ apiRows, month, year, gtAoMode, onPilihBulan }: {
+    apiRows: ApiRow[]; month: number; year: number;
+    gtAoMode?: "fixed240" | "file";
+    /** Ganti periode yang sedang dimuat. Strip 12 bulan adalah SATU-SATUNYA pemilih di tab ini. */
+    onPilihBulan: (bulan: number) => void;
+}) {
     const [payments, setPayments] = useState<PaymentRow[]>([]);
-    const [selectedMonth, setSelectedMonth] = useState(month);
+    // Dulu ada `selectedMonth` lokal yang terpisah dari periode yang benar-benar dimuat.
+    // Akibatnya strip menampilkan bulan A sementara angkanya dihitung dari bulan B, dan bulan
+    // yang tidak sedang dimuat selalu jatuh ke catatan pembayaran — Juli yang insentifnya
+    // Rp 30,8 jt belum dibayar tampil "-" begitu periode digeser ke Agustus. Sekarang klik
+    // di strip mengganti periode sungguhan, jadi bulan terpilih SELALU dihitung ulang.
     const [saving, setSaving] = useState(false);
     const [checked, setChecked] = useState<Record<string, boolean>>({});
     const [paymentsLoading, setPaymentsLoading] = useState(true);
@@ -3060,7 +3083,7 @@ function FinanceView({ apiRows, month, year, gtAoMode }: { apiRows: ApiRow[]; mo
             .map((p) => ({ role: parsePayee(p.salesCode).role, salesCode: p.salesCode, salesName: p.salesName, principle: p.principle, branch: p.branch, total: p.totalIncentive, drift: 0, paymentId: p.id, status: p.paymentStatus }));
     }, [month, apiRows, payments, spvPayees, smPayees]);
 
-    const detailRows = useMemo(() => rowsForMonth(selectedMonth), [rowsForMonth, selectedMonth]);
+    const detailRows = useMemo(() => rowsForMonth(month), [rowsForMonth, month]);
 
     // Periode berjalan dihitung ULANG dari dashboard, bukan dibaca dari incentive_payments.
     // Baris di tabel itu baru ada setelah seseorang menandai lunas, jadi bulan yang insentifnya
@@ -3085,7 +3108,11 @@ function FinanceView({ apiRows, month, year, gtAoMode }: { apiRows: ApiRow[]; mo
                 hasTunggakan ? "tunggakan"
                     : hasLunas && belumDibayar === 0 ? "lunas"
                         : "belum";
-            return { month: m, label: MONTH_LABELS[i], total, belumDibayar, status };
+            // Bulan yang bukan periode terpilih DAN belum punya satu pun catatan pembayaran
+            // tidak diketahui nilainya — bukan nol. Menampilkannya sebagai "-" / BELUM
+            // terbaca "tidak ada yang harus dibayar", padahal artinya "belum dihitung".
+            const belumDihitung = m !== month && monthPayments.length === 0;
+            return { month: m, label: MONTH_LABELS[i], total, belumDibayar, status, belumDihitung };
         });
     }, [payments, month, rowsForMonth]);
 
@@ -3132,7 +3159,7 @@ function FinanceView({ apiRows, month, year, gtAoMode }: { apiRows: ApiRow[]; mo
                             salesName: row.salesName,
                             principle: row.principle,
                             branch: row.branch || PAYEE_PRINCIPLE_ALL,
-                            periodMonth: selectedMonth,
+                            periodMonth: month,
                             periodYear: year,
                             totalIncentive: Math.round(row.total),
                             paymentStatus: "lunas",
@@ -3199,24 +3226,33 @@ function FinanceView({ apiRows, month, year, gtAoMode }: { apiRows: ApiRow[]; mo
         <div className="space-y-5">
             {/* 12-month strip */}
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-                <SectionTitle icon={DollarSign} no={1} title="Rekap Pembayaran Tahunan" desc={`Total insentif per bulan dan sisa yang belum dibayar. ${MONTH_LABELS[month - 1]} dihitung ulang dari dashboard; bulan lain dari catatan pembayaran.`} />
+                <SectionTitle icon={DollarSign} no={1} title="Rekap Pembayaran Tahunan" desc={`Klik bulan untuk memuat periodenya — bulan terpilih selalu dihitung ulang dari dashboard. Bulan lain hanya menampilkan catatan pembayaran yang sudah ada; yang bertanda "?" belum pernah dihitung, bukan berarti nol.`} />
                 <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
                     {monthlySummary.map((m) => {
-                        const active = m.month === selectedMonth;
+                        const active = m.month === month;
                         const tone = statusClasses[m.status];
                         return (
-                            <button key={m.month} onClick={() => setSelectedMonth(m.month)}
+                            <button key={m.month} onClick={() => onPilihBulan(m.month)}
                                 className={`rounded-lg border p-3 text-left transition-all ${tone} ${active ? "bg-indigo-500/10 ring-1 ring-indigo-500/40" : "bg-black/30 hover:bg-white/[0.03]"}`}>
                                 <div className="flex items-center justify-between">
                                     <span className="text-[11px] font-bold text-slate-300">{m.label.slice(0, 3)}</span>
                                     {m.status === "tunggakan" && <AlertTriangle size={13} className="text-rose-400" />}
                                     {m.status === "lunas" && <CheckCircle2 size={13} className="text-emerald-400" />}
                                 </div>
-                                <div className="text-[11px] font-mono mt-1 text-slate-300">{m.total ? formatShortRp(m.total) : "-"}</div>
-                                {m.belumDibayar > 0 && (
-                                    <div className="text-[10px] font-mono text-amber-400/90">belum: {formatShortRp(m.belumDibayar)}</div>
+                                {m.belumDihitung ? (
+                                    <>
+                                        <div className="text-[11px] font-mono mt-1 text-slate-600">?</div>
+                                        <div className="text-[9px] uppercase tracking-wider mt-0.5 font-bold text-slate-600">belum dihitung</div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="text-[11px] font-mono mt-1 text-slate-300">{m.total ? formatShortRp(m.total) : "-"}</div>
+                                        {m.belumDibayar > 0 && (
+                                            <div className="text-[10px] font-mono text-amber-400/90">belum: {formatShortRp(m.belumDibayar)}</div>
+                                        )}
+                                        <div className="text-[9px] uppercase tracking-wider mt-0.5 font-bold">{m.status}</div>
+                                    </>
                                 )}
-                                <div className="text-[9px] uppercase tracking-wider mt-0.5 font-bold">{m.status}</div>
                             </button>
                         );
                     })}
@@ -3226,7 +3262,7 @@ function FinanceView({ apiRows, month, year, gtAoMode }: { apiRows: ApiRow[]; mo
             {/* Detail per-salesman */}
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
                 <div className="flex items-center justify-between mb-4">
-                    <SectionTitle icon={Wallet} no={2} title={`Tabel Insentif: ${MONTH_LABELS[selectedMonth - 1]} ${year}`} desc="Centang lalu simpan sebagai lunas. Perubahan langsung dicatat ke database." />
+                    <SectionTitle icon={Wallet} no={2} title={`Tabel Insentif: ${MONTH_LABELS[month - 1]} ${year}`} desc="Centang lalu simpan sebagai lunas. Perubahan langsung dicatat ke database." />
                     <div className="flex items-center gap-2">
                         <select
                             aria-label="Filter principle pembayaran"
@@ -3400,6 +3436,7 @@ export default function InsentifSalesPage() {
     const [opsiFilter, setOpsiFilter] = useState<{ principles: string[]; branches: string[]; sm: string[] }>(
         { principles: [], branches: [], sm: [] },
     );
+    const [izin, setIzin] = useState<ReadonlySet<string>>(new Set());
     const pathname = usePathname();
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -3444,6 +3481,7 @@ export default function InsentifSalesPage() {
             setGtAoMode(data.gtAoMode === "file" ? "file" : "fixed240");
             setCakupan(data.cakupan ?? { dibatasi: false });
             setOpsiFilter(data.opsiFilter ?? { principles: [], branches: [], sm: [] });
+            setIzin(new Set(Array.isArray(data.izin) ? (data.izin as string[]) : []));
         } catch (error) {
             setApiRows([]);
             setProgressFeed(null);
@@ -3459,6 +3497,11 @@ export default function InsentifSalesPage() {
 
     useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
 
+    const tabs = useMemo(() => viewsTerlihat(izin), [izin]);
+    // View dari URL yang tidak boleh dibuka jatuh ke tab pertama yang boleh. Tanpa ini,
+    // Finance yang membuka tautan lama ?view=sm melihat layar kosong tanpa penjelasan.
+    const viewBoleh = tabs.some((t) => t.key === view) || tabs.length === 0 ? view : tabs[0].key;
+
     const salesmen = useMemo(() => apiRows.map(apiRowToSalesman), [apiRows]);
     // Filter SM disaring di klien, bukan lewat server seperti principle/cabang: nominal tiap
     // baris sudah dihitung server dengan konteks grup penuh, jadi menyaring daftarnya tidak
@@ -3468,19 +3511,22 @@ export default function InsentifSalesPage() {
         [apiRows, smFilter],
     );
     const salesmenSm = useMemo(() => apiRowsSm.map(apiRowToSalesman), [apiRowsSm]);
-    const showFilters = view !== "admin";
+    // Finance tidak ikut: strip 12 bulan di dalamnya SUDAH pemilih periode, dan dua pemilih
+    // bulan di satu layar yang tidak sinkron adalah cara paling mudah salah baca angka
+    // (dilaporkan user 2026-08-29). Admin memang punya pemilih periodenya sendiri.
+    const showFilters = viewBoleh !== "admin" && viewBoleh !== "finance";
     const filterAktif = principle !== "ALL" || branch !== "ALL" || smFilter !== "ALL";
 
     const handleViewKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
         let nextIndex = index;
-        if (event.key === "ArrowRight") nextIndex = (index + 1) % VIEWS_TERLIHAT.length;
-        else if (event.key === "ArrowLeft") nextIndex = (index - 1 + VIEWS_TERLIHAT.length) % VIEWS_TERLIHAT.length;
+        if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+        else if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
         else if (event.key === "Home") nextIndex = 0;
-        else if (event.key === "End") nextIndex = VIEWS_TERLIHAT.length - 1;
+        else if (event.key === "End") nextIndex = tabs.length - 1;
         else return;
 
         event.preventDefault();
-        const nextView = VIEWS_TERLIHAT[nextIndex];
+        const nextView = tabs[nextIndex];
         updateContext({ view: nextView.key });
         requestAnimationFrame(() => document.getElementById(`insentif-tab-${nextView.key}`)?.focus());
     };
@@ -3513,9 +3559,9 @@ export default function InsentifSalesPage() {
             {/* View tabs */}
             <div className="ui-tab-scroll">
             <div role="tablist" aria-label="Tampilan Insentif Sales" className="ui-tab-strip">
-                {VIEWS_TERLIHAT.map((v, index) => {
+                {tabs.map((v, index) => {
                     const Icon = v.icon;
-                    const active = view === v.key;
+                    const active = viewBoleh === v.key;
                     return (
                         <button key={v.key} id={`insentif-tab-${v.key}`} type="button" role="tab"
                             aria-selected={active}
@@ -3546,7 +3592,7 @@ export default function InsentifSalesPage() {
                         }}
                         className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
                     />
-                    {view === "sm" && (
+                    {viewBoleh === "sm" && (
                         <select aria-label="Filter SM" value={smFilter} onChange={(e) => updateContext({ sm: e.target.value })} className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500">
                             <option value="ALL">Semua SM ({opsiFilter.sm.length})</option>
                             {opsiFilter.sm.map((sm) => <option key={sm} value={sm}>{sm}</option>)}
@@ -3569,7 +3615,7 @@ export default function InsentifSalesPage() {
                         </button>
                     )}
                     <span className="text-[11px] text-slate-500 ml-auto">
-                        {view === "sm" && smFilter !== "ALL"
+                        {viewBoleh === "sm" && smFilter !== "ALL"
                             ? `${salesmenSm.length} dari ${salesmen.length} baris`
                             : `${salesmen.length} salesman`}
                     </span>
@@ -3650,14 +3696,14 @@ export default function InsentifSalesPage() {
                 />
             ) : (
                 <div className="space-y-5">
-                    {view === "sales" && (
+                    {viewBoleh === "sales" && (
                         <>
                             <PerformanceBlock rows={salesmen} apiRows={apiRows} progress={tg} />
                             <AchievementTable rows={salesmen} progress={tg} />
                             <IncentiveTable apiRows={apiRows} gtAoMode={gtAoMode} />
                         </>
                     )}
-                    {view === "spv" && (
+                    {viewBoleh === "spv" && (
                         <>
                             <PerformanceBlock rows={salesmen} apiRows={apiRows} progress={tg} />
                             <SpvView rows={salesmen} progress={tg} />
@@ -3665,12 +3711,13 @@ export default function InsentifSalesPage() {
                             <IncentiveTable apiRows={apiRows} gtAoMode={gtAoMode} />
                         </>
                     )}
-                    {view === "sm" && (
+                    {viewBoleh === "sm" && (
                         <SmDashboard rows={salesmenSm} rowsApi={apiRowsSm} apiRows={apiRows} progress={tg}
                             month={month} year={year} onSaved={fetchDashboard} gtAoMode={gtAoMode} />
                     )}
-                    {view === "admin" && <AdminView rows={salesmen} />}
-                    {view === "finance" && <FinanceView apiRows={apiRows} month={month} year={year} gtAoMode={gtAoMode} />}
+                    {viewBoleh === "admin" && <AdminView rows={salesmen} />}
+                    {viewBoleh === "finance" && <FinanceView apiRows={apiRows} month={month} year={year} gtAoMode={gtAoMode}
+                            onPilihBulan={(bulan) => updateContext({ month: String(bulan) })} />}
                 </div>
             )}
             </div>

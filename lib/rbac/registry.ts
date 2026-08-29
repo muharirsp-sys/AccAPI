@@ -32,7 +32,17 @@ export const PERMISSION_REGISTRY = {
     users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission", "manage"],
     // Modul yang sebelumnya TIDAK terdaftar di RBAC (temuan Fase 3 — page-guard gap):
     form_kontrol: ["view", "submit", "manage"],
-    insentif_sales: ["view", "manage", "upload_target", "upload_progress", "input_support", "manage_payment", "manage_hierarchy"],
+    // view          = boleh membuka halaman & membaca angkanya (dipakai semua GET modul ini)
+    // view_dashboard= tab Dashboard SM. Terpisah dari `view` supaya Finance yang cuma
+    //                 memverifikasi pembayaran tidak ikut melihat layar performa tim.
+    // view_all      = lihat seluruh perusahaan tanpa identitas hierarki. Kodenya sudah
+    //                 menerima key ini sejak 2026-08-29 (LIHAT_SEMUA_KEYS di
+    //                 lib/insentif-hierarchy-scope) dan grup Manager sudah memakainya
+    //                 di produksi; pendaftarannya di sini sempat tertunda.
+    insentif_sales: [
+        "view", "view_dashboard", "view_all", "manage", "upload_target", "upload_progress",
+        "input_support", "manage_payment", "manage_hierarchy",
+    ],
     // History Penjualan (cascade No Faktur -> Detail). manage = upload/import CSV e-Faktur.
     sales_history: ["view", "export", "manage"],
     // Laporan Harian per SPV/SM (upload FIX -> feed dashboard + email). send = kirim email (gated); manage = ubah mapping penerima.
