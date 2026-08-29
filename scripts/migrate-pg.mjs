@@ -18,7 +18,10 @@
 
 import { Pool } from "pg";
 
-const url = process.env.DATABASE_URL ?? "";
+// DATABASE_MIGRATION_URL: role ber-hak DDL, terpisah dari role aplikasi. Role aplikasi
+// (accapi_app) sengaja bukan owner tabel — runbook L1g — dan Postgres menolak ALTER TABLE
+// dari non-owner. Kalau tidak di-set, jatuh ke DATABASE_URL seperti semula.
+const url = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || "";
 if (!url.startsWith("postgres")) {
   console.log("[migrate-pg] DATABASE_URL bukan Postgres — dilewati.");
   process.exit(0);
@@ -32,6 +35,8 @@ const migrations = [
     // sebagai kode telanjang dan pasangan satu-orang-dua-rute tidak pernah terbentuk.
     // Kasus nyata: target BASRI YUSUF di M-BSR, penjualannya di M-BSR2.
     nama: "sales_daily_progress.sales_name",
+    sudahAda: `SELECT 1 FROM information_schema.columns
+               WHERE table_name = 'sales_daily_progress' AND column_name = 'sales_name'`,
     sql: "ALTER TABLE sales_daily_progress ADD COLUMN IF NOT EXISTS sales_name TEXT",
   },
 ];
@@ -40,6 +45,15 @@ const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 
 
 try {
   for (const m of migrations) {
+    // Cek dulu lewat information_schema (read-only, tidak butuh hak DDL). Postgres memeriksa
+    // kepemilikan tabel SEBELUM IF NOT EXISTS sempat berlaku, jadi tanpa cek ini ALTER tetap
+    // ditolak walau kolomnya sudah ada — dan karena kegagalan mematikan container, hasilnya
+    // crash loop permanen: "no available server" di proxy.
+    const { rowCount } = await pool.query(m.sudahAda);
+    if (rowCount) {
+      console.log(`[migrate-pg] SKIP ${m.nama} (sudah ada)`);
+      continue;
+    }
     await pool.query(m.sql);
     console.log(`[migrate-pg] OK ${m.nama}`);
   }
@@ -49,6 +63,9 @@ try {
   // Start dengan skema setengah jadi berarti error muncul nanti, di tangan user, pada
   // request acak — jauh lebih mahal daripada gagal start yang langsung terlihat di log.
   console.error("[migrate-pg] GAGAL:", String(error?.message || error));
+  console.error("[migrate-pg] Kalau pesannya soal owner/permission: role aplikasi memang bukan owner tabel.");
+  console.error("[migrate-pg] Jalankan DDL-nya sekali sebagai role owner (lihat docs/handover/), atau set");
+  console.error("[migrate-pg] DATABASE_MIGRATION_URL ke role yang berhak DDL. Setelah kolomnya ada, migrasi ini di-skip.");
   process.exit(1);
 } finally {
   await pool.end();
