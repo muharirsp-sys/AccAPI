@@ -138,7 +138,7 @@ function paceClasses(level: PaceLevel) {
 /**
  * Panel yang terlipat, pakai <details> native: keyboard, screen reader, dan tombol
  * Cari-di-halaman browser bekerja tanpa satu baris JS pun. Panel input support memakai ini
- * karena ia berisi ratusan baris form yang hanya dipakai Finance saat payout — terbuka
+ * karena ia berisi ratusan baris form yang hanya dipakai SM saat menyiapkan payout — terbuka
  * permanen, ia mendorong tabel yang dibaca setiap hari keluar layar.
  */
 function CollapsiblePanel({ icon: Icon, no, title, desc, badge, children }: {
@@ -507,97 +507,25 @@ function SummaryBlock({ label, value, icon: Icon, tone }: { label: string; value
     );
 }
 
-// ── Performance Block (grouped bar chart) ─────────────────────────────────
+// ── Performance Block ───────────────────────────────────────
+// Grafik blok batang dibuang (permintaan user 2026-08-29): dengan ~100 salesman × 3 batang
+// ia tidak terbaca di layar mana pun, dan angka yang sama sudah ada di Tabel Pencapaian
+// per baris. Yang tersisa empat kartu ringkasan. Riwayat grafiknya ada di git kalau
+// suatu saat mau dihidupkan lagi dalam bentuk lain.
 function PerformanceBlock({ rows, apiRows, progress: tg }: { rows: Salesman[]; apiRows: ApiRow[]; progress: WorkdayProgress }) {
     const totalReal = rows.reduce((a, r) => a + r.realValue, 0);
     const totalTarget = rows.reduce((a, r) => a + r.targetValue, 0);
     const totalPct = pct(totalReal, totalTarget);
     const totalIncentive = apiRows.reduce((a, r) => a + r.incentive.total, 0);
 
-    const chartData = rows.map((r) => ({
-        name: r.name.split(" ")[0],
-        code: r.code,
-        value: pct(r.realValue, r.targetValue),
-        ec: pct(r.realEc, r.targetEc),
-        ao: pct(r.realAo, r.targetAo),
-    }));
-
-    const allPcts = chartData.flatMap((d) => [d.value, d.ec, d.ao]);
-    const maxPct = Math.max(...allPcts, tg.pct, 100);
-    const yMax = Math.ceil(maxPct / 20) * 20 + 20;
-    const yTicks = Array.from({ length: yMax / 20 + 1 }, (_, i) => i * 20);
-
-    const avgValue = chartData.reduce((a, d) => a + d.value, 0) / (chartData.length || 1);
-    const avgEc = chartData.reduce((a, d) => a + d.ec, 0) / (chartData.length || 1);
-    const avgAo = chartData.reduce((a, d) => a + d.ao, 0) / (chartData.length || 1);
-    const avgAll = Math.round((avgValue + avgEc + avgAo) / 3);
-
-    const CHART_H = 200;
-    const toYPct = (val: number) => `${100 - (val / yMax) * 100}%`;
-
     return (
         <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
-            <SectionTitle icon={BarChart3} no={1} title="Grafik Blok Performa" desc="% Pencapaian Value (orange), EC (kuning), AO (biru) vs Time Gone" />
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+            <SectionTitle icon={BarChart3} no={1} title="Ringkasan Performa" desc={`Total periode berjalan · ${rows.length} baris · Time Gone ${tg.pct}%`} />
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <SummaryBlock label="Total Realisasi" value={formatShortRp(totalReal)} icon={TrendingUp} tone="emerald" />
                 <SummaryBlock label="Total Target" value={formatShortRp(totalTarget)} icon={Target} tone="indigo" />
                 <SummaryBlock label="Capaian Tim" value={`${totalPct}%`} icon={BarChart3} tone={totalPct >= tg.pct ? "emerald" : "amber"} />
                 <SummaryBlock label="Taksiran Insentif" value={formatShortRp(totalIncentive)} icon={Wallet} tone="amber" />
-            </div>
-            <div className="overflow-x-auto">
-                <div className="min-w-[480px]">
-                    <div className="flex gap-2 items-start">
-                        <div className="shrink-0 w-9 flex flex-col justify-between text-right" style={{ height: CHART_H }}>
-                            {[...yTicks].reverse().map((t) => (
-                                <span key={t} className="text-[9px] text-slate-500 font-mono leading-none">{t}%</span>
-                            ))}
-                        </div>
-                        <div className="flex-1 relative border-l border-b border-white/20" style={{ height: CHART_H }}>
-                            {yTicks.map((t) => (
-                                <div key={t} className="absolute left-0 right-0 border-t border-white/[0.06]" style={{ top: toYPct(t) }} />
-                            ))}
-                            <div className="absolute left-0 right-0 z-10" style={{ top: toYPct(tg.pct) }}>
-                                <div className="border-t-2 border-dashed border-emerald-400/90 w-full" />
-                                <span className="absolute -top-4 right-1 text-[9px] text-emerald-400 font-bold bg-[#1a1c23]/80 px-1 rounded">
-                                    Time Gone {tg.pct}%
-                                </span>
-                            </div>
-                            <div className="absolute left-0 right-0 z-10" style={{ top: toYPct(avgAll) }}>
-                                <div className="border-t border-dashed border-violet-400/80 w-full" />
-                                <span className="absolute -top-4 left-1 text-[9px] text-violet-400 font-bold bg-[#1a1c23]/80 px-1 rounded">
-                                    Avg {avgAll}%
-                                </span>
-                            </div>
-                            <div className="absolute inset-0 flex items-end px-2">
-                                {chartData.map((d) => (
-                                    <div key={d.code} className="flex-1 h-full flex items-end justify-center gap-0.5">
-                                        <div className="w-3.5 bg-orange-400/90 rounded-t-[2px]" style={{ height: `${(d.value / yMax) * CHART_H}px` }} title={`Value: ${d.value}%`} />
-                                        <div className="w-3.5 bg-yellow-300/90 rounded-t-[2px]" style={{ height: `${(d.ec / yMax) * CHART_H}px` }} title={`EC: ${d.ec}%`} />
-                                        <div className="w-3.5 bg-blue-400/90 rounded-t-[2px]" style={{ height: `${(d.ao / yMax) * CHART_H}px` }} title={`AO: ${d.ao}%`} />
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                    <div className="flex mt-1.5" style={{ paddingLeft: "2.75rem" }}>
-                        {chartData.map((d) => (
-                            <div key={d.code} className="flex-1 text-center text-[9px] text-slate-400 truncate px-0.5">{d.name}</div>
-                        ))}
-                    </div>
-                </div>
-            </div>
-            <div className="mt-4 flex flex-wrap items-center gap-4 text-[10px] text-slate-400 border-t border-white/5 pt-3">
-                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-orange-400 inline-block" /> Value</span>
-                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-yellow-300 inline-block" /> Effective Call (EC)</span>
-                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-blue-400 inline-block" /> Aktif Outlet (AO)</span>
-                <span className="flex items-center gap-1.5 ml-2">
-                    <span className="inline-block w-5 border-t-2 border-dashed border-emerald-400" />
-                    <span className="text-emerald-400">Time Gone</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-5 border-t border-dashed border-violet-400" />
-                    <span className="text-violet-400">Average Value,EC,AO</span>
-                </span>
             </div>
         </div>
     );
@@ -937,10 +865,84 @@ function SmView({ rows, progress }: { rows: Salesman[]; progress: WorkdayProgres
                                 </tr>
                             );
                         })}
+                        {groups.length === 0 && (
+                            <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-500 italic">Tidak ada baris SM untuk filter ini.</td></tr>
+                        )}
                     </tbody>
                 </table>
             </div>
         </div>
+    );
+}
+
+// ── Tab SM ─────────────────────────────────────────────────────
+// Dengan >1 SM dan puluhan principal, satu layar berisi ratusan baris. Dua filter ini
+// MENYARING TAMPILAN saja: nominal per baris sudah dihitung server dengan konteks grup
+// penuh (lihat `groupTargets` di route dashboard), jadi menyaring daftar tidak menggeser
+// angka siapa pun. Tabel Insentif SM sengaja TIDAK ikut disaring — strata SM dihitung
+// dari seluruh principal SM itu, menyaringnya akan menampilkan nominal yang tidak dibayar.
+function SmDashboard({ salesmen, apiRows, progress, month, year, onSaved, gtAoMode }: {
+    salesmen: Salesman[];
+    apiRows: ApiRow[];
+    progress: WorkdayProgress;
+    month: number;
+    year: number;
+    onSaved: () => void;
+    gtAoMode?: "fixed240" | "file";
+}) {
+    const [smFilter, setSmFilter] = useState("ALL");
+    const [principleFilter, setPrincipleFilter] = useState("ALL");
+
+    // Opsi diambil dari baris nyata, bukan konstanta PRINCIPLES (isinya data demo
+    // NESTLE/UNILEVER/INDOFOOD dan tidak pernah cocok dengan principal produksi).
+    const smOptions = useMemo(
+        () => [...new Set(salesmen.map((r) => r.sm))].filter(Boolean).sort(),
+        [salesmen],
+    );
+    const principleOptions = useMemo(
+        () => [...new Set(salesmen.map((r) => r.principle))].filter(Boolean).sort(),
+        [salesmen],
+    );
+
+    const cocok = useCallback(
+        (sm: string, principle: string) =>
+            (smFilter === "ALL" || sm === smFilter) && (principleFilter === "ALL" || principle === principleFilter),
+        [smFilter, principleFilter],
+    );
+    const rows = useMemo(() => salesmen.filter((r) => cocok(r.sm, r.principle)), [salesmen, cocok]);
+    const rowsApi = useMemo(() => apiRows.filter((r) => cocok(r.smName ?? "", r.principle)), [apiRows, cocok]);
+
+    const aktif = smFilter !== "ALL" || principleFilter !== "ALL";
+    const selectCls = "bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500";
+
+    return (
+        <>
+            <SupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
+            <SpvSupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
+            <div className="ui-toolbar">
+                <span className="flex items-center gap-2 text-xs font-semibold text-slate-400 uppercase tracking-wider"><Filter size={14} /> Filter SM</span>
+                <select aria-label="Filter SM" value={smFilter} onChange={(e) => setSmFilter(e.target.value)} className={selectCls}>
+                    <option value="ALL">Semua SM ({smOptions.length})</option>
+                    {smOptions.map((sm) => <option key={sm} value={sm}>{sm}</option>)}
+                </select>
+                <select aria-label="Filter principle SM" value={principleFilter} onChange={(e) => setPrincipleFilter(e.target.value)} className={selectCls}>
+                    <option value="ALL">Semua Principle ({principleOptions.length})</option>
+                    {principleOptions.map((pr) => <option key={pr} value={pr}>{pr}</option>)}
+                </select>
+                {aktif && (
+                    <button type="button" onClick={() => { setSmFilter("ALL"); setPrincipleFilter("ALL"); }} className="ui-button-ghost">
+                        Reset filter SM
+                    </button>
+                )}
+                <span className="text-[11px] text-slate-500 ml-auto">
+                    {rows.length} dari {salesmen.length} baris
+                </span>
+            </div>
+            <PerformanceBlock rows={rows} apiRows={rowsApi} progress={progress} />
+            <SmView rows={rows} progress={progress} />
+            <SmIncentiveTable month={month} year={year} />
+            <IncentiveTable apiRows={rowsApi} gtAoMode={gtAoMode} />
+        </>
     );
 }
 
@@ -2593,11 +2595,11 @@ function CodeMergeSection({ period }: { period: string }) {
     );
 }
 
-// ── Finance: input support principle untuk SPV (per SPV per principal) ────────
+// ── SM: input support principle untuk SPV (per SPV per principal) ───────────
 // Support yang menutup penuh rate mengeluarkan principal itu dari hitungan jumlah
 // principal SPV (lib/insentif-spv-calc), jadi angkanya berpengaruh besar.
 // ── Support principle: unduh template terisi + unggah Excel ──────────────────
-// Finance mengisi support untuk ratusan pasangan sales/SPV x principal. Mengetiknya satu per
+// SM mengisi support untuk ratusan pasangan sales/SPV x principal. Mengetiknya satu per
 // satu di layar itu sumber salah ketik, dan support memotong pool insentif — salah angka =
 // salah bayar. Template sengaja SUDAH berisi pasangan periode itu beserta nilai tersimpan,
 // jadi yang diketik hanya kolom nominal. Hasil unggah masuk ke draft, BUKAN langsung ditulis:
@@ -2799,7 +2801,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 // ── Finance View — fetch payments API + PATCH mark lunas ──────────────────
-// ── Finance: input support principle per salesman (channel GT/TT & MT) ───────
+// ── SM: input support principle per salesman (channel GT/TT & MT) ───────────
 // MT juga perlu: computeMt mengurangi support dari pool 1jt sama seperti GT, jadi
 // baris MT harus bisa diisi — kalau tidak, support principle utk sales MT tak pernah masuk.
 function SupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRow[]; month: number; year: number; onSaved?: () => void }) {
@@ -2902,7 +2904,7 @@ function SupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRo
     );
 }
 
-function FinanceView({ apiRows, month, year, onSaved, gtAoMode }: { apiRows: ApiRow[]; month: number; year: number; onSaved?: () => void; gtAoMode?: "fixed240" | "file" }) {
+function FinanceView({ apiRows, month, year, gtAoMode }: { apiRows: ApiRow[]; month: number; year: number; gtAoMode?: "fixed240" | "file" }) {
     const [payments, setPayments] = useState<PaymentRow[]>([]);
     const [selectedMonth, setSelectedMonth] = useState(month);
     const [saving, setSaving] = useState(false);
@@ -3150,8 +3152,6 @@ function FinanceView({ apiRows, month, year, onSaved, gtAoMode }: { apiRows: Api
     if (paymentsLoading) {
         return (
             <div className="space-y-5">
-                <SupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
-                <SpvSupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
                 <LoadingState label="Memuat status pembayaran" rows={3} />
             </div>
         );
@@ -3160,8 +3160,6 @@ function FinanceView({ apiRows, month, year, onSaved, gtAoMode }: { apiRows: Api
     if (paymentsError) {
         return (
             <div className="space-y-5">
-                <SupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
-                <SpvSupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
                 <ErrorState
                     title={paymentsError}
                     message="Status belum ditampilkan agar kegagalan tidak terlihat sebagai belum dibayar."
@@ -3173,9 +3171,6 @@ function FinanceView({ apiRows, month, year, onSaved, gtAoMode }: { apiRows: Api
 
     return (
         <div className="space-y-5">
-            {/* Support principle GT — diisi Finance saat payout */}
-            <SupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
-                <SpvSupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
             {/* 12-month strip */}
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
                 <SectionTitle icon={DollarSign} no={1} title="Rekap Pembayaran Tahunan" desc={`Total insentif per bulan dan sisa yang belum dibayar. ${MONTH_LABELS[month - 1]} dihitung ulang dari dashboard; bulan lain dari catatan pembayaran.`} />
@@ -3619,15 +3614,11 @@ export default function InsentifSalesPage() {
                         </>
                     )}
                     {view === "sm" && (
-                        <>
-                            <PerformanceBlock rows={salesmen} apiRows={apiRows} progress={tg} />
-                            <SmView rows={salesmen} progress={tg} />
-                            <SmIncentiveTable month={month} year={year} />
-                            <IncentiveTable apiRows={apiRows} gtAoMode={gtAoMode} />
-                        </>
+                        <SmDashboard salesmen={salesmen} apiRows={apiRows} progress={tg}
+                            month={month} year={year} onSaved={fetchDashboard} gtAoMode={gtAoMode} />
                     )}
                     {view === "admin" && <AdminView rows={salesmen} />}
-                    {view === "finance" && <FinanceView apiRows={apiRows} month={month} year={year} onSaved={fetchDashboard} gtAoMode={gtAoMode} />}
+                    {view === "finance" && <FinanceView apiRows={apiRows} month={month} year={year} gtAoMode={gtAoMode} />}
                 </div>
             )}
             </div>
