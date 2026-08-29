@@ -24,7 +24,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { and, eq, or } from "drizzle-orm";
+import { and, count, eq, inArray, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { salesDailyProgress } from "@/db/schema";
 import { computeMtdProgress } from "@/lib/insentif-sales";
@@ -228,4 +228,65 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ inserted: valid.length, replaced, skipped: body.length - valid.length });
+}
+
+/**
+ * Hapus SELURUH realisasi closing satu periode. Dipakai sebelum unggah ulang.
+ *
+ * Kenapa perlu tombol sendiri: POST hanya mengganti kombinasi (kode, principal, periode,
+ * TANGGAL) yang ADA di payload. Baris lama yang tanggalnya bergeser — karena aturan
+ * pembacaan tanggal berubah, atau karena file-nya beda — tidak tertimpa dan tetap ikut
+ * terhitung. Selama ini pembersihannya DELETE manual lewat psql di VPS.
+ *
+ * Sengaja hanya menyentuh sales_daily_progress. Target (sales_targets) TIDAK ikut terhapus:
+ * unggah target sudah upsert per (kode, principal, periode), jadi tidak perlu dibersihkan,
+ * dan menghapusnya di sini berarti satu klik bisa menghilangkan seluruh target sebulan.
+ *
+ * Pembayaran (incentive_payments) juga tidak disentuh — baris lunas adalah catatan uang yang
+ * benar-benar dibayar, bukan turunan realisasi.
+ */
+export async function DELETE(req: NextRequest) {
+    // Izin yang sama dengan unggah: siapa pun yang bisa mengunggah sudah bisa menimpa data
+    // periode ini. Membedakannya jadi izin lain hanya menambah pintu tanpa menambah proteksi.
+    const gate = await requirePermission(req, "insentif_sales.upload_progress");
+    if (gate.response) return gate.response;
+
+    const { searchParams } = req.nextUrl;
+    const month = parseInt(searchParams.get("month") ?? "", 10);
+    const year = parseInt(searchParams.get("year") ?? "", 10);
+    if (!Number.isInteger(month) || month < 1 || month > 12
+        || !Number.isInteger(year) || year < 2020 || year > 2100) {
+        return NextResponse.json(
+            { error: "Periode tidak valid. Kirim ?month=1-12&year=2020-2100." },
+            { status: 400 },
+        );
+    }
+
+    const periode = and(
+        eq(salesDailyProgress.periodMonth, month),
+        eq(salesDailyProgress.periodYear, year),
+    );
+
+    const scope = await getScopeForUser(gate.session.user.id, { month, year }, gate.perms);
+    // User ter-scope (SPV/SM) hanya boleh menghapus baris timnya. Tanpa filter ini satu klik
+    // dari SPV mana pun menghapus closing SELURUH perusahaan.
+    const filter = scope === null
+        ? periode
+        : and(periode, inArray(salesDailyProgress.salesCode, [...scope]));
+
+    // Scope kosong = tidak ada satu pun kode yang boleh disentuh. inArray([]) di beberapa
+    // dialek jadi kondisi yang selalu benar; jangan pertaruhkan penghapusan massal pada itu.
+    if (scope !== null && scope.size === 0) {
+        return NextResponse.json({ deleted: 0, month, year });
+    }
+
+    const [sebelum] = await db.select({ n: count() }).from(salesDailyProgress).where(filter);
+    const hasil = await db.delete(salesDailyProgress).where(filter);
+
+    return NextResponse.json({
+        deleted: hasil.rowCount ?? sebelum?.n ?? 0,
+        month,
+        year,
+        dibatasiCakupan: scope !== null,
+    });
 }
