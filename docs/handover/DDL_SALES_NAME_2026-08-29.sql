@@ -1,6 +1,11 @@
 -- DDL_SALES_NAME_2026-08-29.sql
 -- Kolom nama salesman di sales_daily_progress.
 --
+-- TIDAK PERLU DIJALANKAN MANUAL LAGI. Sejak 2026-08-29 scripts/migrate-pg.mjs menjalankan
+-- ALTER yang sama otomatis setiap container start (Dockerfile.frontend CMD), jadi kolomnya
+-- sudah ada begitu deploy selesai. File ini disimpan sebagai rujukan dan jalan darurat
+-- kalau perlu dijalankan lebih dulu di luar siklus deploy.
+--
 -- Kenapa: deteksi kandidat "Gabung Kode Sales" hanya bisa membaca nama dari sales_targets.
 -- Kode yang punya penjualan tapi BELUM punya target sampai di sana sebagai kode telanjang,
 -- sehingga pasangan satu-orang-dua-rute tidak pernah terbentuk. Kasus nyata closing Juli 2026:

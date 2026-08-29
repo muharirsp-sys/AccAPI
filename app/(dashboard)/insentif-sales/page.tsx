@@ -1729,6 +1729,42 @@ function AdminView({ rows }: { rows: Salesman[] }) {
     const [manualRows, setManualRows] = useState<ManualProgressRow[]>([{ ...EMPTY_PROGRESS_ROW }]);
     const [uploading, setUploading] = useState(false);
     const [savingManual, setSavingManual] = useState(false);
+    const [menghapus, setMenghapus] = useState(false);
+
+    /**
+     * Hapus seluruh realisasi closing periode terpilih. Wajib sebelum unggah ulang kalau
+     * tanggal barisnya bisa bergeser dari unggahan sebelumnya: POST hanya menimpa kombinasi
+     * (kode, principal, periode, TANGGAL) yang ada di file baru, jadi baris lama bertanggal
+     * lain tetap tinggal dan ikut terhitung. Dulu ini DELETE manual lewat psql di VPS.
+     */
+    async function handleHapusPeriode() {
+        const [tahun, bulan] = period.split("-").map(Number);
+        if (!tahun || !bulan) { toast.error("Periode belum dipilih."); return; }
+        const label = `${MONTH_LABELS[bulan - 1]} ${tahun}`;
+        // confirm() native: memblokir, bisa dipakai keyboard, dan tidak perlu komponen modal
+        // sendiri untuk satu tombol. Periodenya dieja supaya tidak ada yang menghapus
+        // bulan yang salah karena pemilih periode masih menunjuk bulan lain.
+        if (!window.confirm(
+            `Hapus SELURUH realisasi closing ${label}?
+
+`
+            + `Target dan catatan pembayaran tidak ikut terhapus. Setelah ini closing `
+            + `${label} harus diunggah ulang, kalau tidak pencapaiannya kosong.`,
+        )) return;
+        setMenghapus(true);
+        try {
+            const res = await fetch(`/api/insentif-sales/progress?month=${bulan}&year=${tahun}`, { method: "DELETE" });
+            const data = await readApi(res);
+            if (!res.ok) throw new Error(String(data.error ?? "Gagal menghapus periode."));
+            const n = Number(data.deleted ?? 0);
+            if (n === 0) toast.info(`Tidak ada realisasi ${label} untuk dihapus.`);
+            else toast.success(`${n.toLocaleString("id-ID")} baris realisasi ${label} dihapus. Unggah ulang closing-nya sekarang.`);
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal menghapus periode.");
+        } finally {
+            setMenghapus(false);
+        }
+    }
 
     function setManualCell<K extends keyof ManualProgressRow>(idx: number, key: K, val: ManualProgressRow[K]) {
         setManualRows((prev) => prev.map((r, i) => i === idx ? { ...r, [key]: val } : r));
@@ -1938,10 +1974,23 @@ function AdminView({ rows }: { rows: Salesman[] }) {
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
                 <SectionTitle icon={Upload} no={2} title="Input Progress Harian" desc="Principal dan cabang dibaca per baris. Satu file dapat berisi beberapa principal." />
 
-                <div className="flex flex-wrap items-center gap-3 mb-4">
+                <div className="flex flex-wrap items-end gap-3 mb-4">
                     <Field label="Periode">
                         <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="bg-black/40 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500" />
                     </Field>
+                    <button
+                        type="button"
+                        onClick={handleHapusPeriode}
+                        disabled={menghapus}
+                        className="px-3 py-2.5 rounded-lg border border-rose-500/40 text-rose-300 text-sm hover:bg-rose-500/10 disabled:opacity-50 transition-colors"
+                    >
+                        {menghapus ? "Menghapus…" : "Hapus realisasi periode ini"}
+                    </button>
+                    <p className="text-[11px] text-slate-500 basis-full">
+                        Hapus dulu kalau closing periode ini pernah diunggah dengan aturan yang berbeda —
+                        unggah ulang saja hanya menimpa baris bertanggal sama, sisanya ikut terhitung dua kali.
+                        Target dan catatan pembayaran tidak ikut terhapus.
+                    </p>
                 </div>
 
                 <div className="flex gap-2 mb-4 border-b border-white/10 pb-3">
