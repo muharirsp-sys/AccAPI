@@ -58,6 +58,7 @@ export async function GET(req: NextRequest) {
 
 interface ProgressInput {
     salesCode: string;
+    salesName?: string;
     principle: string;
     branch: string;
     date: string; // YYYY-MM-DD
@@ -206,6 +207,7 @@ export async function POST(req: NextRequest) {
         const rows = valid.map((p) => ({
             id: randomUUID(),
             salesCode: p.salesCode,
+            salesName: p.salesName?.trim() || null,
             principle: p.principle,
             branch: p.branch,
             date: p.date,
