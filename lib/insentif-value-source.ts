@@ -2,6 +2,7 @@
  * Tujuan: Menentukan kolom nilai penjualan mana yang dipakai sebagai realisasi Value,
  *   karena tidak semua cabang memakai acuan yang sama.
  * Caller: handler upload closing di app/(dashboard)/insentif-sales/page.tsx.
+ *   Daftar cabangnya dapat diubah tanpa deploy lewat app_setting — lihat lib/insentif-settings.
  * Dependensi: tidak ada (pure).
  * Main Functions: valueSourceForBranch, realisasiValue.
  * Side Effects: none.
@@ -22,14 +23,29 @@
  * "ABC" = ABC PRESIDENT INDONESIA (ABCPI). Ejaan di file closing "ABC", bukan "ABCPI" —
  * menulis "ABCPI" di sini tidak akan pernah cocok.
  */
-const BRANCH_PAKAI_NILAI_JUAL = new Set(["VINDA", "KINO NON FOOD", "MIX NON FOOD", "ABC"]);
+export const DEFAULT_BRANCH_NILAI_JUAL = ["VINDA", "KINO NON FOOD", "MIX NON FOOD", "ABC"] as const;
 
 export type ValueSource = "dpp" | "nilai_jual";
 
-/** Kolom acuan Value untuk satu cabang. Perbandingan case-insensitive & abai spasi ganda. */
-export function valueSourceForBranch(branch: string): ValueSource {
-    const b = (branch ?? "").trim().toUpperCase().replace(/\s+/g, " ");
-    return BRANCH_PAKAI_NILAI_JUAL.has(b) ? "nilai_jual" : "dpp";
+/** Normalisasi satu nama cabang: kapital, spasi ganda diratakan. Dipakai kedua sisi perbandingan. */
+export function normalisasiBranch(branch: string): string {
+    return (branch ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+}
+
+/**
+ * Kolom acuan Value untuk satu cabang. Perbandingan case-insensitive & abai spasi ganda.
+ *
+ * `daftar` bisa diisi dari app_setting (lib/insentif-settings.getBranchNilaiJual) supaya
+ * penambahan principal tidak perlu deploy. Tanpa argumen ia memakai bawaan — fungsi ini
+ * sengaja tetap MURNI supaya bisa diuji tanpa database dan supaya pemanggil yang lupa
+ * memuat setelan jatuh ke perilaku yang sudah dikenal, bukan ke daftar kosong.
+ */
+export function valueSourceForBranch(
+    branch: string,
+    daftar: readonly string[] = DEFAULT_BRANCH_NILAI_JUAL,
+): ValueSource {
+    const b = normalisasiBranch(branch);
+    return daftar.some((d) => normalisasiBranch(d) === b) ? "nilai_jual" : "dpp";
 }
 
 /**
@@ -37,6 +53,11 @@ export function valueSourceForBranch(branch: string): ValueSource {
  * Kedua angka tetap diminta supaya pemilihan terjadi di satu tempat — pemanggil tidak
  * perlu tahu aturannya, dan aturan tidak tersebar di parser.
  */
-export function realisasiValue(branch: string, dpp: number, nilaiJual: number): number {
-    return valueSourceForBranch(branch) === "nilai_jual" ? nilaiJual : dpp;
+export function realisasiValue(
+    branch: string,
+    dpp: number,
+    nilaiJual: number,
+    daftar?: readonly string[],
+): number {
+    return valueSourceForBranch(branch, daftar) === "nilai_jual" ? nilaiJual : dpp;
 }

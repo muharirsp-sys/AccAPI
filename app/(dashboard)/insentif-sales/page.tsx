@@ -1530,6 +1530,107 @@ function TargetInputSection() {
  * nominal yang dibayar, jadi ia tidak disembunyikan di balik ikon: statusnya tertulis, sebabnya
  * tertulis, dan penggantiannya minta konfirmasi. Default "fixed240" = perilaku sejak awal.
  */
+/**
+ * Setelan berbentuk DAFTAR (cabang beracuan NILAI_JUAL, SM yang ikut skema insentif).
+ * Keduanya dulu konstanta di kode: menambah satu principal berarti satu deploy.
+ *
+ * Editor sengaja textarea satu-baris-satu-nilai, bukan tabel dengan tombol tambah/hapus —
+ * isinya belasan nama, dan menempel dari Excel harus bekerja apa adanya.
+ */
+function DaftarSetelan({ judul, desc, field, contoh, catatan }: {
+    judul: string;
+    desc: string;
+    field: "branchNilaiJual" | "smBerhak";
+    contoh: string;
+    catatan: string;
+}) {
+    const [teks, setTeks] = useState<string | null>(null);
+    const [tersimpan, setTersimpan] = useState<string[]>([]);
+    const [saving, setSaving] = useState(false);
+
+    const muat = useCallback(async () => {
+        try {
+            const res = await fetch("/api/insentif-sales/settings");
+            const data = await readApi(res);
+            if (!res.ok) throw new Error(String(data.error ?? "Gagal memuat setelan."));
+            const daftar = (Array.isArray(data[field]) ? data[field] : []) as string[];
+            setTersimpan(daftar);
+            setTeks(daftar.join("\n"));
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal memuat setelan.");
+        }
+    }, [field]);
+    useEffect(() => { void muat(); }, [muat]);
+
+    const nilai = useMemo(
+        () => (teks ?? "").split("\n").map((v) => v.trim().toUpperCase().replace(/\s+/g, " ")).filter(Boolean),
+        [teks],
+    );
+    const berubah = teks !== null && nilai.join("|") !== tersimpan.join("|");
+
+    async function simpan() {
+        // Mengubah daftar ini menggeser nominal, jadi perubahannya dieja dulu — satu baris
+        // terhapus tanpa sadar saat menempel dari Excel tidak boleh lolos diam-diam.
+        const hilang = tersimpan.filter((v) => !nilai.includes(v));
+        const tambah = nilai.filter((v) => !tersimpan.includes(v));
+        const rincian = [
+            tambah.length ? `+ ${tambah.join(", ")}` : "",
+            hilang.length ? `− ${hilang.join(", ")}` : "",
+        ].filter(Boolean).join("\n");
+        if (!window.confirm(`Simpan perubahan ${judul}?
+
+${rincian || "(tidak ada perubahan)"}
+
+${catatan}`)) return;
+        setSaving(true);
+        try {
+            const res = await fetch("/api/insentif-sales/settings", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ [field]: nilai }),
+            });
+            const data = await readApi(res);
+            if (!res.ok) throw new Error(String(data.error ?? "Gagal menyimpan setelan."));
+            const baru = (Array.isArray(data[field]) ? data[field] : []) as string[];
+            setTersimpan(baru);
+            setTeks(baru.join("\n"));
+            toast.success(`${judul} tersimpan (${baru.length} entri).`);
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal menyimpan setelan.");
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    return (
+        <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
+            <SectionTitle icon={Filter} no={0} title={judul} desc={desc} />
+            <div className="flex flex-col gap-2">
+                <textarea
+                    aria-label={judul}
+                    value={teks ?? ""}
+                    disabled={teks === null || saving}
+                    onChange={(e) => setTeks(e.target.value)}
+                    rows={5}
+                    spellCheck={false}
+                    placeholder={teks === null ? "Memuat…" : contoh}
+                    className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono text-slate-200 outline-none focus:border-indigo-500"
+                />
+                <div className="flex items-center gap-3 flex-wrap">
+                    <button type="button" onClick={simpan} disabled={!berubah || saving}
+                        className="px-4 py-2 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white text-sm font-medium disabled:opacity-40">
+                        {saving ? "Menyimpan…" : "Simpan"}
+                    </button>
+                    <span className="text-[11px] text-slate-500">
+                        {nilai.length} entri · satu per baris · huruf besar/kecil dan spasi ganda diabaikan
+                    </span>
+                </div>
+                <p className="text-[11px] text-amber-400/80">{catatan}</p>
+            </div>
+        </div>
+    );
+}
+
 function GtAoTargetToggle() {
     const [mode, setMode] = useState<"fixed240" | "file" | null>(null);
     const [saving, setSaving] = useState(false);
@@ -1743,6 +1844,25 @@ function AdminView({ rows }: { rows: Salesman[] }) {
     const [uploading, setUploading] = useState(false);
     const [savingManual, setSavingManual] = useState(false);
     const [menghapus, setMenghapus] = useState(false);
+    // Daftar cabang beracuan NILAI_JUAL diambil dari setelan, bukan konstanta di kode.
+    // null = belum termuat → upload ditahan. Memakai bawaan diam-diam saat setelan gagal
+    // dimuat berarti file diproses dengan aturan yang BUKAN aturan yang sedang berlaku,
+    // dan hasilnya tersimpan sebagai realisasi tanpa ada yang tahu.
+    const [branchNilaiJual, setBranchNilaiJual] = useState<string[] | null>(null);
+    useEffect(() => {
+        let batal = false;
+        (async () => {
+            try {
+                const res = await fetch("/api/insentif-sales/settings");
+                const data = await readApi(res);
+                if (!res.ok) throw new Error(String(data.error ?? "Gagal memuat setelan."));
+                if (!batal) setBranchNilaiJual(Array.isArray(data.branchNilaiJual) ? data.branchNilaiJual as string[] : []);
+            } catch {
+                if (!batal) toast.error("Setelan cabang NILAI_JUAL gagal dimuat. Muat ulang halaman sebelum mengunggah closing.");
+            }
+        })();
+        return () => { batal = true; };
+    }, []);
 
     /**
      * Hapus seluruh realisasi closing periode terpilih. Wajib sebelum unggah ulang kalau
@@ -1831,6 +1951,13 @@ function AdminView({ rows }: { rows: Salesman[] }) {
     async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
         const file = e.target.files?.[0];
         if (!file) return;
+        // Tanpa setelan, tiap baris akan dinilai dengan daftar bawaan — hasilnya tersimpan
+        // sebagai realisasi dan tidak ada yang tahu aturannya bukan yang sedang berlaku.
+        if (branchNilaiJual === null) {
+            toast.error("Setelan cabang NILAI_JUAL belum termuat. Muat ulang halaman lalu ulangi.");
+            e.target.value = "";
+            return;
+        }
         setUploading(true);
         try {
             // Baca via XLSX — menangani .xlsx maupun .csv, termasuk field ber-koma di dalam
@@ -1947,8 +2074,8 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                     invoiceNumber: r.invoiceNumber,
                     achievedValueDpp: 0, achievedEc: 0, achievedAo: 0, achievedIa: 0,
                 };
-                // VINDA / KINO NON FOOD / MIX NON FOOD / ABC memakai NILAI_JUAL, sisanya DPP.
-                cur.achievedValueDpp += realisasiValue(branch, r.dpp, r.nilaiJual);
+                // Cabang mana yang memakai NILAI_JUAL diatur di panel setelan, bukan di kode.
+                cur.achievedValueDpp += realisasiValue(branch, r.dpp, r.nilaiJual, branchNilaiJual ?? undefined);
                 cur.achievedEc += r.ec;
                 cur.achievedAo += r.ao;
                 cur.achievedIa += r.ia;
@@ -1986,6 +2113,20 @@ function AdminView({ rows }: { rows: Salesman[] }) {
     return (
         <div className="space-y-5">
             <GtAoTargetToggle />
+            <DaftarSetelan
+                judul="Cabang beracuan NILAI_JUAL"
+                desc="Cabang (kolom JENISPRODUK di file closing) yang realisasi Value-nya diambil dari NILAI_JUAL. Cabang di luar daftar ini memakai DPP."
+                field="branchNilaiJual"
+                contoh={`VINDA\nKINO NON FOOD\nMIX NON FOOD\nABC`}
+                catatan="Berlaku untuk unggahan closing BERIKUTNYA. Periode yang sudah masuk harus dihapus lalu diunggah ulang agar angkanya ikut berubah."
+            />
+            <DaftarSetelan
+                judul="SM yang ikut skema insentif"
+                desc="Nama SM yang berhak atas insentif SM (strata flat berbasis Value). Dicocokkan sebagai kata utuh, jadi HENDRIK tidak akan cocok dengan HENDRIKUS."
+                field="smBerhak"
+                contoh={"HENDRIK"}
+                catatan="Langsung mengubah nominal insentif SM periode mana pun yang dihitung setelah ini."
+            />
             <TargetInputSection />
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
                 <SectionTitle icon={Upload} no={2} title="Input Progress Harian" desc="Principal dan cabang dibaca per baris. Satu file dapat berisi beberapa principal." />

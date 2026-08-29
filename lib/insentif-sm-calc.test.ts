@@ -95,4 +95,11 @@ const office = (target: number, real: number): SmSalesRow =>
     assert.strictEqual(r.total, 0);
 }
 
+// --- whitelist SM dapat diganti dari setelan ---
+assert.strictEqual(isSmBerhak("ADNAN", ["ADNAN"]), true, "daftar kustom dipakai");
+assert.strictEqual(isSmBerhak("HENDRIK", ["ADNAN"]), false, "bawaan tidak diam-diam ditambahkan");
+assert.strictEqual(isSmBerhak("PAK ADNAN", ["  adnan "]), true, "isi daftar dinormalisasi & tetap kata utuh");
+assert.strictEqual(isSmBerhak("ADNANSYAH", ["ADNAN"]), false, "kata utuh, bukan substring");
+assert.strictEqual(isSmBerhak("HENDRIK", []), false, "daftar kosong = tidak ada yang berhak");
+
 console.log("OK — all insentif-sm-calc checks passed");

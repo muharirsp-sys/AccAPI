@@ -51,8 +51,13 @@ function containsWord(haystack: string, word: string): boolean {
  */
 export const SM_BERHAK_INSENTIF = ["HENDRIK"] as const;
 
-export function isSmBerhak(smName: string): boolean {
-    return SM_BERHAK_INSENTIF.some((s) => containsWord(smName, s));
+/**
+ * `daftar` bisa diisi dari app_setting (lib/insentif-settings.getSmBerhak) supaya pergantian
+ * SM tidak perlu deploy. Tanpa argumen memakai bawaan: pemanggil yang lupa memuat setelan
+ * jatuh ke perilaku yang sudah dikenal, bukan ke "tidak ada SM yang berhak".
+ */
+export function isSmBerhak(smName: string, daftar: readonly string[] = SM_BERHAK_INSENTIF): boolean {
+    return daftar.some((s) => containsWord(smName, s.trim().toUpperCase()));
 }
 
 /**
@@ -97,8 +102,12 @@ export function rateSm(ratio: number): number {
     return 0;
 }
 
-export function calculateInsentifSM(smName: string, rows: SmSalesRow[]): SmInsentifResult {
-    const berhak = isSmBerhak(smName);
+export function calculateInsentifSM(
+    smName: string,
+    rows: SmSalesRow[],
+    daftarBerhak?: readonly string[],
+): SmInsentifResult {
+    const berhak = isSmBerhak(smName, daftarBerhak);
     let targetValue = 0;
     let realisasiValue = 0;
     let jumlahBaris = 0;
