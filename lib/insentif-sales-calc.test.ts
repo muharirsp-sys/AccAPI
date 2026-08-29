@@ -13,6 +13,7 @@ import {
     computeMix,
     normalizeStatus,
     normalizeTipe,
+    normalizeChannel,
     type MixPrincipalInput,
 } from "./insentif-sales-calc.ts";
 import { getPeriodWorkdayProgress } from "../app/(dashboard)/insentif-sales/data.ts";
@@ -263,6 +264,15 @@ assert.deepStrictEqual(
     ]);
     const jumlahRincian = r.rincian.reduce((s, x) => s + x.total, 0);
     approx(r.total, jumlahRincian, "total tidak melebihkan porsi Value principal minus");
+}
+
+// === normalizeChannel: kegagalan senyap jadi penolakan bernomor baris ===
+{
+    assert.strictEqual(normalizeChannel("gt"), "GT", "huruf kecil diterima");
+    assert.strictEqual(normalizeChannel(" Tt "), "TT", "spasi & kapitalisasi campur diterima");
+    assert.strictEqual(normalizeChannel("MT"), "MT");
+    assert.throws(() => normalizeChannel("GTT"), /Channel tidak dikenal/, "nilai asing ditolak");
+    assert.throws(() => normalizeChannel(""), /Channel tidak dikenal/, "kosong ditolak");
 }
 
 console.log("OK — all insentif-sales-calc checks passed");

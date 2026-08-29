@@ -17,7 +17,7 @@ import { db } from "@/lib/db";
 import { salesTargets, spvSalesAssignment } from "@/db/schema";
 import { getTargetsForPeriod } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
-import { normalizeStatus, normalizeTipe } from "@/lib/insentif-sales-calc";
+import { normalizeStatus, normalizeTipe, normalizeChannel } from "@/lib/insentif-sales-calc";
 import { getScopeForUser, getUserHierarchyIdentity, getSpvOwnerMap } from "@/lib/insentif-hierarchy-scope";
 
 // Upload target bisa ratusan baris. Konvensi repo: route unggah berat menaikkan batas ini
@@ -98,6 +98,7 @@ export async function POST(req: NextRequest) {
 
     interface PreparedRow {
         input: TargetInput;
+        channel: string;
         tipeSales: string;
         statusInsentif: string;
         spvName: string | null;
@@ -125,6 +126,16 @@ export async function POST(req: NextRequest) {
                 );
             }
         }
+        let channel: string;
+        try {
+            channel = normalizeChannel(t.channel ?? "TT");
+        } catch (e) {
+            return NextResponse.json(
+                { error: `Baris ${t.salesCode}: ${e instanceof Error ? e.message : "Channel tidak valid"}` },
+                { status: 400 },
+            );
+        }
+
         let tipeSales: string, statusInsentif: string;
         try {
             tipeSales = normalizeTipe(t.tipeSales ?? "exclusive");
@@ -134,7 +145,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: `Baris ${t.salesCode}/${t.principle}: ${msg}` }, { status: 400 });
         }
         prepared.push({
-            input: t,
+            input: t, channel,
             tipeSales,
             statusInsentif,
             // trim() WAJIB: spvName/smName dipakai LANGSUNG sebagai kunci grouping di
@@ -166,6 +177,25 @@ export async function POST(req: NextRequest) {
             );
         }
         seen.set(k, t.branch);
+    }
+
+    // Satu kode sales tidak boleh punya dua `tipeSales`. `computeExclusive` dipanggil PER BARIS
+    // dengan pool penuh Rp 1jt, jadi tiga principal satu salesman yang semuanya tertulis
+    // "Exclusive" dibayar 3 x Rp 1.000.000, padahal mix n=3 = Rp 1.200.000
+    // (audit 2026-08-28, M6).
+    const tipePerKode = new Map<string, string>();
+    for (const { input: t, tipeSales } of prepared) {
+        const sebelumnya = tipePerKode.get(t.salesCode);
+        if (sebelumnya !== undefined && sebelumnya !== tipeSales) {
+            return NextResponse.json(
+                {
+                    error: `${t.salesCode}: tipe sales tidak konsisten antar baris `
+                        + `("${sebelumnya}" dan "${tipeSales}"). Satu kode sales harus satu tipe.`,
+                },
+                { status: 400 },
+            );
+        }
+        tipePerKode.set(t.salesCode, tipeSales);
     }
 
     // ── PASS 2: cek kepemilikan scope, sekali jalan pakai peta yang dihitung SEKALI ──
@@ -227,7 +257,7 @@ export async function POST(req: NextRequest) {
                     salesName: t.salesName,
                     principle: t.principle,
                     branch: t.branch,
-                    channel: t.channel ?? "TT",
+                    channel: p.channel,
                     spvName: p.spvName,
                     smName: p.smName,
                     periodMonth: t.periodMonth,
@@ -248,7 +278,7 @@ export async function POST(req: NextRequest) {
                     set: {
                         salesName: t.salesName,
                         branch: t.branch,
-                        channel: t.channel ?? "TT",
+                        channel: p.channel,
                         spvName: p.spvName,
                         smName: p.smName,
                         targetValue: t.targetValue,

@@ -99,6 +99,67 @@ export async function POST(req: NextRequest) {
                     { status: 400 },
                 );
             }
+            // EC/AO/IA adalah CACAHAN dan kolomnya `integer` di DB. Pecahan lolos validasi lama
+            // lalu ditolak Postgres di tengah transaksi, sehingga upload 2.000 baris rollback
+            // dengan pesan mentah tanpa menunjuk barisnya (audit 2026-08-28, H10).
+            if (field !== "achievedValueDpp" && !Number.isInteger(Number(p[field]))) {
+                return NextResponse.json(
+                    { error: `Baris ${p.salesCode}/${p.principle} ${p.date}: ${label} harus bilangan bulat (${String(p[field])}).` },
+                    { status: 400 },
+                );
+            }
+        }
+    }
+
+    // Tanggal: format ketat + harus masuk akal untuk periodenya. Kolomnya `text`, jadi nilai
+    // sampah tersimpan tanpa error dan tidak akan pernah cocok dengan kunci hapus upload
+    // berikutnya — realisasi menumpuk diam-diam (M9). Dan periode diambil dari dropdown UI,
+    // bukan dari tanggal, sehingga closing Juli yang diunggah saat dropdown menunjuk Agustus
+    // mendarat di bulan yang salah tanpa satu pun penolakan (H12). Ini sudah pernah terjadi.
+    for (const p of valid) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(p.date)) {
+            return NextResponse.json(
+                { error: `Baris ${p.salesCode}/${p.principle}: tanggal "${p.date}" tidak terbaca.` },
+                { status: 400 },
+            );
+        }
+        const [ty, tm] = p.date.split("-").map(Number);
+        const bulanBerikut = p.periodMonth === 12 ? 1 : p.periodMonth + 1;
+        const tahunBerikut = p.periodMonth === 12 ? p.periodYear + 1 : p.periodYear;
+        // Tanggal 1 bulan berikutnya SAH: konversi tanggal Excel membulatkan 31 Juli 23:59:35
+        // ke 1 Agustus, dan baris itu memang milik closing Juli (lihat lib/excel-date.ts).
+        const sesuai = (ty === p.periodYear && tm === p.periodMonth)
+            || (ty === tahunBerikut && tm === bulanBerikut && p.date.endsWith("-01"));
+        if (!sesuai) {
+            return NextResponse.json(
+                {
+                    error: `Tanggal ${p.date} tidak cocok dengan periode ${p.periodMonth}/${p.periodYear} `
+                        + `(baris ${p.salesCode}/${p.principle}). Cek pemilih PERIODE sebelum mengunggah.`,
+                },
+                { status: 400 },
+            );
+        }
+    }
+
+    // Kepemilikan. Pola DELETE-lalu-INSERT di bawah menghapus baris berdasarkan salesCode DARI
+    // PAYLOAD, jadi tanpa cek ini pemegang izin upload bisa menghapus permanen realisasi tim
+    // lain (kirim nilai 0 untuk beberapa tanggal -> insentif tim itu jadi Rp 0) atau menaikkan
+    // angka timnya sendiri. Pola yang sama sudah dipakai POST /targets (audit 2026-08-28, H2).
+    {
+        const acuan = valid[0];
+        const scope = await getScopeForUser(
+            gate.session.user.id,
+            { month: acuan.periodMonth, year: acuan.periodYear },
+            gate.perms,
+        );
+        if (scope !== null) {
+            const luar = valid.find((x) => !scope.has(x.salesCode));
+            if (luar) {
+                return NextResponse.json(
+                    { error: `Baris ${luar.salesCode}: di luar cakupan tim Anda.` },
+                    { status: 403 },
+                );
+            }
         }
     }
 

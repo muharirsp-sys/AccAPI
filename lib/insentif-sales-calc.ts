@@ -223,6 +223,19 @@ export function computeMix(principals: MixPrincipalInput[]): MixResult {
     };
 }
 
+/**
+ * Normalisasi kolom "Channel". Dibaca dengan perbandingan literal ("GT"/"TT"/"MT") di seluruh
+ * modul, sementara nilainya dulu masuk apa adanya dari Excel — `"Gt"` berarti tidak cocok
+ * cabang mana pun sehingga SELURUH baris itu insentifnya Rp 0, kolom Pencapaian tetap terisi
+ * normal (jadi tidak terlihat salah), dan barisnya hilang dari panel Input Support sehingga
+ * Finance tidak bisa memperbaikinya dari layar (audit 2026-08-28, M4).
+ */
+export function normalizeChannel(raw: string): "GT" | "TT" | "MT" {
+    const v = raw.trim().toUpperCase();
+    if (v === "GT" || v === "TT" || v === "MT") return v;
+    throw new Error(`Channel tidak dikenal: "${raw}". Pakai GT, TT, atau MT.`);
+}
+
 /** Normalisasi nilai kolom Excel "Status Insentif". Lempar error utk nilai tak dikenal (trust boundary). */
 export function normalizeStatus(raw: string): StatusInsentif {
     const s = raw.trim().toLowerCase().replace(/\s+/g, "");
