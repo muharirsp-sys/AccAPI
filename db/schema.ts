@@ -783,6 +783,10 @@ export const salesDailyProgress = pgTable("sales_daily_progress", {
     // index komposit, planner memakai idx_sdp_code lalu memfilter sisanya di heap, dan jumlah
     // baris per sales_code TUMBUH linier dengan riwayat (audit temuan M1).
     // Belum aktif di produksi — lihat docs/handover/DDL_AUDIT_INSENTIF_2026-08-24.sql.
+    // Kunci idempotensi upload. Kedua penulis (upload closing & laporan-harian) beragregasi
+    // tepat ke grain ini; tanpa UNIQUE, retry setelah 502 menggandakan realisasi tanpa error
+    // (audit 2026-08-28, H5). Produksi: docs/handover/DDL_INSENTIF_HARDENING_2026-08-29.sql.
+    uniqKey: uniqueIndex("uq_sdp_key").on(t.salesCode, t.principle, t.branch, t.periodYear, t.periodMonth, t.date),
     scopeIdx: index("idx_sdp_code_prin_period_date").on(t.salesCode, t.principle, t.periodYear, t.periodMonth, t.date),
 }));
 

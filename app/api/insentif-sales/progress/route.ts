@@ -24,7 +24,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { salesDailyProgress } from "@/db/schema";
 import { computeMtdProgress } from "@/lib/insentif-sales";
@@ -178,17 +178,25 @@ export async function POST(req: NextRequest) {
 
     let replaced = 0;
     await db.transaction(async (tx) => {
-        for (const sc of scopes.values()) {
+        // Satu DELETE per potongan, bukan satu DELETE per baris. Payload sudah beragregasi ke
+        // grain yang hampir sama dengan `scopes`, jadi pola lama = ~2.000 round-trip berurutan
+        // di dalam SATU transaksi: puluhan detik pada data 10x, memegang satu koneksi pool dan
+        // row lock selama itu, lalu 502 di browser → user menekan ulang → realisasi dobel
+        // (audit 2026-08-28, H6 dan H5). Kolom yang dipakai persis prefiks
+        // idx_sdp_code_prin_period_date, jadi indeksnya tetap terpakai.
+        const daftar = [...scopes.values()];
+        for (let i = 0; i < daftar.length; i += 100) {
+            const potongan = daftar.slice(i, i + 100);
             const del = await tx
                 .delete(salesDailyProgress)
                 .where(
-                    and(
+                    or(...potongan.map((sc) => and(
                         eq(salesDailyProgress.salesCode, sc.salesCode),
                         eq(salesDailyProgress.principle, sc.principle),
                         eq(salesDailyProgress.periodMonth, sc.periodMonth),
                         eq(salesDailyProgress.periodYear, sc.periodYear),
                         eq(salesDailyProgress.date, sc.date),
-                    ),
+                    ))),
                 );
             replaced += del.rowCount ?? 0;
         }
