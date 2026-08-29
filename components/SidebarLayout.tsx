@@ -6,7 +6,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useLayoutEffect, useState } from "react";
-import { Menu, Home, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ShieldCheck, ClipboardCheck, ReceiptText, Trophy, ClipboardList, History, Send, GitCompareArrows, X } from "lucide-react";
+import { Menu, Home, Database, Server, LogOut, Percent, CalendarCheck2, DollarSign, Wallet, Settings2, FileText, Shield, ShieldCheck, ClipboardCheck, ReceiptText, Trophy, ClipboardList, History, Send, GitCompareArrows, PackageCheck, X } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -142,6 +142,7 @@ export default function SidebarLayout({ children, localAuthRole, permKeys }: { c
         { name: "Finance", icon: DollarSign, href: "/finance" },
         { name: "Insentif Sales", icon: Trophy, href: "/insentif-sales" },
         { name: "Laporan Harian", icon: Send, href: "/laporan-harian" },
+        { name: "Rekapan Nota", icon: PackageCheck, href: "/rekapan-nota" },
         { name: "Form Kontrol", icon: ClipboardList, href: "/form-kontrol" },
         { name: "Pembayaran / SPPD", icon: Wallet, href: "/payments" },
         { name: "Format SPPD", icon: FileText, href: "/payments/sppd" },

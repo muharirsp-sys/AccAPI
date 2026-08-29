@@ -37,6 +37,9 @@ export const PERMISSION_REGISTRY = {
     sales_history: ["view", "export", "manage"],
     // Laporan Harian per SPV/SM (upload FIX -> feed dashboard + email). send = kirim email (gated); manage = ubah mapping penerima.
     laporan_harian: ["view", "upload", "send", "manage"],
+    // Rekapan Nota (wave-based picking). print = cetak lembar picking/TTF;
+    // approve_takeout = melepas nota dari wave (butuh persetujuan gudang, Q9).
+    rekapan_nota: ["view", "manage", "print", "approve_takeout"],
 } as const;
 
 export type PermissionModule = keyof typeof PERMISSION_REGISTRY;

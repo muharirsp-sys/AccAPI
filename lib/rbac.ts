@@ -33,6 +33,7 @@ export const appModules = [
     "users",
     "sales_history",
     "laporan_harian",
+    "rekapan_nota",
 ] as const;
 export type AppModule = (typeof appModules)[number];
 
@@ -51,6 +52,7 @@ export const moduleLabels: Record<AppModule, string> = {
     users: "Users & RBAC",
     sales_history: "History Penjualan",
     laporan_harian: "Laporan Harian",
+    rekapan_nota: "Rekapan Nota",
 };
 
 export const permissionActions = [
@@ -82,11 +84,15 @@ export const permissionActions = [
     "delete_user",
     "set_role",
     "set_permission",
+    "print",
+    "approve_takeout",
 ] as const;
 export type PermissionAction = (typeof permissionActions)[number];
 
 export const actionLabels: Record<PermissionAction, string> = {
     send: "Kirim Email",
+    print: "Cetak",
+    approve_takeout: "Setujui Take-out",
     view: "Lihat",
     create: "Buat",
     edit: "Edit",
@@ -131,6 +137,7 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission", "manage"],
     sales_history: ["view", "export", "manage"],
     laporan_harian: ["view", "upload", "send", "manage"],
+    rekapan_nota: ["view", "manage", "print", "approve_takeout"],
 };
 
 export type PermissionMap = Partial<Record<AppModule, PermissionAction[]>>;
@@ -207,7 +214,8 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("off_program_control", ["view", "update", "approve", "export"]),
         pick("reconciliation", ["view"]),
         pick("claim_workflow", ["view", "approve", "export"]),
-        pick("sales_history", ["view", "export", "manage"])
+        pick("sales_history", ["view", "export", "manage"]),
+        pick("rekapan_nota", ["view", "manage", "print", "approve_takeout"])
     ),
     finance: mergePermissionMaps(
         pick("dashboard", ["view"]),
@@ -263,6 +271,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/faktur", module: "sales_history", action: "view" },
     { prefix: "/sales-history", module: "sales_history", action: "view" },
     { prefix: "/laporan-harian", module: "laporan_harian", action: "view" },
+    { prefix: "/rekapan-nota", module: "rekapan_nota", action: "view" },
     { prefix: "/", module: "dashboard", action: "view" },
 ];
 
