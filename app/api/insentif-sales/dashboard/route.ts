@@ -25,7 +25,7 @@ import {
 } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getGtAoTargetMode } from "@/lib/insentif-settings";
-import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
+import { getScopeForUser, getUserHierarchyIdentity } from "@/lib/insentif-hierarchy-scope";
 import { isOfficeRow } from "@/lib/insentif-sm-calc";
 import {
     computeExclusive,
@@ -190,7 +190,12 @@ export async function GET(req: NextRequest) {
             // Jalur uang MT tidak terpengaruh — ini murni salah tampil (dilaporkan user 2026-08-26).
             const isqTgt = t.targetIa;
             const pIsq = pct(isqReal, isqTgt);
-            const totalAchieve = Math.round(((pVal + pEc + pAo + pIsq) / 4) * 10) / 10;
+            // GT/TT hanya dibayar atas 2 KPI (Value 30% + AO 70%); merata-ratakan 4 KPI membuat
+            // Total Pencapaian turun belasan poin karena EC dan ISQ yang tidak menghasilkan uang
+            // sama sekali. MT memang 4 KPI (audit 2026-08-28, LOW-ISQ).
+            const totalAchieve = isSchemeChannel(t.channel)
+                ? Math.round(((pVal + pAo) / 2) * 10) / 10
+                : Math.round(((pVal + pEc + pAo + pIsq) / 4) * 10) / 10;
 
             let incentive: { value: number; ec: number; ao: number; isq: number; total: number };
 
@@ -256,5 +261,16 @@ export async function GET(req: NextRequest) {
             };
     });
 
-    return NextResponse.json({ month, year, timeGone, rows, progressFeed, gtAoMode });
+    // Layar harus bisa membedakan "tidak ada datanya" dari "bukan cakupan Anda". Keduanya
+    // sekarang menghasilkan tabel kosong yang identik, dan itu tidak bisa dibedakan dari
+    // "target belum diunggah" (audit 2026-08-28, M13).
+    const cakupan = scope === null
+        ? { dibatasi: false as const }
+        : {
+            dibatasi: true as const,
+            jumlahKode: scope.size,
+            identitas: await getUserHierarchyIdentity(gate.session.user.id),
+        };
+
+    return NextResponse.json({ month, year, timeGone, rows, progressFeed, gtAoMode, cakupan });
 }

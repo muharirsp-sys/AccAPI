@@ -178,6 +178,24 @@ function CollapsiblePanel({ icon: Icon, no, title, desc, badge, children }: {
     );
 }
 
+/**
+ * Kenapa baris ini Rp 0. Pertanyaan yang paling sering diajukan ke layar ini adalah "kenapa
+ * dapat / tidak dapat", dan angka nol sendirian tidak pernah menjawabnya — orang lalu menebak
+ * bahwa sistemnya salah. Urutannya mengikuti urutan penolakan di kalkulasi.
+ */
+function sebabNol(r: ApiRow, gtAoMode?: "fixed240" | "file"): string | null {
+    if (r.incentive.total > 0) return null;
+    if (r.statusInsentif === "principle") return "tidak ikut skema";
+    if (!(r.target.value > 0)) return "target belum diisi";
+    if (!(r.real.value > 0)) return "penjualan bersih ≤ 0";
+    if (r.channel !== "GT" && r.channel !== "TT" && r.channel !== "MT") return `channel "${r.channel}" tak dikenal`;
+    if ((r.support ?? 0) >= 1_000_000) return "ditanggung principle";
+    const ambangAo = r.channel === "MT" || gtAoMode === "file" ? r.target.ao : 240;
+    const pctAoDibayar = ambangAo > 0 ? (r.real.ao / ambangAo) * 100 : 0;
+    if (r.pct.value < 90 && pctAoDibayar < 90) return "belum 90%";
+    return null;
+}
+
 /** Persentase dari API sudah berskala 0-100 (lib/insentif-sales.pct), bukan rasio. */
 function formatPctText(v: number) {
     return `${v.toFixed(1)}%`;
@@ -350,6 +368,7 @@ function SpvBreakdown({ rincian }: { rincian: SpvIncentiveDetail[] }) {
                     <th className="text-right font-semibold pb-2">Realisasi</th>
                     <th className="text-right font-semibold pb-2">Pencapaian</th>
                     <th className="text-right font-semibold pb-2">Rate</th>
+                    <th className="text-right font-semibold pb-2">Support</th>
                     <th className="text-right font-semibold pb-2">Insentif</th>
                 </tr>
             </thead>
@@ -361,13 +380,20 @@ function SpvBreakdown({ rincian }: { rincian: SpvIncentiveDetail[] }) {
                         <td className="py-2 text-right font-mono text-slate-300">{formatRp(d.realisasiValue)}</td>
                         <td className="py-2 text-right font-mono text-slate-300">{formatPctText(pencapaian(d))}</td>
                         <td className="py-2 text-right font-mono text-slate-400">{formatRp(d.rate)}</td>
+                        <td className="py-2 text-right font-mono text-slate-400">{(d.support ?? 0) > 0 ? formatRp(d.support) : "-"}</td>
                         <td className={`py-2 text-right font-mono ${d.insentif > 0 ? "text-amber-400/90" : "text-slate-500"}`}>
-                            {d.insentif > 0 ? formatRp(d.insentif) : "Rp 0 · belum 100%"}
+                            {d.insentif > 0
+                                ? formatRp(d.insentif)
+                                // Label lama selalu berbunyi "belum 100%" — termasuk untuk baris
+                                // berpencapaian 130% yang nol karena support menutup penuh rate.
+                                : (d.porsiDistributor ?? d.rate) <= 0
+                                    ? "Rp 0 · ditanggung principle"
+                                    : "Rp 0 · belum 100%"}
                         </td>
                     </tr>
                 ))}
                 {rincian.length === 0 && (
-                    <tr><td colSpan={6} className="py-3 text-slate-500 italic">Tidak ada principal valid untuk SPV ini.</td></tr>
+                    <tr><td colSpan={7} className="py-3 text-slate-500 italic">Tidak ada principal valid untuk SPV ini.</td></tr>
                 )}
             </tbody>
         </table>
@@ -741,6 +767,7 @@ function IncentiveTable({ apiRows, gtAoMode }: { apiRows: ApiRow[]; gtAoMode?: "
                             const statusLabel: Record<string, string> = { lunas: "Lunas", tunggakan: "Tunggakan", belum: "Belum" };
                             const sc = statusMap[r.paymentStatus] ?? statusMap.belum;
                             const key = `${r.salesCode}|${r.principle}`;
+                            const sebab = sebabNol(r, gtAoMode);
                             return (
                                 <Fragment key={key}>
                                     <tr {...rowProps(key)}>
@@ -750,7 +777,10 @@ function IncentiveTable({ apiRows, gtAoMode }: { apiRows: ApiRow[]; gtAoMode?: "
                                         </td>
                                         <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.incentive.value)}</td>
                                         <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.incentive.ao)}</td>
-                                        <td className="px-3 py-3 text-right bg-amber-500/5 font-mono font-bold text-amber-400">{formatRp(r.incentive.total)}</td>
+                                        <td className="px-3 py-3 text-right bg-amber-500/5">
+                                            <div className="font-mono font-bold text-amber-400">{formatRp(r.incentive.total)}</div>
+                                            {sebab && <div className="text-[10px] font-normal text-slate-500 mt-0.5">{sebab}</div>}
+                                        </td>
                                         <td className="px-3 py-3 text-center">
                                             <span className={`inline-block px-2 py-0.5 rounded border text-[10px] font-bold ${sc}`}>
                                                 {statusLabel[r.paymentStatus] ?? "Belum"}
@@ -804,8 +834,8 @@ function SpvView({ rows, progress: tg }: { rows: Salesman[]; progress: WorkdayPr
                             <th className="px-3 py-3 text-center">Value (T/R/%)</th>
                             <th className="px-3 py-3 text-center">AO TT (%)</th>
                             <th className="px-3 py-3 text-center">Avg AO/Sales</th>
-                            <th className="px-3 py-3 text-center">Ave IA TT</th>
-                            <th className="px-3 py-3 text-center">Ave IA MT</th>
+                            <th className="px-3 py-3 text-center">IA/Toko TT</th>
+                            <th className="px-3 py-3 text-center">IA/Toko MT</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-white/[0.1]">
@@ -819,8 +849,11 @@ function SpvView({ rows, progress: tg }: { rows: Salesman[]; progress: WorkdayPr
                             // 1 salesman bisa banyak baris (per principle) → count distinct salesCode untuk per-sales.
                             const salesmanCount = new Set(list.map((r) => r.code)).size;
                             const avgAo = salesmanCount ? Math.round(list.reduce((a, r) => a + r.realAo, 0) / salesmanCount) : 0;
-                            const aveIaTt = ttList.length ? Math.round(ttList.reduce((a, r) => a + r.realIa, 0) / ttList.length) : 0;
-                            const aveIaMt = mtList.length ? Math.round(mtList.reduce((a, r) => a + r.realIa, 0) / mtList.length) : 0;
+                            // IA per OUTLET (itemSuper), bukan total dibagi jumlah baris. Kolom lama menampilkan
+                            // ~1.200 sementara angka yang dipakai membayar 10,4 — pola yang sama dengan
+                            // ISQ 6.103% (audit 2026-08-28, M12).
+                            const aveIaTt = itemSuper(ttList.reduce((a, r) => a + r.realIa, 0), ttList.reduce((a, r) => a + r.realAo, 0));
+                            const aveIaMt = itemSuper(mtList.reduce((a, r) => a + r.realIa, 0), mtList.reduce((a, r) => a + r.realAo, 0));
                             return (
                                 <tr key={spv} className="even:bg-white/[0.025] hover:bg-white/[0.05] transition-colors">
                                     <td className="px-3 py-3">
@@ -869,8 +902,8 @@ function SmView({ rows, progress }: { rows: Salesman[]; progress: WorkdayProgres
                             <th className="px-3 py-3 text-center">Value (T/R/%)</th>
                             <th className="px-3 py-3 text-center">AO TT (%)</th>
                             <th className="px-3 py-3 text-center">Avg AO/Sales</th>
-                            <th className="px-3 py-3 text-center">Ave IA TT</th>
-                            <th className="px-3 py-3 text-center">Ave IA MT</th>
+                            <th className="px-3 py-3 text-center">IA/Toko TT</th>
+                            <th className="px-3 py-3 text-center">IA/Toko MT</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-white/[0.1]">
@@ -882,9 +915,16 @@ function SmView({ rows, progress }: { rows: Salesman[]; progress: WorkdayProgres
                             const mtList = list.filter((r) => r.channel === "MT");
                             const aoTtReal = ttList.reduce((a, r) => a + r.realAo, 0);
                             const aoTtTarget = ttList.reduce((a, r) => a + r.targetAo, 0);
-                            const avgAo = list.length ? Math.round(list.reduce((a, r) => a + r.realAo, 0) / list.length) : 0;
-                            const aveIaTt = ttList.length ? Math.round(ttList.reduce((a, r) => a + r.realIa, 0) / ttList.length) : 0;
-                            const aveIaMt = mtList.length ? Math.round(mtList.reduce((a, r) => a + r.realIa, 0) / mtList.length) : 0;
+                            // Per SALESMAN, sama seperti SpvView: satu salesman bisa punya banyak baris
+                            // (per principle), jadi membaginya dengan jumlah baris memberi angka 3x
+                            // lebih kecil untuk populasi yang sama, di bawah label yang sama (M12).
+                            const salesmanCount = new Set(list.map((r) => r.code)).size;
+                            const avgAo = salesmanCount ? Math.round(list.reduce((a, r) => a + r.realAo, 0) / salesmanCount) : 0;
+                            // IA per OUTLET (itemSuper), bukan total dibagi jumlah baris. Kolom lama menampilkan
+                            // ~1.200 sementara angka yang dipakai membayar 10,4 — pola yang sama dengan
+                            // ISQ 6.103% (audit 2026-08-28, M12).
+                            const aveIaTt = itemSuper(ttList.reduce((a, r) => a + r.realIa, 0), ttList.reduce((a, r) => a + r.realAo, 0));
+                            const aveIaMt = itemSuper(mtList.reduce((a, r) => a + r.realIa, 0), mtList.reduce((a, r) => a + r.realAo, 0));
                             return (
                                 <tr key={key} className="even:bg-white/[0.025] hover:bg-white/[0.05] transition-colors">
                                     <td className="px-3 py-3 font-semibold text-slate-200">{sm}</td>
@@ -1020,6 +1060,10 @@ interface SpvIncentiveDetail {
     realisasiValue: number;
     pctValue: number;
     rate: number;
+    /** Support principle utk SPV pada principal ini — dikirim API, dulu tidak dideklarasikan. */
+    support: number;
+    /** rate − support (floor 0). Ini yang benar-benar dibayar distributor. */
+    porsiDistributor: number;
     insentif: number;
 }
 interface SpvIncentiveRow {
@@ -3323,6 +3367,11 @@ export default function InsentifSalesPage() {
     // Ambang AO yang dipakai server menghitung baris-baris ini. Diteruskan ke rincian supaya
     // layar tidak pernah mengklaim ambang yang berbeda dari yang dipakai membayar.
     const [gtAoMode, setGtAoMode] = useState<"fixed240" | "file">("fixed240");
+    const [cakupan, setCakupan] = useState<{
+        dibatasi: boolean;
+        jumlahKode?: number;
+        identitas?: { role: string; name: string } | null;
+    }>({ dibatasi: false });
     const [loading, setLoading] = useState(true);
     const [dashboardError, setDashboardError] = useState("");
     const pathname = usePathname();
@@ -3366,6 +3415,7 @@ export default function InsentifSalesPage() {
             setApiRows(data.rows as ApiRow[]);
             setProgressFeed(data.progressFeed as ProgressFeedStatus);
             setGtAoMode(data.gtAoMode === "file" ? "file" : "fixed240");
+            setCakupan(data.cakupan ?? { dibatasi: false });
         } catch (error) {
             setApiRows([]);
             setProgressFeed(null);
@@ -3531,12 +3581,21 @@ export default function InsentifSalesPage() {
                 />
             ) : salesmen.length === 0 && view !== "admin" && view !== "finance" ? (
                 <EmptyState
-                    title={progressFeed?.progressKeys && !progressFeed.targetKeys
-                        ? "Target periode ini belum diunggah"
-                        : "Tidak ada data untuk filter ini"}
-                    message={progressFeed?.progressKeys && !progressFeed.targetKeys
-                        ? `${progressFeed.progressKeys.toLocaleString("id-ID")} kombinasi pencapaian sudah diterima. Unggah target agar performa dan insentif dapat dihitung.`
-                        : "Ubah principle atau cabang, lalu periksa kembali hasilnya."}
+                    title={cakupan.dibatasi && !cakupan.jumlahKode
+                        ? "Belum ada salesman dalam cakupan Anda"
+                        : progressFeed?.progressKeys && !progressFeed.targetKeys
+                            ? "Target periode ini belum diunggah"
+                            : "Tidak ada data untuk filter ini"}
+                    // Tabel kosong karena "bukan cakupan Anda" dulu terlihat persis sama dengan
+                    // "target belum diunggah". Nama identitas disebutkan karena penyebab paling
+                    // sering adalah bedanya penulisan nama ("Marten" vs "MARTEN").
+                    message={cakupan.dibatasi && !cakupan.jumlahKode
+                        ? `Identitas hierarki Anda: ${cakupan.identitas?.role?.toUpperCase() ?? "-"} `
+                          + `"${cakupan.identitas?.name ?? "belum diisi"}". Tidak ada kode sales yang cocok untuk periode ini — `
+                          + `pastikan penulisannya sama persis dengan kolom SPV/SM di file target.`
+                        : progressFeed?.progressKeys && !progressFeed.targetKeys
+                            ? `${progressFeed.progressKeys.toLocaleString("id-ID")} kombinasi pencapaian sudah diterima. Unggah target agar performa dan insentif dapat dihitung.`
+                            : "Ubah principle atau cabang, lalu periksa kembali hasilnya."}
                     actionLabel={progressFeed?.progressKeys && !progressFeed.targetKeys ? "Buka Input Penjualan" : "Reset Filter"}
                     onAction={() => progressFeed?.progressKeys && !progressFeed.targetKeys
                         ? updateContext({ view: "admin" })
