@@ -1895,7 +1895,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                     invoiceNumber: r.invoiceNumber,
                     achievedValueDpp: 0, achievedEc: 0, achievedAo: 0, achievedIa: 0,
                 };
-                // VINDA / KINO NON FOOD / MIX NON FOOD memakai NILAI_JUAL, sisanya DPP.
+                // VINDA / KINO NON FOOD / MIX NON FOOD / ABC memakai NILAI_JUAL, sisanya DPP.
                 cur.achievedValueDpp += realisasiValue(branch, r.dpp, r.nilaiJual);
                 cur.achievedEc += r.ec;
                 cur.achievedAo += r.ao;
