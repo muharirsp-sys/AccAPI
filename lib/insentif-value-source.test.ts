@@ -3,7 +3,7 @@
  * Jalankan: node --experimental-strip-types lib/insentif-value-source.test.ts
  */
 import assert from "node:assert";
-import { valueSourceForBranch, realisasiValue } from "./insentif-value-source.ts";
+import { valueSourceForBranch, realisasiValue, DEFAULT_BRANCH_NILAI_JUAL } from "./insentif-value-source.ts";
 
 // --- empat cabang yang pakai NILAI_JUAL ---
 for (const b of ["VINDA", "KINO NON FOOD", "MIX NON FOOD", "ABC"]) {
@@ -41,5 +41,21 @@ assert.strictEqual(realisasiValue("HEINZ", 100, 123), 100, "HEINZ ambil DPP");
 // retur bernilai negatif harus lewat apa adanya, tidak dibalik tandanya
 assert.strictEqual(realisasiValue("VINDA", -100, -123), -123, "retur VINDA tetap negatif");
 assert.strictEqual(realisasiValue("ABC", -100, -123), -123, "retur ABC tetap negatif");
+
+// --- daftar dapat diganti dari setelan (app_setting), bukan cuma bawaan ---
+{
+    const daftar = ["HEINZ", "MONTISS"];
+    assert.strictEqual(valueSourceForBranch("HEINZ", daftar), "nilai_jual", "daftar kustom dipakai");
+    // Bawaan TIDAK ikut menempel: mengosongkan ABC dari daftar berarti ABC kembali DPP.
+    assert.strictEqual(valueSourceForBranch("ABC", daftar), "dpp", "bawaan tidak diam-diam ditambahkan");
+    assert.strictEqual(realisasiValue("HEINZ", 100, 123, daftar), 123, "realisasiValue ikut daftar");
+    // Normalisasi berlaku pada ISI daftar juga, bukan cuma pada argumen cabang — setelan
+    // diketik manusia, jadi "  mix  non food " harus tetap cocok.
+    assert.strictEqual(valueSourceForBranch("MIX NON FOOD", ["  mix  non food "]), "nilai_jual", "isi daftar dinormalisasi");
+}
+// Daftar KOSONG berarti semuanya DPP — keputusan yang sah, bukan alasan jatuh ke bawaan.
+assert.strictEqual(valueSourceForBranch("VINDA", []), "dpp", "daftar kosong = semua DPP");
+// Tanpa argumen tetap memakai bawaan yang sama dengan konstanta yang diekspor.
+assert.deepStrictEqual([...DEFAULT_BRANCH_NILAI_JUAL], ["VINDA", "KINO NON FOOD", "MIX NON FOOD", "ABC"], "isi bawaan");
 
 console.log("OK insentif-value-source");
