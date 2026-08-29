@@ -284,5 +284,10 @@ export async function GET(req: NextRequest) {
         sm: daftarUnik(groupTargets.map((t) => t.smName)),
     };
 
-    return NextResponse.json({ month, year, timeGone, rows, progressFeed, gtAoMode, cakupan, opsiFilter });
+    // Izin pemanggil (khusus modul ini) dikirim balik supaya layar bisa menyembunyikan tab yang
+    // memang tidak boleh dibuka. Ini MURNI UX — setiap endpoint tetap menjaga dirinya sendiri;
+    // menyembunyikan tab tanpa guard server bukan keamanan, cuma tebal-tipis basa-basi.
+    const izin = [...(gate.perms ?? [])].filter((k) => k.startsWith("insentif_sales."));
+
+    return NextResponse.json({ month, year, timeGone, rows, progressFeed, gtAoMode, cakupan, opsiFilter, izin });
 }

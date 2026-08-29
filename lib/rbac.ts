@@ -33,6 +33,7 @@ export const appModules = [
     "users",
     "sales_history",
     "laporan_harian",
+    "insentif_sales",
 ] as const;
 export type AppModule = (typeof appModules)[number];
 
@@ -51,6 +52,7 @@ export const moduleLabels: Record<AppModule, string> = {
     users: "Users & RBAC",
     sales_history: "History Penjualan",
     laporan_harian: "Laporan Harian",
+    insentif_sales: "Insentif Sales",
 };
 
 export const permissionActions = [
@@ -82,11 +84,25 @@ export const permissionActions = [
     "delete_user",
     "set_role",
     "set_permission",
+    "view_dashboard",
+    "view_all",
+    "upload_target",
+    "upload_progress",
+    "input_support",
+    "manage_payment",
+    "manage_hierarchy",
 ] as const;
 export type PermissionAction = (typeof permissionActions)[number];
 
 export const actionLabels: Record<PermissionAction, string> = {
     send: "Kirim Email",
+    view_dashboard: "Lihat Dashboard",
+    view_all: "Lihat Semua Cakupan",
+    upload_target: "Unggah Target",
+    upload_progress: "Unggah Closing",
+    input_support: "Input Support",
+    manage_payment: "Kelola Pembayaran",
+    manage_hierarchy: "Kelola Hierarki",
     view: "Lihat",
     create: "Buat",
     edit: "Edit",
@@ -131,6 +147,12 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission", "manage"],
     sales_history: ["view", "export", "manage"],
     laporan_harian: ["view", "upload", "send", "manage"],
+    // Sengaja dipecah halus: Finance cuma butuh view + manage_payment + input_support,
+    // dan TIDAK boleh dapat view_dashboard/upload_* (permintaan user 2026-08-29).
+    insentif_sales: [
+        "view", "view_dashboard", "view_all", "manage", "upload_target", "upload_progress",
+        "input_support", "manage_payment", "manage_hierarchy",
+    ],
 };
 
 export type PermissionMap = Partial<Record<AppModule, PermissionAction[]>>;
@@ -263,6 +285,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/faktur", module: "sales_history", action: "view" },
     { prefix: "/sales-history", module: "sales_history", action: "view" },
     { prefix: "/laporan-harian", module: "laporan_harian", action: "view" },
+    { prefix: "/insentif-sales", module: "insentif_sales", action: "view" },
     { prefix: "/", module: "dashboard", action: "view" },
 ];
 
