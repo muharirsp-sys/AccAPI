@@ -86,6 +86,11 @@ export interface IncentiveTier {
     amount: number;   // rupiah
 }
 
+// ⚠ TIDAK DIPAKAI. Aturan insentif yang HIDUP ada di lib/insentif-{sales,mt,spv,sm}-calc.ts.
+// Angka di bawah ini bertentangan dengan aturan itu dan tidak punya satu pun pemakai
+// (diverifikasi audit 2026-08-28). Dibiarkan sementara karena penghapusannya menyentuh file
+// yang sedang dipakai pekerjaan lain; jangan mengimpornya — namanya paling meyakinkan, dan
+// itu justru bahayanya.
 export const INCENTIVE_TIERS: Record<KpiType, IncentiveTier[]> = {
     value: [
         { minPct: 80, maxPct: 90, amount: 250_000 },

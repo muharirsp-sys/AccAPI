@@ -21,7 +21,7 @@
  * spv-dashboard/route.ts, supaya konsisten begitu admin mulai isi Kelola Hierarki.
  */
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, desc } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { parsePayee } from "@/lib/insentif-payee";
 import { user, salesTargets, spvSalesAssignment, smSpvAssignment } from "@/db/schema";
@@ -110,8 +110,26 @@ export function payeeInScope(
 
 /** Nama SPV pemilik salesCode saat ini (assignment override, fallback sales_targets.spv_name). null = belum ada yang klaim. */
 export async function getCurrentSpvOwner(salesCode: string): Promise<string | null> {
-    const spvOf = await effectiveSpvBySalesCode();
-    return spvOf.get(salesCode) ?? null;
+    // Assignment (override) dulu, lalu baris target TERBARU untuk kode itu. Versi lama
+    // membangun peta dari SELURUH riwayat sales_targets tanpa ORDER BY, jadi baris bulan lama
+    // bisa menang dan urutannya berubah setelah VACUUM — padahal nilai ini dipakai memutuskan
+    // apakah klaim SPV ditulis langsung atau ditahan approval. Gejalanya berubah antar
+    // percobaan tanpa satu data pun berubah (audit 2026-08-28, M10). Sekaligus: satu query
+    // ber-indeks untuk satu pertanyaan, bukan full-scan.
+    const [assigned] = await db
+        .select({ spvName: spvSalesAssignment.spvName })
+        .from(spvSalesAssignment)
+        .where(eq(spvSalesAssignment.salesCode, salesCode))
+        .limit(1);
+    if (assigned?.spvName) return assigned.spvName;
+
+    const [terbaru] = await db
+        .select({ spvName: salesTargets.spvName })
+        .from(salesTargets)
+        .where(eq(salesTargets.salesCode, salesCode))
+        .orderBy(desc(salesTargets.periodYear), desc(salesTargets.periodMonth))
+        .limit(1);
+    return terbaru?.spvName ?? null;
 }
 
 /**

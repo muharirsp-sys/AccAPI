@@ -1,7 +1,7 @@
 /* Kunci: tanggal Excel tidak boleh meleset satu hari. Regresi nyata, lihat excel-date.ts. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { excelDateToIso } from "./excel-date";
+import { excelDateToIso } from "./excel-date.ts";
 
 test("23:59:35 hari sebelumnya (bentuk keluaran SheetJS) naik ke hari yang benar", () => {
     // Persis yang dikembalikan SheetJS untuk nota INV/2607/SZ00036 = 3 Juli 2026 di Excel.

@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as XLSX from "xlsx";
-import { generateSupportTemplate, parseLocaleNumber, parseSupportExcel } from "./insentif-sales-excel";
+import { generateSupportTemplate, parseLocaleNumber, parseSupportExcel } from "./insentif-sales-excel.ts";
 
 // XLSX.write({type:"array"}) mengembalikan ArrayBuffer, meski tipenya di repo ini di-cast
 // sebagai Uint8Array. Terima dua-duanya supaya test menguji parser, bukan cast itu.

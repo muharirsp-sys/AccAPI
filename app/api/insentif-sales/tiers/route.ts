@@ -53,6 +53,31 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
 
+    // Strata adalah aturan uang untuk SEMUA orang, tapi route ini melewatkan validasi numerik
+    // yang sudah dipasang di targets/support/payments/progress: Infinity/NaN bisa tersimpan
+    // dan mengubah nominal seluruh perusahaan (audit 2026-08-28, M15).
+    for (const t of body) {
+        if (!t.kpiType) continue;
+        for (const [nilai, label] of [
+            [t.minPercentage, "minPercentage"],
+            [t.maxPercentage, "maxPercentage"],
+            [t.incentiveAmount, "incentiveAmount"],
+        ] as const) {
+            if (!Number.isFinite(Number(nilai)) || Number(nilai) < 0) {
+                return NextResponse.json(
+                    { error: `Tier ${t.kpiType}: ${label} tidak valid (${String(nilai)}).` },
+                    { status: 400 },
+                );
+            }
+        }
+        if (Number(t.minPercentage) > Number(t.maxPercentage)) {
+            return NextResponse.json(
+                { error: `Tier ${t.kpiType}: minPercentage lebih besar dari maxPercentage.` },
+                { status: 400 },
+            );
+        }
+    }
+
     const now = new Date();
     let upserted = 0;
 
