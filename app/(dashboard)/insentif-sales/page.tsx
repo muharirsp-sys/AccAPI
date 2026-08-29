@@ -132,6 +132,12 @@ const VIEWS: { key: ViewKey; label: string; icon: typeof Trophy; hidden?: boolea
 ];
 const VIEWS_TERLIHAT = VIEWS.filter((v) => !v.hidden);
 
+// Spanduk status pencocokan Laporan Harian (berapa kombinasi cocok/tanpa target).
+// Disembunyikan atas permintaan user 2026-08-29 — "dulu", jadi saklarnya dibiarkan di sini
+// alih-alih kodenya dibuang. Angkanya tetap dihitung server (progressFeed), jadi
+// menyalakannya lagi cukup mengubah baris ini jadi true.
+const TAMPILKAN_SPANDUK_PROGRES = false;
+
 // ── Reusable bits ──────────────────────────────────────────────────────────
 function paceClasses(level: PaceLevel) {
     if (level === "green") return "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 neon-text-success";
@@ -903,6 +909,10 @@ function SmDashboard({ rows, rowsApi, apiRows, progress, month, year, onSaved, g
             {/* Tabel Insentif SM sengaja TIDAK ikut disaring: stratanya dihitung dari seluruh
                 principal SM itu, menyaringnya akan memajang nominal yang tidak dibayar. */}
             <SmIncentiveTable month={month} year={year} />
+            {/* SPV ikut dibayar dari periode yang sama, jadi SM perlu melihatnya di sini —
+                sama seperti tab Finance. Rate per principal SPV bergantung pada jumlah
+                principal valid yang ia tangani, jadi tabel ini juga tidak ikut disaring. */}
+            <SpvIncentiveTable month={month} year={year} />
             <IncentiveTable apiRows={rowsApi} gtAoMode={gtAoMode} />
         </>
     );
@@ -3512,7 +3522,7 @@ export default function InsentifSalesPage() {
                 </div>
             )}
 
-            {!loading && !dashboardError && progressFeed && progressFeed.progressKeys > 0 && (
+            {TAMPILKAN_SPANDUK_PROGRES && !loading && !dashboardError && progressFeed && progressFeed.progressKeys > 0 && (
                 <div
                     className={`mb-5 flex items-start gap-3 rounded-xl border p-4 ${
                         progressFeed.ready && progressFeed.zeroTargetKeys === 0 && progressFeed.unmatchedKeys === 0
