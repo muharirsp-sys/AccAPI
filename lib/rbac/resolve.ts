@@ -12,7 +12,7 @@
  */
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { user, userGroup, groupPermission } from "@/db/schema";
@@ -27,17 +27,18 @@ function adminPermissionKeys() {
 export async function getUserPermissions(userId: string): Promise<Set<string>> {
     const keys = new Set<string>();
 
-    const groups = await db
-        .select({ groupId: userGroup.groupId })
+    // Satu round-trip, bukan dua berurutan: fungsi ini jalan di SETIAP request dashboard
+    // (layout memanggilnya sebelum render), jadi waterfall-nya langsung terasa saat banyak
+    // request masuk bersamaan. LEFT JOIN dipakai supaya "punya group tapi group kosong"
+    // tetap dibedakan dari "belum punya group" — bedanya menentukan fallback legacy di bawah.
+    const rows = await db
+        .select({ groupId: userGroup.groupId, key: groupPermission.permissionKey })
         .from(userGroup)
+        .leftJoin(groupPermission, eq(groupPermission.groupId, userGroup.groupId))
         .where(eq(userGroup.userId, userId));
 
-    if (groups.length) {
-        const rows = await db
-            .select({ key: groupPermission.permissionKey })
-            .from(groupPermission)
-            .where(inArray(groupPermission.groupId, groups.map((g) => g.groupId)));
-        for (const r of rows) keys.add(r.key);
+    if (rows.length) {
+        for (const r of rows) if (r.key) keys.add(r.key);
         return keys;
     }
 
