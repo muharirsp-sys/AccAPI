@@ -272,5 +272,17 @@ export async function GET(req: NextRequest) {
             identitas: await getUserHierarchyIdentity(gate.session.user.id),
         };
 
-    return NextResponse.json({ month, year, timeGone, rows, progressFeed, gtAoMode, cakupan });
+    // Opsi filter dibangun dari groupTargets (SEBELUM filter tampilan), bukan dari `rows`.
+    // Kalau dibangun dari hasil yang sudah difilter, memilih satu principle akan menyusutkan
+    // daftarnya jadi satu dan tidak ada jalan kembali selain reset. Sumbernya juga bukan
+    // konstanta PRINCIPLES/BRANCHES di klien — isinya data demo, bukan principal produksi.
+    const daftarUnik = <T,>(nilai: (T | null | undefined)[]) =>
+        [...new Set(nilai)].filter((v): v is T => Boolean(v)).sort();
+    const opsiFilter = {
+        principles: daftarUnik(groupTargets.map((t) => t.principle)),
+        branches: daftarUnik(groupTargets.map((t) => t.branch)),
+        sm: daftarUnik(groupTargets.map((t) => t.smName)),
+    };
+
+    return NextResponse.json({ month, year, timeGone, rows, progressFeed, gtAoMode, cakupan, opsiFilter });
 }
