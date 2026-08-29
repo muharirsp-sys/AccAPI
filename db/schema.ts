@@ -769,6 +769,10 @@ export const salesTargets = pgTable("sales_targets", {
 export const salesDailyProgress = pgTable("sales_daily_progress", {
     id: text("id").primaryKey(),
     salesCode: text("sales_code").notNull(),
+    // Nama salesman dari file closing. Tanpa ini, kode yang belum punya target hanya muncul
+    // sebagai kode telanjang — deteksi kandidat merge tidak bisa membaca nama orangnya, dan
+    // pasangan satu-orang-dua-rute (M-BSR/M-BSR2 BASRI YUSUF) tidak pernah terdeteksi.
+    salesName: text("sales_name"),
     principle: text("principle").notNull(),
     branch: text("branch").notNull(),
     date: text("date").notNull(),

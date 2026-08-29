@@ -1,6 +1,6 @@
 /*
- * Tujuan: Daftar kandidat penggabungan kode sales (prefiks rute sama, kode beda — biasanya
- *   pergantian orang di tengah bulan) + simpan keputusan user (merge / pisah).
+ * Tujuan: Daftar kandidat penggabungan kode sales (prefiks rute sama ATAU nama orang sama,
+ *   kode beda) + simpan keputusan user (merge / pisah).
  * Caller: app/(dashboard)/insentif-sales/page.tsx → CodeMergeSection.
  * Dependensi: lib/sales-code-merge (pure), db/schema (salesDailyProgress, salesTargets, salesCodeMerge).
  * Main Functions: GET kandidat yang belum diputuskan; POST simpan keputusan per kode.
@@ -8,7 +8,8 @@
  *   keputusan ini untuk melipat pencapaian.
  *
  * Penggabungan TIDAK PERNAH otomatis — prefiks sama belum tentu orang yang sama
- * (mis. FS1_GITO channel GT vs FS1_MT_SYAHRUL channel MT). User yang memutuskan.
+ * (mis. FS1_GITO channel GT vs FS1_MT_SYAHRUL channel MT), dan nama sama bisa homonim.
+ * User yang memutuskan.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -17,7 +18,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { salesCodeMerge, salesDailyProgress, salesTargets } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
-import { groupByPrefix, type CodeNamePair } from "@/lib/sales-code-merge";
+import { mergeCandidates, type CodeNamePair } from "@/lib/sales-code-merge";
 import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
 
 export async function GET(req: NextRequest) {
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
             .from(salesTargets)
             .where(and(eq(salesTargets.periodMonth, month), eq(salesTargets.periodYear, year))),
         db
-            .selectDistinct({ salesCode: salesDailyProgress.salesCode })
+            .selectDistinct({ salesCode: salesDailyProgress.salesCode, salesName: salesDailyProgress.salesName })
             .from(salesDailyProgress)
             .where(and(eq(salesDailyProgress.periodMonth, month), eq(salesDailyProgress.periodYear, year))),
         db
@@ -53,12 +54,27 @@ export async function GET(req: NextRequest) {
     const inScope = (salesCode: string) => scope === null || scope.has(salesCode);
 
     const nameByCode = new Map(targetRows.filter((r) => inScope(r.salesCode)).map((r) => [r.salesCode, r.salesName]));
-    const pairs: CodeNamePair[] = [...nameByCode].map(([salesCode, salesName]) => ({ salesCode, salesName }));
-    // Kode di progress tanpa target: tanpa nama, prefiks tak bisa dibaca → dilaporkan terpisah.
-    const orphanCodes = progressCodes.map((p) => p.salesCode).filter((c) => inScope(c) && !nameByCode.has(c));
+    // Nama dari progress dipakai untuk kode yang BELUM punya target. Justru di situlah pasangan
+    // satu-orang-dua-rute muncul: M-BSR2 (FRN5_BASRI YUSUF) hanya ada di closing, targetnya
+    // terlanjur ditulis di M-BSR (M2_1_BASRI YUSUF). Tanpa nama ini, kandidatnya tidak pernah
+    // bisa dibentuk. Nama target tetap menang — itu sumber ejaan yang paling rapi.
+    const namaProgress = new Map<string, string>();
+    for (const p of progressCodes) {
+        if (!p.salesName || !inScope(p.salesCode) || nameByCode.has(p.salesCode)) continue;
+        if (!namaProgress.has(p.salesCode)) namaProgress.set(p.salesCode, p.salesName);
+    }
+    const pairs: CodeNamePair[] = [
+        ...[...nameByCode].map(([salesCode, salesName]) => ({ salesCode, salesName })),
+        ...[...namaProgress].map(([salesCode, salesName]) => ({ salesCode, salesName })),
+    ];
+    // Sisanya: ada di closing, tanpa target DAN tanpa nama (closing lama yang diunggah sebelum
+    // kolom sales_name ada). Namanya tak terbaca → dilaporkan terpisah, bukan sebagai kandidat.
+    const orphanCodes = progressCodes
+        .map((p) => p.salesCode)
+        .filter((c) => inScope(c) && !nameByCode.has(c) && !namaProgress.has(c));
 
     const decidedFrom = new Set(decided.map((d) => d.from));
-    const groups = groupByPrefix(pairs)
+    const groups = mergeCandidates(pairs)
         // Kelompok yang SEMUA anggotanya sudah diputuskan tidak perlu ditanya lagi.
         .map((g) => ({ ...g, members: g.members.filter((m) => !decidedFrom.has(m.salesCode)) }))
         .filter((g) => g.members.length > 1);

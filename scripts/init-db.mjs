@@ -765,6 +765,7 @@ const insentifStatements = [
   `CREATE TABLE IF NOT EXISTS sales_daily_progress (
     id TEXT PRIMARY KEY NOT NULL,
     sales_code TEXT NOT NULL,
+    sales_name TEXT,
     principle TEXT NOT NULL,
     branch TEXT NOT NULL,
     date TEXT NOT NULL,

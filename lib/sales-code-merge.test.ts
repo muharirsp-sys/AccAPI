@@ -3,7 +3,7 @@
  * Jalankan: node --experimental-strip-types lib/sales-code-merge.test.ts
  */
 import assert from "node:assert";
-import { namePrefix, groupByPrefix, applyMergeMap } from "./sales-code-merge.ts";
+import { namePrefix, personName, groupByPrefix, groupByPerson, mergeCandidates, applyMergeMap } from "./sales-code-merge.ts";
 
 // --- prefiks: pola nyata dari file closing ---
 assert.strictEqual(namePrefix("MS10_TANSI"), "MS10", "MS10");
@@ -50,6 +50,63 @@ assert.strictEqual(namePrefix(""), null, "kosong → null");
 
 // --- tidak ada kolisi → tidak ada kandidat ---
 assert.strictEqual(groupByPrefix([{ salesCode: "M-LKM", salesName: "MS1_LUKMAN" }]).length, 0, "tunggal → kosong");
+
+// --- nama orang: prefiks rute dibuang ---
+assert.strictEqual(personName("FRN5_BASRI YUSUF"), "BASRI YUSUF", "FRN5 dibuang");
+assert.strictEqual(personName("M2_1_BASRI YUSUF"), "BASRI YUSUF", "M2_1 dibuang — orang yang sama");
+assert.strictEqual(personName("GDI3_MT_DINI PRATIWI"), "DINI PRATIWI", "penanda MT ikut dibuang");
+assert.strictEqual(personName("MS10_TANSI"), "TANSI", "prefiks tanpa tingkat");
+assert.strictEqual(personName("HEINZ13_SAENAL"), "SAENAL", "prefiks berhuruf panjang");
+assert.strictEqual(personName("CS5_JUSNIATI"), "JUSNIATI", "CS5");
+// bukan orang
+assert.strictEqual(personName("EN_OFFICE"), null, "OFFICE bukan orang");
+assert.strictEqual(personName("FRN_OFFICE"), null, "FRN_OFFICE bukan orang");
+assert.strictEqual(personName("TANPAGARIS"), null, "tanpa underscore → null");
+assert.strictEqual(personName(""), null, "kosong → null");
+
+// --- kasus nyata Juli 2026: satu orang, dua rute, prefiks BEDA ---
+// groupByPrefix buta terhadap ini; itulah sebabnya Rp 271,5 jt BASRI tidak berinsentif.
+{
+    const pasangan = [
+        { salesCode: "M-BSR", salesName: "M2_1_BASRI YUSUF" },
+        { salesCode: "M-BSR2", salesName: "FRN5_BASRI YUSUF" },
+    ];
+    assert.strictEqual(groupByPrefix(pasangan).length, 0, "prefiks beda → tidak terdeteksi (bug lama)");
+    const g = groupByPerson(pasangan);
+    assert.strictEqual(g.length, 1, "nama sama → terdeteksi");
+    assert.strictEqual(g[0].prefix, "BASRI YUSUF", "label kelompok = nama orang");
+    assert.deepStrictEqual(g[0].members.map((m) => m.salesCode), ["M-BSR", "M-BSR2"], "dua kode terkumpul");
+}
+
+// --- JUSNIATI: arah prefiksnya terbalik, tetap harus tertangkap ---
+{
+    const g = groupByPerson([
+        { salesCode: "M-JUS", salesName: "FRN5_JUSNIATI" },
+        { salesCode: "M-JUS2", salesName: "M2_1_JUSNIATI" },
+    ]);
+    assert.strictEqual(g.length, 1, "JUSNIATI terdeteksi");
+}
+
+// --- gabungan: kelompok yang anggotanya identik tidak muncul dua kali ---
+{
+    // MS10 kolisi prefiks (dua ORANG berbeda) + BASRI kolisi nama (dua RUTE satu orang)
+    const semua = mergeCandidates([
+        { salesCode: "M-ISK", salesName: "MS10_ISMAIL KADIR" },
+        { salesCode: "M-TNS", salesName: "MS10_TANSI" },
+        { salesCode: "M-BSR", salesName: "M2_1_BASRI YUSUF" },
+        { salesCode: "M-BSR2", salesName: "FRN5_BASRI YUSUF" },
+    ]);
+    assert.strictEqual(semua.length, 2, "dua kelompok: MS10 dan BASRI YUSUF");
+    assert.deepStrictEqual(semua.map((g) => g.prefix).sort(), ["BASRI YUSUF", "MS10"], "label keduanya");
+}
+{
+    // prefiks sama DAN nama sama → satu kelompok saja, bukan dua
+    const semua = mergeCandidates([
+        { salesCode: "M-A", salesName: "MS10_TANSI" },
+        { salesCode: "M-B", salesName: "MS10_TANSI" },
+    ]);
+    assert.strictEqual(semua.length, 1, "anggota identik tidak ditanya dua kali");
+}
 
 // --- peta merge: langsung, berantai, tanpa aturan, dan siklus tidak menggantung ---
 assert.strictEqual(applyMergeMap("M-ISK", new Map([["M-ISK", "M-TNS"]])), "M-TNS", "merge langsung");

@@ -1820,6 +1820,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                 };
                 return {
                     salesCode: get("KODE_SALESMAN"),
+                    salesName: get("SALESMAN"),
                     principle: get("PRINCIPAL"),
                     branch: get("JENISPRODUK"),
                     tanggal: get("TANGGAL"),
@@ -1866,7 +1867,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
             // (sales, principal, cabang, tanggal) memberi angka identik dengan payload jauh
             // lebih kecil — sekaligus menghapus kebutuhan dedup per nota yang dulu salah.
             const bucket = new Map<string, {
-                salesCode: string; principle: string; branch: string; date: string;
+                salesCode: string; salesName?: string; principle: string; branch: string; date: string;
                 periodMonth: number; periodYear: number; spvName?: string; invoiceNumber?: string;
                 achievedValueDpp: number; achievedEc: number; achievedAo: number; achievedIa: number;
             }>();
@@ -1882,7 +1883,9 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                 const date = isoDate(r.tanggal);
                 const k = `${r.salesCode}|${r.principle}|${branch}|${date}`;
                 const cur = bucket.get(k) ?? {
-                    salesCode: r.salesCode, principle: r.principle, branch, date,
+                    // Nama ikut dikirim supaya kode yang belum punya target tetap bisa
+                    // dikenali orangnya oleh deteksi kandidat Gabung Kode Sales.
+                    salesCode: r.salesCode, salesName: r.salesName, principle: r.principle, branch, date,
                     periodMonth: month, periodYear: year, spvName: r.spvName,
                     // Satu nota PERWAKILAN per ember (sales x principal x cabang x tanggal).
                     // Peringkasan lama membuang nomor nota sama sekali, sehingga baris yang
@@ -1897,6 +1900,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                 cur.achievedEc += r.ec;
                 cur.achievedAo += r.ao;
                 cur.achievedIa += r.ia;
+                if (!cur.salesName && r.salesName) cur.salesName = r.salesName;
                 if (!cur.spvName && r.spvName) cur.spvName = r.spvName;
                 if (!cur.invoiceNumber && r.invoiceNumber) cur.invoiceNumber = r.invoiceNumber;
                 bucket.set(k, cur);
@@ -2504,9 +2508,10 @@ function CodeMergeSection({ period }: { period: string }) {
                 <div>
                     <h3 className="text-sm font-semibold text-amber-200">Konfirmasi Penggabungan Sales ({groups.length})</h3>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                        Beberapa kode sales memakai nomor rute yang sama — biasanya tanda pergantian orang di
-                        tengah bulan. Pilih kode tujuan kalau pencapaiannya harus digabung, atau tandai
-                        Pisah kalau memang dua orang berbeda.
+                        Beberapa kode sales memakai nomor rute yang sama (tanda pergantian orang di tengah
+                        bulan) atau nama orang yang sama dengan rute berbeda (satu orang, dua kode). Pilih
+                        kode tujuan kalau pencapaiannya harus digabung, atau tandai Pisah kalau memang dua
+                        orang berbeda.
                     </p>
                 </div>
                 <button onClick={load} disabled={loading} className="px-3 py-1.5 rounded bg-white/5 border border-white/10 text-xs text-slate-300 disabled:opacity-50 shrink-0">
