@@ -120,13 +120,17 @@ function apiRowToSalesman(row: ApiRow): Salesman {
 
 type ViewKey = "sales" | "spv" | "sm" | "admin" | "finance";
 
-const VIEWS: { key: ViewKey; label: string; icon: typeof Trophy }[] = [
-    { key: "sales", label: "Dashboard Sales", icon: Trophy },
-    { key: "spv", label: "Dashboard SPV", icon: Users },
+// `hidden` menyembunyikan tombol tab-nya saja, bukan menghapus view-nya: kodenya tetap
+// hidup dan masih bisa dibuka lewat ?view=sales / ?view=spv. User minta keduanya
+// disembunyikan "dulu" (2026-08-29), jadi ini sengaja bukan penghapusan.
+const VIEWS: { key: ViewKey; label: string; icon: typeof Trophy; hidden?: boolean }[] = [
+    { key: "sales", label: "Dashboard Sales", icon: Trophy, hidden: true },
+    { key: "spv", label: "Dashboard SPV", icon: Users, hidden: true },
     { key: "sm", label: "Dashboard SM", icon: UserCog },
     { key: "admin", label: "Input Penjualan", icon: Upload },
     { key: "finance", label: "Verifikasi Finance", icon: Wallet },
 ];
+const VIEWS_TERLIHAT = VIEWS.filter((v) => !v.hidden);
 
 // ── Reusable bits ──────────────────────────────────────────────────────────
 function paceClasses(level: PaceLevel) {
@@ -876,13 +880,13 @@ function SmView({ rows, progress }: { rows: Salesman[]; progress: WorkdayProgres
 }
 
 // ── Tab SM ─────────────────────────────────────────────────────
-// Dengan >1 SM dan puluhan principal, satu layar berisi ratusan baris. Dua filter ini
-// MENYARING TAMPILAN saja: nominal per baris sudah dihitung server dengan konteks grup
-// penuh (lihat `groupTargets` di route dashboard), jadi menyaring daftar tidak menggeser
-// angka siapa pun. Tabel Insentif SM sengaja TIDAK ikut disaring — strata SM dihitung
-// dari seluruh principal SM itu, menyaringnya akan menampilkan nominal yang tidak dibayar.
-function SmDashboard({ salesmen, apiRows, progress, month, year, onSaved, gtAoMode }: {
-    salesmen: Salesman[];
+// Filternya ada di toolbar atas bersama periode/principle/cabang, BUKAN toolbar sendiri di
+// dalam tab: dua baris filter mirip yang bertumpuk membuat yang kedua tidak terlihat.
+// Panel support sengaja menerima apiRows PENUH, bukan yang tersaring — pasangan yang sedang
+// disembunyikan filter tetap harus bisa diisi nominal support-nya.
+function SmDashboard({ rows, rowsApi, apiRows, progress, month, year, onSaved, gtAoMode }: {
+    rows: Salesman[];
+    rowsApi: ApiRow[];
     apiRows: ApiRow[];
     progress: WorkdayProgress;
     month: number;
@@ -890,56 +894,14 @@ function SmDashboard({ salesmen, apiRows, progress, month, year, onSaved, gtAoMo
     onSaved: () => void;
     gtAoMode?: "fixed240" | "file";
 }) {
-    const [smFilter, setSmFilter] = useState("ALL");
-    const [principleFilter, setPrincipleFilter] = useState("ALL");
-
-    // Opsi diambil dari baris nyata, bukan konstanta PRINCIPLES (isinya data demo
-    // NESTLE/UNILEVER/INDOFOOD dan tidak pernah cocok dengan principal produksi).
-    const smOptions = useMemo(
-        () => [...new Set(salesmen.map((r) => r.sm))].filter(Boolean).sort(),
-        [salesmen],
-    );
-    const principleOptions = useMemo(
-        () => [...new Set(salesmen.map((r) => r.principle))].filter(Boolean).sort(),
-        [salesmen],
-    );
-
-    const cocok = useCallback(
-        (sm: string, principle: string) =>
-            (smFilter === "ALL" || sm === smFilter) && (principleFilter === "ALL" || principle === principleFilter),
-        [smFilter, principleFilter],
-    );
-    const rows = useMemo(() => salesmen.filter((r) => cocok(r.sm, r.principle)), [salesmen, cocok]);
-    const rowsApi = useMemo(() => apiRows.filter((r) => cocok(r.smName ?? "", r.principle)), [apiRows, cocok]);
-
-    const aktif = smFilter !== "ALL" || principleFilter !== "ALL";
-    const selectCls = "bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500";
-
     return (
         <>
             <SupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
             <SpvSupportInputSection apiRows={apiRows} month={month} year={year} onSaved={onSaved} />
-            <div className="ui-toolbar">
-                <span className="flex items-center gap-2 text-xs font-semibold text-slate-400 uppercase tracking-wider"><Filter size={14} /> Filter SM</span>
-                <select aria-label="Filter SM" value={smFilter} onChange={(e) => setSmFilter(e.target.value)} className={selectCls}>
-                    <option value="ALL">Semua SM ({smOptions.length})</option>
-                    {smOptions.map((sm) => <option key={sm} value={sm}>{sm}</option>)}
-                </select>
-                <select aria-label="Filter principle SM" value={principleFilter} onChange={(e) => setPrincipleFilter(e.target.value)} className={selectCls}>
-                    <option value="ALL">Semua Principle ({principleOptions.length})</option>
-                    {principleOptions.map((pr) => <option key={pr} value={pr}>{pr}</option>)}
-                </select>
-                {aktif && (
-                    <button type="button" onClick={() => { setSmFilter("ALL"); setPrincipleFilter("ALL"); }} className="ui-button-ghost">
-                        Reset filter SM
-                    </button>
-                )}
-                <span className="text-[11px] text-slate-500 ml-auto">
-                    {rows.length} dari {salesmen.length} baris
-                </span>
-            </div>
             <PerformanceBlock rows={rows} apiRows={rowsApi} progress={progress} />
             <SmView rows={rows} progress={progress} />
+            {/* Tabel Insentif SM sengaja TIDAK ikut disaring: stratanya dihitung dari seluruh
+                principal SM itu, menyaringnya akan memajang nominal yang tidak dibayar. */}
             <SmIncentiveTable month={month} year={year} />
             <IncentiveTable apiRows={rowsApi} gtAoMode={gtAoMode} />
         </>
@@ -3369,6 +3331,11 @@ export default function InsentifSalesPage() {
     }>({ dibatasi: false });
     const [loading, setLoading] = useState(true);
     const [dashboardError, setDashboardError] = useState("");
+    // Opsi datang dari server (dibangun sebelum filter tampilan) supaya memilih satu principle
+    // tidak menyusutkan daftarnya jadi satu pilihan tanpa jalan kembali.
+    const [opsiFilter, setOpsiFilter] = useState<{ principles: string[]; branches: string[]; sm: string[] }>(
+        { principles: [], branches: [], sm: [] },
+    );
     const pathname = usePathname();
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -3379,11 +3346,12 @@ export default function InsentifSalesPage() {
     const year = Number.isInteger(requestedYear) && requestedYear >= 2020 && requestedYear <= 2100
         ? requestedYear : now.getFullYear();
     const requestedView = searchParams.get("view") as ViewKey | null;
-    const view = VIEWS.some((item) => item.key === requestedView) ? requestedView! : "sales";
+    const view = VIEWS.some((item) => item.key === requestedView) ? requestedView! : "sm";
     const principle = searchParams.get("principle") || "ALL";
     const branch = searchParams.get("branch") || "ALL";
+    const smFilter = searchParams.get("sm") || "ALL";
 
-    const updateContext = useCallback((updates: Partial<{ view: ViewKey; principle: string; branch: string; month: string; year: string }>) => {
+    const updateContext = useCallback((updates: Partial<{ view: ViewKey; principle: string; branch: string; sm: string; month: string; year: string }>) => {
         const params = new URLSearchParams(searchParams.toString());
         for (const [key, value] of Object.entries(updates)) {
             if (!value || value === "ALL") params.delete(key);
@@ -3411,6 +3379,7 @@ export default function InsentifSalesPage() {
             setProgressFeed(data.progressFeed as ProgressFeedStatus);
             setGtAoMode(data.gtAoMode === "file" ? "file" : "fixed240");
             setCakupan(data.cakupan ?? { dibatasi: false });
+            setOpsiFilter(data.opsiFilter ?? { principles: [], branches: [], sm: [] });
         } catch (error) {
             setApiRows([]);
             setProgressFeed(null);
@@ -3427,18 +3396,27 @@ export default function InsentifSalesPage() {
     useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
 
     const salesmen = useMemo(() => apiRows.map(apiRowToSalesman), [apiRows]);
+    // Filter SM disaring di klien, bukan lewat server seperti principle/cabang: nominal tiap
+    // baris sudah dihitung server dengan konteks grup penuh, jadi menyaring daftarnya tidak
+    // menggeser angka siapa pun (bandingkan `groupTargets` di route dashboard).
+    const apiRowsSm = useMemo(
+        () => smFilter === "ALL" ? apiRows : apiRows.filter((r) => (r.smName ?? "") === smFilter),
+        [apiRows, smFilter],
+    );
+    const salesmenSm = useMemo(() => apiRowsSm.map(apiRowToSalesman), [apiRowsSm]);
     const showFilters = view !== "admin";
+    const filterAktif = principle !== "ALL" || branch !== "ALL" || smFilter !== "ALL";
 
     const handleViewKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
         let nextIndex = index;
-        if (event.key === "ArrowRight") nextIndex = (index + 1) % VIEWS.length;
-        else if (event.key === "ArrowLeft") nextIndex = (index - 1 + VIEWS.length) % VIEWS.length;
+        if (event.key === "ArrowRight") nextIndex = (index + 1) % VIEWS_TERLIHAT.length;
+        else if (event.key === "ArrowLeft") nextIndex = (index - 1 + VIEWS_TERLIHAT.length) % VIEWS_TERLIHAT.length;
         else if (event.key === "Home") nextIndex = 0;
-        else if (event.key === "End") nextIndex = VIEWS.length - 1;
+        else if (event.key === "End") nextIndex = VIEWS_TERLIHAT.length - 1;
         else return;
 
         event.preventDefault();
-        const nextView = VIEWS[nextIndex];
+        const nextView = VIEWS_TERLIHAT[nextIndex];
         updateContext({ view: nextView.key });
         requestAnimationFrame(() => document.getElementById(`insentif-tab-${nextView.key}`)?.focus());
     };
@@ -3471,7 +3449,7 @@ export default function InsentifSalesPage() {
             {/* View tabs */}
             <div className="ui-tab-scroll">
             <div role="tablist" aria-label="Tampilan Insentif Sales" className="ui-tab-strip">
-                {VIEWS.map((v, index) => {
+                {VIEWS_TERLIHAT.map((v, index) => {
                     const Icon = v.icon;
                     const active = view === v.key;
                     return (
@@ -3504,23 +3482,33 @@ export default function InsentifSalesPage() {
                         }}
                         className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
                     />
+                    {view === "sm" && (
+                        <select aria-label="Filter SM" value={smFilter} onChange={(e) => updateContext({ sm: e.target.value })} className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500">
+                            <option value="ALL">Semua SM ({opsiFilter.sm.length})</option>
+                            {opsiFilter.sm.map((sm) => <option key={sm} value={sm}>{sm}</option>)}
+                        </select>
+                    )}
                     <select aria-label="Filter principle" value={principle} onChange={(e) => updateContext({ principle: e.target.value })} className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500">
                         <option value="ALL">Semua Principle</option>
-                        {PRINCIPLES.map((p) => <option key={p} value={p}>{p}</option>)}
+                        {opsiFilter.principles.map((p) => <option key={p} value={p}>{p}</option>)}
                     </select>
                     <select aria-label="Filter cabang" value={branch} onChange={(e) => updateContext({ branch: e.target.value })} className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500">
                         <option value="ALL">Semua Cabang</option>
-                        {BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
+                        {opsiFilter.branches.map((b) => <option key={b} value={b}>{b}</option>)}
                     </select>
                     <button type="button" onClick={fetchDashboard} className="ui-icon-button" title="Refresh data" aria-label="Refresh data insentif">
                         <RefreshCw size={14} />
                     </button>
-                    {(principle !== "ALL" || branch !== "ALL") && (
-                        <button type="button" onClick={() => updateContext({ principle: "ALL", branch: "ALL" })} className="ui-button-ghost">
+                    {filterAktif && (
+                        <button type="button" onClick={() => updateContext({ principle: "ALL", branch: "ALL", sm: "ALL" })} className="ui-button-ghost">
                             Reset filter
                         </button>
                     )}
-                    <span className="text-[11px] text-slate-500 ml-auto">{salesmen.length} salesman</span>
+                    <span className="text-[11px] text-slate-500 ml-auto">
+                        {view === "sm" && smFilter !== "ALL"
+                            ? `${salesmenSm.length} dari ${salesmen.length} baris`
+                            : `${salesmen.length} salesman`}
+                    </span>
                 </div>
             )}
 
@@ -3594,7 +3582,7 @@ export default function InsentifSalesPage() {
                     actionLabel={progressFeed?.progressKeys && !progressFeed.targetKeys ? "Buka Input Penjualan" : "Reset Filter"}
                     onAction={() => progressFeed?.progressKeys && !progressFeed.targetKeys
                         ? updateContext({ view: "admin" })
-                        : updateContext({ principle: "ALL", branch: "ALL" })}
+                        : updateContext({ principle: "ALL", branch: "ALL", sm: "ALL" })}
                 />
             ) : (
                 <div className="space-y-5">
@@ -3614,7 +3602,7 @@ export default function InsentifSalesPage() {
                         </>
                     )}
                     {view === "sm" && (
-                        <SmDashboard salesmen={salesmen} apiRows={apiRows} progress={tg}
+                        <SmDashboard rows={salesmenSm} rowsApi={apiRowsSm} apiRows={apiRows} progress={tg}
                             month={month} year={year} onSaved={fetchDashboard} gtAoMode={gtAoMode} />
                     )}
                     {view === "admin" && <AdminView rows={salesmen} />}
