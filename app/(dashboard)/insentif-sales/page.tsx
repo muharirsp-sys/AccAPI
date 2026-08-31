@@ -3804,16 +3804,20 @@ export default function InsentifSalesPage() {
             )}
 
             {/* Body */}
-            <div id="insentif-view-panel" role="tabpanel" aria-labelledby={`insentif-tab-${view}`} tabIndex={0}>
-            {loading && view !== "admin" ? (
+            {/* Gate-nya pakai `viewBoleh`, BUKAN `view`: Finance membuka halaman tanpa ?view
+                sehingga `view` jatuh ke "sm" dan layar menampilkan EmptyState "tidak ada data"
+                padahal tab yang aktif Finance — strip 12 bulan di dalamnya jadi tak pernah
+                dirender, dan periode tidak bisa dipilih (dilaporkan user 2026-08-31). */}
+            <div id="insentif-view-panel" role="tabpanel" aria-labelledby={`insentif-tab-${viewBoleh}`} tabIndex={0}>
+            {loading && viewBoleh !== "admin" ? (
                 <LoadingState label="Memuat data insentif" rows={6} />
-            ) : dashboardError && view !== "admin" ? (
+            ) : dashboardError && viewBoleh !== "admin" ? (
                 <ErrorState
                     title={dashboardError}
                     message="Data kosong tidak ditampilkan karena server belum memberikan hasil yang valid."
                     onAction={() => void fetchDashboard()}
                 />
-            ) : salesmen.length === 0 && view !== "admin" && view !== "finance" ? (
+            ) : salesmen.length === 0 && viewBoleh !== "admin" && viewBoleh !== "finance" ? (
                 <EmptyState
                     title={cakupan.dibatasi && !cakupan.jumlahKode
                         ? "Belum ada salesman dalam cakupan Anda"
