@@ -180,6 +180,15 @@ CREATE TABLE IF NOT EXISTS nota_kanvas (
     ditandai_by  text        NOT NULL REFERENCES "user"(id)
 );
 
+-- Pernyataan "hari ini tidak ada nota kanvas". Tanpa ini, nol nota bertanda tidak
+-- bisa dibedakan dari belum ada yang memeriksa -- dan kanvas memang tidak setiap hari.
+CREATE TABLE IF NOT EXISTS kanvas_nihil (
+    tanggal     date        PRIMARY KEY,
+    catatan     text,
+    ditandai_at timestamptz NOT NULL DEFAULT now(),
+    ditandai_by text        NOT NULL REFERENCES "user"(id)
+);
+
 -- ---------------------------------------------------------------------
 -- 6. Pick group (pengganti 29+ sheet cetak)
 -- ---------------------------------------------------------------------

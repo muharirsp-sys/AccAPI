@@ -35,6 +35,7 @@ export default function WavePage({ params }: { params: Promise<{ id: string }> }
     const [detail, setDetail] = useState<Detail | null>(null);
     const [pool, setPool] = useState<NotaPool[]>([]);
     const [disembunyikan, setDisembunyikan] = useState(0);
+    const [kanvasNihilOleh, setKanvasNihilOleh] = useState<string | null>(null);
     const [pilih, setPilih] = useState<Set<string>>(new Set());
     const [grupPilih, setGrupPilih] = useState<Set<number>>(new Set());
     const [pesan, setPesan] = useState<string | null>(null);
@@ -50,9 +51,10 @@ export default function WavePage({ params }: { params: Promise<{ id: string }> }
 
         const p = await fetch(`/api/rekapan-nota/pool?tanggal=${d.wave.tanggal}&tipe=${d.wave.tipe}`);
         if (p.ok) {
-            const isi = await p.json() as { nota: NotaPool[]; disembunyikan?: number };
+            const isi = await p.json() as { nota: NotaPool[]; disembunyikan?: number; kanvasNihilOleh?: string | null };
             setPool(isi.nota);
             setDisembunyikan(isi.disembunyikan ?? 0);
+            setKanvasNihilOleh(isi.kanvasNihilOleh ?? null);
         }
     }, [id]);
 
@@ -248,6 +250,14 @@ export default function WavePage({ params }: { params: Promise<{ id: string }> }
                             <h2 className="text-base font-extrabold text-[var(--luxury-text)]">
                                 Pool tersedia ({pool.length} nota)
                             </h2>
+                            {disembunyikan === 0 && wave.tipe === "reguler" && (
+                                <p className="mt-1 text-xs text-[var(--luxury-muted)]">
+                                    {kanvasNihilOleh
+                                        ? `Kanvas: dinyatakan tidak ada oleh ${kanvasNihilOleh}.`
+                                        : <>Kanvas hari ini <strong>belum diperiksa</strong>.{" "}
+                                            <Link href="/rekapan-nota/kanvas" className="underline">Periksa sekarang</Link></>}
+                                </p>
+                            )}
                             {disembunyikan > 0 && (
                                 <p className="mt-1 text-xs text-amber-700">
                                     {disembunyikan} nota disembunyikan karena{" "}

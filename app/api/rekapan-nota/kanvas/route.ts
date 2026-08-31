@@ -41,12 +41,55 @@ export async function GET(req: NextRequest) {
           GROUP BY p.no_nota, k.no_nota
           ORDER BY coalesce(max(p.salesman), 'zzz'), p.no_nota`, [tanggal]);
 
+    const nihil = await pool.query<{ ditandai_at: string; catatan: string | null; oleh: string }>(
+        `SELECT n.ditandai_at, n.catatan, coalesce(u.name, n.ditandai_by) AS oleh
+           FROM kanvas_nihil n LEFT JOIN "user" u ON u.id = n.ditandai_by
+          WHERE n.tanggal = $1::date`, [tanggal]);
+
     return NextResponse.json({
         tanggal,
         jumlahNota: r.rowCount,
         ditandai: r.rows.filter((x) => x.kanvas).length,
+        nihil: nihil.rows[0] ?? null,
         nota: r.rows,
     });
+}
+
+/** Pernyataan "tanggal ini tidak ada nota kanvas" — dan siapa yang menyatakannya. */
+export async function PATCH(req: NextRequest) {
+    const gate = await requirePermission(req, "rekapan_nota.manage");
+    if (gate.response) return gate.response;
+
+    const body = await req.json().catch(() => ({})) as { tanggal?: string; nihil?: boolean; catatan?: string };
+    const tanggal = String(body.tanggal ?? "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) {
+        return NextResponse.json({ error: "tanggal wajib YYYY-MM-DD" }, { status: 400 });
+    }
+
+    if (body.nihil === false) {
+        await pool.query(`DELETE FROM kanvas_nihil WHERE tanggal = $1::date`, [tanggal]);
+        return NextResponse.json({ ok: true, nihil: null });
+    }
+
+    // Menyatakan "tidak ada" selagi ada yang bertanda adalah kontradiksi. Ditolak di sini,
+    // bukan dibiarkan jadi dua kebenaran yang saling membantah di layar.
+    const ada = await pool.query<{ n: string }>(
+        // DISTINCT no_nota: satu nota punya banyak baris pool, dan pesannya menyebut "nota".
+        `SELECT count(DISTINCT k.no_nota)::text n FROM nota_kanvas k
+           JOIN wave_line_pool p ON p.no_nota = k.no_nota AND p.tanggal = $1::date`, [tanggal]);
+    if (Number(ada.rows[0].n) > 0) {
+        return NextResponse.json({
+            error: `Masih ada ${ada.rows[0].n} nota bertanda kanvas untuk tanggal ini. ` +
+                `Cabut tandanya dulu kalau memang tidak ada kanvas hari ini.`,
+        }, { status: 409 });
+    }
+
+    await pool.query(
+        `INSERT INTO kanvas_nihil (tanggal, catatan, ditandai_by) VALUES ($1::date, $2, $3)
+         ON CONFLICT (tanggal) DO UPDATE SET catatan = excluded.catatan,
+             ditandai_by = excluded.ditandai_by, ditandai_at = now()`,
+        [tanggal, body.catatan ?? null, gate.session!.user.id]);
+    return NextResponse.json({ ok: true });
 }
 
 export async function POST(req: NextRequest) {

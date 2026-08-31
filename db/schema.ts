@@ -1328,6 +1328,15 @@ export const notaKanvas = pgTable("nota_kanvas", {
     ditandaiBy: text("ditandai_by").notNull().references(() => user.id),
 });
 
+// Pernyataan eksplisit "tanggal ini tidak ada nota kanvas". Nol nota bertanda tanpa
+// pernyataan ini artinya BELUM DIPERIKSA, bukan tidak ada.
+export const kanvasNihil = pgTable("kanvas_nihil", {
+    tanggal: date("tanggal").primaryKey(),
+    catatan: text("catatan"),
+    ditandaiAt: timestamp("ditandai_at", { withTimezone: true }).notNull().defaultNow(),
+    ditandaiBy: text("ditandai_by").notNull().references(() => user.id),
+});
+
 export const pickGroup = pgTable("pick_group", {
     id: bigserial("id", { mode: "number" }).primaryKey(),
     kode: text("kode").notNull(),

@@ -18,7 +18,8 @@ type Nota = {
     jumlah_baris: number; total_pcs: number; kanvas: boolean;
     terkunci: boolean | null; di_wave: boolean | null;
 };
-type Payload = { tanggal: string; jumlahNota: number; ditandai: number; nota: Nota[] };
+type Nihil = { ditandai_at: string; catatan: string | null; oleh: string } | null;
+type Payload = { tanggal: string; jumlahNota: number; ditandai: number; nihil: Nihil; nota: Nota[] };
 
 const hariIni = () => new Date().toISOString().slice(0, 10);
 
@@ -86,6 +87,22 @@ export default function KanvasPage() {
         }
     }
 
+    async function setNihil(nihil: boolean) {
+        setBusy(true); setError(null); setPesan(null);
+        try {
+            const res = await fetch("/api/rekapan-nota/kanvas", {
+                method: "PATCH", headers: { "content-type": "application/json" },
+                body: JSON.stringify({ tanggal, nihil }),
+            });
+            const p = await res.json() as { error?: string };
+            if (!res.ok) { setError(p.error ?? "Gagal."); return; }
+            setPesan(nihil ? "Dicatat: tidak ada nota kanvas untuk tanggal ini." : "Pernyataan dicabut.");
+            await muat(tanggal);
+        } finally {
+            setBusy(false);
+        }
+    }
+
     if (!data) {
         return (
             <main className="ui-page-shell space-y-4">
@@ -132,7 +149,7 @@ export default function KanvasPage() {
                         {data.jumlahNota} nota &middot; <strong>{data.ditandai}</strong> ditandai kanvas
                     </p>
                     <div className="flex gap-2">
-                        <button onClick={tandai} disabled={busy || !pilih.size} className="ui-button-primary min-h-11 px-4">
+                        <button onClick={tandai} disabled={busy || !pilih.size || !!data.nihil} className="ui-button-primary min-h-11 px-4">
                             <Truck size={16} aria-hidden="true" /> Tandai Kanvas ({pilih.size})
                         </button>
                         <button onClick={() => kirim("DELETE", [...pilih])} disabled={busy || !pilih.size}
@@ -141,6 +158,27 @@ export default function KanvasPage() {
                         </button>
                     </div>
                 </div>
+            </section>
+
+            {/* Kanvas tidak setiap hari. Tanpa pernyataan ini, "0 nota bertanda" tidak bisa
+                dibedakan dari "belum ada yang memeriksa" — dan itu bedanya besar bagi orang
+                yang sedang menyusun wave dan bertanya-tanya apakah masih harus menunggu. */}
+            <section className="ui-surface-panel ui-panel-padding">
+                <label className="flex cursor-pointer items-start gap-3">
+                    <input type="checkbox" className="mt-1" checked={!!data.nihil} disabled={busy}
+                        onChange={(e) => setNihil(e.target.checked)} />
+                    <span>
+                        <span className="block text-sm font-bold text-[var(--luxury-text)]">
+                            Tidak ada nota kanvas untuk tanggal ini
+                        </span>
+                        <span className="mt-1 block text-xs text-[var(--luxury-muted)]">
+                            {data.nihil
+                                ? `Dinyatakan oleh ${data.nihil.oleh} pada ${new Date(data.nihil.ditandai_at).toLocaleString("id-ID")}.`
+                                : "Belum ada yang memastikan. Selama kotak ini kosong, layar penyusunan wave " +
+                                  "akan bilang bahwa kanvas hari ini belum diperiksa."}
+                        </span>
+                    </span>
+                </label>
             </section>
 
             {data.jumlahNota === 0 && (

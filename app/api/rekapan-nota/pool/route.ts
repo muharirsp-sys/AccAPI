@@ -7,6 +7,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requirePermission } from "@/lib/rbac/resolve";
+import { pool } from "@/lib/db";
 import { notaPool, ambilSetting } from "@/lib/rekapan-nota/query";
 import { parseAreaDikecualikan } from "@/lib/rekapan-nota/classify";
 
@@ -34,8 +35,13 @@ export async function GET(req: NextRequest) {
     // Karena itu jumlahnya ikut dilaporkan, supaya kelihatan di layar penyusunan wave.
     const lawan = await notaPool(tanggal, { ...opts, tipe: tipe === "kanvas" ? "reguler" : "kanvas" });
 
+    const nihil = await pool.query<{ oleh: string }>(
+        `SELECT coalesce(u.name, n.ditandai_by) AS oleh FROM kanvas_nihil n
+           LEFT JOIN "user" u ON u.id = n.ditandai_by WHERE n.tanggal = $1::date`, [tanggal]);
+
     return NextResponse.json({
         tanggal, tipe, jumlahNota: rows.length,
+        kanvasNihilOleh: nihil.rows[0]?.oleh ?? null,
         tanpaArea: rows.filter((r) => !r.area).length,
         disembunyikan: lawan.length,
         nota: rows,
