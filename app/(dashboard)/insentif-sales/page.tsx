@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SupportTemplateRow } from "@/lib/insentif-sales-excel";
 import { excelDateToIso } from "@/lib/excel-date";
+import { PPH_RATE, nettoInsentif, pphInsentif } from "@/lib/insentif-pph";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AsyncState";
 import {
     PRINCIPLES, BRANCHES, KPI_LABELS, MONTH_LABELS,
@@ -307,11 +308,13 @@ function SalesBreakdown({ r, semuaBaris, gtAoMode }: { r: ApiRow; semuaBaris?: A
             { label: "Aktif Outlet", value: formatRp(r.incentive.ao) },
             { label: "Item Aktif", value: formatRp(r.incentive.isq) },
             { label: "Total", value: formatRp(r.incentive.total), tone: "amber" as const },
+            ...itemsPph(r.incentive.total),
         ]
         : [
             { label: "Value (30%)", value: formatRp(r.incentive.value) },
             { label: "AO (70%)", value: formatRp(r.incentive.ao) },
             { label: "Total", value: formatRp(r.incentive.total), tone: "amber" as const },
+            ...itemsPph(r.incentive.total),
         ];
 
     // Sales "mix": komponen Value dinilai dari GABUNGAN seluruh principal yang ikut skema,
@@ -448,7 +451,8 @@ function SmBreakdown({ r }: { r: SmIncentiveRow }) {
                 <BreakdownGroup title="Hasil" items={[
                     { label: "Nominal strata", value: formatRp(strata.nominal) },
                     { label: "Ikut skema", value: r.berhak ? "Ya" : "Tidak", tone: "muted" },
-                    { label: "Dibayar", value: formatRp(r.total), tone: "amber" },
+                    { label: "Bruto", value: formatRp(r.total), tone: "amber" },
+                    ...itemsPph(r.total),
                 ]} />
             </div>
             <p className="text-[11px] text-slate-500 mt-4">
@@ -460,6 +464,43 @@ function SmBreakdown({ r }: { r: SmIncentiveRow }) {
 }
 
 /** Penanda baris bisa diklik. Chevron ikut berputar saat terbuka. */
+// ── Kolom PPh ─────────────────────────────────────
+// Kolom insentif tetap BRUTO, PPh dan Netto ditambahkan di sebelahnya: bruto adalah angka
+// yang bisa dicocokkan dengan hitungan manual & file target, netto adalah yang dibayar.
+// Header dan sel selalu berpasangan DUA kolom — kalau salah satunya diubah, ubah juga
+// colSpan baris rincian dan footer tabel itu.
+const LABEL_PPH = `PPh ${(PPH_RATE * 100).toLocaleString("id-ID")}%`;
+
+function PphHeads() {
+    return (
+        <>
+            <th className="px-3 py-3 text-right whitespace-nowrap">{LABEL_PPH}</th>
+            <th className="px-3 py-3 text-right bg-emerald-500/10 whitespace-nowrap">Netto Dibayar</th>
+        </>
+    );
+}
+
+function PphCells({ bruto, foot }: { bruto: number; foot?: boolean }) {
+    return (
+        <>
+            <td className="px-3 py-3 text-right font-mono text-rose-300/80">
+                {bruto > 0 ? `-${formatRp(pphInsentif(bruto))}` : formatRp(0)}
+            </td>
+            <td className={`px-3 py-3 text-right font-mono font-bold ${foot ? "bg-emerald-500/10 text-emerald-300 text-sm" : "bg-emerald-500/5 text-emerald-400"}`}>
+                {formatRp(nettoInsentif(bruto))}
+            </td>
+        </>
+    );
+}
+
+/** Dua baris terakhir grup "Hasil" di kartu rincian, supaya bruto/netto tidak pernah beda tempat. */
+function itemsPph(bruto: number) {
+    return [
+        { label: LABEL_PPH, value: `-${formatRp(pphInsentif(bruto))}`, tone: "muted" as const },
+        { label: "Netto dibayar", value: formatRp(nettoInsentif(bruto)), tone: "amber" as const },
+    ];
+}
+
 function ExpandCell({ open }: { open: boolean }) {
     return (
         <td className="px-3 py-3 text-center whitespace-nowrap">
@@ -705,6 +746,7 @@ function IncentiveTable({ apiRows, gtAoMode }: { apiRows: ApiRow[]; gtAoMode?: "
                             <th className="px-3 py-3 text-right">{KPI_LABELS.value}</th>
                             <th className="px-3 py-3 text-right">{KPI_LABELS.ao}</th>
                             <th className="px-3 py-3 text-right bg-amber-500/10">Total Insentif</th>
+                            <PphHeads />
                             <th className="px-3 py-3 text-center">Status</th>
                             <th className="px-3 py-3 text-center">Rincian</th>
                         </tr>
@@ -733,6 +775,7 @@ function IncentiveTable({ apiRows, gtAoMode }: { apiRows: ApiRow[]; gtAoMode?: "
                                             <div className="font-mono font-bold text-amber-400">{formatRp(r.incentive.total)}</div>
                                             {sebab && <div className="text-[10px] font-normal text-slate-500 mt-0.5">{sebab}</div>}
                                         </td>
+                                        <PphCells bruto={r.incentive.total} />
                                         <td className="px-3 py-3 text-center">
                                             <span className={`inline-block px-2 py-0.5 rounded border text-[10px] font-bold ${sc}`}>
                                                 {statusLabel[r.paymentStatus] ?? "Belum"}
@@ -742,7 +785,7 @@ function IncentiveTable({ apiRows, gtAoMode }: { apiRows: ApiRow[]; gtAoMode?: "
                                     </tr>
                                     {open[key] && (
                                         <tr className="bg-black/30">
-                                            <td colSpan={6} className="px-4 py-4">
+                                            <td colSpan={8} className="px-4 py-4">
                                                 <SalesBreakdown r={r} semuaBaris={apiRows} gtAoMode={gtAoMode} />
                                             </td>
                                         </tr>
@@ -757,6 +800,7 @@ function IncentiveTable({ apiRows, gtAoMode }: { apiRows: ApiRow[]; gtAoMode?: "
                             <td className="px-3 py-3 text-right font-mono text-slate-200">{formatRp(grand.value)}</td>
                             <td className="px-3 py-3 text-right font-mono text-slate-200">{formatRp(grand.ao)}</td>
                             <td className="px-3 py-3 text-right bg-amber-500/10 font-mono text-amber-300 text-sm">{formatRp(grand.total)}</td>
+                            <PphCells bruto={grand.total} foot />
                             <td />
                             <td />
                         </tr>
@@ -992,6 +1036,7 @@ function SmIncentiveTable({ month, year }: { month: number; year: number }) {
                                 <th className="px-3 py-3 text-right">Realisasi Value</th>
                                 <th className="px-3 py-3 text-center">Pencapaian</th>
                                 <th className="px-3 py-3 text-right bg-amber-500/10">Total Insentif</th>
+                                <PphHeads />
                                 <th className="px-3 py-3 text-center">Rincian</th>
                             </tr>
                         </thead>
@@ -1011,11 +1056,12 @@ function SmIncentiveTable({ month, year }: { month: number; year: number }) {
                                             <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.realisasiValue)}</td>
                                             <td className="px-3 py-3 text-center font-bold text-slate-200">{capaian.toFixed(1)}%</td>
                                             <td className="px-3 py-3 text-right bg-amber-500/5 font-mono font-bold text-amber-400">{formatRp(r.total)}</td>
+                                            <PphCells bruto={r.total} />
                                             <ExpandCell open={!!open[r.smName]} />
                                         </tr>
                                         {open[r.smName] && (
                                             <tr className="bg-black/30">
-                                                <td colSpan={6} className="px-4 py-4">
+                                                <td colSpan={8} className="px-4 py-4">
                                                     <SmBreakdown r={r} />
                                                 </td>
                                             </tr>
@@ -1024,13 +1070,14 @@ function SmIncentiveTable({ month, year }: { month: number; year: number }) {
                                 );
                             })}
                             {rows.length === 0 && (
-                                <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-500 italic">Belum ada data SM untuk periode ini.</td></tr>
+                                <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-500 italic">Belum ada data SM untuk periode ini.</td></tr>
                             )}
                         </tbody>
                         <tfoot>
                             <tr className="bg-black/50 border-t-2 border-amber-500/30 font-bold">
                                 <td className="px-3 py-3 uppercase text-[11px] tracking-wider text-amber-300" colSpan={4}>Grand Total</td>
                                 <td className="px-3 py-3 text-right bg-amber-500/10 font-mono text-amber-300 text-sm">{formatRp(grandTotal)}</td>
+                                <PphCells bruto={grandTotal} foot />
                                 <td />
                             </tr>
                         </tfoot>
@@ -1102,6 +1149,7 @@ function SpvIncentiveTable({ month, year }: { month: number; year: number }) {
                                 <th className="px-3 py-3 text-center">Jumlah Principal</th>
                                 <th className="px-3 py-3 text-right">Rate/Principal</th>
                                 <th className="px-3 py-3 text-right bg-amber-500/10">Total Insentif</th>
+                                <PphHeads />
                                 <th className="px-3 py-3 text-center">Rincian</th>
                             </tr>
                         </thead>
@@ -1113,11 +1161,12 @@ function SpvIncentiveTable({ month, year }: { month: number; year: number }) {
                                         <td className="px-3 py-3 text-center text-slate-300">{r.jumlahValid}</td>
                                         <td className="px-3 py-3 text-right font-mono text-slate-300">{formatRp(r.ratePerPrincipal)}</td>
                                         <td className="px-3 py-3 text-right bg-amber-500/5 font-mono font-bold text-amber-400">{formatRp(r.total)}</td>
+                                        <PphCells bruto={r.total} />
                                         <ExpandCell open={!!open[r.spvName]} />
                                     </tr>
                                     {open[r.spvName] && (
                                         <tr className="bg-black/30">
-                                            <td colSpan={5} className="px-4 py-4">
+                                            <td colSpan={7} className="px-4 py-4">
                                                 <SpvBreakdown rincian={r.rincian} />
                                             </td>
                                         </tr>
@@ -1125,13 +1174,14 @@ function SpvIncentiveTable({ month, year }: { month: number; year: number }) {
                                 </Fragment>
                             ))}
                             {rows.length === 0 && (
-                                <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-500 italic">Belum ada data SPV untuk periode ini.</td></tr>
+                                <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-500 italic">Belum ada data SPV untuk periode ini.</td></tr>
                             )}
                         </tbody>
                         <tfoot>
                             <tr className="bg-black/50 border-t-2 border-amber-500/30 font-bold">
                                 <td className="px-3 py-3 uppercase text-[11px] tracking-wider text-amber-300" colSpan={3}>Grand Total</td>
                                 <td className="px-3 py-3 text-right bg-amber-500/10 font-mono text-amber-300 text-sm">{formatRp(grandTotal)}</td>
+                                <PphCells bruto={grandTotal} foot />
                                 <td />
                             </tr>
                         </tfoot>
@@ -3435,6 +3485,7 @@ function FinanceView({ apiRows, month, year, gtAoMode, onPilihBulan }: {
                                 <th className="px-3 py-3 text-center">Peran</th>
                                 <th className="px-3 py-3">Principle</th>
                                 <th className="px-3 py-3 text-right">Total Insentif</th>
+                                <PphHeads />
                                 <th className="px-3 py-3">Bukti Bayar</th>
                                 <th className="px-3 py-3 text-center">Status</th>
                                 <th className="px-3 py-3 text-center">Rincian</th>
@@ -3475,6 +3526,7 @@ function FinanceView({ apiRows, month, year, gtAoMode, onPilihBulan }: {
                                                 </div>
                                             )}
                                         </td>
+                                        <PphCells bruto={r.total} />
                                         <td className="px-3 py-3">
                                             <label className="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded px-2 py-1.5 text-slate-300 cursor-pointer hover:bg-white/10 text-[11px]">
                                                 <FileUp size={13} /> Upload
@@ -3505,7 +3557,7 @@ function FinanceView({ apiRows, month, year, gtAoMode, onPilihBulan }: {
                                     </tr>
                                     {open[selectionKey] && (
                                         <tr className="bg-black/30">
-                                            <td colSpan={8} className="px-4 py-4">
+                                            <td colSpan={10} className="px-4 py-4">
                                                 {sales ? <SalesBreakdown r={sales} semuaBaris={apiRows} gtAoMode={gtAoMode} />
                                                     : spv ? <SpvBreakdown rincian={spv.rincian} />
                                                         : sm ? <SmBreakdown r={sm} />
@@ -3524,7 +3576,7 @@ function FinanceView({ apiRows, month, year, gtAoMode, onPilihBulan }: {
                                 );
                             })}
                             {visibleRows.length === 0 && (
-                                <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-500 italic">
+                                <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-500 italic">
                                     {detailRows.length === 0
                                         ? "Belum ada data untuk bulan ini."
                                         : `Tidak ada penerima untuk principle "${principleFilter}" di bulan ini.`}
@@ -3538,7 +3590,19 @@ function FinanceView({ apiRows, month, year, gtAoMode, onPilihBulan }: {
                         memberi tahu berarti Finance menekan Simpan untuk uang yang tidak
                         dilihatnya. Jumlahnya disebutkan, bukan dibuang diam-diam. */}
                     <span className="text-xs text-slate-400">
-                        {checkedList.length} penerima dipilih · Total: <span className="font-mono font-bold text-amber-400">{formatRp(checkedList.reduce((a, r) => a + r.total, 0))}</span>
+                        {(() => {
+                            const bruto = checkedList.reduce((a, r) => a + r.total, 0);
+                            // Per baris, bukan atas jumlahnya: yang ditransfer adalah netto tiap
+                            // penerima, jadi pembulatan PPh-nya juga per penerima.
+                            const netto = checkedList.reduce((a, r) => a + nettoInsentif(r.total), 0);
+                            return (
+                                <>
+                                    {checkedList.length} penerima dipilih · Bruto: <span className="font-mono text-slate-300">{formatRp(bruto)}</span>
+                                    {" · "}{LABEL_PPH}: <span className="font-mono text-rose-300/80">-{formatRp(bruto - netto)}</span>
+                                    {" · Netto: "}<span className="font-mono font-bold text-emerald-400">{formatRp(netto)}</span>
+                                </>
+                            );
+                        })()}
                         {(() => {
                             const hidden = checkedList.filter((row) => !visibleRows.includes(row)).length;
                             return hidden > 0 ? (
