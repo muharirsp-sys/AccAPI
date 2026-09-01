@@ -24,6 +24,18 @@ export const dynamic = "force-dynamic";
 const GAYA = `
 @page { size: A4 portrait; margin: 12mm 10mm; }
 
+/* Root layout aplikasi memasang tiga lapis gradient position:fixed seukuran layar dan
+   latar gelap di <body>. Elemen fixed DIULANG di setiap halaman cetak, dan gradient tidak
+   bisa digambar sebagai vektor -- Chrome merasterisasi tiap halaman jadi bitmap A4 penuh.
+   Itu yang membuat PDF berat dibuka, bukan isi tabelnya. Halaman cetak dipaksa polos. */
+@media print {
+    html, body { background: #fff !important; }
+    body > div.fixed, body > [class*="radial-gradient"], body > [class*="linear-gradient"] {
+        display: none !important;
+    }
+}
+.cetak-akar { background: #fff; }
+
 .cetak {
     --tinta: #111;
     --samar: #6b6b6b;
@@ -37,7 +49,6 @@ const GAYA = `
     max-width: 190mm;
     margin: 0 auto;
     font-variant-numeric: tabular-nums;
-    -webkit-font-smoothing: antialiased;
 }
 .cetak * { box-sizing: border-box; }
 
@@ -69,9 +80,13 @@ const GAYA = `
 }
 .judul-kolom th.kanan { text-align: right; }
 
-.cetak tbody td { padding: 1mm 1.5mm; border-bottom: 0.4pt solid var(--garis); vertical-align: top; }
-.cetak tbody tr:nth-child(even) td { background: #fafafa; }
-.cetak tbody tr.tandai-5 td { border-bottom-color: var(--garis-tegas); }
+/* Garis di <tr>, bukan di tiap <td>. Dengan border-collapse, garis per sel jadi lima
+   persegi terisi per baris; di lembar 276 baris itu ribuan objek gambar yang harus
+   diproses pembaca PDF sebelum halaman muncul. Zebra dibuang sekalian: garis tiap
+   5 baris sudah cukup menuntun mata, dan dua-duanya bersamaan cuma menambah tinta. */
+.cetak tbody td { padding: 1mm 1.5mm; vertical-align: top; }
+.cetak tbody tr { border-bottom: 0.4pt solid var(--garis); }
+.cetak tbody tr.tandai-5 { border-bottom: 0.6pt solid var(--garis-tegas); }
 
 /* Kotak centang: picking tanpa tempat mencentang = jalan menghitung ulang. */
 .centang { width: 7mm; }
@@ -90,7 +105,6 @@ const GAYA = `
    ke bawah -- deretan angka yang rata bisa dipindai sekali lihat, yang gerigi tidak. */
 .ambil { width: 40mm; background: var(--tint); white-space: nowrap;
     display: flex; align-items: baseline; justify-content: flex-end; gap: 0.8mm; }
-.cetak tbody tr:nth-child(even) td.ambil { background: #ebebeb; }
 .ambil .n  { min-width: 13mm; text-align: right; font-size: 11.5pt; font-weight: 700; letter-spacing: -0.01em; }
 .ambil .u  { min-width: 8mm;  text-align: left;  font-size: 7pt;  font-weight: 700; }
 .ambil .n2 { min-width: 10mm; text-align: right; font-size: 8pt; font-weight: 600; }
@@ -99,7 +113,7 @@ const GAYA = `
 
 /* Exception harus KELIHATAN salah, bukan disamarkan jadi tanda tanya. */
 td.ambil.cacat {
-    background: repeating-linear-gradient(-45deg, #fff, #fff 1.4mm, #e2e2e2 1.4mm, #e2e2e2 2.8mm);
+    background: #dcdcdc;
     justify-content: center;
 }
 td.ambil.cacat b { font-size: 7pt; font-weight: 700; white-space: nowrap; }
@@ -145,7 +159,7 @@ export default async function CetakLayout({ children }: { children: React.ReactN
     if (gate.response) redirect("/login");
 
     return (
-        <div style={{ background: "#fff", color: "#111", minHeight: "100vh", padding: "8mm" }}>
+        <div className="cetak-akar" style={{ color: "#111", minHeight: "100vh", padding: "8mm" }}>
             <style>{GAYA}</style>
             {children}
         </div>

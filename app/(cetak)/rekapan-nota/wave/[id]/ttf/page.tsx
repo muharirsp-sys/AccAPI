@@ -53,7 +53,6 @@ export default async function CetakTtfPage({ params }: { params: Promise<{ id: s
                 .ttf .no { width: 8mm; text-align: right; color: var(--samar); font-size: 7pt; }
                 .ttf .faktur { width: 34mm; font-family: "Consolas", ui-monospace, monospace; font-size: 8pt; font-weight: 600; }
                 .ttf .lembar { width: 14mm; text-align: center; font-size: 11pt; font-weight: 700; background: var(--tint); }
-                .ttf tbody tr:nth-child(even) td.lembar { background: #ebebeb; }
                 .ttf .outlet { font-size: 8pt; }
                 .ttf .outlet i { display: block; font-style: normal; font-size: 6.5pt; color: var(--samar);
                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
