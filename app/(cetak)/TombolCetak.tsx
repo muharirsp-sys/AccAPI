@@ -9,7 +9,7 @@
 export default function TombolCetak() {
     return (
         <button onClick={() => window.print()}
-            className="rounded-lg border border-slate-400 px-4 py-2 text-sm font-semibold">
+            className="tombol-cetak">
             Cetak
         </button>
     );

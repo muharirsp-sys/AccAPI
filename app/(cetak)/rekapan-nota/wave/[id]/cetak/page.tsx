@@ -1,22 +1,46 @@
 /*
- * Tujuan: SATU template lembar rekapan berparameter pick_group — pengganti 29+ sheet
- *         `Print Rkpn *` / `Print Rekapan *`. Withdrawal (kolom A-H) dan allocation
- *         (kolom J-K) dicetak berdampingan, dua proyeksi dari SATU CTE.
- * Caller: /rekapan-nota/wave/[id]/cetak?grup=1,2 (tab baru dari layar penyusunan wave).
+ * Tujuan: SATU lembar picking berparameter pick_group — pengganti 29+ sheet `Print Rkpn *`.
+ * Caller: /rekapan-nota/wave/[id]/cetak?grup=1,7 (tab baru dari layar penyusunan wave).
  * Dependensi: lib/rekapan-nota/query (buildRekapan, ambilPickGroup), lib/db.
- * Main Functions: CetakRekapanPage.
- * Side Effects: Hanya SELECT. Server component: query dijalankan di server, bukan lewat API.
+ * Main Functions: CetakRekapanPage, pecahNama, satuanKecil.
+ * Side Effects: Hanya SELECT. Server component: query di server, tanpa hop API.
+ *
+ * Daftar nota TIDAK lagi disandingkan sebaris dengan daftar barang. Di versi sebelumnya
+ * keduanya berbagi satu <tr> dan hanya sejajar karena kebetulan urutan array — baris ke-5
+ * barang tidak punya hubungan apa pun dengan nota ke-5. Tampilan yang MENYIRATKAN hubungan
+ * yang tidak ada adalah kelas kesalahan yang sama dengan yang sedang diperbaiki modul ini.
  */
+import { Fragment } from "react";
 import { pool } from "@/lib/db";
 import { ambilPickGroup, buildRekapan } from "@/lib/rekapan-nota/query";
 import TombolCetak from "../../../../TombolCetak";
 
 export const dynamic = "force-dynamic";
 
-const angka = (v: number | null | undefined, desimal = 0) =>
-    v === null || v === undefined ? "" : Number(v).toLocaleString("id-ID", {
-        minimumFractionDigits: desimal, maximumFractionDigits: desimal,
-    });
+const ID = (v: number, d = 0) =>
+    v.toLocaleString("id-ID", { minimumFractionDigits: d, maximumFractionDigits: d });
+
+/**
+ * Nama barang beruntun mirip: "ABC KECAP MANIS 62 GR X 48 PCH", "... 130 ML X 48 BTL",
+ * "... 250 GR X 24 PCH". Merek berulang, pembedanya di ekor. Jadi ekornya ditebalkan.
+ * ponytail: satu regex di angka pertama. Nama tanpa angka tampil biasa — tidak rusak,
+ * cuma tidak dapat penekanan.
+ */
+function pecahNama(nama: string): { merek: string; spek: string; kode: string } {
+    // Kode internal di ekor ('..."KR02', '"BT101202"BV01') bukan pembeda yang dilihat
+    // picker -- diredam, tidak dibuang.
+    const pisahKode = nama.match(/^([^"]*)(".*)$/);
+    const inti = (pisahKode?.[1] ?? nama).trim();
+    const kode = pisahKode?.[2] ?? "";
+    // Digit harus diawali spasi: tanpa itu "CLOUD9" terbelah di tengah kata.
+    const m = inti.match(/^(.*?\s)(\d.*)$/);
+    return m ? { merek: m[1], spek: m[2], kode } : { merek: inti, spek: "", kode };
+}
+
+/** Satuan kecil dari ekor nama ("X 48 BTL" -> BTL). Default PCS. */
+function satuanKecil(nama: string): string {
+    return nama.match(/\b(?:X|x)\s*\d+\s*([A-Z]{2,4})\s*$/)?.[1] ?? "PCS";
+}
 
 export default async function CetakRekapanPage({
     params, searchParams,
@@ -35,72 +59,160 @@ export default async function CetakRekapanPage({
 
     const [grup, rekapan] = await Promise.all([ambilPickGroup(grupIds), buildRekapan(id, grupIds)]);
     const { withdrawal, allocation, ringkasan } = rekapan;
-    const baris = Math.max(withdrawal.length, allocation.length);
-    const dicetakPada = new Date().toLocaleString("id-ID");
+
+    const totalKarton = withdrawal.reduce((a, r) => a + Math.floor(Number(r.sat_bsr) || 0), 0);
+    const tanggal = new Date(wave.tanggal + "T00:00:00").toLocaleDateString("id-ID",
+        { day: "numeric", month: "long", year: "numeric" });
+
+    // Batas keluarga produk dihitung SEBELUM render, bukan dengan variabel yang dimutasi
+    // sambil memetakan baris.
+    const baris = withdrawal.map((r, i) => {
+        const keluarga = r.kode_barang.slice(0, 5);
+        return {
+            ...r,
+            keluarga,
+            pisah: i > 0 && keluarga !== withdrawal[i - 1].kode_barang.slice(0, 5),
+            tandai5: (i + 1) % 5 === 0,
+        };
+    });
 
     return (
         <main className="cetak">
-            <div className="layar-saja mb-4"><TombolCetak /></div>
-
-            <h1 className="text-base font-bold">
-                REKAPAN NOTA &mdash; {grup.map((g) => g.nama).join(" + ") || "SEMUA NOTA DI WAVE"}
-            </h1>
-            <p className="mb-2 text-xs">
-                Wave {wave.urutan} &quot;{wave.nama}&quot; &middot; {wave.tanggal} &middot; status {wave.status}
-            </p>
+            <div className="layar-saja"><TombolCetak /></div>
 
             <table>
                 <thead>
-                    <tr>
-                        <th colSpan={7}>PENGAMBILAN BARANG</th>
-                        <th colSpan={3}>NOMOR NOTA &amp; RAYON</th>
-                    </tr>
-                    <tr>
-                        <th>Kode Barang</th><th>Nama Barang</th><th>Total</th><th>Konv</th>
-                        <th>Krt Desimal</th><th>Sat Bsr</th><th>Sat Kcl</th>
-                        <th>Nomor Nota</th><th>Rayon</th><th>Pcs</th>
+                    {/* Kop ikut tiap halaman: satu lembar yang tergeletak di lantai gudang
+                        harus bisa dikenali tanpa mencari halaman pertamanya. */}
+                    <tr><th colSpan={5} style={{ padding: 0, border: "none" }}>
+                        <div className="kop">
+                            <div className="kop-baris">
+                                <div>
+                                    <div className="kop-judul">
+                                        {grup.map((g) => g.nama).join("  +  ") || "SEMUA NOTA DI WAVE"}
+                                    </div>
+                                    <div className="kop-sub">
+                                        {wave.nama.toUpperCase()} &middot; {tanggal} &middot; Wave #{id}
+                                        {wave.status !== "released" && ` · ${wave.status.toUpperCase()}`}
+                                    </div>
+                                </div>
+                                <div className="kop-kode">{grup.map((g) => g.kode).join("+") || "ALL"}</div>
+                            </div>
+                            <div className="angka-utama">
+                                <div><b>{ID(ringkasan.jumlahSku)}</b><span>Jenis barang</span></div>
+                                <div><b>{ID(totalKarton)}</b><span>Karton penuh</span></div>
+                                <div><b>{ID(ringkasan.totalPcs)}</b><span>Total pcs</span></div>
+                                <div><b>{ID(ringkasan.jumlahNota)}</b><span>Nota</span></div>
+                            </div>
+                        </div>
+                    </th></tr>
+                    <tr className="judul-kolom">
+                        <th className="centang" />
+                        <th className="kode">Kode</th>
+                        <th>Nama barang</th>
+                        <th className="kanan ambil">Ambil</th>
+                        <th className="kanan audit">Periksa</th>
                     </tr>
                 </thead>
+
                 <tbody>
-                    {Array.from({ length: baris }, (_, i) => {
-                        const wRow = withdrawal[i];
-                        const aRow = allocation[i];
-                        // Konversi tidak ada -> Sat Bsr/Sat Kcl kosong, barisnya TETAP tercetak (R1.3).
-                        const tanpaKonversi = wRow && (wRow.isi_per_karton === null || wRow.isi_per_karton === 0);
+                    {baris.map((r) => {
+                        const isi = r.isi_per_karton;
+                        const tanpaKonversi = isi === null || isi === 0;
+                        const { merek, spek, kode } = pecahNama(r.nama_barang ?? "");
+                        const kecil = satuanKecil(r.nama_barang ?? "");
+                        const krt = Math.floor(Number(r.sat_bsr) || 0);
+                        const kcl = Number(r.sat_kcl) || 0;
+
                         return (
-                            <tr key={i}>
-                                <td>{wRow?.kode_barang ?? ""}</td>
-                                <td>{wRow?.nama_barang ?? ""}</td>
-                                <td className="angka">{angka(wRow?.total_pcs)}</td>
-                                <td className="angka">{tanpaKonversi ? "?" : angka(wRow?.isi_per_karton)}</td>
-                                <td className="angka">{angka(wRow?.krt_desimal, 2)}</td>
-                                <td className="angka">{angka(wRow?.sat_bsr)}</td>
-                                <td className="angka">{angka(wRow?.sat_kcl)}</td>
-                                <td>{aRow ? `${aRow.prioritas === "urgent" ? "* " : ""}${aRow.no_nota}` : ""}</td>
-                                <td>{aRow?.region ?? ""}</td>
-                                <td className="angka">{angka(aRow?.total_pcs)}</td>
-                            </tr>
+                            <Fragment key={r.kode_barang}>
+                                {r.pisah && (
+                                    <tr className="keluarga"><td colSpan={5} /></tr>
+                                )}
+                                <tr className={r.tandai5 ? "tandai-5" : undefined}>
+                                    <td className="centang"><i /></td>
+                                    <td className="kode">{r.kode_barang}</td>
+                                    <td className="nama">
+                                        <span className="merek">{merek}</span>
+                                        <span className="spek">{spek}</span>
+                                        {kode && <span className="kode-internal"> {kode}</span>}
+                                    </td>
+                                    {tanpaKonversi ? (
+                                        <td className="ambil cacat"><b>KONVERSI BELUM ADA</b></td>
+                                    ) : (
+                                        <td className="ambil">
+                                            {/* Nol karton TIDAK boleh jadi angka terbesar di baris:
+                                                mata mendarat di "0" padahal yang diambil justru
+                                                satuan kecilnya. Tanpa karton penuh, satuan kecil
+                                                yang naik jadi angka utama. */}
+                                            {krt > 0 ? (
+                                                <>
+                                                    <span className="n">{ID(krt)}</span>
+                                                    {/* isi 1 = barang tidak dikarton (jerigen, drum).
+                                                        Menyebutnya "KRT" salah dan menyesatkan. */}
+                                                    <span className="u">{isi === 1 ? kecil : "KRT"}</span>
+                                                    <span className="n2">{kcl > 0 ? `+${ID(kcl)}` : ""}</span>
+                                                    <span className="u2">{kcl > 0 ? kecil : ""}</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <span className="n">{ID(kcl)}</span>
+                                                    <span className="u">{kecil}</span>
+                                                    <span className="n2" /><span className="u2" />
+                                                </>
+                                            )}
+                                        </td>
+                                    )}
+                                    <td className="audit">
+                                        {ID(Number(r.total_pcs))} {kecil.toLowerCase()}
+                                        {" · "}{tanpaKonversi ? "isi ?" : `isi ${ID(isi!)}`}
+                                    </td>
+                                </tr>
+                            </Fragment>
                         );
                     })}
                 </tbody>
+
                 <tfoot>
-                    <tr>
-                        <th colSpan={2}>TOTAL</th>
-                        <th className="angka">{angka(ringkasan.totalPcs)}</th>
-                        <th colSpan={4}></th>
-                        <th colSpan={2}>{ringkasan.jumlahNota} nota</th>
-                        <th className="angka">{angka(allocation.reduce((a, r) => a + Number(r.total_pcs), 0))}</th>
+                    <tr className="total">
+                        <td colSpan={2} className="label">Total lembar ini</td>
+                        <td className="label" />
+                        <td className="ambil nilai" style={{ background: "none" }}>
+                            {ID(totalKarton)} <span className="satuan">KRT</span>
+                        </td>
+                        <td className="audit" style={{ fontSize: "8pt", color: "#111", fontWeight: 700 }}>
+                            {ID(ringkasan.totalPcs)} pcs
+                        </td>
                     </tr>
                 </tfoot>
             </table>
 
-            {/* Kertas yang tergeletak di gudang harus bisa menjawab "ini cetakan yang mana?" (R7.4). */}
-            <p className="mt-2 text-[10px]">
-                Wave #{id} &middot; grup {grup.map((g) => g.kode).join("+") || "(semua)"} &middot;{" "}
-                {ringkasan.jumlahSku} SKU &middot; {ringkasan.jumlahNota} nota &middot;{" "}
-                {angka(ringkasan.totalPcs)} pcs &middot; dicetak {dicetakPada}
-                {" "}&middot; tanda * = urgent, tanda ? = item belum punya konversi
-            </p>
+            {/* Verifikasi dua langkah: yang mengambil dan yang memeriksa adalah orang berbeda. */}
+            <div className="paraf">
+                <div><span>Diambil oleh</span><u /></div>
+                <div><span>Diperiksa oleh</span><u /></div>
+                <div><span>Jam selesai</span><u /></div>
+            </div>
+
+            <section className="blok-nota">
+                <h2>Nota dalam lembar ini &mdash; {ID(ringkasan.jumlahNota)}</h2>
+                <div className="grid-nota">
+                    {allocation.map((a) => (
+                        <div key={a.no_nota} className={a.prioritas === "urgent" ? "urgent" : undefined}>
+                            <b>{a.no_nota}</b>
+                            <i>{ID(Number(a.total_pcs))}</i>
+                        </div>
+                    ))}
+                </div>
+            </section>
+
+            <div className="jejak">
+                <span>
+                    Wave #{id} &middot; {grup.map((g) => g.kode).join("+") || "(semua grup)"} &middot;{" "}
+                    urut kode barang &middot; &#9650; = urgent
+                </span>
+                <span>Dicetak {new Date().toLocaleString("id-ID")}</span>
+            </div>
         </main>
     );
 }

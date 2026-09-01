@@ -1,30 +1,152 @@
 /*
- * Tujuan: Layout khusus halaman cetak gudang — tanpa sidebar, tanpa chat widget, latar putih.
- *         Kertas yang keluar dari printer harus berisi rekapan saja, bukan kerangka aplikasi.
- * Caller: app/(cetak)/** (lembar rekapan & TTF).
- * Dependensi: requirePermissionH (guard sendiri: grup ini di luar (dashboard) yang biasa menjaga).
+ * Tujuan: Layout + seluruh gaya cetak lembar gudang. Dirancang untuk dibaca sambil jalan,
+ *         satu tangan memegang kertas, di bawah tekanan waktu — bukan untuk dibaca di layar.
+ * Caller: app/(cetak)/** (lembar picking & TTF).
+ * Dependensi: requirePermissionH (grup ini di luar (dashboard) yang biasa menjaga).
  * Main Functions: CetakLayout.
  * Side Effects: Membaca session/permission; redirect ke login bila tidak berhak.
+ *
+ * Keputusan desain, semuanya punya alasan operasional:
+ * - Satuan SELALU tertulis ("28 KRT", bukan "28"). Tertukarnya satuan besar dan satuan kecil
+ *   adalah kesalahan picking paling umum yang dilaporkan literatur gudang.
+ * - Jumlah yang harus diambil adalah elemen TERBESAR di barisnya. Angka audit (total pcs dan
+ *   faktor konversi) tetap ada, tapi dikecilkan supaya tidak bersaing.
+ * - Tanpa garis vertikal. Kolom dipisah oleh ruang dan perataan, bukan oleh kisi; kisi
+ *   menambah tinta tanpa menambah keterbacaan.
+ * - Zebra tipis + garis tegas tiap 5 baris: mata bisa menyeberang satu baris tanpa tersesat.
+ * - Bekerja penuh dalam hitam-putih. Tidak ada informasi yang hanya disampaikan oleh warna.
  */
 import { redirect } from "next/navigation";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 
 export const dynamic = "force-dynamic";
 
+const GAYA = `
+@page { size: A4 portrait; margin: 12mm 10mm; }
+
+.cetak {
+    --tinta: #111;
+    --samar: #6b6b6b;
+    --garis: #d4d4d4;
+    --garis-tegas: #9a9a9a;
+    --tint: #f2f2f2;
+    font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    color: var(--tinta);
+    font-size: 8pt;
+    line-height: 1.25;
+    max-width: 190mm;
+    margin: 0 auto;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+}
+.cetak * { box-sizing: border-box; }
+
+/* ---------- Kop: identitas lembar, diulang tiap halaman ---------- */
+.kop { border-bottom: 1.5pt solid var(--tinta); padding-bottom: 2mm; }
+.kop-baris { display: flex; align-items: flex-start; justify-content: space-between; gap: 6mm; }
+.kop-judul { font-size: 15pt; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
+.kop-sub { margin-top: 1mm; font-size: 8pt; color: var(--samar); }
+.kop-kode {
+    flex: none; border: 1.5pt solid var(--tinta); border-radius: 1.5mm;
+    padding: 1mm 2.5mm; font-size: 12pt; font-weight: 700; letter-spacing: 0.02em;
+}
+
+/* Tiga angka yang harus terbaca dalam satu detik. */
+.angka-utama { display: flex; gap: 8mm; margin-top: 2.5mm; }
+.angka-utama div { line-height: 1.05; }
+.angka-utama b { display: block; font-size: 13pt; font-weight: 700; }
+.angka-utama span { font-size: 6.5pt; color: var(--samar); text-transform: uppercase; letter-spacing: 0.08em; }
+
+/* ---------- Tabel ---------- */
+.cetak table { width: 100%; border-collapse: collapse; }
+.cetak thead { display: table-header-group; }   /* kop + judul kolom ikut tiap halaman */
+.cetak tr { break-inside: avoid; page-break-inside: avoid; }
+
+.judul-kolom th {
+    font-size: 6.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--samar); text-align: left; padding: 1.5mm 1.5mm 1mm;
+    border-bottom: 0.75pt solid var(--garis-tegas);
+}
+.judul-kolom th.kanan { text-align: right; }
+
+.cetak tbody td { padding: 1mm 1.5mm; border-bottom: 0.4pt solid var(--garis); vertical-align: top; }
+.cetak tbody tr:nth-child(even) td { background: #fafafa; }
+.cetak tbody tr.tandai-5 td { border-bottom-color: var(--garis-tegas); }
+
+/* Kotak centang: picking tanpa tempat mencentang = jalan menghitung ulang. */
+.centang { width: 7mm; }
+.centang i { display: block; width: 3.6mm; height: 3.6mm; border: 0.75pt solid var(--tinta); border-radius: 0.5mm; }
+
+.kode { width: 32mm; font-family: "Consolas", "SF Mono", ui-monospace, monospace; font-size: 7.5pt; letter-spacing: -0.02em; }
+
+/* Nama: prefiks merek diredam, spesifikasi ukuran/kemasan ditebalkan. Untuk produk yang
+   namanya beruntun mirip, pembedanya justru ada di ekor nama. */
+.nama { font-size: 8pt; }
+.nama .merek { color: var(--samar); }
+.nama .spek { font-weight: 700; }
+.nama .kode-internal { color: #9a9a9a; font-size: 7pt; }
+
+/* Jumlah ambil: pahlawan barisnya. Angka dan satuan punya kolom sendiri supaya SEJAJAR
+   ke bawah -- deretan angka yang rata bisa dipindai sekali lihat, yang gerigi tidak. */
+.ambil { width: 40mm; background: var(--tint); white-space: nowrap;
+    display: flex; align-items: baseline; justify-content: flex-end; gap: 0.8mm; }
+.cetak tbody tr:nth-child(even) td.ambil { background: #ebebeb; }
+.ambil .n  { min-width: 13mm; text-align: right; font-size: 11.5pt; font-weight: 700; letter-spacing: -0.01em; }
+.ambil .u  { min-width: 8mm;  text-align: left;  font-size: 7pt;  font-weight: 700; }
+.ambil .n2 { min-width: 10mm; text-align: right; font-size: 8pt; font-weight: 600; }
+.ambil .u2 { min-width: 7mm;  text-align: left;  font-size: 6.5pt; font-weight: 600; color: var(--samar); }
+.audit { width: 24mm; text-align: right; font-size: 6.5pt; color: var(--samar); white-space: nowrap; }
+
+/* Exception harus KELIHATAN salah, bukan disamarkan jadi tanda tanya. */
+td.ambil.cacat {
+    background: repeating-linear-gradient(-45deg, #fff, #fff 1.4mm, #e2e2e2 1.4mm, #e2e2e2 2.8mm);
+    justify-content: center;
+}
+td.ambil.cacat b { font-size: 7pt; font-weight: 700; white-space: nowrap; }
+
+/* Pemisah keluarga produk: prefiks kode berubah = rak lain. Pengganti master lokasi
+   yang belum ada — cukup untuk membuat urutan ambil terasa berkelompok. */
+tr.keluarga td { border-bottom: none; padding-top: 2mm; padding-bottom: 0.5mm; background: none !important; }
+tr.keluarga td { height: 2.5mm; }
+
+/* ---------- Total & tanda tangan ---------- */
+.total td { border-top: 1.5pt solid var(--tinta); border-bottom: none; padding-top: 2mm; font-weight: 700; background: none !important; }
+.total .label { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.08em; color: var(--samar); }
+.total .nilai { font-size: 12pt; }
+
+.paraf { display: flex; gap: 10mm; margin-top: 8mm; break-inside: avoid; }
+.paraf div { flex: 1; }
+.paraf span { display: block; font-size: 6.5pt; text-transform: uppercase; letter-spacing: 0.08em; color: var(--samar); }
+.paraf u { display: block; margin-top: 9mm; border-top: 0.75pt solid var(--tinta); text-decoration: none; }
+
+/* ---------- Blok nota (allocation) ---------- */
+.blok-nota { margin-top: 7mm; break-inside: auto; }
+.blok-nota h2 { font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+    border-bottom: 0.75pt solid var(--garis-tegas); padding-bottom: 1mm; margin: 0 0 2mm; }
+.grid-nota { columns: 3; column-gap: 6mm; font-size: 7pt; }
+.grid-nota div { break-inside: avoid; padding: 0.7mm 0; border-bottom: 0.3pt dotted var(--garis); display: flex; justify-content: space-between; gap: 2mm; }
+.grid-nota b { font-weight: 600; font-family: "Consolas", ui-monospace, monospace; }
+.grid-nota i { font-style: normal; color: var(--samar); text-align: right; }
+.grid-nota .urgent { font-weight: 700; }
+.grid-nota .urgent b::before { content: "\\25B2\\00A0"; }
+
+/* ---------- Jejak cetakan ---------- */
+.jejak { margin-top: 6mm; padding-top: 1.5mm; border-top: 0.4pt solid var(--garis);
+    font-size: 6pt; color: var(--samar); display: flex; justify-content: space-between; gap: 4mm; }
+
+/* ---------- Hanya layar ---------- */
+.layar-saja { margin-bottom: 6mm; }
+.tombol-cetak { border: 1px solid #333; border-radius: 6px; padding: 8px 18px; font-size: 13px; font-weight: 600; background: #111; color: #fff; cursor: pointer; }
+@media print { .layar-saja { display: none !important; } }
+`;
+
 export default async function CetakLayout({ children }: { children: React.ReactNode }) {
     const gate = await requirePermissionH("rekapan_nota.print");
     if (gate.response) redirect("/login");
 
     return (
-        <div className="min-h-screen bg-white p-6 text-black print:p-0">
-            <style>{`
-                @page { size: A4 portrait; margin: 10mm; }
-                @media print { .layar-saja { display: none !important; } }
-                .cetak table { width: 100%; border-collapse: collapse; font-size: 10px; }
-                .cetak th, .cetak td { border: 1px solid #999; padding: 2px 4px; text-align: left; }
-                .cetak th { background: #eee; }
-                .cetak td.angka { text-align: right; font-variant-numeric: tabular-nums; }
-            `}</style>
+        <div style={{ background: "#fff", color: "#111", minHeight: "100vh", padding: "8mm" }}>
+            <style>{GAYA}</style>
             {children}
         </div>
     );
