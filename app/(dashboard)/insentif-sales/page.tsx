@@ -87,6 +87,23 @@ async function readApi(res: Response): Promise<Record<string, unknown>> {
     }
 }
 
+/**
+ * Pilihan Status Insentif per baris target. Nilainya HARUS sama dengan yang diterima
+ * lib/insentif-sales-calc.normalizeStatus — label di sini cuma untuk manusia.
+ *
+ * distributor_principle : ikut skema, support principle dikurangkan dari pool.
+ * distributor           : ikut skema, support diabaikan (distributor bayar penuh).
+ * principle             : TIDAK ikut skema — Rp 0 dan keluar dari penyebut mix.
+ */
+const STATUS_INSENTIF_OPSI = [
+    { value: "distributor_principle", label: "Distributor + Principle" },
+    { value: "distributor", label: "Distributor" },
+    { value: "principle", label: "Principle" },
+] as const;
+const LABEL_STATUS: Record<string, string> = Object.fromEntries(
+    STATUS_INSENTIF_OPSI.map((o) => [o.value, o.label]),
+);
+
 function payeeRoleBadge(role: PayeeRole) {
     if (role === "spv") return { label: "SPV", cls: "bg-sky-500/10 text-sky-300 border-sky-500/30" };
     if (role === "sm") return { label: "SM", cls: "bg-violet-500/10 text-violet-300 border-violet-500/30" };
@@ -3044,9 +3061,58 @@ function SupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRo
     );
     const [draft, setDraft] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
+    const [ubahStatus, setUbahStatus] = useState("");
 
     const keyOf = (r: ApiRow) => `${r.salesCode}|${r.principle}`;
     const valueOf = (r: ApiRow) => draft[keyOf(r)] ?? String(r.support ?? 0);
+
+    /**
+     * Ubah Status Insentif satu baris. Disimpan langsung, bukan lewat draft seperti Support:
+     * ini pilihan tunggal per baris, dan menahannya di draft berarti dashboard menampilkan
+     * status yang belum tersimpan di sebelah nominal yang dihitung dari status LAMA.
+     *
+     * Dikonfirmasi dulu karena efeknya bukan cuma baris ini: "Principle" mengeluarkan baris
+     * dari penyebut mix, sehingga nominal principal lain pada salesman yang sama ikut naik.
+     */
+    async function gantiStatus(r: ApiRow, status: string) {
+        const lama = r.statusInsentif ?? "distributor_principle";
+        if (status === lama) return;
+        const efek = status === "principle"
+            ? "Insentif baris ini jadi Rp 0 dan ia keluar dari penyebut mix, sehingga nominal principal LAIN pada salesman ini ikut naik."
+            : status === "distributor"
+                ? "Support principle diabaikan untuk baris ini — distributor bayar penuh."
+                : "Baris ini ikut skema dan support principle dikurangkan dari pool.";
+        if (!window.confirm(
+            `Ubah Status Insentif ${r.salesCode} / ${r.principle}
+`
+            + `dari "${LABEL_STATUS[lama] ?? lama}" menjadi "${LABEL_STATUS[status] ?? status}"?
+
+${efek}`,
+        )) return;
+        setUbahStatus(keyOf(r));
+        try {
+            const res = await fetch("/api/insentif-sales/targets/status", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify([{
+                    salesCode: r.salesCode, principle: r.principle,
+                    periodMonth: month, periodYear: year, statusInsentif: status,
+                }]),
+            });
+            const data = await readApi(res);
+            if (!res.ok) throw new Error(String(data.error ?? "Gagal mengubah status."));
+            if (Number(data.updated ?? 0) === 0) {
+                toast.warning(`${r.salesCode}/${r.principle} tidak punya baris target periode ini — status tidak tersimpan.`);
+                return;
+            }
+            toast.success(`Status ${r.salesCode}/${r.principle} → ${LABEL_STATUS[status] ?? status}. Insentif dihitung ulang.`);
+            onSaved?.();
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal mengubah status.");
+        } finally {
+            setUbahStatus("");
+        }
+    }
 
     async function save() {
         setSaving(true);
@@ -3112,7 +3178,20 @@ function SupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRo
                                 <td className="px-3 py-2 font-mono text-slate-300">{r.salesCode}</td>
                                 <td className="px-3 py-2 text-slate-300">{r.salesName}</td>
                                 <td className="px-3 py-2 text-slate-300">{r.principle}</td>
-                                <td className="px-3 py-2 text-xs text-slate-500">{r.tipeSales ?? "-"} / {r.statusInsentif ?? "-"}</td>
+                                <td className="px-3 py-2 text-xs">
+                                    <div className="text-slate-500 mb-1">{r.tipeSales ?? "-"}</div>
+                                    <select
+                                        aria-label={`Status insentif ${r.salesCode} ${r.principle}`}
+                                        value={r.statusInsentif ?? "distributor_principle"}
+                                        disabled={ubahStatus === keyOf(r)}
+                                        onChange={(e) => void gantiStatus(r, e.target.value)}
+                                        className="bg-[#11131a] border border-white/10 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-indigo-500 disabled:opacity-50"
+                                    >
+                                        {STATUS_INSENTIF_OPSI.map((o) => (
+                                            <option key={o.value} value={o.value}>{o.label}</option>
+                                        ))}
+                                    </select>
+                                </td>
                                 <td className="px-3 py-2 text-right">
                                     <input
                                         type="number" min={0}
