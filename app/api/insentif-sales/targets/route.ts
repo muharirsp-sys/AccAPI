@@ -4,7 +4,8 @@
  *   Admin upload laporan penjualan lewat route progress, bukan di sini).
  * Dependensi: lib/insentif-sales, db/schema (salesTargets, spvSalesAssignment),
  *   lib/insentif-hierarchy-scope.
- * Main Functions: GET list targets per periode (scoped kalau caller SPV/SM); POST upsert batch
+ * Main Functions: GET list targets per periode (scoped kalau caller SPV/SM); DELETE satu baris
+ *   target (scoped, ditolak kalau barisnya sudah pernah dibayar lunas); POST upsert batch
  *   targets (scoped: SPV/SM cuma boleh tulis salesCode timnya; salesCode BARU/unclaimed oleh
  *   SPV -> otomatis di-claim jadi tim SPV itu; salesCode milik SPV LAIN -> ditolak, arahkan ke
  *   Kelola Hierarki utk proses klaim/approval).
@@ -13,8 +14,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { salesTargets, spvSalesAssignment } from "@/db/schema";
+import { salesTargets, spvSalesAssignment, incentivePayments } from "@/db/schema";
 import { getTargetsForPeriod } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { normalizeStatus, normalizeTipe, normalizeChannel } from "@/lib/insentif-sales-calc";
@@ -299,4 +301,86 @@ export async function POST(req: NextRequest) {
 
     console.log(`[TARGETS] selesai ${upserted} baris dalam ${Date.now() - t0} ms`);
     return NextResponse.json({ upserted });
+}
+
+/**
+ * Hapus SATU baris target (salesCode + principle + periode).
+ *
+ * Kenapa perlu: POST adalah UPSERT, jadi menghilangkan baris dari tabel di layar lalu Simpan
+ * tidak menghapus apa pun di database — barisnya tetap ada dan tetap ikut dihitung. Itu yang
+ * membuat "sudah saya ubah tapi masih terbaca": mengganti kode sales di file target MEMBUAT
+ * baris baru, baris lama tidak tertimpa karena kodenya bagian dari kunci upsert.
+ *
+ * Baris target hantu bukan sekadar tampil: ia tetap membawa Target Value ke agregat SPV/SM
+ * (pencapaian jadi lebih rendah dari seharusnya) dan tetap dihitung sebagai satu principal di
+ * penyebut mix salesman itu, sehingga nominal principal LAIN pada orang yang sama mengecil.
+ */
+export async function DELETE(req: NextRequest) {
+    const gate = await requirePermission(req, "insentif_sales.upload_target");
+    if (gate.response) return gate.response;
+
+    const { searchParams } = req.nextUrl;
+    const salesCode = (searchParams.get("salesCode") ?? "").trim();
+    const principle = (searchParams.get("principle") ?? "").trim();
+    const periodMonth = parseInt(searchParams.get("month") ?? "", 10);
+    const periodYear = parseInt(searchParams.get("year") ?? "", 10);
+
+    if (!salesCode || !principle) {
+        return NextResponse.json(
+            { error: "salesCode dan principle wajib diisi." },
+            { status: 400 },
+        );
+    }
+    if (!Number.isInteger(periodMonth) || periodMonth < 1 || periodMonth > 12
+        || !Number.isInteger(periodYear) || periodYear < 2020 || periodYear > 2100) {
+        return NextResponse.json({ error: "Periode tidak valid." }, { status: 400 });
+    }
+
+    // Kepemilikan. Tanpa ini SPV/SM ter-scope bisa menghapus target siapa pun se-perusahaan.
+    const scope = await getScopeForUser(
+        gate.session.user.id,
+        { month: periodMonth, year: periodYear },
+        gate.perms,
+    );
+    if (scope !== null && !scope.has(salesCode)) {
+        return NextResponse.json(
+            { error: `${salesCode}: di luar cakupan tim Anda.` },
+            { status: 403 },
+        );
+    }
+
+    // Baris yang sudah dibayar TIDAK boleh kehilangan targetnya: catatan pembayaran akan
+    // menggantung tanpa dasar perhitungan, dan laporan periode itu jadi tidak bisa
+    // dipertanggungjawabkan. Pembayarannya harus dibereskan lebih dulu, secara sadar.
+    const [lunas] = await db
+        .select({ id: incentivePayments.id })
+        .from(incentivePayments)
+        .where(and(
+            eq(incentivePayments.salesCode, salesCode),
+            eq(incentivePayments.principle, principle),
+            eq(incentivePayments.periodMonth, periodMonth),
+            eq(incentivePayments.periodYear, periodYear),
+            eq(incentivePayments.paymentStatus, "lunas"),
+        ))
+        .limit(1);
+    if (lunas) {
+        return NextResponse.json(
+            {
+                error: `${salesCode}/${principle} sudah ditandai LUNAS periode ini. `
+                    + `Batalkan status pembayarannya dulu di tab Verifikasi Finance sebelum target ini dihapus.`,
+            },
+            { status: 409 },
+        );
+    }
+
+    const hasil = await db
+        .delete(salesTargets)
+        .where(and(
+            eq(salesTargets.salesCode, salesCode),
+            eq(salesTargets.principle, principle),
+            eq(salesTargets.periodMonth, periodMonth),
+            eq(salesTargets.periodYear, periodYear),
+        ));
+
+    return NextResponse.json({ deleted: hasil.rowCount ?? 0, salesCode, principle });
 }
