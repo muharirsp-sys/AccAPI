@@ -1247,6 +1247,13 @@ function TargetInputSection() {
     const [saving, setSaving] = useState(false);
     const [inputMethod, setInputMethod] = useState<"manual" | "excel">("manual");
     const [excelUploading, setExcelUploading] = useState(false);
+    // Kunci baris yang BENAR-BENAR ada di database saat pemuatan terakhir. Tombol × dulu
+    // cuma membuang baris dari state, lalu Simpan mengirim sisanya sebagai UPSERT — baris
+    // yang dibuang tidak pernah terhapus dan tetap ikut dihitung. Tanpa penanda ini, tombol
+    // itu tidak bisa membedakan "baris baru yang belum disimpan" dari "baris di database".
+    const [tersimpan, setTersimpan] = useState<Set<string>>(new Set());
+    const [menghapusBaris, setMenghapusBaris] = useState("");
+    const kunciTarget = (r: { salesCode: string; principle: string }) => `${r.salesCode}|${r.principle}`;
 
     const fetchTargets = useCallback(async () => {
         setLoading(true);
@@ -1264,8 +1271,10 @@ function TargetInputSection() {
                     // (mis. ENERGIZER = principle) ke default server.
                     tipeSales: r.tipeSales, statusInsentif: r.statusInsentif,
                 })));
+                setTersimpan(new Set(data.rows.map((r: TargetRow) => `${r.salesCode}|${r.principle}`)));
             } else {
                 setRows([{ ...EMPTY_ROW }]);
+                setTersimpan(new Set());
             }
         } catch {
             toast.error("Gagal memuat target.");
@@ -1293,7 +1302,47 @@ function TargetInputSection() {
     }
 
     function addRow() { setRows((prev) => [...prev, { ...EMPTY_ROW }]); }
-    function removeRow(idx: number) { setRows((prev) => prev.filter((_, i) => i !== idx)); }
+    /**
+     * × pada baris BARU cukup membuangnya dari layar. × pada baris yang sudah ada di database
+     * harus benar-benar DELETE — Simpan tidak akan menghapusnya karena POST adalah upsert.
+     * Baris target hantu tetap membawa Target Value ke agregat SPV/SM dan tetap dihitung
+     * sebagai satu principal di penyebut mix, jadi membiarkannya menggeser nominal.
+     */
+    async function removeRow(idx: number) {
+        const r = rows[idx];
+        const kunci = r ? kunciTarget(r) : "";
+        if (!r || !tersimpan.has(kunci)) {
+            setRows((prev) => prev.filter((_, i) => i !== idx));
+            return;
+        }
+        if (!window.confirm(
+            `Hapus baris target ${r.salesCode} / ${r.principle} periode ${MONTH_LABELS[month - 1]} ${year} dari database?
+
+`
+            + `Target Value Rp ${Number(r.targetValue || 0).toLocaleString("id-ID")} akan hilang dari agregat SPV/SM, `
+            + `dan baris ini tidak lagi dihitung sebagai principal di penyebut mix salesman tersebut.`,
+        )) return;
+        setMenghapusBaris(kunci);
+        try {
+            const q = new URLSearchParams({
+                salesCode: r.salesCode, principle: r.principle,
+                month: String(month), year: String(year),
+            });
+            const res = await fetch(`/api/insentif-sales/targets?${q}`, { method: "DELETE" });
+            const data = await readApi(res);
+            if (!res.ok) throw new Error(String(data.error ?? "Gagal menghapus baris target."));
+            if (Number(data.deleted ?? 0) === 0) {
+                toast.info(`${r.salesCode}/${r.principle} sudah tidak ada di database.`);
+            } else {
+                toast.success(`Baris target ${r.salesCode}/${r.principle} dihapus.`);
+            }
+            await fetchTargets();
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal menghapus baris target.");
+        } finally {
+            setMenghapusBaris("");
+        }
+    }
 
     async function handleSave() {
         const invalid = rows.filter((r) => !r.salesCode.trim() || !r.salesName.trim());
@@ -1518,7 +1567,18 @@ function TargetInputSection() {
                                         <td className="px-2 py-2"><input type="number" className={numInp + " w-20"} value={r.targetIa || ""} onChange={(e) => setCell(i, "targetIa", Number(e.target.value))} placeholder="0" /></td>
                                         <td className="px-2 py-2"><input type="number" className={numInp} value={r.splmValue || ""} onChange={(e) => setCell(i, "splmValue", Number(e.target.value))} placeholder="0" /></td>
                                         <td className="px-2 py-2 text-center">
-                                            <button onClick={() => removeRow(i)} className="text-slate-600 hover:text-rose-400 transition-colors p-1 rounded" title="Hapus baris">×</button>
+                                            <button
+                                                onClick={() => void removeRow(i)}
+                                                disabled={menghapusBaris === kunciTarget(r)}
+                                                className={`transition-colors p-1 rounded disabled:opacity-40 ${
+                                                    tersimpan.has(kunciTarget(r))
+                                                        ? "text-rose-400/70 hover:text-rose-300"
+                                                        : "text-slate-600 hover:text-rose-400"
+                                                }`}
+                                                title={tersimpan.has(kunciTarget(r))
+                                                    ? "Hapus baris ini dari database"
+                                                    : "Buang baris (belum tersimpan)"}
+                                            >×</button>
                                         </td>
                                     </tr>
                                 ))}
