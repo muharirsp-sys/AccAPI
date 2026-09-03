@@ -893,7 +893,7 @@ Status Lifecycle wave:
 | **Entry point UI** | `app/(dashboard)/insentif-sales/page.tsx` — tab `sales`/`spv`/`sm`/`admin`(Input Penjualan)/`finance` lewat `?view=` |
 | **Handler/route** | `app/api/insentif-sales/*/route.ts` (20 route, daftar di bawah) |
 | **Business logic (pure)** | `lib/insentif-sales-calc.ts` (GT), `lib/insentif-mt-calc.ts` (MT), `lib/insentif-spv-calc.ts` (SPV), `lib/insentif-sm-calc.ts` (SM), `lib/insentif-value-source.ts`, `lib/sales-code-merge.ts`, `lib/insentif-payee.ts`, `lib/excel-date.ts` (tanggal Excel, anti geser 1 hari) |
-| **Setelan aturan** | `lib/insentif-settings.ts` + tabel `app_setting` — ambang Target AO GT/TT (`fixed240` \| `file`), diubah lewat `PATCH /api/insentif-sales/settings` (izin `manage`). Gagal baca jatuh ke `fixed240`, bukan melempar. |
+| **Setelan aturan** | `lib/insentif-settings.ts` + tabel `app_setting` — ambang Target AO GT/TT (`fixed240` \| `file`), daftar cabang NILAI_JUAL, daftar SM berhak, dan **semua konstanta uang** (`lib/insentif-konstanta.ts`, key `insentif_konstanta`: pool & bobot GT/MT, ambang bayar, ambang IA MT, rate SPV, strata SM, tarif PPh). Diubah lewat `PATCH /api/insentif-sales/settings` (izin `manage`) dari panel Admin → "Konstanta skema insentif". Gagal baca jatuh ke bawaan `DEFAULT_KONSTANTA`, bukan melempar; fungsi kalkulasi menerimanya sebagai parameter `k`, tanpa `k` memakai bawaan. |
 | **Data access** | `lib/insentif-sales.ts` (`getTargetsForPeriod`, `computeMtdProgress`, `computeMtdByPrinciple`, `getMergeMap`), `lib/insentif-hierarchy-scope.ts` (row-level scope) |
 | **Parser Excel** | `lib/insentif-sales-excel.ts` (`parseTargetExcel`), agregasi closing di browser (`page.tsx`) |
 | **DB** | `sales_targets`, `sales_daily_progress`, `incentive_support`, `spv_support`, `incentive_payments`, `incentive_tiers`, `sales_code_merge`, `spv_sales_assignment`, `sm_spv_assignment`, `spv_sales_claim_request`, `app_setting` |
@@ -1045,7 +1045,7 @@ Excel closing (agregasi browser) ─┴─> POST /progress ─> sales_daily_prog
 ### Self-check (semua pure, tanpa DB)
 
 ```bash
-for t in insentif-sales-calc insentif-mt-calc insentif-spv-calc insentif-sm-calc \
+for t in insentif-sales-calc insentif-mt-calc insentif-spv-calc insentif-sm-calc insentif-konstanta insentif-pph \
          insentif-payee insentif-value-source sales-code-merge; do
   node --experimental-strip-types lib/$t.test.ts
 done

@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { PPH_RATE, nettoInsentif, pphInsentif } from "./insentif-pph";
+import { PPH_RATE, nettoInsentif, pphInsentif } from "./insentif-pph.ts";
 
 test("potongan 2,5% dan netto konsisten", () => {
     assert.equal(PPH_RATE, 0.025);

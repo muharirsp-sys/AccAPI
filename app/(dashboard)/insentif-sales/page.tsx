@@ -9,7 +9,7 @@
 
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import {
     Trophy, Filter, Clock, TrendingUp, BarChart3, ListChecks,
     Wallet, Upload, Target, Users, UserCog, DollarSign, CheckCircle2,
@@ -22,6 +22,10 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SupportTemplateRow } from "@/lib/insentif-sales-excel";
 import { excelDateToIso } from "@/lib/excel-date";
 import { PPH_RATE, nettoInsentif, pphInsentif } from "@/lib/insentif-pph";
+import {
+    DEFAULT_KONSTANTA, KONSTANTA_FIELDS, parseKonstanta, setField, getField,
+    type Konstanta,
+} from "@/lib/insentif-konstanta";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/AsyncState";
 import {
     PRINCIPLES, BRANCHES, KPI_LABELS, MONTH_LABELS,
@@ -220,20 +224,32 @@ function CollapsiblePanel({ icon: Icon, no, title, desc, badge, children }: {
 }
 
 /**
+ * Konstanta yang dipakai SERVER saat menghitung baris-baris di layar ini (dikirim bersama
+ * data dashboard). Semua penjelasan di layar — ambang AO, ambang 90%, strata SM, tarif PPh —
+ * dibaca dari sini, BUKAN dari salinan angka di file ini: setelah angkanya bisa diubah dari
+ * panel Admin, rincian yang memakai salinan sendiri akan membantah nominalnya sendiri.
+ */
+const KonstantaCtx = createContext<Konstanta>(DEFAULT_KONSTANTA);
+const useKonstanta = () => useContext(KonstantaCtx);
+
+/**
  * Kenapa baris ini Rp 0. Pertanyaan yang paling sering diajukan ke layar ini adalah "kenapa
  * dapat / tidak dapat", dan angka nol sendirian tidak pernah menjawabnya — orang lalu menebak
  * bahwa sistemnya salah. Urutannya mengikuti urutan penolakan di kalkulasi.
  */
-function sebabNol(r: ApiRow, gtAoMode?: "fixed240" | "file"): string | null {
+function sebabNol(r: ApiRow, gtAoMode: "fixed240" | "file" | undefined, k: Konstanta): string | null {
     if (r.incentive.total > 0) return null;
     if (r.statusInsentif === "principle") return "tidak ikut skema";
     if (!(r.target.value > 0)) return "target belum diisi";
     if (!(r.real.value > 0)) return "penjualan bersih ≤ 0";
     if (r.channel !== "GT" && r.channel !== "TT" && r.channel !== "MT") return `channel "${r.channel}" tak dikenal`;
-    if ((r.support ?? 0) >= 1_000_000) return "ditanggung principle";
-    const ambangAo = r.channel === "MT" || gtAoMode === "file" ? r.target.ao : 240;
+    if ((r.support ?? 0) >= k.gt.pool1) return "ditanggung principle";
+    const ambangAo = r.channel === "MT" || gtAoMode === "file" ? r.target.ao : k.gt.aoAmbang;
     const pctAoDibayar = ambangAo > 0 ? (r.real.ao / ambangAo) * 100 : 0;
-    if (r.pct.value < 90 && pctAoDibayar < 90) return "belum 90%";
+    const ambangPct = k.gt.ambangBayar * 100;
+    if (r.pct.value < ambangPct && pctAoDibayar < ambangPct) {
+        return `belum ${formatPctText(ambangPct)}`;
+    }
     return null;
 }
 
@@ -308,10 +324,11 @@ function useExpandableRows() {
  * dasar perhitungan yang berbeda dari yang lain untuk baris yang sama.
  */
 function SalesBreakdown({ r, semuaBaris, gtAoMode }: { r: ApiRow; semuaBaris?: ApiRow[]; gtAoMode?: "fixed240" | "file" }) {
+    const k = useKonstanta();
     const isMt = r.channel === "MT";
     // Ambang AO yang dipakai membayar. Menuliskan 240 mati di sini berbahaya: setelah toggle
     // dimatikan, layar akan mengklaim angka yang tidak lagi dipakai menghitung.
-    const ambangAo = isMt || gtAoMode === "file" ? r.target.ao : 240;
+    const ambangAo = isMt || gtAoMode === "file" ? r.target.ao : k.gt.aoAmbang;
 
     // MT membayar 4 KPI (Value 350rb, EC 150rb, OA 150rb, IA 350rb); GT/TT hanya 2 (Value 30%,
     // AO 70%). Menampilkan dua komponen untuk semua channel membuat baris MT memperlihatkan
@@ -324,13 +341,13 @@ function SalesBreakdown({ r, semuaBaris, gtAoMode }: { r: ApiRow; semuaBaris?: A
             { label: "Aktif Outlet", value: formatRp(r.incentive.ao) },
             { label: "Item Aktif", value: formatRp(r.incentive.isq) },
             { label: "Total", value: formatRp(r.incentive.total), tone: "amber" as const },
-            ...itemsPph(r.incentive.total),
+            ...itemsPph(r.incentive.total, k),
         ]
         : [
-            { label: "Value (30%)", value: formatRp(r.incentive.value) },
-            { label: "AO (70%)", value: formatRp(r.incentive.ao) },
+            { label: `Value (${formatPctText(k.gt.bobotValue * 100)})`, value: formatRp(r.incentive.value) },
+            { label: `AO (${formatPctText(k.gt.bobotAo * 100)})`, value: formatRp(r.incentive.ao) },
             { label: "Total", value: formatRp(r.incentive.total), tone: "amber" as const },
-            ...itemsPph(r.incentive.total),
+            ...itemsPph(r.incentive.total, k),
         ];
 
     // Sales "mix": komponen Value dinilai dari GABUNGAN seluruh principal yang ikut skema,
@@ -445,6 +462,8 @@ function SpvBreakdown({ rincian }: { rincian: SpvIncentiveDetail[] }) {
 
 /** Rincian satu SM: strata FLAT, jadi yang perlu dijelaskan adalah strata mana yang kena dan kenapa. */
 function SmBreakdown({ r }: { r: SmIncentiveRow }) {
+    const k = useKonstanta();
+    const SM_STRATA = strataSm(k);
     // Rasio dibulatkan sama persis seperti rateSm (roundRatio 1e-6) sebelum dicocokkan ke
     // strata. Tanpa itu 0,8999999997 di layar jatuh ke "< 90%" padahal yang dibayar server
     // Rp 1,5jt: rincian yang membantah nominalnya sendiri.
@@ -468,7 +487,7 @@ function SmBreakdown({ r }: { r: SmIncentiveRow }) {
                     { label: "Nominal strata", value: formatRp(strata.nominal) },
                     { label: "Ikut skema", value: r.berhak ? "Ya" : "Tidak", tone: "muted" },
                     { label: "Bruto", value: formatRp(r.total), tone: "amber" },
-                    ...itemsPph(r.total),
+                    ...itemsPph(r.total, k),
                 ]} />
             </div>
             <p className="text-[11px] text-slate-500 mt-4">
@@ -485,35 +504,37 @@ function SmBreakdown({ r }: { r: SmIncentiveRow }) {
 // yang bisa dicocokkan dengan hitungan manual & file target, netto adalah yang dibayar.
 // Header dan sel selalu berpasangan DUA kolom — kalau salah satunya diubah, ubah juga
 // colSpan baris rincian dan footer tabel itu.
-const LABEL_PPH = `PPh ${(PPH_RATE * 100).toLocaleString("id-ID")}%`;
+const labelPph = (rate: number = PPH_RATE) => `PPh ${(rate * 100).toLocaleString("id-ID")}%`;
 
 function PphHeads() {
+    const k = useKonstanta();
     return (
         <>
-            <th className="px-3 py-3 text-right whitespace-nowrap">{LABEL_PPH}</th>
+            <th className="px-3 py-3 text-right whitespace-nowrap">{labelPph(k.pph.rate)}</th>
             <th className="px-3 py-3 text-right bg-emerald-500/10 whitespace-nowrap">Netto Dibayar</th>
         </>
     );
 }
 
 function PphCells({ bruto, foot }: { bruto: number; foot?: boolean }) {
+    const k = useKonstanta();
     return (
         <>
             <td className="px-3 py-3 text-right font-mono text-rose-300/80">
-                {bruto > 0 ? `-${formatRp(pphInsentif(bruto))}` : formatRp(0)}
+                {bruto > 0 ? `-${formatRp(pphInsentif(bruto, k.pph.rate))}` : formatRp(0)}
             </td>
             <td className={`px-3 py-3 text-right font-mono font-bold ${foot ? "bg-emerald-500/10 text-emerald-300 text-sm" : "bg-emerald-500/5 text-emerald-400"}`}>
-                {formatRp(nettoInsentif(bruto))}
+                {formatRp(nettoInsentif(bruto, k.pph.rate))}
             </td>
         </>
     );
 }
 
 /** Dua baris terakhir grup "Hasil" di kartu rincian, supaya bruto/netto tidak pernah beda tempat. */
-function itemsPph(bruto: number) {
+function itemsPph(bruto: number, k: Konstanta = DEFAULT_KONSTANTA) {
     return [
-        { label: LABEL_PPH, value: `-${formatRp(pphInsentif(bruto))}`, tone: "muted" as const },
-        { label: "Netto dibayar", value: formatRp(nettoInsentif(bruto)), tone: "amber" as const },
+        { label: labelPph(k.pph.rate), value: `-${formatRp(pphInsentif(bruto, k.pph.rate))}`, tone: "muted" as const },
+        { label: "Netto dibayar", value: formatRp(nettoInsentif(bruto, k.pph.rate)), tone: "amber" as const },
     ];
 }
 
@@ -740,6 +761,7 @@ function AchievementTable({ rows, progress: tg }: { rows: Salesman[]; progress: 
 
 // ── Incentive Table — pakai data incentive dari API ────────────────────────
 function IncentiveTable({ apiRows, gtAoMode }: { apiRows: ApiRow[]; gtAoMode?: "fixed240" | "file" }) {
+    const k = useKonstanta();
     const { open, rowProps } = useExpandableRows();
     const grand = apiRows.reduce(
         (acc, r) => {
@@ -777,7 +799,7 @@ function IncentiveTable({ apiRows, gtAoMode }: { apiRows: ApiRow[]; gtAoMode?: "
                             const statusLabel: Record<string, string> = { lunas: "Lunas", tunggakan: "Tunggakan", belum: "Belum" };
                             const sc = statusMap[r.paymentStatus] ?? statusMap.belum;
                             const key = `${r.salesCode}|${r.principle}`;
-                            const sebab = sebabNol(r, gtAoMode);
+                            const sebab = sebabNol(r, gtAoMode, k);
                             return (
                                 <Fragment key={key}>
                                     <tr {...rowProps(key)}>
@@ -1003,13 +1025,20 @@ interface SmIncentiveRow {
     total: number;
 }
 
-/** Strata FLAT insentif SM (lib/insentif-sm-calc). Ditampilkan supaya angka Rp punya alasan. */
-const SM_STRATA: Array<{ min: number; label: string; nominal: number }> = [
-    { min: 110, label: "≥ 110%", nominal: 3_500_000 },
-    { min: 100, label: "100 - 109,99%", nominal: 2_500_000 },
-    { min: 90, label: "90 - 99,99%", nominal: 1_500_000 },
-    { min: 0, label: "< 90%", nominal: 0 },
-];
+/**
+ * Strata FLAT insentif SM, DITURUNKAN dari konstanta aktif (lib/insentif-sm-calc memakai
+ * angka yang sama). Label batas atas memakai ambang strata berikutnya supaya tetap benar
+ * kalau ambangnya diubah dari panel Admin.
+ */
+function strataSm(k: Konstanta): Array<{ min: number; label: string; nominal: number }> {
+    const pct = (v: number) => formatPctText(v * 100);
+    return [
+        { min: k.sm.ambang3 * 100, label: `≥ ${pct(k.sm.ambang3)}`, nominal: k.sm.nominal3 },
+        { min: k.sm.ambang2 * 100, label: `${pct(k.sm.ambang2)} - <${pct(k.sm.ambang3)}`, nominal: k.sm.nominal2 },
+        { min: k.sm.ambang1 * 100, label: `${pct(k.sm.ambang1)} - <${pct(k.sm.ambang2)}`, nominal: k.sm.nominal1 },
+        { min: 0, label: `< ${pct(k.sm.ambang1)}`, nominal: 0 },
+    ];
+}
 
 function SmIncentiveTable({ month, year }: { month: number; year: number }) {
     const [rows, setRows] = useState<SmIncentiveRow[]>([]);
@@ -1658,6 +1687,153 @@ function TargetInputSection() {
  * tertulis, dan penggantiannya minta konfirmasi. Default "fixed240" = perilaku sejak awal.
  */
 /**
+ * Editor SEMUA konstanta uang skema (pool & bobot GT/MT, ambang bayar, rate SPV, strata SM,
+ * tarif PPh). Sebelum ini setiap perubahan aturan berarti satu deploy.
+ *
+ * Bentuknya satu tabel angka, bukan formulir per skema: isinya 25 angka yang saling terkait,
+ * dan yang ingin dilihat orang saat mengubah salah satunya adalah angka lain di sebelahnya.
+ * Yang berubah ditandai, bawaan ditampilkan, dan penyimpanan minta konfirmasi berisi daftar
+ * perubahannya — angka-angka ini langsung mengubah nominal SEMUA orang.
+ */
+function KonstantaEditor() {
+    const [tersimpan, setTersimpan] = useState<Konstanta | null>(null);
+    const [draf, setDraf] = useState<Konstanta | null>(null);
+    const [bawaan, setBawaan] = useState<Konstanta>(DEFAULT_KONSTANTA);
+    const [saving, setSaving] = useState(false);
+
+    const muat = useCallback(async () => {
+        try {
+            const res = await fetch("/api/insentif-sales/settings");
+            const data = await readApi(res);
+            if (!res.ok) throw new Error(String(data.error ?? "Gagal memuat konstanta."));
+            const k = parseKonstanta(data.konstanta);
+            setTersimpan(k);
+            setDraf(k);
+            if (data.konstantaBawaan) setBawaan(parseKonstanta(data.konstantaBawaan));
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal memuat konstanta.");
+        }
+    }, []);
+    useEffect(() => { void muat(); }, [muat]);
+
+    const berubah = useMemo(() => {
+        if (!draf || !tersimpan) return [];
+        return KONSTANTA_FIELDS.filter((f) => getField(draf, f.path) !== getField(tersimpan, f.path));
+    }, [draf, tersimpan]);
+
+    async function simpan() {
+        if (!draf || !berubah.length) return;
+        const rincian = berubah
+            .map((f) => `${f.label}: ${tampil(getField(tersimpan!, f.path), f.kind)} → ${tampil(getField(draf, f.path), f.kind)}`)
+            .join("\n");
+        if (!window.confirm(
+            `Simpan ${berubah.length} perubahan konstanta insentif?\n\n${rincian}\n\n`
+            + "Nominal insentif SEMUA sales/SPV/SM akan dihitung ulang dengan angka baru ini, "
+            + "termasuk periode yang sudah lewat dan yang belum dibayar.",
+        )) return;
+        setSaving(true);
+        try {
+            const res = await fetch("/api/insentif-sales/settings", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ konstanta: draf }),
+            });
+            const data = await readApi(res);
+            if (!res.ok) throw new Error(String(data.error ?? "Gagal menyimpan konstanta."));
+            const k = parseKonstanta(data.konstanta);
+            setTersimpan(k);
+            setDraf(k);
+            toast.success(`Konstanta tersimpan (${berubah.length} angka berubah).`);
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal menyimpan konstanta.");
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    const grup = [...new Set(KONSTANTA_FIELDS.map((f) => f.grup))];
+
+    return (
+        <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
+            <SectionTitle icon={Filter} no={0} title="Konstanta skema insentif"
+                desc="Pool, bobot, ambang bayar, rate SPV, strata SM, dan tarif PPh. Berlaku untuk setiap perhitungan setelah disimpan." />
+            {draf === null ? (
+                <p className="text-sm text-slate-500">Memuat…</p>
+            ) : (
+                <div className="flex flex-col gap-5">
+                    {grup.map((g) => (
+                        <div key={g}>
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">{g}</div>
+                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                                {KONSTANTA_FIELDS.filter((f) => f.grup === g).map((f) => {
+                                    const nilai = getField(draf, f.path);
+                                    const asal = tersimpan ? getField(tersimpan, f.path) : nilai;
+                                    const beda = nilai !== asal;
+                                    return (
+                                        <label key={f.path} className="flex flex-col gap-1">
+                                            <span className="text-[11px] text-slate-400">
+                                                {f.label}
+                                                {beda && <span className="text-amber-400"> ·  diubah</span>}
+                                            </span>
+                                            <input
+                                                type="number"
+                                                step={f.kind === "rasio" ? "0.01" : "1"}
+                                                min="0"
+                                                value={String(nilai)}
+                                                disabled={saving}
+                                                onChange={(e) => {
+                                                    const v = Number(e.target.value);
+                                                    if (!Number.isFinite(v) || v < 0) return;
+                                                    setDraf(setField(draf, f.path, v));
+                                                }}
+                                                className={`w-full bg-black/40 border rounded px-2 py-1.5 text-xs text-right font-mono outline-none focus:border-indigo-500 ${beda ? "border-amber-500/60 text-amber-300" : "border-white/10 text-slate-200"}`}
+                                            />
+                                            <span className="text-[10px] text-slate-600">
+                                                {f.kind === "rasio" ? `= ${(nilai * 100).toLocaleString("id-ID")}%` : tampil(nilai, f.kind)}
+                                                {" · bawaan "}{tampil(getField(bawaan, f.path), f.kind)}
+                                                {f.catatan ? ` · ${f.catatan}` : ""}
+                                            </span>
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ))}
+                    <div className="flex items-center gap-3 flex-wrap">
+                        <button type="button" onClick={simpan} disabled={!berubah.length || saving}
+                            className="px-4 py-2 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white text-sm font-medium disabled:opacity-40">
+                            {saving ? "Menyimpan…" : `Simpan${berubah.length ? ` (${berubah.length})` : ""}`}
+                        </button>
+                        <button type="button" onClick={() => setDraf(bawaan)} disabled={saving}
+                            className="px-3 py-2 rounded-lg border border-white/10 text-slate-300 text-sm hover:bg-white/5 disabled:opacity-40">
+                            Isi ulang dengan bawaan
+                        </button>
+                        {!!berubah.length && (
+                            <button type="button" onClick={() => setDraf(tersimpan)} disabled={saving}
+                                className="px-3 py-2 rounded-lg border border-white/10 text-slate-400 text-sm hover:bg-white/5 disabled:opacity-40">
+                                Batalkan perubahan
+                            </button>
+                        )}
+                    </div>
+                    <p className="text-[11px] text-amber-400/80">
+                        Mengubah angka di sini langsung menggeser nominal insentif SEMUA orang pada
+                        setiap perhitungan berikutnya, termasuk periode lampau yang belum dibayar.
+                        Pembayaran yang sudah tercatat tetap memakai angka bruto yang tersimpan.
+                    </p>
+                </div>
+            )}
+        </div>
+    );
+}
+
+/** Tampilan angka konstanta: rupiah untuk nominal, persen untuk rasio, cacahan untuk qty. */
+function tampil(v: number, kind: "rp" | "rasio" | "qty") {
+    if (kind === "rp") return formatRp(v);
+    if (kind === "rasio") return `${(v * 100).toLocaleString("id-ID")}%`;
+    return v.toLocaleString("id-ID");
+}
+
+/**
  * Setelan berbentuk DAFTAR (cabang beracuan NILAI_JUAL, SM yang ikut skema insentif).
  * Keduanya dulu konstanta di kode: menambah satu principal berarti satu deploy.
  *
@@ -2239,6 +2415,7 @@ function AdminView({ rows }: { rows: Salesman[] }) {
 
     return (
         <div className="space-y-5">
+            <KonstantaEditor />
             <GtAoTargetToggle />
             <DaftarSetelan
                 judul="Cabang beracuan NILAI_JUAL"
@@ -3282,6 +3459,7 @@ function FinanceView({ apiRows, month, year, gtAoMode, onPilihBulan }: {
     /** Ganti periode yang sedang dimuat. Strip 12 bulan adalah SATU-SATUNYA pemilih di tab ini. */
     onPilihBulan: (bulan: number) => void;
 }) {
+    const k = useKonstanta();
     const [payments, setPayments] = useState<PaymentRow[]>([]);
     // Dulu ada `selectedMonth` lokal yang terpisah dari periode yang benar-benar dimuat.
     // Akibatnya strip menampilkan bulan A sementara angkanya dihitung dari bulan B, dan bulan
@@ -3735,11 +3913,11 @@ function FinanceView({ apiRows, month, year, gtAoMode, onPilihBulan }: {
                             const bruto = checkedList.reduce((a, r) => a + r.total, 0);
                             // Per baris, bukan atas jumlahnya: yang ditransfer adalah netto tiap
                             // penerima, jadi pembulatan PPh-nya juga per penerima.
-                            const netto = checkedList.reduce((a, r) => a + nettoInsentif(r.total), 0);
+                            const netto = checkedList.reduce((a, r) => a + nettoInsentif(r.total, k.pph.rate), 0);
                             return (
                                 <>
                                     {checkedList.length} penerima dipilih · Bruto: <span className="font-mono text-slate-300">{formatRp(bruto)}</span>
-                                    {" · "}{LABEL_PPH}: <span className="font-mono text-rose-300/80">-{formatRp(bruto - netto)}</span>
+                                    {" · "}{labelPph(k.pph.rate)}: <span className="font-mono text-rose-300/80">-{formatRp(bruto - netto)}</span>
                                     {" · Netto: "}<span className="font-mono font-bold text-emerald-400">{formatRp(netto)}</span>
                                 </>
                             );
@@ -3770,6 +3948,8 @@ export default function InsentifSalesPage() {
     // Ambang AO yang dipakai server menghitung baris-baris ini. Diteruskan ke rincian supaya
     // layar tidak pernah mengklaim ambang yang berbeda dari yang dipakai membayar.
     const [gtAoMode, setGtAoMode] = useState<"fixed240" | "file">("fixed240");
+    // Konstanta yang dipakai server saat menghitung baris yang sedang tampil.
+    const [konstanta, setKonstanta] = useState<Konstanta>(DEFAULT_KONSTANTA);
     const [cakupan, setCakupan] = useState<{
         dibatasi: boolean;
         jumlahKode?: number;
@@ -3825,6 +4005,7 @@ export default function InsentifSalesPage() {
             setApiRows(data.rows as ApiRow[]);
             setProgressFeed(data.progressFeed as ProgressFeedStatus);
             setGtAoMode(data.gtAoMode === "file" ? "file" : "fixed240");
+            setKonstanta(parseKonstanta(data.konstanta));
             setCakupan(data.cakupan ?? { dibatasi: false });
             setOpsiFilter(data.opsiFilter ?? { principles: [], branches: [], sm: [] });
             setIzin(new Set(Array.isArray(data.izin) ? (data.izin as string[]) : []));
@@ -3878,6 +4059,8 @@ export default function InsentifSalesPage() {
     };
 
     return (
+        // Semua rincian di bawah membaca konstanta yang dipakai server lewat context ini.
+        <KonstantaCtx.Provider value={konstanta}>
         <div className="ui-page-shell ui-page-shell--wide">
             {/* Header */}
             <div className="ui-page-header">
@@ -4072,5 +4255,6 @@ export default function InsentifSalesPage() {
             )}
             </div>
         </div>
+        </KonstantaCtx.Provider>
     );
 }

@@ -24,7 +24,7 @@ import {
     getTargetsForPeriod,
 } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
-import { getGtAoTargetMode } from "@/lib/insentif-settings";
+import { getGtAoTargetMode, getKonstanta } from "@/lib/insentif-settings";
 import { getScopeForUser, getUserHierarchyIdentity } from "@/lib/insentif-hierarchy-scope";
 import { isOfficeRow } from "@/lib/insentif-sm-calc";
 import {
@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
     const principle = searchParams.get("principle") ?? undefined;
     const branch = searchParams.get("branch") ?? undefined;
 
-    const [rawTargets, realByPrinciple, supportRows, paymentRows, scope, gtAoMode] = await Promise.all([
+    const [rawTargets, realByPrinciple, supportRows, paymentRows, scope, gtAoMode, konstanta] = await Promise.all([
         getTargetsForPeriod(month, year),
         computeMtdByPrinciple(month, year),
         db
@@ -64,6 +64,7 @@ export async function GET(req: NextRequest) {
             .where(and(eq(incentivePayments.periodMonth, month), eq(incentivePayments.periodYear, year))),
         getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
         getGtAoTargetMode(),
+        getKonstanta(),
     ]);
     // scope null = tidak ada scoping (perilaku existing/default). Non-null = user SPV/SM
     // opt-in (lib/insentif-hierarchy-scope) — cuma lihat salesCode bawahannya sendiri.
@@ -145,7 +146,7 @@ export async function GET(req: NextRequest) {
         mixGroups.set(t.salesCode, arr);
     }
     for (const [salesCode, arr] of mixGroups) {
-        for (const line of computeMix(arr).rincian) mixLineMap.set(key(salesCode, line.nama), line);
+        for (const line of computeMix(arr, konstanta).rincian) mixLineMap.set(key(salesCode, line.nama), line);
     }
 
     // Pra-hitung insentif MT-mix per salesman (pool dibagi rata per principle valid).
@@ -171,7 +172,7 @@ export async function GET(req: NextRequest) {
         mtMixGroups.set(t.salesCode, arr);
     }
     for (const [salesCode, arr] of mtMixGroups) {
-        for (const line of computeMtMix(arr).rincian) mtMixLineMap.set(key(salesCode, line.nama), line);
+        for (const line of computeMtMix(arr, konstanta).rincian) mtMixLineMap.set(key(salesCode, line.nama), line);
     }
 
     const timeGone = getWorkdayProgress(new Date());
@@ -211,7 +212,7 @@ export async function GET(req: NextRequest) {
                         realisasi_value: real.realValue,
                         realisasi_ao: real.realAo,
                         nilai_support_principal: supportMap.get(key(t.salesCode, t.principle)) ?? 0,
-                    });
+                    }, konstanta);
                     incentive = { value: ex.insentif_value, ec: 0, ao: ex.insentif_ao, isq: 0, total: ex.total };
                 }
             } else if (isMtChannel(t.channel)) {
@@ -229,7 +230,7 @@ export async function GET(req: NextRequest) {
                         realisasi_ao: real.realAo,
                         realisasi_ia: real.realIa,
                         nilai_support_principal: supportMap.get(key(t.salesCode, t.principle)) ?? 0,
-                    });
+                    }, konstanta);
                 incentive = {
                     value: mt?.insentif_value ?? 0,
                     ec: mt?.insentif_ec ?? 0,
@@ -289,5 +290,7 @@ export async function GET(req: NextRequest) {
     // menyembunyikan tab tanpa guard server bukan keamanan, cuma tebal-tipis basa-basi.
     const izin = [...(gate.perms ?? [])].filter((k) => k.startsWith("insentif_sales."));
 
-    return NextResponse.json({ month, year, timeGone, rows, progressFeed, gtAoMode, cakupan, opsiFilter, izin });
+    // konstanta ikut dikirim supaya rincian di layar (ambang AO, strata, PPh) memakai angka
+    // yang SAMA dengan yang dipakai server saat menghitung — bukan salinan hardcode di UI.
+    return NextResponse.json({ month, year, timeGone, rows, progressFeed, gtAoMode, konstanta, cakupan, opsiFilter, izin });
 }
