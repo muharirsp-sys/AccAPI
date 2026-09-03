@@ -9,17 +9,30 @@ Peta sistem sudah diperbarui: `SYSTEM_MAP.md` (§8 Core Logic Flow, Module Map, 
 
 ## 0. BACA INI DULU — dua jebakan yang bisa merusak
 
-### 0.1 Branch ini TIDAK murni Rekapan Nota
+### 0.1 ~~Branch ini TIDAK murni Rekapan Nota~~ — SUDAH BERES, jangan dipisah
 
-`git log 14c10a2..feat/rekapan-nota` berisi **24 commit**, dan **13 di antaranya milik modul
-Insentif Sales** — hasil kerja sesi lain yang kebetulan mendarat di branch yang sedang
-ter-checkout. Sebelum merge ke `main`, putuskan dulu: dua-duanya memang siap dirilis
-bersama, atau perlu dipisah.
+Kekhawatiran aslinya benar (13 commit Insentif Sales nyasar ke branch ini), tapi keputusannya
+sudah tidak relevan: **11 dari 13 commit Insentif itu sudah mendarat di `main` lewat jalur
+lain** (cherry-pick, SHA berbeda, pesan sama). Buktikan sendiri — `-` artinya patch-nya sudah
+ada di upstream:
 
 ```bash
-git log --oneline 14c10a2..feat/rekapan-nota | grep -c insentif   # 13
-git log --oneline 14c10a2..feat/rekapan-nota | grep -c rekapan    # 9
+git cherry -v origin/main feat/rekapan-nota
 ```
+
+`origin/main` sudah di-merge masuk ke branch ini (commit `e482610`), jadi git sudah membuang
+duplikatnya sendiri. Dua konflik yang muncul sudah diselesaikan:
+
+- `lib/rbac.ts` — 6 konflik, semuanya penambahan murni dari sisi Rekapan Nota (`main` tidak
+  menghapus apa pun). Ambil kedua sisi.
+- `scripts/migrate-pg.mjs` — versi `main` yang menang, dan itu benar: `main` menambahkan
+  `DATABASE_MIGRATION_URL` + guard `information_schema`, sementara branch ini tidak menambah
+  apa pun soal rekapan di file itu.
+
+**Jangan coba memisah commit-nya sekarang.** Interleaved, menyentuh sidebar & RBAC yang sama,
+dan menukar kode terverifikasi dengan riwayat yang rapi adalah pertukaran yang buruk.
+
+Status branch: **0 di belakang `main`**, 27 di depan, sudah di-push. Siap merge.
 
 ### 0.2 Urutan deploy TERBALIK dari dugaan: migrasi DULU, baru merge
 
@@ -80,11 +93,32 @@ Membaca sheet `Konversi` (8.169 SKU), `Master Area Heinz` (3.378 outlet + alamat
 
 ### 1.3 Merge ke `main` → deploy otomatis
 
-### 1.4 Beri permission
+### 1.4 Beri permission — "Admin otomatis dapat semua" ITU SALAH
 
-`rekapan_nota.{view,manage,print,approve_takeout}`. Admin otomatis dapat semua; preset
-`manager` sudah diisikan. Selain itu assign lewat `/admin/groups`. `approve_takeout` sengaja
-dipisah — tidak semua orang boleh menarik nota keluar dari wave.
+Kalimat itu ada di versi handover sebelumnya dan **menyesatkan**. Yang sebenarnya berlaku,
+dari `lib/rbac/resolve.ts:36-43`: begitu seorang user tergabung di **minimal satu** Access
+Group, group itu jadi **satu-satunya** sumber permission-nya — preset role legacy (termasuk
+`admin`) diabaikan total. Tidak ada bypass untuk `role = 'admin'` di `requirePermission()`.
+
+Akibatnya: sesudah deploy, **tidak seorang pun** bisa membuka `/rekapan-nota` sampai key-nya
+ditambahkan ke group, admin sekalipun. Preset `manager` di `lib/rbac.ts:240` hanya menolong
+user yang belum pernah dimasukkan ke group mana pun — di produksi hampir tidak ada.
+
+Jadi langkahnya: buka `/admin/groups`, centang `rekapan_nota.{view,manage,print,approve_takeout}`
+pada group yang berhak. `approve_takeout` sengaja dipisah — tidak semua orang boleh menarik
+nota keluar dari wave.
+
+Cek siapa yang akan kena 403 sebelum Anda pergi:
+
+```sql
+SELECT g.name,
+       count(*) FILTER (WHERE gp.permission_key LIKE 'rekapan_nota.%') AS punya_rekapan,
+       count(ug.user_id) AS jumlah_user
+FROM access_group g
+LEFT JOIN group_permission gp ON gp.group_id = g.id
+LEFT JOIN user_group      ug ON ug.group_id = g.id
+GROUP BY g.name ORDER BY 1;
+```
 
 ---
 
