@@ -15,7 +15,6 @@ import {
     Wallet, Upload, Target, Users, UserCog, DollarSign, CheckCircle2,
     AlertTriangle, FileUp, Save, Loader2, RefreshCw, Download, ChevronDown,
 } from "lucide-react";
-import * as XLSX from "xlsx";
 import { realisasiValue } from "@/lib/insentif-value-source";
 import { payeeCode, parsePayee, PAYEE_PRINCIPLE_ALL, type PayeeRole } from "@/lib/insentif-payee";
 import { toast } from "sonner";
@@ -2090,6 +2089,9 @@ function AdminView({ rows }: { rows: Salesman[] }) {
         try {
             // Baca via XLSX — menangani .xlsx maupun .csv, termasuk field ber-koma di dalam
             // tanda kutip ("ABC PRESIDENT INDONESIA, PT" / alamat) yang bikin split manual geser kolom.
+            // ponytail: dimuat saat dipakai. Import statis menyeret ~900 KB xlsx ke bundle route
+            // ini untuk semua user, padahal cuma handler upload yang membutuhkannya.
+            const XLSX = await import("xlsx");
             const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
             const sheet = wb.Sheets[wb.SheetNames[0]];
             const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
