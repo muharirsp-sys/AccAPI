@@ -57,7 +57,17 @@ approx(computeMt({ ...full(), target_ia: 0 }).insentif_ia, 0, "target IA 0 → 0
 // --- IA dinilai per outlet: total mentah besar tapi AO besar juga → tetap tidak otomatis penuh ---
 {
     const r = computeMt({ ...full(), realisasi_ia: 500 }); // 500/100 = 5 per outlet vs target 10 → 50%
-    approx(r.insentif_ia, 0, "IA 5 vs target 10 per outlet → <90% → 0");
+    approx(r.insentif_ia, 0, "IA 5 vs target 10 per outlet → <80% → 0");
+}
+// --- ambang IA 80% (khusus MT), KPI lain tetap 90% ---
+{
+    // kasus MELIZA: IA per outlet 8,36 vs target 10 → 83,6% (dulu 0 karena ambang 90%)
+    const r = computeMt({ ...full(), realisasi_ia: 836 });
+    approx(r.insentif_ia, 350_000 * 0.836, "IA 83,6% → dibayar (ambang 80%)");
+    approx(computeMt({ ...full(), realisasi_ia: 799 }).insentif_ia, 0, "IA 79,9% → 0");
+    approx(computeMt({ ...full(), realisasi_ia: 800 }).insentif_ia, 350_000 * 0.8, "IA tepat 80% → dibayar");
+    // KPI lain tidak ikut turun: EC 85% tetap 0
+    approx(computeMt({ ...full(), realisasi_ec: 85 }).insentif_ec, 0, "EC 85% tetap 0 (ambang 90%)");
 }
 // --- realisasi_ao 0 → IA tak bisa dihitung per outlet → 0 (hindari bagi nol) ---
 approx(computeMt({ ...full(), realisasi_ao: 0 }).insentif_ia, 0, "AO 0 → IA 0");

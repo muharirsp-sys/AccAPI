@@ -17,11 +17,14 @@
  *   IA selalu tembus cap dan 350rb dibayar penuh tanpa syarat.
  * - Pengali persentase & aturan status/support identik GT (percentageMultiplier, effectiveSupport):
  *   <90% → 0 ; 90–100% → aktual ; >100% → cap 1.00.
+ * - KECUALI IA: ambangnya 80% (dikonfirmasi user 2026-09-03), khusus MT. KPI lain & seluruh GT
+ *   tetap 90%.
  * - Support principle mengurangi pool sebelum dibagi 4 KPI (proporsional, sama seperti GT).
  */
 
 import {
     percentageMultiplier,
+    roundRatio,
     isSchemePrincipal,
     konstantaMix,
     RP_1JT,
@@ -53,6 +56,19 @@ export interface MtResult {
     total: number;
 }
 
+/** Ambang minimum pencapaian IA MT. Khusus IA — KPI lain tetap 0,9 via percentageMultiplier. */
+const IA_AMBANG = 0.8;
+
+/** Sama seperti percentageMultiplier tapi ambangnya IA_AMBANG. */
+function iaMultiplier(realisasi: number, target: number): number {
+    if (!Number.isFinite(target) || target <= 0) return 0;
+    if (!Number.isFinite(realisasi)) return 0;
+    const r = roundRatio(realisasi / target);
+    if (r < IA_AMBANG) return 0;
+    if (r > 1) return 1;
+    return r;
+}
+
 const ZERO: MtResult = { insentif_value: 0, insentif_ec: 0, insentif_ao: 0, insentif_ia: 0, total: 0 };
 
 /** Support efektif — status "distributor" berarti distributor bayar penuh (support 0). */
@@ -76,7 +92,7 @@ function fromPool(pool: number, input: MtInput): MtResult {
     const insentif_ec = MT_BOBOT.ec * scale * percentageMultiplier(input.realisasi_ec, input.target_ec);
     const insentif_ao = MT_BOBOT.ao * scale * percentageMultiplier(input.realisasi_ao, input.target_ao);
     const iaPerOutlet = input.realisasi_ao > 0 ? input.realisasi_ia / input.realisasi_ao : 0;
-    const insentif_ia = MT_BOBOT.ia * scale * percentageMultiplier(iaPerOutlet, input.target_ia);
+    const insentif_ia = MT_BOBOT.ia * scale * iaMultiplier(iaPerOutlet, input.target_ia);
     return {
         insentif_value, insentif_ec, insentif_ao, insentif_ia,
         total: insentif_value + insentif_ec + insentif_ao + insentif_ia,
