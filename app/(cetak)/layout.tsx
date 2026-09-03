@@ -69,7 +69,7 @@ const GAYA = `
 .angka-utama span { font-size: 6.5pt; color: var(--samar); text-transform: uppercase; letter-spacing: 0.08em; }
 
 /* ---------- Tabel ---------- */
-.cetak table { width: 100%; border-collapse: collapse; }
+.cetak table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .cetak thead { display: table-header-group; }   /* kop + judul kolom ikut tiap halaman */
 .cetak tr { break-inside: avoid; page-break-inside: avoid; }
 
@@ -84,44 +84,44 @@ const GAYA = `
    persegi terisi per baris; di lembar 276 baris itu ribuan objek gambar yang harus
    diproses pembaca PDF sebelum halaman muncul. Zebra dibuang sekalian: garis tiap
    5 baris sudah cukup menuntun mata, dan dua-duanya bersamaan cuma menambah tinta. */
-.cetak tbody td { padding: 1mm 1.5mm; vertical-align: top; }
+/* Garis di <tr>, bukan di tiap <td>. Semua baris bergaris SAMA: versi sebelumnya menebalkan
+   tiap baris ke-5 dihitung dari urutan data, padahal di kertas ada baris pemisah keluarga
+   yang menyela -- ritmenya pecah dan garis tebalnya terbaca sebagai cacat cetak. Pengelompokan
+   diserahkan sepenuhnya ke pemisah keluarga, yang punya arti (satu keluarga = satu area rak). */
+.cetak tbody td { padding: 1.1mm 1.5mm; vertical-align: top; }
 .cetak tbody tr { border-bottom: 0.4pt solid var(--garis); }
-.cetak tbody tr.tandai-5 { border-bottom: 0.6pt solid var(--garis-tegas); }
 
 /* Kotak centang: picking tanpa tempat mencentang = jalan menghitung ulang. */
 .centang { width: 7mm; }
 .centang i { display: block; width: 3.6mm; height: 3.6mm; border: 0.75pt solid var(--tinta); border-radius: 0.5mm; }
 
-.kode { width: 32mm; font-family: "Consolas", "SF Mono", ui-monospace, monospace; font-size: 7.5pt; letter-spacing: -0.02em; }
+.kode { width: 30mm; font-family: "Consolas", "SF Mono", ui-monospace, monospace; font-size: 7.5pt; letter-spacing: -0.02em; }
 
 /* Nama: prefiks merek diredam, spesifikasi ukuran/kemasan ditebalkan. Untuk produk yang
    namanya beruntun mirip, pembedanya justru ada di ekor nama. */
-.nama { font-size: 8pt; }
+.nama { font-size: 8pt; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nama .merek { color: var(--samar); }
 .nama .spek { font-weight: 700; }
 .nama .kode-internal { color: #9a9a9a; font-size: 7pt; }
 
 /* Jumlah ambil: pahlawan barisnya. Angka dan satuan punya kolom sendiri supaya SEJAJAR
    ke bawah -- deretan angka yang rata bisa dipindai sekali lihat, yang gerigi tidak. */
-.ambil { width: 40mm; background: var(--tint); white-space: nowrap;
-    display: flex; align-items: baseline; justify-content: flex-end; gap: 0.8mm; }
-.ambil .n  { min-width: 13mm; text-align: right; font-size: 11.5pt; font-weight: 700; letter-spacing: -0.01em; }
-.ambil .u  { min-width: 8mm;  text-align: left;  font-size: 7pt;  font-weight: 700; }
-.ambil .n2 { min-width: 10mm; text-align: right; font-size: 8pt; font-weight: 600; }
-.ambil .u2 { min-width: 7mm;  text-align: left;  font-size: 6.5pt; font-weight: 600; color: var(--samar); }
+.ambil { width: 38mm; background: var(--tint); white-space: nowrap; text-align: right; }
+.ambil span { display: inline-block; vertical-align: baseline; }
+.ambil .n  { width: 11mm; text-align: right; font-size: 11.5pt; font-weight: 700; letter-spacing: -0.01em; }
+.ambil .u  { width: 7mm;  text-align: left;  font-size: 7pt;  font-weight: 700; padding-left: 0.7mm; }
+.ambil .n2 { width: 9mm;  text-align: right; font-size: 8pt; font-weight: 600; }
+.ambil .u2 { width: 6mm;  text-align: left;  font-size: 6.5pt; font-weight: 600; color: var(--samar); padding-left: 0.7mm; }
 .audit { width: 24mm; text-align: right; font-size: 6.5pt; color: var(--samar); white-space: nowrap; }
 
 /* Exception harus KELIHATAN salah, bukan disamarkan jadi tanda tanya. */
-td.ambil.cacat {
-    background: #dcdcdc;
-    justify-content: center;
-}
+td.ambil.cacat { background: #dcdcdc; text-align: center; }
 td.ambil.cacat b { font-size: 7pt; font-weight: 700; white-space: nowrap; }
 
 /* Pemisah keluarga produk: prefiks kode berubah = rak lain. Pengganti master lokasi
    yang belum ada — cukup untuk membuat urutan ambil terasa berkelompok. */
-tr.keluarga td { border-bottom: none; padding-top: 2mm; padding-bottom: 0.5mm; background: none !important; }
-tr.keluarga td { height: 2.5mm; }
+tr.keluarga { border-bottom: none !important; }
+tr.keluarga td { border: none; height: 3mm; padding: 0; background: none !important; }
 
 /* ---------- Total & tanda tangan ---------- */
 .total td { border-top: 1.5pt solid var(--tinta); border-bottom: none; padding-top: 2mm; font-weight: 700; background: none !important; }

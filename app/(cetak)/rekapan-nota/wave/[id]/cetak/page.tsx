@@ -31,7 +31,10 @@ function pecahNama(nama: string): { merek: string; spek: string; kode: string } 
     // picker -- diredam, tidak dibuang.
     const pisahKode = nama.match(/^([^"]*)(".*)$/);
     const inti = (pisahKode?.[1] ?? nama).trim();
-    const kode = pisahKode?.[2] ?? "";
+    // Accurate menuliskan kode internal dengan kutip yang tidak pernah ditutup
+    // ('"KR02', '"BT101202"BV01'). Dibiarkan apa adanya, di kertas terbaca seperti salah
+    // ketik. Kutipnya dibuang, kodenya tetap ada karena membantu mencari di rak.
+    const kode = (pisahKode?.[2] ?? "").replace(/"/g, " ").replace(/\s+/g, " ").trim();
     // Digit harus diawali spasi: tanpa itu "CLOUD9" terbelah di tengah kata.
     const m = inti.match(/^(.*?\s)(\d.*)$/);
     return m ? { merek: m[1], spek: m[2], kode } : { merek: inti, spek: "", kode };
@@ -72,7 +75,6 @@ export default async function CetakRekapanPage({
             ...r,
             keluarga,
             pisah: i > 0 && keluarga !== withdrawal[i - 1].kode_barang.slice(0, 5),
-            tandai5: (i + 1) % 5 === 0,
         };
     });
 
@@ -81,6 +83,15 @@ export default async function CetakRekapanPage({
             <div className="layar-saja"><TombolCetak /></div>
 
             <table>
+                {/* Lebar kolom WAJIB di colgroup: table-layout:fixed membaca baris pertama,
+                    dan baris pertama tabel ini adalah kop ber-colSpan penuh. */}
+                <colgroup>
+                    <col style={{ width: "7mm" }} />
+                    <col style={{ width: "30mm" }} />
+                    <col />
+                    <col style={{ width: "38mm" }} />
+                    <col style={{ width: "24mm" }} />
+                </colgroup>
                 <thead>
                     {/* Kop ikut tiap halaman: satu lembar yang tergeletak di lantai gudang
                         harus bisa dikenali tanpa mencari halaman pertamanya. */}
@@ -129,7 +140,7 @@ export default async function CetakRekapanPage({
                                 {r.pisah && (
                                     <tr className="keluarga"><td colSpan={5} /></tr>
                                 )}
-                                <tr className={r.tandai5 ? "tandai-5" : undefined}>
+                                <tr>
                                     <td className="centang"><i /></td>
                                     <td className="kode">{r.kode_barang}</td>
                                     <td className="nama">
