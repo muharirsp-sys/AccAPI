@@ -108,7 +108,7 @@ Semua di Postgres 16 lokal (container Docker), data di-seed dari file export nya
 | Wave kanvas | nota non-kanvas ditolak masuk; tanda tidak bisa dicabut setelah wave rilis |
 | Nomor halaman lembar cetak | diadu ke halaman fisik PDF: 15/15, 19/19, 7/7, 2/2 **cocok** |
 | Subtotal per halaman | jumlah 13 halaman = 691 KRT / 85.108 pcs = total global **cocok** |
-| `npm run test:rekapan` | 13 self-check lulus |
+| `npm run test:rekapan` | 17 self-check lulus (4 di antaranya paginasi TTF) |
 | `tsc` · `eslint` · `npm run build` | bersih |
 
 Perintah harian selama shadow run:
@@ -140,9 +140,15 @@ Yang kedua memang belum bisa: butuh riwayat upload beberapa hari.
 
 **Sisa pekerjaan kecil yang sudah diidentifikasi:**
 
-- **TTF 49 halaman masih tanpa nomor halaman.** Argumen kontrol dokumen yang sama berlaku:
-  kehilangan satu lembar TTF = ~20 nota hilang senyap. Perbaikannya semurah yang sudah
-  dikerjakan di lembar picking (`bagiHalaman()` + `.halaman` section).
+- ~~**TTF 49 halaman masih tanpa nomor halaman.**~~ **SELESAI.** Paginasi TTF kini dihitung
+  di server (`lib/rekapan-nota/ttf-paginasi.ts`, diuji 4 self-check): tiap lembar punya
+  "Halaman X dari Y", subtotal lembar faktur sendiri, rentang nomor nota, dan paraf hanya di
+  lembar terakhir. Konsekuensi yang harus diketahui: nama outlet **dipaksa satu baris**
+  (`white-space: nowrap`, dipotong elipsis). Itu bukan pilihan estetika — dengan nama boleh
+  membungkus, tinggi baris melompat 10,98mm → 14,4mm dan tinggi baris berhenti seragam,
+  sehingga nomor halaman jadi bohong lagi. Kalau nama panjang ternyata mengganggu sopir,
+  pilihannya: biarkan dua baris **dan** ukur ulang konstanta (jadi ~15 baris/lembar, +15
+  lembar per hari), bukan sekadar mencabut `nowrap`. Jumlah lembar sekarang ~51 (dari 49).
 - **Shadow run 10 hari kerja berturut-turut** (kriteria lulus Fase 3) baru jalan 1 hari.
 - **Uji cetak fisik belum pernah dilakukan.** Yang diverifikasi baru HTML/CSS/PDF; margin
   dan keterbacaan di printer gudang belum dicoba dengan kertas sungguhan.
