@@ -70,8 +70,20 @@ const GAYA = `
 
 /* ---------- Tabel ---------- */
 .cetak table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-.cetak thead { display: table-header-group; }   /* kop + judul kolom ikut tiap halaman */
+.cetak thead { display: table-header-group; }
 .cetak tr { break-inside: avoid; page-break-inside: avoid; }
+
+/* Satu <section> = satu halaman kertas. Paginasi dihitung di server supaya tiap halaman
+   bisa membawa SUBTOTAL-nya sendiri; diserahkan ke browser, <tfoot> mengulang grand total
+   di tiap halaman dan kontrol per-lembar jadi palsu. */
+.halaman { break-after: page; page-break-after: always; }
+.halaman:last-of-type { break-after: auto; page-break-after: auto; }
+.kop-kanan { flex: none; text-align: right; }
+.kop-hal { margin-top: 1.5mm; font-size: 6.5pt; color: var(--samar);
+    text-transform: uppercase; letter-spacing: 0.08em; }
+.ulang { margin-left: 2mm; padding: 0.3mm 1.5mm; border: 0.75pt solid var(--tinta);
+    border-radius: 1mm; font-size: 7pt; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--tinta); }
 
 .judul-kolom th {
     font-size: 6.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
@@ -99,10 +111,16 @@ const GAYA = `
 
 /* Nama: prefiks merek diredam, spesifikasi ukuran/kemasan ditebalkan. Untuk produk yang
    namanya beruntun mirip, pembedanya justru ada di ekor nama. */
-.nama { font-size: 8pt; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nama .merek { color: var(--samar); }
-.nama .spek { font-weight: 700; }
-.nama .kode-internal { color: #9a9a9a; font-size: 7pt; }
+.nama { font-size: 8pt; }
+.nama > span { display: block; }
+.nama { display: flex; align-items: baseline; gap: 0; white-space: nowrap; overflow: hidden; }
+.nama .merek { color: var(--samar); flex: 0 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis;
+    /* Spasi akhir merek hilang di batas flex item -- jaraknya dikembalikan lewat padding. */
+    padding-right: 1.1mm; }
+.nama .spek { font-weight: 700; flex: 0 0 auto; }        /* pembeda: tidak pernah dipotong */
+.nama .kode-internal { color: #9a9a9a; font-size: 7pt; flex: 0 1 auto; min-width: 0;
+    padding-left: 1.2mm; overflow: hidden; text-overflow: ellipsis; }
 
 /* Jumlah ambil: pahlawan barisnya. Angka dan satuan punya kolom sendiri supaya SEJAJAR
    ke bawah -- deretan angka yang rata bisa dipindai sekali lihat, yang gerigi tidak. */
@@ -126,7 +144,10 @@ tr.keluarga td { border: none; height: 3mm; padding: 0; background: none !import
 /* ---------- Total & tanda tangan ---------- */
 .total td { border-top: 1.5pt solid var(--tinta); border-bottom: none; padding-top: 2mm; font-weight: 700; background: none !important; }
 .total .label { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.08em; color: var(--samar); }
-.total .nilai { font-size: 12pt; }
+.total .nilai { font-size: 11pt; }
+.total .satuan { font-size: 7pt; }
+.total .kuat { font-size: 8pt; font-weight: 700; color: var(--tinta); }
+.total td.ambil { background: none; }
 
 .paraf { display: flex; gap: 10mm; margin-top: 8mm; break-inside: avoid; }
 .paraf div { flex: 1; }
