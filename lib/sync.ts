@@ -92,6 +92,18 @@ export type SyncModuleName = "item" | "item_stock" | "customer" | "sales_invoice
 // boleh maju kalau isi barisnya benar-benar berubah — kalau tidak, Web Sales menarik ulang
 // seluruh tabel tiap siklus. raw_data dipakai sebagai proxy hash: payload Accurate utuh,
 // jadi perubahan kolom apa pun ikut terdeteksi.
+/**
+ * Alamat customer dari Accurate: billStreet + billCity + billProvince, bagian kosong dibuang.
+ * Bukan `shipStreet`: yang dipakai mesin usulan area adalah lokasi outletnya, dan alamat
+ * kirim bisa berupa gudang/ekspedisi yang wilayahnya lain sama sekali.
+ */
+export function alamatAccurate(row: Record<string, unknown>): string | null {
+    const bagian = [row.billStreet, row.billCity, row.billProvince]
+        .map((v) => String(v ?? "").replace(/\s+/g, " ").trim())
+        .filter(Boolean);
+    return bagian.length ? bagian.join(", ") : null;
+}
+
 const bumpSyncedAt = (table: string) =>
     sql.raw(`CASE WHEN ${table}.raw_data IS DISTINCT FROM excluded.raw_data THEN now() ELSE ${table}.synced_at END`);
 
@@ -158,7 +170,11 @@ const SYNC_MODULES: Record<SyncModuleName, {
     },
     customer: {
         endpoint: "/customer/list.do",
-        fields: "id,customerNo,name,balance,customerLimitAmount,customerLimitAmountValue,customerLimitAge,customerLimitAgeValue,lastUpdate",
+        // billStreet/City/Province ditambahkan 2026-09-03. Accurate PUNYA alamatnya sejak
+        // dulu (ACCURATE_API_REFERENCE.md:281); kolomnya kosong bukan karena Accurate tidak
+        // mengirim, tapi karena tidak pernah diminta di sini. Alamat = satu-satunya sinyal
+        // mesin usulan area, dan tanpa itu cakupannya runtuh ~79% -> ~21%.
+        fields: "id,customerNo,name,balance,customerLimitAmount,customerLimitAmountValue,customerLimitAge,customerLimitAgeValue,billStreet,billCity,billProvince,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
@@ -169,6 +185,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
                 creditLimitAmount: num(row.customerLimitAmountValue),
                 creditAgeLimitEnabled: bool(row.customerLimitAge),
                 creditAgeLimitDays: num(row.customerLimitAgeValue),
+                alamat: alamatAccurate(row),
                 rawData: JSON.stringify(row),
                 lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
             }));
@@ -182,6 +199,14 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     creditLimitAmount: sql`excluded."credit_limit_amount"`,
                     creditAgeLimitEnabled: sql`excluded."credit_age_limit_enabled"`,
                     creditAgeLimitDays: sql`excluded."credit_age_limit_days"`,
+                    // ISI KALAU KOSONG, tidak pernah menimpa. Alamat dari `Master Area Heinz`
+                    // sudah dinormalkan tangan dan memuat `Kel./Kec.` yang dibaca parseKelKec();
+                    // yang dari Accurate mentah dan sering tanpa keduanya. Menimpa = menukar
+                    // sinyal bagus dengan sinyal buruk, diam-diam, 4x sehari.
+                    // nullif: alamat Accurate yang kosong tidak boleh "mengisi" apa pun.
+                    alamat: sql`CASE WHEN coalesce(customer.alamat, '') = ''
+                                     THEN nullif(excluded."alamat", '')
+                                     ELSE customer.alamat END`,
                     rawData: sql`excluded."raw_data"`,
                     lastUpdate: sql`excluded."last_update"`,
                     syncedAt: bumpSyncedAt("customer"),
