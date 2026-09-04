@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import XLSX from "xlsx";
 import pg from "pg";
+import assert from "node:assert/strict";
 
 const DEFAULT_WORKBOOK =
     "C:\\Users\\Muhar\\Downloads\\A_New Rekapan Nota 24 AGUST 2026 update.xlsx";
@@ -67,18 +68,52 @@ export function bacaMaster(workbookPath) {
     return { konversi, konversiNol, area, alamat, grupAll, grupGdi };
 }
 
+/**
+ * Kunci pencocokan outlet. `customer.customerNo` di produksi = kode outlet + akhiran
+ * principal ("C-BUR015-KN", "C-BUR015-M2", "C-BUR015-MSM"); workbook memetakan outlet
+ * FISIKNYA ("C-BUR015"). Satu outlet = 5-10 baris customer, dan areanya sama untuk
+ * semuanya: area adalah lokasi toko, bukan atribut principal.
+ *
+ * Sengaja BUKAN `regexp_replace(no, '-[A-Za-z0-9]+$', '')`. Diukur di produksi 2026-09-04:
+ * outlet TANPA akhiran principal ("C-MTR002") dipotong jadi "C", dan ribuan baris runtuh
+ * ke satu kode palsu — lebih buruk daripada nol kecocokan yang jujur, karena tidak
+ * kelihatan salah. 43 dari 32.012 baris punya anomali semacam itu.
+ *
+ * Case-insensitive karena "c-put030-M2" dan "C-GRA010-SZ" sama-sama ada di produksi.
+ * Tanda '-' wajib sesudah kode: tanpa itu "C-TOK15" ikut menyambar "C-TOK156-KN".
+ */
+const COCOK_OUTLET = `(upper("customerNo") = upper($1) OR upper("customerNo") LIKE upper($1) || '-%')`;
+
+/**
+ * Kalau satu kode workbook adalah awalan kode workbook lain ("C-AL" vs "C-AL-0546"),
+ * pencocokan berawalan menulis ke baris yang sama dua kali dan yang menang adalah yang
+ * kebetulan belakangan. Dideteksi, bukan diserahkan ke nasib.
+ */
+export function tabrakanPrefiks(daftarKode) {
+    const set = new Set(daftarKode.map((k) => String(k).toUpperCase()));
+    const tabrakan = [];
+    for (const k of set) {
+        for (let i = k.indexOf("-"); i > 0; i = k.indexOf("-", i + 1)) {
+            if (set.has(k.slice(0, i))) tabrakan.push([k.slice(0, i), k]);
+        }
+    }
+    return tabrakan;
+}
+
 async function updateBatch(client, sql, entries) {
     let cocok = 0;
+    let baris = 0;   // satu kode outlet menyentuh banyak baris customer (satu per principal)
     const tidakCocok = [];
     for (const [key, ...values] of entries) {
         const res = await client.query(sql, [key, ...values]);
-        if (res.rowCount > 0) cocok += 1; else tidakCocok.push(key);
+        if (res.rowCount > 0) { cocok += 1; baris += res.rowCount; } else tidakCocok.push(key);
     }
-    return { cocok, tidakCocok };
+    return { cocok, baris, tidakCocok };
 }
 
-function lapor(judul, total, { cocok, tidakCocok }) {
-    console.log(`\n${judul}: ${cocok}/${total} cocok, ${tidakCocok.length} tidak ada padanannya`);
+function lapor(judul, total, { cocok, baris, tidakCocok }) {
+    const ekor = baris !== undefined && baris !== cocok ? ` (${baris} baris customer)` : "";
+    console.log(`\n${judul}: ${cocok}/${total} cocok${ekor}, ${tidakCocok.length} tidak ada padanannya`);
     if (tidakCocok.length) console.log("  contoh:", tidakCocok.slice(0, 10).join(", "));
 }
 
@@ -107,18 +142,29 @@ async function main() {
                 `). Bersihkan dulu sebelum impor master.`);
         }
 
+        // Pencocokan berawalan aman HANYA kalau tidak ada kode workbook yang jadi awalan
+        // kode workbook lain. Kalau ada, dua baris master menulis ke customer yang sama.
+        const tabrakan = tabrakanPrefiks([
+            ...m.area.keys(), ...m.alamat.keys(), ...m.grupAll.keys(), ...m.grupGdi.keys(),
+        ]);
+        if (tabrakan.length) {
+            throw new Error(`Kode master saling berawalan, pencocokan jadi ambigu: ` +
+                tabrakan.slice(0, 5).map(([a, b]) => `${a} < ${b}`).join(", ") +
+                ` (total ${tabrakan.length}). Bereskan di workbook dulu.`);
+        }
+
         await client.query("BEGIN");
         const hasilKonversi = await updateBatch(client,
             `UPDATE item SET isi_per_karton = $2, satuan_besar = $3 WHERE no = $1`,
             [...m.konversi].map(([no, v]) => [no, v.isi, v.satuanBesar]));
         const hasilArea = await updateBatch(client,
-            `UPDATE customer SET area = $2 WHERE "customerNo" = $1`, [...m.area]);
+            `UPDATE customer SET area = $2 WHERE ${COCOK_OUTLET}`, [...m.area]);
         const hasilAlamat = await updateBatch(client,
-            `UPDATE customer SET alamat = $2 WHERE "customerNo" = $1`, [...m.alamat]);
+            `UPDATE customer SET alamat = $2 WHERE ${COCOK_OUTLET}`, [...m.alamat]);
         const hasilAll = await updateBatch(client,
-            `UPDATE customer SET grup_all = $2 WHERE "customerNo" = $1`, [...m.grupAll]);
+            `UPDATE customer SET grup_all = $2 WHERE ${COCOK_OUTLET}`, [...m.grupAll]);
         const hasilGdi = await updateBatch(client,
-            `UPDATE customer SET grup_gdi = $2 WHERE "customerNo" = $1`, [...m.grupGdi]);
+            `UPDATE customer SET grup_gdi = $2 WHERE ${COCOK_OUTLET}`, [...m.grupGdi]);
         await client.query("COMMIT");
 
         lapor("Konversi -> item", m.konversi.size, hasilKonversi);
@@ -140,4 +186,31 @@ async function main() {
     }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
+/**
+ * `node scripts/import-rekapan-master.mjs --self-check` — tanpa DB, tanpa workbook.
+ * Menjaga aturan pencocokan outlet, satu-satunya bagian script ini yang punya cabang.
+ */
+function selfCheck() {
+    const { strictEqual: eq, deepStrictEqual: deq } = assert;
+    // Pola SQL: kode cocok persis, atau diikuti '-' + akhiran principal.
+    const cocok = (kodeWb, customerNo) =>
+        customerNo.toUpperCase() === kodeWb.toUpperCase() ||
+        customerNo.toUpperCase().startsWith(kodeWb.toUpperCase() + "-");
+
+    eq(cocok("C-BUR015", "C-BUR015-KN"), true, "kode + akhiran principal");
+    eq(cocok("C-BUR015", "C-BUR015"), true, "outlet tanpa akhiran principal");
+    eq(cocok("C-GRA010", "c-gra010-M2"), true, "customerNo huruf kecil");
+    eq(cocok("C-BAN019", "C-BAN019-"), true, "akhiran kosong, tanda '-' menggantung");
+    // Yang HARUS ditolak: tanpa '-' pemisah, "C-TOK15" akan menyambar "C-TOK156".
+    eq(cocok("C-TOK15", "C-TOK156-KN"), false, "awalan tanpa '-' tidak boleh cocok");
+    eq(cocok("C-TOK156", "C-TOK15-KN"), false, "kode lebih panjang dari customerNo");
+
+    deq(tabrakanPrefiks(["C-AL0546", "C-BUR015"]), [], "kode normal tidak bertabrakan");
+    eq(tabrakanPrefiks(["C-AL", "C-AL-0546"]).length, 1, "awalan sesama kode master terdeteksi");
+    eq(tabrakanPrefiks(["c-al", "C-AL-0546"]).length, 1, "deteksi tabrakan case-insensitive");
+
+    console.log("self-check aturan pencocokan outlet: 9 lulus");
+}
+
+if (process.argv[2] === "--self-check") selfCheck();
+else if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
