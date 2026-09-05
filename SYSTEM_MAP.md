@@ -205,7 +205,7 @@ push SYSTEM_MAP.md ke main / workflow_dispatch
   -> scripts/guardian/system-map-issues.mjs
        -> extractRisks() hanya blok <!-- accapi-risk ... --> eksplisit
        -> planIssueSync() -> CREATE/UPDATE/SKIP/REOPEN/STALE
-       -> batas maksimum 5 CREATE dan 25 total mutasi per run; duplicate fingerprint fail-closed
+       -> CREATE wajib stabil pada 3 pembacaan API; batas 5 CREATE/25 mutasi; duplicate fingerprint fail-closed
        -> closed issue hanya REOPEN bila operator mengaktifkan allow_reopen
        -> source hilang ditandai VERIFICATION REQUIRED, tidak pernah auto-close
 ```

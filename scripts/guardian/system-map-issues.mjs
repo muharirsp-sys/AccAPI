@@ -2,7 +2,7 @@
  * Tujuan: Mengekstrak risk block eksplisit dari SYSTEM_MAP.md dan menyinkronkannya ke GitHub Issues secara idempoten serta konservatif.
  * Caller: .github/workflows/system-map-issues.yml, operator dry-run lokal, dan tests/guardian/system-map-issues.test.mjs.
  * Dependensi: Node.js standard library dan GitHub REST API saat --apply.
- * Main Functions: extractRisks, validate managed fingerprints/labels, planIssueSync, fetchManagedIssues, applyIssuePlan.
+ * Main Functions: extractRisks, validate fingerprints/labels, stabilize CREATE plans, fetchManagedIssues, applyIssuePlan.
  * Side Effects: --fetch hanya membaca GitHub; --apply dapat create/update/reopen issue tetapi tidak pernah auto-close.
  */
 import { readFileSync, writeFileSync } from "node:fs";
@@ -167,6 +167,29 @@ export function renderSyncPlan(plan) {
   return lines.join("\n");
 }
 
+export async function stabilizeCreatePlan(risks, initialPlan, loadIssues, limits, {
+  stableReads = 3,
+  maxReads = 5,
+  delay = () => new Promise((done) => setTimeout(done, 2_000)),
+} = {}) {
+  if (initialPlan.createCount === 0) return initialPlan;
+  let plan = initialPlan;
+  let signature = JSON.stringify(plan.actions.filter(({ action }) => action === "CREATE").map(({ riskId }) => riskId));
+  let consecutive = 1;
+  for (let read = 1; read < maxReads && consecutive < stableReads; read += 1) {
+    await delay();
+    const refreshed = planIssueSync(risks, await loadIssues(), limits);
+    const refreshedSignature = JSON.stringify(refreshed.actions.filter(({ action }) => action === "CREATE").map(({ riskId }) => riskId));
+    consecutive = refreshedSignature === signature ? consecutive + 1 : 1;
+    signature = refreshedSignature;
+    plan = refreshed;
+  }
+  if (consecutive < stableReads) {
+    throw new Error("GitHub issue visibility did not stabilize; refusing CREATE mutations. Retry after the API converges.");
+  }
+  return plan;
+}
+
 function githubHeaders(token) {
   return { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "User-Agent": "accapi-guardian", "X-GitHub-Api-Version": "2022-11-28" };
 }
@@ -235,6 +258,7 @@ async function main() {
     // Re-read once immediately before mutation; workflow concurrency handles normal races.
     issues = await fetchManagedIssues(repository, token);
     plan = planIssueSync(risks, issues, limits);
+    plan = await stabilizeCreatePlan(risks, plan, () => fetchManagedIssues(repository, token), limits);
     await applyIssuePlan(plan, { repository, token, allowReopen: String(process.env.GUARDIAN_ALLOW_REOPEN).toLowerCase() === "true" });
   }
   const report = renderSyncPlan(plan);

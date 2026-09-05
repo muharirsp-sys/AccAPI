@@ -2,12 +2,12 @@
  * Tujuan: Membuktikan extraction, stable fingerprint, idempotensi, lifecycle konservatif, dan spam guard issue sync.
  * Caller: node --test tests/guardian/*.test.mjs.
  * Dependensi: node:test, node:assert, scripts/guardian/system-map-issues.mjs.
- * Main Functions: Skenario CREATE, SKIP, UPDATE, REOPEN, STALE, duplicate fingerprint, dan excessive-create block.
+ * Main Functions: Skenario CREATE stabilization, SKIP, UPDATE, REOPEN, STALE, duplicate fingerprint, dan spam guard.
  * Side Effects: Tidak ada; GitHub API tidak dipanggil.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractRisks, MANAGED_LABEL, planIssueSync } from "../../scripts/guardian/system-map-issues.mjs";
+import { extractRisks, MANAGED_LABEL, planIssueSync, stabilizeCreatePlan } from "../../scripts/guardian/system-map-issues.mjs";
 
 function source({ title = "Runtime database mismatch", impact = "Routes can fail." } = {}) {
   return `# Map\n<!-- accapi-risk\nid: deploy-database-runtime-mismatch\ntitle: ${title}\npriority: P1\ncategory: deployment\naffected-area: Docker frontend runtime\nbusiness-impact: ${impact}\ntechnical-impact: SQLite fallback conflicts with PostgreSQL-only code.\nacceptance-criteria: Production runtime proves a PostgreSQL DATABASE_URL.\nsuggested-tests: Container startup and authenticated DB route smoke test.\n-->`;
@@ -101,4 +101,20 @@ test("priority label changes without deleting unrelated human labels", () => {
   const update = planIssueSync(extractRisks(source()), [existing]).actions[0];
   assert.equal(update.action, "UPDATE");
   assert.deepEqual(update.labels, [MANAGED_LABEL, "operations", "risk:P1"]);
+});
+
+test("CREATE waits through partial GitHub visibility and becomes SKIP before mutating", async () => {
+  const risks = extractRisks(source());
+  const initial = planIssueSync(risks, []);
+  const primary = issueFrom(initial.actions[0]);
+  const snapshots = [[], [primary], [primary], [primary]];
+  const stabilized = await stabilizeCreatePlan(
+    risks,
+    initial,
+    async () => snapshots.shift() || [primary],
+    {},
+    { stableReads: 3, maxReads: 5, delay: async () => {} },
+  );
+  assert.equal(stabilized.createCount, 0);
+  assert.deepEqual(stabilized.actions.map(({ action }) => action), ["SKIP"]);
 });
