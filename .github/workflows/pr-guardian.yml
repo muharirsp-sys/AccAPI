@@ -1,0 +1,96 @@
+# Tujuan: Menjalankan gate risiko PR deterministik dari implementasi Guardian pada base branch tepercaya.
+# Caller: Event pull_request opened, synchronize, reopened, dan ready_for_review.
+# Dependensi: Git public fetch, actions/setup-node, scripts/guardian/pr-guardian.mjs, serta test repository terpilih.
+# Main Functions: Fetch PR/base tanpa token, pilih Guardian base/bootstrap SHA tepercaya, execute checks, publish stable summary, fail closed.
+# Side Effects: Hanya membaca repository dan menulis job summary; tidak memiliki permission write dan tidak memakai secrets.
+name: AccAPI PR Guardian
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-guardian-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guardian:
+    name: Deterministic risk gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Fetch pull request code without credentials
+        env:
+          REPOSITORY_URL: https://github.com/${{ github.repository }}.git
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          case "$PR_NUMBER" in ''|*[!0-9]*) echo "Invalid pull request number" >&2; exit 1;; esac
+          git init pr
+          git -C pr remote add origin "$REPOSITORY_URL"
+          git -C pr fetch --no-tags origin \
+            "+refs/heads/$BASE_REF:refs/remotes/origin/base" \
+            "+refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr-head"
+          test "$(git -C pr rev-parse refs/remotes/origin/pr-head)" = "$HEAD_SHA"
+          git -C pr cat-file -e "${BASE_SHA}^{commit}"
+          git -C pr checkout --detach "$HEAD_SHA"
+
+      - name: Materialize trusted Guardian revision
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BOOTSTRAP_SHA: ${{ vars.GUARDIAN_BOOTSTRAP_SHA }}
+        run: |
+          TRUSTED_SHA="$BASE_SHA"
+          if ! git -C pr cat-file -e "${TRUSTED_SHA}:scripts/guardian/pr-guardian.mjs" 2>/dev/null; then
+            case "$BOOTSTRAP_SHA" in *[!0-9a-fA-F]*|'') echo "Invalid bootstrap SHA" >&2; exit 1;; esac
+            test "${#BOOTSTRAP_SHA}" -eq 40
+            git -C pr cat-file -e "${BOOTSTRAP_SHA}:scripts/guardian/pr-guardian.mjs"
+            TRUSTED_SHA="$BOOTSTRAP_SHA"
+          fi
+          git -C pr worktree add --detach ../guardian-base "$TRUSTED_SHA"
+          echo "Trusted Guardian SHA: $TRUSTED_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pr/package-lock.json
+
+      - name: Install dependencies without lifecycle scripts
+        working-directory: pr
+        run: npm ci --ignore-scripts
+
+      - name: Run trusted Guardian against PR code
+        id: guardian
+        continue-on-error: true
+        working-directory: pr
+        env:
+          GUARDIAN_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GUARDIAN_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          node ../guardian-base/scripts/guardian/pr-guardian.mjs
+          --repo .
+          --base "$GUARDIAN_BASE_SHA"
+          --head "$GUARDIAN_HEAD_SHA"
+          --execute
+          --report-file ../guardian-report.md
+
+      - name: Publish Guardian report
+        if: always()
+        run: |
+          if [ -f guardian-report.md ]; then
+            cat guardian-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "# ACCAPI PR GUARDIAN" >> "$GITHUB_STEP_SUMMARY"
+            echo "BLOCKED: Guardian did not produce a report." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Enforce Guardian verdict
+        if: steps.guardian.outcome != 'success'
+        run: exit 1

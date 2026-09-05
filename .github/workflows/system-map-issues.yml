@@ -1,0 +1,70 @@
+# Tujuan: Menyinkronkan blok risiko eksplisit SYSTEM_MAP.md ke GitHub Issues dengan lifecycle konservatif.
+# Caller: Push SYSTEM_MAP.md ke main atau workflow_dispatch operator.
+# Dependensi: Git public fetch dan scripts/guardian/system-map-issues.mjs.
+# Main Functions: Fetch exact main SHA tanpa token, parse/dedupe issue, guard jumlah mutasi, update/reopen opsional, tandai stale tanpa close.
+# Side Effects: Dapat membuat/memperbarui issue; reopen hanya jika operator mengaktifkan input dan tidak pernah auto-close.
+name: Sync SYSTEM_MAP Risks
+
+on:
+  push:
+    branches: [main]
+    paths: [SYSTEM_MAP.md]
+  workflow_dispatch:
+    inputs:
+      allow_reopen:
+        description: Reopen a matching closed issue after operator review
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: accapi-system-map-issues
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch trusted main revision without credentials
+        env:
+          REPOSITORY_URL: https://github.com/${{ github.repository }}.git
+          TRUSTED_SHA: ${{ github.sha }}
+        run: |
+          git init .
+          git remote add origin "$REPOSITORY_URL"
+          git fetch --no-tags --depth=1 origin "$TRUSTED_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$TRUSTED_SHA"
+
+      - name: Synchronize explicit risks
+        id: sync
+        continue-on-error: true
+        env:
+          GUARDIAN_GITHUB_TOKEN: ${{ github.token }}
+          GUARDIAN_ALLOW_REOPEN: ${{ inputs.allow_reopen || 'false' }}
+          GUARDIAN_MAX_CREATES: "5"
+          GUARDIAN_MAX_MUTATIONS: "25"
+        run: >-
+          node scripts/guardian/system-map-issues.mjs
+          --apply
+          --source SYSTEM_MAP.md
+          --report-file system-map-issues-report.md
+
+      - name: Publish synchronization report
+        if: always()
+        run: |
+          if [ -f system-map-issues-report.md ]; then
+            cat system-map-issues-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "# ACCAPI SYSTEM_MAP ISSUE SYNC" >> "$GITHUB_STEP_SUMMARY"
+            echo "BLOCKED: synchronization did not produce a report." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Enforce synchronization result
+        if: steps.sync.outcome != 'success'
+        run: exit 1

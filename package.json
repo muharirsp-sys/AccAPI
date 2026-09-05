@@ -1,4 +1,5 @@
 {
+  "_header": "Tujuan: manifest dependency/runtime AccAPI; Caller: npm, Next.js, CI dan Docker; Dependensi: npm registry; Main Functions: scripts dan version constraints; Side Effects: dependency resolution/build commands.",
   "name": "tempapp",
   "version": "0.1.0",
   "private": true,
@@ -18,13 +19,13 @@
     "@libsql/client": "^0.17.0",
     "@sentry/nextjs": "^10.66.0",
     "@tanstack/react-table": "^8.21.3",
-    "better-auth": "^1.5.5",
+    "better-auth": "1.6.22",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "drizzle-orm": "^0.45.1",
     "lucide-react": "^0.577.0",
-    "next": "^16.2.9",
-    "nodemailer": "^8.0.3",
+    "next": "16.3.4",
+    "nodemailer": "10.0.0",
     "pdf-lib": "^1.17.1",
     "pg": "^8.22.0",
     "react": "19.2.3",
@@ -46,13 +47,16 @@
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
-    "eslint-config-next": "^16.2.9",
-    "sharp": "^0.34.5",
+    "eslint-config-next": "16.3.4",
+    "sharp": "0.35.4",
     "tailwindcss": "^4",
     "typescript": "^5"
   },
   "overrides": {
     "esbuild": "0.25.12",
-    "postcss": "8.5.15"
+    "postcss": "8.5.28",
+    "browserslist": "4.28.9",
+    "fast-uri": "3.1.6",
+    "nanoid": "3.3.18"
   }
 }

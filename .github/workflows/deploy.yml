@@ -1,3 +1,8 @@
+# Tujuan: Memvalidasi, membangun, memublikasikan image AccAPI, lalu memicu redeploy Coolify dari main.
+# Caller: Push ke main atau workflow_dispatch operator.
+# Dependensi: Git public fetch, npm, Docker Buildx, GHCR, serta secret URL/token Coolify.
+# Main Functions: lint/typecheck, build image bertag commit SHA + latest, push GHCR, trigger Coolify.
+# Side Effects: Menulis package GHCR dan memicu deployment production; job se-branch diserialisasi agar publish/deploy tidak saling mendahului.
 name: Deploy to Coolify
 
 on:
@@ -11,12 +16,28 @@ env:
   FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/accapi-frontend
   BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/accapi-backend
 
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Fetch trusted revision without credentials
+        env:
+          REPOSITORY_URL: https://github.com/${{ github.repository }}.git
+          TRUSTED_SHA: ${{ github.sha }}
+        run: |
+          git init .
+          git remote add origin "$REPOSITORY_URL"
+          git fetch --no-tags --depth=1 origin "$TRUSTED_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$TRUSTED_SHA"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -33,50 +54,63 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        env:
+          REPOSITORY_URL: https://github.com/${{ github.repository }}.git
+          TRUSTED_SHA: ${{ github.sha }}
+        run: |
+          git init .
+          git remote add origin "$REPOSITORY_URL"
+          git fetch --no-tags --depth=1 origin "$TRUSTED_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$TRUSTED_SHA"
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Build and push Frontend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: .
           file: Dockerfile.frontend
           push: true
-          tags: ${{ env.FRONTEND_IMAGE }}:latest
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+            ${{ env.FRONTEND_IMAGE }}:latest
           build-args: |
             NEXT_PUBLIC_APP_URL=${{ secrets.NEXT_PUBLIC_APP_URL }}
             NEXT_PUBLIC_FASTAPI_BASE_URL=${{ secrets.NEXT_PUBLIC_FASTAPI_BASE_URL }}
             NEXT_PUBLIC_ACCURATE_CLIENT_ID=${{ secrets.NEXT_PUBLIC_ACCURATE_CLIENT_ID }}
             NEXT_PUBLIC_ACCURATE_REDIRECT_URI=${{ secrets.NEXT_PUBLIC_ACCURATE_REDIRECT_URI }}
             BETTER_AUTH_URL=${{ secrets.BETTER_AUTH_URL }}
-            BETTER_AUTH_SECRET=${{ secrets.BETTER_AUTH_SECRET }}
-            DATABASE_URL=file:/app/data/sqlite.db
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Build and push Backend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: .
           file: Dockerfile.backend
           push: true
-          tags: ${{ env.BACKEND_IMAGE }}:latest
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+            ${{ env.BACKEND_IMAGE }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Trigger Coolify redeploy
+        env:
+          COOLIFY_WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
           curl --silent --fail --show-error \
             --request POST \
-            --url "${{ secrets.COOLIFY_WEBHOOK_URL }}" \
-            --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
+            --url "$COOLIFY_WEBHOOK_URL" \
+            --header "Authorization: Bearer $COOLIFY_TOKEN" \
             --header "Content-Type: application/json"
