@@ -1,0 +1,78 @@
+# Tujuan: Menjalankan gate risiko PR deterministik dari implementasi Guardian pada base branch tepercaya.
+# Caller: Event pull_request opened, synchronize, reopened, dan ready_for_review.
+# Dependensi: actions/checkout, actions/setup-node, scripts/guardian/pr-guardian.mjs, serta test repository terpilih.
+# Main Functions: Checkout PR/base terpisah, install tanpa lifecycle scripts, execute checks, publish job summary, fail closed.
+# Side Effects: Hanya membaca repository dan menulis job summary; tidak memiliki permission write dan tidak memakai secrets.
+name: AccAPI PR Guardian
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-guardian-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guardian:
+    name: Deterministic risk gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout pull request code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          path: pr
+
+      - name: Checkout trusted Guardian from base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          path: guardian-base
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pr/package-lock.json
+
+      - name: Install dependencies without lifecycle scripts
+        working-directory: pr
+        run: npm ci --ignore-scripts
+
+      - name: Run trusted Guardian against PR code
+        id: guardian
+        continue-on-error: true
+        working-directory: pr
+        env:
+          GUARDIAN_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GUARDIAN_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          node ../guardian-base/scripts/guardian/pr-guardian.mjs
+          --repo .
+          --base "$GUARDIAN_BASE_SHA"
+          --head "$GUARDIAN_HEAD_SHA"
+          --execute
+          --enforce-human-review
+          --report-file ../guardian-report.md
+
+      - name: Publish Guardian report
+        if: always()
+        run: |
+          if [ -f guardian-report.md ]; then
+            cat guardian-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "# ACCAPI PR GUARDIAN" >> "$GITHUB_STEP_SUMMARY"
+            echo "BLOCKED: Guardian did not produce a report." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Enforce Guardian verdict
+        if: steps.guardian.outcome != 'success'
+        run: exit 1

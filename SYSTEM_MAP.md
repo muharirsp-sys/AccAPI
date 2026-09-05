@@ -185,6 +185,29 @@ Browser -> NEXT_PUBLIC_FASTAPI_BASE_URL (port 8000)
      -> auth.py — RBAC + rate limiter login internal FastAPI
 ```
 
+### 6A. Repository Guardian & Risk Issue Sync
+```
+pull_request (fork/same repository)
+  -> .github/workflows/pr-guardian.yml [contents:read; tanpa secrets/comment write]
+  -> checkout PR code + Guardian dari base SHA tepercaya secara terpisah
+  -> scripts/guardian/pr-guardian.mjs
+       -> git diff --name-status -z (tanpa shell interpolation)
+       -> classifyChanges() -> domain + LOW/MEDIUM/HIGH/CRITICAL
+       -> selectChecks() -> lint/typecheck/test repository yang benar-benar tersedia
+       -> runChecks() -> hasil eksplisit PASSED/FAILED/NOT EXECUTED
+       -> renderGuardianReport() -> PASS / PASS WITH WARNINGS / HUMAN REVIEW REQUIRED / BLOCKED
+  -> job summary; HIGH/CRITICAL atau required check gagal memblokir gate
+
+push SYSTEM_MAP.md ke main / workflow_dispatch
+  -> .github/workflows/system-map-issues.yml [contents:read + issues:write; concurrency tunggal]
+  -> scripts/guardian/system-map-issues.mjs
+       -> extractRisks() hanya blok <!-- accapi-risk ... --> eksplisit
+       -> planIssueSync() -> CREATE/UPDATE/SKIP/REOPEN/STALE
+       -> batas maksimum 5 CREATE dan 25 total mutasi per run; duplicate fingerprint fail-closed
+       -> closed issue hanya REOPEN bila operator mengaktifkan allow_reopen
+       -> source hilang ditandai VERIFICATION REQUIRED, tidak pernah auto-close
+```
+
 ---
 
 ### 7. Dashboard Generator Desktop (Fase 2-8)
@@ -594,6 +617,16 @@ AccAPI/_github_clean/
 ---
 
 ## Module Map (The Chapters)
+
+### Repository Guardian Automation
+
+| File | Fungsi Utama | Peran |
+|---|---|---|
+| `.github/workflows/pr-guardian.yml` | event PR, permission read-only, trusted-base checkout, job summary | Gate PR tanpa `pull_request_target`, secret, comment write, atau interpolasi metadata PR ke shell |
+| `scripts/guardian/pr-guardian.mjs` | `changedFilesFromGit`, `classifyChanges`, `selectChecks`, `evaluateGuardian`, `renderGuardianReport` | Klasifikasi risiko dan eksekusi check deterministik; finance/payment/database/migration tidak dapat turun di bawah CRITICAL |
+| `.github/workflows/system-map-issues.yml` | push path filter, manual dispatch, serialized issue mutation | Memisahkan permission `issues:write` dari PR Guardian dan mencegah run sync normal berlomba |
+| `scripts/guardian/system-map-issues.mjs` | `extractRisks`, `planIssueSync`, `fetchManagedIssues`, `applyIssuePlan` | Sinkronisasi issue idempoten berbasis stable ID, dengan spam guard dan lifecycle tanpa auto-close |
+| `tests/guardian/*.test.mjs` | simulasi classifier/report/sync | Self-check pure Node tanpa GitHub API atau DB production |
 
 ### Auth & Session
 
@@ -1188,6 +1221,56 @@ Alias Principal disimpan di `python_backend/laporan_harian_targets.py`; filter/f
 ---
 
 ## Risks / Blind Spots
+
+Blok `accapi-risk` di bawah adalah kontrak input eksplisit untuk automation issue. Wording boleh diperbarui, tetapi `id` tidak boleh diganti untuk risiko yang sama. Penghapusan blok hanya menandai issue sebagai `SOURCE NO LONGER DETECTED — VERIFICATION REQUIRED`; automation tidak menutup issue.
+
+<!-- accapi-risk
+id: deploy-database-runtime-mismatch
+title: Prove PostgreSQL runtime configuration before removing SQLite fallback
+priority: P1
+category: deployment-data-integrity
+affected-area: Dockerfile.frontend, Coolify runtime environment, database startup migrations
+business-impact: Finance and operational routes can fail or target the wrong storage when DATABASE_URL is absent or points to SQLite.
+technical-impact: Application DB code uses PostgreSQL while the image still carries file:/app/data/sqlite.db as a build and runtime fallback.
+acceptance-criteria: Capture running-container evidence that DATABASE_URL uses PostgreSQL, startup migrations succeed, and authenticated DB routes pass before removing the fallback.
+suggested-tests: Recreate the production container, inspect its effective environment without printing credentials, then smoke-test health plus one authenticated read-only DB route.
+-->
+
+<!-- accapi-risk
+id: deploy-coolify-immutable-image
+title: Make Coolify deploy the exact commit-SHA image
+priority: P1
+category: deployment-release-integrity
+affected-area: GHCR image publication and Coolify webhook deployment
+business-impact: Rollback and incident attribution remain ambiguous if production pulls a mutable latest tag.
+technical-impact: CI publishes an immutable github.sha tag, but the current webhook contract does not prove that Coolify selects that tag or digest.
+acceptance-criteria: Coolify deployment configuration consumes the triggering commit SHA or digest and the running container reports the same immutable image identity.
+suggested-tests: Deploy two controlled revisions, verify the expected digest on the running container after each webhook, and exercise rollback to the prior digest.
+-->
+
+<!-- accapi-risk
+id: guardian-branch-protection-required
+title: Protect Guardian workflow and required check configuration from PR self-bypass
+priority: P1
+category: repository-security
+affected-area: GitHub branch rules, CODEOWNERS, and .github/workflows/pr-guardian.yml
+business-impact: A contributor who can merge a modified workflow could weaken or counterfeit the finance-sensitive gate.
+technical-impact: pull_request avoids privileged fork execution, but workflow definitions still require protected required-check names and review ownership outside repository code.
+acceptance-criteria: Main requires the Guardian status check, workflow changes require designated owner approval, direct pushes are restricted, and fork approval policy is documented.
+suggested-tests: Open a PR that removes or renames the Guardian job and confirm branch rules prevent merge without authorized override.
+-->
+
+<!-- accapi-risk
+id: production-dependency-high-advisories
+title: Triage and remediate high-severity production dependency advisories
+priority: P1
+category: application-security
+affected-area: Better Auth, Next.js, Nodemailer, Sharp, xlsx, and transitive production dependencies
+business-impact: Untriaged authentication, middleware, SSRF, denial-of-service, and file-processing advisories may affect finance-sensitive production workflows.
+technical-impact: npm audit --omit=dev reports 10 high-severity vulnerable dependency groups; xlsx currently has no registry fix and several upgrades may be breaking.
+acceptance-criteria: Determine applicability per advisory, upgrade safely where fixes exist, document compensating controls where they do not, and leave production audit output at an explicitly accepted baseline.
+suggested-tests: Run focused auth bypass, Server Action, email attachment/URL, image upload, and hostile workbook regressions before and after dependency changes.
+-->
 
 | Area | Catatan |
 |---|---|

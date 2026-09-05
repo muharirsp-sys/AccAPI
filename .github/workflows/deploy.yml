@@ -1,3 +1,8 @@
+# Tujuan: Memvalidasi, membangun, memublikasikan image AccAPI, lalu memicu redeploy Coolify dari main.
+# Caller: Push ke main atau workflow_dispatch operator.
+# Dependensi: npm, Docker Buildx, GHCR, serta secret URL/token Coolify.
+# Main Functions: lint/typecheck, build image bertag commit SHA + latest, push GHCR, trigger Coolify.
+# Side Effects: Menulis package GHCR dan memicu deployment production; job se-branch diserialisasi/cancel agar build lama tidak menimpa build baru.
 name: Deploy to Coolify
 
 on:
@@ -11,11 +16,20 @@ env:
   FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/accapi-frontend
   BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/accapi-backend
 
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   typecheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -34,6 +48,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -51,14 +67,15 @@ jobs:
           context: .
           file: Dockerfile.frontend
           push: true
-          tags: ${{ env.FRONTEND_IMAGE }}:latest
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+            ${{ env.FRONTEND_IMAGE }}:latest
           build-args: |
             NEXT_PUBLIC_APP_URL=${{ secrets.NEXT_PUBLIC_APP_URL }}
             NEXT_PUBLIC_FASTAPI_BASE_URL=${{ secrets.NEXT_PUBLIC_FASTAPI_BASE_URL }}
             NEXT_PUBLIC_ACCURATE_CLIENT_ID=${{ secrets.NEXT_PUBLIC_ACCURATE_CLIENT_ID }}
             NEXT_PUBLIC_ACCURATE_REDIRECT_URI=${{ secrets.NEXT_PUBLIC_ACCURATE_REDIRECT_URI }}
             BETTER_AUTH_URL=${{ secrets.BETTER_AUTH_URL }}
-            BETTER_AUTH_SECRET=${{ secrets.BETTER_AUTH_SECRET }}
             DATABASE_URL=file:/app/data/sqlite.db
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -69,7 +86,9 @@ jobs:
           context: .
           file: Dockerfile.backend
           push: true
-          tags: ${{ env.BACKEND_IMAGE }}:latest
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+            ${{ env.BACKEND_IMAGE }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
