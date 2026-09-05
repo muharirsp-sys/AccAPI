@@ -189,7 +189,8 @@ Browser -> NEXT_PUBLIC_FASTAPI_BASE_URL (port 8000)
 ```
 pull_request (fork/same repository)
   -> .github/workflows/pr-guardian.yml [contents:read; tanpa secrets/comment write]
-  -> checkout PR code + Guardian dari base SHA tepercaya secara terpisah
+  -> public Git fetch tanpa token untuk PR head + Guardian dari base SHA tepercaya secara terpisah
+     [bootstrap pertama saja: exact SHA dari repository variable GUARDIAN_BOOTSTRAP_SHA]
   -> scripts/guardian/pr-guardian.mjs
        -> git diff --name-status -z (tanpa shell interpolation)
        -> classifyChanges() -> domain + LOW/MEDIUM/HIGH/CRITICAL

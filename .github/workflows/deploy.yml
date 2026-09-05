@@ -1,6 +1,6 @@
 # Tujuan: Memvalidasi, membangun, memublikasikan image AccAPI, lalu memicu redeploy Coolify dari main.
 # Caller: Push ke main atau workflow_dispatch operator.
-# Dependensi: npm, Docker Buildx, GHCR, serta secret URL/token Coolify.
+# Dependensi: Git public fetch, npm, Docker Buildx, GHCR, serta secret URL/token Coolify.
 # Main Functions: lint/typecheck, build image bertag commit SHA + latest, push GHCR, trigger Coolify.
 # Side Effects: Menulis package GHCR dan memicu deployment production; job se-branch diserialisasi agar publish/deploy tidak saling mendahului.
 name: Deploy to Coolify
@@ -27,9 +27,16 @@ jobs:
   typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
+      - name: Fetch trusted revision without credentials
+        env:
+          REPOSITORY_URL: https://github.com/${{ github.repository }}.git
+          TRUSTED_SHA: ${{ github.sha }}
+        run: |
+          git init .
+          git remote add origin "$REPOSITORY_URL"
+          git fetch --no-tags --depth=1 origin "$TRUSTED_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$TRUSTED_SHA"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
@@ -47,9 +54,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
+        env:
+          REPOSITORY_URL: https://github.com/${{ github.repository }}.git
+          TRUSTED_SHA: ${{ github.sha }}
+        run: |
+          git init .
+          git remote add origin "$REPOSITORY_URL"
+          git fetch --no-tags --depth=1 origin "$TRUSTED_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$TRUSTED_SHA"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0

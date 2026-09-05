@@ -1,7 +1,7 @@
 # Tujuan: Menyinkronkan blok risiko eksplisit SYSTEM_MAP.md ke GitHub Issues dengan lifecycle konservatif.
 # Caller: Push SYSTEM_MAP.md ke main atau workflow_dispatch operator.
-# Dependensi: actions/checkout dan scripts/guardian/system-map-issues.mjs.
-# Main Functions: Parse risk ID, dedupe seluruh issue terkelola, guard jumlah create, update/reopen opsional, tandai stale tanpa close.
+# Dependensi: Git public fetch dan scripts/guardian/system-map-issues.mjs.
+# Main Functions: Fetch exact main SHA tanpa token, parse/dedupe issue, guard jumlah mutasi, update/reopen opsional, tandai stale tanpa close.
 # Side Effects: Dapat membuat/memperbarui issue; reopen hanya jika operator mengaktifkan input dan tidak pernah auto-close.
 name: Sync SYSTEM_MAP Risks
 
@@ -30,10 +30,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout trusted main revision
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
+      - name: Fetch trusted main revision without credentials
+        env:
+          REPOSITORY_URL: https://github.com/${{ github.repository }}.git
+          TRUSTED_SHA: ${{ github.sha }}
+        run: |
+          git init .
+          git remote add origin "$REPOSITORY_URL"
+          git fetch --no-tags --depth=1 origin "$TRUSTED_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$TRUSTED_SHA"
 
       - name: Synchronize explicit risks
         id: sync

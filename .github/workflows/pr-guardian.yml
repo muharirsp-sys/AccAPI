@@ -1,7 +1,7 @@
 # Tujuan: Menjalankan gate risiko PR deterministik dari implementasi Guardian pada base branch tepercaya.
 # Caller: Event pull_request opened, synchronize, reopened, dan ready_for_review.
-# Dependensi: actions/checkout, actions/setup-node, scripts/guardian/pr-guardian.mjs, serta test repository terpilih.
-# Main Functions: Checkout PR/base terpisah, install tanpa lifecycle scripts, execute checks, publish stable job summary, fail closed on deterministic failures.
+# Dependensi: Git public fetch, actions/setup-node, scripts/guardian/pr-guardian.mjs, serta test repository terpilih.
+# Main Functions: Fetch PR/base tanpa token, pilih Guardian base/bootstrap SHA tepercaya, execute checks, publish stable summary, fail closed.
 # Side Effects: Hanya membaca repository dan menulis job summary; tidak memiliki permission write dan tidak memakai secrets.
 name: AccAPI PR Guardian
 
@@ -22,19 +22,38 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout pull request code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          path: pr
+      - name: Fetch pull request code without credentials
+        env:
+          REPOSITORY_URL: https://github.com/${{ github.repository }}.git
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          case "$PR_NUMBER" in ''|*[!0-9]*) echo "Invalid pull request number" >&2; exit 1;; esac
+          git init pr
+          git -C pr remote add origin "$REPOSITORY_URL"
+          git -C pr fetch --no-tags origin \
+            "+refs/heads/$BASE_REF:refs/remotes/origin/base" \
+            "+refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr-head"
+          test "$(git -C pr rev-parse refs/remotes/origin/pr-head)" = "$HEAD_SHA"
+          git -C pr cat-file -e "${BASE_SHA}^{commit}"
+          git -C pr checkout --detach "$HEAD_SHA"
 
-      - name: Checkout trusted Guardian from base
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-          path: guardian-base
+      - name: Materialize trusted Guardian revision
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BOOTSTRAP_SHA: ${{ vars.GUARDIAN_BOOTSTRAP_SHA }}
+        run: |
+          TRUSTED_SHA="$BASE_SHA"
+          if ! git -C pr cat-file -e "${TRUSTED_SHA}:scripts/guardian/pr-guardian.mjs" 2>/dev/null; then
+            case "$BOOTSTRAP_SHA" in *[!0-9a-fA-F]*|'') echo "Invalid bootstrap SHA" >&2; exit 1;; esac
+            test "${#BOOTSTRAP_SHA}" -eq 40
+            git -C pr cat-file -e "${BOOTSTRAP_SHA}:scripts/guardian/pr-guardian.mjs"
+            TRUSTED_SHA="$BOOTSTRAP_SHA"
+          fi
+          git -C pr worktree add --detach ../guardian-base "$TRUSTED_SHA"
+          echo "Trusted Guardian SHA: $TRUSTED_SHA" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

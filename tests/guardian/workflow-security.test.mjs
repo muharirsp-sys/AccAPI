@@ -18,7 +18,9 @@ test("PR Guardian is pull_request read-only and does not consume PR metadata or 
   assert.match(workflow, /permissions:\n  contents: read\n/);
   assert.doesNotMatch(workflow, /(?:issues|pull-requests|id-token|packages): write/);
   assert.doesNotMatch(workflow, /\$\{\{\s*secrets\.|pull_request\.(?:title|body)/);
-  assert.equal((workflow.match(/persist-credentials: false/g) || []).length, 2);
+  assert.doesNotMatch(workflow, /actions\/checkout|persist-credentials|github\.token/);
+  assert.match(workflow, /refs\/pull\/\$PR_NUMBER\/head/);
+  assert.match(workflow, /vars\.GUARDIAN_BOOTSTRAP_SHA/);
   assert.doesNotMatch(workflow, /uses:\s*[^\s]+@v\d/);
   assert.doesNotMatch(workflow, /--enforce-human-review/);
 });
