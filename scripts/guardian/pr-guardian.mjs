@@ -11,7 +11,7 @@ import { resolve } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
-const SOURCE_EXTENSIONS = /\.(?:[cm]?[jt]sx?|py|sql|css|scss|json|ya?ml)$/i;
+const SOURCE_EXTENSIONS = /\.(?:[cm]?[jt]sx?|py|sql|css|scss|json|ya?ml|sh|bash|ps1)$/i;
 
 function normalizePath(file) {
   return String(file).replaceAll("\\", "/").replace(/^\.\//, "");
@@ -66,8 +66,8 @@ export function classifyChanges(inputFiles) {
     if (matches(file, [/^(?:tests?|scripts\/.*\.test|lib\/.*\.(?:test|spec))\b/i, /\.(?:test|spec)\.[cm]?[jt]sx?$/i])) domains.add("tests");
     if (matches(file, [/^app\/(?:\(dashboard\)|\(auth\)|\(cetak\))\//i, /^components\//i, /\.(?:css|scss)$/i])) domains.add("frontend");
     if (matches(file, [/^python_backend\//i, /^app\/api\//i])) domains.add("backend");
-    if (matches(file, [/^db\//i, /^lib\/db\.[jt]s$/i, /^drizzle\.config\.[jt]s$/i, /\.sql$/i])) domains.add("database");
-    if (matches(file, [/^db\/migrations\//i, /^scripts\/(?:init-db|migrat(?:e|ion))/i, /^scripts\/apply-.*migration/i])) domains.add("migration");
+    if (matches(file, [/^(?:db|drizzle|prisma)\//i, /^lib\/db\.[cm]?[jt]s$/i, /^(?:drizzle|prisma)\.config\.[cm]?[jt]s$/i, /\.sql$/i])) domains.add("database");
+    if (matches(file, [/^(?:db|drizzle|prisma)\/migrations?\//i, /^scripts\/(?:init-db|migrat(?:e|ion))/i, /^scripts\/apply-.*migration/i])) domains.add("migration");
     if (matches(file, [/(^|\/)(?:auth|authentication)(?:\/|\.|-)/i, /^lib\/rbac(?:\/|\.)/i, /(^|\/)rbac(?:\/|\.|-)/i, /^app\/api\/admin\/(?:groups|users)/i])) {
       domains.add("auth");
       domains.add("RBAC");
@@ -82,7 +82,7 @@ export function classifyChanges(inputFiles) {
   }
 
   const sensitiveCritical = ["finance", "payments", "incentives", "database", "migration"];
-  const sensitiveHigh = ["auth", "RBAC", "sales-history", "Accurate integration", "infrastructure"];
+  const sensitiveHigh = ["auth", "RBAC", "backend", "sales-history", "Accurate integration", "infrastructure"];
   let risk = "MEDIUM";
   if (files.length === 0) risk = "CRITICAL";
   else if (sensitiveCritical.some((domain) => domains.has(domain))) risk = "CRITICAL";
@@ -104,6 +104,7 @@ const CHECKS = Object.freeze({
   reconciliation: { id: "finance-reconciliation", command: "node", args: ["node_modules/tsx/dist/cli.mjs", "--test"], required: true, reason: "Existing finance/reconciliation calculation and integrity checks, discovered without a shell glob." },
   salesHistory: { id: "sales-history-cursor", command: "node", args: ["node_modules/@playwright/test/cli.js", "test", "tests/ext-cursor.spec.ts"], required: true, reason: "Existing keyset/idempotency regression." },
   accurateWebhook: { id: "accurate-contract", command: "node", args: ["node_modules/@playwright/test/cli.js", "test", "tests/webhook-payload-parse.spec.ts"], required: true, reason: "Existing Accurate webhook contract regression." },
+  pythonSyntax: { id: "python-syntax", command: "python3", args: ["-m", "compileall", "-q", "python_backend"], required: true, reason: "Python backend syntax validation; semantic changes remain HIGH and require human review." },
   guardianSelf: { id: "guardian-self-test", command: "node", args: ["--test"], required: true, reason: "Guardian classifier, report, lifecycle, and workflow-security regressions." },
 });
 
@@ -116,6 +117,7 @@ export function selectChecks(classification) {
   if (domains.has("finance") || domains.has("incentives")) checks.push(CHECKS.reconciliation);
   if (domains.has("sales-history")) checks.push(CHECKS.salesHistory);
   if (domains.has("Accurate integration")) checks.push(CHECKS.accurateWebhook);
+  if (classification.files.some((file) => file.startsWith("python_backend/") && file.endsWith(".py"))) checks.push(CHECKS.pythonSyntax);
   if (domains.has("infrastructure") && classification.files.some((file) => /^\.?github\/workflows\/|^scripts\/guardian\/|^tests\/guardian\//i.test(file))) checks.push(CHECKS.guardianSelf);
   if (domains.has("auth") || domains.has("RBAC")) warnings.push("Auth/RBAC browser authorization checks need a configured PostgreSQL-backed test server; deterministic static checks are not sufficient.");
   if (domains.has("payments")) warnings.push("The existing payment import regression mutates local test data and needs an isolated full-stack environment; it is not silently treated as executed.");
@@ -125,7 +127,7 @@ export function selectChecks(classification) {
 
 export function runChecks(checks, repo, runner = spawnSync) {
   return checks.map((check) => {
-    const command = check.command === "node" ? process.execPath : check.command;
+    const command = check.command === "node" ? process.execPath : check.command === "python3" && process.platform === "win32" ? "python" : check.command;
     const args = check.id === "finance-reconciliation"
       ? [...check.args, ...readdirSync(resolve(repo, "lib/off-program-control"), { withFileTypes: true }).filter((entry) => entry.isFile() && entry.name.endsWith(".test.ts")).map((entry) => `lib/off-program-control/${entry.name}`).sort()]
       : check.id === "guardian-self-test"

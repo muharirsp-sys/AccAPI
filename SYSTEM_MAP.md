@@ -193,10 +193,11 @@ pull_request (fork/same repository)
   -> scripts/guardian/pr-guardian.mjs
        -> git diff --name-status -z (tanpa shell interpolation)
        -> classifyChanges() -> domain + LOW/MEDIUM/HIGH/CRITICAL
-       -> selectChecks() -> lint/typecheck/test repository yang benar-benar tersedia
+       -> selectChecks() -> lint/typecheck, Python compile, dan test repository yang benar-benar tersedia
        -> runChecks() -> hasil eksplisit PASSED/FAILED/NOT EXECUTED
        -> renderGuardianReport() -> PASS / PASS WITH WARNINGS / HUMAN REVIEW REQUIRED / BLOCKED
-  -> job summary; HIGH/CRITICAL atau required check gagal memblokir gate
+  -> job summary; required check gagal memblokir gate, sedangkan HIGH/CRITICAL wajib review manusia via branch rule + CODEOWNERS
+  -> .github/CODEOWNERS menetapkan dua collaborator aktif terverifikasi sebagai owner seluruh repository
 
 push SYSTEM_MAP.md ke main / workflow_dispatch
   -> .github/workflows/system-map-issues.yml [contents:read + issues:write; concurrency tunggal]
@@ -1222,7 +1223,7 @@ Alias Principal disimpan di `python_backend/laporan_harian_targets.py`; filter/f
 
 ## Risks / Blind Spots
 
-Blok `accapi-risk` di bawah adalah kontrak input eksplisit untuk automation issue. Wording boleh diperbarui, tetapi `id` tidak boleh diganti untuk risiko yang sama. Penghapusan blok hanya menandai issue sebagai `SOURCE NO LONGER DETECTED — VERIFICATION REQUIRED`; automation tidak menutup issue.
+Blok `accapi-risk` di bawah adalah kontrak input eksplisit untuk automation issue. Wording boleh diperbarui, tetapi `id` tidak boleh diganti untuk risiko yang sama. Penghapusan blok hanya menandai issue sebagai `SOURCE NO LONGER DETECTED — VERIFICATION REQUIRED`; automation tidak menutup issue. Issue terkelola memakai label `accapi-guardian` dan `risk:P0..P3`; label terkelola tanpa fingerprint atau marker body yang rusak membuat sinkronisasi gagal tertutup.
 
 <!-- accapi-risk
 id: deploy-database-runtime-mismatch
@@ -1231,7 +1232,7 @@ priority: P1
 category: deployment-data-integrity
 affected-area: Dockerfile.frontend, Coolify runtime environment, database startup migrations
 business-impact: Finance and operational routes can fail or target the wrong storage when DATABASE_URL is absent or points to SQLite.
-technical-impact: Application DB code uses PostgreSQL while the image still carries file:/app/data/sqlite.db as a build and runtime fallback.
+technical-impact: Application DB code uses PostgreSQL; image baru sudah menghapus SQLite runtime fallback dan gagal start tanpa PostgreSQL, tetapi konfigurasi Coolify yang sedang berjalan belum dibuktikan.
 acceptance-criteria: Capture running-container evidence that DATABASE_URL uses PostgreSQL, startup migrations succeed, and authenticated DB routes pass before removing the fallback.
 suggested-tests: Recreate the production container, inspect its effective environment without printing credentials, then smoke-test health plus one authenticated read-only DB route.
 -->
@@ -1265,11 +1266,11 @@ id: production-dependency-high-advisories
 title: Triage and remediate high-severity production dependency advisories
 priority: P1
 category: application-security
-affected-area: Better Auth, Next.js, Nodemailer, Sharp, xlsx, and transitive production dependencies
-business-impact: Untriaged authentication, middleware, SSRF, denial-of-service, and file-processing advisories may affect finance-sensitive production workflows.
-technical-impact: npm audit --omit=dev reports 10 high-severity vulnerable dependency groups; xlsx currently has no registry fix and several upgrades may be breaking.
-acceptance-criteria: Determine applicability per advisory, upgrade safely where fixes exist, document compensating controls where they do not, and leave production audit output at an explicitly accepted baseline.
-suggested-tests: Run focused auth bypass, Server Action, email attachment/URL, image upload, and hostile workbook regressions before and after dependency changes.
+affected-area: xlsx workbook parsing in upload/reporting flows
+business-impact: A hostile workbook may cause denial of service or prototype pollution in finance-sensitive import flows.
+technical-impact: Better Auth, Next.js, Nodemailer, Sharp, PostCSS, Browserslist, fast-uri, nanoid, and brace-expansion findings were upgraded; npm audit --omit=dev now reports only xlsx, for which the npm registry has no fixed release.
+acceptance-criteria: Replace xlsx or adopt a verified fixed SheetJS distribution, then run hostile-workbook and import/export regression tests until npm audit has no unaccepted HIGH production finding.
+suggested-tests: Parse oversized, regex-adversarial, and prototype-pollution workbooks under CPU/memory/time limits, then rerun all upload/reporting regressions.
 -->
 
 | Area | Catatan |

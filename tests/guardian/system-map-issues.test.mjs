@@ -7,20 +7,21 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractRisks, planIssueSync } from "../../scripts/guardian/system-map-issues.mjs";
+import { extractRisks, MANAGED_LABEL, planIssueSync } from "../../scripts/guardian/system-map-issues.mjs";
 
 function source({ title = "Runtime database mismatch", impact = "Routes can fail." } = {}) {
   return `# Map\n<!-- accapi-risk\nid: deploy-database-runtime-mismatch\ntitle: ${title}\npriority: P1\ncategory: deployment\naffected-area: Docker frontend runtime\nbusiness-impact: ${impact}\ntechnical-impact: SQLite fallback conflicts with PostgreSQL-only code.\nacceptance-criteria: Production runtime proves a PostgreSQL DATABASE_URL.\nsuggested-tests: Container startup and authenticated DB route smoke test.\n-->`;
 }
 
 function issueFrom(action, overrides = {}) {
-  return { number: 7, state: "open", title: action.title, body: action.body, ...overrides };
+  return { number: 7, state: "open", title: action.title, body: action.body, labels: (action.labels || []).map((name) => ({ name })), ...overrides };
 }
 
 test("CASE 5: one new actionable risk produces one CREATE", () => {
   const plan = planIssueSync(extractRisks(source()), []);
   assert.equal(plan.blocked, false);
   assert.deepEqual(plan.actions.map(({ action }) => action), ["CREATE"]);
+  assert.deepEqual(plan.actions[0].labels, [MANAGED_LABEL, "risk:P1"]);
 });
 
 test("CASE 6: repeated identical sync is SKIP with zero duplicate creates", () => {
@@ -82,4 +83,22 @@ test("excessive updates or stale mutations are blocked even when create count is
   assert.equal(plan.createCount, 0);
   assert.equal(plan.mutationCount, 3);
   assert.equal(plan.blocked, true);
+});
+
+test("managed label without fingerprint and damaged managed markers fail closed", () => {
+  assert.throws(
+    () => planIssueSync(extractRisks(source()), [{ number: 9, state: "open", title: "edited", body: "fingerprint removed", labels: [{ name: MANAGED_LABEL }] }]),
+    /missing its AccAPI risk fingerprint/,
+  );
+  const first = planIssueSync(extractRisks(source()), []);
+  const damaged = issueFrom(first.actions[0], { body: first.actions[0].body.replace("<!-- accapi-managed:end -->", "") });
+  assert.throws(() => planIssueSync(extractRisks(source()), [damaged]), /invalid managed block/);
+});
+
+test("priority label changes without deleting unrelated human labels", () => {
+  const initial = planIssueSync(extractRisks(source()), []);
+  const existing = issueFrom(initial.actions[0], { labels: [{ name: MANAGED_LABEL }, { name: "risk:P2" }, { name: "operations" }] });
+  const update = planIssueSync(extractRisks(source()), [existing]).actions[0];
+  assert.equal(update.action, "UPDATE");
+  assert.deepEqual(update.labels, [MANAGED_LABEL, "operations", "risk:P1"]);
 });

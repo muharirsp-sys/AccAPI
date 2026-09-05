@@ -1,7 +1,7 @@
 # Tujuan: Menjalankan gate risiko PR deterministik dari implementasi Guardian pada base branch tepercaya.
 # Caller: Event pull_request opened, synchronize, reopened, dan ready_for_review.
 # Dependensi: actions/checkout, actions/setup-node, scripts/guardian/pr-guardian.mjs, serta test repository terpilih.
-# Main Functions: Checkout PR/base terpisah, install tanpa lifecycle scripts, execute checks, publish job summary, fail closed.
+# Main Functions: Checkout PR/base terpisah, install tanpa lifecycle scripts, execute checks, publish stable job summary, fail closed on deterministic failures.
 # Side Effects: Hanya membaca repository dan menulis job summary; tidak memiliki permission write dan tidak memakai secrets.
 name: AccAPI PR Guardian
 
@@ -23,21 +23,21 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout pull request code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
           path: pr
 
       - name: Checkout trusted Guardian from base
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
           path: guardian-base
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -60,7 +60,6 @@ jobs:
           --base "$GUARDIAN_BASE_SHA"
           --head "$GUARDIAN_HEAD_SHA"
           --execute
-          --enforce-human-review
           --report-file ../guardian-report.md
 
       - name: Publish Guardian report
