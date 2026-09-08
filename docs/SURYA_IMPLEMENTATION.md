@@ -134,9 +134,12 @@ dan **fallback ke harga standar** bila tidak ada baris harga yang cocok.
   primary key supaya kenaikan terjadwal bisa hidup berdampingan dengan harga yang berlaku.
 - `scripts/sync-item-selling-price.ts` -> `item/detail.do` per item, batch paralel 4 (batas resmi
   8 serentak), checkpoint per batch di `sync_state` module `item_selling_price`. Aman diulang:
-  id di bawah checkpoint pasti sudah selesai karena tiap batch ditunggu penuh. Terukur ~3
-  item/detik, jadi 4.182 item ~23 menit dan menghasilkan ~2,4 juta baris (572 baris per item =
-  12 kategori x 2 satuan x 22 cabang).
+  id di bawah checkpoint pasti sudah selesai karena tiap batch ditunggu penuh.
+  **Hasil sync penuh 2026-09-08: 4.182/4.182 item, 2.330.900 baris harga, 1.258 detik (~21
+  menit), nol item tanpa detail.** Panggilan pertama crash `ECONNRESET` pada item ke-256 —
+  kejadian kedua setelah sync customer — jadi skrip sekarang punya retry bertahap per
+  permintaan (4 percobaan, 500ms sampai 4s, termasuk pada 429/5xx) dan dijalankan ulang dari
+  checkpoint (item_id 786) tanpa mengulang dari nol.
 - `lib/item-price.ts` -> `resolvePrices()`. Urutan penentuan harga, semuanya deterministik:
   tanggal berlaku terbesar `<= tanggal order`, lalu cabang yang diminta, lalu cabang default
   item, lalu cabang mana pun. Tidak ada baris cocok -> `item.unitPrice` (harga standar, `source:
@@ -236,8 +239,21 @@ Dokumen ini adalah checkpoint di disk, bukan bukti seluruh proyek selesai. Perba
 
 - Instruksi terbaru: tahap 2 selesai dan tervalidasi live dengan surat Priskila; tahap 3 berjalan dengan basis data Web Sales yang dipisah dari internal. Sisa tahap 3: aplikasi Web Sales terpisah dan identitas sales. Tahap 4–5 belum dikerjakan.
 - Catatan lingkungan: `/api/me` pada FastAPI lokal menjawab `authenticated: false` karena bypass auth hanya berlaku di Next; uji UI dilakukan dengan launcher scratchpad yang menyuntik identitas uji ke referensi `get_current_user`. Kode produksi TIDAK memiliki bypass; jangan menambahkannya.
-- Checkout: `D:\AccAPI\_github_clean`, branch `feat/rekapan-nota`, HEAD saat checkpoint `c9f8d989c85b08aa5dcd6ae0c49c260a5ac4b8b7`.
-- Belum ada commit, push, merge, deployment, atau penulisan faktur Accurate dari pekerjaan ini.
+- Checkout: `D:\AccAPI\_github_clean`. Pekerjaan ini **sudah di-commit dan di-push** ke branch
+  **`feat/surya-workspace`** (dicabangkan dari `feat/rekapan-nota` @ `c9f8d98`), commit
+  `608ab9e` — 45 file, +4.493/-1.528. PR belum dibuat:
+  https://github.com/muharirsp-sys/AccAPI/pull/new/feat/surya-workspace
+- Cherry-pick sengaja: hanya file milik tahap 1–3. **TIDAK ikut** (tetap milik pekerjaan lain,
+  masih uncommitted di working tree): `app/(dashboard)/reconciliation/page.tsx`,
+  `docs/REKONSILIASI_HANDOFF_FAKTUR_PEMBELIAN_RETURN.md`,
+  `lib/off-program-control/sales-reconciliation.ts` + test-nya, `CLAUDE.md`,
+  `docker-compose.metabase.yml`, `docs/form-kerja/`, `dashboard-generator/`,
+  `docs/handover/*` lama, dan eksperimen OCR lama (`ab_*.py`, `chandra_ocr_adapter.py`,
+  `mistral_ocr_adapter.py`, `ocr_text_compare.py`, `python_backend/data/`).
+- `python_backend/api_key_mistral.txt` dimasukkan ke `.gitignore` pada commit ini. File aslinya
+  TIDAK dihapus; hanya dicegah masuk repo. Temuan pengemasan `.next` tetap harus dibereskan
+  sebelum deployment.
+- Belum ada merge, deployment, atau penulisan faktur Accurate dari pekerjaan ini.
 - Baca `SYSTEM_MAP.md`, lalu dokumen ini. Periksa status Git aktual; jangan mengasumsikan semua perubahan milik pekerjaan ini.
 - Posisi terbaru: UI tahap 1 selesai dan tervalidasi. Pengguna dapat meninjau hasil lokal; jangan ulangi implementasi sidebar. Tahap 2–5 belum dikerjakan. Temuan pengemasan harus dibereskan sebelum deployment.
 - Jangan ulangi diskusi kebutuhan yang sudah dijawab. Web Sales memang belum ada dan pembuatannya sudah diotorisasi.
@@ -310,6 +326,18 @@ Screenshot baru dan sampel halaman operasional telah diperiksa; tidak ada overfl
 
 Sudah dirty sebelum redesign: `app/(dashboard)/reconciliation/page.tsx`, `docs/REKONSILIASI_HANDOFF_FAKTUR_PEMBELIAN_RETURN.md`, `lib/off-program-control/sales-reconciliation.ts`, test pasangannya, dan gitlink `.claude/worktrees/agent-aaac9a19b50b4ba84`. Banyak artefak untracked lain juga sudah ada, termasuk eksperimen OCR, laporan, dan handover lama. Jangan revert, hapus, atau stage massal. Handover ini tersimpan lokal; belum menjadi backup remote.
 
+### Yang paling mendesak berikutnya
+
+1. **Satuan pada order dan aturan promo harus dari master Accurate, bukan diketik bebas.**
+   Item `M5012001000740` berharga BAG 15.900 vs KRT 1.144.800 — salah satuan = nilai order
+   salah 72x. Peringatan merah `knownUnits` hanyalah jaring terakhir, bukan pencegah.
+2. Aplikasi Web Sales terpisah + identitas 100 sales (endpoint sudah siap).
+3. Worker penarik 5 menit (sekarang masih tarik manual dari halaman Order Masuk).
+4. Tahap 4 (faktur Accurate) dan tahap 5 (Rekapan Nota) belum disentuh.
+5. Skema DB dev lokal masih tertinggal beberapa modul utuh (`app_setting`, `pick_group`,
+   `rekap_upload`, `wave_line_pool`, `reconciliation_*`), sehingga `0002_rekapan_nota.sql`
+   belum bisa diterapkan. `drizzle-kit push` TIDAK dijalankan karena bisa menghapus kolom.
+
 ### Prompt melanjutkan
 
-> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean. Baca SYSTEM_MAP.md dan docs/SURYA_IMPLEMENTATION.md, lalu periksa kondisi aktual. Redesign dan validasi UI lokal sudah selesai. Perhatikan temuan pengemasan sebelum deployment. Pekerjaan berikutnya adalah Summary Mistral OCR 4.1, Web Sales, faktur Accurate melalui pull 5 menit, dan Rekapan Nota, dengan validasi setiap tahap. Pertahankan perubahan lain yang sudah ada dan perbarui handover setelah setiap tahap.
+> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace` (commit `608ab9e` sudah di-push). Baca SYSTEM_MAP.md dan docs/SURYA_IMPLEMENTATION.md, lalu periksa kondisi aktual. Tahap 1–3 selesai dan tervalidasi live: ruang kerja, Summary OCR Mistral 4.1 (anotasi per halaman), order internal dengan aturan promo yang dibekukan, basis data Web Sales terpisah, dan harga dari Accurate (2,3 juta baris `item_selling_price`). Pekerjaan berikutnya: satuan dari master Accurate (bukan input bebas), aplikasi Web Sales terpisah, worker pull 5 menit, lalu faktur Accurate dan Rekapan Nota. Jangan stage massal — working tree masih memuat pekerjaan rekonsiliasi dan eksperimen OCR lama yang bukan milik tahap ini. Perbarui handover setelah setiap tahap.
