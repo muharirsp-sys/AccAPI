@@ -2,7 +2,7 @@
  * Tujuan: Membuktikan klasifikasi risiko, pemilihan check, dan perlindungan false PASS PR Guardian.
  * Caller: node --test tests/guardian/*.test.mjs.
  * Dependensi: node:test, node:assert, scripts/guardian/pr-guardian.mjs.
- * Main Functions: Skenario UI, RBAC, backend Python, payment, migration, malicious filename, dan skipped-required check.
+ * Main Functions: Skenario UI, RBAC, backend Python, finance/DB seed, Guardian metadata, malicious filename, dan skipped-required check.
  * Side Effects: Satu test membuat dan menghapus repository Git sementara di OS temp untuk membuktikan git diff nyata.
  */
 import assert from "node:assert/strict";
@@ -42,6 +42,32 @@ test("database adapter, env, and OFF finance calculations cannot bypass sensitiv
   assert.equal(classifyChanges(["lib/db.ts"]).risk, "CRITICAL");
   assert.equal(classifyChanges([".env.example"]).risk, "HIGH");
   assert.equal(classifyChanges(["lib/off-program-control/sales-reconciliation.ts"]).risk, "CRITICAL");
+});
+
+test("automation inputs, Guardian tests, DB seeds, and auth boundaries cannot be classified LOW or MEDIUM", () => {
+  const systemMap = classifyChanges(["SYSTEM_MAP.md"]);
+  assert.equal(systemMap.risk, "HIGH");
+  assert.ok(systemMap.domains.includes("infrastructure"));
+
+  const guardianTests = classifyChanges(["tests/guardian/workflow-security.test.mjs"]);
+  assert.equal(guardianTests.risk, "HIGH");
+  assert.ok(selectChecks(guardianTests).checks.some((check) => check.id === "guardian-self-test"));
+
+  const seed = classifyChanges(["scripts/seed-rbac-presets.ts"]);
+  assert.equal(seed.risk, "CRITICAL");
+  assert.ok(seed.domains.includes("database"));
+  assert.ok(seed.domains.includes("RBAC"));
+
+  assert.equal(classifyChanges(["app/(dashboard)/layout.tsx"]).risk, "HIGH");
+  assert.equal(classifyChanges(["lib/api-security.ts"]).risk, "HIGH");
+  assert.equal(classifyChanges(["lib/claim-workflow/workflow.ts"]).risk, "CRITICAL");
+});
+
+test("UI and unmapped test changes disclose checks that are not executed", () => {
+  const ui = selectChecks(classifyChanges(["components/InvoiceBadge.tsx"]));
+  assert.ok(ui.warnings.some((warning) => warning.includes("no browser")));
+  const tests = selectChecks(classifyChanges(["lib/example.test.ts"]));
+  assert.ok(tests.warnings.some((warning) => warning.includes("not automatically executed")));
 });
 
 test("neutral Python backend changes are HIGH and receive a real syntax check", () => {

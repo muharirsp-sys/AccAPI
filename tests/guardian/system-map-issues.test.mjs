@@ -2,7 +2,7 @@
  * Tujuan: Membuktikan extraction, stable fingerprint, idempotensi, lifecycle konservatif, dan spam guard issue sync.
  * Caller: node --test tests/guardian/*.test.mjs.
  * Dependensi: node:test, node:assert, scripts/guardian/system-map-issues.mjs.
- * Main Functions: Skenario CREATE stabilization, SKIP, UPDATE, REOPEN, STALE, duplicate fingerprint, dan spam guard.
+ * Main Functions: Skenario CREATE stabilization, SKIP, UPDATE, REOPEN, STALE, trusted-label ownership, duplicate fingerprint, dan spam guard.
  * Side Effects: Tidak ada; GitHub API tidak dipanggil.
  */
 import assert from "node:assert/strict";
@@ -93,6 +93,20 @@ test("managed label without fingerprint and damaged managed markers fail closed"
   const first = planIssueSync(extractRisks(source()), []);
   const damaged = issueFrom(first.actions[0], { body: first.actions[0].body.replace("<!-- accapi-managed:end -->", "") });
   assert.throws(() => planIssueSync(extractRisks(source()), [damaged]), /invalid managed block/);
+});
+
+test("an unlabelled public issue cannot claim a managed fingerprint", () => {
+  const risks = extractRisks(source());
+  const first = planIssueSync(risks, []);
+  const untrusted = issueFrom(first.actions[0], { labels: [] });
+  const plan = planIssueSync(risks, [untrusted]);
+  assert.equal(plan.createCount, 1);
+  assert.equal(plan.actions[0].action, "CREATE");
+});
+
+test("invalid numeric mutation limits cannot disable spam guards", () => {
+  assert.throws(() => planIssueSync(extractRisks(source()), [], { maxCreates: Number.NaN }), /maxCreates/);
+  assert.throws(() => planIssueSync(extractRisks(source()), [], { maxMutations: 1.5 }), /maxMutations/);
 });
 
 test("priority label changes without deleting unrelated human labels", () => {

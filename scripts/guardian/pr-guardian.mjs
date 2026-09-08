@@ -66,19 +66,19 @@ export function classifyChanges(inputFiles) {
     if (matches(file, [/^(?:tests?|scripts\/.*\.test|lib\/.*\.(?:test|spec))\b/i, /\.(?:test|spec)\.[cm]?[jt]sx?$/i])) domains.add("tests");
     if (matches(file, [/^app\/(?:\(dashboard\)|\(auth\)|\(cetak\))\//i, /^components\//i, /\.(?:css|scss)$/i])) domains.add("frontend");
     if (matches(file, [/^python_backend\//i, /^app\/api\//i])) domains.add("backend");
-    if (matches(file, [/^(?:db|drizzle|prisma)\//i, /^lib\/db\.[cm]?[jt]s$/i, /^(?:drizzle|prisma)\.config\.[cm]?[jt]s$/i, /\.sql$/i])) domains.add("database");
+    if (matches(file, [/^(?:db|drizzle|prisma)\//i, /^lib\/(?:db|schema)\.[cm]?[jt]s$/i, /^(?:drizzle|prisma)\.config\.[cm]?[jt]s$/i, /^scripts\/(?:seed-|init-db)/i, /\.sql$/i])) domains.add("database");
     if (matches(file, [/^(?:db|drizzle|prisma)\/migrations?\//i, /^scripts\/(?:init-db|migrat(?:e|ion))/i, /^scripts\/apply-.*migration/i])) domains.add("migration");
-    if (matches(file, [/(^|\/)(?:auth|authentication)(?:\/|\.|-)/i, /^lib\/rbac(?:\/|\.)/i, /(^|\/)rbac(?:\/|\.|-)/i, /^app\/api\/admin\/(?:groups|users)/i])) {
+    if (matches(file, [/(^|\/)(?:auth|authentication|authorization|permissions?|rbac|api-security)(?:\/|\.|-)/i, /^scripts\/seed-rbac/i, /^app\/api\/admin\/(?:groups|users)/i, /^app\/\(dashboard\)\/layout\.[cm]?[jt]sx?$/i, /^(?:middleware|proxy)\.[cm]?[jt]s$/i])) {
       domains.add("auth");
       domains.add("RBAC");
     }
-    if (matches(file, [/(^|\/)(?:finance|financial)(?:\/|\.|-)/i, /claim-workflow\/.*(?:calculation|payment|close)/i, /off-program-control\/.*(?:calculation|reconciliation|payment)/i, /^lib\/.*(?:-calc|calculation|financial-math)\.[cm]?[jt]s$/i, /off-finance/i])) domains.add("finance");
+    if (matches(file, [/(^|\/)(?:finance|financial)(?:\/|\.|-)/i, /^(?:lib|app\/api|app\/\(dashboard\))\/(?:claim-workflow|off-program-control)(?:\/|$)/i, /claim-workflow\/.*(?:calculation|payment|close)/i, /off-program-control\/.*(?:calculation|reconciliation|payment)/i, /^lib\/.*(?:-calc|calculation|financial-math)\.[cm]?[jt]s$/i, /off-finance/i])) domains.add("finance");
     if (matches(file, [/(^|\/)(?:payments?|sales-receipt)(?:\/|\.|-)/i, /idempotency/i])) domains.add("payments");
     if (matches(file, [/(^|\/)insentif(?:\/|\.|-)/i, /incentive/i])) domains.add("incentives");
     if (matches(file, [/sales-history/i, /sales_history/i, /ext-sync/i])) domains.add("sales-history");
     if (matches(file, [/accurate/i, /^lib\/sync\.[jt]s$/i, /^app\/api\/(?:proxy|cron\/sync-accurate)/i])) domains.add("Accurate integration");
     if (matches(file, [/(^|\/)(?:report|export|laporan)(?:\/|\.|-)/i, /^dashboard-generator\//i])) domains.add("reporting/export");
-    if (matches(file, [/^\.github\//i, /^scripts\/guardian\//i, /^Dockerfile/i, /^docker-compose/i, /^\.env(?:\.|$)/i, /^package(?:-lock)?\.json$/i, /^(?:next|playwright|tsconfig)\.config/i])) domains.add("infrastructure");
+    if (matches(file, [/^\.github\//i, /^scripts\/guardian\//i, /^tests\/guardian\//i, /^SYSTEM_MAP\.md$/i, /^Dockerfile/i, /^\.dockerignore$/i, /^docker-compose/i, /^\.env(?:\.|$)/i, /^package(?:-lock)?\.json$/i, /^(?:next|playwright|tsconfig)\.config/i])) domains.add("infrastructure");
   }
 
   const sensitiveCritical = ["finance", "payments", "incentives", "database", "migration"];
@@ -120,6 +120,8 @@ export function selectChecks(classification) {
   if (classification.files.some((file) => file.startsWith("python_backend/") && file.endsWith(".py"))) checks.push(CHECKS.pythonSyntax);
   if (domains.has("infrastructure") && classification.files.some((file) => /^\.?github\/workflows\/|^scripts\/guardian\/|^tests\/guardian\//i.test(file))) checks.push(CHECKS.guardianSelf);
   if (domains.has("auth") || domains.has("RBAC")) warnings.push("Auth/RBAC browser authorization checks need a configured PostgreSQL-backed test server; deterministic static checks are not sufficient.");
+  if (domains.has("frontend")) warnings.push("Frontend changes receive static checks only; no browser rendering or interaction test is implied by a PASS.");
+  if (domains.has("tests") && !domains.has("infrastructure")) warnings.push("Changed non-Guardian tests are linted/typechecked but are not automatically executed unless a domain mapping selects them.");
   if (domains.has("payments")) warnings.push("The existing payment import regression mutates local test data and needs an isolated full-stack environment; it is not silently treated as executed.");
   if (domains.has("database") || domains.has("migration")) warnings.push("No disposable PostgreSQL migration round-trip is configured in this workflow; schema/data compatibility requires human review.");
   return { checks: [...new Map(checks.map((check) => [check.id, check])).values()], warnings };

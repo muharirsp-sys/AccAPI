@@ -1,7 +1,7 @@
 # Tujuan: Menjalankan gate risiko PR deterministik dari implementasi Guardian pada base branch tepercaya.
 # Caller: Event pull_request opened, synchronize, reopened, dan ready_for_review.
 # Dependensi: Git public fetch, actions/setup-node, scripts/guardian/pr-guardian.mjs, serta test repository terpilih.
-# Main Functions: Fetch PR/base tanpa token, pilih Guardian base/bootstrap SHA tepercaya, execute checks, publish stable summary, fail closed.
+# Main Functions: Fetch PR/base tanpa token, pilih Guardian base/bootstrap SHA tepercaya, pulihkan self-test tepercaya, execute checks, publish stable summary, fail closed.
 # Side Effects: Hanya membaca repository dan menulis job summary; tidak memiliki permission write dan tidak memakai secrets.
 name: AccAPI PR Guardian
 
@@ -65,6 +65,14 @@ jobs:
       - name: Install dependencies without lifecycle scripts
         working-directory: pr
         run: npm ci --ignore-scripts
+
+      - name: Restore trusted Guardian regression tests
+        run: |
+          if [ -d guardian-base/tests/guardian ]; then
+            rm -rf pr/tests/guardian
+            mkdir -p pr/tests
+            cp -R guardian-base/tests/guardian pr/tests/guardian
+          fi
 
       - name: Run trusted Guardian against PR code
         id: guardian

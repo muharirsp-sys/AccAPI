@@ -195,6 +195,7 @@ pull_request (fork/same repository)
        -> git diff --name-status -z (tanpa shell interpolation)
        -> classifyChanges() -> domain + LOW/MEDIUM/HIGH/CRITICAL
        -> selectChecks() -> lint/typecheck, Python compile, dan test repository yang benar-benar tersedia
+       -> tests/guardian dipulihkan dari Guardian base tepercaya sebelum self-test agar PR tidak dapat melemahkan test-nya sendiri
        -> runChecks() -> hasil eksplisit PASSED/FAILED/NOT EXECUTED
        -> renderGuardianReport() -> PASS / PASS WITH WARNINGS / HUMAN REVIEW REQUIRED / BLOCKED
   -> job summary; required check gagal memblokir gate, sedangkan HIGH/CRITICAL wajib review manusia via branch rule + CODEOWNERS
@@ -205,7 +206,8 @@ push SYSTEM_MAP.md ke main / workflow_dispatch
   -> scripts/guardian/system-map-issues.mjs
        -> extractRisks() hanya blok <!-- accapi-risk ... --> eksplisit
        -> planIssueSync() -> CREATE/UPDATE/SKIP/REOPEN/STALE
-       -> CREATE wajib stabil pada 3 pembacaan API; batas 5 CREATE/25 mutasi; duplicate fingerprint fail-closed
+       -> hanya issue berlabel accapi-guardian yang boleh memiliki fingerprint otoritatif; marker issue publik tanpa label diabaikan
+       -> CREATE wajib stabil pada 3 pembacaan API; batas integer 5 CREATE/25 mutasi; duplicate fingerprint fail-closed
        -> closed issue hanya REOPEN bila operator mengaktifkan allow_reopen
        -> source hilang ditandai VERIFICATION REQUIRED, tidak pernah auto-close
 ```
@@ -610,7 +612,8 @@ AccAPI/_github_clean/
 ├── .env.local                          # Env lokal aktif (tidak di-commit)
 ├── drizzle.config.ts                   # Drizzle kit config (schema + output migrations)
 ├── next.config.ts                      # Next.js config
-├── docker-compose.yml                  # Deploy: frontend + backend container
+├── docker-compose.yml                  # Deploy: frontend + backend; auth secret wajib diinjeksi tanpa fallback
+├── .dockerignore                       # Keluarkan env/compose/runtime data dari build context
 ├── Dockerfile.frontend
 ├── Dockerfile.backend
 └── proxy.ts                            # Dev proxy config
@@ -625,9 +628,9 @@ AccAPI/_github_clean/
 | File | Fungsi Utama | Peran |
 |---|---|---|
 | `.github/workflows/pr-guardian.yml` | event PR, permission read-only, trusted-base checkout, job summary | Gate PR tanpa `pull_request_target`, secret, comment write, atau interpolasi metadata PR ke shell |
-| `scripts/guardian/pr-guardian.mjs` | `changedFilesFromGit`, `classifyChanges`, `selectChecks`, `evaluateGuardian`, `renderGuardianReport` | Klasifikasi risiko dan eksekusi check deterministik; finance/payment/database/migration tidak dapat turun di bawah CRITICAL |
+| `scripts/guardian/pr-guardian.mjs` | `changedFilesFromGit`, `classifyChanges`, `selectChecks`, `evaluateGuardian`, `renderGuardianReport` | Klasifikasi risiko dan eksekusi check deterministik; finance/payment/database/migration/seed tidak dapat turun di bawah CRITICAL, sedangkan auth/RBAC/Guardian/SYSTEM_MAP tidak dapat turun di bawah HIGH |
 | `.github/workflows/system-map-issues.yml` | push path filter, manual dispatch, serialized issue mutation | Memisahkan permission `issues:write` dari PR Guardian dan mencegah run sync normal berlomba |
-| `scripts/guardian/system-map-issues.mjs` | `extractRisks`, `planIssueSync`, `fetchManagedIssues`, `applyIssuePlan` | Sinkronisasi issue idempoten berbasis stable ID, dengan spam guard dan lifecycle tanpa auto-close |
+| `scripts/guardian/system-map-issues.mjs` | `extractRisks`, `planIssueSync`, `stabilizeCreatePlan`, `fetchManagedIssues`, `applyIssuePlan` | Sinkronisasi issue berbasis stable ID + label otoritatif, timeout API, spam guard, dan lifecycle tanpa auto-close |
 | `tests/guardian/*.test.mjs` | simulasi classifier/report/sync | Self-check pure Node tanpa GitHub API atau DB production |
 
 ### Auth & Session
@@ -721,6 +724,7 @@ AccAPI/_github_clean/
 | `app/api/faktur/route.ts` | `GET` | Daftar faktur dari cache `sales_invoice` (cari nomor/pelanggan, default hanya nomor mengandung INV, `?all=1` untuk semua) |
 | `app/api/faktur/[id]/route.ts` | `GET` | Detail 1 faktur + baris item (qty/harga) live dari `sales-invoice/detail.do`; `?raw=1` menampilkan respons Accurate mentah |
 | `app/api/webhook/accurate/route.ts` | `POST` | Terima event webhook Faktur Penjualan dari Accurate (IP whitelist fail-closed + log rotasi + upsert `sales_invoice`) |
+| `app/api/cron/webhook-backfill/route.ts` | `GET` | Membaca log hanya dari runtime path; dynamic file probe diabaikan oleh Turbopack tracing agar standalone image tidak menyalin seluruh repository |
 | `app/(dashboard)/api-wrapper/page.tsx` | UI | Antarmuka manual query/bulk-submit ke Accurate |
 | `app/(dashboard)/api-wrapper/parsers/` | `parsePurchaseReturnBulkSave` | Parse Excel ke payload bulk API Accurate |
 
@@ -786,7 +790,7 @@ menu sidebar `Rekapan Nota`.
 | Variabel | Fungsi |
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection URL (`postgres://...`) untuk runtime Next.js |
-| `BETTER_AUTH_URL` / `BETTER_AUTH_SECRET` | Base URL + secret Better Auth |
+| `BETTER_AUTH_URL` / `BETTER_AUTH_SECRET` | Base URL + secret Better Auth; secret wajib diinjeksi runtime, tanpa fallback di Compose atau image |
 | `NEXT_PUBLIC_APP_URL` | URL publik Next.js (browser) |
 | `NEXT_PUBLIC_FASTAPI_BASE_URL` | URL Python backend (browser) |
 | `ACCURATE_CLIENT_ID` / `ACCURATE_CLIENT_SECRET` | OAuth2 Accurate |
@@ -1233,8 +1237,8 @@ priority: P1
 category: deployment-data-integrity
 affected-area: Dockerfile.frontend, Coolify runtime environment, database startup migrations
 business-impact: Finance and operational routes can fail or target the wrong storage when DATABASE_URL is absent or points to SQLite.
-technical-impact: Application DB code uses PostgreSQL; image baru sudah menghapus SQLite runtime fallback dan gagal start tanpa PostgreSQL, tetapi konfigurasi Coolify yang sedang berjalan belum dibuktikan.
-acceptance-criteria: Capture running-container evidence that DATABASE_URL uses PostgreSQL, startup migrations succeed, and authenticated DB routes pass before removing the fallback.
+technical-impact: Application DB code uses PostgreSQL; live container 2026-09-08 terbukti memakai skema postgresql ke accapi-postgres dan SELECT 1 berhasil, tetapi frontend belum punya healthcheck dan route DB terautentikasi belum di-smoke-test.
+acceptance-criteria: Add a frontend healthcheck and capture an authenticated read-only DB route smoke test in addition to the proven PostgreSQL connection before declaring runtime verification complete.
 suggested-tests: Recreate the production container, inspect its effective environment without printing credentials, then smoke-test health plus one authenticated read-only DB route.
 -->
 
@@ -1274,6 +1278,18 @@ acceptance-criteria: Replace xlsx or adopt a verified fixed SheetJS distribution
 suggested-tests: Parse oversized, regex-adversarial, and prototype-pollution workbooks under CPU/memory/time limits, then rerun all upload/reporting regressions.
 -->
 
+<!-- accapi-risk
+id: rotate-exposed-better-auth-secret
+title: Rotate Better Auth secret exposed through Compose fallback and deployed image
+priority: P0
+category: authentication-secret-exposure
+affected-area: docker-compose.yml, frontend image filesystem, GitHub Actions secret, Coolify runtime environment, active sessions
+business-impact: A reusable authentication credential was committed and embedded in a readable production image, so session and token integrity cannot be trusted until rotation.
+technical-impact: Live inspection on 2026-09-08 found the effective BETTER_AUTH_SECRET literal in /app/docker-compose.yml inside the running image; source fallback and future build-context inclusion are fixed, but the deployed credential and image remain compromised.
+acceptance-criteria: Rotate BETTER_AUTH_SECRET in GitHub and Coolify, redeploy an image built after this fix, invalidate old sessions, and prove the old literal is absent from image files and runtime configuration.
+suggested-tests: Scan the rebuilt image for the old secret without printing it, verify new and old session behavior, confirm login/logout, and inspect container health after redeploy.
+-->
+
 | Area | Catatan |
 |---|---|
 | **Python backend integrasi Next.js** | Tidak ada shared session antar Next.js dan FastAPI. FastAPI punya auth sendiri (`auth.py`); sinkronisasi user hanya via filesystem/env, bukan DB shared. |
@@ -1285,7 +1301,7 @@ suggested-tests: Parse oversized, regex-adversarial, and prototype-pollution wor
 | **`config/`** | Folder berisi data statik (principles, dll) — tidak ter-trace penuh karena bukan TypeScript eksportabel; kemungkinan JSON/YAML. |
 | **`runtime/` path** | `GET /api/cron/cleanup-runtime` membersihkan artefak regenerable dengan retensi terdaftar; arsip PDF OPC/claim sengaja dikecualikan. Production tetap memerlukan scheduler eksternal dan `CRON_SECRET`. |
 | **`app/(dashboard)/finance/page.tsx`** | Memanggil Python FastAPI backend langsung via `NEXT_PUBLIC_FASTAPI_BASE_URL`. Jika backend mati, halaman finance tidak berfungsi. |
-| **D4 env/deploy belum sinkron** | Kode DB sudah PostgreSQL, tetapi `.env.local`, `.env.example`, Docker Compose, dan Dockerfile masih default `file:sqlite.db`. Local/deploy wajib memakai `DATABASE_URL=postgres://...`; tanpa itu route ber-DB tidak operasional. |
+| **D4 env/deploy verifikasi parsial** | Dockerfile baru fail-closed pada URL non-PostgreSQL. Live container 2026-09-08 memakai PostgreSQL dan query konektivitas berhasil, tetapi belum ada healthcheck frontend atau authenticated DB-route smoke test. |
 | **Rekapan Nota: sumber baris nota** | UPLOAD MANUAL export Accurate, bukan sync live. Kalau admin lupa upload, pool kosong dan wave tidak bisa disusun — gagalnya kelihatan, bukan diam-diam. Jalur upgrade: `sales-invoice/detail.do` per faktur (mahal, ~850 nota/hari). |
 | **Rekapan Nota: master konversi** | Diimpor sekali dari sheet `Konversi` (8.173 SKU); export tidak membawa `QTYKONV`. Yang menjaga master tetap benar adalah `konv_tersirat` tiap upload (baseline: cocok 65/65 SKU). Item ganti kemasan -> exception `KONVERSI_BEDA_DENGAN_EXPORT`, bukan orang. |
 | **Rekapan Nota: mapping area** | `Master Area Heinz` belum lengkap. Per 21 Agu 2026, 19 dari 131 nota Heinz tidak muncul di lembar HNZ mana pun karena outletnya belum dipetakan. Mesin usulan menutup ~79% (133/168) dengan LOO 87,1%; sisanya tetap antrean kerja manual, dan tidak ada yang dikarang. |

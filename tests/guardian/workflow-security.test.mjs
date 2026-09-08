@@ -21,6 +21,8 @@ test("PR Guardian is pull_request read-only and does not consume PR metadata or 
   assert.doesNotMatch(workflow, /actions\/checkout|persist-credentials|github\.token/);
   assert.match(workflow, /refs\/pull\/\$PR_NUMBER\/head/);
   assert.match(workflow, /vars\.GUARDIAN_BOOTSTRAP_SHA/);
+  assert.match(workflow, /Restore trusted Guardian regression tests/);
+  assert.match(workflow, /rm -rf pr\/tests\/guardian/);
   assert.doesNotMatch(workflow, /uses:\s*[^\s]+@v\d/);
   assert.doesNotMatch(workflow, /--enforce-human-review/);
 });
@@ -43,6 +45,9 @@ test("deploy has explicit read baseline, serialized cancellation, and no auth se
   assert.doesNotMatch(workflow, /BETTER_AUTH_SECRET/);
   assert.match(workflow, /FRONTEND_IMAGE \}\}:\$\{\{ github\.sha \}\}/);
   assert.match(workflow, /BACKEND_IMAGE \}\}:\$\{\{ github\.sha \}\}/);
+  assert.match(workflow, /timeout-minutes: 60/);
+  assert.match(workflow, /--connect-timeout 10/);
+  assert.match(workflow, /--max-time 30/);
   assert.doesNotMatch(workflow, /uses:\s*[^\s]+@v\d/);
   assert.doesNotMatch(workflow, /--header "Authorization: Bearer \$\{\{/);
 });
@@ -53,4 +58,9 @@ test("frontend image has no SQLite runtime default and fails closed without inje
   assert.doesNotMatch(runner, /DATABASE_URL=file:/);
   assert.match(runner, /DATABASE_URL must be an injected PostgreSQL URL/);
   assert.match(runner, /postgres:\/\/\*\|postgresql:\/\/\*/);
+  const compose = readFileSync("docker-compose.yml", "utf8");
+  assert.match(compose, /BETTER_AUTH_SECRET:\s*\$\{BETTER_AUTH_SECRET:\?/);
+  assert.doesNotMatch(compose, /BETTER_AUTH_SECRET:\s*\$\{BETTER_AUTH_SECRET:-/);
+  const dockerignore = readFileSync(".dockerignore", "utf8");
+  assert.match(dockerignore, /docker-compose\*\.yml/);
 });

@@ -95,8 +95,12 @@ function staleBody(existingBody) {
 }
 
 export function planIssueSync(risks, issues, { maxCreates = 5, maxMutations = 25 } = {}) {
+  for (const [name, value] of [["maxCreates", maxCreates], ["maxMutations", maxMutations]]) {
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${name} must be a non-negative safe integer.`);
+  }
   const byId = new Map();
   for (const issue of issues.filter((candidate) => !candidate.pull_request)) {
+    if (!labelNames(issue).includes(MANAGED_LABEL)) continue;
     const id = fingerprintFromBody(issue.body);
     assertManagedEnvelope(issue, id);
     if (!id) continue;
@@ -195,7 +199,11 @@ function githubHeaders(token) {
 }
 
 async function githubRequest(url, token, options = {}) {
-  const response = await fetch(url, { ...options, headers: { ...githubHeaders(token), ...options.headers } });
+  const response = await fetch(url, {
+    ...options,
+    signal: options.signal || AbortSignal.timeout(15_000),
+    headers: { ...githubHeaders(token), ...options.headers },
+  });
   if (!response.ok) throw new Error(`GitHub API ${response.status} for ${options.method || "GET"} ${new URL(url).pathname}; request-id=${response.headers.get("x-github-request-id") || "unknown"}`);
   return response.status === 204 ? null : response.json();
 }
@@ -206,7 +214,7 @@ export async function fetchManagedIssues(repository, token, { maxPages = 10 } = 
   for (let page = 1; page <= maxPages; page += 1) {
     const batch = await githubRequest(`https://api.github.com/repos/${repository}/issues?state=all&per_page=100&page=${page}`, token);
     issues.push(...batch.filter((issue) => !issue.pull_request));
-    if (batch.length < 100) return issues.filter((issue) => fingerprintFromBody(issue.body) || labelNames(issue).includes(MANAGED_LABEL));
+    if (batch.length < 100) return issues.filter((issue) => labelNames(issue).includes(MANAGED_LABEL));
   }
   throw new Error(`Managed issue scan exceeded ${maxPages * 100} records; refusing incomplete deduplication.`);
 }

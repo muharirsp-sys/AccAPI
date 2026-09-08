@@ -1,7 +1,7 @@
 # Tujuan: Memvalidasi, membangun, memublikasikan image AccAPI, lalu memicu redeploy Coolify dari main.
 # Caller: Push ke main atau workflow_dispatch operator.
 # Dependensi: Git public fetch, npm, Docker Buildx, GHCR, serta secret URL/token Coolify.
-# Main Functions: lint/typecheck, build image bertag commit SHA + latest, push GHCR, trigger Coolify.
+# Main Functions: lint/typecheck, build image bertag commit SHA + latest, push GHCR, trigger Coolify dengan timeout terbatas.
 # Side Effects: Menulis package GHCR dan memicu deployment production; job se-branch diserialisasi agar publish/deploy tidak saling mendahului.
 name: Deploy to Coolify
 
@@ -26,6 +26,7 @@ concurrency:
 jobs:
   typecheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Fetch trusted revision without credentials
         env:
@@ -48,6 +49,7 @@ jobs:
   build-and-push:
     needs: typecheck
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -110,6 +112,8 @@ jobs:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
           curl --silent --fail --show-error \
+            --connect-timeout 10 \
+            --max-time 30 \
             --request POST \
             --url "$COOLIFY_WEBHOOK_URL" \
             --header "Authorization: Bearer $COOLIFY_TOKEN" \
