@@ -626,6 +626,9 @@ Jalankan dari root workspace setelah memeriksa server lokal:
 python python_backend\test_summary_rules.py
 python python_backend\test_orders.py
 python python_backend\test_websales_pull.py
+npx.cmd tsx --test lib\item-price.test.ts
+npx.cmd tsx --test lib\accurate-invoice-write.test.ts
+npx.cmd tsx lib\rbac\registry.test.ts
 npx.cmd tsc --noEmit --incremental false
 npx.cmd eslint components/SidebarLayout.tsx components/WorkspaceNavigation.tsx components/ThemeSwitcher.tsx components/SidebarLayout.test.ts config/workspace-navigation.ts 'app/(dashboard)/page.tsx' 'app/(dashboard)/layout.tsx' app/layout.tsx tests/workspace-redesign.spec.ts tests/sidebar-tooltip-contrast.spec.ts tests/office-calm-theme.spec.ts
 npx.cmd tsx --test components/SidebarLayout.test.ts
