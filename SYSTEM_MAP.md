@@ -1232,7 +1232,7 @@ Blok `accapi-risk` di bawah adalah kontrak input eksplisit untuk automation issu
 
 <!-- accapi-risk
 id: deploy-database-runtime-mismatch
-title: Prove PostgreSQL runtime configuration before removing SQLite fallback
+title: Complete PostgreSQL runtime health and authenticated route verification
 priority: P1
 category: deployment-data-integrity
 affected-area: Dockerfile.frontend, Coolify runtime environment, database startup migrations
@@ -1256,14 +1256,14 @@ suggested-tests: Deploy two controlled revisions, verify the expected digest on 
 
 <!-- accapi-risk
 id: guardian-branch-protection-required
-title: Protect Guardian workflow and required check configuration from PR self-bypass
+title: Validate protected Guardian behavior with a real external fork PR
 priority: P1
-category: repository-security
-affected-area: GitHub branch rules, CODEOWNERS, and .github/workflows/pr-guardian.yml
-business-impact: A contributor who can merge a modified workflow could weaken or counterfeit the finance-sensitive gate.
-technical-impact: pull_request avoids privileged fork execution, but workflow definitions still require protected required-check names and review ownership outside repository code.
-acceptance-criteria: Main requires the Guardian status check, workflow changes require designated owner approval, direct pushes are restricted, and fork approval policy is documented.
-suggested-tests: Open a PR that removes or renames the Guardian job and confirm branch rules prevent merge without authorized override.
+category: repository-security-validation
+affected-area: GitHub external-fork workflow approval, branch rules, CODEOWNERS, and .github/workflows/pr-guardian.yml
+business-impact: Without one real external-fork run, token/secret isolation and approval behavior remain inferred from configuration rather than end-to-end evidence.
+technical-impact: Ruleset 22329681 is active with no bypass, strict Guardian check, CODEOWNERS review, and all_external_contributors workflow approval; negative and metadata attacks passed in same-repository PRs, but the repository has zero forks and no external account was available for a real fork test.
+acceptance-criteria: A controlled external fork PR requires maintainer workflow approval, receives no secrets or write permission, runs the trusted-base Guardian, and remains unmergeable when its required check fails.
+suggested-tests: From a non-collaborator fork, submit malicious title/body/filename plus a failing code change, inspect runner permissions and secret availability, then confirm the ruleset blocks merge.
 -->
 
 <!-- accapi-risk
