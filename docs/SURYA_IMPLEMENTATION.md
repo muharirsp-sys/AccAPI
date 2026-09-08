@@ -679,6 +679,38 @@ Sudah dirty sebelum redesign: `app/(dashboard)/reconciliation/page.tsx`, `docs/R
    `rekap_upload`, `wave_line_pool`, `reconciliation_*`), sehingga `0002_rekapan_nota.sql`
    belum bisa diterapkan. `drizzle-kit push` TIDAK dijalankan karena bisa menghapus kolom.
 
+### Posisi akhir sesi 2026-09-08 (empat commit LOKAL, belum di-push atas permintaan pengguna)
+
+| Commit | Isi |
+|---|---|
+| `e21de22` | Satuan order dari master Accurate (bukan input bebas) |
+| `f7db064` | Penarikan order Web Sales otomatis 5 menit lewat cron |
+| `7343dac` | Halaman Order Sales + izin `websales` terpisah dari `order` |
+| `e17a4a5` | Jalur faktur Accurate dibangun penuh, gerbang kirim masih tertutup |
+
+Pengguna memilih **menahan push**: PR #24 tetap pada isi lamanya sampai diminta. Working tree
+kembali hanya berisi pekerjaan rekonsiliasi + eksperimen OCR lama yang memang sudah ada
+sebelum sesi ini; tidak ada berkas sesi ini yang tertinggal tanpa commit.
+
+**Tahap 5 (Rekapan Nota) BELUM BISA DIKERJAKAN, dan ini bukan soal waktu.** Masukannya adalah
+faktur yang sudah terverifikasi di Accurate, dan tahap 4 belum pernah mengirim satu pun. Lebih
+dari itu, DB dev lokal tidak punya tabel modul ini sama sekali (`app_setting`, `rekap_upload`,
+`wave_line_pool` tidak ada, sehingga `0002_rekapan_nota.sql` gagal diterapkan) — jadi apa pun
+yang dibangun untuk tahap 5 sekarang tidak bisa divalidasi sedikit pun di lokal. Prasyarat
+sebelum tahap 5: (a) satu faktur uji tahap 4 terbukti benar, (b) skema modul Rekapan Nota ada
+di DB dev, TANPA `drizzle-kit push` (push bisa menghapus kolom/tabel yang ada di DB tapi tidak
+ada di schema — keputusan pengguna dulu sebelum itu dijalankan).
+
+Env baru yang dipakai sesi ini (semua fail-closed bila kosong):
+`CRON_SECRET` (juga di container **backend**), `ACCURATE_INVOICE_SEND`,
+`ACCURATE_INVOICE_DB_ID`, `ACCURATE_INVOICE_USER_ID`, `ACCURATE_INVOICE_BRANCH_ID` (opsional),
+`ACCURATE_INVOICE_BATCH` (opsional, default 20). Untuk dev lokal `CRON_SECRET` sudah
+ditambahkan ke `python_backend/.env` (gitignored).
+
 ### Prompt melanjutkan
+
+> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace` (empat commit LOKAL `e21de22`, `f7db064`, `7343dac`, `e17a4a5` — belum di-push). Baca SYSTEM_MAP.md dan docs/SURYA_IMPLEMENTATION.md, lalu periksa kondisi aktual. Tahap 1–3 selesai; satuan order kini dari master Accurate; penarikan Web Sales otomatis 5 menit lewat cron; halaman Order Sales ada dengan izin `websales` terpisah. Tahap 4 dibangun penuh tapi GERBANG KIRIM MASIH TERTUTUP dan nama field request `sales-invoice/save.do` belum terbukti — satu faktur uji pada database yang saya tunjuk harus diperiksa manual sebelum `ACCURATE_INVOICE_SEND=on`. Tahap 5 (Rekapan Nota) menunggu itu plus skema modulnya di DB dev. Jangan stage massal dan jangan push tanpa saya minta.
+
+### Prompt melanjutkan (lama, 7 September)
 
 > Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace` (commit `608ab9e` sudah di-push). Baca SYSTEM_MAP.md dan docs/SURYA_IMPLEMENTATION.md, lalu periksa kondisi aktual. Tahap 1–3 selesai dan tervalidasi live: ruang kerja, Summary OCR Mistral 4.1 (anotasi per halaman), order internal dengan aturan promo yang dibekukan, basis data Web Sales terpisah, dan harga dari Accurate (2,3 juta baris `item_selling_price`). Pekerjaan berikutnya: satuan dari master Accurate (bukan input bebas), aplikasi Web Sales terpisah, worker pull 5 menit, lalu faktur Accurate dan Rekapan Nota. Jangan stage massal — working tree masih memuat pekerjaan rekonsiliasi dan eksperimen OCR lama yang bukan milik tahap ini. Perbarui handover setelah setiap tahap.
