@@ -36,6 +36,10 @@ export const appModules = [
     "laporan_harian",
     "rekapan_nota",
     "insentif_sales",
+    // Web Sales: izin TERPISAH dari `order`. Sales tidak boleh dapat `order.create`
+    // karena POST /orders internal menerima harga dari klien; jalur sales hanya kirim
+    // kode, satuan, jumlah dan uangnya dihitung server.
+    "websales",
 ] as const;
 export type AppModule = (typeof appModules)[number];
 
@@ -57,6 +61,7 @@ export const moduleLabels: Record<AppModule, string> = {
     laporan_harian: "Laporan Harian",
     rekapan_nota: "Rekapan Nota",
     insentif_sales: "Insentif Sales",
+    websales: "Order Sales (Web Sales)",
 };
 
 export const permissionActions = [
@@ -163,6 +168,7 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
         "view", "view_dashboard", "view_all", "manage", "upload_target", "upload_progress",
         "input_support", "manage_payment", "manage_hierarchy",
     ],
+    websales: ["view", "create"],
 };
 
 export type PermissionMap = Partial<Record<AppModule, PermissionAction[]>>;
@@ -290,6 +296,9 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/payments", module: "payments", action: "view" },
     { prefix: "/finance", module: "finance", action: "view" },
     { prefix: "/principles", module: "principles", action: "view" },
+    // /sales sebelum /orders TIDAK relevan (prefix beda), tapi urutannya tetap dijaga:
+    // pencocokan memakai prefix terpanjang.
+    { prefix: "/sales", module: "websales", action: "create" },
     { prefix: "/orders", module: "order", action: "view" },
     { prefix: "/summary", module: "summary", action: "view" },
     { prefix: "/validator", module: "validator", action: "view" },

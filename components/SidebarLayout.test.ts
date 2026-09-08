@@ -12,10 +12,13 @@ import { WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, activeNavigation
 test("all existing modules appear exactly once across six groups", () => {
     const items = WORKSPACE_GROUPS.flatMap(group => group.items);
     assert.equal(WORKSPACE_GROUPS.length, 6);
-    assert.equal(items.length, 19);
+    assert.equal(items.length, 20);
     assert.equal(new Set(items.map(item => item.href)).size, items.length);
     assert.ok(items.some(item => item.href === "/payments/sppd"));
     assert.ok(items.some(item => item.href === "/rekapan-nota"));
+    // Halaman sales ikut katalog supaya filter izin (`websales.create`) yang menentukan
+    // siapa melihatnya — bukan hard-code di dua tempat.
+    assert.ok(items.some(item => item.href === "/sales"));
 });
 test("navigation is default-deny and removes empty groups", () => {
     assert.deepEqual(navigationForPermissions(() => false), []);

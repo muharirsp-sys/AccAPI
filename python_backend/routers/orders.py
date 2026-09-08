@@ -117,8 +117,18 @@ async def preview_order(request: Request):
 
     Harga WAJIB datang dari pemanggil sisi server (hasil sinkronisasi Accurate),
     bukan dari perangkat sales. Tidak menyimpan apa pun.
+
+    Boleh dipakai petugas internal (`order.create`) maupun sales (`websales.create`):
+    sales HARUS melihat nilai transaksi dan promo yang berlaku; yang tidak boleh adalah
+    klien MENENTUKAN harga.
     """
-    require_user(request, True)
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(401, "Silakan login")
+    if not (user_has_permission(user, "order", "create") or user_has_permission(user, "websales", "create")):
+        raise HTTPException(403, "Akses pratinjau order tidak diizinkan")
+    if not validate_csrf_request(request, request.headers.get("X-CSRF-Token", "")):
+        raise HTTPException(403, "Permintaan lintas situs ditolak")
     _, channel, order_date, clean = await read_order_body(request, 512 * 1024)
     if any(not line["price"] for line in clean):
         raise HTTPException(400, "Setiap baris pratinjau butuh harga dari server")

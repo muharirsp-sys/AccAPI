@@ -13,6 +13,14 @@
 export const PERMISSION_REGISTRY = {
     dashboard: ["view"],
     api_wrapper: ["view", "execute"],
+    // Order Masuk internal. Tanpa pendaftaran di sini, Access Group TIDAK BISA memberi
+    // izin ini (registry adalah satu-satunya daftar key yang boleh disimpan) — jadi
+    // modulnya hanya bisa dipakai admin. Ketinggalan saat modul order dibuat.
+    order: ["view", "create", "edit", "export"],
+    // Order Sales (Web Sales). SENGAJA terpisah dari `order`: `order.create` membuka
+    // POST /orders internal yang menerima harga dari klien, sedangkan sales hanya boleh
+    // mengirim kode/satuan/jumlah. Akun sales cukup `websales.view` + `websales.create`.
+    websales: ["view", "create"],
     payments: ["view", "create", "edit", "update", "delete", "upload", "export", "submit"],
     sppd: ["view", "edit_settings", "upload_excel", "generate", "download"],
     finance: ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"],

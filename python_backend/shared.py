@@ -114,6 +114,9 @@ LOGIN_LOCKOUT_SECONDS = int(os.getenv("LOGIN_LOCKOUT_SECONDS", "300"))
 PERMISSION_MODULES = [
     "dashboard",
     "order",
+    # Web Sales: izin terpisah dari `order`. Sales TIDAK boleh dapat `order.create`
+    # karena POST /orders internal menerima harga dari klien.
+    "websales",
     "api_wrapper",
     "payments",
     "sppd",

@@ -228,6 +228,80 @@ eksak (`line["unit"] == program.unit`). Akibatnya program bersatuan salah TIDAK 
 keliru — promonya hanya tidak berlaku. Gagal-aman, tapi tetap salah; menyambungkannya butuh
 master Accurate masuk ke sisi Python (sekarang hanya punya master Excel per principle).
 
+### Aplikasi Web Sales — selesai 2026-09-08 (keputusan pengguna: halaman di web internal)
+
+Keputusan pengguna 2026-09-08 atas dua pilihan yang diajukan:
+
+1. **Bentuk aplikasi: halaman di aplikasi internal, dibatasi izin sales** (bukan proses/VPS
+   terpisah). Basis data order sales tetap terpisah (`websales.sqlite3`).
+2. **Identitas 100 sales: akun Better Auth internal**, dikelola admin dari web internal.
+
+Topologi penuh di `docs/prd/INTEGRASI_WEB_SALES.md` (VPS + Postgres sendiri + dua arah pull)
+TIDAK dipakai. Dokumen itu tetap sah sebagai rancangan bila kelak sales perlu tetap jalan saat
+internal mati.
+
+**Izin `websales` SENGAJA terpisah dari `order`.** Ini bukan kosmetik: `POST /orders` internal
+menerima harga dari klien (input manual petugas), jadi memberi sales `order.create` akan
+membuat mereka bisa menentukan nilai transaksi lewat pintu lain. Akun sales cukup
+`websales.view` + `websales.create`.
+
+- `lib/rbac.ts`: modul baru `websales` (`view`, `create`), label "Order Sales (Web Sales)",
+  dan `pagePermissions` `/sales` -> `websales.create` (guard halaman lewat layout dashboard).
+- `lib/rbac/registry.ts`: **`order` DAN `websales` didaftarkan.** `order.*` sebelumnya TIDAK
+  terdaftar — registry adalah satu-satunya daftar key yang boleh disimpan pada Access Group,
+  jadi selama ini modul Order Masuk hanya bisa dipakai admin dan tidak bisa diberikan ke
+  siapa pun lewat grup. Bug ini ketinggalan sejak modul order dibuat.
+- `lib/rbac/registry.test.ts`: pemindai anti-lupa-daftar kini juga mencocokkan bentuk
+  `perms.has("key")`, bukan hanya `requirePermission(...)`. Justru bentuk itu yang dipakai
+  route dengan izin majemuk, dan itulah sebabnya `order.*` lolos. Hasil: 193 pemakaian key di
+  `app/api/**` tervalidasi, 108 key terdaftar.
+- `python_backend/shared.py`: `websales` masuk `PERMISSION_MODULES` — tanpa itu izin
+  `websales` dibuang senyap oleh `normalize_permissions`.
+- `routers/websales.py`: `require_sales` memeriksa `websales`, bukan `order`.
+- `POST /orders/preview` (FastAPI) dan `/api/orders/preview`, `/api/items/units`,
+  `/api/customers/lookup` (Next) menerima `order.create` **atau** `websales.create`: sales
+  HARUS melihat nilai transaksi dan promo; yang dilarang adalah klien MENENTUKAN harga.
+- `app/api/customers/lookup/route.ts`: konfirmasi pelanggan dari kodenya (nama, area,
+  kategori harga) supaya sales tidak salah pelanggan — kelas kesalahan yang sama dengan
+  salah satuan.
+- `app/(dashboard)/sales/page.tsx`: halaman mobile-first. Kode pelanggan -> nama + kategori
+  harga tampil dan outlet terisi otomatis; per baris kode barang -> nama + satuan `<select>`
+  dari master; perkiraan bruto/diskon/netto + bonus + saran promo; kirim ke
+  `POST /websales/orders` (hanya kode, satuan, jumlah); daftar "Order saya" dengan status
+  menunggu/sudah diproses.
+- Menu "Order Sales" masuk katalog navigasi, jadi filter izin yang menentukan siapa
+  melihatnya — bukan hard-code di dua tempat.
+
+Bukti offline: `test_websales_pull.py` (blok baru: sales `POST /orders` internal -> **403**,
+sales `POST /orders/preview` -> 200 dengan diskon benar, sales `GET /orders/connection` ->
+403, dan mock izin diganti dari "semua boleh kecuali edit" menjadi peta izin nyata per akun),
+`registry.test.ts`, `SidebarLayout.test.ts` (3 blok, katalog 20 item), `tsc`, eslint bersih.
+
+Bukti live lokal:
+
+| Uji | Hasil |
+|---|---|
+| `/api/customers/lookup?no=C-MUS026-GD` | "HJ. MUSTARI, TK {C-MUS026}", kategori harga TT |
+| Kode pelanggan ngawur | `found:false` (ditandai merah di halaman) |
+| Halaman `/sales` di viewport 375x812 | render penuh, tanpa scroll horizontal |
+| Isi kode pelanggan di halaman | nama + "harga TT" tampil, outlet terisi otomatis |
+| Isi kode barang `M5012001000740` | nama tampil, dropdown satuan hanya BAG dan KRT |
+| Access Group: grant `websales.view`+`websales.create` | tersimpan (grup uji dibuat lalu DIHAPUS lagi) |
+| Access Group: grant `websales.hapus_semua` | ditolak "Key tidak valid" |
+
+Batas kejujuran: **pengiriman order dari halaman sales belum diuji live** — `POST
+/websales/orders` FastAPI menolak tanpa sesi Better Auth yang sah (sesi lokal kedaluwarsa,
+`LOCAL_AUTH_BYPASS` hanya berlaku di Next), sehingga pratinjau di halaman itu juga masih
+menampilkan galat. Jalur HTTP-nya diuji lewat TestClient dengan peta izin nyata.
+
+**Langkah operasional sebelum sales dipakai:** buat satu Access Group (mis. "Sales Lapangan")
+berisi HANYA `websales.view` + `websales.create`, lalu buat akun sales dan masukkan ke grup itu
+dari `/admin/users`. Jangan memberi grup itu `order.*`.
+
+Sisa yang belum dikerjakan pada jalur sales: pencarian barang/pelanggan (sekarang kode diketik,
+nama hanya konfirmasi), notifikasi push saran promo ke HP, dan pembatasan pelanggan per sales
+(sekarang sales bisa memilih kode pelanggan mana pun).
+
 ### Penarikan otomatis 5 menit — selesai 2026-09-08 (tahap 4, bagian penjadwal)
 
 Keputusan pengguna: "petugas mengaktifkan koneksi, server terus berjalan sampai dinonaktifkan."
@@ -512,9 +586,9 @@ Sudah dirty sebelum redesign: `app/(dashboard)/reconciliation/page.tsx`, `docs/R
 
 1. ~~Satuan pada order dari master Accurate~~ — SELESAI 2026-09-08 (lihat bagian di atas).
    Sisanya: satuan pada **aturan promo** masih dari surat, bukan master.
-2. Aplikasi Web Sales terpisah + identitas 100 sales (endpoint sudah siap). **BUTUH KEPUTUSAN
-   PENGGUNA** soal topologi dan identitas — lihat "Keputusan terbuka: bentuk aplikasi Web
-   Sales" di bawah. Ini satu-satunya item yang tidak bisa dilanjutkan tanpa jawaban.
+2. ~~Aplikasi Web Sales + identitas 100 sales~~ — SELESAI 2026-09-08 sebagai halaman `/sales`
+   di web internal dengan izin `websales` terpisah. Sisanya: pencarian barang/pelanggan,
+   notifikasi push, dan pembatasan pelanggan per sales.
 3. ~~Worker penarik 5 menit~~ — SELESAI 2026-09-08 sebagai cron 5 menit + tombol koneksi.
 4. Tahap 4 (faktur Accurate) dan tahap 5 (Rekapan Nota) belum disentuh.
 5. Skema DB dev lokal masih tertinggal beberapa modul utuh (`app_setting`, `pick_group`,

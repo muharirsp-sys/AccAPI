@@ -18,11 +18,17 @@ router = APIRouter(prefix="/websales")
 
 
 def require_sales(request, create=False):
+    """Izin `websales`, BUKAN `order`.
+
+    Sales tidak boleh punya `order.create`: `POST /orders` internal menerima harga dari
+    klien (input manual petugas), jadi izin yang sama akan membuat sales bisa menentukan
+    nilai transaksi lewat pintu lain. Petugas internal boleh punya keduanya.
+    """
     user = get_current_user(request)
     if not user:
         raise HTTPException(401, "Silakan login")
-    if not user_has_permission(user, "order", "create" if create else "view"):
-        raise HTTPException(403, "Akses order tidak diizinkan")
+    if not user_has_permission(user, "websales", "create" if create else "view"):
+        raise HTTPException(403, "Akses order sales tidak diizinkan")
     if create and not validate_csrf_request(request, request.headers.get("X-CSRF-Token", "")):
         raise HTTPException(403, "Permintaan lintas situs ditolak")
     return identity(user)

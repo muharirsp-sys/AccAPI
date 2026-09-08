@@ -15,13 +15,16 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { item } from "@/db/schema";
 import { itemUnits } from "@/lib/item-price";
-import { requirePermissionH } from "@/lib/rbac/resolve";
+import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
-    const gate = await requirePermissionH("order.create");
+    const gate = await resolveRequestPermissionsH();
     if (gate.response) return gate.response;
+    if (!gate.perms?.has("order.create") && !gate.perms?.has("websales.create")) {
+        return NextResponse.json({ ok: false, error: "Akses master barang tidak diizinkan" }, { status: 403 });
+    }
 
     const code = (request.nextUrl.searchParams.get("code") ?? "").trim();
     if (!code) return NextResponse.json({ ok: false, error: "Parameter code wajib diisi" }, { status: 400 });

@@ -2,12 +2,14 @@
  * Tujuan: Pratinjau nilai order dan saran promo dengan harga dari server (hasil sync Accurate).
  * Caller: halaman Order Masuk dan aplikasi Web Sales; klien TIDAK pernah mengirim harga.
  * Dependensi: lib/item-price (harga bertingkat + fallback), lib/rbac/resolve, backend FastAPI /orders/preview.
+ * Izin: `order.create` (petugas internal) ATAU `websales.create` (sales). Sales HARUS melihat
+ * nilai transaksi dan promo; yang dilarang adalah klien MENENTUKAN harga.
  * Main Functions: POST.
  * Side Effects: DB read-only; satu panggilan HTTP ke backend promo. Tidak menyimpan order.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { resolvePrices } from "@/lib/item-price";
-import { requirePermissionH } from "@/lib/rbac/resolve";
+import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 export const runtime = "nodejs";
 
@@ -20,8 +22,11 @@ type IncomingLine = { code?: unknown; unit?: unknown; quantity?: unknown };
 type Body = { channel?: unknown; order_date?: unknown; lines?: unknown; customer_no?: unknown; branch_id?: unknown };
 
 export async function POST(request: NextRequest) {
-    const gate = await requirePermissionH("order.create");
+    const gate = await resolveRequestPermissionsH();
     if (gate.response) return gate.response;
+    if (!gate.perms?.has("order.create") && !gate.perms?.has("websales.create")) {
+        return NextResponse.json({ ok: false, error: "Akses pratinjau order tidak diizinkan" }, { status: 403 });
+    }
 
     let body: Body;
     try {

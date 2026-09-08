@@ -33,10 +33,18 @@ def publish():
         db.execute("UPDATE summary_draft SET status='published' WHERE id=?", (draft["id"],))
 
 
+# Izin nyata yang dipakai: sales HANYA punya `websales`, petugas punya `order` + `websales`.
+# Ini yang mencegah sales memakai POST /orders internal (yang menerima harga dari klien).
+PERMISSIONS = {
+    "sales@surya.local": {("websales", "view"), ("websales", "create")},
+    "admin@surya.local": {("order", "view"), ("order", "create"), ("order", "edit"),
+                          ("websales", "view"), ("websales", "create")},
+}
+
+
 def fake_auth(module):
     module.get_current_user = lambda request: request.headers.get("X-Test-User") or None
-    module.user_has_permission = lambda user, area, action: (
-        action != "edit" or user == "admin@surya.local")
+    module.user_has_permission = lambda user, area, action: (area, action) in PERMISSIONS.get(user, set())
     module.validate_csrf_request = lambda request, token: True
 
 
@@ -74,6 +82,18 @@ def main():
 
     # Sales tidak boleh menarik order ke internal; itu wewenang petugas.
     assert client.post("/orders/pull", headers=SALES, json={}).status_code == 403
+
+    # Sales juga TIDAK boleh memakai input order internal: endpoint itu menerima harga dari
+    # klien, jadi izin `websales.create` sengaja tidak membuka `POST /orders`.
+    blocked = client.post("/orders", headers=SALES, json={"outlet": "TOKO", "channel": "GT",
+                                                          "order_date": "2026-06-15",
+                                                          "lines": [dict(code="A", unit="PCS", quantity="1", price="1")]})
+    assert blocked.status_code == 403, blocked.text
+    # Tapi sales HARUS bisa melihat nilai transaksi: pratinjau terbuka untuk keduanya.
+    peek = client.post("/orders/preview", headers=SALES,
+                       json={"channel": "GT", "order_date": "2026-06-15",
+                             "lines": [dict(code="A", unit="PCS", quantity="10", price="1000")]})
+    assert peek.status_code == 200 and peek.json()["result"]["discount"] == "500.00", peek.text
 
     pulled = client.post("/orders/pull", headers=ADMIN, json={})
     assert pulled.status_code == 200, pulled.text
@@ -121,7 +141,9 @@ def check_connection(client):
 
     # Default mati: cron boleh terpasang tanpa efek apa pun.
     cron = {"X-Cron-Secret": "rahasia-uji"}
-    status = client.get("/orders/connection", headers=SALES).json()
+    # Status koneksi adalah urusan internal: sales tidak boleh melihatnya.
+    assert client.get("/orders/connection", headers=SALES).status_code == 403
+    status = client.get("/orders/connection", headers=ADMIN).json()
     assert status["connection"]["enabled"] is False, status
     assert client.post("/orders/pull-cron", headers=cron).json()["skipped"], "koneksi mati harus no-op"
 
