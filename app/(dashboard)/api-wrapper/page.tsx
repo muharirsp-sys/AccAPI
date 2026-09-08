@@ -50,7 +50,9 @@ type DuplicateReviewState = {
 };
 
 // Pastikan mengarah ke client ID yang sama di .env
-const NEXT_PUBLIC_CLIENT_ID = process.env.NEXT_PUBLIC_ACCURATE_CLIENT_ID || "c1c0a2f0-b80e-435b-8065-c929e74aad1a";
+// ponytail: fallback client id hardcoded dihapus — kalau env belum di-set, Accurate menolak
+// dengan "Client ID tidak tepat" dan penyebabnya tidak kelihatan. Lebih baik gagal bersuara.
+const NEXT_PUBLIC_CLIENT_ID = process.env.NEXT_PUBLIC_ACCURATE_CLIENT_ID || "";
 const REDIRECT_URI = process.env.NEXT_PUBLIC_ACCURATE_REDIRECT_URI || "http://localhost:3000/api/auth/callback";
 
 export default function Home() {
@@ -116,6 +118,10 @@ export default function Home() {
   }, []);
 
   const handleLoginAccurate = () => {
+    if (!NEXT_PUBLIC_CLIENT_ID) {
+      toast.error("NEXT_PUBLIC_ACCURATE_CLIENT_ID belum di-set. Isi di .env.local lalu restart server.");
+      return;
+    }
     const params = new URLSearchParams({
       client_id: NEXT_PUBLIC_CLIENT_ID,
       response_type: "code",

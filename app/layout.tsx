@@ -1,15 +1,18 @@
 /*
- * Tujuan: Root layout Next.js untuk font, tema awal, toaster, dan warm luxury background aplikasi.
+ * Tujuan: Root layout Next.js untuk font, tema Surya/alternatif, dan toaster aplikasi.
  * Caller: Next.js App Router root.
- * Dependensi: next/font, sonner, ThemeSwitcher applyStoredThemeScript, app/globals.css.
+ * Dependensi: next/font, sonner, ThemeSwitcher, globals.css dan workspace.css.
  * Main Functions: RootLayout, metadata, ambient background layer, suppress theme hydration warning.
  * Side Effects: Inject script tema dari localStorage sebelum paint dan render toaster global.
  */
 import type { Metadata, Viewport } from "next";
-import { Exo_2, Rajdhani, Share_Tech_Mono } from "next/font/google";
+import { Geist, Exo_2, Rajdhani, Share_Tech_Mono } from "next/font/google";
 import { Toaster } from "sonner";
 import { applyStoredThemeScript } from "@/components/ThemeSwitcher";
 import "./globals.css";
+import "./workspace.css";
+
+const geist = Geist({ variable: "--font-workspace", subsets: ["latin"], display: "swap" });
 
 // Font khusus tema "neon" (data-theme="neon"); tidak dipakai tema warm.
 // Font sans/mono dasar memakai fallback CSS variable di globals.css (:root).
@@ -71,7 +74,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: applyStoredThemeScript }} />
       </head>
       <body
-        className={`${exo2.variable} ${rajdhani.variable} ${shareTechMono.variable} antialiased bg-[#0f1015] text-slate-200 min-h-screen selection:bg-indigo-500/30 selection:text-indigo-200 overflow-x-hidden`}
+        className={`${geist.variable} ${exo2.variable} ${rajdhani.variable} ${shareTechMono.variable} antialiased bg-[#0f1015] text-slate-200 min-h-screen selection:bg-indigo-500/30 selection:text-indigo-200 overflow-x-hidden`}
       >
         <div className="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_70%_60%_at_50%_-15%,rgba(242,210,138,0.34),rgba(255,255,255,0))]"></div>
         <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_760px_at_100%_180px,rgba(199,154,63,0.18),transparent)]"></div>

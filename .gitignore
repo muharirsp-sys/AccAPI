@@ -119,3 +119,7 @@ poster/
 
 # plugin lokal Claude (bukan bagian app)
 ponytail/
+
+# Kunci API Mistral lokal — pernah ikut terbungkus ke .next (temuan 2026-09-07).
+# Jangan pernah masuk repo; pakai secret server di produksi.
+python_backend/api_key_mistral.txt

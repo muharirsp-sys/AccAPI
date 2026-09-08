@@ -46,6 +46,25 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 
 ## Core Logic Flow (Function-Level Flowchart)
 
+### Ruang Kerja Surya (Redesign September 2026)
+```
+DashboardLayout -> session + RBAC union -> SidebarLayout (identitas akun)
+  -> config/workspace-navigation.ts: 18 modul dalam 6 kelompok + Beranda
+  -> WorkspaceNavigation: accordion, pencarian, 3 favorit lokal per akun
+  -> route tujuan; navigasi tidak mengubah preferensi lebar sidebar
+Beranda -> katalog yang sama, disaring RBAC -> akses cepat + direktori kelompok
+RootLayout -> ThemeSwitcher: Surya default + tiga tema alternatif
+  -> app/workspace.css: Geist, hijau/putih, unggah dengan kontras jelas, reduced-motion, print
+  -> mobile dialog native: latar inert, Escape, otomatis menutup saat kembali ke desktop
+```
+Validasi: `npx tsx --test components/SidebarLayout.test.ts` dan
+`npx playwright test tests/workspace-redesign.spec.ts tests/sidebar-tooltip-contrast.spec.ts tests/office-calm-theme.spec.ts`
+pada server development lokal (10 browser checks: navigasi, mobile/resize, unggah, kontras, kompatibilitas tema).
+Referensi visual: `docs/design/surya-workspace-reference.png`.
+Hasil browser desktop/mobile: `docs/design/surya-workspace-desktop.png`, `docs/design/surya-workspace-mobile.png`.
+Checkpoint implementasi dan instruksi resume: `docs/SURYA_IMPLEMENTATION.md` (keputusan, bukti validasi, file yang disentuh, lingkungan uji, dan langkah berikutnya).
+Status: UI redesign tervalidasi lokal. Audit build menemukan tracing `webhook-backfill -> next.config.ts` memasukkan kunci OCR lokal; pengemasan dihentikan dan salinan kunci di artefak dihapus. Lihat handover sebelum deployment.
+
 ### 0. Laporan Harian Sales & Stock
 ```
 UI upload laporan harian

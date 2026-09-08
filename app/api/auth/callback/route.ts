@@ -9,6 +9,9 @@ export async function GET(request: Request) {
 
     const appSession = await auth.api.getSession({ headers: request.headers });
     if (!appSession) {
+        // Cabang ini dulu diam. Dengan LOCAL_AUTH_BYPASS, /login melempar balik ke home
+        // sehingga gagalnya terlihat seperti "login Accurate berputar-putar" tanpa sebab.
+        console.error("Accurate callback ditolak: tidak ada sesi Better Auth yang aktif. Login aplikasi dulu (bypass localhost tidak membuat sesi).");
         return NextResponse.redirect(new URL('/login?error=Accurate+login+requires+app+session', publicBase));
     }
 

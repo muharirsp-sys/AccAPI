@@ -2,7 +2,7 @@
 # Tujuan: FastAPI backend untuk validator, payments restore/SPPD, finance approval, RBAC, proof upload, dan helper export berformat.
 # Caller: Next.js dashboard routes, browser uploads, dan service local AccAPI.
 # Dependensi: FastAPI, pandas/openpyxl, payments.py, template DOCX SPPD, Better Auth SQLite DB, filesystem JSON/output, auth utilities.
-# Main Functions: render_sppd_docx, payments_upload, payments_update, payments_clear, parse_lpb_upload, payments_template_download, payments_sppd_settings_get/save/upload, payments_finance_data, payments_finance_proof, payments_finance_update.
+# Main Functions: Summary master dengan owner/CSRF; render_sppd_docx, payments_upload, payments_update, payments_clear, parse_lpb_upload, payments_template_download, payments_sppd_settings_get/save/upload, payments_finance_data, payments_finance_proof, payments_finance_update.
 # Side Effects: HTTP response/download, file upload/read/write, payments.json backup/mutation, DOCX/XLSX generation with number/date formatting, audit logging.
 # =======================================================================================================
 # You requested:
@@ -416,46 +416,6 @@ async def auto_fix_principle_names(request: Request):
 def health():
     return {"status": "ok", "patch": PATCH_VERSION}
 
-@app.get("/dev/dump_context")
-def dev_dump_context(token: str, principle_name: str = "Priskila (Default)"):
-    if token not in MANUAL_MASTER_CACHE: return {"error": "no token"}
-    cache = MANUAL_MASTER_CACHE[token]
-    raw_items = cache.get("items", [])
-    
-    if principle_name and principle_name.strip():
-        items = [it for it in raw_items if principle_name.upper() in str(it.get("Nama Barang Principle", "")).upper()]
-        if not items:
-            items = raw_items 
-    else:
-        items = raw_items
-        
-    item_names_cache = set()
-    kode_barang_map = {}
-    for item in items:
-        name = str(item.get("Nama Barang", "")).strip().upper()
-        code = str(item.get("Kode Barang", "")).strip()
-        if name: item_names_cache.add(name)
-        if name not in kode_barang_map: kode_barang_map[name] = []
-        if code and code not in kode_barang_map[name]: kode_barang_map[name].append(code)
-            
-    master_names_context = ""
-    for n, kodes in kode_barang_map.items():
-        s_kodes = ",".join(kodes)
-        for master_item in items:
-            nama_barang = str(master_item.get("Nama Barang", "")).strip().upper()
-            nama_principle = str(master_item.get("Nama Barang Principle", "")).strip().upper()
-            nama_aroma = ""
-            for k, v in master_item.items():
-                if "aroma" in str(k).lower() or "rasa" in str(k).lower() or "variant" in str(k).lower():
-                    nama_aroma = str(v).strip()
-                    break
-            kelompok_asli = str(master_item.get("kelompok", "")).strip()
-            if nama_barang == n:
-                master_names_context += f"REF: {nama_principle} - {nama_barang} -> OUTPUT_KELOMPOK: {kelompok_asli} | OUTPUT_VARIANT: {nama_aroma} | OUTPUT_KODE: {s_kodes}\n"
-                break
-                
-    return {"ok": True, "count": len(items), "context": master_names_context}
-
 @app.post("/api/principles/add")
 async def add_principle(request: Request, name: str = Form(...), file: UploadFile = File(...)):
     user = get_current_user(request)
@@ -488,6 +448,9 @@ def delete_principle(request: Request, pid: str):
 
 @app.post("/api/summary/manual/master/load_principle/{pid}")
 def load_principle_master(request: Request, pid: str):
+    from routers.summary_library import require_user
+    from summary_store import identity
+    require_user(request, True)
     user = get_current_user(request)
     if not user: return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "summary", "view"):
@@ -510,6 +473,7 @@ def load_principle_master(request: Request, pid: str):
         token = str(uuid.uuid4())
         
         MANUAL_MASTER_CACHE[token] = {
+            "owner": identity(user),
             "expires": time.time() + 7200,
             "items": items,
             "kelompok_list": k_list,
@@ -550,10 +514,14 @@ from routers.sppd import router as sppd_router
 from routers.finance import router as finance_router
 from routers.summary import router as summary_router
 from routers.laporan_harian import router as laporan_harian_router
+from routers.orders import router as orders_router
+from routers.websales import router as websales_router
 
 app.include_router(payments_router)
 app.include_router(sppd_router)
 app.include_router(finance_router)
 app.include_router(validator_router)
 app.include_router(summary_router)
+app.include_router(orders_router)
+app.include_router(websales_router)
 app.include_router(laporan_harian_router)

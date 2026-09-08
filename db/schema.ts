@@ -99,6 +99,29 @@ export const item = pgTable("item", {
     index("idx_item_synced_at").on(t.syncedAt, t.id)
 ]);
 
+// Harga jual per kategori pelanggan dari Accurate `item.detailSellingPrice[]`.
+// `item/list.do` TIDAK membawa priceCategory (dibuktikan live 2026-09-08), jadi sumbernya
+// `item/detail.do` per item lewat scripts/sync-item-selling-price.ts.
+// effective_date ikut primary key: kenaikan terjadwal hidup berdampingan dengan harga berlaku.
+export const itemSellingPrice = pgTable("item_selling_price", {
+    itemNo: text("item_no").notNull(),
+    itemId: bigint("item_id", { mode: "number" }).notNull(),
+    priceCategoryId: bigint("price_category_id", { mode: "number" }).notNull(),
+    priceCategoryName: text("price_category_name").notNull().default(""),
+    unitName: text("unit_name").notNull().default(""),
+    branchId: bigint("branch_id", { mode: "number" }).notNull().default(0),
+    branchName: text("branch_name").notNull().default(""),
+    defaultBranch: boolean("default_branch").notNull().default(false),
+    defaultCategory: boolean("default_category").notNull().default(false),
+    price: doublePrecision("price").notNull(),
+    effectiveDate: date("effective_date").notNull(),
+    currencyCode: text("currency_code").notNull().default("IDR"),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    primaryKey({ columns: [t.itemNo, t.priceCategoryId, t.unitName, t.branchId, t.effectiveDate] }),
+    index("idx_item_selling_price_lookup").on(t.itemNo, t.unitName, t.priceCategoryId, t.effectiveDate),
+]);
+
 export const customer = pgTable("customer", {
     id: bigint("id", { mode: "number" }).primaryKey(), // Accurate's internal numeric ID
     customerNo: text("customerNo").notNull(),
@@ -115,6 +138,9 @@ export const customer = pgTable("customer", {
     creditLimitAmount: doublePrecision("credit_limit_amount"), // customerLimitAmountValue
     creditAgeLimitEnabled: boolean("credit_age_limit_enabled"), // customerLimitAge
     creditAgeLimitDays: integer("credit_age_limit_days"), // customerLimitAgeValue
+    // Penentu tier harga: dicocokkan ke item_selling_price.price_category_id
+    priceCategoryId: bigint("price_category_id", { mode: "number" }),
+    priceCategoryName: text("price_category_name"),
     rawData: jsonb("raw_data"), // Complete unprocessed payload
     lastUpdate: text("last_update"), // Accurate's modified timestamp
     syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow()

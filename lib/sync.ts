@@ -174,7 +174,7 @@ const SYNC_MODULES: Record<SyncModuleName, {
         // dulu (ACCURATE_API_REFERENCE.md:281); kolomnya kosong bukan karena Accurate tidak
         // mengirim, tapi karena tidak pernah diminta di sini. Alamat = satu-satunya sinyal
         // mesin usulan area, dan tanpa itu cakupannya runtuh ~79% -> ~21%.
-        fields: "id,customerNo,name,balance,customerLimitAmount,customerLimitAmountValue,customerLimitAge,customerLimitAgeValue,billStreet,billCity,billProvince,lastUpdate",
+        fields: "id,customerNo,name,balance,customerLimitAmount,customerLimitAmountValue,customerLimitAge,customerLimitAgeValue,billStreet,billCity,billProvince,priceCategory,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
@@ -186,6 +186,9 @@ const SYNC_MODULES: Record<SyncModuleName, {
                 creditAgeLimitEnabled: bool(row.customerLimitAge),
                 creditAgeLimitDays: num(row.customerLimitAgeValue),
                 alamat: alamatAccurate(row),
+                // priceCategory datang sebagai objek {id,name} — penentu tier harga pelanggan.
+                priceCategoryId: num((row.priceCategory as Record<string, unknown> | undefined)?.id),
+                priceCategoryName: str((row.priceCategory as Record<string, unknown> | undefined)?.name),
                 rawData: JSON.stringify(row),
                 lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
             }));
@@ -199,6 +202,8 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     creditLimitAmount: sql`excluded."credit_limit_amount"`,
                     creditAgeLimitEnabled: sql`excluded."credit_age_limit_enabled"`,
                     creditAgeLimitDays: sql`excluded."credit_age_limit_days"`,
+                    priceCategoryId: sql`excluded."price_category_id"`,
+                    priceCategoryName: sql`excluded."price_category_name"`,
                     // ISI KALAU KOSONG, tidak pernah menimpa. Alamat dari `Master Area Heinz`
                     // sudah dinormalkan tangan dan memuat `Kel./Kec.` yang dibaca parseKelKec();
                     // yang dari Accurate mentah dan sering tanpa keduanya. Menimpa = menukar

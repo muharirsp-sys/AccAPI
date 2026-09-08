@@ -20,6 +20,7 @@ export const roleLabels: Record<AppRole, string> = {
 
 export const appModules = [
     "dashboard",
+    "order",
     "api_wrapper",
     "payments",
     "sppd",
@@ -40,6 +41,7 @@ export type AppModule = (typeof appModules)[number];
 
 export const moduleLabels: Record<AppModule, string> = {
     dashboard: "Dashboard",
+    order: "Order Masuk",
     api_wrapper: "API Wrapper",
     payments: "Payments",
     sppd: "SPPD",
@@ -140,6 +142,7 @@ export const actionLabels: Record<PermissionAction, string> = {
 
 export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     dashboard: ["view"],
+    order: ["view", "create", "edit", "export"],
     api_wrapper: ["view", "execute"],
     payments: ["view", "create", "edit", "update", "delete", "upload", "export", "submit"],
     sppd: ["view", "edit_settings", "upload_excel", "generate", "download"],
@@ -226,6 +229,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
     admin: allPermissions(),
     manager: mergePermissionMaps(
         pick("dashboard", ["view"]),
+        pick("order", ["view", "create", "edit", "export"]),
         pick("api_wrapper", ["view", "execute"]),
         pick("payments", ["view", "export", "submit", "edit", "update"]),
         pick("sppd", ["view", "generate", "download"]),
@@ -251,6 +255,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
     ),
     staff: mergePermissionMaps(
         pick("dashboard", ["view"]),
+        pick("order", ["view", "create"]),
         pick("payments", ["view", "create", "edit", "upload", "submit"]),
         pick("sppd", ["view", "generate", "download"]),
         pick("principles", ["view"]),
@@ -266,6 +271,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
     ),
     viewer: mergePermissionMaps(
         pick("dashboard", ["view"]),
+        pick("order", ["view"]),
         pick("payments", ["view"]),
         pick("sppd", ["view"]),
         pick("finance", ["view"]),
@@ -284,6 +290,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/payments", module: "payments", action: "view" },
     { prefix: "/finance", module: "finance", action: "view" },
     { prefix: "/principles", module: "principles", action: "view" },
+    { prefix: "/orders", module: "order", action: "view" },
     { prefix: "/summary", module: "summary", action: "view" },
     { prefix: "/validator", module: "validator", action: "view" },
     { prefix: "/api-wrapper", module: "api_wrapper", action: "view" },

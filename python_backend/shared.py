@@ -1,7 +1,7 @@
 # Tujuan: Menyediakan konfigurasi, state, dan helper bersama untuk runtime FastAPI.
 # Caller: main.py dan routers/*.py; modul ini tidak mengimpor main/routers agar tidak circular.
 # Dependensi: FastAPI, pandas/openpyxl, konfigurasi environment, dan modul domain backend.
-# Main Functions: Helper pemrosesan dokumen, pembayaran, serta laporan harian per SPV/SM.
+# Main Functions: Helper dokumen/pembayaran/laporan; Summary memakai key-value SQLite atomik dan owner.
 # Side Effects: Membaca/menulis data runtime, file hasil, cache, dan melakukan integrasi eksternal.
 
 from fastapi import FastAPI, UploadFile, File, Request, Form, Response, Cookie, BackgroundTasks
@@ -113,6 +113,7 @@ LOGIN_LOCKOUT_SECONDS = int(os.getenv("LOGIN_LOCKOUT_SECONDS", "300"))
 
 PERMISSION_MODULES = [
     "dashboard",
+    "order",
     "api_wrapper",
     "payments",
     "sppd",
@@ -1238,6 +1239,7 @@ def user_has_permission(username: Optional[str], module: str, action: str) -> bo
             "principles": {"view"},
             "summary": {"view", "export"},
             "validator": {"view", "download"},
+            "order": {"view", "create", "edit", "export"},
         },
         "finance": {
             "dashboard": {"view"},
@@ -1248,6 +1250,7 @@ def user_has_permission(username: Optional[str], module: str, action: str) -> bo
         },
         "staff": {
             "dashboard": {"view"},
+            "order": {"view", "create"},
             "payments": {"view", "create", "edit", "update", "upload", "submit"},
             "sppd": {"view", "generate", "download"},
             "principles": {"view"},
@@ -4451,8 +4454,10 @@ class _PersistentDict(dict):
         return result
 
 _MANUAL_CACHE_DIR = os.path.join(BASE_DIR, "data", "manual_cache")
-MANUAL_MASTER_CACHE: dict = _PersistentDict(os.path.join(_MANUAL_CACHE_DIR, "master_cache.json"))   # token -> {"kelompok": [...], "variant_map": {...}, "gramasi_map": {...}}
-MANUAL_OUTPUTS: dict = _PersistentDict(os.path.join(_MANUAL_CACHE_DIR, "outputs.json"))        # file_id -> {"form": path, "dataset": path}
+from summary_store import JsonStore, identity
+# Legacy JSON files are preserved. Ownerless legacy tokens must be reloaded/uploaded.
+MANUAL_MASTER_CACHE = JsonStore("master")
+MANUAL_OUTPUTS = JsonStore("output")
 
 def _norm_col(x: object) -> str:
     return " ".join(str(x or "").strip().split()).upper()
@@ -5077,7 +5082,7 @@ def process_summary_generation_job(job_id: str, token: str, rows: List[Dict[str,
                 ])
         wb2.save(dataset_path)
 
-        MANUAL_OUTPUTS[file_id] = {"form": form_path, "dataset": dataset_path}
+        MANUAL_OUTPUTS[file_id] = {"owner": identity(user), "form": form_path, "dataset": dataset_path}
         
         BACKGROUND_JOBS[job_id]["status"] = "done"
         BACKGROUND_JOBS[job_id]["result"] = {

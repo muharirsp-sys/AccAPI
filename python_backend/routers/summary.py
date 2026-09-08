@@ -1,5 +1,7 @@
-# routers/summary.py — Endpoint summary program: /summary/* dan /summary_download/*.
-# Dipindahkan mekanis dari main.py tanpa perubahan logic; hanya @app.* diganti @router.*.
+# Tujuan: Summary manual, OCR Mistral 4.1, dan ekspor privat milik pengguna.
+# Caller: dashboard Summary; Dependensi: shared, summary_store, summary_mistral, summary_library.
+# Main Functions: upload/options/generate/download/parse_pdf_ai dan library draft.
+# Side Effects: SQLite, file PDF/XLSX privat, HTTPS ke Mistral; tanpa log isi dokumen.
 from fastapi import APIRouter
 
 from shared import (
@@ -59,7 +61,12 @@ from shared import (
     write_summary_excel,
 )
 
+from summary_store import identity, owned, create_draft
+from summary_mistral import extract as extract_mistral
+from routers.summary_library import router as library_router
+
 router = APIRouter()
+router.include_router(library_router)
 
 @router.post("/summary/manual")
 async def summary_manual_auto_generate(
@@ -105,22 +112,17 @@ async def summary_manual_auto_generate(
         if engine_l in ("manual", "rule", "template"):
             rows = build_summary_rows(text, list_mode, s(template).upper())
         else:
-            # AI first, fallback to template parser if AI fails
-            try:
-                rows = ai_extract_summary_rows(text, list_mode, s(template).upper(), model=model)
-            except Exception as ai_err:
-                rows = build_summary_rows(text, list_mode, s(template).upper())
-                if not rows:
-                    raise ai_err
+            return JSONResponse(status_code=410, content={"ok": False, "error": "Gunakan editor Summary dengan OCR Mistral 4.1."})
 
         if not rows:
             return JSONResponse(status_code=400, content={"ok": False, "error": "Template belum dikenali / hasil kosong."})
 
-        file_id = str(uuid.uuid4())[:8]
+        file_id = str(uuid.uuid4())
         base_dir = os.path.dirname(os.path.abspath(__file__))
         out_dir = os.path.join(base_dir, "output")
         out_path = os.path.join(out_dir, f"summary_{file_id}.xlsx")
         write_summary_excel(rows, out_path)
+        MANUAL_OUTPUTS[file_id] = {"owner": identity(user), "dataset": out_path}
 
         return JSONResponse({"ok": True, "file_id": file_id, "download_url": f"/summary_download/{file_id}"})
     except ValueError as e:
@@ -134,11 +136,12 @@ async def summary_manual_auto_generate(
 
 @router.get("/summary_download/{file_id}")
 def summary_download(request: Request, file_id: str):
-    # Auth check removed to support direct downloads from Next.js cross-origin links
-    # The UUID acts as the access token.
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    out_path = os.path.join(base_dir, "output", f"summary_{file_id}.xlsx")
-    return accel_or_file_response(out_path, "summary.xlsx")
+    from routers.summary_library import require_user
+    user = require_user(request)
+    output = MANUAL_OUTPUTS.get(file_id)
+    if not owned(output, user):
+        return JSONResponse(status_code=404, content={"ok": False, "error": "File tidak ditemukan"})
+    return FileResponse(output["dataset"], filename="summary.xlsx", headers={"Cache-Control": "private, no-store"})
 
 
 
@@ -185,6 +188,7 @@ async def summary_manual_master_upload(
             
         token = str(uuid.uuid4())
         MANUAL_MASTER_CACHE[token] = {
+            "owner": identity(user),
             "kelompok": kelompok_list,
             "variant_map": variant_map,
             "gramasi_map": gramasi_map,
@@ -209,7 +213,7 @@ def summary_manual_master_options(request: Request, token: str, group: str):
     if not user_has_permission(user, "summary", "view"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
     try:
-        if token not in MANUAL_MASTER_CACHE:
+        if not owned(MANUAL_MASTER_CACHE.get(token), user):
             return {"ok": False, "error": "Token master tidak ditemukan / expired"}
 
         cache = MANUAL_MASTER_CACHE[token]
@@ -239,19 +243,18 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
     if not validate_csrf_request(request, csrf_token):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
     try:
-        if token not in MANUAL_MASTER_CACHE:
+        if not owned(MANUAL_MASTER_CACHE.get(token), user):
             return {"ok": False, "error": "Token master tidak ditemukan / expired"}
         rows = json.loads(rows_json)
+        if not isinstance(rows, list) or not 1 <= len(rows) <= 500 or len(rows_json) > 2 * 1024 * 1024:
+            return JSONResponse(status_code=422, content={"ok": False, "error": "Isi 1–500 baris Summary, maksimal 2 MB."})
+        if any(not isinstance(row, dict) for row in rows):
+            return JSONResponse(status_code=422, content={"ok": False, "error": "Baris Summary tidak valid."})
         # FASE 5: identitas input DIUKUR DI SINI (rows msh murni, sblm diproses/dimutasi
         # di bawah -- _matched_items_cache dll ditempel belakangan). Order-sensitive: run
         # dokumen yg sama menghasilkan urutan baris yg sama (ekstraksi kini deterministik).
         _golden_input_key = canonical_signature(rows)
 
-        try:
-            with open("d:/disc_web/debug_payload.json", "w") as f:
-                json.dump(rows, f, indent=4)
-        except: pass
-        
         cache = MANUAL_MASTER_CACHE[token]
         items = cache.get("items", [])
 
@@ -795,10 +798,10 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
 
         if flagged_mismatches or flagged_conflicts:
             append_error_log("summary_manual_generate_flags", Exception("data quality flags"), {
-                "mismatches": flagged_mismatches, "conflicts": flagged_conflicts, "user": user,
+                "mismatch_count": len(flagged_mismatches), "conflict_count": len(flagged_conflicts),
             })
 
-        MANUAL_OUTPUTS[file_id] = {"form": form_path, "dataset": dataset_path}
+        MANUAL_OUTPUTS[file_id] = {"owner": identity(user), "form": form_path, "dataset": dataset_path}
 
         # FASE 5: golden snapshot. Input baris identik (dok+approval sama) HARUS -> output identik.
         # input_key: urutan baris diabaikan (identitas dok). output_sig: urutan DIPERTAHANKAN
@@ -830,10 +833,10 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
 @router.get("/summary/manual/download/{file_id}/{kind}")
 @router.get("/summary/manual/download/{file_id}/{kind}/{dummy:path}")
 def summary_manual_download(request: Request, file_id: str, kind: str, dummy: str = None):
-    # Auth check removed to support direct downloads from Next.js cross-origin links
-    # The UUID acts as the access token.
-    if file_id not in MANUAL_OUTPUTS:
-        return JSONResponse({"ok": False, "error": "File ID tidak ditemukan"}, status_code=404)
+    from routers.summary_library import require_user
+    user = require_user(request)
+    if not owned(MANUAL_OUTPUTS.get(file_id), user):
+        return JSONResponse({"ok": False, "error": "File tidak ditemukan"}, status_code=404)
     if kind not in ["form","dataset"]:
         return JSONResponse({"ok": False, "error": "Kind harus form/dataset"}, status_code=400)
     path = MANUAL_OUTPUTS[file_id].get(kind)
@@ -849,685 +852,33 @@ def summary_manual_download(request: Request, file_id: str, kind: str, dummy: st
     headers = {
         "Content-Disposition": f'attachment; filename="{filename}"',
         "Access-Control-Expose-Headers": "Content-Disposition",
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
         "Content-Type": content_type
     }
     return FileResponse(path, filename=filename, headers=headers)
 
 @router.post("/summary/manual/parse_pdf_regex")
-async def summary_manual_parse_pdf_regex(request: Request, token: str = Form(...), pdf: UploadFile = File(...)):
-    user = get_current_user(request)
-    if not user:
-        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    csrf_token = request.headers.get("X-CSRF-Token", "")
-    if not validate_csrf_request(request, csrf_token): return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
-    
-    try:
-        if token not in MANUAL_MASTER_CACHE: return {"ok": False, "error": "Token master tidak ditemukan / expired"}
-        file_bytes = await read_upload_file_limited(pdf, max_bytes=MAX_PDF_UPLOAD_BYTES, allowed_exts=(".pdf",))
-        
-        import fitz
-        import re
-        import uuid
-        
-        pdf_text = ""
-        with fitz.open(stream=file_bytes, filetype="pdf") as doc:
-            for page in doc: pdf_text += page.get_text() + "\n"
+async def summary_manual_parse_pdf_regex(request: Request):
+    return JSONResponse(status_code=410, content={"ok": False, "error": "Parser regex lama dinonaktifkan karena membuat nilai contoh. Gunakan OCR Mistral atau input manual."})
 
-        # ponytail: PDF scan (image-only) -> get_text() kosong -> regex mustahil. Jangan balas 0 baris diam-diam.
-        if not pdf_text.strip():
-            return {"ok": False, "error": "PDF ini hasil scan (tanpa teks). Regex tidak bisa membaca gambar — gunakan tombol 'Ekstrak Cerdas' (AI/OCR)."}
 
-        rows = []
-        # Basic Regex implementation (Fragile, structure-dependent)
-        # Looks for lines starting with "PROID-..." and captures nearby context naively
-        matches = re.finditer(r"(PROID-[A-Z0-9/\-]+)", pdf_text)
-        idx = 1
-        for match in matches:
-            surat_program = match.group(1)
-            rows.append({
-                "id": str(uuid.uuid4()),
-                "no": str(idx),
-                "principle": "Auto (Regex)",
-                "surat_program": surat_program,
-                "nama_program": "Hasil RegEx Terbatas",
-                "channel_gtmt": "MT",
-                "kelompok": "Bisa Meleset",
-                "variant": "...",
-                "gramasi": "...",
-                "ketentuan": "Beli XX",
-                "benefit_type": "DISC_PCT",
-                "benefit": "5%",
-                "syarat_claim": "Faktur",
-                "keterangan": "Automated OCR/Regex"
-            })
-            idx += 1
-            
-        rows = _apply_native_kelompok(rows, MANUAL_MASTER_CACHE[token].get("items", []))
-        return {"ok": True, "rows": rows}
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return {"ok": False, "error": f"Regex Parser Error: {str(e)}"}
 @router.post("/summary/manual/parse_pdf_ai")
-async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), pdf: UploadFile = File(...), n8n_webhook: str = Form(default=""), principle_name: str = Form(default=""), ai_mode: str = Form(default="split")):
-    
-    user = get_current_user(request)
-    if not user:
-        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    if not user_has_permission(user, "summary", "edit"):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
-    csrf_token = request.headers.get("X-CSRF-Token", "")
-    if not validate_csrf_request(request, csrf_token):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
-    
+async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), pdf: UploadFile = File(...), principle_name: str = Form(default="")):
+    from routers.summary_library import require_user
+    user = require_user(request, True)
+    master = MANUAL_MASTER_CACHE.get(token)
+    if not owned(master, user):
+        return JSONResponse(status_code=404, content={"ok": False, "error": "Master tidak tersedia. Muat master kembali."})
     try:
-        if token not in MANUAL_MASTER_CACHE:
-            return {"ok": False, "error": "Token master tidak ditemukan / expired"}
-            
-        file_bytes = await read_upload_file_limited(pdf, max_bytes=MAX_PDF_UPLOAD_BYTES, allowed_exts=(".pdf",), label="PDF Program")
-
-        # FASE 1b: hasil parse dibekukan per (dokumen, principle). Hit -> lewati OCR+LLM total
-        # (0 biaya API) & rows IDENTIK dgn run pertama -> pipeline dok->rows deterministik penuh.
-        _parse_key = parse_cache_key(file_bytes, principle_name)
-        _cached_rows = parse_cache_get(_parse_key)
-        if _cached_rows is not None:
-            return {"ok": True, "rows": _cached_rows}
-
-        # Direct Python native parsing via OpenAI SDK (Sumopod)
-        api_key = os.getenv("SUMOPOD_API_KEY") or os.getenv("OPENAI_API_KEY")
-        if not api_key:
-             return {"ok": False, "error": "API Key belum dikonfigurasi. Pastikan SUMOPOD_API_KEY atau OPENAI_API_KEY ada di file .env."}
-             
-        import fitz
-        from openai import AsyncOpenAI
-        import json
-        import uuid
-        import re
-        
-        # Fetch Official DB Product Names to ground the AI's deductions
-        cache = MANUAL_MASTER_CACHE[token]
-        raw_items = cache.get("items", [])
-        
-        # SANGAT PENTING: Filter context supaya API Proxy tidak memuntah/terpotong (Tokens Limit)
-        # Hanya gunakan barang yang sesuai dengan Principle yang sedang diproses!
-        if principle_name and principle_name.strip():
-            # ponytail: dulu dicocokkan ke kolom 'principle' (nama produk) -> "Priskila" tak pernah match -> 0.
-            # Cocokkan tiap keyword principal (>=4 huruf) ke principle ATAU nama_barang; kosong -> pakai semua
-            # (master per-principal itu normal; kolom 'Nama Pcpl' memang blank).
-            _kw = [w for w in re.sub(r"\(.*?\)", "", principle_name).upper().split() if len(w) >= 4]
-            def _match_principal(it):
-                blob = (str(it.get("principle", "")) + " " + str(it.get("nama_barang", ""))).upper()
-                return any(w in blob for w in _kw)
-            items = [it for it in raw_items if _match_principal(it)] if _kw else raw_items
-            if not items:
-                items = raw_items # Fallback: master ini memang katalog 1 principal
-        else:
-            items = raw_items
-        
-        # Bikin mapping text yang panjang tapi detail
-        item_names_cache = set()
-        kode_barang_map = {}
-        for item in items:
-            name = str(item.get("nama_barang", "")).strip().upper()
-            code = str(item.get("kode_barang", "")).strip()
-            
-            if name: item_names_cache.add(name)
-            
-            # Kita map nama ke array kode karena 1 nama bisa banyak gramasi
-            if name not in kode_barang_map: kode_barang_map[name] = []
-            
-            if code and code not in kode_barang_map[name]: kode_barang_map[name].append(code)
-            
-        master_names_context = ""
-        for n, kodes in kode_barang_map.items():
-            s_kodes = ",".join(kodes)
-            
-            # Cari baris yang bener-bener punya nama barang ini
-            for master_item in items:
-                nama_barang = str(master_item.get("nama_barang", "")).strip().upper()
-                nama_principle = str(master_item.get("principle", "")).strip().upper()
-                
-                # Dynamic matching for Aroma / Variant
-                nama_aroma = ""
-                for k, v in master_item.items():
-                    if "aroma" in str(k).lower() or "rasa" in str(k).lower() or "variant" in str(k).lower():
-                        nama_aroma = str(v).strip()
-                        break
-                        # Fetch pre-combined Kelompok string from Master cache
-                kelompok_asli = str(master_item.get("kelompok", "")).strip()
-                
-                # Format: REF: [Principle] - [Nama Barang] -> OUTPUT_KELOMPOK: [Kelompok Asli] | OUTPUT_VARIANT: [Variant] | OUTPUT_KODE: [Kode]
-                if nama_barang == n:
-                    master_names_context += f"REF: {nama_principle} - {nama_barang} -> OUTPUT_KELOMPOK: {kelompok_asli} | OUTPUT_VARIANT: {nama_aroma} | OUTPUT_KODE: {s_kodes}\n"
-                    break
-        
-        # Fetch Master Customers if available
-        db_customers = cache.get("customers", [])
-        customer_names = sorted([f"{c.get('kode_customer','')} | {c.get('nama_customer','')}" for c in db_customers])
-        master_customers_context = "\n".join(customer_names) if customer_names else "TIDAK ADA DATA CUSTOMER"
-        
-        try:
-            with open("d:/disc_web/debug_ai_context.txt", "w", encoding="utf-8") as _f:
-                _f.write(master_names_context)
-        except: pass
-        
-        try:
-            import httpx
-            import base64
-            # 1. Extract pure text and highly compressed images from PDF
-            pdf_text = ""
-            base64_images = []
-            
-            with fitz.open(stream=file_bytes, filetype="pdf") as doc:
-                # ponytail: dulu doc[:10] -> halaman 11+ hilang diam-diam. Proses semua sampai cap longgar.
-                MAX_OCR_PAGES = int(os.getenv("SUMMARY_MAX_OCR_PAGES", "40"))
-                pages_total = doc.page_count
-                for page in doc[:MAX_OCR_PAGES]:
-                    txt = page.get_text()
-                    pdf_text += txt + "\n"
-                    # Compress the image so the Base64 string doesn't eat the token budget
-                    pix = page.get_pixmap(matrix=fitz.Matrix(1.0, 1.0))
-                    img_bytes = pix.tobytes("jpeg", 80)
-                    b64 = base64.b64encode(img_bytes).decode("utf-8")
-                    base64_images.append(b64)
-            pages_truncated = pages_total > len(base64_images)
-                    
-            if not pdf_text.strip() and not base64_images:
-                return {"ok": False, "error": "PDF kosong atau tidak memiliki halaman valid."}
-
-            # 2. Call Sumopod proxy directly via HTTP POST
-            prompt = f"""
-SANGAT PENTING: Dokumen promosi ini berkaitan dengan Brand / Keluarga Produk: {principle_name.upper()}.
-Meskipun teks di PDF mungkin buram atau terpotong, JIKA ada kemiripan, Anda WAJIB memprioritaskan penyocokan kode barang dengan nama-nama resmi yang mengandung kata kunci brand ini!
-
-Tugas Anda: EKSTRAK SEMUA TABEL PROMO/DISKON dari dokumen ini ke dalam ARRAY JSON.
-KEMBALIKAN HASILNYA SAJA DALAM FORMAT JSON VALID! (JANGAN ada teks pembuka/penutup).
-
-ATURAN REASONING & EKSTRAKSI (WAJIB DIIKUTI 100%):
-1. COST RATIO (CR): Kolom 'CR' / 'Cost Ratio' HANYA angka referensi internal (BUKAN benefit/diskon) -- ABAIKAN KOLOM ITU SAJA. JANGAN abaikan kolom LAIN di tabel yang sama hanya karena tabel tersebut JUGA punya kolom CR! Kolom 'CUT PRICE' / 'HET' / 'PAKET' di tabel yang sama TETAP WAJIB diekstrak sebagai benefit (lihat aturan 2 & 3) -- CR cuma 1 kolom yang diabaikan, bukan alasan mengosongkan seluruh baris/tabel.
-2. BONUS QTY (Beli X Gratis Y): JIKA mekanismenya memberikan gratis barang (misal: "Beli 2 gratis 1"), isi 'benefit_type' dengan "BONUS_QTY". Nilai 'benefit' adalah jumlah barang gratisnya (1).
-   ATURAN FORMAT "X+Y" (SANGAT PENTING - kolom PAKET biasa tertulis "7+1", "4+1", "10+2", "65+7"):
-   Angka ini BUKAN penjumlahan! "7+1" artinya BELI 7 GRATIS 1. Maka: 'ketentuan' = "Beli 7" (angka KIRI saja, JANGAN dijumlah jadi "Beli 8"!), 'benefit_type' = "BONUS_QTY", 'benefit' = "1 PCS" (angka KANAN + satuan). Contoh: "10+2" -> ketentuan "Beli 10", benefit "2 PCS". "65+7" -> ketentuan "Beli 65", benefit "7 PCS". DILARANG KERAS menjumlahkan kiri+kanan.
-3. POTONGAN HARGA (Cut Price): Isi 'benefit_type' dengan "DISC_RP" dan 'benefit' angkanya SAJA (TANPA huruf "Cut Price" atau "Potongan"). JANGAN SEKALI-KALI MENGGANTI NILAI `ketentuan` (Trigger Beli) DENGAN TEKS POTONGAN HARGA INI! `ketentuan` WAJIB TETAP BERISI "Beli 1", "Beli 2", dll.
-4. KETENTUAN TRIGGER QTY: Jika di surat tertulis "Setiap pembelian", "Setiap pengambilan", ATAU "TIDAK ADA ANGKA MINIMAL", WAJIB ubah teks 'ketentuan' menjadi "Beli 1".
-4b. TABEL FORMAT "CUT PRICE" TANPA TEKS TRIGGER SAMA SEKALI (channel MTI/Modern Trade biasanya
-    begini -- WAJIB tetap diekstrak, JANGAN dikosongkan/dilewati hanya karena tidak ada frasa "Beli X"):
-    Kalau tabel HANYA berisi kolom seperti "CUT PRICE | HET | CR" tanpa kolom "PAKET" dan tanpa kalimat
-    trigger apa pun, maka SETIAP baris tabel = 1 promo terpisah dengan 'ketentuan'="Beli 1",
-    'benefit_type'="DISC_RP", 'benefit'=angka di kolom CUT PRICE SAJA (tanpa titik/koma ribuan diubah
-    jadi angka polos). ABAIKAN kolom HET dan CR (bukan benefit). WAJIB ekstrak SEMUA baris/brand
-    sampai baris TERAKHIR tabel, walau tabelnya panjang dan tidak ada kalimat pemicu di setiap barisnya.
-    CONTOH KONKRET (WAJIB DIIKUTI POLA INI):
-      Input tabel: "| BELLAGIO | Bellagio Eau de Toilette 100ml | 4,700 | 31,628 | 13% |"
-      Output JSON: {{"kelompok": "Bellagio Eau de Toilette 100ml", "ketentuan": "Beli 1",
-                    "benefit_type": "DISC_RP", "benefit": "4700"}}
-      Input tabel: "|          | Bellagio Pomade Kidz 40gr        | 1,400 | 12,600 | 10% |"
-      Output JSON: {{"kelompok": "Bellagio Pomade Kidz 40gr", "ketentuan": "Beli 1",
-                    "benefit_type": "DISC_RP", "benefit": "1400"}}
-      (Catatan: "Pomade Kidz" BEDA dari "Pomade" biasa -- keduanya bisa SAMA-SAMA ada di channel yang
-      sama dengan harga cut price berbeda, JANGAN dianggap duplikat/salah satu dibuang.)
-5. CHANNEL PROMO: Isi 'channel_gtmt' dengan NAMA ASLI channel sesuai di surat.
-6. ATURAN PEMISAHAN & PENGGABUNGAN MEREK (MUTLAK - PROMPT EXPLODER):
-   - HANYA BOLEH GABUNGKAN item-item promo ke dalam 1 baris JSON APABILA mereka memiliki MEREK UTAMA (Brand Keluarga) yang sama 100%. (Misal: Sesama Bellagio Homme boleh digabung).
-     * JIKA Anda menggabungkan beberapa produk/varian/gramasi ke dalam 1 baris (karena mereknya sama), MAKA string `ketentuan` WAJIB ditambah " Boleh Mix Kelompok dan Gramasi Barang Sama" di akhir teks! (Contoh: "Beli 7 Boleh Mix Kelompok dan Gramasi Barang Sama").
-   - JIKA dalam satu tabel/promo dokumen PDF mencakup beberapa MEREK UTAMA yang berbeda (Misal: "Bellagio" dan "Camellia" mendapat promo diskon yang sama), ANDA DILARANG KERAS menggabungkannya ke dalam 1 object array JSON!
-   - ANDA WAJIB MENDUPLIKASI / MEMECAH (EXPLODE) promo tersebut menjadi beberapa baris object JSON yang terpisah secara independen!
-     * JSON Object 1: KHUSUS berisi kelompok "Bellagio" dengan `kode_barangs` yang HANYA milik Bellagio.
-     * JSON Object 2: KHUSUS berisi kelompok "Camellia" dengan `kode_barangs` yang HANYA milik Camellia.
-     * (Keduanya memiliki isi ketentuan, benefit_type, dan benefit yang sama dari hasil duplikasi. JANGAN LUPA tambahkan " Boleh Mix Kelompok dan Gramasi Barang Sama" pada masing-masing baris jika di dalamnya masih merupakan gabungan varian dari merek tersebut).
-   - Ingat: 1 Object JSON = MAKSIMAL 1 MEREK UTAMA (KELOMPOK)! Jangan pernah ada penggabungan silang brand di kolom `kelompok` atau `kode_barangs`!
-7. TIERING PROMO: Beda 'Ketentuan' (trigger qty) = baris JSON harus dipisah! (e.g., Beli 1 diskon 5%, Beli 10 diskon 10% -> 2 baris json).
-8. PARTISI ITEM PER PAKET (MUTLAK - PENYEBAB UTAMA KESALAHAN!):
-   Di dalam SATU merek, TIAP baris GROUP ITEM punya nilai PAKET/CUT PRICE-nya SENDIRI. Kamu WAJIB mengelompokkan item berdasarkan nilai paket yang PERSIS SAMA, lalu buat 1 baris JSON per nilai paket.
-   - SATU item (kode_barang) hanya boleh masuk ke SATU baris JSON -- yaitu baris dengan paket yang sesuai barisnya di surat. DILARANG KERAS memasukkan item yang sama ke lebih dari satu baris ketentuan!
-   - CONTOH BENAR (Bellagio, channel Retail):
-       * "Bellagio Eau de Toilette 100ml"=7+1 dan "Bellagio EDP Prestige 50ml"=7+1 -> 1 baris: ketentuan "Beli 7", kode HANYA kedua item itu.
-       * "Bellagio Roll On 50ml"=4+1, "Bellagio EDP 50ml"=4+1, "Bellagio Pomade 80gr"=4+1, "Bellagio Clay 90gr"=4+1, "Bellagio Body Spray 80ml"=4+1 -> 1 baris TERPISAH: ketentuan "Beli 4", kode HANYA kelima item itu.
-   - CONTOH SALAH (JANGAN LAKUKAN): menaruh SEMUA item Bellagio ke baris "Beli 7" DAN juga ke baris "Beli 4". Item EDT 100ml TIDAK boleh muncul di baris Beli 4, dan Roll On TIDAK boleh muncul di baris Beli 7.
-   - Jadi jumlah `kode_barangs` gabungan dari semua baris 1 merek = TEPAT sama dengan jumlah item merek itu di surat (tidak ada item dobel lintas baris).
-
-=== DAFTAR REFERENSI BARANG ===
-{master_names_context}
-=== AKHIR DAFTAR REFERENSI BARANG ===
-
-=== DAFTAR DATA CUSTOMER (KODE | NAMA) ===
-{master_customers_context}
-=== AKHIR DAFTAR DATA CUSTOMER ===
-
-TUGAS PENCOCOKAN KEYWORD DAN KODE (ATURAN MUTLAK!):
-Ubah logika pencarianmu dari Exact Match menjadi Keyword Mapping cerdas!
-Saat dokumen PDF menyebutkan nama/varian barang (misal: 'Bellagio Eau de Toilete'), silakan cari baris 'REF:' yang paling relevan di "DAFTAR REFERENSI BARANG" di atas berdasarkan MEREK dan JENISNYA. 
-Catat KESELURUHAN angka `Kode Barang` (-kode angka) dari referensi yang cocok tersebut dan gabungkan dengan koma di `kode_barangs`.
-
-ATURAN PENGISIAN PROPERTI JSON (HURUF KECIL):
-- "principle": (String) Nama Perusahaan
-- "surat_program": (String) Nomor surat program
-- "nama_program": (String) Nama Promo / Program
-- "promo_group_id": (String) Isi NON_GROUP jika channel umum. Isi KODE CUSTOMER (C-XXX) jika ini adalah program khusus OUTLET/Toko tertentu.
-- "channel_gtmt": (String) Nama Spesifik Channel (Misal: Retail, MTI, Star Outlet).
-- "periode": (String) Ekstrak periode dari surat (misal "Februari 2024").
-- "kelompok": (String) Jika nama kelompok tidak spesifik, JIBLAK EXACT dari `OUTPUT_KELOMPOK` referensi. Jika tidak ada referensi, isi string kosong "".
-- "variant": (String) ATURAN MUTLAK: Jika surat program menyebut semua tipe/wangi, WAJIB isi dengan 'All Variant'.
-- "gramasi": (String) Gramasi/volume LENGKAP DENGAN SATUAN persis seperti di surat (mis. "22ml", "100gr", "50ml", "80gr"). JANGAN buang satuannya. Kalau ada beberapa, pisah koma.
-- "kode_barangs": (String) Angka Kode Barang dari `OUTPUT_KODE`. Pisahkan koma jika > 1.
-- "ketentuan": (String) Syarat Beli (Misal "Beli 7"). JIKA PROMO BERLAKU UNTUK GABUNGAN VARIAN/GRAMASI, WAJIB tambahkan kalimat " Boleh Mix Kelompok dan Gramasi Barang Sama" di akhir teks! (Contoh: "Beli 7 Boleh Mix Kelompok dan Gramasi Barang Sama").
-- "benefit_type": (String) DISC_RP, DISC_PCT, atau BONUS_QTY
-- "benefit": (String) KHUSUS BONUS QTY (Brg fisik), WAJIB TULIS SATUAN (Misal "1 PCS" / "1 Grt"). Jika DISC_RP/PCT biarkan angkanya saja.
-- "syarat_claim": (String) KOSONGKAN SAJA
-- "keterangan": (String) KOSONGKAN SAJA
-
-SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
-"""
-            # ponytail: "AI learning" dari koreksi manual user (tombol Laporkan Salah) -- bukan fine-tune
-            # model, tapi few-shot: inject before->after koreksi lama ke prompt supaya kesalahan yg sama
-            # tidak terulang utk principal yg sama.
-            prompt += _format_corrections_for_prompt(_load_corrections(principle_name))
-
-            # Prepare multimodal payload for Gemini 2.5 Flash
-            import httpx
-            import json
-            import uuid
-            
-            all_rows = []
-            
-            async with httpx.AsyncClient(timeout=300.0) as client_http:
-                # ==========================
-                # SPLIT MODE LOGIC
-                # ==========================
-                if True: # Split Mode (Gemini OCR per-halaman + deepseek JSON parse)
-                    # --- Phase 1: OCR PER-HALAMAN ---
-                    # ponytail: dulu 1 request untuk SEMUA gambar -> mentok max_tokens (finish_reason=length)
-                    # dan buang ~12% teks di dok 9 hlm (terbukti live). Per-halaman bikin tiap call finish=stop.
-                    # Model OCR: gemini/gemini-2.5-flash (kualitas OCR dokumen unggul, dipilih user).
-                    # Parse JSON pakai gpt-4.1-mini (non-reasoning, murah). mimo-v2.5/deepseek = reasoning
-                    # (risiko token kebakar di halaman padat), gpt-4.1-mini juga vision kalau perlu fallback.
-                    ocr_prompt = "Tugas Anda adalah melakukan OCR (Optical Character Recognition). Baca gambar halaman dokumen ini. Ekstrak SELURUH teks di dalamnya persis seperti aslinya, baris demi baris, tabel demi tabel. JANGAN diringkas, JANGAN ada kata atau angka yang terlewat sekecil apapun!"
-                    headers = {
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json"
-                    }
-                    ocr_model = os.getenv("SUMOPOD_OCR_MODEL", "gemini/gemini-2.5-flash")
-                    # FASE 1: OCR cache by content hash -- surat byte-identik TIDAK di-OCR ulang
-                    # (fondasi determinisme: run ke-2 ambil teks beku, Gemini 0 panggilan).
-                    from ocr_cache import ocr_cache_key, ocr_cache_get, ocr_cache_put
-                    _doc_hash = ocr_cache_key(file_bytes)
-                    _cached_ocr = ocr_cache_get(_doc_hash)
-                    ocr_chunks = []
-                    for _pg_idx, b64 in enumerate([] if _cached_ocr is not None else base64_images):
-                        ocr_payload = {
-                            "model": ocr_model,
-                            "messages": [
-                                {"role": "system", "content": "You are an expert Data Entry and OCR assistant."},
-                                {"role": "user", "content": [
-                                    {"type": "text", "text": ocr_prompt},
-                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                                ]}
-                            ],
-                            "temperature": 0.1,
-                            "max_tokens": 8192
-                        }
-                        # ponytail: Gemini kadang balas 503 "high demand, usually temporary" -> retry
-                        # singkat dgn backoff sebelum nyerah ke placeholder (terbukti live: 4/9 hlm gagal
-                        # tanpa retry -> combined_text penuh placeholder -> parser downstream balik kosong).
-                        _pg_text = None
-                        _last_ocr_err = None
-                        for _attempt in range(3):
-                            try:
-                                ocr_resp = await client_http.post("https://ai.sumopod.com/v1/chat/completions", json=ocr_payload, headers=headers)
-                                if ocr_resp.status_code in (503, 429) and _attempt < 2:
-                                    append_error_log("gemini_ocr_retry", Exception(f"HTTP {ocr_resp.status_code} hlm {_pg_idx+1} attempt {_attempt+1}"), {"text": ocr_resp.text[:300]})
-                                    await asyncio.sleep(3 * (_attempt + 1))
-                                    continue
-                                if ocr_resp.status_code != 200:
-                                    append_error_log("gemini_ocr_error", Exception(f"HTTP {ocr_resp.status_code} hlm {_pg_idx+1}"), {"text": ocr_resp.text})
-                                    ocr_resp.raise_for_status()
-                                _pg_text = ocr_resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                                # ponytail: halaman minim-konten (mis. tanda tangan) kadang bikin model OCR
-                                # nyasar ke loop repetisi karakter tanpa henti (terbukti live: 1 halaman jadi
-                                # >120rb karakter underscore). Deteksi & retry spt 503, biar tak membengkakkan
-                                # chunk lain yang menempel di akhir teks.
-                                _degenerate = bool(re.search(r'(.)\1{199,}', _pg_text))
-                                if _degenerate and _attempt < 2:
-                                    append_error_log("gemini_ocr_degenerate", Exception(f"repetition loop hlm {_pg_idx+1} attempt {_attempt+1}"), {"len": len(_pg_text)})
-                                    _pg_text = None
-                                    await asyncio.sleep(3 * (_attempt + 1))
-                                    continue
-                                if _degenerate:
-                                    # percobaan terakhir masih degenerate -> potong sebelum repetisi mulai,
-                                    # simpan konten valid yg sempat terbaca drpd buang seluruh halaman
-                                    _pg_text = re.split(r'(.)\1{199,}', _pg_text, maxsplit=1)[0].strip() or None
-                                break
-                            except Exception as _ocr_e:
-                                _last_ocr_err = _ocr_e
-                                if _attempt < 2:
-                                    await asyncio.sleep(3 * (_attempt + 1))
-                                    continue
-                        if _pg_text is not None:
-                            ocr_chunks.append(f"--- HALAMAN {_pg_idx+1} ---\n{_pg_text}")
-                        else:
-                            append_error_log("gemini_ocr_page_fail", _last_ocr_err or Exception("unknown"), {"page": _pg_idx + 1})
-                            ocr_chunks.append(f"--- HALAMAN {_pg_idx+1} (OCR GAGAL setelah 3x percobaan) ---")
-                    if _cached_ocr is not None:
-                        ocr_text = _cached_ocr.get("ocr_text", "")  # cache hit: teks OCR beku, Gemini tak dipanggil
-                    else:
-                        ocr_text = "\n\n".join(ocr_chunks)
-                        ocr_cache_put(_doc_hash, getattr(pdf, "filename", "") or "", ocr_text, pages_total, len(base64_images))
-                    combined_text = pdf_text + "\n\n=== HASIL OCR DARI GAMBAR ===\n\n" + ocr_text
-                    if pages_truncated:
-                        combined_text += f"\n\n[PERINGATAN: surat {pages_total} halaman, hanya {len(base64_images)} halaman pertama diproses. Naikkan SUMMARY_MAX_OCR_PAGES.]"
-
-                    # --- Phase 2: Parsing JSON PER-CHANNEL ---
-                    # ponytail: 1 panggilan utk SELURUH dokumen kehabisan max_tokens di tengah channel
-                    # pertama (Retail) krn format JSON per-SKU sangat verbose (puluhan kode per baris) ->
-                    # channel MTI/Grosir/Star Outlet tak pernah ke-generate meski JSON yg dihasilkan valid
-                    # (terbukti live: qwen3.6-flash & gpt-4.1-mini keduanya berhenti persis stlh Retail).
-                    # Fix: pecah teks per section "N. ... CHANNEL ..." lalu parse tiap bagian terpisah
-                    # (pola sama dgn fix OCR per-halaman) -> tiap panggilan dapat budget token penuh.
-                    import re
-                    _hdr_re = re.compile(r'^\s*\d+\.\s*.{0,80}?channel', re.IGNORECASE | re.MULTILINE)
-                    _hdrs = list(_hdr_re.finditer(combined_text))
-                    if len(_hdrs) >= 2:
-                        _preamble = combined_text[:_hdrs[0].start()]
-                        channel_chunks = [
-                            combined_text[_hdrs[i].start(): _hdrs[i + 1].start() if i + 1 < len(_hdrs) else len(combined_text)]
-                            for i in range(len(_hdrs))
-                        ]
-                    else:
-                        _preamble = ""
-                        channel_chunks = [combined_text]
-
-                    # ponytail: guard V1/D -- deteksi TERBUKTI SALAH kalau pakai regex baris-tabel
-                    # markdown (rapuh, gagal kalau OCR format tabelnya beda per run -- chunk MTI live
-                    # sempat balik expected_brands KOSONG shg guard lolos trivial padahal brand hilang
-                    # total). Ganti: alias brand (ejaan surat vs abrev master, spt "BELLAGIO"->"BLAGIO"
-                    # yg sudah dipakai di _apply_native_kelompok) + substring BEBAS di teks mentah,
-                    # BUKAN bergantung struktur tabel -- tahan terhadap variasi format OCR apa pun.
-                    _BRAND_ALIASES = {
-                        "BLAGIO": ["BLAGIO", "BELLAGIO"],
-                        "CAMELLIA": ["CAMELLIA"],
-                        "CSBNCA": ["CSBNCA", "CASABLANCA"],
-                        "EXCELO": ["EXCELO", "EXCELLO"],
-                        "MARIE JOSE": ["MARIE JOSE", "MARIE-JOSE", "MARIEJOSE"],
-                        "REGAZZA": ["REGAZZA", "REGZZA", "REGGAZZA"],
-                    }
-                    def _extract_expected_brands(_chunk_text_for_ai):
-                        _upper = _chunk_text_for_ai.upper()
-                        return {p for p, aliases in _BRAND_ALIASES.items() if any(a in _upper for a in aliases)}
-
-                    async def _parse_json_chunk(_chunk_text_for_ai, _label):
-                        _parsing_prompt = f"{prompt}\n\n====================\nBERIKUT ADALAH TEKS DOKUMEN PROMO ({_label}):\n{_chunk_text_for_ai}\n\n====================\nPENTING: Ekstrak tabel dari teks di atas dan KEMBALIKAN ARRAY JSON SEKARANG JUGA DIAWALI DENGAN SIMBOL '['. JANGAN TULIS HAL LAIN."
-                        _payload = {
-                            "model": os.getenv("SUMOPOD_MODEL", "gpt-4.1-mini"),
-                            "messages": [
-                                {"role": "system", "content": "You are a STRICT data extraction AI. You ONLY speak in valid JSON array format starting with '['. You NEVER output regular text, markdown, or greetings. You MUST obey the schema."},
-                                {"role": "user", "content": _parsing_prompt}
-                            ],
-                            "temperature": 0.1,
-                            # ponytail: HANYA "max_tokens" -- OpenAI/litellm menolak 400 kalau max_tokens &
-                            # max_completion_tokens dikirim BERSAMAAN (terbukti live dgn gpt-4.1-mini).
-                            "max_tokens": int(os.getenv("SUMMARY_PARSE_MAX_TOKENS", "16000"))
-                        }
-                        _full_raw = ""
-                        for _loop_idx in range(5):
-                            _resp = await client_http.post("https://ai.sumopod.com/v1/chat/completions", json=_payload, headers=headers)
-                            if _resp.status_code != 200:
-                                append_error_log("claude_400_debug", Exception(f"HTTP {_resp.status_code} chunk={_label}"), {"text": _resp.text})
-                            _resp.raise_for_status()
-                            _chunk_msg = _resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                            _clean = re.sub(r"```json", "", _chunk_msg, flags=re.IGNORECASE)
-                            _clean = re.sub(r"```", "", _clean)
-                            _overlap = 0
-                            if _full_raw:
-                                for _i in range(min(100, len(_full_raw), len(_clean)), 0, -1):
-                                    if _full_raw[-_i:] == _clean[:_i]:
-                                        _overlap = _i
-                                        break
-                            _full_raw += _clean[_overlap:]
-                            if _full_raw.strip().endswith("]"):
-                                break
-                            if not _chunk_msg:
-                                break
-                            _payload["messages"].append({"role": "assistant", "content": _chunk_msg})
-                            _payload["messages"].append({"role": "user", "content": "Teks JSON terpotong karena batas token! WAJIB lanjutkan string JSON di atas TEPAT mulai dari huruf/simbol yang terputus tanpa basa-basi pengantar, tanpa markdown ```json. Langsung sambung karakternya!"})
-                        return _full_raw.strip()
-
-                    all_rows = []
-                    _debug_dump = []
-                    for _ci, _chunk in enumerate(channel_chunks):
-                        # ponytail: preamble berisi No surat (mis. "002/PPM/NSPM/III/2026") -> WAJIB ikut
-                        # ke SEMUA chunk termasuk chunk pertama (dulu _ci>0 bikin Retail kosong surat_program).
-                        _chunk_full = (_preamble + "\n\n" + _chunk) if _preamble else _chunk
-                        _label = f"bagian {_ci + 1}/{len(channel_chunks)}"
-                        _chunk_rows = []
-                        # ponytail: 2 kegagalan berbeda yg pernah kejadian live: (a) model balas [] valid
-                        # padahal chunk jelas ada datanya (non-deterministik), (b) model balas SEBAGIAN
-                        # brand saja lalu berhenti (MTI: cuma 2 dari 6 brand tertangkap, JSON tetap valid
-                        # jadi tidak "kosong"). Guard emptiness SAJA tidak menangkap (b) -- tambah cek
-                        # kelengkapan brand (dari kolom BRAND tabel OCR, generik, tidak spesifik principal),
-                        # retry sampai lengkap, simpan percobaan TERBAIK (paling sedikit brand hilang).
-                        _expected_brands = _extract_expected_brands(_chunk_full)
-                        _best_rows, _best_missing = [], None
-                        for _retry in range(6):  # ponytail: akurasi wajib > biaya -- retry lebih banyak sampai brand lengkap
-                            _raw = await _parse_json_chunk(_chunk_full, _label)
-                            _debug_dump.append(f"=== CHUNK {_label} (percobaan {_retry + 1}) ===\n{_raw}\n")
-                            if not _raw:
-                                append_error_log("chunk_empty_response", Exception("No text returned"), {"chunk": _label, "attempt": _retry + 1, "user": user})
-                                continue
-                            _match = re.search(r"\[.*\]", _raw, re.DOTALL)
-                            _clean_text = _match.group(0).strip() if _match else _raw.strip()
-                            if _clean_text.startswith("[") and not _clean_text.endswith("]"):
-                                _last_brace = _clean_text.rfind("}")
-                                if _last_brace != -1:
-                                    _clean_text = _clean_text[:_last_brace + 1] + "\n]"
-                            try:
-                                _chunk_data = json.loads(_clean_text, strict=False)
-                            except json.JSONDecodeError:
-                                append_error_log("chunk_invalid_json", Exception("Non-JSON payload"), {"chunk": _label, "attempt": _retry + 1, "raw": _raw[:500]})
-                                continue
-                            if isinstance(_chunk_data, list):
-                                _chunk_rows = _chunk_data
-                            elif isinstance(_chunk_data, dict) and "rows" in _chunk_data:
-                                _chunk_rows = _chunk_data["rows"]
-                            if not _chunk_rows:
-                                continue
-                            # ponytail: cek kelengkapan brand HARUS pakai kelompok HASIL MATCHING ke
-                            # master (yg sungguhan masuk Excel/PDF), BUKAN teks tebakan AI mentah --
-                            # terbukti live keduanya bisa berbeda (raw text bilang "hilang" padahal
-                            # setelah di-match ke master brand-nya sebenarnya ketemu, atau sebaliknya).
-                            import copy as _copy
-                            try:
-                                _resolved_probe = _apply_native_kelompok(_copy.deepcopy(_chunk_rows), items)
-                            except Exception:
-                                _resolved_probe = _chunk_rows
-                            _got_text = " ".join(str(_r.get("kelompok","")) + " " + str(_r.get("principle","")) for _r in _resolved_probe).upper()
-                            _missing = [b for b in _expected_brands if b not in _got_text]
-                            if _best_missing is None or len(_missing) < len(_best_missing):
-                                _best_rows, _best_missing = _chunk_rows, _missing
-                            if not _missing:
-                                break
-                        if _best_missing:
-                            append_error_log("chunk_incomplete_brands", Exception("Brand tidak lengkap setelah retry"), {"chunk": _label, "missing_brands": _best_missing, "user": user})
-                        all_rows.extend(_best_rows)
-
-                    try:
-                        with open(os.path.join(BASE_DIR, "data", "debug_ai.txt"), "w", encoding="utf-8") as f:
-                            f.write(f"=== OCR PHASE 1 ===\n{ocr_text if 'ocr_text' in locals() else 'N/A'}\n\n=== JSON PHASE 2 (per-channel) ===\n" + "\n".join(_debug_dump))
-                    except Exception:
-                        pass
-
-                    if not all_rows:
-                        return {"ok": False, "error": "AI tidak menemukan tabel promo valid di dalam dokumen, atau gagal mengekstrak."}
-
-                    for idx, row in enumerate(all_rows):
-                        if "id" not in row:
-                            row["id"] = str(uuid.uuid4())
-                        if "no" not in row:
-                            row["no"] = str(idx + 1)
-
-                    # TAHAP 2: Native Master DB Mapping (Injects Kelompok perfectly)
-                    all_rows = _apply_native_kelompok(all_rows, items)
-
-                    # FASE 2b: regroup baris berdasarkan tier OTORITATIF dari tabel OCR (bukan LLM) --
-                    # kode_barang yg terbukti (keyakinan tinggi) py trigger/benefit sama digabung jadi
-                    # 1 baris (kasus nyata: Bellagio EDT & EDP Prestige ke-split LLM padahal 7+1 sama).
-                    # Kode yg tak ter-bridge dgn keyakinan tinggi TIDAK disentuh (aman, no silent guess).
-                    all_rows, _tier_regroup_log = regroup_rows_by_tier(all_rows, items, ocr_text)
-
-                    # FASE 1b: bekukan rows hasil parse (freeze-on-first-write) -> run berikut
-                    # dok+principle sama pakai ini, tanpa OCR/LLM lagi (deterministik + hemat).
-                    parse_cache_put(_parse_key, all_rows, getattr(pdf, "filename", "") or "", principle_name)
-
-                    # TAHAP 3: Return raw rows directly to frontend so the user can see/edit individual variants natively.
-                    # (The actual grouping and Prefix Compression runs natively during summary_manual_generate)
-                    return {"ok": True, "rows": all_rows}
-
-                # ==========================
-                # FULL MODE LOGIC (dead code, ai_mode selalu "split" di UI -- dibiarkan sbg fallback lama)
-                # ==========================
-                else: 
-                    # Original logic using only Gemini
-                    user_content = [{"type": "text", "text": prompt}]
-                    # GLM-5 and Claude sonnet on some proxy setups reject image_url.
-                    current_model = os.getenv("SUMOPOD_MODEL", "glm/glm-5").lower()
-                    if "glm-5" not in current_model and "kimi" not in current_model and "deepseek" not in current_model:
-                        for b64 in base64_images:
-                            user_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
-                        
-                    messages = [
-                        {"role": "system", "content": "You are a helpful AI assistant that extracts precise JSON tables from text and scanned images."},
-                        {"role": "user", "content": user_content}
-                    ]
-                    
-                    payload = {
-                        "model": os.getenv("SUMOPOD_MODEL", "glm/glm-5"),
-                        "messages": messages,
-                        "temperature": 0.1,
-                        "max_completion_tokens": 8192,
-                        "max_tokens": 8192
-                    }
-                    
-                    headers = {
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json"
-                    }
-    
-                    full_raw_text = ""
-                    for loop_idx in range(5):
-                        resp = await client_http.post(
-                            "https://ai.sumopod.com/v1/chat/completions",
-                            json=payload,
-                            headers=headers
-                        )
-                        
-                        if resp.status_code != 200:
-                            append_error_log("gemini_400_debug", Exception(f"HTTP {resp.status_code}"), {"text": resp.text})
-                        resp.raise_for_status()
-                        
-                        response_json = resp.json()
-                        chunk_text = response_json.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                        
-                        # Bersihkan markdown formatting di tengah-tengah jika ini adalah sambungan
-                        import re
-                        clean_chunk = re.sub(r"```json", "", chunk_text, flags=re.IGNORECASE)
-                        clean_chunk = re.sub(r"```", "", clean_chunk)
-                        
-                        # Gemini sometimes repeats the last few characters when asked to continue.
-                        # We must find the overlap and slice it out before appending.
-                        overlap_len = 0
-                        if full_raw_text:
-                            # Check overlapping strings up to 100 characters max
-                            for i in range(min(100, len(full_raw_text), len(clean_chunk)), 0, -1):
-                                if full_raw_text[-i:] == clean_chunk[:i]:
-                                    overlap_len = i
-                                    break
-                                    
-                        full_raw_text += clean_chunk[overlap_len:]
-                        
-                        # Cek apakah JSON sudah tertutup seutuhnya
-                        if full_raw_text.strip().endswith("]"):
-                            break # Yey selesai!
-                        
-                        # Jika belum selesai tapi chunk kosong, AI nyerah
-                        if not chunk_text:
-                            break
-                            
-                        # Minta AI melanjutkan TEPAT dari karakter terakhir yang terpotong
-                        payload["messages"].append({"role": "assistant", "content": chunk_text})
-                        payload["messages"].append({"role": "user", "content": "Teks JSON terpotong karena batas token! WAJIB lanjutkan string JSON di atas TEPAT mulai dari huruf/simbol yang terputus tanpa basa-basi pengantar, tanpa markdown ```json. Langsung sambung karakternya!"})
-
-
-                raw_text = full_raw_text.strip()
-                try:
-                    with open(os.path.join(BASE_DIR, "data", "debug_ai.txt"), "w", encoding="utf-8") as f:
-                        f.write(f"=== OCR PHASE 1 ===\n{ocr_text if 'ocr_text' in locals() else 'N/A'}\n\n=== JSON PHASE 2 ===\n{raw_text}\n")
-                except Exception:
-                    pass
-                if not raw_text:
-                    append_error_log("gemini_empty_response", Exception("No text returned"), {"user": user})
-                    return {"ok": False, "error": "AI mengembalikan respons kosong."}
-                    
-                # Extract JSON block just in case
-                match = re.search(r"\[.*\]", raw_text, re.DOTALL)
-                if match:
-                    clean_text = match.group(0).strip()
-                else:
-                    clean_text = raw_text.strip()
-                    
-                # Auto-heal truncated JSON jika proxy benar-benar mati
-                if clean_text.startswith("[") and not clean_text.endswith("]"):
-                    last_brace = clean_text.rfind("}")
-                    if last_brace != -1:
-                        clean_text = clean_text[:last_brace+1] + "\n]"
-                        
-                try:
-                    batch_data = json.loads(clean_text, strict=False)
-                except json.JSONDecodeError:
-                    append_error_log("gemini_invalid_json", Exception("Non-JSON Payload String Loop"), {"raw": raw_text[:500]})
-                    return {"ok": False, "error": f"AI gagal mengirim struktur JSON yang benar.\n\nContoh respons:\n{raw_text[:200]}"}
-                    
-                if isinstance(batch_data, list):
-                    all_rows = batch_data
-                elif isinstance(batch_data, dict) and "rows" in batch_data:
-                    all_rows = batch_data["rows"]
-                
-            if not all_rows:
-                return {"ok": False, "error": "AI tidak menemukan tabel promo valid di dalam dokumen, atau gagal mengekstrak."}
-                
-            try:
-                import json
-                with open("/tmp/ai_dump.json", "w") as f:
-                    json.dump(all_rows, f, indent=2)
-            except: pass
-            
-            for idx, row in enumerate(all_rows):
-                if "id" not in row:
-                    row["id"] = str(uuid.uuid4())
-                if "no" not in row:
-                    row["no"] = str(idx + 1)
-                    
-            # TAHAP 2: Native Master DB Mapping (Injects Kelompok perfectly)
-            all_rows = _apply_native_kelompok(all_rows, items)
-            
-            # TAHAP 3: Return raw rows directly to frontend so the user can see/edit individual variants natively.
-            # (The actual grouping and Prefix Compression runs natively during summary_manual_generate)
-            return {"ok": True, "rows": all_rows}
-                
-        except Exception as api_err:
-             append_error_log("gemini_api_error", api_err, {"user": user})
-             return {"ok": False, "error": f"Gagal menghubungi Google Gemini AI: {str(api_err)}"}
-
-        
-    except Exception as e:
-        import traceback
-        err_msg = traceback.format_exc()
-        print("====== FATAL N8N PARSE ERROR ======")
-        print(err_msg)
-        return {"ok": False, "error": f"Internal Server Error: {str(e)}"}
-        print("===================================")
-        append_error_log("summary_manual_parse_pdf_n8n", e, {"user": user, "token": token})
-        payload = {"ok": False, "error": "Kegagalan sistem internal saat memproses PDF."}
-        if APP_DEBUG and is_admin_user(user):
-            payload["detail"] = str(e)
-        return payload
+        raw = await read_upload_file_limited(pdf, max_bytes=MAX_PDF_UPLOAD_BYTES, allowed_exts=(".pdf",), label="PDF Program")
+        result = await extract_mistral(raw, master, user, principle_name)
+        draft = create_draft(user, principle_name or "Summary Program", {"rows": result["rows"], "programs": [], "master": master, "extraction": {key: value for key, value in result.items() if key != "rows"}}, raw)
+        return {"ok": True, "rows": result["rows"], "draft": draft}
+    except ValueError as error:
+        return JSONResponse(status_code=422, content={"ok": False, "error": str(error)})
+    except Exception:
+        return JSONResponse(status_code=500, content={"ok": False, "error": "Pemrosesan Summary gagal. Draft parsial tidak diterbitkan."})
 
 @router.post("/summary/manual/report_correction")
 async def summary_manual_report_correction(request: Request):
@@ -1573,13 +924,14 @@ async def summary_manual_email(
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     
-    if file_id not in MANUAL_OUTPUTS:
+    if not user_has_permission(user, "summary", "edit") or not owned(MANUAL_OUTPUTS.get(file_id), user):
         return JSONResponse(status_code=404, content={"ok": False, "error": "Generated files not found."})
 
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
 
+    from shared import EMAIL_USER, EMAIL_PASSWORD, send_email_background
     if not EMAIL_USER or not EMAIL_PASSWORD:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Fitur email belum dikonfigurasi di server (EMAIL_USER / EMAIL_PASSWORD kosong)."})
 

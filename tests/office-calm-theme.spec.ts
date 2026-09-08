@@ -1,3 +1,6 @@
+/* Tujuan: Regresi tema alternatif Office Calm pada shell baru dan formulir lama.
+ * Caller: Playwright. Dependensi: tema dan route Finance/SPPD.
+ * Main Functions: cek warna, kontras error, file button. Side Effects: browser uji saja. */
 import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
@@ -7,11 +10,10 @@ test.beforeEach(async ({ page }) => {
 test("Office Calm dashboard uses its warm palette consistently", async ({ page }) => {
     await page.goto("/");
 
-    await expect(page.getByRole("heading", { name: /Portal Internal/ })).toHaveCSS("color", "rgb(46, 38, 29)");
+    await expect(page.getByRole("heading", { name: "Selamat bekerja." })).toHaveCSS("color", "rgb(46, 38, 29)");
     const activeLink = page.locator('aside a[aria-current="page"]');
-    await expect(activeLink).toHaveCSS("background-color", "rgba(242, 210, 138, 0.22)");
-    await expect.poll(() => activeLink.evaluate((element) => getComputedStyle(element, "::before").backgroundColor)).toBe("rgb(200, 148, 50)");
-    await expect(page.locator("svg.lucide-cpu")).toHaveCSS("color", "rgb(200, 148, 50)");
+    await expect(activeLink).toHaveCSS("color", "rgb(15, 118, 110)");
+    await expect(page.getByRole("navigation", { name: "Menu ruang kerja", exact: true }).getByRole("textbox", { name: "Cari menu" })).toBeEnabled();
 
     await page.getByRole("button", { name: "Ganti tema" }).click();
     const officeOption = page.getByRole("button", { name: /Office Calm/ });
