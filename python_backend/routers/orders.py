@@ -53,7 +53,7 @@ def published_rules():
     return programs, sources
 
 
-def store_order(owner, outlet, channel, order_date, note, lines, request_id=None):
+def store_order(owner, outlet, channel, order_date, note, lines, request_id=None, customer_no=""):
     """Hitung dengan aturan terbit lalu bekukan aturan, sumber, dan hasilnya pada order.
 
     Baris tanpa harga (permintaan dari Web Sales) TIDAK dihitung sebagai uang: order
@@ -72,11 +72,12 @@ def store_order(owner, outlet, channel, order_date, note, lines, request_id=None
         result, frozen, status = {"pending_price": True, "lines": lines}, [], "needs_price"
     order_id = str(uuid.uuid4())
     with connect() as db:
-        db.execute("INSERT INTO sales_order(id,owner,outlet,channel,order_date,status,note,lines,rules,sources,result,request_id)"
-                   " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        db.execute("INSERT INTO sales_order(id,owner,outlet,channel,order_date,status,note,lines,rules,sources,"
+                   "result,request_id,customer_no) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                    (order_id, owner, outlet[:160], channel[:80], order_date, status, note,
                     json.dumps(lines, ensure_ascii=False), json.dumps(frozen, ensure_ascii=False),
-                    json.dumps(sources, ensure_ascii=False), json.dumps(result, ensure_ascii=False), request_id))
+                    json.dumps(sources, ensure_ascii=False), json.dumps(result, ensure_ascii=False), request_id,
+                    customer_no[:80]))
     return order_id
 
 
@@ -155,9 +156,14 @@ async def create_order(request: Request):
         raise HTTPException(400, "Format permintaan tidak valid") from None
     outlet, channel = str(body.get("outlet", "")).strip(), str(body.get("channel", "")).strip().upper()
     order_date, note = str(body.get("order_date", "")).strip(), str(body.get("note", ""))[:500]
+    customer_no = str(body.get("customer_no", "")).strip()
     lines = body.get("lines")
     if not outlet or not channel or not order_date:
         raise HTTPException(400, "Outlet, channel, dan tanggal order wajib diisi")
+    # `customerNo` adalah field WAJIB sales-invoice/save.do dan nomor faktur milik Accurate;
+    # order tanpa pelanggan tidak akan pernah bisa menjadi faktur, jadi ditolak di sini.
+    if not customer_no:
+        raise HTTPException(400, "Kode pelanggan Accurate wajib diisi")
     if not isinstance(lines, list) or not 1 <= len(lines) <= 500:
         raise HTTPException(400, "Order harus memiliki 1–500 baris")
     clean = []
@@ -166,7 +172,8 @@ async def create_order(request: Request):
             raise HTTPException(400, "Baris order tidak valid")
         clean.append({key: str(line.get(key, "")).strip() for key in ("code", "unit", "quantity", "price")})
     try:
-        order_id = store_order(identity(user), outlet, channel, order_date, note, clean)
+        order_id = store_order(identity(user), outlet, channel, order_date, note, clean,
+                               customer_no=customer_no)
     except (ValueError, KeyError, TypeError) as error:
         raise HTTPException(400, public_error(error)) from None
     return {"ok": True, "order": order_detail_row(order_id, user)}
@@ -185,7 +192,8 @@ def pull_once(owner):
     for entry in websales_store.pending():
         try:
             order_id = store_order(owner, entry["outlet"], entry["channel"], entry["order_date"],
-                                   entry["note"], entry["lines"], request_id=entry["id"])
+                                   entry["note"], entry["lines"], request_id=entry["id"],
+                                   customer_no=entry.get("customer_no", ""))
             imported.append({"request_id": entry["id"], "order_id": order_id})
         except sqlite3.IntegrityError:
             duplicated.append(entry["id"])
@@ -288,8 +296,8 @@ async def pull_cron(request: Request):
 
 def order_detail_row(order_id, user, everyone=False):
     with connect() as db:
-        query = ("SELECT id,owner,outlet,channel,order_date,status,note,lines,sources,result,request_id,created_at"
-                 " FROM sales_order WHERE id=?")
+        query = ("SELECT id,owner,outlet,channel,order_date,status,note,lines,sources,result,request_id,"
+                 "customer_no,created_at FROM sales_order WHERE id=?")
         row = db.execute(query if everyone else query + " AND owner=?", (order_id,) if everyone else (order_id, identity(user))).fetchone()
     if row is None:
         return None
@@ -304,7 +312,8 @@ def list_orders(request: Request, scope: str = "mine"):
     user = require_user(request)
     everyone = scope == "all" and user_has_permission(user, "order", "edit")
     with connect() as db:
-        query = ("SELECT id,owner,outlet,channel,order_date,status,result,request_id,created_at FROM sales_order "
+        query = ("SELECT id,owner,outlet,channel,order_date,status,result,request_id,customer_no,created_at"
+                 " FROM sales_order "
                  + ("" if everyone else "WHERE owner=? ") + "ORDER BY created_at DESC,id DESC LIMIT 100")
         rows = db.execute(query, () if everyone else (identity(user),)).fetchall()
     return {"ok": True, "scope": "all" if everyone else "mine",

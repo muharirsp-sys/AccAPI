@@ -41,7 +41,7 @@ def main():
     app = FastAPI()
     app.include_router(orders.router)
     client = TestClient(app)
-    body = dict(outlet="TOKO UJI", channel="GT", order_date="2026-06-15",
+    body = dict(outlet="TOKO UJI", channel="GT", order_date="2026-06-15", customer_no="C-001",
                 lines=[dict(code="A", unit="PCS", quantity="10", price="1000")])
 
     # Tanpa aturan terbit, order tidak boleh dihitung diam-diam.
@@ -102,7 +102,9 @@ def main():
     for bad, note in [({**body, "lines": []}, "kosong"),
                       ({**body, "lines": [dict(code="A", unit="PCS", quantity="0", price="1000")]}, "kuantitas nol"),
                       ({**body, "order_date": "15 Juni 2026"}, "tanggal tidak baku"),
-                      ({**body, "outlet": ""}, "outlet kosong")]:
+                      ({**body, "outlet": ""}, "outlet kosong"),
+                      # Tanpa pelanggan Accurate, order tidak akan pernah bisa menjadi faktur.
+                      ({**body, "customer_no": ""}, "pelanggan kosong")]:
         assert client.post("/orders", headers=SALES, json=bad).status_code == 400, note
 
     # Izin: tamu ditolak, pemilik hanya melihat ordernya, admin boleh melihat semua.

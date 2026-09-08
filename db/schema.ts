@@ -122,6 +122,28 @@ export const itemSellingPrice = pgTable("item_selling_price", {
     index("idx_item_selling_price_lookup").on(t.itemNo, t.unitName, t.priceCategoryId, t.effectiveDate),
 ]);
 
+// Antrean faktur Accurate untuk order internal yang sudah dibekukan (db/migrations/0004).
+// `payload` dibekukan saat masuk antrean; state `unknown` = tidak ada jawaban dari Accurate
+// dan TIDAK boleh dikirim ulang otomatis (faktur ganda di Accurate tidak bisa dibatalkan).
+export const invoiceOutbox = pgTable("invoice_outbox", {
+    orderId: text("order_id").primaryKey(),
+    customerNo: text("customer_no").notNull(),
+    orderDate: date("order_date").notNull(),
+    state: text("state").notNull().default("queued"),
+    payload: jsonb("payload").notNull(),
+    queuedBy: text("queued_by").notNull().default(""),
+    // Identitas dokumen = database + record id. Nomor faktur hanya catatan.
+    accurateDbId: text("accurate_db_id").notNull().default(""),
+    accurateId: text("accurate_id").notNull().default(""),
+    accurateNumber: text("accurate_number").notNull().default(""),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_invoice_outbox_state").on(t.state, t.createdAt),
+]);
+
 export const customer = pgTable("customer", {
     id: bigint("id", { mode: "number" }).primaryKey(), // Accurate's internal numeric ID
     customerNo: text("customerNo").notNull(),

@@ -62,7 +62,7 @@ def main():
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert tables == {"order_request"}, tables
 
-    ask = dict(outlet="TOKO SALES", channel="GT", order_date="2026-06-15",
+    ask = dict(outlet="TOKO SALES", channel="GT", order_date="2026-06-15", customer_no="C-001",
                lines=[dict(code="A", unit="PCS", quantity="10")])
     created = client.post("/websales/orders", headers=SALES, json=ask)
     assert created.status_code == 200, created.text
@@ -79,6 +79,8 @@ def main():
                 [dict(code="", unit="PCS", quantity="1")], [dict(code="A", unit="", quantity="1")]):
         assert client.post("/websales/orders", headers=SALES, json={**ask, "lines": bad}).status_code == 400, bad
     assert client.post("/websales/orders", headers=SALES, json={**ask, "order_date": "15-06-2026"}).status_code == 400
+    # Pelanggan Accurate wajib: order tanpa itu tidak akan pernah bisa menjadi faktur.
+    assert client.post("/websales/orders", headers=SALES, json={**ask, "customer_no": ""}).status_code == 400
 
     # Sales tidak boleh menarik order ke internal; itu wewenang petugas.
     assert client.post("/orders/pull", headers=SALES, json={}).status_code == 403
@@ -86,7 +88,7 @@ def main():
     # Sales juga TIDAK boleh memakai input order internal: endpoint itu menerima harga dari
     # klien, jadi izin `websales.create` sengaja tidak membuka `POST /orders`.
     blocked = client.post("/orders", headers=SALES, json={"outlet": "TOKO", "channel": "GT",
-                                                          "order_date": "2026-06-15",
+                                                          "order_date": "2026-06-15", "customer_no": "C-001",
                                                           "lines": [dict(code="A", unit="PCS", quantity="1", price="1")]})
     assert blocked.status_code == 403, blocked.text
     # Tapi sales HARUS bisa melihat nilai transaksi: pratinjau terbuka untuk keduanya.
@@ -104,6 +106,8 @@ def main():
     order_id = next(item["order_id"] for item in body["imported"] if item["request_id"] == request_id)
     order = client.get(f"/orders/{order_id}", headers=ADMIN).json()["order"]
     assert order["status"] == "needs_price" and order["request_id"] == request_id, order
+    # Pelanggan ikut terbawa dari sisi sales; tanpa ini faktur tidak bisa dibuat.
+    assert order["customer_no"] == "C-001", order
     assert order["result"] == {"pending_price": True, "lines": order["lines"]}, order["result"]
     with connect() as db:
         assert json.loads(db.execute("SELECT rules FROM sales_order WHERE id=?", (order_id,)).fetchone()[0]) == []
@@ -120,10 +124,13 @@ def main():
     assert websales_store.get_request(request_id)["status"] == "pulled"
 
     # Input internal langsung tetap menghitung uang dan membekukan aturan.
-    direct = client.post("/orders", headers=ADMIN, json={"outlet": "TOKO INTERNAL", "channel": "GT",
-                                                         "order_date": "2026-06-15",
-                                                         "lines": [dict(code="A", unit="PCS", quantity="10", price="1000")]})
+    internal = {"outlet": "TOKO INTERNAL", "channel": "GT", "order_date": "2026-06-15",
+                "customer_no": "C-002",
+                "lines": [dict(code="A", unit="PCS", quantity="10", price="1000")]}
+    assert client.post("/orders", headers=ADMIN, json={**internal, "customer_no": ""}).status_code == 400
+    direct = client.post("/orders", headers=ADMIN, json=internal)
     assert direct.json()["order"]["result"]["discount"] == "500.00", direct.text
+    assert direct.json()["order"]["customer_no"] == "C-002", direct.json()["order"]
     assert direct.json()["order"]["request_id"] is None, direct.json()["order"]
 
     check_connection(client)
@@ -152,7 +159,7 @@ def check_connection(client):
     assert client.post("/orders/connection", headers=ADMIN, json={"enabled": "ya"}).status_code == 400
 
     client.post("/websales/orders", headers=SALES, json=dict(
-        outlet="TOKO CRON", channel="GT", order_date="2026-06-15",
+        outlet="TOKO CRON", channel="GT", order_date="2026-06-15", customer_no="C-003",
         lines=[dict(code="A", unit="PCS", quantity="3")]))
     assert client.get("/orders/connection", headers=ADMIN).json()["pending"] == 1
 
@@ -171,7 +178,7 @@ def check_connection(client):
     # Dimatikan: penarikan berhenti walau ada permintaan baru menunggu.
     client.post("/orders/connection", headers=ADMIN, json={"enabled": False})
     client.post("/websales/orders", headers=SALES, json=dict(
-        outlet="TOKO SETELAH MATI", channel="GT", order_date="2026-06-15",
+        outlet="TOKO SETELAH MATI", channel="GT", order_date="2026-06-15", customer_no="C-004",
         lines=[dict(code="A", unit="PCS", quantity="1")]))
     assert client.post("/orders/pull-cron", headers=cron).json()["skipped"], "koneksi mati harus berhenti menarik"
     assert client.get("/orders/connection", headers=ADMIN).json()["pending"] == 1

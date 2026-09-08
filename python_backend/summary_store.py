@@ -41,14 +41,19 @@ def connect():
           id TEXT PRIMARY KEY, owner TEXT NOT NULL, outlet TEXT NOT NULL, channel TEXT NOT NULL,
           order_date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', note TEXT NOT NULL DEFAULT '',
           lines TEXT NOT NULL, rules TEXT NOT NULL, sources TEXT NOT NULL, result TEXT NOT NULL,
-          request_id TEXT,
+          request_id TEXT, customer_no TEXT NOT NULL DEFAULT '',
           created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
         CREATE INDEX IF NOT EXISTS sales_order_owner ON sales_order(owner,created_at DESC,id);
         CREATE INDEX IF NOT EXISTS sales_order_status ON sales_order(status,created_at DESC,id);
         """)
         # Kunci anti-ganda untuk order hasil pull; NULL (input internal langsung) tidak bertabrakan.
-        if "request_id" not in {row[1] for row in db.execute("PRAGMA table_info(sales_order)")}:
+        columns = {row[1] for row in db.execute("PRAGMA table_info(sales_order)")}
+        if "request_id" not in columns:
             db.execute("ALTER TABLE sales_order ADD COLUMN request_id TEXT")
+        # Pelanggan Accurate WAJIB ada pada order: `customerNo` adalah field wajib
+        # sales-invoice/save.do, jadi order tanpa itu tidak bisa menjadi faktur.
+        if "customer_no" not in columns:
+            db.execute("ALTER TABLE sales_order ADD COLUMN customer_no TEXT NOT NULL DEFAULT ''")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS sales_order_request ON sales_order(request_id)")
         yield db
         db.commit()

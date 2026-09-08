@@ -228,6 +228,89 @@ eksak (`line["unit"] == program.unit`). Akibatnya program bersatuan salah TIDAK 
 keliru — promonya hanya tidak berlaku. Gagal-aman, tapi tetap salah; menyambungkannya butuh
 master Accurate masuk ke sisi Python (sekarang hanya punya master Excel per principle).
 
+### Tahap 4 — faktur Accurate: DIBANGUN, BELUM PERNAH MENGIRIM (2026-09-08)
+
+Keputusan pengguna: "bangun dulu tanpa mengirim". Jadi seluruh jalur ada dan teruji, tetapi
+**nol request tulis pernah dikirim ke Accurate** dan gerbangnya masih tertutup.
+
+Prasyarat yang ternyata belum ada dan sudah diperbaiki: **order tidak menyimpan pelanggan
+Accurate.** `customerNo` adalah field WAJIB `sales-invoice/save.do`, jadi order tanpa
+pelanggan tidak akan pernah bisa menjadi faktur. Sekarang `customer_no` ada di tabel
+`sales_order` dan `order_request` (ALTER idempoten, seperti pola `request_id`), wajib pada
+`POST /orders` dan `POST /websales/orders`, ikut terbawa saat pull, dan dikirim kedua halaman.
+
+Yang dibangun:
+
+- `lib/accurate-invoice-write.ts` (murni, tanpa DB/jaringan). **Bukan** `lib/accurate-invoice.ts`
+  — file itu sudah ada dan MEMBACA faktur (`detail.do` -> tampilan); yang ini MENULIS.
+  - `buildInvoicePayload` memakai angka **beku** pada order: `unitPrice` dari harga beku baris,
+    `itemCashDiscount` = bruto - netto hasil beku (bukan hitung ulang persentase, supaya tidak
+    ada selisih pembulatan), `itemUnitId` dari master satuan Accurate.
+  - Melempar, bukan menebak: pelanggan kosong, order `needs_price`, satuan tidak ada di master
+    satuan, baris hasil tidak berpasangan dengan baris masukan, netto > bruto.
+  - `typeAutoNumber: 1` dan **tidak pernah mengirim `number`** — nomor faktur milik Accurate.
+  - `charField1` = order id pada header DAN tiap baris: jejak untuk rekonsiliasi status TIDAK
+    PASTI lewat `filter.charField1` di `sales-invoice/list.do`. `charField2` = sumber aturan beku.
+  - `nextOutboxState`: tanpa jawaban (timeout / koneksi putus / respons non-JSON) -> `unknown`,
+    dan `unknown` **tidak pernah** berubah sendiri lagi. Accurate menjawab-dan-menolak ->
+    `rejected` (aman diperbaiki lalu dicoba lagi). Hanya `queued`/`rejected` yang boleh dikirim.
+- `db/migrations/0004_invoice_outbox.sql` + `db/schema.ts` -> tabel `invoice_outbox`
+  (satu baris per order, payload dibekukan saat masuk antrean, identitas = `accurate_db_id` +
+  `accurate_id`; `accurate_number` hanya catatan karena nomor bisa dipakai ulang Accurate).
+  **Sudah diterapkan ke Postgres dev lokal**; produksi BELUM.
+- `app/api/orders/[id]/invoice/route.ts` (izin `order.edit`): POST tanpa `queue` = **dry-run**
+  (payload persis yang akan dikirim, tanpa menyentuh DB maupun Accurate); `{"queue":true}` =
+  masuk antrean. Order yang sudah pernah masuk antrean **tidak ditimpa** (409): menimpa baris
+  `posted`/`unknown` bisa membuat faktur kedua. GET = status antrean order itu.
+- `app/api/cron/post-invoices/route.ts` — satu-satunya tempat request tulis terjadi, dan
+  **rem tangannya terpasang**: menolak 503 sampai `ACCURATE_INVOICE_SEND=on` DAN
+  `ACCURATE_INVOICE_DB_ID` di-set, lalu menolak 409 bila sesi Accurate ternyata terbuka pada
+  database lain. Sesi yang dipakai adalah sesi petugas eksplisit (`ACCURATE_INVOICE_USER_ID`),
+  **bukan** fallback "sesi terbaru siapa pun" seperti sync. Satu status `unknown` menghentikan
+  seluruh batch.
+- Halaman Order Masuk: tombol "Tinjau payload" per order + panel JSON dan tombol "Masukkan ke
+  antrean faktur"; panel menyatakan terang-terangan bahwa payload BELUM dikirim.
+
+Bukti live read-only (DB CV Surya Perkasa, 2026-09-08) yang mendasari pemetaan:
+
+| Probe | Temuan |
+|---|---|
+| `sales-invoice/list.do` | `transDate: "08/09/2026"` -> tanggal tulis **dd/MM/yyyy** (sama dengan jalur purchase-payment yang sudah jalan di produksi) |
+| `sales-invoice/detail.do id=331710` | `detailItem[].itemUnit = {id,name}`, `unitPrice`, `availableUnitRatio`, `branchId`, `tax1Rate: 11` |
+| `item/detail.do id=11900` | `detailSellingPrice[].unit = {id,name}` — id satuan memang ada di data yang sudah kita sync, tapi kolomnya tidak kita simpan |
+| `unit/list.do` | 37 satuan dengan id+nama (BAG=350, KRT=100, PACK=101) -> sumber `itemUnitId`, tanpa tabel baru |
+| `acc.json.do` | 404 — spec OpenAPI tidak bisa diambil dari tenant; tidak ada di repo |
+
+Bukti gerbang (live, Next sungguhan):
+
+| Uji | Hasil |
+|---|---|
+| `GET /api/cron/post-invoices` tanpa Bearer | 401 |
+| Dengan Bearer, gerbang tertutup | 503 "Pengiriman faktur Accurate belum diizinkan…", `sent: 0` |
+| `GET /api/orders/<id>/invoice` | 200 dengan `outbox: null` |
+| `POST /api/orders/<id>/invoice` | 401 dari FastAPI (sesi lokal kedaluwarsa) — jalur diteruskan benar |
+| Migrasi 0004 di Postgres lokal | tabel + 2 indeks terbentuk |
+
+Bukti offline: `lib/accurate-invoice-write.test.ts` 5 blok — dd/MM/yyyy (**testnya menemukan
+bug nyata**: `"08-09-2026"` dulu diterima dan menghasilkan `2026/09/08`, sekarang polanya
+diperiksa penuh), payload dari angka beku, lima penolakan "tidak boleh menebak", pembacaan
+identitas dari amplop `{s,d,r}`, dan mesin status TIDAK PASTI. `test_orders.py`,
+`test_websales_pull.py`, `test_summary_rules.py`, `registry.test.ts` (195 pemakaian key),
+`SidebarLayout.test.ts`, `item-price.test.ts`, `tsc`, eslint semuanya lulus.
+
+**RISIKO YANG BELUM TERTUTUP — baca sebelum mengizinkan pengiriman.** Nama field REQUEST
+`sales-invoice/save.do` belum terbukti: spec resmi tidak ada di repo (`acc.json.do` -> 404) dan
+**Accurate MENGABAIKAN field yang tidak dikenal tanpa galat**. Artinya `itemUnitId`,
+`itemCashDiscount`, dan `typeAutoNumber` bisa saja diabaikan diam-diam sehingga faktur
+terbentuk dengan satuan/diskon yang salah. Karena itu satu faktur uji pada database yang
+Anda tunjuk WAJIB diperiksa manual (satuan, harga per satuan, diskon, nomor) sebelum
+`ACCURATE_INVOICE_SEND=on` dipasang di produksi.
+
+Urutan mengaktifkan nanti: (1) terapkan `0004_invoice_outbox.sql` di produksi, (2) tunjuk
+database Accurate tujuan + petugas pemilik sesi, (3) satu order uji -> "Tinjau payload" ->
+antrean -> jalankan cron sekali, (4) periksa fakturnya di Accurate, (5) baru pasang scheduled
+task 5 menit.
+
 ### Aplikasi Web Sales — selesai 2026-09-08 (keputusan pengguna: halaman di web internal)
 
 Keputusan pengguna 2026-09-08 atas dua pilihan yang diajukan:
@@ -590,7 +673,8 @@ Sudah dirty sebelum redesign: `app/(dashboard)/reconciliation/page.tsx`, `docs/R
    di web internal dengan izin `websales` terpisah. Sisanya: pencarian barang/pelanggan,
    notifikasi push, dan pembatasan pelanggan per sales.
 3. ~~Worker penarik 5 menit~~ — SELESAI 2026-09-08 sebagai cron 5 menit + tombol koneksi.
-4. Tahap 4 (faktur Accurate) dan tahap 5 (Rekapan Nota) belum disentuh.
+4. Tahap 4 (faktur Accurate) DIBANGUN tapi belum pernah mengirim — gerbang masih tertutup dan
+   nama field request `save.do` belum terbukti. Tahap 5 (Rekapan Nota) belum disentuh.
 5. Skema DB dev lokal masih tertinggal beberapa modul utuh (`app_setting`, `pick_group`,
    `rekap_upload`, `wave_line_pool`, `reconciliation_*`), sehingga `0002_rekapan_nota.sql`
    belum bisa diterapkan. `drizzle-kit push` TIDAK dijalankan karena bisa menghapus kolom.

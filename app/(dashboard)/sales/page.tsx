@@ -157,7 +157,7 @@ export default function SalesOrderPage() {
         setBusy(true);
         try {
             const res = await send("POST", "/websales/orders", {
-                outlet, channel, order_date: orderDate, note,
+                outlet, channel, order_date: orderDate, note, customer_no: customerNo.trim(),
                 lines: filled.map(line => ({ code: line.code.trim(), unit: line.unit, quantity: line.quantity })),
             });
             if (!res.ok) { toast.error(res.error); return; }
@@ -276,7 +276,7 @@ export default function SalesOrderPage() {
                     <button onClick={() => setLines(prev => [...prev, emptyLine()])} className="flex items-center gap-1 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg">
                         <Plus size={14} /> Tambah barang
                     </button>
-                    <button onClick={submitRequest} disabled={busy || !outlet.trim() || !channel.trim()}
+                    <button onClick={submitRequest} disabled={busy || !outlet.trim() || !channel.trim() || !customerNo.trim()}
                         className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50">
                         Kirim order
                     </button>

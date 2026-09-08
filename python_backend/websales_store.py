@@ -28,11 +28,16 @@ def connect():
         CREATE TABLE IF NOT EXISTS order_request(
           id TEXT PRIMARY KEY, sales TEXT NOT NULL, outlet TEXT NOT NULL, channel TEXT NOT NULL,
           order_date TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', lines TEXT NOT NULL,
+          customer_no TEXT NOT NULL DEFAULT '',
           status TEXT NOT NULL DEFAULT 'pending', pulled_at TEXT,
           created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
         CREATE INDEX IF NOT EXISTS order_request_pending ON order_request(status,created_at,id);
         CREATE INDEX IF NOT EXISTS order_request_sales ON order_request(sales,created_at DESC,id);
         """)
+        # Pelanggan Accurate ikut dari sisi sales: tanpa `customerNo` order tidak bisa
+        # menjadi faktur (field wajib sales-invoice/save.do).
+        if "customer_no" not in {row[1] for row in db.execute("PRAGMA table_info(order_request)")}:
+            db.execute("ALTER TABLE order_request ADD COLUMN customer_no TEXT NOT NULL DEFAULT ''")
         yield db
         db.commit()
     except Exception:
@@ -42,18 +47,20 @@ def connect():
         db.close()
 
 
-def create_request(sales, outlet, channel, order_date, note, lines):
+def create_request(sales, outlet, channel, order_date, note, lines, customer_no=""):
     request_id = str(uuid.uuid4())
     with connect() as db:
-        db.execute("INSERT INTO order_request(id,sales,outlet,channel,order_date,note,lines) VALUES(?,?,?,?,?,?,?)",
+        db.execute("INSERT INTO order_request(id,sales,outlet,channel,order_date,note,lines,customer_no)"
+                   " VALUES(?,?,?,?,?,?,?,?)",
                    (request_id, sales, outlet[:160], channel[:80], order_date, note[:500],
-                    json.dumps(lines, ensure_ascii=False)))
+                    json.dumps(lines, ensure_ascii=False), customer_no[:80]))
     return get_request(request_id, sales)
 
 
 def get_request(request_id, sales=None):
     with connect() as db:
-        query = "SELECT id,sales,outlet,channel,order_date,note,lines,status,pulled_at,created_at FROM order_request WHERE id=?"
+        query = ("SELECT id,sales,outlet,channel,order_date,note,lines,customer_no,status,pulled_at,created_at"
+                 " FROM order_request WHERE id=?")
         row = db.execute(query if sales is None else query + " AND sales=?",
                          (request_id,) if sales is None else (request_id, sales)).fetchone()
     if row is None:
@@ -66,7 +73,7 @@ def get_request(request_id, sales=None):
 def pending(limit=200):
     """Permintaan yang belum ditarik, urut kedatangan; batch pull memakai daftar ini."""
     with connect() as db:
-        rows = db.execute("SELECT id,sales,outlet,channel,order_date,note,lines FROM order_request "
+        rows = db.execute("SELECT id,sales,outlet,channel,order_date,note,lines,customer_no FROM order_request "
                           "WHERE status='pending' ORDER BY created_at,id LIMIT ?", (max(1, min(limit, 500)),)).fetchall()
     return [{**dict(row), "lines": json.loads(row["lines"])} for row in rows]
 

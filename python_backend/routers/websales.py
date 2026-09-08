@@ -49,6 +49,7 @@ async def create_request_endpoint(request: Request):
     outlet = str(body.get("outlet", "")).strip()
     channel = str(body.get("channel", "")).strip().upper()
     order_date = str(body.get("order_date", "")).strip()
+    customer_no = str(body.get("customer_no", "")).strip()
     lines = body.get("lines")
     try:
         # Tanggal diperiksa di pintu masuk; tanggal ngawur tidak boleh baru gagal saat pull.
@@ -57,6 +58,9 @@ async def create_request_endpoint(request: Request):
         valid_date = False
     if not outlet or not channel or not valid_date:
         raise HTTPException(400, "Outlet, channel, dan tanggal order (YYYY-MM-DD) wajib diisi")
+    # Pelanggan Accurate wajib: tanpa `customerNo` order tidak bisa menjadi faktur.
+    if not customer_no:
+        raise HTTPException(400, "Kode pelanggan Accurate wajib diisi")
     if not isinstance(lines, list) or not 1 <= len(lines) <= 200:
         raise HTTPException(400, "Permintaan order harus memiliki 1–200 baris")
     clean = []
@@ -68,13 +72,14 @@ async def create_request_endpoint(request: Request):
         if not code or not unit or not quantity.isdigit() or int(quantity) <= 0:
             raise HTTPException(400, "Setiap baris butuh kode, satuan, dan jumlah bulat lebih dari nol")
         clean.append({"code": code[:80], "unit": unit[:30], "quantity": quantity})
-    return {"ok": True, "request": create_request(sales, outlet, channel, order_date, str(body.get("note", "")), clean)}
+    return {"ok": True, "request": create_request(sales, outlet, channel, order_date,
+                                                  str(body.get("note", "")), clean, customer_no)}
 
 
 @router.get("/orders")
 def list_requests(request: Request):
     sales = require_sales(request)
     with connect() as db:
-        rows = db.execute("SELECT id,outlet,channel,order_date,status,created_at,pulled_at FROM order_request "
+        rows = db.execute("SELECT id,outlet,channel,order_date,customer_no,status,created_at,pulled_at FROM order_request "
                           "WHERE sales=? ORDER BY created_at DESC,id DESC LIMIT 100", (sales,)).fetchall()
     return {"ok": True, "requests": [dict(row) for row in rows]}

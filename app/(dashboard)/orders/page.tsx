@@ -184,7 +184,9 @@ export default function OrdersPage() {
         setBusy(true);
         setResult(null);
         try {
-            const res = await send("POST", "/orders", { outlet, channel, order_date: orderDate, note, lines });
+            const res = await send("POST", "/orders", {
+                outlet, channel, order_date: orderDate, note, lines, customer_no: customerNo.trim(),
+            });
             if (!res.ok) { toast.error(res.error); return; }
             setResult(res.data.order.result);
             toast.success("Order tersimpan dengan aturan promo yang dibekukan.");
@@ -207,6 +209,26 @@ export default function OrdersPage() {
             failed.slice(0, 3).forEach(item => toast.error(`${item.request_id.slice(0, 8)}: ${item.error}`));
             loadOrders(scope);
             loadConnection();
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    // Faktur Accurate: dry-run dulu supaya payload bisa ditinjau, baru masuk antrean.
+    // Pengirimannya BUKAN di sini — penjadwal /api/cron/post-invoices yang mengirim, dan
+    // gerbangnya masih tertutup sampai database tujuan ditunjuk.
+    const [invoice, setInvoice] = useState<{ orderId: string; payload: unknown; queued: boolean } | null>(null);
+    const prepareInvoice = async (orderId: string, queue: boolean) => {
+        setBusy(true);
+        try {
+            const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/invoice`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ queue }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok) { toast.error(String(data?.error || "Payload faktur gagal dibuat")); return; }
+            setInvoice({ orderId, payload: data.payload, queued: Boolean(data.queued) });
+            toast.success(queue ? "Order masuk antrean faktur." : "Payload faktur siap ditinjau (belum dikirim).");
         } finally {
             setBusy(false);
         }
@@ -332,7 +354,7 @@ export default function OrdersPage() {
                     <button onClick={() => setLines(prev => [...prev, emptyLine()])} className="flex items-center gap-1 text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg">
                         <Plus size={14} /> Tambah baris
                     </button>
-                    <button onClick={submitOrder} disabled={busy || !outlet.trim() || !channel.trim()} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50">
+                    <button onClick={submitOrder} disabled={busy || !outlet.trim() || !channel.trim() || !customerNo.trim()} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50">
                         Hitung dan simpan order
                     </button>
                 </div>
@@ -388,7 +410,7 @@ export default function OrdersPage() {
                     <div className="overflow-x-auto rounded-lg border border-white/10">
                         <table className="w-full text-xs text-slate-300">
                             <thead className="bg-black/40 text-slate-400">
-                                <tr>{["Waktu", "Outlet", "Channel", "Tanggal", "Status", "Bruto", "Diskon", "Netto"].map(head => (
+                                <tr>{["Waktu", "Outlet", "Channel", "Tanggal", "Status", "Bruto", "Diskon", "Netto", "Faktur"].map(head => (
                                     <th key={head} className="px-2 py-1.5 text-left font-semibold whitespace-nowrap">{head}</th>
                                 ))}</tr>
                             </thead>
@@ -403,10 +425,37 @@ export default function OrdersPage() {
                                         <td className="px-2 py-1.5">{order.result.gross}</td>
                                         <td className="px-2 py-1.5">{order.result.discount}</td>
                                         <td className="px-2 py-1.5">{order.result.net}</td>
+                                        <td className="px-2 py-1.5 whitespace-nowrap">
+                                            <button onClick={() => prepareInvoice(order.id, false)} disabled={busy}
+                                                className="text-xs text-emerald-400 hover:text-emerald-300 disabled:opacity-50">
+                                                Tinjau payload
+                                            </button>
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                )}
+
+                {invoice && (
+                    <div className="mt-3 rounded-lg border border-white/10 bg-black/40 p-3 space-y-2">
+                        <p className="text-xs text-slate-400">
+                            Payload faktur untuk order {invoice.orderId.slice(0, 8)} — {invoice.queued ? "sudah di antrean" : "BELUM dikirim dan belum di antrean"}.
+                            Nomor faktur akan datang dari Accurate (typeAutoNumber), bukan dari aplikasi ini.
+                        </p>
+                        <pre className="max-h-64 overflow-auto text-[11px] text-slate-300">{JSON.stringify(invoice.payload, null, 2)}</pre>
+                        <div className="flex flex-wrap gap-2">
+                            {!invoice.queued && (
+                                <button onClick={() => prepareInvoice(invoice.orderId, true)} disabled={busy}
+                                    className="text-xs bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50">
+                                    Masukkan ke antrean faktur
+                                </button>
+                            )}
+                            <button onClick={() => setInvoice(null)} className="text-xs bg-slate-600 hover:bg-slate-500 text-white px-3 py-1.5 rounded-lg">
+                                Tutup
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>
