@@ -253,7 +253,88 @@ Dokumen ini adalah checkpoint di disk, bukan bukti seluruh proyek selesai. Perba
 - `python_backend/api_key_mistral.txt` dimasukkan ke `.gitignore` pada commit ini. File aslinya
   TIDAK dihapus; hanya dicegah masuk repo. Temuan pengemasan `.next` tetap harus dibereskan
   sebelum deployment.
-- Belum ada merge, deployment, atau penulisan faktur Accurate dari pekerjaan ini.
+- **PR #24 sudah dibuat ke `main`**: https://github.com/muharirsp-sys/AccAPI/pull/24
+  HEAD branch `1cd2d95` — `origin/main` (2 commit insentif: `48d279d`, `d7b1328`) sudah
+  di-merge MASUK ke branch ini tanpa konflik, dan hasil gabungannya diverifikasi ulang:
+  `tsc` bersih, 3 uji navigasi, 4 uji insentif (`insentif-konstanta`, `insentif-mt-calc`,
+  `insentif-pph`), dan 3 self-check Python semuanya lulus.
+- **BELUM di-merge ke `main`, dan ini bukan masalah teknis.** Ruleset repo
+  **"Protect main with AccAPI Guardian"** pada `refs/heads/main` mensyaratkan: 1 approving
+  review + code owner review + persetujuan ekstra untuk perubahan tak-terkait-author, DAN
+  status check **"Deterministic risk gate"** (integration id 15368, `strict` policy) yang
+  sampai sekarang belum melaporkan apa pun. `bypass_actors` KOSONG. Status PR:
+  `mergeable: MERGEABLE`, `mergeStateStatus: BLOCKED`, `reviewDecision: REVIEW_REQUIRED`.
+  `gh pr merge --admin` TIDAK dipakai: gate itu sengaja dipasang pemilik repo dan perubahan
+  ini langsung memicu deploy produksi. Perlu approval manusia.
+
+### Perubahan PRODUKSI yang sudah nyata dilakukan 2026-09-08
+
+Dilakukan atas permintaan eksplisit pengguna (opsi A: migrasi dulu, baru merge), lewat pola
+resmi proyek: `ssh root@43.156.118.114` -> `docker exec -i accapi-postgres psql -U accapi -d
+accapi -v ON_ERROR_STOP=1 --single-transaction` dengan isi `db/migrations/0003_item_selling_price.sql`.
+
+Kondisi produksi SEBELUM migrasi membuktikan peringatan itu benar: `customer` **belum punya**
+`price_category_id`/`price_category_name`, sehingga deploy tanpa migrasi akan mematikan sync
+customer yang berjalan 4x/hari (persis kegagalan yang terjadi di lokal).
+
+Terverifikasi SETELAH migrasi:
+
+| Objek | Status |
+|---|---|
+| `item_selling_price` | dibuat + 3 indeks (`_pkey`, `idx_..._lookup`, `idx_..._item`) |
+| `customer.price_category_id` / `price_category_name` | ditambahkan (bigint, text) |
+| Hak role `accapi_app` di tabel baru | `select` = true, `insert` = true |
+
+Semuanya aditif + idempoten; tidak ada data yang diubah/dihapus. Postgres produksi 16.14.
+Baris produksi saat diperiksa: `item` 4.162, `customer` 32.273.
+
+### Yang MASIH harus dilakukan di produksi sebelum/sesudah deploy
+
+1. **`MISTRAL_API_KEY` belum di-set** di kedua container (`accapi-frontend-*`, `accapi-backend-*`;
+   diperiksa dengan `printenv` tanpa menampilkan nilai). Bukan kerusakan — jalur OCR menjawab
+   "MISTRAL_API_KEY belum dikonfigurasi di server" — tetapi ekstraksi Summary tidak bisa dipakai
+   sampai di-set lewat env Coolify (BUKAN edit file compose).
+2. **`item_selling_price` produksi masih KOSONG** (migrasi hanya membuat tabelnya). Setelah
+   deploy, jalankan `scripts/sync-item-selling-price.ts` di produksi (~21 menit untuk 4.182 item,
+   ~2,3 juta baris). Sebelum itu semua harga jatuh ke fallback standar — degradasi yang aman,
+   bukan galat.
+3. **`customer.price_category_id` produksi masih NULL** sampai sync customer berjalan dengan kode
+   baru (kolomnya sudah ada, jadi sync tidak akan gagal).
+4. Temuan pengemasan `.next` TIDAK lagi relevan untuk image produksi: kunci Mistral tidak pernah
+   tracked dan sekarang gitignored, sedangkan build CI berasal dari checkout repo — jadi file
+   kunci itu mustahil ikut ke image. Yang tersisa hanya kebersihan build lokal.
+
+### Menjalankan ulang lingkungan lokal di sesi berikutnya
+
+Ketiga proses lokal sudah DIMATIKAN pada akhir sesi 2026-09-08. Untuk menghidupkan lagi:
+
+```powershell
+# 1. Next dev (halaman Order Masuk, Summary, route /api/orders/preview)
+npm run dev -- --port 3000
+
+# 2. Backend promo/Summary FastAPI di :8000 — WAJIB untuk pratinjau promo.
+#    Sesi ini memakai launcher scratchpad dengan identitas uji karena sesi Better Auth
+#    lokal kedaluwarsa. Cara produksi-benar: login aplikasi lalu jalankan uvicorn biasa.
+cd python_backend
+python -m uvicorn main:app --host 127.0.0.1 --port 8000
+
+# 3. Sync harga jual (hanya bila master/harga berubah; butuh sesi Accurate aktif)
+npx tsx --env-file=.env.local scripts/sync-item-selling-price.ts          # lanjut dari checkpoint
+npx tsx --env-file=.env.local scripts/sync-item-selling-price.ts --restart # dari awal
+
+# Sync master Accurate (item/customer)
+curl -H "Authorization: Bearer <CRON_SECRET dari .env.local>" `
+  "http://localhost:3000/api/cron/sync-accurate?modules=item,customer"
+
+# Probe endpoint Accurate untuk menemukan nama field (read-only)
+npx tsx --env-file=.env.local scripts/probe-accurate-endpoint.ts item/detail.do id=11900 pick=detailSellingPrice max=2000
+```
+
+Catatan penting saat resume: `LOCAL_AUTH_BYPASS=true` aktif kembali di `.env.local`. Bypass ini
+membuat `/api/proxy` dan halaman `/api-wrapper` TIDAK bisa memakai sesi Accurate (identitas
+bypass tidak punya baris `accurate_oauth_session`), dan menutupi sesi Better Auth yang
+kedaluwarsa. Matikan bypass bila harus login Accurate/aplikasi lagi. Sync cron tetap jalan
+dengan bypass aktif karena memakai baris sesi terbaru, bukan user id pemanggil.
 - Baca `SYSTEM_MAP.md`, lalu dokumen ini. Periksa status Git aktual; jangan mengasumsikan semua perubahan milik pekerjaan ini.
 - Posisi terbaru: UI tahap 1 selesai dan tervalidasi. Pengguna dapat meninjau hasil lokal; jangan ulangi implementasi sidebar. Tahap 2–5 belum dikerjakan. Temuan pengemasan harus dibereskan sebelum deployment.
 - Jangan ulangi diskusi kebutuhan yang sudah dijawab. Web Sales memang belum ada dan pembuatannya sudah diotorisasi.
