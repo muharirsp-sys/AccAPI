@@ -181,6 +181,53 @@ Bukti jalur harga (live, pelanggan `C-MUS026-GD` kategori TT):
 | Satuan `LUSIN` | `source: standard` + `knownUnits: [BAG, KRT]` |
 | Backend promo mati | 502 "Layanan promo tidak dapat dihubungi" — bukan menghitung tanpa promo |
 
+### Satuan dari master Accurate, bukan input bebas — selesai dan tervalidasi live 2026-09-08
+
+Ini menutup risiko nomor satu pada daftar "paling mendesak" sebelumnya: satuan yang salah
+membuat nilai order salah sampai 72x (`M5012001000740`: BAG 15.900 vs KRT 1.144.800).
+
+- `lib/item-price.ts` -> `itemUnits(codes)`: satuan sah sebuah item = satuan yang punya baris
+  di `item_selling_price`. Diambil lepas dari kategori harga, jadi pelanggan tanpa kategori pun
+  tidak bisa memakai satuan yang tidak ada pada itemnya.
+- `priceForLine()` dipisah menjadi fungsi murni (tier -> harga standar -> tidak ada harga) supaya
+  urutan keputusannya bisa diuji tanpa DB: `lib/item-price.test.ts`, 4 blok.
+- `app/api/items/units/route.ts` (`GET ?code=`): `{ found, name, units }`. `units` kosong berarti
+  item itu belum punya daftar harga (mis. produksi sebelum sync harga jual) — pemanggil
+  memutuskan sendiri, tidak menebak "PCS".
+- `app/api/orders/preview/route.ts`: default `"PCS"` DIHAPUS (satuan wajib, kalau kosong 400),
+  dan satuan di luar master ditolak **409** sebelum uang dihitung — bukan lagi hanya peringatan
+  merah di bawah baris.
+- Halaman Order Masuk: satuan menjadi `<select>` berisi satuan master item itu, nama barang
+  tampil di bawah baris, satu-satunya satuan dipilih otomatis, dan kode yang tidak ada di master
+  ditandai merah. Item tanpa daftar harga tetap boleh diketik (degradasi, server memang tidak
+  punya master untuk menolaknya).
+- Baris yang sudah ada kodenya tapi belum lengkap kini MENGHENTIKAN pratinjau, bukan dibuang
+  diam-diam: sebelumnya total terlihat benar padahal satu baris tidak ikut dihitung.
+
+Bukti live (Postgres lokal, 2,3 juta baris `item_selling_price` asli):
+
+| Uji | Hasil |
+|---|---|
+| `GET /api/items/units?code=M5012001000740` | `found:true`, nama "ADEM SARI BAG SPARKLING LIME 7GR X 72 BAG", `units:["BAG","KRT"]` |
+| Kode tidak ada | `found:false`, `units:[]` |
+| Pratinjau satuan `LUSIN` | 409 "Satuan LUSIN tidak ada di master untuk M5012001000740 (tersedia: BAG, KRT)" |
+| Pratinjau satuan `PCS` pada `13011010500000` | 409, tersedia KRT, PACK — persis jebakan satuan di `ACCURATE_API_REFERENCE.md` |
+| Satuan kosong | 400 "Setiap baris butuh kode barang, satuan, dan jumlah" |
+| 3 baris (2 satuan salah) | 409 dalam 187 ms |
+| UI | dropdown hanya berisi BAG dan KRT; `LUSIN` tidak bisa lagi diketik |
+
+Batas kejujuran: jalur sukses penuh (satuan sah -> harga tier -> promo) TIDAK diuji ulang live
+pada sesi ini karena `/orders/preview` FastAPI menolak tanpa sesi Better Auth yang sah (sesi
+lokal kedaluwarsa, `LOCAL_AUTH_BYPASS` hanya berlaku di Next). Query pemilihan harga tidak
+diubah dan sudah terbukti live pada sesi sebelumnya (KRT 1.144.800 + BAG 15.900 -> bruto
+2.369.100); yang baru hanya pemeriksaan satuan sebelum harga dipakai.
+
+**Satuan pada aturan promo masih dari surat, bukan dari master.** `summary_rules.tier_of`
+memakai `PCS` bila suratnya tidak menyebut satuan, dan `calculate` mencocokkan satuan secara
+eksak (`line["unit"] == program.unit`). Akibatnya program bersatuan salah TIDAK memberi diskon
+keliru — promonya hanya tidak berlaku. Gagal-aman, tapi tetap salah; menyambungkannya butuh
+master Accurate masuk ke sisi Python (sekarang hanya punya master Excel per principle).
+
 ### Temuan untuk harga bertingkat per pelanggan
 
 `raw_data` hasil `item/list.do` **tidak memuat `priceCategory` sama sekali** (0 dari 4.182 item) — sesuai peringatan `ACCURATE_API_REFERENCE.md` bahwa `detailSellingPrice[]` hanya ada di `detail.do`. Jadi tier harga per pelanggan TIDAK bisa didapat dari sync `list.do` yang sekarang. Dua pilihan, keduanya belum dikerjakan:
@@ -409,9 +456,8 @@ Sudah dirty sebelum redesign: `app/(dashboard)/reconciliation/page.tsx`, `docs/R
 
 ### Yang paling mendesak berikutnya
 
-1. **Satuan pada order dan aturan promo harus dari master Accurate, bukan diketik bebas.**
-   Item `M5012001000740` berharga BAG 15.900 vs KRT 1.144.800 — salah satuan = nilai order
-   salah 72x. Peringatan merah `knownUnits` hanyalah jaring terakhir, bukan pencegah.
+1. ~~Satuan pada order dari master Accurate~~ — SELESAI 2026-09-08 (lihat bagian di atas).
+   Sisanya: satuan pada **aturan promo** masih dari surat, bukan master.
 2. Aplikasi Web Sales terpisah + identitas 100 sales (endpoint sudah siap).
 3. Worker penarik 5 menit (sekarang masih tarik manual dari halaman Order Masuk).
 4. Tahap 4 (faktur Accurate) dan tahap 5 (Rekapan Nota) belum disentuh.

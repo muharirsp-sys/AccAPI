@@ -39,13 +39,15 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: false, error: `Isi 1–${MAX_LINES} baris` }, { status: 400 });
     }
 
+    // Tidak ada default "PCS": item uji hanya punya harga KRT dan PACK, jadi satuan yang
+    // ditebak membuat harga jatuh ke fallback standar dengan satuan yang salah.
     const wanted = incoming.map((line) => ({
         code: String(line.code ?? "").trim(),
-        unit: String(line.unit ?? "").trim().toUpperCase() || "PCS",
+        unit: String(line.unit ?? "").trim().toUpperCase(),
         quantity: String(line.quantity ?? "").trim(),
     }));
-    if (wanted.some((line) => !line.code || !/^\d+$/.test(line.quantity) || Number(line.quantity) <= 0)) {
-        return NextResponse.json({ ok: false, error: "Setiap baris butuh kode barang dan jumlah lebih dari nol" }, { status: 400 });
+    if (wanted.some((line) => !line.code || !line.unit || !/^\d+$/.test(line.quantity) || Number(line.quantity) <= 0)) {
+        return NextResponse.json({ ok: false, error: "Setiap baris butuh kode barang, satuan, dan jumlah lebih dari nol" }, { status: 400 });
     }
 
     // Harga HANYA dari master hasil sync Accurate. Harga yang dikirim klien diabaikan.
@@ -56,6 +58,19 @@ export async function POST(request: NextRequest) {
         customerNo: customerNo || undefined,
         branchId: Number.isFinite(branchId) ? branchId : undefined,
     });
+    // Satuan di luar master DITOLAK, bukan dihitung dengan harga standar: selisih satuan pada
+    // satu item bisa 72x (BAG 15.900 vs KRT 1.144.800).
+    const wrongUnit = resolved.filter((row) => row.knownUnits?.length);
+    if (wrongUnit.length) {
+        return NextResponse.json({
+            ok: false,
+            error: wrongUnit.slice(0, 3)
+                .map((row) => `Satuan ${row.unit} tidak ada di master untuk ${row.code} (tersedia: ${row.knownUnits!.join(", ")})`)
+                .join("; "),
+            wrong_unit: wrongUnit.map((row) => ({ code: row.code, unit: row.unit, known_units: row.knownUnits })),
+        }, { status: 409 });
+    }
+
     const missing = resolved.filter((row) => row.price === null).map((row) => row.code);
     if (missing.length) {
         return NextResponse.json({

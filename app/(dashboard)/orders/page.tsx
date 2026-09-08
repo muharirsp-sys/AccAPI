@@ -47,7 +47,11 @@ async function send(method: string, path: string, body?: unknown) {
     return { ok: res.ok, data, error: String(data?.detail || data?.error || `HTTP ${res.status}`) };
 }
 
-const emptyLine = (): Line => ({ code: "", unit: "PCS", quantity: "1", price: "0" });
+// Satuan sengaja KOSONG: menebak "PCS" membuat harga jatuh ke fallback standar dengan satuan
+// yang salah (item `M5012001000740`: BAG 15.900 vs KRT 1.144.800). Satuan diisi dari master.
+const emptyLine = (): Line => ({ code: "", unit: "", quantity: "1", price: "0" });
+
+type ItemMaster = { found: boolean; name: string; units: string[] };
 
 export default function OrdersPage() {
     const today = new Date().toISOString().split("T")[0];
@@ -73,16 +77,50 @@ export default function OrdersPage() {
 
     useEffect(() => { loadOrders("mine"); }, [loadOrders]);
 
+    // Satuan dan nama barang dari master Accurate, satu permintaan per kode baru.
+    const [master, setMaster] = useState<Record<string, ItemMaster>>({});
+    const codesKey = [...new Set(lines.map(line => line.code.trim()).filter(Boolean))].join(",");
+    useEffect(() => {
+        const pending = codesKey.split(",").filter(code => code && !(code in master));
+        if (pending.length === 0) return;
+        const timer = setTimeout(async () => {
+            const loaded = await Promise.all(pending.map(async code => {
+                const fallback: [string, ItemMaster] = [code, { found: false, name: "", units: [] }];
+                try {
+                    const res = await fetch(`/api/items/units?code=${encodeURIComponent(code)}`);
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok || !data.ok) return fallback;
+                    return [code, { found: Boolean(data.found), name: String(data.name ?? ""), units: (data.units ?? []) as string[] }] as [string, ItemMaster];
+                } catch { return fallback; }
+            }));
+            setMaster(prev => ({ ...prev, ...Object.fromEntries(loaded) }));
+        }, 400);
+        return () => clearTimeout(timer);
+        // master sengaja tidak masuk deps: sudah dijaga filter `code in master`.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [codesKey]);
+
+    // Satuan yang tidak ada di master dibuang; satu-satunya satuan dipilih otomatis.
+    useEffect(() => {
+        setLines(prev => prev.map(line => {
+            const info = master[line.code.trim()];
+            if (!info || info.units.length === 0 || info.units.includes(line.unit)) return line;
+            return { ...line, unit: info.units.length === 1 ? info.units[0] : "" };
+        }));
+    }, [master]);
+
     const previewKey = JSON.stringify([channel, orderDate, customerNo, lines.map(line => [line.code, line.unit, line.quantity])]);
     useEffect(() => {
-        const ready = channel.trim() && /^\d{4}-\d{2}-\d{2}$/.test(orderDate)
-            && lines.some(line => line.code.trim() && Number(line.quantity) > 0);
+        // Baris kosong diabaikan, tapi baris yang sudah ada kodenya WAJIB lengkap: kalau baris
+        // setengah terisi hanya dibuang dari pratinjau, totalnya terlihat benar padahal kurang.
+        const filled = lines.filter(line => line.code.trim());
+        const ready = channel.trim() && /^\d{4}-\d{2}-\d{2}$/.test(orderDate) && filled.length > 0
+            && filled.every(line => line.unit.trim() && Number(line.quantity) > 0);
         if (!ready) { setPreview(null); setPreviewNote(""); return; }
         const timer = setTimeout(async () => {
             const payload = {
                 channel, order_date: orderDate, customer_no: customerNo.trim(),
-                lines: lines.filter(line => line.code.trim() && Number(line.quantity) > 0)
-                    .map(line => ({ code: line.code.trim(), unit: line.unit, quantity: line.quantity })),
+                lines: filled.map(line => ({ code: line.code.trim(), unit: line.unit, quantity: line.quantity })),
             };
             const res = await fetch("/api/orders/preview", {
                 method: "POST", headers: { "Content-Type": "application/json" },
@@ -184,27 +222,54 @@ export default function OrdersPage() {
                 </div>
 
                 <div className="space-y-2">
-                    {lines.map((line, index) => (
+                    {lines.map((line, index) => {
+                        const info = master[line.code.trim()];
+                        return (
                         <div key={index} className="flex flex-wrap items-center gap-2">
-                            {(["code", "unit", "quantity", "price"] as const).map(field => (
-                                <input key={field} value={line[field]} placeholder={field} onChange={e => updateLine(index, field, e.target.value)}
-                                    className={`bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300 ${field === "code" ? "w-56" : "w-28"}`} />
-                            ))}
+                            <input value={line.code} placeholder="kode" onChange={e => updateLine(index, "code", e.target.value)}
+                                className="w-56 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
+                            {/* Satuan dari master Accurate. Item tanpa daftar harga (mis. sebelum sync
+                                harga jual jalan) tetap bisa diketik — server tidak punya master untuk
+                                menolaknya; itu degradasi, bukan izin menebak. */}
+                            {info && info.units.length > 0 ? (
+                                <select aria-label="Satuan" value={line.unit} onChange={e => updateLine(index, "unit", e.target.value)}
+                                    className="w-28 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300">
+                                    <option value="">satuan</option>
+                                    {info.units.map(unit => <option key={unit} value={unit}>{unit}</option>)}
+                                </select>
+                            ) : (
+                                <input aria-label="Satuan" value={line.unit} placeholder="satuan" onChange={e => updateLine(index, "unit", e.target.value.toUpperCase())}
+                                    className="w-28 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
+                            )}
+                            <input value={line.quantity} placeholder="jumlah" onChange={e => updateLine(index, "quantity", e.target.value)}
+                                className="w-28 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
+                            <input value={line.price} placeholder="harga" onChange={e => updateLine(index, "price", e.target.value)}
+                                className="w-28 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
                             {lines.length > 1 && (
                                 <button onClick={() => setLines(prev => prev.filter((_, i) => i !== index))} className="text-rose-600 hover:text-rose-500" aria-label="Hapus baris">
                                     <Trash2 size={15} />
                                 </button>
                             )}
-                            {priceByCode.get(`${line.code.trim()}|${line.unit.trim().toUpperCase()}`) && (
-                                <p className={`w-full text-xs ${priceByCode.get(`${line.code.trim()}|${line.unit.trim().toUpperCase()}`)?.knownUnits?.length ? "text-rose-600" : "text-slate-400"}`}>
-                                    {(() => {
-                                        const info = priceByCode.get(`${line.code.trim()}|${line.unit.trim().toUpperCase()}`)!;
-                                        if (info.source === "tier") return `Harga ${info.priceCategoryName ?? "kategori"} ${info.price} · ${info.branchName ?? "-"} · berlaku ${info.effectiveDate ?? "-"}`;
-                                        if (info.knownUnits?.length) return `Harga standar ${info.price} — satuan ${info.unit} tidak ada di daftar harga (tersedia: ${info.knownUnits.join(", ")})`;
-                                        return `Harga standar ${info.price} (kategori pelanggan belum tersedia)`;
-                                    })()}
+                            {info && (
+                                <p className={`w-full text-xs ${info.found ? "text-slate-400" : "text-rose-600"}`}>
+                                    {!info.found
+                                        ? `Kode ${line.code.trim()} tidak ada di master Accurate`
+                                        : info.units.length === 0
+                                            ? `${info.name} — belum ada daftar harga, satuan tidak dapat diperiksa`
+                                            : info.name}
                                 </p>
                             )}
+                            {(() => {
+                                const priceRow = priceByCode.get(`${line.code.trim()}|${line.unit.trim().toUpperCase()}`);
+                                if (!priceRow) return null;
+                                return (
+                                    <p className="w-full text-xs text-slate-400">
+                                        {priceRow.source === "tier"
+                                            ? `Harga ${priceRow.priceCategoryName ?? "kategori"} ${priceRow.price} · ${priceRow.branchName ?? "-"} · berlaku ${priceRow.effectiveDate ?? "-"}`
+                                            : `Harga standar ${priceRow.price} (kategori pelanggan belum tersedia)`}
+                                    </p>
+                                );
+                            })()}
                             {adviceByCode.get(line.code.trim()) && (
                                 <p className="w-full flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300">
                                     <Lightbulb size={13} className="mt-0.5 shrink-0" aria-hidden />
@@ -212,7 +277,8 @@ export default function OrdersPage() {
                                 </p>
                             )}
                         </div>
-                    ))}
+                        );
+                    })}
                 </div>
 
                 {previewNote && <p className="text-xs text-rose-600">{previewNote}</p>}

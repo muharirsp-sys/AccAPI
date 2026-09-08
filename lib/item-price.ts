@@ -15,6 +15,10 @@
  *   cabang itu. Urutan sebaliknya membuat cabang lain menang hanya karena harganya paling
  *   baru diperbarui.
  * - Fallback: kalau tidak ada baris harga yang cocok, pakai `item.unitPrice` (harga standar).
+ * - Satuan yang SAH untuk sebuah item = satuan yang punya baris harga di `item_selling_price`
+ *   (mis. `M5012001000740` hanya BAG dan KRT). Satuan di luar daftar itu bukan fallback yang
+ *   aman: harga standar item ini per BAG, jadi "3 LUSIN" bernilai 72x salah. `itemUnits`
+ *   adalah sumber pilihan satuan di UI, dan `knownUnits` pada hasil adalah penolakannya.
  */
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -34,6 +38,54 @@ export type PriceResult = {
     // harga standar item ini per BAG, jadi "3 LUSIN" akan bernilai salah tanpa peringatan.
     knownUnits?: string[];
 };
+
+// Satuan master per kode: distinct dari daftar harga Accurate. Dipakai UI untuk membatasi
+// pilihan satuan, dan resolvePrices untuk menandai satuan yang tidak ada di master.
+export async function itemUnits(codes: string[]): Promise<Map<string, string[]>> {
+    const clean = [...new Set(codes.map((code) => code.trim()).filter(Boolean))];
+    if (clean.length === 0) return new Map();
+    const rows = await db.selectDistinct({ itemNo: itemSellingPrice.itemNo, unitName: itemSellingPrice.unitName })
+        .from(itemSellingPrice).where(inArray(itemSellingPrice.itemNo, clean));
+    const units = new Map<string, string[]>();
+    for (const row of rows) {
+        if (!row.unitName) continue;
+        if (!units.has(row.itemNo)) units.set(row.itemNo, []);
+        units.get(row.itemNo)!.push(row.unitName);
+    }
+    for (const list of units.values()) list.sort();
+    return units;
+}
+
+type LineContext = {
+    // Kunci `${code}|${unit}` -> baris harga terpilih untuk kategori pelanggan.
+    bestTier: Map<string, { price: number; priceCategoryName: string; branchName: string; effectiveDate: string }>;
+    standard: Map<string, number | null>;
+    unitsByCode: Map<string, string[]>;
+    categoryName?: string;
+};
+
+// Pure supaya urutan keputusan bisa diuji tanpa DB: tier -> harga standar -> tidak ada harga,
+// dan satuan di luar master selalu terlihat lewat knownUnits.
+export function priceForLine(line: PriceRequest, ctx: LineContext): PriceResult {
+    const code = line.code.trim();
+    const unit = line.unit.trim().toUpperCase();
+    const known = ctx.unitsByCode.get(code) ?? [];
+    const unitOutsideMaster = known.length > 0 && !known.includes(unit);
+    const tier = unitOutsideMaster ? undefined : ctx.bestTier.get(`${code}|${unit}`);
+    if (tier) {
+        return {
+            code, unit, price: tier.price, source: "tier",
+            priceCategoryName: tier.priceCategoryName || ctx.categoryName,
+            branchName: tier.branchName, effectiveDate: tier.effectiveDate,
+        };
+    }
+    const fallback = ctx.standard.get(code);
+    if (fallback === null || fallback === undefined) return { code, unit, price: null, source: "missing" };
+    return {
+        code, unit, price: fallback, source: "standard",
+        ...(unitOutsideMaster ? { knownUnits: known } : {}),
+    };
+}
 
 export async function customerPriceCategory(customerNo: string) {
     if (!customerNo.trim()) return null;
@@ -92,31 +144,14 @@ export async function resolvePrices(
     }
 
     const bestTier = new Map<string, (typeof tiers)[number]>();
-    const unitsByCode = new Map<string, Set<string>>();
     for (const row of tiers) {
         const key = `${row.itemNo}|${row.unitName}`;
         if (!bestTier.has(key)) bestTier.set(key, row);
-        if (!unitsByCode.has(row.itemNo)) unitsByCode.set(row.itemNo, new Set());
-        unitsByCode.get(row.itemNo)!.add(row.unitName);
     }
 
-    return lines.map((line) => {
-        const code = line.code.trim();
-        const unit = line.unit.trim().toUpperCase();
-        const tier = bestTier.get(`${code}|${unit}`);
-        if (tier) {
-            return {
-                code, unit, price: tier.price, source: "tier" as const,
-                priceCategoryName: tier.priceCategoryName || category?.name,
-                branchName: tier.branchName, effectiveDate: tier.effectiveDate,
-            };
-        }
-        const fallback = standard.get(code);
-        if (fallback === null || fallback === undefined) return { code, unit, price: null, source: "missing" as const };
-        const known = unitsByCode.get(code);
-        return {
-            code, unit, price: fallback, source: "standard" as const,
-            ...(known && known.size > 0 && !known.has(unit) ? { knownUnits: [...known].sort() } : {}),
-        };
-    });
+    // Satuan master diambil lepas dari kategori: pelanggan tanpa kategori harga pun tidak boleh
+    // memasukkan satuan yang tidak ada pada itemnya.
+    const unitsByCode = await itemUnits(codes);
+    const ctx = { bestTier, standard, unitsByCode, categoryName: category?.name };
+    return lines.map((line) => priceForLine(line, ctx));
 }
