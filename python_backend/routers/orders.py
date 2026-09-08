@@ -4,13 +4,16 @@ Dependensi: shared auth/RBAC, summary_store, summary_rules (Program, calculate),
 Main Functions: published_rules, preview_order, create_order, pull_requests, list_orders, order_detail.
 Side Effects: SQLite read/write; tidak menulis faktur Accurate dan tidak memanggil AI.
 """
+import hmac
 import json
+import os
 import sqlite3
 import uuid
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
 from shared import get_current_user, user_has_permission, validate_csrf_request
-from summary_store import connect, identity
+from summary_store import JsonStore, connect, identity
 from summary_rules import Program, calculate, suggestions
 import websales_store
 
@@ -159,22 +162,19 @@ async def create_order(request: Request):
     return {"ok": True, "order": order_detail_row(order_id, user)}
 
 
-@router.post("/pull")
-async def pull_requests(request: Request):
+def pull_once(owner):
     """Tarik permintaan order Web Sales ke internal. Aman diulang.
 
     Dua basis data tidak bisa satu transaksi, jadi urutannya: tulis order internal
     dengan `request_id` unik lebih dulu, baru tandai permintaan sebagai `pulled`.
     Bila penandaan gagal, pull berikutnya menabrak kunci unik dan permintaan itu
-    hanya ditandai, bukan digandakan.
+    hanya ditandai, bukan digandakan. Karena itu dua pull yang jalan bersamaan pun
+    tidak menggandakan order — kunci unik yang menjaga, bukan penjadwalannya.
     """
-    user = require_user(request, True)
-    if not user_has_permission(user, "order", "edit"):
-        raise HTTPException(403, "Hanya petugas yang boleh menarik order Web Sales")
     imported, duplicated, failed = [], [], []
     for entry in websales_store.pending():
         try:
-            order_id = store_order(identity(user), entry["outlet"], entry["channel"], entry["order_date"],
+            order_id = store_order(owner, entry["outlet"], entry["channel"], entry["order_date"],
                                    entry["note"], entry["lines"], request_id=entry["id"])
             imported.append({"request_id": entry["id"], "order_id": order_id})
         except sqlite3.IntegrityError:
@@ -187,7 +187,93 @@ async def pull_requests(request: Request):
         websales_store.mark_pulled(entry["id"])
     for request_id in duplicated:
         websales_store.mark_pulled(request_id)
-    return {"ok": True, "imported": imported, "already_imported": duplicated, "failed": failed}
+    return {"imported": imported, "already_imported": duplicated, "failed": failed}
+
+
+@router.post("/pull")
+async def pull_requests(request: Request):
+    """Tarik manual oleh petugas; jalur otomatis ada di /orders/pull-cron."""
+    user = require_user(request, True)
+    if not user_has_permission(user, "order", "edit"):
+        raise HTTPException(403, "Hanya petugas yang boleh menarik order Web Sales")
+    return {"ok": True, **pull_once(identity(user))}
+
+
+# Koneksi Web Sales: petugas menyalakan, penarikan berjalan sampai dinonaktifkan.
+#
+# ponytail: TIDAK ada worker asyncio di dalam FastAPI. Penjadwalnya cron 5 menit yang sudah
+# terpasang (pola sama dengan /api/cron/sync-accurate), dan endpoint ini no-op saat koneksi
+# mati. Alasannya: status bertahan melewati restart, tidak ada dua worker saat uvicorn
+# dijalankan multi-proses, dan tidak ada task yang harus dimatikan rapi. Naikkan ke worker
+# in-process hanya kalau latensi 5 menit terbukti tidak cukup.
+CONNECTION = JsonStore("websales_connection")
+BLANK_CONNECTION = {"enabled": False, "owner": "", "updated_by": "", "updated_at": "",
+                    "last_run_at": "", "last_result": None}
+
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def connection_state():
+    try:
+        return {**BLANK_CONNECTION, **CONNECTION["state"]}
+    except (KeyError, ValueError):
+        return dict(BLANK_CONNECTION)
+
+
+@router.get("/connection")
+def connection_status(request: Request):
+    require_user(request)
+    return {"ok": True, "connection": connection_state(), "pending": websales_store.pending_count()}
+
+
+@router.post("/connection")
+async def set_connection(request: Request):
+    user = require_user(request, True)
+    if not user_has_permission(user, "order", "edit"):
+        raise HTTPException(403, "Hanya petugas yang boleh mengatur koneksi Web Sales")
+    try:
+        body = json.loads(await request.body() or b"{}")
+        if not isinstance(body, dict):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Format permintaan tidak valid") from None
+    if not isinstance(body.get("enabled"), bool):
+        raise HTTPException(400, "Kirim enabled true atau false")
+    state = connection_state()
+    # Order hasil tarik otomatis dimiliki petugas yang menyalakan koneksi — itu yang
+    # membuatnya terlihat di "Milik saya" dan jelas siapa yang bertanggung jawab.
+    state.update(enabled=body["enabled"], updated_by=identity(user), updated_at=now_iso())
+    if body["enabled"]:
+        state["owner"] = identity(user)
+    CONNECTION["state"] = state
+    return {"ok": True, "connection": state, "pending": websales_store.pending_count()}
+
+
+@router.post("/pull-cron")
+async def pull_cron(request: Request):
+    """Dipanggil penjadwal tiap 5 menit; TIDAK memakai sesi pengguna.
+
+    Secret dibandingkan konstan-waktu dan wajib ada: tanpa `CRON_SECRET` endpoint ini
+    menolak, bukan terbuka.
+    """
+    secret = str(os.getenv("CRON_SECRET", "")).strip()
+    if not secret:
+        raise HTTPException(503, "CRON_SECRET belum dikonfigurasi di server")
+    if not hmac.compare_digest(str(request.headers.get("X-Cron-Secret", "")), secret):
+        raise HTTPException(403, "Secret penjadwal tidak cocok")
+    state = connection_state()
+    if not state["enabled"]:
+        return {"ok": True, "skipped": "koneksi Web Sales dimatikan", "imported": [],
+                "already_imported": [], "failed": []}
+    if not state["owner"]:
+        raise HTTPException(409, "Koneksi aktif tanpa pemilik; nyalakan ulang dari halaman Order Masuk")
+    result = pull_once(state["owner"])
+    state.update(last_run_at=now_iso(),
+                 last_result={key: len(value) for key, value in result.items()})
+    CONNECTION["state"] = state
+    return {"ok": True, **result}
 
 
 def order_detail_row(order_id, user, everyone=False):

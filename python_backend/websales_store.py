@@ -71,6 +71,12 @@ def pending(limit=200):
     return [{**dict(row), "lines": json.loads(row["lines"])} for row in rows]
 
 
+def pending_count():
+    """Berapa permintaan yang masih menunggu; dipakai status koneksi, bukan untuk pull."""
+    with connect() as db:
+        return db.execute("SELECT count(*) FROM order_request WHERE status='pending'").fetchone()[0]
+
+
 def mark_pulled(request_id):
     """Ditandai SETELAH order internal tersimpan; aman dijalankan ulang."""
     with connect() as db:

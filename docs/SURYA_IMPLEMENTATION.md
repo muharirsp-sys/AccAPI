@@ -228,6 +228,60 @@ eksak (`line["unit"] == program.unit`). Akibatnya program bersatuan salah TIDAK 
 keliru — promonya hanya tidak berlaku. Gagal-aman, tapi tetap salah; menyambungkannya butuh
 master Accurate masuk ke sisi Python (sekarang hanya punya master Excel per principle).
 
+### Penarikan otomatis 5 menit — selesai 2026-09-08 (tahap 4, bagian penjadwal)
+
+Keputusan pengguna: "petugas mengaktifkan koneksi, server terus berjalan sampai dinonaktifkan."
+
+**Tidak dibangun sebagai worker asyncio di dalam FastAPI.** Penjadwalnya cron 5 menit yang
+sudah terpasang di VPS (pola identik `/api/cron/sync-accurate`), dan endpoint penarik no-op
+saat koneksi mati. Alasan pilihan ini: status koneksi bertahan melewati restart, tidak ada dua
+worker saat uvicorn dijalankan multi-proses, tidak ada task yang harus dimatikan rapi, dan
+tidak ada proses baru untuk dideploy. Naikkan ke worker in-process hanya kalau latensi 5 menit
+terbukti tidak cukup.
+
+- `pull_once(owner)` dipisah dari handler `POST /orders/pull` supaya penjadwal dan tombol
+  manual memakai jalur yang sama persis.
+- `GET /orders/connection` (izin `order.view`): status + jumlah permintaan yang menunggu +
+  hasil jalan terakhir. `POST /orders/connection` (izin `order.edit` + CSRF): `{enabled}`.
+- Order hasil tarik otomatis dimiliki **petugas yang menyalakan koneksi** (disimpan pada
+  status), bukan tanpa pemilik — jadi tetap terlihat di "Milik saya" dan jelas siapa yang
+  bertanggung jawab.
+- `POST /orders/pull-cron`: TANPA sesi pengguna, secret `CRON_SECRET` dibandingkan
+  konstan-waktu. `CRON_SECRET` kosong -> **503, bukan terbuka**.
+- `app/api/cron/pull-websales/route.ts`: gerbang `requireCronSecret` (Bearer) lalu meneruskan
+  ke FastAPI dengan header `X-Cron-Secret`. Satu nilai secret dipakai kedua sisi.
+- Halaman Order Masuk: tombol "Koneksi Web Sales: AKTIF/MATI", tombol "Tarik sekarang", dan
+  satu baris status (menunggu berapa, terakhir jalan kapan, berapa masuk/gagal).
+- Dua pull yang jalan bersamaan tidak menggandakan order: yang menjaga adalah kunci UNIQUE
+  `request_id`, bukan penjadwalannya.
+
+Bukti offline: `python python_backend/test_websales_pull.py` lulus dengan blok baru
+`check_connection` (tanpa `CRON_SECRET` -> 503; secret salah/absen -> 403; koneksi mati ->
+`skipped` dan permintaan tetap menunggu; sales tidak boleh menyalakan koneksi -> 403;
+`enabled` bukan boolean -> 400; koneksi hidup -> 1 order masuk atas nama petugas dan
+`last_result` tercatat; dimatikan lagi -> penarikan berhenti walau ada permintaan baru).
+`test_orders.py` dan `test_summary_rules.py` tetap lulus; `tsc` dan eslint bersih.
+
+Bukti live lokal (uvicorn + Next sungguhan, bukan TestClient):
+
+| Uji | Hasil |
+|---|---|
+| `GET /api/cron/pull-websales` tanpa Bearer | 401 |
+| Dengan Bearer, `CRON_SECRET` belum ada di backend | 503 "CRON_SECRET belum dikonfigurasi di server" |
+| Setelah `CRON_SECRET` di-set di backend, koneksi default mati | 200 `{"skipped":"koneksi Web Sales dimatikan"}` |
+| `POST /orders/pull-cron` dengan secret salah | 403 "Secret penjadwal tidak cocok" |
+
+Batas kejujuran: tombol koneksi di UI TIDAK dilihat langsung di browser lokal karena
+`/orders/connection` FastAPI menolak tanpa sesi Better Auth yang sah (sesi lokal kedaluwarsa,
+`LOCAL_AUTH_BYPASS` hanya berlaku di Next). Jalur HTTP-nya diuji lewat TestClient dengan RBAC
+tiruan; jalur penjadwal diuji live seperti tabel di atas.
+
+**Yang WAJIB dilakukan di produksi:** set `CRON_SECRET` pada container **backend** (sekarang
+hanya frontend yang punya), lalu tambahkan scheduled task tiap 5 menit:
+`curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://<app>/api/cron/pull-websales`.
+Cron boleh dipasang lebih dulu — selama koneksi mati, ia tidak berefek apa pun.
+Untuk dev lokal, `CRON_SECRET` ditambahkan ke `python_backend/.env` (gitignored).
+
 ### Temuan untuk harga bertingkat per pelanggan
 
 `raw_data` hasil `item/list.do` **tidak memuat `priceCategory` sama sekali** (0 dari 4.182 item) — sesuai peringatan `ACCURATE_API_REFERENCE.md` bahwa `detailSellingPrice[]` hanya ada di `detail.do`. Jadi tier harga per pelanggan TIDAK bisa didapat dari sync `list.do` yang sekarang. Dua pilihan, keduanya belum dikerjakan:
@@ -458,8 +512,10 @@ Sudah dirty sebelum redesign: `app/(dashboard)/reconciliation/page.tsx`, `docs/R
 
 1. ~~Satuan pada order dari master Accurate~~ — SELESAI 2026-09-08 (lihat bagian di atas).
    Sisanya: satuan pada **aturan promo** masih dari surat, bukan master.
-2. Aplikasi Web Sales terpisah + identitas 100 sales (endpoint sudah siap).
-3. Worker penarik 5 menit (sekarang masih tarik manual dari halaman Order Masuk).
+2. Aplikasi Web Sales terpisah + identitas 100 sales (endpoint sudah siap). **BUTUH KEPUTUSAN
+   PENGGUNA** soal topologi dan identitas — lihat "Keputusan terbuka: bentuk aplikasi Web
+   Sales" di bawah. Ini satu-satunya item yang tidak bisa dilanjutkan tanpa jawaban.
+3. ~~Worker penarik 5 menit~~ — SELESAI 2026-09-08 sebagai cron 5 menit + tombol koneksi.
 4. Tahap 4 (faktur Accurate) dan tahap 5 (Rekapan Nota) belum disentuh.
 5. Skema DB dev lokal masih tertinggal beberapa modul utuh (`app_setting`, `pick_group`,
    `rekap_upload`, `wave_line_pool`, `reconciliation_*`), sehingga `0002_rekapan_nota.sql`

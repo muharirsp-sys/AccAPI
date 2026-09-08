@@ -105,7 +105,54 @@ def main():
                                                          "lines": [dict(code="A", unit="PCS", quantity="10", price="1000")]})
     assert direct.json()["order"]["result"]["discount"] == "500.00", direct.text
     assert direct.json()["order"]["request_id"] is None, direct.json()["order"]
+
+    check_connection(client)
     print("websales split + pull check: OK")
+
+
+def check_connection(client):
+    """Koneksi 5 menit: mati = no-op, hidup = menarik, secret salah/absen = tolak."""
+    os.environ.pop("CRON_SECRET", None)
+    assert client.post("/orders/pull-cron").status_code == 503
+
+    os.environ["CRON_SECRET"] = "rahasia-uji"
+    assert client.post("/orders/pull-cron", headers={"X-Cron-Secret": "salah"}).status_code == 403
+    assert client.post("/orders/pull-cron").status_code == 403
+
+    # Default mati: cron boleh terpasang tanpa efek apa pun.
+    cron = {"X-Cron-Secret": "rahasia-uji"}
+    status = client.get("/orders/connection", headers=SALES).json()
+    assert status["connection"]["enabled"] is False, status
+    assert client.post("/orders/pull-cron", headers=cron).json()["skipped"], "koneksi mati harus no-op"
+
+    # Sales tidak boleh menyalakan koneksi; itu wewenang petugas.
+    assert client.post("/orders/connection", headers=SALES, json={"enabled": True}).status_code == 403
+    assert client.post("/orders/connection", headers=ADMIN, json={"enabled": "ya"}).status_code == 400
+
+    client.post("/websales/orders", headers=SALES, json=dict(
+        outlet="TOKO CRON", channel="GT", order_date="2026-06-15",
+        lines=[dict(code="A", unit="PCS", quantity="3")]))
+    assert client.get("/orders/connection", headers=ADMIN).json()["pending"] == 1
+
+    on = client.post("/orders/connection", headers=ADMIN, json={"enabled": True})
+    assert on.status_code == 200 and on.json()["connection"]["owner"], on.text
+
+    ran = client.post("/orders/pull-cron", headers=cron).json()
+    assert len(ran["imported"]) == 1 and "skipped" not in ran, ran
+    # Order otomatis dimiliki petugas yang menyalakan koneksi, bukan tanpa pemilik.
+    order_id = ran["imported"][0]["order_id"]
+    assert client.get(f"/orders/{order_id}", headers=ADMIN).status_code == 200
+    after = client.get("/orders/connection", headers=ADMIN).json()
+    assert after["connection"]["last_run_at"] and after["pending"] == 0, after
+    assert after["connection"]["last_result"] == {"imported": 1, "already_imported": 0, "failed": 0}, after
+
+    # Dimatikan: penarikan berhenti walau ada permintaan baru menunggu.
+    client.post("/orders/connection", headers=ADMIN, json={"enabled": False})
+    client.post("/websales/orders", headers=SALES, json=dict(
+        outlet="TOKO SETELAH MATI", channel="GT", order_date="2026-06-15",
+        lines=[dict(code="A", unit="PCS", quantity="1")]))
+    assert client.post("/orders/pull-cron", headers=cron).json()["skipped"], "koneksi mati harus berhenti menarik"
+    assert client.get("/orders/connection", headers=ADMIN).json()["pending"] == 1
 
 
 if __name__ == "__main__":

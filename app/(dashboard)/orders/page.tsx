@@ -52,6 +52,13 @@ async function send(method: string, path: string, body?: unknown) {
 const emptyLine = (): Line => ({ code: "", unit: "", quantity: "1", price: "0" });
 
 type ItemMaster = { found: boolean; name: string; units: string[] };
+type ConnectionStatus = {
+    pending: number;
+    connection: {
+        enabled: boolean; owner: string; updated_by: string; updated_at: string;
+        last_run_at: string; last_result: { imported: number; already_imported: number; failed: number } | null;
+    };
+};
 
 export default function OrdersPage() {
     const today = new Date().toISOString().split("T")[0];
@@ -68,6 +75,26 @@ export default function OrdersPage() {
     const [preview, setPreview] = useState<{ result: Result | null; suggestions: Suggestion[]; prices: PriceInfo[] } | null>(null);
     const [previewNote, setPreviewNote] = useState("");
 
+    const [connection, setConnection] = useState<ConnectionStatus | null>(null);
+
+    const loadConnection = useCallback(async () => {
+        const res = await send("GET", "/orders/connection");
+        if (res.ok) setConnection(res.data as ConnectionStatus);
+    }, []);
+
+    // Petugas menyalakan koneksi sekali; penjadwal 5 menit yang menarik, bukan halaman ini.
+    const toggleConnection = async (enabled: boolean) => {
+        setBusy(true);
+        try {
+            const res = await send("POST", "/orders/connection", { enabled });
+            if (!res.ok) { toast.error(res.error); return; }
+            setConnection(res.data as ConnectionStatus);
+            toast.success(enabled ? "Koneksi Web Sales aktif; order ditarik tiap 5 menit." : "Koneksi Web Sales dimatikan.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const loadOrders = useCallback(async (which: "mine" | "all") => {
         const res = await send("GET", `/orders?scope=${which}`);
         if (!res.ok) return;
@@ -75,7 +102,7 @@ export default function OrdersPage() {
         setScope(res.data.scope === "all" ? "all" : "mine");
     }, []);
 
-    useEffect(() => { loadOrders("mine"); }, [loadOrders]);
+    useEffect(() => { loadOrders("mine"); loadConnection(); }, [loadOrders, loadConnection]);
 
     // Satuan dan nama barang dari master Accurate, satu permintaan per kode baru.
     const [master, setMaster] = useState<Record<string, ItemMaster>>({});
@@ -179,6 +206,7 @@ export default function OrdersPage() {
             toast.success(`Ditarik ${imported} order baru${repeated ? `, ${repeated} sudah pernah masuk` : ""}${failed.length ? `, ${failed.length} gagal` : ""}`);
             failed.slice(0, 3).forEach(item => toast.error(`${item.request_id.slice(0, 8)}: ${item.error}`));
             loadOrders(scope);
+            loadConnection();
         } finally {
             setBusy(false);
         }
@@ -328,8 +356,14 @@ export default function OrdersPage() {
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                     <h2 className="text-lg font-bold">Order terakhir ({scope === "all" ? "semua sales" : "milik saya"})</h2>
                     <div className="flex flex-wrap gap-2">
+                        {connection && (
+                            <button onClick={() => toggleConnection(!connection.connection.enabled)} disabled={busy}
+                                className={`text-xs px-3 py-1.5 rounded-lg font-semibold text-white disabled:opacity-50 ${connection.connection.enabled ? "bg-emerald-600 hover:bg-emerald-500" : "bg-slate-600 hover:bg-slate-500"}`}>
+                                {connection.connection.enabled ? "Koneksi Web Sales: AKTIF" : "Koneksi Web Sales: MATI"}
+                            </button>
+                        )}
                         <button onClick={pullWebSales} disabled={busy} className="text-xs bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50">
-                            Tarik order Web Sales
+                            Tarik sekarang
                         </button>
                         {(["mine", "all"] as const).map(which => (
                             <button key={which} onClick={() => loadOrders(which)} className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg">
@@ -338,6 +372,16 @@ export default function OrdersPage() {
                         ))}
                     </div>
                 </div>
+                {connection && (
+                    <p className="text-xs text-slate-400 mb-3">
+                        {connection.connection.enabled
+                            ? `Penjadwal menarik order tiap 5 menit sampai koneksi dimatikan. Order otomatis dicatat atas nama ${connection.connection.owner || "-"}.`
+                            : "Penarikan otomatis mati; order Web Sales hanya masuk saat ditarik manual."}
+                        {` Menunggu: ${connection.pending}.`}
+                        {connection.connection.last_run_at && ` Terakhir jalan ${connection.connection.last_run_at.slice(0, 16).replace("T", " ")} UTC`}
+                        {connection.connection.last_result && ` (${connection.connection.last_result.imported} masuk, ${connection.connection.last_result.failed} gagal).`}
+                    </p>
+                )}
                 {orders.length === 0 ? (
                     <p className="text-sm text-slate-400">Belum ada order.</p>
                 ) : (
