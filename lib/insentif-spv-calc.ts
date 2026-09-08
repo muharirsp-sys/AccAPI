@@ -43,6 +43,7 @@
  */
 
 import { roundRatio, isSchemePrincipal, type StatusInsentif } from "./insentif-sales-calc.ts";
+import { DEFAULT_KONSTANTA, type Konstanta } from "./insentif-konstanta.ts";
 
 /**
  * Pengali SPV: semua atau tidak sama sekali pada ambang 100% (dikonfirmasi user 2026-08-26).
@@ -51,10 +52,14 @@ import { roundRatio, isSchemePrincipal, type StatusInsentif } from "./insentif-s
  * nominal Sales. Rasio dibulatkan lebih dulu (roundRatio) supaya 0,9999999999 hasil SUM
  * double precision tidak menjatuhkan seluruh rate ke nol dan berubah antar refresh.
  */
-export function spvMultiplier(realisasi: number, target: number): number {
+export function spvMultiplier(
+    realisasi: number,
+    target: number,
+    ambang: number = DEFAULT_KONSTANTA.spv.ambang,
+): number {
     if (!Number.isFinite(target) || target <= 0) return 0;
     if (!Number.isFinite(realisasi)) return 0;
-    return roundRatio(realisasi / target) >= 1 ? 1 : 0;
+    return roundRatio(realisasi / target) >= ambang ? 1 : 0;
 }
 
 export interface SpvSalesRow {
@@ -90,10 +95,10 @@ export interface SpvInsentifResult {
  * Math.max menangani penahanan itu sekaligus: formula 200rb + 1,2jt/n turun di bawah 400rb
  * tepat setelah n=6, jadi tidak perlu cabang khusus.
  */
-export function ratePerPrincipalSpv(n: number): number {
+export function ratePerPrincipalSpv(n: number, k: Konstanta = DEFAULT_KONSTANTA): number {
     if (n <= 0) return 0;
-    if (n === 1) return 1_500_000;
-    return Math.max(400_000, 200_000 + 1_200_000 / n);
+    if (n === 1) return k.spv.rate1;
+    return Math.max(k.spv.rateFloor, k.spv.rateBase + k.spv.rateFaktor / n);
 }
 
 interface PrincipleAgg {
@@ -126,13 +131,14 @@ function groupByPrinciple(rows: SpvSalesRow[]): Map<string, PrincipleAgg> {
 function resolveValidSet(
     candidates: string[],
     supportOf: (principle: string) => number,
+    k: Konstanta,
 ): { valid: string[]; rate: number; dikecualikan: string[] } {
     let valid = [...candidates];
     const dikecualikan: string[] = [];
-    let rate = ratePerPrincipalSpv(valid.length);
+    let rate = ratePerPrincipalSpv(valid.length, k);
 
     for (let i = 0; i < 20; i++) {
-        rate = ratePerPrincipalSpv(valid.length);
+        rate = ratePerPrincipalSpv(valid.length, k);
         if (valid.length === 0) break;
         // "lebih dari" (bukan >=): support tepat sama dengan rate TIDAK mengeluarkan principal —
         // ia tetap dihitung, distributor cuma bayar 0 untuknya (rate − support = 0).
@@ -141,7 +147,7 @@ function resolveValidSet(
         dikecualikan.push(...covered);
         valid = valid.filter((p) => !covered.includes(p));
     }
-    return { valid, rate: ratePerPrincipalSpv(valid.length), dikecualikan };
+    return { valid, rate: ratePerPrincipalSpv(valid.length, k), dikecualikan };
 }
 
 /**
@@ -151,6 +157,7 @@ function resolveValidSet(
 export function calculateInsentifSPV(
     rows: SpvSalesRow[],
     supportByPrinciple?: Map<string, number>,
+    k: Konstanta = DEFAULT_KONSTANTA,
 ): SpvInsentifResult {
     const grouped = groupByPrinciple(rows);
     const supportOf = (p: string) => supportByPrinciple?.get(p) ?? 0;
@@ -161,7 +168,7 @@ export function calculateInsentifSPV(
         .filter(([, g]) => g.hasScheme && g.targetValue > 0)
         .map(([p]) => p);
 
-    const { valid, rate, dikecualikan } = resolveValidSet(schemePrincipals, supportOf);
+    const { valid, rate, dikecualikan } = resolveValidSet(schemePrincipals, supportOf, k);
     const jumlahValid = valid.length;
 
     if (jumlahValid === 0 || rate <= 0) {
@@ -170,7 +177,7 @@ export function calculateInsentifSPV(
 
     const rincian: SpvPrincipalDetail[] = valid.map((principle) => {
         const g = grouped.get(principle)!;
-        const pctValue = spvMultiplier(g.realisasiValue, g.targetValue);
+        const pctValue = spvMultiplier(g.realisasiValue, g.targetValue, k.spv.ambang);
         const support = supportOf(principle);
         const porsiDistributor = Math.max(0, rate - support);
         return {

@@ -10,17 +10,23 @@
  * ikut bergeser dan pemeriksaan drift Finance tetap membandingkan bruto lawan bruto.
  */
 
-/** Tarif PPh atas insentif sales. Diberlakukan sejak 2026-08-31 atas permintaan user. */
-export const PPH_RATE = 0.025;
+import { DEFAULT_KONSTANTA } from "./insentif-konstanta.ts";
+
+/**
+ * Tarif PPh BAWAAN atas insentif sales. Diberlakukan sejak 2026-08-31 atas permintaan user.
+ * Bisa diubah dari panel Admin — pemanggil mengoper `rate` (lib/insentif-konstanta).
+ */
+export const PPH_RATE = DEFAULT_KONSTANTA.pph.rate;
 
 /** Potongan PPh, dibulatkan ke rupiah terdekat — pembayaran tidak mengenal sen. */
-export function pphInsentif(bruto: number): number {
+export function pphInsentif(bruto: number, rate: number = PPH_RATE): number {
     if (!Number.isFinite(bruto) || bruto <= 0) return 0;
-    return Math.round(bruto * PPH_RATE);
+    if (!Number.isFinite(rate) || rate <= 0) return 0;
+    return Math.round(bruto * rate);
 }
 
 /** Yang benar-benar dibayar ke penerima. netto + pph selalu = bruto, tanpa sisa pembulatan. */
-export function nettoInsentif(bruto: number): number {
+export function nettoInsentif(bruto: number, rate: number = PPH_RATE): number {
     if (!Number.isFinite(bruto) || bruto <= 0) return 0;
-    return bruto - pphInsentif(bruto);
+    return bruto - pphInsentif(bruto, rate);
 }

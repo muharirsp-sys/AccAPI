@@ -1,6 +1,7 @@
 /*
  * Tujuan: Baca & ubah setelan aturan insentif tanpa deploy: ambang Target AO skema GT,
- *   daftar cabang beracuan NILAI_JUAL, dan daftar SM yang ikut skema insentif SM.
+ *   daftar cabang beracuan NILAI_JUAL, daftar SM yang ikut skema insentif SM, dan SELURUH
+ *   konstanta uang (pool/bobot/ambang GT & MT, rate SPV, strata SM, tarif PPh).
  * Caller: app/(dashboard)/insentif-sales/page.tsx (panel Admin).
  * Dependensi: lib/insentif-settings, lib/rbac/resolve.
  * Main Functions: GET mode aktif; PATCH ganti mode.
@@ -13,16 +14,18 @@ import { requirePermission } from "@/lib/rbac/resolve";
 import {
     getGtAoTargetMode, setGtAoTargetMode, type GtAoTargetMode,
     getBranchNilaiJual, getSmBerhak, setDaftar,
+    getKonstanta, setKonstanta,
     BRANCH_NILAI_JUAL_KEY, SM_BERHAK_KEY,
 } from "@/lib/insentif-settings";
+import { validateKonstanta, DEFAULT_KONSTANTA } from "@/lib/insentif-konstanta";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
     if (gate.response) return gate.response;
-    const [gtAoMode, branchNilaiJual, smBerhak] = await Promise.all([
-        getGtAoTargetMode(), getBranchNilaiJual(), getSmBerhak(),
+    const [gtAoMode, branchNilaiJual, smBerhak, konstanta] = await Promise.all([
+        getGtAoTargetMode(), getBranchNilaiJual(), getSmBerhak(), getKonstanta(),
     ]);
-    return NextResponse.json({ gtAoMode, branchNilaiJual, smBerhak });
+    return NextResponse.json({ gtAoMode, branchNilaiJual, smBerhak, konstanta, konstantaBawaan: DEFAULT_KONSTANTA });
 }
 
 export async function PATCH(req: NextRequest) {
@@ -58,8 +61,17 @@ export async function PATCH(req: NextRequest) {
         await setDaftar(key, nilai as string[], gate.session.user.id);
     }
 
-    const [gtAoMode, branchNilaiJual, smBerhak] = await Promise.all([
-        getGtAoTargetMode(), getBranchNilaiJual(), getSmBerhak(),
+    // Konstanta uang: divalidasi dulu dan DITOLAK seluruhnya kalau ada satu angka aneh.
+    // Menyimpan sebagian akan meninggalkan tabel rate setengah berubah — nominal yang keluar
+    // bukan aturan lama maupun aturan baru.
+    if ("konstanta" in body) {
+        const pesan = validateKonstanta(body.konstanta);
+        if (pesan.length) return NextResponse.json({ error: pesan.join(" ") }, { status: 400 });
+        await setKonstanta(body.konstanta, gate.session.user.id);
+    }
+
+    const [gtAoMode, branchNilaiJual, smBerhak, konstanta] = await Promise.all([
+        getGtAoTargetMode(), getBranchNilaiJual(), getSmBerhak(), getKonstanta(),
     ]);
-    return NextResponse.json({ gtAoMode, branchNilaiJual, smBerhak });
+    return NextResponse.json({ gtAoMode, branchNilaiJual, smBerhak, konstanta, konstantaBawaan: DEFAULT_KONSTANTA });
 }

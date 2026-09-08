@@ -22,22 +22,21 @@
  *     "principle"            → TIDAK ikut (full principle) → tak dihitung & tak menambah count.
  */
 
-export const RP_1JT = 1_000_000;
-export const TARGET_AO_MIN = 240;
-export const WEIGHT_AO = 0.7;
-export const WEIGHT_VALUE = 0.3;
+import { DEFAULT_KONSTANTA, type Konstanta } from "./insentif-konstanta.ts";
 
-// Konstanta per jumlah principle yang ikut skema (mix). Spec mendefinisikan 2..5.
-const KONSTANTA_MIX: Record<number, number> = {
-    2: 1_000_000,
-    3: 1_200_000,
-    4: 1_400_000,
-    5: 1_500_000,
-};
+// Angka-angka di bawah ini sekarang bisa diubah dari panel Admin (lib/insentif-konstanta).
+// Konstanta yang diekspor tetap ada sebagai NILAI BAWAAN: pemanggil yang tidak mengoper `k`
+// berperilaku persis seperti sebelum editor ada.
+export const RP_1JT = DEFAULT_KONSTANTA.gt.pool1;
+export const TARGET_AO_MIN = DEFAULT_KONSTANTA.gt.aoAmbang;
+export const WEIGHT_AO = DEFAULT_KONSTANTA.gt.bobotAo;
+export const WEIGHT_VALUE = DEFAULT_KONSTANTA.gt.bobotValue;
 
-/** Konstanta pool untuk n principle (mix). n<2 → 0 (pakai exclusive); n>5 → cap 1,5jt. */
-export function konstantaMix(n: number): number {
-    return n < 2 ? 0 : (KONSTANTA_MIX[n] ?? KONSTANTA_MIX[5]);
+/** Konstanta pool untuk n principle (mix). n<2 → 0 (pakai exclusive); n>5 → cap pool 5. */
+export function konstantaMix(n: number, k: Konstanta = DEFAULT_KONSTANTA): number {
+    if (n < 2) return 0;
+    const tabel: Record<number, number> = { 2: k.gt.mix2, 3: k.gt.mix3, 4: k.gt.mix4, 5: k.gt.mix5 };
+    return tabel[n] ?? tabel[5];
 }
 
 export type StatusInsentif = "distributor_principle" | "distributor" | "principle";
@@ -65,12 +64,19 @@ export function roundRatio(r: number): number {
     return Math.round(r * 1e6) / 1e6;
 }
 
-/** Pengali persentase pencapaian: <0.90→0, 0.90–1.00→aktual, >1.00→cap 1.00. */
-export function percentageMultiplier(realisasi: number, target: number): number {
+/**
+ * Pengali persentase pencapaian: <ambang→0, ambang–1.00→aktual, >1.00→cap 1.00.
+ * `ambang` bawaannya 0,90 (aturan sejak awal) dan bisa diubah dari panel Admin.
+ */
+export function percentageMultiplier(
+    realisasi: number,
+    target: number,
+    ambang: number = DEFAULT_KONSTANTA.gt.ambangBayar,
+): number {
     if (!Number.isFinite(target) || target <= 0) return 0;
     if (!Number.isFinite(realisasi)) return 0;
     const r = roundRatio(realisasi / target);
-    if (r < 0.9) return 0;
+    if (r < ambang) return 0;
     if (r > 1) return 1;
     return r;
 }
@@ -112,7 +118,7 @@ export function hasPositiveNetSales(realisasiValue: number): boolean {
 }
 
 /** Insentif untuk 1 principle (eksklusif). */
-export function computeExclusive(input: ExclusiveInput): InsentifResult {
+export function computeExclusive(input: ExclusiveInput, k: Konstanta = DEFAULT_KONSTANTA): InsentifResult {
     if (!isSchemePrincipal(input.status)) return ZERO;
     // TIDAK ADA TARGET = TIDAK ADA INSENTIF (dikonfirmasi user 2026-08-29).
     // Sebelumnya komponen AO memakai penyebut 240 dan tidak melihat target Value sama sekali,
@@ -123,14 +129,14 @@ export function computeExclusive(input: ExclusiveInput): InsentifResult {
     if (!hasPositiveNetSales(input.realisasi_value)) return ZERO;
 
     const support = effectiveSupport(input.status, input.nilai_support_principal);
-    const K = Math.max(0, RP_1JT - support); // porsi distributor
+    const K = Math.max(0, k.gt.pool1 - support); // porsi distributor
     if (K <= 0) return ZERO;
 
-    const pAo = percentageMultiplier(input.realisasi_ao, input.target_ao ?? TARGET_AO_MIN);
-    const pValue = percentageMultiplier(input.realisasi_value, input.target_value);
+    const pAo = percentageMultiplier(input.realisasi_ao, input.target_ao ?? k.gt.aoAmbang, k.gt.ambangBayar);
+    const pValue = percentageMultiplier(input.realisasi_value, input.target_value, k.gt.ambangBayar);
 
-    const insentif_ao = WEIGHT_AO * K * pAo;
-    const insentif_value = WEIGHT_VALUE * K * pValue;
+    const insentif_ao = k.gt.bobotAo * K * pAo;
+    const insentif_value = k.gt.bobotValue * K * pValue;
     return { insentif_ao, insentif_value, total: insentif_ao + insentif_value };
 }
 
@@ -164,7 +170,7 @@ export interface MixResult {
 }
 
 /** Insentif untuk banyak principle (mix). Count hanya principle yang ikut skema (status != "principle"). */
-export function computeMix(principals: MixPrincipalInput[]): MixResult {
+export function computeMix(principals: MixPrincipalInput[], k: Konstanta = DEFAULT_KONSTANTA): MixResult {
     // Principal tanpa target TIDAK dihitung sebagai anggota grup mix (keputusan user 2026-08-29,
     // sejalan dengan computeExclusive). Dampaknya dua arah dan dua-duanya benar: principal itu
     // tidak dibayar, DAN ia tidak lagi menaikkan `n` sehingga konstanta pool anggota lain tidak
@@ -179,7 +185,7 @@ export function computeMix(principals: MixPrincipalInput[]): MixResult {
     // TETAP dapat insentif. Sebelumnya konstantaMix(1)=0 membuat insentifnya Rp 0 diam-diam,
     // sementara computeMtMix (MT) sudah punya fallback yang sama sejak awal.
     // >5 → cap 1,5jt (di dalam konstantaMix).
-    const konstanta = jumlah === 1 ? RP_1JT : konstantaMix(jumlah);
+    const konstanta = jumlah === 1 ? k.gt.pool1 : konstantaMix(jumlah, k);
     const porsi_distributor = Math.max(0, konstanta - total_support);
 
     const empty = (): MixResult => ({
@@ -193,10 +199,10 @@ export function computeMix(principals: MixPrincipalInput[]): MixResult {
     // Value: gabungan/global atas principle valid.
     const totalTarget = valid.reduce((s, p) => s + p.target_value, 0);
     const totalRealisasi = valid.reduce((s, p) => s + p.realisasi_value, 0);
-    const insentif_value = WEIGHT_VALUE * K * percentageMultiplier(totalRealisasi, totalTarget);
+    const insentif_value = k.gt.bobotValue * K * percentageMultiplier(totalRealisasi, totalTarget, k.gt.ambangBayar);
 
     // AO: budget dibagi rata per principle valid.
-    const budgetAo = (WEIGHT_AO * K) / jumlah;
+    const budgetAo = (k.gt.bobotAo * K) / jumlah;
 
     const rincian: MixLineDetail[] = valid.map((p) => {
         // Principal dengan penjualan bersih <= 0 tidak dapat apa pun — baik AO maupun porsi
@@ -205,7 +211,7 @@ export function computeMix(principals: MixPrincipalInput[]): MixResult {
         if (!hasPositiveNetSales(p.realisasi_value)) {
             return { nama: p.nama, insentif_ao: 0, insentif_value: 0, total: 0 };
         }
-        const insentif_ao = budgetAo * percentageMultiplier(p.realisasi_ao, p.target_ao ?? TARGET_AO_MIN);
+        const insentif_ao = budgetAo * percentageMultiplier(p.realisasi_ao, p.target_ao ?? k.gt.aoAmbang, k.gt.ambangBayar);
         // Value global dialokasikan proporsional ke target_value (rata bila total target 0).
         const share = totalTarget > 0 ? p.target_value / totalTarget : 1 / jumlah;
         const line_value = insentif_value * share;

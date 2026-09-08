@@ -28,6 +28,7 @@
  */
 
 import { roundRatio, type StatusInsentif } from "./insentif-sales-calc.ts";
+import { DEFAULT_KONSTANTA, type Konstanta } from "./insentif-konstanta.ts";
 
 /**
  * Cocokkan sebagai KATA UTUH, bukan substring. Pemisah kata di data ini bermacam-macam
@@ -93,12 +94,12 @@ export interface SmInsentifResult {
  * Rasio dibulatkan ke 6 desimal dulu — lihat roundRatio di lib/insentif-sales-calc.ts.
  * Tanpa itu, 0,9999999999 vs 1,0000000001 = beda Rp 1 juta dan bisa berubah antar refresh.
  */
-export function rateSm(ratio: number): number {
+export function rateSm(ratio: number, k: Konstanta = DEFAULT_KONSTANTA): number {
     if (!Number.isFinite(ratio)) return 0;
     const r = roundRatio(ratio);
-    if (r >= 1.1) return 3_500_000;
-    if (r >= 1.0) return 2_500_000;
-    if (r >= 0.9) return 1_500_000;
+    if (r >= k.sm.ambang3) return k.sm.nominal3;
+    if (r >= k.sm.ambang2) return k.sm.nominal2;
+    if (r >= k.sm.ambang1) return k.sm.nominal1;
     return 0;
 }
 
@@ -106,6 +107,7 @@ export function calculateInsentifSM(
     smName: string,
     rows: SmSalesRow[],
     daftarBerhak?: readonly string[],
+    k: Konstanta = DEFAULT_KONSTANTA,
 ): SmInsentifResult {
     const berhak = isSmBerhak(smName, daftarBerhak);
     let targetValue = 0;
@@ -118,5 +120,5 @@ export function calculateInsentifSM(
         realisasiValue += r.realisasiValue;
     }
     const pctValue = targetValue > 0 ? realisasiValue / targetValue : 0;
-    return { jumlahBaris, targetValue, realisasiValue, pctValue, berhak, total: berhak ? rateSm(pctValue) : 0 };
+    return { jumlahBaris, targetValue, realisasiValue, pctValue, berhak, total: berhak ? rateSm(pctValue, k) : 0 };
 }
