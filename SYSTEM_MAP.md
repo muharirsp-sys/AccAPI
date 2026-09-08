@@ -1248,10 +1248,10 @@ title: Make Coolify deploy the exact commit-SHA image
 priority: P1
 category: deployment-release-integrity
 affected-area: GHCR image publication and Coolify webhook deployment
-business-impact: Rollback and incident attribution remain ambiguous if production pulls a mutable latest tag.
-technical-impact: CI publishes an immutable github.sha tag, but the current webhook contract does not prove that Coolify selects that tag or digest.
-acceptance-criteria: Coolify deployment configuration consumes the triggering commit SHA or digest and the running container reports the same immutable image identity.
-suggested-tests: Deploy two controlled revisions, verify the expected digest on the running container after each webhook, and exercise rollback to the prior digest.
+business-impact: Rollback and incident attribution remain ambiguous, and a failed half-build can leave frontend/backend latest tags from different revisions.
+technical-impact: CI serializes runs and publishes immutable github.sha tags, but it pushes each mutable latest tag before both builds are known-good; Coolify consumes latest and running images have no source-revision label.
+acceptance-criteria: Promote a coordinated frontend/backend release only after both builds succeed, make Coolify consume the triggering SHA or pinned digest pair, and expose the same source revision on both running containers.
+suggested-tests: Force the second image build to fail and prove no deployable tag pair advances, then deploy two controlled revisions, verify both running digests/revision labels, and roll back to the prior pair.
 -->
 
 <!-- accapi-risk
