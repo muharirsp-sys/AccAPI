@@ -20,6 +20,7 @@ export const roleLabels: Record<AppRole, string> = {
 
 export const appModules = [
     "dashboard",
+    "order",
     "api_wrapper",
     "payments",
     "sppd",
@@ -33,12 +34,18 @@ export const appModules = [
     "users",
     "sales_history",
     "laporan_harian",
+    "rekapan_nota",
     "insentif_sales",
+    // Web Sales: izin TERPISAH dari `order`. Sales tidak boleh dapat `order.create`
+    // karena POST /orders internal menerima harga dari klien; jalur sales hanya kirim
+    // kode, satuan, jumlah dan uangnya dihitung server.
+    "websales",
 ] as const;
 export type AppModule = (typeof appModules)[number];
 
 export const moduleLabels: Record<AppModule, string> = {
     dashboard: "Dashboard",
+    order: "Order Masuk",
     api_wrapper: "API Wrapper",
     payments: "Payments",
     sppd: "SPPD",
@@ -52,7 +59,9 @@ export const moduleLabels: Record<AppModule, string> = {
     users: "Users & RBAC",
     sales_history: "History Penjualan",
     laporan_harian: "Laporan Harian",
+    rekapan_nota: "Rekapan Nota",
     insentif_sales: "Insentif Sales",
+    websales: "Order Sales (Web Sales)",
 };
 
 export const permissionActions = [
@@ -84,6 +93,8 @@ export const permissionActions = [
     "delete_user",
     "set_role",
     "set_permission",
+    "print",
+    "approve_takeout",
     "view_dashboard",
     "view_all",
     "upload_target",
@@ -96,6 +107,8 @@ export type PermissionAction = (typeof permissionActions)[number];
 
 export const actionLabels: Record<PermissionAction, string> = {
     send: "Kirim Email",
+    print: "Cetak",
+    approve_takeout: "Setujui Take-out",
     view_dashboard: "Lihat Dashboard",
     view_all: "Lihat Semua Cakupan",
     upload_target: "Unggah Target",
@@ -134,6 +147,7 @@ export const actionLabels: Record<PermissionAction, string> = {
 
 export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     dashboard: ["view"],
+    order: ["view", "create", "edit", "export"],
     api_wrapper: ["view", "execute"],
     payments: ["view", "create", "edit", "update", "delete", "upload", "export", "submit"],
     sppd: ["view", "edit_settings", "upload_excel", "generate", "download"],
@@ -147,12 +161,14 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     users: ["view", "create_user", "edit_user", "delete_user", "set_role", "set_permission", "manage"],
     sales_history: ["view", "export", "manage"],
     laporan_harian: ["view", "upload", "send", "manage"],
+    rekapan_nota: ["view", "manage", "print", "approve_takeout"],
     // Sengaja dipecah halus: Finance cuma butuh view + manage_payment + input_support,
     // dan TIDAK boleh dapat view_dashboard/upload_* (permintaan user 2026-08-29).
     insentif_sales: [
         "view", "view_dashboard", "view_all", "manage", "upload_target", "upload_progress",
         "input_support", "manage_payment", "manage_hierarchy",
     ],
+    websales: ["view", "create"],
 };
 
 export type PermissionMap = Partial<Record<AppModule, PermissionAction[]>>;
@@ -219,6 +235,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
     admin: allPermissions(),
     manager: mergePermissionMaps(
         pick("dashboard", ["view"]),
+        pick("order", ["view", "create", "edit", "export"]),
         pick("api_wrapper", ["view", "execute"]),
         pick("payments", ["view", "export", "submit", "edit", "update"]),
         pick("sppd", ["view", "generate", "download"]),
@@ -229,7 +246,8 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
         pick("off_program_control", ["view", "update", "approve", "export"]),
         pick("reconciliation", ["view"]),
         pick("claim_workflow", ["view", "approve", "export"]),
-        pick("sales_history", ["view", "export", "manage"])
+        pick("sales_history", ["view", "export", "manage"]),
+        pick("rekapan_nota", ["view", "manage", "print", "approve_takeout"])
     ),
     finance: mergePermissionMaps(
         pick("dashboard", ["view"]),
@@ -243,6 +261,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
     ),
     staff: mergePermissionMaps(
         pick("dashboard", ["view"]),
+        pick("order", ["view", "create"]),
         pick("payments", ["view", "create", "edit", "upload", "submit"]),
         pick("sppd", ["view", "generate", "download"]),
         pick("principles", ["view"]),
@@ -258,6 +277,7 @@ export const rolePermissionPresets: Record<AppRole, PermissionMap> = {
     ),
     viewer: mergePermissionMaps(
         pick("dashboard", ["view"]),
+        pick("order", ["view"]),
         pick("payments", ["view"]),
         pick("sppd", ["view"]),
         pick("finance", ["view"]),
@@ -276,6 +296,10 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/payments", module: "payments", action: "view" },
     { prefix: "/finance", module: "finance", action: "view" },
     { prefix: "/principles", module: "principles", action: "view" },
+    // /sales sebelum /orders TIDAK relevan (prefix beda), tapi urutannya tetap dijaga:
+    // pencocokan memakai prefix terpanjang.
+    { prefix: "/sales", module: "websales", action: "create" },
+    { prefix: "/orders", module: "order", action: "view" },
     { prefix: "/summary", module: "summary", action: "view" },
     { prefix: "/validator", module: "validator", action: "view" },
     { prefix: "/api-wrapper", module: "api_wrapper", action: "view" },
@@ -285,6 +309,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/faktur", module: "sales_history", action: "view" },
     { prefix: "/sales-history", module: "sales_history", action: "view" },
     { prefix: "/laporan-harian", module: "laporan_harian", action: "view" },
+    { prefix: "/rekapan-nota", module: "rekapan_nota", action: "view" },
     { prefix: "/insentif-sales", module: "insentif_sales", action: "view" },
     { prefix: "/", module: "dashboard", action: "view" },
 ];

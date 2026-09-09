@@ -2,7 +2,7 @@
  * Tujuan: Guard server untuk seluruh route dashboard berdasarkan session Better Auth dan RBAC per halaman.
  * Caller: Semua route di grup `app/(dashboard)`.
  * Dependensi: Better Auth, getUserPermissions (union group ∪ legacy), helper RBAC, middleware header `x-current-path`.
- * Main Functions: DashboardLayout.
+ * Main Functions: DashboardLayout; meneruskan identitas akun untuk preferensi navigasi terisolasi.
  * Side Effects: Membaca session/permission dan redirect login/dashboard bila akses halaman tidak valid.
  */
 import SidebarLayout from "@/components/SidebarLayout";
@@ -47,7 +47,7 @@ export default async function DashboardLayout({
 
     return (
         <>
-            <SidebarLayout localAuthRole={isLocalDev ? role : null} permKeys={permKeys}>
+            <SidebarLayout localAuthRole={isLocalDev ? role : null} permKeys={permKeys} userId={userId || "local"} userName={session?.user.name || "Ruang kerja lokal"}>
                 {allowed ? children : <AccessDenied />}
                 <ServiceWorkerRegistration />
                 <PWAInstallPrompt />

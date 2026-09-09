@@ -1,4 +1,4 @@
-// Tujuan: Switch tema calming (revisi G) yang disimpan di localStorage, bukan database.
+// Tujuan: Pemilih tema Surya dan tema alternatif, disimpan di localStorage.
 // Caller: components/SidebarLayout.tsx (navbar atas).
 // Dependensi: React client hooks, lucide-react.
 // Main Functions: ThemeSwitcher, OFF_THEMES, applyStoredThemeScript.
@@ -11,22 +11,23 @@ import { Palette, Check } from "lucide-react";
 
 export const OFF_THEME_STORAGE_KEY = "off-theme";
 
-export type OffThemeKey = "office-calm" | "neon" | "ios";
+export type OffThemeKey = "surya" | "office-calm" | "neon" | "ios";
 
 export const OFF_THEMES: Array<{ key: OffThemeKey; label: string; hint: string; swatch: string }> = [
-  { key: "office-calm", label: "Office Calm", hint: "Cream hangat dan emas (default)", swatch: "#c89432" },
+  { key: "surya", label: "Surya", hint: "Putih tenang, hijau mendalam (default)", swatch: "#17694f" },
+  { key: "office-calm", label: "Office Calm", hint: "Cream hangat dan emas", swatch: "#c89432" },
   { key: "neon", label: "Neon HUD", hint: "Sci-fi control tower", swatch: "#03060d" },
   { key: "ios", label: "iOS Liquid Glass", hint: "Frosted glass terang ala iOS terbaru", swatch: "#007AFF" },
 ];
 
-const DEFAULT_THEME: OffThemeKey = "office-calm";
+const DEFAULT_THEME: OffThemeKey = "surya";
 
 function isOffThemeKey(value: string | null): value is OffThemeKey {
-  return value === "office-calm" || value === "neon" || value === "ios";
+  return value === "surya" || value === "office-calm" || value === "neon" || value === "ios";
 }
 
 // Script inline untuk apply tema sebelum paint agar tidak ada flash.
-export const applyStoredThemeScript = `(function(){try{var t=localStorage.getItem('${OFF_THEME_STORAGE_KEY}');if(t!=='office-calm'&&t!=='neon'&&t!=='ios'){t='${DEFAULT_THEME}';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','${DEFAULT_THEME}');}})();`;
+export const applyStoredThemeScript = `(function(){try{var t=localStorage.getItem('${OFF_THEME_STORAGE_KEY}');if(t!=='surya'&&t!=='office-calm'&&t!=='neon'&&t!=='ios'){t='${DEFAULT_THEME}';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','${DEFAULT_THEME}');}})();`;
 
 export default function ThemeSwitcher() {
   const [open, setOpen] = useState(false);

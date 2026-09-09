@@ -37,6 +37,29 @@ interface RowData {
 
 // Emulating Axios for backwards compatibility with legacy codebase
 const API_BASE = resolveApiBase();
+
+let cachedCsrf = "";
+async function csrfHeader(): Promise<Record<string, string>> {
+    if (!cachedCsrf) {
+        try {
+            const res = await fetch(`${API_BASE}/api/me`, { credentials: "include", signal: AbortSignal.timeout(15_000) });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.csrf_token) cachedCsrf = String(data.csrf_token);
+        } catch { /* backend masih memeriksa same-origin bila token tidak tersedia */ }
+    }
+    return cachedCsrf ? { "X-CSRF-Token": cachedCsrf } : {};
+}
+
+// Pesan galat backend dipertahankan; alur tinjau/terbit tidak boleh gagal tanpa alasan.
+async function send(method: string, url: string, data?: any) {
+    const res = await fetch(`${API_BASE}${url}`, {
+        method, credentials: "include",
+        body: data === undefined ? undefined : JSON.stringify(data),
+        headers: { "Content-Type": "application/json", ...(await csrfHeader()) },
+    });
+    const body = await res.json().catch(() => ({}));
+    return { ok: res.ok, body, error: String(body?.detail || body?.error || `HTTP ${res.status}`) };
+}
 const api = {
     defaults: { baseURL: API_BASE },
     get: async (url: string, opts?: any) => {
@@ -54,7 +77,7 @@ const api = {
             method: "POST",
             credentials: "include",
             body: isFormData ? data : JSON.stringify(data),
-            headers: isFormData ? {} : { "Content-Type": "application/json" }
+            headers: { ...(isFormData ? {} : { "Content-Type": "application/json" }), ...(await csrfHeader()) }
         });
         if (!res.ok) throw new Error("Fetch POST failed");
         return { data: await res.json(), status: res.status, ok: res.ok };
@@ -144,7 +167,18 @@ export default function SummaryManualPage() {
     const [pdfFile, setPdfFile] = useState<File | null>(null);
     const [isPdfParsing, setIsPdfParsing] = useState(false);
     const [pdfStatus, setPdfStatus] = useState("");
-    const [aiMode, setAiMode] = useState<"split" | "full">("split");
+    const [draft, setDraft] = useState<{ id: string; revision: number; status: string; title: string } | null>(null);
+    const [rules, setRules] = useState<any[]>([]);
+    const [issues, setIssues] = useState<string[]>([]);
+    const [warnings, setWarnings] = useState<string[]>([]);
+    const [reviewBusy, setReviewBusy] = useState(false);
+    const [reviewed, setReviewed] = useState(false);
+    const [simChannel, setSimChannel] = useState("");
+    const [simDate, setSimDate] = useState(new Date().toISOString().split("T")[0]);
+    const [simLines, setSimLines] = useState([{ code: "", unit: "PCS", quantity: "1", price: "0" }]);
+    const [simResult, setSimResult] = useState<any>(null);
+    const [draftPeriod, setDraftPeriod] = useState<[string, string]>(["", ""]);
+    const [draftList, setDraftList] = useState<{ id: string; title: string; status: string; revision: number; updated_at: string }[]>([]);
 
     const [rows, setRows] = useState<RowData[]>([]);
     const [variantOptions, setVariantOptions] = useState<Record<string, any[]>>({});
@@ -238,47 +272,114 @@ export default function SummaryManualPage() {
         } catch (e) { console.error(e); }
     };
 
-    const handlePdfExtract = async (mode: 'regex' | 'ai') => {
+    const handlePdfExtract = async () => {
         if (!pdfFile || !masterToken) return;
         setIsPdfParsing(true);
-        const endpoint = mode === 'ai' ? 'parse_pdf_ai' : 'parse_pdf_regex';
-        const label = mode === 'ai' ? 'Gemini 2.5 Flash' : 'Regex Manual';
-        setPdfStatus(`Mengirim PDF dengan ${label}...`);
+        setPdfStatus("Mengirim PDF ke Mistral OCR 4.1...");
 
         const fd = new FormData();
         fd.append("pdf", pdfFile);
         fd.append("token", masterToken);
-        if (mode === "ai") fd.append("ai_mode", aiMode);
-        
-        const principleName = principles[selectedPrinciple]?.name || "Priskila (Default)";
-        fd.append("principle_name", principleName);
+        fd.append("principle_name", principles[selectedPrinciple]?.name || "");
 
         try {
-            const res = await api.post(`/summary/manual/${endpoint}`, fd);
-            if (res.data.ok) {
-                const parsedRows = res.data.rows.map((r: any) => {
-                    const id = crypto.randomUUID();
-                    let correctKelompok = r.kelompok || "";
-                    // ponytail: simpan snapshot hasil AI asli utk fitur "Laporkan Salah" (before/after)
-                    return { ...r, id, kelompok: correctKelompok, _original: { ...r } };
-                });
-
-                setRows(prev => [...prev, ...parsedRows]);
-                setPdfStatus(`Sukses mengekstrak ${parsedRows.length} baris menggunakan ${label}.`);
-                toast.success(`Ekstraksi PDF Selesai (${parsedRows.length} baris)`);
-
-                for (const row of parsedRows) {
-                    if (row.kelompok && row.kelompok !== "Bisa Meleset") fetchOptions(row.id, row.kelompok, row.variant, row.gramasi);
-                }
-            } else {
-                setPdfStatus(`Gagal (${label}): ` + res.data.error);
-                toast.error(res.data.error);
+            const res = await fetch(`${API_BASE}/summary/manual/parse_pdf_ai`, {
+                method: "POST", credentials: "include", body: fd, headers: await csrfHeader(),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok) {
+                const message = String(data.error || data.detail || `HTTP ${res.status}`);
+                setPdfStatus("Gagal: " + message);
+                toast.error(message);
+                return;
+            }
+            const parsedRows = (data.rows || []).map((r: any) => ({ ...r, id: r.id || crypto.randomUUID(), _original: { ...r } }));
+            setRows(prev => [...prev, ...parsedRows]);
+            setDraft(data.draft ? { id: data.draft.id, revision: data.draft.revision, status: data.draft.status, title: data.draft.title } : null);
+            setWarnings(data.draft?.content?.extraction?.warnings || []);
+            setRules([]);
+            setIssues([]);
+            setReviewed(false);
+            setSimResult(null);
+            setPdfStatus(`Draft dibuat: ${parsedRows.length} baris dari ${data.draft?.content?.extraction?.page_count ?? "?"} halaman. Periksa sebelum menerbitkan aturan.`);
+            refreshDraftList();
+            toast.success(`Ekstraksi selesai (${parsedRows.length} baris)`);
+            for (const row of parsedRows) {
+                if (row.kelompok) fetchOptions(row.id, row.kelompok, row.variant, row.gramasi);
             }
         } catch {
-            setPdfStatus(`Error proses PDF menggunakan ${label}.`);
-            toast.error(`Terjadi kesalahan jaringan saat ekstraksi PDF.`);
+            setPdfStatus("Error proses PDF dengan Mistral OCR 4.1.");
+            toast.error("Terjadi kesalahan jaringan saat ekstraksi PDF.");
         } finally {
             setIsPdfParsing(false);
+        }
+    };
+
+    // Aturan disusun ulang di server dari baris yang sudah ditinjau; angka tidak pernah dikirim dari browser.
+    const refreshDraftList = async () => {
+        const res = await send("GET", "/summary/library");
+        if (res.ok) setDraftList(res.body.drafts || []);
+    };
+
+    const openDraft = async (draftId: string) => {
+        if (!draftId) return;
+        setReviewBusy(true);
+        try {
+            const res = await send("GET", `/summary/library/${draftId}`);
+            if (!res.ok) { toast.error(res.error); return; }
+            const content = res.body.draft?.content || {};
+            setRows((content.rows || []).map((r: any) => ({ ...r, id: r.id || crypto.randomUUID() })));
+            setWarnings(content.extraction?.warnings || []);
+            setDraftPeriod(Array.isArray(content.period) ? [content.period[0] || "", content.period[1] || ""] : ["", ""]);
+            setReviewed(false);
+            setSimResult(null);
+            applyDraft(res.body);
+        } finally {
+            setReviewBusy(false);
+        }
+    };
+
+    const applyDraft = (body: any) => {
+        if (body.draft) setDraft({ id: body.draft.id, revision: body.draft.revision, status: body.draft.status, title: body.draft.title });
+        setRules(body.programs || []);
+        setIssues(body.issues || []);
+    };
+
+    const saveDraft = async () => {
+        if (!draft) return;
+        setReviewBusy(true);
+        try {
+            const res = await send("PUT", `/summary/library/${draft.id}`, { title: draft.title, rows, revision: draft.revision, period: draftPeriod });
+            if (!res.ok) { toast.error(res.error); return; }
+            applyDraft(res.body);
+            toast.success(res.body.issues?.length ? `Tersimpan dengan ${res.body.issues.length} catatan` : `Tersimpan; ${res.body.programs?.length || 0} aturan siap ditinjau`);
+        } finally {
+            setReviewBusy(false);
+        }
+    };
+
+    const publishDraft = async () => {
+        if (!draft) return;
+        setReviewBusy(true);
+        try {
+            const res = await send("POST", `/summary/library/${draft.id}/publish`, { reviewed: true, revision: draft.revision });
+            if (!res.ok) { toast.error(res.error); return; }
+            applyDraft(res.body);
+            toast.success("Aturan promo diterbitkan dan dibekukan pada versi ini.");
+        } finally {
+            setReviewBusy(false);
+        }
+    };
+
+    const runSimulation = async () => {
+        if (!draft) return;
+        setReviewBusy(true);
+        try {
+            const res = await send("POST", `/summary/library/${draft.id}/simulate`, { date: simDate, channel: simChannel, lines: simLines });
+            if (!res.ok) { setSimResult(null); toast.error(res.error); return; }
+            setSimResult(res.body.result);
+        } finally {
+            setReviewBusy(false);
         }
     };
 
@@ -462,6 +563,22 @@ export default function SummaryManualPage() {
                     {masterStatus && <p className="mt-4 text-sm font-medium text-emerald-400 bg-emerald-500/10 inline-block px-3 py-1.5 rounded-md border border-emerald-500/20">{masterStatus}</p>}
                 </div>
 
+                <div className="flex flex-wrap items-center gap-2">
+                    <button onClick={refreshDraftList} disabled={reviewBusy} className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg disabled:opacity-50">
+                        Muat draft tersimpan
+                    </button>
+                    {draftList.length > 0 && (
+                        <select onChange={e => openDraft(e.target.value)} defaultValue="" className="bg-black/50 border border-white/10 rounded-lg text-xs text-white px-2 py-1.5 max-w-full">
+                            <option value="">-- Pilih draft --</option>
+                            {draftList.map(item => (
+                                <option key={item.id} value={item.id} className="bg-black/80">
+                                    {item.title} ({item.status}, rev {item.revision}, {item.updated_at.slice(0, 16).replace("T", " ")})
+                                </option>
+                            ))}
+                        </select>
+                    )}
+                </div>
+
                 {/* STEP 1.5: PDF Extraction */}
                 {masterToken && (
                     <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-emerald-500/20 relative overflow-hidden group">
@@ -470,7 +587,7 @@ export default function SummaryManualPage() {
                             <FileText className="text-emerald-500" size={26} />
                             <div>
                                 <h2 className="text-lg font-bold text-white">Ekstrak dari Dokumen PDF</h2>
-                                <p className="text-sm text-slate-400">Pilih metode ekstraksi PDF ke dalam tabel.</p>
+                                <p className="text-sm text-slate-400">Seluruh halaman dibaca Mistral OCR 4.1 menjadi draft yang wajib ditinjau. Nilai transaksi dihitung aturan terbit, bukan AI.</p>
                             </div>
                         </div>
                         <div className="flex flex-col gap-4 max-w-2xl relative">
@@ -478,17 +595,151 @@ export default function SummaryManualPage() {
                                 <input type="file" accept="application/pdf" onChange={e => setPdfFile(e.target.files?.[0] || null)} className="text-sm w-full sm:flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white/70" />
                                 
                                 <div className="flex gap-2 w-full sm:w-auto">
-                                    <button onClick={() => handlePdfExtract('regex')} disabled={!pdfFile || isPdfParsing} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-slate-700/50 hover:bg-slate-600 text-white px-4 py-2 border border-slate-600 rounded-lg text-sm font-semibold disabled:opacity-50 transition-colors">
-                                        Regex Manual
-                                    </button>
-                                    
-                                    <button onClick={() => handlePdfExtract('ai')} disabled={!pdfFile || isPdfParsing} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 border border-emerald-500 rounded-lg text-sm font-semibold disabled:opacity-50 transition-colors">
-                                        {isPdfParsing ? "AI..." : "Ekstrak Cerdas"}
+                                    <button onClick={handlePdfExtract} disabled={!pdfFile || isPdfParsing} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 border border-emerald-500 rounded-lg text-sm font-semibold disabled:opacity-50 transition-colors">
+                                        {isPdfParsing ? "Memproses..." : "Ekstrak dengan Mistral OCR 4.1"}
                                     </button>
                                 </div>
                             </div>
                         </div>
                         {pdfStatus && <p className="mt-4 text-sm font-medium text-emerald-300 bg-emerald-500/10 p-2.5 rounded-lg border border-emerald-500/20 inline-block">{pdfStatus}</p>}
+                    </div>
+                )}
+
+                {/* STEP 1.6: Draft review dan aturan promo terbit */}
+                {draft && (
+                    <div className="bg-[#1a1c23]/60 backdrop-blur-xl p-6 rounded-2xl shadow-xl border border-amber-500/20">
+                        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                            <div className="flex items-center gap-3">
+                                <Flag className="text-amber-400" size={22} />
+                                <div>
+                                    <h2 className="text-lg font-bold text-white">Tinjau draft lalu terbitkan aturan</h2>
+                                    <p className="text-sm text-slate-400">
+                                        Status <span className="font-semibold text-amber-300">{draft.status}</span> - revisi {draft.revision} - {rules.length} aturan tersusun
+                                    </p>
+                                </div>
+                            </div>
+                            <a href={`${API_BASE}/summary/library/${draft.id}/source`} className="text-sm font-semibold text-sky-300 underline decoration-sky-500/50 hover:text-sky-200">
+                                Unduh PDF sumber
+                            </a>
+                        </div>
+
+                        {warnings.length > 0 && (
+                            <div className="mb-3 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3">
+                                <p className="text-xs font-semibold text-sky-200 mb-1">Catatan OCR</p>
+                                <ul className="list-disc pl-5 text-xs text-slate-300 space-y-0.5">
+                                    {warnings.slice(0, 20).map((note, i) => <li key={i}>{note}</li>)}
+                                </ul>
+                            </div>
+                        )}
+
+                        {issues.length > 0 && (
+                            <div className="mb-3 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3">
+                                <p className="text-xs font-semibold text-rose-600 mb-1">Perbaiki sebelum diterbitkan</p>
+                                <ul className="list-disc pl-5 text-xs text-slate-300 space-y-0.5">
+                                    {issues.slice(0, 20).map((note, i) => <li key={i}>{note}</li>)}
+                                </ul>
+                            </div>
+                        )}
+
+                        {rules.length > 0 && (
+                            <div className="mb-4 overflow-x-auto rounded-lg border border-white/10">
+                                <table className="w-full text-xs text-slate-300">
+                                    <thead className="bg-black/40 text-slate-400">
+                                        <tr>
+                                            {["Program", "Channel", "Periode", "Satuan", "Barang", "Mix", "Stack", "Tier"].map(head => (
+                                                <th key={head} className="px-2 py-1.5 text-left font-semibold whitespace-nowrap">{head}</th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {rules.map((rule: any) => (
+                                            <tr key={rule.id} className="border-t border-white/5">
+                                                <td className="px-2 py-1.5">{rule.name}</td>
+                                                <td className="px-2 py-1.5">{rule.channel}</td>
+                                                <td className="px-2 py-1.5 whitespace-nowrap">{rule.start} - {rule.end}</td>
+                                                <td className="px-2 py-1.5">{rule.unit}</td>
+                                                <td className="px-2 py-1.5">{rule.codes.length}</td>
+                                                <td className="px-2 py-1.5">{rule.mix ? "ya" : "tidak"}</td>
+                                                <td className="px-2 py-1.5">{rule.stacking ? "ya" : "tidak"}</td>
+                                                <td className="px-2 py-1.5">
+                                                    {rule.tiers.map((tier: any, i: number) => (
+                                                        <div key={i} className="whitespace-nowrap">
+                                                            {rule.threshold === "value" ? "Nilai" : "Beli"} {tier.minimum}
+                                                            {tier.percentages.length > 0 && ` - ${tier.percentages.join("% + ")}%`}
+                                                            {tier.rupiah !== "0" && ` - Rp ${tier.rupiah}${tier.rupiah_mode === "per_unit" ? "/satuan" : ""}`}
+                                                            {tier.bonus_code && ` - bonus ${tier.bonus_quantity} ${tier.bonus_unit} ${tier.bonus_code}`}
+                                                        </div>
+                                                    ))}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+
+                        <div className="mb-3 flex flex-wrap items-end gap-2">
+                            <p className="w-full text-xs text-slate-400">Periode draft dipakai untuk baris yang tidak mencantumkan tanggal sendiri.</p>
+                            {([0, 1] as const).map(index => (
+                                <label key={index} className="text-xs text-slate-400">{index === 0 ? "Mulai" : "Selesai"}
+                                    <input type="date" value={draftPeriod[index]} disabled={draft.status !== "draft"}
+                                        onChange={e => setDraftPeriod(prev => (index === 0 ? [e.target.value, prev[1]] : [prev[0], e.target.value]))}
+                                        className="block bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300" />
+                                </label>
+                            ))}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3">
+                            <button onClick={saveDraft} disabled={reviewBusy || draft.status !== "draft"} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50">
+                                Simpan draft dan susun aturan
+                            </button>
+                            <label className="flex items-center gap-2 text-xs text-slate-300">
+                                <input type="checkbox" checked={reviewed} onChange={e => setReviewed(e.target.checked)} disabled={draft.status !== "draft"} className="rounded bg-black/50 border-white/20" />
+                                Saya sudah membandingkan draft dengan PDF sumber
+                            </label>
+                            <button onClick={publishDraft} disabled={reviewBusy || !reviewed || draft.status !== "draft" || rules.length === 0 || issues.length > 0} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50">
+                                Terbitkan aturan
+                            </button>
+                        </div>
+
+                        <div className="mt-5 border-t border-white/10 pt-4">
+                            <p className="text-sm font-semibold text-white mb-2">Uji aturan sebelum dipakai order</p>
+                            <div className="flex flex-wrap items-end gap-2 mb-2">
+                                <label className="text-xs text-slate-400">Tanggal
+                                    <input type="date" value={simDate} onChange={e => setSimDate(e.target.value)} className="block bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" />
+                                </label>
+                                <label className="text-xs text-slate-400">Channel
+                                    <input value={simChannel} onChange={e => setSimChannel(e.target.value.toUpperCase())} placeholder="GT" className="block w-24 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" />
+                                </label>
+                                <button onClick={() => setSimLines(prev => [...prev, { code: "", unit: "PCS", quantity: "1", price: "0" }])} className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg">Tambah baris</button>
+                                <button onClick={runSimulation} disabled={reviewBusy} className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50">Hitung</button>
+                            </div>
+                            <div className="space-y-2">
+                                {simLines.map((simLine, index) => (
+                                    <div key={index} className="flex flex-wrap items-center gap-2">
+                                        {(["code", "unit", "quantity", "price"] as const).map(field => (
+                                            <input key={field} value={simLine[field]} placeholder={field}
+                                                onChange={e => setSimLines(prev => prev.map((item, i) => i === index ? { ...item, [field]: e.target.value } : item))}
+                                                className="w-24 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" />
+                                        ))}
+                                        {simLines.length > 1 && (
+                                            <button onClick={() => setSimLines(prev => prev.filter((_, i) => i !== index))} className="text-rose-300 hover:text-rose-600"><Trash2 size={14} /></button>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                            {simResult && (
+                                <div className="mt-3 rounded-lg border border-white/10 bg-black/40 p-3 text-xs text-slate-300 space-y-1">
+                                    <p>Bruto <span className="font-semibold text-white">{simResult.gross}</span> - diskon <span className="font-semibold text-rose-600">{simResult.discount}</span> - netto <span className="font-semibold text-emerald-300">{simResult.net}</span></p>
+                                    {simResult.applications?.map((item: any, i: number) => (
+                                        <p key={i} className="text-slate-400">{item.program_id}: minimum {item.minimum} - potongan {item.discount}</p>
+                                    ))}
+                                    {simResult.bonuses?.map((item: any, i: number) => (
+                                        <p key={i} className="text-slate-400">Bonus {item.quantity} {item.unit} {item.code} ({item.program_id})</p>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 )}
 

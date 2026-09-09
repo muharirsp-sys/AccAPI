@@ -13,6 +13,14 @@
 export const PERMISSION_REGISTRY = {
     dashboard: ["view"],
     api_wrapper: ["view", "execute"],
+    // Order Masuk internal. Tanpa pendaftaran di sini, Access Group TIDAK BISA memberi
+    // izin ini (registry adalah satu-satunya daftar key yang boleh disimpan) — jadi
+    // modulnya hanya bisa dipakai admin. Ketinggalan saat modul order dibuat.
+    order: ["view", "create", "edit", "export"],
+    // Order Sales (Web Sales). SENGAJA terpisah dari `order`: `order.create` membuka
+    // POST /orders internal yang menerima harga dari klien, sedangkan sales hanya boleh
+    // mengirim kode/satuan/jumlah. Akun sales cukup `websales.view` + `websales.create`.
+    websales: ["view", "create"],
     payments: ["view", "create", "edit", "update", "delete", "upload", "export", "submit"],
     sppd: ["view", "edit_settings", "upload_excel", "generate", "download"],
     finance: ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"],
@@ -47,6 +55,9 @@ export const PERMISSION_REGISTRY = {
     sales_history: ["view", "export", "manage"],
     // Laporan Harian per SPV/SM (upload FIX -> feed dashboard + email). send = kirim email (gated); manage = ubah mapping penerima.
     laporan_harian: ["view", "upload", "send", "manage"],
+    // Rekapan Nota (wave-based picking). print = cetak lembar picking/TTF;
+    // approve_takeout = melepas nota dari wave (butuh persetujuan gudang, Q9).
+    rekapan_nota: ["view", "manage", "print", "approve_takeout"],
 } as const;
 
 export type PermissionModule = keyof typeof PERMISSION_REGISTRY;

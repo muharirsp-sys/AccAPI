@@ -46,6 +46,25 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 
 ## Core Logic Flow (Function-Level Flowchart)
 
+### Ruang Kerja Surya (Redesign September 2026)
+```
+DashboardLayout -> session + RBAC union -> SidebarLayout (identitas akun)
+  -> config/workspace-navigation.ts: 18 modul dalam 6 kelompok + Beranda
+  -> WorkspaceNavigation: accordion, pencarian, 3 favorit lokal per akun
+  -> route tujuan; navigasi tidak mengubah preferensi lebar sidebar
+Beranda -> katalog yang sama, disaring RBAC -> akses cepat + direktori kelompok
+RootLayout -> ThemeSwitcher: Surya default + tiga tema alternatif
+  -> app/workspace.css: Geist, hijau/putih, unggah dengan kontras jelas, reduced-motion, print
+  -> mobile dialog native: latar inert, Escape, otomatis menutup saat kembali ke desktop
+```
+Validasi: `npx tsx --test components/SidebarLayout.test.ts` dan
+`npx playwright test tests/workspace-redesign.spec.ts tests/sidebar-tooltip-contrast.spec.ts tests/office-calm-theme.spec.ts`
+pada server development lokal (10 browser checks: navigasi, mobile/resize, unggah, kontras, kompatibilitas tema).
+Referensi visual: `docs/design/surya-workspace-reference.png`.
+Hasil browser desktop/mobile: `docs/design/surya-workspace-desktop.png`, `docs/design/surya-workspace-mobile.png`.
+Checkpoint implementasi dan instruksi resume: `docs/SURYA_IMPLEMENTATION.md` (keputusan, bukti validasi, file yang disentuh, lingkungan uji, dan langkah berikutnya).
+Status: UI redesign tervalidasi lokal. Audit build menemukan tracing `webhook-backfill -> next.config.ts` memasukkan kunci OCR lokal; pengemasan dihentikan dan salinan kunci di artefak dihapus. Lihat handover sebelum deployment.
+
 ### 0. Laporan Harian Sales & Stock
 ```
 UI upload laporan harian
@@ -347,6 +366,15 @@ UI pilih pick_group -> /rekapan-nota/wave/[id]/cetak?grup=...   (server componen
 PATCH /api/rekapan-nota/wave/[id]/nota { aksi: "takeout" }  -> butuh rekapan_nota.approve_takeout
   -> UPDATE wave_assignment SET dilepas=true, dilepas_alasan/at/by   (ck_takeout memaksa terisi)
   -> nota kembali ke pool; wave_event: wave.nota_released
+
+--- 8.7 Penandaan nota kanvas (Q16) ---
+UI /rekapan-nota/kanvas -> GET /api/rekapan-nota/kanvas?tanggal=...
+  * daftar nota hari itu DIKELOMPOKKAN PER SALESMAN (di situlah nota kanvas menggumpal)
+  -> POST   .../kanvas  multi-select; setelah tanda pertama, tawaran sekali:
+       "Salesman M-XXX punya N nota lain hari ini - tandai semua?"
+  -> DELETE .../kanvas  batal tandai; DITOLAK kalau notanya sudah di wave kanvas rilis
+  * nota bertanda keluar dari pool reguler (R3.5); jumlahnya tetap DITAMPILKAN di layar
+    penyusunan wave supaya hilangnya tidak diam-diam
 
 --- 8.6 Usulan mapping area ---
 GET /api/rekapan-nota/area
@@ -768,6 +796,8 @@ AccAPI/_github_clean/
 | `app/(dashboard)/rekapan-nota/page.tsx` | `RekapanNotaPage` | Wave monitor + upload export |
 | `app/(dashboard)/rekapan-nota/wave/[id]/page.tsx` | `WavePage` | Susun wave dari pool, pilih grup cetak, rilis/konfirmasi |
 | `app/(dashboard)/rekapan-nota/area/page.tsx` | `AreaMappingPage` | Antrean mapping area + terima massal TINGGI |
+| `app/api/rekapan-nota/kanvas/route.ts` | `GET`,`POST`,`DELETE` | Nota per salesman + tandai/batal tandai kanvas. Menolak menandai nota yang sudah di wave reguler, dan menolak mencabut tanda yang sudah di wave kanvas rilis |
+| `app/(dashboard)/rekapan-nota/kanvas/page.tsx` | `KanvasPage` | Penandaan kanvas: kelompok per salesman, multi-select, tawaran sekali "tandai semua nota salesman ini" |
 | `app/(cetak)/layout.tsx` + `TombolCetak.tsx` | `CetakLayout` | Grup route cetak: tanpa sidebar, guard `rekapan_nota.print` sendiri, CSS `@page`/`@media print` |
 | `app/(cetak)/rekapan-nota/wave/[id]/cetak/page.tsx` | `CetakRekapanPage` | SATU template lembar rekapan berparameter grup (server component) |
 | `app/(cetak)/rekapan-nota/wave/[id]/ttf/page.tsx` | `CetakTtfPage` | SATU template TTF berparameter wave |
@@ -861,7 +891,10 @@ pick_group ──── pick_group_member (pick_group_id)
 
 Kolom tambahan pada tabel existing (aditif):
   item.isi_per_karton, item.satuan_besar
-  customer.area, customer.grup_all, customer.grup_gdi
+  customer.area, customer.grup_all, customer.grup_gdi, customer.alamat
+    (alamat WAJIB: Kel./Kec. di dalamnya adalah satu-satunya sinyal mesin usulan area.
+     Cache Accurate tidak membawanya -> diisi dari `Master Area Heinz` saat impor master,
+     lalu dijaga segar dari alamat yang ikut tiap baris nota saat upload.)
 
 Parameter di app_setting (tabel existing, bukan tabel baru):
   rekapan.ambang_pareto_karton    = 50
@@ -887,6 +920,7 @@ Status Lifecycle wave:
 | `scripts/seed-rbac-presets.ts` | Sinkron preset Dynamic RBAC termasuk `manage_hierarchy` dan Laporan Harian + backfill user_group (`node --experimental-strip-types`) — PostgreSQL, idempotent |
 | `db/migrations/0002_rekapan_nota.sql` | DDL modul Rekapan Nota (10 tabel + 6 enum + kolom item/customer) + seed 17 pick_group & 3 app_setting; idempoten |
 | `scripts/apply-rekapan-migration.mjs` | Terapkan 0002 ke PostgreSQL LOKAL dalam satu transaksi (guard hostname; produksi manual dengan role ber-DDL) |
+| `scripts/bandingkan-rekapan-excel.ts` | Kriteria lulus Fase 3: adu hasil AccAPI vs `Paste Data Sore` PER SKU PER GRUP (bukan grand total). Selisih wajib punya sebab yang dibuktikan ke DB; kalau tidak, exit 1. `npx tsx scripts/bandingkan-rekapan-excel.ts --wave <id>` |
 | `scripts/import-rekapan-master.mjs` | Impor sekali `Konversi`/`Master Area Heinz`/`Pemisah` dari workbook ke item & customer; melaporkan yang tidak cocok, tidak menelannya |
 | `scripts/sync-insentif-hierarchy.mjs` | Upsert assignment SPV→Sales dan SM→SPV dari target periode terbaru; tidak menebak identitas akun login |
 
@@ -1304,8 +1338,9 @@ suggested-tests: Scan the rebuilt image for the old secret without printing it, 
 | **D4 env/deploy verifikasi parsial** | Dockerfile baru fail-closed pada URL non-PostgreSQL. Live container 2026-09-08 memakai PostgreSQL dan query konektivitas berhasil, tetapi belum ada healthcheck frontend atau authenticated DB-route smoke test. |
 | **Rekapan Nota: sumber baris nota** | UPLOAD MANUAL export Accurate, bukan sync live. Kalau admin lupa upload, pool kosong dan wave tidak bisa disusun — gagalnya kelihatan, bukan diam-diam. Jalur upgrade: `sales-invoice/detail.do` per faktur (mahal, ~850 nota/hari). |
 | **Rekapan Nota: master konversi** | Diimpor sekali dari sheet `Konversi` (8.173 SKU); export tidak membawa `QTYKONV`. Yang menjaga master tetap benar adalah `konv_tersirat` tiap upload (baseline: cocok 65/65 SKU). Item ganti kemasan -> exception `KONVERSI_BEDA_DENGAN_EXPORT`, bukan orang. |
-| **Rekapan Nota: mapping area** | `Master Area Heinz` belum lengkap. Per 21 Agu 2026, 19 dari 131 nota Heinz tidak muncul di lembar HNZ mana pun karena outletnya belum dipetakan. Mesin usulan menutup ~79% (133/168) dengan LOO 87,1%; sisanya tetap antrean kerja manual, dan tidak ada yang dikarang. |
-| **Rekapan Nota: nota kanvas** | Tabel `nota_kanvas` + constraint sudah ada (nota kanvas mustahil masuk wave reguler), tetapi UI penandaannya BELUM dibuat — sementara ditandai lewat SQL. Kalau lupa ditandai, notanya ikut rekapan reguler padahal barangnya sudah keluar lewat pemindahan gudang. |
+| **Rekapan Nota: mapping area** | `Master Area Heinz` belum lengkap. Per 21 Agu 2026, 19 dari 131 nota Heinz tidak muncul di lembar HNZ mana pun karena outletnya belum dipetakan. Mesin usulan menutup ~79% (133/168) dengan LOO 87,1%; sisanya tetap antrean kerja manual, dan tidak ada yang dikarang. **Cakupan itu runtuh ke ~21% kalau `customer.alamat` kosong** — jalankan `scripts/import-rekapan-master.mjs` sebelum mengandalkan layar mapping. |
+| **Rekapan Nota: nota kanvas** | Penandaan MANUAL lewat `/rekapan-nota/kanvas` (kelompok per salesman, multi-select, tawaran "tandai semua nota salesman ini"). Constraint DB membuat nota kanvas mustahil masuk wave reguler dan sebaliknya. Sisa risikonya orang, bukan sistem: kalau lupa ditandai, notanya ikut rekapan reguler padahal barangnya sudah keluar lewat pemindahan gudang. Peredamnya, layar penyusunan wave menampilkan berapa nota yang disembunyikan karena tanda itu — hilangnya tidak diam-diam. Deteksi otomatis dari GDG belum bisa dibuktikan (butuh export multi-gudang). |
+| **Rekapan Nota: pembanding Excel tidak menyentuh lembar cetak** | `scripts/bandingkan-rekapan-excel.ts` mengadu AccAPI dengan DATA di `Paste Data Sore`, BUKAN dengan lembar `Print Rekapan Sore-*`. E2/E3/E4 (referensi sel bergeser, blok formula kependekan, filter pivot menua) hidup di lembar cetak itu, jadi kertas yang sampai ke gudang memang berbeda dari data yang menghasilkannya. "LULUS" berarti "AccAPI = Excel kalau Excel benar", bukan "AccAPI = kertas kemarin". |
 | **Rekapan Nota: belum dibangun** | `wave_rekonsiliasi` + `ck_neraca` (PRD §3.7) dan `wave_print_log` + preset cetak (§3.8) sengaja ditunda. Neraca two-step tetap dijamin struktural (satu CTE), tapi rekonsiliasi terhadap file upload belum ada. |
 | **Rekapan Nota: `item.no` tanpa index** | Cek `EXPLAIN` pada join `wave_line_pool -> item` sebelum menambah `ix_item_no`; jangan menambah index tanpa bukti. |
 | **`rekprinciple.xlsx`** | File Excel di root — tidak jelas apakah dipakai runtime atau hanya referensi manual. |

@@ -1,161 +1,42 @@
-// Tujuan: Landing dashboard bergaya Executive Control Tower untuk akses cepat modul operasional Smart ERP dengan satu pintu Accurate.
-// Caller: Route Next.js dashboard `/`.
-// Dependensi: `lucide-react`, `next/link`, Better Auth, Drizzle user, helper RBAC, daftar modul lokal.
-// Main Functions: `DashboardLanding`, `MODULES`, kartu modul warm luxury.
-// Side Effects: DB read user permissions dan navigasi via link.
-
-import { Percent, CalendarCheck2, DollarSign, Wallet, Database, ArrowRight, Settings2, ShieldCheck, Cpu, ClipboardCheck } from "lucide-react";
+/*
+ * Tujuan: Beranda ruang kerja Surya dengan alur operasional dan katalog modul berdasarkan izin.
+ * Caller: Next.js route /.
+ * Dependensi: Better Auth, RBAC union, workspace-navigation, Next Link, lucide-react.
+ * Main Functions: DashboardLanding.
+ * Side Effects: Membaca session/permission; tidak menampilkan statistik simulasi.
+ */
 import Link from "next/link";
 import { headers } from "next/headers";
+import { ArrowRight, CalendarDays, Tags, ShoppingCart, PackageCheck, ChartNoAxesCombined } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { canAccessPathWithKeys, rolePermissionPresets } from "@/lib/rbac";
 import { getUserPermissions } from "@/lib/rbac/resolve";
 import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
-
-const MODULES = [
-    {
-        title: "AOL Form Engine",
-        desc: "API Injector ke Accurate Online secara bulk. Bypass web forms.",
-        icon: Settings2,
-        href: "/api-wrapper",
-        color: "from-[#f2d28a]/35 to-[#fff8ea]/20",
-        iconColor: "text-[#9a6b23]",
-        border: "border-indigo-500/20 hover:border-indigo-400/50"
-    },
-    {
-        title: "Validator Diskon",
-        desc: "Lakukan validasi data potongan diskon manual secara bulk.",
-        icon: Percent,
-        href: "/validator",
-        color: "from-[#f5dfad]/34 to-[#fff8ea]/20",
-        iconColor: "text-[#8f6c2f]",
-        border: "border-emerald-500/20 hover:border-emerald-400/50"
-    },
-    {
-        title: "Summary Promo",
-        desc: "Ekstraksi PDF otomatis dengan regex AI dan kompilasi SPT.",
-        icon: CalendarCheck2,
-        href: "/summary",
-        color: "from-[#edd09a]/34 to-[#fff4df]/18",
-        iconColor: "text-[#9b742d]",
-        border: "border-sky-500/20 hover:border-sky-400/50"
-    },
-    {
-        title: "OFF Program Control",
-        desc: "Kontrol pengajuan OFF, approval, pembayaran, dan audit batch.",
-        icon: ClipboardCheck,
-        href: "/off-program-control",
-        color: "from-[#f0d596]/34 to-[#fff8ea]/20",
-        iconColor: "text-[#84682e]",
-        border: "border-teal-500/20 hover:border-teal-400/50"
-    },
-    {
-        title: "Finance",
-        desc: "Review transfer, bukti pembayaran, dan posting purchase-payment.",
-        icon: DollarSign,
-        href: "/finance",
-        color: "from-[#e8c174]/32 to-[#fff2d5]/18",
-        iconColor: "text-[#8d5a24]",
-        border: "border-purple-500/20 hover:border-purple-400/50"
-    },
-    {
-        title: "Pembayaran & SPPD",
-        desc: "Manajemen LPB / CBD dan auto-generate draft cart SPPD.",
-        icon: Wallet,
-        href: "/payments",
-        color: "from-[#f3dba5]/34 to-[#fff6e4]/18",
-        iconColor: "text-[#966b2f]",
-        border: "border-rose-500/20 hover:border-rose-400/50"
-    },
-    {
-        title: "Master Principle",
-        desc: "Konfigurasi kamus data principle untuk PDF Extraction AI.",
-        icon: Database,
-        href: "/principles",
-        color: "from-[#ead7b4]/38 to-[#fff9ed]/18",
-        iconColor: "text-[#7e653d]",
-        border: "border-cyan-500/20 hover:border-cyan-400/50"
-    }
-];
+import { navigationForPermissions } from "@/config/workspace-navigation";
 
 export default async function DashboardLanding() {
     const requestHeaders = await headers();
     const session = await auth.api.getSession({ headers: requestHeaders }).catch(() => null);
     const userId = String(session?.user?.id || "");
-    // Union group ∪ legacy — konsisten dengan guard layout & API.
     const permKeys = isLocalAuthBypassEnabled(requestHeaders)
-        ? new Set(Object.entries(rolePermissionPresets.admin).flatMap(([moduleName, actions]) => (actions || []).map((action) => `${moduleName}.${action}`)))
+        ? new Set(Object.entries(rolePermissionPresets.admin).flatMap(([moduleName, actions]) => (actions || []).map(action => `${moduleName}.${action}`)))
         : userId ? await getUserPermissions(userId) : new Set<string>();
-    const visibleModules = MODULES.filter((mod) => canAccessPathWithKeys(mod.href, permKeys));
-
-    return (
-        <div className="max-w-7xl mx-auto pb-12 pt-4 selection:bg-indigo-500/30">
-            {/* Hero Section */}
-            <div className="relative rounded-[2rem] overflow-hidden bg-gradient-to-br from-[#fffaf0]/90 via-[#f8ead1]/78 to-[#ead2a5]/58 p-8 md:p-14 mb-10 shadow-2xl">
-                <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[100px] -mr-48 -mt-48 pointer-events-none"></div>
-                <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-emerald-500/10 rounded-full blur-[80px] -ml-32 -mb-32 pointer-events-none"></div>
-                
-                <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-10">
-                    <div className="flex-1 space-y-6">
-                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-xs font-bold tracking-widest uppercase shadow-[0_10px_30px_rgba(199,154,63,0.14)]">
-                            <ShieldCheck size={14} /> ERP Sistem Terpusat
-                        </div>
-                        <h1 className="text-4xl md:text-5xl font-black text-[var(--luxury-text)] tracking-tight leading-tight">
-                            Portal Internal <br className="hidden md:block"/>
-                            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#b77a25] via-[#d6a948] to-[#7a4e20]">
-                                CV. Surya Perkasa
-                            </span>
-                        </h1>
-                        <p className="text-lg text-slate-400 max-w-xl leading-relaxed">
-                            Akses modul operasional, finansial, validator, summary, dan satu pintu injeksi Accurate dalam dashboard terpadu.
-                        </p>
-                    </div>
-                    
-                    <div className="hidden lg:flex shrink-0 w-64 h-64 bg-black/40 rounded-[1.75rem] shadow-xl items-center justify-center relative overflow-hidden group">
-                        <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                        <div className="absolute inset-8 rounded-full bg-white/5"></div>
-                        <Cpu size={80} className="text-[var(--luxury-gold)] opacity-40 transition-[opacity,transform] duration-500 group-hover:scale-110 group-hover:opacity-100" />
-                    </div>
-                </div>
-            </div>
-
-            {/* Modules Grid */}
-            <div className="mb-4">
-                <h2 className="text-xl font-extrabold text-white tracking-tight flex items-center gap-2 mb-6 px-2">
-                    <span className="w-1.5 h-6 rounded-full bg-gradient-to-b from-[#f2d28a] to-[#b77a25] block shadow-[0_6px_18px_rgba(199,154,63,0.35)]"></span> Modul Operasional
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {visibleModules.map((mod, i) => {
-                        const Icon = mod.icon;
-                        return (
-                            <Link 
-                                href={mod.href} 
-                                key={i}
-                                className={`group flex flex-col justify-between p-6 rounded-[1.5rem] bg-[#1a1c23] bg-gradient-to-br ${mod.color} border ${mod.border} backdrop-blur-xl transition-all duration-300 hover:shadow-xl hover:-translate-y-1`}
-                                style={{ boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.55), 0 18px 46px rgba(122,78,32,0.10)' }}
-                            >
-                                <div>
-                                    <div className={`w-12 h-12 rounded-2xl bg-black/40 flex items-center justify-center mb-5 border border-white/5 group-hover:scale-110 transition-transform shadow-[0_12px_30px_rgba(199,154,63,0.15)]`}>
-                                        <Icon className={`${mod.iconColor}`} size={24} />
-                                    </div>
-                                    <h3 className="text-lg font-bold text-white mb-2">{mod.title}</h3>
-                                    <p className="text-sm text-slate-400 leading-relaxed mb-6 line-clamp-2">
-                                        {mod.desc}
-                                    </p>
-                                </div>
-                                <div className="mt-auto flex items-center justify-between pt-4">
-                                    <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--luxury-bronze)]">Akses Modul</span>
-                                    <ArrowRight size={16} className={`${mod.iconColor} opacity-50 group-hover:opacity-100 group-hover:translate-x-1 transition-all`} />
-                                </div>
-                            </Link>
-                        );
-                    })}
-                </div>
-            </div>
-            
-            <div className="text-center mt-12 py-6">
-                <p className="text-sm text-slate-500">V1.0.0 &copy; 2026 Core ERP Infrastructure - PT. Surya Perkasa</p>
-            </div>
+    const groups = navigationForPermissions(href => canAccessPathWithKeys(href, permKeys));
+    const allItems = groups.flatMap(group => group.items);
+    const quick = ["/summary", "/faktur", "/rekapan-nota"].map(href => allItems.find(item => item.href === href)).filter(item => Boolean(item));
+    const date = new Intl.DateTimeFormat("id-ID", { weekday: "long", day: "numeric", month: "long", timeZone: "Asia/Makassar" }).format(new Date());
+    return <div className="workspace-home">
+        <div className="workspace-home-heading"><div><p className="workspace-eyebrow">Ruang kerja</p><h1>Selamat bekerja.</h1><p>Semua pekerjaan, dalam satu alur.</p></div><span className="workspace-date"><CalendarDays size={16} aria-hidden="true" />{date}</span></div>
+        <div className="workspace-overview">
+            <section className="workspace-flow" aria-labelledby="workflow-title"><h2 id="workflow-title">Dari program hingga pengiriman.</h2><p>Kelola promo, pantau penjualan, dan siapkan gudang.</p><ol>{[
+                { label: "Program", icon: Tags, href: "/summary" }, { label: "Penjualan", icon: ShoppingCart, href: "/faktur" },
+                { label: "Gudang", icon: PackageCheck, href: "/rekapan-nota" }, { label: "Laporan", icon: ChartNoAxesCombined, href: "/laporan-harian" },
+            ].map(step => <li key={step.label}>{canAccessPathWithKeys(step.href, permKeys) ? <Link prefetch={false} href={step.href}><span className="workspace-flow-icon"><step.icon size={25} strokeWidth={1.5} /></span><strong>{step.label}</strong><ArrowRight size={14} /></Link> : <span className="workspace-flow-unavailable"><span className="workspace-flow-icon"><step.icon size={25} strokeWidth={1.5} /></span><strong>{step.label}</strong></span>}</li>)}</ol></section>
+            <section className="workspace-quick" aria-labelledby="quick-title"><h2 id="quick-title">Akses cepat</h2>{quick.length ? quick.map(item => item && <Link key={item.href} prefetch={false} href={item.href}><item.icon size={19} strokeWidth={1.6} /><span>{item.name}</span><ArrowRight size={17} /></Link>) : <p>Modul yang tersedia tercantum di bawah.</p>}</section>
         </div>
-    );
+        <div className="workspace-directory-heading"><h2>Jelajahi ruang kerja</h2><span>{groups.length} kelompok</span></div>
+        <div className="workspace-directory">{groups.map(group => <section key={group.id} className="workspace-directory-group"><span className="workspace-directory-icon"><group.icon size={25} strokeWidth={1.5} /></span><div><h3>{group.name}</h3><p>{group.description}</p><div className="workspace-directory-links">{group.items.map(item => <Link key={item.href} prefetch={false} href={item.href}>{item.name}<ArrowRight size={12} /></Link>)}</div></div></section>)}</div>
+        {!groups.length && <p role="status" className="workspace-empty">Belum ada modul yang dapat diakses. Hubungi admin untuk mengatur akses Anda.</p>}
+        <footer className="workspace-home-footer">CV. Surya Perkasa<span>Ruang kerja operasional</span></footer>
+    </div>;
 }

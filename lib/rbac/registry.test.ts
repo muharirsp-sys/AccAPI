@@ -46,8 +46,11 @@ function walk(dir: string): string[] {
     return out;
 }
 
-// Cocokkan requirePermission(req, "key") DAN requirePermissionH("key").
-const RE = /requirePermission(?:H)?\s*\(\s*(?:[^,()]+,\s*)?["'`]([^"'`]+)["'`]/g;
+// Cocokkan requirePermission(req, "key"), requirePermissionH("key"), DAN otorisasi majemuk
+// bentuk `perms.has("key")` — route dengan dua izin alternatif memakai bentuk itu, dan
+// key-nya sama-sama harus terdaftar. Tanpa ini `order.*` lolos tak terdaftar cukup lama:
+// Access Group tidak bisa memberikannya sehingga modulnya hanya jalan untuk admin.
+const RE = /(?:requirePermission(?:H)?\s*\(\s*(?:[^,()]+,\s*)?|perms\??\.has\s*\(\s*)["'`]([^"'`]+)["'`]/g;
 let scanned = 0;
 const bad: string[] = [];
 for (const file of walk(API_DIR)) {
