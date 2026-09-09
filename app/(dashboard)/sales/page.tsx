@@ -50,7 +50,7 @@ async function send(method: string, path: string, body?: unknown) {
 }
 
 const emptyLine = (): Line => ({ code: "", unit: "", quantity: "1" });
-const field = "w-full bg-black/50 border border-white/10 rounded-lg px-2 py-2 text-sm text-slate-300";
+const field = "mt-1 block w-full bg-black/50 border border-white/10 rounded-lg px-2 py-2 text-sm text-slate-300";
 
 export default function SalesOrderPage() {
     const today = new Date().toISOString().split("T")[0];
@@ -173,8 +173,8 @@ export default function SalesOrderPage() {
 
     return (
         <div className="p-4 sm:p-8 space-y-5 max-w-3xl">
-            <div className="flex items-center gap-3">
-                <Smartphone className="text-emerald-600" size={26} />
+            <div className="flex items-start gap-3">
+                <Smartphone className="text-emerald-600 shrink-0 mt-0.5" size={26} aria-hidden />
                 <div>
                     <h1 className="text-2xl font-bold">Order Sales</h1>
                     <p className="text-sm text-slate-400">Kirim jumlah barang; harga, diskon, dan bonus dihitung server dari master Accurate dan promo yang berlaku.</p>
@@ -216,24 +216,34 @@ export default function SalesOrderPage() {
                         const advice = preview?.suggestions.find(item => item.codes.includes(line.code.trim()));
                         return (
                             <div key={index} className="rounded-lg border border-white/10 p-3 space-y-2">
-                                <div className="flex items-center gap-2">
-                                    <input value={line.code} placeholder="kode barang" onChange={e => updateLine(index, "code", e.target.value)} className={field} />
+                                {/* Nomor baris dibuat eksplisit: di layar HP baris kedua dan ketiga
+                                    terlihat sama saja, dan sales mengoreksi baris yang salah. */}
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[11px] uppercase tracking-wide text-slate-400">Barang {index + 1}</span>
                                     {lines.length > 1 && (
-                                        <button onClick={() => setLines(prev => prev.filter((_, i) => i !== index))} className="text-rose-600 hover:text-rose-500 shrink-0" aria-label="Hapus baris">
+                                        <button onClick={() => setLines(prev => prev.filter((_, i) => i !== index))}
+                                            className="text-rose-600 hover:text-rose-500 shrink-0" aria-label={`Hapus barang ${index + 1}`}>
                                             <Trash2 size={16} />
                                         </button>
                                     )}
                                 </div>
+                                <label className="block text-xs text-slate-400">Kode barang
+                                    <input value={line.code} placeholder="kode barang" onChange={e => updateLine(index, "code", e.target.value)} className={field} />
+                                </label>
                                 <div className="grid grid-cols-2 gap-2">
+                                    <label className="block text-xs text-slate-400">Satuan
                                     {info && info.units.length > 0 ? (
                                         <select aria-label="Satuan" value={line.unit} onChange={e => updateLine(index, "unit", e.target.value)} className={field}>
-                                            <option value="">satuan</option>
+                                            <option value="">pilih</option>
                                             {info.units.map(unit => <option key={unit} value={unit}>{unit}</option>)}
                                         </select>
                                     ) : (
                                         <input aria-label="Satuan" value={line.unit} placeholder="satuan" onChange={e => updateLine(index, "unit", e.target.value.toUpperCase())} className={field} />
                                     )}
-                                    <input inputMode="numeric" value={line.quantity} placeholder="jumlah" onChange={e => updateLine(index, "quantity", e.target.value)} className={field} />
+                                    </label>
+                                    <label className="block text-xs text-slate-400">Jumlah
+                                        <input inputMode="numeric" value={line.quantity} placeholder="0" onChange={e => updateLine(index, "quantity", e.target.value)} className={field} />
+                                    </label>
                                 </div>
                                 {info && (
                                     <p className={`text-xs ${info.found ? "text-slate-400" : "text-rose-600"}`}>

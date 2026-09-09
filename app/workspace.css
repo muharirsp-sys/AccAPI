@@ -23,6 +23,12 @@ html[data-theme="surya"] body > .fixed.-z-10 { display: none; }
 html[data-theme="surya"] :is(.bg-black\/20,.bg-black\/25,.bg-black\/30,.bg-black\/40,.bg-black\/50) { background-color: #edf3ef !important; }
 html[data-theme="surya"] :is(.bg-indigo-500\/10,.bg-indigo-500\/20,.bg-blue-500\/10,.bg-blue-500\/20,.bg-emerald-500\/10,.bg-emerald-500\/20,.bg-sky-500\/10,.bg-sky-500\/20,.bg-purple-500\/10,.bg-purple-500\/20) { background-color: #e8f2ec !important; }
 html[data-theme="surya"] :is(.bg-\[\#101219\],.bg-\[\#15161f\],.bg-\[\#101217\]) { background-color: #ffffff !important; }
+/* Garis pinggir putih-transparan lahir dari tema gelap; di atas panel putih tema Surya ia
+   praktis tidak terlihat, sehingga kotak input tampak tanpa batas dan kartu menyatu dengan
+   latar. Dipetakan sekali di sini supaya SELURUH halaman ikut terbaca, bukan ditambal
+   per komponen. */
+html[data-theme="surya"] :is(.border-white\/5,.border-white\/10,.border-white\/20) { border-color: #cfe0d6 !important; }
+html[data-theme="surya"] :is(.divide-white\/5,.divide-white\/10) > * + * { border-color: #cfe0d6 !important; }
 html[data-theme="surya"] :is(.shadow-xl,.shadow-2xl) { box-shadow: 0 6px 24px #173e2d0a; }
 html[data-theme="surya"] :is(.text-indigo-300,.text-indigo-400,.text-blue-300,.text-blue-400,.text-emerald-300,.text-emerald-400) { color: #17694f !important; }
 html[data-theme="surya"] .text-slate-300 { color: var(--luxury-text) !important; }
