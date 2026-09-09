@@ -525,6 +525,121 @@ Dokumen ini adalah checkpoint di disk, bukan bukti seluruh proyek selesai. Perba
   `gh pr merge --admin` TIDAK dipakai: gate itu sengaja dipasang pemilik repo dan perubahan
   ini langsung memicu deploy produksi. Perlu approval manusia.
 
+### Master Accurate untuk order sales — dibuktikan live 2026-09-09
+
+Seluruh nama field di bawah ini datang dari **probe live** ke DB CV Surya Perkasa
+(`iris.accurate.id`), bukan dari spec. Alasannya tercatat di `ACCURATE_API_REFERENCE.md`: spec
+resmi Accurate tidak punya response schema sama sekali, dan **field yang tidak dikenal diterima
+tanpa error lalu diabaikan diam-diam**. Setiap klaim di sini punya bukti panggilannya.
+
+#### Temuan yang mengubah pemahaman sebelumnya
+
+1. **"Cabang" di database ini berarti DIVISI PRINCIPAL, bukan kota.** 22 cabang: Kantor Pusat
+   (id 50, default), MIX FOOD, MIX NON FOOD, FORISA, HEINZ, UNIBIS, ABC, URC, SHINZUI, PURATOS,
+   PRIMARASA, VINDA, FORISA - MT, DOLPHIN, ENERGIZER, KINO NON FOOD, RECKITT, MONTISS, MOTASA,
+   CUSSONS, GODREJ, MSM. **Koreksi atas catatan sebelumnya:** kolom `branch` pada `sales_targets`
+   yang saya sebut "tercampur nama principal" ternyata memang memakai kosakata cabang Accurate.
+   Yang justru tidak cocok adalah `sales_profile` (BANDUNG/CIMAHI/SUMEDANG) — itu data contoh.
+2. **Satu outlet fisik punya customerNo BERBEDA per cabang** — mis. `C-100005-RB` (RECKITT) dan
+   `C-100005-VIN` (VINDA) untuk outlet yang sama. Order wajib memakai customerNo cabang yang benar.
+3. **`item/list.do` tidak membawa nama satuan sama sekali.** `unit1Name` dkk diabaikan diam-diam;
+   hanya `ratio2`/`ratio3` yang lolos. Satuan hanya ada di `item/detail.do`.
+4. **Tipe outlet dan tier harga adalah DUA master berbeda** walau beberapa namanya sama.
+   `customer.category` = tipe outlet (9 nilai: TT, MT, NKA, KANVAS, MOTORIST, BTL, INDOGROSIR,
+   EKSPEDISI, Umum); `customer.priceCategory` = tier harga (termasuk ALFAMART, INDOMARET,
+   DIAMOND, HARGA KHUSUS yang tidak ada di daftar tipe outlet).
+
+#### Penomoran faktur per cabang
+
+`auto-number/list.do` -> 155 baris. `transactionType='SI'` adalah seri Faktur Penjualan, 23 buah,
+satu per principal. **Tidak ada satu pun field cabang di dalamnya**, dan `auto-number/detail.do`
+menjawab **404** — endpointnya tidak ada. Jadi pasangan cabang -> seri tidak bisa ditanyakan ke
+Accurate dan harus disimpan sendiri.
+
+`lib/branch-auto-number.ts` memasangkannya deterministik dari nama seri, dengan dua pengaman yang
+lahir dari data nyata:
+
+- **Alias eksplisit** untuk singkatan: `MF`->MIX FOOD, `MNF`->MIX NON FOOD, `FR`->FORISA,
+  `FR - MT`->FORISA - MT. Ditulis satu per satu, bukan pencocokan samar — justru singkatan mirip
+  (`MF` vs `MNF`) yang paling berbahaya kalau ditebak.
+- **Seri "Faktur Pembelian ..." yang bertipe SI ditolak.** Dua seri seperti itu ada sungguhan
+  (`Faktur Pembelian MSM`, `Faktur Pembelian Vinda`); memakainya berarti faktur penjualan
+  menempel pada penomoran pembelian.
+
+Hasil pemasangan (lokal, otomatis dijalankan ulang tiap sync `branch`/`auto_number`):
+**20 dari 22 cabang terpasang.** Dua yang kosong bukan kegagalan:
+
+| Cabang | Sebab |
+|---|---|
+| Kantor Pusat (50) | tidak punya seri Faktur Penjualan sama sekali |
+| URC (551) | serinya ada (`Faktur Penjualan URC`, id 352) tapi **suspended** di Accurate |
+
+Cabang tanpa seri sengaja dibiarkan NULL dan jalur faktur menolaknya. Nomor faktur yang masuk
+seri cabang lain tidak bisa ditarik kembali dari pembukuan.
+
+#### Satuan
+
+`unit/list.do` -> **37 satuan**, dan ruang id-nya **sama** dengan `item.unitNId` (dibuktikan:
+PCS=50 dan KRT=100 identik di kedua sumber). Jadi master ini sah dipakai sebagai
+`detailItem[].itemUnitId` saat membuat faktur.
+
+Pemeriksaan silang yang penting: **nol** nama satuan pada 2,3 juta baris `item_selling_price`
+yang tidak ada di master satuan. Artinya `itemUnitId` selalu bisa diresolusi — tidak ada baris
+order yang akan gagal di Accurate karena satuannya asing.
+
+Satuan item ikut terisi oleh `scripts/sync-item-selling-price.ts` **tanpa satu pun panggilan API
+tambahan**, karena skrip itu memang sudah memanggil `item/detail.do` per item. Uji batch 40 item:
+40/40 terisi (mis. `F4013001007010` PCS(50) + KRT(100), ratio2 72).
+
+#### Yang sudah tersinkron di LOKAL
+
+| Modul | Hasil |
+|---|---|
+| `branch` | 22 baris |
+| `auto_number` | 155 baris, 20 cabang terpasang serinya |
+| `unit` | 37 baris |
+| `customer` | 32.450 baris — 32.448 punya tier harga, 32.072 tipe outlet, 32.070 cabang |
+| `item` + satuan | **4.182 item, 4.182 bersatuan (100%), semuanya multi-satuan** |
+| `item_selling_price` | 2.330.900 baris, 4.182/4.182 item, 0 item tanpa detail, 1.368 detik |
+
+Pemeriksaan silang terakhir setelah sync penuh: **nol** nama satuan pada `item.unit1..5` yang
+tidak ada di master satuan, dan **nol** nama satuan pada 2,3 juta baris harga yang tidak ada di
+master satuan. Jadi setiap baris order bisa dipetakan ke `itemUnitId` yang sah.
+
+Sebaran tipe outlet: TT 29.210, MT 2.045, Umum 649, NKA 154, EKSPEDISI 7, MOTORIST 5,
+INDOGROSIR 2, kosong 378.
+
+#### Produksi: migrasi sudah, sync BELUM BISA
+
+`db/migrations/0006_accurate_order_masters.sql` sudah diterapkan ke Postgres produksi dan
+diverifikasi (4 kolom customer, 15 kolom satuan/ratio item, 3 tabel baru, 1 kolom seri di
+`branch`). Kodenya juga sudah ter-deploy (PR #28).
+
+**Tetapi sync produksi masih gagal 500**, sebabnya sama seperti yang tercatat di bawah: token
+Accurate produksi tidak bisa didekripsi. Login yang dilakukan 2026-09-09 adalah login **lokal**,
+dan itu hanya mengisi database lokal. Sampai login ulang dilakukan di
+`https://web-super.online/api-wrapper`, seluruh master baru di produksi tetap kosong.
+
+### Token Accurate PRODUKSI tidak bisa didekripsi — insiden terbuka sejak 2026-09-08
+
+Ditemukan 2026-09-09 saat sync cabang pertama gagal 500 di produksi.
+
+- `accurate_oauth_session.access_token` produksi berbentuk benar (3 bagian `iv.tag.data`) tapi
+  **tidak ada satu pun kunci di server yang bisa membukanya**: `ACCURATE_TOKEN_ENCRYPTION_KEY`
+  tidak di-set, `BETTER_AUTH_SECRET` dan `AUTH_SECRET` sama-sama menjawab
+  "unable to authenticate data". Datanya utuh; kuncinya yang berubah.
+- Token itu dienkripsi 2026-08-11. Sync terakhir yang berhasil: 2026-09-08 11:15 WITA
+  (`sync_state` semua modul). `/var/log/accapi-cron.log` berubah dari 502 menjadi 500 mulai
+  slot berikutnya, jadi **kegagalan pertama 2026-09-08 sekitar 17:15** — sebelum seluruh deploy
+  2026-09-09. Bukan akibat merge mana pun.
+- Akibat: SELURUH sync Accurate produksi mati sejak saat itu (item, customer, stok, faktur,
+  retur), dan master baru (cabang, penomoran, satuan) tidak bisa diisi.
+- Pemulihan hanya lewat **login ulang OAuth Accurate di `https://web-super.online/api-wrapper`**;
+  Accurate tidak memakai refresh token sehingga tokennya tidak bisa diperbarui otomatis.
+- Pencegahan, dan **urutannya wajib**: set `ACCURATE_TOKEN_ENCRYPTION_KEY` di Coolify LEBIH
+  DULU (kode sudah memprioritaskannya), BARU login ulang. Kalau terbalik, tokennya kembali
+  terikat pada `BETTER_AUTH_SECRET` dan akan hilang lagi setiap rahasia auth berubah.
+
 ### Cabang Accurate + id penjual pada Web Sales — 2026-09-09 (sedang berjalan)
 
 Keputusan pengguna 2026-09-09:
@@ -565,9 +680,11 @@ Diterapkan ke Postgres produksi 2026-09-09 dan diverifikasi: tabel `branch` + 2 
 `sales_profile.accurate_branch_id` bigint, hak `accapi_app` SELECT/INSERT/UPDATE/DELETE otomatis
 dari `pg_default_acl`.
 
-**Belum:** sync cabang pertama belum dijalankan (butuh kode ini ter-deploy), pemetaan
-`accurate_branch_id` untuk tiap profil sales belum diisi, dan jalur order belum membawa
-`sales_code`/`branchId`.
+**Belum:** pemetaan `accurate_branch_id` untuk tiap profil sales belum diisi, dan jalur order
+belum membawa `sales_code`/`branchId`. Catatan penting untuk langkah itu: 6 baris
+`sales_profile` di produksi bercabang BANDUNG/CIMAHI/SUMEDANG, dan **ketiganya bukan cabang
+Accurate** — jadi pemetaannya menunggu daftar kode sales dan cabang yang asli dari pengguna,
+bukan sekadar pekerjaan kode.
 
 Catatan kejujuran: `defaultBranch` dan `suspended` pada `fields` **belum terbukti live**.
 Accurate mengabaikan field tak dikenal tanpa error, jadi kalau kolom itu kosong setelah sync
