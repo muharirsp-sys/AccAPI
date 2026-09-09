@@ -85,7 +85,7 @@ function money(raw: string | undefined, label: string): number {
  */
 export function buildInvoicePayload(
     order: InvoiceOrder,
-    options: { unitIds: Map<string, number>; branchId?: number },
+    options: { unitIds: Map<string, number>; branchId: number; typeAutoNumber: number },
 ): InvoicePayload {
     if (!order.customer_no?.trim()) throw new Error("Order tanpa kode pelanggan Accurate tidak bisa difakturkan");
     if (order.result?.pending_price) throw new Error("Order berstatus needs_price; isi harga dulu sebelum difakturkan");
@@ -120,7 +120,10 @@ export function buildInvoicePayload(
         customerNo: order.customer_no.trim(),
         transDate: toAccurateDate(order.order_date),
         // Nomor faktur milik Accurate. JANGAN mengirim `number`.
-        typeAutoNumber: 1,
+        // Serinya WAJIB dari cabang pelanggan (lib/order-branch): penomoran Faktur Penjualan
+        // di database ini berjalan per cabang, dan nilai tetap `1` dulu berarti SEMUA faktur
+        // masuk satu seri — nomor nyasar ke pembukuan cabang lain tanpa satu pun galat.
+        typeAutoNumber: options.typeAutoNumber,
         description: [`Order ${order.id}`, order.outlet, order.channel, order.note?.trim()].filter(Boolean).join(" | ").slice(0, 500),
         detailItem,
         // Jejak balik ke order internal; dipakai rekonsiliasi status TIDAK PASTI lewat

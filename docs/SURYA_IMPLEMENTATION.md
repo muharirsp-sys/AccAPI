@@ -619,6 +619,48 @@ Awalnya sync produksi gagal 500 karena token Accurate tidak bisa didekripsi. Sud
 2026-09-09 setelah bug jalur login diperbaiki dan login ulang dilakukan di produksi; angka
 final ada di bagian "PRODUKSI TERSINKRON PENUH".
 
+### Penomoran faktur per cabang benar-benar terpasang — 2026-09-09
+
+Dua cacat ditemukan saat menyambungkan master yang baru tersinkron ke jalur faktur, dan
+keduanya diam:
+
+1. **`typeAutoNumber` masih tertulis `1`** di `buildInvoicePayload`. Artinya SELURUH faktur
+   akan masuk satu seri penomoran, tak peduli cabangnya — nomor nyasar ke pembukuan cabang lain
+   tanpa satu pun galat.
+2. **Cabang diambil dari satu env `ACCURATE_INVOICE_BRANCH_ID`.** Satu cabang untuk semua
+   faktur, dengan masalah yang sama.
+
+Sekarang keduanya datang dari `lib/order-branch.ts` -> `resolveOrderBranch(customerNo)`:
+**cabang diambil dari PELANGGAN order itu**, lalu serinya dari `branch.si_auto_number_id`.
+
+Kenapa dari pelanggan dan bukan dari perangkat sales atau env: di Accurate ini satu outlet
+fisik punya customerNo BERBEDA per cabang (`C-100005-RB` untuk RECKITT, `C-100005-VIN` untuk
+VINDA), jadi cabang sudah melekat pada kode pelanggan yang dipilih. Efek sampingnya justru
+yang paling berharga — **nilai ini tidak bisa dipalsukan klien, karena tidak pernah dibaca dari
+permintaan.** `ACCURATE_INVOICE_BRANCH_ID` tidak dipakai lagi.
+
+Setiap ketidakpastian MENOLAK (409), tidak memakai nilai default. Diuji atas data produksi:
+
+| Kondisi | Jumlah pelanggan produksi | Perilaku |
+|---|---|---|
+| Cabang + seri aktif | **32.181** | OK — mis. `C-100005-RB` -> RECKITT -> "Faktur Penjualan Reckitt", `C-MUS026-GD` -> GODREJ -> "Faktur Penjualan Godrej" |
+| Pelanggan tanpa cabang | 73 | ditolak: cabang faktur tidak dapat ditentukan |
+| Cabang tanpa seri aktif | 204 | ditolak: seri penomoran tidak aktif (semuanya pelanggan URC, serinya suspended) |
+| Pelanggan tidak ada di master | — | ditolak: tidak ada di hasil sync |
+
+`buildInvoicePayload` sekarang MEWAJIBKAN `branchId` dan `typeAutoNumber` sebagai opsi (bukan
+opsional), jadi pemanggil baru tidak bisa lupa dan diam-diam kembali ke seri tunggal.
+
+Dry-run untuk ditinjau sebelum gerbang kirim dibuka:
+
+```bash
+# tanpa body `{"queue":true}` = dry-run; tidak menyentuh DB maupun Accurate
+POST /api/orders/<id>/invoice
+```
+
+Responsnya kini membawa `branch` (id, nama, id + nama seri) di samping `payload`, jadi yang
+ditinjau bukan hanya angkanya tapi juga seri nomor yang akan dipakai.
+
 ### PRODUKSI TERSINKRON PENUH — 2026-09-09
 
 Seluruh 9 modul sync berstatus `idle` (tidak ada yang `error`/`syncing`).
@@ -989,7 +1031,7 @@ ada di schema — keputusan pengguna dulu sebelum itu dijalankan).
 
 Env baru yang dipakai sesi ini (semua fail-closed bila kosong):
 `CRON_SECRET` (juga di container **backend**), `ACCURATE_INVOICE_SEND`,
-`ACCURATE_INVOICE_DB_ID`, `ACCURATE_INVOICE_USER_ID`, `ACCURATE_INVOICE_BRANCH_ID` (opsional),
+`ACCURATE_INVOICE_DB_ID`, `ACCURATE_INVOICE_USER_ID` (`ACCURATE_INVOICE_BRANCH_ID` SUDAH TIDAK DIPAKAI sejak 2026-09-09 — cabang diambil dari pelanggan),
 `ACCURATE_INVOICE_BATCH` (opsional, default 20). Untuk dev lokal `CRON_SECRET` sudah
 ditambahkan ke `python_backend/.env` (gitignored).
 
