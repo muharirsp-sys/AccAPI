@@ -90,6 +90,24 @@ export const item = pgTable("item", {
     // Kolom modul Rekapan Nota (diisi dari sheet `Konversi`, bukan dari sync Accurate)
     isiPerKarton: integer("isi_per_karton"),
     satuanBesar: text("satuan_besar"),
+    // Satuan Accurate. HANYA ada di item/detail.do — item/list.do mengabaikan unit1Name dkk
+    // diam-diam (dibuktikan 2026-09-09). unit1 = satuan dasar, unit2..5 kelipatan lewat ratio.
+    // unitNId adalah `itemUnitId` yang wajib dikirim pada baris faktur Accurate.
+    unit1Id: bigint("unit1_id", { mode: "number" }),
+    unit1Name: text("unit1_name"),
+    unit2Id: bigint("unit2_id", { mode: "number" }),
+    unit2Name: text("unit2_name"),
+    unit3Id: bigint("unit3_id", { mode: "number" }),
+    unit3Name: text("unit3_name"),
+    unit4Id: bigint("unit4_id", { mode: "number" }),
+    unit4Name: text("unit4_name"),
+    unit5Id: bigint("unit5_id", { mode: "number" }),
+    unit5Name: text("unit5_name"),
+    ratio2: doublePrecision("ratio2"),
+    ratio3: doublePrecision("ratio3"),
+    ratio4: doublePrecision("ratio4"),
+    ratio5: doublePrecision("ratio5"),
+    hasMultiUnit: boolean("has_multi_unit"),
     rawData: jsonb("raw_data"), // Complete unprocessed payload
     lastUpdate: text("last_update"), // Accurate's modified timestamp
     // Watermark LOKAL untuk delta feed ke Web Sales. lastUpdate tidak bisa dipakai:
@@ -151,11 +169,40 @@ export const branch = pgTable("branch", {
     name: text("name").notNull(),
     defaultBranch: boolean("default_branch").notNull().default(false),
     suspended: boolean("suspended").notNull().default(false),
+    // Seri penomoran Faktur Penjualan milik cabang ini. Accurate TIDAK menyimpan kaitan
+    // cabang<->penomoran (auto-number/list.do tanpa field cabang, detail.do 404), jadi
+    // pasangannya disimpan di sini. NULL = belum dipetakan; jalur faktur menolaknya.
+    siAutoNumberId: bigint("si_auto_number_id", { mode: "number" }),
     rawData: jsonb("raw_data"),
     lastUpdate: text("last_update"),
     syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
     index("idx_branch_synced_at").on(t.syncedAt, t.id)
+]);
+
+// Master satuan Accurate. Ruang id-nya SAMA dengan `item.unitNId` (dibuktikan live
+// 2026-09-09: PCS=50, KRT=100 di kedua sumber), jadi ini sumber `itemUnitId` baris faktur.
+export const accurateUnit = pgTable("accurate_unit", {
+    id: bigint("id", { mode: "number" }).primaryKey(),
+    name: text("name").notNull(),
+    suspended: boolean("suspended").notNull().default(false),
+    rawData: jsonb("raw_data"),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Penomoran dokumen Accurate. `transactionType='SI'` = Faktur Penjualan, satu seri per
+// principal di database ini (23 seri per probe 2026-09-09).
+export const accurateAutoNumber = pgTable("accurate_auto_number", {
+    id: bigint("id", { mode: "number" }).primaryKey(),
+    name: text("name").notNull(),
+    transactionType: text("transaction_type").notNull().default(""),
+    autoNumberType: text("auto_number_type").notNull().default(""),
+    counterDigit: integer("counter_digit"),
+    suspended: boolean("suspended").notNull().default(false),
+    rawData: jsonb("raw_data"),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_auto_number_type").on(t.transactionType, t.name)
 ]);
 
 export const customer = pgTable("customer", {
@@ -177,6 +224,16 @@ export const customer = pgTable("customer", {
     // Penentu tier harga: dicocokkan ke item_selling_price.price_category_id
     priceCategoryId: bigint("price_category_id", { mode: "number" }),
     priceCategoryName: text("price_category_name"),
+    // TIPE OUTLET (customer-category Accurate: TT, MT, NKA, KANVAS, MOTORIST, BTL,
+    // INDOGROSIR, EKSPEDISI, Umum). Beda master dari priceCategory di atas walau beberapa
+    // namanya kebetulan sama.
+    categoryId: bigint("category_id", { mode: "number" }),
+    categoryName: text("category_name"),
+    // Cabang pemilik pelanggan. Satu outlet fisik punya satu customerNo PER CABANG
+    // (mis. C-100005-RB untuk RECKITT, C-100005-VIN untuk VINDA), jadi ini bukan hiasan:
+    // order harus memakai customerNo cabang yang benar.
+    branchId: bigint("branch_id", { mode: "number" }),
+    branchName: text("branch_name"),
     rawData: jsonb("raw_data"), // Complete unprocessed payload
     lastUpdate: text("last_update"), // Accurate's modified timestamp
     syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow()

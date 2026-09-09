@@ -6,8 +6,9 @@
  * ponytail: full resync tiap run (throttled 150ms/halaman); delta sync via lastUpdate kalau volume mulai berat.
  */
 import { db } from "./db";
-import { syncState, branch, item, customer, salesInvoiceCache, salesReturnCache } from "../db/schema";
+import { syncState, branch, accurateAutoNumber, accurateUnit, item, customer, salesInvoiceCache, salesReturnCache } from "../db/schema";
 import { parseAccurateDateTime } from "./accurate-invoice";
+import { matchBranchAutoNumbers } from "./branch-auto-number";
 import { eq, sql } from "drizzle-orm";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -86,7 +87,7 @@ const bool = (v: unknown): boolean | null => (v === undefined || v === null ? nu
 const nested = (row: Record<string, unknown>, key: string): Record<string, unknown> =>
     (row[key] && typeof row[key] === "object" ? row[key] as Record<string, unknown> : {});
 
-export type SyncModuleName = "branch" | "item" | "item_stock" | "customer" | "sales_invoice" | "sales_return";
+export type SyncModuleName = "branch" | "auto_number" | "unit" | "item" | "item_stock" | "customer" | "sales_invoice" | "sales_return";
 
 // Watermark delta feed ke Web Sales. Sync ini full-resync tiap run, jadi synced_at HANYA
 // boleh maju kalau isi barisnya benar-benar berubah — kalau tidak, Web Sales menarik ulang
@@ -140,6 +141,60 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     rawData: sql`excluded."raw_data"`,
                     lastUpdate: sql`excluded."last_update"`,
                     syncedAt: bumpSyncedAt("branch"),
+                },
+            });
+        },
+    },
+    // Penomoran dokumen. Kecil (155 baris) tapi wajib: seri Faktur Penjualan (`SI`) inilah
+    // yang dikirim sebagai `typeAutoNumber` supaya nomor faktur mengikuti cabangnya.
+    // auto-number/list.do TIDAK punya rujukan cabang dan detail.do-nya 404 (probe 2026-09-09),
+    // jadi pemetaan cabang->seri hidup di branch.si_auto_number_id, bukan di sini.
+    auto_number: {
+        endpoint: "/auto-number/list.do",
+        fields: "id,name,transactionType,autoNumberType,counterDigit,suspended",
+        upsertPage: async (rows) => {
+            const payloads = rows.map((row) => ({
+                id: Number(row.id),
+                name: String(row.name ?? ""),
+                transactionType: String(row.transactionType ?? ""),
+                autoNumberType: String(row.autoNumberType ?? ""),
+                counterDigit: row.counterDigit === null || row.counterDigit === undefined ? null : Number(row.counterDigit),
+                suspended: row.suspended === true,
+                rawData: JSON.stringify(row),
+            }));
+            await db.insert(accurateAutoNumber).values(payloads).onConflictDoUpdate({
+                target: accurateAutoNumber.id,
+                set: {
+                    name: sql`excluded."name"`,
+                    transactionType: sql`excluded."transaction_type"`,
+                    autoNumberType: sql`excluded."auto_number_type"`,
+                    counterDigit: sql`excluded."counter_digit"`,
+                    suspended: sql`excluded."suspended"`,
+                    rawData: sql`excluded."raw_data"`,
+                    syncedAt: bumpSyncedAt("accurate_auto_number"),
+                },
+            });
+        },
+    },
+    // Master satuan: 37 baris. Sumber `detailItem[].itemUnitId` saat membuat faktur, dan
+    // ruang id-nya sama dengan item.unitNId (dibuktikan 2026-09-09).
+    unit: {
+        endpoint: "/unit/list.do",
+        fields: "id,name,suspended",
+        upsertPage: async (rows) => {
+            const payloads = rows.map((row) => ({
+                id: Number(row.id),
+                name: String(row.name ?? "").trim().toUpperCase(),
+                suspended: row.suspended === true,
+                rawData: JSON.stringify(row),
+            }));
+            await db.insert(accurateUnit).values(payloads).onConflictDoUpdate({
+                target: accurateUnit.id,
+                set: {
+                    name: sql`excluded."name"`,
+                    suspended: sql`excluded."suspended"`,
+                    rawData: sql`excluded."raw_data"`,
+                    syncedAt: bumpSyncedAt("accurate_unit"),
                 },
             });
         },
@@ -204,7 +259,10 @@ const SYNC_MODULES: Record<SyncModuleName, {
         // dulu (ACCURATE_API_REFERENCE.md:281); kolomnya kosong bukan karena Accurate tidak
         // mengirim, tapi karena tidak pernah diminta di sini. Alamat = satu-satunya sinyal
         // mesin usulan area, dan tanpa itu cakupannya runtuh ~79% -> ~21%.
-        fields: "id,customerNo,name,balance,customerLimitAmount,customerLimitAmountValue,customerLimitAge,customerLimitAgeValue,billStreet,billCity,billProvince,priceCategory,lastUpdate",
+        // `category` = TIPE OUTLET, `branch` = cabang pemilik pelanggan; keduanya hanya datang
+        // sebagai OBJEK. Varian datar (categoryId/branchId/salesman) diabaikan diam-diam oleh
+        // list.do — dibuktikan probe live 2026-09-09.
+        fields: "id,customerNo,name,balance,customerLimitAmount,customerLimitAmountValue,customerLimitAge,customerLimitAgeValue,billStreet,billCity,billProvince,priceCategory,category,branch,lastUpdate",
         upsertPage: async (rows) => {
             const payloads = rows.map((row) => ({
                 id: Number(row.id),
@@ -219,6 +277,10 @@ const SYNC_MODULES: Record<SyncModuleName, {
                 // priceCategory datang sebagai objek {id,name} — penentu tier harga pelanggan.
                 priceCategoryId: num((row.priceCategory as Record<string, unknown> | undefined)?.id),
                 priceCategoryName: str((row.priceCategory as Record<string, unknown> | undefined)?.name),
+                categoryId: num((row.category as Record<string, unknown> | undefined)?.id),
+                categoryName: str((row.category as Record<string, unknown> | undefined)?.name),
+                branchId: num((row.branch as Record<string, unknown> | undefined)?.id),
+                branchName: str((row.branch as Record<string, unknown> | undefined)?.name),
                 rawData: JSON.stringify(row),
                 lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
             }));
@@ -233,6 +295,10 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     creditAgeLimitEnabled: sql`excluded."credit_age_limit_enabled"`,
                     creditAgeLimitDays: sql`excluded."credit_age_limit_days"`,
                     priceCategoryId: sql`excluded."price_category_id"`,
+                    categoryId: sql`excluded."category_id"`,
+                    categoryName: sql`excluded."category_name"`,
+                    branchId: sql`excluded."branch_id"`,
+                    branchName: sql`excluded."branch_name"`,
                     priceCategoryName: sql`excluded."price_category_name"`,
                     // ISI KALAU KOSONG, tidak pernah menimpa. Alamat dari `Master Area Heinz`
                     // sudah dinormalkan tangan dan memuat `Kel./Kec.` yang dibaca parseKelKec();
@@ -378,6 +444,23 @@ export async function upsertSalesInvoiceById(id: number, creds: AccurateCredenti
     };
 }
 
+/** Pasangkan cabang dengan seri Faktur Penjualan miliknya; kembalikan jumlah yang terpasang. */
+async function linkBranchAutoNumbers() {
+    const branches = await db.select({ id: branch.id, name: branch.name }).from(branch);
+    const autoNumbers = await db.select({
+        id: accurateAutoNumber.id, name: accurateAutoNumber.name,
+        transactionType: accurateAutoNumber.transactionType, suspended: accurateAutoNumber.suspended,
+    }).from(accurateAutoNumber);
+    if (branches.length === 0 || autoNumbers.length === 0) return 0;
+
+    let linked = 0;
+    for (const row of matchBranchAutoNumbers(branches, autoNumbers)) {
+        await db.update(branch).set({ siAutoNumberId: row.autoNumberId }).where(eq(branch.id, row.branchId));
+        if (row.autoNumberId !== null) linked += 1;
+    }
+    return linked;
+}
+
 // 3. syncModule: orchestrator dengan checkpoint per halaman + watermark selesai.
 export async function syncModule(moduleName: SyncModuleName, creds: AccurateCredentials) {
     const mod = SYNC_MODULES[moduleName];
@@ -405,6 +488,13 @@ export async function syncModule(moduleName: SyncModuleName, creds: AccurateCred
             await db.update(syncState).set({ lastPage: chunk.page + 1, updatedAt: new Date() }).where(eq(syncState.module, moduleName));
         }
 
+        // Pemasangan cabang <-> seri penomoran Faktur Penjualan dijalankan ulang setiap kali
+        // salah satu sisinya tersegarkan, jadi cabang atau seri yang baru ditambahkan di
+        // Accurate ikut terpasang tanpa langkah manual. Idempoten.
+        const matched = moduleName === "branch" || moduleName === "auto_number"
+            ? await linkBranchAutoNumbers()
+            : 0;
+
         await db.update(syncState).set({
             status: "idle",
             lastPage: 1,
@@ -412,7 +502,7 @@ export async function syncModule(moduleName: SyncModuleName, creds: AccurateCred
             updatedAt: new Date(),
         }).where(eq(syncState.module, moduleName));
 
-        return { success: true, message: `Sync ${moduleName} selesai`, rows: totalRows, durationMs: Date.now() - startedAt };
+        return { success: true, message: `Sync ${moduleName} selesai`, rows: totalRows, durationMs: Date.now() - startedAt, ...(matched ? { branchAutoNumberLinked: matched } : {}) };
     } catch (e) {
         await db.update(syncState).set({ status: "error", updatedAt: new Date() }).where(eq(syncState.module, moduleName));
         return { success: false, message: e instanceof Error ? e.message : String(e), rows: totalRows, durationMs: Date.now() - startedAt };
