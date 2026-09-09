@@ -249,21 +249,21 @@ export default function OrdersPage() {
 
             <div className="bg-[#1a1c23]/60 border border-white/10 rounded-2xl p-5 space-y-4">
                 <div className="flex flex-wrap items-end gap-3">
-                    <label className="text-xs text-slate-400">Outlet
+                    <label className="text-xs text-slate-400 w-full sm:w-auto">Outlet
                         <input value={outlet} onChange={e => setOutlet(e.target.value)} placeholder="Nama / kode outlet"
-                            className="block w-56 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
+                            className="block w-full sm:w-56 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
                     </label>
-                    <label className="text-xs text-slate-400">Channel
+                    <label className="text-xs text-slate-400 w-full sm:w-auto">Channel
                         <input value={channel} onChange={e => setChannel(e.target.value.toUpperCase())} placeholder="GT / RETAIL"
-                            className="block w-32 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
+                            className="block w-full sm:w-32 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
                     </label>
-                    <label className="text-xs text-slate-400">Tanggal order
+                    <label className="text-xs text-slate-400 w-full sm:w-auto">Tanggal order
                         <input type="date" value={orderDate} onChange={e => setOrderDate(e.target.value)}
-                            className="block bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
+                            className="block w-full sm:w-auto bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
                     </label>
-                    <label className="text-xs text-slate-400">Kode pelanggan Accurate
+                    <label className="text-xs text-slate-400 w-full sm:w-auto">Kode pelanggan Accurate
                         <input value={customerNo} onChange={e => setCustomerNo(e.target.value)} placeholder="C.00000"
-                            className="block w-36 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
+                            className="block w-full sm:w-36 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
                     </label>
                     <label className="text-xs text-slate-400 flex-1 min-w-48">Catatan
                         <input value={note} onChange={e => setNote(e.target.value)} placeholder="opsional"
@@ -272,36 +272,50 @@ export default function OrdersPage() {
                 </div>
 
                 <div className="space-y-2">
+                    {/* Kepala kolom hanya di layar lebar: di mobile setiap kotak sudah punya label
+                        sendiri, dua-duanya sekaligus malah berisik. */}
+                    <div className="hidden sm:grid grid-cols-[1fr_7rem_6rem_8rem_1.5rem] gap-2 px-1 text-[11px] uppercase tracking-wide text-slate-400">
+                        <span>Kode barang</span><span>Satuan</span><span>Jumlah</span><span>Harga</span><span />
+                    </div>
                     {lines.map((line, index) => {
                         const info = master[line.code.trim()];
                         return (
-                        <div key={index} className="flex flex-wrap items-center gap-2">
-                            <input value={line.code} placeholder="kode" onChange={e => updateLine(index, "code", e.target.value)}
-                                className="w-56 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
+                        <div key={index} className="rounded-xl border border-white/10 p-2 sm:border-0 sm:p-0 sm:rounded-none grid gap-2 sm:grid-cols-[1fr_7rem_6rem_8rem_1.5rem] sm:items-center">
+                            <label className="text-xs text-slate-400"><span className="sm:sr-only">Kode barang</span>
+                            <input value={line.code} placeholder="kode barang" onChange={e => updateLine(index, "code", e.target.value)}
+                                className="mt-1 sm:mt-0 block w-full bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
+                            </label>
                             {/* Satuan dari master Accurate. Item tanpa daftar harga (mis. sebelum sync
                                 harga jual jalan) tetap bisa diketik — server tidak punya master untuk
                                 menolaknya; itu degradasi, bukan izin menebak. */}
+                            <label className="text-xs text-slate-400"><span className="sm:sr-only">Satuan</span>
                             {info && info.units.length > 0 ? (
                                 <select aria-label="Satuan" value={line.unit} onChange={e => updateLine(index, "unit", e.target.value)}
-                                    className="w-28 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300">
-                                    <option value="">satuan</option>
+                                    className="mt-1 sm:mt-0 block w-full bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300">
+                                    <option value="">pilih</option>
                                     {info.units.map(unit => <option key={unit} value={unit}>{unit}</option>)}
                                 </select>
                             ) : (
                                 <input aria-label="Satuan" value={line.unit} placeholder="satuan" onChange={e => updateLine(index, "unit", e.target.value.toUpperCase())}
-                                    className="w-28 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
+                                    className="mt-1 sm:mt-0 block w-full bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
                             )}
-                            <input value={line.quantity} placeholder="jumlah" onChange={e => updateLine(index, "quantity", e.target.value)}
-                                className="w-28 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
-                            <input value={line.price} placeholder="harga" onChange={e => updateLine(index, "price", e.target.value)}
-                                className="w-28 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
-                            {lines.length > 1 && (
-                                <button onClick={() => setLines(prev => prev.filter((_, i) => i !== index))} className="text-rose-600 hover:text-rose-500" aria-label="Hapus baris">
+                            </label>
+                            <label className="text-xs text-slate-400"><span className="sm:sr-only">Jumlah</span>
+                                <input value={line.quantity} inputMode="numeric" placeholder="0" onChange={e => updateLine(index, "quantity", e.target.value)}
+                                    className="mt-1 sm:mt-0 block w-full bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
+                            </label>
+                            <label className="text-xs text-slate-400"><span className="sm:sr-only">Harga</span>
+                                <input value={line.price} inputMode="numeric" placeholder="0" onChange={e => updateLine(index, "price", e.target.value)}
+                                    className="mt-1 sm:mt-0 block w-full bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
+                            </label>
+                            {lines.length > 1 ? (
+                                <button onClick={() => setLines(prev => prev.filter((_, i) => i !== index))}
+                                    className="justify-self-start sm:justify-self-center text-rose-600 hover:text-rose-500" aria-label={`Hapus baris ${index + 1}`}>
                                     <Trash2 size={15} />
                                 </button>
-                            )}
+                            ) : <span className="hidden sm:block" />}
                             {info && (
-                                <p className={`w-full text-xs ${info.found ? "text-slate-400" : "text-rose-600"}`}>
+                                <p className={`sm:col-span-5 text-xs ${info.found ? "text-slate-400" : "text-rose-600"}`}>
                                     {!info.found
                                         ? `Kode ${line.code.trim()} tidak ada di master Accurate`
                                         : info.units.length === 0
@@ -313,7 +327,7 @@ export default function OrdersPage() {
                                 const priceRow = priceByCode.get(`${line.code.trim()}|${line.unit.trim().toUpperCase()}`);
                                 if (!priceRow) return null;
                                 return (
-                                    <p className="w-full text-xs text-slate-400">
+                                    <p className="sm:col-span-5 text-xs text-slate-400">
                                         {priceRow.source === "tier"
                                             ? `Harga ${priceRow.priceCategoryName ?? "kategori"} ${priceRow.price} · ${priceRow.branchName ?? "-"} · berlaku ${priceRow.effectiveDate ?? "-"}`
                                             : `Harga standar ${priceRow.price} (kategori pelanggan belum tersedia)`}
@@ -321,7 +335,7 @@ export default function OrdersPage() {
                                 );
                             })()}
                             {adviceByCode.get(line.code.trim()) && (
-                                <p className="w-full flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300">
+                                <p className="sm:col-span-5 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300">
                                     <Lightbulb size={13} className="mt-0.5 shrink-0" aria-hidden />
                                     <span>{adviceByCode.get(line.code.trim())!.message}</span>
                                 </p>
