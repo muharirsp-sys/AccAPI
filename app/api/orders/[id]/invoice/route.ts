@@ -16,6 +16,7 @@ import { invoiceOutbox } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { resolveSyncCredentials } from "@/lib/accurate-session";
 import { buildInvoicePayload, type InvoiceOrder } from "@/lib/accurate-invoice-write";
+import { resolveOrderBranch } from "@/lib/order-branch";
 
 export const runtime = "nodejs";
 
@@ -77,12 +78,22 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const master = await accurateUnits();
     if (!master.units) return NextResponse.json({ ok: false, error: master.error }, { status: 503 });
 
+    // Cabang dan seri penomoran datang dari PELANGGAN order ini, bukan dari env tunggal:
+    // penomoran Faktur Penjualan berjalan per cabang, dan satu outlet punya customerNo
+    // berbeda per cabang. Env `ACCURATE_INVOICE_BRANCH_ID` yang lama sengaja tidak dipakai
+    // lagi — satu cabang untuk semua faktur adalah sumber nomor nyasar.
+    const resolvedBranch = await resolveOrderBranch(fetched.order.customer_no ?? "");
+    if (!resolvedBranch.branch) {
+        return NextResponse.json({ ok: false, error: resolvedBranch.error }, { status: 409 });
+    }
+    const orderBranch = resolvedBranch.branch;
+
     let payload;
     try {
-        const branchId = Number(process.env.ACCURATE_INVOICE_BRANCH_ID);
         payload = buildInvoicePayload(fetched.order, {
             unitIds: master.units,
-            branchId: Number.isFinite(branchId) ? branchId : undefined,
+            branchId: orderBranch.branchId,
+            typeAutoNumber: orderBranch.autoNumberId,
         });
     } catch (error) {
         // Payload gagal dibuat = ada yang tidak pasti (satuan, pelanggan, angka belum beku).
@@ -92,7 +103,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
     if (!wantQueue) {
         // Dry-run: payload persis yang akan dikirim, tanpa menyentuh DB maupun Accurate.
-        return NextResponse.json({ ok: true, dry_run: true, payload });
+        return NextResponse.json({ ok: true, dry_run: true, payload, branch: orderBranch });
     }
 
     const existing = await db.select({ state: invoiceOutbox.state }).from(invoiceOutbox)

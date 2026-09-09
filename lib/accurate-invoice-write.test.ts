@@ -29,10 +29,12 @@ test("tanggal tulis Accurate dd/MM/yyyy", () => {
 });
 
 test("payload memakai angka beku dan tidak pernah mengarang nomor faktur", () => {
-    const payload = buildInvoicePayload(order(), { unitIds: UNITS, branchId: 150 });
+    const payload = buildInvoicePayload(order(), { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 });
     assert.equal(payload.customerNo, "C-MUS026-GD");
     assert.equal(payload.transDate, "08/09/2026");
-    assert.equal(payload.typeAutoNumber, 1);
+    // Seri penomoran datang dari cabang pelanggan, bukan nilai tetap: penomoran Faktur
+    // Penjualan berjalan per cabang, jadi `1` untuk semua faktur = nomor nyasar ke cabang lain.
+    assert.equal(payload.typeAutoNumber, 1702);
     assert.ok(!("number" in payload), "nomor faktur harus datang dari Accurate");
     assert.equal(payload.branchId, 150);
     assert.deepEqual(payload.detailItem[0], {
@@ -46,19 +48,19 @@ test("payload memakai angka beku dan tidak pernah mengarang nomor faktur", () =>
 });
 
 test("menolak, bukan menebak, saat ada yang tidak pasti", () => {
-    assert.throws(() => buildInvoicePayload(order({ customer_no: "" }), { unitIds: UNITS }), /pelanggan/);
-    assert.throws(() => buildInvoicePayload(order({ result: { pending_price: true } }), { unitIds: UNITS }), /needs_price/);
-    assert.throws(() => buildInvoicePayload(order(), { unitIds: new Map() }), /master satuan/);
+    assert.throws(() => buildInvoicePayload(order({ customer_no: "" }), { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }), /pelanggan/);
+    assert.throws(() => buildInvoicePayload(order({ result: { pending_price: true } }), { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }), /needs_price/);
+    assert.throws(() => buildInvoicePayload(order(), { unitIds: new Map(), branchId: 150, typeAutoNumber: 1702 }), /master satuan/);
     // Satuan yang tidak ada di master satuan Accurate: satu item bisa berselisih 72x.
     assert.throws(() => buildInvoicePayload(order({
         lines: [{ code: "X", unit: "LUSIN", quantity: "1", price: "1" }],
         result: { lines: [{ code: "X", unit: "LUSIN", quantity: "1", gross: "1", net: "1" }] },
-    }), { unitIds: UNITS }), /master satuan/);
+    }), { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }), /master satuan/);
     // Baris hasil yang tidak punya pasangan baris masukan = angka beku tidak konsisten.
     assert.throws(() => buildInvoicePayload(order({
         result: { lines: [{ code: "LAIN", unit: "KRT", quantity: "1", gross: "1", net: "1" }] },
-    }), { unitIds: UNITS }), /tidak konsisten/);
-    assert.throws(() => buildInvoicePayload(order({ result: { lines: [] } }), { unitIds: UNITS }), /baris hasil/);
+    }), { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }), /tidak konsisten/);
+    assert.throws(() => buildInvoicePayload(order({ result: { lines: [] } }), { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }), /baris hasil/);
 });
 
 test("identitas dokumen dibaca dari amplop Accurate", () => {
