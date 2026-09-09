@@ -71,7 +71,24 @@ export async function getAccurateSession(userId: string) {
 }
 
 export async function upsertAccurateSession(userId: string, update: AccurateSessionUpdate) {
-    const existing = await getAccurateSession(userId);
+    // Baris lama yang TIDAK BISA didekripsi tidak boleh memblokir login ulang.
+    // Insiden produksi 2026-09-08: kunci enkripsi berubah, seluruh sync mati, dan setiap
+    // percobaan login ulang gagal dengan "Unsupported state or unable to authenticate data"
+    // — karena baris usang itu dibaca DI SINI sebelum token baru sempat ditulis. Jadi
+    // satu-satunya jalan pemulihan justru terhalang oleh kerusakan yang mau diperbaiki.
+    // Selama pemanggil membawa access token baru, baris lama memang akan ditimpa seluruhnya.
+    let existing: Awaited<ReturnType<typeof getAccurateSession>> = null;
+    try {
+        existing = await getAccurateSession(userId);
+    } catch (error) {
+        if (!update.accessToken) throw error; // tanpa token baru, tidak ada yang bisa dipulihkan
+        console.warn(`[accurate-session] sesi lama user ${userId} tidak dapat didekripsi; ditimpa oleh login baru:`,
+            error instanceof Error ? error.message : String(error));
+        // Baris tetap ada, jadi cabang UPDATE di bawah yang dipakai — bukan INSERT (kena unique).
+        const [stale] = await db.select({ createdAt: accurateOAuthSession.createdAt })
+            .from(accurateOAuthSession).where(eq(accurateOAuthSession.userId, userId)).limit(1);
+        existing = stale ? ({ createdAt: stale.createdAt } as Awaited<ReturnType<typeof getAccurateSession>>) : null;
+    }
     const now = new Date();
 
     const nextAccessToken = update.accessToken ?? existing?.accessToken;
