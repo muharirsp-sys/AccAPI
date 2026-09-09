@@ -1,3 +1,9 @@
+# Tujuan: Membatasi Docker build context agar source control, runtime data, dan konfigurasi bersecret tidak masuk image.
+# Caller: Docker/BuildKit untuk Dockerfile.frontend dan Dockerfile.backend.
+# Dependensi: Pola ignore Docker.
+# Main Functions: Mengecualikan dependency/build cache, env/compose, runtime output, dan database lokal.
+# Side Effects: Mengurangi build context dan mencegah file operasional sensitif disalin ke layer image.
+
 .git
 .gitignore
 node_modules
@@ -11,6 +17,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .DS_Store
+docker-compose*.yml
+docker-compose*.yaml
 
 # Runtime data must live in persistent Docker volumes, not in the image.
 runtime

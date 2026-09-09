@@ -5,6 +5,7 @@
  *   baru muncul saat cron sync menyapu seluruh 2.000 halaman — bisa berjam-jam kemudian.
  * Caller: cron VPS (Bearer CRON_SECRET). `?check=1` hanya melaporkan, tidak mengubah apa pun.
  * Dependensi: webhook_events.log, lib/accurate-webhook (ekstraksi id), lib/sync (upsert), RBAC cron.
+ * Main Functions: GET memilih log runtime, menemukan invoice hilang, dan menambalnya dengan batas per run.
  * Side Effects: upsert baris sales_invoice yang hilang. Idempoten — aman diulang.
  *
  * Kenapa berbasis log, bukan menyapu Accurate: log sudah menyimpan TEPAT id mana yang pernah
@@ -47,7 +48,7 @@ export async function GET(req: Request) {
     // Sama seperti route webhook: hanya /app/data yang persisten (volume docker-compose).
     const logDir = fs.existsSync("/app/data") ? "/app/data" : process.cwd();
     const files = [path.join(logDir, "webhook_events.log"), path.join(logDir, "webhook_events.log.1")]
-        .filter((f) => fs.existsSync(f));
+        .filter((f) => fs.existsSync(/* turbopackIgnore: true */ f));
     if (files.length === 0) {
         return NextResponse.json({ ok: false, error: `webhook_events.log tidak ditemukan di ${logDir}` }, { status: 404 });
     }
