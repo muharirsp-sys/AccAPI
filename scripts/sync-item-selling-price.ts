@@ -30,6 +30,30 @@ function parseAccurateDate(value: unknown): string | null {
 }
 
 type PriceRow = typeof itemSellingPrice.$inferInsert;
+type UnitRow = { id: number } & Partial<typeof item.$inferInsert>;
+
+/** Satuan item HANYA ada di detail.do — item/list.do mengabaikan unit1Name dkk diam-diam
+ *  (dibuktikan probe live 2026-09-09). Karena detail.do memang sudah dipanggil per item di
+ *  sini, satuan ikut terbawa tanpa satu pun panggilan API tambahan. `unitNId` inilah
+ *  `itemUnitId` yang wajib dikirim pada baris faktur Accurate. */
+function extractUnits(itemId: number, detail: Record<string, unknown>): UnitRow {
+    const numOrNull = (value: unknown) => (Number.isFinite(Number(value)) ? Number(value) : null);
+    const nameOrNull = (value: unknown) => {
+        const text = String(value ?? "").trim().toUpperCase();
+        return text === "" ? null : text;
+    };
+    return {
+        id: itemId,
+        unit1Id: numOrNull(detail.unit1Id), unit1Name: nameOrNull(detail.unit1Name),
+        unit2Id: numOrNull(detail.unit2Id), unit2Name: nameOrNull(detail.unit2Name),
+        unit3Id: numOrNull(detail.unit3Id), unit3Name: nameOrNull(detail.unit3Name),
+        unit4Id: numOrNull(detail.unit4Id), unit4Name: nameOrNull(detail.unit4Name),
+        unit5Id: numOrNull(detail.unit5Id), unit5Name: nameOrNull(detail.unit5Name),
+        ratio2: numOrNull(detail.ratio2), ratio3: numOrNull(detail.ratio3),
+        ratio4: numOrNull(detail.ratio4), ratio5: numOrNull(detail.ratio5),
+        hasMultiUnit: detail.hasMultiUnit === true,
+    };
+}
 
 function extractRows(itemId: number, itemNo: string, detail: Record<string, unknown>): PriceRow[] {
     const list = Array.isArray(detail.detailSellingPrice) ? detail.detailSellingPrice : [];
@@ -92,7 +116,7 @@ async function run() {
 
     // ECONNRESET dari Accurate terjadi nyata pada sync panjang (2x terbukti 2026-09-08),
     // jadi tiap permintaan diulang dengan jeda menaik sebelum dianggap gagal.
-    async function fetchOne(row: { id: number; no: string }, attempt = 1): Promise<PriceRow[] | null> {
+    async function fetchOne(row: { id: number; no: string }, attempt = 1): Promise<{ prices: PriceRow[]; units: UnitRow } | null> {
         try {
             const res = await fetch(`${sessionHost}/accurate/api/item/detail.do?id=${row.id}`, {
                 headers: { Authorization: `Bearer ${apiKey}`, "X-Session-ID": sessionId },
@@ -103,7 +127,8 @@ async function run() {
             const body = await res.json();
             // Accurate bisa membalas 200 dengan s:false; itu bukan sukses.
             if (body?.s !== true || !body?.d) return null;
-            return extractRows(row.id, String(row.no), body.d as Record<string, unknown>);
+            const detail = body.d as Record<string, unknown>;
+            return { prices: extractRows(row.id, String(row.no), detail), units: extractUnits(row.id, detail) };
         } catch (error) {
             if (attempt >= RETRIES) throw error;
             const wait = 500 * 2 ** (attempt - 1);
@@ -118,7 +143,14 @@ async function run() {
     for (let start = 0; start < target.length; start += CONCURRENCY) {
         const batch = target.slice(start, start + CONCURRENCY);
         const results = await Promise.all(batch.map((row) => fetchOne({ id: row.id, no: String(row.no) })));
-        const rows = results.flatMap((result) => result ?? []);
+        const rows = results.flatMap((result) => result?.prices ?? []);
+        // Satuan ditulis per item (UPDATE, bukan upsert): barisnya sudah pasti ada karena
+        // daftar item inilah yang dipakai memilih id yang di-fetch.
+        for (const result of results) {
+            if (!result) continue;
+            const { id, ...units } = result.units;
+            await db.update(item).set(units).where(eq(item.id, id));
+        }
         skipped += results.filter((result) => result === null).length;
         for (let index = 0; index < rows.length; index += 1000) {
             const chunk = rows.slice(index, index + 1000);
