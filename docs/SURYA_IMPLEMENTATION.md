@@ -525,6 +525,29 @@ Dokumen ini adalah checkpoint di disk, bukan bukti seluruh proyek selesai. Perba
   `gh pr merge --admin` TIDAK dipakai: gate itu sengaja dipasang pemilik repo dan perubahan
   ini langsung memicu deploy produksi. Perlu approval manusia.
 
+### Perubahan PRODUKSI 2026-09-09 — migrasi 0004 (antrean faktur)
+
+Atas permintaan eksplisit pengguna, sebelum merge PR #24. Pola yang sama:
+`tr -d '\r' < db/migrations/0004_invoice_outbox.sql | ssh root@43.156.118.114 "docker exec -i
+accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 --single-transaction"`.
+(`tr -d '\r'` karena `core.autocrlf=true` membuat working copy Windows ber-CRLF.)
+
+| Objek | Status setelah migrasi |
+|---|---|
+| Tabel `invoice_outbox` | dibuat, 13 kolom sesuai file migrasi, 0 baris |
+| Indeks | `invoice_outbox_pkey` (order_id) + `idx_invoice_outbox_state` (state, created_at) |
+| Hak `accapi_app` | SELECT, INSERT, UPDATE, DELETE — **otomatis** dari `pg_default_acl` (`accapi_app=arwd/accapi`), bukan GRANT manual |
+| Tabel lain | tidak disentuh; jumlah tabel `public` 68 -> 69 |
+| Idempotensi | dijalankan DUA KALI; jalan kedua hanya `NOTICE: relation ... already exists, skipping` |
+
+Konsekuensi kalau migrasi ini dilewat (sudah tidak berlaku, dicatat sebagai alasan): jalur
+penolakan `/api/cron/post-invoices` tetap membaca `invoice_outbox` untuk melaporkan kedalaman
+antrean, jadi tanpa tabelnya route itu melempar 500 alih-alih menolak rapi 503.
+
+**Gerbang kirim tetap TERTUTUP setelah migrasi ini.** Tabelnya ada, tapi
+`ACCURATE_INVOICE_SEND` dan `ACCURATE_INVOICE_DB_ID` tidak di-set di produksi, jadi tidak ada
+satu pun request tulis ke Accurate yang bisa terjadi. Migrasi ini hanya menyiapkan wadahnya.
+
 ### Perubahan PRODUKSI yang sudah nyata dilakukan 2026-09-08
 
 Dilakukan atas permintaan eksplisit pengguna (opsi A: migrasi dulu, baru merge), lewat pola
