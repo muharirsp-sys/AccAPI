@@ -1,0 +1,7 @@
+# Tujuan: Meminta review manusia untuk setiap perubahan, termasuk workflow dan area finance-sensitive.
+# Caller: GitHub pull-request review enforcement pada branch main.
+# Dependensi: Collaborator terverifikasi @muharirsp-sys dan @MuhammadFiqhiFauzan.
+# Main Functions: Menetapkan kedua maintainer aktif sebagai code owner repository.
+# Side Effects: Saat branch rule mengharuskan code-owner review, PR tidak dapat merge tanpa salah satu owner selain author.
+
+* @muharirsp-sys @MuhammadFiqhiFauzan

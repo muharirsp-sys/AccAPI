@@ -1,3 +1,8 @@
+# Tujuan: Membangun image standalone Next.js dan menolak startup production tanpa PostgreSQL runtime.
+# Caller: GitHub Actions deploy.yml dan operator Docker/Coolify.
+# Dependensi: Node.js 22, package-lock.json, Next.js standalone output, init-db.mjs, dan migrate-pg.mjs.
+# Main Functions: Install dependency, build frontend, copy artifact minimum, validate DATABASE_URL, start migrations/server.
+# Side Effects: Build filesystem image; startup dapat menjalankan migrasi PostgreSQL aditif sebelum membuka port 3000.
 FROM node:22-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -14,7 +19,7 @@ ARG NEXT_PUBLIC_ACCURATE_CLIENT_ID=
 ARG NEXT_PUBLIC_ACCURATE_REDIRECT_URI=http://localhost:3000/api/auth/callback
 ARG BETTER_AUTH_URL=http://localhost:3000
 ARG BETTER_AUTH_SECRET=build-time-placeholder-change-at-runtime
-ARG DATABASE_URL=file:/app/data/sqlite.db
+ARG DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build
 
 ENV NEXT_TELEMETRY_DISABLED=1 \
     NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL \
@@ -33,8 +38,7 @@ WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     HOSTNAME=0.0.0.0 \
-    PORT=3000 \
-    DATABASE_URL=file:/app/data/sqlite.db
+    PORT=3000
 
 # standalone self-contains server.js + node_modules (incl. @libsql/client for init-db)
 COPY --from=builder /app/.next/standalone ./
@@ -47,4 +51,4 @@ COPY --from=builder /app/scripts/seed-insentif-sales.mjs ./scripts/seed-insentif
 RUN mkdir -p /app/data
 
 EXPOSE 3000
-CMD ["sh", "-c", "node scripts/init-db.mjs && node scripts/migrate-pg.mjs && node server.js"]
+CMD ["sh", "-c", "case \"${DATABASE_URL:-}\" in postgres://*|postgresql://*) ;; *) echo 'DATABASE_URL must be an injected PostgreSQL URL' >&2; exit 1;; esac; node scripts/init-db.mjs && node scripts/migrate-pg.mjs && node server.js"]

@@ -204,6 +204,33 @@ Browser -> NEXT_PUBLIC_FASTAPI_BASE_URL (port 8000)
      -> auth.py — RBAC + rate limiter login internal FastAPI
 ```
 
+### 6A. Repository Guardian & Risk Issue Sync
+```
+pull_request (fork/same repository)
+  -> .github/workflows/pr-guardian.yml [contents:read; tanpa secrets/comment write]
+  -> public Git fetch tanpa token untuk PR head + Guardian dari base SHA tepercaya secara terpisah
+     [bootstrap pertama saja: exact SHA dari repository variable GUARDIAN_BOOTSTRAP_SHA]
+  -> scripts/guardian/pr-guardian.mjs
+       -> git diff --name-status -z (tanpa shell interpolation)
+       -> classifyChanges() -> domain + LOW/MEDIUM/HIGH/CRITICAL
+       -> selectChecks() -> lint/typecheck, Python compile, dan test repository yang benar-benar tersedia
+       -> tests/guardian dipulihkan dari Guardian base tepercaya sebelum self-test agar PR tidak dapat melemahkan test-nya sendiri
+       -> runChecks() -> hasil eksplisit PASSED/FAILED/NOT EXECUTED
+       -> renderGuardianReport() -> PASS / PASS WITH WARNINGS / HUMAN REVIEW REQUIRED / BLOCKED
+  -> job summary; required check gagal memblokir gate, sedangkan HIGH/CRITICAL wajib review manusia via branch rule + CODEOWNERS
+  -> .github/CODEOWNERS menetapkan dua collaborator aktif terverifikasi sebagai owner seluruh repository
+
+push SYSTEM_MAP.md ke main / workflow_dispatch
+  -> .github/workflows/system-map-issues.yml [contents:read + issues:write; concurrency tunggal]
+  -> scripts/guardian/system-map-issues.mjs
+       -> extractRisks() hanya blok <!-- accapi-risk ... --> eksplisit
+       -> planIssueSync() -> CREATE/UPDATE/SKIP/REOPEN/STALE
+       -> hanya issue berlabel accapi-guardian yang boleh memiliki fingerprint otoritatif; marker issue publik tanpa label diabaikan
+       -> CREATE wajib stabil pada 3 pembacaan API; batas integer 5 CREATE/25 mutasi; duplicate fingerprint fail-closed
+       -> closed issue hanya REOPEN bila operator mengaktifkan allow_reopen
+       -> source hilang ditandai VERIFICATION REQUIRED, tidak pernah auto-close
+```
+
 ---
 
 ### 7. Dashboard Generator Desktop (Fase 2-8)
@@ -613,7 +640,8 @@ AccAPI/_github_clean/
 ├── .env.local                          # Env lokal aktif (tidak di-commit)
 ├── drizzle.config.ts                   # Drizzle kit config (schema + output migrations)
 ├── next.config.ts                      # Next.js config
-├── docker-compose.yml                  # Deploy: frontend + backend container
+├── docker-compose.yml                  # Deploy: frontend + backend; auth secret wajib diinjeksi tanpa fallback
+├── .dockerignore                       # Keluarkan env/compose/runtime data dari build context
 ├── Dockerfile.frontend
 ├── Dockerfile.backend
 └── proxy.ts                            # Dev proxy config
@@ -622,6 +650,16 @@ AccAPI/_github_clean/
 ---
 
 ## Module Map (The Chapters)
+
+### Repository Guardian Automation
+
+| File | Fungsi Utama | Peran |
+|---|---|---|
+| `.github/workflows/pr-guardian.yml` | event PR, permission read-only, trusted-base checkout, job summary | Gate PR tanpa `pull_request_target`, secret, comment write, atau interpolasi metadata PR ke shell |
+| `scripts/guardian/pr-guardian.mjs` | `changedFilesFromGit`, `classifyChanges`, `selectChecks`, `evaluateGuardian`, `renderGuardianReport` | Klasifikasi risiko dan eksekusi check deterministik; finance/payment/database/migration/seed tidak dapat turun di bawah CRITICAL, sedangkan auth/RBAC/Guardian/SYSTEM_MAP tidak dapat turun di bawah HIGH |
+| `.github/workflows/system-map-issues.yml` | push path filter, manual dispatch, serialized issue mutation | Memisahkan permission `issues:write` dari PR Guardian dan mencegah run sync normal berlomba |
+| `scripts/guardian/system-map-issues.mjs` | `extractRisks`, `planIssueSync`, `stabilizeCreatePlan`, `fetchManagedIssues`, `applyIssuePlan` | Sinkronisasi issue berbasis stable ID + label otoritatif, timeout API, spam guard, dan lifecycle tanpa auto-close |
+| `tests/guardian/*.test.mjs` | simulasi classifier/report/sync | Self-check pure Node tanpa GitHub API atau DB production |
 
 ### Auth & Session
 
@@ -714,6 +752,7 @@ AccAPI/_github_clean/
 | `app/api/faktur/route.ts` | `GET` | Daftar faktur dari cache `sales_invoice` (cari nomor/pelanggan, default hanya nomor mengandung INV, `?all=1` untuk semua) |
 | `app/api/faktur/[id]/route.ts` | `GET` | Detail 1 faktur + baris item (qty/harga) live dari `sales-invoice/detail.do`; `?raw=1` menampilkan respons Accurate mentah |
 | `app/api/webhook/accurate/route.ts` | `POST` | Terima event webhook Faktur Penjualan dari Accurate (IP whitelist fail-closed + log rotasi + upsert `sales_invoice`) |
+| `app/api/cron/webhook-backfill/route.ts` | `GET` | Membaca log hanya dari runtime path; dynamic file probe diabaikan oleh Turbopack tracing agar standalone image tidak menyalin seluruh repository |
 | `app/(dashboard)/api-wrapper/page.tsx` | UI | Antarmuka manual query/bulk-submit ke Accurate |
 | `app/(dashboard)/api-wrapper/parsers/` | `parsePurchaseReturnBulkSave` | Parse Excel ke payload bulk API Accurate |
 
@@ -781,7 +820,7 @@ menu sidebar `Rekapan Nota`.
 | Variabel | Fungsi |
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection URL (`postgres://...`) untuk runtime Next.js |
-| `BETTER_AUTH_URL` / `BETTER_AUTH_SECRET` | Base URL + secret Better Auth |
+| `BETTER_AUTH_URL` / `BETTER_AUTH_SECRET` | Base URL + secret Better Auth; secret wajib diinjeksi runtime, tanpa fallback di Compose atau image |
 | `NEXT_PUBLIC_APP_URL` | URL publik Next.js (browser) |
 | `NEXT_PUBLIC_FASTAPI_BASE_URL` | URL Python backend (browser) |
 | `ACCURATE_CLIENT_ID` / `ACCURATE_CLIENT_SECRET` | OAuth2 Accurate |
@@ -1223,6 +1262,68 @@ Alias Principal disimpan di `python_backend/laporan_harian_targets.py`; filter/f
 
 ## Risks / Blind Spots
 
+Blok `accapi-risk` di bawah adalah kontrak input eksplisit untuk automation issue. Wording boleh diperbarui, tetapi `id` tidak boleh diganti untuk risiko yang sama. Penghapusan blok hanya menandai issue sebagai `SOURCE NO LONGER DETECTED — VERIFICATION REQUIRED`; automation tidak menutup issue. Issue terkelola memakai label `accapi-guardian` dan `risk:P0..P3`; label terkelola tanpa fingerprint atau marker body yang rusak membuat sinkronisasi gagal tertutup.
+
+<!-- accapi-risk
+id: deploy-database-runtime-mismatch
+title: Complete PostgreSQL runtime health and authenticated route verification
+priority: P1
+category: deployment-data-integrity
+affected-area: Dockerfile.frontend, Coolify runtime environment, database startup migrations
+business-impact: Finance and operational routes can fail or target the wrong storage when DATABASE_URL is absent or points to SQLite.
+technical-impact: Application DB code uses PostgreSQL; live container 2026-09-08 terbukti memakai skema postgresql ke accapi-postgres dan SELECT 1 berhasil, tetapi frontend belum punya healthcheck dan route DB terautentikasi belum di-smoke-test.
+acceptance-criteria: Add a frontend healthcheck and capture an authenticated read-only DB route smoke test in addition to the proven PostgreSQL connection before declaring runtime verification complete.
+suggested-tests: Recreate the production container, inspect its effective environment without printing credentials, then smoke-test health plus one authenticated read-only DB route.
+-->
+
+<!-- accapi-risk
+id: deploy-coolify-immutable-image
+title: Make Coolify deploy the exact commit-SHA image
+priority: P1
+category: deployment-release-integrity
+affected-area: GHCR image publication and Coolify webhook deployment
+business-impact: Rollback and incident attribution remain ambiguous, and a failed half-build can leave frontend/backend latest tags from different revisions.
+technical-impact: CI serializes runs and publishes immutable github.sha tags, but it pushes each mutable latest tag before both builds are known-good; Coolify consumes latest and running images have no source-revision label.
+acceptance-criteria: Promote a coordinated frontend/backend release only after both builds succeed, make Coolify consume the triggering SHA or pinned digest pair, and expose the same source revision on both running containers.
+suggested-tests: Force the second image build to fail and prove no deployable tag pair advances, then deploy two controlled revisions, verify both running digests/revision labels, and roll back to the prior pair.
+-->
+
+<!-- accapi-risk
+id: guardian-branch-protection-required
+title: Validate protected Guardian behavior with a real external fork PR
+priority: P1
+category: repository-security-validation
+affected-area: GitHub external-fork workflow approval, branch rules, CODEOWNERS, and .github/workflows/pr-guardian.yml
+business-impact: Without one real external-fork run, token/secret isolation and approval behavior remain inferred from configuration rather than end-to-end evidence.
+technical-impact: Ruleset 22329681 is active with no bypass, strict Guardian check, CODEOWNERS review, and all_external_contributors workflow approval; negative and metadata attacks passed in same-repository PRs, but the repository has zero forks and no external account was available for a real fork test.
+acceptance-criteria: A controlled external fork PR requires maintainer workflow approval, receives no secrets or write permission, runs the trusted-base Guardian, and remains unmergeable when its required check fails.
+suggested-tests: From a non-collaborator fork, submit malicious title/body/filename plus a failing code change, inspect runner permissions and secret availability, then confirm the ruleset blocks merge.
+-->
+
+<!-- accapi-risk
+id: production-dependency-high-advisories
+title: Triage and remediate high-severity production dependency advisories
+priority: P1
+category: application-security
+affected-area: xlsx workbook parsing in upload/reporting flows
+business-impact: A hostile workbook may cause denial of service or prototype pollution in finance-sensitive import flows.
+technical-impact: Better Auth, Next.js, Nodemailer, Sharp, PostCSS, Browserslist, fast-uri, nanoid, and brace-expansion findings were upgraded; npm audit --omit=dev now reports only xlsx, for which the npm registry has no fixed release.
+acceptance-criteria: Replace xlsx or adopt a verified fixed SheetJS distribution, then run hostile-workbook and import/export regression tests until npm audit has no unaccepted HIGH production finding.
+suggested-tests: Parse oversized, regex-adversarial, and prototype-pollution workbooks under CPU/memory/time limits, then rerun all upload/reporting regressions.
+-->
+
+<!-- accapi-risk
+id: rotate-exposed-better-auth-secret
+title: Rotate Better Auth secret exposed through Compose fallback and deployed image
+priority: P0
+category: authentication-secret-exposure
+affected-area: docker-compose.yml, frontend image filesystem, GitHub Actions secret, Coolify runtime environment, active sessions
+business-impact: A reusable authentication credential was committed and embedded in a readable production image, so session and token integrity cannot be trusted until rotation.
+technical-impact: Live inspection on 2026-09-08 found the effective BETTER_AUTH_SECRET literal in /app/docker-compose.yml inside the running image; source fallback and future build-context inclusion are fixed, but the deployed credential and image remain compromised.
+acceptance-criteria: Rotate BETTER_AUTH_SECRET in GitHub and Coolify, redeploy an image built after this fix, invalidate old sessions, and prove the old literal is absent from image files and runtime configuration.
+suggested-tests: Scan the rebuilt image for the old secret without printing it, verify new and old session behavior, confirm login/logout, and inspect container health after redeploy.
+-->
+
 | Area | Catatan |
 |---|---|
 | **Python backend integrasi Next.js** | Tidak ada shared session antar Next.js dan FastAPI. FastAPI punya auth sendiri (`auth.py`); sinkronisasi user hanya via filesystem/env, bukan DB shared. |
@@ -1234,7 +1335,7 @@ Alias Principal disimpan di `python_backend/laporan_harian_targets.py`; filter/f
 | **`config/`** | Folder berisi data statik (principles, dll) — tidak ter-trace penuh karena bukan TypeScript eksportabel; kemungkinan JSON/YAML. |
 | **`runtime/` path** | `GET /api/cron/cleanup-runtime` membersihkan artefak regenerable dengan retensi terdaftar; arsip PDF OPC/claim sengaja dikecualikan. Production tetap memerlukan scheduler eksternal dan `CRON_SECRET`. |
 | **`app/(dashboard)/finance/page.tsx`** | Memanggil Python FastAPI backend langsung via `NEXT_PUBLIC_FASTAPI_BASE_URL`. Jika backend mati, halaman finance tidak berfungsi. |
-| **D4 env/deploy belum sinkron** | Kode DB sudah PostgreSQL, tetapi `.env.local`, `.env.example`, Docker Compose, dan Dockerfile masih default `file:sqlite.db`. Local/deploy wajib memakai `DATABASE_URL=postgres://...`; tanpa itu route ber-DB tidak operasional. |
+| **D4 env/deploy verifikasi parsial** | Dockerfile baru fail-closed pada URL non-PostgreSQL. Live container 2026-09-08 memakai PostgreSQL dan query konektivitas berhasil, tetapi belum ada healthcheck frontend atau authenticated DB-route smoke test. |
 | **Rekapan Nota: sumber baris nota** | UPLOAD MANUAL export Accurate, bukan sync live. Kalau admin lupa upload, pool kosong dan wave tidak bisa disusun — gagalnya kelihatan, bukan diam-diam. Jalur upgrade: `sales-invoice/detail.do` per faktur (mahal, ~850 nota/hari). |
 | **Rekapan Nota: master konversi** | Diimpor sekali dari sheet `Konversi` (8.173 SKU); export tidak membawa `QTYKONV`. Yang menjaga master tetap benar adalah `konv_tersirat` tiap upload (baseline: cocok 65/65 SKU). Item ganti kemasan -> exception `KONVERSI_BEDA_DENGAN_EXPORT`, bukan orang. |
 | **Rekapan Nota: mapping area** | `Master Area Heinz` belum lengkap. Per 21 Agu 2026, 19 dari 131 nota Heinz tidak muncul di lembar HNZ mana pun karena outletnya belum dipetakan. Mesin usulan menutup ~79% (133/168) dengan LOO 87,1%; sisanya tetap antrean kerja manual, dan tidak ada yang dikarang. **Cakupan itu runtuh ke ~21% kalau `customer.alamat` kosong** — jalankan `scripts/import-rekapan-master.mjs` sebelum mengandalkan layar mapping. |

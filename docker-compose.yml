@@ -1,8 +1,8 @@
 # Tujuan: Orkestrasi Docker Compose untuk AccAPI frontend Next.js dan backend FastAPI.
 # Caller: Docker Compose, OpenClaw deploy workflow, dan operator VPS.
-# Dependensi: Dockerfile.frontend, Dockerfile.backend, .env, volume data dan output backend/frontend.
+# Dependensi: Dockerfile.frontend, Dockerfile.backend, secret/environment wajib, volume data dan output backend/frontend.
 # Main Functions: Menjalankan accapi-frontend, accapi-backend, port publish, dan persistent volume.
-# Side Effects: Membuat container, network, volume SQLite/auth, data payments, output SPPD/laporan harian, dan proof transfer.
+# Side Effects: Membuat container, network, volume PostgreSQL/runtime, data payments, output SPPD/laporan harian, dan proof transfer.
 
 services:
   accapi-backend:
@@ -43,7 +43,7 @@ services:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL:-file:/app/data/sqlite.db}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-this-better-auth-secret}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be injected at runtime}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
       NEXT_PUBLIC_FASTAPI_BASE_URL: ${NEXT_PUBLIC_FASTAPI_BASE_URL:-http://localhost:8000}
       NEXT_PUBLIC_ACCURATE_CLIENT_ID: ${NEXT_PUBLIC_ACCURATE_CLIENT_ID:-}
