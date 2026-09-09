@@ -619,6 +619,48 @@ Awalnya sync produksi gagal 500 karena token Accurate tidak bisa didekripsi. Sud
 2026-09-09 setelah bug jalur login diperbaiki dan login ulang dilakukan di produksi; angka
 final ada di bagian "PRODUKSI TERSINKRON PENUH".
 
+### Tahap 5 (Rekapan Nota) — jalurnya sudah dilacak sampai dasar, 2026-09-09
+
+Modul Rekapan Nota yang ada **belum pernah dipakai dengan data nyata**: `rekap_upload` 0 baris,
+`wave_line_pool` 0 baris, `wave` 0 baris. Yang sudah terkonfigurasi hanya 17 `pick_group`.
+Artinya tidak ada data historis untuk dijadikan acuan bentuk kolom — ini yang membuat
+penelusuran di bawah perlu dilakukan lewat kode, bukan lewat contoh data.
+
+**Sumber datanya sejak awal memang faktur Accurate.** `app/api/rekapan-nota/upload` memarse
+export Accurate "Rincian Faktur Penjualan". Jadi tahap 5 bukan membangun sumber baru, melainkan
+mengganti pengantarnya: dari file Excel yang diunduh orang menjadi panggilan API.
+
+Dimensi pengelompokan cetak gudang — dilacak dari `lib/rekapan-nota/query.ts`:
+
+| Dimensi | Sumber sebenarnya | Siap? |
+|---|---|---|
+| `area` | **`customer.area`** (bukan kolom `region` pada pool) | 19.746 dari 32.458 pelanggan terisi |
+| `outlet_all` | `customer.grup_all` | hanya 163 terisi; sisanya jatuh ke "Gabung" |
+| `outlet_gdi` | `customer.grup_gdi` | hanya 548 terisi; sisanya "Gabung" |
+| `volume` | dihitung (karton per nota) | butuh `qty_pcs` + konversi |
+| `jenis_produk` | `wave_line_pool.jenisproduk` | **belum jelas** (lihat di bawah) |
+| `sirup` | `jenisproduk = 'HEINZ ABC'` + pola kode/nama barang | ikut bergantung pada `jenisproduk` |
+
+Kolom `region` pada pool ternyata **tidak dipakai oleh satu pun grup**, jadi ia tidak
+menghalangi. Yang menghalangi hanya satu: **kosakata `jenisproduk`.**
+
+`EKSPRESI_SIRUP` membandingkannya dengan string **`'HEINZ ABC'`**, sedangkan nama cabang
+Accurate untuk principal itu adalah **`HEINZ`** (id 401). Kalau saya isi `jenisproduk` dari nama
+cabang, aturan sirup akan mengembalikan NULL untuk seluruh baris Heinz — dan grup
+`SRP-SIRUP`/`SRP-NONSIRUP` adalah **gudang yang terpisah secara fisik**. Salah di sini bukan
+salah tampilan, tapi barang diambil dari gudang yang salah. Karena itu tidak saya tebak.
+
+Yang SUDAH bisa diisi dari master hasil sync tanpa menebak: `tanggal`, `no_nota`, `kode_cust`,
+`customer`, `kode_barang`, `nama_barang`, `qty`, `satuan`, `satuan_kecil` (`item.unit1_name`,
+100% terisi), `qty_pcs` dan `konv_tersirat` (dari `item.ratio2..5` Accurate — sekaligus menutup
+347 item yang `isi_per_karton`-nya kosong), serta `principal`.
+
+Satu hambatan teknis untuk verifikasi: **satu OAuth client Accurate hanya bisa memegang satu
+token aktif.** Login produksi 2026-09-09 membuat token lokal menjadi `invalid_token`, jadi probe
+`sales-invoice/detail.do` dari lokal tidak bisa lagi dijalankan sampai login lokal diulang —
+dan mengulangnya akan mematikan token produksi. Jangan login bergantian tanpa sadar; pilih satu
+sisi saat perlu memprobe.
+
 ### Penomoran faktur per cabang benar-benar terpasang — 2026-09-09
 
 Dua cacat ditemukan saat menyambungkan master yang baru tersinkron ke jalur faktur, dan
