@@ -615,14 +615,100 @@ INDOGROSIR 2, kosong 378.
 diverifikasi (4 kolom customer, 15 kolom satuan/ratio item, 3 tabel baru, 1 kolom seri di
 `branch`). Kodenya juga sudah ter-deploy (PR #28).
 
-**Tetapi sync produksi masih gagal 500**, sebabnya sama seperti yang tercatat di bawah: token
-Accurate produksi tidak bisa didekripsi. Login yang dilakukan 2026-09-09 adalah login **lokal**,
-dan itu hanya mengisi database lokal. Sampai login ulang dilakukan di
-`https://web-super.online/api-wrapper`, seluruh master baru di produksi tetap kosong.
+Awalnya sync produksi gagal 500 karena token Accurate tidak bisa didekripsi. Sudah pulih
+2026-09-09 setelah bug jalur login diperbaiki dan login ulang dilakukan di produksi; angka
+final ada di bagian "PRODUKSI TERSINKRON PENUH".
 
-### Token Accurate PRODUKSI tidak bisa didekripsi — insiden terbuka sejak 2026-09-08
+### PRODUKSI TERSINKRON PENUH — 2026-09-09
 
-Ditemukan 2026-09-09 saat sync cabang pertama gagal 500 di produksi.
+Seluruh 9 modul sync berstatus `idle` (tidak ada yang `error`/`syncing`).
+
+| Modul | Baris produksi |
+|---|---|
+| `branch` | 22 — **20 terpasang seri Faktur Penjualan** |
+| `accurate_auto_number` | 155 (23 di antaranya bertipe `SI`) |
+| `accurate_unit` | 37 |
+| `item` | 4.185 — **4.185 bersatuan (100%), semuanya multi-satuan** |
+| `item_stock` | 4.185 |
+| `item_selling_price` | **2.332.616** baris; 4.185 item, 35 satuan, 13 tier harga, 22 cabang |
+| `customer` | 32.456 — 32.034 tipe outlet, 32.032 cabang, 32.034 tier harga |
+| `sales_invoice` | 223.589 |
+| `sales_return` | 34.720 |
+
+Pemeriksaan silang ketepatan (bukan sekadar "sync sukses"):
+
+| Uji | Hasil |
+|---|---|
+| Satuan pada 2,33 juta baris harga yang tidak ada di master satuan | **NOL** |
+| Satuan pada `item.unit1..5` yang tidak ada di master satuan | **NOL** |
+| Item tanpa detail saat sync harga | **0 dari 4.185** |
+
+Artinya setiap baris order bisa dipetakan ke `itemUnitId` yang sah, dan tidak ada satuan yang
+akan ditolak Accurate saat faktur dibuat.
+
+Dua cabang sengaja tanpa seri faktur — sudah diperiksa, bukan kegagalan pemetaan: **Kantor
+Pusat** tidak punya seri Faktur Penjualan sama sekali, dan seri **URC** (`Faktur Penjualan URC`,
+id 352) berstatus **suspended** di Accurate. Order dari dua cabang itu akan ditolak, bukan
+dinomori pada seri cabang lain.
+
+Sync harga jual dijalankan berbatch lewat endpoint baru: 7 panggilan x 600 item, ~3 menit per
+batch, total ~21 menit, `skipped: 0` pada semua batch.
+
+### Menjalankan sync harga di PRODUKSI — jalurnya baru ada 2026-09-09
+
+Sebelum ini tidak ada cara menjalankannya di produksi sama sekali, dan itu bukan soal kemauan:
+
+- `scripts/` **tidak ikut ke image** — Dockerfile hanya menyalin `.next/standalone`.
+- Postgres produksi **tidak dipublikasikan ke host** (`5432/tcp` tanpa binding), jadi tunnel dari
+  luar juga tidak bisa tanpa membawa kredensial DB keluar server.
+
+Logikanya dipindah ke `lib/item-price-sync.ts` dan dipakai dua pintu masuk yang berbagi satu
+sumber: `scripts/sync-item-selling-price.ts` (CLI, cara pakai tidak berubah) dan
+`app/api/cron/sync-item-prices` (produksi).
+
+Endpoint-nya **berbatch, default 600 item per panggilan**, karena satu request HTTP selama 21
+menit rapuh — terbukti hari ini: satu panggilan mati dengan `Empty reply from server` tepat saat
+Coolify menukar container. Checkpoint `sync_state` membuat panggilan berikutnya melanjutkan, dan
+respons membawa `done`/`remaining` supaya pemanggil tahu perlu memanggil lagi atau tidak.
+
+```bash
+# satu batch (ulangi sampai "done":true)
+/usr/local/bin/accapi-cron.sh "/api/cron/sync-item-prices?limit=600"
+# mulai dari nol
+/usr/local/bin/accapi-cron.sh "/api/cron/sync-item-prices?limit=600&restart=1"
+```
+
+Jangan jalankan bersamaan dengan sync `sales_invoice`: keduanya memukul Accurate dan batas
+resminya 8 request/detik.
+
+### Bug pemulihan login Accurate — diperbaiki 2026-09-09
+
+Kunci enkripsi token berubah, dan akibatnya bukan cuma sync mati: **login ulang pun mustahil.**
+`upsertAccurateSession` memanggil `getAccurateSession` lebih dulu, yang mendekripsi baris lama —
+jadi callback melempar `OAuth Callback Exception: Unsupported state or unable to authenticate
+data` **sebelum** token baru sempat ditulis. Satu-satunya jalan pemulihan terhalang oleh
+kerusakan yang mau diperbaiki, dan barisnya tetap usang selamanya.
+
+Sekarang baris yang tidak bisa didekripsi diperlakukan sebagai "tidak ada", **hanya bila**
+pemanggil membawa access token baru; tanpa itu error tetap dilempar. Penimpaan dicatat ke log.
+
+Dua jebakan lain yang ikut terungkap saat ini:
+
+1. **Login di localhost tidak memperbaiki produksi.** Dua percobaan login pertama tersimpan ke
+   Postgres lokal (`updated_at` lokal maju, produksi tidak). Periksa `accurate_oauth_session`
+   pada database yang DIMAKSUD, jangan percaya tampilan halaman.
+2. **`BETTER_AUTH_URL` produksi masih `http://localhost:3000`.** Callback OAuth memakainya
+   sebagai basis SEMUA pengalihan, jadi setelah authorize di produksi browser dilempar ke
+   `localhost:3000/api-wrapper?accurate=connected` — halaman lokal yang kebetulan hidup dan
+   menampilkan "connected" padahal yang tersambung bukan produksi. Sudah diminta diubah ke
+   `https://web-super.online`; **periksa lagi nilainya saat resume.**
+
+`ACCURATE_TOKEN_ENCRYPTION_KEY` sekarang di-set di produksi, jadi token tidak lagi terikat
+`BETTER_AUTH_SECRET`. **Kunci itu tidak boleh diganti lagi** — menggantinya mengulang insiden ini.
+
+### Riwayat insiden: token Accurate produksi tidak bisa didekripsi (SELESAI 2026-09-09)
+
+Ditemukan 2026-09-09 saat sync cabang pertama gagal 500 di produksi. Sudah pulih.
 
 - `accurate_oauth_session.access_token` produksi berbentuk benar (3 bagian `iv.tag.data`) tapi
   **tidak ada satu pun kunci di server yang bisa membukanya**: `ACCURATE_TOKEN_ENCRYPTION_KEY`
