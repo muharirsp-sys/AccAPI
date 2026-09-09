@@ -144,6 +144,20 @@ export const invoiceOutbox = pgTable("invoice_outbox", {
     index("idx_invoice_outbox_state").on(t.state, t.createdAt),
 ]);
 
+// Master cabang Accurate. Penomoran faktur Accurate berjalan PER CABANG, dan harga jual
+// juga per cabang, jadi id cabang di sini adalah id milik Accurate — bukan id lokal.
+export const branch = pgTable("branch", {
+    id: bigint("id", { mode: "number" }).primaryKey(),
+    name: text("name").notNull(),
+    defaultBranch: boolean("default_branch").notNull().default(false),
+    suspended: boolean("suspended").notNull().default(false),
+    rawData: jsonb("raw_data"),
+    lastUpdate: text("last_update"),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_branch_synced_at").on(t.syncedAt, t.id)
+]);
+
 export const customer = pgTable("customer", {
     id: bigint("id", { mode: "number" }).primaryKey(), // Accurate's internal numeric ID
     customerNo: text("customerNo").notNull(),
@@ -756,6 +770,10 @@ export const salesProfile = pgTable("sales_profile", {
     channel: text("channel").notNull().default("TT"),
     spvName: text("spv_name"),
     smName: text("sm_name"),
+    // Cabang Accurate penjual ini. `branch` di atas adalah teks bebas warisan modul insentif
+    // (isinya sudah tercampur nama principal di produksi); yang menentukan penomoran faktur
+    // dan harga adalah kolom ini. NULL = belum dipetakan, dan jalur order menolaknya.
+    accurateBranchId: bigint("accurate_branch_id", { mode: "number" }),
     createdAt: timestamp("created_at").notNull(),
     updatedAt: timestamp("updated_at").notNull(),
 }, (t) => ({

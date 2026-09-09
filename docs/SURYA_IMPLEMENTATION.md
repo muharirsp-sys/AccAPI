@@ -525,6 +525,63 @@ Dokumen ini adalah checkpoint di disk, bukan bukti seluruh proyek selesai. Perba
   `gh pr merge --admin` TIDAK dipakai: gate itu sengaja dipasang pemilik repo dan perubahan
   ini langsung memicu deploy produksi. Perlu approval manusia.
 
+### Cabang Accurate + id penjual pada Web Sales — 2026-09-09 (sedang berjalan)
+
+Keputusan pengguna 2026-09-09:
+
+1. **"Setiap cabang punya penomoran sendiri" = penomoran FAKTUR Accurate per cabang.** Order
+   membawa `branchId` cabang penjualnya; Accurate yang menomori. Aplikasi tidak mengarang nomor.
+2. **Daftar cabang yang berlaku = daftar cabang Accurate**, bukan kosakata lokal.
+3. Izin `order.*` DICABUT dari grup Salesman (lihat di bawah).
+
+Temuan yang menentukan bentuk implementasinya: **backend Python tidak punya akses Postgres sama
+sekali** (tidak ada `psycopg` maupun `DATABASE_URL`). Jadi `sales_profile` mustahil dibaca
+FastAPI, dan pelampiran identitas penjual harus terjadi di sisi Next — pola yang sama dengan
+harga: klien mengirim kuantitas, server melengkapi sisanya.
+
+Yang SUDAH ada sebelum pekerjaan ini (tidak perlu dibangun): tabel `sales_profile` di produksi
+sudah memetakan `user_id` -> `sales_code` (UNIQUE) + `sales_name` + `branch` + `channel` +
+`spv_name`/`sm_name`. Isinya 6 baris contoh (`SLS-001`..`SLS-006`, BANDUNG/CIMAHI/SUMEDANG);
+kode 100 sales asli belum ada.
+
+Jebakan yang ditemukan: kolom `branch` pada `sales_targets` **bukan cabang geografis** — isinya
+tercampur nama principal (CUSSONS, GODREJ, HEINZ ABC, FORISA - MT, MIX FOOD, ...). Karena itu
+kolom cabang Accurate dibuat terpisah dan numerik, dan kolom teks lama tidak diubah supaya modul
+insentif tidak ikut rusak.
+
+Selesai pada tahap ini:
+
+- `db/migrations/0005_branch_and_sales_branch.sql` -> tabel `branch` (id cabang **Accurate**,
+  bukan id lokal) + `sales_profile.accurate_branch_id`. Aditif dan idempoten.
+- `db/schema.ts` -> `branch` dan `salesProfile.accurateBranchId`.
+- `lib/sync.ts` -> modul sync `branch` (`/branch/list.do`, `fields=id,name,defaultBranch,
+  suspended,lastUpdate`). Karena registry modul dibaca otomatis oleh `/api/cron/sync-accurate`,
+  cabang ikut tersegarkan pada jadwal 4x/hari yang sudah ada — tanpa baris cron baru.
+- `lib/sync-fields.test.ts` -> penjaga sumber: **setiap** modul sync wajib meminta `id` secara
+  eksplisit. Tanpa `id`, Accurate mengembalikan baris tanpa id dan seluruh upsert masuk sebagai
+  NaN — gagal senyap yang pernah terjadi di produksi 2026-07-13.
+
+Diterapkan ke Postgres produksi 2026-09-09 dan diverifikasi: tabel `branch` + 2 indeks,
+`sales_profile.accurate_branch_id` bigint, hak `accapi_app` SELECT/INSERT/UPDATE/DELETE otomatis
+dari `pg_default_acl`.
+
+**Belum:** sync cabang pertama belum dijalankan (butuh kode ini ter-deploy), pemetaan
+`accurate_branch_id` untuk tiap profil sales belum diisi, dan jalur order belum membawa
+`sales_code`/`branchId`.
+
+Catatan kejujuran: `defaultBranch` dan `suspended` pada `fields` **belum terbukti live**.
+Accurate mengabaikan field tak dikenal tanpa error, jadi kalau kolom itu kosong setelah sync
+pertama, itu bukan bug data — nama fieldnya yang salah dan harus diperbaiki dari hasil probe.
+
+### Izin grup Salesman dikoreksi 2026-09-09
+
+Grup `Salesman` sempat diberi `order.create`, `order.edit`, `order.export`, `order.view`. Tiga
+akibat nyatanya: `order.create` membuka `POST /orders` internal yang **menerima harga dari
+klien**; `order.edit` adalah izin menarik order Web Sales ke internal; dan `order.edit` juga
+membuka `scope=all` sehingga sales bisa membaca seluruh order perusahaan. Keempat izin itu
+dihapus (`DELETE 4`); grup Salesman kini hanya `websales.view` + `websales.create` (plus
+dashboard/form_kontrol/insentif yang memang miliknya).
+
 ### Perubahan PRODUKSI 2026-09-09 — migrasi 0004 (antrean faktur)
 
 Atas permintaan eksplisit pengguna, sebelum merge PR #24. Pola yang sama:

@@ -6,7 +6,7 @@
  * ponytail: full resync tiap run (throttled 150ms/halaman); delta sync via lastUpdate kalau volume mulai berat.
  */
 import { db } from "./db";
-import { syncState, item, customer, salesInvoiceCache, salesReturnCache } from "../db/schema";
+import { syncState, branch, item, customer, salesInvoiceCache, salesReturnCache } from "../db/schema";
 import { parseAccurateDateTime } from "./accurate-invoice";
 import { eq, sql } from "drizzle-orm";
 
@@ -86,7 +86,7 @@ const bool = (v: unknown): boolean | null => (v === undefined || v === null ? nu
 const nested = (row: Record<string, unknown>, key: string): Record<string, unknown> =>
     (row[key] && typeof row[key] === "object" ? row[key] as Record<string, unknown> : {});
 
-export type SyncModuleName = "item" | "item_stock" | "customer" | "sales_invoice" | "sales_return";
+export type SyncModuleName = "branch" | "item" | "item_stock" | "customer" | "sales_invoice" | "sales_return";
 
 // Watermark delta feed ke Web Sales. Sync ini full-resync tiap run, jadi synced_at HANYA
 // boleh maju kalau isi barisnya benar-benar berubah — kalau tidak, Web Sales menarik ulang
@@ -114,6 +114,36 @@ const SYNC_MODULES: Record<SyncModuleName, {
     fields: string;
     upsertPage: (rows: Array<Record<string, unknown>>) => Promise<void>;
 }> = {
+    // Cabang: 22 baris, satu halaman. Kecil tapi WAJIB — penomoran faktur Accurate berjalan
+    // per cabang, jadi order tanpa branchId yang benar akan masuk urutan cabang default.
+    // `defaultBranch`/`suspended` ikut diminta; kalau Accurate tidak mengenalnya, field itu
+    // DIABAIKAN DIAM-DIAM (tidak error) dan kolomnya tetap default — periksa hasil sync
+    // pertama, jangan asumsikan terisi.
+    branch: {
+        endpoint: "/branch/list.do",
+        fields: "id,name,defaultBranch,suspended,lastUpdate",
+        upsertPage: async (rows) => {
+            const payloads = rows.map((row) => ({
+                id: Number(row.id),
+                name: String(row.name ?? ""),
+                defaultBranch: row.defaultBranch === true,
+                suspended: row.suspended === true,
+                rawData: JSON.stringify(row),
+                lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
+            }));
+            await db.insert(branch).values(payloads).onConflictDoUpdate({
+                target: branch.id,
+                set: {
+                    name: sql`excluded."name"`,
+                    defaultBranch: sql`excluded."default_branch"`,
+                    suspended: sql`excluded."suspended"`,
+                    rawData: sql`excluded."raw_data"`,
+                    lastUpdate: sql`excluded."last_update"`,
+                    syncedAt: bumpSyncedAt("branch"),
+                },
+            });
+        },
+    },
     item: {
         endpoint: "/item/list.do",
         // "id" wajib eksplisit — Accurate TIDAK menyertakannya otomatis saat fields diisi
