@@ -151,6 +151,10 @@ async def publish(request: Request, draft_id: str):
         raise HTTPException(404, "Draft tidak ditemukan")
     if body.get("reviewed") is not True:
         raise HTTPException(400, "Periksa sumber, kode, periode, dan semua ketentuan terlebih dahulu")
+    # Aturan terbit dipakai memotong faktur. Surat yang mekanismenya BUKAN on faktur
+    # (mis. "DISC ON PO", "ADDITIONAL DISCOUNT") tidak boleh masuk ke sana lewat pintu ini.
+    if draft["content"].get("extraction", {}).get("on_faktur") is False:
+        raise HTTPException(409, "Mekanisme surat bukan on faktur; program ini diklaim di luar faktur, jangan diterbitkan sebagai aturan order")
     try:
         programs = programs_for(draft)
     except (ValueError, KeyError) as error:
