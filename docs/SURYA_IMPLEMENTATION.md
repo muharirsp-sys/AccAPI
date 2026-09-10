@@ -1310,17 +1310,98 @@ kolom `outlet_mode`/`outlet_classes`, jadi kelayakan outlet baru bisa diisi lewa
 Baris yang sudah punya kolom itu TIDAK hilang saat disimpan (frontend menyalin baris dengan
 spread), tapi baris baru yang dibuat dari UI default `all`.
 
+### Surat induk PRONAS + daftar loyalty — 2026-09-10 (lanjutan sesi yang sama)
+
+Pengguna melampirkan `Loyalty makassar.xlsx` dan `SURAT PRONAS HPC GT Q3 (SEPTEMBER) 2026.PDF`.
+
+**Surat PRONAS adalah surat INDUK-nya**, No. `014/KINO/SLS-SPRT HPC/VIII/2026`, Tangerang
+31 Agustus 2026, ditandatangani Nanang Rezeki (Head of Sales GT HPC West) dan Mochamad Isroin
+(Head of Sales HPC East). **Hasil scan, TIDAK ada lapisan teks** — dibaca sesi ini dengan
+membuka gambar halamannya, bukan OCR berbayar. Isinya tabel 10 program HPC GT Q3:
+
+| # | Program | Rate | On/Off faktur | Periode |
+|---|---|---|---|---|
+| 1 | Loyalty Program (cashback strata PLATINUM 3% / GOLD 2% / SILVER 1%) | running | **OFF FAKTUR** | 01-Jul → 30-Sep-26 |
+| 2 | Contractual Program (quarterly cashback 2,5%) | running | **OFF FAKTUR** | 01-Jul → 30-Sep-26 |
+| 3 | Contractual Program (monthly cashback 2,5%) | running | **OFF FAKTUR** | 01-Sep → 30-Sep-26 |
+| 4 | **MSG Program** (tier potongan) | fixed | **ON FAKTUR** | 01-Sep → 30-Sep-26 |
+| 5 | Program Small Package 1% | running | **ON FAKTUR** | 01-Sep → 30-Sep-26 |
+| 6 | **TP 30+1 Ovale 2in1 Cleanser** | running | **ON FAKTUR** | 01-Sep → 30-Sep-26 |
+| 7 | **TP 30+1 Resik-V** (4 sub-program) | running | **ON FAKTUR** | 01-Sep → 30-Sep-26 |
+| 8 | Hybrid Activation (monthly cashback 1%) | running | OFF FAKTUR | 01-Sep → 30-Sep-26 |
+| 9 | Hybrid Activation (quarterly, strata 150JT UP 3% / 75–149,9JT 2% / 30–74,9JT 1%) | running | OFF FAKTUR | 01-Jul → 30-Sep-26 |
+| 10 | Support Ads/Affiliate/Voucher Hybrid | running | OFF FAKTUR | 01-Sep → 30-Sep-26 |
+
+Ini **membuktikan** klasifikasi on-faktur yang dipakai parser: tujuh program cashback/hybrid
+memang diklaim di luar faktur dan tidak boleh menyentuh nilai faktur sama sekali.
+
+**Keputusan pengguna 2026-09-10**: Small Package "KHUSUS LD JAWA" -> **tidak berlaku untuk
+Surya Perkasa Makassar, diabaikan.** Jadi yang on-faktur untuk Surya tinggal **tiga**:
+MSG, Ovale 30+1, dan Resik-V 30+1 (empat sub-program).
+
+**Daftar loyalty dimuat**: 41 outlet, semuanya `SURYA PERKASA, CV - MAKASSAR`
+(4 PLATINUM, 10 GOLD, 27 SILVER). Strata cashback hanya relevan untuk program OFF faktur;
+untuk gerbang on-faktur semuanya cukup berkelas `LOYALTY`.
+
+- `python_backend/outlet_class.py` — keanggotaan kelas outlet. **Kuncinya KODE OUTLET DASAR**
+  (`C-GAL006`), bukan `customerNo` Accurate: satu outlet fisik punya satu customerNo per
+  cabang principal (dibuktikan live: `C-GAL006-KN` Kino, `-RB` Reckitt, `-CS` Cussons,
+  `-GD`, `-MSM`, `-SZ`, `-M1`...), sedangkan keanggotaan loyalty melekat pada tokonya.
+  `classes_of()` mencocokkan kode penuh maupun kode dasar.
+- **Registri terpisah dari barisnya** (`summary_kv` namespace `outlet_class_loaded`):
+  "dimuat tapi kosong" harus bisa dibedakan dari "belum dimuat" — yang pertama menjalankan
+  programnya, yang kedua menahannya. `load(klass, [], ...)` adalah pernyataan tegas
+  "kelas ini tidak ada di cabang kita".
+- `load()` **mengganti**, bukan menambah: daftar Kino terbit ulang tiap kuartal dan outlet
+  yang keluar dari program harus benar-benar hilang.
+- `python_backend/import_outlet_class.py` — CLI pemuatnya. Kolom kode outlet **tidak ditebak
+  dari judul** (berkas Kino laporan ad hoc), melainkan dipilih dari kolom yang isinya paling
+  banyak cocok dengan `Mapping_Customer`. Default dry-run; `--apply` untuk menulis.
+  **Menolak memuat daftar yang bolong** kecuali diberi `--force`, karena daftar `except` yang
+  kurang satu outlet berarti outlet itu menerima potongan yang seharusnya tidak.
+- `routers/orders.py` kini meneruskan `outlet_classes`/`known_classes` ke `calculate` dan
+  `suggestions`, baik pada `POST /orders` maupun `POST /orders/preview` (pratinjau membaca
+  `customer_no` dari body).
+
+**Perintah yang benar-benar dijalankan (lokal, dev SQLite):**
+
+```bash
+python import_outlet_class.py LOYALTY "Loyalty makassar.xlsx" --mapping "KINO (1).xlsx" \
+  --extra C-KOS005,C-KA0059,C-LO0019 --force --apply
+```
+
+`--extra` dipakai karena **3 outlet tidak ada di `Mapping_Customer`** (sheet-nya lebih lama
+dari daftar loyalty): Kino `52390254695`, `2191200123409`, `3210402085278`. Ketiganya
+diverifikasi satu per satu ke tabel `customer` Accurate dan namanya cocok persis —
+`C-KOS005` KOSMETIK MUNAWARAH, `C-KA0059` KAMIL STAND, `C-LO0019` LOLLYPOP BABY. **Sebaiknya
+`Mapping_Customer` diperbarui** supaya kuartal depan tidak perlu `--force` lagi.
+
+**Bukti rantai penuh atas order nyata** (GALERY MAKASSAR `C-GAL006`, gross Rp 9.375.135,
+`ORDER_DETAIL_20260903`) — inilah kecocokan A-vs-B pertama yang benar:
+
+| Keadaan | Aturan kita | Kino | Alasan tercatat |
+|---|---|---|---|
+| sekarang (CONTRACTUAL belum dimuat) | Rp 0 | Rp 0 | `daftar outlet CONTRACTUAL belum dimuat` |
+| kalau CONTRACTUAL dinyatakan kosong | **Rp 0** | **Rp 0** | `outlet termasuk LOYALTY` |
+| outlet GT non-loyalty (hipotetis) | Rp 180.000 | — | — |
+
+Jadi pertanyaan yang tergantung sejak sesi lalu — "kenapa Kino memberi Rp 0 padahal ordernya
+kena tier 9JT?" — **terjawab: GALERY MAKASSAR memang outlet loyalty (GOLD)**, dan MSG
+mengecualikan loyalty. Bukan Kino yang kurang memberi.
+
+**MSG masih ditahan satu langkah lagi**: suratnya mengecualikan LOYALTY **dan CONTRACTUAL**,
+dan daftar contractual belum ada. Begitu pengguna memastikan, jalankan salah satu:
+`python import_outlet_class.py CONTRACTUAL --empty --apply` (tidak ada outlet contractual di
+Makassar) atau muat berkasnya seperti loyalty. Setelah itu MSG hidup.
+
 ### Yang dibutuhkan dari pengguna untuk melanjutkan
 
-1. **Berkas HIT LIST OUTLET** (daftar outlet LOYALTY / HYBRID / CONTRACTUAL / MSG untuk
-   cabang 1201671 Makassar). Tanpa ini semua aturan Kino ditahan dan tidak ada satu pun
-   potongan yang dihitung. Ini blokir nomor satu.
-2. **Lampiran size/paket SMALL PACKAGE**.
-3. Konfirmasi apakah SMALL PACKAGE berlaku untuk Makassar — suratnya "KHUSUS LD JAWA".
-   Catatan baru: pada surat MTI, cabang `1201671 SURYA PERKASA, CV - MAKASSAR` MEMANG ada di
-   list outlet terlampir (2 outlet: `5191202075409 BAJI PAMAI CBA0003`, `5191202076135 WANG
-   MART CWA0012`), jadi Kino memang mencantumkan Makassar pada program yang berlaku untuknya.
-   Itu justru memperkuat dugaan SMALL PACKAGE (Jawa saja) tidak berlaku di sini.
+1. ~~Hit list LOYALTY~~ **SUDAH** (41 outlet, dimuat 2026-09-10).
+2. ~~SMALL PACKAGE berlaku di Makassar?~~ **TIDAK** — LD Jawa, diabaikan atas keputusan pengguna.
+   Lampiran size/paketnya jadi tidak perlu.
+3. **Daftar outlet CONTRACTUAL** untuk cabang 1201671 — atau pernyataan bahwa tidak ada.
+   Ini satu-satunya yang menahan MSG sekarang.
+4. Perbarui sheet `Mapping_Customer` pada KINO.xlsx: 3 outlet loyalty belum ada di sana.
 
 ### Prompt melanjutkan (2026-09-10, setelah langkah 1–2)
 

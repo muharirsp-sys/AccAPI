@@ -116,7 +116,44 @@ def main():
     check_codes()
     check_suggestions()
     check_outlet()
+    check_outlet_store()
     check_flow()
+
+
+def check_outlet_store():
+    """Keanggotaan kelas outlet: kunci kode dasar, muat = ganti, kosong != belum dimuat."""
+    import outlet_class
+
+    assert outlet_class.base_code("C-GAL006-KN") == "C-GAL006"
+    assert outlet_class.base_code("C-GAL006") == "C-GAL006"
+    assert outlet_class.base_code("BL-SOH001-VIN") == "BL-SOH001"
+    assert outlet_class.base_code("BL-SOH001") == "BL-SOH001"
+    assert outlet_class.base_code("") == ""
+
+    assert outlet_class.known() == () and outlet_class.classes_of("C-A001-KN") == ()
+    outlet_class.load("LOYALTY", ["C-A001-KN", "C-B002", "c-b002"], "uji")
+    assert outlet_class.known() == ("LOYALTY",)
+    # Cabang mana pun pada outlet yang sama ikut terbaca; keanggotaan melekat pada tokonya.
+    assert outlet_class.classes_of("C-A001-RB") == ("LOYALTY",)
+    assert outlet_class.classes_of("C-B002-KN") == ("LOYALTY",)
+    assert outlet_class.classes_of("C-LAIN9-KN") == ()
+
+    # Muat ulang MENGGANTI: outlet yang keluar dari program harus benar-benar hilang.
+    outlet_class.load("LOYALTY", ["C-B002"], "uji ulang")
+    assert outlet_class.classes_of("C-A001-KN") == () and outlet_class.classes_of("C-B002-KN") == ("LOYALTY",)
+
+    # Dinyatakan kosong tetap "dikenal" — itulah yang membedakannya dari belum dimuat.
+    outlet_class.load("CONTRACTUAL", [], "tidak ada di cabang ini")
+    assert outlet_class.known() == ("CONTRACTUAL", "LOYALTY")
+    assert outlet_class.loaded()["CONTRACTUAL"]["count"] == 0
+
+    try:
+        outlet_class.load("EMAS", [], "uji")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("kelas di luar daftar harus ditolak")
+    print("outlet class store check: OK")
 
 
 def check_outlet():
