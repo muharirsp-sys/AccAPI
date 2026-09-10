@@ -1389,10 +1389,32 @@ Jadi pertanyaan yang tergantung sejak sesi lalu — "kenapa Kino memberi Rp 0 pa
 kena tier 9JT?" — **terjawab: GALERY MAKASSAR memang outlet loyalty (GOLD)**, dan MSG
 mengecualikan loyalty. Bukan Kino yang kurang memberi.
 
-**MSG masih ditahan satu langkah lagi**: suratnya mengecualikan LOYALTY **dan CONTRACTUAL**,
-dan daftar contractual belum ada. Begitu pengguna memastikan, jalankan salah satu:
-`python import_outlet_class.py CONTRACTUAL --empty --apply` (tidak ada outlet contractual di
-Makassar) atau muat berkasnya seperti loyalty. Setelah itu MSG hidup.
+**CONTRACTUAL — keputusan pengguna 2026-09-10**: "list outletnya ada di file loyalty
+makassar". Berkas itu hanya punya kolom `Loyalty Program` (PLATINUM/GOLD/SILVER) dan tidak
+memuat penanda contractual/hybrid sama sekali, jadi CONTRACTUAL dimuat dari **berkas yang
+sama, 41 outlet yang sama**. Untuk MSG ini tidak mengubah apa pun: ke-41 outlet itu sudah
+dikecualikan lewat LOYALTY, dan MSG mengecualikan LOYALTY **atau** CONTRACTUAL. **Peringatan
+untuk nanti**: jangan pakai keanggotaan CONTRACTUAL ini untuk program ber-mode `only
+CONTRACTUAL` — sumbernya tidak pernah benar-benar membedakan keduanya. Minta daftar
+contractual asli ke Kino kalau program semacam itu muncul.
+
+**MSG sekarang HIDUP** di lingkungan lokal. Gerbang atas ketiga order nyata di
+`ORDER_DETAIL_20260903`:
+
+| SO | Outlet | Channel | Gross | Aturan kita | Kino | Selisih |
+|---|---|---|---|---|---|---|
+| 1671-SOP-260012670 | C-GAL006 | GT | 9.375.135 | **0** (`outlet termasuk CONTRACTUAL, LOYALTY`) | **0** | **0** |
+| 1671-SOP-260012692 | C-AL0063 ALFAMART | MT | 898.378 | 0 | 55.340 | -55.340 |
+| 1671-SOP-260012693 | C-AL0063 ALFAMART | MT | 14.215.135 | 0 | 875.652 | -875.652 |
+
+Baris GT cocok tepat Rp 0. **Dua order ALFAMART adalah MODERN TRADE**, dan surat PRONAS ini
+khusus channel **GT** — tidak ada satu pun aturan MT yang terbit, jadi diskon Kino di situ
+tidak punya dasar aturan di sistem kita. Ini temuan untuk langkah berikutnya: **gerbang
+validasi butuh surat program MT juga**, kalau tidak setiap faktur MT akan tertahan.
+
+**Jebakan pembaca ORDER_DETAIL**: dua baris terakhir berkas adalah `Total for 1201671` dan
+`Grand Total` (kolom `REGION_ID` berisi teksnya, `PRICE` kosong). Importir wajib
+membuangnya, kalau tidak nilainya terhitung dua kali.
 
 ### Yang dibutuhkan dari pengguna untuk melanjutkan
 
