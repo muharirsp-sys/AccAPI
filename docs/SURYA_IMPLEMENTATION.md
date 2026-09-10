@@ -1416,6 +1416,57 @@ validasi butuh surat program MT juga**, kalau tidak setiap faktur MT akan tertah
 `Grand Total` (kolom `REGION_ID` berisi teksnya, `PRICE` kosong). Importir wajib
 membuangnya, kalau tidak nilainya terhitung dua kali.
 
+### Tiga jenis diskon dan posisi kolom DISC_n — 2026-09-10
+
+Pengguna melampirkan foto tabel **"DISCON SUPER DEV. KINO NON FOOD"** (Makassar, Agustus 2026,
+berlaku 15-08-26 s/d 31-12-26) dan menetapkan taksonomi yang harus dipakai gerbang validasi:
+
+1. **Disc Principle** — bisa diklaim ke Kino.
+2. **Disc Distributor** — tanggungan distributor sendiri.
+3. **Disc Tak Bertuan** — tidak ada di keduanya. **Tidak boleh terjadi; wajib memunculkan peringatan.**
+
+**Penemuan kunci: POSISI kolom `DISC_n` adalah penanda siapa yang menanggung.** Tabel itu
+berkepala `POSISI DISCON` dengan sub-kolom 1..5, `Distributor` di atas 1-3 dan `Principle` di
+atas 4-5. Dibuktikan dengan data nyata: baris ALFAMART pada `ORDER_DETAIL_20260903` berisi
+`DISC_1 = 4` dan `DISC_4 = 2.25` — persis kolom 1 dan 4 pada tabel itu untuk baris Alfamart.
+
+**Diskonnya BERTINGKAT, bukan dijumlah.** 4% lalu 2,25% atas gross Rp 345.945,95 memberi
+Rp 21.310,27, sama persis dengan `TOTAL_DISC` yang dilaporkan Kino. Menjumlahkan 6,25%
+memberi Rp 21.621,62 dan setiap faktur akan tampak selisih.
+
+`python_backend/kino_discount.py` — `split()` dan `classify()`. Memilah satu baris ke tiga
+ember lalu melaporkan yang tidak terjelaskan. Peringatan yang dihasilkan: posisi tanpa pemilik
+(DISC_6..8), klaim principal tanpa aturan terbit, klaim principal tidak sebesar aturan
+(toleransi Rp 1), tarif distributor tidak sesuai kesepakatan, tarif disepakati tapi tidak
+diberikan, tarif outlet belum terdaftar, dan total tidak cocok dengan laporan Kino.
+Self-check `test_kino_discount.py`.
+
+**Hasil atas data nyata 3 September 2026:**
+
+| SO | Outlet | Ch | Distributor | Principal | Tak bertuan |
+|---|---|---|---|---|---|
+| …012670 | C-GAL006 | GT | 0 | 0 | 0 |
+| …012692 | ALFAMART | MT | 35.935,14 | 19.404,97 | 0 |
+| …012693 | ALFAMART | MT | 568.605,41 | 307.046,92 | 0 |
+
+**Rp 326.451,89 klaim principal dalam satu hari penjualan MT tidak punya dasar aturan di
+sistem** — bukan karena salah, tapi karena tarif 2,25% Alfamart itu hidup di tabel discon
+super dev yang belum dimuat, dan surat program MT belum ada.
+
+**Dugaan yang BELUM dikonfirmasi** (jangan dibangun sebelum dijawab): `DISC_1..8` adalah tarif
+tetap dari tabel discon super dev, sedangkan uang program promo (potongan MSG dan sejenisnya)
+masuk ke kolom terpisah `TOTAL_PROMO` — yang pada ketiga order ini bernilai 0. Kalau benar,
+gerbangnya memeriksa dua sumber berbeda: `DISC_n` lawan tabel discon, `TOTAL_PROMO` lawan
+aturan promo terbit.
+
+**Master barang Kino**: `master_barang_principle/FIX_FORM MASTER BARANG - KINO NON FOOD.xlsx`,
+sheet `Fix Mapping` (606 item) punya kolom `NAMA KELOMPOK` — 101 kelompok. Ini **memperkecil**
+temuan #4, tidak menutupnya: tidak ada kelompok bernama persis "OVALE 2IN1 CLEANSER" (yang
+terdekat `OVALE CLEANSING GEL`, 4 item), dan sub-program Resik V harus dipetakan tangan ke
+`RESIK V MANJAKANI` (6), `RESIK V RAMUAN MADURA` (3), `RESIK V GODOKAN` (1), dan seterusnya.
+Peninjau memilih dari daftar pendek, bukan dari 606 item — menebaknya otomatis adalah pola
+kegagalan yang sudah pernah terjadi pada master Priskila.
+
 ### Yang dibutuhkan dari pengguna untuk melanjutkan
 
 1. ~~Hit list LOYALTY~~ **SUDAH** (41 outlet, dimuat 2026-09-10).
