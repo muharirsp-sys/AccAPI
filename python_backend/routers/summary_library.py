@@ -1,7 +1,7 @@
 """Tujuan: Draft Summary persisten, sumber privat, publikasi immutable, dan simulasi promo.
 Caller: SummaryLibrary web; adaptor order membaca hanya versi published.
 Dependensi: shared auth/RBAC, summary_store, summary_rules, summary_mistral.
-Main Functions: list/get/save/publish/withdraw/source/simulate; semua mengembalikan aturan tersusun.
+Main Functions: list/get/save/publish/withdraw/source/simulate; versi terbit termasuk asal paket review memakai snapshot tervalidasi.
 Side Effects: SQLite read/write dan respons PDF privat; tidak menulis faktur.
 """
 import json
@@ -59,6 +59,8 @@ def with_rules(draft):
 
 def preview(draft):
     """Pratinjau aturan untuk ditinjau manusia; kegagalan dilaporkan, bukan disembunyikan."""
+    if draft['status']!='draft' and draft['content'].get('programs'):
+        return [p.model_dump(mode='json') for p in programs_for(draft)],[]
     issues = compile_programs(draft["content"].get("rows", []), draft["content"].get("period"))[1]
     try:
         return [program.model_dump(mode="json") for program in programs_for(draft)], issues

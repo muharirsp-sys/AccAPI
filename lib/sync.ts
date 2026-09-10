@@ -1,7 +1,8 @@
 /*
  * Tujuan: Sync terjadwal data Accurate -> cache SQLite lokal (item, customer, sales_invoice, sales_return).
  * Caller: app/api/cron/sync-accurate/route.ts (dipicu scheduler eksternal, bukan request user).
- * Dependensi: Drizzle, tabel sync_state sebagai checkpoint per modul.
+ * Dependensi: Drizzle, sync_state, program-realization-store untuk jejak benefit faktur aktual.
+ * Main Functions: syncModule, upsertSalesInvoiceById. Side Effects: HTTP baca, cache dan verifikasi realisasi.
  * Catatan Audit F3: dulu onConflictDoNothing (data lama tak pernah ter-update) — kini upsert penuh.
  * ponytail: full resync tiap run (throttled 150ms/halaman); delta sync via lastUpdate kalau volume mulai berat.
  */
@@ -10,10 +11,12 @@ import { syncState, branch, accurateAutoNumber, accurateUnit, item, customer, sa
 import { parseAccurateDateTime } from "./accurate-invoice";
 import { matchBranchAutoNumbers } from "./branch-auto-number";
 import { eq, sql } from "drizzle-orm";
+import { recordInvoiceRealization } from "./program-realization-store";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface AccurateCredentials {
+    databaseId?: string;
     sessionHost: string;
     sessionId: string;
     apiKey: string;
@@ -425,11 +428,15 @@ export async function upsertSalesInvoiceById(id: number, creds: AccurateCredenti
     const body = await res.json();
     // Accurate menjawab 200 dengan d kosong untuk faktur yang sudah dihapus — dibuktikan live
     // 2026-08-21 pada 20 id dari webhook_events.log yang semuanya sudah tidak ada di Accurate.
-    if (!body?.d) throw new AccurateInvoiceGoneError(id);
+    if (!body?.d) {
+        if (body?.s === true && creds.databaseId) await recordInvoiceRealization(creds.databaseId, String(id), null);
+        throw new AccurateInvoiceGoneError(id);
+    }
     if (!body?.s) throw new Error(`detail.do faktur ${id}: ${body?.m || "respons gagal"}`);
 
     const row = body.d as Record<string, unknown>;
     await SYNC_MODULES.sales_invoice.upsertPage([row]);
+    if (creds.databaseId) await recordInvoiceRealization(creds.databaseId, String(id), row);
 
     // Ringkasan untuk log/response — bukti cepat bahwa baris yang benar yang tersimpan.
     return {

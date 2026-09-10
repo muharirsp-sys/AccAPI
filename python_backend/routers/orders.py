@@ -1,7 +1,7 @@
 """Tujuan: Order masuk dengan aturan promo terbit yang dibekukan pada saat pengiriman.
 Caller: halaman order internal; Web Sales terpisah akan memakai endpoint yang sama.
 Dependensi: shared auth/RBAC, summary_store, summary_rules (Program, calculate), websales_store.
-Main Functions: published_rules, preview_order, create_order, pull_requests, list_orders, order_detail.
+Main Functions: published_rules, preview_order, create_order, pull_requests, list_orders, order_detail (termasuk aturan beku untuk faktur).
 Side Effects: SQLite read/write; tidak menulis faktur Accurate dan tidak memanggil AI.
 """
 import hmac
@@ -302,13 +302,13 @@ async def pull_cron(request: Request):
 
 def order_detail_row(order_id, user, everyone=False):
     with connect() as db:
-        query = ("SELECT id,owner,outlet,channel,order_date,status,note,lines,sources,result,request_id,"
+        query = ("SELECT id,owner,outlet,channel,order_date,status,note,lines,rules,sources,result,request_id,"
                  "customer_no,created_at FROM sales_order WHERE id=?")
         row = db.execute(query if everyone else query + " AND owner=?", (order_id,) if everyone else (order_id, identity(user))).fetchone()
     if row is None:
         return None
     value = dict(row)
-    for key in ("lines", "sources", "result"):
+    for key in ("lines", "rules", "sources", "result"):
         value[key] = json.loads(value[key])
     return value
 

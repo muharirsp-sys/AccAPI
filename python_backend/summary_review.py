@@ -1,7 +1,7 @@
 """Tujuan: Paket review Summary, detail setting, dan koreksi persisten milik pengguna.
 Caller: routers.summary_review. Dependensi: summary_store SQLite dan stdlib.
-Main Functions: import_package, list_packages, get_package, save_detail, validate_package.
-Side Effects: SQLite read/write atomik; tidak menerbitkan aturan atau menghitung realisasi.
+Main Functions: import_package, list_packages, get_package, save_detail, validate_package, refresh_brief.
+Side Effects: SQLite read/write atomik; koreksi draft tidak mengubah snapshot aturan yang sudah terbit.
 """
 import copy
 import hashlib
@@ -148,11 +148,36 @@ def save_detail(user,package_id,detail_id,revision,patch):
     if not isinstance(patch,dict) or set(patch)-{'start','end','kode_barang','settings','correction'}:raise ValueError('Field koreksi tidak didukung')
     target=next((r for r in value['content']['details'] if r['row_id']==detail_id),None)
     if target is None:return None
+    if target.get('publication'):raise RuntimeError('Detail sudah diterbitkan. Tarik publikasi dahulu melalui pustaka Summary; order lama tetap beku.')
     original=target.get('original_review_values') or {k:copy.deepcopy(target.get(k)) for k in ['start','end','kode_barang','settings','correction']}
     target.update(patch);target['original_review_values']=original
     check_detail(target,value['content']['master'])
+    if 'settings' in patch:refresh_brief(value['content'],detail_id)
     with connect() as db:
         changed=db.execute("UPDATE summary_review_package SET content=?,revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND owner=? AND revision=?",
             (encode(value['content']),package_id,identity(user),revision)).rowcount
         if not changed:raise RuntimeError('Revisi berubah. Muat ulang sebelum menyimpan.')
     return get_package(user,package_id)
+
+
+def refresh_brief(content,detail_id):
+    """Satu pemilik nilai: ringkasan terpengaruh membaca setting terbaru, tanpa angka lama."""
+    lookup={r['row_id']:r for r in content['details']}
+    for brief in content['summary']:
+        if detail_id not in brief['detail_ids']:continue
+        benefits=[];takes=[]
+        for key in brief['detail_ids']:
+            s=lookup[key]['settings'];kind=s.get('benefit_type');amount=s.get('amount')
+            n=lambda v:format(v,'g') if isinstance(v,(int,float)) else str(v)
+            if s.get('tiers'):benefit='Strata sesuai detail'
+            elif amount is None:benefit='Perlu dilengkapi'
+            elif kind=='percentage':benefit=' + '.join(n(v)+'%' for v in s.get('percentages') or [amount])
+            elif kind=='bonus':benefit=n(amount)+' '+str(s.get('benefit_unit') or '')
+            elif kind=='rupiah_per_unit':benefit=n(amount)+'/'+str(s.get('benefit_unit') or s.get('unit') or '')
+            elif kind=='rupiah_per_invoice':benefit=n(amount)+'/FAKTUR'
+            else:benefit='Lihat detail'
+            takes.append(('Min. Rp' if s.get('threshold_metric')=='value' else 'Beli ')+n(s['minimum'])+
+                         ('' if s.get('threshold_metric')=='value' else ' '+str(s.get('unit') or ''))+
+                         (' (Mix)' if s.get('mix_scope') not in ('same_sku','unspecified',None) else '') if s.get('minimum') is not None else 'Sesuai detail')
+            benefits.append(benefit)
+        brief['benefit']=' / '.join(dict.fromkeys(benefits));brief['ketentuan']=' / '.join(dict.fromkeys(takes))

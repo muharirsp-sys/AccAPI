@@ -1,6 +1,7 @@
 /** Tujuan: Koreksi detail program, tier, SKU dan syarat outlet dari paket Summary.
  * Caller: halaman Summary. Dependensi: /summary/review, auth/CSRF, resolveApiBase.
- * Main Functions: SettingsPage, request, save, download. Side Effects: HTTP dan unduh draft lokal.
+ * Main Functions: SettingsPage, request, save, publish, download; ringkasan singkat dan detail terpisah.
+ * Side Effects: HTTP impor/koreksi/publikasi eksplisit dan unduh paket lokal.
  */
 "use client";
 
@@ -14,10 +15,11 @@ type Detail = {
   row_id: string; document_id: string; principal: string; nama_program: string;
   variant_barang: string; benefit: string; ketentuan_pengambilan: string;
   start: string | null; end: string | null; kode_barang: string[]; conditions: string[];
-  warnings: string[]; settings: Settings; correction: string;
+  warnings: string[]; settings: Settings; correction: string; publication?: {draft_id:string;revision:number};
 };
+type Brief = {summary_id:string;principal:string;kelompok:string;channel:string;ketentuan:string;benefit:string;detail_ids:string[]};
 type Package = { id: string; title: string; revision: number; content: {
-  details: Detail[]; summary: {detail_ids: string[]}[]; master: Record<string, {name: string}>; [key: string]: unknown;
+  details: Detail[]; summary: Brief[]; master: Record<string, {name: string}>; [key: string]: unknown;
 }};
 type ListEntry = Pick<Package, "id" | "title" | "revision">;
 const base = resolveApiBase();
@@ -49,10 +51,12 @@ export default function SettingsPage() {
   const [dirty,setDirty] = useState(false);
   const [message,setMessage] = useState("");
   const [file,setFile] = useState<File | null>(null);
+  const [reviewed,setReviewed] = useState(false);
+  const [issues,setIssues] = useState<string[]>([]);
   useEffect(() => { request("").then(r=>setList(r.packages)).catch(e=>setMessage(e.message)); },[]);
 
   function receive(value: Package, selected?: string) {
-    setPack(value);setDirty(false);
+    setPack(value);setDirty(false);setReviewed(false);setIssues([]);
     const first = selected || value.content.summary[0]?.detail_ids[0];
     setDetail(structuredClone(value.content.details.find(r=>r.row_id===first) || value.content.details[0]));
     setList(old=>[{id:value.id,title:value.title,revision:value.revision},...old.filter(r=>r.id!==value.id)]);
@@ -79,7 +83,7 @@ export default function SettingsPage() {
     const a=document.createElement("a"),url=URL.createObjectURL(new Blob([JSON.stringify(pack.content,null,2)],{type:"application/json"}));
     a.href=url;a.download="Detail Pengaturan Program - Koreksi.json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
-  const filtered=pack?.content.details.filter(r=>`${r.row_id} ${r.principal} ${r.nama_program} ${r.variant_barang}`.toLowerCase().includes(search.toLowerCase())) || [];
+  const filtered=pack?.content.details.filter(r=>`${r.row_id} ${r.document_id} ${r.principal} ${r.nama_program} ${r.variant_barang}`.toLowerCase().includes(search.toLowerCase())) || [];
   const numericFields=[['minimum','Minimum pembelian'],['amount','Nilai benefit'],['max_per_invoice','Maksimum per faktur']] as const;
   const texts=[['unit','Satuan pembelian'],['benefit_unit','Satuan benefit'],['max_per_period','Batas per periode'],['price_basis','Dasar harga'],['bonus_selection','Pemilihan barang bonus']] as const;
   const selects: [string,string,string[]][] = [
@@ -94,10 +98,12 @@ export default function SettingsPage() {
   return <main className="mx-auto max-w-7xl space-y-6 p-4 text-slate-900">
     <header><Link href="/summary" className="text-sm underline">Kembali ke Summary</Link>
       <h1 className="mt-3 text-2xl font-semibold">Detail pengaturan program</h1>
-      <p className="mt-2 text-sm">Koreksi aturan per program sebelum digunakan pada order. Semua paket di halaman ini tetap berstatus draft.</p>
+      <p className="mt-2 text-sm">Ringkasan untuk membaca program. Buka detail untuk mengatur dan menerbitkan aturan order.</p>
+      <Link className="mt-2 inline-block underline" href="/summary/realization">Lihat realisasi order dan faktur</Link>
     </header>
     <section className="space-y-3 rounded border bg-white p-5">
       <h2 className="font-semibold">Buka paket hasil Summary</h2>
+      <button className={button} disabled={busy||dirty} onClick={()=>void run(async()=>receive((await request('/reference/september','POST',{})).package))}>Buka program September 2026</button>
       <div className="flex flex-wrap gap-3">
         <label className="flex-1 text-sm">Paket tersimpan<select aria-label="Paket tersimpan" className={input} value={pack?.id||""} disabled={busy||dirty}
           onChange={e=>{if(e.target.value)void run(async()=>receive((await request(`/${e.target.value}`)).package));}}>
@@ -110,15 +116,19 @@ export default function SettingsPage() {
       </div>
     </section>
     {message&&<p role="status" className="rounded border border-amber-300 bg-amber-50 p-3 text-sm">{message}</p>}
+    {pack&&<details open className="rounded border bg-white p-4"><summary className="cursor-pointer font-semibold">Ringkasan program ({pack.content.summary.length})</summary>
+      <div className="mt-3 max-h-96 overflow-auto"><table className="w-full text-sm"><thead className="sticky top-0 bg-slate-100"><tr>{['Principal / Produk','Channel','Ketentuan','Benefit',''].map((h,i)=><th key={i} className="p-3 text-left">{h}</th>)}</tr></thead><tbody>
+      {pack.content.summary.map(s=><tr key={s.summary_id} className="border-t"><td className="p-3">{s.principal}<div>{s.kelompok}</div></td><td className="p-3">{s.channel}</td><td className="p-3">{s.ketentuan}</td><td className="p-3 font-medium">{s.benefit}</td><td className="p-3"><button disabled={dirty||busy} className="underline" onClick={()=>{const d=pack.content.details.find(r=>r.row_id===s.detail_ids[0]);if(d){setDetail(structuredClone(d));setReviewed(false);setIssues([]);setSearch(d.document_id);document.getElementById('program-detail')?.scrollIntoView({behavior:'smooth'});}}}>Detail</button></td></tr>)}</tbody></table></div>
+    </details>}
     {pack&&detail&&<div className="grid items-start gap-5 lg:grid-cols-[280px_1fr]">
       <aside className="rounded border bg-white p-4">
         <label className="text-sm">Cari program<input className={input} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Principal, produk, atau ID"/></label>
         <p className="my-2 text-xs">{filtered.length} detail - revisi {pack.revision}</p>
         <div className="max-h-[70vh] overflow-y-auto">{filtered.map(r=><button disabled={busy||dirty} key={r.row_id}
-          onClick={()=>setDetail(structuredClone(r))} className={`mb-2 w-full rounded border p-3 text-left text-sm disabled:opacity-60 ${detail.row_id===r.row_id?'border-emerald-600 bg-emerald-50':''}`}>
+          onClick={()=>{setDetail(structuredClone(r));setReviewed(false);setIssues([]);}} className={`mb-2 w-full rounded border p-3 text-left text-sm disabled:opacity-60 ${detail.row_id===r.row_id?'border-emerald-600 bg-emerald-50':''}`}>
           <strong>{r.row_id} - {r.principal}</strong><span className="mt-1 block">{r.variant_barang}</span></button>)}</div>
       </aside>
-      <fieldset disabled={busy} className="min-w-0 space-y-5 rounded border bg-white p-5">
+      <fieldset id="program-detail" disabled={busy||!!detail.publication} className="min-w-0 space-y-5 rounded border bg-white p-5">
         <header><h2 className="text-lg font-semibold">{detail.row_id} - {detail.variant_barang}</h2><p className="text-sm">{detail.nama_program} / {detail.document_id}</p></header>
         <div className="rounded bg-slate-50 p-3 text-sm"><p><strong>Ketentuan sumber:</strong> {detail.ketentuan_pengambilan}</p><p><strong>Benefit sumber:</strong> {detail.benefit}</p></div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -149,7 +159,12 @@ export default function SettingsPage() {
           <button className="rounded border px-4 py-2 text-sm disabled:opacity-50" disabled={busy||!dirty} onClick={()=>receive(pack,detail.row_id)}>Batalkan perubahan</button>
           <button className="rounded border px-4 py-2 text-sm disabled:opacity-50" disabled={busy||dirty} onClick={download}>Unduh paket terkoreksi</button>
           {dirty&&<span className="text-sm">Simpan atau batalkan sebelum berpindah detail.</span>}</div>
-        <p className="border-t pt-4 text-sm">Realisasi biaya membutuhkan faktur terbit dan retur yang terkait dengan versi program. Data di halaman ini masih pengaturan draft; belum ada nilai realisasi yang dihitung.</p>
+        {detail.publication?<p className="text-sm">Sudah diterbitkan sebagai versi tetap untuk order. Penarikan tersedia di pustaka Summary.</p>:<div className="space-y-3 border-t pt-4">
+          <button className="rounded border px-4 py-2 text-sm" disabled={busy||dirty} onClick={()=>void run(async()=>{const r=await request(`/${pack.id}/details/${detail.row_id}/readiness`);setIssues(r.issues);setMessage(r.issues.length?'Lengkapi hal berikut sebelum menerbitkan.':`${r.programs.length} aturan siap ditinjau dan diterbitkan.`);})}>Periksa kelengkapan aturan</button>
+          {issues.length>0&&<ul className="list-disc pl-5 text-sm">{issues.map(v=><li key={v}>{v}</li>)}</ul>}
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={reviewed} onChange={e=>setReviewed(e.target.checked)}/>Saya sudah memeriksa sumber, SKU, benefit, dan semua ketentuan.</label>
+          <button className={button} disabled={busy||dirty||!reviewed} onClick={()=>void run(async()=>{receive((await request(`/${pack.id}/details/${detail.row_id}/publish`,'POST',{revision:pack.revision,reviewed:true})).package,detail.row_id);setMessage('Aturan diterbitkan. Order berikutnya memakai versi ini.');})}>Terbitkan untuk order</button>
+        </div>}
       </fieldset>
     </div>}
   </main>;

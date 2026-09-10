@@ -46,16 +46,27 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 
 ## Core Logic Flow (Function-Level Flowchart)
 
-### Detail Pengaturan Summary (draft koreksi September 2026)
+### Detail Pengaturan Summary dan realisasi program (September 2026)
 `/summary` -> `/summary/settings` -> API `/summary/review` -> `summary_review.py`
 -> tabel SQLite `summary_review_package` pada volume Summary yang sama.
 
-- `app/(dashboard)/summary/settings/page.tsx`: impor paket, pilih detail, edit tanggal/SKU/minimum/benefit/tier/kelayakan, simpan dan unduh koreksi.
-- `python_backend/routers/summary_review.py`: auth Summary view/edit + CSRF, batas JSON 8 MB, endpoint list/import/get/update.
+- `app/(dashboard)/summary/settings/page.tsx`: ringkasan pendek sesuai contoh URC/Priskila; buka referensi September dari volume, koreksi detail, periksa kesiapan, lalu publikasi eksplisit.
+- `python_backend/routers/summary_review.py`: auth Summary view/edit + CSRF, batas JSON 8 MB, endpoint list/import/get/update/readiness/publish.
 - `python_backend/summary_review.py`: validasi relasi ID dan master, kepemilikan, deduplikasi `(owner, source_hash)`, revisi optimistis; nilai sumber sebelum koreksi tetap disimpan.
-- `python_backend/test_summary_review.py`: satu runnable check dengan SQLite sementara; dapat diberi path paket hasil OCR.
-- Status: draft saja. Tidak mengaktifkan program, tidak menerbitkan faktur, dan belum terhubung ke realisasi order/retur. Nilai kosong tidak dianggap nol. Mesin publikasi lama tetap terpisah sampai syarat kompleks terimplementasi dan disetujui.
+- `python_backend/summary_review_publish.py`: validasi setting per faktur yang didukung -> satu transaksi `summary_review_package` + `summary_draft(status=published)`. Batas historis, grade, alokasi, wilayah, pilihan bonus mix, dan klaim di luar faktur ditahan dengan alasan; tidak diabaikan. `test_summary_review_publish.py` membuktikan publikasi -> perhitungan order.
+- `python_backend/test_summary_review.py`: runnable check impor/koreksi/auth/CAS dengan SQLite sementara; dapat diberi path paket OCR asli.
 - Efisiensi: list mengambil metadata saja memakai indeks owner/tanggal; detail mengambil satu primary key. Satu perubahan menulis satu paket dalam transaksi singkat dengan pemeriksaan revisi; maksimum 8 MB per paket, tanpa HTTP di dalam transaksi.
+
+`summary_draft published` -> `routers/orders.py: published_rules/store_order` -> order menyimpan aturan, sumber, hasil -> `GET /orders/{id}` menyertakan aturan beku -> `POST /api/orders/{id}/invoice` -> PostgreSQL `invoice_outbox` menyimpan payload dan snapshot program dalam satu insert.
+
+- `lib/accurate-invoice-write.ts`: membawa bonus SKU pasti sebagai baris gratis; bonus yang SKU-nya belum dipilih menahan pembuatan payload.
+- `lib/program-realization.ts`: cocokkan database (caller), record ID, pelanggan, tanggal, cabang, SKU, unit, harga, jumlah, dan diskon. Mismatch tidak menjadi realisasi; biaya bonus kosong, bukan nol.
+- `lib/program-realization-store.ts`: baca faktur Accurate dan simpan hasil verifikasi pada antrean yang beridentitas tepat. Pemicu: setelah cron mengirim faktur, detail webhook/sync, atau tombol Periksa Accurate.
+- `/summary/realization` -> `/api/summary/realization`: laporan per periode, paginasi keyset 100 order, rencana vs realisasi terverifikasi per program, jumlah bonus, waktu pemeriksaan, ekspor CSV. Nilai sebelum retur; penyesuaian retur dan harga pokok bonus belum otomatis.
+- `db/migrations/0005_program_realization.sql`: tiga kolom nullable pada outbox + indeks periode dan identitas faktur; baris lama tidak diberi snapshot karangan. `lib/program-realization.test.ts` menguji diskon per PCS, bonus, mismatch, dan pengulangan pemeriksaan.
+- Pengiriman Accurate tetap memerlukan gate aktif, database tujuan cocok, petugas eksplisit, dan pemeriksaan satu faktur uji. Memasang fitur tidak mengirim faktur atau mengaktifkan draft secara otomatis.
+
+Surat Kino berlapis teks -> `python_backend/kino_letter.py` -> draft; scan memakai Mistral OCR 4.1. `summary_rules.py` memeriksa kelas outlet; `outlet_class.py` menyimpan keanggotaan kode outlet dasar, `import_outlet_class.py` memuat hit list. Kelas belum dimuat menahan program. `test_kino_letter.py` dan `test_summary_rules.py` menguji parser, tier, dan kelas outlet.
 
 ### Ruang Kerja Surya (Redesign September 2026)
 ```

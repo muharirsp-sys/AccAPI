@@ -1,3 +1,8 @@
+/** Tujuan: Sesi OAuth Accurate terenkripsi beserta identitas database untuk sync/realisasi.
+ * Caller: API Accurate, cron, webhook. Dependensi: crypto, Drizzle, session table.
+ * Main Functions: getAccurateSession, upsertAccurateSession, resolveSyncCredentials, ensureFreshAccurateSession.
+ * Side Effects: PostgreSQL dan HTTP pembaruan sesi; tidak menulis dokumen bisnis.
+ */
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -145,7 +150,7 @@ export async function resolveSyncCredentials(): Promise<
         return { error: "Sesi Accurate tidak bisa di-refresh — access token kemungkinan sudah kadaluarsa. Login ulang di /api-wrapper." };
     }
 
-    return { creds: { sessionHost: session.sessionHost, sessionId: session.sessionId, apiKey: session.accessToken } };
+    return { creds: { sessionHost: session.sessionHost, sessionId: session.sessionId, apiKey: session.accessToken, databaseId: String(session.databaseId ?? "") } };
 }
 
 export async function clearAccurateSession(userId: string) {

@@ -1,6 +1,6 @@
 /*
  * Tujuan: Memetakan order internal yang sudah dibekukan menjadi payload sales-invoice Accurate,
- *         dan menentukan status antrean setelah percobaan kirim.
+ *         termasuk bonus dengan SKU pasti, dan menentukan status antrean setelah kirim.
  * Caller: app/api/orders/[id]/invoice (dry-run + enqueue), app/api/cron/post-invoices (pengirim).
  * Beda dari lib/accurate-invoice.ts: itu MEMBACA faktur (detail.do -> tampilan), ini MENULIS.
  * Dependensi: TIDAK ADA (pure) — supaya bisa diuji tanpa DB dan tanpa jaringan.
@@ -28,6 +28,7 @@
 
 export type FrozenInputLine = { code: string; unit: string; quantity: string; price: string };
 export type FrozenResultLine = { code: string; unit: string; quantity: string; gross: string; net: string };
+export type FrozenBonus = { program_id: string; code: string; unit: string; quantity: string; eligible_codes?: string[] };
 
 export type InvoiceOrder = {
     id: string;
@@ -39,7 +40,9 @@ export type InvoiceOrder = {
     note?: string;
     lines: FrozenInputLine[];
     sources: { draft_id: string; revision: number }[];
-    result: { pending_price?: boolean; gross?: string; discount?: string; net?: string; lines?: FrozenResultLine[] };
+    rules?: { id: string; name: string; [key: string]: unknown }[];
+    result: { pending_price?: boolean; gross?: string; discount?: string; net?: string; lines?: FrozenResultLine[];
+        applications?: { program_id: string; discount: string; minimum: string }[]; bonuses?: FrozenBonus[] };
 };
 
 export type InvoiceLinePayload = {
@@ -114,6 +117,15 @@ export function buildInvoicePayload(
             charField1: order.id,
         };
     });
+
+    for (const bonus of order.result.bonuses ?? []) {
+        if (!bonus.code?.trim()) throw new Error(`Pilih SKU bonus program ${bonus.program_id} sebelum membuat faktur`);
+        const unitId = options.unitIds.get(bonus.unit.trim().toUpperCase());
+        const quantity = money(bonus.quantity, "Jumlah bonus");
+        if (!unitId || quantity <= 0 || !Number.isInteger(quantity)) throw new Error("Satuan/jumlah bonus tidak valid");
+        detailItem.push({ itemNo: bonus.code, quantity, unitPrice: 0, itemUnitId: unitId,
+            itemCashDiscount: 0, detailNotes: `Bonus ${bonus.program_id}`.slice(0, 250), charField1: order.id });
+    }
 
     const sources = order.sources.map((source) => `${source.draft_id.slice(0, 8)}r${source.revision}`).join(",");
     return {

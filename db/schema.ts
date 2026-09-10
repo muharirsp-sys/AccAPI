@@ -2,7 +2,7 @@
  * Tujuan: Skema Drizzle PostgreSQL/libSQL untuk auth, RBAC, modul ERP, Insentif, dan Laporan Harian.
  * Caller: Better Auth adapter, route handler Next.js, script init-db, dan service cache lokal.
  * Dependensi: drizzle-orm/pg-core.
- * Main Functions: Definisi tabel auth, operasional, assignment hierarki, reportRun, dan recipient.
+ * Main Functions: Definisi tabel auth, operasional, invoiceOutbox beserta snapshot/realisasi, reportRun, recipient.
  * Side Effects: Definisi schema untuk DB read/write PostgreSQL oleh caller.
  */
 import { sql } from "drizzle-orm";
@@ -149,6 +149,9 @@ export const invoiceOutbox = pgTable("invoice_outbox", {
     orderDate: date("order_date").notNull(),
     state: text("state").notNull().default("queued"),
     payload: jsonb("payload").notNull(),
+    programSnapshot: jsonb("program_snapshot"),
+    realization: jsonb("realization"),
+    realizationCheckedAt: timestamp("realization_checked_at", { withTimezone: true }),
     queuedBy: text("queued_by").notNull().default(""),
     // Identitas dokumen = database + record id. Nomor faktur hanya catatan.
     accurateDbId: text("accurate_db_id").notNull().default(""),
@@ -160,6 +163,8 @@ export const invoiceOutbox = pgTable("invoice_outbox", {
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
     index("idx_invoice_outbox_state").on(t.state, t.createdAt),
+    index("idx_invoice_outbox_period").on(t.orderDate, t.orderId),
+    index("idx_invoice_outbox_identity").on(t.accurateDbId, t.accurateId).where(sql`${t.state} = 'posted'`),
 ]);
 
 // Master cabang Accurate. Penomoran faktur Accurate berjalan PER CABANG, dan harga jual
