@@ -1520,7 +1520,15 @@ miring, jadi belum dimuat.
 
 Catatan taksonomi: tabel discon memakai channel **NKA / MT / GT**, sedangkan `ORDER_DETAIL`
 memakai `CUST_TYPE1` **General Trade / Modern Trade**. ALFAMART = NKA pada tabel, Modern Trade
-pada ORDER_DETAIL. Pemetaan dua taksonomi ini harus disepakati sebelum gerbang MT jalan.
+pada ORDER_DETAIL.
+
+**Keputusan pengguna 2026-09-10**: pemetaan dua taksonomi ini **TIDAK diformalkan dulu** —
+"nanti kita check by case". Jadi jangan bangun tabel pemetaan channel; gerbang MT menunggu
+tabel discon dalam bentuk xlsx, dan kecocokan channel diperiksa per kasus saat itu.
+
+**Istilah**: "tabel discon super dev" bukan istilah internal, melainkan judul yang tercetak
+pada fotonya (`DISCON SUPER DEV. KINO NON FOOD`). Kalau nama internalnya berbeda, ganti
+sebutan ini di dokumen dan kode sebelum modulnya dibangun.
 
 ### Yang dibutuhkan dari pengguna untuk melanjutkan
 
