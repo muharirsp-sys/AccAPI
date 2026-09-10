@@ -43,6 +43,7 @@ def connect():
           lines TEXT NOT NULL, rules TEXT NOT NULL, sources TEXT NOT NULL, result TEXT NOT NULL,
           request_id TEXT, customer_no TEXT NOT NULL DEFAULT '',
           created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
+        CREATE TABLE IF NOT EXISTS outlet_class(customer_no TEXT NOT NULL, klass TEXT NOT NULL, PRIMARY KEY(customer_no,klass));
         CREATE INDEX IF NOT EXISTS sales_order_owner ON sales_order(owner,created_at DESC,id);
         CREATE INDEX IF NOT EXISTS sales_order_status ON sales_order(status,created_at DESC,id);
         """)
