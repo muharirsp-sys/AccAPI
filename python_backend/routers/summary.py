@@ -1,6 +1,6 @@
 # Tujuan: Summary manual, OCR Mistral 4.1, dan ekspor privat milik pengguna.
-# Caller: dashboard Summary; Dependensi: shared, summary_store, summary_mistral, summary_library.
-# Main Functions: upload/options/generate/download/parse_pdf_ai dan library draft.
+# Caller: dashboard Summary; Dependensi: shared, summary_store, summary_mistral, summary_library, summary_review.
+# Main Functions: upload/options/generate/download/parse_pdf_ai, library draft, impor/koreksi detail setting.
 # Side Effects: SQLite, file PDF/XLSX privat, HTTPS ke Mistral; tanpa log isi dokumen.
 from fastapi import APIRouter
 
@@ -64,9 +64,11 @@ from shared import (
 from summary_store import identity, owned, create_draft
 from summary_mistral import extract as extract_mistral
 from routers.summary_library import router as library_router
+from routers.summary_review import router as review_router
 
 router = APIRouter()
 router.include_router(library_router)
+router.include_router(review_router)
 
 @router.post("/summary/manual")
 async def summary_manual_auto_generate(
@@ -944,4 +946,3 @@ async def summary_manual_email(
         return JSONResponse({"ok": True})
     except Exception as e:
          return JSONResponse(status_code=500, content={"ok": False, "error": "Gagal memulai tugas pengiriman email."})
-

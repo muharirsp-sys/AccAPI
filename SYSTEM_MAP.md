@@ -46,6 +46,17 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 
 ## Core Logic Flow (Function-Level Flowchart)
 
+### Detail Pengaturan Summary (draft koreksi September 2026)
+`/summary` -> `/summary/settings` -> API `/summary/review` -> `summary_review.py`
+-> tabel SQLite `summary_review_package` pada volume Summary yang sama.
+
+- `app/(dashboard)/summary/settings/page.tsx`: impor paket, pilih detail, edit tanggal/SKU/minimum/benefit/tier/kelayakan, simpan dan unduh koreksi.
+- `python_backend/routers/summary_review.py`: auth Summary view/edit + CSRF, batas JSON 8 MB, endpoint list/import/get/update.
+- `python_backend/summary_review.py`: validasi relasi ID dan master, kepemilikan, deduplikasi `(owner, source_hash)`, revisi optimistis; nilai sumber sebelum koreksi tetap disimpan.
+- `python_backend/test_summary_review.py`: satu runnable check dengan SQLite sementara; dapat diberi path paket hasil OCR.
+- Status: draft saja. Tidak mengaktifkan program, tidak menerbitkan faktur, dan belum terhubung ke realisasi order/retur. Nilai kosong tidak dianggap nol. Mesin publikasi lama tetap terpisah sampai syarat kompleks terimplementasi dan disetujui.
+- Efisiensi: list mengambil metadata saja memakai indeks owner/tanggal; detail mengambil satu primary key. Satu perubahan menulis satu paket dalam transaksi singkat dengan pemeriksaan revisi; maksimum 8 MB per paket, tanpa HTTP di dalam transaksi.
+
 ### Ruang Kerja Surya (Redesign September 2026)
 ```
 DashboardLayout -> session + RBAC union -> SidebarLayout (identitas akun)

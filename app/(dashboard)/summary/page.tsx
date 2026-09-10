@@ -1,3 +1,7 @@
+/** Tujuan: Editor Summary, library publikasi dan pintu masuk detail pengaturan.
+ * Caller: dashboard pengguna. Dependensi: API Summary dan master, halaman summary/settings.
+ * Main Functions: SummaryPage, parse/save/publish/simulate. Side Effects: HTTP, unggah/unduh file.
+ */
 "use client";
 
 import { useEffect, useState } from "react";
@@ -529,6 +533,7 @@ export default function SummaryManualPage() {
                     Summary Promo Editor
                 </h1>
                 <p className="text-slate-400 mt-2 text-lg">Buat Summary Promo / LPB Form secara manual atau semi-otomatis</p>
+                <Link href="/summary/settings" className="mt-3 inline-block text-emerald-400 underline">Detail pengaturan dan koreksi program</Link>
             </div>
 
             <div className="space-y-6">
