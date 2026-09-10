@@ -1077,7 +1077,174 @@ Env baru yang dipakai sesi ini (semua fail-closed bila kosong):
 `ACCURATE_INVOICE_BATCH` (opsional, default 20). Untuk dev lokal `CRON_SECRET` sudah
 ditambahkan ke `python_backend/.env` (gitignored).
 
-### Prompt melanjutkan
+## TAHAP 6 (BARU) — Gerbang validasi program Kino sebelum faktur naik ke Accurate
+
+Diminta pengguna 2026-09-10 dengan lampiran nyata. **Belum satu baris kode pun dikerjakan** —
+sesi berhenti di titik keputusan. Bagian ini adalah seluruh konteksnya.
+
+### Apa yang diminta, disusun ulang
+
+Bukan sekadar mengganti upload manual menjadi API. Yang diminta adalah **rekonsiliasi tiga arah**:
+
+```
+A. SURAT PROGRAM (PDF)  -> aturan promo terbit    = yang SEHARUSNYA diberikan
+B. DATA KINO (xlsx)     -> DISC_1..8, TOTAL_PROMO = yang KATA KINO diberikan
+C. ACCURATE             -> faktur tercatat        = yang NYATA masuk pembukuan
+```
+
+Alurnya:
+
+1. Surat -> aturan terbit. **Hanya program on-faktur.**
+2. Data Kino masuk, diterjemahkan ke kode internal lewat KINO.xlsx.
+3. **Gerbang validasi (A vs B).** Sistem menghitung ulang diskon dari aturan terbit lalu
+   membandingkan dengan angka Kino. Cocok -> boleh naik ke Accurate. Tidak cocok -> **DITAHAN**,
+   wajib ditinjau manusia.
+4. Kirim ke Accurate lewat API (bukan upload manual), diskon klaim sudah terhitung.
+5. **Rekonsiliasi balik (C vs B)** — memastikan yang masuk Accurate sama dengan data Kino.
+   Menyambung ke modul rekonsiliasi yang sudah ada.
+6. Ada program tambahan -> surat baru -> ulangi 1, lalu 3 dan 5 lagi.
+
+### Keputusan pengguna 2026-09-10
+
+| Pertanyaan | Jawaban |
+|---|---|
+| Yang diunggah ke Accurate | **Faktur penjualan ke outlet** (ORDER_DETAIL = penjualan Surya ke outlet yang dilaporkan ke Kino) |
+| Toleransi selisih | **Rp 1 per faktur** — hanya menyerap pembulatan |
+| Siapa peninjau | **Atur di RBAC** — jadi permission baru, bukan role yang di-hardcode |
+| Surat pertama | **Keempat surat on-faktur sekaligus** (lihat hambatannya di bawah) |
+
+### Lampiran yang dipakai (ADA DI `C:\Users\Muhar\Downloads`, BUKAN di repo)
+
+5 PDF surat Kino September 2026 + `KINO (1).xlsx` + `ORDER_DETAIL_20260903_20260903 (3).xlsx`.
+**Sesi baru harus meminta ulang lampirannya** — tidak disalin ke repo karena berisi data
+pelanggan dan harga.
+
+- **Kelima surat berlapis teks, BUKAN scan.** `pypdf` dan `pymupdf` sudah ada di container
+  backend produksi, jadi surat Kino bisa diparse deterministik **tanpa OCR sama sekali** —
+  lebih murah dan lebih tepat daripada jalur Mistral yang dipakai untuk surat hasil scan.
+- Field surat berlabel: `NO. PROMO ID`, `Kode Aju`, `PID External`, `Nama Program Promo`,
+  `Periode Promo`, `Divisi`, `Brand`, `Group Of Promo`, `Type Of Promo`, `Class Of Promo`,
+  `Activity Promo`, `Mekanisme Promo`, `Detail Promo`, `Outlet/Account`.
+- **Klasifikasi on-faktur itu MEKANIS**, dari field `Mekanisme Promo`:
+
+| Surat | Mekanisme Promo | Status |
+|---|---|---|
+| BP2609006016 MSG ALL BRAND | `CB ON FAKTUR VALUE` | on faktur — tier nilai |
+| BP2609008021 SMALL PACKAGE | `CB ON FAKTUR DISC %` | on faktur — diskon 1% |
+| BP2609007664 OVALE 2IN1 | `BONUS BARANG ON FAKTUR` | on faktur — bonus barang |
+| BP2609007713 RESIK V | `BONUS BARANG ON FAKTUR` | on faktur — bonus barang |
+| BP2609007909 MTI CONSUMER | `ADDITIONAL DISCOUNT` / class `DISC ON PO` | **BUKAN on faktur — dikecualikan** |
+
+- `KINO (1).xlsx` **bukan format upload**, melainkan tabel terjemahan: sheet
+  `Mapping_Customer` (1.433 baris, Code Kino -> Code Internal), `Mapping_Prd` (678 baris,
+  KODE ITEM / Kode Alias / Satuan / ISI), `Mapping_Sls` (10 baris, SLSMAN_ID -> Code Internal).
+- `ORDER_DETAIL` = versi Kino atas transaksi yang sama, 49 kolom. Yang penting: `SLSMAN_ID`,
+  `CUST_ID1` (kode Kino), **`CUST_ID2` sudah berisi kode internal kita** (mis. `C-GAL006`),
+  `CUST_TYPE1/2/3` (General Trade / Retail / Cosmetic Store), `SO_NO`, `SO_DATE`, `PRD_ID`
+  (kode Kino), `QTY`, `PRICE`, `GROSS`, `DISC_1`..`DISC_8`, `TOTAL_DISC`, `CASH_DISC`, `TAX`,
+  `TOTAL_PROMO`, `NET`, `FLAG_BONUS`, `INVOICE_NO`, `INVOICE_DATE`.
+- Catatan: file `ORDER_DETAIL` tidak bisa dibuka openpyxl langsung (stylesheet rusak,
+  "Colors must be aRGB hex values"). Akalinya: salin ulang zip-nya dengan `xl/styles.xml`
+  diganti stylesheet minimal, baru dibaca.
+
+### Mekanisme surat, verbatim (supaya sesi baru tidak perlu membaca PDF lagi)
+
+**MSG ALL BRAND** (`CB ON FAKTUR VALUE`, periode 1–30 September 2026):
+> PROGRAM INI KHUSUS CHANNEL GT EXCLUDE LOYALTY DAN CONTRACTUAL. REWARD DIBERIKAN DENGAN
+> MINIMAL TRANSAKSI: 1JT–1.99JT potongan on faktur 20.000; 2JT–2.99JT 40.000; 3JT–3.99JT
+> 60.000; 4JT 80.000; 5JT 100.000; 6JT 120.000; 7JT 140.000; 8JT 160.000; 9JT 180.000;
+> 10JT UP 200.000. Outlet/Account: ALL.
+
+**OVALE 2IN1** (`BONUS BARANG ON FAKTUR`):
+> KHUSUS CHANNEL GT PESERTA LOYALTY. KHUSUS BRAND OVALE 2IN1 CLEANSER. SETIAP PEMBELIAN
+> 30 PCS OVALE 2IN1 CLEANSER MIX VARIANT MENDAPATKAN BONUS 1 PCS PRODUK DENGAN HARGA YANG
+> SAMA (BERLAKU KELIPATAN).
+
+**RESIK V** (`BONUS BARANG ON FAKTUR`) — **EMPAT sub-program**, masing-masing 30 PCS -> bonus
+1 PCS harga sama, berlaku kelipatan: Khasiat Manjakani (MIX VARIANT), Manjakani Whitening
+(MIX VARIANT), Khasiat Ramuan Madura Whitening (MIX VARIANT), dan **Godokan Sirih TANPA
+"MIX VARIANT"**. Semuanya khusus GT PESERTA LOYALTY.
+
+**SMALL PACKAGE** (`CB ON FAKTUR DISC %`):
+> KHUSUS CHANNEL GT EXCLUDE PESERTA IKATAN LOYALTY / HYBRID / CONTRACTUAL & MSG (HIT LIST
+> OUTLET TERLAMPIR). **KHUSUS LD JAWA SESUAI LIST TERLAMPIR.** DISC ON FAKTUR 1%. Size tiap
+> package mengikuti lampiran. Brand/sub-brand: B&B, Sleek Baby, Ellips, Eskulin, Ovale,
+> Resik V, Sasha Hair.
+
+### Empat temuan yang MENGHALANGI "terbitkan keempatnya"
+
+1. **Dimensi kelayakan outlet belum ada di model aturan.** Dua program mensyaratkan PESERTA
+   LOYALTY, dua lainnya EXCLUDE LOYALTY/CONTRACTUAL. Model `summary_rules.Program` hanya punya
+   `channel` (GT/RETAIL). Kalau keempatnya diterbitkan apa adanya, **semuanya berlaku untuk
+   setiap outlet** — outlet loyalty menerima potongan MSG yang seharusnya tidak boleh, dan
+   sebaliknya. Ini diskon salah orang, bukan selisih pembulatan.
+2. **SMALL PACKAGE kemungkinan tidak berlaku untuk Surya.** Suratnya "KHUSUS LD JAWA",
+   sedangkan cabang pada ORDER_DETAIL adalah `1201671 SURYA PERKASA / SULAWESI SELATAN`.
+   Menerbitkannya menciptakan potongan 1% yang tidak bisa diklaim. **Belum dikonfirmasi.**
+3. **RESIK V harus jadi empat aturan terpisah**, dan yang Godokan Sirih `mix=false`. Model
+   sudah menangani beda ini dengan benar (mix hanya aktif bila suratnya menyebut), tapi
+   keempatnya jangan digabung.
+4. **`Mapping_Prd` tidak punya kolom brand/sub-brand.** Memetakan "OVALE 2IN1 CLEANSER" ke
+   daftar kode hanya bisa lewat pencocokan NAMA barang — jenis pencocokan samar yang sudah
+   pernah menyusahkan master Priskila, dan di sini akibatnya bonus SKU yang salah.
+
+### Yang MASIH DIBUTUHKAN dari pengguna
+
+- **Lampiran HIT LIST OUTLET** untuk MSG dan SMALL PACKAGE (daftar outlet
+  loyalty/hybrid/contractual/MSG). Tanpa ini temuan #1 tidak bisa ditutup.
+- **Lampiran size/paket** SMALL PACKAGE.
+- Konfirmasi apakah SMALL PACKAGE memang tidak berlaku untuk Makassar.
+- Lampirkan ulang 7 file itu di sesi baru.
+
+### Rencana yang arahnya sudah disampaikan (belum dikerjakan)
+
+1. **Dimensi kelayakan outlet** pada aturan promo: nilai `LOYALTY`/`HYBRID`/`CONTRACTUAL`/`MSG`
+   dengan mode "hanya" atau "kecuali". Dipakai aturan promo DAN gerbang validasi.
+2. **Parser surat Kino deterministik** (`pypdf`, tanpa OCR) + filter on-faktur mekanis.
+3. Terbitkan **MSG ALL BRAND** lebih dulu — satu-satunya yang mekanismenya lengkap tanpa
+   lampiran (tier nilai murni, semua brand HPC, tanpa perlu kode barang), dengan catatan
+   eksplisit bahwa pengecualian loyalty belum aktif.
+4. Baru bangun gerbang validasi (toleransi Rp 1), permission peninjau di RBAC, pengiriman ke
+   Accurate, dan rekonsiliasi balik.
+5. UI/UX dirancang SETELAH bentuk model aturannya pasti (pengguna minta pakai taste-skill).
+   Merancang layar di atas model yang masih akan berubah hanya akan dikerjakan dua kali.
+
+### Prompt melanjutkan (2026-09-10)
+
+> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace` (semua
+> sudah di-merge ke `main`, tidak ada commit lokal tertinggal). Baca SYSTEM_MAP.md dan
+> docs/SURYA_IMPLEMENTATION.md — mulai dari bagian "TAHAP 6 (BARU)". Tahap 1–4 selesai dan
+> produksi sudah tersinkron penuh dari Accurate (22 cabang, 155 penomoran, 37 satuan, 4.185
+> item semuanya bersatuan, 2,33 juta baris harga, 32.456 pelanggan, 223.589 faktur); nomor
+> faktur sudah mengikuti seri cabang pelanggan; gerbang kirim faktur MASIH TERTUTUP menunggu
+> satu faktur uji diperiksa. Pekerjaan berikutnya TAHAP 6: dimensi kelayakan outlet pada aturan
+> promo, parser surat Kino deterministik (tanpa OCR), lalu gerbang validasi data Kino vs aturan
+> (toleransi Rp 1) sebelum faktur naik ke Accurate. Saya lampirkan ulang 5 surat Kino +
+> KINO.xlsx + ORDER_DETAIL.xlsx. Jangan stage massal — working tree masih memuat pekerjaan
+> rekonsiliasi dan eksperimen OCR lama yang bukan milik pekerjaan ini.
+
+### Kondisi lingkungan saat sesi 2026-09-10 ditutup
+
+- **Git**: semua pekerjaan sudah di-merge ke `main` (PR #27, #28, #29, #30, #31, #32, #33, #34).
+  Tidak ada commit lokal tertinggal. Working tree hanya menyisakan pekerjaan rekonsiliasi dan
+  eksperimen OCR lama yang memang sudah dirty sebelum seluruh rangkaian sesi ini.
+- **Produksi**: 9 modul sync `idle`. `MISTRAL_API_KEY`, `ACCURATE_INVOICE_DB_ID` (1742775), dan
+  `ACCURATE_TOKEN_ENCRYPTION_KEY` terpasang; `BETTER_AUTH_URL` sudah diperbaiki menjadi
+  `https://web-super.online`. `ACCURATE_INVOICE_SEND` **tetap kosong** (gerbang tertutup).
+- **Produksi masih kosong isinya**: `summary_draft` 0, `sales_order` 0, `order_request` 0,
+  `wave_line_pool` 0, `invoice_outbox` 0. Belum ada satu pun aturan promo terbit, sehingga
+  `POST /orders` masih menolak 409. **Ini blokir pertama yang harus dibuka.**
+- **Cron produksi**: `/etc/cron.d/accapi` berisi sync-accurate 4x/hari (05:15, 11:15, 17:15,
+  23:15) + tiga cleanup. **`/api/cron/pull-websales` BELUM terjadwal** (penarikan order sales
+  masih manual dari halaman Order Masuk), dan `/api/cron/sync-item-prices` juga belum — jalankan
+  manual saat harga berubah.
+- **Lokal**: Postgres 18 dijalankan lewat `pg_ctl` (service-nya tidak bisa distart tanpa
+  elevasi), `LOCAL_AUTH_BYPASS=true`, dev server SUDAH DIMATIKAN.
+- **PENTING — satu token Accurate saja**: satu OAuth client hanya memegang satu token aktif.
+  Login produksi 2026-09-09 membuat token lokal `invalid_token`. Jangan login bergantian; kalau
+  perlu memprobe dari lokal, sadari itu akan mematikan token produksi.
+
+### Prompt melanjutkan (2026-09-09, sebelum tahap 6)
 
 > Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace` (empat commit LOKAL `e21de22`, `f7db064`, `7343dac`, `e17a4a5` — belum di-push). Baca SYSTEM_MAP.md dan docs/SURYA_IMPLEMENTATION.md, lalu periksa kondisi aktual. Tahap 1–3 selesai; satuan order kini dari master Accurate; penarikan Web Sales otomatis 5 menit lewat cron; halaman Order Sales ada dengan izin `websales` terpisah. Tahap 4 dibangun penuh tapi GERBANG KIRIM MASIH TERTUTUP dan nama field request `sales-invoice/save.do` belum terbukti — satu faktur uji pada database yang saya tunjuk harus diperiksa manual sebelum `ACCURATE_INVOICE_SEND=on`. Tahap 5 (Rekapan Nota) menunggu itu plus skema modulnya di DB dev. Jangan stage massal dan jangan push tanpa saya minta.
 
