@@ -1,7 +1,7 @@
 /*
  * Tujuan: Halaman Faktur Penjualan — cari faktur di cache DB, pilih kolom yang tampil, buka satu
  *   baris untuk melihat detail per item (qty, harga, diskon) yang diambil live dari Accurate.
- * Caller: Route dashboard /faktur (RBAC sales_history.view).
+ * Caller: Route dashboard /faktur (RBAC sales_history.view), tautan realisasi ?invoiceId=&databaseId=.
  * Dependensi: /api/faktur (daftar), /api/faktur/[id] (detail item).
  * Main Functions: FakturPage, ColumnPicker, DetailPanel.
  * Side Effects: fetch API; detail diambil saat baris dibuka; pilihan kolom disimpan di localStorage.
@@ -179,14 +179,14 @@ function ColumnPicker({
     );
 }
 
-function DetailPanel({ id, cols }: { id: number; cols: ColDef<Item>[] }) {
+function DetailPanel({ id, cols, databaseId }: { id: number; cols: ColDef<Item>[]; databaseId?: string }) {
     const [detail, setDetail] = useState<Detail | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         // Panel selalu mount ulang saat faktur lain dibuka, jadi state awalnya sudah kosong.
         let alive = true;
-        fetch(`/api/faktur/${id}`)
+        fetch(`/api/faktur/${id}${databaseId ? `?databaseId=${encodeURIComponent(databaseId)}` : ''}`)
             .then((r) => r.json())
             .then((j) => {
                 if (!alive) return;
@@ -195,7 +195,7 @@ function DetailPanel({ id, cols }: { id: number; cols: ColDef<Item>[] }) {
             })
             .catch(() => { if (alive) setError("Gagal menghubungi server."); });
         return () => { alive = false; };
-    }, [id]);
+    }, [id, databaseId]);
 
     if (error) {
         return <p className="px-5 py-4 text-sm" style={{ color: "var(--luxury-bronze)" }}>{error}</p>;
@@ -310,11 +310,16 @@ export default function FakturPage() {
     const [hasMore, setHasMore] = useState(false);
     const [loading, setLoading] = useState(true);
     const [openId, setOpenId] = useState<number | null>(null);
+    const [linked, setLinked] = useState<{id:number;databaseId:string}|null>(null);
     const [cols, setCols] = useState({ invoice: DEFAULT_INVOICE_COLS, item: DEFAULT_ITEM_COLS });
 
     useEffect(() => {
         const stored = loadCols();
         if (stored) setCols(stored);
+        const params = new URLSearchParams(window.location.search);
+        const id = params.get('invoiceId') || '', databaseId = params.get('databaseId') || '';
+        if (/^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id)) && databaseId)
+            setLinked({id:Number(id),databaseId});
     }, []);
 
     const setColumns = useCallback((next: { invoice: string[]; item: string[] }) => {
@@ -368,6 +373,11 @@ export default function FakturPage() {
                     </p>
                 </div>
             </header>
+
+            {linked && <section className="rounded-xl border" style={{borderColor:'var(--border-strong)'}}>
+                <h2 className="px-5 pt-4 font-semibold">Faktur dari laporan realisasi</h2>
+                <DetailPanel id={linked.id} databaseId={linked.databaseId} cols={itemCols} />
+            </section>}
 
             <div className="flex flex-wrap items-center gap-3">
                 <div className="relative min-w-[16rem] flex-1">

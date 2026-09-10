@@ -1,12 +1,13 @@
 /** Tujuan: Lihat rencana potongan dan benefit yang terverifikasi pada faktur Accurate.
  * Caller: Summary/settings. Dependensi: API summary/realization, sesi dashboard.
- * Main Functions: RealizationPage, load, verify. Side Effects: HTTP baca/verifikasi; unduh CSV.
+ * Main Functions: RealizationPage, load, verify, tautan faktur dengan database+ID. Side Effects: HTTP baca/verifikasi; unduh CSV.
  */
 "use client";
 import { useState } from "react";
 import Link from "next/link";
 import type { Realization } from "@/lib/program-realization";
 type Row = { orderId: string; customer: string; date: string; state: string; invoiceId: string; invoiceNumber: string;
+    databaseId: string;
     plannedDiscount: string | null; plannedPrograms: { name: string; discount: string }[]; realization: Realization | null; checkedAt: string | null };
 const rp = (n: string | number | null) => n === null ? "Belum tersedia" : new Intl.NumberFormat("id-ID", { style:"currency", currency:"IDR", maximumFractionDigits:2 }).format(Number(n));
 export default function RealizationPage() {
@@ -57,7 +58,7 @@ export default function RealizationPage() {
         <tbody>{[...totals].map(([id,p])=><tr key={id} className="border-t"><td className="p-3">{p.name}</td><td className="p-3">{rp(p.discount)}</td><td className="p-3">{p.bonus.join("; ")||"—"}</td></tr>)}</tbody></table></div>}
         <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr>{["Order / pelanggan","Faktur","Rencana","Realisasi","Pemeriksaan"].map(t=><th key={t} className="p-3 text-left">{t}</th>)}</tr></thead>
         <tbody>{rows.map(r=><tr key={r.orderId} className="border-t align-top"><td className="p-3">{r.customer}<div>{r.date}</div><div className="text-xs">{r.orderId}</div></td>
-        <td className="p-3">{r.invoiceNumber?<Link className="underline" href={`/faktur/${encodeURIComponent(r.invoiceId)}`}>{r.invoiceNumber}</Link>:"Belum terbit"}<div>{r.state}</div></td>
+        <td className="p-3">{r.invoiceNumber?<Link className="underline" href={`/faktur?invoiceId=${encodeURIComponent(r.invoiceId)}&databaseId=${encodeURIComponent(r.databaseId)}`}>{r.invoiceNumber}</Link>:"Belum terbit"}<div>{r.state}</div></td>
         <td className="p-3">{rp(r.plannedDiscount)}<div className="text-xs">{r.plannedPrograms.map(p=>p.name).join("; ")}</div></td>
         <td className="p-3">{rp(r.realization?.discount??null)}<div>{r.realization?.reason||"Belum diperiksa"}</div></td>
         <td className="p-3">{r.checkedAt&&<div>{new Date(r.checkedAt).toLocaleString("id-ID")}</div>}<button disabled={busy||r.state!=="posted"} onClick={()=>verify(r.orderId)} className="mt-2 rounded border px-3 py-2 disabled:opacity-40">Periksa Accurate</button></td></tr>)}</tbody></table></div>
