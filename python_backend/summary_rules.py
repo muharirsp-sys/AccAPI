@@ -165,7 +165,8 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
         if qty <= 0:
             raise ValueError("Jumlah barang harus lebih dari nol")
         gross = money(qty * price)
-        lines.append(dict(code=code, unit=unit, quantity=qty, gross=gross, net=gross, applied=[]))
+        lines.append(dict(code=code, unit=unit, quantity=qty, gross=gross, net=gross, applied=[],
+                          percents=[], cash=Decimal(0)))
     applications, bonuses, blocked = [], [], []
     for program in sorted(programs, key=lambda p: (p.priority, p.id)):
         if not program.start <= when <= program.end or program.channel not in ("ALL", channel):
@@ -200,18 +201,28 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
             for percentage in tier.percentages:
                 after = money(after * (1 - number(percentage) / 100))
             units = sum((line["quantity"] for line in group), Decimal(0)) if tier.rupiah_mode == "per_unit" else Decimal(1)
-            discount = min(before, money(before - after + number(tier.rupiah) * factor * units))
-            remaining = discount
+            # Bagian persen dan bagian rupiah dicatat terpisah karena faktur Accurate harus
+            # MENAMPILKAN keduanya: `itemDiscPercent` untuk rantai persennya, `itemCashDiscount`
+            # untuk potongan rupiahnya. Totalnya tetap satu angka yang sama seperti sebelumnya.
+            percent_total = before - after
+            discount = min(before, money(percent_total + number(tier.rupiah) * factor * units))
+            remaining, percent_left = discount, min(discount, percent_total)
             # Allocate cents deterministically; never exceed an individual line's net.
             for index, line in enumerate(group):
                 share = remaining if index == len(group) - 1 else min(remaining, money(discount * line["net"] / before)) if before else Decimal(0)
                 share = min(line["net"], share)
+                percent_share = min(percent_left, share if index == len(group) - 1 else
+                                    (money(percent_total * share / discount) if discount else Decimal(0)))
+                percent_left -= percent_share
+                line["cash"] += share - percent_share
                 line["net"] -= share
                 remaining -= share
                 line["applied"].append(program.stacking)
+                line["percents"].extend(tier.percentages)
             for line in group:
                 extra = min(line["net"], remaining)
                 line["net"] -= extra
+                line["cash"] += extra
                 remaining -= extra
             if tier.bonus_scope == "purchased":
                 bonuses.append(dict(program_id=program.id, code="", unit=tier.bonus_unit, quantity=str(number(tier.bonus_quantity) * factor),

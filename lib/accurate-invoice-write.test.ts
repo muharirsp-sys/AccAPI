@@ -39,9 +39,23 @@ test("payload memakai angka beku dan tidak pernah mengarang nomor faktur", () =>
     assert.equal(payload.branchId, 150);
     assert.deepEqual(payload.detailItem[0], {
         itemNo: "M5012001000740", quantity: 2, unitPrice: 1144800, itemUnitId: 100,
-        // Diskon = bruto - netto dari hasil BEKU, bukan hitung ulang persentase.
-        itemCashDiscount: 228960, detailNotes: "order 11111111 baris 1", charField1: order().id,
+        // Tanpa rantai persen pada hasil beku, seluruh diskon jatuh sebagai rupiah.
+        itemDiscPercent: "", itemCashDiscount: 228960,
+        detailNotes: "order 11111111 baris 1", charField1: order().id,
     });
+
+    // Faktur menampilkan persen DAN rupiah: rantai persen apa adanya, sisanya rupiah.
+    // Mengirim seluruh diskon di kedua field akan membuat Accurate memotong dua kali.
+    const beku = order();
+    beku.result.lines = [{ ...beku.result.lines![0], percents: ["10", "5"], cash: "8960" }];
+    const campur = buildInvoicePayload(beku, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 });
+    assert.equal(campur.detailItem[0].itemDiscPercent, "10+5");
+    assert.equal(campur.detailItem[0].itemCashDiscount, 8960);
+
+    // Bagian rupiah tidak boleh melebihi total diskon baris.
+    const salah = order();
+    salah.result.lines = [{ ...salah.result.lines![0], percents: ["10"], cash: "999999" }];
+    assert.throws(() => buildInvoicePayload(salah, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }), /diskon rupiah/);
     // Jejak balik untuk rekonsiliasi status TIDAK PASTI.
     assert.equal(payload.charField1, order().id);
     assert.equal(payload.charField2, "e6c56dacr2");

@@ -27,7 +27,13 @@
  */
 
 export type FrozenInputLine = { code: string; unit: string; quantity: string; price: string };
-export type FrozenResultLine = { code: string; unit: string; quantity: string; gross: string; net: string };
+export type FrozenResultLine = {
+    code: string; unit: string; quantity: string; gross: string; net: string;
+    /** Rantai persen yang berlaku pada baris ini, mis. ["10","5"]. Dibekukan oleh kalkulator. */
+    percents?: string[];
+    /** Bagian diskon yang berupa RUPIAH, di luar rantai persen di atas. */
+    cash?: string;
+};
 
 export type InvoiceOrder = {
     id: string;
@@ -47,6 +53,7 @@ export type InvoiceLinePayload = {
     quantity: number;
     unitPrice: number;
     itemUnitId: number;
+    itemDiscPercent: string;
     itemCashDiscount: number;
     detailNotes: string;
     charField1: string;
@@ -104,12 +111,25 @@ export function buildInvoicePayload(
         const net = money(line.net, `net baris ${key}`);
         const discount = Number((gross - net).toFixed(2));
         if (discount < 0) throw new Error(`Baris ${key} punya netto lebih besar dari bruto`);
+        // Faktur harus MENAMPILKAN persen dan rupiah, seperti nota Kino. Karena itu rantai
+        // persen dikirim apa adanya lewat `itemDiscPercent` ("10+5") dan HANYA sisa yang
+        // berupa rupiah lewat `itemCashDiscount`. Mengirim seluruh diskon di kedua field
+        // akan membuat Accurate memotong dua kali.
+        const percents = (line.percents ?? []).map((p) => String(p).trim()).filter(Boolean);
+        const cash = line.cash === undefined ? discount : money(line.cash, `diskon rupiah baris ${key}`);
+        if (cash < 0 || cash > discount + 0.01) {
+            throw new Error(`Baris ${key} punya diskon rupiah ${cash} di luar total diskon ${discount}`);
+        }
+        // Accurate menghitung ulang bagian persennya sendiri, jadi totalnya bisa berbeda
+        // beberapa sen dari angka beku kita. Itu diterima; yang tidak boleh adalah selisih
+        // karena kita mengirim dasar yang salah.
         return {
             itemNo: line.code,
             quantity: money(line.quantity, `jumlah baris ${key}`),
             unitPrice: money(input.price, `harga baris ${key}`),
             itemUnitId: unitId,
-            itemCashDiscount: discount,
+            itemDiscPercent: percents.join("+"),
+            itemCashDiscount: cash,
             detailNotes: `order ${order.id.slice(0, 8)} baris ${index + 1}`,
             charField1: order.id,
         };

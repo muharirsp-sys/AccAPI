@@ -1530,6 +1530,47 @@ tabel discon dalam bentuk xlsx, dan kecocokan channel diperiksa per kasus saat i
 pada fotonya (`DISCON SUPER DEV. KINO NON FOOD`). Kalau nama internalnya berbeda, ganti
 sebutan ini di dokumen dan kode sebelum modulnya dibangun.
 
+### Discount Reguler, kode barang, dan faktur persen+rupiah — 2026-09-10
+
+**Penamaan resmi (keputusan pengguna)**: tabel pada foto itu bernama **"Discount Reguler
+(Tanggungan Distributor)"**. Sebutan "discon super dev" hanya judul cetakannya; pakai nama
+resmi ini di kode dan dokumen berikutnya.
+
+**Excel-nya tidak ada, jadi diekstrak dari foto.** Hasilnya
+`DISCOUNT REGULER - TANGGUNGAN DISTRIBUTOR - KINO NON FOOD.xlsx`, dikirim ke pengguna dan
+**TIDAK disimpan di repo** (memuat nama pelanggan dan tarif diskon). Dua sheet:
+
+- `Discount Reguler` — 29 baris, kolom `POSISI 1..5` + `NILAI TERBACA DI FOTO` + `PERIKSA`.
+  Hanya baris **Alfamart** yang posisinya TERBUKTI (dari `DISC_1=4`/`DISC_4=2.25` pada
+  ORDER_DETAIL); sisanya ditandai "posisi kolom BELUM PASTI". Tiga baris tidak terbaca sama
+  sekali (Panen Selaras/Boots, Hypermart, PT. Millennium Multi Persada).
+  **11 kode internal yang tercetak di foto diverifikasi ke master pelanggan Accurate dan
+  semuanya cocok** — dengan satu koreksi: yang terbaca `C-MAA0056` sebenarnya **`C-MA0056`**
+  (MAJU JAYA SENTOSA, CV). Sembilan di antaranya juga ada di daftar loyalty, jadi saling
+  menguatkan.
+- `Kode Barang` — 41 kelompok kandidat dari master Kino untuk 5 sub-program on-faktur, dengan
+  jumlah item dan contoh nama, plus kolom `PAKAI` untuk dicentang. **Ini jawaban atas
+  pertanyaan "kode barang bagaimana"**: surat menyebut MEREK, master menyebut KELOMPOK, dan
+  tidak satu pun namanya sama persis — jadi peninjau mencentang dari daftar pendek, bukan
+  memilih dari 606 item, dan sistem tidak pernah menebak.
+
+**Faktur Accurate kini menampilkan persen DAN rupiah** (permintaan pengguna):
+
+- `summary_rules.calculate()` mencatat per baris `percents` (rantai persen yang berlaku,
+  mis. `["10","5"]`) dan `cash` (bagian diskon yang berupa rupiah). Totalnya tetap angka yang
+  sama; yang baru hanya pemisahannya. Alokasi sen tetap deterministik dan tidak pernah
+  melebihi netto satu baris.
+- `lib/accurate-invoice-write.ts` mengirim `itemDiscPercent: "10+5"` dan `itemCashDiscount`
+  **hanya sisa rupiahnya**. Mengirim seluruh diskon di kedua field akan membuat Accurate
+  memotong DUA KALI. Penulisnya menolak bila bagian rupiah melebihi total diskon baris.
+- Konsekuensi yang diterima: Accurate menghitung ulang bagian persennya sendiri, jadi total
+  faktur bisa berbeda beberapa sen dari angka beku kita. Itu masuk toleransi Rp 1.
+- Hasil beku lama (tanpa `percents`/`cash`) tetap jalan: seluruh diskon jatuh sebagai rupiah
+  seperti perilaku sebelumnya.
+
+Diperiksa: `test_summary_rules.py` (`summary split check`), `lib/accurate-invoice-write.test.ts`
+(5 test), dan `tsc --noEmit` bersih.
+
 ### Yang dibutuhkan dari pengguna untuk melanjutkan
 
 1. ~~Hit list LOYALTY~~ **SUDAH** (41 outlet, dimuat 2026-09-10).
