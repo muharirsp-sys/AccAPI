@@ -1467,6 +1467,61 @@ terdekat `OVALE CLEANSING GEL`, 4 item), dan sub-program Resik V harus dipetakan
 Peninjau memilih dari daftar pendek, bukan dari 606 item — menebaknya otomatis adalah pola
 kegagalan yang sudah pernah terjadi pada master Priskila.
 
+### Di kolom Accurate mana diskon rupiah masuk — dijawab 2026-09-10
+
+Pertanyaan pengguna. Dijawab dari `docs/prd/ACCURATE_API_REFERENCE.md` (hasil probe 303 field
+`sales-invoice`) dan `lib/accurate-invoice.ts` yang sudah terbukti membaca faktur live.
+**Tidak** memanggil API: satu OAuth client hanya memegang satu token, probe dari lokal akan
+mematikan token produksi.
+
+| Yang mau dikirim | Field Accurate | Tingkat |
+|---|---|---|
+| Diskon **persen** per baris (boleh bertingkat, mis. `4+2.25`) | `itemDiscPercent` | `detailItem[]` |
+| Diskon **rupiah** per baris | `itemCashDiscount` | `detailItem[]` |
+| Diskon **persen** seluruh faktur | `cashDiscPercent` | header |
+| Diskon **rupiah** seluruh faktur | `cashDiscount` | header |
+
+Pemetaan yang masuk akal untuk Kino:
+
+- `DISC_1..8` Kino adalah **persen berantai** -> `itemDiscPercent` per baris. Bentuk `"4+2.25"`
+  itulah yang menghasilkan perhitungan bertingkat yang sudah dibuktikan cocok dengan
+  `TOTAL_DISC` Kino. Sayangnya satu field tidak bisa menyimpan SIAPA yang menanggung tiap
+  bagian — pembagian distributor/principal harus tetap disimpan di sisi kita.
+- Potongan program berupa rupiah tingkat faktur (MSG Rp 180.000) -> `cashDiscount` header.
+
+**Yang perlu diputuskan**: `lib/accurate-invoice-write.ts` sekarang mengirim SEMUA diskon
+sebagai `itemCashDiscount` rupiah per baris (bruto - netto beku), sengaja supaya tidak ada
+selisih pembulatan. Kalau faktur harus MENAMPILKAN persen seperti nota Kino, penulisnya perlu
+diubah memakai `itemDiscPercent` untuk bagian persen dan menyisakan `cashDiscount` untuk uang
+program. Itu perubahan pada jalur yang gerbang kirimnya masih tertutup, jadi belum dikerjakan.
+
+**Peringatan yang masih berlaku**: nama field REQUEST `sales-invoice/save.do` BELUM terbukti,
+dan Accurate mengabaikan field tak dikenal tanpa galat. Tabel di atas berasal dari RESPONS
+`detail.do`. Satu faktur uji tetap wajib diperiksa manual.
+
+### Surat MT dan ALFAMART — tidak cocok, 2026-09-10
+
+Pengguna menunjuk `BP2609007909 - MTI - HPC CONSUMER PROMO ON PO` sebagai program MT. Benar
+bahwa itu surat sisi MT (`Group Of Promo: MODERN`, `Type Of Promo: CONSUMER PROMO`), tetapi
+**surat itu tidak menjelaskan diskon ALFAMART**:
+
+- `Class Of Promo: DISC ON PO`, `Mekanisme Promo: ADDITIONAL DISCOUNT`, dan syaratnya
+  "wajib konfirmasi/pengajuan outlet" + "wajib melampirkan SKP" — bukan potongan yang jatuh
+  otomatis di faktur.
+- Daftar outletnya untuk cabang 1201671 hanya **DUA**: `5191202075409 BAJI PAMAI CBA0003` dan
+  `5191202076135 WANG MART CWA0012`. **ALFAMART tidak ada di dalamnya.**
+- Isinya diskon 3% untuk brand tertentu (Ellips Hair Vitamin Jar, Ellips Hair Mist, Sleek Baby
+  Bottle Nipple, Resik V Cair, B&B all variant) — bukan 4% + 2,25%.
+
+Diskon ALFAMART 4% + 2,25% justru tertera pada **tabel discon super dev** baris `Alfamart`,
+channel NKA, kolom 1 dan kolom 4. Jadi sumber kebenaran untuk faktur MT/NKA adalah tabel itu,
+bukan surat MTI. Tabelnya masih berupa FOTO; 29 baris terlalu berisiko disalin dari foto
+miring, jadi belum dimuat.
+
+Catatan taksonomi: tabel discon memakai channel **NKA / MT / GT**, sedangkan `ORDER_DETAIL`
+memakai `CUST_TYPE1` **General Trade / Modern Trade**. ALFAMART = NKA pada tabel, Modern Trade
+pada ORDER_DETAIL. Pemetaan dua taksonomi ini harus disepakati sebelum gerbang MT jalan.
+
 ### Yang dibutuhkan dari pengguna untuk melanjutkan
 
 1. ~~Hit list LOYALTY~~ **SUDAH** (41 outlet, dimuat 2026-09-10).
