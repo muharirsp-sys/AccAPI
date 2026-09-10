@@ -1,6 +1,6 @@
 """Tujuan: Kontrak promo terbit dan kalkulator deterministik untuk order.
 Caller: Summary library, simulator, integrasi order berikutnya.
-Dependensi: Pydantic, Decimal stdlib. Main Functions: Program, validate_programs, calculate, compile_programs, suggestions.
+Dependensi: Pydantic, Decimal stdlib. Main Functions: Program, validate_programs, outlet_allows, calculate, compile_programs, suggestions.
 Side Effects: Tidak ada I/O; uang dibulatkan dua desimal, tidak memakai float untuk aritmetika.
 """
 import re
@@ -22,6 +22,31 @@ def number(value):
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+# Kelas keikutsertaan outlet menurut principal (Kino: "PESERTA LOYALTY", "EXCLUDE LOYALTY /
+# HYBRID / CONTRACTUAL & MSG"). Sengaja daftar tertutup: satu salah ketik pada mode "except"
+# berarti potongan jatuh ke outlet yang justru harus dikecualikan. Principal menambah kelas
+# baru -> tambahkan di sini, jangan longgarkan validasinya.
+OUTLET_CLASSES = ("LOYALTY", "HYBRID", "CONTRACTUAL", "MSG")
+
+
+def outlet_allows(program, outlet_classes, known_classes):
+    """Gerbang kelayakan outlet. Tidak tahu = tidak berlaku.
+
+    `known_classes` adalah kelas yang daftar outletnya SUDAH dimuat. Kelas yang daftarnya
+    belum ada membuat program ditahan, bukan berlaku untuk semua: potongan yang kurang bisa
+    dibayar susulan, potongan yang terlanjur masuk faktur outlet yang salah tidak bisa ditarik.
+    """
+    if program.outlet_mode == "all":
+        return True, ""
+    missing = [c for c in program.outlet_classes if c not in set(known_classes)]
+    if missing:
+        return False, "daftar outlet " + ", ".join(missing) + " belum dimuat"
+    listed = set(program.outlet_classes) & set(outlet_classes)
+    if program.outlet_mode == "only":
+        return bool(listed), "" if listed else "outlet bukan peserta " + ", ".join(program.outlet_classes)
+    return not listed, "outlet termasuk " + ", ".join(sorted(listed)) if listed else ""
 
 
 class Tier(StrictModel):
@@ -66,6 +91,8 @@ class Program(StrictModel):
     end: date
     codes: list[str] = Field(min_length=1, max_length=2000)
     channel: str = Field(min_length=1, max_length=80, description="ALL means all channels, otherwise exact channel code")
+    outlet_mode: Literal["all", "only", "except"] = "all"
+    outlet_classes: list[str] = Field(default_factory=list, max_length=8)
     unit: str = Field(min_length=1, max_length=30)
     mix: bool = False
     threshold: Literal["quantity", "value"] = "quantity"
@@ -93,6 +120,14 @@ class Program(StrictModel):
             raise ValueError("Tier harus unik dan diurutkan dari minimum terkecil")
         if self.threshold == "quantity" and self.value_scope == "order":
             raise ValueError("Batas kuantitas hanya menghitung barang yang memenuhi syarat")
+        if self.outlet_mode == "all" and self.outlet_classes:
+            raise ValueError("Kelas outlet hanya dipakai bila modenya 'only' atau 'except'")
+        if self.outlet_mode != "all":
+            if not self.outlet_classes or len(self.outlet_classes) != len(set(self.outlet_classes)):
+                raise ValueError("Sebutkan kelas outlet, tanpa duplikat")
+            unknown = [c for c in self.outlet_classes if c not in OUTLET_CLASSES]
+            if unknown:
+                raise ValueError("Kelas outlet tidak dikenal: " + ", ".join(unknown) + "; pilihan: " + ", ".join(OUTLET_CLASSES))
         return self
 
 
@@ -110,7 +145,7 @@ def validate_programs(raw, master_codes, page_count):
     return programs
 
 
-def calculate(programs, raw_lines, order_date, channel):
+def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known_classes=()):
     """Highest qualifying tier per program; explicit priority and all-party stacking.
     Quantities require exact units; no inferred conversion. Value = before tax.
     Each percentage compounds on remaining eligible value; rupiah follows percentages.
@@ -131,13 +166,27 @@ def calculate(programs, raw_lines, order_date, channel):
             raise ValueError("Jumlah barang harus lebih dari nol")
         gross = money(qty * price)
         lines.append(dict(code=code, unit=unit, quantity=qty, gross=gross, net=gross, applied=[]))
-    applications, bonuses = [], []
+    applications, bonuses, blocked = [], [], []
     for program in sorted(programs, key=lambda p: (p.priority, p.id)):
         if not program.start <= when <= program.end or program.channel not in ("ALL", channel):
             continue
-        eligible = [line for line in lines if line["code"] in program.codes and line["unit"] == program.unit
+        # Batas nilai adalah soal uang, bukan satuan: program "minimal transaksi Rp X" harus
+        # menghitung semua satuan barangnya, kalau tidak satu order BTL+PCS terpecah dua.
+        eligible = [line for line in lines if line["code"] in program.codes
+                    and (program.threshold == "value" or line["unit"] == program.unit)
                     and (not line["applied"] or (program.stacking and all(line["applied"]))) ]
-        groups = [eligible] if program.mix else [[line] for line in eligible]
+        if not eligible:
+            continue
+        # Kelayakan outlet diperiksa setelah barangnya cocok supaya yang dilaporkan hanya
+        # program yang benar-benar hampir berlaku, bukan seluruh isi pustaka aturan.
+        allowed, reason = outlet_allows(program, outlet_classes, known_classes)
+        if not allowed:
+            blocked.append(dict(program_id=program.id, program_name=program.name, reason=reason))
+            continue
+        # Batas nilai selalu dihitung sekeranjang. "Minimal transaksi Rp 1 juta" adalah syarat
+        # belanja, bukan syarat per baris; menghitungnya per baris membuat order Rp 9 juta
+        # jatuh ke tier Rp 1 juta berkali-kali.
+        groups = [eligible] if (program.mix or program.threshold == "value") else [[line] for line in eligible]
         for group in groups:
             if not group:
                 continue
@@ -172,7 +221,7 @@ def calculate(programs, raw_lines, order_date, channel):
             applications.append(dict(program_id=program.id, minimum=tier.minimum, discount=str(discount)))
     gross = sum((line["gross"] for line in lines), Decimal(0))
     net = sum((line["net"] for line in lines), Decimal(0))
-    return dict(gross=str(gross), discount=str(gross-net), net=str(net), bonuses=bonuses, applications=applications,
+    return dict(gross=str(gross), discount=str(gross-net), net=str(net), bonuses=bonuses, applications=applications, blocked=blocked,
                 lines=[{k: str(v) if isinstance(v, Decimal) else v for k, v in line.items() if k != "applied"} for line in lines])
 
 
@@ -214,13 +263,15 @@ def threshold_of(ketentuan):
     package = package_of(ketentuan)
     if package:
         return "quantity", package[0], package[2] if package[2] in UNITS else "PCS"
-    lowered = ketentuan.lower()
-    if any(mark in lowered for mark in NO_MINIMUM_MARKS):
-        return "quantity", "1", "PCS"
+    # Trigger berangka diperiksa lebih dulu: "Setiap pembelian 30 PCS" adalah minimum 30,
+    # bukan "tanpa minimum" hanya karena kalimatnya diawali "setiap pembelian".
     quantity = QUANTITY_TRIGGER.search(ketentuan)
     if quantity:
         unit = quantity.group(2).upper()
         return "quantity", clean_number(quantity.group(1)), unit if unit in UNITS else "PCS"
+    lowered = ketentuan.lower()
+    if any(mark in lowered for mark in NO_MINIMUM_MARKS):
+        return "quantity", "1", "PCS"
     money = VALUE_TRIGGER.search(ketentuan)
     if money:
         return "value", clean_number(money.group(1)), "PCS"
@@ -269,7 +320,25 @@ def tier_of(row, codes, minimum, unit="PCS"):
         tier.update(bonus_quantity=quantity, bonus_unit=found_unit if found_unit in UNITS else "PCS", **bonus_target(codes))
     else:
         return None, "benefit_type harus DISC_PCT, DISC_RP, atau BONUS_QTY"
+    # "berlaku kelipatan" pada surat = tier berulang. Persen dan potongan per satuan sudah
+    # naik sendiri mengikuti belanja, jadi mengulangnya lagi akan menghitung ganda.
+    if "kelipatan" in str(row.get("ketentuan", "")).lower() and not tier["percentages"] and tier["rupiah_mode"] != "per_unit":
+        tier["repeat"] = True
     return tier, ""
+
+
+def outlet_rule_of(row):
+    """Kolom kelayakan outlet pada baris draft: `outlet_mode` + `outlet_classes` (dipisah koma)."""
+    mode = str(row.get("outlet_mode", "")).strip().lower() or "all"
+    classes = tuple(sorted({c.strip().upper() for c in re.split(r"[,;]", str(row.get("outlet_classes", ""))) if c.strip()}))
+    if mode not in ("all", "only", "except"):
+        return (), "outlet_mode harus all, only, atau except"
+    if (mode == "all") != (not classes):
+        return (), "isi outlet_mode 'only'/'except' bersama kelas outletnya, atau kosongkan keduanya"
+    unknown = [c for c in classes if c not in OUTLET_CLASSES]
+    if unknown:
+        return (), "kelas outlet tidak dikenal: " + ", ".join(unknown) + "; pilihan: " + ", ".join(OUTLET_CLASSES)
+    return (mode, classes), ""
 
 
 def merge_tier(target, extra):
@@ -315,9 +384,13 @@ def compile_programs(rows, period=None):
         if problem:
             issues.append(f"{label}: {problem}")
             continue
+        outlet, problem = outlet_rule_of(row)
+        if problem:
+            issues.append(f"{label}: {problem}")
+            continue
         blob = (ketentuan + " " + str(row.get("keterangan", ""))).lower()
         key = (str(row.get("channel_gtmt", "")).strip().upper() or "ALL", start, end, unit, kind,
-               any(mark in ketentuan.lower() for mark in MIX_MARKS), any(mark in blob for mark in STACK_MARKS), tuple(sorted(codes)))
+               any(mark in ketentuan.lower() for mark in MIX_MARKS), any(mark in blob for mark in STACK_MARKS), tuple(sorted(codes)), outlet)
         group = groups.setdefault(key, {"rows": [], "tiers": {}})
         group["rows"].append(row)
         if minimum in group["tiers"]:
@@ -328,7 +401,7 @@ def compile_programs(rows, period=None):
             group["tiers"][minimum] = tier
     programs, used = [], set()
     for index, (key, group) in enumerate(groups.items()):
-        channel, start, end, unit, kind, mix, stacking, codes = key
+        channel, start, end, unit, kind, mix, stacking, codes, outlet = key
         first = group["rows"][0]
         identifier = str(first.get("promo_group_id", "")).strip() or f"P{index + 1}"
         if identifier in used:
@@ -338,6 +411,7 @@ def compile_programs(rows, period=None):
         programs.append(dict(
             id=identifier[:80], name=(str(first.get("nama_program", "")).strip() or str(first.get("kelompok", "")).strip() or identifier)[:160],
             start=start, end=end, codes=list(codes), channel=channel, unit=unit, mix=mix, threshold=kind,
+            outlet_mode=outlet[0], outlet_classes=list(outlet[1]),
             value_scope="eligible", basis="gross", stacking=stacking, priority=index + 1,
             tiers=[group["tiers"][minimum] for minimum in sorted(group["tiers"], key=number)],
             source_page=page if isinstance(page, int) and page >= 1 else 1,
@@ -362,7 +436,7 @@ def benefit_text(tier):
     return " dan ".join(parts) or "benefit program"
 
 
-def suggestions(programs, raw_lines, order_date, channel, limit=20):
+def suggestions(programs, raw_lines, order_date, channel, limit=20, outlet_classes=(), known_classes=()):
     """Selisih menuju tier berikutnya, untuk ditampilkan ke sales sebelum order dikirim.
 
     Hanya program yang benar-benar berlaku pada tanggal dan channel order. Selisih
@@ -381,8 +455,12 @@ def suggestions(programs, raw_lines, order_date, channel, limit=20):
     for program in sorted(programs, key=lambda item: (item.priority, item.id)):
         if not program.start <= when <= program.end or program.channel not in ("ALL", channel):
             continue
-        eligible = [line for line in lines if line["code"] in program.codes and line["unit"] == program.unit]
-        for group in ([eligible] if program.mix else [[line] for line in eligible]):
+        # Jangan menjanjikan potongan yang tidak akan dihitung kalkulator untuk outlet ini.
+        if not outlet_allows(program, outlet_classes, known_classes)[0]:
+            continue
+        eligible = [line for line in lines if line["code"] in program.codes
+                    and (program.threshold == "value" or line["unit"] == program.unit)]
+        for group in ([eligible] if (program.mix or program.threshold == "value") else [[line] for line in eligible]):
             if not group:
                 continue
             counted = lines if (program.threshold == "value" and program.value_scope == "order") else group

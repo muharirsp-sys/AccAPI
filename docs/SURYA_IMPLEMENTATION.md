@@ -1209,7 +1209,132 @@ pelanggan dan harga.
 5. UI/UX dirancang SETELAH bentuk model aturannya pasti (pengguna minta pakai taste-skill).
    Merancang layar di atas model yang masih akan berubah hanya akan dikerjakan dua kali.
 
-### Prompt melanjutkan (2026-09-10)
+### Tahap 6 langkah 1–2 SELESAI — 2026-09-10 (sesi lanjutan)
+
+Dua dari lima langkah rencana di atas sudah dikerjakan dan lolos self-check. Langkah 3–5
+(terbitkan MSG, gerbang validasi, kirim + rekonsiliasi balik) belum.
+
+**1. Dimensi kelayakan outlet pada aturan promo** — `python_backend/summary_rules.py`
+
+- `Program` bertambah `outlet_mode` (`all` / `only` / `except`) dan `outlet_classes`.
+  Daftar kelas TERTUTUP: `OUTLET_CLASSES = ("LOYALTY","HYBRID","CONTRACTUAL","MSG")`.
+  Sengaja tertutup — satu salah ketik pada mode `except` berarti potongan jatuh ke outlet
+  yang justru harus dikecualikan. Principal menambah kelas -> tambahkan di konstanta itu.
+- `outlet_allows(program, outlet_classes, known_classes)` adalah gerbangnya.
+  **`known_classes` = kelas yang daftar outletnya sudah dimuat.** Kelas yang daftarnya belum
+  ada membuat program DITAHAN, bukan berlaku untuk semua. Ini keputusan yang diambil sesi
+  ini tanpa menunggu jawaban: potongan yang kurang bisa dibayar susulan, potongan yang
+  terlanjur masuk faktur outlet yang salah tidak bisa ditarik.
+- `calculate()` dan `suggestions()` menerima `outlet_classes=`/`known_classes=` (default
+  kosong = gagal tertutup), jadi **`routers/orders.py` tidak diubah sama sekali** dan
+  perilakunya sekarang: tiap program berkelas outlet ditahan sampai daftarnya dimuat.
+- `calculate()` mengembalikan `blocked: [{program_id, program_name, reason}]` — alasan
+  penahanan ikut tersimpan pada `sales_order.result`, jadi terlihat di halaman order.
+- `compile_programs()` membaca kolom baris `outlet_mode` + `outlet_classes` (dipisah koma),
+  ikut jadi kunci pengelompokan (baris berbeda kelayakan tidak melebur), dan salah isi
+  dilaporkan sebagai issue, bukan ditebak.
+- **BELUM ADA sumber data kelasnya.** Tidak ada tabel outlet-tag dan tidak ada importir —
+  sengaja belum dibangun karena berkas hit list-nya belum ada. Begitu berkasnya datang:
+  tabel `outlet_tag(customer_no, tag)` + `known_classes` = kelas yang punya minimal satu
+  baris, lalu `store_order`/`preview_order` meneruskannya ke `calculate`.
+
+**2. Parser surat Kino deterministik, tanpa OCR** — `python_backend/kino_letter.py`
+
+- `parse_pdf(raw)` / `parse_text(text)`: baca label kop (`NO. PROMO ID`, `Kode Aju`,
+  `Periode Promo`, `Mekanisme Promo`, `Detail Promo`, ...) lalu keluarkan baris draft
+  Summary dengan bentuk `FIELDS` yang sama seperti keluaran Mistral, plus `outlet_mode`
+  dan `outlet_classes`. Menolak PDF tanpa lapisan teks (arahkan ke jalur OCR).
+- Klasifikasi on-faktur MEKANIS dari field `Mekanisme Promo` saja (`\bON FAKTUR\b`), bukan
+  dari badan teks — surat DISC ON PO pun menyebut "ON FAKTUR" di kalimatnya.
+- Kelayakan outlet dibaca dari butir yang menyebut CHANNEL/PESERTA, dan **EXCLUDE menang
+  atas PESERTA**: "EXCLUDE PESERTA PROGRAM IKATAN LOYALTY / HYBRID / CONTRACTUAL & MSG"
+  memuat kedua kata, membacanya terbalik membalik arti surat.
+- Tier `1JT � 1.99 JT POTONGAN ON FAKTUR 20.000` terbaca sebagai batas BAWAH (1 juta).
+  Bullet dan tanda rentang surat Kino sama-sama keluar sebagai U+FFFD, jadi tier discan
+  utuh dengan satu regex, sedangkan bonus discan PER BUTIR supaya "berlaku kelipatan"
+  milik butirnya sendiri.
+- Disambung ke `POST /summary/manual/parse_pdf_ai` lewat `kino_extraction()` di
+  `routers/summary.py`: **dicoba lebih dulu, jatuh ke Mistral bila bukan surat Kino atau
+  bukan berlapis teks.** Nol biaya OCR untuk surat Kino.
+- `POST /summary/library/{id}/publish` menolak 409 bila `extraction.on_faktur is False`.
+
+**Tiga bug lama yang ketahuan dari data nyata dan sudah diperbaiki** (semuanya di
+`summary_rules.py`, ketiganya salah UANG, bukan kosmetik):
+
+1. `threshold_of` membaca "Setiap pembelian 30 PCS" sebagai minimum **1**, karena
+   `NO_MINIMUM_MARKS` diperiksa sebelum trigger berangka. Akibatnya bonus 30-dapat-1 pada
+   order 60 PCS keluar **60 bonus**, bukan 2. Urutannya dibalik.
+2. Batas nilai difilter satuan: program "minimal transaksi Rp X" hanya menghitung baris
+   bersatuan sama dengan `program.unit`, jadi order campur BTL+PCS terpecah. Sekarang
+   `threshold == "value"` mengabaikan satuan.
+3. Batas nilai dihitung PER BARIS, bukan sekeranjang. Order Rp 9,37 juta jatuh ke tier
+   Rp 1 juta beberapa kali dan keluar Rp 80.000, bukan Rp 180.000. Sekarang
+   `threshold == "value"` selalu satu keranjang.
+
+**Bukti yang benar-benar dijalankan**
+
+- `python test_summary_rules.py`, `test_kino_letter.py`, `test_orders.py` — semua OK.
+  `test_kino_letter.py` memuat salinan verbatim lapisan teks surat, jadi tidak butuh PDF
+  di repo (PDF-nya berisi data pelanggan, tetap di luar repo).
+- Kelima surat September 2026 diparse dari berkas asli: MSG 10 tier + `except
+  LOYALTY,CONTRACTUAL`; OVALE 1 baris `only LOYALTY`; RESIK V **4 baris terpisah** dengan
+  Godokan Sirih tanpa MIX (temuan #3 tertutup); SMALL PACKAGE 1% + `except` empat kelas +
+  peringatan lampiran; **MTI ditolak** `on_faktur=False`, 0 baris.
+- Rantai penuh diuji dengan order GT nyata dari `ORDER_DETAIL_20260903`
+  (GALERY MAKASSAR `C-GAL006`, 18 baris, gross Rp 9.375.135):
+  daftar belum dimuat -> Rp 0 (`blocked: daftar outlet CONTRACTUAL, LOYALTY belum dimuat`);
+  outlet biasa -> **Rp 180.000** (tier 9JT, sesuai surat); outlet LOYALTY -> Rp 0.
+  **Kino mencatat TOTAL_DISC = 0 untuk order itu.** Jadi begitu gerbang validasi ada, order
+  ini akan DITAHAN — entah GALERY MAKASSAR memang loyalty/contractual, entah Kino kurang
+  memberi. Tidak bisa dipastikan tanpa hit list.
+- `kino_extraction()` dijalankan langsung atas keempat berkas: MSG 10 baris, RESIK 4 baris,
+  MTI 0 baris `on_faktur=False`, dan berkas non-PDF mengembalikan `None` (jatuh ke OCR).
+
+**Batas verifikasi yang jujur**: jalur HTTP-nya (`parse_pdf_ai`, `publish`) belum diklik
+lewat browser di sesi ini — yang diuji fungsinya langsung plus import router. Dev server
+tidak dinyalakan.
+
+**Temuan #4 masih berdiri**: `attach_codes` hanya mencocokkan nama master UTUH, dan
+"OVALE 2IN1 CLEANSER" bukan nama master utuh, jadi `kode_barangs` keluar kosong dan peninjau
+harus memilih kode. Itu memang perilaku yang diinginkan (tidak ada pencocokan samar), tapi
+artinya menerbitkan OVALE/RESIK V/SMALL PACKAGE butuh pemilihan kode manual — atau tabel
+merek->kode yang dibangun dari `Mapping_Prd` + master Accurate, yang belum ada.
+
+**Catatan model yang sengaja tidak diubah**: `value_scope` tetap `eligible`, bukan `order`.
+Di Accurate, cabang = divisi principal dan `customerNo` per cabang, jadi satu faktur hanya
+berisi satu principal — `eligible` dan `order` sama saja untuk MSG. Kalau nanti ada faktur
+campur principal, ini harus ditinjau ulang.
+
+**UI belum disentuh sama sekali** (sesuai rencana butir 5): editor Summary belum punya
+kolom `outlet_mode`/`outlet_classes`, jadi kelayakan outlet baru bisa diisi lewat parser.
+Baris yang sudah punya kolom itu TIDAK hilang saat disimpan (frontend menyalin baris dengan
+spread), tapi baris baru yang dibuat dari UI default `all`.
+
+### Yang dibutuhkan dari pengguna untuk melanjutkan
+
+1. **Berkas HIT LIST OUTLET** (daftar outlet LOYALTY / HYBRID / CONTRACTUAL / MSG untuk
+   cabang 1201671 Makassar). Tanpa ini semua aturan Kino ditahan dan tidak ada satu pun
+   potongan yang dihitung. Ini blokir nomor satu.
+2. **Lampiran size/paket SMALL PACKAGE**.
+3. Konfirmasi apakah SMALL PACKAGE berlaku untuk Makassar — suratnya "KHUSUS LD JAWA".
+   Catatan baru: pada surat MTI, cabang `1201671 SURYA PERKASA, CV - MAKASSAR` MEMANG ada di
+   list outlet terlampir (2 outlet: `5191202075409 BAJI PAMAI CBA0003`, `5191202076135 WANG
+   MART CWA0012`), jadi Kino memang mencantumkan Makassar pada program yang berlaku untuknya.
+   Itu justru memperkuat dugaan SMALL PACKAGE (Jawa saja) tidak berlaku di sini.
+
+### Prompt melanjutkan (2026-09-10, setelah langkah 1–2)
+
+> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca
+> SYSTEM_MAP.md dan docs/SURYA_IMPLEMENTATION.md mulai dari "TAHAP 6". Tahap 1–5 selesai;
+> Tahap 6 langkah 1 (dimensi kelayakan outlet, gagal tertutup) dan langkah 2 (parser surat
+> Kino deterministik tanpa OCR + gerbang on-faktur) SELESAI dan lolos self-check. Berikutnya:
+> tabel + importir outlet-tag begitu hit list-nya saya lampirkan, lalu terbitkan MSG ALL
+> BRAND, lalu gerbang validasi data Kino vs aturan (toleransi Rp 1) dengan permission peninjau
+> di RBAC, lalu kirim ke Accurate dan rekonsiliasi balik. Gerbang kirim faktur MASIH TERTUTUP
+> (`ACCURATE_INVOICE_SEND` kosong) menunggu satu faktur uji diperiksa. Jangan stage massal —
+> working tree masih memuat pekerjaan rekonsiliasi dan eksperimen OCR lama.
+
+### Prompt melanjutkan (2026-09-10, sebelum langkah 1–2)
 
 > Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace` (semua
 > sudah di-merge ke `main`, tidak ada commit lokal tertinggal). Baca SYSTEM_MAP.md dan
