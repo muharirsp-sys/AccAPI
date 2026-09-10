@@ -1,7 +1,7 @@
 """Tujuan: Draft Summary persisten, sumber privat, publikasi immutable, dan simulasi promo.
 Caller: SummaryLibrary web; adaptor order membaca hanya versi published.
 Dependensi: shared auth/RBAC, summary_store, summary_rules, summary_mistral.
-Main Functions: list/get/save/publish/withdraw/source/simulate; semua mengembalikan aturan tersusun.
+Main Functions: list/get/save/publish/withdraw/source/simulate; versi terbit termasuk asal paket review memakai snapshot tervalidasi.
 Side Effects: SQLite read/write dan respons PDF privat; tidak menulis faktur.
 """
 import json
@@ -59,6 +59,8 @@ def with_rules(draft):
 
 def preview(draft):
     """Pratinjau aturan untuk ditinjau manusia; kegagalan dilaporkan, bukan disembunyikan."""
+    if draft['status']!='draft' and draft['content'].get('programs'):
+        return [p.model_dump(mode='json') for p in programs_for(draft)],[]
     issues = compile_programs(draft["content"].get("rows", []), draft["content"].get("period"))[1]
     try:
         return [program.model_dump(mode="json") for program in programs_for(draft)], issues
@@ -151,6 +153,10 @@ async def publish(request: Request, draft_id: str):
         raise HTTPException(404, "Draft tidak ditemukan")
     if body.get("reviewed") is not True:
         raise HTTPException(400, "Periksa sumber, kode, periode, dan semua ketentuan terlebih dahulu")
+    # Aturan terbit dipakai memotong faktur. Surat yang mekanismenya BUKAN on faktur
+    # (mis. "DISC ON PO", "ADDITIONAL DISCOUNT") tidak boleh masuk ke sana lewat pintu ini.
+    if draft["content"].get("extraction", {}).get("on_faktur") is False:
+        raise HTTPException(409, "Mekanisme surat bukan on faktur; program ini diklaim di luar faktur, jangan diterbitkan sebagai aturan order")
     try:
         programs = programs_for(draft)
     except (ValueError, KeyError) as error:

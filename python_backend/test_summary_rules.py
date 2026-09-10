@@ -115,7 +115,94 @@ def main():
     check_compiler()
     check_codes()
     check_suggestions()
+    check_outlet()
+    check_outlet_store()
     check_flow()
+
+
+def check_outlet_store():
+    """Keanggotaan kelas outlet: kunci kode dasar, muat = ganti, kosong != belum dimuat."""
+    import outlet_class
+
+    assert outlet_class.base_code("C-GAL006-KN") == "C-GAL006"
+    assert outlet_class.base_code("C-GAL006") == "C-GAL006"
+    assert outlet_class.base_code("BL-SOH001-VIN") == "BL-SOH001"
+    assert outlet_class.base_code("BL-SOH001") == "BL-SOH001"
+    assert outlet_class.base_code("") == ""
+
+    assert outlet_class.known() == () and outlet_class.classes_of("C-A001-KN") == ()
+    outlet_class.load("LOYALTY", ["C-A001-KN", "C-B002", "c-b002"], "uji")
+    assert outlet_class.known() == ("LOYALTY",)
+    # Cabang mana pun pada outlet yang sama ikut terbaca; keanggotaan melekat pada tokonya.
+    assert outlet_class.classes_of("C-A001-RB") == ("LOYALTY",)
+    assert outlet_class.classes_of("C-B002-KN") == ("LOYALTY",)
+    assert outlet_class.classes_of("C-LAIN9-KN") == ()
+
+    # Muat ulang MENGGANTI: outlet yang keluar dari program harus benar-benar hilang.
+    outlet_class.load("LOYALTY", ["C-B002"], "uji ulang")
+    assert outlet_class.classes_of("C-A001-KN") == () and outlet_class.classes_of("C-B002-KN") == ("LOYALTY",)
+
+    # Dinyatakan kosong tetap "dikenal" — itulah yang membedakannya dari belum dimuat.
+    outlet_class.load("CONTRACTUAL", [], "tidak ada di cabang ini")
+    assert outlet_class.known() == ("CONTRACTUAL", "LOYALTY")
+    assert outlet_class.loaded()["CONTRACTUAL"]["count"] == 0
+
+    try:
+        outlet_class.load("EMAS", [], "uji")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("kelas di luar daftar harus ditolak")
+    print("outlet class store check: OK")
+
+
+def check_outlet():
+    """Kelayakan outlet: tidak tahu = tidak berlaku, dan alasannya dilaporkan."""
+    hanya = program(outlet_mode="only", outlet_classes=["LOYALTY"])
+    kecuali = program(outlet_mode="except", outlet_classes=["LOYALTY", "MSG"])
+    semua = program()
+
+    def hitung(raw, outlet=(), known=()):
+        return calculate(validate_programs([raw], MASTER, 1), [line("A", "10", "10000")], "2026-06-01", "GT",
+                         outlet_classes=outlet, known_classes=known)
+
+    # Daftar outlet belum dimuat: kedua arah ditahan, tidak diterapkan diam-diam.
+    for raw, alasan in ((hanya, "daftar outlet LOYALTY belum dimuat"), (kecuali, "daftar outlet LOYALTY, MSG belum dimuat")):
+        held = hitung(raw)
+        assert held["discount"] == "0.00", held
+        assert held["blocked"][0]["reason"] == alasan, held["blocked"]
+    assert hitung(semua)["discount"] == "5000.00"
+
+    # Daftar sudah dimuat: peserta dapat yang "only", tidak dapat yang "except".
+    assert hitung(hanya, outlet=["LOYALTY"], known=["LOYALTY"])["discount"] == "5000.00"
+    assert hitung(hanya, outlet=[], known=["LOYALTY"])["discount"] == "0.00"
+    assert hitung(kecuali, outlet=["LOYALTY"], known=["LOYALTY", "MSG"])["blocked"][0]["reason"] == "outlet termasuk LOYALTY"
+    assert hitung(kecuali, outlet=[], known=["LOYALTY", "MSG"])["discount"] == "5000.00"
+    # Satu kelas saja yang daftarnya ada tetap kurang untuk program dua kelas.
+    assert hitung(kecuali, outlet=[], known=["LOYALTY"])["blocked"][0]["reason"] == "daftar outlet MSG belum dimuat"
+
+    # Saran tidak menjanjikan promo yang kalkulator tidak akan berikan.
+    naik = program(outlet_mode="only", outlet_classes=["LOYALTY"], tiers=[dict(minimum="99", percentages=["5"])])
+    ditahan = validate_programs([naik], MASTER, 1)
+    assert suggestions(ditahan, [line("A", "10", "1000")], "2026-06-01", "GT") == []
+    assert suggestions(ditahan, [line("A", "10", "1000")], "2026-06-01", "GT",
+                       outlet_classes=["LOYALTY"], known_classes=["LOYALTY"])[0]["gap"] == "89"
+
+    # Kontrak: mode dan kelas harus konsisten, kelas di luar daftar ditolak.
+    rejects(program(outlet_classes=["LOYALTY"]), "kelas tanpa mode")
+    rejects(program(outlet_mode="only"), "mode tanpa kelas")
+    rejects(program(outlet_mode="only", outlet_classes=["EMAS"]), "kelas tidak dikenal")
+    rejects(program(outlet_mode="only", outlet_classes=["LOYALTY", "LOYALTY"]), "kelas duplikat")
+
+    # Baris draft membawa kolomnya sendiri; salah isi dilaporkan, tidak ditebak.
+    dari_baris = compile_programs([row(outlet_mode="except", outlet_classes="loyalty, msg")])[0]
+    assert dari_baris[0]["outlet_mode"] == "except" and dari_baris[0]["outlet_classes"] == ["LOYALTY", "MSG"]
+    assert "tidak dikenal" in compile_programs([row(outlet_mode="only", outlet_classes="EMAS")])[1][0]
+    assert compile_programs([row(outlet_classes="LOYALTY")])[1], "kelas tanpa mode harus dilaporkan"
+    # Baris dengan kelayakan berbeda tidak boleh melebur jadi satu program bertingkat.
+    campur = compile_programs([row(no="1"), row(no="2", outlet_mode="only", outlet_classes="LOYALTY")])[0]
+    assert len(campur) == 2, campur
+    print("summary outlet check: OK")
 
 
 def row(**overrides):

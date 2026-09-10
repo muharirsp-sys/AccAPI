@@ -1,7 +1,7 @@
 """Tujuan: Order masuk dengan aturan promo terbit yang dibekukan pada saat pengiriman.
 Caller: halaman order internal; Web Sales terpisah akan memakai endpoint yang sama.
 Dependensi: shared auth/RBAC, summary_store, summary_rules (Program, calculate), websales_store.
-Main Functions: published_rules, preview_order, create_order, pull_requests, list_orders, order_detail.
+Main Functions: published_rules, preview_order, create_order, pull_requests, list_orders, order_detail (termasuk aturan beku untuk faktur).
 Side Effects: SQLite read/write; tidak menulis faktur Accurate dan tidak memanggil AI.
 """
 import hmac
@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from shared import get_current_user, user_has_permission, validate_csrf_request
 from summary_store import JsonStore, connect, identity
 from summary_rules import Program, calculate, suggestions
+import outlet_class
 import websales_store
 
 router = APIRouter(prefix="/orders")
@@ -65,7 +66,8 @@ def store_order(owner, outlet, channel, order_date, note, lines, request_id=None
     if not programs:
         raise HTTPException(409, "Belum ada aturan promo terbit; terbitkan Summary sebelum order dihitung")
     if priced:
-        result = calculate(programs, lines, order_date, channel)
+        result = calculate(programs, lines, order_date, channel,
+                           outlet_classes=outlet_class.classes_of(customer_no), known_classes=outlet_class.known())
         frozen = [program.model_dump(mode="json") for program in programs]
         status = "draft"
     else:
@@ -130,13 +132,17 @@ async def preview_order(request: Request):
         raise HTTPException(403, "Akses pratinjau order tidak diizinkan")
     if not validate_csrf_request(request, request.headers.get("X-CSRF-Token", "")):
         raise HTTPException(403, "Permintaan lintas situs ditolak")
-    _, channel, order_date, clean = await read_order_body(request, 512 * 1024)
+    body, channel, order_date, clean = await read_order_body(request, 512 * 1024)
     if any(not line["price"] for line in clean):
         raise HTTPException(400, "Setiap baris pratinjau butuh harga dari server")
     programs, sources = published_rules()
+    # Kelayakan outlet ikut dihitung di pratinjau: sales harus melihat angka yang sama
+    # dengan yang nanti dibekukan pada order, termasuk promo yang TIDAK berlaku untuknya.
+    customer_no = str(body.get("customer_no", "")).strip()
+    outlets, tahu = outlet_class.classes_of(customer_no), outlet_class.known()
     try:
-        result = calculate(programs, clean, order_date, channel) if programs else None
-        advice = suggestions(programs, clean, order_date, channel) if programs else []
+        result = calculate(programs, clean, order_date, channel, outlet_classes=outlets, known_classes=tahu) if programs else None
+        advice = suggestions(programs, clean, order_date, channel, outlet_classes=outlets, known_classes=tahu) if programs else []
     except (ValueError, KeyError, TypeError) as error:
         raise HTTPException(400, public_error(error)) from None
     return {"ok": True, "result": result, "suggestions": advice, "sources": sources}
@@ -296,13 +302,13 @@ async def pull_cron(request: Request):
 
 def order_detail_row(order_id, user, everyone=False):
     with connect() as db:
-        query = ("SELECT id,owner,outlet,channel,order_date,status,note,lines,sources,result,request_id,"
+        query = ("SELECT id,owner,outlet,channel,order_date,status,note,lines,rules,sources,result,request_id,"
                  "customer_no,created_at FROM sales_order WHERE id=?")
         row = db.execute(query if everyone else query + " AND owner=?", (order_id,) if everyone else (order_id, identity(user))).fetchone()
     if row is None:
         return None
     value = dict(row)
-    for key in ("lines", "sources", "result"):
+    for key in ("lines", "rules", "sources", "result"):
         value[key] = json.loads(value[key])
     return value
 
