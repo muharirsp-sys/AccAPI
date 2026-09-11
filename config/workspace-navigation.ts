@@ -18,6 +18,7 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
         // Halaman sales di lapangan; hanya tampil untuk akun berizin `websales.create`.
         { name: "Order Sales", href: "/sales", icon: Smartphone },
         { name: "Faktur Penjualan", href: "/faktur", icon: ReceiptText },
+        { name: "Antrean Faktur", href: "/antrean-faktur", icon: Send },
         { name: "History Penjualan", href: "/sales-history", icon: History },
     ] },
     { id: "promo", name: "Promo & Klaim", description: "Susun program, periksa diskon, dan kelola klaim.", icon: Tags, items: [

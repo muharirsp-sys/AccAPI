@@ -301,6 +301,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     // pencocokan memakai prefix terpanjang.
     { prefix: "/sales", module: "websales", action: "create" },
     { prefix: "/principal-order", module: "order", action: "view" },
+    { prefix: "/antrean-faktur", module: "order", action: "view" },
     { prefix: "/orders", module: "order", action: "view" },
     { prefix: "/summary", module: "summary", action: "view" },
     { prefix: "/validator", module: "validator", action: "view" },

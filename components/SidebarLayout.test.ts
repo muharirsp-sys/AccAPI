@@ -12,11 +12,13 @@ import { WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, activeNavigation
 test("all existing modules appear exactly once across six groups", () => {
     const items = WORKSPACE_GROUPS.flatMap(group => group.items);
     assert.equal(WORKSPACE_GROUPS.length, 6);
-    assert.equal(items.length, 22);
+    assert.equal(items.length, 23);
     // Mapping Principal ikut katalog: terjemahan kode principal -> internal adalah master
     // data yang harus bisa diperbaiki admin lewat UI, bukan lewat berkas di share.
     assert.ok(items.some(item => item.href === "/principal-mapping"));
     assert.ok(items.some(item => item.href === "/principal-order"));
+    // Antrean faktur ikut katalog: tab error dan laporan OM adalah layar yang sama.
+    assert.ok(items.some(item => item.href === "/antrean-faktur"));
     assert.equal(new Set(items.map(item => item.href)).size, items.length);
     assert.ok(items.some(item => item.href === "/payments/sppd"));
     assert.ok(items.some(item => item.href === "/rekapan-nota"));

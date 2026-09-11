@@ -15,11 +15,12 @@
  * Aturan yang tidak boleh dilanggar:
  * - Timeout/koneksi putus = TIDAK PASTI (`unknown`), bukan gagal. Tidak pernah dikirim ulang
  *   otomatis: kunci unik lokal tidak menjamin tidak ada faktur ganda di Accurate.
+ * - Yang diambil HANYA `queued`. `rejected` dilepas ulang manusia lewat /antrean-faktur.
  * - Nomor faktur datang dari Accurate; payload memakai typeAutoNumber.
  * - Identitas yang disimpan = database + record id.
  */
 import { NextResponse } from "next/server";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox } from "@/db/schema";
 import { isAllowedAccurateHost, requireCronSecret } from "@/lib/api-security";
@@ -38,7 +39,7 @@ export async function GET(request: Request) {
     const targetDb = String(process.env.ACCURATE_INVOICE_DB_ID || "").trim();
     if (String(process.env.ACCURATE_INVOICE_SEND || "").trim().toLowerCase() !== "on" || !targetDb) {
         const queued = await db.select({ orderId: invoiceOutbox.orderId }).from(invoiceOutbox)
-            .where(inArray(invoiceOutbox.state, ["queued", "rejected"]));
+            .where(eq(invoiceOutbox.state, "queued"));
         return NextResponse.json({
             ok: false,
             error: "Pengiriman faktur Accurate belum diizinkan. Set ACCURATE_INVOICE_SEND=on dan "
@@ -67,8 +68,11 @@ export async function GET(request: Request) {
         }, { status: 409 });
     }
 
+    // HANYA `queued`. Yang `rejected` menunggu manusia menekan "Kirim ulang" di halaman
+    // Antrean Faktur: Accurate menolaknya karena ada yang salah, dan mengulang tiap jalannya
+    // cron hanya menumpuk kegagalan yang sama tanpa memperbaiki sebabnya.
     const rows = await db.select().from(invoiceOutbox)
-        .where(inArray(invoiceOutbox.state, ["queued", "rejected"]))
+        .where(eq(invoiceOutbox.state, "queued"))
         .orderBy(asc(invoiceOutbox.createdAt)).limit(BATCH);
 
     const results: { order_id: string; state: string; number?: string; error?: string }[] = [];

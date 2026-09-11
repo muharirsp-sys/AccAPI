@@ -208,7 +208,23 @@ export function nextOutboxState(current: OutboxState, outcome: SendOutcome): Out
     return "rejected";
 }
 
-/** Boleh dikirim? Hanya `queued` dan `rejected` (yang sudah diperbaiki). */
+/**
+ * Boleh dikirim pengirim terjadwal? HANYA `queued`.
+ *
+ * `rejected` sengaja TIDAK ikut. Accurate menolak karena ada yang salah — outlet non-aktif,
+ * piutang lewat tempo, harga keliru — dan mengirim ulang tiap jalannya cron tidak memperbaiki
+ * satu pun dari itu; yang terjadi hanya tumpukan percobaan gagal yang menutupi masalah asli.
+ * Baris yang ditolak menunggu manusia menyatakan sudah diperbaiki (lihat `resendable`).
+ */
 export function sendable(state: OutboxState): boolean {
-    return state === "queued" || state === "rejected";
+    return state === "queued";
+}
+
+/**
+ * Boleh dilepas ulang oleh manusia? HANYA `rejected` — Accurate MENJAWAB dan menolak, jadi
+ * dipastikan tidak ada fakturnya di sana. `unknown` TIDAK PERNAH: tidak ada jawaban berarti
+ * fakturnya mungkin sudah terbentuk, dan faktur ganda di Accurate tidak bisa dibatalkan.
+ */
+export function resendable(state: OutboxState): boolean {
+    return state === "rejected";
 }

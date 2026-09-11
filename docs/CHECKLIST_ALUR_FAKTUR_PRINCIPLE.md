@@ -91,20 +91,20 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 
 | # | Yang harus benar | Status | Catatan |
 |---|---|---|---|
-| 5.1 | Tab error: Faktur, Sales, centang 4 kategori | ❌ | Belum ada |
-| 5.2 | Resend hanya untuk yang AMAN | 🟡 | Pondasinya sudah benar: `rejected` boleh dikirim ulang, `unknown` **TIDAK PERNAH** — faktur ganda di Accurate tidak bisa dibatalkan. Tombol resend wajib menghormati ini |
-| 5.3 | Gagal lagi → kembali ke antrean error | ❌ | Belum ada |
+| 5.1 | Tab error: Faktur, Sales, centang 4 kategori | 🟡 | `/antrean-faktur` ada: kolom faktur/SO, outlet, **sales**, umur, jawaban Accurate apa adanya, saringan per status. **4 kategori belum ada** — teksnya belum pernah kita lihat (4.25) |
+| 5.2 | Resend hanya untuk yang AMAN | ✅ | `resendable()` + `POST /api/invoice-outbox`: hanya `rejected`. `unknown` ditolak 409 dengan alasannya dan **tidak punya tombol** di layar. Diuji keempat statusnya |
+| 5.3 | Gagal lagi → kembali ke antrean error | ✅ | Kirim ulang mengembalikan ke `queued`; pengirim menandainya `rejected` lagi bila ditolak lagi, dan barisnya muncul lagi di layar yang sama |
 | 5.4 | Jejak percobaan | ✅ | `attempts`, `last_error`, `updated_at` |
 
 ## Langkah 6 — daily closing dan eskalasi ke OM
 
 | # | Yang harus benar | Status | Catatan |
 |---|---|---|---|
-| 6.1 | Definisi "selesai hari itu" | ❓ | **Pertanyaan 4.** Cut-off jam berapa? Zona waktu apa? |
-| 6.2 | Siapa yang menutup hari | ❓ | Otomatis lewat cron, atau admin menekan "tutup hari"? |
-| 6.3 | Halaman laporan OM | ❌ | Belum ada |
-| 6.4 | Isi laporan OM | ❌ | Minimal: jumlah belum selesai, umur masalahnya, faktur + sales + jenis error |
-| 6.5 | Pemicu eskalasi | ❓ | Otomatis saat lewat cut-off, atau admin yang mengeskalasi? |
+| 6.1 | Definisi "selesai hari itu" | ✅ | Bukan jam cut-off: **umur masalah 2 jam** (keputusan pengguna). Dihitung sejak faktur masuk antrean, bukan sejak percobaan terakhir — menekan Kirim ulang tidak menyetel ulang jamnya |
+| 6.2 | Siapa yang menutup hari | ✅ | Admin, dengan menarik ulang laporan dari Kino lalu mengunggah + memvalidasinya lagi. Tidak perlu tombol "tutup hari": SO yang sudah diantrekan bentrok di kunci `PRINCIPAL:NO-SO`, jadi tarik ulang aman diulang |
+| 6.3 | Halaman laporan OM | ✅ | Bukan halaman terpisah: saringan **"hanya yang lewat 2 jam"** pada `/antrean-faktur`. Satu daftar, satu sumber angka — laporan OM tidak bisa berbeda dari layar admin |
+| 6.4 | Isi laporan OM | ✅ | Jumlah yang menggantung, umur per baris, faktur/SO, outlet, **sales** (dari `principal_order_line` lewat nomor SO), status, dan jawaban Accurate apa adanya |
+| 6.5 | Pemicu eskalasi | ✅ | Otomatis dari umur: spanduk merah muncul sendiri begitu ada yang lewat 2 jam. Tidak ada tombol "eskalasi" yang bisa lupa ditekan |
 | 6.6 | Cron produksi | 🟡 | `/etc/cron.d/accapi` ada (sync 4x/hari + cleanup). Jadwal untuk closing/eskalasi belum |
 
 ---
@@ -373,6 +373,56 @@ peta `code|unit` tidak cukup), dan `label` opsional membuat catatan baris memaka
 
 **Yang masih menahan pengiriman**: gerbang `ACCURATE_INVOICE_SEND` tetap kosong. Antrean boleh
 terisi, pengirimannya tidak jalan sampai satu faktur uji diperiksa manual.
+
+## Langkah 5 dan 6 SELESAI — tab error, resend, dan laporan OM, 2026-09-11
+
+`/antrean-faktur` + `app/api/invoice-outbox/route.ts`. Tanpa migrasi baru dan tanpa tabel baru.
+
+**Satu layar, bukan dua.** Laporan OM adalah saringan "hanya yang lewat 2 jam" pada layar yang
+sama. Halaman OM terpisah berarti dua query yang bisa menjawab berbeda untuk pertanyaan yang
+sama, dan OM akan menelepon admin soal angka yang tidak ada di layar admin.
+
+**Perubahan aturan kirim yang disengaja**: pengirim terjadwal kini HANYA mengambil `queued`.
+Sebelumnya `rejected` ikut terambil setiap jalannya cron — padahal Accurate menolak karena ada
+yang salah (outlet non-aktif, piutang lewat tempo, harga keliru) dan mengulanginya 4x sehari
+tidak memperbaiki satu pun dari itu. Sekarang yang ditolak menunggu manusia. `sendable()` =
+`queued` saja, `resendable()` = `rejected` saja, keduanya diuji.
+
+Dua tindakan, keduanya hanya untuk yang DITOLAK:
+
+- **Kirim ulang** — kembali ke `queued` dengan payload yang SAMA. Untuk masalah di luar angka:
+  outlet diaktifkan lagi, piutang dibayar, limit dinaikkan.
+- **Buang dari antrean** — barisnya dihapus supaya batch yang sudah diperbaiki bisa diantrekan
+  ulang dengan angka baru. Ini satu-satunya jalan memperbaiki ANGKA, karena payload dibekukan
+  saat diantrekan dan kirim ulang tidak menghitung ulang apa pun.
+
+`unknown` tidak punya tombol sama sekali, di layar maupun di API (409 dengan alasannya).
+
+**Jam eskalasi dihitung sejak `created_at`, bukan `updated_at`.** Kalau dari percobaan
+terakhir, menekan Kirim ulang akan menyetel ulang jamnya dan masalah berumur sehari bisa
+tampak baru semenit — eskalasi yang bisa dihindari dengan menekan tombol bukan eskalasi.
+Dibuktikan: baris berumur 242 menit tetap 242 menit dan tetap terhitung `overdue` setelah
+dikirim ulang.
+
+**Dibuktikan jalan** (lokal, 2026-09-11, empat baris antrean buatan di keempat status):
+
+| Uji | Hasil |
+|---|---|
+| Daftar bawaan | hanya yang belum selesai; `posted` tidak ikut |
+| Saringan "lewat 2 jam" | 2 baris tersaring, yang berumur 10 menit hilang |
+| Sales + outlet pada baris laporan principal | terisi dari `principal_order_line` lewat nomor SO (`M-MEL`, `trufarm CTU001`) |
+| Kirim ulang `unknown` | **ditolak** dengan alasan charField1 |
+| Buang `unknown` | **ditolak**, alasan yang sama |
+| Kirim ulang `posted` | **ditolak** |
+| Kirim ulang `rejected` | boleh; jadi `queued`, umur masalah tetap |
+| Buang `rejected` | barisnya hilang, batch bisa diantrekan ulang |
+| Cron dengan gerbang tertutup | `waiting: 1` — yang `rejected` TIDAK ikut terhitung maupun terkirim |
+
+**Yang belum, dan sengaja**: klasifikasi 4 kategori error (4.25). Kita belum pernah melihat
+satu pun teks error asli dari Accurate, dan pencocokan pola yang ditebak akan salah
+menggolongkan error nyata — lebih buruk daripada tidak menggolongkan sama sekali. Sekarang
+jawaban Accurate ditampilkan apa adanya. Begitu faktur uji menghasilkan teks aslinya, tempat
+menambahkannya adalah satu fungsi pemeta di `app/api/invoice-outbox/route.ts`.
 
 ## Yang paling menentukan sebelum kode ditulis
 

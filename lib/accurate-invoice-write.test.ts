@@ -2,7 +2,7 @@
    dan timeout tidak boleh dianggap gagal (faktur ganda di Accurate tidak bisa dibatalkan). */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildInvoicePayload, nextOutboxState, readInvoiceIdentity, sendable, toAccurateDate, type InvoiceOrder } from "./accurate-invoice-write.ts";
+import { buildInvoicePayload, nextOutboxState, readInvoiceIdentity, resendable, sendable, toAccurateDate, type InvoiceOrder } from "./accurate-invoice-write.ts";
 
 const UNITS = new Map([["KRT", 100], ["BAG", 350]]);
 
@@ -99,10 +99,18 @@ test("tanpa jawaban dari Accurate statusnya TIDAK PASTI, bukan gagal, dan tidak 
     assert.equal(sendable("posted"), false);
     assert.equal(sendable("sending"), false);
 
-    // Accurate menjawab dan menolak: aman diperbaiki lalu dicoba lagi.
+    // Accurate menjawab dan menolak: aman diperbaiki lalu dicoba lagi — tetapi oleh MANUSIA.
+    // Pengirim terjadwal tidak boleh mengambilnya sendiri; kalau boleh, tiap jalannya cron
+    // mengulang kegagalan yang sama tanpa ada yang memperbaiki sebabnya.
     assert.equal(nextOutboxState("sending", { kind: "rejected", message: "customer suspended" }), "rejected");
-    assert.equal(sendable("rejected"), true);
+    assert.equal(sendable("rejected"), false);
     assert.equal(sendable("queued"), true);
+    assert.equal(resendable("rejected"), true);
+    // Yang TIDAK PASTI tidak pernah boleh dilepas ulang, oleh siapa pun.
+    assert.equal(resendable("unknown"), false);
+    assert.equal(resendable("posted"), false);
+    assert.equal(resendable("sending"), false);
+    assert.equal(resendable("queued"), false);
     assert.equal(nextOutboxState("sending", { kind: "posted", id: "331710", number: "INV/1" }), "posted");
     assert.equal(nextOutboxState("posted", { kind: "rejected", message: "apa pun" }), "posted");
 });
