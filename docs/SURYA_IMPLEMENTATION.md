@@ -1580,6 +1580,58 @@ Diperiksa: `test_summary_rules.py` (`summary split check`), `lib/accurate-invoic
    Ini satu-satunya yang menahan MSG sekarang.
 4. Perbarui sheet `Mapping_Customer` pada KINO.xlsx: 3 outlet loyalty belum ada di sana.
 
+### TAHAP 7 — alur laporan principal: langkah 1–3 SELESAI (2026-09-11)
+
+Alur yang diminta pengguna: sales input di sistem principal -> admin tarik laporan integrasi ->
+unggah ke web -> validasi 2 tahap -> kirim ke Accurate 1 tombol -> tab error + resend ->
+daily closing + eskalasi OM. Checklist lengkap 40 titik periksa ada di
+**`docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md`** — baca itu lebih dulu, bukan bagian ini.
+
+Selesai sesi ini: **langkah 1 (mapping), 2 (parser + unggah batch), 3 (validasi tahap 1)**.
+
+| Yang dibangun | Berkas |
+|---|---|
+| Mapping kode principal -> internal, bisa diimpor & diubah lewat UI | `lib/principal-mapping.ts`, `/principal-mapping`, migrasi 0007 |
+| Parser Order Detail + unggah batch anti-ganda | `lib/order-detail.ts`, `/principal-order`, migrasi 0008 |
+| Validasi tahap 1 (8 pemeriksaan, semuanya menahan) | `lib/principal-validation.ts`, migrasi 0009 |
+| PPN wajib aktif pada setiap faktur | `lib/accurate-invoice-write.ts` |
+
+**Migrasi 0007, 0008, 0009 SUDAH di PRODUKSI** (2026-09-11), semuanya 0 baris.
+
+Keputusan pengguna yang mengikat pekerjaan berikutnya:
+
+- **Dua jalur order hidup berdampingan**: principal bersistem sendiri lewat unggah laporan,
+  principal lain lewat entri di web kita. `invoice_outbox` harus bisa diisi dari keduanya.
+- **Harga**: beda sampai Rp 1 lolos, di atas itu ditahan, lebih tinggi maupun lebih rendah.
+- **Daily closing**: admin menarik ulang laporan saat mau selesai kerja lalu disandingkan;
+  status juga harus real-time; **masalah yang sudah berumur 2 jam tembus ke OM**.
+- **Small Package (LD Jawa) diabaikan** untuk Surya.
+- Pemetaan channel NKA/MT/GT vs General/Modern Trade **tidak diformalkan**, diperiksa per kasus.
+
+Aturan yang diambil dari Power Query admin (`KINO (1).xlsx`) dan sudah diterapkan: satuan naik
+ke KRT hanya bila QTY habis dibagi ISI dengan harga dikali ISI; baris bonus = potongan 100% di
+posisi 1; pelanggan dari `CUST_ID1` + akhiran `-KN`; diskon persen digabung dengan `+`.
+
+**Berikutnya (langkah 4–7)**: adaptor batch -> `invoice_outbox` + satu tombol kirim per batch;
+klasifikasi 4 error Accurate (overdue, overlimit, outlet non-aktif, item non-aktif) yang teksnya
+**belum pernah kita lihat** dan harus diambil dari faktur uji; tab error + resend yang
+menghormati `unknown` (tidak boleh dikirim ulang); halaman OM dengan penanda umur 2 jam.
+
+**Gerbang kirim faktur MASIH TERTUTUP** (`ACCURATE_INVOICE_SEND` kosong). Daftar periksa faktur
+uji kini: satuan, harga per satuan, **diskon persen (`itemDiscPercent`)**, **PPN (`taxable`)
+dan totalnya**, dan nomor faktur.
+
+### Prompt melanjutkan (2026-09-11)
+
+> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`
+> (sudah di-push). Baca `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md` lebih dulu, lalu bagian
+> "TAHAP 7" pada docs/SURYA_IMPLEMENTATION.md. Langkah 1–3 alur laporan principal selesai dan
+> terbukti jalan dengan berkas nyata; migrasi 0007–0009 sudah di produksi. Berikutnya langkah 4:
+> adaptor batch ke `invoice_outbox` + satu tombol kirim per batch, lalu klasifikasi 4 error
+> Accurate, tab error + resend, dan halaman OM dengan penanda umur 2 jam. Gerbang kirim masih
+> tertutup menunggu satu faktur uji diperiksa manual. Jangan stage massal — working tree masih
+> memuat pekerjaan rekonsiliasi dan eksperimen OCR lama.
+
 ### Prompt melanjutkan (2026-09-10, setelah langkah 1–2)
 
 > Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca
