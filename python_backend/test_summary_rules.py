@@ -117,7 +117,35 @@ def main():
     check_suggestions()
     check_outlet()
     check_outlet_store()
+    check_split()
     check_flow()
+
+
+def check_split():
+    """Persen dan rupiah dipisah per baris supaya faktur Accurate bisa menampilkan keduanya."""
+    def satu(raw, lines):
+        return calculate(validate_programs([raw], MASTER, 1), lines, "2026-06-01", "GT")["lines"]
+
+    persen = satu(program(tiers=[dict(minimum="1", percentages=["5"])]), [line("A", "10", "10000")])[0]
+    assert persen["percents"] == ["5"] and Decimal(persen["cash"]) == 0, persen
+    assert persen["net"] == "95000.00"
+
+    rupiah = satu(program(tiers=[dict(minimum="1", rupiah="7500")]), [line("A", "10", "10000")])[0]
+    assert rupiah["percents"] == [] and Decimal(rupiah["cash"]) == 7500, rupiah
+
+    # Satu tier bisa memuat keduanya; jumlah kedua bagian harus sama dengan bruto - netto.
+    campur = satu(program(tiers=[dict(minimum="1", percentages=["10"], rupiah="5000")]), [line("A", "10", "10000")])[0]
+    assert campur["percents"] == ["10"] and Decimal(campur["cash"]) == 5000, campur
+    assert Decimal(campur["gross"]) - Decimal(campur["net"]) == Decimal("15000"), campur
+
+    # Dibagi ke banyak baris: bagian persen dan rupiah tiap baris tetap berjumlah pas.
+    dua = validate_programs([program(codes=["A", "B"], mix=True, tiers=[dict(minimum="1", percentages=["10"], rupiah="1000")])], MASTER, 1)
+    hasil = calculate(dua, [line("A", "1", "3333"), line("B", "1", "6667")], "2026-06-01", "GT")
+    for baris in hasil["lines"]:
+        assert Decimal(baris["gross"]) - Decimal(baris["net"]) >= Decimal(baris["cash"]), baris
+    assert sum(Decimal(b["cash"]) for b in hasil["lines"]) == Decimal("1000"), hasil["lines"]
+    assert Decimal(hasil["discount"]) == Decimal("2000.00"), hasil["discount"]
+    print("summary split check: OK")
 
 
 def check_outlet_store():

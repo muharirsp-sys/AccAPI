@@ -295,11 +295,15 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/payments/sppd", module: "sppd", action: "view" },
     { prefix: "/payments", module: "payments", action: "view" },
     { prefix: "/finance", module: "finance", action: "view" },
+    { prefix: "/principal-mapping", module: "principles", action: "view" },
     { prefix: "/principles", module: "principles", action: "view" },
     // /sales sebelum /orders TIDAK relevan (prefix beda), tapi urutannya tetap dijaga:
     // pencocokan memakai prefix terpanjang.
     { prefix: "/sales", module: "websales", action: "create" },
+    { prefix: "/principal-order", module: "order", action: "view" },
+    { prefix: "/antrean-faktur", module: "order", action: "view" },
     { prefix: "/orders", module: "order", action: "view" },
+    { prefix: "/rekap-promo", module: "summary", action: "view" },
     { prefix: "/summary", module: "summary", action: "view" },
     { prefix: "/validator", module: "validator", action: "view" },
     { prefix: "/api-wrapper", module: "api_wrapper", action: "view" },

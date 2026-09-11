@@ -2,7 +2,7 @@
    dan timeout tidak boleh dianggap gagal (faktur ganda di Accurate tidak bisa dibatalkan). */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildInvoicePayload, nextOutboxState, readInvoiceIdentity, sendable, toAccurateDate, type InvoiceOrder } from "./accurate-invoice-write.ts";
+import { buildInvoicePayload, nextOutboxState, readInvoiceIdentity, resendable, sendable, toAccurateDate, type InvoiceOrder } from "./accurate-invoice-write.ts";
 
 const UNITS = new Map([["KRT", 100], ["BAG", 350]]);
 
@@ -37,11 +37,29 @@ test("payload memakai angka beku dan tidak pernah mengarang nomor faktur", () =>
     assert.equal(payload.typeAutoNumber, 1702);
     assert.ok(!("number" in payload), "nomor faktur harus datang dari Accurate");
     assert.equal(payload.branchId, 150);
+    // PPN wajib aktif untuk semua faktur penjualan, dan harga adalah DPP (pajak ditambahkan
+    // di atasnya), bukan harga yang sudah termasuk pajak.
+    assert.equal(payload.taxable, true);
+    assert.equal(payload.inclusiveTax, false);
     assert.deepEqual(payload.detailItem[0], {
         itemNo: "M5012001000740", quantity: 2, unitPrice: 1144800, itemUnitId: 100,
-        // Diskon = bruto - netto dari hasil BEKU, bukan hitung ulang persentase.
-        itemCashDiscount: 228960, detailNotes: "order 11111111 baris 1", charField1: order().id,
+        // Tanpa rantai persen pada hasil beku, seluruh diskon jatuh sebagai rupiah.
+        itemDiscPercent: "", itemCashDiscount: 228960,
+        detailNotes: "order 11111111 baris 1", charField1: order().id,
     });
+
+    // Faktur menampilkan persen DAN rupiah: rantai persen apa adanya, sisanya rupiah.
+    // Mengirim seluruh diskon di kedua field akan membuat Accurate memotong dua kali.
+    const beku = order();
+    beku.result.lines = [{ ...beku.result.lines![0], percents: ["10", "5"], cash: "8960" }];
+    const campur = buildInvoicePayload(beku, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 });
+    assert.equal(campur.detailItem[0].itemDiscPercent, "10+5");
+    assert.equal(campur.detailItem[0].itemCashDiscount, 8960);
+
+    // Bagian rupiah tidak boleh melebihi total diskon baris.
+    const salah = order();
+    salah.result.lines = [{ ...salah.result.lines![0], percents: ["10"], cash: "999999" }];
+    assert.throws(() => buildInvoicePayload(salah, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }), /diskon rupiah/);
     // Jejak balik untuk rekonsiliasi status TIDAK PASTI.
     assert.equal(payload.charField1, order().id);
     assert.equal(payload.charField2, "e6c56dacr2");
@@ -81,10 +99,18 @@ test("tanpa jawaban dari Accurate statusnya TIDAK PASTI, bukan gagal, dan tidak 
     assert.equal(sendable("posted"), false);
     assert.equal(sendable("sending"), false);
 
-    // Accurate menjawab dan menolak: aman diperbaiki lalu dicoba lagi.
+    // Accurate menjawab dan menolak: aman diperbaiki lalu dicoba lagi — tetapi oleh MANUSIA.
+    // Pengirim terjadwal tidak boleh mengambilnya sendiri; kalau boleh, tiap jalannya cron
+    // mengulang kegagalan yang sama tanpa ada yang memperbaiki sebabnya.
     assert.equal(nextOutboxState("sending", { kind: "rejected", message: "customer suspended" }), "rejected");
-    assert.equal(sendable("rejected"), true);
+    assert.equal(sendable("rejected"), false);
     assert.equal(sendable("queued"), true);
+    assert.equal(resendable("rejected"), true);
+    // Yang TIDAK PASTI tidak pernah boleh dilepas ulang, oleh siapa pun.
+    assert.equal(resendable("unknown"), false);
+    assert.equal(resendable("posted"), false);
+    assert.equal(resendable("sending"), false);
+    assert.equal(resendable("queued"), false);
     assert.equal(nextOutboxState("sending", { kind: "posted", id: "331710", number: "INV/1" }), "posted");
     assert.equal(nextOutboxState("posted", { kind: "rejected", message: "apa pun" }), "posted");
 });

@@ -1,7 +1,7 @@
 /*
  * Tujuan: Menyiapkan faktur Accurate dari satu order internal — dry-run atau masuk antrean.
  * Caller: halaman Order Masuk (petugas), izin `order.edit`.
- * Dependensi: FastAPI GET /orders/{id} (order beku), lib/accurate-invoice-write, db invoice_outbox.
+ * Dependensi: FastAPI GET /orders/{id} (order beku), lib/accurate-invoice-write, lib/accurate-units, db invoice_outbox.
  * Main Functions: POST (dry-run default, `queue: true` untuk memasukkan ke antrean), GET (status).
  * Side Effects: Queue membekukan payload + jejak program dalam satu insert invoice_outbox; dry-run hanya baca.
  *   TIDAK ADA request tulis ke Accurate di sini — pengirimannya di /api/cron/post-invoices.
@@ -14,39 +14,14 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { resolveSyncCredentials } from "@/lib/accurate-session";
 import { buildInvoicePayload, type InvoiceOrder } from "@/lib/accurate-invoice-write";
+import { accurateUnits } from "@/lib/accurate-units";
 import { resolveOrderBranch } from "@/lib/order-branch";
 import { programSnapshot } from "@/lib/program-realization";
 
 export const runtime = "nodejs";
 
 const BACKEND = process.env.FASTAPI_BASE_URL || process.env.NEXT_PUBLIC_FASTAPI_BASE_URL || "http://localhost:8000";
-
-/** Master satuan Accurate: 37 baris (terbukti live 2026-09-08), jadi satu halaman cukup. */
-async function accurateUnits(): Promise<{ units?: Map<string, number>; error?: string }> {
-    const resolved = await resolveSyncCredentials();
-    if (!resolved.creds) return { error: resolved.error };
-    const { sessionHost, sessionId, apiKey } = resolved.creds;
-    const units = new Map<string, number>();
-    for (let page = 1; page <= 5; page += 1) {
-        const url = `${sessionHost}/accurate/api/unit/list.do?sp.page=${page}&sp.pageSize=100&fields=id,name`;
-        const response = await fetch(url, {
-            headers: { Authorization: `Bearer ${apiKey}`, "X-Session-ID": sessionId, Accept: "application/json" },
-            signal: AbortSignal.timeout(20_000),
-        });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok || body?.s !== true) return { error: "Master satuan Accurate tidak dapat dibaca" };
-        const rows = Array.isArray(body.d) ? body.d : [];
-        for (const row of rows) {
-            const name = String(row?.name ?? "").trim().toUpperCase();
-            const id = Number(row?.id);
-            if (name && Number.isFinite(id)) units.set(name, id);
-        }
-        if (rows.length < 100) break;
-    }
-    return units.size > 0 ? { units } : { error: "Master satuan Accurate kosong" };
-}
 
 async function fetchOrder(request: NextRequest, id: string): Promise<{ order?: InvoiceOrder; error?: string; status?: number }> {
     const cookie = request.headers.get("cookie");

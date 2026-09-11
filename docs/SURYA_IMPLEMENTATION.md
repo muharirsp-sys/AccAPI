@@ -869,6 +869,25 @@ membuka `scope=all` sehingga sales bisa membaca seluruh order perusahaan. Keempa
 dihapus (`DELETE 4`); grup Salesman kini hanya `websales.view` + `websales.create` (plus
 dashboard/form_kontrol/insentif yang memang miliknya).
 
+### Perubahan PRODUKSI 2026-09-11 — migrasi 0010 dan 0011
+
+Atas permintaan eksplisit pengguna, lewat pola resmi proyek:
+`tr -d '
+' < db/migrations/<berkas>.sql | ssh root@43.156.118.114 "docker exec -i
+accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 --single-transaction"`.
+
+| Objek | Status setelah migrasi |
+|---|---|
+| `principal_mapping_kind_check` | kini `kind IN ('item','customer','salesman','brand')` — jenis keempat untuk padanan nama merek surat |
+| Tabel `promo_rule` | dibuat, 0 baris |
+| Indeks `promo_rule` | `promo_rule_pkey`, `idx_promo_rule_key` (unik), `idx_promo_rule_item` |
+| Hak `accapi_app` | SELECT, INSERT, UPDATE, DELETE — otomatis dari `pg_default_acl`, bukan GRANT manual |
+| Idempotensi | keduanya dijalankan DUA KALI; jalan kedua hanya `NOTICE: ... already exists, skipping` |
+
+Keduanya aditif dan tidak menyentuh satu baris data pun. `promo_rule` masih kosong di
+produksi: aturannya dimuat lewat tombol **Muat aturan** pada `/rekap-promo` dari sheet
+`Detail` berkas Summary, bukan lewat migrasi.
+
 ### Perubahan PRODUKSI 2026-09-09 — migrasi 0004 (antrean faktur)
 
 Atas permintaan eksplisit pengguna, sebelum merge PR #24. Pola yang sama:
@@ -1416,6 +1435,161 @@ validasi butuh surat program MT juga**, kalau tidak setiap faktur MT akan tertah
 `Grand Total` (kolom `REGION_ID` berisi teksnya, `PRICE` kosong). Importir wajib
 membuangnya, kalau tidak nilainya terhitung dua kali.
 
+### Tiga jenis diskon dan posisi kolom DISC_n — 2026-09-10
+
+Pengguna melampirkan foto tabel **"DISCON SUPER DEV. KINO NON FOOD"** (Makassar, Agustus 2026,
+berlaku 15-08-26 s/d 31-12-26) dan menetapkan taksonomi yang harus dipakai gerbang validasi:
+
+1. **Disc Principle** — bisa diklaim ke Kino.
+2. **Disc Distributor** — tanggungan distributor sendiri.
+3. **Disc Tak Bertuan** — tidak ada di keduanya. **Tidak boleh terjadi; wajib memunculkan peringatan.**
+
+**Penemuan kunci: POSISI kolom `DISC_n` adalah penanda siapa yang menanggung.** Tabel itu
+berkepala `POSISI DISCON` dengan sub-kolom 1..5, `Distributor` di atas 1-3 dan `Principle` di
+atas 4-5. Dibuktikan dengan data nyata: baris ALFAMART pada `ORDER_DETAIL_20260903` berisi
+`DISC_1 = 4` dan `DISC_4 = 2.25` — persis kolom 1 dan 4 pada tabel itu untuk baris Alfamart.
+
+**Diskonnya BERTINGKAT, bukan dijumlah.** 4% lalu 2,25% atas gross Rp 345.945,95 memberi
+Rp 21.310,27, sama persis dengan `TOTAL_DISC` yang dilaporkan Kino. Menjumlahkan 6,25%
+memberi Rp 21.621,62 dan setiap faktur akan tampak selisih.
+
+`python_backend/kino_discount.py` — `split()` dan `classify()`. Memilah satu baris ke tiga
+ember lalu melaporkan yang tidak terjelaskan. Peringatan yang dihasilkan: posisi tanpa pemilik
+(DISC_6..8), klaim principal tanpa aturan terbit, klaim principal tidak sebesar aturan
+(toleransi Rp 1), tarif distributor tidak sesuai kesepakatan, tarif disepakati tapi tidak
+diberikan, tarif outlet belum terdaftar, dan total tidak cocok dengan laporan Kino.
+Self-check `test_kino_discount.py`.
+
+**Hasil atas data nyata 3 September 2026:**
+
+| SO | Outlet | Ch | Distributor | Principal | Tak bertuan |
+|---|---|---|---|---|---|
+| …012670 | C-GAL006 | GT | 0 | 0 | 0 |
+| …012692 | ALFAMART | MT | 35.935,14 | 19.404,97 | 0 |
+| …012693 | ALFAMART | MT | 568.605,41 | 307.046,92 | 0 |
+
+**Rp 326.451,89 klaim principal dalam satu hari penjualan MT tidak punya dasar aturan di
+sistem** — bukan karena salah, tapi karena tarif 2,25% Alfamart itu hidup di tabel discon
+super dev yang belum dimuat, dan surat program MT belum ada.
+
+**Dugaan yang BELUM dikonfirmasi** (jangan dibangun sebelum dijawab): `DISC_1..8` adalah tarif
+tetap dari tabel discon super dev, sedangkan uang program promo (potongan MSG dan sejenisnya)
+masuk ke kolom terpisah `TOTAL_PROMO` — yang pada ketiga order ini bernilai 0. Kalau benar,
+gerbangnya memeriksa dua sumber berbeda: `DISC_n` lawan tabel discon, `TOTAL_PROMO` lawan
+aturan promo terbit.
+
+**Master barang Kino**: `master_barang_principle/FIX_FORM MASTER BARANG - KINO NON FOOD.xlsx`,
+sheet `Fix Mapping` (606 item) punya kolom `NAMA KELOMPOK` — 101 kelompok. Ini **memperkecil**
+temuan #4, tidak menutupnya: tidak ada kelompok bernama persis "OVALE 2IN1 CLEANSER" (yang
+terdekat `OVALE CLEANSING GEL`, 4 item), dan sub-program Resik V harus dipetakan tangan ke
+`RESIK V MANJAKANI` (6), `RESIK V RAMUAN MADURA` (3), `RESIK V GODOKAN` (1), dan seterusnya.
+Peninjau memilih dari daftar pendek, bukan dari 606 item — menebaknya otomatis adalah pola
+kegagalan yang sudah pernah terjadi pada master Priskila.
+
+### Di kolom Accurate mana diskon rupiah masuk — dijawab 2026-09-10
+
+Pertanyaan pengguna. Dijawab dari `docs/prd/ACCURATE_API_REFERENCE.md` (hasil probe 303 field
+`sales-invoice`) dan `lib/accurate-invoice.ts` yang sudah terbukti membaca faktur live.
+**Tidak** memanggil API: satu OAuth client hanya memegang satu token, probe dari lokal akan
+mematikan token produksi.
+
+| Yang mau dikirim | Field Accurate | Tingkat |
+|---|---|---|
+| Diskon **persen** per baris (boleh bertingkat, mis. `4+2.25`) | `itemDiscPercent` | `detailItem[]` |
+| Diskon **rupiah** per baris | `itemCashDiscount` | `detailItem[]` |
+| Diskon **persen** seluruh faktur | `cashDiscPercent` | header |
+| Diskon **rupiah** seluruh faktur | `cashDiscount` | header |
+
+Pemetaan yang masuk akal untuk Kino:
+
+- `DISC_1..8` Kino adalah **persen berantai** -> `itemDiscPercent` per baris. Bentuk `"4+2.25"`
+  itulah yang menghasilkan perhitungan bertingkat yang sudah dibuktikan cocok dengan
+  `TOTAL_DISC` Kino. Sayangnya satu field tidak bisa menyimpan SIAPA yang menanggung tiap
+  bagian — pembagian distributor/principal harus tetap disimpan di sisi kita.
+- Potongan program berupa rupiah tingkat faktur (MSG Rp 180.000) -> `cashDiscount` header.
+
+**Yang perlu diputuskan**: `lib/accurate-invoice-write.ts` sekarang mengirim SEMUA diskon
+sebagai `itemCashDiscount` rupiah per baris (bruto - netto beku), sengaja supaya tidak ada
+selisih pembulatan. Kalau faktur harus MENAMPILKAN persen seperti nota Kino, penulisnya perlu
+diubah memakai `itemDiscPercent` untuk bagian persen dan menyisakan `cashDiscount` untuk uang
+program. Itu perubahan pada jalur yang gerbang kirimnya masih tertutup, jadi belum dikerjakan.
+
+**Peringatan yang masih berlaku**: nama field REQUEST `sales-invoice/save.do` BELUM terbukti,
+dan Accurate mengabaikan field tak dikenal tanpa galat. Tabel di atas berasal dari RESPONS
+`detail.do`. Satu faktur uji tetap wajib diperiksa manual.
+
+### Surat MT dan ALFAMART — tidak cocok, 2026-09-10
+
+Pengguna menunjuk `BP2609007909 - MTI - HPC CONSUMER PROMO ON PO` sebagai program MT. Benar
+bahwa itu surat sisi MT (`Group Of Promo: MODERN`, `Type Of Promo: CONSUMER PROMO`), tetapi
+**surat itu tidak menjelaskan diskon ALFAMART**:
+
+- `Class Of Promo: DISC ON PO`, `Mekanisme Promo: ADDITIONAL DISCOUNT`, dan syaratnya
+  "wajib konfirmasi/pengajuan outlet" + "wajib melampirkan SKP" — bukan potongan yang jatuh
+  otomatis di faktur.
+- Daftar outletnya untuk cabang 1201671 hanya **DUA**: `5191202075409 BAJI PAMAI CBA0003` dan
+  `5191202076135 WANG MART CWA0012`. **ALFAMART tidak ada di dalamnya.**
+- Isinya diskon 3% untuk brand tertentu (Ellips Hair Vitamin Jar, Ellips Hair Mist, Sleek Baby
+  Bottle Nipple, Resik V Cair, B&B all variant) — bukan 4% + 2,25%.
+
+Diskon ALFAMART 4% + 2,25% justru tertera pada **tabel discon super dev** baris `Alfamart`,
+channel NKA, kolom 1 dan kolom 4. Jadi sumber kebenaran untuk faktur MT/NKA adalah tabel itu,
+bukan surat MTI. Tabelnya masih berupa FOTO; 29 baris terlalu berisiko disalin dari foto
+miring, jadi belum dimuat.
+
+Catatan taksonomi: tabel discon memakai channel **NKA / MT / GT**, sedangkan `ORDER_DETAIL`
+memakai `CUST_TYPE1` **General Trade / Modern Trade**. ALFAMART = NKA pada tabel, Modern Trade
+pada ORDER_DETAIL.
+
+**Keputusan pengguna 2026-09-10**: pemetaan dua taksonomi ini **TIDAK diformalkan dulu** —
+"nanti kita check by case". Jadi jangan bangun tabel pemetaan channel; gerbang MT menunggu
+tabel discon dalam bentuk xlsx, dan kecocokan channel diperiksa per kasus saat itu.
+
+**Istilah**: "tabel discon super dev" bukan istilah internal, melainkan judul yang tercetak
+pada fotonya (`DISCON SUPER DEV. KINO NON FOOD`). Kalau nama internalnya berbeda, ganti
+sebutan ini di dokumen dan kode sebelum modulnya dibangun.
+
+### Discount Reguler, kode barang, dan faktur persen+rupiah — 2026-09-10
+
+**Penamaan resmi (keputusan pengguna)**: tabel pada foto itu bernama **"Discount Reguler
+(Tanggungan Distributor)"**. Sebutan "discon super dev" hanya judul cetakannya; pakai nama
+resmi ini di kode dan dokumen berikutnya.
+
+**Excel-nya tidak ada, jadi diekstrak dari foto.** Hasilnya
+`DISCOUNT REGULER - TANGGUNGAN DISTRIBUTOR - KINO NON FOOD.xlsx`, dikirim ke pengguna dan
+**TIDAK disimpan di repo** (memuat nama pelanggan dan tarif diskon). Dua sheet:
+
+- `Discount Reguler` — 29 baris, kolom `POSISI 1..5` + `NILAI TERBACA DI FOTO` + `PERIKSA`.
+  Hanya baris **Alfamart** yang posisinya TERBUKTI (dari `DISC_1=4`/`DISC_4=2.25` pada
+  ORDER_DETAIL); sisanya ditandai "posisi kolom BELUM PASTI". Tiga baris tidak terbaca sama
+  sekali (Panen Selaras/Boots, Hypermart, PT. Millennium Multi Persada).
+  **11 kode internal yang tercetak di foto diverifikasi ke master pelanggan Accurate dan
+  semuanya cocok** — dengan satu koreksi: yang terbaca `C-MAA0056` sebenarnya **`C-MA0056`**
+  (MAJU JAYA SENTOSA, CV). Sembilan di antaranya juga ada di daftar loyalty, jadi saling
+  menguatkan.
+- `Kode Barang` — 41 kelompok kandidat dari master Kino untuk 5 sub-program on-faktur, dengan
+  jumlah item dan contoh nama, plus kolom `PAKAI` untuk dicentang. **Ini jawaban atas
+  pertanyaan "kode barang bagaimana"**: surat menyebut MEREK, master menyebut KELOMPOK, dan
+  tidak satu pun namanya sama persis — jadi peninjau mencentang dari daftar pendek, bukan
+  memilih dari 606 item, dan sistem tidak pernah menebak.
+
+**Faktur Accurate kini menampilkan persen DAN rupiah** (permintaan pengguna):
+
+- `summary_rules.calculate()` mencatat per baris `percents` (rantai persen yang berlaku,
+  mis. `["10","5"]`) dan `cash` (bagian diskon yang berupa rupiah). Totalnya tetap angka yang
+  sama; yang baru hanya pemisahannya. Alokasi sen tetap deterministik dan tidak pernah
+  melebihi netto satu baris.
+- `lib/accurate-invoice-write.ts` mengirim `itemDiscPercent: "10+5"` dan `itemCashDiscount`
+  **hanya sisa rupiahnya**. Mengirim seluruh diskon di kedua field akan membuat Accurate
+  memotong DUA KALI. Penulisnya menolak bila bagian rupiah melebihi total diskon baris.
+- Konsekuensi yang diterima: Accurate menghitung ulang bagian persennya sendiri, jadi total
+  faktur bisa berbeda beberapa sen dari angka beku kita. Itu masuk toleransi Rp 1.
+- Hasil beku lama (tanpa `percents`/`cash`) tetap jalan: seluruh diskon jatuh sebagai rupiah
+  seperti perilaku sebelumnya.
+
+Diperiksa: `test_summary_rules.py` (`summary split check`), `lib/accurate-invoice-write.test.ts`
+(5 test), dan `tsc --noEmit` bersih.
+
 ### Yang dibutuhkan dari pengguna untuk melanjutkan
 
 1. ~~Hit list LOYALTY~~ **SUDAH** (41 outlet, dimuat 2026-09-10).
@@ -1424,6 +1598,115 @@ membuangnya, kalau tidak nilainya terhitung dua kali.
 3. **Daftar outlet CONTRACTUAL** untuk cabang 1201671 — atau pernyataan bahwa tidak ada.
    Ini satu-satunya yang menahan MSG sekarang.
 4. Perbarui sheet `Mapping_Customer` pada KINO.xlsx: 3 outlet loyalty belum ada di sana.
+
+### TAHAP 7 — alur laporan principal: langkah 1–6 SELESAI (2026-09-11)
+
+Alur yang diminta pengguna: sales input di sistem principal -> admin tarik laporan integrasi ->
+unggah ke web -> validasi 2 tahap -> kirim ke Accurate 1 tombol -> tab error + resend ->
+daily closing + eskalasi OM. Checklist lengkap 40 titik periksa ada di
+**`docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md`** — baca itu lebih dulu, bukan bagian ini.
+
+Selesai: **langkah 1 (mapping), 2 (parser + unggah batch), 3 (validasi tahap 1), 4 (batch -> antrean
+faktur), 5 (tab error + resend), 6 (laporan OM 2 jam)**.
+
+| Yang dibangun | Berkas |
+|---|---|
+| Mapping kode principal -> internal, bisa diimpor & diubah lewat UI | `lib/principal-mapping.ts`, `/principal-mapping`, migrasi 0007 |
+| Parser Order Detail + unggah batch anti-ganda | `lib/order-detail.ts`, `/principal-order`, migrasi 0008 |
+| Validasi tahap 1 (8 pemeriksaan, semuanya menahan) | `lib/principal-validation.ts`, migrasi 0009 |
+| Batch -> antrean faktur, satu tombol per batch | `lib/principal-invoice.ts`, `/api/principal-order/queue`, `lib/accurate-units.ts` |
+| Tab error + resend + laporan OM 2 jam | `/antrean-faktur`, `/api/invoice-outbox` |
+| PPN wajib aktif pada setiap faktur | `lib/accurate-invoice-write.ts` |
+
+**Migrasi 0007, 0008, 0009 SUDAH di PRODUKSI** (2026-09-11), semuanya 0 baris.
+
+Keputusan pengguna yang mengikat pekerjaan berikutnya:
+
+- **Dua jalur order hidup berdampingan**: principal bersistem sendiri lewat unggah laporan,
+  principal lain lewat entri di web kita. `invoice_outbox` harus bisa diisi dari keduanya.
+- **Harga**: beda sampai Rp 1 lolos, di atas itu ditahan, lebih tinggi maupun lebih rendah.
+- **Daily closing**: admin menarik ulang laporan saat mau selesai kerja lalu disandingkan;
+  status juga harus real-time; **masalah yang sudah berumur 2 jam tembus ke OM**.
+- **Small Package (LD Jawa) diabaikan** untuk Surya.
+- Pemetaan channel NKA/MT/GT vs General/Modern Trade **tidak diformalkan**, diperiksa per kasus.
+
+Aturan yang diambil dari Power Query admin (`KINO (1).xlsx`) dan sudah diterapkan: satuan naik
+ke KRT hanya bila QTY habis dibagi ISI dengan harga dikali ISI; baris bonus = potongan 100% di
+posisi 1; pelanggan dari `CUST_ID1` + akhiran `-KN`; diskon persen digabung dengan `+`.
+
+**Langkah 4 SELESAI juga (2026-09-11, sesi lanjutan)**: `lib/principal-invoice.ts` +
+`POST /api/principal-order/queue` + tombol **Faktur** per batch. Tanpa migrasi baru. Kunci
+antrean **`PRINCIPAL:NO-SO`, bukan id batch** — admin menarik ulang laporan tiap hari, jadi
+kunci per batch akan memfakturkan SO yang sama dua kali; dengan kunci SO, unggahan kedua
+bentrok di primary key dan dilewati. Satu baris `review` menjatuhkan seluruh SO-nya. Master
+satuan kini dibaca dari tabel sync `accurate_unit`, bukan panggilan live — satu titik gagal
+hilang dari jalur faktur, jalur order internal ikut. Rinciannya (termasuk bukti ujinya) ada di
+checklist bagian "Langkah 4 urutan kerja SELESAI".
+
+**Langkah 5–6 SELESAI juga (2026-09-11)**: `/antrean-faktur` + `/api/invoice-outbox`. Satu
+layar untuk tab error DAN laporan OM — laporan OM adalah saringan "hanya yang lewat 2 jam" di
+layar yang sama, supaya tidak ada angka kedua yang bisa berbeda dari layar admin. Jam eskalasi
+dihitung sejak faktur masuk antrean, **bukan** sejak percobaan terakhir: kalau dari percobaan
+terakhir, menekan Kirim ulang akan menyetel ulang jamnya. Pengirim terjadwal sekarang HANYA
+mengambil `queued` — yang `rejected` menunggu manusia, karena mengulang kegagalan yang sama
+4x sehari tidak memperbaiki sebabnya. `unknown` tidak punya tombol sama sekali.
+
+**Koreksi harga 2026-09-11 (dari temuan pengguna)**: harga dicari per pelanggan DAN per
+**cabang** pelanggan — daftar harga Accurate punya satu baris per (kategori x satuan x cabang),
+dan kenaikan harga sering terbit hanya di cabang principalnya (KINO NON FOOD 7.207 sejak
+1 Agu 2026; 21 cabang lain masih 6.306 dari Maret). Selain itu toleransi Rp 1 kini dihitung
+pada satuan TERKECIL, bukan pada harga karton, karena di situlah pembulatan terjadi. Berkas
+11 September berubah dari 6 cocok/47 ditinjau menjadi **53 cocok/0 ditinjau**. Rinciannya di
+checklist bagian "Koreksi harga".
+
+**Yang tersisa (langkah 7 + 4.25)**: klasifikasi 4 error Accurate (overdue, overlimit, outlet
+non-aktif, item non-aktif). Teksnya **belum pernah kita lihat** dan harus diambil dari faktur
+uji — pola yang ditebak akan salah menggolongkan error nyata, lebih buruk daripada tidak
+menggolongkan. Sekarang jawaban Accurate ditampilkan apa adanya.
+
+**Gerbang kirim faktur MASIH TERTUTUP** (`ACCURATE_INVOICE_SEND` kosong). Daftar periksa faktur
+uji kini: satuan, harga per satuan, **diskon persen (`itemDiscPercent`)**, **PPN (`taxable`)
+dan totalnya**, dan nomor faktur.
+
+### Prompt melanjutkan (2026-09-11, setelah langkah 6)
+
+> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca
+> `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md` lebih dulu, lalu bagian "TAHAP 7" pada
+> docs/SURYA_IMPLEMENTATION.md. Langkah 1–6 alur laporan principal SELESAI dan terbukti jalan
+> lokal: mapping, parser + unggah batch, validasi 8 pemeriksaan, batch -> `invoice_outbox`
+> (kunci `PRINCIPAL:NO-SO`), lalu `/antrean-faktur` sebagai tab error + resend + laporan OM
+> 2 jam. Migrasi 0007–0009 sudah di produksi; langkah 4–6 tidak menambah migrasi sama sekali.
+> **Yang tersisa hanya bisa dikerjakan setelah SATU FAKTUR UJI dikirim dan diperiksa manual**:
+> klasifikasi 4 kategori error Accurate dari teks aslinya (jangan ditebak), dan pemeriksaan
+> `save.do` (satuan, harga, `itemDiscPercent`, `taxable` + totalnya, nomor faktur dari seri
+> cabang). Gerbang kirim masih tertutup (`ACCURATE_INVOICE_SEND` kosong) — jangan membukanya
+> tanpa saya minta. Jangan stage massal: working tree masih memuat pekerjaan rekonsiliasi dan
+> eksperimen OCR lama.
+
+### Prompt melanjutkan (2026-09-11, setelah langkah 4)
+
+> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca
+> `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md` lebih dulu, lalu bagian "TAHAP 7" pada
+> docs/SURYA_IMPLEMENTATION.md. Langkah 1–4 alur laporan principal SELESAI dan terbukti jalan:
+> mapping, parser + unggah batch, validasi 8 pemeriksaan, dan batch -> `invoice_outbox` lewat
+> tombol Faktur (kunci antrean `PRINCIPAL:NO-SO`, pratinjau default). Migrasi 0007–0009 sudah
+> di produksi dan langkah 4 tidak menambah migrasi. Berikutnya langkah 5–7: tab error + resend
+> yang menghormati `unknown` (tidak boleh dikirim ulang), klasifikasi 4 error Accurate yang
+> teksnya HARUS diambil dari faktur uji (jangan ditebak), dan halaman OM dengan penanda umur
+> 2 jam. Gerbang kirim masih tertutup (`ACCURATE_INVOICE_SEND` kosong) menunggu satu faktur uji
+> diperiksa manual. Jangan stage massal — working tree masih memuat pekerjaan rekonsiliasi dan
+> eksperimen OCR lama.
+
+### Prompt melanjutkan (2026-09-11, setelah langkah 1–3)
+
+> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`
+> (sudah di-push). Baca `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md` lebih dulu, lalu bagian
+> "TAHAP 7" pada docs/SURYA_IMPLEMENTATION.md. Langkah 1–3 alur laporan principal selesai dan
+> terbukti jalan dengan berkas nyata; migrasi 0007–0009 sudah di produksi. Berikutnya langkah 4:
+> adaptor batch ke `invoice_outbox` + satu tombol kirim per batch, lalu klasifikasi 4 error
+> Accurate, tab error + resend, dan halaman OM dengan penanda umur 2 jam. Gerbang kirim masih
+> tertutup menunggu satu faktur uji diperiksa manual. Jangan stage massal — working tree masih
+> memuat pekerjaan rekonsiliasi dan eksperimen OCR lama.
 
 ### Prompt melanjutkan (2026-09-10, setelah langkah 1–2)
 

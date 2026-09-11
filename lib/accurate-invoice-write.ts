@@ -27,7 +27,15 @@
  */
 
 export type FrozenInputLine = { code: string; unit: string; quantity: string; price: string };
-export type FrozenResultLine = { code: string; unit: string; quantity: string; gross: string; net: string };
+export type FrozenResultLine = {
+    code: string; unit: string; quantity: string; gross: string; net: string;
+    /** Rantai persen yang berlaku pada baris ini, mis. ["10","5"]. Dibekukan oleh kalkulator. */
+    percents?: string[];
+    /** Bagian diskon yang berupa RUPIAH, di luar rantai persen di atas. */
+    cash?: string;
+    /** Harga satuan bila baris hasil membawanya sendiri (jalur laporan principal). */
+    price?: string;
+};
 export type FrozenBonus = { program_id: string; code: string; unit: string; quantity: string; eligible_codes?: string[] };
 
 export type InvoiceOrder = {
@@ -50,6 +58,7 @@ export type InvoiceLinePayload = {
     quantity: number;
     unitPrice: number;
     itemUnitId: number;
+    itemDiscPercent: string;
     itemCashDiscount: number;
     detailNotes: string;
     charField1: string;
@@ -59,6 +68,8 @@ export type InvoicePayload = {
     customerNo: string;
     transDate: string;
     typeAutoNumber: number;
+    taxable: boolean;
+    inclusiveTax: boolean;
     description: string;
     detailItem: InvoiceLinePayload[];
     charField1: string;
@@ -88,7 +99,9 @@ function money(raw: string | undefined, label: string): number {
  */
 export function buildInvoicePayload(
     order: InvoiceOrder,
-    options: { unitIds: Map<string, number>; branchId: number; typeAutoNumber: number },
+    // `label` = penanda pendek pada catatan tiap baris faktur. Default potongan id order;
+    // jalur laporan principal mengirim nomor SO-nya, yang jauh lebih berarti bagi pembukuan.
+    options: { unitIds: Map<string, number>; branchId: number; typeAutoNumber: number; label?: string },
 ): InvoicePayload {
     if (!order.customer_no?.trim()) throw new Error("Order tanpa kode pelanggan Accurate tidak bisa difakturkan");
     if (order.result?.pending_price) throw new Error("Order berstatus needs_price; isi harga dulu sebelum difakturkan");
@@ -99,7 +112,11 @@ export function buildInvoicePayload(
     const detailItem = resultLines.map((line, index) => {
         const key = `${line.code}|${line.unit}`;
         const input = frozen.get(key);
-        if (!input) throw new Error(`Baris hasil ${key} tidak ada pada baris order; angka beku tidak konsisten`);
+        // Jalur laporan principal membawa harga pada baris hasilnya sendiri: satu SO bisa
+        // memuat item+satuan yang SAMA dua kali (baris biasa dan baris bonus berdiskon 100%),
+        // jadi peta `code|unit` tidak cukup untuk menemukan harganya.
+        const unitPrice = line.price ?? input?.price;
+        if (unitPrice === undefined) throw new Error(`Baris hasil ${key} tidak ada pada baris order; angka beku tidak konsisten`);
         const unitId = options.unitIds.get(line.unit.trim().toUpperCase());
         // Satuan TIDAK boleh ditebak: satu item bisa berselisih 72x antar satuan.
         if (!unitId) throw new Error(`Satuan ${line.unit} tidak ada di master satuan Accurate`);
@@ -107,13 +124,26 @@ export function buildInvoicePayload(
         const net = money(line.net, `net baris ${key}`);
         const discount = Number((gross - net).toFixed(2));
         if (discount < 0) throw new Error(`Baris ${key} punya netto lebih besar dari bruto`);
+        // Faktur harus MENAMPILKAN persen dan rupiah, seperti nota Kino. Karena itu rantai
+        // persen dikirim apa adanya lewat `itemDiscPercent` ("10+5") dan HANYA sisa yang
+        // berupa rupiah lewat `itemCashDiscount`. Mengirim seluruh diskon di kedua field
+        // akan membuat Accurate memotong dua kali.
+        const percents = (line.percents ?? []).map((p) => String(p).trim()).filter(Boolean);
+        const cash = line.cash === undefined ? discount : money(line.cash, `diskon rupiah baris ${key}`);
+        if (cash < 0 || cash > discount + 0.01) {
+            throw new Error(`Baris ${key} punya diskon rupiah ${cash} di luar total diskon ${discount}`);
+        }
+        // Accurate menghitung ulang bagian persennya sendiri, jadi totalnya bisa berbeda
+        // beberapa sen dari angka beku kita. Itu diterima; yang tidak boleh adalah selisih
+        // karena kita mengirim dasar yang salah.
         return {
             itemNo: line.code,
             quantity: money(line.quantity, `jumlah baris ${key}`),
-            unitPrice: money(input.price, `harga baris ${key}`),
+            unitPrice: money(unitPrice, `harga baris ${key}`),
             itemUnitId: unitId,
-            itemCashDiscount: discount,
-            detailNotes: `order ${order.id.slice(0, 8)} baris ${index + 1}`,
+            itemDiscPercent: percents.join("+"),
+            itemCashDiscount: cash,
+            detailNotes: `order ${options.label ?? order.id.slice(0, 8)} baris ${index + 1}`,
             charField1: order.id,
         };
     });
@@ -123,8 +153,11 @@ export function buildInvoicePayload(
         const unitId = options.unitIds.get(bonus.unit.trim().toUpperCase());
         const quantity = money(bonus.quantity, "Jumlah bonus");
         if (!unitId || quantity <= 0 || !Number.isInteger(quantity)) throw new Error("Satuan/jumlah bonus tidak valid");
+        // Baris bonus berharga 0, jadi tidak punya rantai persen sama sekali — dikirim kosong,
+        // bukan dihilangkan: field yang absen membuat Accurate memakai nilai bawaannya sendiri.
         detailItem.push({ itemNo: bonus.code, quantity, unitPrice: 0, itemUnitId: unitId,
-            itemCashDiscount: 0, detailNotes: `Bonus ${bonus.program_id}`.slice(0, 250), charField1: order.id });
+            itemDiscPercent: "", itemCashDiscount: 0,
+            detailNotes: `Bonus ${bonus.program_id}`.slice(0, 250), charField1: order.id });
     }
 
     const sources = order.sources.map((source) => `${source.draft_id.slice(0, 8)}r${source.revision}`).join(",");
@@ -136,6 +169,14 @@ export function buildInvoicePayload(
         // di database ini berjalan per cabang, dan nilai tetap `1` dulu berarti SEMUA faktur
         // masuk satu seri — nomor nyasar ke pembukuan cabang lain tanpa satu pun galat.
         typeAutoNumber: options.typeAutoNumber,
+        // PPN WAJIB aktif untuk semua faktur penjualan; tidak ada saklar dan tidak ada
+        // jalur yang bisa mengirim faktur non-PPN diam-diam.
+        taxable: true,
+        // Harga jual Accurate maupun PRICE pada laporan principal adalah DPP: pada data Kino
+        // 3 Sep 2026, GROSS 324.324,32 + TAX 35.675,68 (11%) = NET 360.000, jadi pajaknya
+        // DITAMBAHKAN di atas harga, bukan sudah termasuk. Kalau faktur uji nanti keluar 11%
+        // terlalu tinggi, di sinilah tempat memperbaikinya.
+        inclusiveTax: false,
         description: [`Order ${order.id}`, order.outlet, order.channel, order.note?.trim()].filter(Boolean).join(" | ").slice(0, 500),
         detailItem,
         // Jejak balik ke order internal; dipakai rekonsiliasi status TIDAK PASTI lewat
@@ -182,7 +223,23 @@ export function nextOutboxState(current: OutboxState, outcome: SendOutcome): Out
     return "rejected";
 }
 
-/** Boleh dikirim? Hanya `queued` dan `rejected` (yang sudah diperbaiki). */
+/**
+ * Boleh dikirim pengirim terjadwal? HANYA `queued`.
+ *
+ * `rejected` sengaja TIDAK ikut. Accurate menolak karena ada yang salah — outlet non-aktif,
+ * piutang lewat tempo, harga keliru — dan mengirim ulang tiap jalannya cron tidak memperbaiki
+ * satu pun dari itu; yang terjadi hanya tumpukan percobaan gagal yang menutupi masalah asli.
+ * Baris yang ditolak menunggu manusia menyatakan sudah diperbaiki (lihat `resendable`).
+ */
 export function sendable(state: OutboxState): boolean {
-    return state === "queued" || state === "rejected";
+    return state === "queued";
+}
+
+/**
+ * Boleh dilepas ulang oleh manusia? HANYA `rejected` — Accurate MENJAWAB dan menolak, jadi
+ * dipastikan tidak ada fakturnya di sana. `unknown` TIDAK PERNAH: tidak ada jawaban berarti
+ * fakturnya mungkin sudah terbentuk, dan faktur ganda di Accurate tidak bisa dibatalkan.
+ */
+export function resendable(state: OutboxState): boolean {
+    return state === "rejected";
 }

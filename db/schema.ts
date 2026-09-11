@@ -167,6 +167,37 @@ export const invoiceOutbox = pgTable("invoice_outbox", {
     index("idx_invoice_outbox_identity").on(t.accurateDbId, t.accurateId).where(sql`${t.state} = 'posted'`),
 ]);
 
+// Aturan promo terbit dalam bentuk yang bisa dibandingkan dengan faktur nyata (db/migrations/0011).
+// Skema kolomnya sama dengan yang dibaca mesin Validator Diskon, supaya satu bentuk aturan
+// dipakai dua tempat. `item_code` KOSONG = aturan tingkat faktur (berlaku semua barang).
+export const promoRule = pgTable("promo_rule", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    principal: text("principal").notNull(),
+    suratProgram: text("surat_program").notNull().default(""),
+    promoLabel: text("promo_label").notNull().default(""),
+    promoGroupId: text("promo_group_id").notNull().default(""),
+    promoGroup: text("promo_group").notNull().default(""),
+    itemCode: text("item_code").notNull().default(""),
+    itemName: text("item_name").notNull().default(""),
+    prdId: text("prd_id").notNull().default(""),
+    periodStart: date("period_start"),
+    periodEnd: date("period_end"),
+    active: boolean("active").notNull().default(true),
+    tierNo: integer("tier_no").notNull().default(1),
+    triggerQty: numeric("trigger_qty").notNull().default("0"),
+    triggerUnit: text("trigger_unit").notNull().default("PCS"),
+    benefitType: text("benefit_type").notNull().default(""),
+    benefitValue: text("benefit_value").notNull().default(""),
+    benefitUnit: text("benefit_unit").notNull().default(""),
+    benefitBeban: text("benefit_beban").notNull().default("PRINCIPAL"),
+    onFaktur: boolean("on_faktur").notNull().default(true),
+    note: text("note").notNull().default(""),
+    importedBy: text("imported_by").notNull().default(""),
+    importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_promo_rule_item").on(t.itemCode, t.periodStart, t.periodEnd),
+]);
+
 // Master cabang Accurate. Penomoran faktur Accurate berjalan PER CABANG, dan harga jual
 // juga per cabang, jadi id cabang di sini adalah id milik Accurate — bukan id lokal.
 export const branch = pgTable("branch", {
@@ -187,6 +218,80 @@ export const branch = pgTable("branch", {
 
 // Master satuan Accurate. Ruang id-nya SAMA dengan `item.unitNId` (dibuktikan live
 // 2026-09-09: PCS=50, KRT=100 di kedua sumber), jadi ini sumber `itemUnitId` baris faktur.
+// Unggahan laporan integrasi principal. `report_*` = bukti apa adanya dari principal,
+// `qty/unit/price` = hasil aturan satuan; keduanya disimpan karena gerbang membandingkannya.
+export const principalOrderBatch = pgTable("principal_order_batch", {
+    id: text("id").primaryKey(),
+    principal: text("principal").notNull(),
+    fileName: text("file_name").notNull(),
+    fileHash: text("file_hash").notNull(),
+    branch: text("branch").notNull().default(""),
+    period: text("period").notNull().default(""),
+    lineCount: integer("line_count").notNull().default(0),
+    skipped: integer("skipped").notNull().default(0),
+    issues: jsonb("issues").notNull().default([]),
+    status: text("status").notNull().default("parsed"),
+    uploadedBy: text("uploaded_by").notNull().default(""),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    validatedAt: timestamp("validated_at", { withTimezone: true }),
+    okCount: integer("ok_count").notNull().default(0),
+    reviewCount: integer("review_count").notNull().default(0),
+});
+
+export const principalOrderLine = pgTable("principal_order_line", {
+    batchId: text("batch_id").notNull(),
+    rowNumber: integer("row_number").notNull(),
+    soNo: text("so_no").notNull(),
+    soDate: date("so_date"),
+    soStatus: text("so_status").notNull().default(""),
+    customerCode: text("customer_code").notNull().default(""),
+    customerName: text("customer_name").notNull().default(""),
+    customerType: text("customer_type").notNull().default(""),
+    salesmanCode: text("salesman_code").notNull().default(""),
+    productCode: text("product_code").notNull().default(""),
+    productName: text("product_name").notNull().default(""),
+    reportQty: numeric("report_qty").notNull().default("0"),
+    reportPrice: numeric("report_price").notNull().default("0"),
+    reportGross: numeric("report_gross").notNull().default("0"),
+    reportDiscount: numeric("report_discount").notNull().default("0"),
+    reportPromo: numeric("report_promo").notNull().default("0"),
+    reportNet: numeric("report_net").notNull().default("0"),
+    qty: numeric("qty").notNull().default("0"),
+    unit: text("unit").notNull().default(""),
+    price: numeric("price").notNull().default("0"),
+    discounts: jsonb("discounts").notNull().default([]),
+    bonus: boolean("bonus").notNull().default(false),
+    // Hasil validasi tahap 1 (migrasi 0009).
+    itemCode: text("item_code"),
+    customerNo: text("customer_no"),
+    salesmanInternal: text("salesman_internal"),
+    expectedPrice: numeric("expected_price"),
+    priceSource: text("price_source"),
+    discDistributor: numeric("disc_distributor").notNull().default("0"),
+    discPrincipal: numeric("disc_principal").notNull().default("0"),
+    discUnowned: numeric("disc_unowned").notNull().default("0"),
+    status: text("status").notNull().default("pending"),
+    findings: jsonb("findings").notNull().default([]),
+}, (table) => ({
+    pk: primaryKey({ columns: [table.batchId, table.rowNumber] }),
+}));
+
+// Terjemahan kode principal -> kode internal. Satu tabel untuk tiga jenis karena
+// bentuknya sama; `unit`/`packSize` hanya terisi untuk kind='item'.
+export const principalMapping = pgTable("principal_mapping", {
+    principal: text("principal").notNull(),
+    kind: text("kind").notNull(),
+    sourceCode: text("source_code").notNull(),
+    targetCode: text("target_code").notNull(),
+    unit: text("unit"),
+    packSize: numeric("pack_size"),
+    note: text("note").notNull().default(""),
+    updatedBy: text("updated_by").notNull().default(""),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+    pk: primaryKey({ columns: [table.principal, table.kind, table.sourceCode] }),
+}));
+
 export const accurateUnit = pgTable("accurate_unit", {
     id: bigint("id", { mode: "number" }).primaryKey(),
     name: text("name").notNull(),

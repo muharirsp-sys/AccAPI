@@ -97,6 +97,33 @@ def kino_extraction(raw, master):
             "on_faktur": result["on_faktur"], "mechanism": result["mechanism"],
             "source_hash": hashlib.sha256(raw).hexdigest()}
 
+
+def kino_extraction(raw, master):
+    """Surat Kino berlapis teks dibaca deterministik; surat lain (dan scan) tetap ke OCR.
+
+    Dipakai sebelum Mistral karena surat Kino dicetak dari sistem mereka: lapisan teksnya
+    utuh, jadi OCR hanya menambah biaya dan risiko salah baca. Gagal apa pun -> None supaya
+    jalur OCR tetap jalan; parser ini tidak boleh menjadi titik gagal baru.
+    """
+    import hashlib
+
+    from kino_letter import parse_pdf
+    from summary_mistral import attach_codes
+
+    try:
+        result = parse_pdf(raw)
+    except Exception:
+        return None
+    if not result["letter"].get("Kode Aju") or not result["letter"].get("Mekanisme Promo"):
+        return None
+    catalog = [{"code": str(item.get("kode_barang", "")).strip(), "name": str(item.get("nama_barang", "")),
+                "group": str(item.get("kelompok", ""))} for item in master.get("items", [])]
+    attach_codes(result["rows"], catalog, result["warnings"])
+    return {"rows": result["rows"], "warnings": result["warnings"][:400], "page_count": result["page_count"],
+            "model": "deterministic:kino_letter", "pipeline_version": 1, "cached": False,
+            "on_faktur": result["on_faktur"], "mechanism": result["mechanism"],
+            "source_hash": hashlib.sha256(raw).hexdigest()}
+
 @router.post("/summary/manual")
 async def summary_manual_auto_generate(
     request: Request,
