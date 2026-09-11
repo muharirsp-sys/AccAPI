@@ -205,6 +205,46 @@ dan tanpa satuan ditolak dengan pesan yang jelas. Halaman dibuka di browser dan 
 
 **Belum dilakukan**: migrasi `0007` belum diterapkan di PRODUKSI.
 
+## Koreksi dan temuan dari `Order Detail.xlsx` (11 September 2026)
+
+**Koreksi penting soal berkas.** Yang diunggah admin setiap hari adalah **`Order Detail.xlsx`**
+— laporan integrasi dari sistem Kino. `KINO (1).xlsx` **bukan** berkas harian: itu berkas kerja
+manual pengguna selama ini (tabel terjemahan + Power Query). Perannya di sistem baru hanya
+sebagai **sumber awal isi `principal_mapping`**, diimpor sesekali saat mapping berubah, lewat
+halaman `/principal-mapping`. Dua berkas, dua jalur, jangan tertukar.
+
+**Tiga temuan dari berkas 11 September yang mengubah rancangan parser:**
+
+1. **`CUST_ID2` TIDAK selalu berisi kode internal.** Pada berkas 3 September, `CUST_ID2` =
+   `C-GAL006`. Pada berkas 11 September, `CUST_ID1` = `CUST_ID2` = `322680876413` — dua-duanya
+   kode Kino, dan kode internalnya (`CTU001`) hanya menempel pada teks `CUSTOMER`
+   ("trufarm CTU001"). Jadi **jalur yang sah hanya `CUST_ID1` -> `principal_mapping`**, persis
+   seperti yang dilakukan Power Query. Membaca `CUST_ID2` atau mengorek nama outlet adalah
+   pencocokan samar yang sudah pernah menyusahkan master Priskila.
+2. **Kode outlet itu belum ada di `Mapping_Customer`.** `322680876413` tidak ketemu di 1.433
+   baris yang sudah dimuat. Artinya mapping akan sering tertinggal dari kenyataan, dan
+   **itulah alasan halaman `/principal-mapping` harus bisa diperbaiki admin saat itu juga** —
+   bukan menunggu berkas baru dari kantor.
+3. **Ada baris ber-`QTY` 0** (baris pertama berkas ini: QTY 0, GROSS 0, TAX 0, tapi PRICE
+   terisi). Parser tidak boleh memperlakukannya sebagai baris faktur.
+
+Sisanya sama persis: 49 kolom, judul di baris ke-5, stylesheet rusak (butuh perbaikan
+`cellXfs`), dan dua baris ekor `Total for ...` / `Grand Total` yang wajib dibuang. Berkas ini
+satu SO (`1671-SOP-260013001`, Modern Trade, 65 baris, gross Rp 20.165.405) **tanpa satu pun
+diskon dan tanpa `TOTAL_PROMO`** — jadi pertanyaan "di kolom mana potongan program jatuh"
+masih terbuka sampai ada laporan hari yang promonya benar-benar turun.
+
+## PPN wajib aktif pada setiap faktur penjualan — 2026-09-11
+
+Permintaan pengguna. `buildInvoicePayload` sekarang **selalu** mengirim `taxable: true`. Tidak
+ada saklar, tidak ada env, tidak ada jalur yang bisa membuat faktur non-PPN diam-diam.
+
+Ditambah `inclusiveTax: false`, karena harga pada kedua sumber adalah **DPP**: data Kino
+3 September memperlihatkan GROSS 324.324,32 + TAX 35.675,68 (11%) = NET 360.000, jadi pajaknya
+ditambahkan di atas harga. **Kalau faktur uji nanti keluar 11% terlalu tinggi, di sinilah
+tempat memperbaikinya** — dan ini masuk daftar periksa faktur uji bersama satuan, harga,
+diskon persen, dan nomor.
+
 ## Yang paling menentukan sebelum kode ditulis
 
 1. **Sumber kebenaran order** — sistem Kino (upload) atau entri internal kita? Ini menentukan

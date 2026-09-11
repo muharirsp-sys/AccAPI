@@ -63,6 +63,8 @@ export type InvoicePayload = {
     customerNo: string;
     transDate: string;
     typeAutoNumber: number;
+    taxable: boolean;
+    inclusiveTax: boolean;
     description: string;
     detailItem: InvoiceLinePayload[];
     charField1: string;
@@ -144,6 +146,14 @@ export function buildInvoicePayload(
         // di database ini berjalan per cabang, dan nilai tetap `1` dulu berarti SEMUA faktur
         // masuk satu seri — nomor nyasar ke pembukuan cabang lain tanpa satu pun galat.
         typeAutoNumber: options.typeAutoNumber,
+        // PPN WAJIB aktif untuk semua faktur penjualan; tidak ada saklar dan tidak ada
+        // jalur yang bisa mengirim faktur non-PPN diam-diam.
+        taxable: true,
+        // Harga jual Accurate maupun PRICE pada laporan principal adalah DPP: pada data Kino
+        // 3 Sep 2026, GROSS 324.324,32 + TAX 35.675,68 (11%) = NET 360.000, jadi pajaknya
+        // DITAMBAHKAN di atas harga, bukan sudah termasuk. Kalau faktur uji nanti keluar 11%
+        // terlalu tinggi, di sinilah tempat memperbaikinya.
+        inclusiveTax: false,
         description: [`Order ${order.id}`, order.outlet, order.channel, order.note?.trim()].filter(Boolean).join(" | ").slice(0, 500),
         detailItem,
         // Jejak balik ke order internal; dipakai rekonsiliasi status TIDAK PASTI lewat

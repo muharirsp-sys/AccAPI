@@ -37,6 +37,10 @@ test("payload memakai angka beku dan tidak pernah mengarang nomor faktur", () =>
     assert.equal(payload.typeAutoNumber, 1702);
     assert.ok(!("number" in payload), "nomor faktur harus datang dari Accurate");
     assert.equal(payload.branchId, 150);
+    // PPN wajib aktif untuk semua faktur penjualan, dan harga adalah DPP (pajak ditambahkan
+    // di atasnya), bukan harga yang sudah termasuk pajak.
+    assert.equal(payload.taxable, true);
+    assert.equal(payload.inclusiveTax, false);
     assert.deepEqual(payload.detailItem[0], {
         itemNo: "M5012001000740", quantity: 2, unitPrice: 1144800, itemUnitId: 100,
         // Tanpa rantai persen pada hasil beku, seluruh diskon jatuh sebagai rupiah.
