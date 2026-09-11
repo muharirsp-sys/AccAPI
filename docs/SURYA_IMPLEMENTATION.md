@@ -869,6 +869,34 @@ membuka `scope=all` sehingga sales bisa membaca seluruh order perusahaan. Keempa
 dihapus (`DELETE 4`); grup Salesman kini hanya `websales.view` + `websales.create` (plus
 dashboard/form_kontrol/insentif yang memang miliknya).
 
+### Perubahan PRODUKSI 2026-09-11 — pemuatan DATA (mapping + aturan promo)
+
+Atas permintaan eksplisit pengguna, setelah deploy. Sumbernya BUKAN ketikan ulang: barisnya
+disalin dari database lokal yang isinya sudah lewat jalur impor sungguhan (`/principal-mapping`
+untuk mapping, `/api/promo-recap` untuk aturan promo), lewat `\copy ... to csv` di lokal lalu
+`copy ... from stdin with csv` di produksi. `id` sengaja tidak ikut supaya sequence tetap benar.
+
+| Data | Sebelum | Sesudah |
+|---|---|---|
+| `principal_mapping` kind='item' | 0 | **677** |
+| `principal_mapping` kind='customer' | 0 | **1.434** |
+| `principal_mapping` kind='salesman' | 0 | **9** |
+| `principal_mapping` kind='brand' | 0 | **8** |
+| `promo_rule` | 0 | **145** (4 surat, 11 program, 10 baris tingkat faktur) |
+
+Pemeriksaan setelah muat:
+
+- 145 aturan semuanya `active`, periode 2026-09-01 s/d 2026-09-30, sequence `promo_rule_id_seq`
+  di 145 (tidak akan bentrok dengan sisipan berikutnya).
+- 135 aturan tingkat barang: **0 kode yang tidak ada** di master `item` Accurate produksi.
+- 0 barang tanpa ISI (aturan satuan akan salah 36x kalau ada).
+- **202 dari 677 mapping barang menunjuk kode internal yang TIDAK ADA di master `item`**
+  Accurate. Angka yang sama persis di lokal, jadi ini kenyataan data (Kino punya barang yang
+  tidak dibawa Accurate), bukan kesenjangan sync. Baris seperti ini akan DITAHAN gerbang
+  validasi dengan sebutan "kode barang tidak ada di master Accurate" — itu perilaku yang benar.
+- 1 mapping pelanggan yang `kode + "-KN"`-nya belum ada di master `customer`; ditahan gerbang
+  dengan cara yang sama.
+
 ### Perubahan PRODUKSI 2026-09-11 — migrasi 0010 dan 0011
 
 Atas permintaan eksplisit pengguna, lewat pola resmi proyek:
