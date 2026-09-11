@@ -27,11 +27,11 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 
 | # | Yang harus benar | Status | Catatan |
 |---|---|---|---|
-| 3.1 | Endpoint upload xlsx + RBAC + CSRF | ❌ | Belum ada satu pun jalur unggah laporan principal |
-| 3.2 | Parser ORDER_DETAIL → baris ternormalisasi | ❌ | Bahannya ada (`kino_discount.line_percentages`), parsernya belum |
-| 3.3 | Satu unggahan = satu batch, punya identitas | ❌ | Butuh tabel batch + baris |
-| 3.4 | Idempoten: berkas sama diunggah dua kali tidak menggandakan | ❌ | Kunci: hash isi berkas + `SO_NO`. **Wajib**, kalau tidak faktur bisa dobel di Accurate |
-| 3.5 | Pengelompokan jadi calon faktur | ❌ | Per `SO_NO`? per `INVOICE_NO`? Lihat pertanyaan 6 |
+| 3.1 | Endpoint upload xlsx + RBAC + CSRF | ✅ | `POST /api/principal-order`, izin `order.create` |
+| 3.2 | Parser ORDER_DETAIL → baris ternormalisasi | ✅ | `lib/order-detail.ts`; nilai baris cocok Rp 0,00 atas dua berkas nyata |
+| 3.3 | Satu unggahan = satu batch, punya identitas | ✅ | `principal_order_batch` + `principal_order_line` (migrasi 0008) |
+| 3.4 | Idempoten: berkas sama diunggah dua kali tidak menggandakan | ✅ | `UNIQUE(principal, file_hash)`; unggah ulang ditolak 409 kecuali menyatakan `replace` |
+| 3.5 | Pengelompokan jadi calon faktur | 🟡 | `so_no` tersimpan dan terindeks; pembentukan calon fakturnya masuk tahap validasi |
 
 ## Langkah 4 tahap 1a — cocokkan ITEM dan HARGA dengan Accurate
 
@@ -39,7 +39,7 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 |---|---|---|---|
 | 4.1 | `PRD_ID` Kino → kode barang internal | ✅ | **Selesai 2026-09-11.** Tabel `principal_mapping` + halaman `/principal-mapping`. Termuat nyata dari `KINO (1).xlsx`: 677 barang, 1.433 pelanggan, 9 salesman |
 | 4.2 | Kode internal ada di master `item` Accurate | ✅ | Tabel `item` tersinkron (4.185 item, semuanya bersatuan) |
-| 4.3 | **Satuan** baris | 🟡 | Aturannya pasti (lihat Power Query) dan `unit`+`pack_size` sudah tersimpan per barang; penerapannya pada parser laporan belum |
+| 4.3 | **Satuan** baris | ✅ | `fixLine()` menerapkan aturan Power Query; 13 dari 53 baris berkas 11 Sep naik ke KRT, nilai baris tetap |
 | 4.4 | Harga per pelanggan dari Accurate | ✅ | `lib/item-price.ts` + `customerPriceCategory` + `item_selling_price` (2,33 juta baris) |
 | 4.5 | Bandingkan harga laporan vs harga Accurate | ❌ | Perbandingannya belum dibuat. Dan **kalau beda, siapa yang menang?** Lihat pertanyaan 3 |
 | 4.6 | `CUST_ID2` → pelanggan Accurate yang benar | 🟡 | Mapping pelanggan sudah di DB; akhiran cabang `-KN` terkonfirmasi dari Power Query. Penyambungannya ke parser laporan belum |
@@ -244,6 +244,42 @@ Ditambah `inclusiveTax: false`, karena harga pada kedua sumber adalah **DPP**: d
 ditambahkan di atas harga. **Kalau faktur uji nanti keluar 11% terlalu tinggi, di sinilah
 tempat memperbaikinya** — dan ini masuk daftar periksa faktur uji bersama satuan, harga,
 diskon persen, dan nomor.
+
+## Langkah 2 urutan kerja SELESAI — parser + unggah batch, 2026-09-11
+
+`lib/order-detail.ts` + `db/migrations/0008_principal_order_batch.sql` + `/principal-order`.
+
+**SheetJS membaca stylesheet rusak laporan ini tanpa perbaikan apa pun** — akal-akalan
+`cellXfs` yang dipakai dari Python tidak perlu diporting. Satu blok kerja hilang.
+
+Aturan yang diterapkan, semuanya dari Power Query admin:
+
+- `fixLine()` — naik ke KRT HANYA bila QTY habis dibagi ISI, harga dikali ISI. Testnya
+  memeriksa `qty * price` tidak berubah di kedua cabang.
+- `discountsOf()` — DISC_1..8 jadi `{position, percent}`; baris `FLAG_BONUS != "N"` menjadi
+  **potongan 100% di posisi 1**. Posisi 6–8 tetap ikut supaya bisa dilaporkan sebagai diskon
+  tak bertuan.
+- `customerCode` diambil dari **`CUST_ID1`**, bukan `CUST_ID2` dan bukan nama outlet.
+- Baris ekor `Total for ...` / `Grand Total` dan baris ber-QTY nol dikeluarkan dan dilaporkan.
+- Produk tanpa mapping **tidak ditebak satuannya** — barisnya keluar dan kodenya dilaporkan
+  supaya admin memperbaikinya di `/principal-mapping` lalu mengunggah ulang.
+
+Penyimpanan menyimpan **dua versi angka**: `report_*` (bukti apa adanya dari principal,
+tidak pernah diubah) dan `qty/unit/price` (hasil aturan satuan). Gerbang membandingkan
+keduanya, dan saat ada selisih peninjau harus bisa melihat angka aslinya.
+
+**Dibuktikan jalan** (lokal, 2026-09-11, lewat endpoint sungguhan):
+
+| Berkas | Baris dipakai | Dilewati | Naik KRT | Nilai hasil fix vs GROSS laporan |
+|---|---|---|---|---|
+| `Order Detail.xlsx` (11 Sep) | 53 | 12 (QTY nol) | 13 | Rp 20.165.405,40 — **selisih Rp 0,00** |
+| `ORDER_DETAIL_20260903` (3 Sep) | 23 | 0 | 8 | Rp 24.488.648,65 — **selisih Rp 0,00** |
+
+Unggah ulang berkas yang sama **ditolak 409** dengan menyebut batch sebelumnya. Halaman
+`/principal-order` menampilkan daftar batch dan isi barisnya, dengan posisi diskon diberi
+warna: D1–D3 distributor, D4–D5 klaim principal, D6–D8 merah (tak bertuan).
+
+**Belum dilakukan**: migrasi `0007` dan `0008` belum diterapkan di PRODUKSI.
 
 ## Yang paling menentukan sebelum kode ditulis
 

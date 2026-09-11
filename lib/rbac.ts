@@ -300,6 +300,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     // /sales sebelum /orders TIDAK relevan (prefix beda), tapi urutannya tetap dijaga:
     // pencocokan memakai prefix terpanjang.
     { prefix: "/sales", module: "websales", action: "create" },
+    { prefix: "/principal-order", module: "order", action: "view" },
     { prefix: "/orders", module: "order", action: "view" },
     { prefix: "/summary", module: "summary", action: "view" },
     { prefix: "/validator", module: "validator", action: "view" },

@@ -182,6 +182,50 @@ export const branch = pgTable("branch", {
 
 // Master satuan Accurate. Ruang id-nya SAMA dengan `item.unitNId` (dibuktikan live
 // 2026-09-09: PCS=50, KRT=100 di kedua sumber), jadi ini sumber `itemUnitId` baris faktur.
+// Unggahan laporan integrasi principal. `report_*` = bukti apa adanya dari principal,
+// `qty/unit/price` = hasil aturan satuan; keduanya disimpan karena gerbang membandingkannya.
+export const principalOrderBatch = pgTable("principal_order_batch", {
+    id: text("id").primaryKey(),
+    principal: text("principal").notNull(),
+    fileName: text("file_name").notNull(),
+    fileHash: text("file_hash").notNull(),
+    branch: text("branch").notNull().default(""),
+    period: text("period").notNull().default(""),
+    lineCount: integer("line_count").notNull().default(0),
+    skipped: integer("skipped").notNull().default(0),
+    issues: jsonb("issues").notNull().default([]),
+    status: text("status").notNull().default("parsed"),
+    uploadedBy: text("uploaded_by").notNull().default(""),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const principalOrderLine = pgTable("principal_order_line", {
+    batchId: text("batch_id").notNull(),
+    rowNumber: integer("row_number").notNull(),
+    soNo: text("so_no").notNull(),
+    soDate: date("so_date"),
+    soStatus: text("so_status").notNull().default(""),
+    customerCode: text("customer_code").notNull().default(""),
+    customerName: text("customer_name").notNull().default(""),
+    customerType: text("customer_type").notNull().default(""),
+    salesmanCode: text("salesman_code").notNull().default(""),
+    productCode: text("product_code").notNull().default(""),
+    productName: text("product_name").notNull().default(""),
+    reportQty: numeric("report_qty").notNull().default("0"),
+    reportPrice: numeric("report_price").notNull().default("0"),
+    reportGross: numeric("report_gross").notNull().default("0"),
+    reportDiscount: numeric("report_discount").notNull().default("0"),
+    reportPromo: numeric("report_promo").notNull().default("0"),
+    reportNet: numeric("report_net").notNull().default("0"),
+    qty: numeric("qty").notNull().default("0"),
+    unit: text("unit").notNull().default(""),
+    price: numeric("price").notNull().default("0"),
+    discounts: jsonb("discounts").notNull().default([]),
+    bonus: boolean("bonus").notNull().default(false),
+}, (table) => ({
+    pk: primaryKey({ columns: [table.batchId, table.rowNumber] }),
+}));
+
 // Terjemahan kode principal -> kode internal. Satu tabel untuk tiga jenis karena
 // bentuknya sama; `unit`/`packSize` hanya terisi untuk kind='item'.
 export const principalMapping = pgTable("principal_mapping", {

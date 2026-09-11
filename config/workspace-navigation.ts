@@ -5,7 +5,8 @@
  * Main Functions: WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions.
  * Side Effects: Tidak ada; tidak mengubah hak akses.
  */
-import { Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, ClipboardList, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, type LucideIcon } from "lucide-react";
+import {
+    FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, ClipboardList, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, type LucideIcon } from "lucide-react";
 
 export type WorkspaceItem = { name: string; href: string; icon: LucideIcon };
 export type WorkspaceGroup = { id: string; name: string; description: string; icon: LucideIcon; items: WorkspaceItem[] };
@@ -13,6 +14,7 @@ export const HOME_ITEM: WorkspaceItem = { name: "Beranda", href: "/", icon: Home
 export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
     { id: "sales", name: "Penjualan", description: "Telusuri faktur dan riwayat transaksi pelanggan.", icon: TrendingUp, items: [
         { name: "Order Masuk", href: "/orders", icon: ClipboardList },
+        { name: "Order Principal", href: "/principal-order", icon: FileSpreadsheet },
         // Halaman sales di lapangan; hanya tampil untuk akun berizin `websales.create`.
         { name: "Order Sales", href: "/sales", icon: Smartphone },
         { name: "Faktur Penjualan", href: "/faktur", icon: ReceiptText },
