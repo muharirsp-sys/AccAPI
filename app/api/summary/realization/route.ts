@@ -1,5 +1,5 @@
 /** Tujuan: Laporan benefit order/faktur per periode, dan pemeriksaan ulang Accurate.
- * Caller: /summary/realization. Dependensi: RBAC, invoice_outbox, program-realization-store.
+ * Caller: /summary/realization. Dependensi: RBAC, invoice_outbox, program-realization-store, request-origin.
  * Main Functions: GET (100 order/page), POST (verifikasi satu faktur).
  * Side Effects: PostgreSQL baca; POST membaca Accurate dan memperbarui status lokal.
  */
@@ -11,6 +11,7 @@ import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { resolveSyncCredentials } from "@/lib/accurate-session";
 import { refreshRealization } from "@/lib/program-realization-store";
 import type { InvoiceOrder } from "@/lib/accurate-invoice-write";
+import { hasExpectedOrigin } from "@/lib/request-origin";
 export const runtime = "nodejs";
 
 async function access(edit = false) {
@@ -45,7 +46,9 @@ export async function GET(request: NextRequest) {
 }
 export async function POST(request: NextRequest) {
     const denied = await access(true); if (denied) return denied;
-    if (request.headers.get("origin") !== request.nextUrl.origin)
+    const publicUrl = process.env.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_APP_URL
+        || (process.env.NODE_ENV === "production" ? "" : request.nextUrl.origin);
+    if (!hasExpectedOrigin(request.headers.get("origin"), publicUrl))
         return NextResponse.json({ error: "Asal permintaan tidak cocok" }, { status: 403 });
     const body = await request.json().catch(()=>null);
     if (!body || typeof body.orderId !== "string" || !/^[a-zA-Z0-9-]{1,80}$/.test(body.orderId))
