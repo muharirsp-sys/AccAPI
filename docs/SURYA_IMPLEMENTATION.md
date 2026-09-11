@@ -869,6 +869,24 @@ membuka `scope=all` sehingga sales bisa membaca seluruh order perusahaan. Keempa
 dihapus (`DELETE 4`); grup Salesman kini hanya `websales.view` + `websales.create` (plus
 dashboard/form_kontrol/insentif yang memang miliknya).
 
+### Perubahan PRODUKSI 2026-09-11 — migrasi 0010 dan 0011
+
+Atas permintaan eksplisit pengguna, lewat pola resmi proyek:
+`tr -d '' < db/migrations/<berkas>.sql | ssh root@43.156.118.114 "docker exec -i
+accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 --single-transaction"`.
+
+| Objek | Status setelah migrasi |
+|---|---|
+| `principal_mapping_kind_check` | kini `kind IN ('item','customer','salesman','brand')` — jenis keempat untuk padanan nama merek surat |
+| Tabel `promo_rule` | dibuat, 0 baris |
+| Indeks `promo_rule` | `promo_rule_pkey`, `idx_promo_rule_key` (unik), `idx_promo_rule_item` |
+| Hak `accapi_app` | SELECT, INSERT, UPDATE, DELETE — otomatis dari `pg_default_acl`, bukan GRANT manual |
+| Idempotensi | keduanya dijalankan DUA KALI; jalan kedua hanya `NOTICE: ... already exists, skipping` |
+
+Keduanya aditif dan tidak menyentuh satu baris data pun. `promo_rule` masih kosong di
+produksi: aturannya dimuat lewat tombol **Muat aturan** pada `/rekap-promo` dari sheet
+`Detail` berkas Summary, bukan lewat migrasi.
+
 ### Perubahan PRODUKSI 2026-09-09 — migrasi 0004 (antrean faktur)
 
 Atas permintaan eksplisit pengguna, sebelum merge PR #24. Pola yang sama:
