@@ -31,7 +31,7 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 | 3.2 | Parser ORDER_DETAIL → baris ternormalisasi | ✅ | `lib/order-detail.ts`; nilai baris cocok Rp 0,00 atas dua berkas nyata |
 | 3.3 | Satu unggahan = satu batch, punya identitas | ✅ | `principal_order_batch` + `principal_order_line` (migrasi 0008) |
 | 3.4 | Idempoten: berkas sama diunggah dua kali tidak menggandakan | ✅ | `UNIQUE(principal, file_hash)`; unggah ulang ditolak 409 kecuali menyatakan `replace` |
-| 3.5 | Pengelompokan jadi calon faktur | 🟡 | `so_no` tersimpan dan terindeks; pembentukan calon fakturnya masuk tahap validasi |
+| 3.5 | Pengelompokan jadi calon faktur | ✅ | `lib/principal-invoice.ts`: satu SO = satu faktur; SO ditolak UTUH bila ada satu baris `review` |
 
 ## Langkah 4 tahap 1a — cocokkan ITEM dan HARGA dengan Accurate
 
@@ -72,8 +72,8 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 | 4.18 | Payload faktur dari angka beku | ✅ | `lib/accurate-invoice-write.ts`, kini kirim persen + rupiah terpisah |
 | 4.19 | Antrean + anti-ganda | ✅ | `invoice_outbox`, kunci `accurate_db_id` + order; `unknown` tidak pernah dikirim ulang sendiri |
 | 4.20 | Nomor faktur ikut seri cabang pelanggan | ✅ | `branch.si_auto_number_id`, tidak pernah mengirim `number` |
-| 4.21 | **Sumber payload = batch unggahan, bukan `sales_order`** | ❌ | Sekarang `invoice_outbox` diisi dari order internal SQLite. Perlu adaptor dari batch |
-| 4.22 | Satu tombol untuk satu batch sekaligus | ❌ | Yang ada baru per order |
+| 4.21 | **Sumber payload = batch unggahan, bukan `sales_order`** | ✅ | `POST /api/principal-order/queue` mengisi `invoice_outbox` dari batch. Dua jalur hidup berdampingan, kuncinya berbeda: order internal pakai uuid, laporan principal pakai `PRINCIPAL:NO-SO` |
+| 4.22 | Satu tombol untuk satu batch sekaligus | ✅ | Tombol **Faktur** pada tiap batch: pratinjau dulu (tidak menulis apa pun), lalu "Antrekan N faktur" |
 | 4.23 | Gerbang kirim | 🟡 | `ACCURATE_INVOICE_SEND` masih kosong, **sengaja**. Nama field request `save.do` belum terbukti; satu faktur uji wajib diperiksa manual dulu |
 
 ## Langkah 4 tahap 2b — tangkap 4 jenis error Accurate
@@ -325,6 +325,54 @@ tanpa diminta terpisah karena kode yang di-push memerlukannya; sifatnya aditif d
 
 **Jebakan yang sempat memakan waktu**: cache Turbopack basi membuat SELURUH route `/api/*`
 menjawab 404 padahal kodenya benar. `rm -rf .next/cache` lalu jalankan ulang dev server.
+
+## Langkah 4 urutan kerja SELESAI — batch jadi antrean faktur, 2026-09-11
+
+`lib/principal-invoice.ts` + `POST /api/principal-order/queue` + tombol **Faktur** pada tiap batch.
+Tanpa migrasi baru: `invoice_outbox` yang sudah ada dipakai apa adanya.
+
+**Kunci antrean = `PRINCIPAL:NO-SO`, BUKAN id batch.** Ini keputusan yang menentukan seluruh
+bentuknya. Admin menarik ulang laporan setiap hari (dan wajib menariknya lagi saat daily
+closing), jadi SO yang sama pasti muncul lagi di berkas lain. Kalau kuncinya id batch, SO itu
+akan difakturkan dua kali; dengan kunci SO, unggahan kedua bentrok di primary key
+`invoice_outbox` dan dilewati dengan alasan yang ditampilkan. Order internal tetap memakai
+uuid-nya sendiri, jadi dua jalur itu tidak pernah bertabrakan — sesuai keputusan pengguna
+bahwa keduanya hidup berdampingan.
+
+Gerbang berlapis, semuanya gagal-tertutup:
+
+- batch wajib sudah divalidasi (`validated_at`), kalau belum ditolak 409;
+- satu baris `review` saja menjatuhkan SELURUH SO-nya — faktur separuh isi adalah faktur salah
+  dan tidak bisa ditarik dari Accurate;
+- pelanggan wajib tunggal per SO, tanggal wajib terbaca (tidak pernah ditebak);
+- cabang + seri penomoran dari `lib/order-branch`; SO yang cabangnya tidak pasti dilewati;
+- pratinjau adalah default — `queue: true` harus dinyatakan eksplisit, persis seperti unggahan.
+
+`lib/accurate-units.ts` (baru) membaca master satuan dari tabel hasil sync `accurate_unit`,
+bukan memanggil `unit/list.do` live. Isinya sama persis (37 baris, PCS=50, KRT=100) dan
+menghilangkan satu titik gagal pada jalur faktur — termasuk saat token OAuth sedang dipegang
+sesi lain. Jalur order internal ikut memakainya. Ceilingnya tertulis di kode: satuan yang baru
+dibuat di Accurate belum ada sampai sync berikutnya, dan gejalanya adalah payload DITOLAK
+dengan menyebut satuannya, bukan salah diam-diam.
+
+`buildInvoicePayload` disentuh dua baris saja: baris hasil boleh membawa `price` sendiri
+(satu SO bisa memuat item+satuan yang SAMA dua kali karena baris bonus berdiskon 100%, jadi
+peta `code|unit` tidak cukup), dan `label` opsional membuat catatan baris memakai NOMOR SO.
+
+**Dibuktikan jalan** (lokal, 2026-09-11, lewat endpoint dan UI sungguhan):
+
+| Uji | Hasil |
+|---|---|
+| Batch nyata `Order Detail.xlsx` (6 cocok, 47 ditinjau) | **0 calon faktur**, alasan ditampilkan: "47 dari 53 baris belum lolos validasi" |
+| Batch uji berisi 6 baris yang semuanya cocok | 1 faktur, 6 baris, bruto Rp 3.059.459,46, `typeAutoNumber` 1701, `taxable: true`, satuan BTL=203/KRT=100 |
+| Antrekan dua kali | kedua kalinya **ditolak**: "sudah ada di antrean faktur (status queued)" |
+| SO yang sama dari **batch berbeda** (simulasi tarik ulang) | **ditolak juga** — inilah gunanya kunci SO |
+
+`lib/principal-invoice.test.ts` 4 test lolos (24 test lolos untuk seluruh berkas terkait),
+`npx tsc --noEmit` bersih. Data uji lokal sudah dihapus lagi; `invoice_outbox` lokal kembali 0 baris.
+
+**Yang masih menahan pengiriman**: gerbang `ACCURATE_INVOICE_SEND` tetap kosong. Antrean boleh
+terisi, pengirimannya tidak jalan sampai satu faktur uji diperiksa manual.
 
 ## Yang paling menentukan sebelum kode ditulis
 

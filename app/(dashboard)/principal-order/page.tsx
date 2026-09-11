@@ -1,14 +1,15 @@
 /*
  * Tujuan: Unggah laporan integrasi principal (Order Detail) dan lihat batch yang sudah masuk.
  * Caller: Route dashboard `/principal-order`.
- * Dependensi: /api/principal-order, toast Sonner, lucide-react.
- * Main Functions: PrincipalOrderPage, upload, openBatch, removeBatch.
+ * Dependensi: /api/principal-order, /api/principal-order/validate, /api/principal-order/queue,
+ *             toast Sonner, lucide-react.
+ * Main Functions: PrincipalOrderPage, upload, openBatch, validate, prepareInvoices, queueInvoices, removeBatch.
  * Side Effects: HTTP read/write; unggah default PRATINJAU, menyimpan hanya setelah dikonfirmasi.
  */
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Upload, Search, Trash2, AlertTriangle, FileSpreadsheet, ShieldCheck, CheckCircle2 } from "lucide-react";
+import { Upload, Search, Trash2, AlertTriangle, FileSpreadsheet, ShieldCheck, CheckCircle2, Receipt } from "lucide-react";
 import { toast } from "sonner";
 
 type Batch = {
@@ -28,6 +29,15 @@ type Line = {
     status: "pending" | "ok" | "review"; findings: string[];
 };
 
+type Plan = {
+    batchId: string;
+    ready: {
+        key: string; soNo: string; customerNo: string; orderDate: string; lineCount: number;
+        gross: number; net: number; branch: string;
+    }[];
+    skipped: { soNo: string; reason: string }[];
+};
+
 type Preview = {
     fileName: string; branch: string; period: string; lineCount: number; skipped: number;
     issues: string[]; unmappedProducts: string[];
@@ -45,6 +55,7 @@ export default function PrincipalOrderPage() {
     const [open, setOpen] = useState<{ batch: Batch; lines: Line[] } | null>(null);
     const [busy, setBusy] = useState(false);
     const [onlyReview, setOnlyReview] = useState(false);
+    const [plan, setPlan] = useState<Plan | null>(null);
 
     const loadBatches = useCallback(async () => {
         const res = await fetch("/api/principal-order", { credentials: "include" });
@@ -99,6 +110,47 @@ export default function PrincipalOrderPage() {
             await openBatch(id);
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Validasi gagal");
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    /** Pratinjau dulu: tidak ada satu pun baris antrean ditulis sebelum daftarnya dilihat. */
+    async function prepareInvoices(id: string) {
+        setBusy(true);
+        try {
+            const res = await fetch(`/api/principal-order/queue?id=${encodeURIComponent(id)}`, {
+                method: "POST", credentials: "include",
+                headers: { "Content-Type": "application/json" }, body: JSON.stringify({ queue: false }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.ok) {
+                // Alasan penolakan per SO tetap ditampilkan, bukan cuma pesan galatnya.
+                setPlan(data?.skipped ? { batchId: id, ready: [], skipped: data.skipped } : null);
+                throw new Error(data.error ?? "Faktur gagal disiapkan");
+            }
+            setPlan({ batchId: id, ready: data.ready, skipped: data.skipped });
+            toast[data.ready.length ? "success" : "warning"](`${data.ready.length} faktur siap diantrekan`);
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Faktur gagal disiapkan");
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function queueInvoices(id: string) {
+        setBusy(true);
+        try {
+            const res = await fetch(`/api/principal-order/queue?id=${encodeURIComponent(id)}`, {
+                method: "POST", credentials: "include",
+                headers: { "Content-Type": "application/json" }, body: JSON.stringify({ queue: true }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.ok) throw new Error(data.error ?? "Gagal memasukkan ke antrean");
+            toast.success(`${data.queued} faktur masuk antrean`);
+            setPlan(null);
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Gagal memasukkan ke antrean");
         } finally {
             setBusy(false);
         }
@@ -222,6 +274,11 @@ export default function PrincipalOrderPage() {
                                             className="mr-1 inline-flex items-center gap-1 rounded bg-white/10 px-2 py-1 text-xs disabled:opacity-40">
                                             <ShieldCheck size={13} /> Validasi
                                         </button>
+                                        <button onClick={() => void prepareInvoices(batch.id)} disabled={busy || !batch.validatedAt || batch.okCount === 0}
+                                            title={batch.validatedAt ? "Siapkan faktur dari SO yang seluruh barisnya lolos" : "Validasi batch ini dulu"}
+                                            className="mr-1 inline-flex items-center gap-1 rounded bg-white/10 px-2 py-1 text-xs disabled:opacity-40">
+                                            <Receipt size={13} /> Faktur
+                                        </button>
                                         <button onClick={() => void removeBatch(batch.id)} className="px-2 text-red-400 hover:text-red-300"><Trash2 size={15} /></button>
                                     </td>
                                 </tr>
@@ -233,6 +290,65 @@ export default function PrincipalOrderPage() {
                     </table>
                 </div>
             </section>
+
+            {plan && (
+                <section className="space-y-3 rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
+                    <div className="flex flex-wrap items-center gap-3">
+                        <h2 className="text-lg font-medium text-white">Calon faktur</h2>
+                        <span className="text-sm text-slate-400">
+                            satu SO = satu faktur; SO yang punya satu saja baris perlu ditinjau tidak ikut
+                        </span>
+                        <button onClick={() => setPlan(null)} className="ml-auto text-xs text-slate-400 hover:text-slate-200">Tutup</button>
+                    </div>
+                    {plan.ready.length > 0 && (
+                        <div className="overflow-x-auto rounded border border-white/10">
+                            <table className="w-full text-sm">
+                                <thead className="bg-white/5 text-slate-400">
+                                    <tr>
+                                        <th className="px-3 py-2 text-left">SO</th>
+                                        <th className="px-3 py-2 text-left">Pelanggan</th>
+                                        <th className="px-3 py-2 text-left">Cabang</th>
+                                        <th className="px-3 py-2 text-left">Tanggal</th>
+                                        <th className="px-3 py-2 text-right">Baris</th>
+                                        <th className="px-3 py-2 text-right">Bruto</th>
+                                        <th className="px-3 py-2 text-right">Netto</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {plan.ready.map((entry) => (
+                                        <tr key={entry.key} className="border-t border-white/5">
+                                            <td className="px-3 py-1.5 font-mono text-xs">{entry.soNo}</td>
+                                            <td className="px-3 py-1.5 font-mono text-xs">{entry.customerNo}</td>
+                                            <td className="px-3 py-1.5 text-xs text-slate-400">{entry.branch}</td>
+                                            <td className="px-3 py-1.5 text-xs">{entry.orderDate}</td>
+                                            <td className="px-3 py-1.5 text-right">{entry.lineCount}</td>
+                                            <td className="px-3 py-1.5 text-right">{money(entry.gross)}</td>
+                                            <td className="px-3 py-1.5 text-right text-emerald-300">{money(entry.net)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                    {plan.skipped.length > 0 && (
+                        <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-200">
+                            {plan.skipped.map((entry) => (
+                                <li key={`${entry.soNo}-${entry.reason}`}><span className="font-mono">{entry.soNo}</span> — {entry.reason}</li>
+                            ))}
+                        </ul>
+                    )}
+                    <div className="flex flex-wrap items-center gap-3">
+                        <button onClick={() => void queueInvoices(plan.batchId)} disabled={busy || plan.ready.length === 0}
+                            className="inline-flex items-center gap-2 rounded bg-blue-600 px-3 py-2 text-sm disabled:opacity-40">
+                            <Receipt size={16} /> Antrekan {plan.ready.length} faktur
+                        </button>
+                        <p className="text-xs text-slate-400">
+                            Masuk antrean saja — pengiriman ke Accurate lewat pengirim terjadwal, dan gerbangnya
+                            masih tertutup sampai satu faktur uji diperiksa manual.
+                        </p>
+                    </div>
+                </section>
+            )}
 
             {open && (
                 <section className="space-y-3">

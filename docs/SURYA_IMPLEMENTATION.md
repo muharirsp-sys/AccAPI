@@ -1580,20 +1580,21 @@ Diperiksa: `test_summary_rules.py` (`summary split check`), `lib/accurate-invoic
    Ini satu-satunya yang menahan MSG sekarang.
 4. Perbarui sheet `Mapping_Customer` pada KINO.xlsx: 3 outlet loyalty belum ada di sana.
 
-### TAHAP 7 — alur laporan principal: langkah 1–3 SELESAI (2026-09-11)
+### TAHAP 7 — alur laporan principal: langkah 1–4 SELESAI (2026-09-11)
 
 Alur yang diminta pengguna: sales input di sistem principal -> admin tarik laporan integrasi ->
 unggah ke web -> validasi 2 tahap -> kirim ke Accurate 1 tombol -> tab error + resend ->
 daily closing + eskalasi OM. Checklist lengkap 40 titik periksa ada di
 **`docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md`** — baca itu lebih dulu, bukan bagian ini.
 
-Selesai sesi ini: **langkah 1 (mapping), 2 (parser + unggah batch), 3 (validasi tahap 1)**.
+Selesai: **langkah 1 (mapping), 2 (parser + unggah batch), 3 (validasi tahap 1), 4 (batch -> antrean faktur)**.
 
 | Yang dibangun | Berkas |
 |---|---|
 | Mapping kode principal -> internal, bisa diimpor & diubah lewat UI | `lib/principal-mapping.ts`, `/principal-mapping`, migrasi 0007 |
 | Parser Order Detail + unggah batch anti-ganda | `lib/order-detail.ts`, `/principal-order`, migrasi 0008 |
 | Validasi tahap 1 (8 pemeriksaan, semuanya menahan) | `lib/principal-validation.ts`, migrasi 0009 |
+| Batch -> antrean faktur, satu tombol per batch | `lib/principal-invoice.ts`, `/api/principal-order/queue`, `lib/accurate-units.ts` |
 | PPN wajib aktif pada setiap faktur | `lib/accurate-invoice-write.ts` |
 
 **Migrasi 0007, 0008, 0009 SUDAH di PRODUKSI** (2026-09-11), semuanya 0 baris.
@@ -1612,16 +1613,39 @@ Aturan yang diambil dari Power Query admin (`KINO (1).xlsx`) dan sudah diterapka
 ke KRT hanya bila QTY habis dibagi ISI dengan harga dikali ISI; baris bonus = potongan 100% di
 posisi 1; pelanggan dari `CUST_ID1` + akhiran `-KN`; diskon persen digabung dengan `+`.
 
-**Berikutnya (langkah 4–7)**: adaptor batch -> `invoice_outbox` + satu tombol kirim per batch;
-klasifikasi 4 error Accurate (overdue, overlimit, outlet non-aktif, item non-aktif) yang teksnya
-**belum pernah kita lihat** dan harus diambil dari faktur uji; tab error + resend yang
-menghormati `unknown` (tidak boleh dikirim ulang); halaman OM dengan penanda umur 2 jam.
+**Langkah 4 SELESAI juga (2026-09-11, sesi lanjutan)**: `lib/principal-invoice.ts` +
+`POST /api/principal-order/queue` + tombol **Faktur** per batch. Tanpa migrasi baru. Kunci
+antrean **`PRINCIPAL:NO-SO`, bukan id batch** — admin menarik ulang laporan tiap hari, jadi
+kunci per batch akan memfakturkan SO yang sama dua kali; dengan kunci SO, unggahan kedua
+bentrok di primary key dan dilewati. Satu baris `review` menjatuhkan seluruh SO-nya. Master
+satuan kini dibaca dari tabel sync `accurate_unit`, bukan panggilan live — satu titik gagal
+hilang dari jalur faktur, jalur order internal ikut. Rinciannya (termasuk bukti ujinya) ada di
+checklist bagian "Langkah 4 urutan kerja SELESAI".
+
+**Berikutnya (langkah 5–7)**: klasifikasi 4 error Accurate (overdue, overlimit, outlet
+non-aktif, item non-aktif) yang teksnya **belum pernah kita lihat** dan harus diambil dari
+faktur uji; tab error + resend yang menghormati `unknown` (tidak boleh dikirim ulang);
+halaman OM dengan penanda umur 2 jam.
 
 **Gerbang kirim faktur MASIH TERTUTUP** (`ACCURATE_INVOICE_SEND` kosong). Daftar periksa faktur
 uji kini: satuan, harga per satuan, **diskon persen (`itemDiscPercent`)**, **PPN (`taxable`)
 dan totalnya**, dan nomor faktur.
 
-### Prompt melanjutkan (2026-09-11)
+### Prompt melanjutkan (2026-09-11, setelah langkah 4)
+
+> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca
+> `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md` lebih dulu, lalu bagian "TAHAP 7" pada
+> docs/SURYA_IMPLEMENTATION.md. Langkah 1–4 alur laporan principal SELESAI dan terbukti jalan:
+> mapping, parser + unggah batch, validasi 8 pemeriksaan, dan batch -> `invoice_outbox` lewat
+> tombol Faktur (kunci antrean `PRINCIPAL:NO-SO`, pratinjau default). Migrasi 0007–0009 sudah
+> di produksi dan langkah 4 tidak menambah migrasi. Berikutnya langkah 5–7: tab error + resend
+> yang menghormati `unknown` (tidak boleh dikirim ulang), klasifikasi 4 error Accurate yang
+> teksnya HARUS diambil dari faktur uji (jangan ditebak), dan halaman OM dengan penanda umur
+> 2 jam. Gerbang kirim masih tertutup (`ACCURATE_INVOICE_SEND` kosong) menunggu satu faktur uji
+> diperiksa manual. Jangan stage massal — working tree masih memuat pekerjaan rekonsiliasi dan
+> eksperimen OCR lama.
+
+### Prompt melanjutkan (2026-09-11, setelah langkah 1–3)
 
 > Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`
 > (sudah di-push). Baca `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md` lebih dulu, lalu bagian

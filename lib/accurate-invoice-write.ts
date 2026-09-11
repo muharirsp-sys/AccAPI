@@ -33,6 +33,8 @@ export type FrozenResultLine = {
     percents?: string[];
     /** Bagian diskon yang berupa RUPIAH, di luar rantai persen di atas. */
     cash?: string;
+    /** Harga satuan bila baris hasil membawanya sendiri (jalur laporan principal). */
+    price?: string;
 };
 
 export type InvoiceOrder = {
@@ -94,7 +96,9 @@ function money(raw: string | undefined, label: string): number {
  */
 export function buildInvoicePayload(
     order: InvoiceOrder,
-    options: { unitIds: Map<string, number>; branchId: number; typeAutoNumber: number },
+    // `label` = penanda pendek pada catatan tiap baris faktur. Default potongan id order;
+    // jalur laporan principal mengirim nomor SO-nya, yang jauh lebih berarti bagi pembukuan.
+    options: { unitIds: Map<string, number>; branchId: number; typeAutoNumber: number; label?: string },
 ): InvoicePayload {
     if (!order.customer_no?.trim()) throw new Error("Order tanpa kode pelanggan Accurate tidak bisa difakturkan");
     if (order.result?.pending_price) throw new Error("Order berstatus needs_price; isi harga dulu sebelum difakturkan");
@@ -105,7 +109,11 @@ export function buildInvoicePayload(
     const detailItem = resultLines.map((line, index) => {
         const key = `${line.code}|${line.unit}`;
         const input = frozen.get(key);
-        if (!input) throw new Error(`Baris hasil ${key} tidak ada pada baris order; angka beku tidak konsisten`);
+        // Jalur laporan principal membawa harga pada baris hasilnya sendiri: satu SO bisa
+        // memuat item+satuan yang SAMA dua kali (baris biasa dan baris bonus berdiskon 100%),
+        // jadi peta `code|unit` tidak cukup untuk menemukan harganya.
+        const unitPrice = line.price ?? input?.price;
+        if (unitPrice === undefined) throw new Error(`Baris hasil ${key} tidak ada pada baris order; angka beku tidak konsisten`);
         const unitId = options.unitIds.get(line.unit.trim().toUpperCase());
         // Satuan TIDAK boleh ditebak: satu item bisa berselisih 72x antar satuan.
         if (!unitId) throw new Error(`Satuan ${line.unit} tidak ada di master satuan Accurate`);
@@ -128,11 +136,11 @@ export function buildInvoicePayload(
         return {
             itemNo: line.code,
             quantity: money(line.quantity, `jumlah baris ${key}`),
-            unitPrice: money(input.price, `harga baris ${key}`),
+            unitPrice: money(unitPrice, `harga baris ${key}`),
             itemUnitId: unitId,
             itemDiscPercent: percents.join("+"),
             itemCashDiscount: cash,
-            detailNotes: `order ${order.id.slice(0, 8)} baris ${index + 1}`,
+            detailNotes: `order ${options.label ?? order.id.slice(0, 8)} baris ${index + 1}`,
             charField1: order.id,
         };
     });
