@@ -10,7 +10,7 @@
  */
 import * as XLSX from "xlsx";
 
-export type MappingKind = "item" | "customer" | "salesman";
+export type MappingKind = "item" | "customer" | "salesman" | "brand";
 
 export type MappingRow = {
     kind: MappingKind;
@@ -42,6 +42,14 @@ export const KINDS: Record<MappingKind, {
         label: "Salesman", sheet: "Mapping_Sls",
         source: ["slsman id", "slsmanid", "sls id", "kode sales principal"],
         target: ["code internal", "kode internal", "kode sales"],
+    },
+    // Nama merek pada SURAT promo -> pola nama pada master barang. Surat memakai bahasa
+    // pemasaran ("OVALE 2IN1 CLEANSER"), master memakai bahasa gudang ("OVALE FACIAL LOTION"),
+    // dan tanpa catatan ini tiap surat berikutnya menanyakan hal yang sama.
+    brand: {
+        label: "Merek pada surat", sheet: "Mapping_Brand",
+        source: ["merek surat", "nama merek", "brand surat", "brand"],
+        target: ["nama master", "pola nama", "nama barang", "brand master"],
     },
 };
 

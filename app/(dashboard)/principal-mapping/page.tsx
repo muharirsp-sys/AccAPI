@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Upload, Search, Save, Trash2, Plus, AlertTriangle, Check } from "lucide-react";
 import { toast } from "sonner";
 
-type Kind = "item" | "customer" | "salesman";
+type Kind = "item" | "customer" | "salesman" | "brand";
 
 type Row = {
     principal: string; kind: Kind; sourceCode: string; targetCode: string;
@@ -24,6 +24,7 @@ const KIND_TABS: { kind: Kind; label: string; hint: string }[] = [
     { kind: "item", label: "Barang", hint: "Kode barang principal → kode internal, dengan satuan dan ISI per karton" },
     { kind: "customer", label: "Pelanggan", hint: "Kode outlet principal → kode pelanggan internal (tanpa akhiran cabang)" },
     { kind: "salesman", label: "Salesman", hint: "ID salesman principal → kode internal" },
+    { kind: "brand", label: "Merek surat", hint: "Nama merek seperti tertulis di surat promo → pola nama pada master barang, mis. OVALE 2IN1 CLEANSER → OVALE FACIAL LOTION" },
 ];
 
 const PAGE = 50;
