@@ -63,6 +63,7 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 - `lib/program-realization.ts`: cocokkan database (caller), record ID, pelanggan, tanggal, cabang, SKU, unit, harga, jumlah, dan diskon. Mismatch tidak menjadi realisasi; biaya bonus kosong, bukan nol.
 - `lib/program-realization-store.ts`: baca faktur Accurate dan simpan hasil verifikasi pada antrean yang beridentitas tepat. Pemicu: setelah cron mengirim faktur, detail webhook/sync, atau tombol Periksa Accurate.
 - `/summary/realization` -> `/api/summary/realization`: laporan per periode, paginasi keyset 100 order, rencana vs realisasi terverifikasi per program, jumlah bonus, waktu pemeriksaan, ekspor CSV. Nilai sebelum retur; penyesuaian retur dan harga pokok bonus belum otomatis.
+- Klik nomor faktur -> `/faktur?invoiceId=&databaseId=` -> panel detail yang sudah ada -> API faktur memeriksa database sesi sebelum mengambil record. Tidak mencari atau memasangkan lewat nomor faktur.
 - `db/migrations/0005_program_realization.sql`: tiga kolom nullable pada outbox + indeks periode dan identitas faktur; baris lama tidak diberi snapshot karangan. `lib/program-realization.test.ts` menguji diskon per PCS, bonus, mismatch, dan pengulangan pemeriksaan.
 - Pengiriman Accurate tetap memerlukan gate aktif, database tujuan cocok, petugas eksplisit, dan pemeriksaan satu faktur uji. Memasang fitur tidak mengirim faktur atau mengaktifkan draft secara otomatis.
 
