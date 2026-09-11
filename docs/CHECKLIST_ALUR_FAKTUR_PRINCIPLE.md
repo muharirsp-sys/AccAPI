@@ -109,6 +109,72 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 
 ---
 
+## Jawaban pengguna 2026-09-11 dan temuan Power Query
+
+### Keputusan
+
+1. **Dua jalur hidup berdampingan.** Principal yang punya sistem sendiri (Kino) lewat **upload
+   laporan**; principal yang tidak, lewat **entri di web kita**. `invoice_outbox` harus bisa
+   diisi dari dua sumber, dan tiap principal perlu penanda jalurnya.
+2. **Harga**: selisih sampai **Rp 1** boleh lewat. Di atas itu **DITAHAN**, mau lebih tinggi
+   maupun lebih rendah. Sama seperti toleransi diskon.
+3. **Daily closing**: saat admin mau selesai kerja, admin **wajib menarik ulang laporan dari
+   Kino** lalu disandingkan lagi. Status juga harus **real-time**, dan hitungan waktunya
+   **sejak masalahnya muncul**: lewat **2 jam** -> tembus ke OM.
+
+### Isi Power Query `KINO (1).xlsx` — proses manual yang berjalan hari ini
+
+Berkasnya menyimpan sepuluh query (`Kino_OD_Base`, `Header`, `Detail`, `ToAccurateNew`, dst).
+Ini **spesifikasi yang sudah terbukti dipakai**, jadi jangan dibangun ulang dengan tebakan.
+
+**Sumber**: `\192.168.1.249ktrs$\Bersama_5\Integrasi\Kino Non Food\OD.xlsx` — laporan
+integrasi mendarat di network share, bukan hanya di unduhan admin.
+
+**Satuan, kuantitas, dan harga — jawaban pertanyaan 4.3:**
+
+```
+Custom     = QTY / ISI                     (ISI dari Mapping_Prd)
+Fix Qty    = if QTY habis dibagi ISI then QTY/ISI   else QTY
+Fix Satuan = if QTY habis dibagi ISI then "KRT"     else Mapping_Prd[Satuan]
+Fix Harga  = if QTY habis dibagi ISI then PRICE*ISI else PRICE
+```
+
+Jadi **QTY selalu dalam satuan terkecil**, dan dinaikkan ke KRT hanya bila pas sekarton.
+Harga ikut dikalikan ISI supaya nilai barisnya tidak berubah.
+
+**Bonus barang**: `Fix Disc. 1 = if FLAG_BONUS = "N" then DISC_1 else 100`. Baris bonus muncul
+sebagai baris biasa dengan **diskon 100%**, bukan sebagai catatan bonus terpisah. Gerbang promo
+harus memperlakukannya begitu, kalau tidak setiap bonus akan tampak sebagai diskon tak bertuan.
+
+**Kode dan relasi yang dipakai:**
+
+| Yang dicari | Caranya |
+|---|---|
+| Kode barang internal | `Mapping_Prd[KODE ITEM]`, di-join lewat `Kode Alias` = `Text.End(PRD_ID, 15)` (PRD_ID "-" diganti ".") |
+| Pelanggan Accurate | `Mapping_Customer[Code Internal]` **& `"-KN"`** — akhiran cabang Kino terkonfirmasi |
+| Salesman | `Mapping_Sls[Code Internal]` |
+| Gudang | konstanta `"GD01"` |
+| Diskon persen | `"d1+d2+d3+d4+d5"` digabung dengan `+` — **format yang sama persis dengan `itemDiscPercent`** yang sudah kita kirim |
+
+**Nomor faktur**: query `ToAccurateNew` membuat nomornya SENDIRI dari sheet `Config_LastNumber`
+(prefix + urutan dipad nol, lanjut dari nomor terakhir). Pada jalur API **ini tidak dipakai
+lagi** — nomor datang dari Accurate lewat seri cabang (`branch.si_auto_number_id`). Itu justru
+menghilangkan satu sumber kesalahan, tetapi berarti nomor faktur hasil sistem baru TIDAK akan
+melanjutkan deret `Config_LastNumber`. Perlu dipastikan itu diterima bagian pembukuan.
+
+**Keluarannya format HEADER/ITEM kolom A..N** — template impor berkas, bukan API. Artinya jalur
+API kita menggantikan langkah impor manual ini, bukan menambahinya.
+
+### Dampak ke checklist di atas
+
+- 4.3 satuan: ❌ -> **✅ aturannya pasti** (tinggal diimplementasikan)
+- 4.1 kode barang: rumusnya pasti (`KODE ITEM` lewat `Kode Alias`)
+- 4.6 pelanggan: akhiran `-KN` terkonfirmasi, bukan lagi tebakan
+- 4.5 harga: toleransi Rp 1 dua arah, sisanya ditahan
+- 6.1/6.2/6.5: pemicu eskalasi = **umur masalah 2 jam**, bukan jam cut-off tetap; ditambah
+  penarikan ulang laporan di akhir kerja sebagai penutup hari
+- Baru: **baris bonus = diskon 100%** wajib dikenali gerbang promo
+
 ## Yang paling menentukan sebelum kode ditulis
 
 1. **Sumber kebenaran order** — sistem Kino (upload) atau entri internal kita? Ini menentukan
