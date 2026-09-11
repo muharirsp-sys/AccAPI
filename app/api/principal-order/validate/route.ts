@@ -2,6 +2,8 @@
  * Tujuan: Validasi tahap 1 satu batch — item, pelanggan, harga, dan pecahan diskon.
  * Caller: halaman Order Principal, tombol "Validasi".
  * Dependensi: lib/principal-validation, lib/item-price, db/schema, rbac.
+ *
+ * Harga dicari per pelanggan DAN per cabang pelanggan; lihat catatan di dekat `branchOf`.
  * Main Functions: POST.
  * Side Effects: Menulis hasil pemeriksaan ke `principal_order_line` dan hitungan ke batch.
  *
@@ -65,11 +67,18 @@ export async function POST(request: NextRequest) {
 
     const [knownItems, knownCustomers, unitsByCode] = await Promise.all([
         itemCodes.length ? db.select({ no: item.no }).from(item).where(inArray(item.no, itemCodes)) : Promise.resolve([]),
-        customerNos.length ? db.select({ no: customer.customerNo }).from(customer).where(inArray(customer.customerNo, customerNos)) : Promise.resolve([]),
+        customerNos.length ? db.select({ no: customer.customerNo, branchId: customer.branchId }).from(customer).where(inArray(customer.customerNo, customerNos)) : Promise.resolve([]),
         itemUnits(itemCodes),
     ]);
     const itemSet = new Set(knownItems.map((row) => row.no));
     const customerSet = new Set(knownCustomers.map((row) => row.no));
+    // Cabang pelanggan WAJIB ikut ke pencarian harga. Daftar harga Accurate punya satu baris
+    // per (kategori x satuan x CABANG), dan kenaikan harga sering hanya terbit di cabang
+    // principalnya. Contoh nyata 11 Sep 2026: item K1082002002010 SCH kategori MT berharga
+    // 7.207 di cabang KINO NON FOOD (berlaku 1 Agu 2026) tetapi masih 6.306 di 21 cabang
+    // lain. Tanpa cabang, pemilih jatuh ke cabang default (Kantor Pusat) dan mengambil harga
+    // lama — 47 dari 53 baris tertahan sebagai "selisih harga" yang sebenarnya tidak ada.
+    const branchOf = new Map(knownCustomers.map((row) => [row.no, row.branchId ?? undefined]));
 
     // Harga dilihat per pelanggan: kategori harga berbeda memberi harga berbeda untuk item sama.
     const priceByKey = new Map<string, { price: number | null; source: string }>();
@@ -83,7 +92,11 @@ export async function POST(request: NextRequest) {
         grouped.get(customerNo)!.push({ code: itemCode, unit: line.unit });
     }
     for (const [customerNo, wanted] of grouped) {
-        const results = await resolvePrices(wanted, { orderDate: String(batch.period).slice(0, 10) || new Date().toISOString().slice(0, 10), customerNo });
+        const results = await resolvePrices(wanted, {
+            orderDate: String(batch.period).slice(0, 10) || new Date().toISOString().slice(0, 10),
+            customerNo,
+            branchId: branchOf.get(customerNo),
+        });
         for (const result of results) priceByKey.set(`${customerNo}|${result.code}|${result.unit}`, { price: result.price, source: result.source });
     }
 
@@ -103,6 +116,9 @@ export async function POST(request: NextRequest) {
                 salesmanCode: line.salesmanCode, salesmanInternal,
                 unit: line.unit, knownUnits: itemCode ? (unitsByCode.get(itemCode) ?? []) : [],
                 price: Number(line.price), expectedPrice: found?.price ?? null,
+                // ISI baris ini, dibaca dari apa yang sudah terjadi: qty laporan (satuan
+                // terkecil) dibagi qty faktur. Baris yang tidak naik ke KRT menghasilkan 1.
+                unitRatio: Number(line.qty) > 0 ? Number(line.reportQty) / Number(line.qty) : 1,
                 gross: Number(line.reportGross), reportDiscount: Number(line.reportDiscount),
                 discounts: (line.discounts as DiscountAt[]) ?? [], bonus: line.bonus,
                 hasPublishedRules,

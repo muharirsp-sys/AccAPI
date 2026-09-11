@@ -78,3 +78,18 @@ test("baris bonus tetap diperiksa harganya", () => {
     assert.equal(bonus.status, "review");
     assert.match(bonus.findings.join(" "), /Harga laporan/);
 });
+
+test("toleransi harga berlaku pada satuan terkecil, bukan pada harga karton", () => {
+    // Angka nyata 11 Sep 2026, item K1351003030010: Accurate menyimpan BTL 29.189 (bulat) dan
+    // KRT 700.536 = 29.189 x 24, sedangkan laporan Kino membawa DPP 29.189,1892 (32.400/1,11).
+    // Beda Rp 0,19 per botol menjadi Rp 4,54 per karton — pembulatan yang sama, dikali ISI.
+    const karton = line({ unit: "KRT", knownUnits: ["BTL", "KRT"], price: 700540.5408, expectedPrice: 700536, unitRatio: 24 });
+    assert.deepEqual(checkLine(karton).findings, []);
+
+    // Tanpa ISI, selisih yang sama persis tetap ditahan: itu memang di atas Rp 1 per satuan.
+    assert.match(checkLine({ ...karton, unitRatio: 1 }).findings[0], /berbeda lebih tinggi/);
+
+    // Salah harga yang sungguhan (Rp 500 per botol = Rp 12.000 per karton) tetap tertahan.
+    const salah = checkLine(line({ unit: "KRT", price: 712536, expectedPrice: 700536, unitRatio: 24 }));
+    assert.match(salah.findings[0], /setara 500 per satuan terkecil dari 24/);
+});

@@ -1632,6 +1632,14 @@ terakhir, menekan Kirim ulang akan menyetel ulang jamnya. Pengirim terjadwal sek
 mengambil `queued` — yang `rejected` menunggu manusia, karena mengulang kegagalan yang sama
 4x sehari tidak memperbaiki sebabnya. `unknown` tidak punya tombol sama sekali.
 
+**Koreksi harga 2026-09-11 (dari temuan pengguna)**: harga dicari per pelanggan DAN per
+**cabang** pelanggan — daftar harga Accurate punya satu baris per (kategori x satuan x cabang),
+dan kenaikan harga sering terbit hanya di cabang principalnya (KINO NON FOOD 7.207 sejak
+1 Agu 2026; 21 cabang lain masih 6.306 dari Maret). Selain itu toleransi Rp 1 kini dihitung
+pada satuan TERKECIL, bukan pada harga karton, karena di situlah pembulatan terjadi. Berkas
+11 September berubah dari 6 cocok/47 ditinjau menjadi **53 cocok/0 ditinjau**. Rinciannya di
+checklist bagian "Koreksi harga".
+
 **Yang tersisa (langkah 7 + 4.25)**: klasifikasi 4 error Accurate (overdue, overlimit, outlet
 non-aktif, item non-aktif). Teksnya **belum pernah kita lihat** dan harus diambil dari faktur
 uji — pola yang ditebak akan salah menggolongkan error nyata, lebih buruk daripada tidak

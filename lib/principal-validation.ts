@@ -52,6 +52,11 @@ export type LineInput = {
     knownUnits: string[];
     price: number;
     expectedPrice: number | null;
+    /**
+     * Berapa satuan terkecil dalam satu baris faktur (ISI), bila barisnya dinaikkan ke KRT.
+     * 1 = baris masih dalam satuan terkecil. Dipakai HANYA untuk toleransi harga.
+     */
+    unitRatio?: number;
     gross: number;
     reportDiscount: number;
     discounts: DiscountAt[];
@@ -88,9 +93,18 @@ export function checkLine(line: LineInput): LineCheck {
         findings.push(`Harga Accurate untuk ${line.itemCode ?? line.productCode} ${line.unit} tidak ditemukan.`);
     } else {
         const gap = cents(line.price - line.expectedPrice);
-        if (Math.abs(gap) > TOLERANCE) {
+        // Toleransi Rp 1 berlaku pada SATUAN TERKECIL, tempat pembulatannya benar-benar terjadi:
+        // Accurate menyimpan harga per satuan terkecil dalam rupiah bulat (BTL 29.189) sementara
+        // laporan principal membawa desimal DPP (29.189,1892 = 32.400 / 1,11). Beda Rp 0,19 per
+        // botol itu menjadi Rp 4,54 begitu baris dinaikkan ke KRT isi 24 — pembulatan yang sama,
+        // hanya dikali ISI. Salah harga yang sungguhan besarnya ratusan rupiah per satuan
+        // terkecil, jadi tetap tertahan.
+        const ratio = line.unitRatio && line.unitRatio > 0 ? line.unitRatio : 1;
+        const gapPerSmallest = cents(gap / ratio);
+        if (Math.abs(gapPerSmallest) > TOLERANCE) {
             findings.push(`Harga laporan ${line.price.toLocaleString("id-ID")} berbeda ${gap > 0 ? "lebih tinggi" : "lebih rendah"} `
-                + `${Math.abs(gap).toLocaleString("id-ID")} dari harga Accurate ${line.expectedPrice.toLocaleString("id-ID")}.`);
+                + `${Math.abs(gap).toLocaleString("id-ID")} dari harga Accurate ${line.expectedPrice.toLocaleString("id-ID")}`
+                + (ratio > 1 ? ` (setara ${Math.abs(gapPerSmallest).toLocaleString("id-ID")} per satuan terkecil dari ${ratio}).` : "."));
         }
     }
 

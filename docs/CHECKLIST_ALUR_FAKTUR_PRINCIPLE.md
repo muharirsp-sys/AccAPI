@@ -40,8 +40,8 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 | 4.1 | `PRD_ID` Kino → kode barang internal | ✅ | **Selesai 2026-09-11.** Tabel `principal_mapping` + halaman `/principal-mapping`. Termuat nyata dari `KINO (1).xlsx`: 677 barang, 1.433 pelanggan, 9 salesman |
 | 4.2 | Kode internal ada di master `item` Accurate | ✅ | Tabel `item` tersinkron (4.185 item, semuanya bersatuan) |
 | 4.3 | **Satuan** baris | ✅ | `fixLine()` menerapkan aturan Power Query; 13 dari 53 baris berkas 11 Sep naik ke KRT, nilai baris tetap |
-| 4.4 | Harga per pelanggan dari Accurate | ✅ | `lib/item-price.ts` + `customerPriceCategory` + `item_selling_price` (2,33 juta baris) |
-| 4.5 | Bandingkan harga laporan vs harga Accurate | ✅ | Toleransi Rp 1 dua arah; di atas itu baris ditahan |
+| 4.4 | Harga per pelanggan dari Accurate | ✅ | `lib/item-price.ts` + `customerPriceCategory` + `item_selling_price` (2,33 juta baris). **Cabang pelanggan WAJIB ikut**: daftar harga berisi satu baris per (kategori x satuan x CABANG) |
+| 4.5 | Bandingkan harga laporan vs harga Accurate | ✅ | Toleransi Rp 1 dua arah, dihitung pada **satuan terkecil** (tempat pembulatannya terjadi), bukan pada harga karton |
 | 4.6 | `CUST_ID1` → pelanggan Accurate yang benar | ✅ | `CUST_ID1` -> mapping -> `+ "-KN"`, lalu dicek ada di master `customer` |
 
 ## Langkah 4 tahap 1b — cocokkan PROMO dengan aturan terbit
@@ -423,6 +423,39 @@ satu pun teks error asli dari Accurate, dan pencocokan pola yang ditebak akan sa
 menggolongkan error nyata — lebih buruk daripada tidak menggolongkan sama sekali. Sekarang
 jawaban Accurate ditampilkan apa adanya. Begitu faktur uji menghasilkan teks aslinya, tempat
 menambahkannya adalah satu fungsi pemeta di `app/api/invoice-outbox/route.ts`.
+
+## Koreksi harga — cabang pelanggan dan toleransi per satuan terkecil, 2026-09-11
+
+Temuan pengguna: 47 dari 53 baris tertahan sebagai "selisih harga" padahal kalau disandingkan
+dengan harga MT, harganya sudah benar. Dua sebab, dua perbaikan kecil.
+
+**Sebab 1 — cabang, bukan kategori.** Kategori harga pelanggan sudah benar: `C-TRU001-KN`
+memang MT (id 200), dan validasi memang sudah memakainya. Yang hilang adalah CABANG. Daftar
+harga Accurate berisi satu baris per (kategori x satuan x **cabang**), dan kenaikan harga
+sering terbit hanya di cabang principalnya:
+
+| item K1082002002010, satuan SCH, kategori MT | berlaku | harga |
+|---|---|---|
+| cabang KINO NON FOOD (1051) | 2026-08-01 | **7.207** |
+| 21 cabang lain, termasuk Kantor Pusat | 2026-03-09 | 6.306 |
+
+`resolvePrices` memilih CABANG DULU baru tanggal — aturan yang memang benar dan sudah diuji.
+Tetapi `validate/route.ts` tidak pernah mengirim `branchId`, jadi pemilihnya jatuh ke cabang
+default (Kantor Pusat) dan mengambil harga Maret. Perbaikannya satu opsi pada satu panggilan:
+cabang diambil dari `customer.branch_id` pelanggan itu sendiri, sama seperti cabang faktur.
+
+**Sebab 2 — toleransi Rp 1 diterapkan pada satuan yang salah.** Setelah cabang benar, 6 baris
+masih tertahan karena beda Rp 3–18 per KARTON. Asalnya pembulatan: Accurate menyimpan harga
+per satuan terkecil dalam rupiah bulat (BTL 29.189; KRT = 29.189 x 24 = 700.536) sedangkan
+laporan Kino membawa desimal DPP (29.189,1892 = 32.400 / 1,11). Beda Rp 0,19 per botol menjadi
+Rp 4,54 begitu dikali 24. Toleransi Rp 1 sekarang dihitung pada satuan terkecil, dengan ISI
+dibaca dari yang sudah terjadi pada barisnya (`report_qty / qty`), bukan dari tabel lain.
+Salah harga yang sungguhan — ratusan rupiah per satuan terkecil — tetap tertahan, dan ada
+testnya.
+
+**Hasil pada berkas nyata 11 September**: 6 cocok / 47 ditinjau -> **53 cocok / 0 ditinjau**,
+lalu tombol Faktur menghasilkan **1 calon faktur, 53 baris, bruto Rp 20.165.405,36** (laporan
+Kino Rp 20.165.405,40 — beda 4 sen, di bawah satu rupiah).
 
 ## Yang paling menentukan sebelum kode ditulis
 
