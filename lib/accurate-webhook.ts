@@ -7,6 +7,41 @@
 // { databaseId, type: "SALES_INVOICE", timestamp, uuid, data: [{ salesInvoiceId, salesInvoiceNo,
 // isDownPayment, salesInvoiceTotalAmount, action: "WRITE" }] } — BUKAN { eventType, module, id }
 // seperti tebakan awal. `data` adalah array (bisa >1 baris per envelope).
+/**
+ * Id dari envelope webhook bertipe `type`, dibaca dari salah satu `keys` yang ada.
+ *
+ * Bentuk pastinya baru TERBUKTI untuk SALES_INVOICE (`salesInvoiceId`, dari log produksi
+ * 2026-08-11). Untuk CUSTOMER dan ITEM nama fieldnya belum pernah kita lihat, jadi beberapa
+ * kemungkinan diterima sekaligus dan yang tidak dikenal DILEWATI — bukan ditebak jadi `id`
+ * dari field lain, karena salah id berarti menimpa baris master yang salah.
+ */
+export function flattenEventIds(payload: unknown, type: string, keys: string[]): number[] {
+    const envelopes = (Array.isArray(payload) ? payload : [payload]) as Array<{
+        type?: string; data?: Array<Record<string, unknown>>;
+    }>;
+    const ids: number[] = [];
+    for (const envelope of envelopes) {
+        if (envelope?.type !== type) continue;
+        for (const record of envelope?.data ?? []) {
+            for (const key of keys) {
+                const id = Number(record?.[key]);
+                if (Number.isFinite(id) && id > 0) { ids.push(id); break; }
+            }
+        }
+    }
+    return [...new Set(ids)];
+}
+
+/** Pelanggan berubah di Accurate (kategori harga, limit, cabang) — cache kita wajib menyusul. */
+export function flattenCustomerIds(payload: unknown): number[] {
+    return flattenEventIds(payload, "CUSTOMER", ["customerId", "id"]);
+}
+
+/** Barang berubah (nama, satuan, status aktif). */
+export function flattenItemIds(payload: unknown): number[] {
+    return flattenEventIds(payload, "ITEM", ["itemId", "id"]);
+}
+
 export function flattenSalesInvoiceIds(payload: unknown): number[] {
     const envelopes = (Array.isArray(payload) ? payload : [payload]) as Array<{
         type?: string;

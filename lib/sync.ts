@@ -420,6 +420,37 @@ export class AccurateInvoiceGoneError extends Error {
     }
 }
 
+/**
+ * Satu pelanggan/barang yang diberitahukan webhook -> segarkan cache master kita.
+ *
+ * Kenapa perlu: master `customer` dan `item` adalah SALINAN hasil sync, bukan sambungan
+ * langsung. Kategori harga pelanggan yang diubah di Accurate tidak terlihat sampai cron
+ * berikutnya (4x sehari) — dan gerbang validasi memakai kategori itu untuk menentukan harga.
+ * Nyata terjadi 2026-09-11: kategori HINDA MART diubah ke TT, tetapi 11 baris faktur tetap
+ * tertahan karena cache masih MT.
+ *
+ * `detail.do` dipakai, sama seperti jalur faktur. Kalau field kunci (`customerNo`/`no`) tidak
+ * ada pada jawabannya, barisnya TIDAK ditulis: menimpa master dengan nilai kosong jauh lebih
+ * buruk daripada menunggu cron.
+ */
+export async function upsertMasterById(
+    kind: "customer" | "item", id: number, creds: AccurateCredentials,
+): Promise<{ kind: string; id: number; code: string }> {
+    const path = kind === "customer" ? "customer" : "item";
+    const url = `${creds.sessionHost}/accurate/api/${path}/detail.do?id=${id}`;
+    const res = await fetch(url, { headers: accurateHeaders(creds), signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) throw new Error(`detail.do ${kind} ${id}: HTTP ${res.status}`);
+    const body = await res.json();
+    const row = body?.d as Record<string, unknown> | undefined;
+    if (!row) throw new Error(`detail.do ${kind} ${id}: respons tanpa data`);
+
+    const code = String((kind === "customer" ? row.customerNo : row.no) ?? "").trim();
+    if (!code) throw new Error(`detail.do ${kind} ${id}: tanpa ${kind === "customer" ? "customerNo" : "no"}; tidak ditulis`);
+
+    await SYNC_MODULES[kind].upsertPage([row]);
+    return { kind, id, code };
+}
+
 export async function upsertSalesInvoiceById(id: number, creds: AccurateCredentials) {
     const url = `${creds.sessionHost}/accurate/api/sales-invoice/detail.do?id=${id}`;
     const res = await fetch(url, { headers: accurateHeaders(creds), signal: AbortSignal.timeout(30_000) });

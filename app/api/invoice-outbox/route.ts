@@ -10,6 +10,9 @@
  * - `unknown` TIDAK PERNAH boleh dikirim ulang maupun dihapus dari sini. Tidak ada jawaban
  *   dari Accurate berarti fakturnya MUNGKIN sudah terbentuk, dan faktur ganda di sana tidak
  *   bisa dibatalkan. Penyelesaiannya rekonsiliasi `charField1`, bukan tombol.
+ * - Batch yang barisnya masih perlu ditinjau IKUT dihitung eskalasinya. Masalah yang belum
+ *   sampai ke antrean bukan berarti tidak ada masalah — justru itu masalah yang diabaikan,
+ *   dan itulah yang paling sering menggantung sampai lewat hari (keputusan pengguna 2026-09-11).
  * - Umur masalah dihitung sejak `created_at` — saat faktur masuk antrean dan BELUM sampai ke
  *   Accurate — bukan sejak percobaan terakhir. Kalau dihitung dari `updated_at`, menekan
  *   "Kirim ulang" akan me-reset jam eskalasi, dan masalah yang berumur sehari bisa terlihat
@@ -18,7 +21,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { invoiceOutbox, principalOrderLine } from "@/db/schema";
+import { invoiceOutbox, principalOrderBatch, principalOrderLine } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { resendable, type OutboxState } from "@/lib/accurate-invoice-write";
 
@@ -76,16 +79,39 @@ export async function GET(request: NextRequest) {
         }
     }
 
+    // Batch yang sudah divalidasi tetapi masih menyisakan baris "review": belum jadi faktur,
+    // belum masuk antrean, dan karena itu tidak akan pernah muncul di daftar di atas.
+    const batches = await db.select({
+        id: principalOrderBatch.id, fileName: principalOrderBatch.fileName,
+        principal: principalOrderBatch.principal, uploadedAt: principalOrderBatch.uploadedAt,
+        uploadedBy: principalOrderBatch.uploadedBy, reviewCount: principalOrderBatch.reviewCount,
+        lineCount: principalOrderBatch.lineCount,
+        ageMinutes: sql<number>`floor(extract(epoch from (now() - ${principalOrderBatch.uploadedAt})) / 60)::int`,
+    }).from(principalOrderBatch)
+        .where(sql`${principalOrderBatch.reviewCount} > 0`)
+        .orderBy(asc(principalOrderBatch.uploadedAt)).limit(100);
+
+    const pending = batches.map((row) => ({
+        ...row,
+        overdue: row.ageMinutes >= ESCALATE_AFTER_MINUTES,
+    }));
+
     const counts = await db.select({ state: invoiceOutbox.state, total: sql<number>`count(*)::int` })
         .from(invoiceOutbox).groupBy(invoiceOutbox.state);
     const [overdue] = await db.select({ total: sql<number>`count(*)::int` }).from(invoiceOutbox)
         .where(and(ne(invoiceOutbox.state, "posted"), overdueFilter));
 
+    const batchOverdue = pending.filter((row) => row.overdue);
     return NextResponse.json({
         ok: true,
         escalateAfterMinutes: ESCALATE_AFTER_MINUTES,
         summary: Object.fromEntries(counts.map((row) => [row.state, row.total])),
-        overdue: overdue?.total ?? 0,
+        // Eskalasi = yang menggantung di ANTREAN + yang masih tertahan di BATCH.
+        overdue: (overdue?.total ?? 0) + batchOverdue.length,
+        overdueQueue: overdue?.total ?? 0,
+        overdueBatches: batchOverdue.length,
+        pendingBatches: pending,
+        reviewLinesOverdue: batchOverdue.reduce((total, row) => total + row.reviewCount, 0),
         rows: rows.map((row) => {
             const soNo = soNoOf(row.orderId);
             return {

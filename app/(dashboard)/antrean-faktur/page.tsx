@@ -22,10 +22,19 @@ type Row = {
     queuedBy: string; createdAt: string; updatedAt: string; ageMinutes: number; overdue: boolean;
 };
 
+type Batch = {
+    id: string; fileName: string; principal: string; uploadedAt: string; uploadedBy: string;
+    reviewCount: number; lineCount: number; ageMinutes: number; overdue: boolean;
+};
+
 type Data = {
     escalateAfterMinutes: number;
     summary: Record<string, number>;
     overdue: number;
+    overdueQueue: number;
+    overdueBatches: number;
+    reviewLinesOverdue: number;
+    pendingBatches: Batch[];
     rows: Row[];
 };
 
@@ -95,8 +104,17 @@ export default function AntreanFakturPage() {
                 <div className="flex items-center gap-3 rounded-lg border border-red-500/40 bg-red-500/10 p-4">
                     <AlertTriangle className="text-red-300" size={20} />
                     <div className="flex-1">
-                        <p className="font-medium text-red-200">{data.overdue} faktur menggantung lebih dari 2 jam</p>
-                        <p className="text-xs text-red-200/80">Ini isi laporan OM. Centang saringan di bawah untuk melihat hanya yang itu.</p>
+                        <p className="font-medium text-red-200">
+                            {data.overdue} masalah menggantung lebih dari 2 jam
+                            {data.overdueBatches > 0 && (
+                                <span className="font-normal"> — {data.overdueQueue} di antrean faktur,
+                                    {" "}{data.overdueBatches} batch belum diantrekan ({data.reviewLinesOverdue} baris perlu ditinjau)</span>
+                            )}
+                        </p>
+                        <p className="text-xs text-red-200/80">
+                            Ini isi laporan OM. Batch yang barisnya masih perlu ditinjau ikut dihitung:
+                            belum masuk antrean bukan berarti tidak ada masalah, justru itu masalah yang diabaikan.
+                        </p>
                     </div>
                     <button onClick={() => setOnlyOverdue(true)} className="rounded bg-red-500/20 px-3 py-1.5 text-sm text-red-100">
                         Tampilkan
@@ -120,6 +138,47 @@ export default function AntreanFakturPage() {
                     <RefreshCw size={13} /> Muat ulang
                 </button>
             </section>
+
+            {!!data?.pendingBatches?.length && (
+                <section className="space-y-2">
+                    <h2 className="text-lg font-medium text-white">Batch yang belum diantrekan</h2>
+                    <div className="overflow-x-auto rounded-lg border border-white/10">
+                        <table className="w-full text-sm">
+                            <thead className="bg-white/5 text-slate-400">
+                                <tr>
+                                    <th className="px-3 py-2 text-left">Berkas</th>
+                                    <th className="px-3 py-2 text-right">Baris</th>
+                                    <th className="px-3 py-2 text-right">Perlu ditinjau</th>
+                                    <th className="px-3 py-2 text-left">Umur</th>
+                                    <th className="px-3 py-2 text-left">Diunggah</th>
+                                    <th className="px-3 py-2" />
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {data.pendingBatches.map((batch) => (
+                                    <tr key={batch.id} className={`border-t border-white/5 ${batch.overdue ? "bg-red-500/5" : ""}`}>
+                                        <td className="px-3 py-2">
+                                            {batch.fileName}
+                                            <div className="text-xs text-slate-500">{batch.principal}</div>
+                                        </td>
+                                        <td className="px-3 py-2 text-right">{batch.lineCount}</td>
+                                        <td className="px-3 py-2 text-right text-amber-300">{batch.reviewCount}</td>
+                                        <td className={`px-3 py-2 text-xs ${batch.overdue ? "text-red-300" : "text-slate-400"}`}>
+                                            <Clock size={12} className="mr-1 inline" />{usia(batch.ageMinutes)}
+                                        </td>
+                                        <td className="px-3 py-2 text-xs text-slate-500">
+                                            {new Date(batch.uploadedAt).toLocaleString("id-ID")}{batch.uploadedBy ? ` · ${batch.uploadedBy}` : ""}
+                                        </td>
+                                        <td className="px-3 py-2 text-right">
+                                            <a href="/principal-order" className="text-xs text-blue-300 hover:underline">Buka batch</a>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            )}
 
             <div className="overflow-x-auto rounded-lg border border-white/10">
                 <table className="w-full text-sm">
