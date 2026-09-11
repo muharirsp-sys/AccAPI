@@ -3,7 +3,7 @@
  * Caller: Coolify scheduled task / cron dengan Bearer CRON_SECRET.
  * Dependensi: db invoice_outbox, lib/accurate-invoice-write (status + identitas), lib/accurate-session.
  * Main Functions: GET.
- * Side Effects: Menulis FAKTUR di Accurate (tidak bisa dibatalkan dari sini) dan update antrean.
+ * Side Effects: Menulis faktur, update antrean; membaca kembali faktur untuk verifikasi benefit program.
  *
  * GERBANG SENGAJA TERTUTUP (keputusan pengguna 2026-09-08: "bangun dulu tanpa mengirim").
  * Endpoint ini MENOLAK sampai dua env di-set eksplisit:
@@ -26,6 +26,7 @@ import { invoiceOutbox } from "@/db/schema";
 import { isAllowedAccurateHost, requireCronSecret } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
 import { nextOutboxState, readInvoiceIdentity, type SendOutcome } from "@/lib/accurate-invoice-write";
+import { refreshRealization } from "@/lib/program-realization-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -126,6 +127,11 @@ export async function GET(request: Request) {
                 ? { accurateDbId: targetDb, accurateId: outcome!.id, accurateNumber: outcome!.number, lastError: "" }
                 : { lastError: outcome!.message.slice(0, 1000) }),
         }).where(eq(invoiceOutbox.orderId, row.orderId));
+        if (state === "posted") {
+            try { await refreshRealization(row.orderId, { databaseId: targetDb, sessionHost: session.sessionHost,
+                sessionId: session.sessionId, apiKey: session.accessToken }); }
+            catch { /* Faktur sudah tersimpan; pemeriksaan dapat diulang dari laporan tanpa mengirim ulang. */ }
+        }
         results.push({
             order_id: row.orderId, state,
             ...(outcome!.kind === "posted" ? { number: outcome!.number } : { error: outcome!.message.slice(0, 200) }),

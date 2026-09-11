@@ -3,7 +3,7 @@
  * Caller: halaman Order Masuk (petugas), izin `order.edit`.
  * Dependensi: FastAPI GET /orders/{id} (order beku), lib/accurate-invoice-write, lib/accurate-units, db invoice_outbox.
  * Main Functions: POST (dry-run default, `queue: true` untuk memasukkan ke antrean), GET (status).
- * Side Effects: Dry-run TIDAK menulis apa pun. Queue menulis satu baris invoice_outbox.
+ * Side Effects: Queue membekukan payload + jejak program dalam satu insert invoice_outbox; dry-run hanya baca.
  *   TIDAK ADA request tulis ke Accurate di sini — pengirimannya di /api/cron/post-invoices.
  *
  * Satuan diambil dari master satuan Accurate (`unit/list.do`, read-only) supaya `itemUnitId`
@@ -17,6 +17,7 @@ import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { buildInvoicePayload, type InvoiceOrder } from "@/lib/accurate-invoice-write";
 import { accurateUnits } from "@/lib/accurate-units";
 import { resolveOrderBranch } from "@/lib/order-branch";
+import { programSnapshot } from "@/lib/program-realization";
 
 export const runtime = "nodejs";
 
@@ -96,6 +97,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         orderDate: fetched.order.order_date,
         state: "queued",
         payload,
+        programSnapshot: programSnapshot(fetched.order),
         queuedBy: String(gate.session?.user?.email ?? gate.session?.user?.id ?? ""),
     });
     return NextResponse.json({ ok: true, queued: true, payload });

@@ -872,7 +872,8 @@ dashboard/form_kontrol/insentif yang memang miliknya).
 ### Perubahan PRODUKSI 2026-09-11 — migrasi 0010 dan 0011
 
 Atas permintaan eksplisit pengguna, lewat pola resmi proyek:
-`tr -d '' < db/migrations/<berkas>.sql | ssh root@43.156.118.114 "docker exec -i
+`tr -d '
+' < db/migrations/<berkas>.sql | ssh root@43.156.118.114 "docker exec -i
 accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 --single-transaction"`.
 
 | Objek | Status setelah migrasi |

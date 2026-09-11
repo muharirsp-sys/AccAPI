@@ -1,7 +1,8 @@
 /*
  * Tujuan: Detail satu faktur (header + baris item, qty, harga) langsung dari Accurate detail.do.
- * Caller: app/(dashboard)/faktur/page.tsx saat baris diperluas.
+ * Caller: halaman faktur saat baris diperluas atau dibuka dari realisasi dengan database+ID.
  * Dependensi: lib/accurate-session (kredensial sistem), lib/accurate-invoice (mapper), RBAC.
+ * Main Functions: GET, cek database tujuan opsional sebelum membaca detail.
  * Side Effects: 1 panggilan HTTP ke Accurate per pembukaan faktur (read-only).
  *
  * Kenapa ambil live, bukan dari kolom raw_data: cron sync 4x/hari menimpa raw_data pakai respons
@@ -28,6 +29,10 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     const accurate = await resolveSyncCredentials();
     if (!accurate.creds) {
         return NextResponse.json({ ok: false, error: accurate.error }, { status: 503 });
+    }
+    const databaseId = request.nextUrl.searchParams.get("databaseId");
+    if (databaseId !== null && (!databaseId || databaseId !== accurate.creds.databaseId)) {
+        return NextResponse.json({ ok: false, error: "Database sesi Accurate berbeda dari faktur pada laporan realisasi." }, { status: 409 });
     }
 
     try {
