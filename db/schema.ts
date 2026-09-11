@@ -162,6 +162,37 @@ export const invoiceOutbox = pgTable("invoice_outbox", {
     index("idx_invoice_outbox_state").on(t.state, t.createdAt),
 ]);
 
+// Aturan promo terbit dalam bentuk yang bisa dibandingkan dengan faktur nyata (db/migrations/0011).
+// Skema kolomnya sama dengan yang dibaca mesin Validator Diskon, supaya satu bentuk aturan
+// dipakai dua tempat. `item_code` KOSONG = aturan tingkat faktur (berlaku semua barang).
+export const promoRule = pgTable("promo_rule", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    principal: text("principal").notNull(),
+    suratProgram: text("surat_program").notNull().default(""),
+    promoLabel: text("promo_label").notNull().default(""),
+    promoGroupId: text("promo_group_id").notNull().default(""),
+    promoGroup: text("promo_group").notNull().default(""),
+    itemCode: text("item_code").notNull().default(""),
+    itemName: text("item_name").notNull().default(""),
+    prdId: text("prd_id").notNull().default(""),
+    periodStart: date("period_start"),
+    periodEnd: date("period_end"),
+    active: boolean("active").notNull().default(true),
+    tierNo: integer("tier_no").notNull().default(1),
+    triggerQty: numeric("trigger_qty").notNull().default("0"),
+    triggerUnit: text("trigger_unit").notNull().default("PCS"),
+    benefitType: text("benefit_type").notNull().default(""),
+    benefitValue: text("benefit_value").notNull().default(""),
+    benefitUnit: text("benefit_unit").notNull().default(""),
+    benefitBeban: text("benefit_beban").notNull().default("PRINCIPAL"),
+    onFaktur: boolean("on_faktur").notNull().default(true),
+    note: text("note").notNull().default(""),
+    importedBy: text("imported_by").notNull().default(""),
+    importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_promo_rule_item").on(t.itemCode, t.periodStart, t.periodEnd),
+]);
+
 // Master cabang Accurate. Penomoran faktur Accurate berjalan PER CABANG, dan harga jual
 // juga per cabang, jadi id cabang di sini adalah id milik Accurate — bukan id lokal.
 export const branch = pgTable("branch", {
