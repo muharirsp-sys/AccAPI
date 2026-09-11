@@ -295,6 +295,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/payments/sppd", module: "sppd", action: "view" },
     { prefix: "/payments", module: "payments", action: "view" },
     { prefix: "/finance", module: "finance", action: "view" },
+    { prefix: "/principal-mapping", module: "principles", action: "view" },
     { prefix: "/principles", module: "principles", action: "view" },
     // /sales sebelum /orders TIDAK relevan (prefix beda), tapi urutannya tetap dijaga:
     // pencocokan memakai prefix terpanjang.

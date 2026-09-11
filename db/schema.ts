@@ -182,6 +182,22 @@ export const branch = pgTable("branch", {
 
 // Master satuan Accurate. Ruang id-nya SAMA dengan `item.unitNId` (dibuktikan live
 // 2026-09-09: PCS=50, KRT=100 di kedua sumber), jadi ini sumber `itemUnitId` baris faktur.
+// Terjemahan kode principal -> kode internal. Satu tabel untuk tiga jenis karena
+// bentuknya sama; `unit`/`packSize` hanya terisi untuk kind='item'.
+export const principalMapping = pgTable("principal_mapping", {
+    principal: text("principal").notNull(),
+    kind: text("kind").notNull(),
+    sourceCode: text("source_code").notNull(),
+    targetCode: text("target_code").notNull(),
+    unit: text("unit"),
+    packSize: numeric("pack_size"),
+    note: text("note").notNull().default(""),
+    updatedBy: text("updated_by").notNull().default(""),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+    pk: primaryKey({ columns: [table.principal, table.kind, table.sourceCode] }),
+}));
+
 export const accurateUnit = pgTable("accurate_unit", {
     id: bigint("id", { mode: "number" }).primaryKey(),
     name: text("name").notNull(),

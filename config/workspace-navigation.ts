@@ -41,6 +41,7 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
     { id: "settings", name: "Pengaturan", description: "Atur integrasi Accurate, master data, dan akses.", icon: Settings2, items: [
         { name: "AOL Form Engine", href: "/api-wrapper", icon: Settings2 },
         { name: "Master Principle", href: "/principles", icon: Database },
+        { name: "Mapping Principal", href: "/principal-mapping", icon: Database },
         { name: "User & RBAC", href: "/admin/users", icon: Shield },
         { name: "Kelola Akses Group", href: "/admin/groups", icon: ShieldCheck },
     ] },

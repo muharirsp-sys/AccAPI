@@ -37,12 +37,12 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 
 | # | Yang harus benar | Status | Catatan |
 |---|---|---|---|
-| 4.1 | `PRD_ID` Kino → kode barang internal | 🟡 | Tabelnya ada di `KINO.xlsx` sheet `Mapping_Prd` (678 baris) tapi **masih berupa berkas, belum masuk DB**. Perlu importir seperti `import_outlet_class.py` |
+| 4.1 | `PRD_ID` Kino → kode barang internal | ✅ | **Selesai 2026-09-11.** Tabel `principal_mapping` + halaman `/principal-mapping`. Termuat nyata dari `KINO (1).xlsx`: 677 barang, 1.433 pelanggan, 9 salesman |
 | 4.2 | Kode internal ada di master `item` Accurate | ✅ | Tabel `item` tersinkron (4.185 item, semuanya bersatuan) |
-| 4.3 | **Satuan** baris | ❌ | **ORDER_DETAIL TIDAK punya kolom satuan.** `Mapping_Prd` punya `Satuan` + `ISI`. Lihat pertanyaan 2 — salah satuan = salah 36x/72x |
+| 4.3 | **Satuan** baris | 🟡 | Aturannya pasti (lihat Power Query) dan `unit`+`pack_size` sudah tersimpan per barang; penerapannya pada parser laporan belum |
 | 4.4 | Harga per pelanggan dari Accurate | ✅ | `lib/item-price.ts` + `customerPriceCategory` + `item_selling_price` (2,33 juta baris) |
 | 4.5 | Bandingkan harga laporan vs harga Accurate | ❌ | Perbandingannya belum dibuat. Dan **kalau beda, siapa yang menang?** Lihat pertanyaan 3 |
-| 4.6 | `CUST_ID2` → pelanggan Accurate yang benar | 🟡 | `CUST_ID2` = kode dasar (`C-GAL006`); Accurate memakai kode per cabang principal (`C-GAL006-KN`). Pemilihan akhiran cabang Kino belum dibuat |
+| 4.6 | `CUST_ID2` → pelanggan Accurate yang benar | 🟡 | Mapping pelanggan sudah di DB; akhiran cabang `-KN` terkonfirmasi dari Power Query. Penyambungannya ke parser laporan belum |
 
 ## Langkah 4 tahap 1b — cocokkan PROMO dengan aturan terbit
 
@@ -174,6 +174,36 @@ API kita menggantikan langkah impor manual ini, bukan menambahinya.
 - 6.1/6.2/6.5: pemicu eskalasi = **umur masalah 2 jam**, bukan jam cut-off tetap; ditambah
   penarikan ulang laporan di akhir kerja sebagai penutup hari
 - Baru: **baris bonus = diskon 100%** wajib dikenali gerbang promo
+
+## Langkah 1 urutan kerja SELESAI — mapping principal, 2026-09-11
+
+`db/migrations/0007_principal_mapping.sql` + `/principal-mapping`.
+
+**Satu tabel untuk tiga jenis**, bukan tiga tabel: bentuknya sama (kode sana -> kode sini),
+dan tiga tabel berarti tiga importir, tiga endpoint, dan tiga layar untuk hal yang persis
+sama. `unit` dan `pack_size` hanya terisi untuk `kind='item'`.
+
+- `lib/principal-mapping.ts` — murni, tanpa DB. Judul kolom **dicari lewat sinonim yang
+  dinormalkan**, bukan indeks tetap, karena berkas principal adalah laporan ad hoc yang judul
+  kolomnya berubah-ubah. Baris setengah jadi, ISI kosong, dan kode ganda **dilaporkan**.
+- Barang tanpa `ISI` **ditolak**, di importir maupun di form: aturan satuan menaikkan baris ke
+  KRT hanya bila QTY habis dibagi ISI, jadi ISI yang hilang membuat satu baris salah 36x.
+- `/api/principal-mapping` GET (cari + halaman), PUT (tambah/ubah), DELETE, POST (ringkasan).
+  Izin memakai modul `principles` yang sudah ada — ini master data principal, bukan modul baru.
+- `/api/principal-mapping/import` — **default pratinjau**, menulis hanya dengan `apply=true`.
+  Memuat MENGGANTI seluruh jenis yang diimpor: kode yang dicabut principal harus benar-benar
+  hilang, bukan menumpuk dari muatan sebelumnya.
+- Halaman `/principal-mapping`: tiga tab, cari, halaman, tambah/ubah/hapus per baris, dan
+  impor berkas dengan pratinjau temuan lebih dulu.
+
+**Dibuktikan jalan** (lokal, 2026-09-11): impor `KINO (1).xlsx` lewat endpoint sungguhan ->
+**677 barang, 1.433 pelanggan, 9 salesman** masuk Postgres; satu baris salesman berkode
+internal kosong dilaporkan dan dilewati. PUT/DELETE/cari diuji lewat HTTP; barang tanpa ISI
+dan tanpa satuan ditolak dengan pesan yang jelas. Halaman dibuka di browser dan menampilkan
+677 baris. `npx tsc --noEmit` bersih, `lib/principal-mapping.test.ts` 6 test lolos,
+`components/SidebarLayout.test.ts` lolos setelah katalognya diperbarui.
+
+**Belum dilakukan**: migrasi `0007` belum diterapkan di PRODUKSI.
 
 ## Yang paling menentukan sebelum kode ditulis
 

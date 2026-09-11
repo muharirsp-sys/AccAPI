@@ -12,7 +12,10 @@ import { WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, activeNavigation
 test("all existing modules appear exactly once across six groups", () => {
     const items = WORKSPACE_GROUPS.flatMap(group => group.items);
     assert.equal(WORKSPACE_GROUPS.length, 6);
-    assert.equal(items.length, 20);
+    assert.equal(items.length, 21);
+    // Mapping Principal ikut katalog: terjemahan kode principal -> internal adalah master
+    // data yang harus bisa diperbaiki admin lewat UI, bukan lewat berkas di share.
+    assert.ok(items.some(item => item.href === "/principal-mapping"));
     assert.equal(new Set(items.map(item => item.href)).size, items.length);
     assert.ok(items.some(item => item.href === "/payments/sppd"));
     assert.ok(items.some(item => item.href === "/rekapan-nota"));
