@@ -8,13 +8,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Upload, Search, Trash2, AlertTriangle, FileSpreadsheet } from "lucide-react";
+import { Upload, Search, Trash2, AlertTriangle, FileSpreadsheet, ShieldCheck, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
 type Batch = {
     id: string; principal: string; fileName: string; branch: string; period: string;
     lineCount: number; skipped: number; issues: string[]; status: string;
     uploadedBy: string; uploadedAt: string;
+    validatedAt: string | null; okCount: number; reviewCount: number;
 };
 
 type Line = {
@@ -22,6 +23,9 @@ type Line = {
     customerType: string; productCode: string; productName: string;
     reportQty: string; reportGross: string; qty: string; unit: string; price: string;
     discounts: { position: number; percent: number }[]; bonus: boolean;
+    itemCode: string | null; customerNo: string | null; expectedPrice: string | null;
+    discDistributor: string; discPrincipal: string; discUnowned: string;
+    status: "pending" | "ok" | "review"; findings: string[];
 };
 
 type Preview = {
@@ -40,6 +44,7 @@ export default function PrincipalOrderPage() {
     const [batches, setBatches] = useState<Batch[]>([]);
     const [open, setOpen] = useState<{ batch: Batch; lines: Line[] } | null>(null);
     const [busy, setBusy] = useState(false);
+    const [onlyReview, setOnlyReview] = useState(false);
 
     const loadBatches = useCallback(async () => {
         const res = await fetch("/api/principal-order", { credentials: "include" });
@@ -80,6 +85,23 @@ export default function PrincipalOrderPage() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) { toast.error(data.error ?? "Gagal memuat batch"); return; }
         setOpen({ batch: data.batch, lines: data.lines });
+    }
+
+    async function validate(id: string) {
+        setBusy(true);
+        try {
+            const res = await fetch(`/api/principal-order/validate?id=${encodeURIComponent(id)}`, { method: "POST", credentials: "include" });
+            const data = await res.json();
+            if (!res.ok || !data.ok) throw new Error(data.error ?? "Validasi gagal");
+            toast[data.reviewCount > 0 ? "warning" : "success"](
+                `${data.okCount} baris cocok, ${data.reviewCount} perlu ditinjau`);
+            await loadBatches();
+            await openBatch(id);
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Validasi gagal");
+        } finally {
+            setBusy(false);
+        }
     }
 
     async function removeBatch(id: string) {
@@ -168,6 +190,7 @@ export default function PrincipalOrderPage() {
                                 <th className="px-3 py-2 text-left">Periode</th>
                                 <th className="px-3 py-2 text-right">Baris</th>
                                 <th className="px-3 py-2 text-right">Dilewati</th>
+                                <th className="px-3 py-2 text-left">Validasi</th>
                                 <th className="px-3 py-2 text-left">Diunggah</th>
                                 <th className="px-3 py-2" />
                             </tr>
@@ -184,16 +207,27 @@ export default function PrincipalOrderPage() {
                                     <td className="px-3 py-2 text-slate-300">{batch.period || "—"}</td>
                                     <td className="px-3 py-2 text-right">{batch.lineCount}</td>
                                     <td className="px-3 py-2 text-right">{batch.skipped > 0 ? <span className="text-amber-300">{batch.skipped}</span> : "—"}</td>
+                                    <td className="px-3 py-2">
+                                        {batch.validatedAt
+                                            ? <span className={batch.reviewCount > 0 ? "text-amber-300" : "text-emerald-300"}>
+                                                {batch.okCount} cocok · {batch.reviewCount} ditinjau
+                                            </span>
+                                            : <span className="text-slate-500">belum divalidasi</span>}
+                                    </td>
                                     <td className="px-3 py-2 text-xs text-slate-500">
                                         {new Date(batch.uploadedAt).toLocaleString("id-ID")}{batch.uploadedBy ? ` · ${batch.uploadedBy}` : ""}
                                     </td>
-                                    <td className="px-3 py-2 text-right">
+                                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                                        <button onClick={() => void validate(batch.id)} disabled={busy}
+                                            className="mr-1 inline-flex items-center gap-1 rounded bg-white/10 px-2 py-1 text-xs disabled:opacity-40">
+                                            <ShieldCheck size={13} /> Validasi
+                                        </button>
                                         <button onClick={() => void removeBatch(batch.id)} className="px-2 text-red-400 hover:text-red-300"><Trash2 size={15} /></button>
                                     </td>
                                 </tr>
                             ))}
                             {!batches.length && (
-                                <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-500">Belum ada batch. Unggah berkas Order Detail di atas.</td></tr>
+                                <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-500">Belum ada batch. Unggah berkas Order Detail di atas.</td></tr>
                             )}
                         </tbody>
                     </table>
@@ -202,10 +236,18 @@ export default function PrincipalOrderPage() {
 
             {open && (
                 <section className="space-y-3">
-                    <h2 className="text-lg font-medium text-white">
-                        {open.batch.fileName}
-                        <span className="ml-2 text-sm font-normal text-slate-400">{open.lines.length} baris · {open.batch.branch}</span>
-                    </h2>
+                    <div className="flex flex-wrap items-center gap-3">
+                        <h2 className="text-lg font-medium text-white">
+                            {open.batch.fileName}
+                            <span className="ml-2 text-sm font-normal text-slate-400">{open.lines.length} baris · {open.batch.branch}</span>
+                        </h2>
+                        {open.batch.validatedAt && (
+                            <label className="ml-auto flex items-center gap-2 text-sm text-slate-300">
+                                <input type="checkbox" checked={onlyReview} onChange={(event) => setOnlyReview(event.target.checked)} />
+                                Tampilkan hanya yang perlu ditinjau ({open.batch.reviewCount})
+                            </label>
+                        )}
+                    </div>
                     <div className="overflow-x-auto rounded-lg border border-white/10 max-h-[28rem]">
                         <table className="w-full text-sm">
                             <thead className="bg-white/5 text-slate-400 sticky top-0">
@@ -218,10 +260,11 @@ export default function PrincipalOrderPage() {
                                     <th className="px-3 py-2 text-right">Harga</th>
                                     <th className="px-3 py-2 text-left">Diskon</th>
                                     <th className="px-3 py-2 text-right">Bruto</th>
+                                    <th className="px-3 py-2 text-left">Hasil validasi</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {open.lines.map((line) => (
+                                {open.lines.filter((line) => !onlyReview || line.status === "review").map((line) => (
                                     <tr key={line.rowNumber} className="border-t border-white/5">
                                         <td className="px-3 py-1.5 font-mono text-xs">{line.soNo}</td>
                                         <td className="px-3 py-1.5">
@@ -247,6 +290,17 @@ export default function PrincipalOrderPage() {
                                             {!line.discounts.length && <span className="text-slate-600">—</span>}
                                         </td>
                                         <td className="px-3 py-1.5 text-right">{money(line.reportGross)}</td>
+                                        <td className="px-3 py-1.5 text-xs max-w-md">
+                                            {line.status === "pending" && <span className="text-slate-600">belum divalidasi</span>}
+                                            {line.status === "ok" && (
+                                                <span className="inline-flex items-center gap-1 text-emerald-300"><CheckCircle2 size={13} /> cocok</span>
+                                            )}
+                                            {line.status === "review" && (
+                                                <ul className="list-disc pl-4 text-amber-200">
+                                                    {line.findings.map((finding) => <li key={finding}>{finding}</li>)}
+                                                </ul>
+                                            )}
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -254,7 +308,8 @@ export default function PrincipalOrderPage() {
                     </div>
                     <p className="text-xs text-slate-500">
                         Posisi diskon menentukan siapa menanggung: D1–D3 distributor, D4–D5 klaim principal,
-                        D6–D8 tidak punya pemilik (merah) dan wajib ditinjau.
+                        D6–D8 tidak punya pemilik (merah) dan wajib ditinjau. Selisih harga sampai Rp 1 dianggap
+                        pembulatan; di atas itu baris ditahan, baik lebih tinggi maupun lebih rendah.
                     </p>
                 </section>
             )}

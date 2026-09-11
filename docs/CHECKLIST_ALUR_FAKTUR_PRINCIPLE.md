@@ -41,8 +41,8 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 | 4.2 | Kode internal ada di master `item` Accurate | ✅ | Tabel `item` tersinkron (4.185 item, semuanya bersatuan) |
 | 4.3 | **Satuan** baris | ✅ | `fixLine()` menerapkan aturan Power Query; 13 dari 53 baris berkas 11 Sep naik ke KRT, nilai baris tetap |
 | 4.4 | Harga per pelanggan dari Accurate | ✅ | `lib/item-price.ts` + `customerPriceCategory` + `item_selling_price` (2,33 juta baris) |
-| 4.5 | Bandingkan harga laporan vs harga Accurate | ❌ | Perbandingannya belum dibuat. Dan **kalau beda, siapa yang menang?** Lihat pertanyaan 3 |
-| 4.6 | `CUST_ID2` → pelanggan Accurate yang benar | 🟡 | Mapping pelanggan sudah di DB; akhiran cabang `-KN` terkonfirmasi dari Power Query. Penyambungannya ke parser laporan belum |
+| 4.5 | Bandingkan harga laporan vs harga Accurate | ✅ | Toleransi Rp 1 dua arah; di atas itu baris ditahan |
+| 4.6 | `CUST_ID1` → pelanggan Accurate yang benar | ✅ | `CUST_ID1` -> mapping -> `+ "-KN"`, lalu dicek ada di master `customer` |
 
 ## Langkah 4 tahap 1b — cocokkan PROMO dengan aturan terbit
 
@@ -60,10 +60,10 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 
 | # | Yang harus benar | Status | Catatan |
 |---|---|---|---|
-| 4.14 | Status per faktur: cocok / perlu ditinjau | ❌ | Belum ada |
-| 4.15 | Halaman admin review | ❌ | Harus menunjukkan: faktur mana, baris mana, selisih apa (item / harga / diskon), dan angka pembandingnya |
+| 4.14 | Status per baris: cocok / perlu ditinjau | ✅ | `principal_order_line.status` + hitungan `ok_count`/`review_count` pada batch |
+| 4.15 | Halaman admin review | 🟡 | `/principal-order` sudah menampilkan temuan per baris + saringan "hanya yang perlu ditinjau". Halaman khusus peninjau (dan tindakannya) belum |
 | 4.16 | Izin RBAC peninjau | ❌ | Sudah diputuskan jadi permission baru, belum dibuat |
-| 4.17 | Faktur yang sudah diperbaiki bisa masuk kembali ke antrean | ❌ | Belum ada |
+| 4.17 | Yang sudah diperbaiki bisa diperiksa ulang | ✅ | Tombol Validasi bisa dijalankan berulang; terbukti 0 cocok -> 6 cocok setelah satu mapping diperbaiki |
 
 ## Langkah 4 tahap 2 — satu tombol kirim ke Accurate
 
@@ -280,6 +280,51 @@ Unggah ulang berkas yang sama **ditolak 409** dengan menyebut batch sebelumnya. 
 warna: D1–D3 distributor, D4–D5 klaim principal, D6–D8 merah (tak bertuan).
 
 **Belum dilakukan**: migrasi `0007` dan `0008` belum diterapkan di PRODUKSI.
+
+## Langkah 3 urutan kerja SELESAI — validasi tahap 1, 2026-09-11
+
+`lib/principal-validation.ts` + `POST /api/principal-order/validate` + migrasi 0009.
+
+Yang diperiksa per baris, **semuanya menahan** (tidak ada yang "cuma peringatan", karena semua
+yang diperiksa di sini berakhir sebagai angka pada faktur):
+
+1. Kode produk ada di mapping, dan kode barangnya ada di master `item` Accurate.
+2. Kode outlet ada di mapping, dan `kode + "-KN"` ada di master `customer`.
+3. Kode salesman ada di mapping.
+4. Satuan baris ada pada daftar harga Accurate (satu item bisa berselisih 72x antar satuan).
+5. **Harga**: selisih sampai **Rp 1** lolos; di atas itu ditahan, **lebih tinggi maupun lebih
+   rendah** (keputusan pengguna).
+6. **Pecahan diskon per POSISI**: D1–D3 distributor, D4–D5 klaim principal, sisanya tak bertuan.
+   Diskon bertingkat, bukan dijumlah.
+7. Klaim principal tanpa aturan promo terbit.
+8. Total diskon hitungan kami vs yang dilaporkan principal (toleransi Rp 1).
+
+Hasil terjemahan (`item_code`, `customer_no`, `salesman_internal`, `expected_price`) **DISIMPAN**
+pada barisnya, bukan dihitung ulang saat kirim: mapping bisa berubah setelah batch ditinjau, dan
+faktur wajib memakai angka yang benar-benar dilihat manusia.
+
+**Satu penyederhanaan yang disengaja dan gagal-tertutup**: `hasPublishedRules` ditahan pada
+`false` di `validate/route.ts`. Aturan promo terbit tinggal di SQLite backend Python, bukan di
+Postgres, jadi belum bisa ditanya dari route Next. Akibatnya **setiap klaim principal wajib
+ditinjau manusia** — arah yang aman. Upgrade-nya tertulis di komentar kode: panggil
+`GET /summary/library/published` pada FastAPI lalu bandingkan hasil `calculate()` per faktur.
+
+**Dibuktikan jalan** (lokal, berkas `Order Detail.xlsx` 11 September, 53 baris):
+
+| Tahap | Cocok | Perlu ditinjau | Temuan utama |
+|---|---|---|---|
+| Validasi pertama | 0 | 53 | outlet `322680876413` belum ada di mapping — 53 baris ditahan |
+| Setelah admin menambah mapping outlet lewat UI | **6** | 47 | sisanya **selisih harga nyata** Rp 630–2.387 per satuan |
+
+Terjemahan yang berhasil: item 53/53, salesman 53/53, pelanggan 53/53 setelah diperbaiki.
+Selisih harga yang tersisa itu temuan bisnis sungguhan — entah master harga Accurate tertinggal,
+entah Kino menagih harga lain. Persis yang gerbang ini ada untuk menangkapnya.
+
+**Migrasi 0007, 0008, dan 0009 SUDAH diterapkan di PRODUKSI** (2026-09-11). 0009 ikut diterapkan
+tanpa diminta terpisah karena kode yang di-push memerlukannya; sifatnya aditif dan idempoten.
+
+**Jebakan yang sempat memakan waktu**: cache Turbopack basi membuat SELURUH route `/api/*`
+menjawab 404 padahal kodenya benar. `rm -rf .next/cache` lalu jalankan ulang dev server.
 
 ## Yang paling menentukan sebelum kode ditulis
 

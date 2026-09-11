@@ -197,6 +197,9 @@ export const principalOrderBatch = pgTable("principal_order_batch", {
     status: text("status").notNull().default("parsed"),
     uploadedBy: text("uploaded_by").notNull().default(""),
     uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    validatedAt: timestamp("validated_at", { withTimezone: true }),
+    okCount: integer("ok_count").notNull().default(0),
+    reviewCount: integer("review_count").notNull().default(0),
 });
 
 export const principalOrderLine = pgTable("principal_order_line", {
@@ -222,6 +225,17 @@ export const principalOrderLine = pgTable("principal_order_line", {
     price: numeric("price").notNull().default("0"),
     discounts: jsonb("discounts").notNull().default([]),
     bonus: boolean("bonus").notNull().default(false),
+    // Hasil validasi tahap 1 (migrasi 0009).
+    itemCode: text("item_code"),
+    customerNo: text("customer_no"),
+    salesmanInternal: text("salesman_internal"),
+    expectedPrice: numeric("expected_price"),
+    priceSource: text("price_source"),
+    discDistributor: numeric("disc_distributor").notNull().default("0"),
+    discPrincipal: numeric("disc_principal").notNull().default("0"),
+    discUnowned: numeric("disc_unowned").notNull().default("0"),
+    status: text("status").notNull().default("pending"),
+    findings: jsonb("findings").notNull().default([]),
 }, (table) => ({
     pk: primaryKey({ columns: [table.batchId, table.rowNumber] }),
 }));
