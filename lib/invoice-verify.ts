@@ -148,13 +148,21 @@ export type VerifyResult = {
     linesChecked: number;
     /** Salesman pada faktur Accurate (butir 4.31); kosong = faktur keluar tanpa sales. */
     salesman: string;
+    /** Tanggal yang BENAR-BENAR dipakai Accurate (dd/MM/yyyy), untuk ditampilkan apa adanya. */
+    invoiceDate: string;
 };
 
 const unchecked = (reason: string, invoice?: AccurateInvoice): VerifyResult => ({
     status: "tak-terperiksa", reason, findings: [],
     invoiceNumber: invoice?.number ?? "", invoiceId: invoice?.id ?? "", linesChecked: 0,
-    salesman: invoice?.salesmanName ?? "",
+    salesman: invoice?.salesmanName ?? "", invoiceDate: invoice?.transDate ?? "",
 });
+
+/** dd/MM/yyyy -> yyyyMMdd supaya bisa dibandingkan sebagai angka; 0 bila tidak terbaca. */
+function sortableDate(raw: string): number {
+    const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(raw ?? "").trim());
+    return match ? Number(`${match[3]}${match[2]}${match[1]}`) : 0;
+}
 
 /**
  * Payload beku lawan faktur Accurate. Menandai selisih; TIDAK memperbaiki apa pun — faktur yang
@@ -179,7 +187,21 @@ export function verifyInvoice(payload: InvoicePayload, raw: unknown): VerifyResu
     // membandingkan dua dokumen yang tidak berhubungan dan hasilnya menyesatkan.
     head("charField1", payload.charField1, invoice.charField1);
     head("pelanggan", payload.customerNo, invoice.customerNo);
-    head("tanggal", payload.transDate, invoice.transDate);
+    // Tanggal SENGAJA tidak dituntut sama persis. Aturan pengguna 2026-09-12: faktur diproses
+    // pada tanggal masalahnya selesai, jadi laporan yang tertahan sehari memang wajar terbit
+    // keesokan harinya — dan Accurate memang menstempel tanggal pembuatannya sendiri. Yang
+    // TIDAK wajar hanya satu arah: faktur bertanggal LEBIH AWAL daripada SO-nya, karena itu
+    // berarti penjualan tercatat sebelum pesanannya ada.
+    const soDate = sortableDate(payload.transDate);
+    const invoiceDate = sortableDate(invoice.transDate);
+    if (!invoiceDate) {
+        findings.push({ line: null, field: "tanggal faktur", expected: payload.transDate, actual: invoice.transDate || "kosong" });
+    } else if (soDate && invoiceDate < soDate) {
+        findings.push({
+            line: null, field: "tanggal faktur lebih awal dari SO",
+            expected: `>= ${payload.transDate}`, actual: invoice.transDate,
+        });
+    }
     head("PPN aktif (taxable)", payload.taxable, invoice.taxable);
     head("PPN di atas harga (inclusiveTax)", payload.inclusiveTax, invoice.inclusiveTax);
     // Nomor faktur dibuat Accurate dari seri milik cabang. Yang bisa dibuktikan dari jawabannya
@@ -252,5 +274,6 @@ export function verifyInvoice(payload: InvoicePayload, raw: unknown): VerifyResu
         invoiceId: invoice.id,
         linesChecked: checked,
         salesman: invoice.salesmanName,
+        invoiceDate: invoice.transDate,
     };
 }
