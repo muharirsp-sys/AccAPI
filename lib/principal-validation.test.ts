@@ -166,13 +166,30 @@ test("promo yang TIDAK SESUAI aturan wajib muncul sebagai perlu ditinjau, bukan 
     assert.deepEqual(tanpaDiskon.findings, []);
 });
 
-test("diskon distributor tidak pernah butuh aturan terbit", () => {
-    // SS DIAPERS 12 Sep 2026: 2% di posisi 1. Itu tanggungan kita sendiri (Satu Sama Group),
-    // bukan klaim ke principal, jadi tidak ada yang perlu dijelaskan surat program.
-    const hasil = checkLine(line({ discounts: [{ position: 1, percent: 2 }], reportDiscount: 6486.49 }));
-    assert.equal(hasil.status, "ok");
-    assert.equal(hasil.split.distributor, 6486.49);
-    assert.equal(hasil.split.principal, 0);
+test("diskon distributor pun WAJIB punya aturan terbit", () => {
+    // Keputusan pengguna 2026-09-12: "tidak boleh meloloskan apa pun tanpa aturan, harus ada
+    // aturannya dulu baru bisa tembus ke faktur". Potongan yang tidak punya aturan bukan beban
+    // sendiri — ia potongan yang belum jelas milik siapa, dan memberikannya lebih dulu lalu
+    // bertanya kemudian adalah cara kehilangan uang tanpa jejak.
+    const tanpa = checkLine(line({ discounts: [{ position: 1, percent: 2 }], reportDiscount: 6486.49 }));
+    assert.equal(tanpa.status, "review");
+    assert.ok(tanpa.findings.some((f) => f.includes("tanggungan distributor")));
+    assert.equal(tanpa.split.distributor, 6486.49);
+
+    // Begitu tarif distributornya terbit dan cocok, barisnya lolos.
+    const dengan = checkLine(line({
+        discounts: [{ position: 1, percent: 2 }], reportDiscount: 6486.49,
+        rules: [aturan({ benefitBeban: "DISTRIBUTOR", benefitValue: "2" })],
+    }));
+    assert.equal(dengan.status, "ok");
+    assert.deepEqual(dengan.findings, []);
+
+    // Aturan berbeban PRINCIPAL tidak boleh membenarkan potongan di posisi distributor.
+    const salahBeban = checkLine(line({
+        discounts: [{ position: 1, percent: 2 }], reportDiscount: 6486.49,
+        rules: [aturan({ benefitValue: "2" })],
+    }));
+    assert.equal(salahBeban.status, "review");
 });
 
 const msg = (over: Partial<PublishedRule> = {}): PublishedRule => ({

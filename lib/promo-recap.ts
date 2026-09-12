@@ -16,13 +16,14 @@
  * Gerbang kita memang menahan keduanya sebelum faktur naik, tetapi faktur juga bisa dibuat
  * langsung di Accurate di luar jalur ini. Angka nol harus DIBUKTIKAN, bukan diasumsikan.
  */
-import { splitDiscounts, TOLERANCE, type DiscountAt } from "@/lib/principal-validation";
+import { OWNER, splitDiscounts, TOLERANCE, type DiscountAt } from "@/lib/principal-validation";
 
 export type PromoRule = {
     principal: string;
     suratProgram: string;
     promoLabel: string;
     promoGroup: string;
+    /** Kosong = aturan tingkat FAKTUR (berlaku semua barang), mis. program MSG. */
     itemCode: string;
     periodStart: string | null;
     periodEnd: string | null;
@@ -30,6 +31,12 @@ export type PromoRule = {
     benefitValue: string;
     benefitUnit: string;
     onFaktur: boolean;
+    /** PRINCIPAL (bisa ditagihkan) atau DISTRIBUTOR (tanggungan sendiri). */
+    benefitBeban: string;
+    tierNo: number;
+    /** Ambang pemicu; `triggerUnit` RP = nilai belanja. */
+    triggerQty: number;
+    triggerUnit: string;
 };
 
 export type InvoiceLine = {
@@ -37,6 +44,9 @@ export type InvoiceLine = {
     invoiceId: string;
     transDate: string;
     customerNo: string;
+    /** Cabang faktur = principal pemiliknya; ruang nama yang sama dengan `promo_rule.principal`. */
+    branchName: string;
+    customerName: string;
     itemCode: string;
     itemName: string;
     quantity: number;
@@ -88,9 +98,10 @@ export function invoiceLines(raw: unknown): InvoiceLine[] {
     const invoiceNo = String(invoice.number ?? "");
     const invoiceId = String(invoice.id ?? "");
     const transDate = isoDate(String(invoice.transDate ?? ""));
-    const customerNo = String(
-        (invoice.customer as Record<string, unknown> | undefined)?.customerNo ?? invoice.customerNo ?? "",
-    );
+    const customer = (invoice.customer ?? {}) as Record<string, unknown>;
+    const customerNo = String(customer.customerNo ?? invoice.customerNo ?? "");
+    const customerName = String(customer.name ?? "");
+    const branchName = String(invoice.branchName ?? "");
 
     return details.map((entry) => {
         const detail = (entry ?? {}) as Record<string, unknown>;
@@ -105,7 +116,7 @@ export function invoiceLines(raw: unknown): InvoiceLine[] {
             .map((part, index) => ({ position: index + 1, percent: Number(String(part).trim().replace(",", ".")) }))
             .filter((entry) => Number.isFinite(entry.percent) && entry.percent !== 0);
         return {
-            invoiceNo, invoiceId, transDate, customerNo,
+            invoiceNo, invoiceId, transDate, customerNo, customerName, branchName,
             itemCode: String(detail.itemNo ?? item.no ?? ""),
             itemName: String(item.name ?? detail.detailName ?? ""),
             quantity, unitPrice,
@@ -116,17 +127,70 @@ export function invoiceLines(raw: unknown): InvoiceLine[] {
     });
 }
 
-export type RuleMatch = { rule: PromoRule; expectedPercent: number | null };
+export type Bucket = "principal" | "distributor" | "unowned";
 
-/** Aturan yang berlaku untuk satu baris: barangnya cocok DAN tanggal faktur di dalam periode. */
-export function ruleFor(line: InvoiceLine, rules: PromoRule[]): RuleMatch | null {
-    const found = rules.find((rule) =>
-        rule.itemCode === line.itemCode
-        && (!rule.periodStart || rule.periodStart <= line.transDate)
-        && (!rule.periodEnd || line.transDate <= rule.periodEnd));
-    if (!found) return null;
-    const percent = found.benefitType === "DISC_PCT" ? Number(found.benefitValue) : null;
-    return { rule: found, expectedPercent: Number.isFinite(percent as number) ? (percent as number) : null };
+/**
+ * Satu potongan yang sudah digolongkan — bahan kartu, rincian layar, DAN unduhan CSV sekaligus.
+ * Satu bentuk untuk ketiganya supaya angka di kartu tidak mungkin berbeda dari rinciannya.
+ */
+export type DetailRow = {
+    bucket: Bucket;
+    invoiceNo: string;
+    transDate: string;
+    branchName: string;
+    customerNo: string;
+    customerName: string;
+    itemCode: string;
+    itemName: string;
+    /** Posisi kolom diskon yang menyumbang, mis. "4" atau "1+2"; "faktur" untuk potongan MSG. */
+    positions: string;
+    percent: number;
+    amount: number;
+    suratProgram: string;
+    promoGroup: string;
+    /** Kosong bila tidak ada yang perlu dijelaskan; terisi kalau tak bertuan. */
+    reason: string;
+};
+
+/** PPN yang dipakai mengembalikan potongan tingkat faktur ke nilai surat programnya. */
+export const PPN = 0.11;
+
+const inPeriod = (rule: PromoRule, date: string) =>
+    (!rule.periodStart || rule.periodStart <= date) && (!rule.periodEnd || date <= rule.periodEnd);
+
+/**
+ * Aturan per BARANG yang membenarkan potongan sebesar `percent` atas beban `beban`.
+ *
+ * Beban IKUT dicocokkan: aturan principal tidak boleh membenarkan potongan yang duduk di posisi
+ * distributor, dan sebaliknya. Posisi menyatakan siapa yang DIMAKSUD menanggung; aturan
+ * menyatakan apakah maksud itu sah.
+ */
+export function ruleFor(line: InvoiceLine, rules: PromoRule[], beban: string, percent: number): PromoRule | null {
+    if (percent <= 0) return null;
+    return rules.find((rule) => rule.itemCode === line.itemCode
+        && rule.benefitBeban === beban
+        && rule.benefitType === "DISC_PCT"
+        && inPeriod(rule, line.transDate)
+        && Math.abs(cents(Number(rule.benefitValue) - percent)) <= 0.01) ?? null;
+}
+
+/**
+ * Aturan tingkat FAKTUR (program MSG): tier tertinggi yang ambang belanjanya terlampaui.
+ * Nominal surat TERMASUK PPN sedangkan faktur membawa DPP, jadi klaimnya dikembalikan dulu.
+ */
+export function fakturRuleFor(
+    rules: PromoRule[], beban: string, transDate: string, gross: number, claim: number, lineCount: number,
+): PromoRule | null {
+    const tiers = rules
+        .filter((rule) => !rule.itemCode && rule.benefitBeban === beban && rule.benefitType === "DISC_RP"
+            && rule.triggerUnit.toUpperCase() === "RP" && inPeriod(rule, transDate))
+        .sort((a, b) => b.triggerQty - a.triggerQty);
+    const reached = tiers.find((tier) => gross >= tier.triggerQty);
+    if (!reached) return null;
+    const expected = Number(reached.benefitValue);
+    if (!Number.isFinite(expected)) return null;
+    // Toleransi Rp 1 per baris: nominalnya dibagi rata lalu dibulatkan di tiap baris.
+    return Math.abs(cents(claim * (1 + PPN)) - expected) <= TOLERANCE * Math.max(lineCount, 1) ? reached : null;
 }
 
 export type ProgramRecap = {
@@ -134,25 +198,29 @@ export type ProgramRecap = {
     suratProgram: string;
     promoLabel: string;
     promoGroup: string;
-    principalAmount: number;
+    amount: number;
     lines: number;
     invoices: number;
-    mismatched: { invoiceNo: string; itemCode: string; expected: number; actual: number }[];
 };
 
 export type Recap = {
     invoices: number;
     lines: number;
     gross: number;
-    distributor: number;
+    /** Potongan yang COCOK aturan principal — inilah yang benar-benar bisa ditagihkan. */
     principal: number;
+    /** Potongan yang COCOK aturan distributor — beban sendiri, dan memang seharusnya begitu. */
+    distributor: number;
+    /**
+     * Potongan yang TIDAK cocok aturan mana pun, di posisi mana pun. Bukan "posisi 6 ke atas":
+     * keputusan pengguna 2026-09-12 — yang membuat sebuah potongan tak bertuan adalah TIDAK
+     * SESUAINYA dengan promo yang berlaku, bukan letak kolomnya. Untuk Kino hari ini itu berarti
+     * SELURUH potongan posisi 1-3 masuk ke sini, karena belum ada satu pun aturan berbeban
+     * DISTRIBUTOR yang termuat. Uang ini wajib divalidasi dulu sebelum diakui beban siapa pun.
+     */
     unowned: number;
-    /** Klaim principal yang TIDAK punya aturan terbit — uang yang belum bisa dipertanggungjawabkan. */
-    principalWithoutRule: number;
-    cashDiscount: number;
     programs: ProgramRecap[];
-    unownedLines: { invoiceNo: string; itemCode: string; amount: number; positions: number[] }[];
-    unexplained: { invoiceNo: string; itemCode: string; amount: number }[];
+    rows: DetailRow[];
 };
 
 /**
@@ -161,70 +229,113 @@ export type Recap = {
  */
 export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
     const out: Recap = {
-        invoices: 0, lines: lines.length, gross: 0, distributor: 0, principal: 0, unowned: 0,
-        principalWithoutRule: 0, cashDiscount: 0, programs: [], unownedLines: [], unexplained: [],
+        invoices: 0, lines: lines.length, gross: 0,
+        principal: 0, distributor: 0, unowned: 0, programs: [], rows: [],
     };
-    const invoiceIds = new Set<string>();
     const byProgram = new Map<string, ProgramRecap>();
+    const programInvoices = new Map<string, Set<string>>();
+
+    const add = (rule: PromoRule, amount: number, invoiceNo: string) => {
+        const key = `${rule.suratProgram}|${rule.promoGroup}`;
+        const entry = byProgram.get(key) ?? {
+            key, suratProgram: rule.suratProgram, promoLabel: rule.promoLabel,
+            promoGroup: rule.promoGroup, amount: 0, lines: 0, invoices: 0,
+        };
+        entry.amount = cents(entry.amount + amount);
+        entry.lines += 1;
+        byProgram.set(key, entry);
+        if (!programInvoices.has(key)) programInvoices.set(key, new Set());
+        programInvoices.get(key)!.add(invoiceNo);
+    };
+
+    // Potongan tingkat faktur tidak bisa dinilai per baris — nominalnya milik seluruh faktur.
+    const perInvoice = new Map<string, { gross: number; leftover: number; lines: InvoiceLine[] }>();
 
     for (const line of lines) {
-        invoiceIds.add(line.invoiceId || line.invoiceNo);
-        const split = splitDiscounts(line.gross, line.discounts);
+        const invoiceKey = line.invoiceId || line.invoiceNo;
+        const bucketOf = perInvoice.get(invoiceKey) ?? { gross: 0, leftover: 0, lines: [] };
+        bucketOf.gross = cents(bucketOf.gross + line.gross);
+        bucketOf.lines.push(line);
         out.gross = cents(out.gross + line.gross);
-        out.distributor = cents(out.distributor + split.distributor);
-        out.principal = cents(out.principal + split.principal);
-        out.unowned = cents(out.unowned + split.unowned);
-        out.cashDiscount = cents(out.cashDiscount + line.cashDiscount);
 
-        if (split.unowned > 0) {
-            out.unownedLines.push({
-                invoiceNo: line.invoiceNo, itemCode: line.itemCode, amount: split.unowned,
-                positions: line.discounts.filter((d) => d.position > 5).map((d) => d.position),
+        const split = splitDiscounts(line.gross, line.discounts);
+        const percentAt = (owner: string) => cents(line.discounts
+            .filter((entry) => (OWNER[entry.position] ?? "unowned") === owner)
+            .reduce((total, entry) => total + entry.percent, 0));
+        const positionsAt = (owner: string) => line.discounts
+            .filter((entry) => (OWNER[entry.position] ?? "unowned") === owner)
+            .map((entry) => String(entry.position)).join("+");
+
+        const base = {
+            invoiceNo: line.invoiceNo, transDate: line.transDate, branchName: line.branchName,
+            customerNo: line.customerNo, customerName: line.customerName,
+            itemCode: line.itemCode, itemName: line.itemName,
+        };
+
+        for (const owner of ["distributor", "principal"] as const) {
+            const amount = owner === "distributor" ? split.distributor : split.principal;
+            if (amount <= 0) continue;
+            const percent = percentAt(owner);
+            const beban = owner === "distributor" ? "DISTRIBUTOR" : "PRINCIPAL";
+            const matched = ruleFor(line, rules, beban, percent);
+            if (matched) {
+                out[owner] = cents(out[owner] + amount);
+                if (owner === "principal") add(matched, amount, line.invoiceNo);
+                out.rows.push({ ...base, bucket: owner, positions: positionsAt(owner), percent, amount,
+                    suratProgram: matched.suratProgram, promoGroup: matched.promoGroup, reason: "" });
+                continue;
+            }
+            out.unowned = cents(out.unowned + amount);
+            const adaAturan = rules.some((rule) => rule.itemCode === line.itemCode && rule.benefitBeban === beban);
+            out.rows.push({ ...base, bucket: "unowned", positions: positionsAt(owner), percent, amount,
+                suratProgram: "", promoGroup: "",
+                reason: adaAturan
+                    ? `${percent}% tidak sama dengan aturan ${beban.toLowerCase()} yang berlaku untuk barang ini`
+                    : `tidak ada aturan ${beban.toLowerCase()} untuk barang ini`,
             });
         }
-        if (split.principal <= 0) continue;
 
-        const matched = ruleFor(line, rules);
-        if (!matched) {
-            out.principalWithoutRule = cents(out.principalWithoutRule + split.principal);
-            out.unexplained.push({ invoiceNo: line.invoiceNo, itemCode: line.itemCode, amount: split.principal });
+        // Posisi di luar 1-5: tidak ada yang mengaku menanggung, jadi selalu tak bertuan.
+        if (split.unowned > 0) {
+            out.unowned = cents(out.unowned + split.unowned);
+            out.rows.push({ ...base, bucket: "unowned", positions: positionsAt("unowned"),
+                percent: percentAt("unowned"), amount: split.unowned, suratProgram: "", promoGroup: "",
+                reason: "posisi di luar 1-5; tidak ada yang menyatakan menanggungnya" });
+        }
+
+        // Potongan rupiah yang TIDAK berasal dari rantai persen: calon potongan tingkat faktur.
+        const leftover = cents(line.cashDiscount - split.total);
+        if (leftover > TOLERANCE) bucketOf.leftover = cents(bucketOf.leftover + leftover);
+        perInvoice.set(invoiceKey, bucketOf);
+    }
+
+    for (const invoice of perInvoice.values()) {
+        if (invoice.leftover <= 0) continue;
+        const first = invoice.lines[0];
+        const matched = fakturRuleFor(rules, "PRINCIPAL", first.transDate, invoice.gross, invoice.leftover, invoice.lines.length);
+        const base = {
+            invoiceNo: first.invoiceNo, transDate: first.transDate, branchName: first.branchName,
+            customerNo: first.customerNo, customerName: first.customerName,
+            itemCode: "", itemName: "(potongan tingkat faktur)", positions: "faktur", percent: 0,
+            amount: invoice.leftover,
+        };
+        if (matched) {
+            out.principal = cents(out.principal + invoice.leftover);
+            add(matched, invoice.leftover, first.invoiceNo);
+            out.rows.push({ ...base, bucket: "principal", suratProgram: matched.suratProgram,
+                promoGroup: matched.promoGroup, reason: "" });
             continue;
         }
-        const key = `${matched.rule.suratProgram}|${matched.rule.promoGroup}`;
-        const program = byProgram.get(key) ?? {
-            key, suratProgram: matched.rule.suratProgram, promoLabel: matched.rule.promoLabel,
-            promoGroup: matched.rule.promoGroup, principalAmount: 0, lines: 0, invoices: 0, mismatched: [],
-        };
-        program.principalAmount = cents(program.principalAmount + split.principal);
-        program.lines += 1;
-        byProgram.set(key, program);
-
-        // Sesuai mekanisme? Dibandingkan pada PERSEN posisi principal, bukan pada rupiahnya:
-        // rupiah ikut berubah oleh diskon distributor yang memotong lebih dulu.
-        if (matched.expectedPercent !== null) {
-            const actual = line.discounts
-                .filter((entry) => entry.position === 4 || entry.position === 5)
-                .reduce((total, entry) => total + entry.percent, 0);
-            if (Math.abs(cents(actual - matched.expectedPercent)) > 0.01) {
-                program.mismatched.push({
-                    invoiceNo: line.invoiceNo, itemCode: line.itemCode,
-                    expected: matched.expectedPercent, actual: cents(actual),
-                });
-            }
-        }
+        out.unowned = cents(out.unowned + invoice.leftover);
+        out.rows.push({ ...base, bucket: "unowned", suratProgram: "", promoGroup: "",
+            reason: "potongan rupiah tanpa aturan tingkat faktur yang cocok" });
     }
 
-    for (const program of byProgram.values()) {
-        program.invoices = new Set(
-            lines.filter((line) => {
-                const matched = ruleFor(line, rules);
-                return matched && `${matched.rule.suratProgram}|${matched.rule.promoGroup}` === program.key;
-            }).map((line) => line.invoiceNo),
-        ).size;
-    }
+    for (const [key, program] of byProgram) program.invoices = programInvoices.get(key)?.size ?? 0;
 
-    out.invoices = invoiceIds.size;
-    out.programs = [...byProgram.values()].sort((a, b) => b.principalAmount - a.principalAmount);
+    out.invoices = new Set(lines.map((line) => line.invoiceId || line.invoiceNo)).size;
+    out.programs = [...byProgram.values()].sort((a, b) => b.amount - a.amount);
+    out.rows.sort((a, b) => b.amount - a.amount);
     return out;
 }
 

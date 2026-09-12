@@ -1890,6 +1890,92 @@ penyimpangan di jalur ini berarti faktur salah yang tidak bisa ditarik.
 menyegarkan harga untuk barang pada batch itu saja (puluhan item, bukan 4.182). Menambahkannya
 ke cron produksi sebagai jaring pengaman masih menunggu keputusan.
 
+### TAHAP 12 — hari faktur benar-benar terkirim, dan promo jadi gerbang (2026-09-12)
+
+Hari terpanjang proyek ini. Sembilan faktur nyata terkirim lewat tombol, verifikasi balik
+membuktikan isinya, dan lima bug yang tidak pernah terlihat manusia muncul satu per satu karena
+ada yang memeriksanya. Urut kejadiannya penting, karena tiap temuan lahir dari temuan sebelumnya.
+
+**Yang terkirim**: `INV/2609/KN00444` s/d `KN00452` (9 faktur, batch 11 & 12 September), plus
+faktur uji `KN00403` kemarin. Semuanya diverifikasi COCOK per baris.
+
+| Yang dibangun | Berkas |
+|---|---|
+| Tombol **Kirim ke Accurate** + verifikasi di tempat | `app/api/invoice-outbox/send`, `lib/invoice-sender.ts` |
+| Buang baris antrean yang belum terkirim | `discardable()` mencakup `queued` |
+| Salesman ikut terkirim | `accurate_employee` (migrasi 0012), modul sync `employee` |
+| Tombol **Segarkan harga** per batch | `syncItemPrices({ itemNos })` |
+| Gerbang validasi membaca `promo_rule` | `checkLine(rules)`, `checkSoPromo()`, `matchItemRule()` |
+| Rekap promo: saringan principal, rincian, CSV | `lib/promo-recap.ts`, `/rekap-promo` |
+
+**Lima bug yang ditemukan verifikasi, bukan manusia:**
+
+1. **`transDate` diabaikan `save.do`** — dikirim 11/09, tercatat 12/09. Bukti pertama bahwa
+   field tak dikenal memang hilang diam-diam. Kebetulan sesuai aturan pengguna (*"faktur
+   diproses pada tanggal masalahnya selesai"*), jadi tanggal kini diperiksa satu arah saja.
+2. **`raw_data` faktur kehilangan rincian baris** tiap cron: `list.do` tidak membawa
+   `detailItem` dan upsert-nya menimpa tanpa syarat. Rekap Promo dan verifikasi sama-sama buta.
+3. **Cabang pelanggan hilang saat disegarkan webhook**: `list.do` mengirim `branch` sebagai
+   objek, `detail.do` mengirim `branchId` datar. 84 pelanggan tanpa cabang -> harga jatuh ke
+   cabang lain -> 7 baris ditahan sebagai "harga tidak sesuai" padahal harga Accurate benar.
+4. **`itemCashDiscount` pada jalur BACA adalah total potongan baris**, bukan sisa rupiah yang
+   kita kirim. Menuduh 3 faktur yang benar.
+5. **Rantai persen dimampatkan**: klaim principal posisi 4 dikirim sebagai `"3"` -> terbaca
+   posisi 1 = tanggungan distributor. Rp 28.921 yang bisa ditagihkan berubah jadi biaya sendiri.
+
+Pola yang sama muncul tiga kali dan layak diingat: **kosong berarti "tidak tahu", bukan "tidak
+punya"**. Tiap upsert yang menimpa dengan nilai kosong menghapus kebenaran yang sudah ada.
+
+**Keputusan pengguna yang mengikat pekerjaan berikutnya:**
+
+- **Tidak ada potongan yang boleh tembus ke faktur tanpa aturan** — kedua beban, bukan hanya
+  klaim principal. Potongan tanpa aturan bukan "beban sendiri"; ia potongan yang belum jelas
+  milik siapa.
+- **Tak bertuan = tidak sesuai promo yang berlaku**, di posisi mana pun. Bukan "posisi 6+".
+- **Untuk Kino, posisi 1-3 hanya diakui tanggungan distributor bila ada aturan berbeban
+  `DISTRIBUTOR`.** Belum ada satu pun yang termuat.
+- **Barang yang berhak promo tetapi TIDAK diberi diskon principal tidak ditandai** — kalau
+  principal tidak memberikannya, itu bukan kesalahan kita.
+- **Klaim itu per PROGRAM, bukan per batch.**
+- Tanggal proses faktur nanti bisa dipilih di web (belum dibangun).
+
+**Penahan alur nomor satu sekarang**: tarif **Discount Reguler (Tanggungan Distributor)**
+(butir 4.10) belum pernah dimuat. Sejak gerbang diperketat, setiap potongan posisi 1-3 tertahan
+— batch 12 September turun dari 48 lolos jadi 37 lolos / 11 ditinjau. Itu disengaja dan diminta,
+tetapi artinya **tidak ada faktur Kino berdiskon distributor yang bisa dikirim sampai sheet
+`PERIKSA` dimuat**.
+
+**Keadaan produksi saat sesi ditutup:**
+
+- Migrasi **0012 sudah di produksi**; `accurate_employee` 236 baris, kesembilan kode salesman
+  Kino nyambung.
+- 81 pelanggan yang kehilangan cabang sudah ditambal dari `raw_data`; sisa 4 memang tidak punya
+  `branchId` di Accurate.
+- Daftar harga jual ditarik penuh (4.182 item). **`sync-item-prices` TIDAK ADA di
+  `/etc/cron.d/accapi`** — hanya tombol Segarkan harga dan panggilan manual yang menyegarkannya.
+  Menambahkannya ke cron masih menunggu keputusan.
+- Antrean faktur kosong; seluruhnya `posted`.
+- `ACCURATE_INVOICE_SEND` tetap kosong: jalur cron tetap mati, pengiriman hanya lewat tombol.
+- Butir **4.32 TERBUKTI**: Accurate menafsirkan rantai diskon persen dengan benar, dan potongan
+  rupiah tingkat faktur mendarat utuh.
+
+### Prompt melanjutkan (2026-09-13)
+
+> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca
+> `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md` lalu "TAHAP 12" pada docs/SURYA_IMPLEMENTATION.md.
+> Sembilan faktur nyata sudah terkirim lewat tombol Kirim dan seluruhnya diverifikasi cocok per
+> baris; salesman, diskon persen bertingkat, dan potongan rupiah tingkat faktur semuanya
+> terbukti mendarat benar di Accurate. **Penahan utama sekarang butir 4.10**: tarif Discount
+> Reguler (Tanggungan Distributor) belum pernah dimuat, sedangkan gerbang validasi kini menahan
+> SETIAP potongan yang tidak punya aturan terbit — termasuk posisi 1-3 — atas permintaan
+> pengguna. Akibatnya batch 12 September hanya 37 dari 48 baris yang lolos. Langkah pertama:
+> muat tarif distributor ke `promo_rule` dengan `benefit_beban='DISTRIBUTOR'` (sumbernya sheet
+> `PERIKSA`; tanyakan berkasnya ke pengguna). Sesudah itu: butir 4.25 (kumpulkan teks error
+> Accurate yang asli — belum pernah ada satu pun penolakan), pemilihan tanggal proses faktur di
+> web, dan keputusan apakah `sync-item-prices` masuk cron. Gerbang kirim otomatis (cron) tetap
+> TERTUTUP; pengiriman hanya lewat tombol di /antrean-faktur. Jangan stage massal — working tree
+> masih memuat pekerjaan rekonsiliasi dan eksperimen OCR lama.
+
 ### Prompt melanjutkan (2026-09-12, setelah salesman)
 
 > Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca

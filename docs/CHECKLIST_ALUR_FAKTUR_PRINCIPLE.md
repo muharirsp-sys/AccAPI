@@ -51,10 +51,12 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 | 4.7 | Surat program jadi aturan terbit | ✅ | `kino_letter.py` (tanpa OCR) + `summary_rules` + gerbang on-faktur |
 | 4.8 | Kelayakan outlet (loyalty dll) | ✅ | `outlet_class.py`; 41 outlet loyalty Makassar sudah dimuat |
 | 4.9 | Pilah diskon: distributor / principal / tak bertuan | ✅ | `kino_discount.classify`, toleransi Rp 1 |
-| 4.10 | Tarif **Discount Reguler (Tanggungan Distributor)** termuat | 🟡 | Tarifnya belum dimuat, tetapi **tidak menahan faktur**: posisi 1–3 = tanggungan distributor, tidak perlu aturan terbit. Terbukti 12 Sep 2026 — SS DIAPERS (Satu Sama Group) 2% di DISC_1 lolos apa adanya. Yang belum ada hanya pembandingnya, kalau suatu saat tarifnya mau diperiksa |
+| 4.10 | Tarif **Discount Reguler (Tanggungan Distributor)** termuat | ❌ | **MENAHAN FAKTUR sejak 2026-09-12.** Keputusan pengguna: *"gerbang validasi tidak boleh meloloskan apa pun tanpa aturan"*. Potongan posisi 1-3 kini WAJIB cocok dengan aturan berbeban `DISTRIBUTOR`; belum ada satu pun yang termuat (145 aturan semuanya `PRINCIPAL`), jadi setiap potongan distributor tertahan. Batch 12 Sep: 48 lolos -> 37 lolos, 11 ditinjau. **Ini penahan utama alur sekarang** — muat sheet `PERIKSA` untuk membukanya |
 | 4.11 | Kode barang per program promo | ✅ | `promo_rule.item_code` termuat: 105 aturan `DISC_PCT`, 30 `BONUS_QTY`, 10 `DISC_RP` tingkat faktur |
 | 4.12 | Aturan untuk channel MT/NKA | ❌ | Surat PRONAS hanya GT. Diskon ALFAMART berasal dari Discount Reguler, bukan surat |
 | 4.13 | Potongan tingkat FAKTUR (MSG) vs tingkat BARIS | ✅ | **SELESAI 2026-09-12.** `checkSoPromo()` mencocokkan SISA klaim se-SO dengan tier `DISC_RP` (`item_code` kosong, `trigger_unit='RP'`). Nominal surat TERMASUK PPN sedangkan laporan membawa DPP, jadi klaim dikalikan 1,11 sebelum dibandingkan — RISKA TK: 18.016,22 × 1,11 = 19.998 lawan tier Rp 20.000, beda Rp 2. Toleransi Rp 1 **per baris** karena nominalnya dibagi rata lalu dibulatkan di tiap baris |
+| 4.39 | **Tidak ada potongan tembus ke faktur tanpa aturan** | ✅ | **2026-09-12.** `checkLine` memeriksa KEDUA beban, bukan hanya klaim principal. Potongan yang tidak punya aturan bukan "beban sendiri" — ia potongan yang belum jelas milik siapa |
+| 4.40 | Rekap promo: tak bertuan = tidak sesuai aturan | ✅ | **2026-09-12.** Bukan lagi "posisi 6+". Beban ikut dicocokkan. Saringan principal (aturan hanya ada untuk KINO, sementara rekap membaca semua principal). Tiap kartu & program bisa dibuka rinciannya dan diunduh CSV; satu daftar `rows` melayani kartu, tabel, dan unduhan supaya angkanya tidak mungkin berbeda |
 
 ## Langkah 4 tahap 1c — routing: cocok lanjut, tidak cocok ke admin review
 
