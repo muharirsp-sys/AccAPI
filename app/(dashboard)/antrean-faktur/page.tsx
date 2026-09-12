@@ -13,7 +13,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, RefreshCw, Send, Trash2, HelpCircle, CheckCircle2, Clock, ShieldCheck, ShieldAlert } from "lucide-react";
+import { AlertTriangle, RefreshCw, Send, Trash2, HelpCircle, CheckCircle2, Clock, ShieldCheck, ShieldAlert, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 type Row = {
@@ -106,6 +106,47 @@ export default function AntreanFakturPage() {
         }
     }
 
+    /**
+     * Kirim SEMUA yang menunggu, lalu baca balik hasilnya dari Accurate saat itu juga.
+     * "Terkirim" saja belum berarti benar — yang dilaporkan berhasil hanya yang isinya
+     * TERBUKTI sama dengan yang dikirim.
+     */
+    async function kirim() {
+        const menunggu = data?.summary?.queued ?? 0;
+        if (!menunggu) { toast.info("Tidak ada faktur yang menunggu kirim"); return; }
+        if (!confirm(
+            `Kirim ${menunggu} faktur ke Accurate sekarang?
+
+`
+            + "Faktur yang sudah terbentuk di Accurate TIDAK BISA ditarik. Setelah terkirim, "
+            + "isinya langsung dibaca balik dari Accurate dan dibandingkan per baris.")) return;
+        setBusy(true);
+        try {
+            const res = await fetch("/api/invoice-outbox/send", {
+                method: "POST", credentials: "include",
+                headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+            });
+            const body = await res.json();
+            if (!res.ok) throw new Error(body.error ?? "Pengiriman gagal");
+            if (body.unknown > 0) {
+                toast.error(`${body.unknown} faktur TIDAK PASTI nasibnya — Accurate tidak menjawab. Jangan dikirim ulang; cocokkan lewat charField1.`);
+            }
+            if (body.rejected > 0) toast.warning(`${body.rejected} ditolak Accurate; alasannya ada di kolom Jawaban Accurate`);
+            if (body.mismatched > 0) {
+                toast.error(`${body.mismatched} faktur terkirim TAPI isinya berselisih — lihat Verifikasi balik di bawah`);
+            } else if (body.unchecked > 0) {
+                toast.warning(`${body.sent} terkirim, ${body.unchecked} belum bisa dibaca balik dari Accurate`);
+            } else if (body.verifiedOk > 0) {
+                toast.success(`${body.verifiedOk} faktur terkirim DAN terverifikasi cocok per baris`);
+            }
+            await load();
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Pengiriman gagal");
+        } finally {
+            setBusy(false);
+        }
+    }
+
     const toggle = (key: string) => setPicked((current) => current.includes(key) ? current.filter((value) => value !== key) : [...current, key]);
 
     return (
@@ -155,6 +196,11 @@ export default function AntreanFakturPage() {
                 </label>
                 <button onClick={() => void load()} className="inline-flex items-center gap-1 rounded bg-white/10 px-3 py-1.5 text-xs">
                     <RefreshCw size={13} /> Muat ulang
+                </button>
+                <button onClick={() => void kirim()} disabled={busy || !(data?.summary?.queued ?? 0)}
+                    title="Kirim semua faktur yang menunggu ke Accurate, lalu baca balik hasilnya dari Accurate dan bandingkan per baris"
+                    className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-3 py-1.5 text-xs text-emerald-200 disabled:opacity-40">
+                    <Upload size={13} /> Kirim {data?.summary?.queued ?? 0} faktur ke Accurate
                 </button>
             </section>
 
