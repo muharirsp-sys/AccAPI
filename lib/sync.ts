@@ -310,10 +310,18 @@ const SYNC_MODULES: Record<SyncModuleName, {
                 // priceCategory datang sebagai objek {id,name} — penentu tier harga pelanggan.
                 priceCategoryId: num((row.priceCategory as Record<string, unknown> | undefined)?.id),
                 priceCategoryName: str((row.priceCategory as Record<string, unknown> | undefined)?.name),
-                categoryId: num((row.category as Record<string, unknown> | undefined)?.id),
-                categoryName: str((row.category as Record<string, unknown> | undefined)?.name),
-                branchId: num((row.branch as Record<string, unknown> | undefined)?.id),
-                branchName: str((row.branch as Record<string, unknown> | undefined)?.name),
+                categoryId: num((row.category as Record<string, unknown> | undefined)?.id ?? row.categoryId),
+                categoryName: str((row.category as Record<string, unknown> | undefined)?.name) || str(row.customerCategoryName),
+                // DUA bentuk, dan keduanya nyata. `list.do` (cron) mengirim `branch` sebagai
+                // OBJEK; `detail.do` (jalur webhook) mengirim `branchId` DATAR plus
+                // `customerBranchName`, tanpa objek `branch` sama sekali. Membaca objeknya saja
+                // membuat setiap pelanggan yang disegarkan webhook KEHILANGAN cabangnya —
+                // dan cabang adalah penentu harga (satu baris harga per kategori x satuan x
+                // CABANG). Akibatnya di produksi 2026-09-12: 84 pelanggan tanpa cabang, harga
+                // jatuh ke cabang lain, dan 11 baris SATU SAMA ditahan sebagai "harga tidak
+                // sesuai" padahal harga di Accurate sudah benar.
+                branchId: num((row.branch as Record<string, unknown> | undefined)?.id ?? row.branchId),
+                branchName: str((row.branch as Record<string, unknown> | undefined)?.name) || str(row.customerBranchName),
                 rawData: JSON.stringify(row),
                 lastUpdate: str(row.lastUpdate) ?? new Date().toISOString(),
             }));
@@ -330,8 +338,13 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     priceCategoryId: sql`excluded."price_category_id"`,
                     categoryId: sql`excluded."category_id"`,
                     categoryName: sql`excluded."category_name"`,
-                    branchId: sql`excluded."branch_id"`,
-                    branchName: sql`excluded."branch_name"`,
+                    // COALESCE, bukan timpa: jawaban yang tidak membawa cabang tidak boleh
+                    // MENGHAPUS cabang yang sudah benar. Bentuk jawaban Accurate berbeda antar
+                    // endpoint, dan pelajaran yang sama sudah dibayar dua kali hari ini —
+                    // raw_data faktur dan cabang pelanggan. Kosong berarti "tidak tahu",
+                    // bukan "tidak punya".
+                    branchId: sql`coalesce(excluded."branch_id", customer.branch_id)`,
+                    branchName: sql`coalesce(nullif(excluded."branch_name", ''), customer.branch_name)`,
                     priceCategoryName: sql`excluded."price_category_name"`,
                     // ISI KALAU KOSONG, tidak pernah menimpa. Alamat dari `Master Area Heinz`
                     // sudah dinormalkan tangan dan memuat `Kel./Kec.` yang dibaca parseKelKec();
