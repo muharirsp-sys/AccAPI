@@ -74,7 +74,10 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 | 4.20 | Nomor faktur ikut seri cabang pelanggan | ✅ | `branch.si_auto_number_id`, tidak pernah mengirim `number` |
 | 4.21 | **Sumber payload = batch unggahan, bukan `sales_order`** | ✅ | `POST /api/principal-order/queue` mengisi `invoice_outbox` dari batch. Dua jalur hidup berdampingan, kuncinya berbeda: order internal pakai uuid, laporan principal pakai `PRINCIPAL:NO-SO` |
 | 4.22 | Satu tombol untuk satu batch sekaligus | ✅ | Tombol **Faktur** pada tiap batch: pratinjau dulu (tidak menulis apa pun), lalu "Antrekan N faktur" |
-| 4.23 | Gerbang kirim | 🟡 | `ACCURATE_INVOICE_SEND` masih kosong, **sengaja**. Nama field request `save.do` belum terbukti; satu faktur uji wajib diperiksa manual dulu |
+| 4.23 | Gerbang kirim | 🟡 | **Satu faktur uji SUDAH dikirim 2026-09-12**: `INV/2609/KN00403`. Satuan, harga, PPN, nomor seri cabang, dan `charField1` semuanya benar. Rem ditutup lagi setelahnya; `ACCURATE_INVOICE_SEND` kosong, sisa 3 faktur tetap tertahan |
+| 4.30 | **Verifikasi balik otomatis: faktur di Accurate vs baris batch principal** | ❌ | **Permintaan pengguna 2026-09-12**: "kenapa harus saya yang mastikan?" Sistem punya semua bahannya — `charField1` = kunci antrean, dan webhook menyimpan jawaban `detail.do` utuh. Yang belum ada: pembanding otomatis per baris (satuan, qty, harga, diskon persen, PPN, nomor seri cabang) yang menandai selisih, bukan manusia yang memelototi |
+| 4.31 | Salesman pada faktur | ❌ | Faktur uji keluar dengan `masterSalesmanId: null`. Validasi sudah menerjemahkan kode salesman, tetapi `buildInvoicePayload` tidak pernah mengirimkannya. Proses manual selama ini mengisi salesman — butuh keputusan pengguna |
+| 4.32 | Diskon persen pada faktur nyata | ❌ | Faktur uji `itemDiscPercent: ""` karena berkas 11 September tanpa diskon sama sekali. Field yang paling berisiko justru BELUM terbukti; menunggu hari yang promonya turun |
 
 ## Langkah 4 tahap 2b — tangkap 4 jenis error Accurate
 

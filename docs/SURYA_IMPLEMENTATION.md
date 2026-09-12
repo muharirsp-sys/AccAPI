@@ -1696,6 +1696,83 @@ menggolongkan. Sekarang jawaban Accurate ditampilkan apa adanya.
 uji kini: satuan, harga per satuan, **diskon persen (`itemDiscPercent`)**, **PPN (`taxable`)
 dan totalnya**, dan nomor faktur.
 
+### TAHAP 8 — faktur uji NYATA terkirim, dan pekerjaan berikutnya (2026-09-12)
+
+**`INV/2609/KN00403` sudah terbentuk di Accurate** (database 1742775, record 335951) dari
+SO `1671-SOP-260013022`. Ini faktur pertama yang benar-benar ditulis sistem ini.
+
+Diperiksa dari jawaban Accurate sendiri (`detail.do` lewat webhook), bukan dari kiriman kita:
+
+| Titik periksa | Hasil |
+|---|---|
+| Satuan | `itemUnit: BLR` (id 1000), `unitRatio: 1` — sama dengan laporan |
+| Harga satuan | `unitPrice: 11.396,3964` (harga MT), BUKAN `item.unitPrice` master (10.180,18) |
+| PPN | `taxable: true`, `inclusiveTax: false`, 11% = 15.043 DI ATAS DPP 136.756,76 -> total 151.799,76 |
+| Nomor faktur | `INV/2609/KN00403`, `branchId 1051` / `KINO NON FOOD` — ikut seri cabang |
+| Jejak balik | `charField1` = `KINO-NON-FOOD:1671-SOP-260013022`, di kepala DAN di baris |
+| Gudang | `GD01` (default Accurate), sama dengan proses manual |
+
+**Cara faktur uji dikirim** (untuk diulang, bukan untuk ditiru sembarangan): env Coolify dibaca
+saat container DIBUAT, jadi `docker restart` tidak cukup. Urutannya: sunting
+`/data/coolify/services/<uuid>/.env` -> `docker compose up -d --no-deps accapi-frontend` ->
+panggil `/api/cron/post-invoices` sekali -> hapus `ACCURATE_INVOICE_SEND` -> recreate lagi.
+Keempat baris antrean bertanggal-antre identik, jadi urutan `ORDER BY created_at` tidak pasti;
+SO yang diuji dimajukan 1 detik lalu dikembalikan. Cadangan `.env`:
+`/root/accapi-env-backup-1789173948`. **Env yang disunting begini akan TERTIMPA deploy Coolify
+berikutnya** — untuk permanen, set lewat UI Coolify.
+
+**Bug yang ketahuan justru karena faktur uji ini**: `sales_invoice.raw_data` bertipe jsonb
+tetapi ISINYA string (`lib/sync` menyimpan lewat `JSON.stringify`; `jsonb_typeof` = `"string"`
+untuk semua baris). Rekap Promo membacanya sebagai NOL baris, jadi akan melaporkan "tidak ada
+diskon" untuk faktur yang penuh diskon — jawaban salah yang terlihat menenangkan. Sudah
+diperbaiki (`b93c188`) beserta testnya. Pelajarannya: test yang menyisipkan barisnya sendiri
+sebagai objek jsonb menguji bentuk yang TIDAK PERNAH ditulis jalur sungguhan.
+
+**Permintaan pengguna yang menjadi pekerjaan utama berikutnya**: *"kenapa harus saya yang
+mastikan? harusnya jika sudah masuk di Accurate, kamu harus bisa validasi kembali hasilnya."*
+Benar. Bahannya sudah lengkap: `charField1` menghubungkan faktur Accurate ke kunci antrean,
+dan webhook menyimpan jawaban `detail.do` utuh. Yang belum ada adalah **pembanding otomatis
+per baris** — satuan, qty, harga, diskon persen, PPN, nomor seri cabang — yang menandai
+selisih sendiri. Ini butir 4.30 pada checklist.
+
+**Dua lubang lain yang faktur uji ini buka:**
+
+- **Salesman tidak ikut terkirim** (4.31). Faktur uji `masterSalesmanId: null`, padahal
+  validasi sudah menerjemahkan kode salesman dan proses manual selama ini mengisinya.
+- **Diskon persen belum terbukti** (4.32). Baris uji `itemDiscPercent: ""` karena berkas
+  11 September tidak punya satu pun diskon. Ketiga faktur yang masih mengantre juga tanpa
+  diskon, jadi pembuktiannya menunggu hari yang promonya benar-benar turun.
+
+**Keadaan produksi saat sesi ditutup:**
+
+- Antrean: 1 `posted`, 3 `queued`. Gerbang kirim TERTUTUP kembali (`ACCURATE_INVOICE_SEND`
+  kosong); `ACCURATE_INVOICE_USER_ID` dan `ACCURATE_INVOICE_BATCH=1` dibiarkan terpasang.
+- Tidak ada jadwal cron untuk `/api/cron/post-invoices` — sengaja, sampai verifikasi balik ada.
+- Data: `principal_mapping` 677 item + 1.434 pelanggan + 9 salesman + 8 merek; `promo_rule`
+  145 baris (4 surat, 11 program).
+- Webhook Accurate: langganan Barang + Pelanggan + Faktur Penjualan AKTIF di sisi Accurate,
+  dan penerima kita sudah memproses ketiganya — tetapi kodenya (`99a1d34`) **belum di-merge**,
+  jadi di produksi masih versi lama yang hanya memproses faktur. **Sisa aktif webhook 7 hari**;
+  pastikan cron `accurate-webhook-renew` benar-benar jalan.
+- Commit `99a1d34` (webhook master + eskalasi batch) dan `b93c188` (perbaikan raw_data) ada di
+  `feat/surya-workspace`, sudah di-push, **belum di-merge ke main**.
+
+### Prompt melanjutkan (2026-09-12)
+
+> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca
+> `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md` lebih dulu, lalu bagian "TAHAP 8" pada
+> docs/SURYA_IMPLEMENTATION.md. Faktur uji NYATA `INV/2609/KN00403` sudah terbentuk di Accurate
+> dan isinya benar (satuan, harga, PPN, nomor seri cabang, charField1). Pekerjaan utama
+> berikutnya adalah **butir 4.30: verifikasi balik OTOMATIS** — bandingkan faktur yang sudah
+> masuk Accurate (dari `sales_invoice.raw_data`, dihubungkan lewat `charField1`) dengan baris
+> batch principal asalnya, per baris: satuan, qty, harga, diskon persen, PPN, dan nomor seri
+> cabang; yang berselisih ditandai sistem, bukan dipelototi manusia. Pengguna secara eksplisit
+> menolak pemeriksaan manual sebagai jawaban. Sekalian putuskan 4.31 (salesman tidak ikut
+> terkirim) dan ingat 4.32 (diskon persen belum pernah terbukti pada faktur nyata). Dua commit
+> `99a1d34` dan `b93c188` belum di-merge ke main. Gerbang kirim TERTUTUP dan biarkan tertutup
+> sampai verifikasi balik itu ada. Jangan stage massal — working tree masih memuat pekerjaan
+> rekonsiliasi dan eksperimen OCR lama.
+
 ### Prompt melanjutkan (2026-09-11, setelah langkah 6)
 
 > Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca
