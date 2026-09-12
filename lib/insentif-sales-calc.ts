@@ -12,10 +12,17 @@
  * - Target AO konstan 240 (penyebut persentase AO).
  * - Pengali persentase: <0.90 → 0 ; 0.90–1.00 → aktual ; >1.00 → cap 1.00.
  * - Konstanta = porsi insentif penuh berdasar jumlah principle yang dipegang.
- * - Yang dibayar DISTRIBUTOR = konstanta − total support principle (floor 0; support ≥ konstanta → 0),
- *   lalu di-split 70/30 × pencapaian.
- *   Contoh: exclusive konstanta 1jt, support 700rb → distributor 300rb.
- *           mix 3 principle konstanta 1.2jt, support 700rb → distributor 500rb.
+ * - Jatah awal per principal = konstanta ÷ jumlah principal (poster "Insentif Salesman Mix",
+ *   berlaku Juli 2026). Support dikurangkan SATU PER SATU dan DIBATASI jatah itu:
+ *   pengurang = min(support, jatah per principal). Kelebihan support satu principal
+ *   TIDAK ikut memakan jatah principal lain.
+ * - Yang dibayar DISTRIBUTOR = konstanta − total pengurang (floor 0), lalu di-split 70/30 × pencapaian.
+ *   Contoh poster: 5 principal, konstanta 1,5jt, jatah 300rb/principal. Anlen support 200rb
+ *   (pengurang 200rb), Taro support 700rb (pengurang dibatasi 300rb) → 1,5jt − 500rb = 1jt.
+ * - Porsi AO (70%) dibagi HANYA ke principal yang TIDAK dapat support; yang sudah disupport
+ *   principle tidak ikut pembagian AO dari distributor. Porsi Value (30%) tetap gabungan
+ *   seluruh principal valid, termasuk yang disupport.
+ * - Exclusive (1 principal) tidak berubah: jatah = konstanta itu sendiri.
  * - Status Insentif menentukan principle ikut skema atau tidak:
  *     "distributor_principle" → ikut, support principle dikurangkan.
  *     "distributor"          → ikut, distributor bayar penuh (support = 0).
@@ -161,8 +168,9 @@ export interface MixLineDetail {
 export interface MixResult {
     jumlah_valid: number;
     konstanta: number;
-    total_support: number;
-    porsi_distributor: number; // konstanta − total_support (floor 0)
+    total_support: number;      // support principle apa adanya (bisa melebihi jatah)
+    total_pengurang: number;    // yang benar-benar mengurangi konstanta (per principal dibatasi jatahnya)
+    porsi_distributor: number;  // konstanta − total_pengurang (floor 0)
     rincian: MixLineDetail[];
     total_ao: number;
     insentif_value: number; // Value global (gabungan)
@@ -186,10 +194,19 @@ export function computeMix(principals: MixPrincipalInput[], k: Konstanta = DEFAU
     // sementara computeMtMix (MT) sudah punya fallback yang sama sejak awal.
     // >5 → cap 1,5jt (di dalam konstantaMix).
     const konstanta = jumlah === 1 ? k.gt.pool1 : konstantaMix(jumlah, k);
-    const porsi_distributor = Math.max(0, konstanta - total_support);
+
+    // Jatah awal per principal, lalu support dikurangkan satu per satu dengan batas jatah itu.
+    // Sebelumnya support dijumlah mentah: support Taro Rp 700rb pada jatah Rp 300rb ikut menggerus
+    // jatah principal lain Rp 400rb, padahal kelebihan itu urusan principle-nya sendiri.
+    const jatahPerPrincipal = jumlah > 0 ? konstanta / jumlah : 0;
+    const pengurang = new Map<MixPrincipalInput, number>(
+        valid.map((p) => [p, Math.min(effectiveSupport(p.status, p.nilai_support_principal), jatahPerPrincipal)]),
+    );
+    const total_pengurang = [...pengurang.values()].reduce((s, v) => s + v, 0);
+    const porsi_distributor = Math.max(0, konstanta - total_pengurang);
 
     const empty = (): MixResult => ({
-        jumlah_valid: jumlah, konstanta, total_support, porsi_distributor: 0,
+        jumlah_valid: jumlah, konstanta, total_support, total_pengurang, porsi_distributor: 0,
         rincian: [], total_ao: 0, insentif_value: 0, total: 0,
     });
     if (konstanta <= 0 || porsi_distributor <= 0) return empty();
@@ -201,8 +218,10 @@ export function computeMix(principals: MixPrincipalInput[], k: Konstanta = DEFAU
     const totalRealisasi = valid.reduce((s, p) => s + p.realisasi_value, 0);
     const insentif_value = k.gt.bobotValue * K * percentageMultiplier(totalRealisasi, totalTarget, k.gt.ambangBayar);
 
-    // AO: budget dibagi rata per principle valid.
-    const budgetAo = (k.gt.bobotAo * K) / jumlah;
+    // AO: budget dibagi rata HANYA ke principal tanpa support. Principal yang sudah dibayari
+    // principle-nya tidak ikut pembagian AO dari distributor (poster butir 5).
+    const tanpaSupport = valid.filter((p) => (pengurang.get(p) ?? 0) <= 0);
+    const budgetAo = tanpaSupport.length > 0 ? (k.gt.bobotAo * K) / tanpaSupport.length : 0;
 
     const rincian: MixLineDetail[] = valid.map((p) => {
         // Principal dengan penjualan bersih <= 0 tidak dapat apa pun — baik AO maupun porsi
@@ -211,7 +230,9 @@ export function computeMix(principals: MixPrincipalInput[], k: Konstanta = DEFAU
         if (!hasPositiveNetSales(p.realisasi_value)) {
             return { nama: p.nama, insentif_ao: 0, insentif_value: 0, total: 0 };
         }
-        const insentif_ao = budgetAo * percentageMultiplier(p.realisasi_ao, p.target_ao ?? k.gt.aoAmbang, k.gt.ambangBayar);
+        const insentif_ao = (pengurang.get(p) ?? 0) > 0
+            ? 0
+            : budgetAo * percentageMultiplier(p.realisasi_ao, p.target_ao ?? k.gt.aoAmbang, k.gt.ambangBayar);
         // Value global dialokasikan proporsional ke target_value (rata bila total target 0).
         const share = totalTarget > 0 ? p.target_value / totalTarget : 1 / jumlah;
         const line_value = insentif_value * share;
@@ -224,7 +245,7 @@ export function computeMix(principals: MixPrincipalInput[], k: Konstanta = DEFAU
     const total_value_dibayar = rincian.reduce((s, r) => s + r.insentif_value, 0);
 
     return {
-        jumlah_valid: jumlah, konstanta, total_support, porsi_distributor,
+        jumlah_valid: jumlah, konstanta, total_support, total_pengurang, porsi_distributor,
         rincian, total_ao, insentif_value, total: total_ao + total_value_dibayar,
     };
 }
