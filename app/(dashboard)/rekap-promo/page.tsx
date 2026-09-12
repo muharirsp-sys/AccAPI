@@ -73,7 +73,7 @@ export default function RekapPromoPage() {
     const [to, setTo] = useState(awal.to);
     const [data, setData] = useState<Data | null>(null);
     const [file, setFile] = useState<File | null>(null);
-    const [preview, setPreview] = useState<{ rows: number; programs: number; tingkatFaktur: number; issues: string[] } | null>(null);
+    const [preview, setPreview] = useState<{ rows: number; programs: number; tingkatFaktur: number; tarifOutlet: number; outlet: number; issues: string[] } | null>(null);
     const [busy, setBusy] = useState(false);
     const [principal, setPrincipal] = useState("");
     const [buka, setBuka] = useState<Buka>(kosong);
@@ -180,7 +180,7 @@ export default function RekapPromoPage() {
                     <RefreshCw size={15} /> Muat rekap
                 </button>
                 <label className="text-sm ml-auto">
-                    <span className="block text-slate-400 mb-1">Muat aturan promo (sheet Detail)</span>
+                    <span className="block text-slate-400 mb-1">Muat aturan promo (sheet Detail dan/atau Discount Reguler)</span>
                     <input type="file" accept=".xlsx" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setPreview(null); }}
                         className="block text-sm file:mr-3 file:rounded file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-slate-200" />
                 </label>
@@ -194,9 +194,11 @@ export default function RekapPromoPage() {
 
             {preview && (
                 <p className="rounded border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200">
-                    {preview.rows} baris aturan · {preview.programs} program · {preview.tingkatFaktur} baris tingkat faktur.
+                    {preview.rows} baris aturan · {preview.programs} program · {preview.tingkatFaktur} baris tingkat faktur
+                    {preview.tarifOutlet > 0 && <> · {preview.tarifOutlet} tarif distributor untuk {preview.outlet} outlet</>}.
                     {preview.issues.length > 0 && <> Temuan: {preview.issues.slice(0, 3).join("; ")}</>}
-                    {" "}Tekan <strong>Muat aturan</strong> untuk mengganti aturan principal ini.
+                    {" "}Tekan <strong>Muat aturan</strong>. Yang diganti hanya bagian yang dibawa berkas ini:
+                    {" "}sheet Detail mengganti aturan surat, sheet Discount Reguler mengganti tarif outlet.
                 </p>
             )}
 

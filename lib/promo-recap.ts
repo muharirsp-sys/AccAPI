@@ -16,7 +16,7 @@
  * Gerbang kita memang menahan keduanya sebelum faktur naik, tetapi faktur juga bisa dibuat
  * langsung di Accurate di luar jalur ini. Angka nol harus DIBUKTIKAN, bukan diasumsikan.
  */
-import { OWNER, splitDiscounts, TOLERANCE, type DiscountAt } from "@/lib/principal-validation";
+import { matchTariff, OWNER, splitDiscounts, TOLERANCE, type DiscountAt } from "@/lib/principal-validation";
 
 export type PromoRule = {
     principal: string;
@@ -25,6 +25,8 @@ export type PromoRule = {
     promoGroup: string;
     /** Kosong = aturan tingkat FAKTUR (berlaku semua barang), mis. program MSG. */
     itemCode: string;
+    /** Kosong = berlaku semua pelanggan. Terisi = tarif Discount Reguler milik satu outlet. */
+    customerCode: string;
     periodStart: string | null;
     periodEnd: string | null;
     benefitType: string;
@@ -167,11 +169,28 @@ const inPeriod = (rule: PromoRule, date: string) =>
  */
 export function ruleFor(line: InvoiceLine, rules: PromoRule[], beban: string, percent: number): PromoRule | null {
     if (percent <= 0) return null;
-    return rules.find((rule) => rule.itemCode === line.itemCode
+    return rules.find((rule) => rule.itemCode === line.itemCode && !rule.customerCode
         && rule.benefitBeban === beban
         && rule.benefitType === "DISC_PCT"
         && inPeriod(rule, line.transDate)
         && Math.abs(cents(Number(rule.benefitValue) - percent)) <= 0.01) ?? null;
+}
+
+/**
+ * Tarif Discount Reguler outlet ini (butir 4.10) yang menjelaskan SELURUH potongan distributor
+ * pada baris faktur. Tarifnya melekat pada OUTLET dan berlaku semua barang, jadi tidak pernah
+ * ketemu lewat `ruleFor` yang mencocokkan per barang.
+ *
+ * Kode outlet pada faktur Accurate membawa akhiran cabang (`C-MA0056-KN`) sedangkan tarifnya
+ * tercetak dengan kode internal (`C-MA0056`), jadi dicocokkan dengan awalan — bukan sama persis.
+ */
+export function tariffFor(line: InvoiceLine, rules: PromoRule[]): PromoRule[] | null {
+    const no = line.customerNo.toUpperCase();
+    if (!no) return null;
+    const milikOutlet = rules.filter((rule) => rule.customerCode
+        && inPeriod(rule, line.transDate)
+        && (no === rule.customerCode.toUpperCase() || no.startsWith(`${rule.customerCode.toUpperCase()}-`)));
+    return milikOutlet.length ? matchTariff(line.discounts, milikOutlet) : null;
 }
 
 /**
@@ -277,7 +296,10 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
             if (amount <= 0) continue;
             const percent = percentAt(owner);
             const beban = owner === "distributor" ? "DISTRIBUTOR" : "PRINCIPAL";
-            const matched = ruleFor(line, rules, beban, percent);
+            // Tarif outlet dicoba setelah aturan per barang: yang per barang lebih sempit,
+            // jadi kalau keduanya bisa menjelaskan, yang menyebut barangnya yang dipakai.
+            const matched = ruleFor(line, rules, beban, percent)
+                ?? (owner === "distributor" ? tariffFor(line, rules)?.[0] ?? null : null);
             if (matched) {
                 out[owner] = cents(out[owner] + amount);
                 if (owner === "principal") add(matched, amount, line.invoiceNo);
@@ -286,12 +308,14 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
                 continue;
             }
             out.unowned = cents(out.unowned + amount);
-            const adaAturan = rules.some((rule) => rule.itemCode === line.itemCode && rule.benefitBeban === beban);
+            const adaAturan = rules.some((rule) => rule.itemCode === line.itemCode && !rule.customerCode && rule.benefitBeban === beban);
+            const adaTarif = owner === "distributor" && rules.some((rule) => rule.customerCode
+                && line.customerNo.toUpperCase().startsWith(rule.customerCode.toUpperCase()));
             out.rows.push({ ...base, bucket: "unowned", positions: positionsAt(owner), percent, amount,
                 suratProgram: "", promoGroup: "",
-                reason: adaAturan
-                    ? `${percent}% tidak sama dengan aturan ${beban.toLowerCase()} yang berlaku untuk barang ini`
-                    : `tidak ada aturan ${beban.toLowerCase()} untuk barang ini`,
+                reason: adaAturan || adaTarif
+                    ? `${percent}% (posisi ${positionsAt(owner)}) tidak sama dengan aturan ${beban.toLowerCase()} yang berlaku`
+                    : `tidak ada aturan ${beban.toLowerCase()} untuk ${owner === "distributor" ? "outlet ini" : "barang ini"}`,
             });
         }
 
@@ -341,3 +365,75 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
 
 /** Rp 1 per baris, sama dengan gerbang validasi — hanya menyerap pembulatan. */
 export const RECAP_TOLERANCE = TOLERANCE;
+
+const text = (value: unknown) => String(value ?? "").trim();
+
+/** Sheet tarif per outlet; namanya sama dengan judul tabel principalnya, bukan singkatan. */
+export const TARIFF_SHEET = "Discount Reguler";
+const TARIFF_PROGRAM = "DISCOUNT REGULER";
+const TARIFF_GROUP = "TANGGUNGAN DISTRIBUTOR";
+
+/**
+ * Tarif **Discount Reguler (Tanggungan Distributor)** — butir 4.10.
+ *
+ * Bentuk sheetnya: satu BARIS per outlet, satu KOLOM per posisi (`POSISI 1` .. `POSISI 5`),
+ * isinya persen. Itu bentuk tabel aslinya (dan tabel yang dicetak principal), jadi dibaca apa
+ * adanya lalu dipecah menjadi satu aturan per (outlet x posisi) — posisi menentukan siapa
+ * menanggung, jadi ia tidak boleh larut jadi satu angka gabungan.
+ *
+ * Tanpa periode: tarif reguler berlaku sampai dicabut, dan baris tanpa tanggal memang dibaca
+ * gerbang sebagai selalu berlaku. Yang dicabut hilang dengan memuat ulang berkasnya.
+ *
+ * Sel kosong BUKAN nol: outlet yang posisinya tidak diisi tidak mendapat tarif di posisi itu,
+ * dan potongannya akan tertahan — itu yang diminta ("tidak ada potongan tembus tanpa aturan").
+ */
+export function parseTariff(
+    raw: Record<string, unknown>[],
+    ctx: { principal: string; importedBy: string; issues: string[] },
+) {
+    const out: {
+        principal: string; suratProgram: string; promoLabel: string; promoGroupId: string; promoGroup: string;
+        itemCode: string; itemName: string; prdId: string; customerCode: string;
+        periodStart: string | null; periodEnd: string | null; active: boolean; tierNo: number;
+        triggerQty: string; triggerUnit: string; benefitType: string; benefitValue: string;
+        benefitUnit: string; benefitBeban: string; onFaktur: boolean; note: string; importedBy: string;
+    }[] = [];
+    raw.forEach((row, index) => {
+        const keys = Object.keys(row);
+        const pick = (...names: string[]) => {
+            const hit = keys.find((key) => names.includes(key.trim().toUpperCase().replace(/\s+/g, " ")));
+            return hit ? text(row[hit]) : "";
+        };
+        const customerCode = pick("KODE_OUTLET", "KODE OUTLET", "KODE INTERNAL", "CODE INTERNAL", "KODE PELANGGAN", "KODE").toUpperCase();
+        const customerName = pick("PELANGGAN", "OUTLET", "NAMA OUTLET", "NAMA PELANGGAN", "CUSTOMER", "NAMA");
+        if (!customerCode) {
+            // Baris tanpa kode DILAPORKAN, tidak dilewati diam-diam: tiga baris pada tabel
+            // aslinya memang tidak terbaca dari foto, dan itu harus terlihat sebagai lubang.
+            if (customerName) ctx.issues.push(`${TARIFF_SHEET} baris ${index + 2}: "${customerName}" tanpa kode outlet — tarifnya tidak dimuat`);
+            return;
+        }
+        let terisi = 0;
+        for (let position = 1; position <= 5; position += 1) {
+            const value = pick(`POSISI ${position}`, `POSISI_${position}`, `DISC_${position}`, `DISC ${position}`);
+            if (value === "") continue;
+            const percent = Number(value.replace(",", ".").replace("%", ""));
+            if (!Number.isFinite(percent) || percent <= 0) {
+                if (percent !== 0) ctx.issues.push(`${TARIFF_SHEET} baris ${index + 2} (${customerCode}) posisi ${position}: "${value}" bukan persen`);
+                continue;
+            }
+            terisi += 1;
+            out.push({
+                principal: ctx.principal, suratProgram: TARIFF_PROGRAM, promoLabel: customerName,
+                promoGroupId: "", promoGroup: TARIFF_GROUP,
+                itemCode: "", itemName: "", prdId: "", customerCode,
+                periodStart: null, periodEnd: null, active: true, tierNo: position,
+                triggerQty: "0", triggerUnit: "PCS",
+                benefitType: "DISC_PCT", benefitValue: String(percent), benefitUnit: "%",
+                benefitBeban: "DISTRIBUTOR", onFaktur: true,
+                note: pick("CATATAN", "PERIKSA", "KETERANGAN"), importedBy: ctx.importedBy,
+            });
+        }
+        if (terisi === 0) ctx.issues.push(`${TARIFF_SHEET} baris ${index + 2} (${customerCode}): tidak ada satu posisi pun yang terisi`);
+    });
+    return out;
+}

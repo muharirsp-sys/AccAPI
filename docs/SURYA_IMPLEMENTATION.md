@@ -1959,6 +1959,47 @@ tetapi artinya **tidak ada faktur Kino berdiskon distributor yang bisa dikirim s
 - Butir **4.32 TERBUKTI**: Accurate menafsirkan rantai diskon persen dengan benar, dan potongan
   rupiah tingkat faktur mendarat utuh.
 
+### TAHAP 13 — aturan promo dapat dimensi OUTLET (butir 4.10), 2026-09-13
+
+Penahan alur nomor satu dibaca ulang, dan ternyata bukan pekerjaan memuat data: **`promo_rule`
+tidak punya dimensi pelanggan sama sekali.** Tarif Discount Reguler melekat pada OUTLET dan
+berlaku untuk seluruh barang yang dibelinya — terbukti pada `ORDER_DETAIL` 12 September:
+SS DIAPERS MESJID RAYA memotong 2% di posisi 1 pada **delapan barang yang berbeda**, dan
+SS DIAPERS PERINTIS 2% pada tiga barang lain. Itulah kesebelas baris yang tertahan.
+
+Tanpa kolom outlet, satu-satunya cara memuatnya adalah menyalin satu baris aturan per barang:
+4.182 baris yang harus dimuat ulang tiap master barang bertambah, dan diam-diam salah begitu
+ada barang baru. Jadi kolomnya yang ditambahkan, bukan datanya yang digandakan.
+
+| Yang dibangun | Berkas |
+|---|---|
+| Kolom `customer_code` + kunci unik baru | `db/migrations/0013_promo_rule_customer.sql` |
+| Pencocokan tarif **per POSISI** | `matchTariff()` di `lib/principal-validation.ts` |
+| Impor sheet `Discount Reguler` | `parseTariff()` di `lib/promo-recap.ts` |
+| Muat ulang tidak saling mencabut | `POST /api/promo-recap` |
+| Rekap Promo ikut mengenali tarif | `tariffFor()` di `lib/promo-recap.ts` |
+
+**Tiga keputusan yang layak diingat:**
+
+1. **Dicocokkan per POSISI, bukan per jumlah.** Tarif posisi 1 tidak boleh membenarkan potongan
+   yang duduk di posisi 2. Ini bug rantai persen yang dimampatkan (bug #5 TAHAP 12) dalam
+   bentuk lain: begitu posisi hilang, potongan berpindah penanggung tanpa ada yang tahu.
+2. **Separuh penjelasan bukan penjelasan.** Baris yang terpotong di dua posisi sementara hanya
+   satu yang punya tarif tetap ditahan seluruhnya.
+3. **Muat ulang hanya mengganti SLICE-nya sendiri.** Aturan surat (`customer_code` kosong) dan
+   tarif outlet (terisi) datang dari dua sumber yang tidak pernah dikirim bersamaan. Sebelumnya
+   tiap unggahan menghapus seluruh aturan principal itu — memuat yang satu akan diam-diam
+   mencabut yang lain, lalu gerbang menahan faktur yang sebenarnya sah.
+
+Diperiksa: 60 test lulus (`principal-validation`, `promo-recap`, `order-detail`,
+`invoice-verify`), `tsc --noEmit` dan eslint bersih.
+
+**Yang MASIH menahan**: berkas tarifnya sendiri. `DISCOUNT REGULER - TANGGUNGAN DISTRIBUTOR -
+KINO NON FOOD.xlsx` dibuat 2026-09-10 dari foto, dikirim ke pengguna, dan **sengaja tidak
+disimpan di repo** (memuat nama pelanggan dan tarif). Isinya juga belum tentu siap dipakai:
+hanya baris ALFAMART yang posisinya TERBUKTI, sisanya ditandai "posisi kolom BELUM PASTI", dan
+tiga baris tidak terbaca sama sekali. Migrasi `0013` **belum dijalankan di produksi**.
+
 ### Prompt melanjutkan (2026-09-13)
 
 > Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca
