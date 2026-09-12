@@ -86,8 +86,9 @@ export default function AntreanFakturPage() {
 
     async function act(orderId: string, action: "resend" | "discard") {
         if (action === "discard" && !confirm(
-            "Buang baris ini dari antrean? Pakai ini kalau angkanya yang salah — batch yang sudah "
-            + "diperbaiki bisa diantrekan ulang setelahnya.")) return;
+            "Buang baris ini dari antrean? Fakturnya belum ada di Accurate, jadi aman. Pakai ini "
+            + "kalau angkanya yang salah atau aturannya sudah berubah — batch yang sudah diperbaiki "
+            + "bisa diantrekan ulang setelahnya dengan angka terbaru.")) return;
         setBusy(true);
         try {
             const res = await fetch("/api/invoice-outbox", {
@@ -357,6 +358,13 @@ export default function AntreanFakturPage() {
                                                 <Trash2 size={15} />
                                             </button>
                                         </>
+                                    )}
+                                    {row.state === "queued" && (
+                                        <button onClick={() => void act(row.orderId, "discard")} disabled={busy}
+                                            title="Belum terkirim sama sekali. Buang supaya batch bisa diantrekan ulang dengan angka terbaru."
+                                            className="px-2 text-slate-400 hover:text-red-300 disabled:opacity-40">
+                                            <Trash2 size={15} />
+                                        </button>
                                     )}
                                     {row.state === "unknown" && (
                                         <span className="text-xs text-red-300/80">cocokkan manual</span>

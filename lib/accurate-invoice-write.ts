@@ -250,3 +250,19 @@ export function sendable(state: OutboxState): boolean {
 export function resendable(state: OutboxState): boolean {
     return state === "rejected";
 }
+
+/**
+ * Boleh DIBUANG dari antrean? `rejected` dan `queued` — keduanya dipastikan TIDAK punya faktur
+ * di Accurate: yang pertama karena Accurate menjawab dan menolak, yang kedua karena belum satu
+ * request pun terkirim (baris yang sedang dikirim berstatus `sending`, bukan `queued`).
+ *
+ * `queued` perlu ikut karena payload DIBEKUKAN saat diantrekan. Kalau aturan pembentuk payload
+ * berubah setelah itu — salesman mulai ikut dikirim, harga diperbaiki — baris lama akan terbit
+ * dengan angka lama, dan tanpa jalan membuangnya satu-satunya pilihan adalah menyentuh DB.
+ *
+ * `sending`, `posted`, dan `unknown` TIDAK PERNAH: fakturnya pasti atau mungkin sudah ada di
+ * sana, dan menghapus jejak lokalnya hanya menghilangkan satu-satunya petunjuk untuk mencarinya.
+ */
+export function discardable(state: OutboxState): boolean {
+    return state === "rejected" || state === "queued";
+}
