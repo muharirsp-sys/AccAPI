@@ -2,7 +2,7 @@
    dan timeout tidak boleh dianggap gagal (faktur ganda di Accurate tidak bisa dibatalkan). */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildInvoicePayload, nextOutboxState, readInvoiceIdentity, resendable, sendable, toAccurateDate, type InvoiceOrder } from "./accurate-invoice-write.ts";
+import { discardable, buildInvoicePayload, nextOutboxState, readInvoiceIdentity, resendable, sendable, toAccurateDate, type InvoiceOrder } from "./accurate-invoice-write.ts";
 
 const UNITS = new Map([["KRT", 100], ["BAG", 350]]);
 
@@ -114,3 +114,15 @@ test("tanpa jawaban dari Accurate statusnya TIDAK PASTI, bukan gagal, dan tidak 
     assert.equal(nextOutboxState("sending", { kind: "posted", id: "331710", number: "INV/1" }), "posted");
     assert.equal(nextOutboxState("posted", { kind: "rejected", message: "apa pun" }), "posted");
 });
+
+test("yang boleh DIBUANG hanya yang pasti belum ada fakturnya di Accurate", () => {
+    // Belum satu request pun terkirim, atau Accurate menjawab dan menolak.
+    assert.equal(discardable("queued"), true);
+    assert.equal(discardable("rejected"), true);
+    // `sending` sedang dalam perjalanan, `posted` pasti ada, `unknown` mungkin ada — menghapus
+    // jejak lokalnya menghilangkan satu-satunya petunjuk untuk mencarinya lewat charField1.
+    assert.equal(discardable("sending"), false);
+    assert.equal(discardable("posted"), false);
+    assert.equal(discardable("unknown"), false);
+});
+

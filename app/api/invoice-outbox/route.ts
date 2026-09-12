@@ -23,7 +23,7 @@ import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox, principalOrderBatch, principalOrderLine } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { resendable, type OutboxState } from "@/lib/accurate-invoice-write";
+import { discardable, resendable, type OutboxState } from "@/lib/accurate-invoice-write";
 
 export const runtime = "nodejs";
 
@@ -144,19 +144,25 @@ export async function POST(request: NextRequest) {
         .where(eq(invoiceOutbox.orderId, orderId)).limit(1);
     if (!row) return NextResponse.json({ ok: false, error: "Baris antrean tidak ditemukan" }, { status: 404 });
 
-    if (!resendable(row.state as OutboxState)) {
+    const allowed = action === "discard" ? discardable(row.state as OutboxState) : resendable(row.state as OutboxState);
+    if (!allowed) {
         const alasan = row.state === "unknown"
             ? "Statusnya TIDAK PASTI: Accurate tidak menjawab, jadi fakturnya mungkin sudah terbentuk di sana. "
               + "Cocokkan dulu lewat pencarian charField1 di Accurate; jangan pernah dikirim ulang dari sini."
-            : `Status ${row.state} tidak boleh dilepas ulang.`;
+            : action === "discard"
+                ? `Status ${row.state} tidak boleh dibuang: fakturnya mungkin atau pasti sudah ada di Accurate.`
+                : `Status ${row.state} tidak boleh dilepas ulang.`;
         return NextResponse.json({ ok: false, error: alasan }, { status: 409 });
     }
 
     if (action === "discard") {
-        // Hanya untuk yang DITOLAK: Accurate menjawab dan menolak, jadi dipastikan tidak ada
-        // fakturnya di sana. Barisnya dibuang supaya batch yang sudah diperbaiki bisa
-        // diantrekan lagi dengan angka baru — payload lama beku dan tidak ikut terbarui.
-        await db.delete(invoiceOutbox).where(and(eq(invoiceOutbox.orderId, orderId), eq(invoiceOutbox.state, "rejected")));
+        // Yang DITOLAK (Accurate menjawab dan menolak) dan yang MASIH MENUNGGU (belum pernah
+        // satu request pun terkirim) — keduanya dipastikan tidak punya faktur di Accurate.
+        // `queued` ikut karena payload BEKU saat diantrekan: kalau aturan pembentuk payload
+        // berubah (mis. salesman mulai ikut dikirim), satu-satunya cara memperbaruinya adalah
+        // membuang barisnya lalu mengantrekan ulang dari batch.
+        await db.delete(invoiceOutbox)
+            .where(and(eq(invoiceOutbox.orderId, orderId), inArray(invoiceOutbox.state, ["rejected", "queued"])));
         return NextResponse.json({ ok: true, orderId, action, state: null });
     }
 

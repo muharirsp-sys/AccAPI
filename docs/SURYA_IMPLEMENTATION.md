@@ -1813,6 +1813,64 @@ konkret: buka `/antrean-faktur` di produksi dan lihat `INV/2609/KN00403` dinyata
   DILAPORKAN, tidak diubah statusnya sendiri. Satu kekeliruan pasangan tidak boleh menutup
   masalah yang belum selesai.
 
+### TAHAP 10 — verifikasi balik JALAN di produksi, salesman terpasang (2026-09-12)
+
+Verifikasi balik dijalankan atas data nyata pada hari yang sama, dan **langsung membayar
+ongkosnya**: satu temuan yang tidak pernah dilihat manusia.
+
+**Temuan 1 — `transDate` diabaikan `save.do`.** Payload mengirim `11/09/2026`, Accurate
+mencatat `12/09/2026`, yaitu hari faktur itu dibuat. Inilah bukti pertama bahwa field yang
+tidak dikenal memang HILANG DIAM-DIAM — kekhawatiran yang sejak awal jadi alasan gerbang
+ditutup, kini terbukti dengan satu contoh nyata. Aturan pengguna ternyata sejalan dengan
+perilaku Accurate (*"faktur diproses pada tanggal masalah itu selesai"*), jadi tanggal kini
+diperiksa SATU ARAH: hanya faktur yang bertanggal lebih AWAL dari SO-nya yang ditandai.
+Menuntut sama persis akan membuat alarm yang tidak pernah bisa dipadamkan, dan alarm begitu
+mengajari orang mengabaikan seluruh layarnya.
+
+**Temuan 2 — mapping salesman menunjuk dua orang yang sudah nonaktif.** Pengguna mengoreksi
+dua baris (`1671GR4101` M-LFD -> M-RAH, `1671GR4106` M-EKA -> M-WEC); master Accurate kemudian
+membenarkannya sendiri: `M-LFD` (LUFIDAR) dan `M-EKA` keduanya `suspended: true`.
+
+**Temuan 3 — 11 baris tertahan karena cache pelanggan, bukan karena harga.** HINDA MART sudah
+diubah kategorinya di Accurate tetapi cache kita masih menyimpan MT. Setelah master pelanggan
+ditarik ulang, kategorinya TT dan harga TT = 10.180,18018 — persis harga laporan. MT/NKA naik
+ke 11.396,4 sejak 1 Agustus, kategori lain masih harga Maret.
+
+**Butir 4.31 SELESAI.** `salesman/list.do` **tidak ada** (404 "URL API tidak tepat").
+Salesman = pegawai bertanda `salesman: true` pada **`employee/list.do`**, dan `employee.number`
+**sama persis** dengan kode salesman internal kita. Jadi jembatan ke `masterSalesmanId`
+DITURUNKAN dari master (`accurate_employee`, migrasi 0012, modul sync `employee`), bukan
+diketik ulang ke mapping — kolom isian tangan akan basi diam-diam tiap kali sales berganti,
+dan temuan 2 membuktikan itu bukan kekhawatiran teoretis. Kesembilan kode Kino nyambung di
+produksi. Yang `suspended` tidak dipakai; sales yang tidak ketemu **tidak menahan faktur**.
+
+**Butir 4.35 (baru).** `discardable()` kini mencakup `queued`, bukan hanya `rejected`. Payload
+dibekukan saat diantrekan, jadi begitu aturan pembentuknya berubah — salesman mulai ikut
+dikirim — baris lama akan terbit dengan angka lama dan tidak ada jalan membuangnya selain
+menyentuh DB. `sending`/`posted`/`unknown` tetap tidak pernah bisa dibuang.
+
+**Keadaan produksi:**
+
+- Migrasi **0012 SUDAH di produksi**; `accurate_employee` terisi 236 baris.
+- Master pelanggan ditarik ulang (32.488 baris); batch 11 September siap divalidasi ulang.
+- Antrean: 1 `posted`, 3 `queued` **dengan payload lama tanpa salesman** — harus dibuang lalu
+  diantrekan ulang kalau salesnya mau ikut.
+- **Gerbang kirim TETAP TERTUTUP.**
+- Sisa baris `review`: 1 SO (`1671-SOP-260013024`, outlet `322640794971` "sumber baru") yang
+  butuh mapping outlet + harga Accurate.
+
+### Prompt melanjutkan (2026-09-12, setelah salesman)
+
+> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca
+> `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md` lalu "TAHAP 10" pada docs/SURYA_IMPLEMENTATION.md.
+> Verifikasi balik sudah JALAN di produksi dan sudah menemukan bahwa `transDate` diabaikan
+> `save.do`. Salesman sudah terpasang lewat `accurate_employee` (butir 4.31 selesai). Yang
+> tersisa: (a) 3 baris antrean berpayload lama tanpa salesman — buang lalu antrekan ulang,
+> (b) outlet "sumber baru" 322640794971 belum dipetakan, (c) butir 4.32 diskon persen masih
+> menunggu hari berpromo, (d) butir 4.25 teks error Accurate belum pernah dilihat. Gerbang
+> kirim TERTUTUP sampai diminta. Jangan stage massal — working tree masih memuat pekerjaan
+> rekonsiliasi dan eksperimen OCR lama.
+
 ### Prompt melanjutkan (2026-09-12, setelah verifikasi balik)
 
 > Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca
