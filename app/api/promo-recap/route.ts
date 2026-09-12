@@ -61,22 +61,38 @@ export async function GET(request: NextRequest) {
         promoGroup: row.promoGroup, itemCode: row.itemCode,
         periodStart: row.periodStart, periodEnd: row.periodEnd,
         benefitType: row.benefitType, benefitValue: row.benefitValue, benefitUnit: row.benefitUnit,
-        onFaktur: row.onFaktur,
+        onFaktur: row.onFaktur, benefitBeban: row.benefitBeban,
+        tierNo: row.tierNo, triggerQty: Number(row.triggerQty), triggerUnit: row.triggerUnit,
     }));
 
-    const lines = rows.flatMap((row) => invoiceLines(row.raw));
-    const result = recap(lines, rules);
+    // Principal yang BISA disaring = yang punya aturan terbit. Menyaring ke principal tanpa
+    // aturan hanya menghasilkan halaman yang seluruhnya tak bertuan, dan itu bukan temuan —
+    // itu cuma tandanya aturannya belum dimuat.
+    const principals = [...new Set(rules.map((rule) => rule.principal.trim()).filter(Boolean))].sort();
+    const principal = (request.nextUrl.searchParams.get("principal") || "").trim();
+
+    // Cabang faktur = principal pemiliknya, ruang nama yang sama dengan `promo_rule.principal`.
+    // Tanpa saringan ini rekap mencampur SEMUA principal sementara aturan hanya ada untuk
+    // sebagian — dan klaim principal lain pasti tampak "tanpa aturan terbit" selamanya.
+    const semua = rows.flatMap((row) => invoiceLines(row.raw));
+    const lines = principal
+        ? semua.filter((line) => line.branchName.trim().toUpperCase() === principal.toUpperCase())
+        : semua;
+    const scopedRules = principal
+        ? rules.filter((rule) => rule.principal.trim().toUpperCase() === principal.toUpperCase())
+        : rules;
+    const result = recap(lines, scopedRules);
 
     // Faktur yang `raw_data`-nya belum memuat rincian baris: hanya jalur webhook (detail.do)
     // yang membawanya, faktur hasil sync daftar tidak. Wajib terlihat, bukan hilang diam-diam.
     // Dihitung dari hasil bongkar, bukan dari bentuk mentahnya: `raw_data` tersimpan sebagai
     // TEKS JSON (lihat catatan di lib/promo-recap), jadi memeriksa `raw.detailItem` langsung
     // selalu menjawab "tidak ada rincian" untuk semua faktur.
-    const withDetail = new Set(lines.map((line) => line.invoiceId || line.invoiceNo));
+    const withDetail = new Set(semua.map((line) => line.invoiceId || line.invoiceNo));
     const withoutDetail = rows.length - withDetail.size;
 
     return NextResponse.json({
-        ok: true, from, to,
+        ok: true, from, to, principal, principals,
         invoicesInRange: rows.length,
         invoicesWithoutDetail: withoutDetail,
         rules: rules.length,

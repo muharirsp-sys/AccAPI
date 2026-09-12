@@ -12,24 +12,48 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Upload, RefreshCw, CheckCircle2, FileWarning } from "lucide-react";
+import { AlertTriangle, Upload, RefreshCw, CheckCircle2, FileWarning, Download } from "lucide-react";
 import { toast } from "sonner";
 
 type Program = {
     key: string; suratProgram: string; promoLabel: string; promoGroup: string;
-    principalAmount: number; lines: number; invoices: number;
-    mismatched: { invoiceNo: string; itemCode: string; expected: number; actual: number }[];
+    amount: number; lines: number; invoices: number;
+};
+
+type DetailRow = {
+    bucket: "principal" | "distributor" | "unowned";
+    invoiceNo: string; transDate: string; branchName: string;
+    customerNo: string; customerName: string;
+    itemCode: string; itemName: string;
+    positions: string; percent: number; amount: number;
+    suratProgram: string; promoGroup: string; reason: string;
 };
 
 type Data = {
-    from: string; to: string; invoicesInRange: number; invoicesWithoutDetail: number; rules: number;
+    from: string; to: string; principal: string; principals: string[];
+    invoicesInRange: number; invoicesWithoutDetail: number; rules: number;
     recap: {
-        invoices: number; lines: number; gross: number; distributor: number; principal: number;
-        unowned: number; principalWithoutRule: number; cashDiscount: number; programs: Program[];
-        unownedLines: { invoiceNo: string; itemCode: string; amount: number; positions: number[] }[];
-        unexplained: { invoiceNo: string; itemCode: string; amount: number }[];
+        invoices: number; lines: number; gross: number;
+        distributor: number; principal: number; unowned: number;
+        programs: Program[]; rows: DetailRow[];
     };
 };
+
+/** Kartu ringkas; `key` menentukan angka mana yang dibaca dan rincian mana yang dibuka. */
+const KARTU = [
+    { key: "gross", label: "Bruto faktur", note: "" },
+    { key: "principal", label: "Klaim principal", note: "cocok aturan principal, bisa ditagihkan" },
+    { key: "distributor", label: "Tanggungan distributor", note: "cocok aturan distributor, beban sendiri" },
+    { key: "unowned", label: "Tak bertuan", note: "tidak sesuai promo yang berlaku — wajib divalidasi" },
+] as const;
+
+// BOM supaya nama outlet ber-aksen tidak jadi mojibake di Excel; CRLF karena Excel Windows
+// memperlakukan LF saja sebagai satu baris panjang.
+const BOM = String.fromCharCode(0xFEFF);
+const CRLF = String.fromCharCode(13, 10);
+
+type Buka = { jenis: "none" | "bucket" | "program"; nilai: string };
+const kosong: Buka = { jenis: "none", nilai: "" };
 
 const rp = (value: number) => `Rp ${Number(value).toLocaleString("id-ID", { maximumFractionDigits: 0 })}`;
 // toISOString() memakai UTC, jadi tanggal 1 di WITA berubah jadi tanggal 31 bulan sebelumnya.
@@ -51,13 +75,17 @@ export default function RekapPromoPage() {
     const [file, setFile] = useState<File | null>(null);
     const [preview, setPreview] = useState<{ rows: number; programs: number; tingkatFaktur: number; issues: string[] } | null>(null);
     const [busy, setBusy] = useState(false);
+    const [principal, setPrincipal] = useState("");
+    const [buka, setBuka] = useState<Buka>(kosong);
 
     const load = useCallback(async () => {
-        const res = await fetch(`/api/promo-recap?from=${from}&to=${to}`, { credentials: "include" });
+        const query = new URLSearchParams({ from, to });
+        if (principal) query.set("principal", principal);
+        const res = await fetch(`/api/promo-recap?${query.toString()}`, { credentials: "include" });
         const body = await res.json().catch(() => ({}));
         if (!res.ok || !body.ok) { toast.error(body.error ?? "Rekap gagal dimuat"); return; }
         setData(body);
-    }, [from, to]);
+    }, [from, to, principal]);
 
     useEffect(() => { void load(); }, [load]);
 
@@ -85,7 +113,39 @@ export default function RekapPromoPage() {
     }
 
     const r = data?.recap;
-    const bersih = r && r.unowned === 0 && r.principalWithoutRule === 0;
+    const bersih = r && r.unowned === 0;
+
+    // Satu daftar rincian melayani kartu, tabel layar, DAN unduhan CSV. Kalau ketiganya
+    // dihitung sendiri-sendiri, angka di kartu bisa berbeda dari isi unduhannya — dan yang
+    // dipegang orang saat menagih adalah unduhannya.
+    const rincian = !r ? [] : buka.jenis === "bucket"
+        ? r.rows.filter((row) => row.bucket === buka.nilai)
+        : buka.jenis === "program"
+            ? r.rows.filter((row) => `${row.suratProgram}|${row.promoGroup}` === buka.nilai)
+            : [];
+    const totalRincian = rincian.reduce((total, row) => total + row.amount, 0);
+    const judulRincian = buka.jenis === "program"
+        ? `Rincian program ${buka.nilai.split("|")[0]} · ${buka.nilai.split("|")[1]}`
+        : `Rincian ${KARTU.find((kartu) => kartu.key === buka.nilai)?.label ?? ""}`;
+
+    /** CSV, bukan xlsx: dibuka Excel apa adanya dan tidak menambah satu pun dependensi. */
+    function unduh() {
+        const judul = ["Faktur", "Tanggal", "Principal", "Kode Outlet", "Outlet", "Kode Barang",
+            "Nama Barang", "Posisi", "Persen", "Rupiah", "Surat", "Kelompok", "Keterangan"];
+        // Titik koma: Excel Indonesia memakai koma sebagai desimal, jadi pemisah koma
+        // memecah angka jadi dua kolom. BOM supaya nama outlet ber-aksen tidak jadi mojibake.
+        const escape = (value: string | number) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+        const isi = rincian.map((row) => [row.invoiceNo, row.transDate, row.branchName, row.customerNo,
+            row.customerName, row.itemCode, row.itemName, row.positions, row.percent, row.amount,
+            row.suratProgram, row.promoGroup, row.reason].map(escape).join(";"));
+        const teks = BOM + [judul.map(escape).join(";"), ...isi].join(CRLF);
+        const url = URL.createObjectURL(new Blob([teks], { type: "text/csv;charset=utf-8" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `rekap-promo-${buka.nilai.replace(/[^A-Za-z0-9]+/g, "-")}-${from}-sd-${to}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
 
     return (
         <div className="p-6 space-y-6 text-slate-200">
@@ -107,6 +167,14 @@ export default function RekapPromoPage() {
                     <span className="block text-slate-400 mb-1">Sampai</span>
                     <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
                         className="bg-black/40 border border-white/10 rounded px-3 py-2" />
+                </label>
+                <label className="text-sm">
+                    <span className="block text-slate-400 mb-1">Principal</span>
+                    <select value={principal} onChange={(e) => { setPrincipal(e.target.value); setBuka(kosong); }}
+                        className="bg-black/40 border border-white/10 rounded px-3 py-2">
+                        <option value="">Semua principal</option>
+                        {(data?.principals ?? []).map((nama) => <option key={nama} value={nama}>{nama}</option>)}
+                    </select>
                 </label>
                 <button onClick={() => void load()} className="inline-flex items-center gap-2 rounded bg-white/10 px-3 py-2 text-sm">
                     <RefreshCw size={15} /> Muat rekap
@@ -135,18 +203,31 @@ export default function RekapPromoPage() {
             {r && (
                 <>
                     <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        {[
-                            { label: "Bruto faktur", value: rp(r.gross), note: `${r.invoices} faktur · ${r.lines} baris` },
-                            { label: "Klaim principal", value: rp(r.principal), note: "posisi 4–5, bisa ditagihkan" },
-                            { label: "Tanggungan distributor", value: rp(r.distributor), note: "posisi 1–3, beban sendiri" },
-                            { label: "Diskon tak bertuan", value: rp(r.unowned), note: "posisi 6+, seharusnya nol" },
-                        ].map((kartu) => (
-                            <div key={kartu.label} className="rounded-lg border border-white/10 bg-black/20 p-4">
-                                <p className="text-xs text-slate-400">{kartu.label}</p>
-                                <p className={`text-xl font-semibold ${kartu.label.includes("tak bertuan") && r.unowned > 0 ? "text-red-300" : "text-white"}`}>{kartu.value}</p>
-                                <p className="text-xs text-slate-500">{kartu.note}</p>
-                            </div>
-                        ))}
+                        {KARTU.map((kartu) => {
+                            const nilai = kartu.key === "gross" ? r.gross
+                                : kartu.key === "principal" ? r.principal
+                                : kartu.key === "distributor" ? r.distributor : r.unowned;
+                            const aktif = buka.jenis === "bucket" && buka.nilai === kartu.key;
+                            const bisaDibuka = kartu.key !== "gross";
+                            return (
+                                <button key={kartu.key} type="button" disabled={!bisaDibuka}
+                                    onClick={() => setBuka(aktif ? kosong : { jenis: "bucket", nilai: kartu.key })}
+                                    className={`rounded-lg border p-4 text-left transition ${aktif ? "border-blue-400 bg-blue-500/10" : "border-white/10 bg-black/20"} ${bisaDibuka ? "hover:border-blue-400/60" : "cursor-default"}`}>
+                                    <p className="text-xs text-slate-400">{kartu.label}</p>
+                                    <p className={`text-xl font-semibold ${kartu.key === "unowned" && r.unowned > 0 ? "text-red-300" : "text-white"}`}>
+                                        {rp(nilai)}
+                                    </p>
+                                    <p className="text-xs text-slate-500">
+                                        {kartu.key === "gross" ? `${r.invoices} faktur · ${r.lines} baris` : kartu.note}
+                                    </p>
+                                    {bisaDibuka && (
+                                        <p className="mt-1 text-[11px] text-blue-300">
+                                            {aktif ? "tutup rincian" : "lihat rincian"}
+                                        </p>
+                                    )}
+                                </button>
+                            );
+                        })}
                     </section>
 
                     <div className={`flex items-start gap-3 rounded-lg border p-4 ${bersih ? "border-emerald-500/30 bg-emerald-500/5" : "border-red-500/40 bg-red-500/10"}`}>
@@ -154,16 +235,18 @@ export default function RekapPromoPage() {
                         <div className="text-sm">
                             {bersih ? (
                                 <p className="text-emerald-200">
-                                    Periode ini bersih: tidak ada diskon tak bertuan, dan seluruh klaim principal punya aturan terbit.
+                                    Periode ini bersih: setiap potongan cocok dengan aturan promo yang berlaku.
                                 </p>
                             ) : (
                                 <>
                                     <p className="font-medium text-red-200">
-                                        {rp(r.unowned)} diskon tak bertuan dan {rp(r.principalWithoutRule)} klaim principal tanpa aturan terbit.
+                                        {rp(r.unowned)} potongan belum bisa dipertanggungjawabkan.
                                     </p>
                                     <p className="text-xs text-red-200/80">
-                                        Daily closing seharusnya membuat keduanya nol saat faktur masuk Accurate. Angka di atas
-                                        berarti ada faktur yang lewat di luar gerbang, atau aturannya belum dimuat.
+                                        Tak bertuan berarti potongannya <strong>tidak sesuai promo yang berlaku</strong> — di posisi
+                                        mana pun, bukan hanya posisi 6 ke atas. Termasuk potongan posisi 1–3 yang belum punya
+                                        aturan berbeban DISTRIBUTOR: selama aturannya belum dimuat, uang itu belum boleh diakui
+                                        sebagai beban sendiri maupun ditagihkan. Buka kartunya untuk melihat sebabnya per baris.
                                     </p>
                                 </>
                             )}
@@ -189,31 +272,32 @@ export default function RekapPromoPage() {
                                         <th className="px-3 py-2 text-right">Faktur</th>
                                         <th className="px-3 py-2 text-right">Baris</th>
                                         <th className="px-3 py-2 text-right">Klaim principal</th>
-                                        <th className="px-3 py-2 text-left">Sesuai mekanisme</th>
+                                        <th className="px-3 py-2" />
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {r.programs.map((program) => (
-                                        <tr key={program.key} className="border-t border-white/5">
+                                        <tr key={program.key}
+                                            className={`border-t border-white/5 ${buka.jenis === "program" && buka.nilai === program.key ? "bg-blue-500/10" : ""}`}>
                                             <td className="px-3 py-2 font-mono text-xs">{program.suratProgram}</td>
                                             <td className="px-3 py-2 text-xs">{program.promoLabel}</td>
                                             <td className="px-3 py-2">{program.promoGroup}</td>
                                             <td className="px-3 py-2 text-right">{program.invoices}</td>
                                             <td className="px-3 py-2 text-right">{program.lines}</td>
-                                            <td className="px-3 py-2 text-right text-emerald-300">{rp(program.principalAmount)}</td>
-                                            <td className="px-3 py-2 text-xs">
-                                                {program.mismatched.length === 0
-                                                    ? <span className="text-emerald-300">sesuai</span>
-                                                    : <span className="text-amber-300">
-                                                        {program.mismatched.length} baris menyimpang (mis. {program.mismatched[0].invoiceNo}:
-                                                        surat {program.mismatched[0].expected}% vs faktur {program.mismatched[0].actual}%)
-                                                    </span>}
+                                            <td className="px-3 py-2 text-right text-emerald-300">{rp(program.amount)}</td>
+                                            <td className="px-3 py-2 text-right">
+                                                <button type="button" className="text-xs text-blue-300 hover:underline"
+                                                    onClick={() => setBuka(buka.jenis === "program" && buka.nilai === program.key
+                                                        ? kosong : { jenis: "program", nilai: program.key })}>
+                                                    {buka.jenis === "program" && buka.nilai === program.key ? "tutup" : "rincian"}
+                                                </button>
                                             </td>
                                         </tr>
                                     ))}
                                     {!r.programs.length && (
                                         <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-500">
-                                            Belum ada klaim principal yang cocok dengan aturan terbit pada periode ini.
+                                            Belum ada potongan yang cocok dengan aturan terbit pada periode ini.
+                                            {!data.principal && " Coba saring per principal — aturan hanya termuat untuk sebagian principal."}
                                         </td></tr>
                                     )}
                                 </tbody>
@@ -221,19 +305,61 @@ export default function RekapPromoPage() {
                         </div>
                     </section>
 
-                    {(r.unownedLines.length > 0 || r.unexplained.length > 0) && (
-                        <section className="grid gap-4 lg:grid-cols-2">
-                            {[
-                                { judul: "Diskon tak bertuan", isi: r.unownedLines.map((x) => `${x.invoiceNo} · ${x.itemCode} · ${rp(x.amount)} (posisi ${x.positions.join(", ")})`) },
-                                { judul: "Klaim principal tanpa aturan terbit", isi: r.unexplained.map((x) => `${x.invoiceNo} · ${x.itemCode} · ${rp(x.amount)}`) },
-                            ].filter((blok) => blok.isi.length > 0).map((blok) => (
-                                <div key={blok.judul} className="rounded-lg border border-red-500/30 bg-red-500/5 p-4">
-                                    <p className="mb-2 font-medium text-red-200">{blok.judul} ({blok.isi.length})</p>
-                                    <ul className="max-h-64 space-y-0.5 overflow-y-auto text-xs text-red-100/90">
-                                        {blok.isi.slice(0, 100).map((teks) => <li key={teks}>{teks}</li>)}
-                                    </ul>
-                                </div>
-                            ))}
+                    {buka.jenis !== "none" && (
+                        <section className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-3">
+                                <h2 className="text-lg font-medium text-white">{judulRincian}</h2>
+                                <span className="text-xs text-slate-400">{rincian.length} baris · {rp(totalRincian)}</span>
+                                <button onClick={unduh} disabled={!rincian.length}
+                                    className="ml-auto inline-flex items-center gap-1 rounded bg-white/10 px-3 py-1.5 text-xs disabled:opacity-40">
+                                    <Download size={13} /> Unduh CSV
+                                </button>
+                            </div>
+                            <div className="max-h-[28rem] overflow-auto rounded-lg border border-white/10">
+                                <table className="w-full text-sm">
+                                    <thead className="sticky top-0 bg-slate-900 text-slate-400">
+                                        <tr>
+                                            <th className="px-3 py-2 text-left">Faktur</th>
+                                            <th className="px-3 py-2 text-left">Tanggal</th>
+                                            <th className="px-3 py-2 text-left">Outlet</th>
+                                            <th className="px-3 py-2 text-left">Barang</th>
+                                            <th className="px-3 py-2 text-left">Posisi</th>
+                                            <th className="px-3 py-2 text-right">%</th>
+                                            <th className="px-3 py-2 text-right">Rupiah</th>
+                                            <th className="px-3 py-2 text-left">Keterangan</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {rincian.slice(0, 500).map((row, index) => (
+                                            <tr key={`${row.invoiceNo}-${row.itemCode}-${row.positions}-${index}`} className="border-t border-white/5">
+                                                <td className="px-3 py-2 font-mono text-xs">{row.invoiceNo}</td>
+                                                <td className="px-3 py-2 text-xs">{row.transDate}</td>
+                                                <td className="px-3 py-2 text-xs">
+                                                    <div className="font-mono">{row.customerNo}</div>
+                                                    <div className="text-slate-500">{row.customerName}</div>
+                                                </td>
+                                                <td className="px-3 py-2 text-xs">
+                                                    <div className="font-mono">{row.itemCode || "—"}</div>
+                                                    <div className="text-slate-500">{row.itemName}</div>
+                                                </td>
+                                                <td className="px-3 py-2 text-xs">{row.positions}</td>
+                                                <td className="px-3 py-2 text-right text-xs">{row.percent || "—"}</td>
+                                                <td className="px-3 py-2 text-right">{rp(row.amount)}</td>
+                                                <td className="px-3 py-2 text-xs">
+                                                    {row.reason
+                                                        ? <span className="text-red-200/90">{row.reason}</span>
+                                                        : <span className="text-slate-500">{row.suratProgram} · {row.promoGroup}</span>}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {rincian.length > 500 && (
+                                <p className="text-xs text-slate-500">
+                                    Ditampilkan 500 baris teratas. Unduhan CSV memuat seluruh {rincian.length} baris.
+                                </p>
+                            )}
                         </section>
                     )}
                 </>
