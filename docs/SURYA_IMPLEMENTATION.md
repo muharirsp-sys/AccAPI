@@ -1994,11 +1994,47 @@ ada barang baru. Jadi kolomnya yang ditambahkan, bukan datanya yang digandakan.
 Diperiksa: 60 test lulus (`principal-validation`, `promo-recap`, `order-detail`,
 `invoice-verify`), `tsc --noEmit` dan eslint bersih.
 
-**Yang MASIH menahan**: berkas tarifnya sendiri. `DISCOUNT REGULER - TANGGUNGAN DISTRIBUTOR -
-KINO NON FOOD.xlsx` dibuat 2026-09-10 dari foto, dikirim ke pengguna, dan **sengaja tidak
-disimpan di repo** (memuat nama pelanggan dan tarif). Isinya juga belum tentu siap dipakai:
-hanya baris ALFAMART yang posisinya TERBUKTI, sisanya ditandai "posisi kolom BELUM PASTI", dan
-tiga baris tidak terbaca sama sekali. Migrasi `0013` **belum dijalankan di produksi**.
+**Foto tabelnya dikirim ulang hari ini, dan DATA membantah tafsir mata.** Dua nilai yang
+tercetak bersebelahan pada tiap baris ternyata posisi **1 dan 4**, bukan dua kolom berdampingan
+— dibuktikan dengan menyapu sepuluh berkas `ORDER_DETAIL` lama dan mencocokkan pola diskon per
+pelanggan:
+
+| Outlet | Nilai di tabel | Posisi nyata pada ORDER_DETAIL |
+|---|---|---|
+| Indogrosir `C-IND051` | 3,96% · 0,5% | 1:3,96 · 4:0,5 — cocok |
+| Alfamart `C-AL0063` | 4% · 2,25% | 1:4 · 4:2,25 — cocok |
+| Alfamidi `C-AL0064` | 4% · 2,25% | 1:4 · 4:2,25 — cocok |
+| Lotte Mart, Satu Sama Jaya, Misi Pasaraya, Verlina, Hj. Icha | 2–3% | posisi 1 — cocok |
+| Indomaret `C-IN0050` | 3,96% · **3%** | 1:3,96 · 4:**3,1** — **BEDA** |
+
+Konsekuensinya besar: **tabel ini bukan tarif distributor saja.** Header cetakannya sendiri
+memisahkan `Distributor` (posisi 1-3) dari `Principle` (posisi 4-5) — peta yang sama persis
+dengan `OWNER`. Jadi 2,25% Alfamart di posisi 4 itu **klaim principal yang selama ini tidak
+punya surat**, yaitu butir 4.12. `parseTariff` menurunkan beban dari POSISI, tidak pernah dari
+kolom isian tangan: satu tabel tidak boleh bisa menyatakan dua hal berbeda tentang baris yang sama.
+
+Masa berlakunya juga ada, tulisan tangan di sudut kanan bawah: **15/8-26 s/d 31/12-26**.
+
+**Gerbang tambahan atas permintaan pengguna**: satu baris tarif hanya dimuat kalau kolom `PAKAI`
+diisi. Tabelnya diekstrak dari FOTO dan hanya sebagian posisinya pernah dibuktikan; aturan
+tebakan yang lolos ke gerbang sama buruknya dengan tidak punya gerbang, bedanya yang ini
+terlihat benar. Dijaga di `parseTariff`, bukan di kedisiplinan penyusun sheetnya.
+
+**Sheet periksa sudah dibuat dan dikirim ke pengguna** (tidak disimpan di repo — memuat nama
+pelanggan dan tarif): 31 baris, **10 outlet dicentang `PAKAI` karena terbukti dari data nyata**,
+21 baris menunggu pengguna memastikan posisinya. Muatan percobaan menghasilkan **13 aturan**.
+
+**Dijalankan atas kesebelas baris yang tertahan 12 September: sebelas-belasnya lolos** —
+SS DIAPERS MESJID RAYA (`C-SAT016`, 8 baris) dan PERINTIS KM.9 (`C-SAT015`, 3 baris), keduanya
+2% di posisi 1. Keduanya anggota SATU SAMA JAYA ABADI GROUP; baris ber-"GROUP" pada tabel
+dipecah satu baris per kode outlet anggotanya.
+
+**Yang masih menggantung**: (a) migrasi `0013` **belum dijalankan di produksi** — Postgres lokal
+maupun Docker tidak hidup, jadi SQL-nya belum pernah dieksekusi sama sekali; (b) pemetaan
+`CUST_ID2` -> kode internal untuk kedua outlet SS DIAPERS **diambil dari nama pelanggan pada
+laporan** ("...CSAT016"), bukan dari `principal_mapping` — wajib diperiksa lawan DB sebelum
+dipercaya; (c) Indomaret posisi 4 berselisih 3% lawan 3,1%, dan itu justru jenis selisih yang
+gerbang ini ada untuk menangkapnya; (d) 21 baris sisa menunggu pengguna.
 
 ### Prompt melanjutkan (2026-09-13)
 

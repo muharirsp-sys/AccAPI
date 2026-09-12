@@ -190,21 +190,29 @@ test("sheet Discount Reguler dipecah jadi satu aturan per (outlet x posisi)", ()
     const issues: string[] = [];
     const hasil = parseTariff([
         // Bentuk tabel aslinya: satu baris per outlet, satu kolom per posisi.
-        { "PELANGGAN": "ALFAMART", "KODE_OUTLET": "c-alf001", "POSISI 1": 4, "POSISI 2": "", "POSISI 3": "", "POSISI 4": "", "POSISI 5": "", "PERIKSA": "terbukti dari ORDER_DETAIL" },
-        { "PELANGGAN": "SS DIAPERS MESJID RAYA", "KODE_OUTLET": "C-SSD001", "POSISI 1": "2%", "POSISI 2": "1,5" },
+        { "PAKAI": "YA", "PELANGGAN": "ALFAMART", "KODE_OUTLET": "c-al0063", "POSISI 1": 4, "POSISI 2": "", "POSISI 3": "", "POSISI 4": "2.25", "POSISI 5": "" },
+        { "PAKAI": "ya", "PELANGGAN": "SS DIAPERS MESJID RAYA", "KODE_OUTLET": "C-SAT016", "POSISI 1": "2%", "POSISI 2": "1,5" },
         // Tiga baris tabel aslinya tidak terbaca dari foto: harus muncul sebagai lubang.
-        { "PELANGGAN": "HYPERMART", "KODE_OUTLET": "", "POSISI 1": "" },
+        { "PAKAI": "YA", "PELANGGAN": "HYPERMART", "KODE_OUTLET": "", "POSISI 1": "" },
         // Outlet berkode tetapi tanpa satu posisi pun -> dilaporkan, tidak dimuat diam-diam.
-        { "PELANGGAN": "PANEN SELARAS", "KODE_OUTLET": "C-PAN001" },
+        { "PAKAI": "YA", "PELANGGAN": "PANEN SELARAS", "KODE_OUTLET": "C-PAN001" },
+        // Posisinya BELUM dinyatakan pasti -> tidak dimuat, dan itu dilaporkan.
+        { "PAKAI": "", "PELANGGAN": "RAMAYANA", "KODE_OUTLET": "C-RAM001", "POSISI 1": 3 },
     ], { principal: "KINO NON FOOD", importedBy: "uji@surya", issues });
 
-    assert.equal(hasil.length, 3);
-    assert.deepEqual(hasil.map((r) => [r.customerCode, r.tierNo, r.benefitValue]),
-        [["C-ALF001", 1, "4"], ["C-SSD001", 1, "2"], ["C-SSD001", 2, "1.5"]]);
-    // Tarif reguler berlaku sampai dicabut: tanpa periode, dan selalu beban DISTRIBUTOR.
+    assert.deepEqual(hasil.map((r) => [r.customerCode, r.tierNo, r.benefitValue, r.benefitBeban]), [
+        // Beban diturunkan dari POSISI, seperti header tabel principalnya: 1-3 distributor,
+        // 4-5 principal. Alfamart 2,25% di posisi 4 itu klaim principal, bukan beban sendiri.
+        ["C-AL0063", 1, "4", "DISTRIBUTOR"],
+        ["C-AL0063", 4, "2.25", "PRINCIPAL"],
+        ["C-SAT016", 1, "2", "DISTRIBUTOR"],
+        ["C-SAT016", 2, "1.5", "DISTRIBUTOR"],
+    ]);
     assert.ok(hasil.every((r) => r.periodStart === null && r.periodEnd === null
-        && r.benefitBeban === "DISTRIBUTOR" && r.benefitType === "DISC_PCT" && r.itemCode === ""));
-    assert.equal(issues.length, 2);
+        && r.benefitType === "DISC_PCT" && r.itemCode === ""));
+    assert.equal(issues.length, 3);
     assert.match(issues.join(" "), /HYPERMART/);
     assert.match(issues.join(" "), /C-PAN001/);
+    // Yang belum dicentang PAKAI tidak boleh ikut, dan harus terlihat kenapa.
+    assert.match(issues.join(" "), /C-RAM001: kolom PAKAI belum diisi/);
 });

@@ -374,15 +374,30 @@ const TARIFF_PROGRAM = "DISCOUNT REGULER";
 const TARIFF_GROUP = "TANGGUNGAN DISTRIBUTOR";
 
 /**
- * Tarif **Discount Reguler (Tanggungan Distributor)** — butir 4.10.
+ * Sebuah baris tarif hanya dimuat kalau peninjau MENYATAKAN posisinya sudah pasti (kolom
+ * `PAKAI`). Keputusan pengguna 2026-09-13: yang posisinya belum terbukti jangan dimuat dulu.
+ *
+ * Kenapa dijaga di sini dan bukan di tangan penyusun sheetnya: tabel tarif ini diekstrak dari
+ * FOTO, dan hanya baris ALFAMART yang posisinya pernah dibuktikan lawan data nyata. Aturan
+ * tebakan yang lolos ke gerbang persis sama buruknya dengan tidak punya gerbang — bedanya
+ * yang ini terlihat benar.
+ */
+const DIPAKAI = new Set(["YA", "Y", "YES", "TRUE", "1", "V", "X", "OK", "PASTI", "TERBUKTI", "✓", "√"]);
+
+/**
+ * Tabel **Discount Reguler** — butir 4.10 (dan 4.12).
  *
  * Bentuk sheetnya: satu BARIS per outlet, satu KOLOM per posisi (`POSISI 1` .. `POSISI 5`),
  * isinya persen. Itu bentuk tabel aslinya (dan tabel yang dicetak principal), jadi dibaca apa
  * adanya lalu dipecah menjadi satu aturan per (outlet x posisi) — posisi menentukan siapa
  * menanggung, jadi ia tidak boleh larut jadi satu angka gabungan.
  *
- * Tanpa periode: tarif reguler berlaku sampai dicabut, dan baris tanpa tanggal memang dibaca
- * gerbang sebagai selalu berlaku. Yang dicabut hilang dengan memuat ulang berkasnya.
+ * Isinya BUKAN tarif distributor saja: posisi 1-3 tanggungan distributor, posisi 4-5 klaim
+ * principal — persis pembagian yang tercetak pada header tabelnya. Baris Alfamart 2,25% di
+ * posisi 4 itulah diskon yang selama ini tidak punya surat (butir 4.12).
+ *
+ * Tanpa periode: berlaku sampai dicabut, dan baris tanpa tanggal memang dibaca gerbang sebagai
+ * selalu berlaku. Yang dicabut hilang dengan memuat ulang berkasnya.
  *
  * Sel kosong BUKAN nol: outlet yang posisinya tidak diisi tidak mendapat tarif di posisi itu,
  * dan potongannya akan tertahan — itu yang diminta ("tidak ada potongan tembus tanpa aturan").
@@ -406,6 +421,16 @@ export function parseTariff(
         };
         const customerCode = pick("KODE_OUTLET", "KODE OUTLET", "KODE INTERNAL", "CODE INTERNAL", "KODE PELANGGAN", "KODE").toUpperCase();
         const customerName = pick("PELANGGAN", "OUTLET", "NAMA OUTLET", "NAMA PELANGGAN", "CUSTOMER", "NAMA");
+        const konfirmasi = pick("PAKAI", "TERBUKTI", "POSISI PASTI");
+        // Tarif reguler punya masa berlaku sendiri (tulisan tangan pada tabelnya: 15/8-26 s/d
+        // 31/12-26), lepas dari periode surat program. Kosong = berlaku sampai dicabut.
+        const periodStart = pick("PERIOD_START", "PERIODE MULAI", "MULAI").slice(0, 10);
+        const periodEnd = pick("PERIOD_END", "PERIODE SAMPAI", "SAMPAI").slice(0, 10);
+        if (!DIPAKAI.has(konfirmasi.toUpperCase())) {
+            const sebutan = customerCode || customerName || `baris ${index + 2}`;
+            ctx.issues.push(`${TARIFF_SHEET} ${sebutan}: kolom PAKAI belum diisi — posisinya belum dinyatakan pasti, tarifnya tidak dimuat`);
+            return;
+        }
         if (!customerCode) {
             // Baris tanpa kode DILAPORKAN, tidak dilewati diam-diam: tiga baris pada tabel
             // aslinya memang tidak terbaca dari foto, dan itu harus terlihat sebagai lubang.
@@ -422,14 +447,19 @@ export function parseTariff(
                 continue;
             }
             terisi += 1;
+            // Beban DITURUNKAN dari posisinya, bukan diketik ulang. Header tabel principalnya
+            // sendiri memisahkan "Distributor" (1-3) dari "Principle" (4-5), dan itu peta yang
+            // sama dengan OWNER. Mengisinya tangan berarti satu tabel bisa menyatakan dua hal
+            // berbeda tentang baris yang sama.
+            const beban = OWNER[position] === "principal" ? "PRINCIPAL" : "DISTRIBUTOR";
             out.push({
                 principal: ctx.principal, suratProgram: TARIFF_PROGRAM, promoLabel: customerName,
                 promoGroupId: "", promoGroup: TARIFF_GROUP,
                 itemCode: "", itemName: "", prdId: "", customerCode,
-                periodStart: null, periodEnd: null, active: true, tierNo: position,
+                periodStart: periodStart || null, periodEnd: periodEnd || null, active: true, tierNo: position,
                 triggerQty: "0", triggerUnit: "PCS",
                 benefitType: "DISC_PCT", benefitValue: String(percent), benefitUnit: "%",
-                benefitBeban: "DISTRIBUTOR", onFaktur: true,
+                benefitBeban: beban, onFaktur: true,
                 note: pick("CATATAN", "PERIKSA", "KETERANGAN"), importedBy: ctx.importedBy,
             });
         }
