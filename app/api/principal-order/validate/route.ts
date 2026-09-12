@@ -149,7 +149,7 @@ export async function POST(request: NextRequest) {
             // yang belum dijelaskan aturan per barang.
             entry.gross += Number(line.reportGross);
             const itemCode = items.get(line.productCode);
-            const byItem = itemCode ? matchItemRule(discounts, rulesByItem.get(itemCode) ?? []) : null;
+            const byItem = itemCode ? matchItemRule(discounts, rulesByItem.get(itemCode) ?? [], itemCode) : null;
             if (!byItem) { entry.claim += split.principal; entry.lines += 1; }
             perSo.set(key, entry);
         }

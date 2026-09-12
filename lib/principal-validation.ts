@@ -112,7 +112,7 @@ export const PPN = 0.11;
  * memutuskan barisnya, dan oleh pemanggil untuk menghitung SISA klaim yang belum dijelaskan
  * sebelum aturan tingkat faktur ditanya.
  */
-export function matchItemRule(discounts: DiscountAt[], rules: PublishedRule[]): PublishedRule | null {
+export function matchItemRule(discounts: DiscountAt[], rules: PublishedRule[], itemCode?: string | null): PublishedRule | null {
     // Dibandingkan pada PERSEN posisi principal, bukan rupiahnya: rupiah ikut berubah oleh
     // diskon distributor yang memotong lebih dulu.
     const actual = cents(discounts
@@ -120,6 +120,9 @@ export function matchItemRule(discounts: DiscountAt[], rules: PublishedRule[]): 
         .reduce((total, entry) => total + entry.percent, 0));
     if (actual <= 0) return null;
     return rules.find((rule) => rule.itemCode && rule.benefitType === "DISC_PCT"
+        // Pemanggil memang sudah menyaring per barang, tetapi disaring lagi di sini: aturan
+        // milik barang LAIN yang kebetulan ikut terbawa tidak boleh meloloskan baris ini.
+        && (!itemCode || rule.itemCode === itemCode)
         && Math.abs(cents(Number(rule.benefitValue) - actual)) <= 0.01) ?? null;
 }
 
@@ -224,11 +227,12 @@ export function checkLine(line: LineInput): LineCheck {
     // aturannya. Sekarang aturannya dibaca, dan yang ditahan hanya yang benar-benar tidak
     // cocok. Uang yang tidak bisa dipertanggungjawabkan tetap tidak boleh lewat.
     if (split.principal > 0) {
-        const percentRules = line.rules.filter((rule) => rule.itemCode && rule.benefitType === "DISC_PCT");
+        const percentRules = line.rules.filter((rule) => rule.itemCode && rule.benefitType === "DISC_PCT"
+            && (!line.itemCode || rule.itemCode === line.itemCode));
         const actual = cents(line.discounts
             .filter((entry) => OWNER[entry.position] === "principal")
             .reduce((total, entry) => total + entry.percent, 0));
-        const matched = matchItemRule(line.discounts, line.rules);
+        const matched = matchItemRule(line.discounts, line.rules, line.itemCode);
 
         if (matched) {
             // Cocok dengan aturan terbit; tidak ada temuan.

@@ -126,9 +126,44 @@ test("klaim principal yang BEDA dari aturan terbit tetap ditahan, dengan angkany
     assert.ok(hasil.findings.some((f) => f.includes("5%") && f.includes("3%")));
 });
 
-test("klaim principal tanpa aturan terbit tetap uang yang tidak bisa dipertanggungjawabkan", () => {
+test("ADA diskon tapi promonya tidak tersetting di web = WAJIB perlu ditinjau", () => {
+    // Keputusan pengguna 2026-09-12: yang ditandai hanya ini — ada potongannya, tetapi tidak
+    // ada suratnya dan tidak ada aturannya di web. Uang yang tidak bisa dipertanggungjawabkan.
     const hasil = checkLine(line({ discounts: [{ position: 4, percent: 3 }], reportDiscount: 9729.73 }));
+    assert.equal(hasil.status, "review");
     assert.ok(hasil.findings.some((f) => f.includes("belum punya aturan promo terbit")));
+
+    // Posisi 5 sama saja: keduanya klaim principal.
+    const posisi5 = checkLine(line({ discounts: [{ position: 5, percent: 2 }], reportDiscount: 6486.49 }));
+    assert.equal(posisi5.status, "review");
+});
+
+test("promo yang TIDAK SESUAI aturan wajib muncul sebagai perlu ditinjau, bukan diloloskan", () => {
+    // Keputusan pengguna 2026-09-12. Tiga bentuk ketidaksesuaian, semuanya harus tertahan.
+    const lebihBesar = checkLine(line({
+        discounts: [{ position: 4, percent: 5 }], reportDiscount: 16216.22, rules: [aturan()],
+    }));
+    assert.equal(lebihBesar.status, "review");
+
+    const lebihKecil = checkLine(line({
+        discounts: [{ position: 4, percent: 1 }], reportDiscount: 3243.24, rules: [aturan()],
+    }));
+    assert.equal(lebihKecil.status, "review");
+
+    // Aturannya ada untuk barang LAIN dengan persen yang kebetulan SAMA: tidak boleh
+    // meloloskan baris ini. Tertahan sebagai klaim tanpa aturan, bukan sebagai cocok.
+    const barangLain = checkLine(line({
+        discounts: [{ position: 4, percent: 3 }], reportDiscount: 9729.73,
+        rules: [aturan({ itemCode: "K9999999999999" })],
+    }));
+    assert.equal(barangLain.status, "review");
+    assert.ok(barangLain.findings.some((f) => f.includes("belum punya aturan promo terbit")));
+
+    // Yang TIDAK ditandai: tidak ada diskon sama sekali meski barangnya masuk program.
+    // Kalau principal tidak memberikannya, itu bukan kesalahan yang perlu ditinjau.
+    const tanpaDiskon = checkLine(line({ discounts: [], reportDiscount: 0, rules: [aturan()] }));
+    assert.equal(tanpaDiskon.status, "ok");
+    assert.deepEqual(tanpaDiskon.findings, []);
 });
 
 test("diskon distributor tidak pernah butuh aturan terbit", () => {
