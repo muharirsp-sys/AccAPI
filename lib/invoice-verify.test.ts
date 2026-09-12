@@ -139,13 +139,14 @@ test("butir 4.32: rantai diskon persen yang ditafsirkan Accurate berbeda ketahua
     });
     const benar = accurate({}, {
         itemNo: "K1", quantity: 1, unitPrice: 100000, itemUnit: { id: 50, name: "PCS" }, itemUnitId: 50,
-        itemDiscPercent: "10+5", itemCashDiscount: 0, totalPrice: 85500, detailNotes: "order SO baris 1",
+        // Accurate melaporkan TOTAL potongan baris di itemCashDiscount: 100.000 - 85.500.
+        itemDiscPercent: "10+5", itemCashDiscount: 14500, totalPrice: 85500, detailNotes: "order SO baris 1",
     });
     assert.equal(verifyInvoice(kirim, benar).status, "cocok");
 
     const dijumlahkan = accurate({}, {
         itemNo: "K1", quantity: 1, unitPrice: 100000, itemUnit: { id: 50, name: "PCS" }, itemUnitId: 50,
-        itemDiscPercent: "10+5", itemCashDiscount: 0, totalPrice: 85000, detailNotes: "order SO baris 1",
+        itemDiscPercent: "10+5", itemCashDiscount: 14500, totalPrice: 85000, detailNotes: "order SO baris 1",
     });
     const hasil = verifyInvoice(kirim, dijumlahkan);
     assert.equal(hasil.status, "selisih");
@@ -184,7 +185,7 @@ test("baris kembar (biasa + bonus 100%) dipasangkan lewat detailNotes, bukan uru
     const terbalik = accurate({ charField1: "X" }, {});
     terbalik.detailItem = [
         { itemNo: "K1", quantity: 2, unitPrice: 1000, itemUnit: { id: 50, name: "PCS" }, itemUnitId: 50,
-          itemDiscPercent: "100", itemCashDiscount: 0, totalPrice: 0, detailNotes: "order SO baris 2" },
+          itemDiscPercent: "100", itemCashDiscount: 2000, totalPrice: 0, detailNotes: "order SO baris 2" },
         { itemNo: "K1", quantity: 10, unitPrice: 1000, itemUnit: { id: 50, name: "PCS" }, itemUnitId: 50,
           itemDiscPercent: "", itemCashDiscount: 0, totalPrice: 10000, detailNotes: "order SO baris 1" },
     ];
@@ -241,3 +242,36 @@ test("pembaca raw_data mengambil satuan, nomor baris kita, dan cabang dari jawab
     assert.equal(invoice.lines[0].unitName, "BLR");
     assert.equal(invoice.lines[0].ourLine, 1);
 });
+
+test("itemCashDiscount pada jawaban Accurate adalah TOTAL potongan baris, bukan sisa rupiah kita", () => {
+    // Kasus nyata INV/2609/KN00452 (12 Sep 2026). Kita kirim persen 2 dengan rupiah 0;
+    // Accurate menjawab itemCashDiscount 1.913,51 — tepat 2% dari 95.675,68. Versi pertama
+    // pembanding ini menuduh TIGA faktur yang sebenarnya benar, karena membandingkan angka
+    // yang KITA kirim di field bernama sama. Nilai barisnya sendiri sudah cocok sejak awal.
+    const kirim = payload({
+        detailItem: [{
+            itemNo: "K1158010012510", quantity: 6, unitPrice: 15945.945946, itemUnitId: 1000,
+            itemDiscPercent: "2", itemCashDiscount: 0,
+            detailNotes: "order SO baris 1", charField1: "KINO-NON-FOOD:1671-SOP-260013051",
+        }],
+        charField1: "KINO-NON-FOOD:1671-SOP-260013051",
+    });
+    const jawaban = accurate({ charField1: "KINO-NON-FOOD:1671-SOP-260013051" }, {
+        itemNo: "K1158010012510", quantity: 6, unitPrice: 15945.945946,
+        itemUnit: { id: 1000, name: "BTL" }, itemUnitId: 1000,
+        itemDiscPercent: "2", itemCashDiscount: 1913.51, totalPrice: 93762.17,
+        detailNotes: "order SO baris 1",
+    });
+    const hasil = verifyInvoice(kirim, jawaban);
+    assert.equal(hasil.status, "cocok");
+
+    // Yang TETAP ditandai: potongan yang benar-benar berbeda dari yang diharapkan.
+    const keliru = accurate({ charField1: "KINO-NON-FOOD:1671-SOP-260013051" }, {
+        itemNo: "K1158010012510", quantity: 6, unitPrice: 15945.945946,
+        itemUnit: { id: 1000, name: "BTL" }, itemUnitId: 1000,
+        itemDiscPercent: "2", itemCashDiscount: 5000, totalPrice: 93762.17,
+        detailNotes: "order SO baris 1",
+    });
+    assert.ok(verifyInvoice(kirim, keliru).findings.some((f) => f.field === "total diskon baris"));
+});
+

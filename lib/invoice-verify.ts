@@ -261,11 +261,18 @@ export function verifyInvoice(payload: InvoicePayload, raw: unknown): VerifyResu
         near("qty", sent.quantity, got.quantity, 0.0001);
         near("harga satuan", sent.unitPrice, got.unitPrice, 0.01);
         same("diskon persen", normalizePercentChain(sent.itemDiscPercent), normalizePercentChain(got.discPercent));
-        near("diskon rupiah", sent.itemCashDiscount, got.cashDiscount, 0.01);
-        // Nilai barisnya sendiri: di sinilah salah tafsir rantai persen muncul sebagai UANG.
-        // Accurate menghitung ulang persennya, jadi toleransinya Rp 1 seperti gerbang validasi.
+
         const gross = cents(sent.quantity * sent.unitPrice);
         const expectedNet = cents(gross - splitDiscounts(gross, chainOf(sent.itemDiscPercent)).total - sent.itemCashDiscount);
+        // `itemCashDiscount` pada JAWABAN Accurate adalah TOTAL potongan rupiah baris — termasuk
+        // bagian yang dihitung Accurate sendiri dari rantai persen. Bukan sisa rupiah yang kita
+        // kirim di field bernama sama. Dibuktikan 2026-09-12 pada INV/2609/KN00452: kita kirim
+        // itemDiscPercent "2" dengan itemCashDiscount 0, Accurate menjawab 1.913,51 — tepat 2%
+        // dari 95.675,68. Membandingkannya dengan angka yang KITA kirim menuduh tiga faktur yang
+        // sebenarnya benar; yang harus dibandingkan adalah total potongan yang kita HARAPKAN.
+        near("total diskon baris", cents(gross - expectedNet), got.cashDiscount, TOLERANCE);
+        // Nilai barisnya sendiri: di sinilah salah tafsir rantai persen muncul sebagai UANG.
+        // Accurate menghitung ulang persennya, jadi toleransinya Rp 1 seperti gerbang validasi.
         near("nilai baris", expectedNet, got.totalPrice, TOLERANCE);
     });
 
