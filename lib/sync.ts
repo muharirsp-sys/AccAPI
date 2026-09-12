@@ -358,7 +358,17 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     status: sql`excluded."status"`,
                     dueDate: sql`excluded."due_date"`,
                     age: sql`excluded."age"`,
-                    rawData: sql`excluded."raw_data"`,
+                    // JANGAN menimpa rincian baris dengan jawaban yang tidak punya rincian.
+                    // `list.do` (cron) tidak mengirim `detailItem`; `detail.do` (webhook) iya.
+                    // Tanpa penjagaan ini, sync terjadwal menghapus satu-satunya salinan baris
+                    // faktur yang dipakai Rekap Promo DAN verifikasi balik (butir 4.30) — dan
+                    // keduanya lalu melaporkan "tidak ada apa-apa" dengan nada meyakinkan.
+                    // ponytail: cocokkan teksnya, karena raw_data tersimpan sebagai STRING JSON
+                    // di kolom jsonb sehingga operator `?` tidak bisa dipakai. Kalau suatu saat
+                    // penyimpanannya diperbaiki jadi objek, ganti dengan `raw_data ? 'detailItem'`.
+                    rawData: sql`case when excluded."raw_data"::text like '%detailItem%'
+                                       or sales_invoice.raw_data::text not like '%detailItem%'
+                                  then excluded."raw_data" else sales_invoice.raw_data end`,
                     lastUpdate: sql`excluded."last_update"`,
                     // COALESCE: kalau Accurate tidak mengirim lastUpdate di satu panggilan,
                     // jangan hapus nilai yang sudah benar (pelajaran dari raw_data yang tertimpa).
@@ -418,6 +428,37 @@ export class AccurateInvoiceGoneError extends Error {
         super(`Faktur ${invoiceId} tidak ada lagi di Accurate (detail.do: respons tanpa data)`);
         this.name = "AccurateInvoiceGoneError";
     }
+}
+
+/**
+ * Satu pelanggan/barang yang diberitahukan webhook -> segarkan cache master kita.
+ *
+ * Kenapa perlu: master `customer` dan `item` adalah SALINAN hasil sync, bukan sambungan
+ * langsung. Kategori harga pelanggan yang diubah di Accurate tidak terlihat sampai cron
+ * berikutnya (4x sehari) — dan gerbang validasi memakai kategori itu untuk menentukan harga.
+ * Nyata terjadi 2026-09-11: kategori HINDA MART diubah ke TT, tetapi 11 baris faktur tetap
+ * tertahan karena cache masih MT.
+ *
+ * `detail.do` dipakai, sama seperti jalur faktur. Kalau field kunci (`customerNo`/`no`) tidak
+ * ada pada jawabannya, barisnya TIDAK ditulis: menimpa master dengan nilai kosong jauh lebih
+ * buruk daripada menunggu cron.
+ */
+export async function upsertMasterById(
+    kind: "customer" | "item", id: number, creds: AccurateCredentials,
+): Promise<{ kind: string; id: number; code: string }> {
+    const path = kind === "customer" ? "customer" : "item";
+    const url = `${creds.sessionHost}/accurate/api/${path}/detail.do?id=${id}`;
+    const res = await fetch(url, { headers: accurateHeaders(creds), signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) throw new Error(`detail.do ${kind} ${id}: HTTP ${res.status}`);
+    const body = await res.json();
+    const row = body?.d as Record<string, unknown> | undefined;
+    if (!row) throw new Error(`detail.do ${kind} ${id}: respons tanpa data`);
+
+    const code = String((kind === "customer" ? row.customerNo : row.no) ?? "").trim();
+    if (!code) throw new Error(`detail.do ${kind} ${id}: tanpa ${kind === "customer" ? "customerNo" : "no"}; tidak ditulis`);
+
+    await SYNC_MODULES[kind].upsertPage([row]);
+    return { kind, id, code };
 }
 
 export async function upsertSalesInvoiceById(id: number, creds: AccurateCredentials) {

@@ -1,16 +1,18 @@
 /*
  * Tujuan: Terima webhook Accurate dan segarkan cache faktur penjualan (Accurate -> sales_invoice).
- * Caller: Accurate Online (push, bukan request user). Hanya modul "Faktur Penjualan" yang di-subscribe.
+ * Caller: Accurate Online (push, bukan request user). Modul yang dilanggan: Faktur Penjualan,
+ *         Pelanggan, dan Barang — master adalah SALINAN, dan perubahan di Accurate harus
+ *         menyusul saat itu juga, bukan menunggu cron 4x sehari.
  * Dependensi: lib/accurate-session (kredensial non-interaktif), lib/sync (upsert faktur),
  *             lib/accurate-webhook (parser payload).
- * Side Effects: append webhook_events.log + upsert tabel sales_invoice.
+ * Side Effects: append webhook_events.log + upsert tabel sales_invoice, customer, dan item.
  */
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import { resolveSyncCredentials } from '@/lib/accurate-session';
-import { upsertSalesInvoiceById } from '@/lib/sync';
-import { flattenSalesInvoiceIds } from '@/lib/accurate-webhook';
+import { upsertMasterById, upsertSalesInvoiceById } from '@/lib/sync';
+import { flattenCustomerIds, flattenItemIds, flattenSalesInvoiceIds } from '@/lib/accurate-webhook';
 
 const MAX_LOG_BYTES = 20 * 1024 * 1024;
 
@@ -62,7 +64,16 @@ export async function POST(request: Request) {
         console.log(`[+] Disimpan ke webhook_events.log`);
 
         const invoiceIds = flattenSalesInvoiceIds(payload);
-        console.log(`>> ${invoiceIds.length} faktur penjualan terdeteksi: ${invoiceIds.join(", ") || "(tidak ada — payload bukan tipe SALES_INVOICE atau kosong)"}`);
+        const customerIds = flattenCustomerIds(payload);
+        const itemIds = flattenItemIds(payload);
+        console.log(`>> ${invoiceIds.length} faktur, ${customerIds.length} pelanggan, ${itemIds.length} barang terdeteksi`);
+        if (invoiceIds.length + customerIds.length + itemIds.length === 0) {
+            // Bukan galat: Accurate juga mengirim tipe lain. Dicatat supaya tipe yang belum
+            // dikenali ketahuan dari log, bukan hilang diam-diam.
+            const tipe = (Array.isArray(payload) ? payload : [payload])
+                .map((e) => (e as { type?: string })?.type ?? "(tanpa type)").join(", ");
+            console.log(`>> tidak ada id yang dikenali; tipe pada payload: ${tipe}`);
+        }
 
         const accurate = await resolveSyncCredentials();
         if (!accurate.creds) {
@@ -84,6 +95,22 @@ export async function POST(request: Request) {
                 const message = e instanceof Error ? e.message : String(e);
                 console.error(`[WEBHOOK] Gagal proses faktur ${id}: ${message}`);
                 failed.push({ id, error: message });
+            }
+        }
+
+        // Master menyusul di jalur yang sama: kategori harga pelanggan menentukan harga pada
+        // gerbang validasi, jadi menunggu cron berikutnya berarti faktur tertahan tanpa sebab.
+        for (const [kind, ids] of [["customer", customerIds], ["item", itemIds]] as const) {
+            for (const id of ids) {
+                try {
+                    const summary = await upsertMasterById(kind, id, accurate.creds);
+                    console.log(`[+] Master ${kind} tersegarkan: ${summary.code} (id ${id})`);
+                    processed.push(summary);
+                } catch (e) {
+                    const message = e instanceof Error ? e.message : String(e);
+                    console.error(`[WEBHOOK] Gagal segarkan ${kind} ${id}: ${message}`);
+                    failed.push({ id, error: message });
+                }
             }
         }
 

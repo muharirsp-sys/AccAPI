@@ -88,3 +88,14 @@ test("rekap per program, dan persen yang menyimpang dari mekanisme dilaporkan", 
         invoiceNo: "SI.2026.09.0001", itemCode: "K1010001006010", expected: 5, actual: 3,
     });
 });
+
+test("raw_data yang tersimpan sebagai TEKS JSON tetap terbaca", () => {
+    // Bentuk nyata di produksi: lib/sync menyimpan lewat JSON.stringify, jadi kolom jsonb-nya
+    // berisi string. Kalau ini tidak diurai, rekap melaporkan nol diskon untuk faktur yang
+    // penuh diskon — salah, dan terlihat menenangkan.
+    const teks = JSON.stringify(faktur);
+    assert.equal(invoiceLines(teks).length, 2);
+    assert.equal(invoiceLines(teks)[0].invoiceNo, "SI.2026.09.0001");
+    assert.deepEqual(invoiceLines(JSON.stringify(teks))[0].discounts, [{ position: 1, percent: 4 }, { position: 4, percent: 3 }]);
+    assert.deepEqual(invoiceLines("bukan json"), []);
+});
