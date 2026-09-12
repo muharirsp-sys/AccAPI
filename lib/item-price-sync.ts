@@ -15,7 +15,7 @@
  * supaya satu request HTTP tidak perlu hidup 21 menit.
  * Laju dibatasi di bawah batas resmi Accurate (8 request/detik).
  */
-import { asc, eq, gt, sql } from "drizzle-orm";
+import { asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { resolveSyncCredentials } from "@/lib/accurate-session";
 import { db } from "@/lib/db";
 import { item, itemSellingPrice, syncState } from "@/db/schema";
@@ -92,6 +92,13 @@ function extractRows(itemId: number, itemNo: string, detail: Record<string, unkn
 export type SyncItemPricesOptions = {
     limit?: number;
     restart?: boolean;
+    /**
+     * Segarkan HANYA item ini (kode barang), abaikan kursor. Dipakai saat harga satu batch
+     * laporan principal perlu diperbarui sekarang juga: sync penuh 4.182 item butuh ~21 menit,
+     * dan menunggu selama itu berarti admin memilih menerka harga mana yang benar.
+     * Checkpoint TIDAK disentuh — ini penyegaran bertarget, bukan kelanjutan sync penuh.
+     */
+    itemNos?: string[];
     log?: (message: string) => void;
 };
 
@@ -120,15 +127,23 @@ export async function syncItemPrices(options: SyncItemPricesOptions = {}): Promi
     }
     const { sessionHost, sessionId, apiKey } = resolved.creds;
 
+    const wantedNos = [...new Set((options.itemNos ?? []).map((no) => String(no).trim()).filter(Boolean))];
+    const targeted = wantedNos.length > 0;
+
     let cursor = 0;
-    if (!restart) {
+    if (!restart && !targeted) {
         const [state] = await db.select().from(syncState).where(eq(syncState.module, MODULE));
         cursor = Number(state?.lastPage ?? 0) || 0;
     }
-    log(`Mulai dari item_id > ${cursor}${Number.isFinite(limit) ? ` (limit ${limit} item)` : ""}`);
+    log(targeted
+        ? `Penyegaran bertarget: ${wantedNos.length} kode barang`
+        : `Mulai dari item_id > ${cursor}${Number.isFinite(limit) ? ` (limit ${limit} item)` : ""}`);
 
-    const pending = await db.select({ id: item.id, no: item.no }).from(item)
-        .where(gt(item.id, cursor)).orderBy(asc(item.id));
+    const pending = targeted
+        ? await db.select({ id: item.id, no: item.no }).from(item)
+            .where(inArray(item.no, wantedNos)).orderBy(asc(item.id))
+        : await db.select({ id: item.id, no: item.no }).from(item)
+            .where(gt(item.id, cursor)).orderBy(asc(item.id));
     const target = Number.isFinite(limit) ? pending.slice(0, limit) : pending;
     log(`Item yang akan diproses: ${target.length}`);
 
@@ -190,9 +205,14 @@ export async function syncItemPrices(options: SyncItemPricesOptions = {}): Promi
         }
         priceRows += rows.length;
         done += batch.length;
-        const lastId = batch.at(-1)!.id;
-        await db.insert(syncState).values({ module: MODULE, lastPage: lastId, status: "running" })
-            .onConflictDoUpdate({ target: syncState.module, set: { lastPage: lastId, status: "running", updatedAt: new Date() } });
+        // Penyegaran bertarget TIDAK menggeser checkpoint: kalau digeser, sync penuh berikutnya
+        // akan melompati item yang belum pernah disentuh hanya karena ada yang minta harga
+        // satu batch diperbarui.
+        if (!targeted) {
+            const lastId = batch.at(-1)!.id;
+            await db.insert(syncState).values({ module: MODULE, lastPage: lastId, status: "running" })
+                .onConflictDoUpdate({ target: syncState.module, set: { lastPage: lastId, status: "running", updatedAt: new Date() } });
+        }
         if (done % 200 < CONCURRENCY) {
             const rate = done / ((Date.now() - started) / 1000);
             const left = ((target.length - done) / Math.max(rate, 0.01) / 60).toFixed(1);
@@ -201,10 +221,12 @@ export async function syncItemPrices(options: SyncItemPricesOptions = {}): Promi
         if (DELAY_MS > 0) await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     }
 
-    const finalCursor = target.at(-1)?.id ?? cursor;
+    const finalCursor = targeted ? cursor : (target.at(-1)?.id ?? cursor);
     const finished = target.length === pending.length;
-    await db.insert(syncState).values({ module: MODULE, lastPage: finalCursor, status: finished ? "idle" : "running", lastSyncTimestamp: new Date().toISOString() })
-        .onConflictDoUpdate({ target: syncState.module, set: { lastPage: finalCursor, status: finished ? "idle" : "running", lastSyncTimestamp: new Date().toISOString(), updatedAt: new Date() } });
+    if (!targeted) {
+        await db.insert(syncState).values({ module: MODULE, lastPage: finalCursor, status: finished ? "idle" : "running", lastSyncTimestamp: new Date().toISOString() })
+            .onConflictDoUpdate({ target: syncState.module, set: { lastPage: finalCursor, status: finished ? "idle" : "running", lastSyncTimestamp: new Date().toISOString(), updatedAt: new Date() } });
+    }
 
     return {
         ok: true, processed: done, priceRows, skipped,

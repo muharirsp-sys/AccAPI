@@ -17,6 +17,7 @@ import { db } from "@/lib/db";
 import { customer, item, principalMapping, principalOrderBatch, principalOrderLine } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
+import { syncItemPrices } from "@/lib/item-price-sync";
 import { checkLine, type DiscountAt } from "@/lib/principal-validation";
 
 export const runtime = "nodejs";
@@ -60,10 +61,26 @@ export async function POST(request: NextRequest) {
     const hasPublishedRules = false;
 
     const itemCodes = [...new Set(lines.map((line) => items.get(line.productCode)).filter(Boolean) as string[])];
+    let priceRefresh: { ok: boolean; error?: string; processed?: number; priceRows?: number } | null = null;
     const customerNos = [...new Set(lines.map((line) => {
         const base = customers.get(line.customerCode);
         return base ? `${base}${suffix}` : null;
     }).filter(Boolean) as string[])];
+
+    // Harga jual di cache bisa TERTINGGAL: `sync-item-prices` tidak pernah masuk cron, jadi
+    // satu-satunya penyegar selama ini adalah tangan manusia. Akibatnya admin yang baru saja
+    // memperbaiki harga di Accurate tetap melihat baris tertahan, dan tidak punya cara
+    // menjalankan ulang sync-nya dari layar. `?prices=1` menyegarkan HANYA barang pada batch
+    // ini lebih dulu — puluhan item, bukan 4.182, jadi hitungan detik bukan 21 menit.
+    if (request.nextUrl.searchParams.get("prices") === "1" && itemCodes.length) {
+        try {
+            priceRefresh = await syncItemPrices({ itemNos: itemCodes });
+        } catch (error) {
+            // Gagal menyegarkan BUKAN alasan membatalkan validasi: harga lama tetap dipakai
+            // dan barisnya tetap tertahan bila berselisih — gagal tertutup, seperti biasa.
+            priceRefresh = { ok: false, error: error instanceof Error ? error.message : "penyegaran harga gagal" };
+        }
+    }
 
     const [knownItems, knownCustomers, unitsByCode] = await Promise.all([
         itemCodes.length ? db.select({ no: item.no }).from(item).where(inArray(item.no, itemCodes)) : Promise.resolve([]),
@@ -141,5 +158,5 @@ export async function POST(request: NextRequest) {
         }).where(eq(principalOrderBatch.id, id));
     });
 
-    return NextResponse.json({ ok: true, id, checked: lines.length, okCount: ok, reviewCount: review, hasPublishedRules });
+    return NextResponse.json({ ok: true, id, checked: lines.length, okCount: ok, reviewCount: review, hasPublishedRules, priceRefresh });
 }

@@ -9,7 +9,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Upload, Search, Trash2, AlertTriangle, FileSpreadsheet, ShieldCheck, CheckCircle2, Receipt } from "lucide-react";
+import { Upload, Search, Trash2, AlertTriangle, FileSpreadsheet, ShieldCheck, CheckCircle2, Receipt, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 type Batch = {
@@ -98,12 +98,25 @@ export default function PrincipalOrderPage() {
         setOpen({ batch: data.batch, lines: data.lines });
     }
 
-    async function validate(id: string) {
+    /**
+     * `refreshPrices` menyegarkan daftar harga Accurate untuk barang pada batch INI lebih dulu.
+     * Dipakai setelah harga diperbaiki di Accurate: cache harga jual tidak pernah masuk cron,
+     * jadi tanpa ini baris tetap tertahan dengan harga lama dan tidak ada cara menjalankan
+     * sync-nya dari layar. Bertarget, jadi hitungan detik — bukan 21 menit sync penuh.
+     */
+    async function validate(id: string, refreshPrices = false) {
         setBusy(true);
         try {
-            const res = await fetch(`/api/principal-order/validate?id=${encodeURIComponent(id)}`, { method: "POST", credentials: "include" });
+            const query = `id=${encodeURIComponent(id)}${refreshPrices ? "&prices=1" : ""}`;
+            const res = await fetch(`/api/principal-order/validate?${query}`, { method: "POST", credentials: "include" });
             const data = await res.json();
             if (!res.ok || !data.ok) throw new Error(data.error ?? "Validasi gagal");
+            if (data.priceRefresh && !data.priceRefresh.ok) {
+                // Harga lama tetap dipakai dan barisnya tetap tertahan; jangan diam-diam.
+                toast.warning(`Harga gagal disegarkan: ${data.priceRefresh.error ?? "tidak diketahui"}`);
+            } else if (data.priceRefresh) {
+                toast.info(`Harga disegarkan: ${data.priceRefresh.processed} barang, ${data.priceRefresh.priceRows} baris harga`);
+            }
             toast[data.reviewCount > 0 ? "warning" : "success"](
                 `${data.okCount} baris cocok, ${data.reviewCount} perlu ditinjau`);
             await loadBatches();
@@ -273,6 +286,11 @@ export default function PrincipalOrderPage() {
                                         <button onClick={() => void validate(batch.id)} disabled={busy}
                                             className="mr-1 inline-flex items-center gap-1 rounded bg-white/10 px-2 py-1 text-xs disabled:opacity-40">
                                             <ShieldCheck size={13} /> Validasi
+                                        </button>
+                                        <button onClick={() => void validate(batch.id, true)} disabled={busy}
+                                            title="Tarik ulang daftar harga Accurate untuk barang pada batch ini, lalu validasi. Pakai setelah harga diperbaiki di Accurate."
+                                            className="mr-1 inline-flex items-center gap-1 rounded bg-white/10 px-2 py-1 text-xs disabled:opacity-40">
+                                            <RefreshCw size={13} /> Segarkan harga
                                         </button>
                                         <button onClick={() => void prepareInvoices(batch.id)} disabled={busy || !batch.validatedAt || batch.okCount === 0}
                                             title={batch.validatedAt ? "Siapkan faktur dari SO yang seluruh barisnya lolos" : "Validasi batch ini dulu"}
