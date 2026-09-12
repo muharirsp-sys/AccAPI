@@ -112,14 +112,24 @@ export const PPN = 0.11;
  * memutuskan barisnya, dan oleh pemanggil untuk menghitung SISA klaim yang belum dijelaskan
  * sebelum aturan tingkat faktur ditanya.
  */
-export function matchItemRule(discounts: DiscountAt[], rules: PublishedRule[], itemCode?: string | null): PublishedRule | null {
-    // Dibandingkan pada PERSEN posisi principal, bukan rupiahnya: rupiah ikut berubah oleh
-    // diskon distributor yang memotong lebih dulu.
+export function matchItemRule(
+    discounts: DiscountAt[],
+    rules: PublishedRule[],
+    itemCode?: string | null,
+    owner: "principal" | "distributor" = "principal",
+): PublishedRule | null {
+    // Dibandingkan pada PERSEN posisi yang bersangkutan, bukan rupiahnya: rupiah ikut berubah
+    // oleh diskon yang memotong lebih dulu di rantai yang sama.
     const actual = cents(discounts
-        .filter((entry) => OWNER[entry.position] === "principal")
+        .filter((entry) => OWNER[entry.position] === owner)
         .reduce((total, entry) => total + entry.percent, 0));
     if (actual <= 0) return null;
+    const beban = owner === "principal" ? "PRINCIPAL" : "DISTRIBUTOR";
     return rules.find((rule) => rule.itemCode && rule.benefitType === "DISC_PCT"
+        // BEBAN ikut dicocokkan: aturan principal tidak boleh membenarkan potongan yang duduk
+        // di posisi distributor, dan sebaliknya. Posisi menyatakan siapa yang DIMAKSUD
+        // menanggung; aturan menyatakan apakah maksud itu sah.
+        && rule.benefitBeban === beban
         // Pemanggil memang sudah menyaring per barang, tetapi disaring lagi di sini: aturan
         // milik barang LAIN yang kebetulan ikut terbawa tidak boleh meloloskan baris ini.
         && (!itemCode || rule.itemCode === itemCode)
@@ -226,23 +236,31 @@ export function checkLine(line: LineInput): LineCheck {
     // karena gerbang ini tidak pernah membaca aturan terbit — termasuk klaim yang sudah punya
     // aturannya. Sekarang aturannya dibaca, dan yang ditahan hanya yang benar-benar tidak
     // cocok. Uang yang tidak bisa dipertanggungjawabkan tetap tidak boleh lewat.
-    if (split.principal > 0) {
-        const percentRules = line.rules.filter((rule) => rule.itemCode && rule.benefitType === "DISC_PCT"
-            && (!line.itemCode || rule.itemCode === line.itemCode));
-        const actual = cents(line.discounts
-            .filter((entry) => OWNER[entry.position] === "principal")
-            .reduce((total, entry) => total + entry.percent, 0));
-        const matched = matchItemRule(line.discounts, line.rules, line.itemCode);
+    // TIDAK ADA potongan yang boleh tembus ke faktur tanpa aturannya (keputusan pengguna
+    // 2026-09-12). Berlaku untuk KEDUA beban: klaim principal maupun tanggungan distributor.
+    // Sebelumnya posisi 1-3 lolos begitu saja karena "toh beban sendiri" — tetapi potongan yang
+    // tidak punya aturan bukan beban sendiri, ia potongan yang belum jelas milik siapa, dan
+    // memberikannya lebih dulu lalu bertanya kemudian adalah cara kehilangan uang tanpa jejak.
+    for (const owner of ["distributor", "principal"] as const) {
+        const amount = owner === "principal" ? split.principal : split.distributor;
+        if (amount <= 0) continue;
+        const beban = owner === "principal" ? "PRINCIPAL" : "DISTRIBUTOR";
+        const sebutan = owner === "principal" ? "Klaim principal" : "Potongan tanggungan distributor";
 
-        if (matched) {
-            // Cocok dengan aturan terbit; tidak ada temuan.
-        } else if (line.fakturPromo) {
-            // Potongan tingkat faktur: nominalnya milik SELURUH SO, sudah diperiksa di sana.
-        } else if (percentRules.length > 0) {
+        if (matchItemRule(line.discounts, line.rules, line.itemCode, owner)) continue;
+        // Potongan tingkat faktur: nominalnya milik SELURUH SO dan sudah diperiksa di sana.
+        if (owner === "principal" && line.fakturPromo) continue;
+
+        const percentRules = line.rules.filter((rule) => rule.itemCode && rule.benefitType === "DISC_PCT"
+            && rule.benefitBeban === beban && (!line.itemCode || rule.itemCode === line.itemCode));
+        const actual = cents(line.discounts
+            .filter((entry) => OWNER[entry.position] === owner)
+            .reduce((total, entry) => total + entry.percent, 0));
+        if (percentRules.length > 0) {
             const daftar = percentRules.map((rule) => `${rule.benefitValue}% (${rule.suratProgram} ${rule.promoGroup})`).join(", ");
-            findings.push(`Klaim principal ${actual}% tidak sama dengan aturan terbit untuk barang ini: ${daftar}.`);
+            findings.push(`${sebutan} ${actual}% tidak sama dengan aturan terbit untuk barang ini: ${daftar}.`);
         } else {
-            findings.push(`Klaim principal Rp ${split.principal.toLocaleString("id-ID")} belum punya aturan promo terbit yang menjelaskannya.`);
+            findings.push(`${sebutan} Rp ${amount.toLocaleString("id-ID")} belum punya aturan promo terbit yang menjelaskannya.`);
         }
     }
 
