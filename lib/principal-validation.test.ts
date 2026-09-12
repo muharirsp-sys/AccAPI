@@ -2,7 +2,7 @@
    "cuma warning". Toleransi Rp 1 hanya menyerap pembulatan, bukan selisih aturan. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkLine, splitDiscounts, type LineInput } from "./principal-validation.ts";
+import { checkLine, checkSoPromo, splitDiscounts, type LineInput, type PublishedRule } from "./principal-validation.ts";
 
 const line = (over: Partial<LineInput> = {}): LineInput => ({
     productCode: "106052", itemCode: "K1010001006010", itemExists: true,
@@ -11,7 +11,7 @@ const line = (over: Partial<LineInput> = {}): LineInput => ({
     unit: "BTL", knownUnits: ["BTL", "KRT"],
     price: 13513.51, expectedPrice: 13513.51,
     gross: 324324.32, reportDiscount: 0, discounts: [], bonus: false,
-    hasPublishedRules: false, ...over,
+    rules: [], ...over,
 });
 
 test("diskon bertingkat cocok dengan angka nyata Kino", () => {
@@ -58,9 +58,14 @@ test("klaim principal tanpa aturan terbit dan diskon tak bertuan ditahan", () =>
     const tanpaAturan = checkLine(line({ discounts: [{ position: 4, percent: 2.25 }], reportDiscount: 7297.3 }));
     assert.equal(tanpaAturan.status, "review");
     assert.match(tanpaAturan.findings.join(" "), /belum punya aturan promo terbit/);
-    // Begitu aturannya terbit, klaim yang sama tidak lagi ditahan karena alasan itu.
-    const adaAturan = checkLine(line({ discounts: [{ position: 4, percent: 2.25 }], reportDiscount: 7297.3, hasPublishedRules: true }));
-    assert.equal(adaAturan.findings.filter((f) => f.includes("aturan promo terbit")).length, 0);
+    // Begitu aturannya terbit DAN angkanya cocok, klaim yang sama tidak lagi ditahan.
+    const adaAturan = checkLine(line({
+        discounts: [{ position: 4, percent: 2.25 }], reportDiscount: 7297.3,
+        rules: [{ suratProgram: "BP26", promoGroup: "X", itemCode: "K1010001006010", tierNo: 1,
+                  triggerQty: 0, triggerUnit: "PCS", benefitType: "DISC_PCT", benefitValue: "2.25",
+                  benefitBeban: "PRINCIPAL" }],
+    }));
+    assert.deepEqual(adaAturan.findings, []);
 
     const liar = checkLine(line({ discounts: [{ position: 7, percent: 5 }], reportDiscount: 16216.22 }));
     assert.match(liar.findings.join(" "), /tak bertuan .* DISC_7/);
@@ -93,3 +98,89 @@ test("toleransi harga berlaku pada satuan terkecil, bukan pada harga karton", ()
     const salah = checkLine(line({ unit: "KRT", price: 712536, expectedPrice: 700536, unitRatio: 24 }));
     assert.match(salah.findings[0], /setara 500 per satuan terkecil dari 24/);
 });
+
+const aturan = (over: Partial<PublishedRule> = {}): PublishedRule => ({
+    suratProgram: "BP2609007909", promoGroup: "SLEEK BABY BABY BOTTLE NIPPLE",
+    itemCode: "K1010001006010", tierNo: 1, triggerQty: 0, triggerUnit: "PCS",
+    benefitType: "DISC_PCT", benefitValue: "3", benefitBeban: "PRINCIPAL", ...over,
+});
+
+test("klaim principal yang COCOK aturan terbit tidak lagi ditahan", () => {
+    // Kasus nyata 12 Sep 2026, SO 1671-SOP-260013044: 3% di posisi 4 atas barang yang memang
+    // masuk BP2609007909. Sebelum perbaikan ini gerbang menahannya karena tidak pernah membaca
+    // aturan terbit sama sekali — gerbang yang menahan segalanya sama tidak bergunanya dengan
+    // gerbang yang meloloskan segalanya.
+    const hasil = checkLine(line({
+        discounts: [{ position: 4, percent: 3 }], reportDiscount: 9729.73, rules: [aturan()],
+    }));
+    assert.equal(hasil.status, "ok");
+    assert.deepEqual(hasil.findings, []);
+    assert.equal(hasil.split.principal, 9729.73);
+});
+
+test("klaim principal yang BEDA dari aturan terbit tetap ditahan, dengan angkanya disebut", () => {
+    const hasil = checkLine(line({
+        discounts: [{ position: 4, percent: 5 }], reportDiscount: 16216.22, rules: [aturan()],
+    }));
+    assert.equal(hasil.status, "review");
+    assert.ok(hasil.findings.some((f) => f.includes("5%") && f.includes("3%")));
+});
+
+test("klaim principal tanpa aturan terbit tetap uang yang tidak bisa dipertanggungjawabkan", () => {
+    const hasil = checkLine(line({ discounts: [{ position: 4, percent: 3 }], reportDiscount: 9729.73 }));
+    assert.ok(hasil.findings.some((f) => f.includes("belum punya aturan promo terbit")));
+});
+
+test("diskon distributor tidak pernah butuh aturan terbit", () => {
+    // SS DIAPERS 12 Sep 2026: 2% di posisi 1. Itu tanggungan kita sendiri (Satu Sama Group),
+    // bukan klaim ke principal, jadi tidak ada yang perlu dijelaskan surat program.
+    const hasil = checkLine(line({ discounts: [{ position: 1, percent: 2 }], reportDiscount: 6486.49 }));
+    assert.equal(hasil.status, "ok");
+    assert.equal(hasil.split.distributor, 6486.49);
+    assert.equal(hasil.split.principal, 0);
+});
+
+const msg = (over: Partial<PublishedRule> = {}): PublishedRule => ({
+    suratProgram: "BP2609006016", promoGroup: "ALL BRAND HPC", itemCode: "",
+    tierNo: 1, triggerQty: 1_000_000, triggerUnit: "RP",
+    benefitType: "DISC_RP", benefitValue: "20000", benefitBeban: "PRINCIPAL", ...over,
+});
+
+test("potongan tingkat faktur (MSG) dicocokkan se-SO, dengan PPN dikembalikan", () => {
+    // Kasus nyata RISKA TK 12 Sep 2026: bruto 1.198.378 melampaui ambang Rp 1 juta -> tier 1
+    // Rp 20.000. Laporan membawa DPP 18.016,22; 18.016,22 x 1,11 = 19.998 — beda Rp 2 saja.
+    const verdict = checkSoPromo({ gross: 1_198_378, principalClaim: 18_016.22, lineCount: 18 },
+        [msg(), msg({ tierNo: 2, triggerQty: 2_000_000, benefitValue: "40000" })]);
+    assert.match(verdict.explained, /BP2609006016 tier 1/);
+    assert.deepEqual(verdict.findings, []);
+});
+
+test("MSG: tier yang diambil adalah yang TERTINGGI yang ambangnya terlampaui", () => {
+    const verdict = checkSoPromo({ gross: 2_500_000, principalClaim: 36_036.04, lineCount: 10 },
+        [msg(), msg({ tierNo: 2, triggerQty: 2_000_000, benefitValue: "40000" })]);
+    assert.match(verdict.explained, /tier 2/);
+});
+
+test("MSG: nominal yang tidak sesuai tier tetap ditahan", () => {
+    const verdict = checkSoPromo({ gross: 1_198_378, principalClaim: 45_000, lineCount: 18 }, [msg()]);
+    assert.equal(verdict.explained, "");
+    assert.ok(verdict.findings[0].includes("20.000"));
+});
+
+test("MSG: belanja di bawah ambang tidak menjelaskan apa pun", () => {
+    const verdict = checkSoPromo({ gross: 500_000, principalClaim: 9_000, lineCount: 5 }, [msg()]);
+    assert.equal(verdict.explained, "");
+    assert.deepEqual(verdict.findings, []);
+});
+
+test("baris yang klaimnya dijelaskan MSG tidak perlu punya aturan barangnya sendiri", () => {
+    // 7 barang ESK Cologne pada SO RISKA sama sekali tidak masuk program mana pun, tetapi
+    // ikut kebagian potongan faktur yang dibagi rata. Memeriksanya per barang akan menuduh
+    // baris yang sebenarnya benar.
+    const hasil = checkLine(line({
+        discounts: [{ position: 5, percent: 1.5033, amount: 4875.45 }],
+        reportDiscount: 4875.45, gross: 324324.32, fakturPromo: "BP2609006016 tier 1",
+    }));
+    assert.equal(hasil.status, "ok");
+});
+

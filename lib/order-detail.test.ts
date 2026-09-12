@@ -90,3 +90,27 @@ test("berkas yang bukan Order Detail ditolak, bukan menghasilkan nol baris diam-
     assert.equal(result.lines.length, 0);
     assert.match(result.issues[0], /bukan berkas Order Detail/);
 });
+
+test("kolom DISC_n yang berisi RUPIAH dibedakan dari yang berisi persen", () => {
+    // Berkas 12 September 2026 memuat keduanya. SS DIAPERS: persen di DISC_1.
+    const persen = discountsOf({ DISC_1: 2, GROSS: 95675.68, TOTAL_DISC: 1913.51 }, false);
+    assert.deepEqual(persen, [{ position: 1, percent: 2 }]);
+
+    // RISKA TK: RUPIAH di DISC_5 (potongan faktur MSG yang dibagi rata). Dibaca sebagai
+    // persen, 446,8468 berarti 446,85% — dan potongan yang SAH ikut tertahan.
+    const rupiah = discountsOf({ DISC_5: 446.8468, GROSS: 29729.73, TOTAL_DISC: 446.85 }, false);
+    assert.equal(rupiah.length, 1);
+    assert.equal(rupiah[0].position, 5);
+    assert.equal(rupiah[0].amount, 446.8468);
+    // Persen setara: hitungan di hilir tidak perlu tahu bedanya.
+    assert.ok(Math.abs(29729.73 * rupiah[0].percent / 100 - 446.85) <= 1);
+
+    // Baris bonus tetap 100% di posisi 1, tidak ikut ditebak-tebak.
+    assert.deepEqual(discountsOf({ DISC_1: 0, GROSS: 1000, TOTAL_DISC: 1000 }, true), [{ position: 1, percent: 100 }]);
+
+    // Dua posisi terisi: tidak dibedakan, jatuh ke persen. Kalau ternyata salah, selisih
+    // totalnya yang menahan barisnya — gagal tertutup.
+    const campur = discountsOf({ DISC_1: 4, DISC_4: 2.25, GROSS: 345945.95, TOTAL_DISC: 21310.27 }, false);
+    assert.deepEqual(campur, [{ position: 1, percent: 4 }, { position: 4, percent: 2.25 }]);
+});
+

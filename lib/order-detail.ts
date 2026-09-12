@@ -12,7 +12,17 @@ import * as XLSX from "xlsx";
 
 export type PackInfo = { unit: string; packSize: number };
 
-export type DiscountAt = { position: number; percent: number };
+export type DiscountAt = {
+    position: number;
+    percent: number;
+    /**
+     * Rupiah asli bila kolom DISC_n memuat NOMINAL, bukan persen (potongan tingkat faktur yang
+     * dibagi rata ke baris — program MSG). `percent` tetap diisi dengan nilai SETARA supaya
+     * seluruh hitungan di hilir tidak berubah; `amount` yang dipakai saat menyusun faktur,
+     * karena membulatkan ulang dari persen bisa meleset beberapa rupiah dari yang dilaporkan.
+     */
+    amount?: number;
+};
 
 export type OrderDetailLine = {
     rowNumber: number;
@@ -85,12 +95,42 @@ export function fixLine(qty: number, price: number, pack: PackInfo): { qty: numb
         : { qty, unit: pack.unit, price };
 }
 
-/** DISC_1..8 -> posisi yang benar-benar terisi. Baris bonus = potongan 100% di posisi 1. */
+/**
+ * DISC_1..8 -> posisi yang benar-benar terisi. Baris bonus = potongan 100% di posisi 1.
+ *
+ * Kolom DISC_n TIDAK selalu berisi persen. Dibuktikan pada berkas 12 September 2026: outlet
+ * RISKA TK menaruh RUPIAH di DISC_5 (446,8468 atas bruto 29.729,73 = 1,503%) karena potongannya
+ * program MSG tingkat FAKTUR yang dibagi rata ke tiap baris, sementara SS DIAPERS menaruh
+ * persen (2,0) di DISC_1. Satu kolom, dua satuan, dalam satu berkas.
+ *
+ * Membacanya selalu sebagai persen membuat 446,8468 jadi 446,85% — gerbang validasi memang
+ * menahannya, tetapi dengan alasan yang salah, dan potongan faktur yang SAH ikut tertahan.
+ *
+ * Pembedanya tidak perlu menebak: TOTAL_DISC yang dilaporkan principal adalah jawabannya.
+ * Hitung kedua tafsir, pakai yang mereproduksi TOTAL_DISC. Yang berupa rupiah dikembalikan
+ * dengan persen SETARA (supaya seluruh hitungan di hilir tidak berubah) plus `amount`, karena
+ * rupiah aslinya itulah yang harus muncul di faktur, bukan persen hasil pembagian.
+ *
+ * ponytail: hanya dibedakan saat TEPAT SATU posisi terisi. Berkas bercampur persen dan rupiah
+ * pada satu baris belum pernah ada; kalau suatu saat muncul, tafsirnya jatuh ke persen dan
+ * selisih totalnya tetap menahan barisnya — gagal tertutup, bukan salah diam-diam.
+ */
 export function discountsOf(row: Record<string, unknown>, bonus: boolean): DiscountAt[] {
     const found: DiscountAt[] = [];
     for (let position = 1; position <= DISCOUNT_POSITIONS; position += 1) {
         const percent = position === 1 && bonus ? 100 : num(row[`DISC_${position}`]);
         if (percent > 0) found.push({ position, percent });
+    }
+    if (bonus || found.length !== 1) return found;
+
+    const gross = num(row.GROSS);
+    const reported = num(row.TOTAL_DISC);
+    if (gross <= 0 || reported <= 0) return found;
+    const only = found[0];
+    const asPercent = Math.round(gross * only.percent) / 100;
+    if (Math.abs(asPercent - reported) <= 1) return found;
+    if (Math.abs(only.percent - reported) <= 1) {
+        return [{ position: only.position, percent: (only.percent / gross) * 100, amount: only.percent }];
     }
     return found;
 }

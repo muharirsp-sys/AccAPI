@@ -12,13 +12,13 @@
  * benar-benar dilihat manusia.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { customer, item, principalMapping, principalOrderBatch, principalOrderLine } from "@/db/schema";
+import { customer, item, principalMapping, principalOrderBatch, principalOrderLine, promoRule } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { syncItemPrices } from "@/lib/item-price-sync";
-import { checkLine, type DiscountAt } from "@/lib/principal-validation";
+import { checkLine, checkSoPromo, matchItemRule, splitDiscounts, type DiscountAt, type PublishedRule } from "@/lib/principal-validation";
 
 export const runtime = "nodejs";
 
@@ -52,13 +52,29 @@ export async function POST(request: NextRequest) {
     ]);
     const suffix = BRANCH_SUFFIX[batch.principal] ?? "";
 
-    // ponytail: aturan promo terbit tinggal di SQLite backend Python, bukan di Postgres ini,
-    // jadi belum bisa ditanya dari sini. Ditahan pada `false` DENGAN SENGAJA — artinya setiap
-    // klaim principal wajib ditinjau manusia. Gagal tertutup: potongan yang tertahan bisa
-    // dilepas, potongan yang terlanjur masuk faktur tidak bisa ditarik.
-    // Upgrade: panggil `GET /summary/library/published` pada FastAPI dan bandingkan hasil
-    // `calculate()` per faktur, bukan sekadar boolean ini.
-    const hasPublishedRules = false;
+    // Aturan promo terbit dibaca dari `promo_rule` — tabel yang sama dengan yang ditampilkan
+    // Rekap Promo. Sampai 2026-09-12 gerbang ini memakai konstanta mati `hasPublishedRules =
+    // false`, jadi SETIAP klaim principal ditahan, termasuk yang aturannya sudah termuat dan
+    // angkanya cocok persis. Gerbang yang menahan segalanya sama tidak bergunanya dengan
+    // gerbang yang meloloskan segalanya: keduanya tidak membedakan benar dari salah.
+    const soDate = String(batch.period).slice(0, 10) || new Date().toISOString().slice(0, 10);
+    const publishedRules = await db.select({
+        suratProgram: promoRule.suratProgram, promoGroup: promoRule.promoGroup, itemCode: promoRule.itemCode,
+        tierNo: promoRule.tierNo, triggerQty: promoRule.triggerQty, triggerUnit: promoRule.triggerUnit,
+        benefitType: promoRule.benefitType, benefitValue: promoRule.benefitValue, benefitBeban: promoRule.benefitBeban,
+    }).from(promoRule).where(and(
+        eq(promoRule.active, true),
+        or(isNull(promoRule.periodStart), lte(promoRule.periodStart, soDate))!,
+        or(isNull(promoRule.periodEnd), gte(promoRule.periodEnd, soDate))!,
+    ));
+    const rulesByItem = new Map<string, PublishedRule[]>();
+    const fakturRules: PublishedRule[] = [];
+    for (const row of publishedRules) {
+        const rule: PublishedRule = { ...row, triggerQty: Number(row.triggerQty) };
+        if (!rule.itemCode) { fakturRules.push(rule); continue; }
+        if (!rulesByItem.has(rule.itemCode)) rulesByItem.set(rule.itemCode, []);
+        rulesByItem.get(rule.itemCode)!.push(rule);
+    }
 
     const itemCodes = [...new Set(lines.map((line) => items.get(line.productCode)).filter(Boolean) as string[])];
     let priceRefresh: { ok: boolean; error?: string; processed?: number; priceRows?: number } | null = null;
@@ -117,6 +133,36 @@ export async function POST(request: NextRequest) {
         for (const result of results) priceByKey.set(`${customerNo}|${result.code}|${result.unit}`, { price: result.price, source: result.source });
     }
 
+    // Potongan tingkat FAKTUR diputuskan PER SO, bukan per baris: satu nominal untuk seluruh
+    // SO yang dibagi rata, sehingga barang yang tidak masuk program pun ikut kebagian. Kalau
+    // diperiksa per baris, justru baris yang benar yang akan dituduh.
+    const soPromo = new Map<string, string>();
+    const soFindings = new Map<string, string[]>();
+    if (fakturRules.length > 0) {
+        const perSo = new Map<string, { gross: number; claim: number; lines: number }>();
+        for (const line of lines) {
+            const key = String(line.soNo);
+            const entry = perSo.get(key) ?? { gross: 0, claim: 0, lines: 0 };
+            const discounts = (line.discounts as DiscountAt[]) ?? [];
+            const split = splitDiscounts(Number(line.reportGross), discounts);
+            // Ambangnya dihitung dari SELURUH belanja SO; yang dicocokkan hanya SISA klaim
+            // yang belum dijelaskan aturan per barang.
+            entry.gross += Number(line.reportGross);
+            const itemCode = items.get(line.productCode);
+            const byItem = itemCode ? matchItemRule(discounts, rulesByItem.get(itemCode) ?? []) : null;
+            if (!byItem) { entry.claim += split.principal; entry.lines += 1; }
+            perSo.set(key, entry);
+        }
+        for (const [soNo, entry] of perSo) {
+            const verdict = checkSoPromo(
+                { gross: entry.gross, principalClaim: entry.claim, lineCount: entry.lines },
+                fakturRules,
+            );
+            if (verdict.explained) soPromo.set(soNo, verdict.explained);
+            if (verdict.findings.length) soFindings.set(soNo, verdict.findings);
+        }
+    }
+
     let ok = 0;
     let review = 0;
     await db.transaction(async (tx) => {
@@ -138,9 +184,15 @@ export async function POST(request: NextRequest) {
                 unitRatio: Number(line.qty) > 0 ? Number(line.reportQty) / Number(line.qty) : 1,
                 gross: Number(line.reportGross), reportDiscount: Number(line.reportDiscount),
                 discounts: (line.discounts as DiscountAt[]) ?? [], bonus: line.bonus,
-                hasPublishedRules,
+                rules: itemCode ? (rulesByItem.get(itemCode) ?? []) : [],
+                fakturPromo: soPromo.get(String(line.soNo)),
             });
-            if (checked.status === "ok") ok += 1; else review += 1;
+            // Temuan tingkat SO menahan SETIAP barisnya: nominalnya milik seluruh SO, jadi
+            // tidak ada satu baris pun yang bisa dinyatakan benar sendirian.
+            const sisi = soFindings.get(String(line.soNo)) ?? [];
+            const findings = sisi.length ? [...checked.findings, ...sisi] : checked.findings;
+            const status = findings.length ? "review" : "ok";
+            if (status === "ok") ok += 1; else review += 1;
 
             await tx.update(principalOrderLine).set({
                 itemCode, customerNo, salesmanInternal,
@@ -149,7 +201,7 @@ export async function POST(request: NextRequest) {
                 discDistributor: String(checked.split.distributor),
                 discPrincipal: String(checked.split.principal),
                 discUnowned: String(checked.split.unowned),
-                status: checked.status, findings: checked.findings,
+                status, findings,
             }).where(and(eq(principalOrderLine.batchId, id), eq(principalOrderLine.rowNumber, line.rowNumber)));
         }
         await tx.update(principalOrderBatch).set({
@@ -158,5 +210,5 @@ export async function POST(request: NextRequest) {
         }).where(eq(principalOrderBatch.id, id));
     });
 
-    return NextResponse.json({ ok: true, id, checked: lines.length, okCount: ok, reviewCount: review, hasPublishedRules, priceRefresh });
+    return NextResponse.json({ ok: true, id, checked: lines.length, okCount: ok, reviewCount: review, publishedRules: publishedRules.length, fakturPrograms: [...new Set(soPromo.values())], priceRefresh });
 }

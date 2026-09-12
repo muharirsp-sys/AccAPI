@@ -109,6 +109,12 @@ export function groupCandidates(
             const rowNet = cents(rowGross - split.total);
             gross = cents(gross + rowGross);
             net = cents(net + rowNet);
+            // Potongan yang di laporan memang berupa RUPIAH (potongan tingkat faktur yang
+            // dibagi rata) dikirim sebagai rupiah, bukan dipaksa jadi persen: membulatkan ulang
+            // dari persen hasil pembagian bisa meleset beberapa rupiah dari yang dilaporkan
+            // principal, dan selisih itulah yang nanti ditandai verifikasi balik sebagai salah.
+            const sorted = [...row.discounts].sort((a, b) => a.position - b.position);
+            const cash = cents(sorted.reduce((total, entry) => total + (entry.amount ?? 0), 0));
             return {
                 code: row.itemCode!,
                 unit: row.unit,
@@ -116,9 +122,9 @@ export function groupCandidates(
                 gross: rowGross.toFixed(2),
                 net: rowNet.toFixed(2),
                 // Rantai persen dikirim apa adanya ("4+2.25") supaya faktur MENAMPILKAN
-                // persennya seperti nota principal; sisanya nol, tidak ada diskon rupiah.
-                percents: [...row.discounts].sort((a, b) => a.position - b.position).map((entry) => String(entry.percent)),
-                cash: "0",
+                // persennya seperti nota principal.
+                percents: sorted.filter((entry) => entry.amount === undefined).map((entry) => String(entry.percent)),
+                cash: String(cash),
                 price: String(price),
             };
         });

@@ -15,7 +15,17 @@ export const OWNER: Record<number, "distributor" | "principal"> = { 1: "distribu
 /** Rp 1 per baris; hanya menyerap pembulatan, bukan selisih aturan. Ditetapkan pengguna. */
 export const TOLERANCE = 1;
 
-export type DiscountAt = { position: number; percent: number };
+export type DiscountAt = {
+    position: number;
+    percent: number;
+    /**
+     * Rupiah asli bila kolom DISC_n memuat NOMINAL, bukan persen (potongan tingkat faktur yang
+     * dibagi rata ke baris — program MSG). `percent` tetap diisi dengan nilai SETARA supaya
+     * seluruh hitungan di hilir tidak berubah; `amount` yang dipakai saat menyusun faktur,
+     * karena membulatkan ulang dari persen bisa meleset beberapa rupiah dari yang dilaporkan.
+     */
+    amount?: number;
+};
 
 export type Split = { distributor: number; principal: number; unowned: number; total: number };
 
@@ -61,10 +71,106 @@ export type LineInput = {
     reportDiscount: number;
     discounts: DiscountAt[];
     bonus: boolean;
-    hasPublishedRules: boolean;
+    /** Aturan terbit yang berlaku untuk BARANG ini pada tanggal SO-nya. */
+    rules: PublishedRule[];
+    /**
+     * Diisi bila klaim principal pada SO ini sudah dijelaskan aturan tingkat FAKTUR
+     * (lihat checkSoPromo). Baris tidak perlu punya aturannya sendiri.
+     */
+    fakturPromo?: string;
 };
 
 export type LineCheck = { status: "ok" | "review"; findings: string[]; split: Split };
+
+/**
+ * Satu aturan promo terbit (`promo_rule`), sudah disaring per tanggal oleh pemanggil.
+ * `itemCode` kosong = aturan tingkat FAKTUR (berlaku semua barang), mis. program MSG.
+ */
+export type PublishedRule = {
+    suratProgram: string;
+    promoGroup: string;
+    itemCode: string;
+    tierNo: number;
+    /** Ambang pemicu; `triggerUnit` RP = nilai belanja, selain itu jumlah barang. */
+    triggerQty: number;
+    triggerUnit: string;
+    benefitType: string;
+    benefitValue: string;
+    benefitBeban: string;
+};
+
+/**
+ * PPN yang dipakai membandingkan potongan tingkat faktur. Surat program menulis manfaatnya
+ * dalam rupiah TERMASUK PPN (Rp 20.000), sedangkan laporan principal membawa DPP (18.016,22).
+ * Dibuktikan pengguna 2026-09-12: 18.016,22 x 1,11 = 19.998 — beda Rp 2 dari Rp 20.000.
+ */
+export const PPN = 0.11;
+
+/**
+ * Aturan per BARANG yang menjelaskan klaim principal pada satu baris, atau null.
+ * Dipakai dua kali dan harus memberi jawaban yang sama di keduanya: oleh checkLine untuk
+ * memutuskan barisnya, dan oleh pemanggil untuk menghitung SISA klaim yang belum dijelaskan
+ * sebelum aturan tingkat faktur ditanya.
+ */
+export function matchItemRule(discounts: DiscountAt[], rules: PublishedRule[]): PublishedRule | null {
+    // Dibandingkan pada PERSEN posisi principal, bukan rupiahnya: rupiah ikut berubah oleh
+    // diskon distributor yang memotong lebih dulu.
+    const actual = cents(discounts
+        .filter((entry) => OWNER[entry.position] === "principal")
+        .reduce((total, entry) => total + entry.percent, 0));
+    if (actual <= 0) return null;
+    return rules.find((rule) => rule.itemCode && rule.benefitType === "DISC_PCT"
+        && Math.abs(cents(Number(rule.benefitValue) - actual)) <= 0.01) ?? null;
+}
+
+export type SoPromo = {
+    /** Kosong bila klaim principal pada SO ini TIDAK dijelaskan aturan tingkat faktur. */
+    explained: string;
+    /** Temuan tingkat SO; menahan seluruh barisnya, sama seperti temuan per baris. */
+    findings: string[];
+};
+
+/**
+ * Potongan tingkat FAKTUR (program MSG): satu nominal untuk SELURUH SO, dibagi rata ke tiap
+ * barisnya. Tidak bisa diperiksa per baris — barang yang sama sekali tidak masuk program pun
+ * ikut kebagian potongannya, jadi pencocokan per barang akan menuduh baris yang benar.
+ *
+ * Yang dicocokkan: SISA klaim principal se-SO — bagian yang BELUM dijelaskan aturan per barang
+ * — dikembalikan ke nilai TERMASUK PPN, lawan manfaat tier tertinggi yang ambangnya terlampaui
+ * oleh bruto SO. Memakai total klaim mentah akan menuduh SO yang klaimnya sudah beres per
+ * barang: SO 1671-SOP-260013044 (12 Sep 2026) brutonya 3 juta sehingga menyentuh tier 3, padahal
+ * seluruh klaimnya adalah promo 3% per barang yang sudah cocok dan tidak ada urusan dengan MSG.
+ */
+export function checkSoPromo(
+    input: { gross: number; principalClaim: number; lineCount: number },
+    rules: PublishedRule[],
+): SoPromo {
+    if (input.principalClaim <= 0) return { explained: "", findings: [] };
+    const tiers = rules
+        .filter((rule) => !rule.itemCode && rule.benefitType === "DISC_RP" && rule.triggerUnit.toUpperCase() === "RP")
+        .sort((a, b) => b.triggerQty - a.triggerQty);
+    const reached = tiers.find((tier) => input.gross >= tier.triggerQty);
+    if (!reached) return { explained: "", findings: [] };
+
+    const expected = Number(reached.benefitValue);
+    if (!Number.isFinite(expected)) return { explained: "", findings: [] };
+    const claimWithTax = cents(input.principalClaim * (1 + PPN));
+    // Toleransi Rp 1 PER BARIS: nominalnya dibagi rata lalu dibulatkan di tiap baris, jadi
+    // sisa pembulatannya menumpuk sebanyak barisnya. Satu baris tetap Rp 1, seperti gerbang lain.
+    const tolerance = TOLERANCE * Math.max(input.lineCount, 1);
+    if (Math.abs(claimWithTax - expected) > tolerance) {
+        return {
+            explained: "",
+            findings: [`Potongan faktur ${reached.suratProgram} tier ${reached.tierNo}: klaim principal `
+                + `Rp ${input.principalClaim.toLocaleString("id-ID")} (Rp ${claimWithTax.toLocaleString("id-ID")} dengan PPN) `
+                + `berbeda dari manfaat terbit Rp ${expected.toLocaleString("id-ID")}.`],
+        };
+    }
+    return {
+        explained: `${reached.suratProgram} tier ${reached.tierNo} (belanja >= Rp ${reached.triggerQty.toLocaleString("id-ID")} -> Rp ${expected.toLocaleString("id-ID")})`,
+        findings: [],
+    };
+}
 
 /**
  * Satu baris -> status + temuan. Setiap temuan menahan barisnya; tidak ada yang "cuma warning",
@@ -113,10 +219,27 @@ export function checkLine(line: LineInput): LineCheck {
         findings.push(`Diskon tak bertuan Rp ${split.unowned.toLocaleString("id-ID")} pada ${posisi.join(", ")}; `
             + "posisi itu bukan tanggungan distributor maupun klaim principal.");
     }
-    // Klaim principal tanpa aturan terbit adalah uang yang tidak bisa dipertanggungjawabkan.
-    // Selama belum ada satu pun aturan promo terbit, SETIAP klaim harus ditinjau manusia.
-    if (split.principal > 0 && !line.hasPublishedRules) {
-        findings.push(`Klaim principal Rp ${split.principal.toLocaleString("id-ID")} belum punya aturan promo terbit yang menjelaskannya.`);
+    // Klaim principal wajib PUNYA PENJELASAN. Sebelumnya setiap klaim ditahan tanpa kecuali
+    // karena gerbang ini tidak pernah membaca aturan terbit — termasuk klaim yang sudah punya
+    // aturannya. Sekarang aturannya dibaca, dan yang ditahan hanya yang benar-benar tidak
+    // cocok. Uang yang tidak bisa dipertanggungjawabkan tetap tidak boleh lewat.
+    if (split.principal > 0) {
+        const percentRules = line.rules.filter((rule) => rule.itemCode && rule.benefitType === "DISC_PCT");
+        const actual = cents(line.discounts
+            .filter((entry) => OWNER[entry.position] === "principal")
+            .reduce((total, entry) => total + entry.percent, 0));
+        const matched = matchItemRule(line.discounts, line.rules);
+
+        if (matched) {
+            // Cocok dengan aturan terbit; tidak ada temuan.
+        } else if (line.fakturPromo) {
+            // Potongan tingkat faktur: nominalnya milik SELURUH SO, sudah diperiksa di sana.
+        } else if (percentRules.length > 0) {
+            const daftar = percentRules.map((rule) => `${rule.benefitValue}% (${rule.suratProgram} ${rule.promoGroup})`).join(", ");
+            findings.push(`Klaim principal ${actual}% tidak sama dengan aturan terbit untuk barang ini: ${daftar}.`);
+        } else {
+            findings.push(`Klaim principal Rp ${split.principal.toLocaleString("id-ID")} belum punya aturan promo terbit yang menjelaskannya.`);
+        }
     }
 
     // Angka kita harus sama dengan yang dilaporkan principal; beda berarti salah satu salah baca.
