@@ -75,7 +75,7 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 | 4.21 | **Sumber payload = batch unggahan, bukan `sales_order`** | ✅ | `POST /api/principal-order/queue` mengisi `invoice_outbox` dari batch. Dua jalur hidup berdampingan, kuncinya berbeda: order internal pakai uuid, laporan principal pakai `PRINCIPAL:NO-SO` |
 | 4.22 | Satu tombol untuk satu batch sekaligus | ✅ | Tombol **Faktur** pada tiap batch: pratinjau dulu (tidak menulis apa pun), lalu "Antrekan N faktur" |
 | 4.23 | Gerbang kirim | 🟡 | **Satu faktur uji SUDAH dikirim 2026-09-12**: `INV/2609/KN00403`. Satuan, harga, PPN, nomor seri cabang, dan `charField1` semuanya benar. Rem ditutup lagi setelahnya; `ACCURATE_INVOICE_SEND` kosong, sisa 3 faktur tetap tertahan |
-| 4.30 | **Verifikasi balik otomatis: faktur di Accurate vs yang dikirim** | 🟡 | **DIBANGUN 2026-09-12** — `lib/invoice-verify.ts` + `GET /api/invoice-verify` + bagian **Verifikasi balik** pada `/antrean-faktur` (dimuat sendiri, tanpa tombol). Per baris: kode barang, **satuan (id, bukan nama)**, qty, harga, diskon persen, diskon rupiah, dan **nilai baris**; per faktur: `charField1`, pelanggan, tanggal, `taxable`/`inclusiveTax`/`tax1Amount`, `branchId` dan nomor terbit. 16 test. **Sisa:** belum pernah dijalankan atas data produksi — sekali buka `/antrean-faktur` di produksi, hasilnya langsung terlihat |
+| 4.30 | **Verifikasi balik otomatis: faktur di Accurate vs yang dikirim** | 🟡 | **DIBANGUN 2026-09-12** — `lib/invoice-verify.ts` + `GET /api/invoice-verify` + bagian **Verifikasi balik** pada `/antrean-faktur` (dimuat sendiri, tanpa tombol). Per baris: kode barang, **satuan (id, bukan nama)**, qty, harga, diskon persen, diskon rupiah, dan **nilai baris**; per faktur: `charField1`, pelanggan, `taxable`/`inclusiveTax`/`tax1Amount`, `branchId`, nomor terbit, dan tanggal (satu arah — lihat di bawah). 16 test. **Sisa:** belum pernah dijalankan atas data produksi — sekali buka `/antrean-faktur` di produksi, hasilnya langsung terlihat |
 | 4.31 | Salesman pada faktur | ❓ | **Diputuskan 2026-09-12: KIRIM, tetapi id-nya dibuktikan dulu — tidak ditebak.** Accurate menautkan sales lewat `masterSalesmanId` (angka), sedangkan yang kita punya kode internal; master salesman Accurate belum tersinkron. Menebak nama field `save.do` adalah pilihan terburuk: field tak dikenal DIABAIKAN DIAM-DIAM, jadi tebakan yang salah menghasilkan faktur yang tampak sukses dan tetap tanpa sales. Jalan tanpa tebakan dan tanpa endpoint baru: faktur yang dibuat MANUAL sudah membawa `masterSalesmanId` + `masterSalesmanName` berpasangan di `sales_invoice.raw_data` — satu query atas cache sendiri sudah cukup jadi peta. Sampai itu ada, verifikasi balik **melaporkan salesman tiap faktur** dan "tanpa sales" terbaca di layar |
 | 4.32 | Diskon persen pada faktur nyata | ❌ | Faktur uji `itemDiscPercent: ""` karena berkas 11 September tanpa diskon sama sekali. Field yang paling berisiko justru BELUM terbukti; menunggu hari yang promonya turun. **Yang berubah 2026-09-12:** pembuktiannya tidak lagi perlu mata manusia — verifikasi balik membandingkan rantai persennya DAN `totalPrice` baris, jadi kalau Accurate menjumlahkan persen (bukan bertingkat) selisihnya muncul sendiri sebagai temuan "nilai baris" |
 | 4.33 | Faktur GANDA untuk satu SO | 🟡 | Ikut diperiksa verifikasi balik: dua faktur Accurate dengan `charField1` sama = temuan paling atas, mengalahkan hasil apa pun. Belum pernah terjadi (dan tidak boleh) |
@@ -495,8 +495,16 @@ periksa yang lebih rapi, melainkan pembanding yang berjalan sendiri.
 | `/antrean-faktur` | Bagian **Verifikasi balik faktur Accurate**, dimuat bersama halaman |
 
 **Yang dibandingkan, per baris:** kode barang, satuan, qty, harga satuan, diskon persen,
-diskon rupiah, dan **nilai baris**. **Per faktur:** `charField1`, pelanggan, tanggal,
-`taxable`, `inclusiveTax`, `tax1Amount` > 0, `branchId`, dan nomor faktur benar-benar terbit.
+diskon rupiah, dan **nilai baris**. **Per faktur:** `charField1`, pelanggan, `taxable`, `inclusiveTax`,
+`tax1Amount` > 0, `branchId`, dan nomor faktur benar-benar terbit.
+
+**Tanggal diperiksa SATU ARAH saja** (aturan pengguna 2026-09-12: *"faktur diproses pada
+tanggal masalah itu selesai"*). Faktur uji dikirim 12/09 untuk SO 11/09 dan Accurate
+menstempel tanggal pembuatannya sendiri; menuntut sama persis menghasilkan alarm yang tidak
+pernah bisa dipadamkan, dan alarm begitu mengajari orang mengabaikan seluruh layarnya. Yang
+ditandai: faktur bertanggal **lebih awal** daripada SO-nya, atau tanggal yang tidak terbaca.
+Tanggal yang benar-benar dipakai Accurate ditampilkan apa adanya. **Belum ada**: pemilihan
+tanggal proses di web (permintaan pengguna 2026-09-12).
 
 **Enam keputusan yang menentukan bentuknya** — semuanya menutup satu cara verifikasi bisa
 berbohong:

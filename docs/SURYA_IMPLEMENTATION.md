@@ -1772,8 +1772,10 @@ bagian "Butir 4.30 SELESAI dibangun" — baca itu, bukan ringkasan ini.
 | `lib/sync.ts` | Perbaikan: `raw_data` tidak lagi kehilangan `detailItem` tiap cron |
 
 Yang diperiksa per baris: kode barang, satuan (id), qty, harga satuan, diskon persen, diskon
-rupiah, nilai baris. Per faktur: `charField1`, pelanggan, tanggal, `taxable`, `inclusiveTax`,
-`tax1Amount`, `branchId`, nomor terbit, **dan faktur ganda** (dua faktur berkunci sama).
+rupiah, nilai baris. Per faktur: `charField1`, pelanggan, `taxable`, `inclusiveTax`,
+`tax1Amount`, `branchId`, nomor terbit, **faktur ganda** (dua faktur berkunci sama), dan
+tanggal SATU ARAH — hanya faktur yang bertanggal lebih AWAL dari SO-nya yang ditandai, karena
+aturan pengguna: faktur diproses pada tanggal masalahnya selesai.
 
 **Bug yang ikut ketahuan dan diperbaiki**: cron sync menimpa `raw_data` dengan jawaban
 `list.do` yang tidak membawa `detailItem`. Rincian baris faktur — bahan verifikasi ini DAN
