@@ -69,10 +69,11 @@ export async function GET(request: NextRequest) {
 
     // Faktur yang `raw_data`-nya belum memuat rincian baris: hanya jalur webhook (detail.do)
     // yang membawanya, faktur hasil sync daftar tidak. Wajib terlihat, bukan hilang diam-diam.
-    const withoutDetail = rows.filter((row) => {
-        const raw = (row.raw ?? {}) as Record<string, unknown>;
-        return !Array.isArray(raw.detailItem) || raw.detailItem.length === 0;
-    }).length;
+    // Dihitung dari hasil bongkar, bukan dari bentuk mentahnya: `raw_data` tersimpan sebagai
+    // TEKS JSON (lihat catatan di lib/promo-recap), jadi memeriksa `raw.detailItem` langsung
+    // selalu menjawab "tidak ada rincian" untuk semua faktur.
+    const withDetail = new Set(lines.map((line) => line.invoiceId || line.invoiceNo));
+    const withoutDetail = rows.length - withDetail.size;
 
     return NextResponse.json({
         ok: true, from, to,

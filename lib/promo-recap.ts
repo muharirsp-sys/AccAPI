@@ -47,6 +47,16 @@ export type InvoiceLine = {
 };
 
 const cents = (value: number) => Math.round(value * 100) / 100;
+
+function safeParse(raw: string): unknown {
+    try {
+        const once = JSON.parse(raw);
+        // Bisa berlapis dua kalau suatu saat disimpan ulang; urai sekali lagi, lalu berhenti.
+        return typeof once === "string" ? JSON.parse(once) : once;
+    } catch {
+        return null;
+    }
+}
 const num = (value: unknown) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
@@ -67,7 +77,13 @@ export function isoDate(raw: string): string {
  * informasi yang justru dicari rekap ini.
  */
 export function invoiceLines(raw: unknown): InvoiceLine[] {
-    const invoice = (raw ?? {}) as Record<string, unknown>;
+    // `sales_invoice.raw_data` bertipe jsonb tetapi ISINYA STRING: lib/sync menyimpannya
+    // lewat JSON.stringify, jadi yang tersimpan adalah teks JSON, bukan objek (dibuktikan di
+    // produksi 2026-09-12: `jsonb_typeof(raw_data)` = "string"). Tanpa penguraian ini rekap
+    // membaca NOL baris dan melaporkan "tidak ada diskon" untuk faktur yang penuh diskon —
+    // jawaban salah yang terlihat menenangkan.
+    const parsed = typeof raw === "string" ? safeParse(raw) : raw;
+    const invoice = (parsed ?? {}) as Record<string, unknown>;
     const details = Array.isArray(invoice.detailItem) ? invoice.detailItem : [];
     const invoiceNo = String(invoice.number ?? "");
     const invoiceId = String(invoice.id ?? "");
