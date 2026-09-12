@@ -15,9 +15,9 @@
  *   - cabang + seri penomoran diambil dari pelanggan; ketidakpastian = SO itu dilewati.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { invoiceOutbox, principalOrderBatch, principalOrderLine } from "@/db/schema";
+import { accurateEmployee, invoiceOutbox, principalOrderBatch, principalOrderLine } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { groupCandidates, type BatchLine, type SkippedSo } from "@/lib/principal-invoice";
 import { buildInvoicePayload, type InvoicePayload } from "@/lib/accurate-invoice-write";
@@ -87,6 +87,27 @@ export async function POST(request: NextRequest) {
     const master = await accurateUnits();
     if (!master.units) return NextResponse.json({ ok: false, error: master.error }, { status: 503 });
 
+    // Sales per SO: kode internal dari baris batch -> id pegawai Accurate. `employee.number`
+    // memang sama dengan kode internal kita (dibuktikan live 2026-09-12), jadi jembatannya
+    // diturunkan dari master, bukan diketik ulang di mapping — kolom yang diisi tangan akan
+    // basi diam-diam tiap kali sales berganti, dan itu sudah pernah terjadi.
+    const salesmanBySo = new Map<string, string>();
+    for (const row of rows) {
+        const code = (row.salesmanInternal ?? "").trim().toUpperCase();
+        if (code && !salesmanBySo.has(row.soNo)) salesmanBySo.set(row.soNo, code);
+    }
+    const salesmanIds = new Map<string, number>();
+    const codes = [...new Set(salesmanBySo.values())];
+    if (codes.length) {
+        // Yang `suspended` sengaja tidak ikut: memasang sales nonaktif pada faktur baru hanya
+        // memindahkan kesalahan, bukan memperbaikinya. Fakturnya tetap terbit, tanpa sales.
+        const employees = await db.select({ number: accurateEmployee.number, id: accurateEmployee.id })
+            .from(accurateEmployee)
+            .where(and(inArray(accurateEmployee.number, codes), eq(accurateEmployee.salesman, true),
+                eq(accurateEmployee.suspended, false)));
+        for (const employee of employees) salesmanIds.set(employee.number, employee.id);
+    }
+
     // Sudah pernah diantrekan? Jangan sentuh: `posted` dan `unknown` berarti fakturnya PASTI
     // atau MUNGKIN sudah ada di Accurate, dan faktur ganda di sana tidak bisa dibatalkan.
     const existing = await db.select({ orderId: invoiceOutbox.orderId, state: invoiceOutbox.state })
@@ -96,6 +117,7 @@ export async function POST(request: NextRequest) {
     type Ready = {
         key: string; soNo: string; customerNo: string; orderDate: string; lineCount: number;
         gross: number; net: number; branch: string; payload: InvoicePayload;
+        salesman: string; salesmanId: number;
     };
     const ready: Ready[] = [];
     const blocked: SkippedSo[] = [...skipped];
@@ -111,11 +133,16 @@ export async function POST(request: NextRequest) {
                 branchId: resolved.branch.branchId,
                 typeAutoNumber: resolved.branch.autoNumberId,
                 label: candidate.soNo,
+                masterSalesmanId: salesmanIds.get(salesmanBySo.get(candidate.soNo) ?? ""),
             });
             ready.push({
                 key: candidate.key, soNo: candidate.soNo, customerNo: candidate.customerNo,
                 orderDate: candidate.orderDate, lineCount: candidate.lineCount,
                 gross: candidate.gross, net: candidate.net, branch: resolved.branch.branchName, payload,
+                // Pratinjau harus menyebut sales yang TIDAK ketemu, bukan diam: itulah faktur
+                // yang nanti terbit tanpa sales dan baru ketahuan setelah masuk Accurate.
+                salesman: salesmanBySo.get(candidate.soNo) ?? "",
+                salesmanId: payload.masterSalesmanId ?? 0,
             });
         } catch (error) {
             blocked.push({ soNo: candidate.soNo, reason: error instanceof Error ? error.message : "payload faktur gagal dibuat" });

@@ -212,6 +212,20 @@ test("butir 4.31: salesman pada faktur Accurate ikut dilaporkan", () => {
     assert.equal(verifyInvoice(payload(), accurate({ masterSalesmanName: "KN01_BUDI" })).salesman, "KN01_BUDI");
 });
 
+test("sales diperiksa HANYA bila kita mengirimnya", () => {
+    // Faktur tanpa sales bukan selisih selama kita memang tidak mengirim sales: itu keadaan
+    // yang diketahui, dan menandainya merah akan menenggelamkan selisih yang sungguhan.
+    assert.equal(verifyInvoice(payload(), accurate()).status, "cocok");
+
+    // Begitu dikirim, sales yang TIDAK nyangkut di Accurate jadi temuan — di situlah ketahuan
+    // kalau `masterSalesmanId` ternyata diabaikan save.do seperti nasib transDate.
+    const kirim = payload({ masterSalesmanId: 2450 });
+    assert.ok(verifyInvoice(kirim, accurate()).findings.some((f) => f.field === "sales (masterSalesmanId)"));
+    assert.equal(verifyInvoice(kirim, accurate({ masterSalesmanId: 2450 })).status, "cocok");
+    assert.ok(verifyInvoice(kirim, accurate({ masterSalesmanId: 3401 }))
+        .findings.some((f) => f.field === "sales (masterSalesmanId)"));
+});
+
 test("rantai persen dibakukan tanpa menggeser posisi", () => {
     assert.equal(normalizePercentChain("4,00 + 2.25"), "4+2.25");
     assert.equal(normalizePercentChain(""), "");

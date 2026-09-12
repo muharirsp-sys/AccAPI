@@ -7,7 +7,7 @@
  * ponytail: full resync tiap run (throttled 150ms/halaman); delta sync via lastUpdate kalau volume mulai berat.
  */
 import { db } from "./db";
-import { syncState, branch, accurateAutoNumber, accurateUnit, item, customer, salesInvoiceCache, salesReturnCache } from "../db/schema";
+import { syncState, branch, accurateAutoNumber, accurateUnit, accurateEmployee, item, customer, salesInvoiceCache, salesReturnCache } from "../db/schema";
 import { parseAccurateDateTime } from "./accurate-invoice";
 import { matchBranchAutoNumbers } from "./branch-auto-number";
 import { eq, sql } from "drizzle-orm";
@@ -90,7 +90,7 @@ const bool = (v: unknown): boolean | null => (v === undefined || v === null ? nu
 const nested = (row: Record<string, unknown>, key: string): Record<string, unknown> =>
     (row[key] && typeof row[key] === "object" ? row[key] as Record<string, unknown> : {});
 
-export type SyncModuleName = "branch" | "auto_number" | "unit" | "item" | "item_stock" | "customer" | "sales_invoice" | "sales_return";
+export type SyncModuleName = "branch" | "auto_number" | "unit" | "employee" | "item" | "item_stock" | "customer" | "sales_invoice" | "sales_return";
 
 // Watermark delta feed ke Web Sales. Sync ini full-resync tiap run, jadi synced_at HANYA
 // boleh maju kalau isi barisnya benar-benar berubah — kalau tidak, Web Sales menarik ulang
@@ -198,6 +198,36 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     suspended: sql`excluded."suspended"`,
                     rawData: sql`excluded."raw_data"`,
                     syncedAt: bumpSyncedAt("accurate_unit"),
+                },
+            });
+        },
+    },
+    // Sumber `masterSalesmanId` baris faktur. `salesman/list.do` TIDAK ADA (404 "URL API tidak
+    // tepat", diuji live 2026-09-12); salesman adalah pegawai bertanda `salesman: true`, dan
+    // `number`-nya sama persis dengan kode salesman internal kita.
+    employee: {
+        endpoint: "/employee/list.do",
+        fields: "id,number,name,branchId,salesman,suspended",
+        upsertPage: async (rows) => {
+            const payloads = rows.map((row) => ({
+                id: Number(row.id),
+                number: String(row.number ?? "").trim().toUpperCase(),
+                name: String(row.name ?? "").trim(),
+                branchId: num(row.branchId),
+                salesman: row.salesman === true,
+                suspended: row.suspended === true,
+                rawData: JSON.stringify(row),
+            }));
+            await db.insert(accurateEmployee).values(payloads).onConflictDoUpdate({
+                target: accurateEmployee.id,
+                set: {
+                    number: sql`excluded."number"`,
+                    name: sql`excluded."name"`,
+                    branchId: sql`excluded."branch_id"`,
+                    salesman: sql`excluded."salesman"`,
+                    suspended: sql`excluded."suspended"`,
+                    rawData: sql`excluded."raw_data"`,
+                    syncedAt: bumpSyncedAt("accurate_employee"),
                 },
             });
         },

@@ -302,6 +302,23 @@ export const accurateUnit = pgTable("accurate_unit", {
 
 // Penomoran dokumen Accurate. `transactionType='SI'` = Faktur Penjualan, satu seri per
 // principal di database ini (23 seri per probe 2026-09-09).
+// Master pegawai Accurate. `number` TERBUKTI sama dengan kode salesman internal kita
+// (M-IDW = id 4652 "KN2_IRDAWATI ALIM", dibuktikan live 2026-09-12), jadi `masterSalesmanId`
+// pada faktur diturunkan dari sini — bukan diketik ulang ke mapping, yang akan basi diam-diam
+// setiap kali sales berganti. `salesman` dan `suspended` menentukan siapa yang boleh dipasang.
+export const accurateEmployee = pgTable("accurate_employee", {
+    id: bigint("id", { mode: "number" }).primaryKey(),
+    number: text("number").notNull().default(""),
+    name: text("name").notNull().default(""),
+    branchId: bigint("branch_id", { mode: "number" }),
+    salesman: boolean("salesman").notNull().default(false),
+    suspended: boolean("suspended").notNull().default(false),
+    rawData: jsonb("raw_data"),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_accurate_employee_number").on(t.number)
+]);
+
 export const accurateAutoNumber = pgTable("accurate_auto_number", {
     id: bigint("id", { mode: "number" }).primaryKey(),
     name: text("name").notNull(),
