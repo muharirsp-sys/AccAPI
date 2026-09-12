@@ -358,7 +358,17 @@ const SYNC_MODULES: Record<SyncModuleName, {
                     status: sql`excluded."status"`,
                     dueDate: sql`excluded."due_date"`,
                     age: sql`excluded."age"`,
-                    rawData: sql`excluded."raw_data"`,
+                    // JANGAN menimpa rincian baris dengan jawaban yang tidak punya rincian.
+                    // `list.do` (cron) tidak mengirim `detailItem`; `detail.do` (webhook) iya.
+                    // Tanpa penjagaan ini, sync terjadwal menghapus satu-satunya salinan baris
+                    // faktur yang dipakai Rekap Promo DAN verifikasi balik (butir 4.30) — dan
+                    // keduanya lalu melaporkan "tidak ada apa-apa" dengan nada meyakinkan.
+                    // ponytail: cocokkan teksnya, karena raw_data tersimpan sebagai STRING JSON
+                    // di kolom jsonb sehingga operator `?` tidak bisa dipakai. Kalau suatu saat
+                    // penyimpanannya diperbaiki jadi objek, ganti dengan `raw_data ? 'detailItem'`.
+                    rawData: sql`case when excluded."raw_data"::text like '%detailItem%'
+                                       or sales_invoice.raw_data::text not like '%detailItem%'
+                                  then excluded."raw_data" else sales_invoice.raw_data end`,
                     lastUpdate: sql`excluded."last_update"`,
                     // COALESCE: kalau Accurate tidak mengirim lastUpdate di satu panggilan,
                     // jangan hapus nilai yang sudah benar (pelajaran dari raw_data yang tertimpa).

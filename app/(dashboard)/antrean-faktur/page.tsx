@@ -13,7 +13,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, RefreshCw, Send, Trash2, HelpCircle, CheckCircle2, Clock } from "lucide-react";
+import { AlertTriangle, RefreshCw, Send, Trash2, HelpCircle, CheckCircle2, Clock, ShieldCheck, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 
 type Row = {
@@ -26,6 +26,16 @@ type Batch = {
     id: string; fileName: string; principal: string; uploadedAt: string; uploadedBy: string;
     reviewCount: number; lineCount: number; ageMinutes: number; overdue: boolean;
 };
+
+type Finding = { line: number | null; field: string; expected: string; actual: string };
+
+type Verified = {
+    orderId: string; soNo: string | null; state: string; customerNo: string; orderDate: string;
+    matchedBy: string; foundWhileUnknown: boolean; status: "cocok" | "selisih" | "tak-terperiksa";
+    reason: string; findings: Finding[]; invoiceNumber: string; linesChecked: number; salesman: string;
+};
+
+type Verify = { checked: number; summary: Record<string, number>; rows: Verified[] };
 
 type Data = {
     escalateAfterMinutes: number;
@@ -50,6 +60,7 @@ const usia = (minutes: number) => (minutes < 60 ? `${minutes} menit` : `${Math.f
 
 export default function AntreanFakturPage() {
     const [data, setData] = useState<Data | null>(null);
+    const [verify, setVerify] = useState<Verify | null>(null);
     const [picked, setPicked] = useState<string[]>([]);
     const [onlyOverdue, setOnlyOverdue] = useState(false);
     const [busy, setBusy] = useState(false);
@@ -62,6 +73,12 @@ export default function AntreanFakturPage() {
         const body = await res.json().catch(() => ({}));
         if (!res.ok || !body.ok) { toast.error(body.error ?? "Antrean gagal dimuat"); return; }
         setData(body);
+
+        // Verifikasi balik ikut dimuat sendiri, tanpa tombol: kalau harus ditekan, ia akan
+        // lupa ditekan justru pada hari yang fakturnya salah.
+        const check = await fetch("/api/invoice-verify", { credentials: "include" });
+        const checked = await check.json().catch(() => ({}));
+        setVerify(check.ok && checked.ok ? checked : null);
     }, [picked, onlyOverdue]);
 
     useEffect(() => { void load(); }, [load]);
@@ -137,6 +154,103 @@ export default function AntreanFakturPage() {
                 <button onClick={() => void load()} className="inline-flex items-center gap-1 rounded bg-white/10 px-3 py-1.5 text-xs">
                     <RefreshCw size={13} /> Muat ulang
                 </button>
+            </section>
+
+            <section className="space-y-2">
+                <div className="flex flex-wrap items-center gap-3">
+                    <h2 className="text-lg font-medium text-white">Verifikasi balik faktur Accurate</h2>
+                    {verify && (
+                        <span className="text-xs text-slate-400">
+                            {verify.checked} faktur diperiksa ·{" "}
+                            <span className="text-emerald-300">{verify.summary.cocok ?? 0} cocok</span> ·{" "}
+                            <span className="text-red-300">{verify.summary.selisih ?? 0} selisih</span> ·{" "}
+                            <span className="text-amber-300">{verify.summary["tak-terperiksa"] ?? 0} belum bisa diperiksa</span>
+                        </span>
+                    )}
+                </div>
+                <p className="text-xs text-slate-500">
+                    Isi faktur di Accurate disandingkan dengan payload yang dikirim — satuan, qty, harga,
+                    diskon persen, nilai baris, PPN, dan cabang penomoran — dihubungkan lewat{" "}
+                    <span className="font-mono">charField1</span>. Yang berselisih ditandai di sini; tidak
+                    ada yang perlu dipelototi satu per satu di Accurate.
+                </p>
+                {!!verify?.summary?.selisih && (
+                    <div className="flex items-center gap-3 rounded-lg border border-red-500/40 bg-red-500/10 p-3">
+                        <ShieldAlert className="text-red-300" size={18} />
+                        <p className="text-sm text-red-200">
+                            {verify.summary.selisih} faktur di Accurate TIDAK sama dengan yang dikirim.
+                            Faktur yang sudah terbentuk tidak bisa ditarik — perbaikannya di Accurate,
+                            dan gerbang kirim harus ditutup sampai sebabnya ketemu.
+                        </p>
+                    </div>
+                )}
+                <div className="overflow-x-auto rounded-lg border border-white/10">
+                    <table className="w-full text-sm">
+                        <thead className="bg-white/5 text-slate-400">
+                            <tr>
+                                <th className="px-3 py-2 text-left">SO</th>
+                                <th className="px-3 py-2 text-left">Faktur Accurate</th>
+                                <th className="px-3 py-2 text-left">Hasil</th>
+                                <th className="px-3 py-2 text-left">Temuan</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {verify?.rows.map((row) => (
+                                <tr key={row.orderId} className={`border-t border-white/5 ${row.status === "selisih" ? "bg-red-500/5" : ""}`}>
+                                    <td className="px-3 py-2 font-mono text-xs">
+                                        {row.soNo ?? row.orderId}
+                                        <div className="text-slate-500">{row.customerNo}</div>
+                                    </td>
+                                    <td className="px-3 py-2 text-xs">
+                                        {row.invoiceNumber || "—"}
+                                        <div className="text-slate-500">
+                                            {row.matchedBy ? `dicocokkan lewat ${row.matchedBy}` : "belum ketemu"}
+                                            {row.salesman ? ` · sales ${row.salesman}` : " · tanpa sales"}
+                                        </div>
+                                    </td>
+                                    <td className="px-3 py-2 text-xs whitespace-nowrap">
+                                        {row.status === "cocok" && (
+                                            <span className="text-emerald-300">
+                                                <ShieldCheck size={13} className="mr-1 inline" />
+                                                cocok ({row.linesChecked} baris)
+                                            </span>
+                                        )}
+                                        {row.status === "selisih" && (
+                                            <span className="text-red-300">
+                                                <ShieldAlert size={13} className="mr-1 inline" />
+                                                {row.findings.length} selisih
+                                            </span>
+                                        )}
+                                        {row.status === "tak-terperiksa" && (
+                                            <span className="text-amber-300">
+                                                <HelpCircle size={13} className="mr-1 inline" /> belum bisa diperiksa
+                                            </span>
+                                        )}
+                                        {row.foundWhileUnknown && (
+                                            <div className="text-red-300">fakturnya ADA di Accurate padahal berstatus TIDAK PASTI</div>
+                                        )}
+                                    </td>
+                                    <td className="px-3 py-2 text-xs">
+                                        {row.status === "tak-terperiksa" && <span className="text-amber-200/90">{row.reason}</span>}
+                                        {row.findings.map((finding, index) => (
+                                            <div key={index} className="text-red-200/90">
+                                                {finding.line ? `baris ${finding.line} · ` : ""}{finding.field}: dikirim{" "}
+                                                <span className="font-mono">{finding.expected}</span>, di Accurate{" "}
+                                                <span className="font-mono">{finding.actual}</span>
+                                            </div>
+                                        ))}
+                                        {row.status === "cocok" && <span className="text-slate-500">—</span>}
+                                    </td>
+                                </tr>
+                            ))}
+                            {!verify?.rows.length && (
+                                <tr><td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                                    Belum ada faktur yang terkirim ke Accurate untuk diperiksa.
+                                </td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             </section>
 
             {!!data?.pendingBatches?.length && (

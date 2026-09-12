@@ -75,9 +75,11 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 | 4.21 | **Sumber payload = batch unggahan, bukan `sales_order`** | ✅ | `POST /api/principal-order/queue` mengisi `invoice_outbox` dari batch. Dua jalur hidup berdampingan, kuncinya berbeda: order internal pakai uuid, laporan principal pakai `PRINCIPAL:NO-SO` |
 | 4.22 | Satu tombol untuk satu batch sekaligus | ✅ | Tombol **Faktur** pada tiap batch: pratinjau dulu (tidak menulis apa pun), lalu "Antrekan N faktur" |
 | 4.23 | Gerbang kirim | 🟡 | **Satu faktur uji SUDAH dikirim 2026-09-12**: `INV/2609/KN00403`. Satuan, harga, PPN, nomor seri cabang, dan `charField1` semuanya benar. Rem ditutup lagi setelahnya; `ACCURATE_INVOICE_SEND` kosong, sisa 3 faktur tetap tertahan |
-| 4.30 | **Verifikasi balik otomatis: faktur di Accurate vs baris batch principal** | ❌ | **Permintaan pengguna 2026-09-12**: "kenapa harus saya yang mastikan?" Sistem punya semua bahannya — `charField1` = kunci antrean, dan webhook menyimpan jawaban `detail.do` utuh. Yang belum ada: pembanding otomatis per baris (satuan, qty, harga, diskon persen, PPN, nomor seri cabang) yang menandai selisih, bukan manusia yang memelototi |
-| 4.31 | Salesman pada faktur | ❌ | Faktur uji keluar dengan `masterSalesmanId: null`. Validasi sudah menerjemahkan kode salesman, tetapi `buildInvoicePayload` tidak pernah mengirimkannya. Proses manual selama ini mengisi salesman — butuh keputusan pengguna |
-| 4.32 | Diskon persen pada faktur nyata | ❌ | Faktur uji `itemDiscPercent: ""` karena berkas 11 September tanpa diskon sama sekali. Field yang paling berisiko justru BELUM terbukti; menunggu hari yang promonya turun |
+| 4.30 | **Verifikasi balik otomatis: faktur di Accurate vs yang dikirim** | 🟡 | **DIBANGUN 2026-09-12** — `lib/invoice-verify.ts` + `GET /api/invoice-verify` + bagian **Verifikasi balik** pada `/antrean-faktur` (dimuat sendiri, tanpa tombol). Per baris: kode barang, **satuan (id, bukan nama)**, qty, harga, diskon persen, diskon rupiah, dan **nilai baris**; per faktur: `charField1`, pelanggan, tanggal, `taxable`/`inclusiveTax`/`tax1Amount`, `branchId` dan nomor terbit. 16 test. **Sisa:** belum pernah dijalankan atas data produksi — sekali buka `/antrean-faktur` di produksi, hasilnya langsung terlihat |
+| 4.31 | Salesman pada faktur | ❓ | **Diputuskan 2026-09-12: KIRIM, tetapi id-nya dibuktikan dulu — tidak ditebak.** Accurate menautkan sales lewat `masterSalesmanId` (angka), sedangkan yang kita punya kode internal; master salesman Accurate belum tersinkron. Menebak nama field `save.do` adalah pilihan terburuk: field tak dikenal DIABAIKAN DIAM-DIAM, jadi tebakan yang salah menghasilkan faktur yang tampak sukses dan tetap tanpa sales. Jalan tanpa tebakan dan tanpa endpoint baru: faktur yang dibuat MANUAL sudah membawa `masterSalesmanId` + `masterSalesmanName` berpasangan di `sales_invoice.raw_data` — satu query atas cache sendiri sudah cukup jadi peta. Sampai itu ada, verifikasi balik **melaporkan salesman tiap faktur** dan "tanpa sales" terbaca di layar |
+| 4.32 | Diskon persen pada faktur nyata | ❌ | Faktur uji `itemDiscPercent: ""` karena berkas 11 September tanpa diskon sama sekali. Field yang paling berisiko justru BELUM terbukti; menunggu hari yang promonya turun. **Yang berubah 2026-09-12:** pembuktiannya tidak lagi perlu mata manusia — verifikasi balik membandingkan rantai persennya DAN `totalPrice` baris, jadi kalau Accurate menjumlahkan persen (bukan bertingkat) selisihnya muncul sendiri sebagai temuan "nilai baris" |
+| 4.33 | Faktur GANDA untuk satu SO | 🟡 | Ikut diperiksa verifikasi balik: dua faktur Accurate dengan `charField1` sama = temuan paling atas, mengalahkan hasil apa pun. Belum pernah terjadi (dan tidak boleh) |
+| 4.34 | `raw_data` faktur tidak boleh kehilangan rincian baris | ✅ | **Bug diperbaiki 2026-09-12.** Cron sync memakai `list.do` yang TIDAK membawa `detailItem`, dan upsert-nya menimpa `raw_data` tanpa syarat — jadi tiap sync menghapus satu-satunya salinan baris faktur yang dipakai Rekap Promo dan verifikasi balik. `lib/sync.ts` kini hanya menimpa bila yang baru punya rincian atau yang lama memang tidak punya |
 
 ## Langkah 4 tahap 2b — tangkap 4 jenis error Accurate
 
@@ -479,3 +481,59 @@ Kino Rp 20.165.405,40 — beda 4 sen, di bawah satu rupiah).
 - **Idempotensi unggahan.** Berkas yang sama diunggah dua kali tidak boleh membuat dua faktur.
 - **Daftar kelas outlet yang bolong** memberi potongan ke outlet yang seharusnya dikecualikan;
   importirnya sudah menolak daftar bolong kecuali dipaksa sadar.
+
+## Butir 4.30 SELESAI dibangun — verifikasi balik otomatis, 2026-09-12
+
+Permintaannya satu kalimat: *"kenapa harus saya yang mastikan?"* Jawabannya bukan daftar
+periksa yang lebih rapi, melainkan pembanding yang berjalan sendiri.
+
+| Berkas | Isi |
+|---|---|
+| `lib/invoice-verify.ts` | Murni, tanpa DB/jaringan. `readAccurateInvoice` + `verifyInvoice` + `normalizePercentChain` |
+| `lib/invoice-verify.test.ts` | 16 test, termasuk bentuk nyata `INV/2609/KN00403` |
+| `app/api/invoice-verify/route.ts` | `GET`, read-only, izin `order.view` |
+| `/antrean-faktur` | Bagian **Verifikasi balik faktur Accurate**, dimuat bersama halaman |
+
+**Yang dibandingkan, per baris:** kode barang, satuan, qty, harga satuan, diskon persen,
+diskon rupiah, dan **nilai baris**. **Per faktur:** `charField1`, pelanggan, tanggal,
+`taxable`, `inclusiveTax`, `tax1Amount` > 0, `branchId`, dan nomor faktur benar-benar terbit.
+
+**Enam keputusan yang menentukan bentuknya** — semuanya menutup satu cara verifikasi bisa
+berbohong:
+
+1. **Pembandingnya `invoice_outbox.payload`, bukan baris batch.** Unggah ulang berkas yang
+   sama menghapus batch lama beserta barisnya (`ON DELETE CASCADE`), jadi harapan yang
+   dibangun dari batch akan buta justru pada faktur paling lama — yang paling butuh diperiksa.
+   Payload adalah rekaman permanen niat sistem, dan rantai batch -> payload hanya punya satu
+   jalur kode (`groupCandidates` + `buildInvoicePayload`) yang bertest dan punya pratinjau.
+2. **Tidak diperiksa ≠ cocok.** Faktur yang `raw_data`-nya tanpa `detailItem` berstatus
+   `tak-terperiksa`, bukan hijau. Hijau palsu lebih berbahaya daripada tidak ada verifikasi,
+   karena orang berhenti memeriksa.
+3. **`charField1` ikut diperiksa, bukan hanya dipakai.** Kalau faktur yang ketemu membawa
+   kunci lain, yang salah bukan angkanya — yang salah pasangannya, dan sisa perbandingan
+   menyesatkan.
+4. **Baris dipasangkan lewat `detailNotes` ("…baris N") yang kita tulis sendiri**, bukan lewat
+   kode barang: satu SO bisa memuat item+satuan yang sama dua kali (baris biasa dan baris
+   bonus berdiskon 100%), dan memasangkan lewat kode barang akan menukar keduanya.
+5. **Satuan dibandingkan pada ID, bukan nama** — satu item bisa berselisih 72x antar satuan,
+   dan nama satuan boleh berganti di master tanpa mengubah barang apa pun.
+6. **`nilai baris` diperiksa terpisah dari rantai persennya.** Di situlah salah tafsir diskon
+   muncul sebagai UANG: "10+5" bertingkat atas Rp 100.000 memberi netto 85.500, dijumlahkan
+   15% memberi 85.000. Rp 500 itu tidak terlihat dari field mana pun kecuali nilai barisnya.
+
+**Faktur ganda (4.33)** ikut terjaring: calon faktur dikumpulkan sebagai DAFTAR per
+`charField1`, jadi dua faktur berkunci sama langsung jadi temuan teratas.
+
+**Cara kerjanya di layar**: dimuat sendiri saat `/antrean-faktur` dibuka. Tidak ada tombol
+"periksa" — tombol yang harus ditekan akan lupa ditekan justru pada hari fakturnya salah.
+
+**Bug yang ditemukan sambil membangunnya (4.34)**: `lib/sync.ts` menimpa `raw_data` tiap cron
+dengan jawaban `list.do` yang TIDAK punya `detailItem`. Artinya rincian baris faktur — satu-
+satunya bahan verifikasi ini DAN Rekap Promo — terhapus 4x sehari. Sudah dijaga. Faktur yang
+terlanjur kehilangan rinciannya akan muncul sebagai `tak-terperiksa` dengan alasannya, dan
+pulih sendiri begitu Accurate mengirim webhook berikutnya untuk faktur itu.
+
+**Yang belum**: verifikasi ini belum pernah dijalankan atas data produksi. Sekali
+`/antrean-faktur` dibuka di produksi, `INV/2609/KN00403` langsung ikut diperiksa. **Gerbang
+kirim tetap TERTUTUP sampai hasil itu terlihat.**
+

@@ -1757,6 +1757,73 @@ selisih sendiri. Ini butir 4.30 pada checklist.
 - Commit `99a1d34` (webhook master + eskalasi batch) dan `b93c188` (perbaikan raw_data) ada di
   `feat/surya-workspace`, sudah di-push, **belum di-merge ke main**.
 
+### TAHAP 9 — verifikasi balik otomatis terbangun (butir 4.30), 2026-09-12
+
+Pekerjaan utama TAHAP 8 selesai: **sistem sekarang memeriksa sendiri faktur yang sudah masuk
+Accurate**, per baris, dan hasilnya muncul tanpa ada yang perlu ditekan. Rinciannya (termasuk
+enam keputusan yang menentukan bentuknya) ada di `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md`
+bagian "Butir 4.30 SELESAI dibangun" — baca itu, bukan ringkasan ini.
+
+| Berkas | Peran |
+|---|---|
+| `lib/invoice-verify.ts` | Pembanding murni: payload beku lawan `detail.do`. 16 test |
+| `app/api/invoice-verify/route.ts` | `GET` read-only, izin `order.view`, dijodohkan lewat `charField1` |
+| `/antrean-faktur` | Bagian **Verifikasi balik**, dimuat bersama halaman |
+| `lib/sync.ts` | Perbaikan: `raw_data` tidak lagi kehilangan `detailItem` tiap cron |
+
+Yang diperiksa per baris: kode barang, satuan (id), qty, harga satuan, diskon persen, diskon
+rupiah, nilai baris. Per faktur: `charField1`, pelanggan, tanggal, `taxable`, `inclusiveTax`,
+`tax1Amount`, `branchId`, nomor terbit, **dan faktur ganda** (dua faktur berkunci sama).
+
+**Bug yang ikut ketahuan dan diperbaiki**: cron sync menimpa `raw_data` dengan jawaban
+`list.do` yang tidak membawa `detailItem`. Rincian baris faktur — bahan verifikasi ini DAN
+Rekap Promo — terhapus 4x sehari. Pelajarannya sama dengan `b93c188`: yang menyimpan dan yang
+membaca `raw_data` adalah dua jalur berbeda, dan yang membaca tidak pernah diuji terhadap
+bentuk yang benar-benar ditulis jalur satunya.
+
+**Keputusan 4.31 (salesman)**: **kirim, tetapi `masterSalesmanId` dibuktikan dulu dari data
+kita sendiri — jangan menebak nama field `save.do`.** Accurate mengabaikan field tak dikenal
+tanpa galat, jadi tebakan yang salah menghasilkan faktur yang tampak sukses dan tetap tanpa
+sales: keadaan hari ini, ditambah keyakinan palsu. Jalan yang tidak menebak: faktur yang
+dibuat MANUAL sudah memuat `masterSalesmanId` + `masterSalesmanName` berpasangan di
+`sales_invoice.raw_data`, jadi peta kode sales -> id Accurate bisa dibangun dari cache sendiri
+tanpa endpoint baru. Sampai itu ada, verifikasi balik melaporkan salesman tiap faktur dan
+"tanpa sales" terbaca di layar — lubangnya tidak lagi diam.
+
+**Butir 4.32 (diskon persen)** tetap belum terbukti pada faktur nyata, dan memang harus
+menunggu hari yang promonya turun. Yang berubah: pembuktiannya tidak lagi butuh mata manusia.
+Verifikasi membandingkan rantai persennya DAN `totalPrice` baris, jadi kalau Accurate
+menjumlahkan persen alih-alih bertingkat, selisihnya muncul sendiri sebagai temuan
+"nilai baris" — Rp 500 pada contoh 100.000 dengan "10+5".
+
+**Gerbang kirim TETAP TERTUTUP** (`ACCURATE_INVOICE_SEND` kosong). Syarat membukanya sekarang
+konkret: buka `/antrean-faktur` di produksi dan lihat `INV/2609/KN00403` dinyatakan **cocok**.
+
+**Yang belum dikerjakan dan disengaja:**
+
+- Verifikasi belum pernah jalan atas data produksi (butuh DB produksi; lokal tidak ada
+  Postgres maupun Docker saat sesi ini).
+- Faktur yang `raw_data`-nya TERLANJUR kehilangan `detailItem` sebelum perbaikan sync tidak
+  dipulihkan otomatis; ia muncul sebagai `tak-terperiksa` dengan alasannya, dan pulih sendiri
+  pada webhook berikutnya untuk faktur itu. Penambal massal (`webhook-backfill` yang juga
+  menyegarkan baris tanpa rincian) sengaja belum dibuat — belum terbukti perlu.
+- Route verifikasi read-only: baris `unknown` yang fakturnya ternyata KETEMU hanya
+  DILAPORKAN, tidak diubah statusnya sendiri. Satu kekeliruan pasangan tidak boleh menutup
+  masalah yang belum selesai.
+
+### Prompt melanjutkan (2026-09-12, setelah verifikasi balik)
+
+> Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca
+> `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md` lebih dulu (terutama bagian "Butir 4.30 SELESAI
+> dibangun"), lalu "TAHAP 9" pada docs/SURYA_IMPLEMENTATION.md. Verifikasi balik otomatis
+> sudah ada dan bertest, tetapi **belum pernah jalan atas data produksi**: langkah pertama
+> adalah membuka `/antrean-faktur` di produksi dan memastikan `INV/2609/KN00403` dinyatakan
+> **cocok**. Kalau cocok, itulah syarat membuka gerbang kirim; kalau `tak-terperiksa` karena
+> `raw_data` tanpa `detailItem`, pancing webhook faktur itu sekali. Berikutnya: 4.31 bangun
+> peta `masterSalesmanId` dari `sales_invoice.raw_data` faktur manual lalu kirim salesman, dan
+> 4.25 kumpulkan teks error Accurate yang asli. Gerbang kirim TERTUTUP sampai diminta.
+> Jangan stage massal — working tree masih memuat pekerjaan rekonsiliasi dan eksperimen OCR lama.
+
 ### Prompt melanjutkan (2026-09-12)
 
 > Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca
