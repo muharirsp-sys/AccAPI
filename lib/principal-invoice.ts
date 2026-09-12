@@ -48,6 +48,23 @@ export type SkippedSo = { soNo: string; reason: string };
 
 const cents = (value: number) => Math.round(value * 100) / 100;
 
+/**
+ * Rantai persen yang POSISINYA terjaga: setiap slot sampai posisi terisi tertinggi diisi,
+ * yang kosong jadi "0". Diskon yang di laporan berupa RUPIAH tidak punya tempat di rantai
+ * persen — nominalnya dikirim terpisah — jadi slotnya tetap "0" dan rantainya boleh kosong.
+ */
+export function percentChain(discounts: DiscountAt[]): string[] {
+    const byPercent = discounts.filter((entry) => entry.amount === undefined);
+    if (byPercent.length === 0) return [];
+    const last = Math.max(...byPercent.map((entry) => entry.position));
+    const chain: string[] = [];
+    for (let position = 1; position <= last; position += 1) {
+        const found = byPercent.find((entry) => entry.position === position);
+        chain.push(found ? String(found.percent) : "0");
+    }
+    return chain;
+}
+
 /** Kunci antrean; sengaja tidak memuat id batch (lihat catatan kepala berkas). */
 export function invoiceKey(principal: string, soNo: string): string {
     return `${principal.trim().toUpperCase().replace(/\s+/g, "-")}:${soNo.trim()}`;
@@ -121,9 +138,15 @@ export function groupCandidates(
                 quantity: String(quantity),
                 gross: rowGross.toFixed(2),
                 net: rowNet.toFixed(2),
-                // Rantai persen dikirim apa adanya ("4+2.25") supaya faktur MENAMPILKAN
-                // persennya seperti nota principal.
-                percents: sorted.filter((entry) => entry.amount === undefined).map((entry) => String(entry.percent)),
+                // Rantai persen dikirim LENGKAP DENGAN NOLNYA ("0+0+0+3"), persis seperti
+                // Power Query admin yang selama ini dipakai ("d1+d2+d3+d4+d5" digabung `+`).
+                // POSISI menentukan siapa menanggung: 1-3 distributor, 4-5 klaim principal.
+                // Memampatkan rantainya jadi "3" memindahkan klaim principal ke posisi 1, dan
+                // faktur itu lalu terbaca sebagai tanggungan distributor oleh siapa pun yang
+                // membacanya kembali — Rekap Promo, laporan klaim, maupun pemeriksa. Terbukti
+                // pada INV/2609/KN00450 (12 Sep 2026): klaim Rp 28.921 tersimpan sebagai 3% di
+                // posisi 1. Uang yang bisa ditagihkan berubah jadi biaya sendiri, tanpa galat.
+                percents: percentChain(sorted),
                 cash: String(cash),
                 price: String(price),
             };

@@ -4,7 +4,7 @@
    bruto laporan — termasuk saat satu item+satuan muncul dua kali karena baris bonus. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { groupCandidates, invoiceKey, type BatchLine } from "./principal-invoice.ts";
+import { groupCandidates, invoiceKey, percentChain, type BatchLine } from "./principal-invoice.ts";
 import { buildInvoicePayload } from "./accurate-invoice-write.ts";
 
 const line = (over: Partial<BatchLine>): BatchLine => ({
@@ -64,7 +64,9 @@ test("diskon bertingkat, dan nilai baris payload sama dengan bruto laporan", () 
     assert.equal(payload.detailItem.length, 2);
     assert.equal(payload.taxable, true);
     assert.equal(payload.transDate, "11/09/2026");
-    assert.equal(payload.detailItem[0].itemDiscPercent, "4+2.25");
+    // Nolnya IKUT: posisi 4 adalah klaim principal, dan "4+2.25" akan membuatnya terbaca
+    // sebagai posisi 2 alias tanggungan distributor saat faktur dibaca kembali.
+    assert.equal(payload.detailItem[0].itemDiscPercent, "4+0+0+2.25");
     assert.equal(payload.detailItem[1].itemDiscPercent, "100");
     // Baris bonus tetap berharga penuh; yang membuatnya gratis adalah persennya.
     for (const item of payload.detailItem) {
@@ -73,3 +75,17 @@ test("diskon bertingkat, dan nilai baris payload sama dengan bruto laporan", () 
         assert.equal(item.itemCashDiscount, 0);
     }
 });
+
+test("rantai persen mempertahankan POSISI dengan nol, bukan dimampatkan", () => {
+    // POSISI menentukan siapa menanggung. Klaim principal di posisi 4 yang dikirim sebagai "3"
+    // akan terbaca sebagai posisi 1 — tanggungan distributor — oleh siapa pun yang membaca
+    // fakturnya kembali. Terbukti pada INV/2609/KN00450: Rp 28.921 yang bisa ditagihkan ke
+    // principal tersimpan sebagai biaya sendiri, tanpa satu pun galat.
+    assert.deepEqual(percentChain([{ position: 4, percent: 3 }]), ["0", "0", "0", "3"]);
+    assert.deepEqual(percentChain([{ position: 1, percent: 2 }]), ["2"]);
+    assert.deepEqual(percentChain([{ position: 1, percent: 4 }, { position: 4, percent: 2.25 }]),
+        ["4", "0", "0", "2.25"]);
+    // Potongan berupa RUPIAH tidak punya tempat di rantai persen; nominalnya dikirim terpisah.
+    assert.deepEqual(percentChain([{ position: 5, percent: 1.5, amount: 446.85 }]), []);
+});
+
