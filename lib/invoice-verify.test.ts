@@ -85,6 +85,25 @@ test("satuan berbeda ketahuan meski kode barang dan qty sama", () => {
     assert.equal(temuan.actual, "100 (KRT)");
 });
 
+test("tanggal faktur BOLEH lebih baru dari SO: faktur diproses saat masalahnya selesai", () => {
+    // Aturan pengguna 2026-09-12. Faktur uji nyata dikirim 12/09 untuk SO 11/09 dan Accurate
+    // menstempel tanggal pembuatannya sendiri; menuntut sama persis membuat alarm yang tidak
+    // pernah bisa dipadamkan, dan alarm begitu justru mengajari orang mengabaikannya.
+    const hasil = verifyInvoice(payload(), accurate({ transDate: "12/09/2026" }));
+    assert.equal(hasil.status, "cocok");
+    assert.equal(hasil.invoiceDate, "12/09/2026");
+});
+
+test("tanggal faktur LEBIH AWAL dari SO tetap ditandai", () => {
+    // Arah sebaliknya tidak pernah wajar: penjualan tercatat sebelum pesanannya ada.
+    const hasil = verifyInvoice(payload(), accurate({ transDate: "10/09/2026" }));
+    assert.ok(hasil.findings.some((f) => f.field === "tanggal faktur lebih awal dari SO"));
+});
+
+test("tanggal faktur kosong atau tidak terbaca tetap ditandai", () => {
+    assert.ok(verifyInvoice(payload(), accurate({ transDate: "" })).findings.some((f) => f.field === "tanggal faktur"));
+});
+
 test("harga, qty, dan cabang yang meleset masing-masing jadi satu temuan", () => {
     const hasil = verifyInvoice(payload(), accurate({ branchId: 1052 }, { unitPrice: 10180.18, quantity: 10 }));
     const fields = hasil.findings.map((f) => f.field);

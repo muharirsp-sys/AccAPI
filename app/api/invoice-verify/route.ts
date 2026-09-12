@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
                     ? "Faktur dengan charField1 ini TIDAK ditemukan di cache. Belum berarti tidak ada di Accurate — cache bisa tertinggal."
                     : "Faktur belum ada di cache sales_invoice (webhook/sync belum menariknya)",
                 findings: [], invoiceNumber: row.accurateNumber ?? "", invoiceId: String(row.accurateId ?? ""),
-                linesChecked: 0, salesman: "",
+                linesChecked: 0, salesman: "", invoiceDate: "",
             };
         // Faktur ganda mengalahkan hasil apa pun: isinya boleh cocok semua, tetapi ADA DUA.
         if (duplicates.length > 1) {

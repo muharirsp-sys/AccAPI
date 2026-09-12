@@ -33,6 +33,7 @@ type Verified = {
     orderId: string; soNo: string | null; state: string; customerNo: string; orderDate: string;
     matchedBy: string; foundWhileUnknown: boolean; status: "cocok" | "selisih" | "tak-terperiksa";
     reason: string; findings: Finding[]; invoiceNumber: string; linesChecked: number; salesman: string;
+    invoiceDate: string;
 };
 
 type Verify = { checked: number; summary: Record<string, number>; rows: Verified[] };
@@ -205,6 +206,7 @@ export default function AntreanFakturPage() {
                                         {row.invoiceNumber || "—"}
                                         <div className="text-slate-500">
                                             {row.matchedBy ? `dicocokkan lewat ${row.matchedBy}` : "belum ketemu"}
+                                            {row.invoiceDate ? ` · tgl ${row.invoiceDate}` : ""}
                                             {row.salesman ? ` · sales ${row.salesman}` : " · tanpa sales"}
                                         </div>
                                     </td>
