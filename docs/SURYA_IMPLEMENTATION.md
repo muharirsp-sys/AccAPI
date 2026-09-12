@@ -1859,6 +1859,37 @@ menyentuh DB. `sending`/`posted`/`unknown` tetap tidak pernah bisa dibuang.
 - Sisa baris `review`: 1 SO (`1671-SOP-260013024`, outlet `322640794971` "sumber baru") yang
   butuh mapping outlet + harga Accurate.
 
+### TAHAP 11 — tombol Kirim, dan verifikasi yang langsung menjawab (2026-09-12)
+
+Permintaan pengguna: *"saya ingin tombolnya permanen dan bisa saya pencet send, lalu setelah
+saya send, kamu langsung validasi baca hasilnya yang di Accurate lalu itu dianggap berhasil."*
+
+`POST /api/invoice-outbox/send` + tombol **Kirim N faktur ke Accurate** di `/antrean-faktur`.
+Satu tekan menjalankan empat langkah berurutan: kirim -> tarik ulang `detail.do` faktur yang
+baru terbentuk -> bandingkan per baris dengan payload beku -> lapor. **"Terkirim" saja tidak
+dilaporkan berhasil**; yang dihitung hijau hanya yang isinya TERBUKTI sama.
+
+**Kenapa tombol ini tidak memakai `ACCURATE_INVOICE_SEND`.** Env itu rem untuk jalur OTOMATIS
+— cron yang berjalan tanpa ada yang menekan apa pun. Tombol ini kebalikannya: ada manusia
+berizin yang menekannya, namanya tercatat, dan hasilnya diperiksa detik itu juga. Dan
+menggantungkannya pada env justru memperburuk: env Coolify TERTIMPA tiap deploy — pada
+2026-09-12 `ACCURATE_INVOICE_USER_ID` dan `ACCURATE_INVOICE_BATCH` lenyap dalam sehari setelah
+empat deploy, jadi tombol yang bergantung padanya akan mati diam-diam pada waktu tak terduga.
+
+Gerbang yang tetap ada, semuanya gagal-tertutup: izin `order.edit`, **sesi Accurate milik
+penekan sendiri** (bukan "sesi terbaru siapa pun", dan tidak ada env user id yang bisa hilang),
+`ACCURATE_INVOICE_DB_ID` wajib cocok dengan database sesi itu, dan hanya `queued` yang terkirim.
+
+**Jalur kirim jadi SATU**: `lib/invoice-sender.ts`, dipakai tombol maupun cron. Kalau
+masing-masing menyalin logikanya, satu pintu akan menyimpang tanpa ada yang tahu — dan
+penyimpangan di jalur ini berarti faktur salah yang tidak bisa ditarik.
+
+**Temuan hari ini yang memicu pekerjaan lain**: `sync-item-prices` TIDAK PERNAH masuk
+`/etc/cron.d/accapi`, jadi cache harga jual hanya berubah kalau ada yang menjalankannya manual
+— dan dari layar tidak ada caranya sama sekali. Tombol **Segarkan harga** pada `/principal-order`
+menyegarkan harga untuk barang pada batch itu saja (puluhan item, bukan 4.182). Menambahkannya
+ke cron produksi sebagai jaring pengaman masih menunggu keputusan.
+
 ### Prompt melanjutkan (2026-09-12, setelah salesman)
 
 > Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca

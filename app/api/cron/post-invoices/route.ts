@@ -20,13 +20,12 @@
  * - Identitas yang disimpan = database + record id.
  */
 import { NextResponse } from "next/server";
-import { and, asc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox } from "@/db/schema";
 import { isAllowedAccurateHost, requireCronSecret } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
-import { nextOutboxState, readInvoiceIdentity, type SendOutcome } from "@/lib/accurate-invoice-write";
-import { refreshRealization } from "@/lib/program-realization-store";
+import { sendQueuedInvoices } from "@/lib/invoice-sender";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -72,74 +71,14 @@ export async function GET(request: Request) {
     // HANYA `queued`. Yang `rejected` menunggu manusia menekan "Kirim ulang" di halaman
     // Antrean Faktur: Accurate menolaknya karena ada yang salah, dan mengulang tiap jalannya
     // cron hanya menumpuk kegagalan yang sama tanpa memperbaiki sebabnya.
-    const rows = await db.select().from(invoiceOutbox)
-        .where(eq(invoiceOutbox.state, "queued"))
-        .orderBy(asc(invoiceOutbox.createdAt)).limit(BATCH);
-
-    const results: { order_id: string; state: string; number?: string; error?: string }[] = [];
-    for (const row of rows) {
-        // Klaim baris dulu: `sending` menandai bahwa request MUNGKIN sudah terkirim, jadi
-        // proses yang mati di tengah tidak meninggalkan baris yang terlihat aman dikirim ulang.
-        const claimed = await db.update(invoiceOutbox)
-            .set({ state: "sending", attempts: row.attempts + 1, updatedAt: new Date() })
-            .where(and(eq(invoiceOutbox.orderId, row.orderId), eq(invoiceOutbox.state, row.state)))
-            .returning({ orderId: invoiceOutbox.orderId });
-        if (claimed.length === 0) continue; // diklaim proses lain
-
-        let outcome: SendOutcome;
-        try {
-            const response = await fetch(`${session.sessionHost}/accurate/api/sales-invoice/save.do`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: "application/json",
-                    Authorization: `Bearer ${session.accessToken}`,
-                    "X-Session-ID": session.sessionId,
-                },
-                body: JSON.stringify(row.payload),
-                signal: AbortSignal.timeout(60_000),
-            });
-            const text = await response.text();
-            let body: unknown;
-            try {
-                body = JSON.parse(text);
-            } catch {
-                // Respons non-JSON: kita tidak tahu fakturnya terbentuk atau tidak.
-                outcome = { kind: "no_answer", message: `respons non-JSON (${response.status})` };
-                body = null;
-            }
-            if (body !== null) {
-                const identity = readInvoiceIdentity(body);
-                outcome = identity.ok
-                    ? { kind: "posted", id: identity.id, number: identity.number }
-                    : { kind: "rejected", message: identity.message };
-            }
-        } catch (error) {
-            // Timeout atau koneksi putus: fakturnya MUNGKIN sudah terbentuk di Accurate.
-            outcome = { kind: "no_answer", message: error instanceof Error ? error.message : "tanpa jawaban" };
-        }
-
-        const state = nextOutboxState("sending", outcome!);
-        await db.update(invoiceOutbox).set({
-            state,
-            updatedAt: new Date(),
-            ...(outcome!.kind === "posted"
-                ? { accurateDbId: targetDb, accurateId: outcome!.id, accurateNumber: outcome!.number, lastError: "" }
-                : { lastError: outcome!.message.slice(0, 1000) }),
-        }).where(eq(invoiceOutbox.orderId, row.orderId));
-        if (state === "posted") {
-            try { await refreshRealization(row.orderId, { databaseId: targetDb, sessionHost: session.sessionHost,
-                sessionId: session.sessionId, apiKey: session.accessToken }); }
-            catch { /* Faktur sudah tersimpan; pemeriksaan dapat diulang dari laporan tanpa mengirim ulang. */ }
-        }
-        results.push({
-            order_id: row.orderId, state,
-            ...(outcome!.kind === "posted" ? { number: outcome!.number } : { error: outcome!.message.slice(0, 200) }),
-        });
-        // Status TIDAK PASTI menghentikan batch: satu jaringan bermasalah tidak boleh
-        // menghasilkan sepuluh faktur yang tidak jelas nasibnya.
-        if (state === "unknown") break;
-    }
+    //
+    // Jalur kirimnya SAMA PERSIS dengan tombol Kirim (lib/invoice-sender). Yang berbeda hanya
+    // gerbangnya: di sini env, di sana izin + sesi penekannya.
+    const outcome = await sendQueuedInvoices(
+        { sessionHost: session.sessionHost, sessionId: session.sessionId, accessToken: session.accessToken },
+        { targetDb, limit: BATCH },
+    );
+    const results = outcome.results;
     const unknown = results.filter((item) => item.state === "unknown").length;
     return NextResponse.json({ ok: unknown === 0, sent: results.filter((i) => i.state === "posted").length, unknown, results });
 }
