@@ -51,10 +51,10 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 | 4.7 | Surat program jadi aturan terbit | ✅ | `kino_letter.py` (tanpa OCR) + `summary_rules` + gerbang on-faktur |
 | 4.8 | Kelayakan outlet (loyalty dll) | ✅ | `outlet_class.py`; 41 outlet loyalty Makassar sudah dimuat |
 | 4.9 | Pilah diskon: distributor / principal / tak bertuan | ✅ | `kino_discount.classify`, toleransi Rp 1 |
-| 4.10 | Tarif **Discount Reguler (Tanggungan Distributor)** termuat | ❌ | Menunggu sheet `PERIKSA` diisi; importirnya belum dibuat |
-| 4.11 | Kode barang per program promo | ❌ | Menunggu sheet `PAKAI` dicentang |
+| 4.10 | Tarif **Discount Reguler (Tanggungan Distributor)** termuat | 🟡 | Tarifnya belum dimuat, tetapi **tidak menahan faktur**: posisi 1–3 = tanggungan distributor, tidak perlu aturan terbit. Terbukti 12 Sep 2026 — SS DIAPERS (Satu Sama Group) 2% di DISC_1 lolos apa adanya. Yang belum ada hanya pembandingnya, kalau suatu saat tarifnya mau diperiksa |
+| 4.11 | Kode barang per program promo | ✅ | `promo_rule.item_code` termuat: 105 aturan `DISC_PCT`, 30 `BONUS_QTY`, 10 `DISC_RP` tingkat faktur |
 | 4.12 | Aturan untuk channel MT/NKA | ❌ | Surat PRONAS hanya GT. Diskon ALFAMART berasal dari Discount Reguler, bukan surat |
-| 4.13 | Potongan tingkat FAKTUR (MSG) vs tingkat BARIS | 🟡 | Kalkulator sudah menghitung sekeranjang; pengadu-annya ke laporan Kino belum. Lihat pertanyaan 6 tentang `TOTAL_PROMO` |
+| 4.13 | Potongan tingkat FAKTUR (MSG) vs tingkat BARIS | ✅ | **SELESAI 2026-09-12.** `checkSoPromo()` mencocokkan SISA klaim se-SO dengan tier `DISC_RP` (`item_code` kosong, `trigger_unit='RP'`). Nominal surat TERMASUK PPN sedangkan laporan membawa DPP, jadi klaim dikalikan 1,11 sebelum dibandingkan — RISKA TK: 18.016,22 × 1,11 = 19.998 lawan tier Rp 20.000, beda Rp 2. Toleransi Rp 1 **per baris** karena nominalnya dibagi rata lalu dibulatkan di tiap baris |
 
 ## Langkah 4 tahap 1c — routing: cocok lanjut, tidak cocok ke admin review
 
@@ -546,4 +546,45 @@ pulih sendiri begitu Accurate mengirim webhook berikutnya untuk faktur itu.
 **Yang belum**: verifikasi ini belum pernah dijalankan atas data produksi. Sekali
 `/antrean-faktur` dibuka di produksi, `INV/2609/KN00403` langsung ikut diperiksa. **Gerbang
 kirim tetap TERTUTUP sampai hasil itu terlihat.**
+
+## Butir 4.37 SELESAI — gerbang validasi membaca aturan promo terbit, 2026-09-12
+
+Sampai hari ini `app/api/principal-order/validate` memakai `const hasPublishedRules = false;`
+— dipatok mati. Akibatnya **setiap** klaim principal ditahan, termasuk yang aturannya sudah
+termuat di web dan angkanya cocok persis. Gerbang yang menahan segalanya sama tidak bergunanya
+dengan gerbang yang meloloskan segalanya: keduanya tidak membedakan benar dari salah.
+
+Dibuktikan atas berkas NYATA `ORDER_DETAIL_20260912` (49 baris, 33 berdiskon, 4 SO):
+
+| SO | Outlet | Bentuk potongan | Hasil gerbang |
+|---|---|---|---|
+| `-260013044` | BAJI PAMAI (MT) | 3% di posisi 4, 5 baris | cocok **BP2609007909** `DISC_PCT 3%` per barang |
+| `-260013050`, `-260013051` | SS DIAPERS (Satu Sama Group) | 2% di posisi 1 | tanggungan distributor, tidak perlu aturan |
+| `-260013054` | RISKA TK (GT) | **rupiah** di posisi 5, 18 baris | cocok **BP2609006016** tier 1 (belanja ≥ Rp 1 juta → Rp 20.000) |
+
+**Tiga hal yang menentukan bentuknya:**
+
+1. **Aturan per BARANG diperiksa dulu, sisanya baru ditanyakan ke aturan tingkat FAKTUR.**
+   Memakai total klaim mentah akan menuduh SO yang klaimnya sudah beres: SO `-260013044`
+   brutonya Rp 3 juta sehingga menyentuh tier 3 MSG (Rp 60.000), padahal seluruh klaimnya
+   promo 3% per barang yang tidak ada urusannya dengan MSG. `matchItemRule()` dipakai dua kali
+   — oleh `checkLine` dan oleh penghitung sisa — supaya keduanya tidak mungkin berbeda jawaban.
+2. **Potongan tingkat faktur dinilai per SO, bukan per baris.** Nominalnya dibagi rata ke SELURUH
+   baris, termasuk 7 barang ESK Cologne yang sama sekali tidak masuk program mana pun.
+   Memeriksanya per barang akan menuduh baris yang benar.
+3. **PPN dikembalikan sebelum dibandingkan.** Surat program menulis manfaatnya termasuk PPN
+   (Rp 20.000); laporan principal membawa DPP (18.016,22). Tanpa `× 1,11` potongan yang sah
+   akan terlihat meleset 10%.
+
+**Bug parser yang ikut diperbaiki**: kolom `DISC_n` TIDAK selalu berisi persen. Dalam satu
+berkas, SS DIAPERS menaruh persen (2,0) di `DISC_1` sementara RISKA menaruh **rupiah**
+(446,8468) di `DISC_5`. Dibaca sebagai persen, 446,8468 berarti 446,85%. Pembedanya tidak perlu
+ditebak — `TOTAL_DISC` yang dilaporkan principal adalah jawabannya: hitung kedua tafsir, pakai
+yang mereproduksinya. Yang berupa rupiah dibawa sampai ke faktur sebagai **rupiah**
+(`itemCashDiscount`), bukan dibulatkan ulang dari persen hasil pembagian.
+
+| # | Yang harus benar | Status | Catatan |
+|---|---|---|---|
+| 4.37 | Gerbang validasi membaca `promo_rule` | ✅ | `checkLine(rules)` + `checkSoPromo()` + `matchItemRule()`; 12 test baru |
+| 4.38 | `DISC_n` rupiah vs persen dibedakan | ✅ | Pembedanya `TOTAL_DISC`; hanya saat tepat satu posisi terisi, selebihnya jatuh ke persen dan selisih totalnya tetap menahan — gagal tertutup |
 
