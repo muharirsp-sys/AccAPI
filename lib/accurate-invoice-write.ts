@@ -75,6 +75,8 @@ export type InvoicePayload = {
     charField1: string;
     charField2: string;
     branchId?: number;
+    /** Sales pemilik faktur (id pegawai Accurate). Absen bila kodenya belum ketemu di master. */
+    masterSalesmanId?: number;
 };
 
 /** Accurate menerima tanggal tulis sebagai dd/MM/yyyy (terbukti di jalur purchase-payment). */
@@ -101,7 +103,8 @@ export function buildInvoicePayload(
     order: InvoiceOrder,
     // `label` = penanda pendek pada catatan tiap baris faktur. Default potongan id order;
     // jalur laporan principal mengirim nomor SO-nya, yang jauh lebih berarti bagi pembukuan.
-    options: { unitIds: Map<string, number>; branchId: number; typeAutoNumber: number; label?: string },
+    options: { unitIds: Map<string, number>; branchId: number; typeAutoNumber: number; label?: string;
+        masterSalesmanId?: number },
 ): InvoicePayload {
     if (!order.customer_no?.trim()) throw new Error("Order tanpa kode pelanggan Accurate tidak bisa difakturkan");
     if (order.result?.pending_price) throw new Error("Order berstatus needs_price; isi harga dulu sebelum difakturkan");
@@ -184,6 +187,10 @@ export function buildInvoicePayload(
         charField1: order.id,
         charField2: sources.slice(0, 100),
         ...(options.branchId ? { branchId: options.branchId } : {}),
+        // Sales TIDAK menahan faktur bila kodenya belum ketemu: field ini tidak pernah dikirim
+        // sama sekali sampai 2026-09-12, jadi menjadikannya syarat akan menghentikan seluruh
+        // antrean atas data yang memang belum pernah ada. Yang kosong ditandai verifikasi balik.
+        ...(options.masterSalesmanId ? { masterSalesmanId: options.masterSalesmanId } : {}),
     };
 }
 

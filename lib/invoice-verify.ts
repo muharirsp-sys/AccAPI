@@ -210,6 +210,9 @@ export function verifyInvoice(payload: InvoicePayload, raw: unknown): VerifyResu
     if (!invoice.number) {
         findings.push({ line: null, field: "nomor faktur", expected: "terbit dari seri cabang", actual: "kosong" });
     }
+    // Sales hanya diperiksa bila kita memang mengirimnya. Faktur yang keluar tanpa sales tetap
+    // TERLIHAT (kolom sales di layar kosong), tetapi bukan selisih: itu keadaan yang diketahui.
+    if (payload.masterSalesmanId) head("sales (masterSalesmanId)", payload.masterSalesmanId, invoice.salesmanId);
     if (invoice.taxable && invoice.tax1Amount <= 0) {
         findings.push({ line: null, field: "nilai PPN (tax1Amount)", expected: "> 0", actual: String(invoice.tax1Amount) });
     }
