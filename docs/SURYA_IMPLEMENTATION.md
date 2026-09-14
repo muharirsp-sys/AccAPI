@@ -2053,8 +2053,24 @@ dijalankan dengan heredoc langsung ke `docker exec -i accapi-postgres psql`. Ing
 migrasi berikutnya — `< db/migrations/...` akan selalu gagal di sana.
 
 **Keputusan pengguna 2026-09-14 — Indomaret**: tarifnya **3%**, bukan 3,1%. Baris ORDER_DETAIL
-yang memakai 3,1% SENGAJA tertahan gerbang sampai ada konfirmasi dari Kino. Sheet periksa kini
-11 dari 31 baris dicentang, menghasilkan **15 aturan** (13 distributor + 2 principal Indomaret).
+yang memakai 3,1% SENGAJA tertahan gerbang sampai ada konfirmasi dari Kino.
+
+**Sheet tarif final dari pengguna (2026-09-14): 70 baris -> 89 aturan untuk 70 outlet**
+(73 `DISTRIBUTOR`, 16 `PRINCIPAL`), seluruhnya dicentang `PAKAI`. Yang penting dipahami:
+**29 baris yang tercetak di tabel principal bukan 29 outlet** — sebagian adalah JARINGAN yang
+harus dipecah ke kode outlet anggotanya, dan pengguna yang melengkapinya:
+
+| Jaringan | Outlet |
+|---|---|
+| SATU SAMA JAYA ABADI GROUP | 17 |
+| MISI PASARAYA GROUP | 12 |
+| Indomaret, Alfamart, SANGIR TALAUD | 5 masing-masing |
+| Indogrosir | 4 |
+| Hero/mitra swalayan, Panen Selaras | 2 masing-masing |
+
+Itu sebabnya tarif TIDAK boleh dicocokkan dengan menebak dari nama atau awalan kode: anggota
+SATU SAMA saja terdiri dari `C-SA0001`, `C-SA0268`, `C-SA0269`, dan empat belas `C-SAT…` yang
+tidak punya awalan bersama.
 
 **Yang masih menggantung**: (a) ~~migrasi `0013`~~ **SUDAH di produksi 2026-09-14**;
 (b) pemetaan
