@@ -216,3 +216,26 @@ test("sheet Discount Reguler dipecah jadi satu aturan per (outlet x posisi)", ()
     // Yang belum dicentang PAKAI tidak boleh ikut, dan harus terlihat kenapa.
     assert.match(issues.join(" "), /C-RAM001: kolom PAKAI belum diisi/);
 });
+
+test("outlet yang tertulis dua kali tidak menggagalkan seluruh muatan", () => {
+    // Kasus nyata 14 Sep 2026: C-SAT017 tertulis pada baris 27 dan 42 daftar yang disusun
+    // tangan. Kunci uniknya sama persis, jadi menyerahkannya ke database berarti 90 aturan
+    // hilang gara-gara satu baris kembar.
+    const sama: string[] = [];
+    const hasilSama = parseTariff([
+        { "PAKAI": "YA", "PELANGGAN": "SATU SAMA JAYA", "KODE_OUTLET": "C-SAT017", "POSISI 1": 2 },
+        { "PAKAI": "YA", "PELANGGAN": "SATU SAMA JAYA", "KODE_OUTLET": "C-SAT017", "POSISI 1": 2 },
+    ], { principal: "KINO NON FOOD", importedBy: "uji", issues: sama });
+    assert.equal(hasilSama.length, 1);
+    assert.match(sama.join(" "), /tertulis 2x dengan isi yang sama/);
+
+    // Kembar yang isinya BERBEDA adalah pernyataan yang saling bertentangan tentang outlet dan
+    // posisi yang sama. Memilih salah satunya berarti menebak tarif mana yang benar.
+    const beda: string[] = [];
+    const hasilBeda = parseTariff([
+        { "PAKAI": "YA", "PELANGGAN": "X", "KODE_OUTLET": "C-XX0001", "POSISI 1": 2 },
+        { "PAKAI": "YA", "PELANGGAN": "X", "KODE_OUTLET": "C-XX0001", "POSISI 1": 3 },
+    ], { principal: "KINO NON FOOD", importedBy: "uji", issues: beda });
+    assert.equal(hasilBeda.length, 0);
+    assert.match(beda.join(" "), /isi BERBEDA \(2% DISTRIBUTOR vs 3% DISTRIBUTOR\)/);
+});

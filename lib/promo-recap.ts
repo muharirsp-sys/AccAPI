@@ -465,5 +465,39 @@ export function parseTariff(
         }
         if (terisi === 0) ctx.issues.push(`${TARIFF_SHEET} baris ${index + 2} (${customerCode}): tidak ada satu posisi pun yang terisi`);
     });
+    return dedupe(out, ctx.issues);
+}
+
+/**
+ * Satu outlet bisa tertulis dua kali — daftar yang disusun tangan dari jaringan toko memang
+ * begitu (SATU SAMA JAYA `C-SAT017` tertulis pada baris 27 dan 42). Kembarnya WAJIB diselesaikan
+ * di sini: kunci uniknya sama persis, jadi menyerahkannya ke database berarti SELURUH muatan
+ * gagal karena satu baris kembar — 90 aturan hilang gara-gara satu salah ketik.
+ *
+ * Kembar yang ISINYA SAMA digabung dan dihitung. Kembar yang isinya BERBEDA adalah pernyataan
+ * yang saling bertentangan tentang outlet dan posisi yang sama; keduanya DIBUANG dan dilaporkan,
+ * karena memilih salah satunya berarti menebak tarif mana yang benar.
+ */
+function dedupe<T extends { customerCode: string; tierNo: number; benefitValue: string; benefitBeban: string; suratProgram: string; promoGroup: string; itemCode: string }>(
+    rows: T[], issues: string[],
+): T[] {
+    const byKey = new Map<string, T[]>();
+    for (const row of rows) {
+        const key = `${row.suratProgram}|${row.promoGroup}|${row.itemCode}|${row.customerCode}|${row.tierNo}`;
+        byKey.set(key, [...(byKey.get(key) ?? []), row]);
+    }
+    const out: T[] = [];
+    for (const [, kembar] of byKey) {
+        const pertama = kembar[0];
+        if (kembar.length === 1) { out.push(pertama); continue; }
+        const beda = kembar.filter((row) => row.benefitValue !== pertama.benefitValue || row.benefitBeban !== pertama.benefitBeban);
+        if (beda.length === 0) {
+            issues.push(`${TARIFF_SHEET} ${pertama.customerCode} posisi ${pertama.tierNo}: tertulis ${kembar.length}x dengan isi yang sama — digabung jadi satu`);
+            out.push(pertama);
+            continue;
+        }
+        const nilai = [...new Set(kembar.map((row) => `${row.benefitValue}% ${row.benefitBeban}`))].join(" vs ");
+        issues.push(`${TARIFF_SHEET} ${pertama.customerCode} posisi ${pertama.tierNo}: tertulis ${kembar.length}x dengan isi BERBEDA (${nilai}) — tidak dimuat, tentukan dulu yang benar`);
+    }
     return out;
 }
