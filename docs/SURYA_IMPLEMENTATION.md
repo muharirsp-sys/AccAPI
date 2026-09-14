@@ -2044,14 +2044,19 @@ kecil — menambah satu outlet berarti menyusun ulang berkasnya dan mempertaruhk
 - Diuji atas DB lokal sungguhan: 145 aturan terbaca, tarif dibuat lalu disalin ke dua outlet,
   dan beban yang salah posisi ditolak.
 
-**Migrasi `0013` SUDAH dijalankan di LOKAL** (Postgres 18 lewat `pg_ctl`): kolom `customer_code`
-ada, kunci unik lama diganti yang beroutlet, 145 aturan lama utuh.
+**Migrasi `0013` SUDAH dijalankan di LOKAL DAN PRODUKSI** (2026-09-14): kolom `customer_code`
+ada, kunci unik lama diganti yang beroutlet, `idx_promo_rule_customer` terpasang, dan 145 aturan
+lama utuh di keduanya. Tarif outlet di produksi masih **0 baris** — menunggu sheet dimuat.
+
+Berkas migrasinya TIDAK ADA di VPS (deploy lewat image GHCR, bukan checkout repo), jadi SQL-nya
+dijalankan dengan heredoc langsung ke `docker exec -i accapi-postgres psql`. Ingat itu untuk
+migrasi berikutnya — `< db/migrations/...` akan selalu gagal di sana.
 
 **Keputusan pengguna 2026-09-14 — Indomaret**: tarifnya **3%**, bukan 3,1%. Baris ORDER_DETAIL
 yang memakai 3,1% SENGAJA tertahan gerbang sampai ada konfirmasi dari Kino. Sheet periksa kini
 11 dari 31 baris dicentang, menghasilkan **15 aturan** (13 distributor + 2 principal Indomaret).
 
-**Yang masih menggantung**: (a) migrasi `0013` **belum dijalankan di PRODUKSI** (lokal sudah);
+**Yang masih menggantung**: (a) ~~migrasi `0013`~~ **SUDAH di produksi 2026-09-14**;
 (b) pemetaan
 `CUST_ID2` -> kode internal untuk kedua outlet SS DIAPERS **diambil dari nama pelanggan pada
 laporan** ("...CSAT016"), bukan dari `principal_mapping` — wajib diperiksa lawan DB sebelum
