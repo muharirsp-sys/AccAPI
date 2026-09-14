@@ -178,6 +178,7 @@ export async function POST(request: NextRequest) {
     };
     if (!apply) return NextResponse.json({ ok: true, applied: false, ...summary });
 
+    try {
     await db.transaction(async (tx) => {
         // Muat ulang MENGGANTI aturan principal ini: program yang dicabut harus benar-benar
         // hilang, bukan menumpuk dari muatan sebelumnya lalu ikut menjelaskan diskon.
@@ -200,6 +201,14 @@ export async function POST(request: NextRequest) {
             }
         }
     });
+    } catch (error) {
+        // Satu baris bentrok menggagalkan SELURUH muatan — itu memang benar (semua atau tidak
+        // sama sekali), tetapi penyebabnya harus terbaca, bukan jadi 500 tanpa keterangan.
+        const pesan = error instanceof Error ? error.message : "gagal menulis aturan";
+        return NextResponse.json({ ok: false, applied: false, ...summary, error: /duplicate|unique/i.test(pesan)
+            ? `Ada baris kembar yang menabrak kunci unik, jadi tidak ada satu pun yang dimuat: ${pesan}`
+            : pesan }, { status: 409 });
+    }
     return NextResponse.json({ ok: true, applied: true, ...summary });
 }
 
