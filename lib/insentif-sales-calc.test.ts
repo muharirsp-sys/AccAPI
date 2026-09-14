@@ -64,7 +64,9 @@ assert.strictEqual(
     approx(r.insentif_value, 300_000, "Value tetap (0.3*1jt)");
 }
 
-// === CASE 2 (spec): Mix 3 principle, support total 700rb, pencapaian 100% → distributor 500rb ===
+// === CASE 2 (poster Juli 2026): Mix 3 principle, 1 support 700rb, pencapaian 100% ===
+// Jatah per principal 1,2jt/3 = 400rb, jadi pengurang support A dibatasi 400rb (bukan 700rb).
+// Porsi AO dibagi hanya ke B & C; A yang sudah disupport tidak ikut pembagian AO.
 {
     const base = { target_value: 100, realisasi_value: 100, realisasi_ao: 240 };
     const r = computeMix([
@@ -74,11 +76,34 @@ assert.strictEqual(
     ]);
     assert.strictEqual(r.jumlah_valid, 3, "CASE2 count");
     approx(r.konstanta, 1_200_000, "CASE2 konstanta");
-    approx(r.total_support, 700_000, "CASE2 total support");
-    approx(r.porsi_distributor, 500_000, "CASE2 porsi distributor");
-    approx(r.insentif_value, 150_000, "CASE2 Value (0.3*500k)");
-    approx(r.total_ao, 350_000, "CASE2 AO (0.7*500k)");
-    approx(r.total, 500_000, "CASE2 total");
+    approx(r.total_support, 700_000, "CASE2 support sebenarnya");
+    approx(r.total_pengurang, 400_000, "CASE2 pengurang dibatasi jatah 400rb");
+    approx(r.porsi_distributor, 800_000, "CASE2 porsi distributor (dulu 500rb)");
+    approx(r.insentif_value, 240_000, "CASE2 Value (0.3*800k, gabungan 3 principal)");
+    approx(r.total_ao, 560_000, "CASE2 AO (0.7*800k)");
+    approx(r.rincian.find((x) => x.nama === "A")!.insentif_ao, 0, "A disupport → tidak ikut AO");
+    approx(r.rincian.find((x) => x.nama === "B")!.insentif_ao, 280_000, "AO dibagi 2, bukan 3");
+    approx(r.total, 800_000, "CASE2 total");
+}
+
+// === Contoh poster butir 4: 5 principal, Anlen support 200rb, Taro support 700rb ===
+{
+    const base = { target_value: 100, realisasi_value: 100, realisasi_ao: 240 };
+    const r = computeMix([
+        { nama: "Anlen", status: "distributor_principle", ...base, nilai_support_principal: 200_000 },
+        { nama: "Taro", status: "distributor_principle", ...base, nilai_support_principal: 700_000 },
+        { nama: "P3", status: "distributor", ...base },
+        { nama: "P4", status: "distributor", ...base },
+        { nama: "P5", status: "distributor", ...base },
+    ]);
+    approx(r.konstanta, 1_500_000, "poster konstanta 5 principal");
+    approx(r.total_pengurang, 500_000, "poster pengurang 200rb + 300rb (Taro dibatasi)");
+    approx(r.porsi_distributor, 1_000_000, "poster konstanta setelah support");
+    approx(r.insentif_value, 300_000, "poster Value 30%");
+    approx(r.total_ao, 700_000, "poster AO 70%");
+    approx(r.rincian.find((x) => x.nama === "P3")!.insentif_ao, 700_000 / 3, "poster AO per principal tanpa support");
+    approx(r.rincian.find((x) => x.nama === "Taro")!.insentif_ao, 0, "Taro tidak ikut pembagian AO");
+    approx(r.total, 1_000_000, "poster total insentif CV");
 }
 
 // mix: pegang 4 principle tapi 1 status=principle → dihitung 3 (konstanta 1.2jt)
