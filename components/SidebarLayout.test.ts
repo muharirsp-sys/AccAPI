@@ -12,7 +12,7 @@ import { WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, activeNavigation
 test("all existing modules appear exactly once across six groups", () => {
     const items = WORKSPACE_GROUPS.flatMap(group => group.items);
     assert.equal(WORKSPACE_GROUPS.length, 6);
-    assert.equal(items.length, 24);
+    assert.equal(items.length, 25);
     // Mapping Principal ikut katalog: terjemahan kode principal -> internal adalah master
     // data yang harus bisa diperbaiki admin lewat UI, bukan lewat berkas di share.
     assert.ok(items.some(item => item.href === "/principal-mapping"));
@@ -21,6 +21,9 @@ test("all existing modules appear exactly once across six groups", () => {
     assert.ok(items.some(item => item.href === "/antrean-faktur"));
     // Rekap promo ikut katalog: rekap akhir bulan dibaca dari faktur nyata Accurate.
     assert.ok(items.some(item => item.href === "/rekap-promo"));
+    // Aturan promo ikut katalog: aturan terbit harus bisa dibuat dan diperbaiki dengan tangan,
+    // bukan hanya dimuat dari berkas — satu outlet baru tidak boleh menunggu berkas disusun ulang.
+    assert.ok(items.some(item => item.href === "/aturan-promo"));
     assert.equal(new Set(items.map(item => item.href)).size, items.length);
     assert.ok(items.some(item => item.href === "/payments/sppd"));
     assert.ok(items.some(item => item.href === "/rekapan-nota"));
