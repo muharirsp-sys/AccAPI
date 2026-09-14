@@ -90,6 +90,8 @@ export type PublishedRule = {
     suratProgram: string;
     promoGroup: string;
     itemCode: string;
+    /** Kosong = berlaku semua pelanggan. Terisi = tarif Discount Reguler milik satu outlet. */
+    customerCode: string;
     tierNo: number;
     /** Ambang pemicu; `triggerUnit` RP = nilai belanja, selain itu jumlah barang. */
     triggerQty: number;
@@ -134,6 +136,48 @@ export function matchItemRule(
         // milik barang LAIN yang kebetulan ikut terbawa tidak boleh meloloskan baris ini.
         && (!itemCode || rule.itemCode === itemCode)
         && Math.abs(cents(Number(rule.benefitValue) - actual)) <= 0.01) ?? null;
+}
+
+/** Bentuk minimum satu baris tarif; dipakai gerbang validasi maupun Rekap Promo. */
+export type TariffRule = {
+    customerCode: string;
+    itemCode: string;
+    tierNo: number;
+    benefitType: string;
+    benefitValue: string;
+    benefitBeban: string;
+};
+
+/**
+ * Tarif **Discount Reguler (Tanggungan Distributor)**: satu baris aturan per (outlet x POSISI),
+ * berlaku untuk SEMUA barang yang dibeli outlet itu. Terbukti pada ORDER_DETAIL 12 September
+ * 2026 — SS DIAPERS MESJID RAYA memotong 2% di posisi 1 pada delapan barang yang berbeda.
+ *
+ * Dicocokkan **per POSISI, bukan pada jumlahnya**: posisi menyatakan siapa menanggung, jadi 4%
+ * di posisi 1 dan 4% di posisi 2 adalah dua hal berbeda meski totalnya sama. Ini bug yang sama
+ * dengan rantai persen yang dimampatkan (2026-09-12): begitu posisi hilang, potongan berpindah
+ * penanggung tanpa ada yang tahu.
+ *
+ * Mengembalikan aturan yang menjelaskan SELURUH potongan distributor pada baris itu, atau null
+ * bila ada SATU posisi saja yang tidak punya tarifnya — separuh penjelasan bukan penjelasan.
+ *
+ * Pemanggil WAJIB sudah menyaring `rules` ke outlet baris ini (dan, untuk rekap, ke periodenya).
+ * Yang dijaga di sini: `customerCode` harus terisi, supaya aturan yang berlaku umum tidak
+ * pernah ikut membenarkan tarif outlet.
+ */
+export function matchTariff<T extends TariffRule>(discounts: DiscountAt[], rules: T[]): T[] | null {
+    const worn = discounts.filter((entry) => OWNER[entry.position] === "distributor" && entry.percent > 0);
+    if (worn.length === 0) return null;
+    const matched: T[] = [];
+    for (const entry of worn) {
+        const rule = rules.find((candidate) => candidate.customerCode && !candidate.itemCode
+            && candidate.benefitBeban === "DISTRIBUTOR" && candidate.benefitType === "DISC_PCT"
+            && candidate.tierNo === entry.position
+            && Math.abs(cents(Number(candidate.benefitValue) - entry.percent)) <= 0.01);
+        if (!rule) return null;
+        matched.push(rule);
+    }
+    return matched;
 }
 
 export type SoPromo = {
@@ -248,17 +292,27 @@ export function checkLine(line: LineInput): LineCheck {
         const sebutan = owner === "principal" ? "Klaim principal" : "Potongan tanggungan distributor";
 
         if (matchItemRule(line.discounts, line.rules, line.itemCode, owner)) continue;
+        // Tarif Discount Reguler: melekat pada OUTLET dan berlaku semua barang, jadi tidak
+        // pernah ketemu lewat aturan per barang di atas.
+        if (owner === "distributor" && matchTariff(line.discounts, line.rules)) continue;
         // Potongan tingkat faktur: nominalnya milik SELURUH SO dan sudah diperiksa di sana.
         if (owner === "principal" && line.fakturPromo) continue;
 
-        const percentRules = line.rules.filter((rule) => rule.itemCode && rule.benefitType === "DISC_PCT"
-            && rule.benefitBeban === beban && (!line.itemCode || rule.itemCode === line.itemCode));
+        const percentRules = line.rules.filter((rule) => rule.benefitType === "DISC_PCT"
+            && rule.benefitBeban === beban
+            // Aturan per barang, ATAU tarif outlet (berlaku semua barang) di sisi distributor.
+            && (rule.itemCode ? (!line.itemCode || rule.itemCode === line.itemCode) : Boolean(rule.customerCode)));
         const actual = cents(line.discounts
             .filter((entry) => OWNER[entry.position] === owner)
             .reduce((total, entry) => total + entry.percent, 0));
         if (percentRules.length > 0) {
-            const daftar = percentRules.map((rule) => `${rule.benefitValue}% (${rule.suratProgram} ${rule.promoGroup})`).join(", ");
-            findings.push(`${sebutan} ${actual}% tidak sama dengan aturan terbit untuk barang ini: ${daftar}.`);
+            // Posisi ikut disebut: tarif yang benar nilainya tetapi salah posisi berarti
+            // penanggungnya berpindah, dan itu tidak akan terlihat dari persennya saja.
+            const daftar = percentRules.map((rule) => (rule.customerCode
+                ? `posisi ${rule.tierNo} ${rule.benefitValue}% (${rule.suratProgram})`
+                : `${rule.benefitValue}% (${rule.suratProgram} ${rule.promoGroup})`)).join(", ");
+            const lawan = percentRules.some((rule) => rule.customerCode) ? "aturan terbit" : "aturan terbit untuk barang ini";
+            findings.push(`${sebutan} ${actual}% tidak sama dengan ${lawan}: ${daftar}.`);
         } else {
             findings.push(`${sebutan} Rp ${amount.toLocaleString("id-ID")} belum punya aturan promo terbit yang menjelaskannya.`);
         }

@@ -11,12 +11,12 @@
  * dipakai untuk menjelaskan siapa menanggung apa. Selisihnya justru temuan yang dicari.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { and, eq, gte, lte, ne, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
 import { promoRule, salesInvoiceCache } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { invoiceLines, recap, type PromoRule } from "@/lib/promo-recap";
+import { invoiceLines, parseTariff, recap, TARIFF_SHEET, type PromoRule } from "@/lib/promo-recap";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
     const ruleRows = await db.select().from(promoRule).where(eq(promoRule.active, true));
     const rules: PromoRule[] = ruleRows.map((row) => ({
         principal: row.principal, suratProgram: row.suratProgram, promoLabel: row.promoLabel,
-        promoGroup: row.promoGroup, itemCode: row.itemCode,
+        promoGroup: row.promoGroup, itemCode: row.itemCode, customerCode: row.customerCode,
         periodStart: row.periodStart, periodEnd: row.periodEnd,
         benefitType: row.benefitType, benefitValue: row.benefitValue, benefitUnit: row.benefitUnit,
         onFaktur: row.onFaktur, benefitBeban: row.benefitBeban,
@@ -116,8 +116,11 @@ export async function POST(request: NextRequest) {
 
     const book = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: "array" });
     const sheet = book.Sheets["Detail"];
-    if (!sheet) return NextResponse.json({ ok: false, error: "Berkas ini tidak punya sheet `Detail`" }, { status: 422 });
-    const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+    const tariffSheet = book.Sheets[TARIFF_SHEET];
+    if (!sheet && !tariffSheet) {
+        return NextResponse.json({ ok: false, error: `Berkas ini tidak punya sheet \`Detail\` maupun \`${TARIFF_SHEET}\`` }, { status: 422 });
+    }
+    const raw = sheet ? XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" }) : [];
 
     const issues: string[] = [];
     const values = raw.map((row, index) => {
@@ -130,6 +133,7 @@ export async function POST(request: NextRequest) {
             suratProgram: text(row.SURAT_PROGRAM), promoLabel: text(row.PROMO_LABEL),
             promoGroupId: text(row.PROMO_GROUP_ID), promoGroup: text(row.PROMO_GROUP),
             itemCode: text(row.KODE_BARANG), itemName: text(row.NAMA_BARANG), prdId: text(row.PRD_ID_KINO),
+            customerCode: "",
             periodStart: start || null, periodEnd: end || null,
             active: text(row.PROMO_ACTIVE).toLowerCase() !== "false",
             tierNo: Number(row.TIER_NO) || 1,
@@ -141,7 +145,13 @@ export async function POST(request: NextRequest) {
             note: text(row.CATATAN), importedBy: String(gate.session?.user?.email ?? ""),
         };
     });
-    if (values.length === 0) return NextResponse.json({ ok: false, error: "Sheet `Detail` kosong" }, { status: 422 });
+    const tariff = tariffSheet
+        ? parseTariff(XLSX.utils.sheet_to_json<Record<string, unknown>>(tariffSheet, { defval: "" }),
+            { principal, importedBy: String(gate.session?.user?.email ?? ""), issues })
+        : [];
+    if (values.length === 0 && tariff.length === 0) {
+        return NextResponse.json({ ok: false, error: `Sheet \`Detail\` dan \`${TARIFF_SHEET}\` sama-sama tidak memberi satu aturan pun`, issues: issues.slice(0, 50) }, { status: 422 });
+    }
 
     // Satu barang internal bisa punya DUA kode principal (pecahan berbeda di sistem Kino),
     // sehingga barisnya kembar. Aturan promo melekat pada barang internal, jadi yang kembar
@@ -149,7 +159,7 @@ export async function POST(request: NextRequest) {
     const unik = new Map<string, (typeof values)[number]>();
     let digabung = 0;
     for (const row of values) {
-        const key = `${row.suratProgram}|${row.promoGroup}|${row.itemCode}|${row.tierNo}`;
+        const key = `${row.suratProgram}|${row.promoGroup}|${row.itemCode}|${row.customerCode}|${row.tierNo}`;
         const ada = unik.get(key);
         if (!ada) { unik.set(key, row); continue; }
         digabung += 1;
@@ -162,6 +172,8 @@ export async function POST(request: NextRequest) {
         merged: digabung,
         programs: new Set(baris.map((v) => `${v.suratProgram}|${v.promoGroup}`)).size,
         tingkatFaktur: baris.filter((v) => !v.itemCode).length,
+        tarifOutlet: tariff.length,
+        outlet: new Set(tariff.map((v) => v.customerCode)).size,
         issues: issues.slice(0, 50),
     };
     if (!apply) return NextResponse.json({ ok: true, applied: false, ...summary });
@@ -169,9 +181,23 @@ export async function POST(request: NextRequest) {
     await db.transaction(async (tx) => {
         // Muat ulang MENGGANTI aturan principal ini: program yang dicabut harus benar-benar
         // hilang, bukan menumpuk dari muatan sebelumnya lalu ikut menjelaskan diskon.
-        await tx.delete(promoRule).where(eq(promoRule.principal, principal));
-        for (let start = 0; start < baris.length; start += 500) {
-            await tx.insert(promoRule).values(baris.slice(start, start + 500));
+        //
+        // Yang diganti hanya SLICE yang dibawa berkas ini. Aturan surat (`customer_code` kosong)
+        // dan tarif outlet (`customer_code` terisi) datang dari dua sumber yang berbeda —
+        // workbook Summary dan tabel Discount Reguler — dan tidak selalu dikirim bersamaan.
+        // Menghapus keduanya tiap unggahan berarti memuat yang satu diam-diam mencabut yang
+        // lain, lalu gerbang menahan faktur yang sebenarnya sah.
+        if (baris.length > 0) {
+            await tx.delete(promoRule).where(and(eq(promoRule.principal, principal), eq(promoRule.customerCode, "")));
+            for (let start = 0; start < baris.length; start += 500) {
+                await tx.insert(promoRule).values(baris.slice(start, start + 500));
+            }
+        }
+        if (tariff.length > 0) {
+            await tx.delete(promoRule).where(and(eq(promoRule.principal, principal), ne(promoRule.customerCode, "")));
+            for (let start = 0; start < tariff.length; start += 500) {
+                await tx.insert(promoRule).values(tariff.slice(start, start + 500));
+            }
         }
     });
     return NextResponse.json({ ok: true, applied: true, ...summary });

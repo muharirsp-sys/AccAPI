@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
     const soDate = String(batch.period).slice(0, 10) || new Date().toISOString().slice(0, 10);
     const publishedRules = await db.select({
         suratProgram: promoRule.suratProgram, promoGroup: promoRule.promoGroup, itemCode: promoRule.itemCode,
+        customerCode: promoRule.customerCode,
         tierNo: promoRule.tierNo, triggerQty: promoRule.triggerQty, triggerUnit: promoRule.triggerUnit,
         benefitType: promoRule.benefitType, benefitValue: promoRule.benefitValue, benefitBeban: promoRule.benefitBeban,
     }).from(promoRule).where(and(
@@ -69,12 +70,27 @@ export async function POST(request: NextRequest) {
     ));
     const rulesByItem = new Map<string, PublishedRule[]>();
     const fakturRules: PublishedRule[] = [];
+    // Tarif Discount Reguler melekat pada OUTLET, bukan barang: satu baris melayani seluruh
+    // belanja outlet itu, jadi dikelompokkan per outlet dan disambungkan ke baris lewat
+    // kode internal pelanggannya (tanpa akhiran cabang, seperti yang tercetak di tarifnya).
+    const tariffByCustomer = new Map<string, PublishedRule[]>();
     for (const row of publishedRules) {
         const rule: PublishedRule = { ...row, triggerQty: Number(row.triggerQty) };
+        if (rule.customerCode) {
+            const key = rule.customerCode.toUpperCase();
+            if (!tariffByCustomer.has(key)) tariffByCustomer.set(key, []);
+            tariffByCustomer.get(key)!.push(rule);
+            continue;
+        }
         if (!rule.itemCode) { fakturRules.push(rule); continue; }
         if (!rulesByItem.has(rule.itemCode)) rulesByItem.set(rule.itemCode, []);
         rulesByItem.get(rule.itemCode)!.push(rule);
     }
+    /** Tarif outlet ini, dicari dengan kode internal maupun kode ber-akhiran cabang. */
+    const tariffOf = (base: string | null, customerNo: string | null): PublishedRule[] =>
+        (base ? tariffByCustomer.get(base.toUpperCase()) : undefined)
+        ?? (customerNo ? tariffByCustomer.get(customerNo.toUpperCase()) : undefined)
+        ?? [];
 
     const itemCodes = [...new Set(lines.map((line) => items.get(line.productCode)).filter(Boolean) as string[])];
     let priceRefresh: { ok: boolean; error?: string; processed?: number; priceRows?: number } | null = null;
@@ -184,7 +200,10 @@ export async function POST(request: NextRequest) {
                 unitRatio: Number(line.qty) > 0 ? Number(line.reportQty) / Number(line.qty) : 1,
                 gross: Number(line.reportGross), reportDiscount: Number(line.reportDiscount),
                 discounts: (line.discounts as DiscountAt[]) ?? [], bonus: line.bonus,
-                rules: itemCode ? (rulesByItem.get(itemCode) ?? []) : [],
+                rules: [
+                    ...(itemCode ? (rulesByItem.get(itemCode) ?? []) : []),
+                    ...tariffOf(base, customerNo),
+                ],
                 fakturPromo: soPromo.get(String(line.soNo)),
             });
             // Temuan tingkat SO menahan SETIAP barisnya: nominalnya milik seluruh SO, jadi

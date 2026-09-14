@@ -1959,6 +1959,105 @@ tetapi artinya **tidak ada faktur Kino berdiskon distributor yang bisa dikirim s
 - Butir **4.32 TERBUKTI**: Accurate menafsirkan rantai diskon persen dengan benar, dan potongan
   rupiah tingkat faktur mendarat utuh.
 
+### TAHAP 13 — aturan promo dapat dimensi OUTLET (butir 4.10), 2026-09-13
+
+Penahan alur nomor satu dibaca ulang, dan ternyata bukan pekerjaan memuat data: **`promo_rule`
+tidak punya dimensi pelanggan sama sekali.** Tarif Discount Reguler melekat pada OUTLET dan
+berlaku untuk seluruh barang yang dibelinya — terbukti pada `ORDER_DETAIL` 12 September:
+SS DIAPERS MESJID RAYA memotong 2% di posisi 1 pada **delapan barang yang berbeda**, dan
+SS DIAPERS PERINTIS 2% pada tiga barang lain. Itulah kesebelas baris yang tertahan.
+
+Tanpa kolom outlet, satu-satunya cara memuatnya adalah menyalin satu baris aturan per barang:
+4.182 baris yang harus dimuat ulang tiap master barang bertambah, dan diam-diam salah begitu
+ada barang baru. Jadi kolomnya yang ditambahkan, bukan datanya yang digandakan.
+
+| Yang dibangun | Berkas |
+|---|---|
+| Kolom `customer_code` + kunci unik baru | `db/migrations/0013_promo_rule_customer.sql` |
+| Pencocokan tarif **per POSISI** | `matchTariff()` di `lib/principal-validation.ts` |
+| Impor sheet `Discount Reguler` | `parseTariff()` di `lib/promo-recap.ts` |
+| Muat ulang tidak saling mencabut | `POST /api/promo-recap` |
+| Rekap Promo ikut mengenali tarif | `tariffFor()` di `lib/promo-recap.ts` |
+
+**Tiga keputusan yang layak diingat:**
+
+1. **Dicocokkan per POSISI, bukan per jumlah.** Tarif posisi 1 tidak boleh membenarkan potongan
+   yang duduk di posisi 2. Ini bug rantai persen yang dimampatkan (bug #5 TAHAP 12) dalam
+   bentuk lain: begitu posisi hilang, potongan berpindah penanggung tanpa ada yang tahu.
+2. **Separuh penjelasan bukan penjelasan.** Baris yang terpotong di dua posisi sementara hanya
+   satu yang punya tarif tetap ditahan seluruhnya.
+3. **Muat ulang hanya mengganti SLICE-nya sendiri.** Aturan surat (`customer_code` kosong) dan
+   tarif outlet (terisi) datang dari dua sumber yang tidak pernah dikirim bersamaan. Sebelumnya
+   tiap unggahan menghapus seluruh aturan principal itu — memuat yang satu akan diam-diam
+   mencabut yang lain, lalu gerbang menahan faktur yang sebenarnya sah.
+
+Diperiksa: 60 test lulus (`principal-validation`, `promo-recap`, `order-detail`,
+`invoice-verify`), `tsc --noEmit` dan eslint bersih.
+
+**Foto tabelnya dikirim ulang hari ini, dan DATA membantah tafsir mata.** Dua nilai yang
+tercetak bersebelahan pada tiap baris ternyata posisi **1 dan 4**, bukan dua kolom berdampingan
+— dibuktikan dengan menyapu sepuluh berkas `ORDER_DETAIL` lama dan mencocokkan pola diskon per
+pelanggan:
+
+| Outlet | Nilai di tabel | Posisi nyata pada ORDER_DETAIL |
+|---|---|---|
+| Indogrosir `C-IND051` | 3,96% · 0,5% | 1:3,96 · 4:0,5 — cocok |
+| Alfamart `C-AL0063` | 4% · 2,25% | 1:4 · 4:2,25 — cocok |
+| Alfamidi `C-AL0064` | 4% · 2,25% | 1:4 · 4:2,25 — cocok |
+| Lotte Mart, Satu Sama Jaya, Misi Pasaraya, Verlina, Hj. Icha | 2–3% | posisi 1 — cocok |
+| Indomaret `C-IN0050` | 3,96% · **3%** | 1:3,96 · 4:**3,1** — **BEDA** |
+
+Konsekuensinya besar: **tabel ini bukan tarif distributor saja.** Header cetakannya sendiri
+memisahkan `Distributor` (posisi 1-3) dari `Principle` (posisi 4-5) — peta yang sama persis
+dengan `OWNER`. Jadi 2,25% Alfamart di posisi 4 itu **klaim principal yang selama ini tidak
+punya surat**, yaitu butir 4.12. `parseTariff` menurunkan beban dari POSISI, tidak pernah dari
+kolom isian tangan: satu tabel tidak boleh bisa menyatakan dua hal berbeda tentang baris yang sama.
+
+Masa berlakunya juga ada, tulisan tangan di sudut kanan bawah: **15/8-26 s/d 31/12-26**.
+
+**Gerbang tambahan atas permintaan pengguna**: satu baris tarif hanya dimuat kalau kolom `PAKAI`
+diisi. Tabelnya diekstrak dari FOTO dan hanya sebagian posisinya pernah dibuktikan; aturan
+tebakan yang lolos ke gerbang sama buruknya dengan tidak punya gerbang, bedanya yang ini
+terlihat benar. Dijaga di `parseTariff`, bukan di kedisiplinan penyusun sheetnya.
+
+**Sheet periksa sudah dibuat dan dikirim ke pengguna** (tidak disimpan di repo — memuat nama
+pelanggan dan tarif): 31 baris, **10 outlet dicentang `PAKAI` karena terbukti dari data nyata**,
+21 baris menunggu pengguna memastikan posisinya. Muatan percobaan menghasilkan **13 aturan**.
+
+**Dijalankan atas kesebelas baris yang tertahan 12 September: sebelas-belasnya lolos** —
+SS DIAPERS MESJID RAYA (`C-SAT016`, 8 baris) dan PERINTIS KM.9 (`C-SAT015`, 3 baris), keduanya
+2% di posisi 1. Keduanya anggota SATU SAMA JAYA ABADI GROUP; baris ber-"GROUP" pada tabel
+dipecah satu baris per kode outlet anggotanya.
+
+**Lanjutan 2026-09-14 — aturan bisa diketik, bukan hanya dimuat.** Menu **Aturan Promo**
+(`/aturan-promo` + `app/api/promo-rule`) menulis `promo_rule` yang SAMA dengan importir berkas.
+Alasannya: impor MENGGANTI seluruh irisannya, jadi ia tidak bisa dipakai untuk satu perbaikan
+kecil — menambah satu outlet berarti menyusun ulang berkasnya dan mempertaruhkan seluruh muatan.
+
+- `PUT` menyalin satu tarif ke beberapa outlet sekaligus. Itu jawaban untuk baris ber-"GROUP":
+  tarifnya satu, tetapi tetap **satu baris per kode outlet** — gerbang mencocokkan per pelanggan,
+  dan kode anggota grup tidak selalu berawalan sama (SATU SAMA JAYA: `C-SA0269`, `C-SAT015`,
+  `C-SAT016`), jadi menebak dari nama akan meleset diam-diam.
+- Pada baris TARIF, **beban wajib sesuai posisinya**. Posisi 1 berbeban `PRINCIPAL` ditolak 422
+  dengan alasannya: aturan begitu tidak akan pernah cocok dengan potongan mana pun — ia hanya
+  terlihat ada di layar.
+- Diuji atas DB lokal sungguhan: 145 aturan terbaca, tarif dibuat lalu disalin ke dua outlet,
+  dan beban yang salah posisi ditolak.
+
+**Migrasi `0013` SUDAH dijalankan di LOKAL** (Postgres 18 lewat `pg_ctl`): kolom `customer_code`
+ada, kunci unik lama diganti yang beroutlet, 145 aturan lama utuh.
+
+**Keputusan pengguna 2026-09-14 — Indomaret**: tarifnya **3%**, bukan 3,1%. Baris ORDER_DETAIL
+yang memakai 3,1% SENGAJA tertahan gerbang sampai ada konfirmasi dari Kino. Sheet periksa kini
+11 dari 31 baris dicentang, menghasilkan **15 aturan** (13 distributor + 2 principal Indomaret).
+
+**Yang masih menggantung**: (a) migrasi `0013` **belum dijalankan di PRODUKSI** (lokal sudah);
+(b) pemetaan
+`CUST_ID2` -> kode internal untuk kedua outlet SS DIAPERS **diambil dari nama pelanggan pada
+laporan** ("...CSAT016"), bukan dari `principal_mapping` — wajib diperiksa lawan DB sebelum
+dipercaya; (c) Indomaret posisi 4 berselisih 3% lawan 3,1%, dan itu justru jenis selisih yang
+gerbang ini ada untuk menangkapnya; (d) 21 baris sisa menunggu pengguna.
+
 ### Prompt melanjutkan (2026-09-13)
 
 > Lanjutkan pekerjaan Surya di D:\AccAPI\_github_clean, branch `feat/surya-workspace`. Baca

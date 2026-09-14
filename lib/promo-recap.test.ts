@@ -3,11 +3,11 @@
    tak bertuan (posisi 6+) dan klaim principal tanpa aturan terbit. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fakturRuleFor, invoiceLines, isoDate, recap, ruleFor, type PromoRule } from "./promo-recap.ts";
+import { fakturRuleFor, invoiceLines, isoDate, parseTariff, recap, ruleFor, type PromoRule } from "./promo-recap.ts";
 
 const aturan = (over: Partial<PromoRule> = {}): PromoRule => ({
     principal: "KINO NON FOOD", suratProgram: "BP2609007909", promoLabel: "MTI - HPC CONSUMER PROMO ON PO",
-    promoGroup: "ELLIPS HAIR MIST", itemCode: "K1010001006010",
+    promoGroup: "ELLIPS HAIR MIST", itemCode: "K1010001006010", customerCode: "",
     periodStart: "2026-09-01", periodEnd: "2026-09-30",
     benefitType: "DISC_PCT", benefitValue: "3", benefitUnit: "%", onFaktur: false,
     benefitBeban: "PRINCIPAL", tierNo: 1, triggerQty: 0, triggerUnit: "PCS", ...over,
@@ -165,4 +165,54 @@ test("raw_data yang tersimpan sebagai TEKS JSON tetap terbaca", () => {
     assert.equal(invoiceLines(teks)[0].invoiceNo, "SI.2026.09.0001");
     assert.deepEqual(invoiceLines(JSON.stringify(teks))[0].discounts, [{ position: 1, percent: 4 }, { position: 4, percent: 3 }]);
     assert.deepEqual(invoiceLines("bukan json"), []);
+});
+
+test("tarif Discount Reguler outlet menjelaskan potongan distributor di rekap", () => {
+    // Kode outlet pada faktur Accurate ber-akhiran cabang (`C-TRU001-KN`) sedangkan tarifnya
+    // tercetak dengan kode internal (`C-TRU001`). Kalau akhirannya tidak dijembatani, seluruh
+    // potongan yang sah akan terhitung tak bertuan di laporan uang akhir bulan.
+    const tarif = aturan({
+        suratProgram: "DISCOUNT REGULER", promoGroup: "TANGGUNGAN DISTRIBUTOR",
+        itemCode: "", customerCode: "C-TRU001", tierNo: 1,
+        benefitBeban: "DISTRIBUTOR", benefitValue: "4", periodStart: null, periodEnd: null,
+    });
+    const hasil = recap(invoiceLines(faktur), [aturan(), tarif]);
+    assert.equal(hasil.distributor, 40000);
+    assert.equal(hasil.unowned, 0);
+
+    // Outlet LAIN tidak ikut kecipratan tarif ini.
+    const lain = recap(invoiceLines({ ...faktur, customer: { customerNo: "C-XXX999-KN" } }), [aturan(), tarif]);
+    assert.equal(lain.distributor, 0);
+    assert.equal(lain.unowned, 40000);
+});
+
+test("sheet Discount Reguler dipecah jadi satu aturan per (outlet x posisi)", () => {
+    const issues: string[] = [];
+    const hasil = parseTariff([
+        // Bentuk tabel aslinya: satu baris per outlet, satu kolom per posisi.
+        { "PAKAI": "YA", "PELANGGAN": "ALFAMART", "KODE_OUTLET": "c-al0063", "POSISI 1": 4, "POSISI 2": "", "POSISI 3": "", "POSISI 4": "2.25", "POSISI 5": "" },
+        { "PAKAI": "ya", "PELANGGAN": "SS DIAPERS MESJID RAYA", "KODE_OUTLET": "C-SAT016", "POSISI 1": "2%", "POSISI 2": "1,5" },
+        // Tiga baris tabel aslinya tidak terbaca dari foto: harus muncul sebagai lubang.
+        { "PAKAI": "YA", "PELANGGAN": "HYPERMART", "KODE_OUTLET": "", "POSISI 1": "" },
+        // Outlet berkode tetapi tanpa satu posisi pun -> dilaporkan, tidak dimuat diam-diam.
+        { "PAKAI": "YA", "PELANGGAN": "PANEN SELARAS", "KODE_OUTLET": "C-PAN001" },
+        // Posisinya BELUM dinyatakan pasti -> tidak dimuat, dan itu dilaporkan.
+        { "PAKAI": "", "PELANGGAN": "RAMAYANA", "KODE_OUTLET": "C-RAM001", "POSISI 1": 3 },
+    ], { principal: "KINO NON FOOD", importedBy: "uji@surya", issues });
+
+    assert.deepEqual(hasil.map((r) => [r.customerCode, r.tierNo, r.benefitValue, r.benefitBeban]), [
+        // Beban diturunkan dari POSISI, seperti header tabel principalnya: 1-3 distributor,
+        // 4-5 principal. Alfamart 2,25% di posisi 4 itu klaim principal, bukan beban sendiri.
+        ["C-AL0063", 1, "4", "DISTRIBUTOR"],
+        ["C-AL0063", 4, "2.25", "PRINCIPAL"],
+        ["C-SAT016", 1, "2", "DISTRIBUTOR"],
+        ["C-SAT016", 2, "1.5", "DISTRIBUTOR"],
+    ]);
+    assert.ok(hasil.every((r) => r.periodStart === null && r.periodEnd === null
+        && r.benefitType === "DISC_PCT" && r.itemCode === ""));
+    assert.equal(issues.length, 3);
+    assert.match(issues.join(" "), /HYPERMART/);
+    assert.match(issues.join(" "), /C-PAN001/);
+    // Yang belum dicentang PAKAI tidak boleh ikut, dan harus terlihat kenapa.
+    assert.match(issues.join(" "), /C-RAM001: kolom PAKAI belum diisi/);
 });

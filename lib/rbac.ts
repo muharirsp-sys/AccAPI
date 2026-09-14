@@ -303,6 +303,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/principal-order", module: "order", action: "view" },
     { prefix: "/antrean-faktur", module: "order", action: "view" },
     { prefix: "/orders", module: "order", action: "view" },
+    { prefix: "/aturan-promo", module: "summary", action: "view" },
     { prefix: "/rekap-promo", module: "summary", action: "view" },
     { prefix: "/summary", module: "summary", action: "view" },
     { prefix: "/validator", module: "validator", action: "view" },

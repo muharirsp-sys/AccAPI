@@ -61,7 +61,7 @@ test("klaim principal tanpa aturan terbit dan diskon tak bertuan ditahan", () =>
     // Begitu aturannya terbit DAN angkanya cocok, klaim yang sama tidak lagi ditahan.
     const adaAturan = checkLine(line({
         discounts: [{ position: 4, percent: 2.25 }], reportDiscount: 7297.3,
-        rules: [{ suratProgram: "BP26", promoGroup: "X", itemCode: "K1010001006010", tierNo: 1,
+        rules: [{ suratProgram: "BP26", promoGroup: "X", itemCode: "K1010001006010", customerCode: "", tierNo: 1,
                   triggerQty: 0, triggerUnit: "PCS", benefitType: "DISC_PCT", benefitValue: "2.25",
                   benefitBeban: "PRINCIPAL" }],
     }));
@@ -101,7 +101,7 @@ test("toleransi harga berlaku pada satuan terkecil, bukan pada harga karton", ()
 
 const aturan = (over: Partial<PublishedRule> = {}): PublishedRule => ({
     suratProgram: "BP2609007909", promoGroup: "SLEEK BABY BABY BOTTLE NIPPLE",
-    itemCode: "K1010001006010", tierNo: 1, triggerQty: 0, triggerUnit: "PCS",
+    itemCode: "K1010001006010", customerCode: "", tierNo: 1, triggerQty: 0, triggerUnit: "PCS",
     benefitType: "DISC_PCT", benefitValue: "3", benefitBeban: "PRINCIPAL", ...over,
 });
 
@@ -193,7 +193,7 @@ test("diskon distributor pun WAJIB punya aturan terbit", () => {
 });
 
 const msg = (over: Partial<PublishedRule> = {}): PublishedRule => ({
-    suratProgram: "BP2609006016", promoGroup: "ALL BRAND HPC", itemCode: "",
+    suratProgram: "BP2609006016", promoGroup: "ALL BRAND HPC", itemCode: "", customerCode: "",
     tierNo: 1, triggerQty: 1_000_000, triggerUnit: "RP",
     benefitType: "DISC_RP", benefitValue: "20000", benefitBeban: "PRINCIPAL", ...over,
 });
@@ -236,3 +236,59 @@ test("baris yang klaimnya dijelaskan MSG tidak perlu punya aturan barangnya send
     assert.equal(hasil.status, "ok");
 });
 
+
+const tarif = (over: Partial<PublishedRule> = {}): PublishedRule => ({
+    suratProgram: "DISCOUNT REGULER", promoGroup: "TANGGUNGAN DISTRIBUTOR",
+    itemCode: "", customerCode: "C-GAL006", tierNo: 1, triggerQty: 0, triggerUnit: "PCS",
+    benefitType: "DISC_PCT", benefitValue: "2", benefitBeban: "DISTRIBUTOR", ...over,
+});
+
+test("tarif Discount Reguler per outlet menjelaskan potongan pada SEMUA barang", () => {
+    // Kasus nyata 12 Sep 2026: SS DIAPERS MESJID RAYA memotong 2% di posisi 1 pada delapan
+    // barang yang berbeda. Tarifnya melekat pada OUTLET, jadi satu aturan tanpa kode barang.
+    const lolos = checkLine(line({
+        discounts: [{ position: 1, percent: 2 }], reportDiscount: 6486.49, rules: [tarif()],
+    }));
+    assert.equal(lolos.status, "ok", lolos.findings.join(" | "));
+
+    // Barang lain, outlet sama, tarif sama -> tetap lolos tanpa menambah satu aturan pun.
+    const barangLain = checkLine(line({
+        itemCode: "K9999999999999", discounts: [{ position: 1, percent: 2 }],
+        reportDiscount: 6486.49, rules: [tarif()],
+    }));
+    assert.equal(barangLain.status, "ok", barangLain.findings.join(" | "));
+});
+
+test("tarif dicocokkan PER POSISI: nilai benar di posisi salah tetap ditahan", () => {
+    // Posisi menentukan siapa menanggung. Tarif posisi 1 tidak boleh membenarkan potongan
+    // yang duduk di posisi 2 — itu bug rantai persen yang dimampatkan, dalam bentuk lain.
+    const salahPosisi = checkLine(line({
+        discounts: [{ position: 2, percent: 2 }], reportDiscount: 6486.49, rules: [tarif()],
+    }));
+    assert.equal(salahPosisi.status, "review");
+    assert.match(salahPosisi.findings.join(" "), /posisi 1 2%/);
+
+    // Dua posisi terpotong, hanya satu yang punya tarif -> separuh penjelasan bukan penjelasan.
+    const separuh = checkLine(line({
+        discounts: [{ position: 1, percent: 2 }, { position: 2, percent: 1 }],
+        reportDiscount: 9600, rules: [tarif()],
+    }));
+    assert.equal(separuh.status, "review");
+
+    // Kedua posisi punya tarifnya -> lolos. 2% lalu 1% atas sisanya = 6.486,49 + 3.178,38.
+    const lengkap = checkLine(line({
+        discounts: [{ position: 1, percent: 2 }, { position: 2, percent: 1 }],
+        reportDiscount: 9664.87, rules: [tarif(), tarif({ tierNo: 2, benefitValue: "1" })],
+    }));
+    assert.equal(lengkap.status, "ok", lengkap.findings.join(" | "));
+});
+
+test("tarif outlet tidak pernah membenarkan klaim principal", () => {
+    // Beban ikut dicocokkan: potongan di posisi 4 adalah klaim principal, dan tarif
+    // distributor tidak boleh menjadikannya sah hanya karena persennya kebetulan sama.
+    const hasil = checkLine(line({
+        discounts: [{ position: 4, percent: 2 }], reportDiscount: 6486.49, rules: [tarif()],
+    }));
+    assert.equal(hasil.status, "review");
+    assert.match(hasil.findings.join(" "), /Klaim principal/);
+});
