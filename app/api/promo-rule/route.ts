@@ -15,7 +15,7 @@
  * kelihatan ada di layar tetapi diam-diam tidak menjelaskan apa pun.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { promoRule } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
@@ -88,6 +88,7 @@ export async function GET(request: NextRequest) {
 
     const principal = (request.nextUrl.searchParams.get("principal") ?? "").trim();
     const jenis = (request.nextUrl.searchParams.get("jenis") ?? "").trim();
+    const beban = (request.nextUrl.searchParams.get("beban") ?? "").trim().toUpperCase();
     const cari = (request.nextUrl.searchParams.get("q") ?? "").trim().toUpperCase();
 
     const rows = await db.select().from(promoRule)
@@ -102,6 +103,7 @@ export async function GET(request: NextRequest) {
         if (jenis === "tarif" && !isTarif(row)) return false;
         if (jenis === "barang" && (isTarif(row) || !row.itemCode)) return false;
         if (jenis === "faktur" && (isTarif(row) || row.itemCode)) return false;
+        if (beban && row.benefitBeban.toUpperCase() !== beban) return false;
         if (!cari) return true;
         return [row.suratProgram, row.promoGroup, row.promoLabel, row.itemCode, row.itemName, row.customerCode]
             .some((field) => String(field).toUpperCase().includes(cari));
@@ -157,12 +159,19 @@ export async function PATCH(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
     const gate = await gateOf("summary.edit");
     if (gate.response) return gate.response;
-    const id = Number(request.nextUrl.searchParams.get("id"));
-    if (!Number.isFinite(id)) return NextResponse.json({ ok: false, error: "id wajib diisi" }, { status: 400 });
+    // Satu `id` atau banyak `ids`: membersihkan puluhan tarif yang salah posisi satu per satu
+    // memakan waktu, dan setengah terhapus lebih berbahaya daripada tidak terhapus sama sekali.
+    const satu = request.nextUrl.searchParams.get("id");
+    const banyak = request.nextUrl.searchParams.get("ids");
+    const ids = [...new Set([satu, ...(banyak ?? "").split(",")]
+        .map((value) => Number(String(value ?? "").trim()))
+        .filter((value) => Number.isFinite(value) && value > 0))];
+    if (!ids.length) return NextResponse.json({ ok: false, error: "Sebutkan id aturan yang mau dihapus" }, { status: 400 });
+    if (ids.length > 500) return NextResponse.json({ ok: false, error: "Maksimal 500 aturan sekali hapus" }, { status: 413 });
 
-    const gone = await db.delete(promoRule).where(eq(promoRule.id, id)).returning({ id: promoRule.id });
-    if (!gone.length) return NextResponse.json({ ok: false, error: "Aturan tidak ditemukan" }, { status: 404 });
-    return NextResponse.json({ ok: true, id });
+    const gone = await db.delete(promoRule).where(inArray(promoRule.id, ids)).returning({ id: promoRule.id });
+    if (!gone.length) return NextResponse.json({ ok: false, error: "Tidak ada aturan yang cocok" }, { status: 404 });
+    return NextResponse.json({ ok: true, deleted: gone.length, diminta: ids.length });
 }
 
 /** Menyalin satu tarif ke beberapa outlet sekaligus — jawaban untuk baris ber-"GROUP". */
