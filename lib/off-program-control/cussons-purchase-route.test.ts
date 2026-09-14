@@ -74,7 +74,6 @@ async function withPermissions<T>(
 ): Promise<T> {
   const sessionDescriptor = Object.getOwnPropertyDescriptor(auth.api, "getSession"),
     selectDescriptor = Object.getOwnPropertyDescriptor(db, "select");
-  let selectCall = 0;
   Object.defineProperty(auth.api, "getSession", {
     configurable: true,
     value: async () => ({
@@ -101,16 +100,22 @@ async function withPermissions<T>(
   });
   Object.defineProperty(db, "select", {
     configurable: true,
-    value: () => ({
-      from: () => ({
-        where: () =>
-          Promise.resolve(
-            selectCall++ === 0
-              ? [{ groupId: "route-test-group" }]
-              : permissions.map((key) => ({ key })),
-          ),
-      }),
-    }),
+    // getUserPermissions() memakai SATU query ber-LEFT JOIN (userGroup x groupPermission),
+    // bukan lagi dua select berurutan. Stub dua-panggilan yang lama tidak punya .leftJoin,
+    // jadi guard-nya melempar TypeError dan route menjawab 500 alih-alih 403.
+    // Baris tanpa permission tetap dikembalikan sebagai { key: null } — itulah yang
+    // membedakan "punya group tapi kosong" (403) dari "belum punya group" (fallback legacy).
+    value: () => {
+      const rows = permissions.length
+        ? permissions.map((key) => ({ groupId: "route-test-group", key }))
+        : [{ groupId: "route-test-group", key: null }];
+      const chain = {
+        from: () => chain,
+        leftJoin: () => chain,
+        where: () => Promise.resolve(rows),
+      };
+      return chain;
+    },
   });
   try {
     return await action();
