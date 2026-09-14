@@ -2029,8 +2029,30 @@ SS DIAPERS MESJID RAYA (`C-SAT016`, 8 baris) dan PERINTIS KM.9 (`C-SAT015`, 3 ba
 2% di posisi 1. Keduanya anggota SATU SAMA JAYA ABADI GROUP; baris ber-"GROUP" pada tabel
 dipecah satu baris per kode outlet anggotanya.
 
-**Yang masih menggantung**: (a) migrasi `0013` **belum dijalankan di produksi** — Postgres lokal
-maupun Docker tidak hidup, jadi SQL-nya belum pernah dieksekusi sama sekali; (b) pemetaan
+**Lanjutan 2026-09-14 — aturan bisa diketik, bukan hanya dimuat.** Menu **Aturan Promo**
+(`/aturan-promo` + `app/api/promo-rule`) menulis `promo_rule` yang SAMA dengan importir berkas.
+Alasannya: impor MENGGANTI seluruh irisannya, jadi ia tidak bisa dipakai untuk satu perbaikan
+kecil — menambah satu outlet berarti menyusun ulang berkasnya dan mempertaruhkan seluruh muatan.
+
+- `PUT` menyalin satu tarif ke beberapa outlet sekaligus. Itu jawaban untuk baris ber-"GROUP":
+  tarifnya satu, tetapi tetap **satu baris per kode outlet** — gerbang mencocokkan per pelanggan,
+  dan kode anggota grup tidak selalu berawalan sama (SATU SAMA JAYA: `C-SA0269`, `C-SAT015`,
+  `C-SAT016`), jadi menebak dari nama akan meleset diam-diam.
+- Pada baris TARIF, **beban wajib sesuai posisinya**. Posisi 1 berbeban `PRINCIPAL` ditolak 422
+  dengan alasannya: aturan begitu tidak akan pernah cocok dengan potongan mana pun — ia hanya
+  terlihat ada di layar.
+- Diuji atas DB lokal sungguhan: 145 aturan terbaca, tarif dibuat lalu disalin ke dua outlet,
+  dan beban yang salah posisi ditolak.
+
+**Migrasi `0013` SUDAH dijalankan di LOKAL** (Postgres 18 lewat `pg_ctl`): kolom `customer_code`
+ada, kunci unik lama diganti yang beroutlet, 145 aturan lama utuh.
+
+**Keputusan pengguna 2026-09-14 — Indomaret**: tarifnya **3%**, bukan 3,1%. Baris ORDER_DETAIL
+yang memakai 3,1% SENGAJA tertahan gerbang sampai ada konfirmasi dari Kino. Sheet periksa kini
+11 dari 31 baris dicentang, menghasilkan **15 aturan** (13 distributor + 2 principal Indomaret).
+
+**Yang masih menggantung**: (a) migrasi `0013` **belum dijalankan di PRODUKSI** (lokal sudah);
+(b) pemetaan
 `CUST_ID2` -> kode internal untuk kedua outlet SS DIAPERS **diambil dari nama pelanggan pada
 laporan** ("...CSAT016"), bukan dari `principal_mapping` — wajib diperiksa lawan DB sebelum
 dipercaya; (c) Indomaret posisi 4 berselisih 3% lawan 3,1%, dan itu justru jenis selisih yang
