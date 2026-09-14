@@ -101,7 +101,13 @@ export default function RekapPromoPage() {
             if (!res.ok || !body.ok) throw new Error(body.error ?? "Impor aturan gagal");
             setPreview(body);
             if (apply) {
-                toast.success(`${body.rows} aturan dimuat (${body.programs} program)`);
+                // Berkas tarif tidak punya sheet `Detail`, jadi `rows` memang 0 — melaporkan
+                // angka itu saja membuat muatan yang BERHASIL terbaca sebagai gagal.
+                const bagian = [
+                    body.rows > 0 ? `${body.rows} aturan surat (${body.programs} program)` : "",
+                    body.tarifOutlet > 0 ? `${body.tarifOutlet} tarif untuk ${body.outlet} outlet` : "",
+                ].filter(Boolean);
+                toast.success(bagian.length ? `Dimuat: ${bagian.join(" + ")}` : "Berkas ini tidak memuat satu aturan pun");
                 setPreview(null); setFile(null);
                 await load();
             }
