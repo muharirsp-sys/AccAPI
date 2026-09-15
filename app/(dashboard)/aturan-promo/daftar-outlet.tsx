@@ -16,7 +16,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Plus, RefreshCw, Trash2, Users } from "lucide-react";
+import { Download, FileUp, Plus, RefreshCw, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 
 type Member = {
@@ -45,6 +45,11 @@ export default function DaftarOutlet() {
     const [q, setQ] = useState("");
     const [busy, setBusy] = useState(false);
     const [tambah, setTambah] = useState<{ listName: string; codes: string; tier: string; periodStart: string; periodEnd: string; note: string } | null>(null);
+    // Kode distributor kita, datang dari server (diturunkan dari batch laporan principal
+    // terakhir). Lampiran surat memuat outlet SELURUH distributor nasional; kode inilah yang
+    // memisahkan milik kita dari milik orang lain.
+    const [distCode, setDistCode] = useState("");
+    const [listName, setListName] = useState("LOYALTY");
 
     const load = useCallback(async () => {
         setBusy(true);
@@ -56,6 +61,7 @@ export default function DaftarOutlet() {
             const body = await res.json();
             if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal memuat daftar outlet");
             setLists(body.lists); setMembers(body.members);
+            if (body.distCode) setDistCode((lama) => lama || body.distCode);
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Gagal memuat daftar outlet");
         } finally { setBusy(false); }
@@ -72,7 +78,8 @@ export default function DaftarOutlet() {
             });
             const body = await res.json();
             if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal menyimpan");
-            toast.success(`${body.ditambah} outlet masuk daftar ${body.listName} (dari ${body.diminta} kode)`);
+            toast.success(`${body.ditambah} outlet masuk daftar ${body.listName} (dari ${body.diminta} kode`
+                + (body.kembar > 0 ? `, ${body.kembar} kembar digabung)` : ")"));
             // Yang ditolak DIPERLIHATKAN satu per satu, bukan diringkas jadi satu angka: yang
             // mengisi perlu tahu kode MANA yang harus diperbaiki, bukan bahwa ada yang gagal.
             for (const alasan of (body.ditolak ?? []) as string[]) toast.warning(alasan, { duration: 12000 });
@@ -80,6 +87,33 @@ export default function DaftarOutlet() {
             await load();
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Gagal menyimpan");
+        } finally { setBusy(false); }
+    }
+
+    /**
+     * Unggah surat PDF atau berkas terpisah. Satu tombol untuk keduanya: yang membedakan hanya
+     * jenis berkasnya, dan menanyakannya lebih dulu ke pengguna cuma menambah satu langkah
+     * yang jawabannya sudah ada di nama berkas.
+     */
+    async function unggah(file: File) {
+        setBusy(true);
+        try {
+            const form = new FormData();
+            form.append("file", file);
+            form.append("distCode", distCode);
+            form.append("listName", listName);
+            const res = await fetch("/api/promo-outlet", { method: "POST", body: form });
+            const body = await res.json();
+            if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal membaca berkas");
+            const kembar = body.kembar > 0 ? `, ${body.kembar} kembar digabung` : "";
+            toast.success(body.sumber === "surat"
+                ? `Surat ${body.listName}: ${body.ditambah} outlet peserta dimuat${kembar}, ${body.aturanDitunjuk} aturan surat ini ditunjuk ke daftarnya`
+                : `${body.ditambah} outlet masuk daftar ${body.listName}${kembar}`);
+            for (const alasan of (body.ditolak ?? []) as string[]) toast.warning(alasan, { duration: 12000 });
+            for (const nota of (body.catatan ?? []) as string[]) toast.info(nota, { duration: 12000 });
+            await load();
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Gagal membaca berkas", { duration: 15000 });
         } finally { setBusy(false); }
     }
 
@@ -106,10 +140,19 @@ export default function DaftarOutlet() {
                     className="ml-auto inline-flex items-center gap-2 rounded bg-white/10 px-2.5 py-1.5 text-xs disabled:opacity-40">
                     <RefreshCw size={13} /> Muat ulang
                 </button>
+                <a href="/api/promo-outlet?template=1"
+                    className="inline-flex items-center gap-2 rounded bg-white/10 px-2.5 py-1.5 text-xs">
+                    <Download size={13} /> Template
+                </a>
+                <label className={`inline-flex cursor-pointer items-center gap-2 rounded bg-emerald-600 px-2.5 py-1.5 text-xs ${busy ? "opacity-40" : ""}`}>
+                    <FileUp size={13} /> Unggah surat / berkas
+                    <input type="file" accept=".pdf,.xlsx,.xls,.csv" disabled={busy} className="hidden"
+                        onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void unggah(file); }} />
+                </label>
                 <button onClick={() => setTambah({ listName: list || lists[0]?.name || "LOYALTY", codes: "", tier: "", periodStart: "", periodEnd: "", note: "" })}
                     disabled={busy}
                     className="inline-flex items-center gap-2 rounded bg-blue-600 px-2.5 py-1.5 text-xs disabled:opacity-40">
-                    <Plus size={13} /> Tambah outlet
+                    <Plus size={13} /> Ketik manual
                 </button>
             </header>
 
@@ -120,6 +163,24 @@ export default function DaftarOutlet() {
                 untuk memutuskannya. Satu daftar dipakai beberapa surat sekaligus — aturan cukup menunjuknya,
                 jadi mengubah daftar di sini langsung mengubah semua surat yang memakainya.
             </p>
+
+            <p className="max-w-3xl rounded border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs leading-relaxed text-emerald-100">
+                <strong>Kalau daftarnya tercetak di suratnya, unggah saja suratnya.</strong> Surat ber-“LIST OUTLET
+                TERLAMPIR” memuat tabel peserta di halaman lampirannya; sistem membacanya, mengambil baris milik
+                kode distributor kita saja, dan langsung menunjuk semua aturan surat itu ke daftarnya. Tidak ada
+                langkah menyalin, jadi tidak ada yang bisa meleset saat menyalin. Gunakan <strong>Template</strong> +
+                berkas terpisah hanya untuk daftar yang memang <em>tidak</em> tercetak di surat mana pun — peserta
+                loyalty kuartalan, misalnya.
+            </p>
+
+            <div className="flex flex-wrap items-end gap-2">
+                <F label="Kode distributor kita" hint="Tujuh angka pada kolom KODE DIST di lampiran surat. Dipakai memisahkan outlet kita dari outlet distributor lain pada surat yang sama.">
+                    <input value={distCode} onChange={(e) => setDistCode(e.target.value)} placeholder="1201671" className={`${inputCls} w-40`} />
+                </F>
+                <F label="Nama daftar (berkas terpisah)" hint="Hanya dipakai kalau yang diunggah BUKAN surat. Surat memakai nomornya sendiri sebagai nama daftar.">
+                    <input value={listName} onChange={(e) => setListName(e.target.value.toUpperCase())} placeholder="LOYALTY" className={`${inputCls} w-44`} />
+                </F>
+            </div>
 
             <div className="flex flex-wrap items-end gap-2">
                 <F label="Daftar">

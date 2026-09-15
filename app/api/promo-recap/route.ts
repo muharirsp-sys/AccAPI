@@ -198,9 +198,34 @@ export async function POST(request: NextRequest) {
         // Menghapus keduanya tiap unggahan berarti memuat yang satu diam-diam mencabut yang
         // lain, lalu gerbang menahan faktur yang sebenarnya sah.
         if (baris.length > 0) {
+            // Daftar outlet peserta yang sudah ditunjuk aturan lama DISELAMATKAN lebih dulu.
+            // Berkas Summary tidak membawa kolom itu (daftarnya datang dari lampiran surat atau
+            // dari berkas terpisah), jadi tanpa ini muat ulang akan melepas ikatannya diam-diam:
+            // daftarnya tetap ada dan terlihat benar di layar, tetapi tidak lagi menahan apa pun.
+            // Gerbang yang melonggar tanpa ada yang menyadarinya adalah cara kehilangan uang
+            // yang paling sulit ditemukan.
+            const ikatan = await tx.selectDistinct({
+                suratProgram: promoRule.suratProgram,
+                outletList: promoRule.outletList,
+                outletListMode: promoRule.outletListMode,
+            }).from(promoRule).where(and(
+                eq(promoRule.principal, principal), eq(promoRule.customerCode, ""), ne(promoRule.outletList, ""),
+            ));
+
             await tx.delete(promoRule).where(and(eq(promoRule.principal, principal), eq(promoRule.customerCode, "")));
             for (let start = 0; start < baris.length; start += 500) {
                 await tx.insert(promoRule).values(baris.slice(start, start + 500));
+            }
+
+            for (const ikat of ikatan) {
+                await tx.update(promoRule)
+                    .set({ outletList: ikat.outletList, outletListMode: ikat.outletListMode })
+                    .where(and(eq(promoRule.principal, principal), eq(promoRule.customerCode, ""),
+                        eq(promoRule.suratProgram, ikat.suratProgram)));
+            }
+            if (ikatan.length) {
+                issues.push(`Ikatan daftar outlet dipasang kembali untuk ${ikatan.length} surat: `
+                    + ikatan.map((ikat) => `${ikat.suratProgram} -> ${ikat.outletListMode} ${ikat.outletList}`).join(", "));
             }
         }
         if (tariff.length > 0) {

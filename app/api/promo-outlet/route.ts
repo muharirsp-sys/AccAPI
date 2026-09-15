@@ -17,12 +17,20 @@
  * dengan yang dipakai jalur order; menebaknya dari nama tidak pernah dilakukan di sini.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
-import { customer, principalMapping, promoOutlet } from "@/db/schema";
+import { customer, principalMapping, principalOrderBatch, promoOutlet, promoRule } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
+import { readLetterOutlets } from "@/lib/promo-letter";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
+
+const MAX_BYTES = 20 * 1024 * 1024;
+
+/** Kolom berkas manual. Sengaja sedikit: yang wajib hanya kodenya. */
+const TEMPLATE_HEADER = ["KODE_OUTLET", "NAMA (diabaikan)", "TINGKAT", "MULAI", "SAMPAI", "CATATAN"];
 
 const text = (value: unknown) => String(value ?? "").trim();
 
@@ -97,6 +105,26 @@ export async function GET(request: NextRequest) {
     const gate = await gateOf("summary.view");
     if (gate.response) return gate.response;
 
+    // Berkas contoh untuk daftar yang datang TERPISAH dari suratnya (mis. loyalty kuartalan).
+    // Dibuat di sini, bukan disimpan sebagai berkas statis, supaya kolomnya tidak bisa
+    // berbeda dari yang benar-benar dibaca importirnya.
+    if (request.nextUrl.searchParams.get("template") === "1") {
+        const sheet = XLSX.utils.aoa_to_sheet([
+            TEMPLATE_HEADER,
+            ["C-WIN013", "CV WINAR'S", "PLATINUM", "2026-10-01", "2026-12-31", "kuartal 4"],
+            ["22160031402", "boleh kode Kino juga", "GOLD", "2026-10-01", "2026-12-31", ""],
+        ]);
+        const book = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(book, sheet, "Daftar Outlet");
+        const buffer = XLSX.write(book, { type: "buffer", bookType: "xlsx" }) as Buffer;
+        return new NextResponse(new Uint8Array(buffer), {
+            headers: {
+                "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "content-disposition": 'attachment; filename="template-daftar-outlet.xlsx"',
+            },
+        });
+    }
+
     const list = text(request.nextUrl.searchParams.get("list")).toUpperCase();
     const cari = text(request.nextUrl.searchParams.get("q")).toUpperCase();
 
@@ -120,13 +148,196 @@ export async function GET(request: NextRequest) {
         lists.set(row.listName, entry);
     }
 
+    // Kode distributor kita, DITURUNKAN dari batch laporan principal terakhir ("1201671 -
+    // SURYA PERKASA, CV - MAKASSAR") dan bukan ditulis mati di layar. Lampiran surat memuat
+    // outlet seluruh distributor nasional, jadi kode inilah yang menentukan mana milik kita.
+    const [batch] = await db.select({ branch: principalOrderBatch.branch })
+        .from(principalOrderBatch).orderBy(desc(principalOrderBatch.uploadedAt)).limit(1);
+    const distCode = /^\s*(\d{7})/.exec(String(batch?.branch ?? ""))?.[1] ?? "";
+
     return NextResponse.json({
         ok: true,
         lists: [...lists.values()].sort((a, b) => a.name.localeCompare(b.name)),
         total: rows.length,
+        distCode,
         members: disaring.slice(0, 1000),
         truncated: Math.max(disaring.length - 1000, 0),
     });
+}
+
+/**
+ * Menyimpan anggota hasil penerjemahan kode. Satu pintu untuk ketiga jalurnya — ketik, berkas,
+ * dan surat — supaya tidak ada jalur yang diam-diam memuat kode yang tidak terbukti.
+ */
+async function simpanAnggota(rows: (typeof promoOutlet.$inferInsert)[], email: string): Promise<number> {
+    if (!rows.length) return 0;
+    // `excluded.*` supaya TIAP baris memperbarui dirinya sendiri: menulis nilai satu baris ke
+    // seluruh kembar akan menyeragamkan nama dan kode principal yang justru berbeda per outlet.
+    const ditulis = await db.insert(promoOutlet).values(rows)
+        .onConflictDoUpdate({
+            target: [promoOutlet.listName, promoOutlet.customerCode],
+            set: {
+                customerName: sql`excluded.customer_name`, tier: sql`excluded.tier`,
+                sourceCode: sql`excluded.source_code`,
+                periodStart: sql`excluded.period_start`, periodEnd: sql`excluded.period_end`,
+                active: sql`excluded.active`, note: sql`excluded.note`,
+                importedBy: email, importedAt: new Date(),
+            },
+        })
+        .returning({ id: promoOutlet.id });
+    return ditulis.length;
+}
+
+/**
+ * Unggah daftar peserta: SURAT PDF, atau berkas terpisah (xlsx/csv).
+ *
+ * Yang dari SURAT lebih dipercaya dan karena itu lebih disukai: daftarnya memang bagian dari
+ * surat itu, jadi tidak ada langkah menyalin yang bisa meleset, dan nama daftarnya adalah nomor
+ * suratnya sendiri. Berkas terpisah tetap ada karena sebagian daftar memang datang terpisah —
+ * peserta loyalty kuartalan tidak tercetak di surat mana pun.
+ */
+async function unggah(request: NextRequest, email: string) {
+    let form: FormData;
+    try {
+        form = await request.formData();
+    } catch {
+        return NextResponse.json({ ok: false, error: "Berkas tidak terbaca" }, { status: 400 });
+    }
+    const file = form.get("file");
+    if (!(file instanceof File)) return NextResponse.json({ ok: false, error: "Pilih berkasnya dulu" }, { status: 400 });
+    if (file.size > MAX_BYTES) return NextResponse.json({ ok: false, error: "Berkas lebih dari 20 MB" }, { status: 413 });
+
+    const principal = text(form.get("principal")) || "KINO NON FOOD";
+    const { mapping, internal } = await lookups(principal);
+    const resolve = resolverOf(mapping, internal);
+    const raw = new Uint8Array(await file.arrayBuffer());
+    const isPdf = /\.pdf$/i.test(file.name) || file.type === "application/pdf";
+
+    return isPdf ? dariSurat(raw, form, resolve, email) : dariBerkas(raw, form, resolve, email);
+}
+
+/** Surat PDF -> daftar peserta bernama nomor suratnya, lalu aturan surat itu ditunjuk ke sana. */
+async function dariSurat(
+    raw: Uint8Array, form: FormData, resolve: ReturnType<typeof resolverOf>, email: string,
+) {
+    const distCode = text(form.get("distCode"));
+    if (!/^\d{7}$/.test(distCode)) {
+        return NextResponse.json({ ok: false, error: "Isi kode distributor kita (tujuh angka) — lampiran surat memuat outlet seluruh distributor" }, { status: 422 });
+    }
+
+    // Surat Kino dicetak dari sistem mereka, jadi lapisan teksnya utuh dan tidak perlu OCR.
+    // Surat hasil scan akan menghasilkan halaman kosong, dan itu dilaporkan apa adanya.
+    const { extractText, getDocumentProxy } = await import("unpdf");
+    let pages: string[];
+    try {
+        const pdf = await getDocumentProxy(raw);
+        const hasil = await extractText(pdf, { mergePages: false });
+        pages = hasil.text as unknown as string[];
+    } catch (error) {
+        return NextResponse.json({ ok: false, error: `PDF tidak terbaca: ${error instanceof Error ? error.message : "gagal"}` }, { status: 422 });
+    }
+
+    const surat = readLetterOutlets(pages, distCode);
+    if (!surat.kodeAju) {
+        return NextResponse.json({ ok: false, error: "Nomor surat (Kode Aju) tidak tercetak pada halaman pertama — surat ini kemungkinan hasil scan, daftarnya harus diunggah terpisah" }, { status: 422 });
+    }
+    if (!surat.outlets.length) {
+        const ada = surat.distributors.slice(0, 12).map((d) => `${d.code} ${d.name} (${d.outlets})`).join("; ");
+        return NextResponse.json({
+            ok: false,
+            error: surat.distributors.length
+                ? `Tidak ada outlet berkode distributor ${distCode} pada lampiran ${surat.kodeAju}. Yang ada: ${ada}`
+                : `Surat ${surat.kodeAju} tidak punya halaman lampiran outlet yang terbaca`,
+        }, { status: 422 });
+    }
+
+    const listName = surat.kodeAju.toUpperCase();
+    const rows: (typeof promoOutlet.$inferInsert)[] = [];
+    const ditolak: string[] = [];
+    const sudah = new Set<string>();
+    for (const outlet of surat.outlets) {
+        const hasil = resolve(outlet.outletCode);
+        if ("error" in hasil) { ditolak.push(`${outlet.outletCode} (${outlet.label}): ${hasil.error}`); continue; }
+        if (sudah.has(hasil.code)) continue;
+        sudah.add(hasil.code);
+        rows.push({
+            listName, customerCode: hasil.code, customerName: hasil.name,
+            tier: "", sourceCode: outlet.outletCode,
+            periodStart: text(form.get("periodStart")).slice(0, 10) || null,
+            periodEnd: text(form.get("periodEnd")).slice(0, 10) || null,
+            active: true, note: `dari lampiran surat ${surat.kodeAju}`, importedBy: email,
+        });
+    }
+    const ditambah = await simpanAnggota(rows, email);
+
+    // Aturan surat ini LANGSUNG ditunjuk ke daftarnya. Itu memang maksud lampirannya: surat yang
+    // membawa daftar outlet berlaku HANYA untuk outlet itu. Membiarkan langkah ini manual berarti
+    // daftarnya ada, terlihat benar di layar, dan tidak menahan apa pun.
+    const ditunjuk = await db.update(promoRule)
+        .set({ outletList: listName, outletListMode: "INCLUDE" })
+        .where(eq(promoRule.suratProgram, surat.kodeAju))
+        .returning({ id: promoRule.id });
+
+    return NextResponse.json({
+        ok: true, sumber: "surat", listName, program: surat.program,
+        // Angkanya wajib menjumlah: diminta = ditambah + ditolak + kembar. Selisih yang tidak
+        // dijelaskan membuat orang mengira ada baris yang hilang diam-diam.
+        ditambah, diminta: surat.outlets.length, kembar: surat.outlets.length - ditolak.length - rows.length,
+        ditolak: ditolak.slice(0, 50),
+        aturanDitunjuk: ditunjuk.length,
+        catatan: [
+            ...(ditunjuk.length === 0
+                ? [`Aturan surat ${surat.kodeAju} belum dimuat, jadi belum ada yang bisa ditunjuk ke daftar ini. Muat aturannya dulu lewat Rekap Promo.`]
+                : []),
+            ...(surat.skipped > 0 ? [`${surat.skipped} baris lampiran tidak terbaca sebagai baris outlet.`] : []),
+        ],
+    });
+}
+
+/** Berkas terpisah (xlsx/csv) dengan kolom TEMPLATE_HEADER. */
+async function dariBerkas(
+    raw: Uint8Array, form: FormData, resolve: ReturnType<typeof resolverOf>, email: string,
+) {
+    const listName = text(form.get("listName")).toUpperCase();
+    if (!listName) return NextResponse.json({ ok: false, error: "Nama daftar wajib diisi untuk berkas terpisah" }, { status: 422 });
+
+    let sheet: Record<string, unknown>[];
+    try {
+        const book = XLSX.read(raw, { type: "array" });
+        sheet = XLSX.utils.sheet_to_json<Record<string, unknown>>(book.Sheets[book.SheetNames[0]], { defval: "" });
+    } catch (error) {
+        return NextResponse.json({ ok: false, error: `Berkas tidak terbaca: ${error instanceof Error ? error.message : "gagal"}` }, { status: 422 });
+    }
+
+    const pick = (row: Record<string, unknown>, ...names: string[]) => {
+        const key = Object.keys(row).find((k) => names.includes(k.trim().toUpperCase().replace(/\s+/g, " ")));
+        return key ? text(row[key]) : "";
+    };
+    const rows: (typeof promoOutlet.$inferInsert)[] = [];
+    const ditolak: string[] = [];
+    const sudah = new Set<string>();
+    sheet.forEach((row, index) => {
+        const kode = pick(row, "KODE_OUTLET", "KODE OUTLET", "KODE", "KODE INTERNAL", "KODE PELANGGAN");
+        if (!kode) return;
+        const hasil = resolve(kode);
+        if ("error" in hasil) { ditolak.push(`baris ${index + 2}: ${hasil.error}`); return; }
+        if (sudah.has(hasil.code)) return;
+        sudah.add(hasil.code);
+        rows.push({
+            listName, customerCode: hasil.code, customerName: hasil.name,
+            tier: pick(row, "TINGKAT", "TIER", "KELAS").toUpperCase(),
+            sourceCode: hasil.source,
+            periodStart: (pick(row, "MULAI", "PERIOD_START", "PERIODE MULAI") || text(form.get("periodStart"))).slice(0, 10) || null,
+            periodEnd: (pick(row, "SAMPAI", "PERIOD_END", "PERIODE SAMPAI") || text(form.get("periodEnd"))).slice(0, 10) || null,
+            active: true, note: pick(row, "CATATAN", "KETERANGAN", "NOTE"), importedBy: email,
+        });
+    });
+    if (!rows.length) {
+        return NextResponse.json({ ok: false, error: `Tidak ada kode yang bisa dipakai. ${ditolak.slice(0, 5).join("; ")}` }, { status: 422 });
+    }
+    const ditambah = await simpanAnggota(rows, email);
+    return NextResponse.json({ ok: true, sumber: "berkas", listName, ditambah, diminta: sheet.length,
+        kembar: sheet.length - ditolak.length - rows.length, ditolak: ditolak.slice(0, 50), catatan: [] });
 }
 
 /**
@@ -141,6 +352,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
     const gate = await gateOf("summary.edit");
     if (gate.response) return gate.response;
+    if ((request.headers.get("content-type") ?? "").includes("multipart/form-data")) {
+        return unggah(request, gate.email!);
+    }
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body) return NextResponse.json({ ok: false, error: "Isian tidak terbaca" }, { status: 400 });
 
@@ -176,24 +390,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: false, error: `Tidak ada kode yang bisa dipakai. ${ditolak.join("; ")}` }, { status: 422 });
     }
 
-    // `excluded.*` supaya TIAP baris memperbarui dirinya sendiri: menulis nilai satu baris ke
-    // seluruh kembar akan menyeragamkan nama dan kode principal yang justru berbeda per outlet.
-    const ditulis = await db.insert(promoOutlet).values(rows)
-        .onConflictDoUpdate({
-            target: [promoOutlet.listName, promoOutlet.customerCode],
-            set: {
-                customerName: sql`excluded.customer_name`, tier: sql`excluded.tier`,
-                sourceCode: sql`excluded.source_code`,
-                periodStart: sql`excluded.period_start`, periodEnd: sql`excluded.period_end`,
-                active: sql`excluded.active`, note: sql`excluded.note`,
-                importedBy: gate.email!, importedAt: new Date(),
-            },
-        })
-        .returning({ id: promoOutlet.id });
+    const ditambah = await simpanAnggota(rows, gate.email!);
 
     return NextResponse.json({
-        ok: true, listName, ditambah: ditulis.length, diminta: kode.length,
-        ditolak: ditolak.slice(0, 50),
+        ok: true, sumber: "ketik", listName, ditambah, diminta: kode.length,
+        kembar: kode.length - ditolak.length - rows.length, ditolak: ditolak.slice(0, 50), catatan: [],
     });
 }
 
