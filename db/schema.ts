@@ -233,6 +233,21 @@ export const promoOutlet = pgTable("promo_outlet", {
     index("idx_promo_outlet_list").on(t.listName),
 ]);
 
+// Hasil OCR surat program (Mistral OCR 4.1), disimpan supaya surat yang sama tidak ditagih
+// dua kali. OCR dibayar per halaman, dan mengunggah ulang surat yang sama adalah hal yang
+// wajar — pesan galat kita sendiri yang menyuruhnya. Kuncinya HASH ISI berkas, bukan namanya.
+export const promoLetterOcr = pgTable("promo_letter_ocr", {
+    sourceHash: text("source_hash").notNull(),
+    model: text("model").notNull(),
+    pipelineVersion: text("pipeline_version").notNull(),
+    result: jsonb("result").notNull(),
+    pageCount: integer("page_count").notNull().default(0),
+    createdBy: text("created_by").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    primaryKey({ columns: [t.sourceHash, t.model, t.pipelineVersion] }),
+]);
+
 // Master cabang Accurate. Penomoran faktur Accurate berjalan PER CABANG, dan harga jual
 // juga per cabang, jadi id cabang di sini adalah id milik Accurate — bukan id lokal.
 export const branch = pgTable("branch", {

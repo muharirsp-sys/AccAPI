@@ -17,12 +17,14 @@
  * dengan yang dipakai jalur order; menebaknya dari nama tidak pernah dilakukan di sini.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
-import { customer, principalMapping, principalOrderBatch, promoOutlet, promoRule } from "@/db/schema";
+import { customer, principalMapping, principalOrderBatch, promoLetterOcr, promoOutlet, promoRule } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { readLetterOutlets } from "@/lib/promo-letter";
+import { fromOcrRows, letterHead, readLetterOutlets, type LetterAttachment } from "@/lib/promo-letter";
+import { ocrLetterOutlets, ocrStatus, OCR_MODEL, OCR_VERSION, type OcrLetterResult } from "@/lib/promo-letter-ocr";
+import { createHash } from "node:crypto";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -207,7 +209,7 @@ async function unggah(request: NextRequest, email: string) {
     if (!(file instanceof File)) return NextResponse.json({ ok: false, error: "Pilih berkasnya dulu" }, { status: 400 });
     if (file.size > MAX_BYTES) return NextResponse.json({ ok: false, error: "Berkas lebih dari 20 MB" }, { status: 413 });
 
-    const principal = text(form.get("principal")) || "KINO NON FOOD";
+    const principal = principalOf(form);
     const { mapping, internal } = await lookups(principal);
     const resolve = resolverOf(mapping, internal);
     const raw = new Uint8Array(await file.arrayBuffer());
@@ -216,39 +218,111 @@ async function unggah(request: NextRequest, email: string) {
     return isPdf ? dariSurat(raw, form, resolve, email) : dariBerkas(raw, form, resolve, email);
 }
 
+const principalOf = (form: FormData) => text(form.get("principal")) || "KINO NON FOOD";
+
+/**
+ * OCR sekali saja untuk satu isi berkas. Hasilnya disimpan berkunci HASH ISI — bukan nama
+ * berkas — karena surat yang sama sering dikirim ulang dengan nama berbeda, dan karena pesan
+ * galat kita sendiri menyuruh orang mencoba lagi dengan kode distributor yang dibetulkan.
+ * Tanpa simpanan ini, percobaan kedua ditagih ulang untuk dokumen yang isinya persis sama.
+ */
+async function bacaDenganOcr(
+    raw: Uint8Array, sourceHash: string, principal: string, email: string,
+): Promise<OcrLetterResult> {
+    const [tersimpan] = await db.select({ result: promoLetterOcr.result })
+        .from(promoLetterOcr)
+        .where(and(eq(promoLetterOcr.sourceHash, sourceHash), eq(promoLetterOcr.model, OCR_MODEL),
+            eq(promoLetterOcr.pipelineVersion, OCR_VERSION)));
+    if (tersimpan) return tersimpan.result as OcrLetterResult;
+
+    // Katalog kode pelanggan principal ini: dipakai model untuk MENJANGKARKAN kode yang
+    // terbaca, bukan untuk menebaknya. Sama alasannya dengan katalog barang pada jalur Summary.
+    const katalog = await db.select({ code: principalMapping.sourceCode, target: principalMapping.targetCode })
+        .from(principalMapping)
+        .where(and(eq(principalMapping.principal, principal), eq(principalMapping.kind, "customer")));
+    const hasil = await ocrLetterOutlets(raw, katalog.map((row) => ({ code: row.code, name: row.target })), principal);
+
+    // Disimpan HANYA kalau utuh: hasil parsial sudah ditolak lebih dulu di dalam pembacanya.
+    await db.insert(promoLetterOcr).values({
+        sourceHash, model: hasil.model, pipelineVersion: hasil.pipelineVersion,
+        result: hasil, pageCount: hasil.pageCount, createdBy: email,
+    }).onConflictDoNothing();
+    return hasil;
+}
+
 /** Surat PDF -> daftar peserta bernama nomor suratnya, lalu aturan surat itu ditunjuk ke sana. */
 async function dariSurat(
     raw: Uint8Array, form: FormData, resolve: ReturnType<typeof resolverOf>, email: string,
 ) {
     const distCode = text(form.get("distCode"));
-    if (!/^\d{7}$/.test(distCode)) {
-        return NextResponse.json({ ok: false, error: "Isi kode distributor kita (tujuh angka) — lampiran surat memuat outlet seluruh distributor" }, { status: 422 });
-    }
+    const sourceHash = createHash("sha256").update(raw).digest("hex");
 
-    // Surat Kino dicetak dari sistem mereka, jadi lapisan teksnya utuh dan tidak perlu OCR.
-    // Surat hasil scan akan menghasilkan halaman kosong, dan itu dilaporkan apa adanya.
-    const { extractText, getDocumentProxy } = await import("unpdf");
-    let pages: string[];
+    // JALUR SATU — lapisan teks. Gratis, dan untuk surat yang dicetak dari sistem principal
+    // (Kino) justru paling tepat: tidak ada yang perlu ditafsirkan. Membacanya dengan OCR
+    // hanya menambah biaya dan risiko salah baca.
+    let pages: string[] = [];
     try {
+        const { extractText, getDocumentProxy } = await import("unpdf");
         const pdf = await getDocumentProxy(raw);
         const hasil = await extractText(pdf, { mergePages: false });
         pages = hasil.text as unknown as string[];
-    } catch (error) {
-        return NextResponse.json({ ok: false, error: `PDF tidak terbaca: ${error instanceof Error ? error.message : "gagal"}` }, { status: 422 });
+    } catch {
+        // PDF tanpa lapisan teks yang bisa dibuka bukan alasan berhenti — justru itu kandidat
+        // OCR. Yang benar-benar rusak akan gagal lagi di bawah, dengan sebabnya sendiri.
+        pages = [];
     }
 
-    const surat = readLetterOutlets(pages, distCode);
+    let surat: LetterAttachment = readLetterOutlets(pages, distCode);
+    let sumberTeks = "lapisan teks";
+    let ocrPages = 0;
+    const catatan: string[] = [];
+
+    // JALUR DUA — Mistral OCR 4.1, sama dengan yang dipakai Summary Promo di produksi.
+    // Dipakai hanya kalau jalur teks tidak menghasilkan apa-apa: surat hasil scan (delapan dari
+    // tiga puluh surat September memang scan murni), atau surat principal lain yang tabelnya
+    // tidak berbentuk seperti punya Kino. Biayanya per halaman, jadi ia TIDAK PERNAH dipanggil
+    // ketika lapisan teksnya sudah menjawab.
+    const perluOcr = surat.outlets.length === 0 && surat.distributors.length === 0;
+    if (perluOcr) {
+        const config = ocrStatus();
+        if (!config.configured) {
+            return NextResponse.json({
+                ok: false,
+                error: "Surat ini tidak punya lapisan teks (hasil scan) dan MISTRAL_API_KEY belum dikonfigurasi di server, jadi tidak ada yang bisa membacanya. Set kuncinya, atau unggah daftarnya sebagai berkas terpisah.",
+            }, { status: 422 });
+        }
+        let hasil: OcrLetterResult;
+        try {
+            hasil = await bacaDenganOcr(raw, sourceHash, principalOf(form), email);
+        } catch (error) {
+            return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "OCR gagal" }, { status: 422 });
+        }
+        sumberTeks = `Mistral ${hasil.model}`;
+        ocrPages = hasil.pageCount;
+        surat = fromOcrRows(hasil.rows, letterHead(hasil.pages[0] ?? ""), distCode);
+        catatan.push(...hasil.warnings.slice(0, 20));
+    }
+
     if (!surat.kodeAju) {
-        return NextResponse.json({ ok: false, error: "Nomor surat (Kode Aju) tidak tercetak pada halaman pertama — surat ini kemungkinan hasil scan, daftarnya harus diunggah terpisah" }, { status: 422 });
+        return NextResponse.json({
+            ok: false,
+            error: `Nomor surat (Kode Aju) tidak terbaca pada halaman pertama${perluOcr ? " meski sudah lewat OCR" : ""}. Tanpa nomor surat, daftarnya tidak punya nama — unggah daftarnya sebagai berkas terpisah dan beri nama sendiri.`,
+        }, { status: 422 });
     }
     if (!surat.outlets.length) {
         const ada = surat.distributors.slice(0, 12).map((d) => `${d.code} ${d.name} (${d.outlets})`).join("; ");
         return NextResponse.json({
             ok: false,
             error: surat.distributors.length
-                ? `Tidak ada outlet berkode distributor ${distCode} pada lampiran ${surat.kodeAju}. Yang ada: ${ada}`
-                : `Surat ${surat.kodeAju} tidak punya halaman lampiran outlet yang terbaca`,
+                ? `Tidak ada outlet berkode distributor "${distCode}" pada lampiran ${surat.kodeAju}. Yang ada: ${ada}`
+                : `Surat ${surat.kodeAju} tidak punya halaman lampiran outlet yang terbaca (dibaca lewat ${sumberTeks})`,
         }, { status: 422 });
+    }
+    // Lampiran tanpa kolom distributor = seluruh daftarnya milik kita. Itu memang bentuk surat
+    // yang dikirim per distributor, tetapi WAJIB disebut: kalau ternyata ada kolomnya dan model
+    // melewatkannya, kita baru saja memuat outlet milik distributor lain.
+    if (surat.tanpaKodeDist) {
+        catatan.push("Lampiran ini tidak punya kolom distributor, jadi SELURUH barisnya dimuat sebagai peserta. Periksa sekali bahwa daftarnya memang khusus untuk kita.");
     }
 
     const listName = surat.kodeAju.toUpperCase();
@@ -279,13 +353,14 @@ async function dariSurat(
         .returning({ id: promoRule.id });
 
     return NextResponse.json({
-        ok: true, sumber: "surat", listName, program: surat.program,
+        ok: true, sumber: "surat", listName, program: surat.program, sumberTeks, ocrPages,
         // Angkanya wajib menjumlah: diminta = ditambah + ditolak + kembar. Selisih yang tidak
         // dijelaskan membuat orang mengira ada baris yang hilang diam-diam.
         ditambah, diminta: surat.outlets.length, kembar: surat.outlets.length - ditolak.length - rows.length,
         ditolak: ditolak.slice(0, 50),
         aturanDitunjuk: ditunjuk.length,
         catatan: [
+            ...catatan,
             ...(ditunjuk.length === 0
                 ? [`Aturan surat ${surat.kodeAju} belum dimuat, jadi belum ada yang bisa ditunjuk ke daftar ini. Muat aturannya dulu lewat Rekap Promo.`]
                 : []),

@@ -106,8 +106,11 @@ export default function DaftarOutlet() {
             const body = await res.json();
             if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal membaca berkas");
             const kembar = body.kembar > 0 ? `, ${body.kembar} kembar digabung` : "";
+            // Sumber bacaannya DISEBUT: yang lewat OCR itu berbayar per halaman, dan yang
+            // mengunggah berhak tahu kapan ia membayar dan kapan tidak.
+            const lewat = body.ocrPages > 0 ? ` (dibaca ${body.sumberTeks}, ${body.ocrPages} halaman)` : "";
             toast.success(body.sumber === "surat"
-                ? `Surat ${body.listName}: ${body.ditambah} outlet peserta dimuat${kembar}, ${body.aturanDitunjuk} aturan surat ini ditunjuk ke daftarnya`
+                ? `Surat ${body.listName}: ${body.ditambah} outlet peserta dimuat${kembar}, ${body.aturanDitunjuk} aturan surat ini ditunjuk ke daftarnya${lewat}`
                 : `${body.ditambah} outlet masuk daftar ${body.listName}${kembar}`);
             for (const alasan of (body.ditolak ?? []) as string[]) toast.warning(alasan, { duration: 12000 });
             for (const nota of (body.catatan ?? []) as string[]) toast.info(nota, { duration: 12000 });
@@ -171,6 +174,11 @@ export default function DaftarOutlet() {
                 langkah menyalin, jadi tidak ada yang bisa meleset saat menyalin. Gunakan <strong>Template</strong> +
                 berkas terpisah hanya untuk daftar yang memang <em>tidak</em> tercetak di surat mana pun — peserta
                 loyalty kuartalan, misalnya.
+                <br /><br />
+                <strong>Surat hasil scan tetap terbaca.</strong> Kalau suratnya tidak punya lapisan teks, sistem
+                otomatis membacanya dengan <strong>Mistral OCR 4.1</strong> — mesin yang sama dengan Summary Promo di
+                produksi. OCR itu <em>berbayar per halaman</em>, jadi ia hanya dipakai kalau lapisan teksnya memang
+                tidak menjawab, dan hasilnya disimpan supaya surat yang sama tidak pernah ditagih dua kali.
             </p>
 
             <div className="flex flex-wrap items-end gap-2">

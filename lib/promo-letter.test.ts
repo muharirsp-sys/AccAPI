@@ -2,7 +2,7 @@
    memberi program milik distributor lain kepada outlet kita, atau sebaliknya. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readLetterOutlets } from "./promo-letter.ts";
+import { fromOcrRows, letterHead, readLetterOutlets } from "./promo-letter.ts";
 
 // Baris asli BP2609007909 (halaman 2), apa adanya hasil bacaan lapisan teks suratnya.
 const kop = [
@@ -71,4 +71,56 @@ test("surat hasil scan menghasilkan lampiran kosong, bukan daftar karangan", () 
     const hasil = readLetterOutlets(["", ""], "1201671");
     assert.deepEqual(hasil.outlets, []);
     assert.equal(hasil.kodeAju, "");
+});
+
+test("hasil OCR: yang jelas bukan kode ditolak, sisanya tetap disaring per distributor", () => {
+    const hasil = fromOcrRows([
+        { kode_dist: "1201671", nama_dist: "SURYA PERKASA, CV - MAKASSAR", kode_outlet: "5191202075409", nama_outlet: "BAJI PAMAI CBA0003" },
+        { kode_dist: "1201671", nama_dist: "SURYA PERKASA, CV - MAKASSAR", kode_outlet: "5191202076135", nama_outlet: "WANG MART CWA0012" },
+        // Sel yang tidak terbaca pada hasil scan: bukan kode, jadi jadi LUBANG yang terlihat.
+        { kode_dist: "1201671", nama_dist: "SURYA PERKASA, CV - MAKASSAR", kode_outlet: "tidak terbaca", nama_outlet: "?" },
+        { kode_dist: "1201937", nama_dist: "JB DISTRIBUSI, CV - LOMBOK", kode_outlet: "1937JBD0123", nama_outlet: "CV MATAHARI" },
+    ], { kodeAju: "BP2609007909", program: "MTI - HPC CONSUMER PROMO ON PO" }, "1201671");
+
+    assert.deepEqual(hasil.outlets.map((o) => o.outletCode), ["5191202075409", "5191202076135"]);
+    assert.equal(hasil.skipped, 1);
+    assert.equal(hasil.kodeAju, "BP2609007909");
+    assert.equal(hasil.tanpaKodeDist, false);
+    // Distributor lain tetap terhitung, supaya kode yang salah ketik tetap bisa ditunjukkan.
+    assert.equal(hasil.distributors.length, 2);
+});
+
+test("lampiran principal LAIN: kode beraksara dan tanpa kolom distributor tetap terbaca", () => {
+    // Bentuk nyata surat URC "PROMO TOKO ONLINE SEPTEMBER 2026 - SULAWESI 1": kode toko sudah
+    // kode Accurate (`C-BRI002`) dan kode distributornya beraksara (`SUR030`) — dua-duanya
+    // gagal kalau dipaksa memakai jangkar Kino (tujuh angka / diawali angka).
+    const berdist = fromOcrRows([
+        { kode_dist: "SUR030", nama_dist: "CV SURYA PERKASA", kode_outlet: "C-BRI002", nama_outlet: "BRILLIAN KEVIN" },
+        { kode_dist: "SUR030", nama_dist: "CV SURYA PERKASA", kode_outlet: "C-ZEL790", nama_outlet: "ZELAN STORE" },
+        { kode_dist: "NUR011", nama_dist: "CV NURHIDAYAT", kode_outlet: "C-LAIN01", nama_outlet: "MILIK ORANG LAIN" },
+    ], { kodeAju: "542/TMDH1/8/26", program: "PROMO TOKO ONLINE" }, "SUR030");
+    assert.deepEqual(berdist.outlets.map((o) => o.outletCode), ["C-BRI002", "C-ZEL790"]);
+
+    // Lampiran yang memang TIDAK punya kolom distributor: seluruh daftarnya milik kita, karena
+    // surat seperti itu memang dikirim per distributor. Tetap ditandai supaya terlihat.
+    const tanpa = fromOcrRows([
+        { kode_dist: "", nama_dist: "", kode_outlet: "C-BRI002", nama_outlet: "BRILLIAN KEVIN" },
+        { kode_dist: "", nama_dist: "", kode_outlet: "C-ZEL790", nama_outlet: "ZELAN STORE" },
+    ], { kodeAju: "542/TMDH1/8/26", program: "PROMO TOKO ONLINE" }, "SUR030");
+    assert.equal(tanpa.outlets.length, 2);
+    assert.equal(tanpa.tanpaKodeDist, true);
+    assert.deepEqual(tanpa.distributors, []);
+});
+
+test("kop surat dibaca sama dari lapisan teks maupun dari markdown OCR", () => {
+    assert.deepEqual(letterHead("Kode Aju : BP2609007909\nNama Program Promo : MTI - HPC"),
+        { kodeAju: "BP2609007909", program: "MTI - HPC" });
+    // Markdown OCR membubuhi tebal; nilainya tetap harus keluar.
+    assert.equal(letterHead("**Kode Aju** : BP2609007713").kodeAju, "BP2609007713");
+    assert.deepEqual(letterHead("halaman tanpa kop"), { kodeAju: "", program: "" });
+});
+
+test("kop dalam bentuk TABEL markdown juga terbaca", () => {
+    assert.equal(letterHead("| Kode Aju | BP2609006016 |\n| Nama Program Promo | MSG ALL BRAND |").kodeAju, "BP2609006016");
+    assert.equal(letterHead("| Kode Aju | BP2609006016 |\n| Nama Program Promo | MSG ALL BRAND |").program, "MSG ALL BRAND");
 });
