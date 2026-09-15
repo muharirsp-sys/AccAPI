@@ -60,7 +60,11 @@ def main():
     assert again["result"]["discount"] == "500.00", again["result"]
     assert len(again["sources"]) == 1, again["sources"]
     # Dua surat terbit, keduanya tidak boleh digabung: yang lebih dulu terbit menang, bukan yang ID-nya kebetulan kecil.
-    newer = client.post("/orders", headers=SALES, json=body).json()["order"]
+    # Order kedua dengan isi yang SAMA ditahan gerbang order ganda — memang itu gunanya.
+    # Di sini ia sengaja dikonfirmasi, persis seperti admin yang sudah memeriksanya.
+    ditahan = client.post("/orders", headers=SALES, json=body)
+    assert ditahan.status_code == 409 and "bukan order ganda" in ditahan.json()["detail"], ditahan.text
+    newer = client.post("/orders", headers=SALES, json={**body, "confirm_duplicate": True}).json()["order"]
     assert newer["result"]["discount"] == "500.00", newer["result"]
     assert newer["result"]["applications"][0]["program_id"].endswith(":P1"), newer["result"]["applications"]
     assert len(newer["sources"]) == 2 and newer["sources"][0]["draft_id"] == first, newer["sources"]

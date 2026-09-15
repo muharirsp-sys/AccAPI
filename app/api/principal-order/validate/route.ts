@@ -12,14 +12,15 @@
  * benar-benar dilihat manusia.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { customer, item, principalMapping, principalOrderBatch, principalOrderLine, promoOutlet, promoRule } from "@/db/schema";
+import { customer, item, orderDupeAck, principalMapping, principalOrderBatch, principalOrderLine, promoOutlet, promoRule } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { syncItemPrices } from "@/lib/item-price-sync";
 import { berlakuPada, bonusQuota, checkLine, checkSoPromo, isBonusLine, matchItemRule, outletAllowed,
     outletListsOn, splitDiscounts, type DiscountAt, type PublishedRule } from "@/lib/principal-validation";
+import { duplicateFinding, findDuplicate, type OrderFingerprint } from "@/lib/order-duplicate";
 
 export const runtime = "nodejs";
 
@@ -254,6 +255,55 @@ export async function POST(request: NextRequest) {
         }
     }
 
+    // GERBANG ORDER GANDA. Satu SO yang outletnya sama dan barangnya MIRIP dengan SO lain pada
+    // tanggal yang sama ditahan sampai ada manusia yang menyatakan ia sudah memeriksanya.
+    //
+    // Yang dicari bukan yang identik saja. Order ganda yang isinya persis sama masih mungkin
+    // ketahuan mata; yang berbahaya justru yang hampir sama — satu order diketik ulang karena
+    // yang pertama dikira gagal, lalu satu barang ditambah. Keduanya lalu terlihat sebagai order
+    // berbeda, dan barangnya keluar gudang dua kali.
+    //
+    // Dibandingkan dengan SO pada batch INI maupun batch lain milik principal yang sama: order
+    // ganda paling sering justru lahir dari unggahan kedua, bukan dari satu berkas.
+    const dupeFindings = new Map<string, string>();
+    {
+        const perSo = new Map<string, OrderFingerprint>();
+        for (const line of lines) {
+            const soNo = String(line.soNo);
+            const entry = perSo.get(soNo) ?? {
+                key: soNo, outlet: String(line.customerCode ?? ""), orderDate: dateOf(line), itemCodes: [],
+            };
+            entry.itemCodes.push(items.get(line.productCode) ?? line.productCode);
+            perSo.set(soNo, entry);
+        }
+        const lain = await db.select({
+            soNo: principalOrderLine.soNo, soDate: principalOrderLine.soDate,
+            customerCode: principalOrderLine.customerCode, productCode: principalOrderLine.productCode,
+            itemCode: principalOrderLine.itemCode,
+        }).from(principalOrderLine)
+            .innerJoin(principalOrderBatch, eq(principalOrderBatch.id, principalOrderLine.batchId))
+            .where(and(eq(principalOrderBatch.principal, batch.principal), ne(principalOrderLine.batchId, id)));
+        const perSoLain = new Map<string, OrderFingerprint>();
+        for (const row of lain) {
+            const soNo = String(row.soNo);
+            if (perSo.has(soNo)) continue; // SO yang sama dari unggahan lama bukan order kedua.
+            const entry = perSoLain.get(soNo) ?? {
+                key: soNo, outlet: String(row.customerCode ?? ""),
+                orderDate: String(row.soDate ?? "").slice(0, 10), itemCodes: [],
+            };
+            entry.itemCodes.push(row.itemCode || row.productCode);
+            perSoLain.set(soNo, entry);
+        }
+        const semua = [...perSo.values(), ...perSoLain.values()];
+        const sudahDikonfirmasi = new Set((await db.select({ soNo: orderDupeAck.soNo })
+            .from(orderDupeAck).where(eq(orderDupeAck.principal, batch.principal))).map((row) => row.soNo));
+        for (const [soNo, sidik] of perSo) {
+            if (sudahDikonfirmasi.has(soNo)) continue;
+            const hit = findDuplicate(sidik, semua);
+            if (hit) dupeFindings.set(soNo, duplicateFinding(hit, `SO ${soNo}`));
+        }
+    }
+
     let ok = 0;
     let review = 0;
     await db.transaction(async (tx) => {
@@ -285,7 +335,10 @@ export async function POST(request: NextRequest) {
             // Temuan tingkat SO menahan SETIAP barisnya: nominalnya milik seluruh SO, jadi
             // tidak ada satu baris pun yang bisa dinyatakan benar sendirian.
             const sisi = soFindings.get(String(line.soNo)) ?? [];
-            const findings = sisi.length ? [...checked.findings, ...sisi] : checked.findings;
+            // Temuan order ganda juga menahan SELURUH SO: yang diduga ganda adalah ordernya,
+            // bukan satu barisnya.
+            const dupe = dupeFindings.get(String(line.soNo));
+            const findings = [...checked.findings, ...sisi, ...(dupe ? [dupe] : [])];
             const status = findings.length ? "review" : "ok";
             if (status === "ok") ok += 1; else review += 1;
 
