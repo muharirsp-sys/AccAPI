@@ -216,6 +216,21 @@ test("MSG: tier yang diambil adalah yang TERTINGGI yang ambangnya terlampaui", (
     assert.match(verdict.explained, /tier 2/);
 });
 
+test("MSG: ambang tier dibaca TERMASUK PPN, sama seperti manfaatnya", () => {
+    // NOVA COSMETIK 7 Sep 2026 (produksi): DPP 2.817.305 -> dengan PPN 3.127.208, jadi tier 3
+    // Rp 60.000. Kino memang memberi Rp 60.000 (DPP 54.058 x 1,11 = 60.004). Membandingkan DPP
+    // mentah dengan ambang menjatuhkannya ke tier 2 dan menuduh klaim yang benar.
+    const tiers = [
+        msg(), msg({ tierNo: 2, triggerQty: 2_000_000, benefitValue: "40000" }),
+        msg({ tierNo: 3, triggerQty: 3_000_000, benefitValue: "60000" }),
+    ];
+    const verdict = checkSoPromo({ gross: 2_817_304.8, principalClaim: 54_058, lineCount: 19 }, tiers);
+    assert.match(verdict.explained, /tier 3/);
+    assert.deepEqual(verdict.findings, []);
+    // Yang benar-benar di bawah ambang TETAP tidak dijelaskan: PPN bukan pintu belakang.
+    assert.equal(checkSoPromo({ gross: 800_000, principalClaim: 18_016, lineCount: 5 }, tiers).explained, "");
+});
+
 test("MSG: nominal yang tidak sesuai tier tetap ditahan", () => {
     const verdict = checkSoPromo({ gross: 1_198_378, principalClaim: 45_000, lineCount: 18 }, [msg()]);
     assert.equal(verdict.explained, "");
@@ -357,4 +372,31 @@ test("aturan yang sudah lewat masa berlakunya tidak menjelaskan apa pun", () => 
     assert.equal(berlakuPada(berlaku, "2026-08-31"), false);
     // Tanpa batas = berlaku kapan pun; itu yang dipakai tarif reguler tanpa periode.
     assert.equal(berlakuPada(aturan(), "2020-01-01"), true);
+});
+
+test("baris bonus: potongan 100% dijelaskan aturan BONUS_QTY, bebannya principal", () => {
+    // Bentuk nyata baris bonus: harga penuh lalu dipotong 100% di POSISI 1 (kolom distributor),
+    // sementara suratnya menulis "beli 30 gratis 1" — BONUS_QTY, bukan persen. Gerbang dan
+    // Rekap Promo wajib menjawab sama: dijelaskan, dan beban PRINCIPAL sesuai suratnya.
+    const bonusRule: PublishedRule = {
+        suratProgram: "BP2609007713", promoGroup: "RESIK V KHASIAT MANJAKANI",
+        itemCode: "K1010001006010", customerCode: "", tierNo: 1,
+        triggerQty: 30, triggerUnit: "PCS",
+        benefitType: "BONUS_QTY", benefitValue: "1", benefitBeban: "PRINCIPAL",
+    };
+    const bonusLine = { bonus: true, discounts: [{ position: 1, percent: 100 }], reportDiscount: 324324.32 };
+
+    const lolos = checkLine(line({ ...bonusLine, rules: [bonusRule] }));
+    assert.equal(lolos.status, "ok");
+    assert.equal(lolos.split.principal, 324324.32);
+    assert.equal(lolos.split.distributor, 0);
+
+    // Tanpa aturannya baris yang sama TETAP tertahan: angka 100 bukan surat.
+    assert.equal(checkLine(line({ ...bonusLine, rules: [] })).status, "review");
+    // Aturan bonus milik barang lain tidak meloloskannya.
+    assert.equal(checkLine(line({ ...bonusLine, rules: [{ ...bonusRule, itemCode: "K9999" }] })).status, "review");
+    // 100% BERSAMA potongan lain bukan baris bonus — itu keadaan yang belum pernah ada.
+    const campuran = checkLine(line({ bonus: true, rules: [bonusRule], reportDiscount: 324324.32,
+        discounts: [{ position: 1, percent: 100 }, { position: 4, percent: 3 }] }));
+    assert.equal(campuran.status, "review");
 });

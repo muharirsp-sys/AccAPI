@@ -16,7 +16,7 @@
  * Gerbang kita memang menahan keduanya sebelum faktur naik, tetapi faktur juga bisa dibuat
  * langsung di Accurate di luar jalur ini. Angka nol harus DIBUKTIKAN, bukan diasumsikan.
  */
-import { matchTariff, OWNER, splitDiscounts, TOLERANCE, type DiscountAt } from "@/lib/principal-validation";
+import { matchBonusRule, matchTariff, OWNER, splitDiscounts, TOLERANCE, type DiscountAt } from "@/lib/principal-validation";
 
 export type PromoRule = {
     principal: string;
@@ -204,7 +204,9 @@ export function fakturRuleFor(
         .filter((rule) => !rule.itemCode && rule.benefitBeban === beban && rule.benefitType === "DISC_RP"
             && rule.triggerUnit.toUpperCase() === "RP" && inPeriod(rule, transDate))
         .sort((a, b) => b.triggerQty - a.triggerQty);
-    const reached = tiers.find((tier) => gross >= tier.triggerQty);
+    // Ambang DAN manfaat sama-sama TERMASUK PPN; faktur membawa DPP, jadi keduanya
+    // dikembalikan. Lihat checkSoPromo — bukti yang sama, 15 faktur September di produksi.
+    const reached = tiers.find((tier) => cents(gross * (1 + PPN)) >= tier.triggerQty);
     if (!reached) return null;
     const expected = Number(reached.benefitValue);
     if (!Number.isFinite(expected)) return null;
@@ -332,7 +334,24 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
             itemCode: line.itemCode, itemName: line.itemName,
         };
 
-        for (const owner of ["distributor", "principal"] as const) {
+        // Baris BONUS ("beli 30 gratis 1") diputuskan lebih dulu dan sekaligus: faktur
+        // mencatatnya sebagai potongan 100% di posisi 1, jadi pencocokan persen per beban
+        // tidak akan pernah menemukannya dan seluruh nilainya jatuh ke tak bertuan. Diakui
+        // sebagai KLAIM PRINCIPAL sesuai bunyi suratnya (keputusan pengguna 2026-09-15).
+        const bonusRule = matchBonusRule(line.discounts, rules.filter((rule) => inPeriod(rule, line.transDate)), line.itemCode);
+        // Yang di posisi 1-5 saja; bonus di posisi di luar itu tetap jatuh ke blok tak
+        // bertuan di bawah, seperti di gerbang — dan tidak boleh ikut dihitung dua kali.
+        const bonusAmount = bonusRule ? cents(split.distributor + split.principal) : 0;
+        if (bonusRule && bonusAmount > 0) {
+            terpakai.add(kunci(bonusRule));
+            out.principal = cents(out.principal + bonusAmount);
+            add(bonusRule, bonusAmount, line.invoiceNo);
+            out.rows.push({ ...base, bucket: "principal", positions: positionsAt("distributor") || positionsAt("principal"),
+                percent: 100, amount: bonusAmount, suratProgram: bonusRule.suratProgram,
+                promoGroup: bonusRule.promoGroup, reason: "" });
+        }
+
+        for (const owner of (bonusRule && bonusAmount > 0) ? [] : (["distributor", "principal"] as const)) {
             const amount = owner === "distributor" ? split.distributor : split.principal;
             if (amount <= 0) continue;
             const percent = percentAt(owner);

@@ -152,6 +152,31 @@ export function matchItemRule(
     return cocok[0];
 }
 
+/**
+ * Baris BONUS. Suratnya menulis "setiap pembelian 30 PCS mendapat BONUS 1 PCS produk dengan
+ * harga yang sama" (`BONUS_QTY`), tetapi faktur maupun laporan principal mencatatnya sebagai
+ * baris tambahan berharga penuh lalu DIPOTONG 100% — satu-satunya potongan pada baris itu.
+ * Tidak ada pencocokan persen yang bisa menemukannya: manfaatnya "1 PCS", bukan "100%".
+ *
+ * Bebannya PRINCIPAL sesuai bunyi suratnya, MESKI 100%-nya duduk di posisi 1 alias kolom
+ * distributor. Posisi hanya menyatakan siapa yang DIMAKSUD menanggung; di sini suratnya yang
+ * menyatakannya, dan surat lebih kuat daripada letak kolom (keputusan pengguna 2026-09-15).
+ *
+ * Syaratnya sengaja sempit — TEPAT SATU potongan dan tepat 100%. Baris yang dipotong 100%
+ * bersama potongan lain bukan baris bonus; itu keadaan yang belum pernah ada dan tidak boleh
+ * lolos hanya karena mirip.
+ *
+ * Pemanggil WAJIB sudah menyaring `rules` ke tanggal barisnya.
+ */
+export function matchBonusRule<T extends { itemCode: string; customerCode: string; benefitType: string }>(
+    discounts: DiscountAt[], rules: T[], itemCode?: string | null,
+): T | null {
+    const worn = discounts.filter((entry) => entry.percent > 0);
+    if (worn.length !== 1 || Math.abs(cents(worn[0].percent - 100)) > 0.01) return null;
+    return rules.find((rule) => rule.benefitType === "BONUS_QTY" && !rule.customerCode
+        && rule.itemCode && (!itemCode || rule.itemCode === itemCode)) ?? null;
+}
+
 /** Aturan berlaku pada tanggal itu. Kosong di salah satu ujung = tidak dibatasi di ujung itu. */
 export function berlakuPada(rule: PublishedRule, date: string): boolean {
     return (!rule.periodStart || rule.periodStart <= date) && (!rule.periodEnd || date <= rule.periodEnd);
@@ -225,7 +250,14 @@ export function checkSoPromo(
     const tiers = rules
         .filter((rule) => !rule.itemCode && rule.benefitType === "DISC_RP" && rule.triggerUnit.toUpperCase() === "RP")
         .sort((a, b) => b.triggerQty - a.triggerQty);
-    const reached = tiers.find((tier) => input.gross >= tier.triggerQty);
+    // AMBANGNYA juga TERMASUK PPN, bukan hanya manfaatnya. Surat MSG menulis "MINIMAL
+    // TRANSAKSI 1JT - 1.99JT" — nilai yang dibayar outlet, sedangkan laporan membawa DPP.
+    // Membandingkan DPP dengan ambang bruto menjatuhkan SO ke tier di bawahnya dan menuduh
+    // klaim yang sebenarnya benar. Dibuktikan atas 15 faktur September di produksi: tier yang
+    // benar-benar diberi Kino cocok 15/15 dengan ambang termasuk PPN, dan hanya 10/15 dengan
+    // DPP (TK. SAWI 12, TK. ASMA, NOVA COSMETIK, APOTEK HUSADA FARMA, TRIPLE M meleset).
+    const grossWithTax = cents(input.gross * (1 + PPN));
+    const reached = tiers.find((tier) => grossWithTax >= tier.triggerQty);
     if (!reached) return { explained: "", findings: [] };
 
     const expected = Number(reached.benefitValue);
@@ -243,7 +275,7 @@ export function checkSoPromo(
         };
     }
     return {
-        explained: `${reached.suratProgram} tier ${reached.tierNo} (belanja >= Rp ${reached.triggerQty.toLocaleString("id-ID")} -> Rp ${expected.toLocaleString("id-ID")})`,
+        explained: `${reached.suratProgram} tier ${reached.tierNo} (belanja dengan PPN >= Rp ${reached.triggerQty.toLocaleString("id-ID")} -> Rp ${expected.toLocaleString("id-ID")})`,
         findings: [],
     };
 }
@@ -304,7 +336,20 @@ export function checkLine(line: LineInput): LineCheck {
     // Sebelumnya posisi 1-3 lolos begitu saja karena "toh beban sendiri" — tetapi potongan yang
     // tidak punya aturan bukan beban sendiri, ia potongan yang belum jelas milik siapa, dan
     // memberikannya lebih dulu lalu bertanya kemudian adalah cara kehilangan uang tanpa jejak.
-    for (const owner of ["distributor", "principal"] as const) {
+    // Baris bonus diputuskan lebih dulu dan SEKALIGUS: 100%-nya satu potongan utuh yang
+    // dijelaskan satu aturan, jadi memecahnya per beban hanya akan menuduh separuhnya.
+    const bonusRule = matchBonusRule(line.discounts, line.rules, line.itemCode);
+    if (bonusRule) {
+        // Beban dipindahkan ke principal supaya gerbang dan Rekap Promo memberi jawaban yang
+        // sama. Tanpa ini baris bonus tercatat beban distributor — mengaku menanggung barang
+        // yang menurut suratnya diberikan principal. `unowned` sengaja TIDAK ikut dipindah:
+        // bonus di posisi di luar 1-5 belum pernah ada, dan kalau muncul ia harus tetap
+        // tertahan, bukan disahkan oleh aturan yang kebetulan ada.
+        split.principal = cents(split.principal + split.distributor);
+        split.distributor = 0;
+    }
+
+    for (const owner of bonusRule ? [] : (["distributor", "principal"] as const)) {
         const amount = owner === "principal" ? split.principal : split.distributor;
         if (amount <= 0) continue;
         const beban = owner === "principal" ? "PRINCIPAL" : "DISTRIBUTOR";

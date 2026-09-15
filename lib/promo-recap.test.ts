@@ -154,6 +154,12 @@ test("potongan tingkat faktur (MSG) dicocokkan per FAKTUR, dengan PPN dikembalik
     assert.equal(fakturRuleFor([tier], "PRINCIPAL", "2026-09-12", 1_198_378, 17_000, 18), null);
     // Belanja di bawah ambang tidak menjelaskan apa pun.
     assert.equal(fakturRuleFor([tier], "PRINCIPAL", "2026-09-12", 500_000, 18_016.22, 18), null);
+
+    // NOVA COSMETIK 7 Sep 2026 (produksi): DPP 2.817.305 = 3.127.208 dengan PPN -> tier 3.
+    // Ambangnya wajib dibaca termasuk PPN, sama seperti manfaatnya; dengan DPP mentah faktur
+    // ini jatuh ke tier 2 dan Rp 54.058 yang sah ikut tercatat tak bertuan.
+    const tier3 = { ...tier, tierNo: 3, triggerQty: 3_000_000, benefitValue: "60000" };
+    assert.equal(fakturRuleFor([tier, tier3], "PRINCIPAL", "2026-09-07", 2_817_304.8, 54_058, 19)?.tierNo, 3);
 });
 
 test("raw_data yang tersimpan sebagai TEKS JSON tetap terbaca", () => {
@@ -272,4 +278,37 @@ test("pemeriksaan tarif: yang menganggur dan outlet yang potongannya tanpa atura
     assert.equal(outlet.amount, hasil.unowned);
     assert.deepEqual(outlet.positions, ["4"]);
     assert.deepEqual(outlet.percents, [3]);
+});
+
+test("baris bonus: potongan 100% dijelaskan aturan BONUS_QTY dan diakui klaim principal", () => {
+    // KOSMETIK MUNAWARAH 15 Sep 2026 (produksi, INV/2609/KN00531): surat BP2609007713 memberi
+    // "beli 30 PCS gratis 1 PCS harga sama", dan Accurate mencatatnya sebagai baris tambahan
+    // berdiskon 100% di POSISI 1 — kolom distributor. Tanpa pembacaan ini seluruh Rp 2,61 juta
+    // bonus September jatuh ke tak bertuan, padahal suratnya jelas ada.
+    const bonus = {
+        number: "INV/2609/KN00531", id: 9, transDate: "15/09/2026", branchName: "KINO NON FOOD",
+        customer: { customerNo: "C-KOS005-KN", name: "KOSMETIK MUNAWARAH" },
+        detailItem: [
+            { itemNo: "K1390001009010", item: { name: "KNF RESIK V RAMUAN MADURA WHITENING 90ML" },
+              quantity: 1, unitPrice: 35135.2, itemDiscPercent: "100", itemCashDiscount: 35135.2 },
+        ],
+    };
+    const bonusRule = aturan({
+        suratProgram: "BP2609007713", promoGroup: "RESIK V KHASIAT RAMUAN MADURA WHITENING",
+        itemCode: "K1390001009010", benefitType: "BONUS_QTY", benefitValue: "1", benefitUnit: "PCS",
+        triggerQty: 30, triggerUnit: "PCS",
+    });
+    const hasil = recap(invoiceLines(bonus), [bonusRule]);
+    assert.equal(hasil.principal, 35135.2);
+    assert.equal(hasil.distributor, 0);
+    assert.equal(hasil.unowned, 0);
+    assert.equal(hasil.programs[0].suratProgram, "BP2609007713");
+    assert.equal(hasil.rows[0].positions, "1");
+
+    // Tanpa aturannya, baris yang sama TETAP tak bertuan — bukan disahkan oleh angka 100 saja.
+    assert.equal(recap(invoiceLines(bonus), []).unowned, 35135.2);
+    // Aturan bonus milik BARANG LAIN tidak boleh meloloskannya.
+    assert.equal(recap(invoiceLines(bonus), [aturan({ ...bonusRule, itemCode: "K9999" })]).unowned, 35135.2);
+    // Di luar periode juga tidak.
+    assert.equal(recap(invoiceLines(bonus), [{ ...bonusRule, periodEnd: "2026-09-10" }]).unowned, 35135.2);
 });
