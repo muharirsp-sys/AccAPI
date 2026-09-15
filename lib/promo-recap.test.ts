@@ -239,3 +239,37 @@ test("outlet yang tertulis dua kali tidak menggagalkan seluruh muatan", () => {
     assert.equal(hasilBeda.length, 0);
     assert.match(beda.join(" "), /isi BERBEDA \(2% DISTRIBUTOR vs 3% DISTRIBUTOR\)/);
 });
+
+test("pemeriksaan tarif: yang menganggur dan outlet yang potongannya tanpa aturan", () => {
+    const tarifCocok = aturan({
+        suratProgram: "DISCOUNT REGULER", promoGroup: "TANGGUNGAN DISTRIBUTOR", promoLabel: "TRUFARM",
+        itemCode: "", customerCode: "C-TRU001", tierNo: 1,
+        benefitBeban: "DISTRIBUTOR", benefitValue: "4", periodStart: null, periodEnd: null,
+    });
+    // Outlet ini memang bertransaksi, tetapi tarifnya di kolom yang salah — persis gejala yang
+    // laporan ini dicari: terdaftar, outletnya belanja, tapi tidak pernah menjelaskan apa pun.
+    const tarifSalahKolom = aturan({
+        suratProgram: "DISCOUNT REGULER", promoGroup: "TANGGUNGAN DISTRIBUTOR", promoLabel: "TRUFARM",
+        itemCode: "", customerCode: "C-TRU001", tierNo: 2,
+        benefitBeban: "DISTRIBUTOR", benefitValue: "9", periodStart: null, periodEnd: null,
+    });
+    // Outlet yang tidak muncul sama sekali pada periode ini — wajar menganggur.
+    const tarifOutletDiam = aturan({
+        suratProgram: "DISCOUNT REGULER", promoGroup: "TANGGUNGAN DISTRIBUTOR", promoLabel: "DIAM",
+        itemCode: "", customerCode: "C-ZZZ999", tierNo: 1,
+        benefitBeban: "DISTRIBUTOR", benefitValue: "2", periodStart: null, periodEnd: null,
+    });
+
+    const hasil = recap(invoiceLines(faktur), [tarifCocok, tarifSalahKolom, tarifOutletDiam]);
+
+    const menganggur = hasil.tarifMenganggur.map((t) => `${t.customerCode}/${t.tierNo}/${t.outletBertransaksi}`);
+    assert.deepEqual(menganggur, ["C-TRU001/2/true", "C-ZZZ999/1/false"]);
+
+    // Klaim principal 3% tidak punya aturan -> tak bertuan, dan diringkas per outlet.
+    assert.equal(hasil.outletTanpaAturan.length, 1);
+    const [outlet] = hasil.outletTanpaAturan;
+    assert.equal(outlet.customerNo, "C-TRU001-KN");
+    assert.equal(outlet.amount, hasil.unowned);
+    assert.deepEqual(outlet.positions, ["4"]);
+    assert.deepEqual(outlet.percents, [3]);
+});
