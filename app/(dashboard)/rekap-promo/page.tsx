@@ -29,6 +29,16 @@ type DetailRow = {
     suratProgram: string; promoGroup: string; reason: string;
 };
 
+type TarifMenganggur = {
+    customerCode: string; tierNo: number; benefitValue: string; benefitBeban: string;
+    suratProgram: string; promoLabel: string; outletBertransaksi: boolean;
+};
+
+type OutletTanpaAturan = {
+    customerNo: string; customerName: string; amount: number; lines: number;
+    positions: string[]; percents: number[];
+};
+
 type Data = {
     from: string; to: string; principal: string; principals: string[];
     invoicesInRange: number; invoicesWithoutDetail: number; rules: number;
@@ -36,6 +46,7 @@ type Data = {
         invoices: number; lines: number; gross: number;
         distributor: number; principal: number; unowned: number;
         programs: Program[]; rows: DetailRow[];
+        tarifMenganggur: TarifMenganggur[]; outletTanpaAturan: OutletTanpaAturan[];
     };
 };
 
@@ -310,6 +321,92 @@ export default function RekapPromoPage() {
                                     )}
                                 </tbody>
                             </table>
+                        </div>
+                    </section>
+
+                    {/* Pemeriksaan tarif. Dua laporan yang menjawab pertanyaan berbeda: yang
+                        pertama mencari tarif yang salah atau basi, yang kedua mencari tarif
+                        yang HILANG. Keduanya deterministik — dibandingkan dengan faktur nyata,
+                        bukan ditebak. */}
+                    <section className="grid gap-4 lg:grid-cols-2">
+                        <div className="space-y-2">
+                            <h2 className="text-lg font-medium text-white">Tarif yang tidak terpakai</h2>
+                            <p className="text-xs leading-relaxed text-slate-400">
+                                Terdaftar tapi tidak pernah menjelaskan satu potongan pun pada periode ini.
+                                Yang outletnya <strong>tetap berbelanja</strong> patut dicurigai: kemungkinan kode
+                                outletnya salah ketik, atau potongannya sebenarnya muncul di kolom lain.
+                            </p>
+                            <div className="max-h-80 overflow-auto rounded-lg border border-white/10">
+                                <table className="w-full text-sm">
+                                    <thead className="sticky top-0 bg-slate-900 text-slate-400">
+                                        <tr>
+                                            <th className="px-3 py-2 text-left">Outlet</th>
+                                            <th className="px-3 py-2 text-left">Tarif</th>
+                                            <th className="px-3 py-2 text-left">Outlet belanja?</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {r.tarifMenganggur.map((t) => (
+                                            <tr key={`${t.customerCode}-${t.tierNo}`} className="border-t border-white/5">
+                                                <td className="px-3 py-1.5 font-mono text-xs">{t.customerCode}
+                                                    <span className="block text-slate-500">{t.promoLabel}</span></td>
+                                                <td className="whitespace-nowrap px-3 py-1.5">{t.benefitValue}% di kolom {t.tierNo}
+                                                    <span className="block text-xs text-slate-500">{t.benefitBeban === "PRINCIPAL" ? "principal" : "kita"}</span></td>
+                                                <td className="px-3 py-1.5">
+                                                    {t.outletBertransaksi
+                                                        ? <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-300">ya — periksa</span>
+                                                        : <span className="text-xs text-slate-500">tidak belanja</span>}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                        {!r.tarifMenganggur.length && (
+                                            <tr><td colSpan={3} className="px-3 py-8 text-center text-slate-500">
+                                                Semua tarif terpakai pada periode ini.
+                                            </td></tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <h2 className="text-lg font-medium text-white">Outlet yang potongannya belum punya aturan</h2>
+                            <p className="text-xs leading-relaxed text-slate-400">
+                                Kebalikannya: potongan nyata yang tidak ada tarifnya. Persen dan kolomnya ikut
+                                ditulis supaya bisa langsung diadu dengan tabel tarif — di sinilah kode outlet
+                                yang terlewat akan muncul.
+                            </p>
+                            <div className="max-h-80 overflow-auto rounded-lg border border-white/10">
+                                <table className="w-full text-sm">
+                                    <thead className="sticky top-0 bg-slate-900 text-slate-400">
+                                        <tr>
+                                            <th className="px-3 py-2 text-left">Outlet</th>
+                                            <th className="px-3 py-2 text-left">Potongan</th>
+                                            <th className="px-3 py-2 text-right">Nilai</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {r.outletTanpaAturan.map((o) => (
+                                            <tr key={o.customerNo} className="border-t border-white/5">
+                                                <td className="px-3 py-1.5 font-mono text-xs">{o.customerNo}
+                                                    <span className="block text-slate-500">{o.customerName}</span></td>
+                                                <td className="whitespace-nowrap px-3 py-1.5 text-xs">
+                                                    kolom {o.positions.join(", ")}
+                                                    <span className="block text-slate-500">
+                                                        {o.percents.map((p) => `${p}%`).join(", ") || "—"} · {o.lines} baris
+                                                    </span>
+                                                </td>
+                                                <td className="px-3 py-1.5 text-right tabular-nums text-red-300">{rp(o.amount)}</td>
+                                            </tr>
+                                        ))}
+                                        {!r.outletTanpaAturan.length && (
+                                            <tr><td colSpan={3} className="px-3 py-8 text-center text-emerald-300">
+                                                Tidak ada potongan tanpa aturan pada periode ini.
+                                            </td></tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </section>
 

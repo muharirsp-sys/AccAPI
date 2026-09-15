@@ -240,6 +240,41 @@ export type Recap = {
     unowned: number;
     programs: ProgramRecap[];
     rows: DetailRow[];
+    /** Pemeriksaan tarif: yang terdaftar tapi tidak pernah menjelaskan satu potongan pun. */
+    tarifMenganggur: TarifMenganggur[];
+    /** Pemeriksaan tarif: outlet yang potongannya belum punya aturan, diringkas per outlet. */
+    outletTanpaAturan: OutletTanpaAturan[];
+};
+
+/**
+ * Tarif yang terdaftar tetapi tidak pernah dipakai sepanjang periode.
+ *
+ * Bukan otomatis salah — outlet bisa saja memang tidak berbelanja. Tetapi tarif yang menganggur
+ * berbulan-bulan biasanya berarti salah satu dari tiga hal: kode outletnya salah ketik, outletnya
+ * sudah tutup, atau potongannya sebenarnya muncul di KOLOM LAIN sehingga tarifnya tidak pernah
+ * cocok. Ketiganya hanya terlihat kalau dihitung.
+ */
+export type TarifMenganggur = {
+    customerCode: string;
+    tierNo: number;
+    benefitValue: string;
+    benefitBeban: string;
+    suratProgram: string;
+    promoLabel: string;
+    /** Outlet ini muncul di faktur periode ini, tetapi tarifnya tetap tidak pernah cocok. */
+    outletBertransaksi: boolean;
+};
+
+/** Outlet dengan potongan yang belum punya aturan, diringkas supaya lubangnya terlihat. */
+export type OutletTanpaAturan = {
+    customerNo: string;
+    customerName: string;
+    amount: number;
+    lines: number;
+    /** Kolom diskon yang terlibat, mis. "1" atau "4". */
+    positions: string[];
+    /** Persen yang muncul, supaya bisa langsung diadu dengan tabel tarifnya. */
+    percents: number[];
 };
 
 /**
@@ -250,7 +285,13 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
     const out: Recap = {
         invoices: 0, lines: lines.length, gross: 0,
         principal: 0, distributor: 0, unowned: 0, programs: [], rows: [],
+        tarifMenganggur: [], outletTanpaAturan: [],
     };
+    // Aturan yang BENAR-BENAR menjelaskan sesuatu, dicatat saat dipakai — bukan ditebak ulang
+    // di akhir dengan logika kedua yang bisa menjawab berbeda dari yang dipakai menggolongkan.
+    const terpakai = new Set<string>();
+    const kunci = (rule: PromoRule) => `${rule.customerCode}|${rule.suratProgram}|${rule.promoGroup}|${rule.itemCode}|${rule.tierNo}`;
+    const outletBertransaksi = new Set(lines.map((line) => line.customerNo.toUpperCase()));
     const byProgram = new Map<string, ProgramRecap>();
     const programInvoices = new Map<string, Set<string>>();
 
@@ -298,9 +339,10 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
             const beban = owner === "distributor" ? "DISTRIBUTOR" : "PRINCIPAL";
             // Tarif outlet dicoba setelah aturan per barang: yang per barang lebih sempit,
             // jadi kalau keduanya bisa menjelaskan, yang menyebut barangnya yang dipakai.
-            const matched = ruleFor(line, rules, beban, percent)
-                ?? (owner === "distributor" ? tariffFor(line, rules)?.[0] ?? null : null);
+            const cocokTarif = owner === "distributor" ? tariffFor(line, rules) : null;
+            const matched = ruleFor(line, rules, beban, percent) ?? cocokTarif?.[0] ?? null;
             if (matched) {
+                for (const dipakai of cocokTarif ?? [matched]) terpakai.add(kunci(dipakai));
                 out[owner] = cents(out[owner] + amount);
                 if (owner === "principal") add(matched, amount, line.invoiceNo);
                 out.rows.push({ ...base, bucket: owner, positions: positionsAt(owner), percent, amount,
@@ -360,6 +402,41 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
     out.invoices = new Set(lines.map((line) => line.invoiceId || line.invoiceNo)).size;
     out.programs = [...byProgram.values()].sort((a, b) => b.amount - a.amount);
     out.rows.sort((a, b) => b.amount - a.amount);
+
+    // Laporan 1 — tarif yang tidak pernah menjelaskan apa pun.
+    out.tarifMenganggur = rules
+        .filter((rule) => rule.customerCode && !rule.itemCode && !terpakai.has(kunci(rule)))
+        .map((rule) => ({
+            customerCode: rule.customerCode, tierNo: rule.tierNo, benefitValue: rule.benefitValue,
+            benefitBeban: rule.benefitBeban, suratProgram: rule.suratProgram, promoLabel: rule.promoLabel,
+            // Outlet yang TIDAK berbelanja wajar kalau tarifnya menganggur. Yang berbelanja
+            // tetapi tarifnya tidak pernah cocok — itu yang patut dicurigai.
+            outletBertransaksi: [...outletBertransaksi].some((no) =>
+                no === rule.customerCode.toUpperCase() || no.startsWith(`${rule.customerCode.toUpperCase()}-`)),
+        }))
+        .sort((a, b) => Number(b.outletBertransaksi) - Number(a.outletBertransaksi)
+            || a.customerCode.localeCompare(b.customerCode) || a.tierNo - b.tierNo);
+
+    // Laporan 2 — potongan tanpa aturan, diringkas per outlet supaya lubangnya terlihat.
+    const perOutlet = new Map<string, OutletTanpaAturan>();
+    for (const row of out.rows) {
+        if (row.bucket !== "unowned") continue;
+        const entry = perOutlet.get(row.customerNo) ?? {
+            customerNo: row.customerNo, customerName: row.customerName,
+            amount: 0, lines: 0, positions: [], percents: [],
+        };
+        entry.amount = cents(entry.amount + row.amount);
+        entry.lines += 1;
+        for (const pos of row.positions.split("+").filter(Boolean)) {
+            if (!entry.positions.includes(pos)) entry.positions.push(pos);
+        }
+        if (row.percent > 0 && !entry.percents.includes(row.percent)) entry.percents.push(row.percent);
+        perOutlet.set(row.customerNo, entry);
+    }
+    out.outletTanpaAturan = [...perOutlet.values()]
+        .map((entry) => ({ ...entry, positions: entry.positions.sort(), percents: entry.percents.sort((a, b) => a - b) }))
+        .sort((a, b) => b.amount - a.amount);
+
     return out;
 }
 
