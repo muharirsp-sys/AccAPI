@@ -32,7 +32,11 @@ export const maxDuration = 60;
 const MAX_BYTES = 20 * 1024 * 1024;
 
 /** Kolom berkas manual. Sengaja sedikit: yang wajib hanya kodenya. */
-const TEMPLATE_HEADER = ["KODE_OUTLET", "NAMA (diabaikan)", "TINGKAT", "MULAI", "SAMPAI", "CATATAN"];
+// KETERANGAN, bukan TINGKAT. PLATINUM/GOLD/SILVER tidak pernah dipakai memutuskan apa pun —
+// tidak ada satu surat pun yang membedakan tingkat — jadi kolom ini catatan bebas, dan
+// menamainya "tingkat" membuat orang mengira ia punya arti bagi gerbang. Berkas lama yang
+// berkepala TINGKAT tetap terbaca; lihat `pick()` di pembaca berkasnya.
+const TEMPLATE_HEADER = ["KODE_OUTLET", "NAMA (diabaikan)", "KETERANGAN", "MULAI", "SAMPAI", "CATATAN"];
 
 const text = (value: unknown) => String(value ?? "").trim();
 
@@ -126,8 +130,8 @@ export async function GET(request: NextRequest) {
     if (request.nextUrl.searchParams.get("template") === "1") {
         const sheet = XLSX.utils.aoa_to_sheet([
             TEMPLATE_HEADER,
-            ["C-WIN013", "CV WINAR'S", "PLATINUM", "2026-10-01", "2026-12-31", "kuartal 4"],
-            ["22160031402", "boleh kode Kino juga", "GOLD", "2026-10-01", "2026-12-31", ""],
+            ["C-WIN013", "CV WINAR'S", "catatan bebas, mis. PLATINUM", "2026-10-01", "2026-12-31", "kuartal 4"],
+            ["22160031402", "boleh kode Kino juga", "", "2026-10-01", "2026-12-31", ""],
         ]);
         const book = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(book, sheet, "Daftar Outlet");
@@ -154,13 +158,60 @@ export async function GET(request: NextRequest) {
     });
 
     // Ringkasan per daftar supaya "berapa toko yang ikut" terjawab tanpa menghitung sendiri.
-    const lists = new Map<string, { name: string; members: number; tiers: Record<string, number> }>();
+    const lists = new Map<string, { name: string; members: number; tiers: Record<string, number>;
+        linked: { suratProgram: string; mode: string; rules: number }[] }>();
     for (const row of rows) {
-        const entry = lists.get(row.listName) ?? { name: row.listName, members: 0, tiers: {} };
+        const entry = lists.get(row.listName) ?? { name: row.listName, members: 0, tiers: {}, linked: [] };
         entry.members += 1;
-        const tier = row.tier || "(tanpa tingkat)";
+        const tier = row.tier || "(tanpa keterangan)";
         entry.tiers[tier] = (entry.tiers[tier] ?? 0) + 1;
         lists.set(row.listName, entry);
+    }
+
+    // PROMO YANG MENUNJUK TIAP DAFTAR, dan promo yang sedang berjalan.
+    //
+    // Nama daftar adalah satu-satunya tali antara aturan dan peserta, dan talinya berupa teks
+    // yang diketik dua kali di dua layar berbeda. Salah ketik satu huruf tidak menimbulkan galat
+    // apa pun: daftarnya tersimpan rapi, aturannya tetap menunjuk nama lama, dan tidak ada yang
+    // berlaku untuk siapa pun. Yang mengisi harus bisa MELIHAT tali itu tersambung, bukan
+    // mempercayainya.
+    const hari = new Date().toISOString().slice(0, 10);
+    const ruleRows = await db.select({
+        outletList: promoRule.outletList, outletListMode: promoRule.outletListMode,
+        suratProgram: promoRule.suratProgram, promoLabel: promoRule.promoLabel,
+        periodStart: promoRule.periodStart, periodEnd: promoRule.periodEnd, active: promoRule.active,
+    }).from(promoRule);
+
+    for (const row of ruleRows) {
+        const nama = text(row.outletList).toUpperCase();
+        if (!nama) continue;
+        const entry = lists.get(nama) ?? { name: nama, members: 0, tiers: {}, linked: [] };
+        const mode = text(row.outletListMode) || "INCLUDE";
+        const ada = entry.linked.find((x) => x.suratProgram === row.suratProgram && x.mode === mode);
+        if (ada) ada.rules += 1;
+        else entry.linked.push({ suratProgram: row.suratProgram, mode, rules: 1 });
+        // Daftar yang DITUNJUK aturan tapi belum punya anggota tetap muncul: nol anggota berarti
+        // aturannya tidak berlaku untuk siapa pun, dan itu justru yang paling perlu terlihat.
+        lists.set(nama, entry);
+    }
+
+    // Promo yang sedang berjalan hari ini — bahan pilihan "nama daftar", supaya nama daftar
+    // untuk sebuah surat diambil dari suratnya sendiri dan tidak diketik ulang dari ingatan.
+    const berjalan = new Map<string, { suratProgram: string; promoLabel: string; periodStart: string | null; periodEnd: string | null; rules: number }>();
+    for (const row of ruleRows) {
+        if (!row.active) continue;
+        if (row.periodStart && String(row.periodStart) > hari) continue;
+        if (row.periodEnd && String(row.periodEnd) < hari) continue;
+        const nama = text(row.suratProgram);
+        if (!nama) continue;
+        const entry = berjalan.get(nama) ?? {
+            suratProgram: nama, promoLabel: text(row.promoLabel),
+            periodStart: row.periodStart ? String(row.periodStart) : null,
+            periodEnd: row.periodEnd ? String(row.periodEnd) : null, rules: 0,
+        };
+        entry.rules += 1;
+        if (!entry.promoLabel) entry.promoLabel = text(row.promoLabel);
+        berjalan.set(nama, entry);
     }
 
     // Kode distributor kita, DITURUNKAN dari batch laporan principal terakhir ("1201671 -
@@ -173,6 +224,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
         ok: true,
         lists: [...lists.values()].sort((a, b) => a.name.localeCompare(b.name)),
+        programs: [...berjalan.values()].sort((a, b) => a.suratProgram.localeCompare(b.suratProgram)),
         total: rows.length,
         distCode,
         members: disaring.slice(0, 1000),
@@ -429,11 +481,11 @@ async function dariBerkas(
         sudah.add(hasil.code);
         rows.push({
             listName, customerCode: hasil.code, customerName: hasil.name,
-            tier: pick(row, "TINGKAT", "TIER", "KELAS").toUpperCase(),
+            tier: pick(row, "KETERANGAN", "TINGKAT", "TIER", "KELAS"),
             sourceCode: hasil.source,
             periodStart: (pick(row, "MULAI", "PERIOD_START", "PERIODE MULAI") || text(form.get("periodStart"))).slice(0, 10) || null,
             periodEnd: (pick(row, "SAMPAI", "PERIOD_END", "PERIODE SAMPAI") || text(form.get("periodEnd"))).slice(0, 10) || null,
-            active: true, note: pick(row, "CATATAN", "KETERANGAN", "NOTE"), importedBy: email,
+            active: true, note: pick(row, "CATATAN", "NOTE"), importedBy: email,
         });
     });
     if (!rows.length) {
@@ -484,7 +536,7 @@ export async function POST(request: NextRequest) {
         sudahAda.add(hasil.code);
         rows.push({
             listName, customerCode: hasil.code, customerName: hasil.name,
-            tier: text(body.tier).toUpperCase(), sourceCode: hasil.source,
+            tier: text(body.tier), sourceCode: hasil.source,
             periodStart: text(body.periodStart).slice(0, 10) || null,
             periodEnd: text(body.periodEnd).slice(0, 10) || null,
             active: body.active !== false, note: text(body.note), importedBy: gate.email!,
@@ -502,7 +554,7 @@ export async function POST(request: NextRequest) {
     });
 }
 
-/** Mengubah satu anggota — tingkat, periode, aktif, catatan. Kode outletnya tidak diubah di sini. */
+/** Mengubah satu anggota — keterangan, periode, aktif, catatan. Kode outletnya tidak diubah di sini. */
 export async function PATCH(request: NextRequest) {
     const gate = await gateOf("summary.edit");
     if (gate.response) return gate.response;
@@ -511,7 +563,7 @@ export async function PATCH(request: NextRequest) {
     if (!body || !Number.isFinite(id)) return NextResponse.json({ ok: false, error: "id wajib diisi" }, { status: 400 });
 
     const changed = await db.update(promoOutlet).set({
-        tier: text(body.tier).toUpperCase(),
+        tier: text(body.tier),
         periodStart: text(body.periodStart).slice(0, 10) || null,
         periodEnd: text(body.periodEnd).slice(0, 10) || null,
         active: body.active !== false,

@@ -2,15 +2,17 @@
  * Tujuan: Unggah laporan integrasi principal (Order Detail) dan lihat batch yang sudah masuk.
  * Caller: Route dashboard `/principal-order`.
  * Dependensi: /api/principal-order, /api/principal-order/validate, /api/principal-order/queue,
- *             toast Sonner, lucide-react.
- * Main Functions: PrincipalOrderPage, upload, openBatch, validate, prepareInvoices, queueInvoices, removeBatch.
+ *             /api/principal-order/dupe-ack, lib/order-duplicate, toast Sonner, lucide-react.
+ * Main Functions: PrincipalOrderPage, upload, openBatch, validate, confirmDupe, revokeDupe,
+ *                 prepareInvoices, queueInvoices, removeBatch.
  * Side Effects: HTTP read/write; unggah default PRATINJAU, menyimpan hanya setelah dikonfirmasi.
  */
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Upload, Search, Trash2, AlertTriangle, FileSpreadsheet, ShieldCheck, CheckCircle2, Receipt, RefreshCw } from "lucide-react";
+import { Upload, Search, Trash2, AlertTriangle, FileSpreadsheet, ShieldCheck, ShieldAlert, ShieldOff, CheckCircle2, Receipt, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
+import { isDuplicateFinding } from "@/lib/order-duplicate";
 
 type Batch = {
     id: string; principal: string; fileName: string; branch: string; period: string;
@@ -38,6 +40,9 @@ type Plan = {
     skipped: { soNo: string; reason: string }[];
 };
 
+/** Satu konfirmasi "SO ini BUKAN order ganda" yang sudah tercatat. */
+type Ack = { principal: string; soNo: string; reason: string; note: string; confirmedBy: string; confirmedAt: string };
+
 type Preview = {
     fileName: string; branch: string; period: string; lineCount: number; skipped: number;
     issues: string[]; unmappedProducts: string[];
@@ -56,6 +61,8 @@ export default function PrincipalOrderPage() {
     const [busy, setBusy] = useState(false);
     const [onlyReview, setOnlyReview] = useState(false);
     const [plan, setPlan] = useState<Plan | null>(null);
+    const [acks, setAcks] = useState<Ack[]>([]);
+    const [dupeNote, setDupeNote] = useState<Record<string, string>>({});
 
     const loadBatches = useCallback(async () => {
         const res = await fetch("/api/principal-order", { credentials: "include" });
@@ -91,11 +98,75 @@ export default function PrincipalOrderPage() {
         }
     }
 
+    async function loadAcks(forPrincipal: string) {
+        const res = await fetch(`/api/principal-order/dupe-ack?principal=${encodeURIComponent(forPrincipal)}`, { credentials: "include" });
+        const data = await res.json().catch(() => ({}));
+        setAcks(res.ok && data.ok ? data.acks : []);
+    }
+
     async function openBatch(id: string) {
         const res = await fetch(`/api/principal-order?id=${encodeURIComponent(id)}`, { credentials: "include" });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) { toast.error(data.error ?? "Gagal memuat batch"); return; }
         setOpen({ batch: data.batch, lines: data.lines });
+        await loadAcks(data.batch.principal);
+    }
+
+    /**
+     * Melepas satu SO dari gerbang order ganda.
+     *
+     * Yang dikirim bukan hanya "saya menekan tombol" melainkan ALASAN yang sedang menahan SO
+     * itu saat ini: yang membaca jejaknya nanti perlu tahu APA yang sudah diperiksa orang
+     * tersebut, dan tanda tangan tanpa isi tidak bisa dipertanggungjawabkan.
+     *
+     * Batch divalidasi ulang sesudahnya. Status baris di basis data masih memuat temuan lama
+     * sampai dihitung ulang — tanpa validasi ulang, tombolnya ditekan dan layarnya tidak
+     * berubah apa pun, yang akan dibaca sebagai "tombolnya rusak".
+     *
+     * Catatannya diketik di isian pada barisnya, BUKAN lewat `prompt()`: dialog bawaan peramban
+     * bisa diblokir tanpa pesan apa pun (peramban tersemat, pratinjau, popup blocker), dan
+     * `prompt()` yang diblokir menjawab null — persis seperti orang yang menekan Batal. Tombol
+     * yang diam-diam tidak melakukan apa-apa adalah kegagalan terburuk untuk gerbang uang.
+     */
+    async function confirmDupe(soNo: string, reason: string) {
+        if (!open) return;
+        const note = dupeNote[soNo] ?? "";
+        let lolos = false;
+        setBusy(true);
+        try {
+            const res = await fetch("/api/principal-order/dupe-ack", {
+                method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ principal: open.batch.principal, soNo, reason, note }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok) throw new Error(data.error ?? "Konfirmasi gagal");
+            lolos = true;
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Konfirmasi gagal");
+        } finally {
+            setBusy(false);
+        }
+        if (!lolos) return;
+        toast.success(`SO ${soNo} dinyatakan bukan order ganda`);
+        await validate(open.batch.id);
+    }
+
+    /**
+     * Mencabut konfirmasi: SO-nya kembali ditahan gerbang pada validasi berikutnya.
+     *
+     * Sengaja TANPA dialog "yakin?". Mencabut adalah arah yang AMAN — ia mengembalikan
+     * penahanan, bukan melepaskannya — dan salah tekan diperbaiki dengan satu tombol di
+     * sebelahnya. Dialog bawaan peramban juga bisa diblokir tanpa pesan, dan tombol yang
+     * diam-diam tidak melakukan apa pun lebih buruk daripada tidak ada tombol.
+     */
+    async function revokeDupe(soNo: string) {
+        if (!open) return;
+        const query = `principal=${encodeURIComponent(open.batch.principal)}&soNo=${encodeURIComponent(soNo)}`;
+        const res = await fetch(`/api/principal-order/dupe-ack?${query}`, { method: "DELETE", credentials: "include" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) { toast.error(data.error ?? "Gagal mencabut konfirmasi"); return; }
+        toast.success(`Konfirmasi SO ${soNo} dicabut`);
+        await validate(open.batch.id);
     }
 
     /**
@@ -178,6 +249,20 @@ export default function PrincipalOrderPage() {
         if (open?.batch.id === id) setOpen(null);
         await loadBatches();
     }
+
+    // SO yang ditahan gerbang order ganda. Temuannya melekat pada SETIAP baris SO itu —
+    // yang diduga ganda adalah ordernya, bukan satu barisnya — jadi dikelompokkan balik ke
+    // per-SO di sini, supaya satu tombol melepas satu order, bukan satu baris dari sebuah order.
+    const dupes = new Map<string, string>();
+    for (const line of open?.lines ?? []) {
+        const finding = line.findings.find(isDuplicateFinding);
+        if (finding && !dupes.has(line.soNo)) dupes.set(line.soNo, finding);
+    }
+    // Konfirmasi yang sudah tercatat BERTAHAN lintas validasi, jadi kalau tidak ditampilkan ia
+    // jadi keputusan tak terlihat: SO-nya lolos terus dan tidak ada yang tahu sejak kapan atau
+    // oleh siapa. Disaring ke SO milik batch yang sedang dibuka saja.
+    const soDiBatch = new Set((open?.lines ?? []).map((line) => line.soNo));
+    const acksDiBatch = acks.filter((ack) => soDiBatch.has(ack.soNo));
 
     return (
         <div className="p-6 space-y-6 text-slate-200">
@@ -382,6 +467,49 @@ export default function PrincipalOrderPage() {
                             </label>
                         )}
                     </div>
+
+                    {(dupes.size > 0 || acksDiBatch.length > 0) && (
+                        <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
+                            <h3 className="flex items-center gap-2 text-sm font-medium text-amber-200">
+                                <ShieldAlert size={16} /> Gerbang order ganda
+                            </h3>
+                            {[...dupes].map(([soNo, finding]) => (
+                                <div key={soNo} className="flex flex-wrap items-start gap-3 rounded border border-white/10 bg-black/20 p-3 text-sm">
+                                    <div className="min-w-0 flex-1 space-y-2">
+                                        <p className="font-mono text-xs text-amber-200">SO {soNo}</p>
+                                        <p className="text-xs text-slate-300">{finding}</p>
+                                        <input value={dupeNote[soNo] ?? ""}
+                                            onChange={(event) => setDupeNote((lama) => ({ ...lama, [soNo]: event.target.value }))}
+                                            placeholder="Catatan konfirmasi — mis. sudah dicek ke sales, dua order ini memang berbeda"
+                                            className="w-full rounded border border-white/10 bg-black/40 px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-amber-500" />
+                                    </div>
+                                    <button onClick={() => void confirmDupe(soNo, finding)} disabled={busy}
+                                        title="Catat bahwa SO ini sudah diperiksa manusia dan BUKAN order ganda, lalu validasi ulang batch ini"
+                                        className="inline-flex items-center gap-1 rounded bg-amber-600 px-3 py-1.5 text-xs whitespace-nowrap disabled:opacity-40">
+                                        <ShieldCheck size={13} /> Bukan order ganda
+                                    </button>
+                                </div>
+                            ))}
+                            {acksDiBatch.map((ack) => (
+                                <div key={ack.soNo} className="flex flex-wrap items-center gap-3 rounded border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs">
+                                    <span className="font-mono text-emerald-300">SO {ack.soNo}</span>
+                                    <span className="text-slate-400">
+                                        dikonfirmasi {ack.confirmedBy || "—"} · {new Date(ack.confirmedAt).toLocaleString("id-ID")}
+                                        {ack.note ? ` · ${ack.note}` : ""}
+                                    </span>
+                                    <button onClick={() => void revokeDupe(ack.soNo)} disabled={busy}
+                                        className="ml-auto inline-flex items-center gap-1 rounded bg-white/10 px-2 py-1 disabled:opacity-40">
+                                        <ShieldOff size={13} /> Cabut
+                                    </button>
+                                </div>
+                            ))}
+                            <p className="text-xs text-slate-500">
+                                Konfirmasi BERTAHAN: batch boleh divalidasi ulang berapa kali pun tanpa harus
+                                mengonfirmasi lagi. Yang tercatat bukan hanya siapa menekan tombol, melainkan
+                                alasan yang sedang menahan SO itu saat ditekan.
+                            </p>
+                        </div>
+                    )}
                     <div className="overflow-x-auto rounded-lg border border-white/10 max-h-[28rem]">
                         <table className="w-full text-sm">
                             <thead className="bg-white/5 text-slate-400 sticky top-0">

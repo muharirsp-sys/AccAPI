@@ -3,7 +3,7 @@
    lebih buruk daripada tidak punya pemeriksaan sama sekali. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { duplicateFinding, findDuplicate, type OrderFingerprint } from "./order-duplicate.ts";
+import { duplicateFinding, findDuplicate, isDuplicateFinding, type OrderFingerprint } from "./order-duplicate.ts";
 
 const order = (key: string, itemCodes: string[], over: Partial<OrderFingerprint> = {}): OrderFingerprint => ({
     key, outlet: "C-BA0003", orderDate: "2026-09-12", itemCodes, ...over,
@@ -65,4 +65,12 @@ test("order kosong dan order itu sendiri tidak pernah dianggap ganda", () => {
     assert.equal(findDuplicate(order("SO-1", []), [order("SO-2", ["K1"])]), null);
     assert.equal(findDuplicate(order("SO-1", ["K1", "K2"]), [order("SO-1", ["K1", "K2"])]), null);
     assert.equal(findDuplicate(order("SO-2", ["K1"]), [order("SO-1", [])]), null);
+});
+
+test("temuan ganda bisa dikenali layar, dan temuan lain tidak ikut terbawa", () => {
+    const mirip = findDuplicate(order("SO-2", ["K1", "K2", "K3", "K4"]), [order("SO-1", ["K1", "K2", "K3"])]);
+    const sama = findDuplicate(order("SO-2", ["K1", "K2"]), [order("SO-1", ["K2", "K1"])]);
+    assert.ok(isDuplicateFinding(duplicateFinding(mirip!)));
+    assert.ok(isDuplicateFinding(duplicateFinding(sama!)));
+    assert.equal(isDuplicateFinding("Harga faktur 7.207 berbeda dari daftar harga 6.306"), false);
 });

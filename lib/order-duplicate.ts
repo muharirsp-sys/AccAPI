@@ -117,3 +117,13 @@ export function duplicateFinding(hit: DuplicateHit, sebutan = "Order"): string {
             + "Mirip tetapi tidak sama persis justru bentuk ketikan ulang yang paling sering lolos — "
             + "konfirmasi dulu bahwa ini bukan order ganda.";
 }
+
+/**
+ * Apakah kalimat temuan ini lahir dari `duplicateFinding`.
+ *
+ * Layar Order Principal memakainya untuk tahu SO mana yang ditahan gerbang ganda, dan
+ * penandanya sengaja hidup di berkas yang MENULIS kalimatnya: kalau suatu saat kalimatnya
+ * diubah, yang mengubahnya melihat penanda ini tepat di bawahnya. Penanda yang tinggal di
+ * layar akan diam-diam berhenti cocok, dan tombol konfirmasinya hilang tanpa galat apa pun.
+ */
+export const isDuplicateFinding = (finding: string) => /bukan order ganda/i.test(String(finding ?? ""));
