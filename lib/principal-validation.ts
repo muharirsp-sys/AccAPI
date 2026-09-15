@@ -305,6 +305,15 @@ export function checkLine(line: LineInput): LineCheck {
         const actual = cents(line.discounts
             .filter((entry) => OWNER[entry.position] === owner)
             .reduce((total, entry) => total + entry.percent, 0));
+        // TIDAK PUNYA ATURAN = TAK BERTUAN, di posisi mana pun (keputusan pengguna 2026-09-15).
+        // Peta posisi 1-3/4-5 hanya berlaku bagi potongan yang aturannya ADA; ia menyatakan
+        // siapa yang DIMAKSUD menanggung, bukan siapa yang terbukti menanggung. Selama belum
+        // ada aturannya, mencatatnya sebagai "beban distributor" berarti mengaku menanggung
+        // uang yang belum jelas milik siapa, dan sebagai "klaim principal" berarti mengaku
+        // berhak menagihnya. Dua-duanya salah dengan cara yang berbeda.
+        split[owner] = cents(split[owner] - amount);
+        split.unowned = cents(split.unowned + amount);
+
         if (percentRules.length > 0) {
             // Posisi ikut disebut: tarif yang benar nilainya tetapi salah posisi berarti
             // penanggungnya berpindah, dan itu tidak akan terlihat dari persennya saja.
@@ -312,9 +321,10 @@ export function checkLine(line: LineInput): LineCheck {
                 ? `posisi ${rule.tierNo} ${rule.benefitValue}% (${rule.suratProgram})`
                 : `${rule.benefitValue}% (${rule.suratProgram} ${rule.promoGroup})`)).join(", ");
             const lawan = percentRules.some((rule) => rule.customerCode) ? "aturan terbit" : "aturan terbit untuk barang ini";
-            findings.push(`${sebutan} ${actual}% tidak sama dengan ${lawan}: ${daftar}.`);
+            findings.push(`${sebutan} ${actual}% tidak sama dengan ${lawan}: ${daftar} — jadi tak bertuan.`);
         } else {
-            findings.push(`${sebutan} Rp ${amount.toLocaleString("id-ID")} belum punya aturan promo terbit yang menjelaskannya.`);
+            findings.push(`${sebutan} Rp ${amount.toLocaleString("id-ID")} tidak punya aturan promo terbit, `
+                + `jadi dihitung tak bertuan sampai aturannya ada.`);
         }
     }
 

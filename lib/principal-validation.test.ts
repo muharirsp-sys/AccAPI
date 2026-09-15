@@ -57,7 +57,7 @@ test("mapping dan master yang hilang ditahan, masing-masing dengan sebabnya", ()
 test("klaim principal tanpa aturan terbit dan diskon tak bertuan ditahan", () => {
     const tanpaAturan = checkLine(line({ discounts: [{ position: 4, percent: 2.25 }], reportDiscount: 7297.3 }));
     assert.equal(tanpaAturan.status, "review");
-    assert.match(tanpaAturan.findings.join(" "), /belum punya aturan promo terbit/);
+    assert.match(tanpaAturan.findings.join(" "), /tidak punya aturan promo terbit/);
     // Begitu aturannya terbit DAN angkanya cocok, klaim yang sama tidak lagi ditahan.
     const adaAturan = checkLine(line({
         discounts: [{ position: 4, percent: 2.25 }], reportDiscount: 7297.3,
@@ -131,7 +131,7 @@ test("ADA diskon tapi promonya tidak tersetting di web = WAJIB perlu ditinjau", 
     // ada suratnya dan tidak ada aturannya di web. Uang yang tidak bisa dipertanggungjawabkan.
     const hasil = checkLine(line({ discounts: [{ position: 4, percent: 3 }], reportDiscount: 9729.73 }));
     assert.equal(hasil.status, "review");
-    assert.ok(hasil.findings.some((f) => f.includes("belum punya aturan promo terbit")));
+    assert.ok(hasil.findings.some((f) => f.includes("tidak punya aturan promo terbit")));
 
     // Posisi 5 sama saja: keduanya klaim principal.
     const posisi5 = checkLine(line({ discounts: [{ position: 5, percent: 2 }], reportDiscount: 6486.49 }));
@@ -157,7 +157,7 @@ test("promo yang TIDAK SESUAI aturan wajib muncul sebagai perlu ditinjau, bukan 
         rules: [aturan({ itemCode: "K9999999999999" })],
     }));
     assert.equal(barangLain.status, "review");
-    assert.ok(barangLain.findings.some((f) => f.includes("belum punya aturan promo terbit")));
+    assert.ok(barangLain.findings.some((f) => f.includes("tidak punya aturan promo terbit")));
 
     // Yang TIDAK ditandai: tidak ada diskon sama sekali meski barangnya masuk program.
     // Kalau principal tidak memberikannya, itu bukan kesalahan yang perlu ditinjau.
@@ -174,7 +174,10 @@ test("diskon distributor pun WAJIB punya aturan terbit", () => {
     const tanpa = checkLine(line({ discounts: [{ position: 1, percent: 2 }], reportDiscount: 6486.49 }));
     assert.equal(tanpa.status, "review");
     assert.ok(tanpa.findings.some((f) => f.includes("tanggungan distributor")));
-    assert.equal(tanpa.split.distributor, 6486.49);
+    // Tanpa aturan, potongannya TIDAK diakui sebagai beban kita — ia tak bertuan sampai
+    // aturannya ada (keputusan pengguna 2026-09-15).
+    assert.equal(tanpa.split.distributor, 0);
+    assert.equal(tanpa.split.unowned, 6486.49);
 
     // Begitu tarif distributornya terbit dan cocok, barisnya lolos.
     const dengan = checkLine(line({
@@ -291,4 +294,33 @@ test("tarif outlet tidak pernah membenarkan klaim principal", () => {
     }));
     assert.equal(hasil.status, "review");
     assert.match(hasil.findings.join(" "), /Klaim principal/);
+});
+
+test("potongan tanpa aturan jadi TAK BERTUAN, di posisi mana pun", () => {
+    // Keputusan pengguna 2026-09-15. Peta posisi 1-3/4-5 hanya berlaku bagi potongan yang
+    // aturannya ADA — ia menyatakan siapa yang DIMAKSUD menanggung, bukan siapa yang terbukti.
+    const tanpaAturan = checkLine(line({ discounts: [{ position: 1, percent: 2 }], reportDiscount: 6486.49 }));
+    assert.equal(tanpaAturan.status, "review");
+    assert.equal(tanpaAturan.split.distributor, 0, "tidak boleh diakui sebagai beban kita");
+    assert.equal(tanpaAturan.split.unowned, 6486.49);
+    assert.match(tanpaAturan.findings.join(" "), /tak bertuan/);
+
+    // Sisi principal sama saja: tanpa aturan, ia bukan uang yang berhak kita tagih.
+    const klaimLiar = checkLine(line({ discounts: [{ position: 4, percent: 2.25 }], reportDiscount: 7297.3 }));
+    assert.equal(klaimLiar.split.principal, 0);
+    assert.equal(klaimLiar.split.unowned, 7297.3);
+
+    // Begitu aturannya ada, potongannya kembali diakui pada penanggung yang benar.
+    const adaAturan = checkLine(line({
+        discounts: [{ position: 1, percent: 2 }], reportDiscount: 6486.49,
+        rules: [tarif()],
+    }));
+    assert.equal(adaAturan.status, "ok", adaAturan.findings.join(" | "));
+    assert.equal(adaAturan.split.distributor, 6486.49);
+    assert.equal(adaAturan.split.unowned, 0);
+
+    // Totalnya tidak boleh berubah gara-gara penggolongan ulang — hanya embernya yang pindah.
+    for (const hasil of [tanpaAturan, klaimLiar, adaAturan]) {
+        assert.equal(hasil.split.distributor + hasil.split.principal + hasil.split.unowned, hasil.split.total);
+    }
 });
