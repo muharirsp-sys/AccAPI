@@ -6,7 +6,7 @@
 # Caller     : python_backend/main.py endpoint /laporan-harian/process (dipanggil Next.js
 #              app/api/laporan-harian/upload). Juga dipakai parity test Tahap 0.
 # Dependensi : pandas, openpyxl, laporan_harian_lookups.json, laporan_harian_targets.py,
-#              dan laporan_harian_principal.py untuk parity Power Query Principal.
+#              laporan_harian_principal.py dan laporan_harian_layout.py untuk format arsip.
 #              python-calamine dipakai bila tersedia (baca cepat).
 # Main Functions:
 #   load_lookups(f_format, f_spv) -> LookupTables
@@ -17,6 +17,10 @@
 #   nilai bonus/los kosong pada penjualan saat sumber referensinya tidak ada.
 #   latest_sales_date(...) -> tanggal transaksi penjualan terakhir untuk nama file dan subject email.
 #   _normal_text(...) -> normalisasi null-safe termasuk pandas.NA.
+#   Parity September: CABANG_OR_COSTCENTER menentukan jenis produk penjualan; stok memakai Mapping PIC,
+#   SAHAR memfilter MT/Office lintas principal, YUDI menambah VOLUME_KG, layout mengikuti arsip.
+#   Retur memakai jenis produk sumber dengan join exact seperti template; nilai yang tidak cocok tetap kosong.
+#   Arsip run mencakup Excel dan tampilan HTML Pak Fahdhar download-only.
 # Side Effects: Baca file sumber dan tulis XLSX hasil ke runtime; tidak mengubah file sumber/tidak kirim email.
 # Catatan parity (dikonfirmasi user): sumber penjualan = sheet "Paste Acc" (export Accurate),
 #   sheet "Paste Lap. Penj" lama sudah kosong -> tidak dipakai. Retur = "Paste Lap. Retur" (dinegasikan).
@@ -27,6 +31,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from laporan_harian_targets import REPORT_TARGETS
+from laporan_harian_layout import apply_layout, report_layout
 from laporan_harian_principal import (
     apply_sales_rule,
     apply_stock_rule,
@@ -68,6 +73,7 @@ class LookupTables:
     jp_map: dict             # kode jenis produk -> nama
     sm_map: dict             # PRINCIPLE -> NAMA SM
     report_targets: dict = None  # keyword email -> {group_type, values}; alias principal non-exact
+    stock_spv_map: dict = None  # Mapping PIC untuk Stock, berbeda dari GOLONGAN sales FORISA
 
 
 # ---------- IO cepat ----------
@@ -105,7 +111,8 @@ def load_lookups(f_format: str, f_spv: str) -> LookupTables:
     jpm = dict(zip(jp["JENISPRODUK"].astype(str).str.strip(), jp["NAMA JENIS PRODUK"]))
     mp = sheet_df(f_spv, "Mapping")                 # PRINCIPLE, NAMA SPV, NAMA SM
     sm = dict(zip(mp["PRINCIPLE"].astype(str).str.strip(), mp["NAMA SM"]))
-    return LookupTables(p2s, c2s, jpm, sm, {})
+    stock_spv = dict(zip(mp["PRINCIPLE"].astype(str).str.strip(), mp["NAMA SPV"]))
+    return LookupTables(p2s, c2s, jpm, sm, {}, stock_spv)
 
 
 # ---------- Stage A: Paste Data -> FIX ----------
@@ -130,6 +137,9 @@ def _prep_acc(acc: pd.DataFrame, lk: LookupTables) -> pd.DataFrame:
             a.loc[:, c] = a[c].astype("string").str.strip()
     jenis_produk = a.get("JENISPRODUK", pd.Series(pd.NA, index=a.index)).astype("string").str.strip()
     a.loc[:, "JENISPRODUK"] = jenis_produk.map(lk.jp_map).fillna(jenis_produk)
+    if "CABANG_OR_COSTCENTER" in a:
+        branch = a["CABANG_OR_COSTCENTER"].astype("string").str.strip()
+        a.loc[:, "JENISPRODUK"] = branch.where(branch.notna() & branch.ne(""), a["JENISPRODUK"])
     a.loc[:, "JENIS_TRANSAKSI"] = np.where(
         a["NO_NOTA"].astype("string").str.upper().str.startswith("INV"), PENJ_LABEL, RETUR_LABEL)
     a.loc[:, "NILAI_JUAL"] = _num(a.get("NILAI_JUAL"))
@@ -336,7 +346,7 @@ def build_stock_frame(stock_path: str, sb: pd.DataFrame, lk: Optional[LookupTabl
     st.columns = [str(c).strip() for c in st.columns]
     # Export Accurate menyisipkan kolom spacer. Setelah spacer dibuang, nama headernya tidak sama dengan
     # isi bisnis: Nama Gudang = kode (GD01), Deskripsi Gudang = nama, Nama Satuan = satuan.
-    if "Nama Gudang" in st.columns:
+    if "Nama Gudang" in st.columns and "Kode Gudang" not in st.columns:
         st["Kode Gudang"] = st["Nama Gudang"]
     if "Deskripsi Gudang" in st.columns:
         st["Nama Gudang"] = st["Deskripsi Gudang"]
@@ -352,6 +362,7 @@ def build_stock_frame(stock_path: str, sb: pd.DataFrame, lk: Optional[LookupTabl
     st = st.rename(columns=ren)
     st = st[st["KODE_BARANG"].notna()].copy()
     st["KODE_BARANG"] = st["KODE_BARANG"].astype("string").str.strip()
+    st = st[st["KODE_BARANG"].ne("")].copy()
     mapping_cols = ["KODE_BARANG", "PRINCIPAL", "GOLONGAN", "NAMA_SM"]
     product_map = (sb.reindex(columns=mapping_cols)
                      .dropna(subset=["KODE_BARANG"])
@@ -369,7 +380,7 @@ def build_stock_frame(stock_path: str, sb: pd.DataFrame, lk: Optional[LookupTabl
         st["PRINCIPAL"] = mapped_principal
     source_key = st["PRINCIPAL"].map(_normal_text)
     principal_to_spv = {
-        _normal_text(key): value for key, value in (lk.principal_to_spv if lk else {}).items()
+        _normal_text(key): value for key, value in ((lk.stock_spv_map or lk.principal_to_spv) if lk else {}).items()
     }
     sm_map = {
         _normal_text(key): value for key, value in (lk.sm_map if lk else {}).items()
@@ -448,13 +459,15 @@ REPORT_COLUMNS = ["NO_NOTA","TANGGAL","TGL_JT","KODE_CUST","CUSTOMER","KODE_SALE
 
 
 def build_report_frame(sb: pd.DataFrame) -> pd.DataFrame:
-    """DataFrame siap-tulis: kolom 50 seperti 2.3, tanpa #NUM!/NaN (blank), tanggal string."""
+    """Kolom 50 seperti 2.3, blank aman, tanggal Excel, NPWP teks dan alias qty FIX lama."""
     df = sb.loc[:, ~sb.columns.duplicated()].copy()
     if "FIX QTY_SATUAN KECIL" in df.columns and "QTY_SATUANKECIL" not in df.columns:
         df["QTY_SATUANKECIL"] = df["FIX QTY_SATUAN KECIL"]
     for c in REPORT_COLUMNS:
         if c not in df.columns:
             df[c] = np.nan
+    df['NPWP'] = df['NPWP'].map(lambda v: None if pd.isna(v) else
+                               str(int(v)) if isinstance(v, (int, float, np.number)) else str(v))
     for c in ("TANGGAL", "TGL_JT"):
         df = df.assign(**{c: pd.to_datetime(df[c], errors="coerce").dt.to_pydatetime()})
     numcols = ["QTY","HARGA","POTONGAN","NILAI_JUAL","JUMLAH","DPP","Harga Sesuai Inputan",
@@ -513,8 +526,8 @@ def resolve_report_groups(sb: pd.DataFrame, report_keywords: list, lk: LookupTab
             continue
         normalized_values = {_normal_text(value) for value in filter_values}
         mask = sb[column].map(_normal_text).isin(normalized_values)
-        frame = sb[mask].copy()
-        if group_type == "principal":
+        frame = sb.copy() if normalized == "SAHAR" else sb[mask].copy()
+        if group_type == "principal" or normalized == "SAHAR":
             frame = apply_sales_rule(keyword, frame)
         if frame.empty:
             unmatched.append(keyword)
@@ -543,34 +556,38 @@ def write_report_files(sb: pd.DataFrame, out_dir: str, report_date: str,
     for target in groups:
         keyword = target["keyword"]
         data = target["frame"]
+        normalized = build_report_frame(data)
         frame = (
-            build_principal_report(keyword, data, REPORT_COLUMNS)
-            if target["groupType"] == "principal" else
+            build_principal_report(keyword, normalized, REPORT_COLUMNS)
+            if target["groupType"] == "principal" or keyword == "YUDI" else
             pd.DataFrame()
         )
         if frame.empty and len(data):
-            frame = build_report_frame(data)
+            frame = normalized
         headers = [str(column) for column in frame.columns]
         safe = keyword.replace("/", "-").replace("\\", "-")
         file_name = f"{report_date}_{safe}.xlsx"
         path = os.path.join(out_dir, file_name)
         wb = Workbook()
         sheet_base = keyword.replace("/", "-").replace("\\", "-").replace("&", "dan") or "NA"
-        wb.new_sheet(sheet_base[:31], data=[headers] + frame.values.tolist())
+        layout = report_layout(keyword)
+        names = [s["name"] for s in layout.get("sheets", [])]
+        wb.new_sheet(names[0] if names else sheet_base[:31], data=[headers] + frame.values.tolist())
         stock_rows = 0
         if stock_frame is not None and not stock_frame.empty:
             stock_column = target["stockColumn"] or target["column"]
             stock_values = target["stockValues"]
             if target["groupType"] == "principal":
                 stock_column = next(
-                    (column for column in ("Principal", "NAMA PRINCIPAL", "PRINCIPLE", stock_column)
+                    (column for column in ("PRINCIPAL", "Principal", "NAMA PRINCIPAL", "PRINCIPLE", stock_column)
                      if column in stock_frame.columns),
                     stock_column,
                 )
             normalized_values = {_normal_text(value) for value in stock_values}
             stock_mask = stock_frame[stock_column].map(_normal_text).isin(normalized_values)
-            target_stock = stock_frame[stock_mask].loc[:, ~stock_frame.columns.duplicated()].copy()
-            if target["groupType"] == "principal":
+            selected_stock = stock_frame if keyword == "SAHAR" else stock_frame[stock_mask]
+            target_stock = selected_stock.loc[:, ~stock_frame.columns.duplicated()].copy()
+            if target["groupType"] == "principal" or keyword == "SAHAR":
                 target_stock = apply_stock_rule(keyword, target_stock)
             # Mapping GOLONGAN/NAMA_SM hanya untuk filter; query akhir 2.3 selalu memilih tujuh kolom ini.
             target_stock = build_principal_stock(target_stock)
@@ -579,10 +596,11 @@ def write_report_files(sb: pd.DataFrame, out_dir: str, report_date: str,
             stock_rows = int(len(target_stock))
         else:
             target_stock = None
-        if target_stock is not None and stock_rows:
-            wb.new_sheet(f"{sheet_base[:25]} Stock"[:31],
+        if target_stock is not None:
+            wb.new_sheet(names[1] if len(names) > 1 else f"{sheet_base[:25]} STOCK"[:31],
                          data=[stock_headers] + target_stock.values.tolist())
         wb.save(path)
+        apply_layout(path, keyword)
         written.append({
             "keyword": keyword,
             "groupType": target["groupType"],
@@ -632,12 +650,19 @@ def write_to_format_file(fix: pd.DataFrame, out_dir: str, report_date: str) -> d
     os.makedirs(out_dir, exist_ok=True)
     file_name = f"{report_date}_2.To Format Laporan.xlsx"
     path = os.path.join(out_dir, file_name)
+    columns = report_layout("2. To Format Laporan")["sheets"][0]["headers"]
     frame = fix.loc[:, ~fix.columns.duplicated()].copy()
+    if "QTY_SATUANKECIL" in frame:
+        frame["FIX QTY_SATUAN KECIL"] = frame["QTY_SATUANKECIL"]
+    frame = frame.reindex(columns=columns)
     headers = [str(column) for column in frame.columns]
-    values = [[_excel_safe(value) for value in row] for row in frame.to_numpy(dtype=object)]
+    values = frame.astype(object).where(pd.notna(frame), None).values.tolist()
     wb = Workbook()
     wb.new_sheet("FIX LAP PENJ"[:31], data=[headers] + values)
+    for sheet in report_layout("2. To Format Laporan").get("lookup_sheets", []):
+        wb.new_sheet(sheet['name'], data=sheet['values'])
     wb.save(path)
+    apply_layout(path, "2. To Format Laporan")
     return {"fileName": file_name, "path": path, "rows": int(len(frame))}
 
 
@@ -650,7 +675,7 @@ def create_run_archive(out_dir: str, report_date: str) -> dict:
     path = os.path.join(out_dir, file_name)
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for name in sorted(os.listdir(out_dir)):
-            if name.lower().endswith((".xlsx", ".xlsm")):
+            if name.lower().endswith((".xlsx", ".xlsm", ".html")):
                 archive.write(os.path.join(out_dir, name), arcname=name)
     return {"fileName": file_name, "path": path}
 
@@ -668,7 +693,7 @@ def load_lookups_json(path: str = LOOKUPS_JSON) -> "LookupTables":
     d = _json.load(open(path, encoding="utf-8"))
     return LookupTables(d.get("principal_to_spv", {}), d.get("conca_to_spv", {}),
                         d.get("jp_map", {}), d.get("sm_map", {}),
-                        REPORT_TARGETS)
+                        REPORT_TARGETS, d.get("stock_spv_map"))
 
 
 def build_fix_from_accurate(penjualan_path: str, retur_path: Optional[str], lk: LookupTables) -> pd.DataFrame:
@@ -684,6 +709,11 @@ def build_fix_from_accurate(penjualan_path: str, retur_path: Optional[str], lk: 
         rr_raw = _read_sheet(retur_path, RINCIAN_SHEET)
         rr_raw.columns = [str(c).strip() for c in rr_raw.columns]
         r = _prep_acc(rr_raw, lk)
+        product = rr_raw["JENIS PRODUK"].astype("string").str.strip()
+        product = product.map(lk.jp_map).fillna(product)
+        conca = r["PRINCIPAL"].fillna("") + product.fillna("")
+        r["GOLONGAN"] = conca.map(lk.conca_to_spv)
+        r["JENISPRODUK"] = product.where(conca.isin(lk.conca_to_spv), pd.NA)
         r["JENIS_TRANSAKSI"] = RETUR_LABEL   # file retur = semua RJN
         for c in ("QTY", "HARGA", "DPP", "NILAI_JUAL", "POTONGAN", "JUMLAH", "NILAI_PAJAK", "QTY_SATUANKECIL"):
             if c in r:

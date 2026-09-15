@@ -1,7 +1,7 @@
 # Tujuan: Menjaga output SPV/SM dan parity Power Query Principal tetap benar.
 # Caller: Developer/CI melalui eksekusi Python langsung.
 # Dependensi: pandas, openpyxl, laporan_harian.resolve_report_groups, dan write_report_files.
-# Main Functions: main() memeriksa nama customer, tanggal, Principal, parsing Stock Accurate, dan kontrak tujuh kolom Stock.
+# Main Functions: main() memeriksa customer, Stock kanonik, nama sheet arsip dan FIX 63 kolom.
 # Side Effects: Membuat lalu menghapus workbook sementara.
 
 import tempfile
@@ -87,9 +87,9 @@ def main() -> None:
          "GOLONGAN": "YUDI", "NAMA_SM": "HENDRIK"},
         {"KODE_BARANG": "SKU-3", "QTY AKHIR": 12, "PRINCIPAL": "MOTASA INDONESIA, PT",
          "GOLONGAN": "YUDI", "NAMA_SM": "HENDRIK"},
-        {"KODE_BARANG": "SKU-F1", "QTY AKHIR": 8, "Principal": "FONTERRA BRANDS INDONESIA, PT",
+        {"KODE_BARANG": "SKU-F1", "QTY AKHIR": 8, "PRINCIPAL": "FONTERRA BRANDS INDONESIA, PT",
          "GOLONGAN": "SOFYAN", "NAMA_SM": "ADNAN", "Kode Gudang": "GD01"},
-        {"KODE_BARANG": "SKU-F2", "QTY AKHIR": 9, "Principal": "FONTERRA BRANDS INDONESIA, PT",
+        {"KODE_BARANG": "SKU-F2", "QTY AKHIR": 9, "PRINCIPAL": "FONTERRA BRANDS INDONESIA, PT",
          "GOLONGAN": "SOFYAN", "NAMA_SM": "ADNAN", "Kode Gudang": "GD02"},
     ])
     lookups = laporan.LookupTables({}, {}, {}, {}, {
@@ -120,7 +120,7 @@ def main() -> None:
         assert {item["groupType"] for item in written} == {"spv", "sm", "principal"}
         output = Path(next(item["path"] for item in written if item["keyword"] == "DENNY"))
         workbook = openpyxl.load_workbook(output, read_only=True, data_only=True)
-        assert workbook.sheetnames == ["DENNY", "DENNY Stock"]
+        assert workbook.sheetnames == ["DENNY", "DENNY STOCK"]
         sheet = workbook["DENNY"]
         headers = [cell.value for cell in sheet[1]]
         values = [cell.value for cell in sheet[2]]
@@ -131,7 +131,7 @@ def main() -> None:
         assert values[headers.index("AO")] == 7
         assert values[headers.index("EC")] == 9
         assert values[headers.index("Item Aktif")] == 11
-        stock_sheet = workbook["DENNY Stock"]
+        stock_sheet = workbook["DENNY STOCK"]
         stock_headers = [cell.value for cell in stock_sheet[1]]
         stock_values = [cell.value for cell in stock_sheet[2]]
         assert stock_headers == laporan.build_principal_stock(stock).columns.tolist()
@@ -147,29 +147,29 @@ def main() -> None:
             next(item["path"] for item in written if item["keyword"] == "HENDRIK"),
             read_only=True, data_only=True,
         )
-        assert [cell.value for cell in sm_workbook["HENDRIK Stock"][1]] == stock_headers
+        assert [cell.value for cell in sm_workbook["HENDRIK STOCK"][1]] == stock_headers
         sm_workbook.close()
 
         motasa_1 = openpyxl.load_workbook(
             next(item["path"] for item in written if item["keyword"] == "MOTASA MKS 1"),
             read_only=True, data_only=True,
         )
-        assert motasa_1["MOTASA MKS 1"]["G2"].value == "MS1_TEST"
+        assert motasa_1["Sheet1"]["G2"].value == "MS1_TEST"
         motasa_1.close()
 
         motasa_2 = openpyxl.load_workbook(
             next(item["path"] for item in written if item["keyword"] == "MOTASA MKS 2"),
             read_only=True, data_only=True,
         )
-        assert motasa_2["MOTASA MKS 2"]["G2"].value == "MS6_TEST"
+        assert motasa_2["Sheet1"]["G2"].value == "MS6_TEST"
         motasa_2.close()
 
         fonterra = openpyxl.load_workbook(
             next(item["path"] for item in written if item["keyword"] == "FONTERRA"),
             read_only=True, data_only=True,
         )
-        assert [cell.value for cell in fonterra["FONTERRA Stock"][1]] == stock_headers
-        assert fonterra["FONTERRA Stock"]["C2"].value == "GD01"
+        assert [cell.value for cell in fonterra["FONTERRA STOCK"][1]] == stock_headers
+        assert fonterra["FONTERRA STOCK"]["C2"].value == "GD01"
         fonterra.close()
         assert next(item["rows"] for item in written if item["keyword"] == "FONTERRA") == 1
         assert next(item["stockRows"] for item in written if item["keyword"] == "FONTERRA") == 1
@@ -208,9 +208,12 @@ def main() -> None:
         assert to_format["rows"] == 2
         to_format_wb = openpyxl.load_workbook(to_format["path"], read_only=True, data_only=True)
         to_format_sheet = to_format_wb["FIX LAP PENJ"]
-        assert [cell.value for cell in to_format_sheet[1]] == ["NO_NOTA", "TANGGAL", "DPP", "QTY"]
-        assert [cell.value for cell in to_format_sheet[2]] == ["INV-1", "2026-07-15", 1000.0, 2]
-        assert [cell.value for cell in to_format_sheet[3]] == ["INV-2", None, None, 1]
+        assert len(list(to_format_sheet[1])) == 63
+        assert to_format_sheet['A2'].value == 'INV-1'
+        assert to_format_sheet['B2'].value == pd.Timestamp('2026-07-15')
+        assert to_format_sheet['P2'].value == 1000.0
+        assert to_format_sheet['L2'].value == 2
+        assert to_format_sheet['B3'].value is None
         to_format_wb.close()
 
         import zipfile
