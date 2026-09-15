@@ -175,7 +175,7 @@ export default function DaftarOutlet() {
 
             <div className="max-h-96 overflow-auto rounded border border-white/10">
                 <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-slate-900 text-slate-300">
+                    <thead className="bg-white/5 text-slate-300">
                         <tr>
                             {["Daftar", "Outlet", "Tingkat", "Kode Kino", "Ikut", ""].map((h) => (
                                 <th key={h} className="whitespace-nowrap px-2 py-2 text-left font-medium">{h}</th>
