@@ -1,0 +1,220 @@
+/*
+ * Tujuan: JEMBATAN publikasi Summary -> `promo_rule`. Surat yang sudah dibaca OCR, dikoreksi
+ *         manusia, dan DITERBITKAN, menjadi aturan yang benar-benar menahan faktur.
+ * Caller: halaman Aturan Promo (tombol "Muat dari Summary").
+ * Dependensi: FastAPI /summary/review/published (sumber), db promo_rule + promo_outlet, rbac.
+ * Main Functions: GET (daftar publikasi), POST (muat satu publikasi).
+ * Side Effects: menulis `promo_rule` irisan `source='surat'` milik surat itu, dan `promo_outlet`
+ *               bila publikasinya membawa daftar outlet khusus.
+ *
+ * KENAPA NEXT YANG MENULIS, BUKAN PYTHON.
+ * `promo_rule` punya satu pemilik: sisi Next. Importir Excel, layar Aturan Promo, unggah surat,
+ * dan jembatan ini semuanya menulis lewat Drizzle dengan bentuk baris yang sama. Membiarkan
+ * Python ikut menulis berarti bentuk barisnya hidup di dua bahasa, dan suatu saat keduanya akan
+ * berbeda tentang kolom yang sama.
+ *
+ * KENAPA SERVER YANG MENGAMBIL, BUKAN PERAMBAN.
+ * Halaman Summary memang memanggil FastAPI langsung dari peramban. Tetapi kalau ISI aturan
+ * dikirim dari peramban, gerbang "sudah diterbitkan" bisa dilewati dengan menyusun muatan
+ * sendiri. Jadi yang dikirim peramban hanya ID publikasinya; isinya diambil server ke server,
+ * dengan cookie pemakainya diteruskan supaya kepemilikan paketnya tetap diperiksa FastAPI.
+ *
+ * MUAT ULANG MENGGANTI IRISANNYA SENDIRI: `source='surat'` untuk surat itu saja. Aturan dari
+ * Excel, tarif outlet, dan yang diketik tangan tidak tersentuh.
+ */
+import { NextRequest, NextResponse } from "next/server";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { customer, item, principalMapping, promoOutlet, promoRule } from "@/db/schema";
+import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
+import { bridgeRows, type PublishedLetter, type SummaryProgram } from "@/lib/summary-bridge";
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
+const text = (value: unknown) => String(value ?? "").trim();
+
+function backendBase() {
+    return process.env.FASTAPI_BASE_URL || process.env.NEXT_PUBLIC_FASTAPI_BASE_URL || "http://localhost:8000";
+}
+
+async function gateOf(perlu: "summary.view" | "summary.edit") {
+    const gate = await resolveRequestPermissionsH();
+    if (gate.response) return { response: gate.response };
+    if (!gate.perms?.has(perlu)) {
+        return { response: NextResponse.json({ ok: false, error: "Akses aturan promo tidak diizinkan" }, { status: 403 }) };
+    }
+    return { email: String(gate.session?.user?.email ?? "") };
+}
+
+/**
+ * Ambil dari FastAPI dengan cookie pemakainya diteruskan.
+ *
+ * Tanpa cookie, FastAPI menolak — dan itu memang benar: paket Summary milik PER PEMAKAI, jadi
+ * jembatan ini tidak boleh bisa membaca paket orang lain hanya karena ia berjalan di server.
+ */
+async function fromBackend(request: NextRequest, path: string) {
+    const cookie = request.headers.get("cookie") ?? "";
+    const url = `${backendBase()}/summary/review${path}`;
+    let response: Response;
+    try {
+        response = await fetch(url, { headers: cookie ? { cookie } : {}, cache: "no-store" });
+    } catch {
+        // Sebabnya disebut, bukan "fetch failed": yang membaca pesan ini bukan yang menulis
+        // kodenya, dan "mesin Summary tidak menyala" adalah sesuatu yang bisa ia tindak lanjuti.
+        throw new Error(`Mesin Summary tidak menjawab di ${backendBase()}. Pastikan layanannya menyala.`);
+    }
+    if (response.status === 401 || response.status === 403) {
+        throw new Error("Sesi Anda tidak dikenali oleh mesin Summary. Buka halaman Summary sekali lalu coba lagi; pada mesin pengembang, jalur ini memang tidak bisa dipakai karena login dilewati.");
+    }
+    if (!response.ok) throw new Error(`Mesin Summary menolak permintaan (HTTP ${response.status})`);
+    return await response.json() as Record<string, unknown>;
+}
+
+export async function GET(request: NextRequest) {
+    const gate = await gateOf("summary.view");
+    if (gate.response) return gate.response;
+    try {
+        const body = await fromBackend(request, "/published/list");
+        const published = (body.published ?? []) as Record<string, unknown>[];
+        // Yang SUDAH pernah dimuat ditandai, supaya "muat ulang" adalah keputusan sadar dan
+        // bukan kebetulan. Dicari dari jejaknya, bukan dari ingatan layar.
+        const dimuat = await db.select({ ref: promoRule.sourceRef, surat: promoRule.suratProgram })
+            .from(promoRule).where(eq(promoRule.source, "surat"));
+        const refs = new Set(dimuat.map((row) => row.ref));
+        return NextResponse.json({
+            ok: true,
+            published: published.map((entry) => ({ ...entry, sudahDimuat: refs.has(String(entry.draft_id ?? "")) })),
+        });
+    } catch (error) {
+        return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "gagal" }, { status: 502 });
+    }
+}
+
+export async function POST(request: NextRequest) {
+    const gate = await gateOf("summary.edit");
+    if (gate.response) return gate.response;
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    const draftId = text(body?.draftId);
+    if (!draftId) return NextResponse.json({ ok: false, error: "Sebutkan publikasi yang mau dimuat" }, { status: 400 });
+
+    let terbit: Record<string, unknown>;
+    try {
+        terbit = await fromBackend(request, `/published/${encodeURIComponent(draftId)}`);
+    } catch (error) {
+        return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "gagal" }, { status: 502 });
+    }
+
+    const content = (terbit.content ?? {}) as Record<string, unknown>;
+    const detail = (content.review_detail ?? {}) as Record<string, unknown>;
+    const settings = (detail.settings ?? {}) as Record<string, unknown>;
+    const master = (content.master ?? {}) as Record<string, unknown>;
+    const items = Array.isArray(master.items) ? master.items as Record<string, unknown>[] : [];
+
+    const letter: PublishedLetter = {
+        draftId,
+        principal: text(detail.principal) || text(body?.principal) || "KINO NON FOOD",
+        suratProgram: text(detail.document_id),
+        promoLabel: text(detail.nama_program),
+        promoGroup: text(detail.variant_barang),
+        programs: (Array.isArray(content.programs) ? content.programs : []) as SummaryProgram[],
+        itemNames: Object.fromEntries(items.map((item) => [text(item.kode_barang), text(item.nama_barang)])),
+        settlement: text(settings.settlement),
+        beban: text(settings.beban) || text(settings.benefit_beban) || "PRINCIPAL",
+        outletCodes: (Array.isArray(settings.outlet_codes) ? settings.outlet_codes : []).map(text).filter(Boolean),
+    };
+
+    const hasil = bridgeRows(letter);
+    if (!hasil.rows.length) {
+        return NextResponse.json({
+            ok: false,
+            error: "Tidak ada satu pun aturan yang bisa dinyatakan dari publikasi ini",
+            ditolak: hasil.refused, catatan: hasil.notes,
+        }, { status: 422 });
+    }
+
+    // Barang yang tidak ada di master Accurate DITAHAN di sini, bukan dibiarkan jadi aturan yang
+    // tidak akan pernah cocok. Aturan untuk barang hantu tidak menahan apa pun; ia hanya
+    // membuat layar terlihat penuh.
+    const itemCodes = [...new Set(hasil.rows.map((row) => row.itemCode).filter(Boolean))];
+    const catatan = [...hasil.notes];
+    const ditolak = [...hasil.refused];
+    const known = itemCodes.length
+        ? new Set((await db.select({ no: item.no }).from(item).where(inArray(item.no, itemCodes))).map((row) => row.no))
+        : new Set<string>();
+    const hilang = itemCodes.filter((code) => !known.has(code));
+    if (hilang.length) {
+        ditolak.push(`${hilang.length} kode barang tidak ada di master Accurate dan tidak dimuat: ${hilang.slice(0, 15).join(", ")}`);
+    }
+    const rows = hasil.rows.filter((row) => !row.itemCode || known.has(row.itemCode));
+    if (!rows.length) {
+        return NextResponse.json({ ok: false, error: "Semua barang pada publikasi ini tidak ada di master Accurate", ditolak, catatan }, { status: 422 });
+    }
+
+    // Daftar outlet khusus ikut dimuat kalau publikasinya membawanya. Kodenya diterjemahkan
+    // lewat `principal_mapping`/master pelanggan — tidak pernah ditebak.
+    let outletDimuat = 0;
+    if (letter.outletCodes.length) {
+        const [maps, pelanggan] = await Promise.all([
+            db.select({ source: principalMapping.sourceCode, target: principalMapping.targetCode })
+                .from(principalMapping).where(eq(principalMapping.kind, "customer")),
+            db.select({ no: customer.customerNo, name: customer.name }).from(customer),
+        ]);
+        const mapping = new Map(maps.map((row) => [row.source.trim().toUpperCase(), row.target.trim().toUpperCase()]));
+        const internal = new Map<string, string>();
+        for (const row of pelanggan) {
+            const no = row.no.trim().toUpperCase();
+            const base = no.split("-").length >= 3 ? no.slice(0, no.lastIndexOf("-")) : no;
+            if (!internal.has(base)) internal.set(base, row.name);
+        }
+        const anggota: (typeof promoOutlet.$inferInsert)[] = [];
+        for (const kode of letter.outletCodes) {
+            const atas = kode.toUpperCase();
+            const code = mapping.get(atas) ?? (internal.has(atas) ? atas : "");
+            if (!code || !internal.has(code)) { ditolak.push(`Outlet ${kode} pada daftar publikasi tidak ada di master pelanggan`); continue; }
+            anggota.push({
+                listName: letter.suratProgram.toUpperCase(), customerCode: code, customerName: internal.get(code) ?? "",
+                sourceCode: mapping.has(atas) ? atas : "", periodStart: null, periodEnd: null, active: true,
+                note: `dari publikasi Summary ${draftId.slice(0, 8)}`, importedBy: gate.email!,
+            });
+        }
+        if (anggota.length) {
+            const ditulis = await db.insert(promoOutlet).values(anggota)
+                .onConflictDoUpdate({
+                    target: [promoOutlet.listName, promoOutlet.customerCode],
+                    set: { customerName: sql`excluded.customer_name`, sourceCode: sql`excluded.source_code`,
+                        active: sql`excluded.active`, note: sql`excluded.note`, importedBy: gate.email!, importedAt: new Date() },
+                })
+                .returning({ id: promoOutlet.id });
+            outletDimuat = ditulis.length;
+        }
+    }
+
+    // Irisan yang diganti: aturan `source='surat'` milik SURAT INI pada principal ini. Muat
+    // ulang publikasi yang sama harus menghasilkan keadaan yang sama, bukan menumpuk.
+    const ditulis = await db.transaction(async (tx) => {
+        // Kunci irisannya PUBLIKASI, bukan nomor surat: satu surat bisa punya banyak detail,
+        // dan tiap detail diterbitkan sendiri-sendiri. Menghapus per nomor surat berarti memuat
+        // detail kedua akan mencabut aturan detail pertama dari surat yang sama.
+        // `publish_detail` menolak menerbitkan ulang detail yang sama, jadi satu detail selalu
+        // punya tepat satu publikasi — kunci ini stabil.
+        await tx.delete(promoRule).where(and(
+            eq(promoRule.source, "surat"),
+            eq(promoRule.sourceRef, draftId),
+        ));
+        const values = rows.map((row) => ({
+            ...row, prdId: "", importedBy: gate.email!, source: "surat", sourceRef: draftId,
+        }));
+        for (let start = 0; start < values.length; start += 500) {
+            await tx.insert(promoRule).values(values.slice(start, start + 500));
+        }
+        return values.length;
+    });
+
+    return NextResponse.json({
+        ok: true, suratProgram: letter.suratProgram, principal: letter.principal,
+        aturan: ditulis, outlet: outletDimuat,
+        program: (letter.programs ?? []).length,
+        ditolak, catatan,
+    });
+}

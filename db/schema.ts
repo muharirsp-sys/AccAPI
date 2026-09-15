@@ -194,11 +194,67 @@ export const promoRule = pgTable("promo_rule", {
     benefitUnit: text("benefit_unit").notNull().default(""),
     benefitBeban: text("benefit_beban").notNull().default("PRINCIPAL"),
     onFaktur: boolean("on_faktur").notNull().default(true),
+    // Daftar outlet peserta (`promo_outlet.list_name`). Kosong = berlaku semua outlet.
+    // Suratnya sendiri yang menyebut peserta: "KHUSUS CHANNEL GT PESERTA LOYALTY"
+    // (Resik V, Ovale) dan "EXCLUDE LOYALTY" (MSG) — dua arah, satu daftar.
+    outletList: text("outlet_list").notNull().default(""),
+    /** INCLUDE = hanya peserta daftar; EXCLUDE = semua kecuali peserta. Kosong = tanpa batas. */
+    outletListMode: text("outlet_list_mode").notNull().default(""),
+    /**
+     * ASAL baris ini: `surat` (publikasi Summary lewat jembatan), `excel` (impor sheet Detail),
+     * `tarif` (impor Discount Reguler), `manual` (diketik di layar). Kosong = baris lama,
+     * diperlakukan milik jalur excel/tarif. Tiap penulis hanya boleh mengganti IRISANNYA
+     * SENDIRI; tanpa penanda ini yang satu akan menghapus muatan yang lain tanpa galat.
+     */
+    source: text("source").notNull().default(""),
+    /** Jejaknya: id publikasi Summary, atau nama berkas impornya. */
+    sourceRef: text("source_ref").notNull().default(""),
     note: text("note").notNull().default(""),
     importedBy: text("imported_by").notNull().default(""),
     importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
     index("idx_promo_rule_item").on(t.itemCode, t.periodStart, t.periodEnd),
+]);
+
+// Anggota satu daftar outlet, mis. peserta program LOYALTY. Satu daftar dipakai banyak surat
+// sekaligus, jadi ia tinggal di tabelnya sendiri dan aturan hanya MENUNJUKNYA — menyalin
+// keanggotaan ke tiap aturan berarti 41 outlet x 3 surat yang harus berubah bersamaan.
+// Periode melekat pada ANGGOTA, bukan pada nama daftar: keanggotaan berganti tiap kuartal
+// sementara suratnya menyebut "LOYALTY" begitu saja.
+export const promoOutlet = pgTable("promo_outlet", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    listName: text("list_name").notNull(),
+    /** Kode internal TANPA akhiran cabang (C-WIN013); faktur membawa C-WIN013-KN. */
+    customerCode: text("customer_code").notNull(),
+    customerName: text("customer_name").notNull().default(""),
+    /** PLATINUM/GOLD/SILVER — keterangan saja; tidak ada surat yang membedakan tingkatnya. */
+    tier: text("tier").notNull().default(""),
+    /** CUST_ID2 principal, supaya baris ini bisa diadu ulang dengan `principal_mapping`. */
+    sourceCode: text("source_code").notNull().default(""),
+    periodStart: date("period_start"),
+    periodEnd: date("period_end"),
+    active: boolean("active").notNull().default(true),
+    note: text("note").notNull().default(""),
+    importedBy: text("imported_by").notNull().default(""),
+    importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    uniqueIndex("idx_promo_outlet_key").on(t.listName, t.customerCode),
+    index("idx_promo_outlet_list").on(t.listName),
+]);
+
+// Hasil OCR surat program (Mistral OCR 4.1), disimpan supaya surat yang sama tidak ditagih
+// dua kali. OCR dibayar per halaman, dan mengunggah ulang surat yang sama adalah hal yang
+// wajar — pesan galat kita sendiri yang menyuruhnya. Kuncinya HASH ISI berkas, bukan namanya.
+export const promoLetterOcr = pgTable("promo_letter_ocr", {
+    sourceHash: text("source_hash").notNull(),
+    model: text("model").notNull(),
+    pipelineVersion: text("pipeline_version").notNull(),
+    result: jsonb("result").notNull(),
+    pageCount: integer("page_count").notNull().default(0),
+    createdBy: text("created_by").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    primaryKey({ columns: [t.sourceHash, t.model, t.pipelineVersion] }),
 ]);
 
 // Master cabang Accurate. Penomoran faktur Accurate berjalan PER CABANG, dan harga jual

@@ -2,7 +2,8 @@
    "cuma warning". Toleransi Rp 1 hanya menyerap pembulatan, bukan selisih aturan. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { berlakuPada, checkLine, checkSoPromo, splitDiscounts, type LineInput, type PublishedRule } from "./principal-validation.ts";
+import { berlakuPada, bonusQuota, checkLine, checkSoPromo, outletAllowed, outletListsOn, splitDiscounts,
+    type LineInput, type PublishedRule } from "./principal-validation.ts";
 
 const line = (over: Partial<LineInput> = {}): LineInput => ({
     productCode: "106052", itemCode: "K1010001006010", itemExists: true,
@@ -216,6 +217,21 @@ test("MSG: tier yang diambil adalah yang TERTINGGI yang ambangnya terlampaui", (
     assert.match(verdict.explained, /tier 2/);
 });
 
+test("MSG: ambang tier dibaca TERMASUK PPN, sama seperti manfaatnya", () => {
+    // NOVA COSMETIK 7 Sep 2026 (produksi): DPP 2.817.305 -> dengan PPN 3.127.208, jadi tier 3
+    // Rp 60.000. Kino memang memberi Rp 60.000 (DPP 54.058 x 1,11 = 60.004). Membandingkan DPP
+    // mentah dengan ambang menjatuhkannya ke tier 2 dan menuduh klaim yang benar.
+    const tiers = [
+        msg(), msg({ tierNo: 2, triggerQty: 2_000_000, benefitValue: "40000" }),
+        msg({ tierNo: 3, triggerQty: 3_000_000, benefitValue: "60000" }),
+    ];
+    const verdict = checkSoPromo({ gross: 2_817_304.8, principalClaim: 54_058, lineCount: 19 }, tiers);
+    assert.match(verdict.explained, /tier 3/);
+    assert.deepEqual(verdict.findings, []);
+    // Yang benar-benar di bawah ambang TETAP tidak dijelaskan: PPN bukan pintu belakang.
+    assert.equal(checkSoPromo({ gross: 800_000, principalClaim: 18_016, lineCount: 5 }, tiers).explained, "");
+});
+
 test("MSG: nominal yang tidak sesuai tier tetap ditahan", () => {
     const verdict = checkSoPromo({ gross: 1_198_378, principalClaim: 45_000, lineCount: 18 }, [msg()]);
     assert.equal(verdict.explained, "");
@@ -357,4 +373,194 @@ test("aturan yang sudah lewat masa berlakunya tidak menjelaskan apa pun", () => 
     assert.equal(berlakuPada(berlaku, "2026-08-31"), false);
     // Tanpa batas = berlaku kapan pun; itu yang dipakai tarif reguler tanpa periode.
     assert.equal(berlakuPada(aturan(), "2020-01-01"), true);
+});
+
+test("baris bonus: potongan 100% dijelaskan aturan BONUS_QTY, bebannya principal", () => {
+    // Bentuk nyata baris bonus: harga penuh lalu dipotong 100% di POSISI 1 (kolom distributor),
+    // sementara suratnya menulis "beli 30 gratis 1" — BONUS_QTY, bukan persen. Gerbang dan
+    // Rekap Promo wajib menjawab sama: dijelaskan, dan beban PRINCIPAL sesuai suratnya.
+    const bonusRule: PublishedRule = {
+        suratProgram: "BP2609007713", promoGroup: "RESIK V KHASIAT MANJAKANI",
+        itemCode: "K1010001006010", customerCode: "", tierNo: 1,
+        triggerQty: 30, triggerUnit: "PCS",
+        benefitType: "BONUS_QTY", benefitValue: "1", benefitBeban: "PRINCIPAL",
+    };
+    const bonusLine = { bonus: true, discounts: [{ position: 1, percent: 100 }], reportDiscount: 324324.32 };
+
+    const lolos = checkLine(line({ ...bonusLine, rules: [bonusRule] }));
+    assert.equal(lolos.status, "ok");
+    assert.equal(lolos.split.principal, 324324.32);
+    assert.equal(lolos.split.distributor, 0);
+
+    // Tanpa aturannya baris yang sama TETAP tertahan: angka 100 bukan surat.
+    assert.equal(checkLine(line({ ...bonusLine, rules: [] })).status, "review");
+    // Aturan bonus milik barang lain tidak meloloskannya.
+    assert.equal(checkLine(line({ ...bonusLine, rules: [{ ...bonusRule, itemCode: "K9999" }] })).status, "review");
+    // 100% BERSAMA potongan lain bukan baris bonus — itu keadaan yang belum pernah ada.
+    const campuran = checkLine(line({ bonus: true, rules: [bonusRule], reportDiscount: 324324.32,
+        discounts: [{ position: 1, percent: 100 }, { position: 4, percent: 3 }] }));
+    assert.equal(campuran.status, "review");
+});
+
+test("daftar outlet peserta: INCLUDE hanya peserta, EXCLUDE justru sebaliknya", () => {
+    // Bunyi suratnya sendiri: BP2609007713/BP2609007664 "KHUSUS CHANNEL GT PESERTA LOYALTY",
+    // BP2609006016 "EXCLUDE LOYALTY". Satu daftar, dua arah.
+    const lists = outletListsOn([
+        { listName: "LOYALTY", customerCode: "C-WIN013", periodStart: "2026-07-01", periodEnd: "2026-09-30" },
+        { listName: "LOYALTY", customerCode: "C-KOS005" },
+    ], "2026-09-15");
+
+    const hanya = { outletList: "LOYALTY", outletListMode: "INCLUDE" };
+    const kecuali = { outletList: "LOYALTY", outletListMode: "EXCLUDE" };
+    assert.equal(outletAllowed(hanya, "C-WIN013-KN", lists), true);
+    assert.equal(outletAllowed(hanya, "C-NOV009-KN", lists), false);
+    assert.equal(outletAllowed(kecuali, "C-WIN013-KN", lists), false);
+    assert.equal(outletAllowed(kecuali, "C-NOV009-KN", lists), true);
+
+    // Aturan tanpa daftar tidak tersentuh sama sekali — 234 baris yang sudah termuat.
+    assert.equal(outletAllowed({}, "C-NOV009-KN", lists), true);
+
+    // Awalan dipenggal di tanda hubung: C-WIN01 tidak boleh ikut mengesahkan C-WIN013.
+    assert.equal(outletAllowed(hanya, "C-WIN0131-KN", lists), false);
+
+    // Keanggotaan berperiode: di luar periodenya, outlet itu BUKAN peserta.
+    const oktober = outletListsOn([
+        { listName: "LOYALTY", customerCode: "C-WIN013", periodStart: "2026-07-01", periodEnd: "2026-09-30" },
+    ], "2026-10-01");
+    assert.equal(outletAllowed(hanya, "C-WIN013-KN", oktober), false);
+    assert.equal(outletAllowed(kecuali, "C-WIN013-KN", oktober), true);
+
+    // GAGAL TERTUTUP: daftar yang namanya salah ketik membuat aturannya tidak berlaku untuk
+    // siapa pun, bukan berlaku untuk semua orang.
+    assert.equal(outletAllowed({ outletList: "LOYALTI", outletListMode: "INCLUDE" }, "C-WIN013-KN", lists), false);
+
+    // Anggota yang dinonaktifkan tidak ikut terbaca.
+    const mati = outletListsOn([{ listName: "LOYALTY", customerCode: "C-WIN013", active: false }], "2026-09-15");
+    assert.equal(outletAllowed(hanya, "C-WIN013-KN", mati), false);
+});
+
+test("gerbang menahan bonus yang jatuh ke outlet BUKAN peserta", () => {
+    const bonusRule: PublishedRule = {
+        suratProgram: "BP2609007713", promoGroup: "RESIK V KHASIAT MANJAKANI",
+        itemCode: "K1010001006010", customerCode: "", tierNo: 1, triggerQty: 30, triggerUnit: "PCS",
+        benefitType: "BONUS_QTY", benefitValue: "1", benefitBeban: "PRINCIPAL",
+        outletList: "LOYALTY", outletListMode: "INCLUDE",
+    };
+    const bonusLine = { bonus: true, discounts: [{ position: 1, percent: 100 }], reportDiscount: 324324.32 };
+
+    // Pemanggil (route) yang menyaring; di sini dibuktikan bahwa aturan yang TIDAK lolos
+    // saringan itu memang tidak menjelaskan apa pun — bukan lolos karena isinya kebetulan cocok.
+    const lists = outletListsOn([{ listName: "LOYALTY", customerCode: "C-WIN013" }], "2026-09-15");
+    const peserta = [bonusRule].filter((rule) => outletAllowed(rule, "C-WIN013-KN", lists));
+    const bukan = [bonusRule].filter((rule) => outletAllowed(rule, "C-GAL006-KN", lists));
+    assert.equal(checkLine(line({ ...bonusLine, rules: peserta })).status, "ok");
+    assert.equal(checkLine(line({ ...bonusLine, rules: bukan })).status, "review");
+});
+
+test("kuota bonus: beli 10 pcs TIDAK boleh dapat bonus", () => {
+    // Ketakutan yang disebut pengguna, dan memang jalur yang sebelumnya terbuka: baris bonus
+    // diperiksa sendirian, sementara jumlah belinya ada di baris LAIN.
+    const aturan = [{ itemCode: "K137A", suratProgram: "BP2609007713", promoGroup: "RESIK V KHASIAT MANJAKANI", triggerQty: 30, benefitValue: "1" }];
+    const kurang = bonusQuota([
+        { key: "beli", itemCode: "K137A", quantity: 10, bonus: false },
+        { key: "bonus", itemCode: "K137A", quantity: 1, bonus: true },
+    ], aturan);
+    assert.equal(kurang[0].purchased, 10);
+    assert.equal(kurang[0].entitled, 0);
+    assert.equal(kurang[0].given, 1);
+    assert.deepEqual(kurang[0].overKeys, ["bonus"]);
+
+    // Tepat 30 berhak satu, dan tidak lebih.
+    const pas = bonusQuota([
+        { key: "beli", itemCode: "K137A", quantity: 30, bonus: false },
+        { key: "b1", itemCode: "K137A", quantity: 1, bonus: true },
+    ], aturan);
+    assert.equal(pas[0].entitled, 1);
+    assert.deepEqual(pas[0].overKeys, []);
+
+    // 59 masih satu: kelipatan PENUH, bukan pembulatan.
+    assert.equal(bonusQuota([{ key: "b", itemCode: "K137A", quantity: 59, bonus: false }], aturan)[0].entitled, 1);
+});
+
+test("kuota bonus dihitung per KELOMPOK MIX, dengan satuan sudah diseragamkan", () => {
+    // Angka nyata INV/2609/KN00453: beli 12 KRT isi 72 (=864) + 3 KRT isi 36 (=108) pada satu
+    // kelompok mix, bonus 28 + 3 = 31 BTL. 972 / 30 = 32 -> masih dalam kuota.
+    const aturan = [
+        { itemCode: "K1370000005010", suratProgram: "BP2609007713", promoGroup: "RESIK V KHASIAT MANJAKANI", triggerQty: 30, benefitValue: "1" },
+        { itemCode: "K1370000009010", suratProgram: "BP2609007713", promoGroup: "RESIK V KHASIAT MANJAKANI", triggerQty: 30, benefitValue: "1" },
+        { itemCode: "K1370001009010", suratProgram: "BP2609007713", promoGroup: "RESIK V MANJAKANI WHITENING", triggerQty: 30, benefitValue: "1" },
+    ];
+    const hasil = bonusQuota([
+        { key: "a", itemCode: "K1370000005010", quantity: 864, bonus: false },
+        { key: "b", itemCode: "K1370000005010", quantity: 28, bonus: true },
+        { key: "c", itemCode: "K1370000009010", quantity: 108, bonus: false },
+        { key: "d", itemCode: "K1370000009010", quantity: 3, bonus: true },
+        { key: "e", itemCode: "K1370001009010", quantity: 252, bonus: false },
+        { key: "f", itemCode: "K1370001009010", quantity: 8, bonus: true },
+    ], aturan);
+    const manjakani = hasil.find((g) => g.promoGroup === "RESIK V KHASIAT MANJAKANI")!;
+    assert.equal(manjakani.purchased, 972);
+    assert.equal(manjakani.entitled, 32);
+    assert.equal(manjakani.given, 31);
+    assert.deepEqual(manjakani.overKeys, []);
+
+    // Kelompok lain dihitung sendiri: 252 / 30 = 8, diberi 8 — pas.
+    const whitening = hasil.find((g) => g.promoGroup === "RESIK V MANJAKANI WHITENING")!;
+    assert.equal(whitening.entitled, 8);
+    assert.deepEqual(whitening.overKeys, []);
+
+    // Kalau pembeliannya dipindah ke kelompok lain, bonusnya TIDAK ikut berhak.
+    const salahKelompok = bonusQuota([
+        { key: "a", itemCode: "K1370001009010", quantity: 900, bonus: false },
+        { key: "b", itemCode: "K1370000005010", quantity: 5, bonus: true },
+    ], aturan);
+    assert.deepEqual(salahKelompok.find((g) => g.promoGroup === "RESIK V KHASIAT MANJAKANI")!.overKeys, ["b"]);
+});
+
+test("kuota bonus: baris tidak pernah dipecah, dan yang lewat disebut satu per satu", () => {
+    const aturan = [{ itemCode: "K1", suratProgram: "S", promoGroup: "G", triggerQty: 30, benefitValue: "1" }];
+    const hasil = bonusQuota([
+        { key: "beli", itemCode: "K1", quantity: 60, bonus: false },   // berhak 2
+        { key: "b1", itemCode: "K1", quantity: 1, bonus: true },
+        { key: "b2", itemCode: "K1", quantity: 1, bonus: true },
+        { key: "b3", itemCode: "K1", quantity: 1, bonus: true },       // kelebihan
+    ], aturan);
+    assert.equal(hasil[0].entitled, 2);
+    assert.deepEqual(hasil[0].overKeys, ["b3"]);
+
+    // Baris yang membuat kumulatif melewati kuota dianggap lewat SELURUHNYA.
+    const utuh = bonusQuota([
+        { key: "beli", itemCode: "K1", quantity: 60, bonus: false },
+        { key: "borongan", itemCode: "K1", quantity: 10, bonus: true },
+    ], aturan);
+    assert.deepEqual(utuh[0].overKeys, ["borongan"]);
+
+    // Tanpa ambang (surat tidak menyebut minimum), tidak ada kuota yang bisa ditegakkan.
+    const tanpa = bonusQuota([
+        { key: "b", itemCode: "K1", quantity: 99, bonus: true },
+    ], [{ ...aturan[0], triggerQty: 0 }]);
+    assert.deepEqual(tanpa[0].overKeys, []);
+});
+
+test("gerbang MENAHAN baris bonus yang melewati kuota, meski aturannya ada", () => {
+    const bonusRule: PublishedRule = {
+        suratProgram: "BP2609007713", promoGroup: "RESIK V KHASIAT MANJAKANI",
+        itemCode: "K1010001006010", customerCode: "", tierNo: 1, triggerQty: 30, triggerUnit: "PCS",
+        benefitType: "BONUS_QTY", benefitValue: "1", benefitBeban: "PRINCIPAL",
+    };
+    const bonusLine = { bonus: true, discounts: [{ position: 1, percent: 100 }], reportDiscount: 324324.32 };
+
+    // Kuotanya dihitung pemanggil; di sini dibuktikan bahwa alasannya MENAHAN barisnya, dan
+    // aturan yang ada tidak lagi menjelaskannya.
+    const lewat = checkLine(line({
+        ...bonusLine, rules: [bonusRule],
+        bonusOverQuota: "Bonus melewati kuota RESIK V KHASIAT MANJAKANI: pembelian 10 berhak 0, tetapi diberikan 1.",
+    }));
+    assert.equal(lewat.status, "review");
+    assert.match(lewat.findings.join(" "), /melewati kuota/);
+    // Bebannya TIDAK dipindah ke principal: yang tidak dijelaskan tidak boleh diakui bisa ditagih.
+    assert.equal(lewat.split.principal, 0);
+
+    // Tanpa alasan kuota, baris yang sama tetap lolos seperti biasa.
+    assert.equal(checkLine(line({ ...bonusLine, rules: [bonusRule] })).status, "ok");
 });

@@ -78,6 +78,12 @@ export type LineInput = {
      * (lihat checkSoPromo). Baris tidak perlu punya aturannya sendiri.
      */
     fakturPromo?: string;
+    /**
+     * Diisi bila baris BONUS ini melewati kuota kelompoknya (lihat `bonusQuota`). Isinya
+     * kalimat sebabnya, dan barisnya ditahan — aturan bonus menyatakan "setiap 30 pcs", jadi
+     * bonus yang tidak punya pembeliannya bukan bonus, ia barang yang keluar tanpa dasar.
+     */
+    bonusOverQuota?: string;
 };
 
 export type LineCheck = { status: "ok" | "review"; findings: string[]; split: Split };
@@ -102,6 +108,10 @@ export type PublishedRule = {
     benefitType: string;
     benefitValue: string;
     benefitBeban: string;
+    /** Daftar outlet peserta; kosong = berlaku semua outlet. Lihat `outletAllowed`. */
+    outletList?: string;
+    /** INCLUDE = hanya peserta daftar; EXCLUDE = semua kecuali peserta. */
+    outletListMode?: string;
 };
 
 /**
@@ -152,8 +162,202 @@ export function matchItemRule(
     return cocok[0];
 }
 
+/** Baris BONUS: TEPAT satu potongan, dan potongan itu 100%. Satu predikat untuk semua jalur. */
+/**
+ * Baris BONUS. Suratnya menulis "setiap pembelian 30 PCS mendapat BONUS 1 PCS produk dengan
+ * harga yang sama" (`BONUS_QTY`), tetapi faktur maupun laporan principal mencatatnya sebagai
+ * baris tambahan berharga penuh lalu DIPOTONG 100% — satu-satunya potongan pada baris itu.
+ * Tidak ada pencocokan persen yang bisa menemukannya: manfaatnya "1 PCS", bukan "100%".
+ *
+ * Bebannya PRINCIPAL sesuai bunyi suratnya, MESKI 100%-nya duduk di posisi 1 alias kolom
+ * distributor. Posisi hanya menyatakan siapa yang DIMAKSUD menanggung; di sini suratnya yang
+ * menyatakannya, dan surat lebih kuat daripada letak kolom (keputusan pengguna 2026-09-15).
+ *
+ * Syaratnya sengaja sempit — TEPAT SATU potongan dan tepat 100%. Baris yang dipotong 100%
+ * bersama potongan lain bukan baris bonus; itu keadaan yang belum pernah ada dan tidak boleh
+ * lolos hanya karena mirip.
+ *
+ * Pemanggil WAJIB sudah menyaring `rules` ke tanggal barisnya.
+ */
+export function isBonusLine(discounts: DiscountAt[]): boolean {
+    const worn = discounts.filter((entry) => entry.percent > 0);
+    return worn.length === 1 && Math.abs(cents(worn[0].percent - 100)) <= 0.01;
+}
+
+export function matchBonusRule<T extends { itemCode: string; customerCode: string; benefitType: string }>(
+    discounts: DiscountAt[], rules: T[], itemCode?: string | null,
+): T | null {
+    if (!isBonusLine(discounts)) return null;
+    return rules.find((rule) => rule.benefitType === "BONUS_QTY" && !rule.customerCode
+        && rule.itemCode && (!itemCode || rule.itemCode === itemCode)) ?? null;
+}
+
+/**
+ * Outlet ini termasuk yang dimaksud aturannya?
+ *
+ * Surat program tidak hanya menyebut barang, ia juga menyebut PESERTA — dan menyebutnya ke
+ * dua arah: BP2609007713 dan BP2609007664 berlaku "KHUSUS CHANNEL GT PESERTA LOYALTY",
+ * sedangkan BP2609006016 (MSG) berlaku "EXCLUDE LOYALTY DAN CONTRACTUAL". Satu daftar yang
+ * sama, dua arah. Karena itu aturan MENUNJUK daftar, tidak menyalin isinya.
+ *
+ * `lists`: nama daftar (huruf besar) -> kode internal anggotanya yang berlaku pada tanggal
+ * baris ini. Pemanggil yang menyaring periodenya, sama seperti `berlakuPada` untuk aturan.
+ *
+ * Kode pada faktur membawa akhiran cabang (`C-WIN013-KN`) sedangkan daftarnya menyimpan kode
+ * internal (`C-WIN013`), jadi dicocokkan dengan AWALAN yang dipenggal di tanda hubung —
+ * bukan sembarang awalan: `C-WIN01` tidak boleh ikut mengesahkan `C-WIN013`.
+ *
+ * GAGAL TERTUTUP: daftar yang namanya tidak dikenali membuat aturannya TIDAK berlaku, bukan
+ * berlaku untuk semua. Satu salah ketik nama daftar yang lalu menahan semuanya masih bisa
+ * dilihat dan diperbaiki; satu salah ketik yang diam-diam meloloskan semuanya tidak.
+ */
+export function outletAllowed(
+    rule: { outletList?: string; outletListMode?: string },
+    customerNo: string | null | undefined,
+    lists: Map<string, Set<string>>,
+): boolean {
+    const nama = String(rule.outletList ?? "").trim().toUpperCase();
+    if (!nama) return true;
+    const anggota = lists.get(nama) ?? new Set<string>();
+    const no = String(customerNo ?? "").trim().toUpperCase();
+    const peserta = Boolean(no) && [...anggota].some((kode) => no === kode || no.startsWith(`${kode}-`));
+    return String(rule.outletListMode ?? "").trim().toUpperCase() === "EXCLUDE" ? !peserta : peserta;
+}
+
+/** Satu anggota daftar outlet, apa adanya dari `promo_outlet`. */
+export type OutletMember = {
+    listName: string;
+    customerCode: string;
+    periodStart?: string | null;
+    periodEnd?: string | null;
+    active?: boolean;
+};
+
+/**
+ * Anggota daftar yang BERLAKU pada satu tanggal -> bentuk yang dipakai `outletAllowed`.
+ *
+ * Periodenya disaring di sini dan bukan di SQL karena satu berkas batch bisa memuat lebih
+ * dari satu tanggal SO — persis alasan yang sama dengan aturan promo. Keanggotaan loyalty
+ * berganti tiap kuartal, jadi menyaring sekali di muka dengan periode batch berarti menilai
+ * seluruh berkas dengan keanggotaan tanggal yang salah, diam-diam.
+ */
+export function outletListsOn(members: OutletMember[], date: string): Map<string, Set<string>> {
+    const out = new Map<string, Set<string>>();
+    for (const member of members) {
+        if (member.active === false) continue;
+        if (!berlakuPada({ periodStart: member.periodStart, periodEnd: member.periodEnd }, date)) continue;
+        const nama = member.listName.trim().toUpperCase();
+        if (!out.has(nama)) out.set(nama, new Set());
+        out.get(nama)!.add(member.customerCode.trim().toUpperCase());
+    }
+    return out;
+}
+
+/** Satu baris untuk pemeriksaan kuota bonus. `quantity` WAJIB dalam satuan TERKECIL. */
+export type BonusLine = {
+    /** Penanda baris pada pemanggilnya; dikembalikan apa adanya supaya barisnya bisa ditunjuk. */
+    key: string;
+    itemCode: string;
+    /** Jumlah dalam satuan terkecil. 12 KRT isi 72 = 864, bukan 12. */
+    quantity: number;
+    /** Baris BONUS (potongan 100%), bukan baris pembelian. */
+    bonus: boolean;
+};
+
+/** Aturan bonus yang menentukan kuotanya. Satu kelompok mix = satu (surat, kelompok). */
+export type BonusQuotaRule = {
+    itemCode: string;
+    suratProgram: string;
+    promoGroup: string;
+    /** Ambang dalam satuan terkecil, mis. 30 PCS. */
+    triggerQty: number;
+    /** Berapa yang didapat tiap kelipatan ambang, mis. 1. */
+    benefitValue: string;
+};
+
+export type BonusQuota = {
+    group: string;
+    suratProgram: string;
+    promoGroup: string;
+    trigger: number;
+    benefit: number;
+    /** Jumlah pembelian (satuan terkecil) pada kelompok ini. */
+    purchased: number;
+    /** Bonus yang BERHAK diterima: kelipatan penuh dari ambang. */
+    entitled: number;
+    /** Bonus yang benar-benar diberikan pada faktur/SO ini. */
+    given: number;
+    /** Baris bonus yang melewati kuota, dalam urutan munculnya. */
+    overKeys: string[];
+};
+
+/**
+ * Kuota bonus per KELOMPOK MIX, untuk satu faktur atau satu SO.
+ *
+ * Kenapa per kelompok dan bukan per barang: suratnya sendiri berkata begitu — "SETIAP PEMBELIAN
+ * 30 PCS RESIK V KHASIAT MANJAKANI **MIX VARIANT** AKAN MENDAPATKAN BONUS 1 PCS". Memeriksanya
+ * per barang akan menahan pembelian yang sah (20 pcs varian A + 15 varian B memang berhak satu
+ * bonus), dan memeriksanya per faktur tanpa kelompok akan meloloskan bonus merek lain.
+ *
+ * Kenapa per FAKTUR/SO dan bukan per baris: baris bonus adalah baris TERSENDIRI berharga penuh
+ * lalu dipotong 100%. Jumlah belinya ada di baris LAIN. Memeriksa baris bonus sendirian sama
+ * saja tidak memeriksa apa pun — dan itulah lubang yang membuat "beli 10 pcs dapat bonus 1 pcs"
+ * bisa lewat.
+ *
+ * Satuan WAJIB sudah diseragamkan ke satuan terkecil oleh pemanggil. Faktur nyata mencampur BTL
+ * dan KRT pada barang yang sama (INV/2609/KN00453: beli 12 KRT isi 72, bonus 28 BTL); tanpa
+ * penyeragaman, 12 akan dibandingkan dengan ambang 30 dan pembelian 864 pcs terbaca kurang.
+ *
+ * `overKeys` diisi dengan menelusuri baris bonus SESUAI URUTANNYA dan berhenti begitu kumulatifnya
+ * melewati kuota. Baris tidak pernah dipecah: baris yang membuat kumulatif melewati kuota
+ * dianggap melewati seluruhnya — menghitung sebagiannya sah berarti mengarang pembagian yang
+ * tidak ada pada fakturnya.
+ */
+export function bonusQuota(lines: BonusLine[], rules: BonusQuotaRule[]): BonusQuota[] {
+    const byItem = new Map<string, BonusQuotaRule>();
+    for (const rule of rules) {
+        if (!rule.itemCode) continue;
+        if (!byItem.has(rule.itemCode)) byItem.set(rule.itemCode, rule);
+    }
+    const out = new Map<string, BonusQuota>();
+    for (const line of lines) {
+        const rule = byItem.get(line.itemCode);
+        if (!rule) continue;
+        const group = `${rule.suratProgram}|${rule.promoGroup}`;
+        const entry = out.get(group) ?? {
+            group, suratProgram: rule.suratProgram, promoGroup: rule.promoGroup,
+            trigger: rule.triggerQty, benefit: Number(rule.benefitValue) || 0,
+            purchased: 0, entitled: 0, given: 0, overKeys: [],
+        };
+        if (line.bonus) entry.given += line.quantity;
+        else entry.purchased += line.quantity;
+        out.set(group, entry);
+    }
+    for (const entry of out.values()) {
+        // Ambang nol berarti surat tidak menyebut minimum pembelian; tidak ada kuota untuk
+        // diperiksa, dan mengarang kuota dari angka nol akan menahan bonus yang memang berhak.
+        entry.entitled = entry.trigger > 0 && entry.benefit > 0
+            ? Math.floor(entry.purchased / entry.trigger) * entry.benefit
+            : Number.POSITIVE_INFINITY;
+    }
+    // Penelusuran urutan baris bonus dilakukan setelah kuotanya diketahui.
+    const berjalan = new Map<string, number>();
+    for (const line of lines) {
+        if (!line.bonus) continue;
+        const rule = byItem.get(line.itemCode);
+        if (!rule) continue;
+        const group = `${rule.suratProgram}|${rule.promoGroup}`;
+        const entry = out.get(group)!;
+        const sebelum = berjalan.get(group) ?? 0;
+        const sesudah = sebelum + line.quantity;
+        berjalan.set(group, sesudah);
+        if (sesudah > entry.entitled) entry.overKeys.push(line.key);
+    }
+    return [...out.values()];
+}
+
 /** Aturan berlaku pada tanggal itu. Kosong di salah satu ujung = tidak dibatasi di ujung itu. */
-export function berlakuPada(rule: PublishedRule, date: string): boolean {
+export function berlakuPada(rule: { periodStart?: string | null; periodEnd?: string | null }, date: string): boolean {
     return (!rule.periodStart || rule.periodStart <= date) && (!rule.periodEnd || date <= rule.periodEnd);
 }
 
@@ -225,7 +429,14 @@ export function checkSoPromo(
     const tiers = rules
         .filter((rule) => !rule.itemCode && rule.benefitType === "DISC_RP" && rule.triggerUnit.toUpperCase() === "RP")
         .sort((a, b) => b.triggerQty - a.triggerQty);
-    const reached = tiers.find((tier) => input.gross >= tier.triggerQty);
+    // AMBANGNYA juga TERMASUK PPN, bukan hanya manfaatnya. Surat MSG menulis "MINIMAL
+    // TRANSAKSI 1JT - 1.99JT" — nilai yang dibayar outlet, sedangkan laporan membawa DPP.
+    // Membandingkan DPP dengan ambang bruto menjatuhkan SO ke tier di bawahnya dan menuduh
+    // klaim yang sebenarnya benar. Dibuktikan atas 15 faktur September di produksi: tier yang
+    // benar-benar diberi Kino cocok 15/15 dengan ambang termasuk PPN, dan hanya 10/15 dengan
+    // DPP (TK. SAWI 12, TK. ASMA, NOVA COSMETIK, APOTEK HUSADA FARMA, TRIPLE M meleset).
+    const grossWithTax = cents(input.gross * (1 + PPN));
+    const reached = tiers.find((tier) => grossWithTax >= tier.triggerQty);
     if (!reached) return { explained: "", findings: [] };
 
     const expected = Number(reached.benefitValue);
@@ -243,7 +454,7 @@ export function checkSoPromo(
         };
     }
     return {
-        explained: `${reached.suratProgram} tier ${reached.tierNo} (belanja >= Rp ${reached.triggerQty.toLocaleString("id-ID")} -> Rp ${expected.toLocaleString("id-ID")})`,
+        explained: `${reached.suratProgram} tier ${reached.tierNo} (belanja dengan PPN >= Rp ${reached.triggerQty.toLocaleString("id-ID")} -> Rp ${expected.toLocaleString("id-ID")})`,
         findings: [],
     };
 }
@@ -304,7 +515,25 @@ export function checkLine(line: LineInput): LineCheck {
     // Sebelumnya posisi 1-3 lolos begitu saja karena "toh beban sendiri" — tetapi potongan yang
     // tidak punya aturan bukan beban sendiri, ia potongan yang belum jelas milik siapa, dan
     // memberikannya lebih dulu lalu bertanya kemudian adalah cara kehilangan uang tanpa jejak.
-    for (const owner of ["distributor", "principal"] as const) {
+    // Baris bonus diputuskan lebih dulu dan SEKALIGUS: 100%-nya satu potongan utuh yang
+    // dijelaskan satu aturan, jadi memecahnya per beban hanya akan menuduh separuhnya.
+    //
+    // KUOTA diperiksa sebelum aturannya: bonus yang melewati kuota TIDAK dijelaskan aturan mana
+    // pun, betapapun benar barang dan persennya. Kuotanya dihitung pemanggil karena jumlah
+    // BELINYA ada di baris lain pada SO yang sama.
+    const bonusRule = line.bonusOverQuota ? null : matchBonusRule(line.discounts, line.rules, line.itemCode);
+    if (line.bonusOverQuota) findings.push(line.bonusOverQuota);
+    if (bonusRule) {
+        // Beban dipindahkan ke principal supaya gerbang dan Rekap Promo memberi jawaban yang
+        // sama. Tanpa ini baris bonus tercatat beban distributor — mengaku menanggung barang
+        // yang menurut suratnya diberikan principal. `unowned` sengaja TIDAK ikut dipindah:
+        // bonus di posisi di luar 1-5 belum pernah ada, dan kalau muncul ia harus tetap
+        // tertahan, bukan disahkan oleh aturan yang kebetulan ada.
+        split.principal = cents(split.principal + split.distributor);
+        split.distributor = 0;
+    }
+
+    for (const owner of bonusRule ? [] : (["distributor", "principal"] as const)) {
         const amount = owner === "principal" ? split.principal : split.distributor;
         if (amount <= 0) continue;
         const beban = owner === "principal" ? "PRINCIPAL" : "DISTRIBUTOR";

@@ -14,11 +14,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { customer, item, principalMapping, principalOrderBatch, principalOrderLine, promoRule } from "@/db/schema";
+import { customer, item, principalMapping, principalOrderBatch, principalOrderLine, promoOutlet, promoRule } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { syncItemPrices } from "@/lib/item-price-sync";
-import { berlakuPada, checkLine, checkSoPromo, matchItemRule, splitDiscounts, type DiscountAt, type PublishedRule } from "@/lib/principal-validation";
+import { berlakuPada, bonusQuota, checkLine, checkSoPromo, isBonusLine, matchItemRule, outletAllowed,
+    outletListsOn, splitDiscounts, type DiscountAt, type PublishedRule } from "@/lib/principal-validation";
 
 export const runtime = "nodejs";
 
@@ -69,7 +70,24 @@ export async function POST(request: NextRequest) {
         periodStart: promoRule.periodStart, periodEnd: promoRule.periodEnd,
         tierNo: promoRule.tierNo, triggerQty: promoRule.triggerQty, triggerUnit: promoRule.triggerUnit,
         benefitType: promoRule.benefitType, benefitValue: promoRule.benefitValue, benefitBeban: promoRule.benefitBeban,
+        outletList: promoRule.outletList, outletListMode: promoRule.outletListMode,
     }).from(promoRule).where(eq(promoRule.active, true));
+
+    // Daftar outlet peserta (mis. LOYALTY). Surat sendiri yang menyebutnya: BP2609007713 dan
+    // BP2609007664 "KHUSUS CHANNEL GT PESERTA LOYALTY", BP2609006016 "EXCLUDE LOYALTY".
+    // Disaring per TANGGAL SO seperti aturannya, karena keanggotaan berganti tiap kuartal.
+    const outletMembers = await db.select({
+        listName: promoOutlet.listName, customerCode: promoOutlet.customerCode,
+        periodStart: promoOutlet.periodStart, periodEnd: promoOutlet.periodEnd, active: promoOutlet.active,
+    }).from(promoOutlet);
+    const listsByDate = new Map<string, Map<string, Set<string>>>();
+    const listsOn = (date: string) => {
+        const ada = listsByDate.get(date);
+        if (ada) return ada;
+        const baru = outletListsOn(outletMembers, date);
+        listsByDate.set(date, baru);
+        return baru;
+    };
     const rulesByItem = new Map<string, PublishedRule[]>();
     const fakturRules: PublishedRule[] = [];
     // Tarif Discount Reguler melekat pada OUTLET, bukan barang: satu baris melayani seluruh
@@ -88,13 +106,24 @@ export async function POST(request: NextRequest) {
         if (!rulesByItem.has(rule.itemCode)) rulesByItem.set(rule.itemCode, []);
         rulesByItem.get(rule.itemCode)!.push(rule);
     }
+    /** Kode pelanggan Accurate baris ini (dengan akhiran cabang), atau null bila belum dipetakan. */
+    const customerNoOf = (line: { customerCode: string }) => {
+        const base = customers.get(line.customerCode);
+        return base ? `${base}${suffix}` : null;
+    };
+
     /** Tarif outlet ini, dicari dengan kode internal maupun kode ber-akhiran cabang. */
     const tariffOf = (base: string | null, customerNo: string | null): PublishedRule[] =>
         (base ? tariffByCustomer.get(base.toUpperCase()) : undefined)
         ?? (customerNo ? tariffByCustomer.get(customerNo.toUpperCase()) : undefined)
         ?? [];
-    /** Aturan yang benar-benar berlaku pada tanggal SO baris ini. */
-    const berlaku = (rules: PublishedRule[], date: string) => rules.filter((rule) => berlakuPada(rule, date));
+    /**
+     * Aturan yang benar-benar berlaku untuk baris ini: tanggalnya masuk periode DAN outletnya
+     * memang peserta daftar yang ditunjuk aturan itu. Dua syarat, satu saringan — supaya tidak
+     * ada jalur pencocokan yang lupa menanyakan salah satunya.
+     */
+    const berlaku = (rules: PublishedRule[], date: string, customerNo?: string | null) =>
+        rules.filter((rule) => berlakuPada(rule, date) && outletAllowed(rule, customerNo, listsOn(date)));
 
     const itemCodes = [...new Set(lines.map((line) => items.get(line.productCode)).filter(Boolean) as string[])];
     let priceRefresh: { ok: boolean; error?: string; processed?: number; priceRows?: number } | null = null;
@@ -159,10 +188,10 @@ export async function POST(request: NextRequest) {
     const soPromo = new Map<string, string>();
     const soFindings = new Map<string, string[]>();
     if (fakturRules.length > 0) {
-        const perSo = new Map<string, { gross: number; claim: number; lines: number; date: string }>();
+        const perSo = new Map<string, { gross: number; claim: number; lines: number; date: string; customerNo: string | null }>();
         for (const line of lines) {
             const key = String(line.soNo);
-            const entry = perSo.get(key) ?? { gross: 0, claim: 0, lines: 0, date: dateOf(line) };
+            const entry = perSo.get(key) ?? { gross: 0, claim: 0, lines: 0, date: dateOf(line), customerNo: customerNoOf(line) };
             const discounts = (line.discounts as DiscountAt[]) ?? [];
             const split = splitDiscounts(Number(line.reportGross), discounts);
             // Ambangnya dihitung dari SELURUH belanja SO; yang dicocokkan hanya SISA klaim
@@ -170,7 +199,7 @@ export async function POST(request: NextRequest) {
             entry.gross += Number(line.reportGross);
             const itemCode = items.get(line.productCode);
             const byItem = itemCode
-                ? matchItemRule(discounts, berlaku(rulesByItem.get(itemCode) ?? [], dateOf(line)), itemCode)
+                ? matchItemRule(discounts, berlaku(rulesByItem.get(itemCode) ?? [], dateOf(line), customerNoOf(line)), itemCode)
                 : null;
             if (!byItem) { entry.claim += split.principal; entry.lines += 1; }
             perSo.set(key, entry);
@@ -178,10 +207,50 @@ export async function POST(request: NextRequest) {
         for (const [soNo, entry] of perSo) {
             const verdict = checkSoPromo(
                 { gross: entry.gross, principalClaim: entry.claim, lineCount: entry.lines },
-                berlaku(fakturRules, entry.date),
+                berlaku(fakturRules, entry.date, entry.customerNo),
             );
             if (verdict.explained) soPromo.set(soNo, verdict.explained);
             if (verdict.findings.length) soFindings.set(soNo, verdict.findings);
+        }
+    }
+
+    // KUOTA BONUS per SO, dihitung sebelum baris mana pun dinilai.
+    //
+    // Baris bonus pada laporan principal berharga penuh lalu dipotong 100%, sedangkan jumlah
+    // BELINYA ada di baris lain. Tanpa pemeriksaan se-SO, "beli 10 pcs dapat bonus 1 pcs" akan
+    // lolos gerbang dengan sempurna: barangnya benar, aturannya ada, persennya 100 seperti
+    // seharusnya. Ambangnya dihitung dalam SATUAN TERKECIL (`reportQty`), karena satu SO
+    // mencampur KRT dan PCS pada barang yang sama.
+    const overQuota = new Map<string, string>();
+    {
+        const perSoLines = new Map<string, typeof lines>();
+        for (const line of lines) {
+            const key = String(line.soNo);
+            perSoLines.set(key, [...(perSoLines.get(key) ?? []), line]);
+        }
+        for (const [soNo, isi] of perSoLines) {
+            const date = dateOf(isi[0]);
+            const aturanBonus = publishedRules
+                .filter((rule) => rule.benefitType === "BONUS_QTY" && rule.itemCode && berlakuPada(rule, date)
+                    && outletAllowed(rule, customerNoOf(isi[0]), listsOn(date)))
+                .map((rule) => ({
+                    itemCode: rule.itemCode, suratProgram: rule.suratProgram, promoGroup: rule.promoGroup,
+                    triggerQty: Number(rule.triggerQty) || 0, benefitValue: rule.benefitValue,
+                }));
+            if (!aturanBonus.length) continue;
+            const kuota = bonusQuota(isi.map((line) => ({
+                key: `${soNo}#${line.rowNumber}`,
+                itemCode: items.get(line.productCode) ?? "",
+                quantity: Number(line.reportQty) || 0,
+                bonus: line.bonus || isBonusLine((line.discounts as DiscountAt[]) ?? []),
+            })), aturanBonus);
+            for (const grup of kuota) {
+                for (const key of grup.overKeys) {
+                    overQuota.set(key, `Bonus melewati kuota ${grup.promoGroup}: pembelian ${grup.purchased} `
+                        + `berhak ${grup.entitled}, tetapi diberikan ${grup.given}. Aturannya "setiap ${grup.trigger}" — `
+                        + "bonus tanpa pembeliannya bukan bonus.");
+                }
+            }
         }
     }
 
@@ -209,8 +278,9 @@ export async function POST(request: NextRequest) {
                 rules: berlaku([
                     ...(itemCode ? (rulesByItem.get(itemCode) ?? []) : []),
                     ...tariffOf(base, customerNo),
-                ], dateOf(line)),
+                ], dateOf(line), customerNo),
                 fakturPromo: soPromo.get(String(line.soNo)),
+                bonusOverQuota: overQuota.get(`${line.soNo}#${line.rowNumber}`),
             });
             // Temuan tingkat SO menahan SETIAP barisnya: nominalnya milik seluruh SO, jadi
             // tidak ada satu baris pun yang bisa dinyatakan benar sendirian.

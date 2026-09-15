@@ -26,6 +26,7 @@ export const runtime = "nodejs";
 const text = (value: unknown) => String(value ?? "").trim();
 const BEBAN = new Set(["PRINCIPAL", "DISTRIBUTOR"]);
 const JENIS = new Set(["DISC_PCT", "DISC_RP", "BONUS_QTY"]);
+const MODE = new Set(["", "INCLUDE", "EXCLUDE"]);
 
 type Draft = typeof promoRule.$inferInsert;
 
@@ -37,6 +38,8 @@ function draftOf(body: Record<string, unknown>, importedBy: string): { row: Draf
     const benefitBeban = text(body.benefitBeban).toUpperCase() || "PRINCIPAL";
     const benefitValue = text(body.benefitValue).replace(",", ".");
     const tierNo = Number(body.tierNo) || 1;
+    const outletList = text(body.outletList).toUpperCase();
+    const outletListMode = text(body.outletListMode).toUpperCase();
 
     if (!text(body.principal)) return { error: "Principal wajib diisi" };
     if (!text(body.suratProgram)) return { error: "Surat/program wajib diisi — ia yang menjelaskan asal aturannya" };
@@ -46,6 +49,12 @@ function draftOf(body: Record<string, unknown>, importedBy: string): { row: Draf
         return { error: `Nilai manfaat "${benefitValue}" bukan angka` };
     }
     if (tierNo < 1) return { error: "Tingkat/posisi minimal 1" };
+    if (!MODE.has(outletListMode)) return { error: "Arah daftar outlet harus INCLUDE atau EXCLUDE" };
+    // Daftar tanpa arah tidak akan pernah menyaring apa pun, dan arah tanpa daftar akan
+    // MENAHAN semuanya. Dua-duanya aturan yang terlihat ada tetapi tidak berkata apa-apa.
+    if (Boolean(outletList) !== Boolean(outletListMode)) {
+        return { error: "Isi nama daftar outlet DAN arahnya sekaligus, atau kosongkan keduanya" };
+    }
 
     // Baris TARIF: melekat outlet, berlaku semua barang, dan `tierNo` adalah POSISI diskon.
     if (customerCode && !itemCode && benefitType === "DISC_PCT") {
@@ -69,7 +78,10 @@ function draftOf(body: Record<string, unknown>, importedBy: string): { row: Draf
         triggerUnit: text(body.triggerUnit).toUpperCase() || "PCS",
         benefitType, benefitValue, benefitUnit: text(body.benefitUnit),
         benefitBeban, onFaktur: body.onFaktur !== false,
+        outletList, outletListMode,
         note: text(body.note), importedBy,
+        // Diketik di layar; jalur impor mana pun tidak boleh menghapusnya.
+        source: "manual", sourceRef: "",
     } };
 }
 
@@ -105,7 +117,7 @@ export async function GET(request: NextRequest) {
         if (jenis === "faktur" && (isTarif(row) || row.itemCode)) return false;
         if (beban && row.benefitBeban.toUpperCase() !== beban) return false;
         if (!cari) return true;
-        return [row.suratProgram, row.promoGroup, row.promoLabel, row.itemCode, row.itemName, row.customerCode]
+        return [row.suratProgram, row.promoGroup, row.promoLabel, row.itemCode, row.itemName, row.customerCode, row.outletList]
             .some((field) => String(field).toUpperCase().includes(cari));
     });
 

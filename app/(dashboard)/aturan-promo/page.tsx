@@ -17,6 +17,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Save, Trash2, Copy, RefreshCw, X, Info } from "lucide-react";
 import { toast } from "sonner";
+import DaftarOutlet from "./daftar-outlet";
+import DariSummary from "./dari-summary";
 
 type Rule = {
     id: number; principal: string; suratProgram: string; promoLabel: string; promoGroup: string;
@@ -24,7 +26,7 @@ type Rule = {
     periodStart: string | null; periodEnd: string | null; active: boolean;
     tierNo: number; triggerQty: string; triggerUnit: string;
     benefitType: string; benefitValue: string; benefitUnit: string; benefitBeban: string;
-    onFaktur: boolean; note: string; importedBy: string;
+    onFaktur: boolean; outletList: string; outletListMode: string; note: string; importedBy: string;
 };
 
 const KOSONG: Partial<Rule> = {
@@ -32,7 +34,7 @@ const KOSONG: Partial<Rule> = {
     promoLabel: "", itemCode: "", itemName: "", customerCode: "",
     periodStart: "", periodEnd: "", active: true, tierNo: 1, triggerQty: "0", triggerUnit: "PCS",
     benefitType: "DISC_PCT", benefitValue: "", benefitUnit: "%", benefitBeban: "DISTRIBUTOR",
-    onFaktur: true, note: "",
+    onFaktur: true, outletList: "", outletListMode: "", note: "",
 };
 
 /** Bentuk aturan, dibaca dari isinya — bukan dari kolom penanda yang bisa berbeda dari isinya. */
@@ -47,7 +49,12 @@ const persen = (value: string) => String(value).replace(".", ",");
 
 /** Satu kalimat yang menjelaskan arti sebuah aturan, untuk orang yang tidak membaca kolom. */
 function artinya(rule: Partial<Rule>): string {
-    const siapa = rule.customerCode ? `Outlet ${rule.customerCode}` : "Semua outlet";
+    // Daftar peserta ikut disebut di kalimatnya: aturan yang sama persis bisa berlaku untuk 41
+    // toko atau untuk semua toko KECUALI 41 itu, dan bedanya tidak terlihat dari kolom lain.
+    const daftar = rule.outletList
+        ? rule.outletListMode === "EXCLUDE" ? ` yang BUKAN peserta ${rule.outletList}` : ` peserta ${rule.outletList}`
+        : "";
+    const siapa = rule.customerCode ? `Outlet ${rule.customerCode}` : `Semua outlet${daftar}`;
     const barang = rule.itemCode ? `barang ${rule.itemCode}` : "semua barang";
     const beban = rule.benefitBeban === "PRINCIPAL"
         ? "ditanggung principal — bisa ditagihkan kembali"
@@ -285,6 +292,16 @@ export default function AturanPromoPage() {
 
                         <F label="Berlaku mulai" hint="Dikosongkan = berlaku sejak kapan pun."><input type="date" value={draft.periodStart ?? ""} onChange={(e) => setDraft({ ...draft, periodStart: e.target.value })} className={inputCls} /></F>
                         <F label="Berlaku sampai" hint="Dikosongkan = berlaku sampai dicabut."><input type="date" value={draft.periodEnd ?? ""} onChange={(e) => setDraft({ ...draft, periodEnd: e.target.value })} className={inputCls} /></F>
+                        <F label="Hanya untuk peserta daftar" hint="Nama daftar outlet, mis. LOYALTY. Dikosongkan = berlaku untuk semua outlet. Daftarnya disusun di panel bawah halaman ini.">
+                            <input value={draft.outletList ?? ""} onChange={(e) => setDraft({ ...draft, outletList: e.target.value.toUpperCase() })} placeholder="kosong = semua outlet" className={inputCls} />
+                        </F>
+                        <F label="Arah daftar" hint="“Hanya peserta” untuk program yang khusus mereka; “Semua kecuali peserta” untuk program yang justru mengecualikan mereka (MSG).">
+                            <select value={draft.outletListMode ?? ""} onChange={(e) => setDraft({ ...draft, outletListMode: e.target.value })} className={inputCls} disabled={!draft.outletList}>
+                                <option value="">— tanpa daftar —</option>
+                                <option value="INCLUDE">Hanya peserta daftar</option>
+                                <option value="EXCLUDE">Semua KECUALI peserta daftar</option>
+                            </select>
+                        </F>
                         <F label="Catatan" hint="Mis. sumber datanya, atau siapa yang memastikan."><input value={draft.note ?? ""} onChange={(e) => setDraft({ ...draft, note: e.target.value })} className={inputCls} /></F>
                         <label className="flex items-end gap-2 pb-6 text-sm">
                             <input type="checkbox" id="aturan-aktif" checked={draft.active !== false} onChange={(e) => setDraft({ ...draft, active: e.target.checked })} />
@@ -380,7 +397,16 @@ export default function AturanPromoPage() {
                                         <span className="block text-xs text-slate-500">{b.hint}</span>
                                     </td>
                                     <td className="px-2 py-1.5 align-top">
-                                        {rule.customerCode || <span className="text-slate-500">semua outlet</span>}
+                                        {/* Aturan yang dibatasi DAFTAR PESERTA tidak boleh tetap tertulis
+                                            "semua outlet": kolom ini yang dibaca orang untuk menjawab
+                                            "berlaku di toko mana", dan jawabannya jadi kebalikannya. */}
+                                        {rule.customerCode || (rule.outletList
+                                            ? <span className={rule.outletListMode === "EXCLUDE" ? "text-rose-300" : "text-sky-300"}>
+                                                {rule.outletListMode === "EXCLUDE"
+                                                    ? `semua KECUALI peserta ${rule.outletList}`
+                                                    : `hanya peserta ${rule.outletList}`}
+                                            </span>
+                                            : <span className="text-slate-500">semua outlet</span>)}
                                         <span className="block text-xs text-slate-500">
                                             {rule.itemCode ? `${rule.itemCode} ${rule.itemName}`.trim() : "semua barang"}
                                         </span>
@@ -432,6 +458,10 @@ export default function AturanPromoPage() {
                     </tbody>
                 </table>
             </div>
+
+            <DariSummary setelahMuat={() => void load()} />
+
+            <DaftarOutlet />
         </div>
     );
 }
