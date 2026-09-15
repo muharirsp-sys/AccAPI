@@ -11,6 +11,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
+from order_duplicate import duplicate_message, find_duplicate
 from pydantic import ValidationError
 from shared import get_current_user, user_has_permission, validate_csrf_request
 from summary_store import JsonStore, connect, identity
@@ -54,12 +55,50 @@ def published_rules():
     return programs, sources
 
 
-def store_order(owner, outlet, channel, order_date, note, lines, request_id=None, customer_no=""):
+def duplicate_check(owner, outlet, channel, order_date, lines):
+    """Order lain milik outlet dan tanggal yang sama yang isinya MIRIP, atau None.
+
+    Dijalankan sebelum order disimpan, dan menahan DUA jalur sekaligus karena keduanya lewat
+    `store_order`: Order Sales (diketik) dan Order Masuk (tarikan Web Sales).
+
+    Yang dibandingkan kode barangnya saja, bukan jumlah maupun harganya: ketikan ulang hampir
+    selalu mengubah jumlah, dan justru itu yang membuatnya lolos kalau yang dibandingkan angka.
+    """
+    codes = [str(line.get("code", "")).strip() for line in lines]
+    candidate = {"key": "", "outlet": outlet, "order_date": order_date, "item_codes": codes}
+    # Jendela bandingnya dipersempit di SINI, bukan di dalam pemeta: channel yang berbeda
+    # adalah jalur order yang berbeda, dan ketikan ulang hampir selalu mengulang channel yang
+    # sama. Menyertakannya berarti menahan order MT hanya karena outletnya juga order GT hari itu.
+    with connect() as db:
+        rows = db.execute(
+            "SELECT id,outlet,order_date,lines FROM sales_order WHERE owner=? AND outlet=? AND channel=? "
+            "AND order_date=? AND status<>'cancelled' ORDER BY rowid DESC LIMIT 200",
+            (owner, outlet[:160], channel[:80], order_date)).fetchall()
+    existing = []
+    for row in rows:
+        try:
+            isi = json.loads(row[3]) or []
+        except (ValueError, TypeError):
+            continue
+        existing.append({"key": row[0], "outlet": row[1], "order_date": row[2],
+                         "item_codes": [str(line.get("code", "")).strip() for line in isi]})
+    return find_duplicate(candidate, existing)
+
+
+def store_order(owner, outlet, channel, order_date, note, lines, request_id=None, customer_no="",
+                confirm_duplicate=False):
     """Hitung dengan aturan terbit lalu bekukan aturan, sumber, dan hasilnya pada order.
 
     Baris tanpa harga (permintaan dari Web Sales) TIDAK dihitung sebagai uang: order
     masuk berstatus `needs_price` dengan aturan belum dibekukan, supaya nilai transaksi
     tidak pernah ditentukan oleh klien. Harga diisi internal (tahap Accurate).
+
+    GERBANG ORDER GANDA: order yang outletnya sama dan barangnya MIRIP dengan order lain pada
+    tanggal yang sama DITOLAK, sampai ada manusia yang menyatakan sudah memeriksanya lewat
+    `confirm_duplicate`. Ditolak, bukan disimpan dengan tanda — order yang tersimpan akan
+    terlihat seperti order biasa oleh setiap layar yang membacanya, dan tandanya akan terlewat.
+    Yang datang dari Web Sales tidak hilang: permintaannya tetap `pending` dan dilaporkan sebagai
+    `failed`, jadi ia menunggu keputusan manusia alih-alih ikut terproses.
     """
     priced = all(str(line.get("price", "")).strip() for line in lines)
     programs, sources = published_rules()
@@ -72,7 +111,19 @@ def store_order(owner, outlet, channel, order_date, note, lines, request_id=None
         status = "draft"
     else:
         result, frozen, status = {"pending_price": True, "lines": lines}, [], "needs_price"
+    # Gerbang ganda diperiksa SETELAH ordernya terbukti sah, bukan sebelum: order yang isinya
+    # tidak valid harus ditolak karena tidak valid, bukan karena mirip. Meminta manusia
+    # mengonfirmasi order yang toh tidak bisa disimpan hanya melatihnya menekan tombol.
+    if not confirm_duplicate:
+        hit = duplicate_check(owner, outlet, channel, order_date, lines)
+        if hit:
+            raise HTTPException(409, duplicate_message(hit))
+
     order_id = str(uuid.uuid4())
+    # Jejak konfirmasi ikut pada catatan ordernya: siapa pun yang membuka order ini nanti harus
+    # bisa tahu bahwa ia pernah ditahan sebagai dugaan ganda, dan sengaja diloloskan.
+    if confirm_duplicate:
+        note = (note + " | dikonfirmasi BUKAN order ganda").strip()[:500]
     with connect() as db:
         db.execute("INSERT INTO sales_order(id,owner,outlet,channel,order_date,status,note,lines,rules,sources,"
                    "result,request_id,customer_no) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -179,13 +230,14 @@ async def create_order(request: Request):
         clean.append({key: str(line.get(key, "")).strip() for key in ("code", "unit", "quantity", "price")})
     try:
         order_id = store_order(identity(user), outlet, channel, order_date, note, clean,
-                               customer_no=customer_no)
+                               customer_no=customer_no,
+                               confirm_duplicate=body.get("confirm_duplicate") is True)
     except (ValueError, KeyError, TypeError) as error:
         raise HTTPException(400, public_error(error)) from None
     return {"ok": True, "order": order_detail_row(order_id, user)}
 
 
-def pull_once(owner):
+def pull_once(owner, confirm_duplicate=False):
     """Tarik permintaan order Web Sales ke internal. Aman diulang.
 
     Dua basis data tidak bisa satu transaksi, jadi urutannya: tulis order internal
@@ -199,12 +251,19 @@ def pull_once(owner):
         try:
             order_id = store_order(owner, entry["outlet"], entry["channel"], entry["order_date"],
                                    entry["note"], entry["lines"], request_id=entry["id"],
-                                   customer_no=entry.get("customer_no", ""))
+                                   customer_no=entry.get("customer_no", ""),
+                                   confirm_duplicate=confirm_duplicate)
             imported.append({"request_id": entry["id"], "order_id": order_id})
         except sqlite3.IntegrityError:
             duplicated.append(entry["id"])
-        except HTTPException:
-            raise
+        except HTTPException as error:
+            # Dugaan order ganda hanya menahan permintaan ITU; permintaan lain pada tarikan yang
+            # sama tetap diproses. Galat lain (mis. aturan promo belum terbit) memang menghentikan
+            # seluruh tarikan, karena ia bukan soal satu permintaan.
+            if error.status_code != 409:
+                raise
+            failed.append({"request_id": entry["id"], "error": error.detail, "duplicate": True})
+            continue
         except (ValueError, KeyError, TypeError) as error:
             failed.append({"request_id": entry["id"], "error": public_error(error)})
             continue

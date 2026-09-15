@@ -257,6 +257,22 @@ export const promoLetterOcr = pgTable("promo_letter_ocr", {
     primaryKey({ columns: [t.sourceHash, t.model, t.pipelineVersion] }),
 ]);
 
+// Pernyataan manusia bahwa sebuah SO BUKAN order ganda, meski gerbang kemiripan menahannya.
+// Kuncinya (principal, so_no) dan bukan id batch: berkas yang sama bisa diunggah ulang dengan
+// id batch baru, sedangkan SO-nya tetap SO yang itu juga — dan konfirmasi yang harus diulang
+// tiap unggahan akan ditekan tanpa dibaca.
+export const orderDupeAck = pgTable("order_dupe_ack", {
+    principal: text("principal").notNull(),
+    soNo: text("so_no").notNull(),
+    /** Alasan yang ditahan saat dikonfirmasi; jejaknya, bukan sekadar tanda tangan. */
+    reason: text("reason").notNull().default(""),
+    note: text("note").notNull().default(""),
+    confirmedBy: text("confirmed_by").notNull().default(""),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    primaryKey({ columns: [t.principal, t.soNo] }),
+]);
+
 // Master cabang Accurate. Penomoran faktur Accurate berjalan PER CABANG, dan harga jual
 // juga per cabang, jadi id cabang di sini adalah id milik Accurate — bukan id lokal.
 export const branch = pgTable("branch", {
