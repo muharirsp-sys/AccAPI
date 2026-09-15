@@ -51,23 +51,45 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 | 4.7 | Surat program jadi aturan terbit | ✅ | `kino_letter.py` (tanpa OCR) + `summary_rules` + gerbang on-faktur |
 | 4.8 | Kelayakan outlet (loyalty dll) | ✅ | `outlet_class.py`; 41 outlet loyalty Makassar sudah dimuat |
 | 4.9 | Pilah diskon: distributor / principal / tak bertuan | ✅ | `kino_discount.classify`, toleransi Rp 1 |
-| 4.10 | Tarif **Discount Reguler (Tanggungan Distributor)** termuat | 🟡 | **Jalurnya SELESAI 2026-09-13, datanya belum ada.** Temuan hari ini: ini bukan sekadar "muat data" — `promo_rule` tidak punya dimensi OUTLET sama sekali, padahal tarif ini melekat pada pelanggan dan berlaku untuk SEMUA barangnya (terbukti pada ORDER_DETAIL 12 Sep: SS DIAPERS MESJID RAYA 2% di posisi 1 pada delapan barang berbeda). Yang dibangun: migrasi `0013` (kolom `customer_code`, kunci unik ikut berubah), `matchTariff()` yang mencocokkan **per POSISI** bukan per jumlah, impor sheet `Discount Reguler` pada `POST /api/promo-recap`, dan Rekap Promo ikut mengenalinya. **Muat ulang tidak lagi saling mencabut**: sheet `Detail` mengganti aturan surat, sheet `Discount Reguler` mengganti tarif outlet. **Sisa: berkas tarifnya** — `DISCOUNT REGULER - TANGGUNGAN DISTRIBUTOR - KINO NON FOOD.xlsx` dikirim ke pengguna 2026-09-10 dan tidak disimpan di repo, jadi harus diminta kembali. Migrasi `0013` sudah di LOKAL dan PRODUKSI (2026-09-14); tarif outlet di produksi masih 0 baris. Sampai dimuat, batch 12 Sep tetap 37 lolos / 11 ditinjau |
+| 4.10 | Tarif **Discount Reguler (Tanggungan Distributor)** termuat | 🟡 | **Jalurnya SELESAI 2026-09-13, datanya belum ada.** Temuan hari ini: ini bukan sekadar "muat data" — `promo_rule` tidak punya dimensi OUTLET sama sekali, padahal tarif ini melekat pada pelanggan dan berlaku untuk SEMUA barangnya (terbukti pada ORDER_DETAIL 12 Sep: SS DIAPERS MESJID RAYA 2% di posisi 1 pada delapan barang berbeda). Yang dibangun: migrasi `0013` (kolom `customer_code`, kunci unik ikut berubah), `matchTariff()` yang mencocokkan **per POSISI** bukan per jumlah, impor sheet `Discount Reguler` pada `POST /api/promo-recap`, dan Rekap Promo ikut mengenalinya. **Muat ulang tidak lagi saling mencabut**: sheet `Detail` mengganti aturan surat, sheet `Discount Reguler` mengganti tarif outlet. **Sisa: berkas tarifnya** — `DISCOUNT REGULER - TANGGUNGAN DISTRIBUTOR - KINO NON FOOD.xlsx` dikirim ke pengguna 2026-09-10 dan tidak disimpan di repo, jadi harus diminta kembali. Migrasi `0013` sudah di LOKAL dan PRODUKSI (2026-09-14); tarif outlet di produksi masih 0 baris. Sampai dimuat, batch 12 Sep tetap 37 lolos / 11 ditinjau. **Sudah dimuat pengguna 14 Sep 2026**: 70 baris berkas -> 89 tarif outlet, jadi `promo_rule` produksi berisi 145 aturan surat + 89 tarif = 234 |
 | 4.42 | **Potongan tanpa aturan = TAK BERTUAN di posisi mana pun** | ✅ | **2026-09-15, keputusan pengguna.** Peta posisi 1-3 distributor / 4-5 principal itu tetap, TETAPI hanya berlaku bagi potongan yang aturannya ADA. Posisi menyatakan siapa yang DIMAKSUD menanggung, bukan siapa yang terbukti. `checkLine` kini memindahkan nominal yang tidak punya aturan dari ember `distributor`/`principal` ke `unowned`: mencatatnya sebagai beban distributor berarti mengaku menanggung uang yang belum jelas milik siapa, dan sebagai klaim principal berarti mengaku berhak menagihnya. Rekap Promo sudah begitu sejak 4.40; sekarang gerbang dan rekap sepakat |
 | 4.41 | Aturan promo bisa dibuat/diubah MANUAL | ✅ | **2026-09-14, permintaan pengguna.** Menu `/aturan-promo` + `app/api/promo-rule`: tambah, ubah, hapus, dan **salin satu tarif ke beberapa outlet** (jawaban untuk baris ber-"GROUP" — tetap satu baris per kode, karena kode anggota grup tidak selalu berawalan sama). Menulis tabel yang SAMA dengan importir; tidak ada salinan kedua. Beban wajib sesuai posisi pada baris tarif, kalau tidak ditolak dengan alasannya |
 | 4.11 | Kode barang per program promo | ✅ | `promo_rule.item_code` termuat: 105 aturan `DISC_PCT`, 30 `BONUS_QTY`, 10 `DISC_RP` tingkat faktur |
-| 4.12 | Aturan untuk channel MT/NKA | 🟡 | **Sumbernya ketemu 2026-09-13**: tabel Discount Reguler memuat KEDUA beban — header cetakannya memisahkan `Distributor` (posisi 1-3) dari `Principle` (posisi 4-5). Diskon ALFAMART 2,25% itu posisi 4 alias klaim principal, dan sekarang bisa dimuat sebagai aturan berbeban `PRINCIPAL` lewat sheet yang sama. Menunggu berkasnya dipastikan pengguna |
+| 4.12 | Aturan untuk channel MT/NKA | 🟡 | **Sumbernya ketemu 2026-09-13**: tabel Discount Reguler memuat KEDUA beban — header cetakannya memisahkan `Distributor` (posisi 1-3) dari `Principle` (posisi 4-5). Diskon ALFAMART 2,25% itu posisi 4 alias klaim principal, dan sekarang bisa dimuat sebagai aturan berbeban `PRINCIPAL` lewat sheet yang sama. Menunggu berkasnya dipastikan pengguna. **2026-09-15:** dimensi channelnya sendiri sudah ada (butir 4.47) — MT kini bisa dinyatakan sebagai channel aturan, bukan cuma tersirat dari kode outletnya |
 | 4.13 | Potongan tingkat FAKTUR (MSG) vs tingkat BARIS | ✅ | **SELESAI 2026-09-12.** `checkSoPromo()` mencocokkan SISA klaim se-SO dengan tier `DISC_RP` (`item_code` kosong, `trigger_unit='RP'`). Nominal surat TERMASUK PPN sedangkan laporan membawa DPP, jadi klaim dikalikan 1,11 sebelum dibandingkan — RISKA TK: 18.016,22 × 1,11 = 19.998 lawan tier Rp 20.000, beda Rp 2. Toleransi Rp 1 **per baris** karena nominalnya dibagi rata lalu dibulatkan di tiap baris |
 | 4.39 | **Tidak ada potongan tembus ke faktur tanpa aturan** | ✅ | **2026-09-12.** `checkLine` memeriksa KEDUA beban, bukan hanya klaim principal. Potongan yang tidak punya aturan bukan "beban sendiri" — ia potongan yang belum jelas milik siapa |
 | 4.40 | Rekap promo: tak bertuan = tidak sesuai aturan | ✅ | **2026-09-12.** Bukan lagi "posisi 6+". Beban ikut dicocokkan. Saringan principal (aturan hanya ada untuk KINO, sementara rekap membaca semua principal). Tiap kartu & program bisa dibuka rinciannya dan diunduh CSV; satu daftar `rows` melayani kartu, tabel, dan unduhan supaya angkanya tidak mungkin berbeda |
+| 4.43 | **MEKANISME klaim: on faktur vs rafaksi** | ✅ | **2026-09-15.** Surat menyebut mekanismenya sendiri, dan itu menentukan apakah programnya BOLEH memotong faktur sama sekali. `bridgeRows` menolak publikasi ber-`settlement` selain `on_invoice` (`rafaksi`, `choose_rafaksi_or_on_invoice`) dengan kalimat sebabnya, dan `readiness()` di sisi Python menolaknya lebih dulu ("Pilih mekanisme on faktur; klaim rafaksi terpisah tidak memotong faktur"). **Kenapa ditolak, bukan dimuat dengan tanda:** rafaksi ditagihkan TERPISAH dan tidak pernah muncul di faktur. Memuatnya sebagai aturan promo berarti gerbang akan MEMBENARKAN potongan yang seharusnya tidak ada di sana — kebalikan dari gunanya gerbang |
+| 4.44 | **MEKANISME "BONUS BARANG ON FAKTUR"** | ✅ | **2026-09-15.** Bentuk `BP2609007713` (Resik V) dan `BP2609007664` (Ovale). Faktur mencatatnya sebagai baris TAMBAHAN berharga penuh lalu dipotong 100% **di posisi 1** — kolom distributor — jadi tidak ada pencocokan persen yang bisa menemukannya, dan ke-30 aturannya dulu tidak pernah menjelaskan apa pun. `matchBonusRule` membacanya dan mengakuinya sebagai klaim PRINCIPAL sesuai bunyi suratnya, lalu memindahkan bebannya supaya gerbang dan Rekap Promo memberi jawaban yang sama |
+| 4.45 | **MEKANISME "POTONGAN ON FAKTUR" tingkat NOTA** | ✅ | **2026-09-15.** Bentuk MSG (`BP2609006016`): satu nominal untuk SELURUH nota, dibagi rata ke tiap baris — termasuk barang yang sama sekali tidak masuk program. Disimpan sebagai aturan `DISC_RP` ber-`item_code` KOSONG dan `trigger_unit='RP'`, diperiksa `checkSoPromo` per SO, bukan per baris. Menyamakannya dengan potongan per barang berarti satu potongan nota dikalikan sebanyak barisnya. Jembatan memisahkannya lewat `rupiah_mode`: `once` = tingkat nota, `per_unit` = tetap per barang |
+| 4.46 | **MEKANISME "DISCOUNT ON FAKTUR" per barang** | ✅ | Bentuk paling umum (`BP2609007909`, 105 aturan). `DISC_PCT` per kode barang, dicocokkan `matchItemRule` **per POSISI dan per BEBAN**: aturan principal tidak boleh membenarkan potongan yang duduk di posisi distributor, dan sebaliknya. Posisi menyatakan siapa yang DIMAKSUD menanggung; aturan menyatakan apakah maksud itu sah |
+| 4.47 | **CHANNEL (Type Of Promo) ditegakkan dari MASTER** | ✅ | **2026-09-15, migrasi `0018`.** Surat menyebut channelnya ("KHUSUS CHANNEL GT") tetapi `promo_rule` tidak punya tempat menyimpannya, jembatan MEMBUANG `program.channel`, dan gerbang tidak pernah menanyakan kategori outletnya — jadi surat GT berlaku untuk outlet MT juga. Channel outlet kini diturunkan dari `customer.category_name`, **bukan** dari laporan principal dan **bukan** dari yang diketik pengirim order. Peta (keputusan pengguna): **GT = TT saja**; kategori lain dipakai apa adanya. Outlet tanpa kategori (378 di produksi) ikut ditahan — yang tidak diketahui tidak diloloskan. Selisih laporan lawan master jadi temuan tersendiri: **HINDA MART (`C-HIL009`)** disebut General Trade oleh Kino, master kita `MT` |
+| 4.48 | **Aturan EXCLUDE berdaftar kosong GAGAL TERTUTUP** | ✅ | **2026-09-15.** INCLUDE sudah aman sejak awal (daftar kosong = tidak ada yang berhak). EXCLUDE justru sebaliknya: tidak ada yang dikecualikan dibaca sebagai "berlaku untuk semua", jadi nama salah ketik satu huruf — atau keanggotaan kuartal yang belum diunggah — memberi potongan MSG kepada outlet yang justru dikecualikan suratnya. Daftar kosong bukan berarti "tidak ada yang dikecualikan"; ia berarti KITA TIDAK TAHU siapa. Peringatannya muncul se-batch saat Validasi ditekan, menyebut nama daftar dan surat yang memakainya |
+| 4.49 | **Daftar outlet peserta punya rumahnya sendiri** | ✅ | **2026-09-15, migrasi `0014`.** Surat menyebut PESERTA dan menyebutnya DUA ARAH. Aturan **menunjuk** daftar, tidak menyalin isinya: satu daftar dipakai tiga surat, dan menyalinnya berarti 41 outlet × 3 surat yang harus berubah bersamaan tiap kuartal. **Periode melekat pada ANGGOTA, bukan pada nama daftar**, karena keanggotaan berganti tiap kuartal sementara suratnya cuma menyebut "LOYALTY". Layar Aturan Promo memperlihatkan aturan mana yang menunjuk tiap daftar, dan menandai daftar yang belum ditunjuk siapa pun |
+| 4.50 | **Ambang tanpa syarat beli = 1, bukan gagal terbit** | ✅ | **2026-09-15.** `Tier` menuntut minimum > 0, jadi surat yang memang tidak menyebut "beli N" — diskon datar seperti `BP2609007909` — gagal terbit dengan pesan "Minimum, benefit, satuan atau strata belum valid" yang tidak menyebut sebabnya sama sekali. Artinya jelas: SETIAP pembelian dapat, dan dalam satuan terkecil itu berarti satu. Angka yang tertulis tetap dipakai apa adanya; yang diganti hanya yang kosong atau nol |
+| 4.51 | **Surat hasil scan tetap terbaca** | ✅ | **2026-09-15, migrasi `0015`.** Delapan dari tiga puluh surat September scan murni. Dibaca **Mistral OCR 4.1**, mesin yang sama dengan Summary Promo di produksi: satu panggilan per halaman, PDF dipecah lokal, nomor halaman dari permintaan kita bukan dari model, dokumen dinyatakan UNTRUSTED, hasil parsial ditolak seluruhnya. Hasilnya disimpan berkunci **hash isi berkas** — OCR dibayar per halaman, dan pesan galat kita sendiri menyuruh orang mencoba lagi |
+| 4.52 | **Jembatan publikasi Summary → `promo_rule`** | ✅ | **2026-09-15, migrasi `0016`.** Sumbernya PUBLIKASI, bukan draft: menerbitkan adalah satu-satunya tempat manusia menyatakan "saya sudah memeriksa ini". Server yang mengambil, bukan peramban — peramban hanya mengirim ID publikasi, kalau ISI aturan datang dari peramban gerbang "sudah diterbitkan" bisa dilewati. **Tiap penulis hanya menyentuh irisannya sendiri** (`promo_rule.source`: `surat`/`excel`/`tarif`/`manual`); tanpa itu impor Excel akan menghapus aturan dari jembatan, dan yang hilang TIDAK terlihat sebagai galat — gerbang cuma berhenti menahan. **Belum pernah dijalankan ujung ke ujung dengan sesi login sungguhan**, tetapi rantainya dikunci uji di `lib/summary-ke-gerbang.test.ts` |
 
 ## Langkah 4 tahap 1c — routing: cocok lanjut, tidak cocok ke admin review
 
 | # | Yang harus benar | Status | Catatan |
 |---|---|---|---|
 | 4.14 | Status per baris: cocok / perlu ditinjau | ✅ | `principal_order_line.status` + hitungan `ok_count`/`review_count` pada batch |
-| 4.15 | Halaman admin review | 🟡 | `/principal-order` sudah menampilkan temuan per baris + saringan "hanya yang perlu ditinjau". Halaman khusus peninjau (dan tindakannya) belum |
+| 4.15 | Halaman admin review | 🟡 | `/principal-order` sudah menampilkan temuan per baris + saringan "hanya yang perlu ditinjau". **Tindakan pertama sudah ada (2026-09-15): tombol konfirmasi order ganda**, lengkap dengan catatan, jejak siapa/kapan, dan pencabutannya. Halaman khusus peninjau masih belum |
 | 4.16 | Izin RBAC peninjau | ❌ | Sudah diputuskan jadi permission baru, belum dibuat |
 | 4.17 | Yang sudah diperbaiki bisa diperiksa ulang | ✅ | Tombol Validasi bisa dijalankan berulang; terbukti 0 cocok -> 6 cocok setelah satu mapping diperbaiki |
+
+## Langkah 4 tahap 1d — gerbang yang menahan SELURUH SO
+
+Dua gerbang yang tidak bisa diputuskan dari satu baris saja. Keduanya ditambahkan 2026-09-15
+setelah terbukti ada jalan uang yang lolos tanpa terlihat.
+
+| # | Yang harus benar | Status | Catatan |
+|---|---|---|---|
+| 4.53 | **Kuota bonus: bonus tanpa pembeliannya bukan bonus** | ✅ | Baris bonus adalah baris TERSENDIRI berharga penuh lalu dipotong 100%; jumlah **belinya** ada di baris lain. Memeriksa baris bonus sendirian sama saja tidak memeriksa apa pun — "beli 10 pcs dapat bonus 1 pcs" lolos dengan sempurna: barangnya benar, aturannya ada, persennya 100 seperti seharusnya. `bonusQuota()` menghitung per faktur/SO dan **per kelompok mix**, karena suratnya berkata begitu ("SETIAP PEMBELIAN 30 PCS ... MIX VARIANT"). **Satuan diseragamkan ke satuan terkecil**: INV/2609/KN00453 beli 12 KRT isi 72 dan bonus 28 BTL pada barang yang sama; tanpa penyeragaman, 12 dibandingkan dengan ambang 30. Diadu dengan angka nyata: MANJAKANI beli 972 berhak 32 diberi 31 lolos; WHITENING beli 252 berhak 8 diberi 8 lolos pas — penegakan ini tidak menahan satu pun bonus yang sah pada data yang ada |
+| 4.54 | **Order ganda: outlet sama, barang MIRIP** | ✅ | Order ganda yang isinya persis sama masih mungkin ketahuan mata; yang berbahaya justru yang HAMPIR sama — satu order diketik ulang karena yang pertama dikira gagal, lalu satu barang ditambah. **Containment, bukan Jaccard**: 3 barang di dalam 10 barang punya Jaccard 0,3 (terlihat tidak mirip) padahal itu bentuk ketikan ulang paling khas; containment membacanya 1,0. Ambang 0,5. **Jendelanya tanggal yang SAMA**, bukan tujuh hari: menahan pesanan rutin akan membuat konfirmasinya ditekan tanpa dibaca. Diperiksa SETELAH ordernya terbukti sah. `lib/order-duplicate.ts` dan `python_backend/order_duplicate.py` kembaran, dikunci contoh angka yang sama persis di kedua berkas ujinya |
+| 4.55 | **Melepas SO yang ditahan gerbang ganda** | ✅ | **2026-09-15.** Gerbangnya sudah menahan di produksi sejak awal tetapi tidak ada cara melepasnya dari layar mana pun — gerbang tanpa pintu keluar sama saja dengan batch yang mati. Yang dikonfirmasi ORDERNYA, bukan barisnya. Yang disimpan bukan hanya "siapa menekan tombol" melainkan ALASAN yang sedang menahan saat itu. Konfirmasi BERTAHAN lintas validasi, dan karena itu ia ikut DITAMPILKAN — konfirmasi yang tidak terlihat adalah keputusan tak terlihat |
+| 4.56 | **Channel order Sales dipastikan ke master** | ✅ | **2026-09-15.** Order Sales sudah menyaring promo per channel, tetapi channelnya datang dari badan permintaan — diketik pengirim order. Yang diperiksa jadi channel yang DIAKUI, bukan yang TERBUKTI. Kini ditanyakan ke master lewat `GET /api/outlet-channel` (Next), **bukan salinan lokal**: salinan akan basi tepat saat admin membetulkan kategori, yaitu justru tujuan fitur ini — bekasnya sudah ada pada `sync-item-prices` yang tidak pernah masuk cron. Tanpa kredensial baru (`CRON_SECRET` yang sudah ada), alamat internal diturunkan dari `AUTH_VERIFY_URL`. Gagal tertutup di empat keadaan: channel beda, outlet tanpa kategori, outlet di luar master, Next tidak terhubung |
 
 ## Langkah 4 tahap 2 — satu tombol kirim ke Accurate
 
@@ -592,3 +614,54 @@ yang mereproduksinya. Yang berupa rupiah dibawa sampai ke faktur sebagai **rupia
 | 4.37 | Gerbang validasi membaca `promo_rule` | ✅ | `checkLine(rules)` + `checkSoPromo()` + `matchItemRule()`; 12 test baru |
 | 4.38 | `DISC_n` rupiah vs persen dibedakan | ✅ | Pembedanya `TOTAL_DISC`; hanya saat tepat satu posisi terisi, selebihnya jatuh ke persen dan selisih totalnya tetap menahan — gagal tertutup |
 
+
+---
+
+## MEKANISME surat — satu tabel, karena inilah yang paling sering salah dibaca
+
+*Ditambahkan 2026-09-15 atas permintaan pengguna. Sebelum ini kata "mekanisme" tidak muncul
+sekali pun di berkas ini, padahal ia menentukan APAKAH sebuah program boleh memotong faktur
+sama sekali — dan kalau boleh, dalam BENTUK apa ia akan muncul di laporan Kino.*
+
+Surat menyebut mekanismenya di kolom **MEKANISME** / **Type Of Promo** / **Mekanisme klaim**.
+Satu mekanisme = satu bentuk baris `promo_rule` = satu pencocok. Salah membacanya tidak
+menimbulkan galat: aturannya tersimpan rapi, terlihat benar di layar, dan tidak pernah cocok
+dengan potongan mana pun.
+
+| Bunyi surat | Bentuk `promo_rule` | Yang mencocokkan | Kalau salah baca |
+|---|---|---|---|
+| **DISCOUNT ON FAKTUR** (diskon % per barang) | `DISC_PCT`, `item_code` terisi, `tier_no` = posisi DISC_n | `matchItemRule` — per posisi DAN per beban | Salah posisi = uang berpindah penanggung tanpa terlihat |
+| **BONUS BARANG ON FAKTUR** | `BONUS_QTY`, `item_code` terisi, `trigger_qty` = "setiap N" | `matchBonusRule` + `bonusQuota` | Faktur mencatatnya sebagai baris tambahan diskon **100% di posisi 1**; tanpa pencocok khusus ia tidak pernah dijelaskan aturan apa pun |
+| **POTONGAN ON FAKTUR** tingkat nota (MSG) | `DISC_RP`, `item_code` **kosong**, `trigger_unit='RP'` | `checkSoPromo` — per SO, bukan per baris | Dimuat per barang = satu potongan nota dikalikan sebanyak barisnya |
+| **POTONGAN per unit** (rupiah per barang) | `DISC_RP`, `item_code` terisi | jalur per barang | Disamakan dengan tingkat nota = ambangnya salah dihitung |
+| **RAFAKSI / klaim terpisah** | **tidak dimuat sama sekali** | — | Rafaksi ditagihkan TERPISAH dan tidak pernah muncul di faktur. Memuatnya berarti gerbang MEMBENARKAN potongan yang seharusnya tidak ada |
+| **Pilih rafaksi ATAU on faktur** | **tidak dimuat sama sekali** | — | Selama belum dipilih manusia, tidak ada satu jawaban yang benar. Dua jawaban lebih buruk daripada tidak punya aturan |
+
+Tiga penyaring yang berjalan **sebelum** mekanismenya dinilai — ketiganya per **tanggal SO**,
+bukan per periode batch, karena satu berkas bisa memuat lebih dari satu tanggal:
+
+1. **Periode** (`berlakuPada`) — aturan Oktober tidak boleh membenarkan potongan September.
+2. **Daftar outlet peserta** (`outletAllowed`) — dua arah, INCLUDE dan EXCLUDE, dan **keduanya
+   gagal tertutup** sejak 2026-09-15.
+3. **Channel** (`channelAllowed`) — GT = TT saja, diturunkan dari master Accurate.
+
+Ketiganya disatukan dalam satu saringan `berlaku()` di `validate/route.ts` supaya tidak ada
+jalur pencocokan yang lupa menanyakan salah satunya.
+
+### Yang ditolak jembatan, dan kenapa ditolak utuh
+
+`Program` di sisi Summary lebih kaya daripada `promo_rule`. Yang tidak bisa dinyatakan utuh
+**tidak dimuat separuh** — separuh aturan akan meloloskan potongan dengan alasan yang salah,
+dan itu lebih buruk daripada tidak punya aturan sama sekali:
+
+- mekanisme selain on faktur (di atas);
+- ambang berdasar harga **netto** (gerbang membandingkan bruto);
+- ambang yang menghitung **seluruh order** termasuk barang di luar program;
+- rantai beberapa persen dalam satu strata ("8%+2%") — itu DUA potongan di dua posisi, dan
+  posisi menentukan penanggung;
+- lebih dari satu kelas outlet pada satu aturan;
+- barang di luar master.
+
+**Satu hal yang belum dijaga, dan sengaja ditulis di sini supaya tidak terlupa:** `trigger_qty`
+pada aturan per barang NON-bonus masih keterangan belaka. `matchItemRule` mencocokkan persennya
+saja. Yang sudah benar-benar dijaga jumlah belinya baru jalur `BONUS_QTY` (butir 4.53).

@@ -286,6 +286,37 @@ ganda tidak punya pasangan untuk dibandingkan).
 **Setelah surat `BP2609007909` diunggah**, SO 13044 tetap lolos: outletnya C-BA0003 BAJI PAMAI,
 salah satu dari dua outlet kita di lampiran surat itu.
 
+### Lanjutan sesi yang sama: channel, EXCLUDE, dan Order Sales
+
+Tiga butir yang diangkat pengguna setelah simulasi surat Oktober. Dua di antaranya lubang yang
+GAGAL TERBUKA — bentuk kegagalan yang tidak menimbulkan galat, hanya potongan yang lewat.
+
+**Channel** (migrasi `0018`). Surat menyebut channelnya sendiri, tetapi `promo_rule` tidak punya
+tempat menyimpannya, jembatan MEMBUANG `program.channel`, dan gerbang tidak pernah menanyakan
+kategori outletnya. Kini diturunkan dari `customer.category_name` — **GT = TT saja** (keputusan
+pengguna). Outlet tanpa kategori ikut ditahan. Bukan teori: **HINDA MART (`C-HIL009`)** disebut
+"General Trade" oleh Kino sedangkan master kita `MT`, satu dari sepuluh outlet.
+
+**EXCLUDE berdaftar kosong** berhenti berlaku untuk semua orang. Daftar kosong bukan berarti
+tidak ada yang dikecualikan; ia berarti kita tidak tahu siapa.
+
+**Order Sales** memastikan channel ke master lewat `GET /api/outlet-channel`, bukan salinan
+lokal — salinan akan basi tepat saat admin membetulkan kategori, yaitu justru tujuan fiturnya.
+Tanpa kredensial baru: memakai `CRON_SECRET` yang sudah ada, alamat internal diturunkan dari
+`AUTH_VERIFY_URL`. Gagal tertutup di empat keadaan. Order Sales masih nol order di produksi,
+jadi penegakan ini tidak menahan pekerjaan siapa pun.
+
+Seluruhnya sudah di `main` dan berjalan di produksi (PR #64); migrasi `0018` dijalankan dan
+diverifikasi SEBELUM merge. 234 baris `promo_rule` tetap ber-channel kosong, jadi tidak satu pun
+keputusan gerbang atas data lama berubah.
+
+**Peringatan operasional:** BAJI PAMAI (`C-BA0003`) berkategori **MT** di master, dan ia salah
+satu dari dua outlet lampiran `BP2609007909`. Jangan isi channel GT pada 105 aturan surat itu
+kecuali suratnya memang menyebutnya — kalau diisi, SO 13044 akan berhenti dijelaskan.
+
+Mekanisme surat (on faktur / bonus barang / potongan nota / rafaksi) kini punya tabelnya sendiri
+di `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md`, beserta butir 4.43-4.56.
+
 ### Keadaan produksi saat sesi ini ditutup
 
 - `promo_rule`: 234 baris — 105 aturan barang `BP2609007909`, 89 tarif outlet, 30 `BONUS_QTY`,
