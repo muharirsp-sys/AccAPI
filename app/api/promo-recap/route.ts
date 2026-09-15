@@ -11,7 +11,7 @@
  * dipakai untuk menjelaskan siapa menanggung apa. Selisihnya justru temuan yang dicari.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, gte, lte, ne, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
 import { promoOutlet, promoRule, salesInvoiceCache } from "@/db/schema";
@@ -152,6 +152,7 @@ export async function POST(request: NextRequest) {
             benefitUnit: text(row.BENEFIT_UNIT), benefitBeban: text(row.BENEFIT_BEBAN) || "PRINCIPAL",
             onFaktur: !text(row.CARA_TAGIH).toUpperCase().startsWith("BUKAN"),
             note: text(row.CATATAN), importedBy: String(gate.session?.user?.email ?? ""),
+            source: "excel", sourceRef: file.name.slice(0, 200),
         };
     });
     const tariff = tariffSheet
@@ -212,7 +213,14 @@ export async function POST(request: NextRequest) {
                 eq(promoRule.principal, principal), eq(promoRule.customerCode, ""), ne(promoRule.outletList, ""),
             ));
 
-            await tx.delete(promoRule).where(and(eq(promoRule.principal, principal), eq(promoRule.customerCode, "")));
+            // HANYA irisan milik jalur Excel (dan baris lama yang belum bertanda). Aturan yang
+            // datang dari publikasi Summary punya penulisnya sendiri dan tidak boleh ikut
+            // terhapus di sini — yang hilang tidak akan terlihat sebagai galat, gerbang cuma
+            // berhenti menahan.
+            await tx.delete(promoRule).where(and(
+                eq(promoRule.principal, principal), eq(promoRule.customerCode, ""),
+                inArray(promoRule.source, ["", "excel"]),
+            ));
             for (let start = 0; start < baris.length; start += 500) {
                 await tx.insert(promoRule).values(baris.slice(start, start + 500));
             }
@@ -229,7 +237,10 @@ export async function POST(request: NextRequest) {
             }
         }
         if (tariff.length > 0) {
-            await tx.delete(promoRule).where(and(eq(promoRule.principal, principal), ne(promoRule.customerCode, "")));
+            await tx.delete(promoRule).where(and(
+                eq(promoRule.principal, principal), ne(promoRule.customerCode, ""),
+                inArray(promoRule.source, ["", "tarif"]),
+            ));
             for (let start = 0; start < tariff.length; start += 500) {
                 await tx.insert(promoRule).values(tariff.slice(start, start + 500));
             }

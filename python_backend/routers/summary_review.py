@@ -32,6 +32,53 @@ async def import_package(request:Request):
     except (ValueError,TypeError,KeyError,RecursionError):raise HTTPException(400,'Paket tidak valid. Periksa ID, master, tanggal, angka, dan status draft.') from None
 
 
+def _ringkas(row):
+    """Satu publikasi -> keterangan singkat, tanpa membongkar seluruh isinya."""
+    content = json.loads(row[3])
+    detail = content.get('review_detail') or {}
+    programs = content.get('programs') or []
+    return {
+        'draft_id': row[0], 'title': row[1], 'published_at': row[2],
+        'surat_program': str(detail.get('document_id') or ''),
+        'principal': str(detail.get('principal') or ''),
+        'nama_program': str(detail.get('nama_program') or ''),
+        'kelompok': str(detail.get('variant_barang') or ''),
+        'period': content.get('period') or {},
+        'programs': len(programs),
+        'codes': sorted({code for program in programs for code in (program.get('codes') or [])}),
+    }
+
+
+@router.get('/published/list')
+def published_list(request: Request):
+    """Publikasi yang siap dijembatani ke aturan promo.
+
+    Hanya yang berstatus `published`: itulah satu-satunya tempat manusia sudah menyatakan
+    "saya sudah memeriksa ini". Draft tidak pernah boleh menyeberang ke gerbang faktur.
+    """
+    user = require_user(request)
+    with service.connect() as db:
+        rows = db.execute(
+            "SELECT id,title,updated_at,content FROM summary_draft "
+            "WHERE owner=? AND status='published' ORDER BY updated_at DESC LIMIT 200",
+            (service.identity(user),)).fetchall()
+    return {'ok': True, 'published': [_ringkas(row) for row in rows]}
+
+
+@router.get('/published/{draft_id}')
+def published_one(request: Request, draft_id: str):
+    """Isi satu publikasi, apa adanya. Pembacanya yang menerjemahkan, bukan endpoint ini."""
+    user = require_user(request)
+    with service.connect() as db:
+        row = db.execute(
+            "SELECT id,title,updated_at,content FROM summary_draft "
+            "WHERE id=? AND owner=? AND status='published'",
+            (draft_id, service.identity(user))).fetchone()
+    if not row:
+        raise HTTPException(404, 'Publikasi tidak ditemukan')
+    return {'ok': True, 'published': _ringkas(row), 'content': json.loads(row[3])}
+
+
 @router.get('/{package_id}')
 def get_package(request:Request,package_id:str):
     value=service.get_package(require_user(request),package_id)

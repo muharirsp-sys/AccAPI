@@ -200,6 +200,15 @@ export const promoRule = pgTable("promo_rule", {
     outletList: text("outlet_list").notNull().default(""),
     /** INCLUDE = hanya peserta daftar; EXCLUDE = semua kecuali peserta. Kosong = tanpa batas. */
     outletListMode: text("outlet_list_mode").notNull().default(""),
+    /**
+     * ASAL baris ini: `surat` (publikasi Summary lewat jembatan), `excel` (impor sheet Detail),
+     * `tarif` (impor Discount Reguler), `manual` (diketik di layar). Kosong = baris lama,
+     * diperlakukan milik jalur excel/tarif. Tiap penulis hanya boleh mengganti IRISANNYA
+     * SENDIRI; tanpa penanda ini yang satu akan menghapus muatan yang lain tanpa galat.
+     */
+    source: text("source").notNull().default(""),
+    /** Jejaknya: id publikasi Summary, atau nama berkas impornya. */
+    sourceRef: text("source_ref").notNull().default(""),
     note: text("note").notNull().default(""),
     importedBy: text("imported_by").notNull().default(""),
     importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),

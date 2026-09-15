@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Save, Trash2, Copy, RefreshCw, X, Info } from "lucide-react";
 import { toast } from "sonner";
 import DaftarOutlet from "./daftar-outlet";
+import DariSummary from "./dari-summary";
 
 type Rule = {
     id: number; principal: string; suratProgram: string; promoLabel: string; promoGroup: string;
@@ -454,6 +455,8 @@ export default function AturanPromoPage() {
                     </tbody>
                 </table>
             </div>
+
+            <DariSummary setelahMuat={() => void load()} />
 
             <DaftarOutlet />
         </div>

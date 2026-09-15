@@ -529,6 +529,7 @@ export function parseTariff(
         periodStart: string | null; periodEnd: string | null; active: boolean; tierNo: number;
         triggerQty: string; triggerUnit: string; benefitType: string; benefitValue: string;
         benefitUnit: string; benefitBeban: string; onFaktur: boolean; note: string; importedBy: string;
+        source: string;
     }[] = [];
     raw.forEach((row, index) => {
         const keys = Object.keys(row);
@@ -577,7 +578,7 @@ export function parseTariff(
                 triggerQty: "0", triggerUnit: "PCS",
                 benefitType: "DISC_PCT", benefitValue: String(percent), benefitUnit: "%",
                 benefitBeban: beban, onFaktur: true,
-                note: pick("CATATAN", "PERIKSA", "KETERANGAN"), importedBy: ctx.importedBy,
+                note: pick("CATATAN", "PERIKSA", "KETERANGAN"), importedBy: ctx.importedBy, source: "tarif",
             });
         }
         if (terisi === 0) ctx.issues.push(`${TARIFF_SHEET} baris ${index + 2} (${customerCode}): tidak ada satu posisi pun yang terisi`);

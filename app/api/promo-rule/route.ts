@@ -80,6 +80,8 @@ function draftOf(body: Record<string, unknown>, importedBy: string): { row: Draf
         benefitBeban, onFaktur: body.onFaktur !== false,
         outletList, outletListMode,
         note: text(body.note), importedBy,
+        // Diketik di layar; jalur impor mana pun tidak boleh menghapusnya.
+        source: "manual", sourceRef: "",
     } };
 }
 
