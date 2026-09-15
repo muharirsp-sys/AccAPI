@@ -74,6 +74,39 @@ function artinya(rule: Partial<Rule>): string {
         + `tertulis di kolom DISC_${rule.tierNo} pada laporan Kino. Potongan ini ${beban}.`;
 }
 
+const inputCls = "w-full rounded border border-white/10 bg-white/5 px-2 py-1.5 text-sm";
+
+/*
+ * `F` dan `G` hidup di ruang MODUL, bukan di dalam komponen.
+ *
+ * Komponen yang dibuat ulang tiap render punya identitas tipe yang baru tiap render, dan React
+ * membongkar-pasang seluruh isinya. Akibatnya kotak isian kehilangan fokus setiap satu huruf
+ * diketik — bug yang terbaca sebagai "layarnya lemot", bukan sebagai bug, jadi ia bertahan lama.
+ */
+function F({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+    return (
+        <label className="text-sm">
+            <span className="mb-1 block text-slate-300">{label}</span>
+            {children}
+            {hint && <span className="mt-1 block text-xs leading-snug text-slate-500">{hint}</span>}
+        </label>
+    );
+}
+
+/**
+ * Satu kelompok isian. Enam belas kotak dalam satu kisi rata tidak punya urutan baca: yang
+ * mengisi harus menebak kotak mana berkaitan dengan kotak mana, dan kesalahan yang paling
+ * mahal di halaman ini (salah kolom diskon, salah penanggung) lahir persis dari situ.
+ * Dikelompokkan menurut pertanyaan yang dijawabnya, bukan menurut urutan kolom tabel.
+ */
+const G = ({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) => (
+    <fieldset className="rounded border border-white/10 px-3 pb-3">
+        <legend className="px-1 text-sm font-semibold text-slate-300">{title}</legend>
+        <p className="mb-3 text-xs text-slate-500">{hint}</p>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{children}</div>
+    </fieldset>
+);
+
 export default function AturanPromoPage() {
     const [rules, setRules] = useState<Rule[]>([]);
     const [principals, setPrincipals] = useState<string[]>([]);
@@ -86,6 +119,11 @@ export default function AturanPromoPage() {
     const [draft, setDraft] = useState<Partial<Rule> | null>(null);
     const [salin, setSalin] = useState<{ rule: Rule; kode: string } | null>(null);
     const [pilih, setPilih] = useState<Set<number>>(new Set());
+    // Halaman ini menumpuk tiga pekerjaan yang berbeda dalam satu kolom: menyusun aturan,
+    // menarik dari Summary, dan menyusun daftar peserta. Dengan ratusan aturan, panel daftar
+    // peserta terdorong berlembar-lembar ke bawah — dan panel yang harus dicari dengan
+    // menggulung akan dianggap tidak ada. Satu tab berarti satu pekerjaan.
+    const [tab, setTab] = useState<"aturan" | "summary" | "outlet">("aturan");
 
     const load = useCallback(async () => {
         setBusy(true);
@@ -170,14 +208,6 @@ export default function AturanPromoPage() {
         } finally { setBusy(false); }
     }
 
-    const inputCls = "w-full rounded border border-white/10 bg-white/5 px-2 py-1.5 text-sm";
-    const F = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
-        <label className="text-sm">
-            <span className="block text-slate-300 mb-1">{label}</span>
-            {children}
-            {hint && <span className="mt-1 block text-xs leading-snug text-slate-500">{hint}</span>}
-        </label>
-    );
     const isTarif = Boolean(draft?.customerCode) && !draft?.itemCode;
 
     return (
@@ -191,6 +221,23 @@ export default function AturanPromoPage() {
                     yang sama.
                 </p>
             </header>
+
+            <nav className="flex flex-wrap gap-1 border-b border-white/10">
+                {([
+                    ["aturan", `Aturan promo${total ? ` (${total})` : ""}`],
+                    ["summary", "Tarik dari Summary"],
+                    ["outlet", "Daftar outlet peserta"],
+                ] as const).map(([key, label]) => (
+                    <button key={key} type="button" onClick={() => setTab(key)}
+                        aria-current={tab === key ? "page" : undefined}
+                        className={`-mb-px rounded-t border-b-2 px-3 py-2 text-sm transition ${tab === key
+                            ? "border-blue-400 text-white" : "border-transparent text-slate-400 hover:text-slate-200"}`}>
+                        {label}
+                    </button>
+                ))}
+            </nav>
+
+            {tab === "aturan" && (<>
 
             <section className="flex flex-wrap items-end gap-2">
                 <F label="Principal">
@@ -239,14 +286,16 @@ export default function AturanPromoPage() {
                         <span>{artinya(draft)}</span>
                     </p>
 
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <G title="Asal aturan" hint="Dari mana aturan ini datang. Tanpa ini tidak ada yang bisa menjawab “kenapa boleh potong?” saat ditanya.">
                         <F label="Principal" hint="Pemilik programnya."><input value={draft.principal ?? ""} onChange={(e) => setDraft({ ...draft, principal: e.target.value })} className={inputCls} /></F>
                         <F label="Surat / program" hint="Asal aturannya. Tanpa ini tidak ada yang bisa menjawab “kenapa boleh potong?”">
                             <input value={draft.suratProgram ?? ""} onChange={(e) => setDraft({ ...draft, suratProgram: e.target.value })} className={inputCls} />
                         </F>
                         <F label="Kelompok" hint="Pengelompokan di dalam surat itu."><input value={draft.promoGroup ?? ""} onChange={(e) => setDraft({ ...draft, promoGroup: e.target.value })} className={inputCls} /></F>
                         <F label="Nama program" hint="Bebas — untuk dibaca manusia saja."><input value={draft.promoLabel ?? ""} onChange={(e) => setDraft({ ...draft, promoLabel: e.target.value })} className={inputCls} /></F>
+                    </G>
 
+                    <G title="Berlaku untuk siapa dan barang apa" hint="Dikosongkan berarti “semua”. Daftar peserta menyempitkannya lagi, dan di situlah salah sasaran paling sering terjadi.">
                         <F label="Kode outlet" hint="Kode internal tanpa akhiran cabang, mis. C-AL0063. Dikosongkan = berlaku untuk semua outlet.">
                             <input value={draft.customerCode ?? ""} onChange={(e) => setDraft({ ...draft, customerCode: e.target.value })} placeholder="kosong = semua outlet" className={inputCls} />
                         </F>
@@ -254,6 +303,19 @@ export default function AturanPromoPage() {
                             <input value={draft.itemCode ?? ""} onChange={(e) => setDraft({ ...draft, itemCode: e.target.value })} placeholder="kosong = semua barang" className={inputCls} />
                         </F>
                         <F label="Nama barang" hint="Untuk dibaca manusia; tidak dipakai mencocokkan."><input value={draft.itemName ?? ""} onChange={(e) => setDraft({ ...draft, itemName: e.target.value })} className={inputCls} /></F>
+                        <F label="Hanya untuk peserta daftar" hint="Nama daftar outlet, mis. LOYALTY. Dikosongkan = berlaku untuk semua outlet. Daftarnya disusun di tab “Daftar outlet peserta”, dan namanya harus sama persis.">
+                            <input value={draft.outletList ?? ""} onChange={(e) => setDraft({ ...draft, outletList: e.target.value.toUpperCase() })} placeholder="kosong = semua outlet" className={inputCls} />
+                        </F>
+                        <F label="Arah daftar" hint="“Hanya peserta” untuk program yang khusus mereka; “Semua kecuali peserta” untuk program yang justru mengecualikan mereka (MSG).">
+                            <select value={draft.outletListMode ?? ""} onChange={(e) => setDraft({ ...draft, outletListMode: e.target.value })} className={inputCls} disabled={!draft.outletList}>
+                                <option value="">— tanpa daftar —</option>
+                                <option value="INCLUDE">Hanya peserta daftar</option>
+                                <option value="EXCLUDE">Semua KECUALI peserta daftar</option>
+                            </select>
+                        </F>
+                    </G>
+
+                    <G title="Potongannya" hint="Berapa, dalam bentuk apa, di kolom mana, dan siapa yang menanggung. Salah kolom berarti uang berpindah penanggung tanpa terlihat.">
                         <F label="Siapa yang menanggung" hint="Principal = uangnya bisa ditagihkan kembali. Distributor = jadi biaya kita sendiri.">
                             <select value={draft.benefitBeban ?? "PRINCIPAL"} onChange={(e) => setDraft({ ...draft, benefitBeban: e.target.value })} className={inputCls}>
                                 <option value="DISTRIBUTOR">Kita sendiri (distributor)</option>
@@ -290,24 +352,17 @@ export default function AturanPromoPage() {
                             </div>
                         </F>
 
+                    </G>
+
+                    <G title="Masa berlaku dan catatan" hint="Aturan dinilai per TANGGAL SO, bukan per periode batch: satu berkas bisa memuat beberapa tanggal, dan aturan bisa berganti di antaranya.">
                         <F label="Berlaku mulai" hint="Dikosongkan = berlaku sejak kapan pun."><input type="date" value={draft.periodStart ?? ""} onChange={(e) => setDraft({ ...draft, periodStart: e.target.value })} className={inputCls} /></F>
                         <F label="Berlaku sampai" hint="Dikosongkan = berlaku sampai dicabut."><input type="date" value={draft.periodEnd ?? ""} onChange={(e) => setDraft({ ...draft, periodEnd: e.target.value })} className={inputCls} /></F>
-                        <F label="Hanya untuk peserta daftar" hint="Nama daftar outlet, mis. LOYALTY. Dikosongkan = berlaku untuk semua outlet. Daftarnya disusun di panel bawah halaman ini.">
-                            <input value={draft.outletList ?? ""} onChange={(e) => setDraft({ ...draft, outletList: e.target.value.toUpperCase() })} placeholder="kosong = semua outlet" className={inputCls} />
-                        </F>
-                        <F label="Arah daftar" hint="“Hanya peserta” untuk program yang khusus mereka; “Semua kecuali peserta” untuk program yang justru mengecualikan mereka (MSG).">
-                            <select value={draft.outletListMode ?? ""} onChange={(e) => setDraft({ ...draft, outletListMode: e.target.value })} className={inputCls} disabled={!draft.outletList}>
-                                <option value="">— tanpa daftar —</option>
-                                <option value="INCLUDE">Hanya peserta daftar</option>
-                                <option value="EXCLUDE">Semua KECUALI peserta daftar</option>
-                            </select>
-                        </F>
                         <F label="Catatan" hint="Mis. sumber datanya, atau siapa yang memastikan."><input value={draft.note ?? ""} onChange={(e) => setDraft({ ...draft, note: e.target.value })} className={inputCls} /></F>
-                        <label className="flex items-end gap-2 pb-6 text-sm">
+                        <label className="flex items-center gap-2 pt-6 text-sm">
                             <input type="checkbox" id="aturan-aktif" checked={draft.active !== false} onChange={(e) => setDraft({ ...draft, active: e.target.checked })} />
                             <span>Aktif <span className="text-slate-500">(dimatikan = diabaikan gerbang)</span></span>
                         </label>
-                    </div>
+                    </G>
 
                     {isTarif && draft.benefitType === "DISC_PCT" && (
                         <p className="rounded border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-200">
@@ -368,9 +423,11 @@ export default function AturanPromoPage() {
                 )}
             </div>
 
-            <div className="overflow-x-auto rounded border border-white/10">
+            {/* Tinggi dibatasi supaya daftar yang panjang tidak mendorong apa pun keluar layar,
+                dan kepalanya menempel supaya kolom masih terbaca di baris ke-200. */}
+            <div className="max-h-[32rem] overflow-auto rounded border border-white/10">
                 <table className="w-full text-sm">
-                    <thead className="bg-white/5 text-slate-300">
+                    <thead className="sticky top-0 z-10 bg-white/5 text-slate-300 backdrop-blur">
                         <tr>
                             <th className="w-9 px-2 py-2">
                                 <input type="checkbox" id="pilih-semua" aria-label="Pilih semua yang tampil"
@@ -459,9 +516,11 @@ export default function AturanPromoPage() {
                 </table>
             </div>
 
-            <DariSummary setelahMuat={() => void load()} />
+            </>)}
 
-            <DaftarOutlet />
+            {tab === "summary" && <DariSummary setelahMuat={() => void load()} />}
+
+            {tab === "outlet" && <DaftarOutlet />}
         </div>
     );
 }

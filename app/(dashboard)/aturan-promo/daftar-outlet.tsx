@@ -24,9 +24,60 @@ type Member = {
     tier: string; sourceCode: string; periodStart: string | null; periodEnd: string | null;
     active: boolean; note: string; importedBy: string;
 };
-type ListInfo = { name: string; members: number; tiers: Record<string, number> };
+type ListInfo = {
+    name: string; members: number; tiers: Record<string, number>;
+    /** Aturan yang MENUNJUK daftar ini. Kosong = daftarnya tidak dipakai siapa-siapa. */
+    linked: { suratProgram: string; mode: string; rules: number }[];
+};
+/** Promo yang periodenya mencakup hari ini — bahan pilihan nama daftar. */
+type Program = { suratProgram: string; promoLabel: string; periodStart: string | null; periodEnd: string | null; rules: number };
 
 const inputCls = "w-full rounded border border-white/15 bg-white/5 px-2 py-1.5 text-sm outline-none focus:border-blue-400";
+
+/**
+ * Isian nama daftar yang MEMPERLIHATKAN talinya.
+ *
+ * Nama daftar adalah satu-satunya tali antara aturan promo dan daftar peserta, dan sampai
+ * sekarang talinya cuma teks yang diketik dua kali di dua layar. Salah satu huruf tidak
+ * menimbulkan galat apa pun: daftarnya tersimpan, aturannya tetap menunjuk nama lama, dan
+ * tidak ada yang berlaku untuk siapa pun. Gagalnya sunyi, jadi talinya harus kelihatan.
+ *
+ * Bentuknya datalist, bukan select: promo yang sedang berjalan bisa DIPILIH (itu jalur yang
+ * benar untuk surat), tetapi daftar yang tidak berasal dari surat mana pun — peserta loyalty
+ * kuartalan — tetap bisa diketik. Select murni akan menutup jalur kedua itu.
+ */
+function PilihDaftar({ id, value, onChange, lists, programs, className = "" }: {
+    id: string; value: string; onChange: (value: string) => void;
+    lists: ListInfo[]; programs: Program[]; className?: string;
+}) {
+    const nama = value.trim().toUpperCase();
+    const cocok = lists.find((entry) => entry.name.toUpperCase() === nama);
+    const linked = cocok?.linked ?? [];
+    return (
+        <div className={className}>
+            <input list={id} value={value} onChange={(e) => onChange(e.target.value.toUpperCase())}
+                placeholder="LOYALTY atau nomor surat" className={inputCls} />
+            <datalist id={id}>
+                {programs.map((p) => (
+                    <option key={`p-${p.suratProgram}`} value={p.suratProgram}>
+                        {`promo berjalan · ${p.rules} aturan${p.promoLabel ? ` · ${p.promoLabel}` : ""}`}
+                    </option>
+                ))}
+                {lists.filter((entry) => !programs.some((p) => p.suratProgram === entry.name))
+                    .map((entry) => <option key={`l-${entry.name}`} value={entry.name}>{`daftar yang sudah ada · ${entry.members} toko`}</option>)}
+            </datalist>
+            {nama && (linked.length > 0
+                ? <span className="mt-1 block text-xs leading-snug text-emerald-400">
+                    Tersambung ke {linked.map((l) => `${l.suratProgram} (${l.mode === "EXCLUDE" ? "semua KECUALI peserta" : "hanya peserta"}, ${l.rules} aturan)`).join("; ")}.
+                </span>
+                : <span className="mt-1 block rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs leading-snug text-amber-200">
+                    Belum ada aturan promo yang menunjuk nama ini. Selama begitu, daftarnya tidak
+                    memengaruhi gerbang mana pun. Pilih promo yang sedang berjalan, atau isi
+                    “Hanya untuk peserta daftar” pada aturannya dengan nama yang sama persis.
+                </span>)}
+        </div>
+    );
+}
 
 function F({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
     return (
@@ -40,6 +91,7 @@ function F({ label, hint, children }: { label: string; hint?: string; children: 
 
 export default function DaftarOutlet() {
     const [lists, setLists] = useState<ListInfo[]>([]);
+    const [programs, setPrograms] = useState<Program[]>([]);
     const [members, setMembers] = useState<Member[]>([]);
     const [list, setList] = useState("");
     const [q, setQ] = useState("");
@@ -60,7 +112,7 @@ export default function DaftarOutlet() {
             const res = await fetch(`/api/promo-outlet?${params}`);
             const body = await res.json();
             if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal memuat daftar outlet");
-            setLists(body.lists); setMembers(body.members);
+            setLists(body.lists); setMembers(body.members); setPrograms(body.programs ?? []);
             if (body.distCode) setDistCode((lama) => lama || body.distCode);
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Gagal memuat daftar outlet");
@@ -172,7 +224,11 @@ export default function DaftarOutlet() {
                 jadi mengubah daftar di sini langsung mengubah semua surat yang memakainya.
             </p>
 
-            <p className="max-w-3xl rounded border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs leading-relaxed text-emerald-100">
+            <details className="max-w-3xl rounded border border-emerald-500/30 bg-emerald-500/5 text-xs leading-relaxed text-emerald-100">
+            <summary className="cursor-pointer select-none px-3 py-2 font-medium">
+                Cara memuat: unggah suratnya, atau pakai template untuk daftar yang tidak tercetak di surat
+            </summary>
+            <p className="px-3 pb-3">
                 <strong>Kalau daftarnya tercetak di suratnya, unggah saja suratnya.</strong> Surat ber-“LIST OUTLET
                 TERLAMPIR” memuat tabel peserta di halaman lampirannya; sistem membacanya, mengambil baris milik
                 kode distributor kita saja, dan langsung menunjuk semua aturan surat itu ke daftarnya. Tidak ada
@@ -185,13 +241,15 @@ export default function DaftarOutlet() {
                 produksi. OCR itu <em>berbayar per halaman</em>, jadi ia hanya dipakai kalau lapisan teksnya memang
                 tidak menjawab, dan hasilnya disimpan supaya surat yang sama tidak pernah ditagih dua kali.
             </p>
+            </details>
 
             <div className="flex flex-wrap items-end gap-2">
                 <F label="Kode distributor kita" hint="Tujuh angka pada kolom KODE DIST di lampiran surat. Dipakai memisahkan outlet kita dari outlet distributor lain pada surat yang sama.">
                     <input value={distCode} onChange={(e) => setDistCode(e.target.value)} placeholder="1201671" className={`${inputCls} w-40`} />
                 </F>
                 <F label="Nama daftar (berkas terpisah)" hint="Hanya dipakai kalau yang diunggah BUKAN surat. Surat memakai nomornya sendiri sebagai nama daftar.">
-                    <input value={listName} onChange={(e) => setListName(e.target.value.toUpperCase())} placeholder="LOYALTY" className={`${inputCls} w-44`} />
+                    <PilihDaftar id="daftar-unggah" value={listName} onChange={setListName}
+                        lists={lists} programs={programs} className="w-72" />
                 </F>
             </div>
 
@@ -205,24 +263,48 @@ export default function DaftarOutlet() {
                 <F label="Cari">
                     <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="kode atau nama toko" className={`${inputCls} min-w-56`} />
                 </F>
-                {lists.map((entry) => (
-                    <span key={entry.name} className="rounded bg-white/5 px-2 py-1 text-xs text-slate-300">
-                        {entry.name}: {entry.members} toko
-                        <span className="text-slate-500">
-                            {" "}({Object.entries(entry.tiers).map(([tier, n]) => `${tier} ${n}`).join(", ")})
-                        </span>
-                    </span>
-                ))}
+            </div>
+
+            {/* Tiap daftar dengan TALINYA. Daftar yang tidak ditunjuk aturan mana pun ditandai
+                kuning: ia tersimpan rapi tetapi tidak memengaruhi gerbang apa pun, dan itu satu-
+                satunya bentuk salah sasaran yang tidak menimbulkan galat. Chip-nya sekaligus
+                saringan — daftar yang dilihat orang adalah daftar yang ingin ia buka. */}
+            <div className="flex flex-wrap gap-2">
+                {lists.map((entry) => {
+                    const dipakai = entry.linked.length > 0;
+                    const aktif = list === entry.name;
+                    return (
+                        <button key={entry.name} type="button"
+                            onClick={() => setList(aktif ? "" : entry.name)}
+                            title={dipakai
+                                ? entry.linked.map((l) => `${l.suratProgram}: ${l.mode === "EXCLUDE" ? "semua KECUALI peserta" : "hanya peserta"}, ${l.rules} aturan`).join("; ")
+                                : "Belum ada aturan promo yang menunjuk daftar ini"}
+                            className={`rounded border px-2.5 py-1.5 text-left text-xs transition ${aktif
+                                ? "border-blue-400 bg-blue-500/15"
+                                : dipakai ? "border-white/10 bg-white/5 hover:border-white/25"
+                                    : "border-amber-500/40 bg-amber-500/10 hover:border-amber-400"}`}>
+                            <span className="font-medium">{entry.name}</span>
+                            <span className="text-slate-400"> · {entry.members} toko</span>
+                            <span className={`mt-0.5 block ${dipakai ? "text-emerald-400" : "text-amber-200"}`}>
+                                {dipakai
+                                    ? entry.linked.map((l) => `${l.suratProgram} ${l.mode === "EXCLUDE" ? "(kecuali)" : "(hanya)"}`).join(" · ")
+                                    : "belum dipakai aturan mana pun"}
+                            </span>
+                        </button>
+                    );
+                })}
             </div>
 
             {tambah && (
                 <div className="space-y-3 rounded border border-blue-500/30 bg-blue-500/5 p-3">
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <F label="Nama daftar" hint="Tanpa kuartal. Periodenya diisi per toko di bawah, karena keanggotaan berganti tiap kuartal sedangkan suratnya cuma menyebut “LOYALTY”.">
-                            <input value={tambah.listName} onChange={(e) => setTambah({ ...tambah, listName: e.target.value })} placeholder="LOYALTY" className={inputCls} />
+                        <F label="Nama daftar / promo" hint="Pilih promo yang sedang berjalan, atau ketik nama daftar yang berdiri sendiri. Tanpa kuartal: periodenya diisi per toko di bawah, karena keanggotaan berganti tiap kuartal sedangkan suratnya cuma menyebut “LOYALTY”.">
+                            <PilihDaftar id="daftar-ketik" value={tambah.listName}
+                                onChange={(nilai) => setTambah({ ...tambah, listName: nilai })}
+                                lists={lists} programs={programs} />
                         </F>
-                        <F label="Tingkat" hint="PLATINUM/GOLD/SILVER. Keterangan saja — tidak ada surat yang membedakannya.">
-                            <input value={tambah.tier} onChange={(e) => setTambah({ ...tambah, tier: e.target.value })} placeholder="PLATINUM" className={inputCls} />
+                        <F label="Keterangan" hint="Catatan bebas, mis. PLATINUM. Tidak dipakai memutuskan apa pun — tidak ada surat yang membedakan tingkat.">
+                            <input value={tambah.tier} onChange={(e) => setTambah({ ...tambah, tier: e.target.value })} placeholder="mis. PLATINUM" className={inputCls} />
                         </F>
                         <F label="Ikut mulai" hint="Dikosongkan = berlaku sejak kapan pun.">
                             <input type="date" value={tambah.periodStart} onChange={(e) => setTambah({ ...tambah, periodStart: e.target.value })} className={inputCls} />
@@ -251,7 +333,7 @@ export default function DaftarOutlet() {
                 <table className="w-full text-sm">
                     <thead className="bg-white/5 text-slate-300">
                         <tr>
-                            {["Daftar", "Outlet", "Tingkat", "Kode Kino", "Ikut", ""].map((h) => (
+                            {["Daftar", "Outlet", "Keterangan", "Kode Kino", "Ikut", ""].map((h) => (
                                 <th key={h} className="whitespace-nowrap px-2 py-2 text-left font-medium">{h}</th>
                             ))}
                         </tr>
