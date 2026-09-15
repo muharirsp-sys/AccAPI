@@ -28,7 +28,7 @@ import { PDFDocument } from "pdf-lib";
 
 export const OCR_MODEL = "mistral-ocr-4-1";
 /** Ikut kunci cache. Naikkan kalau prompt/skema berubah, supaya hasil lama tidak dipakai ulang. */
-export const OCR_VERSION = "surya-outlet-v1";
+export const OCR_VERSION = "surya-outlet-v2";
 
 const FIELDS = ["region", "kode_dist", "nama_dist", "kode_outlet", "nama_outlet", "mekanisme"] as const;
 
@@ -216,8 +216,31 @@ async function annotate(slice: string, index: number, apiKey: string, prompt: st
     }
     return {
         index,
-        text: String(pages[0].markdown),
+        text: pageText(pages[0]),
         rows,
         warnings: Array.isArray(parsed.warnings) ? parsed.warnings.map((note) => String(note)) : [],
     };
+}
+
+/**
+ * Markdown satu halaman DENGAN isi tabelnya disisipkan kembali.
+ *
+ * Mistral mengeluarkan tabel sebagai berkas terpisah dan menaruh penanda `[tbl-0.md](tbl-0.md)`
+ * di tempatnya. Tanpa penyisipan ini, halaman yang isinya memang berbentuk tabel akan terbaca
+ * sebagai halaman nyaris kosong — dan pada surat principal tertentu KOP SURATNYA sendiri ada di
+ * dalam tabel, sehingga nomor suratnya hilang. Sama dengan `page_text()` pada
+ * `python_backend/summary_mistral.py`; kalau yang di sana berubah, ubah juga yang ini.
+ */
+function pageText(page: Record<string, unknown>): string {
+    let text = String(page.markdown ?? "");
+    const tables = Array.isArray(page.tables) ? page.tables as Record<string, unknown>[] : [];
+    for (const table of tables) {
+        const id = String(table?.id ?? "");
+        const content = String(table?.content ?? "");
+        const placeholder = `[${id}](${id})`;
+        if (id && text.includes(placeholder)) text = text.split(placeholder).join(content);
+        else if (content) text += `
+${content}`;
+    }
+    return text;
 }

@@ -92,13 +92,26 @@ async function lookups(principal: string) {
         db.select({ no: customer.customerNo, name: customer.name }).from(customer),
     ]);
     const mapping = new Map(maps.map((row) => [row.source.trim().toUpperCase(), row.target.trim().toUpperCase()]));
-    // Master pelanggan berisi kode BERCABANG (C-WIN013-KN); daftar peserta menyimpan kode
-    // internalnya. Akhiran cabang principal dibuang supaya keduanya bicara dalam kode yang sama.
+    // Master pelanggan berisi kode BERCABANG (`C-WIN013-KN`); daftar peserta menyimpan kode
+    // internalnya (`C-WIN013`). Akhiran cabangnya dibuang supaya keduanya bicara dalam kode
+    // yang sama.
+    //
+    // Akhirannya TIDAK selalu milik principal yang sedang dimuat. Outlet yang sama bisa hanya
+    // punya cabang lain — `C-BRI002` di produksi cuma ada sebagai `C-BRI002-M2`, dan surat URC
+    // yang menyebutnya akan tertolak kalau kita hanya mengenali `-KN`. Karena itu segmen
+    // terakhir dibuang kapan pun kodenya berbentuk `C-XXXnnn-CABANG` (tiga bagian), sementara
+    // akhiran principal tetap didahulukan supaya cabangnya sendiri yang jadi nama.
     const internal = new Map<string, string>();
+    const potong = (no: string) => {
+        if (suffix && no.endsWith(suffix)) return no.slice(0, -suffix.length);
+        return no.split("-").length >= 3 ? no.slice(0, no.lastIndexOf("-")) : no;
+    };
     for (const row of pelanggan) {
         const no = row.no.trim().toUpperCase();
-        const base = suffix && no.endsWith(suffix) ? no.slice(0, -suffix.length) : no;
-        if (!internal.has(base)) internal.set(base, row.name);
+        const base = potong(no);
+        // Kode dengan akhiran principal menang: ia yang dipakai jalur order, jadi namanya juga
+        // yang paling sering dilihat manusia.
+        if (!internal.has(base) || (suffix && no.endsWith(suffix))) internal.set(base, row.name);
     }
     return { mapping, internal };
 }
@@ -263,7 +276,12 @@ async function dariSurat(
     let pages: string[] = [];
     try {
         const { extractText, getDocumentProxy } = await import("unpdf");
-        const pdf = await getDocumentProxy(raw);
+        // SALINAN, bukan `raw` itu sendiri: pdf.js MENGAMBIL ALIH buffer yang diberikan
+        // kepadanya, dan sesudahnya `raw` menjadi kosong. Tanpa salinan ini jalur OCR di
+        // bawah menerima berkas nol byte lalu melaporkan "PDF rusak" untuk surat yang
+        // sebenarnya baik-baik saja — dan itu terjadi HANYA pada surat hasil scan, yaitu
+        // satu-satunya jalur yang memang butuh OCR.
+        const pdf = await getDocumentProxy(new Uint8Array(raw));
         const hasil = await extractText(pdf, { mergePages: false });
         pages = hasil.text as unknown as string[];
     } catch {
@@ -303,10 +321,15 @@ async function dariSurat(
         catatan.push(...hasil.warnings.slice(0, 20));
     }
 
-    if (!surat.kodeAju) {
+    // Nomor surat jadi nama daftarnya. Kalau kopnya tidak memuat nomor yang bisa dikenali —
+    // dan itu wajar, tiap principal menulis kopnya sendiri — nama yang DIKETIK pengguna dipakai.
+    // Menolak surat hanya karena kopnya tidak sesuai kebiasaan satu principal berarti menutup
+    // pintu untuk dua belas principal lainnya.
+    const listName = (surat.kodeAju || text(form.get("listName"))).toUpperCase();
+    if (!listName) {
         return NextResponse.json({
             ok: false,
-            error: `Nomor surat (Kode Aju) tidak terbaca pada halaman pertama${perluOcr ? " meski sudah lewat OCR" : ""}. Tanpa nomor surat, daftarnya tidak punya nama — unggah daftarnya sebagai berkas terpisah dan beri nama sendiri.`,
+            error: `Nomor surat tidak terbaca pada halaman pertama${perluOcr ? " meski sudah lewat OCR" : ""}, dan nama daftar belum diisi. Isi "Nama daftar" lalu unggah lagi — berkasnya tidak akan dibaca ulang, hasil bacanya sudah disimpan.`,
         }, { status: 422 });
     }
     if (!surat.outlets.length) {
@@ -325,7 +348,6 @@ async function dariSurat(
         catatan.push("Lampiran ini tidak punya kolom distributor, jadi SELURUH barisnya dimuat sebagai peserta. Periksa sekali bahwa daftarnya memang khusus untuk kita.");
     }
 
-    const listName = surat.kodeAju.toUpperCase();
     const rows: (typeof promoOutlet.$inferInsert)[] = [];
     const ditolak: string[] = [];
     const sudah = new Set<string>();
@@ -339,7 +361,7 @@ async function dariSurat(
             tier: "", sourceCode: outlet.outletCode,
             periodStart: text(form.get("periodStart")).slice(0, 10) || null,
             periodEnd: text(form.get("periodEnd")).slice(0, 10) || null,
-            active: true, note: `dari lampiran surat ${surat.kodeAju}`, importedBy: email,
+            active: true, note: `dari lampiran surat ${surat.kodeAju || listName}`, importedBy: email,
         });
     }
     const ditambah = await simpanAnggota(rows, email);
@@ -347,10 +369,15 @@ async function dariSurat(
     // Aturan surat ini LANGSUNG ditunjuk ke daftarnya. Itu memang maksud lampirannya: surat yang
     // membawa daftar outlet berlaku HANYA untuk outlet itu. Membiarkan langkah ini manual berarti
     // daftarnya ada, terlihat benar di layar, dan tidak menahan apa pun.
-    const ditunjuk = await db.update(promoRule)
-        .set({ outletList: listName, outletListMode: "INCLUDE" })
-        .where(eq(promoRule.suratProgram, surat.kodeAju))
-        .returning({ id: promoRule.id });
+    // Aturan hanya bisa ditunjuk kalau kita tahu surat MANA ini. Nama daftar yang diketik
+    // manusia tidak boleh dipakai mencari aturan: salah ketik satu huruf akan menunjuk aturan
+    // surat lain, dan itu memindahkan hak promo tanpa ada yang tahu.
+    const ditunjuk = surat.kodeAju
+        ? await db.update(promoRule)
+            .set({ outletList: listName, outletListMode: "INCLUDE" })
+            .where(eq(promoRule.suratProgram, surat.kodeAju))
+            .returning({ id: promoRule.id })
+        : [];
 
     return NextResponse.json({
         ok: true, sumber: "surat", listName, program: surat.program, sumberTeks, ocrPages,
@@ -361,9 +388,11 @@ async function dariSurat(
         aturanDitunjuk: ditunjuk.length,
         catatan: [
             ...catatan,
-            ...(ditunjuk.length === 0
-                ? [`Aturan surat ${surat.kodeAju} belum dimuat, jadi belum ada yang bisa ditunjuk ke daftar ini. Muat aturannya dulu lewat Rekap Promo.`]
-                : []),
+            ...(!surat.kodeAju
+                ? [`Nomor surat tidak terbaca, jadi daftarnya dinamai "${listName}" dan TIDAK ada aturan yang ditunjuk otomatis. Tunjuk sendiri lewat kolom "Hanya untuk peserta daftar" pada aturannya.`]
+                : ditunjuk.length === 0
+                    ? [`Aturan surat ${surat.kodeAju} belum dimuat, jadi belum ada yang bisa ditunjuk ke daftar ini. Muat aturannya dulu lewat Rekap Promo.`]
+                    : []),
             ...(surat.skipped > 0 ? [`${surat.skipped} baris lampiran tidak terbaca sebagai baris outlet.`] : []),
         ],
     });

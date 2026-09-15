@@ -45,11 +45,15 @@ export type LetterAttachment = {
  * (`| Kode Aju | BP2609007909 |`). Kalau hanya bentuk pertama yang dikenali, surat hasil scan
  * akan kehilangan nomor suratnya — dan nomor surat itulah nama daftar pesertanya.
  */
-const field = (text: string, label: string) => {
+const field = (text: string, label: string, awalBaris = false) => {
     const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Label pendek seperti "No" dan "Hal" WAJIB berada di awal baris. Tanpa syarat itu ia akan
+    // tertangkap di tengah kalimat dan mengambil nilai milik label lain — dan nomor surat yang
+    // salah berarti daftar peserta yang bernama salah.
+    const awal = awalBaris ? "(?:^|\\n)[^\\S\\n]*(?:\\*\\*)?" : "";
     const patterns = [
-        new RegExp(`${escaped}[^:\\n]{0,8}:\\s*(.+)`, "i"),
-        new RegExp(`${escaped}[^|\\n]{0,8}\\|\\s*([^|\\n]+)`, "i"),
+        new RegExp(`${awal}${escaped}[^:\\n]{0,8}:\\s*(.+)`, "i"),
+        new RegExp(`${awal}${escaped}[^|\\n]{0,8}\\|\\s*([^|\\n]+)`, "i"),
     ];
     for (const pattern of patterns) {
         const match = pattern.exec(text);
@@ -133,9 +137,27 @@ export function readLetterOutlets(pages: string[], distCode: string): LetterAtta
     }, distCode, skipped);
 }
 
-/** Kop surat: nomor dan nama programnya. Dipakai jalur teks maupun jalur OCR. */
+/**
+ * Kop surat: nomor dan nama programnya. Dipakai jalur teks maupun jalur OCR.
+ *
+ * Label kopnya berbeda-beda antar principal, jadi dicoba berurutan dari yang paling khas ke
+ * yang paling umum: Kino menulis `Kode Aju : BP2609007909`, sedangkan surat Priskila hasil
+ * scan menulis `No : 002/PPM/NSPM/IX/2026` dengan judulnya di baris `Hal :`. Yang tidak punya
+ * keduanya bukan kegagalan — pemanggil masih boleh memberi nama daftarnya sendiri.
+ */
 export function letterHead(text: string): { kodeAju: string; program: string } {
-    return { kodeAju: field(text, "Kode Aju"), program: field(text, "Nama Program Promo") };
+    const kodeAju = field(text, "Kode Aju")
+        // Labelnya ditulis APA ADANYA; `field` yang meloloskan tanda baca regex di dalamnya.
+        // Meloloskannya dua kali membuat polanya menuntut backslash sungguhan di dalam teks.
+        || field(text, "No. Proposal")
+        || field(text, "Nomor Surat")
+        || field(text, "Nomor", true)
+        || field(text, "No", true);
+    const program = field(text, "Nama Program Promo")
+        || field(text, "Nama Program")
+        || field(text, "Perihal", true)
+        || field(text, "Hal", true);
+    return { kodeAju, program };
 }
 
 /**

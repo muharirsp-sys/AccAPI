@@ -124,3 +124,30 @@ test("kop dalam bentuk TABEL markdown juga terbaca", () => {
     assert.equal(letterHead("| Kode Aju | BP2609006016 |\n| Nama Program Promo | MSG ALL BRAND |").kodeAju, "BP2609006016");
     assert.equal(letterHead("| Kode Aju | BP2609006016 |\n| Nama Program Promo | MSG ALL BRAND |").program, "MSG ALL BRAND");
 });
+
+test("nomor surat principal LAIN juga terbaca dari kopnya", () => {
+    // Kop Priskila hasil scan (dibaca Mistral OCR 4.1, apa adanya).
+    const priskila = [
+        "**PT.PRISKILA PRIMA MAKMUR**",
+        "Phone : (+62-21) 395 08 100 (Hunting)",
+        "Jakarta, 28 Agustus 2026",
+        "No : 002/PPM/NSPM/IX/2026",
+        "Hal : PROGRAM PRISKILA LOYAL STORE SEPTEMBER 2026",
+    ].join("\n");
+    assert.equal(letterHead(priskila).kodeAju, "002/PPM/NSPM/IX/2026");
+    assert.equal(letterHead(priskila).program, "PROGRAM PRISKILA LOYAL STORE SEPTEMBER 2026");
+
+    // "Kode Aju" tetap menang untuk surat Kino, meski kopnya juga memuat "NO. PROMO ID".
+    assert.equal(letterHead("NO. PROMO ID : PN26006070\nKode Aju : BP2609007909").kodeAju, "BP2609007909");
+
+    // Label pendek tidak boleh tertangkap di tengah kalimat.
+    assert.equal(letterHead("Program ini No urut kedua : bukan nomor surat").kodeAju, "");
+});
+
+test("kop di dalam TABEL markdown OCR: nomor proposal principal lain tetap terbaca", () => {
+    // Bentuk nyata hasil Mistral OCR 4.1 atas surat URC (tabel kop disisipkan kembali).
+    const kopTabel = "# PROMO NASIONAL TOKO ONLINE\n\n"
+        + "|  **Budget Code** : 11410 / C61 | **Jenis Program** : 11410 - Consumer Promo GT (LK) | **No. Proposal** : 542/TMDH1/8/26#  |\n"
+        + "| --- | --- | --- |\n";
+    assert.equal(letterHead(kopTabel).kodeAju, "542/TMDH1/8/26#");
+});
