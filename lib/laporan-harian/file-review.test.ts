@@ -1,5 +1,5 @@
 /*
- * Tujuan: Self-check keamanan nama file dan pemilihan kolom contoh review Laporan Harian.
+ * Tujuan: Self-check nama file, HTML manager yang diizinkan, dan kolom contoh review.
  * Caller: Developer/CI via node --experimental-strip-types.
  * Dependensi: lib/laporan-harian/file-review.
  * Main Functions: assert-based self-check module.
@@ -13,6 +13,9 @@ assert.equal(isAllowedReviewFile("2026-07-14_DENNY.xlsx", "2026-07-15"), false);
 assert.equal(isAllowedReviewFile("2026-07-15_../secret.xlsx", "2026-07-15"), false);
 assert.equal(isAllowedReviewFile("2026-07-15_Laporan_Harian_Arsip.zip", "2026-07-15"), true);
 assert.equal(isAllowedReviewFile("2026-07-15_bad.exe", "2026-07-15"), false);
+assert.equal(isAllowedReviewFile("2026-07-15_Laporan_Pak_Fahdhar.html", "2026-07-15"), true);
+assert.equal(isAllowedReviewFile("2026-07-15_other.html", "2026-07-15"), false);
+assert.equal(isAllowedReviewFile("2026-07-15_..\\Laporan_Pak_Fahdhar.html", "2026-07-15"), false);
 
 const sample = buildReviewSample([
     ["NO_NOTA", "CUSTOMER", "IGNORED", "DPP"],

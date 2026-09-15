@@ -2,7 +2,7 @@
  * Tujuan: Validasi nama file laporan run-scoped dan bentuk contoh baris yang ringkas untuk review UI.
  * Caller: app/api/laporan-harian/[runId]/preview/route.ts; self-check file-review.test.ts.
  * Dependensi: Tidak ada.
- * Main Functions: isAllowedReviewFile, buildReviewSample.
+ * Main Functions: isAllowedReviewFile (XLSX/ZIP dan HTML Pak Fahdhar), buildReviewSample.
  * Side Effects: Tidak ada; seluruh fungsi murni.
  */
 const REVIEW_COLUMNS = [
@@ -20,7 +20,8 @@ const REVIEW_COLUMNS = [
 
 export function isAllowedReviewFile(fileName: string, reportDate: string): boolean {
     return fileName.startsWith(`${reportDate}_`)
-        && (fileName.toLowerCase().endsWith(".xlsx") || fileName.toLowerCase().endsWith(".zip"))
+        && (fileName.toLowerCase().endsWith(".xlsx") || fileName.toLowerCase().endsWith(".zip")
+            || fileName === `${reportDate}_Laporan_Pak_Fahdhar.html`)
         && !fileName.includes("/")
         && !fileName.includes("\\")
         && !fileName.includes("..");

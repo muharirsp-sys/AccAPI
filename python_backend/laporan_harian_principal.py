@@ -1,13 +1,14 @@
 """Tujuan: Mereplikasi filter dan format khusus Power Query laporan Principal.
 Caller: laporan_harian.resolve_report_groups dan write_report_files untuk format penjualan serta Stock.
 Dependensi: pandas, laporan_harian_pl_mr.csv, laporan_harian_reckitt_items.csv.
-Main Functions: apply_sales_rule, apply_stock_rule, build_principal_report, build_principal_stock,
+Main Functions: apply_sales_rule (termasuk SAHAR), apply_stock_rule, build_principal_report (YUDI kg), build_principal_stock,
                 serta normalisasi pandas.NA yang null-safe.
 Side Effects: Membaca dua CSV referensi lokal secara lazy; tidak menulis file.
 """
 
 from functools import lru_cache
 from pathlib import Path
+import re
 
 import numpy as np
 import pandas as pd
@@ -124,7 +125,9 @@ def apply_sales_rule(keyword: str, frame: pd.DataFrame) -> pd.DataFrame:
     """Terapkan filter tambahan setelah filter Principal kanonik."""
     key = _normal(keyword)
     out = frame.copy()
-    if key == "FONTERRA":
+    if key == "SAHAR":
+        out = out[_series(out, "SALESMAN", "").astype("string").str.contains(r"_MT|_OFFICE", na=False)].copy()
+    elif key == "FONTERRA":
         excluded = _series(out, "KODE_CUST", "").astype("string").str.contains("C-TUN020", na=False)
         out = out[~excluded].copy()
     elif key in {"MOTASA MKS 1", "MOTASA MKS 2"}:
@@ -141,7 +144,11 @@ def apply_sales_rule(keyword: str, frame: pd.DataFrame) -> pd.DataFrame:
 def apply_stock_rule(keyword: str, frame: pd.DataFrame) -> pd.DataFrame:
     """Power Query khusus stock: FONTERRA hanya gudang GD01."""
     out = frame.copy()
-    if _normal(keyword) == "FONTERRA":
+    if _normal(keyword) == "SAHAR":
+        principal = _series(out, "PRINCIPAL").map(_normal)
+        excluded = {"", "FOKUS RETAIL NUSAPRIMA, PT", "HEINZ ABC INDONESIA, PT", "MOTASA INDONESIA, PT", "MULIA PUTRA MANDIRI, PT", "PURATOS, PT", "SOFTEX INDONESIA, PT"}
+        out = out[~principal.isin(excluded)].copy()
+    elif _normal(keyword) == "FONTERRA":
         warehouse = next(
             (column for column in out.columns if _normal(column) in {"KODE GUDANG", "WAREHOUSE CODE"}),
             None,
@@ -203,7 +210,7 @@ def _build_mustika(frame: pd.DataFrame) -> pd.DataFrame:
     result["Nama Salesman"] = _series(out, "SALESMAN")
     result["Kode Item"] = _series(out, "NAMA_BARANG").map(_mustika_item_code)
     result["Nama Item"] = _series(out, "NAMA_BARANG")
-    result["Tgl. Transaksi"] = pd.to_datetime(_series(out, "TANGGAL"), errors="coerce").dt.strftime("%Y-%m-%d")
+    result["Tgl. Transaksi"] = pd.to_datetime(_series(out, "TANGGAL"), errors="coerce")
     result["No.Faktur"] = _series(out, "NO_NOTA")
     result["Kode Transaksi"] = _series(out, "JENIS_TRANSAKSI")
     result["Quantity"] = quantity
@@ -219,6 +226,24 @@ def _build_mustika(frame: pd.DataFrame) -> pd.DataFrame:
 def build_principal_report(keyword: str, frame: pd.DataFrame, default_columns: list) -> pd.DataFrame:
     """Format khusus Mustika/Reckitt; Principal lain memakai kolom standar."""
     key = _normal(keyword)
+    if key == "YUDI":
+        def volume(row):
+            if _normal(row.get("JENISPRODUK")) != "PURATOS":
+                return None
+            name = str(row.get("NAMA_BARANG", ""))
+            if "X" not in name:
+                return None
+            tokens = re.split(r'[ \"\s]+', name.rsplit("X", 1)[1].strip())
+            token = tokens[0].upper() if tokens else ""
+            digits = re.sub(r'[^0-9,.]', '', token).replace(',', '.')
+            try:
+                amount = float(digits) * float(row.get("QTY_SATUANKECIL"))
+                return amount / 1000 if "GR" in token else amount if "KG" in token else None
+            except (TypeError, ValueError):
+                return None
+        out = frame.reindex(columns=default_columns).copy()
+        out['VOLUME_KG'] = frame.apply(volume, axis=1)
+        return out.astype(object).where(pd.notna(out), None)
     if key == "MUSTIKA RATU":
         return _build_mustika(frame)
     if key == "RECKIT":
