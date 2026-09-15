@@ -19,8 +19,9 @@ import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { syncItemPrices } from "@/lib/item-price-sync";
 import { berlakuPada, bonusQuota, channelAllowed, channelOutlet, checkLine, checkSoPromo, daftarKosong,
-    isBonusLine, matchItemRule, outletAllowed, outletListsOn, splitDiscounts,
-    type DiscountAt, type PublishedRule } from "@/lib/principal-validation";
+    isBonusLine, matchItemRule, needsTriggerCheck, outletAllowed, outletListsOn, purchaseByGroup,
+    splitDiscounts, triggerGroupKey, triggerReached,
+    type DiscountAt, type PublishedRule, type TriggerBuy } from "@/lib/principal-validation";
 import { duplicateFinding, findDuplicate, type OrderFingerprint } from "@/lib/order-duplicate";
 
 export const runtime = "nodejs";
@@ -120,15 +121,47 @@ export async function POST(request: NextRequest) {
         (base ? tariffByCustomer.get(base.toUpperCase()) : undefined)
         ?? (customerNo ? tariffByCustomer.get(customerNo.toUpperCase()) : undefined)
         ?? [];
+    // BELANJA PER SO PER KELOMPOK ATURAN, dihitung sekali sebelum baris mana pun dinilai.
+    //
+    // Ambang "beli minimal N" tidak bisa dijawab dari satu baris: satu SO memuat barang yang sama
+    // pada beberapa baris dengan satuan berbeda, dan surat menyebut ambangnya MIX antar varian.
+    // Bentuknya sama dengan kuota bonus, dan memang harus sama — dua cara menghitung "berapa yang
+    // dibeli" pada satu faktur akan berbeda suatu hari, dan yang satu akan menuduh yang lain.
+    const belanjaPerSo = new Map<string, Map<string, TriggerBuy>>();
+    {
+        const perSo = new Map<string, typeof lines>();
+        for (const line of lines) {
+            const key = String(line.soNo);
+            perSo.set(key, [...(perSo.get(key) ?? []), line]);
+        }
+        const aturanBerambang = publishedRules.filter(needsTriggerCheck);
+        for (const [soNo, isi] of perSo) {
+            belanjaPerSo.set(soNo, purchaseByGroup(isi.map((line) => ({
+                itemCode: items.get(line.productCode) ?? "",
+                quantity: Number(line.reportQty) || 0,
+                gross: Number(line.reportGross) || 0,
+                bonus: line.bonus || isBonusLine((line.discounts as DiscountAt[]) ?? []),
+            })), aturanBerambang));
+        }
+    }
+    const belanjaOn = (soNo: string, rule: PublishedRule) =>
+        belanjaPerSo.get(soNo)?.get(triggerGroupKey(rule));
+
     /**
      * Aturan yang benar-benar berlaku untuk baris ini: tanggalnya masuk periode, outletnya
-     * memang peserta daftar yang ditunjuk aturan itu, DAN channelnya cocok. Tiga syarat, satu
-     * saringan — supaya tidak ada jalur pencocokan yang lupa menanyakan salah satunya.
+     * memang peserta daftar yang ditunjuk aturan itu, channelnya cocok, DAN ambang belinya
+     * terpenuhi. Empat syarat, satu saringan — supaya tidak ada jalur pencocokan yang lupa
+     * menanyakan salah satunya.
+     *
+     * Ambangnya hanya diperiksa untuk aturan PER BARANG non-bonus (`needsTriggerCheck`): ambang
+     * MSG sudah dinilai `checkSoPromo` dan ambang bonus sudah dinilai `bonusQuota`. Kalau
+     * keduanya ikut disaring di sini mereka akan hilang sebelum pemeriksanya sempat melihat.
      */
-    const berlaku = (rules: PublishedRule[], date: string, customerNo?: string | null) =>
+    const berlaku = (rules: PublishedRule[], date: string, customerNo?: string | null, soNo?: string) =>
         rules.filter((rule) => berlakuPada(rule, date)
             && outletAllowed(rule, customerNo, listsOn(date))
-            && channelAllowed(rule, customerNo ? channelOf.get(customerNo) : ""));
+            && channelAllowed(rule, customerNo ? channelOf.get(customerNo) : "")
+            && (!needsTriggerCheck(rule) || triggerReached(rule, belanjaOn(String(soNo ?? ""), rule)).ok));
 
     /**
      * Aturan yang periodenya cocok tetapi TERSARING oleh channel atau daftar peserta, beserta
@@ -136,7 +169,7 @@ export async function POST(request: NextRequest) {
      * "potongan tidak punya aturan" padahal aturannya ada — tuduhan yang salah alamat, dan
      * yang membacanya akan mencari kesalahan di tempat yang keliru.
      */
-    const sebabTerhalang = (rules: PublishedRule[], date: string, customerNo?: string | null) => {
+    const sebabTerhalang = (rules: PublishedRule[], date: string, customerNo?: string | null, soNo?: string) => {
         const sebab = new Set<string>();
         for (const rule of rules) {
             if (!berlakuPada(rule, date)) continue;
@@ -149,6 +182,9 @@ export async function POST(request: NextRequest) {
                 sebab.add(isi === 0
                     ? `Aturan ${rule.suratProgram} menunjuk daftar "${rule.outletList}" yang tidak punya anggota pada ${date}.`
                     : `Outlet ini tidak memenuhi syarat daftar "${rule.outletList}" (${rule.outletListMode}) pada aturan ${rule.suratProgram}.`);
+            } else if (needsTriggerCheck(rule)) {
+                const ambang = triggerReached(rule, belanjaOn(String(soNo ?? ""), rule));
+                if (!ambang.ok) sebab.add(ambang.reason);
             }
         }
         return [...sebab];
@@ -233,7 +269,7 @@ export async function POST(request: NextRequest) {
             entry.gross += Number(line.reportGross);
             const itemCode = items.get(line.productCode);
             const byItem = itemCode
-                ? matchItemRule(discounts, berlaku(rulesByItem.get(itemCode) ?? [], dateOf(line), customerNoOf(line)), itemCode)
+                ? matchItemRule(discounts, berlaku(rulesByItem.get(itemCode) ?? [], dateOf(line), customerNoOf(line), key), itemCode)
                 : null;
             if (!byItem) { entry.claim += split.principal; entry.lines += 1; }
             perSo.set(key, entry);
@@ -369,7 +405,7 @@ export async function POST(request: NextRequest) {
                 rules: berlaku([
                     ...(itemCode ? (rulesByItem.get(itemCode) ?? []) : []),
                     ...tariffOf(base, customerNo),
-                ], dateOf(line), customerNo),
+                ], dateOf(line), customerNo, String(line.soNo)),
                 fakturPromo: soPromo.get(String(line.soNo)),
                 bonusOverQuota: overQuota.get(`${line.soNo}#${line.rowNumber}`),
                 outletChannel: customerNo ? channelOf.get(customerNo) ?? "" : "",
@@ -377,7 +413,7 @@ export async function POST(request: NextRequest) {
                 terhalang: sebabTerhalang([
                     ...(itemCode ? (rulesByItem.get(itemCode) ?? []) : []),
                     ...tariffOf(base, customerNo),
-                ], dateOf(line), customerNo),
+                ], dateOf(line), customerNo, String(line.soNo)),
             });
             // Temuan tingkat SO menahan SETIAP barisnya: nominalnya milik seluruh SO, jadi
             // tidak ada satu baris pun yang bisa dinyatakan benar sendirian.

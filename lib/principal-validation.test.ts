@@ -3,7 +3,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { berlakuPada, bonusQuota, channelAllowed, channelLaporan, channelOutlet, checkLine, checkSoPromo,
-    daftarKosong, outletAllowed, outletListsOn, splitDiscounts,
+    daftarKosong, needsTriggerCheck, outletAllowed, outletListsOn, purchaseByGroup, splitDiscounts, triggerGroupKey,
+    triggerReached,
     type LineInput, type PublishedRule } from "./principal-validation.ts";
 
 const line = (over: Partial<LineInput> = {}): LineInput => ({
@@ -635,4 +636,100 @@ test("channel laporan principal diterjemahkan, yang tak dikenal TIDAK ditebak", 
     assert.equal(channelLaporan("GT"), "GT");
     assert.equal(channelLaporan("Wholesale"), "", "istilah baru tidak boleh ditebak jadi GT atau MT");
     assert.equal(channelLaporan(""), "");
+});
+
+/* ---------------------------------------------------------------- AMBANG per barang non-bonus
+
+   Sampai 2026-09-15 `trigger_qty` pada aturan per barang non-bonus hanyalah keterangan:
+   pencocoknya melihat PERSEN saja. "Beli 30 pcs dapat 3%" yang diberikan pada pembelian 5 pcs
+   lolos sempurna — barangnya benar, persennya benar, dan tidak ada yang bertanya berapa dibeli. */
+
+const aturanAmbang = (over: Partial<PublishedRule> = {}): PublishedRule => ({
+    suratProgram: "BP2610001234", promoGroup: "B&B ALL VARIANT", itemCode: "K1041101030010",
+    customerCode: "", tierNo: 4, triggerQty: 30, triggerUnit: "PCS",
+    benefitType: "DISC_PCT", benefitValue: "3", benefitBeban: "PRINCIPAL", ...over,
+});
+
+test("ambang PCS dinilai dari belanja SE-SO, bukan per baris", () => {
+    const rules = [aturanAmbang()];
+    // Satu SO, barang sama, dua baris bersatuan berbeda — persis bentuk INV/2609/KN00453.
+    const belanja = purchaseByGroup([
+        { itemCode: "K1041101030010", quantity: 24, gross: 200_000 },
+        { itemCode: "K1041101030010", quantity: 12, gross: 100_000 },
+    ], rules);
+    const kunci = triggerGroupKey(rules[0]);
+    assert.equal(belanja.get(kunci)?.qty, 36);
+    assert.equal(triggerReached(rules[0], belanja.get(kunci)).ok, true);
+
+    // Per baris, 24 dan 12 dua-duanya di bawah 30 — dan menahannya akan menuduh pembelian yang sah.
+    const kurang = purchaseByGroup([{ itemCode: "K1041101030010", quantity: 12, gross: 100_000 }], rules);
+    const hasil = triggerReached(rules[0], kurang.get(kunci));
+    assert.equal(hasil.ok, false);
+    assert.match((hasil as { reason: string }).reason, /12 PCS, belum mencapai ambang 30 PCS/);
+});
+
+test("ambang dijumlah per KELOMPOK, karena suratnya berkata MIX VARIANT", () => {
+    const rules = [
+        aturanAmbang({ itemCode: "K1041101030010" }),
+        aturanAmbang({ itemCode: "K1090003005010" }),
+    ];
+    const belanja = purchaseByGroup([
+        { itemCode: "K1041101030010", quantity: 20, gross: 150_000 },
+        { itemCode: "K1090003005010", quantity: 15, gross: 120_000 },
+    ], rules);
+    // 20 varian A + 15 varian B = 35, memenuhi ambang 30 walau tidak satu pun mencapainya sendiri.
+    assert.equal(triggerReached(rules[0], belanja.get(triggerGroupKey(rules[0]))).ok, true);
+
+    // Kelompok LAIN tidak ikut menolong: aturan yang kelompoknya berbeda dinilai sendiri.
+    const lain = aturanAmbang({ promoGroup: "RESIK V CAIR", itemCode: "K1370000005010" });
+    assert.equal(triggerReached(lain, belanja.get(triggerGroupKey(lain))).ok, false);
+});
+
+test("baris BONUS tidak ikut dihitung sebagai pembelian", () => {
+    const rules = [aturanAmbang()];
+    const belanja = purchaseByGroup([
+        { itemCode: "K1041101030010", quantity: 25, gross: 200_000 },
+        { itemCode: "K1041101030010", quantity: 10, gross: 80_000, bonus: true },
+    ], rules);
+    // 25 beli + 10 bonus = 35, tetapi bonusnya hadiah — bukan belanja yang memenuhi syaratnya sendiri.
+    assert.equal(belanja.get(triggerGroupKey(rules[0]))?.qty, 25);
+    assert.equal(triggerReached(rules[0], belanja.get(triggerGroupKey(rules[0]))).ok, false);
+});
+
+test("ambang RUPIAH dinilai TERMASUK PPN, mengikuti bukti program MSG", () => {
+    const rule = aturanAmbang({ triggerQty: 1_000_000, triggerUnit: "RP" });
+    // DPP 910.000 -> dengan PPN 1.010.100, melewati ambang sejuta.
+    assert.equal(triggerReached(rule, { qty: 0, value: 910_000 }).ok, true);
+    // DPP 800.000 -> dengan PPN 888.000, belum.
+    const kurang = triggerReached(rule, { qty: 0, value: 800_000 });
+    assert.equal(kurang.ok, false);
+    assert.match((kurang as { reason: string }).reason, /belum mencapai ambang Rp 1.000.000/);
+});
+
+test("ambang bersatuan KRT TIDAK ditebak, dan tidak dianggap terpenuhi", () => {
+    // Isi karton berbeda tiap barang; mengubah "5 KRT" jadi angka satuan terkecil berarti
+    // mengarang isi yang tidak tertulis di aturannya.
+    const rule = aturanAmbang({ triggerQty: 5, triggerUnit: "KRT" });
+    const hasil = triggerReached(rule, { qty: 10_000, value: 99_000_000 });
+    assert.equal(hasil.ok, false, "belanja sebesar apa pun tidak boleh mengesahkan ambang yang tidak terbaca");
+    assert.match((hasil as { reason: string }).reason, /Tulis ambangnya dalam satuan terkecil/);
+});
+
+test("ambang nol atau kosong berarti tanpa syarat beli — bentuk 105 aturan produksi", () => {
+    for (const q of [0, undefined]) {
+        assert.equal(triggerReached(aturanAmbang({ triggerQty: q as number }), undefined).ok, true);
+    }
+    // Ambang 1 (bentuk BP2609007909 sesudah default "setiap pembelian") terpenuhi oleh 1 pcs.
+    assert.equal(triggerReached(aturanAmbang({ triggerQty: 1 }), { qty: 1, value: 100 }).ok, true);
+    assert.equal(triggerReached(aturanAmbang({ triggerQty: 1 }), { qty: 0, value: 0 }).ok, false);
+});
+
+test("ambang MSG dan bonus TIDAK disaring di sini — pemeriksanya sudah ada masing-masing", () => {
+    // Kalau keduanya ikut tersaring, mereka hilang dari daftar aturan sebelum `checkSoPromo`
+    // dan `bonusQuota` sempat melihat — dan program MSG yang selama ini benar berhenti dikenali
+    // tanpa satu pun galat.
+    assert.equal(needsTriggerCheck({ itemCode: "", benefitType: "DISC_RP" }), false, "tingkat faktur (MSG)");
+    assert.equal(needsTriggerCheck({ itemCode: "K1", benefitType: "BONUS_QTY" }), false, "bonus");
+    assert.equal(needsTriggerCheck({ itemCode: "", customerCode: "C-AL0063", benefitType: "DISC_PCT" }), false, "tarif outlet");
+    assert.equal(needsTriggerCheck({ itemCode: "K1", benefitType: "DISC_PCT" }), true, "inilah yang belum dijaga");
 });

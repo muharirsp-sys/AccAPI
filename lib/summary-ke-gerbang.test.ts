@@ -17,8 +17,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bridgeRows, type BridgeRow, type PublishedLetter, type SummaryProgram } from "./summary-bridge.ts";
 import {
-    berlakuPada, channelAllowed, channelOutlet, checkSoPromo, matchItemRule, outletAllowed,
-    outletListsOn, splitDiscounts,
+    berlakuPada, channelAllowed, channelOutlet, checkSoPromo, matchItemRule, needsTriggerCheck,
+    outletAllowed, outletListsOn, purchaseByGroup, splitDiscounts, triggerGroupKey, triggerReached,
     type DiscountAt, type PublishedRule,
 } from "./principal-validation.ts";
 
@@ -312,4 +312,52 @@ test("surat tanpa channel (ALL) tetap berlaku di mana saja — bentuk sebagian b
         assert.ok(matchItemRule(diskon, berlakuUntuk(aturan, "2026-10-15", "C-BA0003-KN", [], kategori), "K1041101030010"),
             `aturan tanpa channel harus berlaku untuk kategori ${kategori || "(kosong)"}`);
     }
+});
+
+/* ------------------------------------------------------------------ 5. ambang "beli minimal N"
+
+   Sampai 2026-09-15 ambang pada aturan per barang non-bonus hanyalah keterangan. Surat Oktober
+   yang berbunyi "BELI 30 PCS DISKON 5%" akan mengesahkan diskon 5% pada pembelian 1 pcs. */
+
+test("ambang surat Oktober ikut ke aturan DAN benar-benar menahan", () => {
+    const surat = suratOktober({
+        programs: [{ ...programA(), tiers: [{ minimum: "30", percentages: ["3"] }] }],
+    });
+    const rows = bridgeRows(surat).rows;
+    assert.deepEqual(rows.map((row) => row.triggerQty), ["30", "30"], "ambang wajib terbawa jembatan");
+    const aturan = rows.map(keAturanGerbang);
+    assert.ok(aturan.every(needsTriggerCheck), "aturan persen per barang memang yang harus dijaga");
+
+    const diskon: DiscountAt[] = [{ position: 4, percent: 3 }];
+    const nilai = (baris: { itemCode: string; quantity: number; gross: number }[]) => {
+        const belanja = purchaseByGroup(baris, aturan);
+        const lolos = aturan.filter((rule) => triggerReached(rule, belanja.get(triggerGroupKey(rule))).ok);
+        return matchItemRule(diskon, lolos, "K1041101030010");
+    };
+
+    // Beli 5 pcs lalu dapat diskon 30-pcs: inilah yang selama ini lolos sempurna.
+    assert.equal(nilai([{ itemCode: "K1041101030010", quantity: 5, gross: 40_000 }]), null);
+    // Beli 30 pcs: sah.
+    assert.ok(nilai([{ itemCode: "K1041101030010", quantity: 30, gross: 240_000 }]));
+    // Mix antar varian satu kelompok ikut dihitung, seperti bunyi suratnya.
+    assert.ok(nilai([
+        { itemCode: "K1041101030010", quantity: 20, gross: 160_000 },
+        { itemCode: "K1090003005010", quantity: 15, gross: 120_000 },
+    ]));
+});
+
+test("ambang MSG Oktober tetap dinilai checkSoPromo, tidak ikut tersaring ambang per barang", () => {
+    // Kalau tier MSG ikut disaring `needsTriggerCheck`, ia hilang sebelum `checkSoPromo` melihat
+    // dan program yang selama ini benar berhenti dikenali tanpa satu pun galat.
+    const aturan = bridgeRows(suratOktober()).rows.map(keAturanGerbang);
+    const msg = aturan.filter((rule) => rule.benefitType === "DISC_RP");
+    assert.equal(msg.length, 2);
+    assert.ok(msg.every((rule) => !needsTriggerCheck(rule)));
+    // Daftar LOYALTY wajib punya anggota: sejak 15 Sep 2026 aturan EXCLUDE berdaftar kosong
+    // TIDAK berlaku untuk siapa pun (gagal tertutup), jadi daftar kosong di sini akan menyaring
+    // tier MSG-nya karena alasan yang sama sekali berbeda dan menyembunyikan yang sedang diuji.
+    const anggota = [{ listName: "LOYALTY", customerCode: "C-AD0021", periodStart: "2026-10-01", periodEnd: "2026-12-31" }];
+    const hasil = checkSoPromo({ gross: 1_000_000, principalClaim: 18_018.02, lineCount: 5 },
+        berlakuUntuk(aturan, "2026-10-15", "C-BA0003-KN", anggota));
+    assert.match(hasil.explained, /BP2610001234 tier 1/);
 });
