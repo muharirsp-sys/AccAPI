@@ -18,8 +18,9 @@ import { customer, item, orderDupeAck, principalMapping, principalOrderBatch, pr
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { syncItemPrices } from "@/lib/item-price-sync";
-import { berlakuPada, bonusQuota, checkLine, checkSoPromo, isBonusLine, matchItemRule, outletAllowed,
-    outletListsOn, splitDiscounts, type DiscountAt, type PublishedRule } from "@/lib/principal-validation";
+import { berlakuPada, bonusQuota, channelAllowed, channelOutlet, checkLine, checkSoPromo, daftarKosong,
+    isBonusLine, matchItemRule, outletAllowed, outletListsOn, splitDiscounts,
+    type DiscountAt, type PublishedRule } from "@/lib/principal-validation";
 import { duplicateFinding, findDuplicate, type OrderFingerprint } from "@/lib/order-duplicate";
 
 export const runtime = "nodejs";
@@ -71,6 +72,7 @@ export async function POST(request: NextRequest) {
         periodStart: promoRule.periodStart, periodEnd: promoRule.periodEnd,
         tierNo: promoRule.tierNo, triggerQty: promoRule.triggerQty, triggerUnit: promoRule.triggerUnit,
         benefitType: promoRule.benefitType, benefitValue: promoRule.benefitValue, benefitBeban: promoRule.benefitBeban,
+        channel: promoRule.channel,
         outletList: promoRule.outletList, outletListMode: promoRule.outletListMode,
     }).from(promoRule).where(eq(promoRule.active, true));
 
@@ -119,12 +121,38 @@ export async function POST(request: NextRequest) {
         ?? (customerNo ? tariffByCustomer.get(customerNo.toUpperCase()) : undefined)
         ?? [];
     /**
-     * Aturan yang benar-benar berlaku untuk baris ini: tanggalnya masuk periode DAN outletnya
-     * memang peserta daftar yang ditunjuk aturan itu. Dua syarat, satu saringan — supaya tidak
-     * ada jalur pencocokan yang lupa menanyakan salah satunya.
+     * Aturan yang benar-benar berlaku untuk baris ini: tanggalnya masuk periode, outletnya
+     * memang peserta daftar yang ditunjuk aturan itu, DAN channelnya cocok. Tiga syarat, satu
+     * saringan — supaya tidak ada jalur pencocokan yang lupa menanyakan salah satunya.
      */
     const berlaku = (rules: PublishedRule[], date: string, customerNo?: string | null) =>
-        rules.filter((rule) => berlakuPada(rule, date) && outletAllowed(rule, customerNo, listsOn(date)));
+        rules.filter((rule) => berlakuPada(rule, date)
+            && outletAllowed(rule, customerNo, listsOn(date))
+            && channelAllowed(rule, customerNo ? channelOf.get(customerNo) : ""));
+
+    /**
+     * Aturan yang periodenya cocok tetapi TERSARING oleh channel atau daftar peserta, beserta
+     * sebabnya. Dipakai menjelaskan kenapa barisnya tertahan; tanpa ini temuannya berbunyi
+     * "potongan tidak punya aturan" padahal aturannya ada — tuduhan yang salah alamat, dan
+     * yang membacanya akan mencari kesalahan di tempat yang keliru.
+     */
+    const sebabTerhalang = (rules: PublishedRule[], date: string, customerNo?: string | null) => {
+        const sebab = new Set<string>();
+        for (const rule of rules) {
+            if (!berlakuPada(rule, date)) continue;
+            const chan = customerNo ? channelOf.get(customerNo) ?? "" : "";
+            if (!channelAllowed(rule, chan)) {
+                sebab.add(`Aturan ${rule.suratProgram} dibatasi channel ${rule.channel}, sedangkan outlet ini `
+                    + `${chan ? `ber-channel ${chan}` : "belum punya kategori di master Accurate"}.`);
+            } else if (!outletAllowed(rule, customerNo, listsOn(date))) {
+                const isi = listsOn(date).get(String(rule.outletList ?? "").toUpperCase())?.size ?? 0;
+                sebab.add(isi === 0
+                    ? `Aturan ${rule.suratProgram} menunjuk daftar "${rule.outletList}" yang tidak punya anggota pada ${date}.`
+                    : `Outlet ini tidak memenuhi syarat daftar "${rule.outletList}" (${rule.outletListMode}) pada aturan ${rule.suratProgram}.`);
+            }
+        }
+        return [...sebab];
+    };
 
     const itemCodes = [...new Set(lines.map((line) => items.get(line.productCode)).filter(Boolean) as string[])];
     let priceRefresh: { ok: boolean; error?: string; processed?: number; priceRows?: number } | null = null;
@@ -150,7 +178,7 @@ export async function POST(request: NextRequest) {
 
     const [knownItems, knownCustomers, unitsByCode] = await Promise.all([
         itemCodes.length ? db.select({ no: item.no }).from(item).where(inArray(item.no, itemCodes)) : Promise.resolve([]),
-        customerNos.length ? db.select({ no: customer.customerNo, branchId: customer.branchId }).from(customer).where(inArray(customer.customerNo, customerNos)) : Promise.resolve([]),
+        customerNos.length ? db.select({ no: customer.customerNo, branchId: customer.branchId, categoryName: customer.categoryName }).from(customer).where(inArray(customer.customerNo, customerNos)) : Promise.resolve([]),
         itemUnits(itemCodes),
     ]);
     const itemSet = new Set(knownItems.map((row) => row.no));
@@ -162,6 +190,11 @@ export async function POST(request: NextRequest) {
     // lain. Tanpa cabang, pemilih jatuh ke cabang default (Kantor Pusat) dan mengambil harga
     // lama — 47 dari 53 baris tertahan sebagai "selisih harga" yang sebenarnya tidak ada.
     const branchOf = new Map(knownCustomers.map((row) => [row.no, row.branchId ?? undefined]));
+    // CHANNEL OUTLET DARI MASTER, bukan dari laporan principal dan bukan dari yang diketik.
+    // Laporan bisa salah — dan sudah: HINDA MART (C-HIL009) disebut "General Trade" oleh Kino
+    // sedangkan master kita menyimpannya MT. Yang dipakai memutuskan promo adalah master,
+    // karena itu satu-satunya yang kita pegang sendiri.
+    const channelOf = new Map(knownCustomers.map((row) => [row.no, channelOutlet(row.categoryName)]));
 
     // Harga dilihat per pelanggan: kategori harga berbeda memberi harga berbeda untuk item sama.
     const priceByKey = new Map<string, { price: number | null; source: string }>();
@@ -304,6 +337,14 @@ export async function POST(request: NextRequest) {
         }
     }
 
+    // PERINGATAN SE-BATCH: daftar outlet yang DITUNJUK aturan tetapi kosong pada tanggal SO.
+    // Barisnya memang sudah tertahan sendiri (daftar kosong = aturan tidak berlaku untuk siapa
+    // pun), tetapi sebabnya harus sampai ke manusia yang bisa membetulkannya — kalau tidak, ia
+    // akan terbaca sebagai "aturannya hilang" dan dicari di tempat yang salah.
+    const peringatan = [...new Set(
+        [...new Set(lines.map(dateOf))].flatMap((date) => daftarKosong(publishedRules, listsOn(date))),
+    )];
+
     let ok = 0;
     let review = 0;
     await db.transaction(async (tx) => {
@@ -331,6 +372,12 @@ export async function POST(request: NextRequest) {
                 ], dateOf(line), customerNo),
                 fakturPromo: soPromo.get(String(line.soNo)),
                 bonusOverQuota: overQuota.get(`${line.soNo}#${line.rowNumber}`),
+                outletChannel: customerNo ? channelOf.get(customerNo) ?? "" : "",
+                reportChannel: line.customerType ?? "",
+                terhalang: sebabTerhalang([
+                    ...(itemCode ? (rulesByItem.get(itemCode) ?? []) : []),
+                    ...tariffOf(base, customerNo),
+                ], dateOf(line), customerNo),
             });
             // Temuan tingkat SO menahan SETIAP barisnya: nominalnya milik seluruh SO, jadi
             // tidak ada satu baris pun yang bisa dinyatakan benar sendirian.
@@ -358,5 +405,5 @@ export async function POST(request: NextRequest) {
         }).where(eq(principalOrderBatch.id, id));
     });
 
-    return NextResponse.json({ ok: true, id, checked: lines.length, okCount: ok, reviewCount: review, publishedRules: publishedRules.length, fakturPrograms: [...new Set(soPromo.values())], priceRefresh });
+    return NextResponse.json({ ok: true, id, checked: lines.length, okCount: ok, reviewCount: review, publishedRules: publishedRules.length, fakturPrograms: [...new Set(soPromo.values())], priceRefresh, peringatan });
 }

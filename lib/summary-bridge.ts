@@ -100,6 +100,8 @@ export type BridgeRow = {
     benefitUnit: string;
     benefitBeban: string;
     onFaktur: boolean;
+    /** Channel yang disebut surat: "GT", "MT", atau kosong/"ALL" = di mana saja. */
+    channel: string;
     outletList: string;
     outletListMode: string;
     note: string;
@@ -233,6 +235,9 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
                 benefitUnit: benefit.unit,
                 benefitBeban: beban,
                 onFaktur: true,
+                // Channel dari suratnya sendiri. "ALL" disimpan kosong supaya satu arti punya
+                // satu bentuk di basis data, dan supaya baris lama yang kosong berarti sama.
+                channel: text(program.channel).toUpperCase() === "ALL" ? "" : text(program.channel).toUpperCase(),
                 outletList, outletListMode,
                 note: `dari publikasi Summary ${letter.draftId.slice(0, 8)} (${program.id})`,
             };
@@ -270,7 +275,7 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
     const terpakai = new Map<string, BridgeRow>();
     const bersih: BridgeRow[] = [];
     const isinya = (row: BridgeRow) => [row.benefitType, row.benefitValue, row.benefitUnit,
-        row.triggerQty, row.triggerUnit, row.benefitBeban, row.outletList, row.outletListMode].join("|");
+        row.triggerQty, row.triggerUnit, row.benefitBeban, row.channel, row.outletList, row.outletListMode].join("|");
     for (const row of rows) {
         const kunci = `${row.suratProgram}|${row.promoGroup}|${row.itemCode}|${row.tierNo}`;
         const kembar = terpakai.get(kunci);

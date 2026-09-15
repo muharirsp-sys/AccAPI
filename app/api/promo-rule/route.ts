@@ -40,6 +40,10 @@ function draftOf(body: Record<string, unknown>, importedBy: string): { row: Draf
     const tierNo = Number(body.tierNo) || 1;
     const outletList = text(body.outletList).toUpperCase();
     const outletListMode = text(body.outletListMode).toUpperCase();
+    // "ALL" disimpan KOSONG: satu arti harus punya satu bentuk, kalau tidak saringan channel
+    // harus mengenali dua ejaan untuk hal yang sama dan suatu saat akan lupa salah satunya.
+    const channelDiisi = text(body.channel).toUpperCase();
+    const channel = channelDiisi === "ALL" ? "" : channelDiisi;
 
     if (!text(body.principal)) return { error: "Principal wajib diisi" };
     if (!text(body.suratProgram)) return { error: "Surat/program wajib diisi — ia yang menjelaskan asal aturannya" };
@@ -78,7 +82,7 @@ function draftOf(body: Record<string, unknown>, importedBy: string): { row: Draf
         triggerUnit: text(body.triggerUnit).toUpperCase() || "PCS",
         benefitType, benefitValue, benefitUnit: text(body.benefitUnit),
         benefitBeban, onFaktur: body.onFaktur !== false,
-        outletList, outletListMode,
+        channel, outletList, outletListMode,
         note: text(body.note), importedBy,
         // Diketik di layar; jalur impor mana pun tidak boleh menghapusnya.
         source: "manual", sourceRef: "",
@@ -117,7 +121,7 @@ export async function GET(request: NextRequest) {
         if (jenis === "faktur" && (isTarif(row) || row.itemCode)) return false;
         if (beban && row.benefitBeban.toUpperCase() !== beban) return false;
         if (!cari) return true;
-        return [row.suratProgram, row.promoGroup, row.promoLabel, row.itemCode, row.itemName, row.customerCode, row.outletList]
+        return [row.suratProgram, row.promoGroup, row.promoLabel, row.itemCode, row.itemName, row.customerCode, row.outletList, row.channel]
             .some((field) => String(field).toUpperCase().includes(cari));
     });
 

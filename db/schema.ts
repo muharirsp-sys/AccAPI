@@ -194,6 +194,13 @@ export const promoRule = pgTable("promo_rule", {
     benefitUnit: text("benefit_unit").notNull().default(""),
     benefitBeban: text("benefit_beban").notNull().default("PRINCIPAL"),
     onFaktur: boolean("on_faktur").notNull().default(true),
+    /**
+     * Channel yang disebut surat pada kolom "Type Of Promo": GT, MT, atau kosong/ALL.
+     * Dicocokkan dengan channel OUTLET yang diturunkan dari `customer.category_name`
+     * (GT = TT saja, keputusan pengguna 15 Sep 2026). Kosong = berlaku di channel mana pun,
+     * dan itu bentuk seluruh 234 baris yang sudah termuat.
+     */
+    channel: text("channel").notNull().default(""),
     // Daftar outlet peserta (`promo_outlet.list_name`). Kosong = berlaku semua outlet.
     // Suratnya sendiri yang menyebut peserta: "KHUSUS CHANNEL GT PESERTA LOYALTY"
     // (Resik V, Ovale) dan "EXCLUDE LOYALTY" (MSG) — dua arah, satu daftar.

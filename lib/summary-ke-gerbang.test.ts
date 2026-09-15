@@ -17,7 +17,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bridgeRows, type BridgeRow, type PublishedLetter, type SummaryProgram } from "./summary-bridge.ts";
 import {
-    berlakuPada, checkSoPromo, matchItemRule, outletAllowed, outletListsOn, splitDiscounts,
+    berlakuPada, channelAllowed, channelOutlet, checkSoPromo, matchItemRule, outletAllowed,
+    outletListsOn, splitDiscounts,
     type DiscountAt, type PublishedRule,
 } from "./principal-validation.ts";
 
@@ -86,13 +87,15 @@ const keAturanGerbang = (row: BridgeRow): PublishedRule => ({
     periodStart: row.periodStart, periodEnd: row.periodEnd,
     triggerQty: Number(row.triggerQty), triggerUnit: row.triggerUnit,
     benefitType: row.benefitType, benefitValue: row.benefitValue, benefitBeban: row.benefitBeban,
-    outletList: row.outletList, outletListMode: row.outletListMode,
+    channel: row.channel, outletList: row.outletList, outletListMode: row.outletListMode,
 });
 
-/** Saringan yang dipakai route validate untuk tiap baris: periode DAN daftar peserta. */
+/** Saringan yang dipakai route validate untuk tiap baris: periode, daftar peserta, DAN channel. */
 const berlakuUntuk = (rules: PublishedRule[], tanggal: string, customerNo: string | null,
-    anggota: Parameters<typeof outletListsOn>[0]) =>
-    rules.filter((rule) => berlakuPada(rule, tanggal) && outletAllowed(rule, customerNo, outletListsOn(anggota, tanggal)));
+    anggota: Parameters<typeof outletListsOn>[0], kategoriAccurate = "TT") =>
+    rules.filter((rule) => berlakuPada(rule, tanggal)
+        && outletAllowed(rule, customerNo, outletListsOn(anggota, tanggal))
+        && channelAllowed(rule, channelOutlet(kategoriAccurate)));
 
 /* ------------------------------------------------------------------ 1. jembatan */
 
@@ -276,4 +279,37 @@ test("periode Oktober dari sisi Python sampai ke gerbang tanpa disentuh siapa pu
     assert.equal(row.periodEnd, "2026-10-31");
     assert.equal(berlakuPada(keAturanGerbang(row), "2026-10-31"), true, "hari terakhir Oktober masih berlaku");
     assert.equal(berlakuPada(keAturanGerbang(row), "2026-11-01"), false, "1 November sudah tidak");
+});
+
+/* ------------------------------------------------------------------ 4. channel
+
+   Surat menyebut channelnya ("Type Of Promo"), dan sampai 15 Sep 2026 jembatan MEMBUANGNYA.
+   Akibatnya surat "KHUSUS CHANNEL GT" berlaku juga untuk outlet MT. Sudah ada contohnya di
+   produksi: HINDA MART (C-HIL009) disebut General Trade oleh Kino, master kita menyimpannya MT. */
+
+test("channel surat ikut ke aturan, dan GT hanya berlaku untuk outlet berkategori TT", () => {
+    const suratGT = suratOktober({
+        programs: [{ ...programA(), channel: "GT" }],
+    });
+    const aturan = bridgeRows(suratGT).rows.map(keAturanGerbang);
+    assert.equal(aturan[0].channel, "GT", "channel surat wajib terbawa, bukan dibuang");
+
+    const diskon: DiscountAt[] = [{ position: 4, percent: 3 }];
+    const pada = (kategori: string) =>
+        matchItemRule(diskon, berlakuUntuk(aturan, "2026-10-15", "C-BA0003-KN", [], kategori), "K1041101030010");
+
+    assert.ok(pada("TT"), "outlet TT berhak promo GT");
+    assert.equal(pada("MT"), null, "outlet MT TIDAK berhak promo GT");
+    assert.equal(pada("Umum"), null, "kategori yang belum dirapikan juga tidak");
+    assert.equal(pada(""), null, "outlet tanpa kategori di master ditahan, bukan diloloskan");
+});
+
+test("surat tanpa channel (ALL) tetap berlaku di mana saja — bentuk sebagian besar aturan termuat", () => {
+    const aturan = bridgeRows(suratOktober({ programs: [{ ...programA(), channel: "ALL" }] })).rows.map(keAturanGerbang);
+    assert.equal(aturan[0].channel, "", "\"ALL\" disimpan kosong supaya satu arti punya satu bentuk");
+    const diskon: DiscountAt[] = [{ position: 4, percent: 3 }];
+    for (const kategori of ["TT", "MT", "NKA", ""]) {
+        assert.ok(matchItemRule(diskon, berlakuUntuk(aturan, "2026-10-15", "C-BA0003-KN", [], kategori), "K1041101030010"),
+            `aturan tanpa channel harus berlaku untuk kategori ${kategori || "(kosong)"}`);
+    }
 });

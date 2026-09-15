@@ -1,0 +1,35 @@
+-- =====================================================================
+-- CHANNEL pada aturan promo — surat menyebutnya, gerbang belum pernah membacanya.
+--
+-- Surat program menyebut channelnya di kolom "Type Of Promo": BP2609007713 dan
+-- BP2609007664 berbunyi "KHUSUS CHANNEL GT PESERTA LOYALTY", BP2609006016
+-- "KHUSUS CHANNEL GT EXCLUDE LOYALTY". Sampai migrasi ini, `promo_rule` tidak
+-- punya tempat untuk menyimpannya: jembatan Summary MEMBUANG `program.channel`,
+-- dan gerbang validasi tidak pernah menanyakan kategori outletnya sama sekali.
+--
+-- Akibatnya surat "KHUSUS CHANNEL GT" berlaku untuk outlet MT juga. Itu bukan
+-- kekhawatiran teoretis: pada 10 outlet batch September produksi, satu sudah
+-- berselisih — HINDA MART (C-HIL009, CUST_ID2 2191200123206) disebut "General
+-- Trade" oleh laporan Kino sedangkan master Accurate menyimpannya `MT`.
+--
+-- Channel OUTLET diturunkan dari MASTER (`customer.category_name`), bukan dari
+-- laporan principal dan bukan dari yang diketik pengirim order. Laporan bisa
+-- salah, dan yang diketik bisa dikarang; master adalah satu-satunya yang kita
+-- pegang sendiri. Petanya (keputusan pengguna 15 Sep 2026): **GT = TT saja**.
+-- Kategori lain dipakai apa adanya, jadi surat ber-"CHANNEL MT" hanya cocok
+-- dengan kategori MT, dan Umum/KANVAS/MOTORIST tidak ikut mendapat promo GT
+-- sampai kategorinya dibetulkan di Accurate. Memperlebarnya berarti menebak,
+-- dan yang ditebak di sini berakhir sebagai potongan pada faktur.
+--
+-- KOSONG = BERLAKU DI MANA SAJA, dan itu sengaja. Seluruh 234 baris yang sudah
+-- termuat di produksi tetap ber-channel kosong, jadi migrasi ini TIDAK mengubah
+-- satu pun keputusan gerbang atas data yang ada. Pembatasan channel baru mulai
+-- berlaku untuk aturan yang memang membawanya — dimuat jembatan dari suratnya,
+-- atau diisi tangan di layar Aturan Promo.
+--
+-- Apply: docker exec -i accapi-postgres psql -U accapi -d accapi \
+--          -v ON_ERROR_STOP=1 --single-transaction < db/migrations/0018_promo_rule_channel.sql
+-- Idempoten dan aditif; tidak menyentuh satu baris data pun.
+-- =====================================================================
+
+ALTER TABLE promo_rule ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT '';

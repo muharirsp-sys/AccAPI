@@ -26,7 +26,7 @@ type Rule = {
     periodStart: string | null; periodEnd: string | null; active: boolean;
     tierNo: number; triggerQty: string; triggerUnit: string;
     benefitType: string; benefitValue: string; benefitUnit: string; benefitBeban: string;
-    onFaktur: boolean; outletList: string; outletListMode: string; note: string; importedBy: string;
+    onFaktur: boolean; channel: string; outletList: string; outletListMode: string; note: string; importedBy: string;
 };
 
 const KOSONG: Partial<Rule> = {
@@ -34,7 +34,7 @@ const KOSONG: Partial<Rule> = {
     promoLabel: "", itemCode: "", itemName: "", customerCode: "",
     periodStart: "", periodEnd: "", active: true, tierNo: 1, triggerQty: "0", triggerUnit: "PCS",
     benefitType: "DISC_PCT", benefitValue: "", benefitUnit: "%", benefitBeban: "DISTRIBUTOR",
-    onFaktur: true, outletList: "", outletListMode: "", note: "",
+    onFaktur: true, channel: "", outletList: "", outletListMode: "", note: "",
 };
 
 /** Bentuk aturan, dibaca dari isinya — bukan dari kolom penanda yang bisa berbeda dari isinya. */
@@ -54,7 +54,10 @@ function artinya(rule: Partial<Rule>): string {
     const daftar = rule.outletList
         ? rule.outletListMode === "EXCLUDE" ? ` yang BUKAN peserta ${rule.outletList}` : ` peserta ${rule.outletList}`
         : "";
-    const siapa = rule.customerCode ? `Outlet ${rule.customerCode}` : `Semua outlet${daftar}`;
+    // Channel ikut disebut: aturan yang sama persis berlaku untuk toko yang sama sekali berbeda
+    // kalau channelnya berbeda, dan itu tidak terlihat dari kolom lain mana pun.
+    const chan = rule.channel ? ` berkategori ${rule.channel === "GT" ? "TT (GT)" : rule.channel} di Accurate` : "";
+    const siapa = rule.customerCode ? `Outlet ${rule.customerCode}` : `Semua outlet${chan}${daftar}`;
     const barang = rule.itemCode ? `barang ${rule.itemCode}` : "semua barang";
     const beban = rule.benefitBeban === "PRINCIPAL"
         ? "ditanggung principal — bisa ditagihkan kembali"
@@ -302,6 +305,7 @@ export default function AturanPromoPage() {
                         </F>
                         <F label="Kelompok" hint="Pengelompokan di dalam surat itu."><input value={draft.promoGroup ?? ""} onChange={(e) => setDraft({ ...draft, promoGroup: e.target.value })} className={inputCls} /></F>
                         <F label="Nama program" hint="Bebas — untuk dibaca manusia saja."><input value={draft.promoLabel ?? ""} onChange={(e) => setDraft({ ...draft, promoLabel: e.target.value })} className={inputCls} /></F>
+                        <F label="Nama barang" hint="Untuk dibaca manusia; tidak dipakai mencocokkan."><input value={draft.itemName ?? ""} onChange={(e) => setDraft({ ...draft, itemName: e.target.value })} className={inputCls} /></F>
                     </G>
 
                     <G title="Berlaku untuk siapa dan barang apa" hint="Dikosongkan berarti “semua”. Daftar peserta menyempitkannya lagi, dan di situlah salah sasaran paling sering terjadi.">
@@ -311,7 +315,14 @@ export default function AturanPromoPage() {
                         <F label="Kode barang" hint="Dikosongkan = berlaku untuk semua barang yang dibeli outlet itu.">
                             <input value={draft.itemCode ?? ""} onChange={(e) => setDraft({ ...draft, itemCode: e.target.value })} placeholder="kosong = semua barang" className={inputCls} />
                         </F>
-                        <F label="Nama barang" hint="Untuk dibaca manusia; tidak dipakai mencocokkan."><input value={draft.itemName ?? ""} onChange={(e) => setDraft({ ...draft, itemName: e.target.value })} className={inputCls} /></F>
+                        <F label="Channel (Type Of Promo)"
+                            hint="Diambil dari kolom “Type Of Promo” pada surat. GT dicocokkan dengan outlet berkategori TT di Accurate; MT dengan MT. Dikosongkan = berlaku di channel mana pun.">
+                            <select value={draft.channel ?? ""} onChange={(e) => setDraft({ ...draft, channel: e.target.value })} className={inputCls}>
+                                <option value="">— semua channel —</option>
+                                <option value="GT">GT (outlet TT)</option>
+                                <option value="MT">MT</option>
+                            </select>
+                        </F>
                         <F label="Hanya untuk peserta daftar"
                             hint={draft.outletList
                                 ? "“Hanya peserta” untuk program yang khusus mereka; “Semua kecuali peserta” untuk yang justru mengecualikan mereka (MSG). Nama daftarnya harus sama persis dengan yang di tab “Daftar outlet peserta”."
@@ -480,6 +491,9 @@ export default function AturanPromoPage() {
                                                     : `hanya peserta ${rule.outletList}`}
                                             </span>
                                             : <span className="text-slate-500">semua outlet</span>)}
+                                        {rule.channel && (
+                                            <span className="ml-1 rounded bg-white/10 px-1.5 py-0.5 text-xs">{rule.channel}</span>
+                                        )}
                                         <span className="block text-xs text-slate-500">
                                             {rule.itemCode ? `${rule.itemCode} ${rule.itemName}`.trim() : "semua barang"}
                                         </span>

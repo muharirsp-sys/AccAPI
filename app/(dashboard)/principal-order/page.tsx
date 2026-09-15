@@ -190,6 +190,11 @@ export default function PrincipalOrderPage() {
             }
             toast[data.reviewCount > 0 ? "warning" : "success"](
                 `${data.okCount} baris cocok, ${data.reviewCount} perlu ditinjau`);
+            // Peringatan se-batch: daftar outlet yang DITUNJUK aturan tetapi kosong pada tanggal
+            // SO. Barisnya sudah tertahan sendiri, tetapi tanpa kalimat ini sebabnya terbaca
+            // sebagai "aturannya hilang" dan dicari di tempat yang salah. Dibuat lama supaya
+            // sempat dibaca — ia menunjuk pekerjaan yang harus dikerjakan, bukan sekadar kabar.
+            for (const pesan of (data.peringatan ?? []) as string[]) toast.warning(pesan, { duration: 15000 });
             await loadBatches();
             await openBatch(id);
         } catch (error) {
