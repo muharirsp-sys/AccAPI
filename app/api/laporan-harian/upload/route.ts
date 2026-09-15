@@ -5,7 +5,7 @@
  * Caller: UI modul Laporan Harian (browser, multipart).
  * Dependensi: requirePermission, recipient aktif, FastAPI /laporan-harian/process, normalisasi ingest,
  *             db/schema (reportRun, reportRecipient, reportRunRecipient).
- * Main Functions: POST (proses + dry-run, simpan tanggal transaksi terakhir, dan verifikasi feed insentif).
+ * Main Functions: POST (proses + dry-run, verifikasi feed insentif, dan hasil Pak Fahdhar download-only).
  * Side Effects: HTTP call ke FastAPI; DB write (report_run, report_run_recipient, sales_daily_progress).
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -208,6 +208,7 @@ export async function POST(req: NextRequest) {
             unmatchedReportKeywords,
             toFormatFileName,
             archiveFileName,
+            manager: result.manager ?? null,
         });
     } catch (e) {
         return NextResponse.json(

@@ -2,7 +2,7 @@
 # Caller: Next.js app/api/laporan-harian/*.
 # Dependensi: shared runtime config, laporan_harian pipeline, resolver target, writer XLSX,
 #             python-calamine, dan openpyxl sebagai fallback.
-# Main Functions: laporan_harian_process() menentukan tanggal transaksi terakhir dan meneruskan lookup ke mapping Stock,
+# Main Functions: laporan_harian_process() menulis target, snapshot dan rekap Pak Fahdhar download-only,
 #                 lalu laporan_harian_preview() dan laporan_harian_file().
 # Side Effects: Membaca upload/workbook runtime, menulis workbook runtime, dan mengirim JSON/file melalui HTTP.
 from fastapi import APIRouter
@@ -111,6 +111,7 @@ async def laporan_harian_process(
         unmatched_report_keywords = []
         to_format = None
         archive = None
+        manager = None
         if write_files and run_id:
             import json as _json, re as _re, datetime as _dt
             safe_run = _re.sub(r"[^A-Za-z0-9_-]", "", str(run_id))[:64]
@@ -125,10 +126,15 @@ async def laporan_harian_process(
                     {"ok": False, "error": f"Keyword laporan tidak valid: {exc}"},
                     status_code=400,
                 )
+            # MSM tetap dibuat untuk unduhan bila CSV tidak mengatur emailnya.
+            output_keywords = list(dict.fromkeys(keywords + ["MSM"]))
             files_written, unmatched_report_keywords = LH.write_report_files(
-                sb, out_dir, rdate, keywords, lk, stock_frame,
+                sb, out_dir, rdate, output_keywords, lk, stock_frame,
             )
+            unmatched_report_keywords = [key for key in unmatched_report_keywords if key in keywords]
             to_format = LH.write_to_format_file(fix_df, out_dir, rdate)
+            from laporan_harian_manager import write_manager_report
+            manager = write_manager_report(sb, lk, out_dir, rdate)
             archive = LH.create_run_archive(out_dir, rdate)
 
         return ORJSONResponse({
@@ -136,6 +142,7 @@ async def laporan_harian_process(
             "files": files_written,
             "to_format": to_format,
             "archive": archive,
+            "manager": manager,
             "report_date": effective_report_date,
             "sales_rows": int(len(sb)),
             "net_dpp": float(sb["DPP"].sum()),

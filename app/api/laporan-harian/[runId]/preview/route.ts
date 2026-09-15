@@ -2,7 +2,7 @@
  * Tujuan: Lihat detail run/penerima, preview JSON ringkas, atau stream unduhan file sebelum email dikirim.
  * Caller: UI Laporan Harian (review opsional sebelum Send).
  * Dependensi: requirePermission, db/schema, FastAPI preview/file endpoint, file-review.
- * Main Functions: GET (ringkasan run, sample JSON, atau proxy download streaming/range).
+ * Main Functions: GET (sample JSON, unduhan streaming, atau HTML Pak Fahdhar sandbox untuk screenshot).
  * Side Effects: DB read dan HTTP streaming/read; tidak mengubah data.
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -42,7 +42,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ runId: stri
         }
         const query = `run=${encodeURIComponent(runId)}&name=${encodeURIComponent(fileName)}`;
         const isDownload = req.nextUrl.searchParams.get("download") === "1";
-        const endpoint = isDownload ? "file" : "preview";
+        const isManagerHtml = fileName === `${run.reportDate}_Laporan_Pak_Fahdhar.html`;
+        const endpoint = isDownload || isManagerHtml ? "file" : "preview";
         const requestHeaders = new Headers();
         const range = req.headers.get("range");
         if (isDownload && range) requestHeaders.set("range", range);
@@ -60,15 +61,18 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ runId: stri
                 );
             }
 
-            if (isDownload) {
+            if (isDownload || isManagerHtml) {
                 if (!response.body) {
                     return NextResponse.json({ error: "Backend tidak mengirim isi file" }, { status: 502 });
                 }
                 const headers = new Headers({
-                    "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+                    "Content-Type": isManagerHtml ? "text/html; charset=utf-8" : fileName.endsWith(".zip")
+                        ? "application/zip" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "Content-Disposition": `${isManagerHtml && !isDownload ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(fileName)}`,
                     "Cache-Control": "private, no-store",
+                    "X-Content-Type-Options": "nosniff",
                 });
+                if (isManagerHtml) headers.set("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'");
                 for (const header of ["content-length", "content-range", "accept-ranges", "etag", "last-modified"]) {
                     const value = response.headers.get(header);
                     if (value) headers.set(header, value);

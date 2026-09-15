@@ -4,7 +4,7 @@
  * Dependensi: POST /api/laporan-harian/upload, GET /api/laporan-harian/[runId]/preview,
  *             POST /api/laporan-harian/[runId]/send, lucide-react, semantic UI classes global.
  * Main Functions: LaporanHarianPage, FilePicker, readJsonResponse, handleUpload, loadReview,
- *                 pilihan semua/penerima tertentu, dan handleSend dengan pilihan closing.
+ *                 pilihan penerima, handleSend, dan hasil Pak Fahdhar siap screenshot/unduh.
  * Side Effects: HTTP upload/read/send; tidak menyimpan state di localStorage.
  */
 "use client";
@@ -50,6 +50,7 @@ type UploadResult = {
     unmappedProgress?: { rows: number; achievedValueDpp: number; branches: string[] };
     toFormatFileName?: string | null;
     archiveFileName?: string | null;
+    manager?: { fileName: string; previewFileName: string; rows: number; missingTargets: boolean } | null;
 };
 
 type FilePickerProps = {
@@ -394,6 +395,26 @@ export default function LaporanHarianPage() {
                                 </p>
                             </div>
                         </div>
+                    )}
+
+                    {result.manager && (
+                        <section className="ui-surface-panel ui-panel-padding space-y-3" aria-labelledby="fahdhar-title">
+                            <h2 id="fahdhar-title" className="text-base font-extrabold">Laporan Pak Fahdhar</h2>
+                            <p className="text-sm text-[var(--luxury-muted)]">
+                                Rekap {result.manager.rows} kelompok SM, SPV, jenis produk, dan principal dari transaksi yang baru diproses.
+                                {result.manager.missingTargets && " Target periode ini belum dimuat; kolom target dan persentase masih kosong."}
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                                <a className="ui-button-primary min-h-11 px-4" target="_blank" rel="noopener noreferrer"
+                                    href={`/api/laporan-harian/${result.runId}/preview?file=${encodeURIComponent(result.manager.previewFileName)}`}>
+                                    Buka tampilan screenshot
+                                </a>
+                                <a className="ui-button-secondary min-h-11"
+                                    href={`/api/laporan-harian/${result.runId}/preview?file=${encodeURIComponent(result.manager.fileName)}&download=1`}>
+                                    <Download size={17} aria-hidden="true" /> Unduh Excel Pak Fahdhar
+                                </a>
+                            </div>
+                        </section>
                     )}
 
                     {reviewOpen && (

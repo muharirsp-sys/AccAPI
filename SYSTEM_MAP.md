@@ -98,6 +98,9 @@ UI upload laporan harian
        -> alias Stock Accurate: Nama Gudang=kode, Deskripsi Gudang=nama, Nama Satuan=satuan
        -> mapping Principal sumber ke SPV/SM (fallback item penjualan bila Principal kosong)
   -> laporan_harian.write_report_files() -> XLSX per SPV, SM, dan Principal
+       -> laporan_harian_layout.py + laporan_harian_layouts.json: posisi kolom, sheet, font, format tanggal/angka, lebar arsip, relasi styles/theme paket XLSX
+  -> laporan_harian_manager.write_manager_report() -> Excel + HTML Pak Fahdhar untuk unduhan/screenshot
+       -> agregasi JUMLAH net retur sekali, mapping cabang/principal -> SPV/SM; target periode belum tersedia tetap kosong
 ```
 
 ### 1. Autentikasi & Guard Halaman
@@ -1224,7 +1227,10 @@ UI: modul /laporan-harian
      -> untuk target Principal, terapkan parity Power Query di `laporan_harian_principal.py`:
         FONTERRA exclude `C-TUN020` + stock `GD01`; MOTASA 1/2 berdasarkan prefix salesman;
         RECKITT tambah `Devisi`; MUSTIKA RATU menghasilkan format khusus 20 kolom dengan
-        Market/HET/NET/DISC/BA; GODREJ/ENERGIZER/ABC/URC/HEINZ memakai filter Principal kanonik
+        Market/HET/NET/DISC/BA; GODREJ/ENERGIZER/ABC/URC memakai filter Principal kanonik;
+        HEINZ penjualan memakai GOLONGAN=ZUL & ARUL, stok memakai PRINCIPAL;
+        SAHAR mengambil salesman _MT/_OFFICE lintas principal dan pengecualian stok sesuai query;
+        YUDI menambah VOLUME_KG Puratos pada kolom ke-51
      -> referensi `PL_MR` dan `RECKITT LIST` disimpan sebagai CSV read-only di `python_backend/`;
         Principal asli file stock dipertahankan agar item tanpa penjualan harian tidak hilang
      -> nama customer memakai `Nama Pelanggan Faktur Penjualan` (fallback kode hanya bila nama kosong)
@@ -1233,10 +1239,19 @@ UI: modul /laporan-harian
         `Table.SelectColumns` Power Query 2.3: `Kode`, `Nama Barang`, `Kode Gudang`, `Nama Gudang`,
         `Satuan`, `Principal`, `Saldo Akhir`
      -> tulis file per keyword ke `LH_RUNTIME_DIR/<runId>/` dengan 2 sheet bila stok diunggah:
-        `<Keyword>` (penjualan) + `<Keyword> Stock` (cakupan target yang sama)
+        nama sheet persis arsip (`<Keyword>` + `<Keyword> STOCK`; MSM/MOTASA `Sheet1` + `Sheet2`)
+        -> `laporan_harian_layout.py` menerapkan profil `laporan_harian_layouts.json` tanpa menyalin transaksi;
+           tanggal tetap nilai Excel dengan format sumber, NPWP teks; FIX lama dinormalisasi sebelum format khusus
+        -> mapping `stock_spv_map` dari Mapping PIC terpisah dari conca sales (FORISA stok -> YUDI)
+        -> MSM ikut dibuat untuk unduhan walaupun tidak tercantum pada mapping email
         (container: `/app/python_backend/output/laporan-harian`, tersimpan di volume `accapi_backend_output`)
      -> tulis juga download-only `<tanggal>_2.To Format Laporan.xlsx` (snapshot FIX LAP PENJ, tidak
-        pernah dikirim email) dan ZIP arsip `<tanggal>_Laporan_Harian_Arsip.zip` berisi seluruh workbook run
+        pernah dikirim email; 63 kolom + sheet lookup JENIS PRODUK/GOLONGAN)
+     -> `laporan_harian_manager.write_manager_report`: rekap JUMLAH termasuk pajak/net retur tanpa
+        menggandakan overlap laporan SPV/SM; 12 kolom mengikuti sheet aktif template Pak Fahdhar
+        `Paste Pivot Pencapaian April25`, B/G/H tersembunyi, ROUND/TRUNC dalam ribuan dengan cache;
+        target periode tidak disalin dari bulan lama (J/K/L kosong, status missingTargets)
+     -> ZIP arsip `<tanggal>_Laporan_Harian_Arsip.zip` memuat seluruh workbook dan HTML manager run
      -> normalisasi progress kosong salesCode -> `UNMAPPED:<branch>` + warning eksplisit (nilai tidak dibuang/tidak ditebak)
      -> feed dashboard: BULK replace ke sales_daily_progress (batch, hindari N+1)
      -> verifikasi coverage exact-key `salesCode|principle` terhadap target periode Insentif Sales;
@@ -1256,6 +1271,8 @@ UI: review file opsional -> GET /api/laporan-harian/[runId]/preview?file=...
         -> Next.js memilih 10 kolom kunci dan mengirim JSON kecil (tidak parse XLSX via SheetJS)
      -> download=1: Next.js meneruskan body FileResponse sebagai stream dan metadata range/size
         (tidak menahan seluruh XLSX di memori); `2.To Format`/arsip ZIP diunduh lewat jalur yang sama
+     -> HTML bernama tepat `<tanggal>_Laporan_Pak_Fahdhar.html` ditampilkan inline dengan sandbox CSP;
+        UI otomatis menyediakan tombol screenshot dan unduhan Excel Pak Fahdhar sesudah generate
 ```
 
 Admin mapping: `/laporan-harian/mapping` -> `app/api/laporan-harian/mapping/route.ts` -> CRUD
@@ -1271,6 +1288,12 @@ Alias Principal disimpan di `python_backend/laporan_harian_targets.py`; filter/f
 `python_backend/laporan_harian_principal.py`. Sumber audit penerima ada di
 `config/mapping_laporan.csv`; sinkronkan secara transaksional dengan
 `node scripts/sync-laporan-recipients.mjs` agar tepat 20 keyword aktif dan keyword lama dinonaktifkan.
+
+Validasi paritas 14 September 2026 dilakukan di worktree/DB lokal terpisah, tanpa pengiriman email
+atau perubahan production. Self-check: `python python_backend/test_laporan_harian_parity.py`.
+Simulasi menu web dengan tiga ekspor asli: `tests/laporan-harian-parity.spec.ts`, opt-in
+`LAPORAN_PARITY_FILES=1`, `LAPORAN_PARITY_SOURCE_DIR`, dan `PLAYWRIGHT_BASE_URL` lokal.
+File transaksi/bukti simulasi berada di `outputs/parity/` lokal dan tidak untuk disertakan ke Git.
 
 ---
 
