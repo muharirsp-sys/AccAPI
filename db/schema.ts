@@ -252,6 +252,40 @@ export const promoOutlet = pgTable("promo_outlet", {
 // Hasil OCR surat program (Mistral OCR 4.1), disimpan supaya surat yang sama tidak ditagih
 // dua kali. OCR dibayar per halaman, dan mengunggah ulang surat yang sama adalah hal yang
 // wajar — pesan galat kita sendiri yang menyuruhnya. Kuncinya HASH ISI berkas, bukan namanya.
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+    dataType: () => "bytea",
+});
+
+/**
+ * Persetujuan sebuah PUBLIKASI Summary sebelum ia boleh menjadi aturan promo.
+ *
+ * Dua syarat, dan keduanya pernyataan MANUSIA yang sistem tidak bisa buat sendiri:
+ * `confirmed` = "programnya sudah benar dan bisa berjalan", dicentang SESUDAH melihat
+ * simulasinya; `file_bytes` = PDF surat yang sudah ditandatangani OM dan tim. Sistem bisa
+ * menilai apakah aturannya terbaca, tetapi tidak bisa menilai apakah programnya memang
+ * disetujui orang yang berwenang — jadi ia menyimpan buktinya dan menolak berjalan tanpa itu.
+ *
+ * Kuncinya ID PUBLIKASI, bukan nomor surat: satu surat punya banyak detail yang diterbitkan
+ * sendiri-sendiri, dan menyetujui satu detail tidak boleh diam-diam menyetujui sisanya.
+ */
+export const promoLetterApproval = pgTable("promo_letter_approval", {
+    draftId: text("draft_id").primaryKey(),
+    suratProgram: text("surat_program").notNull().default(""),
+    principal: text("principal").notNull().default(""),
+    confirmed: boolean("confirmed").notNull().default(false),
+    confirmedBy: text("confirmed_by").notNull().default(""),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    note: text("note").notNull().default(""),
+    fileName: text("file_name").notNull().default(""),
+    fileHash: text("file_hash").notNull().default(""),
+    fileSize: integer("file_size").notNull().default(0),
+    fileBytes: bytea("file_bytes"),
+    uploadedBy: text("uploaded_by").notNull().default(""),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
+}, (t) => [
+    index("idx_promo_letter_approval_surat").on(t.suratProgram),
+]);
+
 export const promoLetterOcr = pgTable("promo_letter_ocr", {
     sourceHash: text("source_hash").notNull(),
     model: text("model").notNull(),
@@ -530,10 +564,6 @@ export const accurateOAuthSession = pgTable("accurate_oauth_session", {
 });
 
 // --- OFF Program Control --- //
-
-const bytea = customType<{ data: Buffer; driverData: Buffer }>({
-    dataType: () => "bytea",
-});
 
 export const reconciliationMappingVersion = pgTable("reconciliation_mapping_version", {
     id: text("id").primaryKey(),

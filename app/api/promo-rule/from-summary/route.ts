@@ -25,9 +25,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { customer, item, principalMapping, promoOutlet, promoRule } from "@/db/schema";
+import { customer, item, principalMapping, principalOrderLine, promoLetterApproval, promoOutlet, promoRule } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { bridgeRows, type PublishedLetter, type SummaryProgram } from "@/lib/summary-bridge";
+import { simulateLetter, type TrialLine } from "@/lib/summary-simulation";
+import { type DiscountAt } from "@/lib/principal-validation";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -71,9 +73,105 @@ async function fromBackend(request: NextRequest, path: string) {
     return await response.json() as Record<string, unknown>;
 }
 
+
+/**
+ * Isi publikasi -> bentuk yang dibaca jembatan. SATU perata untuk simulasi maupun pemuatan.
+ *
+ * Kalau keduanya meratakan sendiri-sendiri, simulasi akan memperlihatkan aturan yang berbeda
+ * dari yang benar-benar dimuat — dan simulasi yang berbohong lebih buruk daripada tidak punya
+ * simulasi: ia membuat orang menandatangani sesuatu dengan percaya diri yang tidak berdasar.
+ */
+function letterOf(terbit: Record<string, unknown>, draftId: string, principalCadangan = ""): PublishedLetter {
+    const content = (terbit.content ?? {}) as Record<string, unknown>;
+    const detail = (content.review_detail ?? {}) as Record<string, unknown>;
+    const settings = (detail.settings ?? {}) as Record<string, unknown>;
+    const master = (content.master ?? {}) as Record<string, unknown>;
+    const items = Array.isArray(master.items) ? master.items as Record<string, unknown>[] : [];
+    return {
+        draftId,
+        principal: text(detail.principal) || principalCadangan || "KINO NON FOOD",
+        suratProgram: text(detail.document_id),
+        promoLabel: text(detail.nama_program),
+        promoGroup: text(detail.variant_barang),
+        programs: (Array.isArray(content.programs) ? content.programs : []) as SummaryProgram[],
+        itemNames: Object.fromEntries(items.map((entry) => [text(entry.kode_barang), text(entry.nama_barang)])),
+        settlement: text(settings.settlement),
+        beban: text(settings.beban) || text(settings.benefit_beban) || "PRINCIPAL",
+        outletCodes: (Array.isArray(settings.outlet_codes) ? settings.outlet_codes : []).map(text).filter(Boolean),
+    };
+}
+
+/**
+ * Baris laporan principal NYATA yang memuat barang surat ini, untuk bahan simulasi.
+ *
+ * Dibatasi 2.000 baris terbaru: simulasi harus selesai selagi orang menunggunya di layar, dan
+ * bukti atas dua ribu baris sudah jauh lebih meyakinkan daripada bukti atas nol baris. Yang
+ * dicari baris yang BARANGNYA disebut surat — bukan yang periodenya cocok — karena surat baru
+ * memang belum punya faktur pada periodenya sendiri.
+ */
+async function trialLinesFor(itemCodes: string[]): Promise<TrialLine[]> {
+    if (!itemCodes.length) return [];
+    const rows = await db.select({
+        soNo: principalOrderLine.soNo, itemCode: principalOrderLine.itemCode,
+        reportQty: principalOrderLine.reportQty, reportGross: principalOrderLine.reportGross,
+        discounts: principalOrderLine.discounts, bonus: principalOrderLine.bonus,
+    }).from(principalOrderLine)
+        .where(inArray(principalOrderLine.itemCode, itemCodes))
+        .limit(2000);
+    return rows.map((row) => ({
+        soNo: String(row.soNo), itemCode: String(row.itemCode ?? ""),
+        quantity: Number(row.reportQty) || 0, gross: Number(row.reportGross) || 0,
+        discounts: (row.discounts as DiscountAt[]) ?? [], bonus: Boolean(row.bonus),
+    }));
+}
+
 export async function GET(request: NextRequest) {
     const gate = await gateOf("summary.view");
     if (gate.response) return gate.response;
+
+    // MODE SIMULASI. Tidak menulis apa pun — ia membaca aturan yang BELUM ada dan menghitungnya
+    // terhadap baris yang SUDAH ada. Simulasi yang bisa merusak akan berhenti dijalankan orang,
+    // dan simulasi yang ditakuti sama saja tidak punya simulasi.
+    const simulate = text(request.nextUrl.searchParams.get("simulate"));
+    if (simulate) {
+    let terbit: Record<string, unknown>;
+        try {
+            terbit = await fromBackend(request, `/published/${encodeURIComponent(simulate)}`);
+        } catch (error) {
+            return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "gagal" }, { status: 502 });
+        }
+        const letter = letterOf(terbit, simulate);
+        const calon = bridgeRows(letter);
+        const itemCodes = [...new Set(calon.rows.map((row) => row.itemCode).filter(Boolean))];
+        const [uji, known, approval] = await Promise.all([
+            trialLinesFor(itemCodes),
+            itemCodes.length
+                ? db.select({ no: item.no }).from(item).where(inArray(item.no, itemCodes))
+                : Promise.resolve([] as { no: string }[]),
+            db.select().from(promoLetterApproval).where(eq(promoLetterApproval.draftId, simulate)),
+        ]);
+        const hasil = simulateLetter(letter, uji);
+        // Barang hantu diperiksa DI SINI juga, bukan hanya saat memuat: kalau orang baru tahu
+        // kode barangnya tidak ada di master setelah menekan Muat, simulasinya tidak menjawab
+        // pertanyaan yang seharusnya ia jawab.
+        const ada = new Set(known.map((row) => row.no));
+        const hilang = itemCodes.filter((code) => !ada.has(code));
+        if (hilang.length) {
+            hasil.warnings.unshift(`${hilang.length} kode barang TIDAK ADA di master Accurate dan tidak akan `
+                + `dimuat: ${hilang.slice(0, 15).join(", ")}. Aturan untuk barang hantu tidak menahan apa pun.`);
+        }
+        const setuju = approval[0];
+        return NextResponse.json({
+            ok: true, simulasi: hasil, barangHilang: hilang,
+            persetujuan: {
+                dicentang: Boolean(setuju?.confirmed), dicentangOleh: setuju?.confirmedBy ?? "",
+                dicentangPada: setuju?.confirmedAt ?? null, catatan: setuju?.note ?? "",
+                buktiNama: setuju?.fileName ?? "", buktiUkuran: setuju?.fileSize ?? 0,
+                buktiOleh: setuju?.uploadedBy ?? "", buktiPada: setuju?.uploadedAt ?? null,
+            },
+        });
+    }
+
     try {
         const body = await fromBackend(request, "/published/list");
         const published = (body.published ?? []) as Record<string, unknown>[];
@@ -98,6 +196,31 @@ export async function POST(request: NextRequest) {
     const draftId = text(body?.draftId);
     if (!draftId) return NextResponse.json({ ok: false, error: "Sebutkan publikasi yang mau dimuat" }, { status: 400 });
 
+    // GERBANG PERSETUJUAN. Menerbitkan di Summary saja tidak cukup lagi (permintaan pengguna
+    // 2026-09-15): aturan yang lahir dari sini menahan faktur sungguhan dan mengesahkan potongan
+    // sungguhan, jadi ia menuntut dua pernyataan manusia yang sistem tidak bisa buat sendiri —
+    // CENTANG bahwa programnya benar dan bisa berjalan, dan BUKTI surat bertanda tangan.
+    //
+    // Diperiksa SEBELUM apa pun dihitung: menolak di akhir berarti orang menunggu proses panjang
+    // untuk sesuatu yang sejak awal tidak akan tersimpan.
+    const [setuju] = await db.select().from(promoLetterApproval)
+    .where(eq(promoLetterApproval.draftId, draftId));
+    if (!setuju?.confirmed) {
+    return NextResponse.json({
+        ok: false,
+        error: "Publikasi ini belum dinyatakan benar. Jalankan simulasinya dulu, periksa hasilnya, "
+            + "lalu centang \u201cprogram ini sudah benar dan bisa berjalan\u201d.",
+    }, { status: 409 });
+    }
+    if (!setuju.fileSize) {
+    return NextResponse.json({
+        ok: false,
+        error: "Bukti surat bertanda tangan belum diunggah. Sistem bisa menilai apakah aturannya "
+            + "terbaca, tetapi tidak bisa menilai apakah programnya memang disetujui OM dan tim \u2014 "
+            + "jadi buktinya wajib ada sebelum aturannya berlaku.",
+    }, { status: 409 });
+    }
+
     let terbit: Record<string, unknown>;
     try {
         terbit = await fromBackend(request, `/published/${encodeURIComponent(draftId)}`);
@@ -105,24 +228,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "gagal" }, { status: 502 });
     }
 
-    const content = (terbit.content ?? {}) as Record<string, unknown>;
-    const detail = (content.review_detail ?? {}) as Record<string, unknown>;
-    const settings = (detail.settings ?? {}) as Record<string, unknown>;
-    const master = (content.master ?? {}) as Record<string, unknown>;
-    const items = Array.isArray(master.items) ? master.items as Record<string, unknown>[] : [];
-
-    const letter: PublishedLetter = {
-        draftId,
-        principal: text(detail.principal) || text(body?.principal) || "KINO NON FOOD",
-        suratProgram: text(detail.document_id),
-        promoLabel: text(detail.nama_program),
-        promoGroup: text(detail.variant_barang),
-        programs: (Array.isArray(content.programs) ? content.programs : []) as SummaryProgram[],
-        itemNames: Object.fromEntries(items.map((item) => [text(item.kode_barang), text(item.nama_barang)])),
-        settlement: text(settings.settlement),
-        beban: text(settings.beban) || text(settings.benefit_beban) || "PRINCIPAL",
-        outletCodes: (Array.isArray(settings.outlet_codes) ? settings.outlet_codes : []).map(text).filter(Boolean),
-    };
+    const letter = letterOf(terbit, draftId, text(body?.principal));
 
     const hasil = bridgeRows(letter);
     if (!hasil.rows.length) {
