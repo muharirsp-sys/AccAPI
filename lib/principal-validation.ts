@@ -348,6 +348,122 @@ export function outletListsOn(members: OutletMember[], date: string): Map<string
     return out;
 }
 
+/** Belanja satu KELOMPOK aturan pada satu SO. Dipakai menilai ambang "beli minimal N". */
+export type TriggerBuy = {
+    /** Jumlah dalam satuan TERKECIL. 12 KRT isi 72 = 864, bukan 12. */
+    qty: number;
+    /** Nilai bruto laporan (DPP), sebelum PPN. */
+    value: number;
+};
+
+/** Kunci kelompok ambang: satu surat, satu kelompok. Sama dengan kelompok mix pada `bonusQuota`. */
+export const triggerGroupKey = (rule: { suratProgram?: string; promoGroup?: string }) =>
+    `${String(rule.suratProgram ?? "")}|${String(rule.promoGroup ?? "")}`;
+
+/**
+ * Belanja per kelompok aturan pada SATU SO — bahan penilaian ambang "beli minimal N".
+ *
+ * KENAPA PER KELOMPOK, BUKAN PER BARANG. Suratnya sendiri berkata begitu: "SETIAP PEMBELIAN
+ * 30 PCS ... MIX VARIANT". Memeriksanya per barang akan MENAHAN pembelian yang sah — 20 pcs
+ * varian A ditambah 15 varian B memang memenuhi ambang 30. Aturan yang memang per barang tetap
+ * terjaga: jembatan menulis satu kelompok per barang untuk program non-mix (`same_sku`), jadi
+ * kelompoknya menyempit dengan sendirinya tanpa perlu kolom penanda baru.
+ *
+ * KENAPA PER SO, BUKAN PER BARIS. Satu SO bisa memuat barang yang sama pada beberapa baris
+ * dengan satuan berbeda (KRT dan PCS), dan ambang surat berlaku untuk pembelian pada faktur itu
+ * — bukan untuk tiap barisnya sendiri-sendiri.
+ *
+ * Baris BONUS tidak ikut dihitung sebagai pembelian: ia hadiahnya, bukan belanjanya. Kalau ikut,
+ * bonus akan membantu memenuhi ambang yang justru menjadi syaratnya sendiri.
+ */
+export function purchaseByGroup(
+    lines: { itemCode: string; quantity: number; gross: number; bonus?: boolean }[],
+    rules: { itemCode: string; suratProgram?: string; promoGroup?: string }[],
+): Map<string, TriggerBuy> {
+    const groupsOfItem = new Map<string, Set<string>>();
+    for (const rule of rules) {
+        if (!rule.itemCode) continue;
+        if (!groupsOfItem.has(rule.itemCode)) groupsOfItem.set(rule.itemCode, new Set());
+        groupsOfItem.get(rule.itemCode)!.add(triggerGroupKey(rule));
+    }
+    const out = new Map<string, TriggerBuy>();
+    for (const line of lines) {
+        if (line.bonus) continue;
+        for (const group of groupsOfItem.get(line.itemCode) ?? []) {
+            const entry = out.get(group) ?? { qty: 0, value: 0 };
+            entry.qty += Number(line.quantity) || 0;
+            entry.value = cents(entry.value + (Number(line.gross) || 0));
+            out.set(group, entry);
+        }
+    }
+    return out;
+}
+
+/**
+ * Apakah ambang "beli minimal N" aturan ini TERPENUHI oleh belanja kelompoknya.
+ *
+ * Sampai 2026-09-15 `trigger_qty` pada aturan per barang non-bonus hanyalah keterangan:
+ * `matchItemRule` mencocokkan PERSENNYA saja. Jadi "beli 30 pcs dapat diskon 3%" yang diberikan
+ * pada pembelian 5 pcs lolos dengan sempurna — barangnya benar, persennya benar, dan tidak ada
+ * yang bertanya berapa yang dibeli.
+ *
+ * Tiga satuan, dan hanya dua yang bisa dinilai:
+ *   PCS (atau kosong)  jumlah satuan terkecil lawan ambang. Bentuk seluruh aturan produksi.
+ *   RP                 nilai belanja TERMASUK PPN, mengikuti keputusan yang sudah dibuktikan
+ *                      pada program MSG: surat menulis nilai yang DIBAYAR outlet, sedangkan
+ *                      laporan membawa DPP (15/15 faktur cocok dengan PPN, 10/15 tanpa).
+ *   KRT                TIDAK BISA dinilai, dan sengaja tidak ditebak: isi karton berbeda tiap
+ *                      barang, jadi mengubah "5 KRT" jadi angka satuan terkecil berarti
+ *                      mengarang isi yang tidak tertulis di aturannya.
+ *
+ * Yang tidak bisa dinilai TIDAK dianggap terpenuhi. Ambang yang tidak terbaca adalah ambang yang
+ * tidak menjaga apa pun, dan aturan yang tidak menjaga apa pun tidak boleh mengesahkan potongan.
+ */
+/**
+ * Apakah ambang aturan ini memang urusan `triggerReached` — dan bukan urusan pemeriksa lain.
+ *
+ * Tiga jenis aturan punya ambang, dan hanya SATU yang belum dijaga:
+ *   per barang non-bonus   BELUM dijaga sampai 2026-09-15 -> di sinilah lubangnya
+ *   BONUS_QTY              sudah dijaga `bonusQuota`, lengkap dengan kuota kelipatannya
+ *   tingkat faktur (MSG)   sudah dijaga `checkSoPromo`, dengan ambang termasuk PPN se-SO
+ *
+ * Kalau yang dua terakhir ikut disaring di sini, mereka akan HILANG dari daftar aturan sebelum
+ * pemeriksanya sempat melihat — dan program MSG yang selama ini benar akan berhenti dikenali
+ * tanpa satu pun galat. Itu sebabnya batasnya ditulis terang di satu tempat, bukan tersebar
+ * sebagai syarat di tiap pemanggil.
+ */
+export function needsTriggerCheck(rule: { itemCode?: string; benefitType?: string; customerCode?: string }): boolean {
+    if (!String(rule.itemCode ?? "").trim()) return false;
+    if (String(rule.customerCode ?? "").trim()) return false;
+    return String(rule.benefitType ?? "").trim().toUpperCase() !== "BONUS_QTY";
+}
+
+export function triggerReached(
+    rule: { triggerQty?: number; triggerUnit?: string; suratProgram?: string; promoGroup?: string },
+    bought: TriggerBuy | undefined,
+): { ok: true } | { ok: false; reason: string } {
+    const ambang = Number(rule.triggerQty) || 0;
+    if (ambang <= 0) return { ok: true };
+    const unit = String(rule.triggerUnit ?? "").trim().toUpperCase() || "PCS";
+    const sebut = `${rule.suratProgram ?? ""} ${rule.promoGroup ?? ""}`.trim() || "aturan ini";
+    const beli = bought ?? { qty: 0, value: 0 };
+
+    if (unit === "KRT") {
+        return { ok: false, reason: `Ambang ${sebut} tertulis ${ambang} KRT, dan isi karton berbeda tiap barang `
+            + "jadi tidak bisa diubah ke satuan terkecil tanpa menebak. Tulis ambangnya dalam satuan terkecil (PCS) "
+            + "di Aturan Promo supaya bisa ditegakkan." };
+    }
+    if (unit === "RP") {
+        const denganPpn = cents(beli.value * (1 + PPN));
+        if (denganPpn >= ambang) return { ok: true };
+        return { ok: false, reason: `Belanja kelompok ${sebut} pada SO ini Rp ${beli.value.toLocaleString("id-ID")} `
+            + `(Rp ${denganPpn.toLocaleString("id-ID")} dengan PPN), belum mencapai ambang Rp ${ambang.toLocaleString("id-ID")}.` };
+    }
+    if (beli.qty >= ambang) return { ok: true };
+    return { ok: false, reason: `Belanja kelompok ${sebut} pada SO ini ${beli.qty.toLocaleString("id-ID")} ${unit}, `
+        + `belum mencapai ambang ${ambang.toLocaleString("id-ID")} ${unit}.` };
+}
+
 /** Satu baris untuk pemeriksaan kuota bonus. `quantity` WAJIB dalam satuan TERKECIL. */
 export type BonusLine = {
     /** Penanda baris pada pemanggilnya; dikembalikan apa adanya supaya barisnya bisa ditunjuk. */

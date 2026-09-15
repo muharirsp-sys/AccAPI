@@ -62,13 +62,16 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 | 4.43 | **MEKANISME klaim: on faktur vs rafaksi** | ✅ | **2026-09-15.** Surat menyebut mekanismenya sendiri, dan itu menentukan apakah programnya BOLEH memotong faktur sama sekali. `bridgeRows` menolak publikasi ber-`settlement` selain `on_invoice` (`rafaksi`, `choose_rafaksi_or_on_invoice`) dengan kalimat sebabnya, dan `readiness()` di sisi Python menolaknya lebih dulu ("Pilih mekanisme on faktur; klaim rafaksi terpisah tidak memotong faktur"). **Kenapa ditolak, bukan dimuat dengan tanda:** rafaksi ditagihkan TERPISAH dan tidak pernah muncul di faktur. Memuatnya sebagai aturan promo berarti gerbang akan MEMBENARKAN potongan yang seharusnya tidak ada di sana — kebalikan dari gunanya gerbang |
 | 4.44 | **MEKANISME "BONUS BARANG ON FAKTUR"** | ✅ | **2026-09-15.** Bentuk `BP2609007713` (Resik V) dan `BP2609007664` (Ovale). Faktur mencatatnya sebagai baris TAMBAHAN berharga penuh lalu dipotong 100% **di posisi 1** — kolom distributor — jadi tidak ada pencocokan persen yang bisa menemukannya, dan ke-30 aturannya dulu tidak pernah menjelaskan apa pun. `matchBonusRule` membacanya dan mengakuinya sebagai klaim PRINCIPAL sesuai bunyi suratnya, lalu memindahkan bebannya supaya gerbang dan Rekap Promo memberi jawaban yang sama |
 | 4.45 | **MEKANISME "POTONGAN ON FAKTUR" tingkat NOTA** | ✅ | **2026-09-15.** Bentuk MSG (`BP2609006016`): satu nominal untuk SELURUH nota, dibagi rata ke tiap baris — termasuk barang yang sama sekali tidak masuk program. Disimpan sebagai aturan `DISC_RP` ber-`item_code` KOSONG dan `trigger_unit='RP'`, diperiksa `checkSoPromo` per SO, bukan per baris. Menyamakannya dengan potongan per barang berarti satu potongan nota dikalikan sebanyak barisnya. Jembatan memisahkannya lewat `rupiah_mode`: `once` = tingkat nota, `per_unit` = tetap per barang |
-| 4.46 | **MEKANISME "DISCOUNT ON FAKTUR" per barang** | ✅ | Bentuk paling umum (`BP2609007909`, 105 aturan). `DISC_PCT` per kode barang, dicocokkan `matchItemRule` **per POSISI dan per BEBAN**: aturan principal tidak boleh membenarkan potongan yang duduk di posisi distributor, dan sebaliknya. Posisi menyatakan siapa yang DIMAKSUD menanggung; aturan menyatakan apakah maksud itu sah |
+| 4.46 | **MEKANISME "DISCOUNT ON FAKTUR" per barang** | ✅ | Bentuk paling umum (`BP2609007909`, 105 aturan). `DISC_PCT` per kode barang, dicocokkan `matchItemRule` **per POSISI dan per BEBAN**: aturan principal tidak boleh membenarkan potongan yang duduk di posisi distributor, dan sebaliknya. Posisi menyatakan siapa yang DIMAKSUD menanggung; aturan menyatakan apakah maksud itu sah. **Ambang belinya ditegakkan sejak 2026-09-15** — lihat butir 4.57 |
 | 4.47 | **CHANNEL (Type Of Promo) ditegakkan dari MASTER** | ✅ | **2026-09-15, migrasi `0018`.** Surat menyebut channelnya ("KHUSUS CHANNEL GT") tetapi `promo_rule` tidak punya tempat menyimpannya, jembatan MEMBUANG `program.channel`, dan gerbang tidak pernah menanyakan kategori outletnya — jadi surat GT berlaku untuk outlet MT juga. Channel outlet kini diturunkan dari `customer.category_name`, **bukan** dari laporan principal dan **bukan** dari yang diketik pengirim order. Peta (keputusan pengguna): **GT = TT saja**; kategori lain dipakai apa adanya. Outlet tanpa kategori (378 di produksi) ikut ditahan — yang tidak diketahui tidak diloloskan. Selisih laporan lawan master jadi temuan tersendiri: **HINDA MART (`C-HIL009`)** disebut General Trade oleh Kino, master kita `MT` |
 | 4.48 | **Aturan EXCLUDE berdaftar kosong GAGAL TERTUTUP** | ✅ | **2026-09-15.** INCLUDE sudah aman sejak awal (daftar kosong = tidak ada yang berhak). EXCLUDE justru sebaliknya: tidak ada yang dikecualikan dibaca sebagai "berlaku untuk semua", jadi nama salah ketik satu huruf — atau keanggotaan kuartal yang belum diunggah — memberi potongan MSG kepada outlet yang justru dikecualikan suratnya. Daftar kosong bukan berarti "tidak ada yang dikecualikan"; ia berarti KITA TIDAK TAHU siapa. Peringatannya muncul se-batch saat Validasi ditekan, menyebut nama daftar dan surat yang memakainya |
 | 4.49 | **Daftar outlet peserta punya rumahnya sendiri** | ✅ | **2026-09-15, migrasi `0014`.** Surat menyebut PESERTA dan menyebutnya DUA ARAH. Aturan **menunjuk** daftar, tidak menyalin isinya: satu daftar dipakai tiga surat, dan menyalinnya berarti 41 outlet × 3 surat yang harus berubah bersamaan tiap kuartal. **Periode melekat pada ANGGOTA, bukan pada nama daftar**, karena keanggotaan berganti tiap kuartal sementara suratnya cuma menyebut "LOYALTY". Layar Aturan Promo memperlihatkan aturan mana yang menunjuk tiap daftar, dan menandai daftar yang belum ditunjuk siapa pun |
 | 4.50 | **Ambang tanpa syarat beli = 1, bukan gagal terbit** | ✅ | **2026-09-15.** `Tier` menuntut minimum > 0, jadi surat yang memang tidak menyebut "beli N" — diskon datar seperti `BP2609007909` — gagal terbit dengan pesan "Minimum, benefit, satuan atau strata belum valid" yang tidak menyebut sebabnya sama sekali. Artinya jelas: SETIAP pembelian dapat, dan dalam satuan terkecil itu berarti satu. Angka yang tertulis tetap dipakai apa adanya; yang diganti hanya yang kosong atau nol |
 | 4.51 | **Surat hasil scan tetap terbaca** | ✅ | **2026-09-15, migrasi `0015`.** Delapan dari tiga puluh surat September scan murni. Dibaca **Mistral OCR 4.1**, mesin yang sama dengan Summary Promo di produksi: satu panggilan per halaman, PDF dipecah lokal, nomor halaman dari permintaan kita bukan dari model, dokumen dinyatakan UNTRUSTED, hasil parsial ditolak seluruhnya. Hasilnya disimpan berkunci **hash isi berkas** — OCR dibayar per halaman, dan pesan galat kita sendiri menyuruh orang mencoba lagi |
 | 4.52 | **Jembatan publikasi Summary → `promo_rule`** | ✅ | **2026-09-15, migrasi `0016`.** Sumbernya PUBLIKASI, bukan draft: menerbitkan adalah satu-satunya tempat manusia menyatakan "saya sudah memeriksa ini". Server yang mengambil, bukan peramban — peramban hanya mengirim ID publikasi, kalau ISI aturan datang dari peramban gerbang "sudah diterbitkan" bisa dilewati. **Tiap penulis hanya menyentuh irisannya sendiri** (`promo_rule.source`: `surat`/`excel`/`tarif`/`manual`); tanpa itu impor Excel akan menghapus aturan dari jembatan, dan yang hilang TIDAK terlihat sebagai galat — gerbang cuma berhenti menahan. **Belum pernah dijalankan ujung ke ujung dengan sesi login sungguhan**, tetapi rantainya dikunci uji di `lib/summary-ke-gerbang.test.ts` |
+| 4.57 | **Ambang "beli minimal N" pada aturan PER BARANG non-bonus** | ✅ | **2026-09-15.** Sampai hari ini `trigger_qty` di jalur ini hanyalah keterangan: `matchItemRule` mencocokkan PERSENNYA saja. Jadi "beli 30 pcs dapat diskon 3%" yang diberikan pada pembelian 5 pcs lolos dengan sempurna — barangnya benar, persennya benar, dan tidak ada yang bertanya berapa yang dibeli. **Dinilai per SO dan per KELOMPOK**, bentuk yang sama persis dengan kuota bonus, karena suratnya berkata "MIX VARIANT": memeriksa per barang akan menahan pembelian yang sah (20 varian A + 15 varian B memang memenuhi ambang 30), dan program non-mix tetap terjaga karena jembatan menulis satu kelompok per barang untuk `same_sku`. **Baris bonus tidak ikut dihitung sebagai pembelian** — kalau ikut, bonus akan membantu memenuhi syaratnya sendiri. Satuan: PCS dinilai pada satuan terkecil; RP dinilai TERMASUK PPN mengikuti bukti MSG; **KRT sengaja TIDAK ditebak** karena isi karton berbeda tiap barang, dan ambang yang tidak terbaca tidak dianggap terpenuhi. Ambang MSG dan bonus TIDAK ikut disaring di sini (`needsTriggerCheck`): pemeriksanya sudah ada masing-masing, dan menyaringnya dua kali akan menghilangkannya sebelum pemeriksanya sempat melihat |
+| 4.58 | **SIMULASI sebelum publikasi jadi aturan** | ✅ | **2026-09-15, permintaan pengguna.** Yang menyusun Summary bukan yang menulis kodenya, dan ia diminta menyatakan "program ini sudah benar dan bisa berjalan" — pernyataan yang menahan faktur sungguhan. Tanpa diperlihatkan APA yang akan dibaca sistem, pernyataan itu cuma tanda tangan di atas sesuatu yang tidak bisa ia lihat, dan centang seperti itu hanya memindahkan tanggung jawab ke orang yang tidak punya cara memeriksa. `simulateLetter` menjawab tiga pertanyaan: **aturan apa yang akan terbaca** (dikelompokkan supaya bisa dibaca mata), **apa yang ditolak beserta sebabnya**, dan **apa hasilnya atas baris faktur SUNGGUHAN** (sampai 2.000 baris terbaru yang memuat barang surat itu). Ambangnya dihitung dengan cara yang sama persis dengan gerbangnya — kalau berbeda, simulasi akan menjanjikan sesuatu yang gerbangnya tidak tepati. **Tidak menulis apa pun**: simulasi yang bisa merusak akan berhenti dijalankan orang |
+| 4.59 | **Dua pernyataan manusia sebelum jembatan berjalan** | ✅ | **2026-09-15, migrasi `0019`.** Menerbitkan di Summary saja tidak cukup lagi. ① **Centang** "program ini sudah benar dan bisa berjalan", sengaja diletakkan DI BAWAH simulasinya. ② **Bukti PDF surat bertanda tangan OM dan tim**: sistem bisa menilai apakah aturannya terbaca, tetapi TIDAK BISA menilai apakah programnya memang disetujui yang berwenang — jadi yang disimpan bukan penilaian melainkan buktinya. Berkasnya di basis data, bukan cakram container yang dibuat ulang tiap deploy. Kuncinya id PUBLIKASI bukan nomor surat: menyetujui satu detail tidak boleh diam-diam menyetujui sisanya. Keduanya wajib; kurang satu, jembatan menjawab 409 dengan kalimat yang menyebut mana yang kurang |
 
 ## Langkah 4 tahap 1c — routing: cocok lanjut, tidak cocok ke admin review
 
@@ -662,6 +665,97 @@ dan itu lebih buruk daripada tidak punya aturan sama sekali:
 - lebih dari satu kelas outlet pada satu aturan;
 - barang di luar master.
 
-**Satu hal yang belum dijaga, dan sengaja ditulis di sini supaya tidak terlupa:** `trigger_qty`
-pada aturan per barang NON-bonus masih keterangan belaka. `matchItemRule` mencocokkan persennya
-saja. Yang sudah benar-benar dijaga jumlah belinya baru jalur `BONUS_QTY` (butir 4.53).
+**Ambang beli kini dijaga di ketiga jalurnya** (sejak 2026-09-15): `BONUS_QTY` lewat `bonusQuota`
+(butir 4.53), tingkat faktur lewat `checkSoPromo` (butir 4.13), dan per barang non-bonus lewat
+`triggerReached` (butir 4.57). Ketiganya menghitung "berapa yang dibeli" dengan cara yang sama —
+per SO, per kelompok, dalam satuan terkecil, dan tanpa menghitung baris bonus sebagai pembelian.
+Dua cara menghitung hal yang sama pada satu faktur akan berbeda suatu hari, dan yang satu akan
+menuduh yang lain.
+
+**Yang masih ditahan dengan sengaja:** ambang bersatuan **KRT**. Isi karton berbeda tiap barang,
+jadi mengubahnya ke satuan terkecil berarti mengarang angka yang tidak tertulis di aturannya.
+Aturan seperti itu menahan barisnya dengan pesan yang menyuruh menulis ulang ambangnya dalam PCS.
+
+---
+
+## PIPELINE PENUH — dari surat sampai faktur, satu jalur
+
+*Ditambahkan 2026-09-15 atas permintaan pengguna. Butir-butir di atas menjawab "apa yang harus
+benar"; bagian ini menjawab "apa yang terjadi, berurutan, dan di mana ia bisa berhenti".*
+
+```
+  SURAT PROGRAM (PDF)
+        │
+        │  lapisan teks, atau Mistral OCR 4.1 kalau hasil scan          butir 4.51
+        ▼
+  BARIS DRAFT di Summary
+        │
+        │  KOREKSI MANUSIA — kode barang, periode, ketentuan, mekanisme
+        ▼
+  TERBITKAN  ─────────────►  readiness() menolak yang belum lengkap     butir 4.43
+        │                     (mekanisme bukan on faktur, tanggal kosong,
+        │                      kelas outlet, daftar outlet, benefit tak terhitung)
+        ▼
+  SIMULASI  ◄──── WAJIB DILIHAT sebelum dinyatakan benar                butir 4.58
+        │         · aturan apa yang akan terbaca sistem
+        │         · apa yang ditolak, beserta sebabnya
+        │         · hasilnya atas baris faktur SUNGGUHAN
+        ▼
+  DUA PERNYATAAN MANUSIA                                                butir 4.59
+        │  ① centang "program ini sudah benar dan bisa berjalan"
+        │  ② unggah PDF surat bertanda tangan OM dan tim
+        ▼
+  JEMBATAN  ─────────────►  yang tak bisa dinyatakan utuh DITOLAK       butir 4.52
+        │                     (rafaksi, dasar netto, ambang se-order,
+        │                      rantai persen, dua kelas outlet, barang hantu)
+        ▼
+  promo_rule  ◄──── impor Excel · tarif outlet · ketikan tangan         butir 4.41
+        │            (tiap penulis hanya menyentuh irisannya sendiri)
+        │
+        │            promo_outlet ─── daftar peserta, dua arah          butir 4.49
+        ▼
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  GERBANG VALIDASI — empat saringan, lalu enam pemeriksa                       ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║  saringan per TANGGAL SO:  periode · daftar peserta · channel · ambang beli    ║
+║  pemeriksa:  item & harga (4.1-4.6) · pecahan diskon (4.9) · per barang (4.46) ║
+║              tingkat faktur (4.13) · kuota bonus (4.53) · order ganda (4.54)   ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+        │
+        ├── cocok ──────────────► antrean faktur ──► Accurate ──► verifikasi balik
+        │                          butir 4.21-4.23        4.30
+        └── perlu ditinjau ─────► admin review ──► perbaiki mapping/aturan/master
+                                   butir 4.15         lalu Validasi lagi (4.17)
+```
+
+### Jalur ORDER, yang bertemu di gerbang yang sama
+
+```
+  Order Sales (diketik)         Order Masuk (tarikan Web Sales)
+        │                              │
+        └──────────► store_order ◄─────┘
+                          │
+                          ├── channel dipastikan ke MASTER Accurate     butir 4.56
+                          ├── aturan promo terbit dihitung (calculate)
+                          └── gerbang order ganda                       butir 4.54
+```
+
+### Di mana pipeline ini BISA BERHENTI, dan apa artinya
+
+| Berhenti di | Artinya | Yang membetulkannya |
+|---|---|---|
+| `readiness()` | surat belum lengkap atau mekanismenya bukan on faktur | peninjau Summary |
+| simulasi kosong | tidak satu aturan pun bisa dinyatakan | peninjau Summary; baca daftar penolakan |
+| dua pernyataan | belum dicentang, atau bukti tanda tangan belum diunggah | peninjau + OM |
+| jembatan | sebagian program tidak bisa dinyatakan utuh | peninjau; sisanya tetap dimuat |
+| saringan tanggal | fakturnya di luar periode surat | tidak ada yang salah |
+| saringan daftar | outlet bukan peserta, atau daftarnya kosong | muat daftar outlet peserta |
+| saringan channel | kategori outlet di Accurate tidak cocok | betulkan kategori di Accurate |
+| saringan ambang | belanjanya belum mencapai syarat beli | tidak ada yang salah |
+| pemeriksa | angkanya berbeda dari aturannya | admin review; lihat temuan per baris |
+| gerbang kirim | rem manual, sengaja tertutup | keputusan pengguna |
+
+**Satu prinsip yang berlaku di seluruh jalur ini:** tiap titik berhenti **gagal tertutup** dan
+**menyebut sebabnya**. Yang tidak diketahui ditahan, bukan diloloskan — dan yang ditahan selalu
+membawa kalimat yang menunjuk siapa yang bisa membetulkannya. Gerbang yang menahan tanpa
+menjelaskan akan dilewati orang dengan menekan tombol sampai ia diam.
