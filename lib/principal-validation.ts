@@ -84,6 +84,19 @@ export type LineInput = {
      * bonus yang tidak punya pembeliannya bukan bonus, ia barang yang keluar tanpa dasar.
      */
     bonusOverQuota?: string;
+    /**
+     * Channel outlet menurut MASTER Accurate (lihat `channelOutlet`). Kosong = kategorinya
+     * belum diisi di master, dan aturan ber-channel tidak akan berlaku untuknya.
+     */
+    outletChannel?: string;
+    /** Channel yang DIKATAKAN laporan principal ("General Trade"/"Modern Trade"). */
+    reportChannel?: string;
+    /**
+     * Sebab-sebab aturan yang SEBENARNYA ADA untuk barang ini tidak ikut dinilai: channelnya
+     * tidak cocok, atau daftar pesertanya kosong. Tanpa ini, barisnya tertahan dengan tuduhan
+     * "potongan tidak punya aturan" — tuduhan yang salah alamat, karena aturannya ada.
+     */
+    terhalang?: string[];
 };
 
 export type LineCheck = { status: "ok" | "review"; findings: string[]; split: Split };
@@ -110,6 +123,11 @@ export type PublishedRule = {
     benefitBeban: string;
     /** Daftar outlet peserta; kosong = berlaku semua outlet. Lihat `outletAllowed`. */
     outletList?: string;
+    /**
+     * Channel yang disebut surat: "GT", "MT", "ALL", atau kosong. Dicocokkan dengan channel
+     * OUTLET yang diturunkan dari master Accurate — lihat `channelOutlet` dan `channelAllowed`.
+     */
+    channel?: string;
     /** INCLUDE = hanya peserta daftar; EXCLUDE = semua kecuali peserta. */
     outletListMode?: string;
 };
@@ -219,9 +237,86 @@ export function outletAllowed(
     const nama = String(rule.outletList ?? "").trim().toUpperCase();
     if (!nama) return true;
     const anggota = lists.get(nama) ?? new Set<string>();
+    // DAFTAR KOSONG PADA TANGGAL ITU: aturannya tidak berlaku, apa pun arahnya.
+    //
+    // Untuk INCLUDE itu sudah jelas sejak awal — tidak ada peserta berarti tidak ada yang
+    // berhak. Untuk EXCLUDE dulu justru sebaliknya: tidak ada yang dikecualikan dibaca sebagai
+    // "berlaku untuk semua", dan itu GAGAL TERBUKA. Nama daftar yang salah ketik satu huruf,
+    // atau keanggotaan kuartal berikutnya yang belum diunggah, akan memberi potongan kepada
+    // outlet yang justru dikecualikan suratnya — tanpa galat apa pun.
+    //
+    // Daftar kosong bukan berarti "tidak ada yang dikecualikan"; ia berarti KITA TIDAK TAHU
+    // siapa yang dikecualikan. Yang tidak diketahui ditahan, bukan diloloskan.
+    if (anggota.size === 0) return false;
     const no = String(customerNo ?? "").trim().toUpperCase();
     const peserta = Boolean(no) && [...anggota].some((kode) => no === kode || no.startsWith(`${kode}-`));
     return String(rule.outletListMode ?? "").trim().toUpperCase() === "EXCLUDE" ? !peserta : peserta;
+}
+
+/**
+ * Nama daftar yang DITUNJUK aturan tetapi kosong pada tanggal itu.
+ *
+ * Dipakai memberi tahu manusia SEBABNYA, bukan sekadar menahan barisnya. Baris yang tertahan
+ * karena daftarnya kosong akan terbaca sebagai "potongan tanpa aturan" — tuduhan yang salah
+ * alamat, dan yang membacanya akan mencari kesalahan di tempat yang keliru.
+ */
+export function daftarKosong(
+    rules: { outletList?: string; outletListMode?: string; suratProgram?: string }[],
+    lists: Map<string, Set<string>>,
+): string[] {
+    const kurang = new Map<string, Set<string>>();
+    for (const rule of rules) {
+        const nama = String(rule.outletList ?? "").trim().toUpperCase();
+        if (!nama) continue;
+        if ((lists.get(nama)?.size ?? 0) > 0) continue;
+        if (!kurang.has(nama)) kurang.set(nama, new Set());
+        kurang.get(nama)!.add(String(rule.suratProgram ?? "").trim() || "(tanpa surat)");
+    }
+    return [...kurang].map(([nama, surat]) =>
+        `Daftar outlet "${nama}" tidak punya anggota pada tanggal ini, jadi aturan ${[...surat].sort().join(", ")} `
+        + "tidak berlaku untuk siapa pun dan barisnya ditahan. Muat daftarnya lewat Aturan Promo -> Daftar outlet peserta.");
+}
+
+/**
+ * Channel outlet menurut MASTER ACCURATE, bukan menurut laporan principal dan bukan menurut
+ * yang diketik pengirim order.
+ *
+ * Keputusan pengguna 15 Sep 2026: **GT = TT saja**. Kategori lain dipakai apa adanya, jadi
+ * surat ber-"CHANNEL MT" hanya cocok dengan outlet berkategori MT, dan kategori yang belum
+ * dirapikan (Umum, KANVAS, MOTORIST) tidak ikut mendapat promo GT sampai kategorinya dibetulkan
+ * di Accurate. Itu disengaja: memperlebarnya di sini berarti menebak, dan yang ditebak di sini
+ * berakhir sebagai potongan pada faktur.
+ */
+export function channelOutlet(categoryName: string | null | undefined): string {
+    const kategori = String(categoryName ?? "").trim().toUpperCase();
+    if (!kategori) return "";
+    return kategori === "TT" ? "GT" : kategori;
+}
+
+/**
+ * Apakah aturan ini boleh berlaku untuk outlet dengan channel tersebut.
+ *
+ * Aturan tanpa channel (atau "ALL") berlaku di mana saja — itu bentuk sebagian besar surat.
+ * Outlet yang channelnya TIDAK DIKETAHUI (kategori kosong di master) tidak lolos aturan
+ * ber-channel: yang tidak diketahui ditahan, sama seperti daftar peserta yang kosong.
+ */
+/**
+ * Channel menurut LAPORAN principal ("General Trade" / "Modern Trade") -> kosakata surat.
+ * Yang tidak dikenali dikembalikan kosong, bukan ditebak: menebak di sini berarti menuduh
+ * outlet salah kategori hanya karena principal memakai istilah yang belum pernah kita lihat.
+ */
+export function channelLaporan(value: string | null | undefined): string {
+    const teks = String(value ?? "").trim().toUpperCase();
+    if (!teks) return "";
+    if (teks.includes("GENERAL") || teks === "GT") return "GT";
+    if (teks.includes("MODERN") || teks === "MT") return "MT";
+    return "";
+}
+
+export function channelAllowed(rule: { channel?: string }, outletChannel: string | null | undefined): boolean {
+    const diminta = String(rule.channel ?? "").trim().toUpperCase();
+    if (!diminta || diminta === "ALL") return true;
+    return diminta === String(outletChannel ?? "").trim().toUpperCase();
 }
 
 /** Satu anggota daftar outlet, apa adanya dari `promo_outlet`. */
@@ -533,6 +628,7 @@ export function checkLine(line: LineInput): LineCheck {
         split.distributor = 0;
     }
 
+    let adaYangTakBertuan = false;
     for (const owner of bonusRule ? [] : (["distributor", "principal"] as const)) {
         const amount = owner === "principal" ? split.principal : split.distributor;
         if (amount <= 0) continue;
@@ -561,6 +657,7 @@ export function checkLine(line: LineInput): LineCheck {
         // berhak menagihnya. Dua-duanya salah dengan cara yang berbeda.
         split[owner] = cents(split[owner] - amount);
         split.unowned = cents(split.unowned + amount);
+        adaYangTakBertuan = true;
 
         if (percentRules.length > 0) {
             // Posisi ikut disebut: tarif yang benar nilainya tetapi salah posisi berarti
@@ -574,6 +671,23 @@ export function checkLine(line: LineInput): LineCheck {
             findings.push(`${sebutan} Rp ${amount.toLocaleString("id-ID")} tidak punya aturan promo terbit, `
                 + `jadi dihitung tak bertuan sampai aturannya ada.`);
         }
+    }
+
+    // Kalau ada potongan yang dinyatakan tak bertuan padahal aturannya SEBENARNYA ADA — hanya
+    // tersaring channel atau daftar peserta — sebabnya disebut di sini. Tanpa itu, yang membaca
+    // temuan akan mencari aturan yang hilang, padahal yang salah justru kategori outletnya.
+    if (adaYangTakBertuan) for (const sebab of line.terhalang ?? []) findings.push(sebab);
+
+    // CHANNEL LAPORAN LAWAN MASTER. Laporan principal menyebut channelnya sendiri; master
+    // Accurate menyebut kategorinya. Kalau keduanya berbeda, salah satu salah — dan yang
+    // dipakai memutuskan promo adalah MASTER, jadi selisihnya harus terlihat, bukan didiamkan.
+    // Sudah ada contohnya di produksi: HINDA MART (C-HIL009) disebut General Trade oleh Kino
+    // sedangkan master kita menyimpannya MT.
+    if (split.total > 0 && line.outletChannel && line.reportChannel
+        && channelLaporan(line.reportChannel) && channelLaporan(line.reportChannel) !== line.outletChannel) {
+        findings.push(`Laporan principal menyebut outlet ini ${line.reportChannel} (${channelLaporan(line.reportChannel)}), `
+            + `sedangkan master Accurate menyimpannya ${line.outletChannel}. Promo per channel diputuskan dari MASTER, `
+            + "jadi betulkan kategorinya di Accurate atau tanyakan ke principal mana yang benar.");
     }
 
     // Angka kita harus sama dengan yang dilaporkan principal; beda berarti salah satu salah baca.

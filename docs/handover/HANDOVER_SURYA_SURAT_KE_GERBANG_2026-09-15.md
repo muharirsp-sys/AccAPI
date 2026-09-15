@@ -205,15 +205,20 @@ pengembang (atas izin pengguna, untuk uji hidup OCR). Tidak ikut git. Hapus kala
 
 ## Yang MASIH menggantung — kerjakan dari sini
 
-1. **Tombol konfirmasi order ganda di layar Order Principal.** API-nya siap
-   (`POST /api/principal-order/dupe-ack`), tampilannya belum. Tanpa tombol, SO yang ditahan
-   gerbang ganda tidak bisa dilepas dari layar. **Ini yang paling mendesak** — gerbangnya sudah
-   menahan di produksi.
+1. ~~**Tombol konfirmasi order ganda di layar Order Principal.**~~ **SELESAI 15 Sep sesi
+   lanjutan** (`bc0f34b`, PR #63). Lihat bagian *Sesi lanjutan* di bawah.
 2. **Daftar `BP2609007909` belum dimuat di produksi.** Sengaja disisakan supaya pengguna
    mengunggah suratnya sendiri lewat Aturan Promo → Daftar outlet peserta → Unggah surat.
    Sampai itu dilakukan, 105 aturan 3% B&B masih berlaku untuk **semua** outlet.
+   **Diperiksa 15 Sep:** kedua outlet lampirannya SUDAH ada di `principal_mapping`
+   (`5191202075409` → `C-BA0003` BAJI PAMAI, `5191202076135` → `C-WA0012` WANG MART), jadi
+   unggahannya akan menghasilkan daftar 2 outlet yang utuh — tidak ada kode yang akan ditolak.
 3. **Tiga CUST_ID2 belum ada di `principal_mapping`**: KOSMETIK MUNAWARAH (52390254695),
    KAMIL STAND (2191200123409), LOLLYPOP BABY (3210402085278).
+   **Diperiksa 15 Sep: masih menggantung**, tetapi datanya sudah ada di tangan — ketiganya
+   tersimpan di `promo_outlet` lengkap dengan `source_code`-nya (`C-KOS005` ↔ 52390254695,
+   `C-KA0059` ↔ 2191200123409, `C-LO0019` ↔ 3210402085278). Tinggal disalin ke Mapping
+   Principal; tidak ada yang perlu dicari lagi.
 4. **Konfirmasi Kino**: Indomaret 3,1% vs 3% (Rp 8,13 juta menggantung), dan keempat jaringan
    yang melaporkan potongan beban distributor di kolom klaim principal.
 5. **Jembatan Summary belum pernah dijalankan ujung ke ujung dengan sesi login sungguhan.**
@@ -221,7 +226,9 @@ pengembang (atas izin pengguna, untuk uji hidup OCR). Tidak ikut git. Hapus kala
    melaporkannya dengan kalimat yang bisa ditindaklanjuti). Jalan penuhnya butuh publikasi
    Summary yang nyata.
 6. **Validasi ulang batch 12 September belum pernah dijalankan** (warisan sesi sebelumnya).
-   Semua dasarnya sudah diperiksa di basis data: 48 baris seharusnya lolos.
+   Butuh SATU KLIK di layar produksi; jalur ini tidak punya pintu selain sesi login, dan itu
+   memang disengaja. Lihat *Sesi lanjutan* di bawah untuk hasil yang seharusnya keluar dan
+   alasannya, baris demi baris.
 7. **Multi-principal.** Jalur `promo_rule` baru tersambung untuk KINO NON FOOD. Folder
    `reference_surat_program/sept26` berisi surat 13 principal; pembaca lampirannya sudah
    digeneralisasi, tetapi mapping outlet/barang per principal belum.
@@ -230,14 +237,78 @@ pengembang (atas izin pengguna, untuk uji hidup OCR). Tidak ikut git. Hapus kala
 
 ---
 
+## Sesi lanjutan, 15 September 2026 — tombol konfirmasi, layar Aturan Promo, dan bukti 12 Sep
+
+### Yang dikerjakan
+
+**Tombol konfirmasi order ganda** (`bc0f34b`). Yang dikonfirmasi adalah ORDER-nya, bukan
+barisnya: temuan ganda melekat pada tiap baris SO, jadi dikelompokkan balik ke per-SO supaya
+satu tombol melepas satu order. Konfirmasi yang sudah tercatat ikut ditampilkan — siapa, kapan,
+catatannya — dan bisa dicabut; konfirmasi bertahan lintas validasi, dan yang tidak terlihat
+adalah keputusan tak terlihat. Batch divalidasi ulang sesudah konfirmasi, karena status baris di
+basis data masih memuat temuan lama sampai dihitung ulang.
+
+Catatannya diketik di isian pada barisnya, **bukan lewat `prompt()`**: dialog bawaan peramban
+bisa diblokir tanpa pesan apa pun, dan `prompt()` yang diblokir menjawab `null` — persis seperti
+orang yang menekan Batal. Ini bukan kekhawatiran teoretis: peramban uji sesi ini menolak
+`confirm()` diam-diam, dan tombol Cabut tidak melakukan apa pun sampai dialognya dibuang.
+
+**Layar Aturan Promo** (`6111c08`). Nama daftar adalah satu-satunya tali antara aturan dan
+pesertanya, dan talinya cuma teks yang diketik dua kali di dua layar. Isiannya kini menawarkan
+promo yang sedang berjalan dan menyebut aturan mana yang menunjuk nama itu; nama yang belum
+ditunjuk aturan mana pun diberi kotak peringatan. `TINGKAT` jadi `KETERANGAN` (tidak ada surat
+yang membedakan tingkat). Tiga tab menggantikan satu kolom panjang.
+
+### Batch 12 September: apa yang seharusnya keluar, dan kenapa
+
+Keadaan tersimpan di produksi **sudah** 48 cocok / 0 ditinjau, tetapi angka itu ditulis oleh
+validasi **12 Sep 08:23** — sebelum tarif Discount Reguler dimuat (14 Sep) dan sebelum gerbang
+kuota bonus serta order ganda ada. Jadi ia bukan bukti; menjalankan ulang barulah bukti.
+
+Diperiksa atas basis data produksi, keempat SO-nya:
+
+| SO | Outlet | Baris | Potongan | Kenapa lolos |
+|---|---|---:|---|---|
+| 13044 | `5191202075409` → C-BA0003 | 20 | 5 baris 3% di posisi 4 | kelima barangnya punya aturan 3% `BP2609007909`, 1–30 Sep |
+| 13050 | `322570636957` → C-SAT015 | 3 | 2% di posisi 1 | tarif outlet 2% DISTRIBUTOR, 15 Agu–31 Des |
+| 13051 | `322570636956` → C-SAT016 | 8 | 2% di posisi 1 | tarif outlet 2% DISTRIBUTOR, 15 Agu–31 Des |
+| 13054 | `2191200122557` → C-RIS035 | 17 | Rp 18.016,22 di posisi 5 | bukan peserta LOYALTY, jadi tier MSG `BP2609006016` (EXCLUDE) berlaku |
+
+Sekalian menjawab butir 2 handover tarif: pemetaan SS DIAPERS **sudah** ada di
+`principal_mapping` (`322570636956` → `C-SAT016`, `322570636957` → `C-SAT015`), bukan lagi
+diturunkan dari nama pelanggan.
+
+**Kedua gerbang baru tidak bisa mengubah hasilnya**, dan itu diperiksa bukan diandaikan:
+batch ini **nol baris bonus** (kuota bonus tidak punya apa pun untuk dinilai), dan keempat SO-nya
+duduk di **empat outlet berbeda** yang tak satu pun punya SO lain di batch mana pun (gerbang
+ganda tidak punya pasangan untuk dibandingkan).
+
+**Setelah surat `BP2609007909` diunggah**, SO 13044 tetap lolos: outletnya C-BA0003 BAJI PAMAI,
+salah satu dari dua outlet kita di lampiran surat itu.
+
+### Keadaan produksi saat sesi ini ditutup
+
+- `promo_rule`: 234 baris — 105 aturan barang `BP2609007909`, 89 tarif outlet, 30 `BONUS_QTY`,
+  10 tier `DISC_RP` MSG. Seluruhnya `active`.
+- `promo_outlet`: hanya `LOYALTY` (41 outlet). `BP2609007909` **belum** dimuat.
+- `order_dupe_ack`: kosong. Belum ada SO yang perlu dikonfirmasi.
+- Gerbang kirim faktur otomatis **tetap tertutup**. Tidak ada env pengirim yang disentuh, dan
+  tidak ada migrasi baru pada PR #63.
+
+---
+
 ## Prompt melanjutkan
 
 > Lanjutkan pekerjaan Surya di `D:\AccAPI\_github_clean`, branch `feat/surya-workspace`. Baca
-> `docs/handover/HANDOVER_SURYA_SURAT_KE_GERBANG_2026-09-15.md`. Semua sudah di `main` dan
-> berjalan di produksi; migrasi 0014–0017 sudah dijalankan. **Langkah pertama: tombol konfirmasi
-> order ganda di layar Order Principal** — gerbangnya sudah menahan di produksi tetapi belum ada
-> cara melepasnya dari layar; API-nya siap di `POST /api/principal-order/dupe-ack`. Lalu jalankan
-> Validasi ulang batch 12 September (target 48 lolos), dan minta pengguna mengunggah surat
-> `BP2609007909` lewat Aturan Promo supaya 105 aturan 3% B&B tidak lagi berlaku untuk semua
-> outlet. Gerbang kirim faktur otomatis TETAP TERTUTUP. Jangan stage massal — working tree masih
-> memuat pekerjaan rekonsiliasi dan dashboard-generator yang bukan milik alur ini.
+> `docs/handover/HANDOVER_SURYA_SURAT_KE_GERBANG_2026-09-15.md`, terutama bagian *Sesi
+> lanjutan*. Semua sudah di `main` dan berjalan di produksi; migrasi 0014–0017 sudah dijalankan
+> dan PR #63 tidak menambah migrasi. Tombol konfirmasi order ganda SUDAH ada di layar Order
+> Principal. **Dua langkah berikutnya keduanya di layar produksi dan butuh sesi login pengguna:**
+> unggah surat `BP2609007909` lewat Aturan Promo → Daftar outlet peserta (kedua outletnya sudah
+> terpetakan, tidak akan ada kode yang ditolak), lalu tekan Validasi pada batch
+> `ORDER_DETAIL_20260912_20260912.xlsx` — targetnya tetap 48 lolos, alasannya baris demi baris
+> ada di tabel *Sesi lanjutan*. Sesudah itu butir yang tersisa: tiga CUST_ID2 ke Mapping
+> Principal (datanya sudah ada di `promo_outlet.source_code`), konfirmasi Kino soal Indomaret
+> 3,1%, jembatan Summary ujung ke ujung, multi-principal, dan `triggerQty` non-bonus. Gerbang
+> kirim faktur otomatis TETAP TERTUTUP. Jangan stage massal — working tree masih memuat
+> pekerjaan rekonsiliasi dan dashboard-generator yang bukan milik alur ini.

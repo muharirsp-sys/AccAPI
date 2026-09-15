@@ -2,7 +2,8 @@
    "cuma warning". Toleransi Rp 1 hanya menyerap pembulatan, bukan selisih aturan. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { berlakuPada, bonusQuota, checkLine, checkSoPromo, outletAllowed, outletListsOn, splitDiscounts,
+import { berlakuPada, bonusQuota, channelAllowed, channelLaporan, channelOutlet, checkLine, checkSoPromo,
+    daftarKosong, outletAllowed, outletListsOn, splitDiscounts,
     type LineInput, type PublishedRule } from "./principal-validation.ts";
 
 const line = (over: Partial<LineInput> = {}): LineInput => ({
@@ -428,7 +429,11 @@ test("daftar outlet peserta: INCLUDE hanya peserta, EXCLUDE justru sebaliknya", 
         { listName: "LOYALTY", customerCode: "C-WIN013", periodStart: "2026-07-01", periodEnd: "2026-09-30" },
     ], "2026-10-01");
     assert.equal(outletAllowed(hanya, "C-WIN013-KN", oktober), false);
-    assert.equal(outletAllowed(kecuali, "C-WIN013-KN", oktober), true);
+    // EXCLUDE pada daftar yang kehabisan anggota juga TIDAK berlaku (keputusan pengguna
+    // 15 Sep 2026). Daftar kosong tidak berarti "tidak ada yang dikecualikan"; ia berarti kita
+    // tidak tahu siapa yang dikecualikan, dan yang tidak diketahui ditahan. Sebelum ini
+    // keanggotaan kuartal yang belum diunggah membuat potongan MSG jatuh ke SEMUA outlet.
+    assert.equal(outletAllowed(kecuali, "C-WIN013-KN", oktober), false);
 
     // GAGAL TERTUTUP: daftar yang namanya salah ketik membuat aturannya tidak berlaku untuk
     // siapa pun, bukan berlaku untuk semua orang.
@@ -563,4 +568,71 @@ test("gerbang MENAHAN baris bonus yang melewati kuota, meski aturannya ada", () 
 
     // Tanpa alasan kuota, baris yang sama tetap lolos seperti biasa.
     assert.equal(checkLine(line({ ...bonusLine, rules: [bonusRule] })).status, "ok");
+});
+
+/* ---------------------------------------------------------------- CHANNEL dan daftar kosong
+
+   Dua lubang yang ditemukan pengguna 15 Sep 2026, keduanya GAGAL TERBUKA sebelum ini:
+   surat ber-"CHANNEL GT" berlaku untuk outlet MT, dan aturan EXCLUDE yang daftarnya kosong
+   berlaku untuk semua orang. */
+
+test("GT = TT saja; kategori master yang lain tidak ikut mendapat promo GT", () => {
+    assert.equal(channelOutlet("TT"), "GT");
+    assert.equal(channelOutlet("MT"), "MT");
+    assert.equal(channelOutlet("NKA"), "NKA");
+    assert.equal(channelOutlet("Umum"), "UMUM");
+    assert.equal(channelOutlet(null), "", "kategori kosong berarti channelnya tidak diketahui");
+
+    const gt = { channel: "GT" };
+    assert.equal(channelAllowed(gt, channelOutlet("TT")), true);
+    assert.equal(channelAllowed(gt, channelOutlet("MT")), false);
+    assert.equal(channelAllowed(gt, channelOutlet("Umum")), false);
+    // Outlet yang kategorinya belum diisi TIDAK lolos aturan ber-channel: yang tidak diketahui
+    // ditahan, sama seperti daftar peserta yang kosong.
+    assert.equal(channelAllowed(gt, ""), false);
+    // Aturan tanpa channel berlaku di mana saja — bentuk sebagian besar surat.
+    assert.equal(channelAllowed({ channel: "" }, ""), true);
+    assert.equal(channelAllowed({ channel: "ALL" }, channelOutlet("MT")), true);
+});
+
+test("aturan EXCLUDE yang daftarnya KOSONG tidak berlaku untuk siapa pun, bukan untuk semua", () => {
+    const rule = { outletList: "LOYALTY", outletListMode: "EXCLUDE" };
+    const adaAnggota = outletListsOn(
+        [{ listName: "LOYALTY", customerCode: "C-AD0021", periodStart: "2026-10-01", periodEnd: "2026-12-31" }],
+        "2026-10-15");
+    // Dengan anggota: peserta dikecualikan, bukan peserta dapat. Ini perilaku yang benar.
+    assert.equal(outletAllowed(rule, "C-AD0021-KN", adaAnggota), false);
+    assert.equal(outletAllowed(rule, "C-BA0003-KN", adaAnggota), true);
+
+    // Tanpa anggota pada tanggal itu — nama salah ketik, atau keanggotaan kuartal berikutnya
+    // belum diunggah — aturannya TIDAK berlaku untuk siapa pun. Sebelum ini ia berlaku untuk
+    // semua orang, termasuk outlet yang justru dikecualikan suratnya.
+    const kosong = outletListsOn([], "2026-10-15");
+    assert.equal(outletAllowed(rule, "C-BA0003-KN", kosong), false);
+    assert.equal(outletAllowed(rule, "C-AD0021-KN", kosong), false);
+    // Keanggotaan yang sudah lewat periodenya sama saja dengan tidak ada.
+    const kedaluwarsa = outletListsOn(
+        [{ listName: "LOYALTY", customerCode: "C-AD0021", periodStart: "2026-07-01", periodEnd: "2026-09-30" }],
+        "2026-10-15");
+    assert.equal(outletAllowed(rule, "C-BA0003-KN", kedaluwarsa), false);
+});
+
+test("daftar kosong dilaporkan dengan nama surat yang memakainya", () => {
+    const pesan = daftarKosong([
+        { outletList: "LOYALTY", outletListMode: "EXCLUDE", suratProgram: "BP2609006016" },
+        { outletList: "LOYALTY", outletListMode: "INCLUDE", suratProgram: "BP2609007713" },
+        { outletList: "", suratProgram: "BP2609007909" },
+    ], outletListsOn([], "2026-10-15"));
+    assert.equal(pesan.length, 1);
+    assert.match(pesan[0], /LOYALTY/);
+    assert.match(pesan[0], /BP2609006016, BP2609007713/);
+    assert.doesNotMatch(pesan[0], /BP2609007909/, "aturan tanpa daftar tidak ada urusannya");
+});
+
+test("channel laporan principal diterjemahkan, yang tak dikenal TIDAK ditebak", () => {
+    assert.equal(channelLaporan("General Trade"), "GT");
+    assert.equal(channelLaporan("Modern Trade"), "MT");
+    assert.equal(channelLaporan("GT"), "GT");
+    assert.equal(channelLaporan("Wholesale"), "", "istilah baru tidak boleh ditebak jadi GT atau MT");
+    assert.equal(channelLaporan(""), "");
 });

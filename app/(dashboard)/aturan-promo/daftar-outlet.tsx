@@ -32,7 +32,8 @@ type ListInfo = {
 /** Promo yang periodenya mencakup hari ini — bahan pilihan nama daftar. */
 type Program = { suratProgram: string; promoLabel: string; periodStart: string | null; periodEnd: string | null; rules: number };
 
-const inputCls = "w-full rounded border border-white/15 bg-white/5 px-2 py-1.5 text-sm outline-none focus:border-blue-400";
+const inputCls = "w-full rounded border border-white/15 bg-white/5 px-2.5 py-2 text-sm outline-none"
+    + " transition focus:border-blue-400 focus:ring-1 focus:ring-blue-400/40";
 
 /**
  * Isian nama daftar yang MEMPERLIHATKAN talinya.
@@ -81,10 +82,13 @@ function PilihDaftar({ id, value, onChange, lists, programs, className = "" }: {
 
 function F({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
     return (
-        <label className="block text-sm">
-            <span className="mb-1 block text-slate-300">{label}</span>
+        // Sama seperti di layar Aturan Promo: kotaknya menempel di atas sel, keterangannya
+        // didorong ke bawah, supaya kotak isian pada satu baris tetap sejajar meski panjang
+        // keterangannya berbeda-beda.
+        <label className="flex h-full flex-col text-sm">
+            <span className="mb-1.5 block font-medium text-slate-300">{label}</span>
             {children}
-            {hint && <span className="mt-1 block text-xs leading-snug text-slate-500">{hint}</span>}
+            {hint && <span className="mt-1.5 block text-[11px] leading-[1.45] text-slate-500">{hint}</span>}
         </label>
     );
 }
@@ -243,13 +247,13 @@ export default function DaftarOutlet() {
             </p>
             </details>
 
-            <div className="flex flex-wrap items-end gap-2">
+            <div className="grid max-w-3xl items-start gap-x-5 gap-y-4 sm:grid-cols-2">
                 <F label="Kode distributor kita" hint="Tujuh angka pada kolom KODE DIST di lampiran surat. Dipakai memisahkan outlet kita dari outlet distributor lain pada surat yang sama.">
-                    <input value={distCode} onChange={(e) => setDistCode(e.target.value)} placeholder="1201671" className={`${inputCls} w-40`} />
+                    <input value={distCode} onChange={(e) => setDistCode(e.target.value)} placeholder="1201671" className={inputCls} />
                 </F>
                 <F label="Nama daftar (berkas terpisah)" hint="Hanya dipakai kalau yang diunggah BUKAN surat. Surat memakai nomornya sendiri sebagai nama daftar.">
                     <PilihDaftar id="daftar-unggah" value={listName} onChange={setListName}
-                        lists={lists} programs={programs} className="w-72" />
+                        lists={lists} programs={programs} />
                 </F>
             </div>
 
@@ -296,8 +300,8 @@ export default function DaftarOutlet() {
             </div>
 
             {tambah && (
-                <div className="space-y-3 rounded border border-blue-500/30 bg-blue-500/5 p-3">
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="space-y-4 rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
+                    <div className="grid items-start gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
                         <F label="Nama daftar / promo" hint="Pilih promo yang sedang berjalan, atau ketik nama daftar yang berdiri sendiri. Tanpa kuartal: periodenya diisi per toko di bawah, karena keanggotaan berganti tiap kuartal sedangkan suratnya cuma menyebut “LOYALTY”.">
                             <PilihDaftar id="daftar-ketik" value={tambah.listName}
                                 onChange={(nilai) => setTambah({ ...tambah, listName: nilai })}
@@ -340,7 +344,7 @@ export default function DaftarOutlet() {
                     </thead>
                     <tbody>
                         {members.map((member) => (
-                            <tr key={member.id} className={`border-t border-white/5 ${member.active ? "" : "opacity-50"}`}>
+                            <tr key={member.id} className={`border-t border-white/5 transition-colors hover:bg-white/[0.03] ${member.active ? "" : "opacity-50"}`}>
                                 <td className="whitespace-nowrap px-2 py-1.5 align-top text-xs text-slate-400">{member.listName}</td>
                                 <td className="px-2 py-1.5 align-top">
                                     {member.customerCode}

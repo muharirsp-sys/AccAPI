@@ -100,6 +100,8 @@ export type BridgeRow = {
     benefitUnit: string;
     benefitBeban: string;
     onFaktur: boolean;
+    /** Channel yang disebut surat: "GT", "MT", atau kosong/"ALL" = di mana saja. */
+    channel: string;
     outletList: string;
     outletListMode: string;
     note: string;
@@ -233,6 +235,9 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
                 benefitUnit: benefit.unit,
                 benefitBeban: beban,
                 onFaktur: true,
+                // Channel dari suratnya sendiri. "ALL" disimpan kosong supaya satu arti punya
+                // satu bentuk di basis data, dan supaya baris lama yang kosong berarti sama.
+                channel: text(program.channel).toUpperCase() === "ALL" ? "" : text(program.channel).toUpperCase(),
                 outletList, outletListMode,
                 note: `dari publikasi Summary ${letter.draftId.slice(0, 8)} (${program.id})`,
             };
@@ -255,15 +260,40 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
     // sama pada tingkat yang sama. Kalau itu dibiarkan, seluruh muatan gagal karena satu
     // bentrok — dan yang gagal bukan hanya yang bentrok. Dideteksi di sini supaya yang bentrok
     // saja yang ditolak, dengan menyebut barangnya.
-    const terpakai = new Set<string>();
+    //
+    // KEMBAR YANG SAMA ISINYA BUKAN PENOLAKAN, dan bedanya penting.
+    //
+    // Satu detail yang menyebut beberapa barang menghasilkan SATU PROGRAM PER BARANG. Untuk
+    // potongan setingkat NOTA, tiap program itu membawa tier yang sama persis — jadi kembarnya
+    // TIDAK BISA DIHINDARI dan tidak menandakan apa pun yang salah. Melaporkannya sebagai
+    // "ditolak" membuat tiap muat surat MSG terlihat gagal separuh, dan penolakan yang selalu
+    // muncul akan berhenti dibaca — termasuk yang sungguhan.
+    //
+    // Yang sungguhan adalah kembar yang isinya BERBEDA: dua program menyatakan hal yang sama
+    // dengan angka yang berlainan. Di situ memang ada dua jawaban, dan gerbang tidak boleh
+    // memilih sendiri.
+    const terpakai = new Map<string, BridgeRow>();
     const bersih: BridgeRow[] = [];
+    const isinya = (row: BridgeRow) => [row.benefitType, row.benefitValue, row.benefitUnit,
+        row.triggerQty, row.triggerUnit, row.benefitBeban, row.channel, row.outletList, row.outletListMode].join("|");
     for (const row of rows) {
         const kunci = `${row.suratProgram}|${row.promoGroup}|${row.itemCode}|${row.tierNo}`;
-        if (terpakai.has(kunci)) {
-            refused.push(`${row.promoGroupId}: barang ${row.itemCode || "(tingkat faktur)"} tingkat ${row.tierNo} sudah dinyatakan program lain pada kelompok "${row.promoGroup}"; dua aturan untuk hal yang sama berarti dua jawaban`);
+        const kembar = terpakai.get(kunci);
+        const sebutBarang = row.itemCode || "(tingkat faktur)";
+        if (kembar) {
+            if (isinya(kembar) === isinya(row)) {
+                notes.push(`${row.promoGroupId}: ${sebutBarang} tingkat ${row.tierNo} sudah dinyatakan `
+                    + `${kembar.promoGroupId} dengan isi yang SAMA; dimuat sekali saja. Ini wajar pada `
+                    + "potongan setingkat nota — satu detail berbarang banyak memang menghasilkan satu program per barang.");
+            } else {
+                refused.push(`${row.promoGroupId}: barang ${sebutBarang} tingkat ${row.tierNo} sudah dinyatakan `
+                    + `${kembar.promoGroupId} pada kelompok "${row.promoGroup}" dengan isi BERBEDA `
+                    + `(${kembar.benefitValue}${kembar.benefitUnit} lawan ${row.benefitValue}${row.benefitUnit}); `
+                    + "dua aturan untuk hal yang sama berarti dua jawaban");
+            }
             continue;
         }
-        terpakai.add(kunci);
+        terpakai.set(kunci, row);
         bersih.push(row);
     }
 

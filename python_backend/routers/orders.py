@@ -17,6 +17,7 @@ from shared import get_current_user, user_has_permission, validate_csrf_request
 from summary_store import JsonStore, connect, identity
 from summary_rules import Program, calculate, suggestions
 import outlet_class
+import outlet_channel
 import websales_store
 
 router = APIRouter(prefix="/orders")
@@ -100,6 +101,22 @@ def store_order(owner, outlet, channel, order_date, note, lines, request_id=None
     Yang datang dari Web Sales tidak hilang: permintaannya tetap `pending` dan dilaporkan sebagai
     `failed`, jadi ia menunggu keputusan manusia alih-alih ikut terproses.
     """
+    # CHANNEL DIPASTIKAN KE MASTER, bukan dipercaya dari yang mengirim.
+    #
+    # `calculate` di bawah menyaring promo dengan `program.channel`, tetapi channel yang
+    # dipakainya selama ini datang dari badan permintaan — diketik pengirim order. Yang
+    # diperiksa jadi channel yang DIAKUI, bukan yang TERBUKTI, dan surat "KHUSUS CHANNEL GT"
+    # bisa jatuh ke outlet yang master kita sendiri menyebutnya MT. Sudah ada contohnya di
+    # jalur principal: HINDA MART (C-HIL009) disebut General Trade oleh Kino, master kita MT.
+    #
+    # Ditanyakan ke Next, bukan dibaca dari salinan lokal — lihat `outlet_channel`. Gagal
+    # tertutup: tidak ada jawaban berarti ordernya ditahan. Diperiksa SEBELUM apa pun dihitung,
+    # karena hasil hitungan dengan channel yang salah tidak layak disimpan meski cuma draft.
+    try:
+        outlet_channel.verify(customer_no, channel)
+    except outlet_channel.ChannelTidakPasti as error:
+        raise HTTPException(422, str(error)) from None
+
     priced = all(str(line.get("price", "")).strip() for line in lines)
     programs, sources = published_rules()
     if not programs:
@@ -191,12 +208,22 @@ async def preview_order(request: Request):
     # dengan yang nanti dibekukan pada order, termasuk promo yang TIDAK berlaku untuknya.
     customer_no = str(body.get("customer_no", "")).strip()
     outlets, tahu = outlet_class.classes_of(customer_no), outlet_class.known()
+    # Channel dilaporkan, TIDAK dilemparkan sebagai galat, di pratinjau: sales sedang mengetik,
+    # dan angka harganya tetap berguna sambil ia membetulkan channelnya. Yang tidak boleh adalah
+    # ia baru tahu ordernya akan ditolak setelah seluruh baris diketik — jadi sebabnya muncul
+    # sekarang, dengan kalimat yang sama persis dengan yang nanti menolaknya.
+    channel_masalah = ""
+    try:
+        outlet_channel.verify(customer_no, channel)
+    except outlet_channel.ChannelTidakPasti as error:
+        channel_masalah = str(error)
     try:
         result = calculate(programs, clean, order_date, channel, outlet_classes=outlets, known_classes=tahu) if programs else None
         advice = suggestions(programs, clean, order_date, channel, outlet_classes=outlets, known_classes=tahu) if programs else []
     except (ValueError, KeyError, TypeError) as error:
         raise HTTPException(400, public_error(error)) from None
-    return {"ok": True, "result": result, "suggestions": advice, "sources": sources}
+    return {"ok": True, "result": result, "suggestions": advice, "sources": sources,
+            "channel_masalah": channel_masalah}
 
 
 @router.post("")

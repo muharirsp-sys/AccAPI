@@ -49,3 +49,21 @@ def main():
 
 
 if __name__=='__main__':main()
+
+
+def test_minimum_tanpa_syarat_beli_jadi_satu():
+    """Surat yang tidak menyebut "beli N" berarti SETIAP pembelian dapat, bukan tidak berlaku.
+
+    `Tier` menolak minimum <= 0, jadi sebelum ini diskon datar ("DISKON 3% ON FAKTUR", tanpa
+    syarat) gagal terbit dengan pesan yang tidak menyebut sebabnya sama sekali.
+    """
+    from summary_review_publish import minimum_of
+
+    for kosong in [{}, {"minimum": None}, {"minimum": ""}, {"minimum": "0"}, {"minimum": "0.00"}]:
+        assert minimum_of(kosong) == "1", kosong
+
+    # Angka yang tertulis TIDAK disentuh; yang diganti hanya yang kosong atau nol.
+    assert minimum_of({"minimum": "30"}) == "30"
+    assert minimum_of({"minimum": "1000000"}) == "1000000"
+    # Bukan angka sama sekali dibiarkan lewat, supaya `Tier` yang menolaknya dengan sebabnya.
+    assert minimum_of({"minimum": "dua lusin"}) == "dua lusin"
