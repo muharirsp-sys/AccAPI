@@ -73,6 +73,10 @@ export default function OrdersPage() {
     const [scope, setScope] = useState<"mine" | "all">("mine");
     const [customerNo, setCustomerNo] = useState("");
     const [preview, setPreview] = useState<{ result: Result | null; suggestions: Suggestion[]; prices: PriceInfo[] } | null>(null);
+    // Channel outlet menurut MASTER Accurate. Kalau tidak cocok dengan yang diketik, ordernya
+    // AKAN ditolak saat disimpan — jadi sebabnya muncul sekarang, bukan setelah semua baris
+    // diketik. Kalimatnya sama persis dengan yang nanti menolaknya.
+    const [channelMasalah, setChannelMasalah] = useState("");
     const [previewNote, setPreviewNote] = useState("");
 
     const [connection, setConnection] = useState<ConnectionStatus | null>(null);
@@ -143,7 +147,7 @@ export default function OrdersPage() {
         const filled = lines.filter(line => line.code.trim());
         const ready = channel.trim() && /^\d{4}-\d{2}-\d{2}$/.test(orderDate) && filled.length > 0
             && filled.every(line => line.unit.trim() && Number(line.quantity) > 0);
-        if (!ready) { setPreview(null); setPreviewNote(""); return; }
+        if (!ready) { setPreview(null); setPreviewNote(""); setChannelMasalah(""); return; }
         const timer = setTimeout(async () => {
             const payload = {
                 channel, order_date: orderDate, customer_no: customerNo.trim(),
@@ -156,6 +160,7 @@ export default function OrdersPage() {
             const data = await res.json().catch(() => ({}));
             if (!res.ok || !data.ok) { setPreview(null); setPreviewNote(String(data?.error || "Pratinjau tidak tersedia")); return; }
             setPreviewNote("");
+            setChannelMasalah(String(data.channel_masalah || ""));
             setPreview({ result: data.result ?? null, suggestions: data.suggestions ?? [], prices: data.prices ?? [] });
         }, 600);
         return () => clearTimeout(timer);
@@ -346,6 +351,12 @@ export default function OrdersPage() {
                 </div>
 
                 {previewNote && <p className="text-xs text-rose-600">{previewNote}</p>}
+
+                {channelMasalah && (
+                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+                        {channelMasalah}
+                    </div>
+                )}
 
                 {preview?.result && (
                     <div className="rounded-lg border border-white/10 bg-black/40 p-3 text-sm text-slate-300">
