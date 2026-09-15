@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq, gte, lte, ne, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
-import { promoRule, salesInvoiceCache } from "@/db/schema";
+import { promoOutlet, promoRule, salesInvoiceCache } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { invoiceLines, parseTariff, recap, TARIFF_SHEET, type PromoRule } from "@/lib/promo-recap";
 
@@ -63,7 +63,16 @@ export async function GET(request: NextRequest) {
         benefitType: row.benefitType, benefitValue: row.benefitValue, benefitUnit: row.benefitUnit,
         onFaktur: row.onFaktur, benefitBeban: row.benefitBeban,
         tierNo: row.tierNo, triggerQty: Number(row.triggerQty), triggerUnit: row.triggerUnit,
+        outletList: row.outletList, outletListMode: row.outletListMode,
     }));
+
+    // Daftar outlet peserta (mis. LOYALTY). Dibaca UTUH lalu disaring per tanggal baris di
+    // dalam `recap` — keanggotaannya berganti tiap kuartal, jadi menyaringnya sekali dengan
+    // tanggal akhir periode akan menilai awal bulan dengan keanggotaan yang salah.
+    const members = await db.select({
+        listName: promoOutlet.listName, customerCode: promoOutlet.customerCode,
+        periodStart: promoOutlet.periodStart, periodEnd: promoOutlet.periodEnd, active: promoOutlet.active,
+    }).from(promoOutlet);
 
     // Principal yang BISA disaring = yang punya aturan terbit. Menyaring ke principal tanpa
     // aturan hanya menghasilkan halaman yang seluruhnya tak bertuan, dan itu bukan temuan —
@@ -81,7 +90,7 @@ export async function GET(request: NextRequest) {
     const scopedRules = principal
         ? rules.filter((rule) => rule.principal.trim().toUpperCase() === principal.toUpperCase())
         : rules;
-    const result = recap(lines, scopedRules);
+    const result = recap(lines, scopedRules, members);
 
     // Faktur yang `raw_data`-nya belum memuat rincian baris: hanya jalur webhook (detail.do)
     // yang membawanya, faktur hasil sync daftar tidak. Wajib terlihat, bukan hilang diam-diam.

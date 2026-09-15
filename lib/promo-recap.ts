@@ -16,7 +16,8 @@
  * Gerbang kita memang menahan keduanya sebelum faktur naik, tetapi faktur juga bisa dibuat
  * langsung di Accurate di luar jalur ini. Angka nol harus DIBUKTIKAN, bukan diasumsikan.
  */
-import { matchBonusRule, matchTariff, OWNER, splitDiscounts, TOLERANCE, type DiscountAt } from "@/lib/principal-validation";
+import { matchBonusRule, matchTariff, outletAllowed, outletListsOn, OWNER, splitDiscounts, TOLERANCE,
+    type DiscountAt, type OutletMember } from "@/lib/principal-validation";
 
 export type PromoRule = {
     principal: string;
@@ -39,7 +40,12 @@ export type PromoRule = {
     /** Ambang pemicu; `triggerUnit` RP = nilai belanja. */
     triggerQty: number;
     triggerUnit: string;
+    /** Daftar outlet peserta (`promo_outlet.list_name`); kosong = berlaku semua outlet. */
+    outletList?: string;
+    /** INCLUDE = hanya peserta daftar; EXCLUDE = semua kecuali peserta. */
+    outletListMode?: string;
 };
+
 
 export type InvoiceLine = {
     invoiceNo: string;
@@ -283,7 +289,18 @@ export type OutletTanpaAturan = {
  * Rekap satu periode. Angka yang dilaporkan adalah angka Accurate; aturan hanya dipakai untuk
  * MENJELASKAN angka itu, tidak pernah untuk menggantinya.
  */
-export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
+export function recap(lines: InvoiceLine[], rules: PromoRule[], members: OutletMember[] = []): Recap {
+    // Keanggotaan daftar berganti tiap kuartal sementara rekap membentang sebulan, jadi ia
+    // disusun PER TANGGAL BARIS — bukan sekali untuk seluruh periode. Hasilnya disimpan
+    // supaya sebulan faktur tidak menyusun ulang daftar yang sama ratusan kali.
+    const listsByDate = new Map<string, Map<string, Set<string>>>();
+    const listsOn = (date: string) => {
+        const ada = listsByDate.get(date);
+        if (ada) return ada;
+        const baru = outletListsOn(members, date);
+        listsByDate.set(date, baru);
+        return baru;
+    };
     const out: Recap = {
         invoices: 0, lines: lines.length, gross: 0,
         principal: 0, distributor: 0, unowned: 0, programs: [], rows: [],
@@ -321,6 +338,9 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
         out.gross = cents(out.gross + line.gross);
 
         const split = splitDiscounts(line.gross, line.discounts);
+        // Aturan yang OUTLET ini memang jadi pesertanya. Disaring di sini sekali, lalu dipakai
+        // semua pencocokan di bawah — supaya tidak ada satu pun jalur yang lupa menanyakannya.
+        const berlakuDiOutlet = rules.filter((rule) => outletAllowed(rule, line.customerNo, listsOn(line.transDate)));
         const percentAt = (owner: string) => cents(line.discounts
             .filter((entry) => (OWNER[entry.position] ?? "unowned") === owner)
             .reduce((total, entry) => total + entry.percent, 0));
@@ -338,7 +358,7 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
         // mencatatnya sebagai potongan 100% di posisi 1, jadi pencocokan persen per beban
         // tidak akan pernah menemukannya dan seluruh nilainya jatuh ke tak bertuan. Diakui
         // sebagai KLAIM PRINCIPAL sesuai bunyi suratnya (keputusan pengguna 2026-09-15).
-        const bonusRule = matchBonusRule(line.discounts, rules.filter((rule) => inPeriod(rule, line.transDate)), line.itemCode);
+        const bonusRule = matchBonusRule(line.discounts, berlakuDiOutlet.filter((rule) => inPeriod(rule, line.transDate)), line.itemCode);
         // Yang di posisi 1-5 saja; bonus di posisi di luar itu tetap jatuh ke blok tak
         // bertuan di bawah, seperti di gerbang — dan tidak boleh ikut dihitung dua kali.
         const bonusAmount = bonusRule ? cents(split.distributor + split.principal) : 0;
@@ -358,8 +378,8 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
             const beban = owner === "distributor" ? "DISTRIBUTOR" : "PRINCIPAL";
             // Tarif outlet dicoba setelah aturan per barang: yang per barang lebih sempit,
             // jadi kalau keduanya bisa menjelaskan, yang menyebut barangnya yang dipakai.
-            const cocokTarif = owner === "distributor" ? tariffFor(line, rules) : null;
-            const matched = ruleFor(line, rules, beban, percent) ?? cocokTarif?.[0] ?? null;
+            const cocokTarif = owner === "distributor" ? tariffFor(line, berlakuDiOutlet) : null;
+            const matched = ruleFor(line, berlakuDiOutlet, beban, percent) ?? cocokTarif?.[0] ?? null;
             if (matched) {
                 for (const dipakai of cocokTarif ?? [matched]) terpakai.add(kunci(dipakai));
                 out[owner] = cents(out[owner] + amount);
@@ -369,8 +389,8 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
                 continue;
             }
             out.unowned = cents(out.unowned + amount);
-            const adaAturan = rules.some((rule) => rule.itemCode === line.itemCode && !rule.customerCode && rule.benefitBeban === beban);
-            const adaTarif = owner === "distributor" && rules.some((rule) => rule.customerCode
+            const adaAturan = berlakuDiOutlet.some((rule) => rule.itemCode === line.itemCode && !rule.customerCode && rule.benefitBeban === beban);
+            const adaTarif = owner === "distributor" && berlakuDiOutlet.some((rule) => rule.customerCode
                 && line.customerNo.toUpperCase().startsWith(rule.customerCode.toUpperCase()));
             out.rows.push({ ...base, bucket: "unowned", positions: positionsAt(owner), percent, amount,
                 suratProgram: "", promoGroup: "",
@@ -397,7 +417,8 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[]): Recap {
     for (const invoice of perInvoice.values()) {
         if (invoice.leftover <= 0) continue;
         const first = invoice.lines[0];
-        const matched = fakturRuleFor(rules, "PRINCIPAL", first.transDate, invoice.gross, invoice.leftover, invoice.lines.length);
+        const matched = fakturRuleFor(rules.filter((rule) => outletAllowed(rule, first.customerNo, listsOn(first.transDate))),
+            "PRINCIPAL", first.transDate, invoice.gross, invoice.leftover, invoice.lines.length);
         const base = {
             invoiceNo: first.invoiceNo, transDate: first.transDate, branchName: first.branchName,
             customerNo: first.customerNo, customerName: first.customerName,

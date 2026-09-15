@@ -2,7 +2,8 @@
    "cuma warning". Toleransi Rp 1 hanya menyerap pembulatan, bukan selisih aturan. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { berlakuPada, checkLine, checkSoPromo, splitDiscounts, type LineInput, type PublishedRule } from "./principal-validation.ts";
+import { berlakuPada, checkLine, checkSoPromo, outletAllowed, outletListsOn, splitDiscounts,
+    type LineInput, type PublishedRule } from "./principal-validation.ts";
 
 const line = (over: Partial<LineInput> = {}): LineInput => ({
     productCode: "106052", itemCode: "K1010001006010", itemExists: true,
@@ -399,4 +400,59 @@ test("baris bonus: potongan 100% dijelaskan aturan BONUS_QTY, bebannya principal
     const campuran = checkLine(line({ bonus: true, rules: [bonusRule], reportDiscount: 324324.32,
         discounts: [{ position: 1, percent: 100 }, { position: 4, percent: 3 }] }));
     assert.equal(campuran.status, "review");
+});
+
+test("daftar outlet peserta: INCLUDE hanya peserta, EXCLUDE justru sebaliknya", () => {
+    // Bunyi suratnya sendiri: BP2609007713/BP2609007664 "KHUSUS CHANNEL GT PESERTA LOYALTY",
+    // BP2609006016 "EXCLUDE LOYALTY". Satu daftar, dua arah.
+    const lists = outletListsOn([
+        { listName: "LOYALTY", customerCode: "C-WIN013", periodStart: "2026-07-01", periodEnd: "2026-09-30" },
+        { listName: "LOYALTY", customerCode: "C-KOS005" },
+    ], "2026-09-15");
+
+    const hanya = { outletList: "LOYALTY", outletListMode: "INCLUDE" };
+    const kecuali = { outletList: "LOYALTY", outletListMode: "EXCLUDE" };
+    assert.equal(outletAllowed(hanya, "C-WIN013-KN", lists), true);
+    assert.equal(outletAllowed(hanya, "C-NOV009-KN", lists), false);
+    assert.equal(outletAllowed(kecuali, "C-WIN013-KN", lists), false);
+    assert.equal(outletAllowed(kecuali, "C-NOV009-KN", lists), true);
+
+    // Aturan tanpa daftar tidak tersentuh sama sekali — 234 baris yang sudah termuat.
+    assert.equal(outletAllowed({}, "C-NOV009-KN", lists), true);
+
+    // Awalan dipenggal di tanda hubung: C-WIN01 tidak boleh ikut mengesahkan C-WIN013.
+    assert.equal(outletAllowed(hanya, "C-WIN0131-KN", lists), false);
+
+    // Keanggotaan berperiode: di luar periodenya, outlet itu BUKAN peserta.
+    const oktober = outletListsOn([
+        { listName: "LOYALTY", customerCode: "C-WIN013", periodStart: "2026-07-01", periodEnd: "2026-09-30" },
+    ], "2026-10-01");
+    assert.equal(outletAllowed(hanya, "C-WIN013-KN", oktober), false);
+    assert.equal(outletAllowed(kecuali, "C-WIN013-KN", oktober), true);
+
+    // GAGAL TERTUTUP: daftar yang namanya salah ketik membuat aturannya tidak berlaku untuk
+    // siapa pun, bukan berlaku untuk semua orang.
+    assert.equal(outletAllowed({ outletList: "LOYALTI", outletListMode: "INCLUDE" }, "C-WIN013-KN", lists), false);
+
+    // Anggota yang dinonaktifkan tidak ikut terbaca.
+    const mati = outletListsOn([{ listName: "LOYALTY", customerCode: "C-WIN013", active: false }], "2026-09-15");
+    assert.equal(outletAllowed(hanya, "C-WIN013-KN", mati), false);
+});
+
+test("gerbang menahan bonus yang jatuh ke outlet BUKAN peserta", () => {
+    const bonusRule: PublishedRule = {
+        suratProgram: "BP2609007713", promoGroup: "RESIK V KHASIAT MANJAKANI",
+        itemCode: "K1010001006010", customerCode: "", tierNo: 1, triggerQty: 30, triggerUnit: "PCS",
+        benefitType: "BONUS_QTY", benefitValue: "1", benefitBeban: "PRINCIPAL",
+        outletList: "LOYALTY", outletListMode: "INCLUDE",
+    };
+    const bonusLine = { bonus: true, discounts: [{ position: 1, percent: 100 }], reportDiscount: 324324.32 };
+
+    // Pemanggil (route) yang menyaring; di sini dibuktikan bahwa aturan yang TIDAK lolos
+    // saringan itu memang tidak menjelaskan apa pun — bukan lolos karena isinya kebetulan cocok.
+    const lists = outletListsOn([{ listName: "LOYALTY", customerCode: "C-WIN013" }], "2026-09-15");
+    const peserta = [bonusRule].filter((rule) => outletAllowed(rule, "C-WIN013-KN", lists));
+    const bukan = [bonusRule].filter((rule) => outletAllowed(rule, "C-GAL006-KN", lists));
+    assert.equal(checkLine(line({ ...bonusLine, rules: peserta })).status, "ok");
+    assert.equal(checkLine(line({ ...bonusLine, rules: bukan })).status, "review");
 });

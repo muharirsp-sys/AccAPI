@@ -102,6 +102,10 @@ export type PublishedRule = {
     benefitType: string;
     benefitValue: string;
     benefitBeban: string;
+    /** Daftar outlet peserta; kosong = berlaku semua outlet. Lihat `outletAllowed`. */
+    outletList?: string;
+    /** INCLUDE = hanya peserta daftar; EXCLUDE = semua kecuali peserta. */
+    outletListMode?: string;
 };
 
 /**
@@ -177,8 +181,69 @@ export function matchBonusRule<T extends { itemCode: string; customerCode: strin
         && rule.itemCode && (!itemCode || rule.itemCode === itemCode)) ?? null;
 }
 
+/**
+ * Outlet ini termasuk yang dimaksud aturannya?
+ *
+ * Surat program tidak hanya menyebut barang, ia juga menyebut PESERTA — dan menyebutnya ke
+ * dua arah: BP2609007713 dan BP2609007664 berlaku "KHUSUS CHANNEL GT PESERTA LOYALTY",
+ * sedangkan BP2609006016 (MSG) berlaku "EXCLUDE LOYALTY DAN CONTRACTUAL". Satu daftar yang
+ * sama, dua arah. Karena itu aturan MENUNJUK daftar, tidak menyalin isinya.
+ *
+ * `lists`: nama daftar (huruf besar) -> kode internal anggotanya yang berlaku pada tanggal
+ * baris ini. Pemanggil yang menyaring periodenya, sama seperti `berlakuPada` untuk aturan.
+ *
+ * Kode pada faktur membawa akhiran cabang (`C-WIN013-KN`) sedangkan daftarnya menyimpan kode
+ * internal (`C-WIN013`), jadi dicocokkan dengan AWALAN yang dipenggal di tanda hubung —
+ * bukan sembarang awalan: `C-WIN01` tidak boleh ikut mengesahkan `C-WIN013`.
+ *
+ * GAGAL TERTUTUP: daftar yang namanya tidak dikenali membuat aturannya TIDAK berlaku, bukan
+ * berlaku untuk semua. Satu salah ketik nama daftar yang lalu menahan semuanya masih bisa
+ * dilihat dan diperbaiki; satu salah ketik yang diam-diam meloloskan semuanya tidak.
+ */
+export function outletAllowed(
+    rule: { outletList?: string; outletListMode?: string },
+    customerNo: string | null | undefined,
+    lists: Map<string, Set<string>>,
+): boolean {
+    const nama = String(rule.outletList ?? "").trim().toUpperCase();
+    if (!nama) return true;
+    const anggota = lists.get(nama) ?? new Set<string>();
+    const no = String(customerNo ?? "").trim().toUpperCase();
+    const peserta = Boolean(no) && [...anggota].some((kode) => no === kode || no.startsWith(`${kode}-`));
+    return String(rule.outletListMode ?? "").trim().toUpperCase() === "EXCLUDE" ? !peserta : peserta;
+}
+
+/** Satu anggota daftar outlet, apa adanya dari `promo_outlet`. */
+export type OutletMember = {
+    listName: string;
+    customerCode: string;
+    periodStart?: string | null;
+    periodEnd?: string | null;
+    active?: boolean;
+};
+
+/**
+ * Anggota daftar yang BERLAKU pada satu tanggal -> bentuk yang dipakai `outletAllowed`.
+ *
+ * Periodenya disaring di sini dan bukan di SQL karena satu berkas batch bisa memuat lebih
+ * dari satu tanggal SO — persis alasan yang sama dengan aturan promo. Keanggotaan loyalty
+ * berganti tiap kuartal, jadi menyaring sekali di muka dengan periode batch berarti menilai
+ * seluruh berkas dengan keanggotaan tanggal yang salah, diam-diam.
+ */
+export function outletListsOn(members: OutletMember[], date: string): Map<string, Set<string>> {
+    const out = new Map<string, Set<string>>();
+    for (const member of members) {
+        if (member.active === false) continue;
+        if (!berlakuPada({ periodStart: member.periodStart, periodEnd: member.periodEnd }, date)) continue;
+        const nama = member.listName.trim().toUpperCase();
+        if (!out.has(nama)) out.set(nama, new Set());
+        out.get(nama)!.add(member.customerCode.trim().toUpperCase());
+    }
+    return out;
+}
+
 /** Aturan berlaku pada tanggal itu. Kosong di salah satu ujung = tidak dibatasi di ujung itu. */
-export function berlakuPada(rule: PublishedRule, date: string): boolean {
+export function berlakuPada(rule: { periodStart?: string | null; periodEnd?: string | null }, date: string): boolean {
     return (!rule.periodStart || rule.periodStart <= date) && (!rule.periodEnd || date <= rule.periodEnd);
 }
 

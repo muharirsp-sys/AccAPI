@@ -312,3 +312,31 @@ test("baris bonus: potongan 100% dijelaskan aturan BONUS_QTY dan diakui klaim pr
     // Di luar periode juga tidak.
     assert.equal(recap(invoiceLines(bonus), [{ ...bonusRule, periodEnd: "2026-09-10" }]).unowned, 35135.2);
 });
+
+test("rekap menghormati daftar outlet peserta, per tanggal barisnya", () => {
+    const bonus = (customerNo: string, transDate: string) => ({
+        number: `INV/${customerNo}`, id: customerNo, transDate, branchName: "KINO NON FOOD",
+        customer: { customerNo, name: customerNo },
+        detailItem: [{ itemNo: "K1390001009010", item: { name: "KNF RESIK V" },
+            quantity: 1, unitPrice: 35135.2, itemDiscPercent: "100", itemCashDiscount: 35135.2 }],
+    });
+    const rule = aturan({
+        suratProgram: "BP2609007713", promoGroup: "RESIK V KHASIAT MANJAKANI",
+        itemCode: "K1390001009010", benefitType: "BONUS_QTY", benefitValue: "1",
+        triggerQty: 30, triggerUnit: "PCS", outletList: "LOYALTY", outletListMode: "INCLUDE",
+    });
+    const members = [{ listName: "LOYALTY", customerCode: "C-WIN013", periodStart: "2026-07-01", periodEnd: "2026-09-30" }];
+
+    const peserta = recap(invoiceLines(bonus("C-WIN013-KN", "15/09/2026")), [rule], members);
+    assert.equal(peserta.principal, 35135.2);
+    assert.equal(peserta.unowned, 0);
+
+    // Outlet yang bukan peserta: bonusnya TETAP tertahan meski barang dan persennya cocok.
+    const bukan = recap(invoiceLines(bonus("C-NOV009-KN", "15/09/2026")), [rule], members);
+    assert.equal(bukan.principal, 0);
+    assert.equal(bukan.unowned, 35135.2);
+
+    // Keanggotaan berperiode: outlet yang sama, bulan berikutnya, sudah bukan peserta lagi.
+    const oktober = recap(invoiceLines(bonus("C-WIN013-KN", "01/10/2026")), [{ ...rule, periodEnd: "2026-10-31" }], members);
+    assert.equal(oktober.unowned, 35135.2);
+});
