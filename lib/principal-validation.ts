@@ -93,6 +93,9 @@ export type PublishedRule = {
     /** Kosong = berlaku semua pelanggan. Terisi = tarif Discount Reguler milik satu outlet. */
     customerCode: string;
     tierNo: number;
+    /** Masa berlaku; kosong = berlaku kapan pun. Dibandingkan dengan tanggal SO barisnya. */
+    periodStart?: string | null;
+    periodEnd?: string | null;
     /** Ambang pemicu; `triggerUnit` RP = nilai belanja, selain itu jumlah barang. */
     triggerQty: number;
     triggerUnit: string;
@@ -109,10 +112,19 @@ export type PublishedRule = {
 export const PPN = 0.11;
 
 /**
- * Aturan per BARANG yang menjelaskan klaim principal pada satu baris, atau null.
+ * Aturan per BARANG yang menjelaskan potongan pada satu baris, atau null.
  * Dipakai dua kali dan harus memberi jawaban yang sama di keduanya: oleh checkLine untuk
  * memutuskan barisnya, dan oleh pemanggil untuk menghitung SISA klaim yang belum dijelaskan
  * sebelum aturan tingkat faktur ditanya.
+ *
+ * Dicocokkan **per POSISI, bukan pada jumlahnya** — sama seperti tarif outlet. Menjumlahkan
+ * lebih dulu membuat 3% di satu kolom plus 2% di kolom lain lolos hanya karena kebetulan ada
+ * satu aturan bernilai 5%, padahal itu bisa dua program yang berbeda dan salah satunya tidak
+ * punya dasar. Baris yang dipotong di dua kolom sementara hanya satu punya aturannya tetap
+ * ditahan: separuh penjelasan bukan penjelasan.
+ *
+ * Dibandingkan pada PERSEN, bukan rupiahnya: rupiah ikut berubah oleh diskon yang memotong
+ * lebih dulu di rantai yang sama.
  */
 export function matchItemRule(
     discounts: DiscountAt[],
@@ -120,22 +132,29 @@ export function matchItemRule(
     itemCode?: string | null,
     owner: "principal" | "distributor" = "principal",
 ): PublishedRule | null {
-    // Dibandingkan pada PERSEN posisi yang bersangkutan, bukan rupiahnya: rupiah ikut berubah
-    // oleh diskon yang memotong lebih dulu di rantai yang sama.
-    const actual = cents(discounts
-        .filter((entry) => OWNER[entry.position] === owner)
-        .reduce((total, entry) => total + entry.percent, 0));
-    if (actual <= 0) return null;
+    const worn = discounts.filter((entry) => OWNER[entry.position] === owner && entry.percent > 0);
+    if (worn.length === 0) return null;
     const beban = owner === "principal" ? "PRINCIPAL" : "DISTRIBUTOR";
-    return rules.find((rule) => rule.itemCode && rule.benefitType === "DISC_PCT"
-        // BEBAN ikut dicocokkan: aturan principal tidak boleh membenarkan potongan yang duduk
-        // di posisi distributor, dan sebaliknya. Posisi menyatakan siapa yang DIMAKSUD
-        // menanggung; aturan menyatakan apakah maksud itu sah.
-        && rule.benefitBeban === beban
-        // Pemanggil memang sudah menyaring per barang, tetapi disaring lagi di sini: aturan
-        // milik barang LAIN yang kebetulan ikut terbawa tidak boleh meloloskan baris ini.
-        && (!itemCode || rule.itemCode === itemCode)
-        && Math.abs(cents(Number(rule.benefitValue) - actual)) <= 0.01) ?? null;
+    const cocok: PublishedRule[] = [];
+    for (const entry of worn) {
+        const rule = rules.find((candidate) => candidate.itemCode && candidate.benefitType === "DISC_PCT"
+            // BEBAN ikut dicocokkan: aturan principal tidak boleh membenarkan potongan yang duduk
+            // di posisi distributor, dan sebaliknya. Posisi menyatakan siapa yang DIMAKSUD
+            // menanggung; aturan menyatakan apakah maksud itu sah.
+            && candidate.benefitBeban === beban
+            // Pemanggil memang sudah menyaring per barang, tetapi disaring lagi di sini: aturan
+            // milik barang LAIN yang kebetulan ikut terbawa tidak boleh meloloskan baris ini.
+            && (!itemCode || candidate.itemCode === itemCode)
+            && Math.abs(cents(Number(candidate.benefitValue) - entry.percent)) <= 0.01);
+        if (!rule) return null;
+        cocok.push(rule);
+    }
+    return cocok[0];
+}
+
+/** Aturan berlaku pada tanggal itu. Kosong di salah satu ujung = tidak dibatasi di ujung itu. */
+export function berlakuPada(rule: PublishedRule, date: string): boolean {
+    return (!rule.periodStart || rule.periodStart <= date) && (!rule.periodEnd || date <= rule.periodEnd);
 }
 
 /** Bentuk minimum satu baris tarif; dipakai gerbang validasi maupun Rekap Promo. */

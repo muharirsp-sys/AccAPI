@@ -2,7 +2,7 @@
    "cuma warning". Toleransi Rp 1 hanya menyerap pembulatan, bukan selisih aturan. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkLine, checkSoPromo, splitDiscounts, type LineInput, type PublishedRule } from "./principal-validation.ts";
+import { berlakuPada, checkLine, checkSoPromo, splitDiscounts, type LineInput, type PublishedRule } from "./principal-validation.ts";
 
 const line = (over: Partial<LineInput> = {}): LineInput => ({
     productCode: "106052", itemCode: "K1010001006010", itemExists: true,
@@ -323,4 +323,38 @@ test("potongan tanpa aturan jadi TAK BERTUAN, di posisi mana pun", () => {
     for (const hasil of [tanpaAturan, klaimLiar, adaAturan]) {
         assert.equal(hasil.split.distributor + hasil.split.principal + hasil.split.unowned, hasil.split.total);
     }
+});
+
+test("aturan per barang dicocokkan PER KOLOM, bukan pada jumlahnya", () => {
+    // Satu aturan 5% tidak boleh meloloskan 3% di kolom 4 plus 2% di kolom 5: itu bisa dua
+    // program berbeda, dan salah satunya mungkin tidak punya dasar sama sekali.
+    const jumlahSaja = checkLine(line({
+        discounts: [{ position: 4, percent: 3 }, { position: 5, percent: 2 }], reportDiscount: 16021.62,
+        rules: [aturan({ benefitValue: "5" })],
+    }));
+    assert.equal(jumlahSaja.status, "review");
+    assert.equal(jumlahSaja.split.principal, 0, "yang tidak dijelaskan tidak boleh diakui");
+
+    // Masing-masing kolom punya aturannya sendiri -> lolos.
+    const lengkap = checkLine(line({
+        discounts: [{ position: 4, percent: 3 }, { position: 5, percent: 2 }], reportDiscount: 16021.62,
+        rules: [aturan({ benefitValue: "3" }), aturan({ promoGroup: "LAIN", benefitValue: "2" })],
+    }));
+    assert.equal(lengkap.status, "ok", lengkap.findings.join(" | "));
+
+    // Satu kolom saja yang punya aturan -> tetap ditahan seluruhnya.
+    const separuh = checkLine(line({
+        discounts: [{ position: 4, percent: 3 }, { position: 5, percent: 2 }], reportDiscount: 16021.62,
+        rules: [aturan({ benefitValue: "3" })],
+    }));
+    assert.equal(separuh.status, "review");
+});
+
+test("aturan yang sudah lewat masa berlakunya tidak menjelaskan apa pun", () => {
+    const berlaku = aturan({ periodStart: "2026-09-01", periodEnd: "2026-09-30" });
+    assert.equal(berlakuPada(berlaku, "2026-09-12"), true);
+    assert.equal(berlakuPada(berlaku, "2026-10-01"), false);
+    assert.equal(berlakuPada(berlaku, "2026-08-31"), false);
+    // Tanpa batas = berlaku kapan pun; itu yang dipakai tarif reguler tanpa periode.
+    assert.equal(berlakuPada(aturan(), "2020-01-01"), true);
 });

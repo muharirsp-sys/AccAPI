@@ -12,13 +12,13 @@
  * benar-benar dilihat manusia.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { customer, item, principalMapping, principalOrderBatch, principalOrderLine, promoRule } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { syncItemPrices } from "@/lib/item-price-sync";
-import { checkLine, checkSoPromo, matchItemRule, splitDiscounts, type DiscountAt, type PublishedRule } from "@/lib/principal-validation";
+import { berlakuPada, checkLine, checkSoPromo, matchItemRule, splitDiscounts, type DiscountAt, type PublishedRule } from "@/lib/principal-validation";
 
 export const runtime = "nodejs";
 
@@ -57,17 +57,19 @@ export async function POST(request: NextRequest) {
     // false`, jadi SETIAP klaim principal ditahan, termasuk yang aturannya sudah termuat dan
     // angkanya cocok persis. Gerbang yang menahan segalanya sama tidak bergunanya dengan
     // gerbang yang meloloskan segalanya: keduanya tidak membedakan benar dari salah.
-    const soDate = String(batch.period).slice(0, 10) || new Date().toISOString().slice(0, 10);
+    // Periodenya TIDAK disaring di SQL memakai periode batch. Satu berkas bisa memuat lebih
+    // dari satu tanggal SO, dan aturan bisa berganti di antaranya — menyaring sekali di muka
+    // berarti seluruh batch dinilai dengan aturan tanggal yang salah, diam-diam. Aturannya
+    // ratusan baris saja, jadi disaring per baris memakai `so_date` miliknya sendiri.
+    const batchDate = String(batch.period).slice(0, 10) || new Date().toISOString().slice(0, 10);
+    const dateOf = (line: { soDate: string | null }) => String(line.soDate ?? "").slice(0, 10) || batchDate;
     const publishedRules = await db.select({
         suratProgram: promoRule.suratProgram, promoGroup: promoRule.promoGroup, itemCode: promoRule.itemCode,
         customerCode: promoRule.customerCode,
+        periodStart: promoRule.periodStart, periodEnd: promoRule.periodEnd,
         tierNo: promoRule.tierNo, triggerQty: promoRule.triggerQty, triggerUnit: promoRule.triggerUnit,
         benefitType: promoRule.benefitType, benefitValue: promoRule.benefitValue, benefitBeban: promoRule.benefitBeban,
-    }).from(promoRule).where(and(
-        eq(promoRule.active, true),
-        or(isNull(promoRule.periodStart), lte(promoRule.periodStart, soDate))!,
-        or(isNull(promoRule.periodEnd), gte(promoRule.periodEnd, soDate))!,
-    ));
+    }).from(promoRule).where(eq(promoRule.active, true));
     const rulesByItem = new Map<string, PublishedRule[]>();
     const fakturRules: PublishedRule[] = [];
     // Tarif Discount Reguler melekat pada OUTLET, bukan barang: satu baris melayani seluruh
@@ -91,6 +93,8 @@ export async function POST(request: NextRequest) {
         (base ? tariffByCustomer.get(base.toUpperCase()) : undefined)
         ?? (customerNo ? tariffByCustomer.get(customerNo.toUpperCase()) : undefined)
         ?? [];
+    /** Aturan yang benar-benar berlaku pada tanggal SO baris ini. */
+    const berlaku = (rules: PublishedRule[], date: string) => rules.filter((rule) => berlakuPada(rule, date));
 
     const itemCodes = [...new Set(lines.map((line) => items.get(line.productCode)).filter(Boolean) as string[])];
     let priceRefresh: { ok: boolean; error?: string; processed?: number; priceRows?: number } | null = null;
@@ -155,24 +159,26 @@ export async function POST(request: NextRequest) {
     const soPromo = new Map<string, string>();
     const soFindings = new Map<string, string[]>();
     if (fakturRules.length > 0) {
-        const perSo = new Map<string, { gross: number; claim: number; lines: number }>();
+        const perSo = new Map<string, { gross: number; claim: number; lines: number; date: string }>();
         for (const line of lines) {
             const key = String(line.soNo);
-            const entry = perSo.get(key) ?? { gross: 0, claim: 0, lines: 0 };
+            const entry = perSo.get(key) ?? { gross: 0, claim: 0, lines: 0, date: dateOf(line) };
             const discounts = (line.discounts as DiscountAt[]) ?? [];
             const split = splitDiscounts(Number(line.reportGross), discounts);
             // Ambangnya dihitung dari SELURUH belanja SO; yang dicocokkan hanya SISA klaim
             // yang belum dijelaskan aturan per barang.
             entry.gross += Number(line.reportGross);
             const itemCode = items.get(line.productCode);
-            const byItem = itemCode ? matchItemRule(discounts, rulesByItem.get(itemCode) ?? [], itemCode) : null;
+            const byItem = itemCode
+                ? matchItemRule(discounts, berlaku(rulesByItem.get(itemCode) ?? [], dateOf(line)), itemCode)
+                : null;
             if (!byItem) { entry.claim += split.principal; entry.lines += 1; }
             perSo.set(key, entry);
         }
         for (const [soNo, entry] of perSo) {
             const verdict = checkSoPromo(
                 { gross: entry.gross, principalClaim: entry.claim, lineCount: entry.lines },
-                fakturRules,
+                berlaku(fakturRules, entry.date),
             );
             if (verdict.explained) soPromo.set(soNo, verdict.explained);
             if (verdict.findings.length) soFindings.set(soNo, verdict.findings);
@@ -200,10 +206,10 @@ export async function POST(request: NextRequest) {
                 unitRatio: Number(line.qty) > 0 ? Number(line.reportQty) / Number(line.qty) : 1,
                 gross: Number(line.reportGross), reportDiscount: Number(line.reportDiscount),
                 discounts: (line.discounts as DiscountAt[]) ?? [], bonus: line.bonus,
-                rules: [
+                rules: berlaku([
                     ...(itemCode ? (rulesByItem.get(itemCode) ?? []) : []),
                     ...tariffOf(base, customerNo),
-                ],
+                ], dateOf(line)),
                 fakturPromo: soPromo.get(String(line.soNo)),
             });
             // Temuan tingkat SO menahan SETIAP barisnya: nominalnya milik seluruh SO, jadi
