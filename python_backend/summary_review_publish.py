@@ -8,7 +8,29 @@ import uuid
 from collections import defaultdict
 from summary_review import get_package, encode
 from summary_store import connect, identity
-from summary_rules import Program
+from summary_rules import Program, number
+
+
+def minimum_of(tier):
+    """Ambang satu strata; TANPA syarat beli berarti SATU, bukan nol.
+
+    `Tier` menolak minimum <= 0, jadi surat yang memang tidak menyebut syarat beli ("diskon 3%
+    on faktur", tanpa "beli N") dulu gagal terbit dengan pesan yang tidak menyebut sebabnya.
+    Padahal artinya jelas dan tidak ambigu: SETIAP pembelian dapat. Dalam satuan terkecil,
+    "setiap pembelian" adalah satu.
+
+    Yang TIDAK dilakukan di sini: menebak. Angka yang tertulis tetap dipakai apa adanya; yang
+    diganti hanya yang kosong atau nol. Ambang yang salah baca akan tetap salah, dan itu urusan
+    pembaca suratnya, bukan urusan nilai bawaan ini.
+    """
+    tulisan = str(tier.get('minimum') or '').strip()
+    if not tulisan:
+        return '1'
+    try:
+        return tulisan if number(tulisan) > 0 else '1'
+    except ValueError:
+        # Bukan angka sama sekali -> biarkan `Tier` yang menolaknya dengan sebabnya sendiri.
+        return tulisan
 
 
 def readiness(row, master):
@@ -46,7 +68,7 @@ def readiness(row, master):
     for i,codes in enumerate(groups.values(),1):
         built=[]
         for t in tiers:
-            tier=dict(minimum=str(t.get('minimum')),repeat=s['repeat'])
+            tier=dict(minimum=minimum_of(t),repeat=s['repeat'])
             amount=t.get('amount',s.get('amount'))
             if s['benefit_type']=='percentage':tier['percentages']=[str(n) for n in s.get('percentages') or [amount]]
             elif s['benefit_type']=='bonus':tier.update(bonus_code=codes[0],bonus_quantity=str(amount),bonus_unit=s.get('benefit_unit') or s['unit'])

@@ -137,10 +137,14 @@ test("beban distributor terbawa apa adanya", () => {
     assert.equal(hasil.rows[0].benefitBeban, "DISTRIBUTOR");
 });
 
-test("dua program yang menyebut barang dan tingkat yang sama: yang kedua ditolak, bukan seluruhnya gagal", () => {
+test("dua program menyebut barang dan tingkat yang sama dengan ISI SAMA: dimuat sekali, bukan ditolak", () => {
     // Kunci unik promo_rule memuat (surat, kelompok, barang, tingkat). Dua detail satu surat
     // bisa menyebut barang yang sama; kalau tidak dijaga di sini, satu bentrok menjatuhkan
     // seluruh muatan — termasuk aturan yang tidak ada urusannya.
+    //
+    // Kembar yang ISINYA SAMA tidak menandakan apa pun yang salah, dan pada potongan setingkat
+    // nota ia bahkan tidak bisa dihindari. Melaporkannya sebagai penolakan membuat tiap muat
+    // surat terlihat gagal separuh, dan penolakan yang selalu muncul berhenti dibaca.
     const hasil = bridgeRows(letter({
         programs: [
             program({ id: "row-1-1", codes: ["K1370000005010"] }),
@@ -149,6 +153,23 @@ test("dua program yang menyebut barang dan tingkat yang sama: yang kedua ditolak
     }));
     assert.deepEqual(hasil.rows.map((r) => `${r.promoGroupId}:${r.itemCode}`),
         ["row-1-1:K1370000005010", "row-2-1:K1370000009010"]);
+    assert.deepEqual(hasil.refused, []);
+    assert.equal(hasil.notes.length, 1);
+    assert.match(hasil.notes[0], /isi yang SAMA; dimuat sekali saja/);
+});
+
+test("kembar yang ISINYA BERBEDA tetap ditolak: di situ memang ada dua jawaban", () => {
+    const hasil = bridgeRows(letter({
+        programs: [
+            program({ id: "row-1-1", codes: ["K1370000005010"] }),
+            program({
+                id: "row-2-1", codes: ["K1370000005010"],
+                tiers: [{ minimum: "30", bonus_quantity: "2", bonus_unit: "PCS", repeat: true }],
+            }),
+        ],
+    }));
+    assert.equal(hasil.rows.length, 1);
+    assert.equal(hasil.rows[0].benefitValue, "1", "yang pertama yang dipakai");
     assert.equal(hasil.refused.length, 1);
-    assert.match(hasil.refused[0], /dua aturan untuk hal yang sama/);
+    assert.match(hasil.refused[0], /isi BERBEDA \(1PCS lawan 2PCS\)/);
 });

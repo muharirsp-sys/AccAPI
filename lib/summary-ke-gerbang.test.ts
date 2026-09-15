@@ -247,11 +247,14 @@ test("potongan nota dari detail berbarang banyak tetap jadi SATU aturan per ting
     assert.deepEqual(hasil.rows.map((row) => row.itemCode), ["", ""]);
     assert.deepEqual(hasil.rows.map((row) => row.benefitValue), ["20000", "40000"]);
 
-    // Kembarannya DITOLAK dengan sebabnya, bukan dibuang diam-diam. Pesan ini akan terlihat
-    // pengguna pada tiap muat surat MSG dan TERLIHAT seperti galat padahal hasilnya benar;
-    // itu sebabnya ia dikunci di sini, supaya yang membacanya nanti tahu ini memang begitu.
-    assert.equal(hasil.refused.length, 2);
-    assert.match(hasil.refused[0], /row-1-2.*tingkat faktur.*sudah dinyatakan program lain/);
+    // Kembarannya dilaporkan sebagai CATATAN, bukan penolakan. Kembar ini tidak bisa dihindari
+    // pada potongan setingkat nota — satu detail berbarang banyak memang menghasilkan satu
+    // program per barang — jadi menyebutnya "ditolak" akan membuat tiap muat surat MSG
+    // terlihat gagal separuh. Penolakan yang selalu muncul akan berhenti dibaca, termasuk
+    // yang sungguhan.
+    assert.deepEqual(hasil.refused, []);
+    assert.equal(hasil.notes.length, 2);
+    assert.match(hasil.notes[0], /row-1-2.*tingkat faktur.*isi yang SAMA; dimuat sekali saja/);
 });
 
 test("periode Oktober dari sisi Python sampai ke gerbang tanpa disentuh siapa pun", () => {
