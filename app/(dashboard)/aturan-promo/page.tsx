@@ -397,7 +397,16 @@ export default function AturanPromoPage() {
                                         <span className="block text-xs text-slate-500">{b.hint}</span>
                                     </td>
                                     <td className="px-2 py-1.5 align-top">
-                                        {rule.customerCode || <span className="text-slate-500">semua outlet</span>}
+                                        {/* Aturan yang dibatasi DAFTAR PESERTA tidak boleh tetap tertulis
+                                            "semua outlet": kolom ini yang dibaca orang untuk menjawab
+                                            "berlaku di toko mana", dan jawabannya jadi kebalikannya. */}
+                                        {rule.customerCode || (rule.outletList
+                                            ? <span className={rule.outletListMode === "EXCLUDE" ? "text-rose-300" : "text-sky-300"}>
+                                                {rule.outletListMode === "EXCLUDE"
+                                                    ? `semua KECUALI peserta ${rule.outletList}`
+                                                    : `hanya peserta ${rule.outletList}`}
+                                            </span>
+                                            : <span className="text-slate-500">semua outlet</span>)}
                                         <span className="block text-xs text-slate-500">
                                             {rule.itemCode ? `${rule.itemCode} ${rule.itemName}`.trim() : "semua barang"}
                                         </span>
@@ -422,12 +431,6 @@ export default function AturanPromoPage() {
                                     <td className="px-2 py-1.5 align-top">
                                         {rule.suratProgram}
                                         <span className="block text-xs text-slate-500">{rule.promoGroup || rule.promoLabel}</span>
-                                        {rule.outletList && (
-                                            <span className={`mt-0.5 inline-block rounded px-1.5 py-0.5 text-xs ${rule.outletListMode === "EXCLUDE"
-                                                ? "bg-rose-500/15 text-rose-300" : "bg-sky-500/15 text-sky-300"}`}>
-                                                {rule.outletListMode === "EXCLUDE" ? `kecuali peserta ${rule.outletList}` : `hanya peserta ${rule.outletList}`}
-                                            </span>
-                                        )}
                                     </td>
                                     <td className="whitespace-nowrap px-2 py-1.5 align-top text-xs text-slate-400">
                                         {rule.periodStart ?? "kapan pun"}<br />s/d {rule.periodEnd ?? "dicabut"}

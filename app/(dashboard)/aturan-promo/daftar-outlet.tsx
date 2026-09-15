@@ -145,7 +145,12 @@ export default function DaftarOutlet() {
                 </button>
                 <a href="/api/promo-outlet?template=1"
                     className="inline-flex items-center gap-2 rounded bg-white/10 px-2.5 py-1.5 text-xs">
-                    <Download size={13} /> Template
+                    <Download size={13} /> Template daftar outlet
+                </a>
+                <a href="/api/promo-recap?template=1"
+                    className="inline-flex items-center gap-2 rounded bg-white/10 px-2.5 py-1.5 text-xs"
+                    title="Dua sheet: Detail (aturan per barang) dan Discount Reguler (tarif/diskon MT per outlet)">
+                    <Download size={13} /> Template aturan &amp; tarif MT
                 </a>
                 <label className={`inline-flex cursor-pointer items-center gap-2 rounded bg-emerald-600 px-2.5 py-1.5 text-xs ${busy ? "opacity-40" : ""}`}>
                     <FileUp size={13} /> Unggah surat / berkas

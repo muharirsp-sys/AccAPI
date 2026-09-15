@@ -18,8 +18,8 @@ import { customer, item, principalMapping, principalOrderBatch, principalOrderLi
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { syncItemPrices } from "@/lib/item-price-sync";
-import { berlakuPada, checkLine, checkSoPromo, matchItemRule, outletAllowed, outletListsOn, splitDiscounts,
-    type DiscountAt, type PublishedRule } from "@/lib/principal-validation";
+import { berlakuPada, bonusQuota, checkLine, checkSoPromo, isBonusLine, matchItemRule, outletAllowed,
+    outletListsOn, splitDiscounts, type DiscountAt, type PublishedRule } from "@/lib/principal-validation";
 
 export const runtime = "nodejs";
 
@@ -214,6 +214,46 @@ export async function POST(request: NextRequest) {
         }
     }
 
+    // KUOTA BONUS per SO, dihitung sebelum baris mana pun dinilai.
+    //
+    // Baris bonus pada laporan principal berharga penuh lalu dipotong 100%, sedangkan jumlah
+    // BELINYA ada di baris lain. Tanpa pemeriksaan se-SO, "beli 10 pcs dapat bonus 1 pcs" akan
+    // lolos gerbang dengan sempurna: barangnya benar, aturannya ada, persennya 100 seperti
+    // seharusnya. Ambangnya dihitung dalam SATUAN TERKECIL (`reportQty`), karena satu SO
+    // mencampur KRT dan PCS pada barang yang sama.
+    const overQuota = new Map<string, string>();
+    {
+        const perSoLines = new Map<string, typeof lines>();
+        for (const line of lines) {
+            const key = String(line.soNo);
+            perSoLines.set(key, [...(perSoLines.get(key) ?? []), line]);
+        }
+        for (const [soNo, isi] of perSoLines) {
+            const date = dateOf(isi[0]);
+            const aturanBonus = publishedRules
+                .filter((rule) => rule.benefitType === "BONUS_QTY" && rule.itemCode && berlakuPada(rule, date)
+                    && outletAllowed(rule, customerNoOf(isi[0]), listsOn(date)))
+                .map((rule) => ({
+                    itemCode: rule.itemCode, suratProgram: rule.suratProgram, promoGroup: rule.promoGroup,
+                    triggerQty: Number(rule.triggerQty) || 0, benefitValue: rule.benefitValue,
+                }));
+            if (!aturanBonus.length) continue;
+            const kuota = bonusQuota(isi.map((line) => ({
+                key: `${soNo}#${line.rowNumber}`,
+                itemCode: items.get(line.productCode) ?? "",
+                quantity: Number(line.reportQty) || 0,
+                bonus: line.bonus || isBonusLine((line.discounts as DiscountAt[]) ?? []),
+            })), aturanBonus);
+            for (const grup of kuota) {
+                for (const key of grup.overKeys) {
+                    overQuota.set(key, `Bonus melewati kuota ${grup.promoGroup}: pembelian ${grup.purchased} `
+                        + `berhak ${grup.entitled}, tetapi diberikan ${grup.given}. Aturannya "setiap ${grup.trigger}" — `
+                        + "bonus tanpa pembeliannya bukan bonus.");
+                }
+            }
+        }
+    }
+
     let ok = 0;
     let review = 0;
     await db.transaction(async (tx) => {
@@ -240,6 +280,7 @@ export async function POST(request: NextRequest) {
                     ...tariffOf(base, customerNo),
                 ], dateOf(line), customerNo),
                 fakturPromo: soPromo.get(String(line.soNo)),
+                bonusOverQuota: overQuota.get(`${line.soNo}#${line.rowNumber}`),
             });
             // Temuan tingkat SO menahan SETIAP barisnya: nominalnya milik seluruh SO, jadi
             // tidak ada satu baris pun yang bisa dinyatakan benar sendirian.

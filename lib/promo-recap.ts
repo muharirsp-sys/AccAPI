@@ -16,8 +16,8 @@
  * Gerbang kita memang menahan keduanya sebelum faktur naik, tetapi faktur juga bisa dibuat
  * langsung di Accurate di luar jalur ini. Angka nol harus DIBUKTIKAN, bukan diasumsikan.
  */
-import { matchBonusRule, matchTariff, outletAllowed, outletListsOn, OWNER, splitDiscounts, TOLERANCE,
-    type DiscountAt, type OutletMember } from "@/lib/principal-validation";
+import { bonusQuota, isBonusLine, matchBonusRule, matchTariff, outletAllowed, outletListsOn, OWNER,
+    splitDiscounts, TOLERANCE, type BonusQuota, type DiscountAt, type OutletMember } from "@/lib/principal-validation";
 
 export type PromoRule = {
     principal: string;
@@ -58,6 +58,12 @@ export type InvoiceLine = {
     itemCode: string;
     itemName: string;
     quantity: number;
+    /**
+     * Jumlah dalam SATUAN TERKECIL. Faktur mencampur BTL dan KRT pada barang yang sama
+     * (INV/2609/KN00453: beli 12 KRT isi 72, bonus 28 BTL), jadi kuota bonus tidak bisa
+     * dihitung dari `quantity` mentah — 12 akan dibandingkan dengan ambang 30 pcs.
+     */
+    baseQuantity: number;
     unitPrice: number;
     gross: number;
     discounts: DiscountAt[];
@@ -127,7 +133,11 @@ export function invoiceLines(raw: unknown): InvoiceLine[] {
             invoiceNo, invoiceId, transDate, customerNo, customerName, branchName,
             itemCode: String(detail.itemNo ?? item.no ?? ""),
             itemName: String(item.name ?? detail.detailName ?? ""),
-            quantity, unitPrice,
+            quantity,
+            // `quantityDefault` adalah jumlah satuan terkecil menurut Accurate sendiri;
+            // `unitRatio` jadi cadangan bila suatu saat field itu tidak terkirim.
+            baseQuantity: num(detail.quantityDefault) || cents(quantity * (num(detail.unitRatio) || 1)),
+            unitPrice,
             gross: cents(quantity * unitPrice),
             discounts: percents,
             cashDiscount: num(detail.itemCashDiscount),
@@ -330,7 +340,39 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[], members: OutletM
     // Potongan tingkat faktur tidak bisa dinilai per baris — nominalnya milik seluruh faktur.
     const perInvoice = new Map<string, { gross: number; leftover: number; lines: InvoiceLine[] }>();
 
-    for (const line of lines) {
+    // KUOTA BONUS, dihitung per FAKTUR sebelum baris mana pun digolongkan.
+    //
+    // Baris bonus adalah baris tersendiri berharga penuh lalu dipotong 100%; jumlah BELINYA ada
+    // di baris lain. Memeriksa baris bonus sendirian sama saja tidak memeriksa apa pun — itulah
+    // lubang yang membuat "beli 10 pcs dapat bonus 1 pcs" bisa lewat. Karena itu kuotanya
+    // dihitung lebih dulu, per kelompok mix, atas seluruh baris faktur.
+    const kunciBaris = (line: InvoiceLine, index: number) => `${line.invoiceId || line.invoiceNo}#${index}`;
+    const lewatKuota = new Map<string, BonusQuota>();
+    {
+        const perFaktur = new Map<string, { line: InvoiceLine; index: number }[]>();
+        lines.forEach((line, index) => {
+            const key = line.invoiceId || line.invoiceNo;
+            perFaktur.set(key, [...(perFaktur.get(key) ?? []), { line, index }]);
+        });
+        for (const isi of perFaktur.values()) {
+            const tanggal = isi[0].line.transDate;
+            const aturanBonus = rules
+                .filter((rule) => rule.benefitType === "BONUS_QTY" && rule.itemCode && inPeriod(rule, tanggal)
+                    && outletAllowed(rule, isi[0].line.customerNo, listsOn(tanggal)))
+                .map((rule) => ({
+                    itemCode: rule.itemCode, suratProgram: rule.suratProgram, promoGroup: rule.promoGroup,
+                    triggerQty: Number(rule.triggerQty) || 0, benefitValue: rule.benefitValue,
+                }));
+            if (!aturanBonus.length) continue;
+            const kuota = bonusQuota(isi.map(({ line, index }) => ({
+                key: kunciBaris(line, index), itemCode: line.itemCode,
+                quantity: line.baseQuantity || line.quantity, bonus: isBonusLine(line.discounts),
+            })), aturanBonus);
+            for (const grup of kuota) for (const key of grup.overKeys) lewatKuota.set(key, grup);
+        }
+    }
+
+    for (const [urutan, line] of lines.entries()) {
         const invoiceKey = line.invoiceId || line.invoiceNo;
         const bucketOf = perInvoice.get(invoiceKey) ?? { gross: 0, leftover: 0, lines: [] };
         bucketOf.gross = cents(bucketOf.gross + line.gross);
@@ -362,7 +404,16 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[], members: OutletM
         // Yang di posisi 1-5 saja; bonus di posisi di luar itu tetap jatuh ke blok tak
         // bertuan di bawah, seperti di gerbang — dan tidak boleh ikut dihitung dua kali.
         const bonusAmount = bonusRule ? cents(split.distributor + split.principal) : 0;
-        if (bonusRule && bonusAmount > 0) {
+        // Bonus yang melewati kuota TIDAK diakui, meski aturannya ada dan barangnya benar.
+        // Aturan menyatakan "setiap 30 pcs"; bonus ke-33 pada pembelian 60 pcs tidak punya
+        // dasar, dan mengakuinya berarti membenarkan barang yang keluar gudang tanpa alasan.
+        const kuota = lewatKuota.get(kunciBaris(line, urutan));
+        if (bonusRule && bonusAmount > 0 && kuota) {
+            out.unowned = cents(out.unowned + bonusAmount);
+            out.rows.push({ ...base, bucket: "unowned", positions: positionsAt("distributor") || positionsAt("principal"),
+                percent: 100, amount: bonusAmount, suratProgram: "", promoGroup: "",
+                reason: `bonus melewati kuota ${kuota.promoGroup}: beli ${kuota.purchased} berhak ${kuota.entitled}, diberi ${kuota.given}` });
+        } else if (bonusRule && bonusAmount > 0) {
             terpakai.add(kunci(bonusRule));
             out.principal = cents(out.principal + bonusAmount);
             add(bonusRule, bonusAmount, line.invoiceNo);

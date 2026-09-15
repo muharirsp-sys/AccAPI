@@ -36,11 +36,52 @@ function defaultRange() {
     };
 }
 
+/**
+ * Kolom yang BENAR-BENAR dibaca importir, ditulis sekali di sini lalu dipakai dua kali:
+ * jadi berkas contoh, dan jadi rujukan saat membaca berkas sungguhan. Menyimpannya sebagai
+ * berkas statis berarti suatu saat contohnya akan menjanjikan kolom yang tidak lagi dibaca.
+ */
+const DETAIL_HEADER = ["SURAT_PROGRAM", "PROMO_LABEL", "PROMO_GROUP_ID", "PROMO_GROUP", "KODE_BARANG",
+    "NAMA_BARANG", "PRD_ID_KINO", "PERIODE", "PERIOD_START", "PERIOD_END", "PROMO_ACTIVE", "TIER_NO",
+    "TRIGGER_QTY", "TRIGGER_UNIT", "BENEFIT_TYPE", "BENEFIT_VALUE", "BENEFIT_UNIT", "BENEFIT_BEBAN",
+    "CARA_TAGIH", "CATATAN"];
+
+const TARIFF_HEADER = ["KODE_OUTLET", "PELANGGAN", "POSISI 1", "POSISI 2", "POSISI 3", "POSISI 4",
+    "POSISI 5", "PAKAI", "PERIODE MULAI", "PERIODE SAMPAI", "CATATAN"];
+
 export async function GET(request: NextRequest) {
     const gate = await resolveRequestPermissionsH();
     if (gate.response) return gate.response;
     if (!gate.perms?.has("summary.view") && !gate.perms?.has("order.view")) {
         return NextResponse.json({ ok: false, error: "Akses rekap promo tidak diizinkan" }, { status: 403 });
+    }
+
+    // Berkas contoh untuk kedua sheet yang dibaca importir. Sheet `Discount Reguler` itulah
+    // tempat diskon MT/tarif reguler dimuat, dan kolom `PAKAI` di sana bukan basa-basi: tabel
+    // tarif aslinya diekstrak dari FOTO, jadi baris yang posisinya belum dipastikan TIDAK dimuat.
+    if (request.nextUrl.searchParams.get("template") === "1") {
+        const book = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
+            DETAIL_HEADER,
+            ["BP2609007909", "MTI - HPC CONSUMER PROMO ON PO", "", "B&B ALL VARIANT", "K1041001025010",
+                "KNF B&B HAIR BODY WASH RIKO 250ML X 24", "", "September 2026", "2026-09-01", "2026-09-30",
+                "TRUE", 1, 1, "PCS", "DISC_PCT", "3", "%", "PRINCIPAL", "ON FAKTUR", "contoh"],
+            ["BP2609007713", "PROMO BRAND RESIK V", "", "RESIK V KHASIAT MANJAKANI", "K1370000005010",
+                "KNF RESIK V MANJAKANI 50ML X 72 BTL", "", "September 2026", "2026-09-01", "2026-09-30",
+                "TRUE", 1, 30, "PCS", "BONUS_QTY", "1", "PCS", "PRINCIPAL", "ON FAKTUR", "beli 30 gratis 1"],
+        ]), "Detail");
+        XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
+            TARIFF_HEADER,
+            ["C-AL0063", "ALFAMART", 4, 2.25, "", "", "", "YA", "2026-08-15", "2026-12-31", "posisi terbukti dari ORDER_DETAIL"],
+            ["C-IN0050", "INDOMARET", 3.96, 3, "", "", "", "", "", "", "PAKAI dikosongkan = belum dipastikan, tidak dimuat"],
+        ]), TARIFF_SHEET);
+        const buffer = XLSX.write(book, { type: "buffer", bookType: "xlsx" }) as Buffer;
+        return new NextResponse(new Uint8Array(buffer), {
+            headers: {
+                "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "content-disposition": 'attachment; filename="template-aturan-promo.xlsx"',
+            },
+        });
     }
     const fallback = defaultRange();
     const from = (request.nextUrl.searchParams.get("from") || fallback.from).slice(0, 10);

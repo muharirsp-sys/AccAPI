@@ -289,6 +289,10 @@ test("baris bonus: potongan 100% dijelaskan aturan BONUS_QTY dan diakui klaim pr
         number: "INV/2609/KN00531", id: 9, transDate: "15/09/2026", branchName: "KINO NON FOOD",
         customer: { customerNo: "C-KOS005-KN", name: "KOSMETIK MUNAWARAH" },
         detailItem: [
+            // Baris PEMBELIAN: 30 pcs, yang membuat satu bonus berhak. Tanpa baris ini kuotanya
+            // nol — dan memang seharusnya begitu.
+            { itemNo: "K1390001009010", item: { name: "KNF RESIK V RAMUAN MADURA WHITENING 90ML" },
+              quantity: 30, unitPrice: 35135.2, itemDiscPercent: "", itemCashDiscount: 0 },
             { itemNo: "K1390001009010", item: { name: "KNF RESIK V RAMUAN MADURA WHITENING 90ML" },
               quantity: 1, unitPrice: 35135.2, itemDiscPercent: "100", itemCashDiscount: 35135.2 },
         ],
@@ -317,8 +321,11 @@ test("rekap menghormati daftar outlet peserta, per tanggal barisnya", () => {
     const bonus = (customerNo: string, transDate: string) => ({
         number: `INV/${customerNo}`, id: customerNo, transDate, branchName: "KINO NON FOOD",
         customer: { customerNo, name: customerNo },
-        detailItem: [{ itemNo: "K1390001009010", item: { name: "KNF RESIK V" },
-            quantity: 1, unitPrice: 35135.2, itemDiscPercent: "100", itemCashDiscount: 35135.2 }],
+        detailItem: [
+            { itemNo: "K1390001009010", item: { name: "KNF RESIK V" },
+                quantity: 30, unitPrice: 35135.2, itemDiscPercent: "", itemCashDiscount: 0 },
+            { itemNo: "K1390001009010", item: { name: "KNF RESIK V" },
+                quantity: 1, unitPrice: 35135.2, itemDiscPercent: "100", itemCashDiscount: 35135.2 }],
     });
     const rule = aturan({
         suratProgram: "BP2609007713", promoGroup: "RESIK V KHASIAT MANJAKANI",
@@ -339,4 +346,45 @@ test("rekap menghormati daftar outlet peserta, per tanggal barisnya", () => {
     // Keanggotaan berperiode: outlet yang sama, bulan berikutnya, sudah bukan peserta lagi.
     const oktober = recap(invoiceLines(bonus("C-WIN013-KN", "01/10/2026")), [{ ...rule, periodEnd: "2026-10-31" }], members);
     assert.equal(oktober.unowned, 35135.2);
+});
+
+test("bonus yang MELEWATI KUOTA ditolak, meski aturannya ada dan barangnya benar", () => {
+    // Ketakutan yang disebut pengguna: beli 10 pcs, dapat bonus 1 pcs. Aturannya ada, barangnya
+    // benar, persennya benar — dan justru itu yang membuatnya berbahaya: semua tampak sah.
+    const bonusRule = aturan({
+        suratProgram: "BP2609007713", promoGroup: "RESIK V KHASIAT MANJAKANI",
+        itemCode: "K1390001009010", benefitType: "BONUS_QTY", benefitValue: "1", benefitUnit: "PCS",
+        triggerQty: 30, triggerUnit: "PCS",
+    });
+    const faktur = (beli: number) => ({
+        number: "INV/2609/KN09999", id: 99, transDate: "15/09/2026", branchName: "KINO NON FOOD",
+        customer: { customerNo: "C-KOS005-KN", name: "KOSMETIK MUNAWARAH" },
+        detailItem: [
+            { itemNo: "K1390001009010", item: { name: "KNF RESIK V" }, quantity: beli,
+              unitPrice: 35135.2, itemDiscPercent: "", itemCashDiscount: 0 },
+            { itemNo: "K1390001009010", item: { name: "KNF RESIK V" }, quantity: 1,
+              unitPrice: 35135.2, itemDiscPercent: "100", itemCashDiscount: 35135.2 },
+        ],
+    });
+
+    const kurang = recap(invoiceLines(faktur(10)), [bonusRule]);
+    assert.equal(kurang.principal, 0);
+    assert.equal(kurang.unowned, 35135.2);
+    assert.match(kurang.rows.find((r) => r.bucket === "unowned")!.reason, /melewati kuota/);
+    assert.match(kurang.rows.find((r) => r.bucket === "unowned")!.reason, /beli 10 berhak 0, diberi 1/);
+
+    // Tepat 30 berhak satu: yang sah tidak ikut tertahan.
+    assert.equal(recap(invoiceLines(faktur(30)), [bonusRule]).principal, 35135.2);
+
+    // Satuan diseragamkan: 1 KRT isi 36 adalah 36 pcs, bukan 1.
+    const karton = {
+        ...faktur(1),
+        detailItem: [
+            { itemNo: "K1390001009010", item: { name: "KNF RESIK V" }, quantity: 1, quantityDefault: 36,
+              unitRatio: 36, unitPrice: 1264867, itemDiscPercent: "", itemCashDiscount: 0 },
+            { itemNo: "K1390001009010", item: { name: "KNF RESIK V" }, quantity: 1,
+              unitPrice: 35135.2, itemDiscPercent: "100", itemCashDiscount: 35135.2 },
+        ],
+    };
+    assert.equal(recap(invoiceLines(karton), [bonusRule]).principal, 35135.2);
 });
