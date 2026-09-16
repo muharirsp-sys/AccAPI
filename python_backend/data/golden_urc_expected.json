@@ -1,0 +1,194 @@
+{
+  "surat": [
+    {
+      "file": "002 - BTGO Lexus 76g NED Oct 25 - Feb 26 periode Jul-Sep 2025 (National MTI).pdf",
+      "nama_program": "BUY 2 GET 1 FREE LEXUS 76g (EXPIRED OCT 2025 – FEB 2026)",
+      "benefit": {
+        "tier": "Beli 2",
+        "benefit_type": "BONUS_QTY",
+        "benefit": "1 PCS"
+      },
+      "items": [
+        {
+          "item_description": "Lexus Cheese 76gx24PC",
+          "kelompok": "LEXUS SANDWICH",
+          "kode_barangs": [
+            "76180030076000",
+            "76180030076000",
+            "76180030076002"
+          ]
+        },
+        {
+          "item_description": "Lexus Chocolate 76gx24PC",
+          "kelompok": "LEXUS SANDWICH",
+          "kode_barangs": [
+            "76180010076000",
+            "76180010076000",
+            "76180010076002"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "004 - Diskon 25% Medium pack Munchys NED Dec 25-Feb 26 periode Jul-Aug 2025 (National MTI).pdf",
+      "nama_program": "DISKON 25% MUNCHY’S MEDIUM PACK CATEGORY (EXPIRED DEC 2025 – FEB 2026)",
+      "benefit": {
+        "tier": "Beli 1",
+        "benefit_type": "DISC_PCT",
+        "benefit": "25%"
+      },
+      "items": [
+        {
+          "item_description": "Lexus Cheese 190gx12PC",
+          "kelompok": "LEXUS SANDWICH",
+          "kode_barangs": [
+            "76180030190000",
+            "76180030190000",
+            "76180030190002"
+          ]
+        },
+        {
+          "item_description": "Lexus Choco Coated 200gx12PC",
+          "kelompok": "LEXUS CHOCO",
+          "kode_barangs": [
+            "76190010200000",
+            "76190010200000"
+          ]
+        },
+        {
+          "item_description": "Lexus Chocolate 190gx12PC",
+          "kelompok": "LEXUS SANDWICH",
+          "kode_barangs": [
+            "76180010190000",
+            "76180010190000",
+            "76180010190001",
+            "76180010190002"
+          ]
+        },
+        {
+          "item_description": "Lexus Cookies Dark Chocolate 189gx12PC",
+          "kelompok": "LEXUS COOKIES",
+          "kode_barangs": [
+            "76170010189000",
+            "76170010189000"
+          ]
+        },
+        {
+          "item_description": "Lexus Cookies Mixed Nut 189gx12PC",
+          "kelompok": "LEXUS COOKIES",
+          "kode_barangs": [
+            "76170020189000",
+            "76170020189000"
+          ]
+        },
+        {
+          "item_description": "Lexus Cookies Original 189gx12PC",
+          "kelompok": "LEXUS COOKIES",
+          "kode_barangs": [
+            "76170030189000",
+            "76170030189000"
+          ]
+        },
+        {
+          "item_description": "Lexus Lemon 190gx12PC",
+          "kelompok": "LEXUS SANDWICH",
+          "kode_barangs": [
+            "76180050190000"
+          ]
+        },
+        {
+          "item_description": "Lexus Lychee 190gx12PC",
+          "kelompok": "LEXUS SANDWICH",
+          "kode_barangs": [
+            "76180040190000"
+          ]
+        },
+        {
+          "item_description": "Lexus Peanut 190gx12PC",
+          "kelompok": "LEXUS SANDWICH",
+          "kode_barangs": [
+            "76180020190000",
+            "76180020190000"
+          ]
+        },
+        {
+          "item_description": "Munchy's Choc Sandwich 258gx12PC",
+          "kelompok": "MUNCHYS CRACKERS",
+          "kode_barangs": [
+            "76220030258000",
+            "76220030258000"
+          ]
+        },
+        {
+          "item_description": "Munchy's Cream Cracker 300gx12PC",
+          "kelompok": "MUNCHYS CRACKERS",
+          "kode_barangs": [
+            "76220010300000",
+            "76220010300000"
+          ]
+        },
+        {
+          "item_description": "Munchy's Original Cream Cracker 375gx12PC",
+          "kelompok": "MUNCHYS CREAM CRACKERS",
+          "kode_barangs": [
+            "76200010375000"
+          ]
+        },
+        {
+          "item_description": "Munchy's Sugar Cracker 380gx12PC",
+          "kelompok": "MUNCHYS MALKIST",
+          "kode_barangs": [
+            "76230010380000",
+            "76230010380000B"
+          ]
+        },
+        {
+          "item_description": "Munchy's Vegetable Cracker 380gx12PC",
+          "kelompok": "MUNCHYS CRACKERS",
+          "kode_barangs": [
+            "76220040380000",
+            "76220040380000"
+          ]
+        },
+        {
+          "item_description": "Munchy's Wheat Cracker 276gx12PC",
+          "kelompok": "MUNCHYS CRACKERS",
+          "kode_barangs": [
+            "76220020276000",
+            "76220020276000"
+          ]
+        },
+        {
+          "item_description": "Oat Krunch Chocolate 208gx12PC",
+          "kelompok": "OAT CRUNCH",
+          "kode_barangs": [
+            "76210010208000",
+            "76210010208000"
+          ]
+        },
+        {
+          "item_description": "Oat Krunch Hazelnut 208gx12PC",
+          "kelompok": "OAT CRUNCH",
+          "kode_barangs": [
+            "76210020208000"
+          ]
+        },
+        {
+          "item_description": "Oat Krunch Nutty Chocolate 208gx12PC",
+          "kelompok": "OAT CRUNCH",
+          "kode_barangs": [
+            "76210040208000"
+          ]
+        },
+        {
+          "item_description": "Oat Krunch Strawberry & Blackcurrant 208gx12PC",
+          "kelompok": "OAT CRUNCH",
+          "kode_barangs": [
+            "76210030208000",
+            "76210030208000"
+          ]
+        }
+      ]
+    }
+  ]
+}

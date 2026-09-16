@@ -1,0 +1,20 @@
+{
+  "brand_aliases": {
+    "BELLAGIO": "BLAGIO", "CASABLANCA": "CSBNCA", "CAMELLIA": "CAMELLIA",
+    "REGAZZA": "REGAZZA", "REGGAZZA": "REGAZZA", "EXCELLO": "EXCELO", "MARIE JOSE": "MARIE JOSE"
+  },
+  "type_synonyms": {
+    "EAU DE TOILETTE": "EDT", "EAU DE TOILETE": "EDT", "EAU DE PARFUME": "EDP", "EAU DE PARFUM": "EDP",
+    "PARFUME": "EDP", "PARFUM": "EDP", "TOILETTE": "EDT", "TOILETE": "EDT",
+    "POMADE": "PMD", "JAPANESE": "J SARIES", "FRAGRANCE MIST": "B MIST B.PARFUME",
+    "BODY MIST": "B MIST", "HAIR COLOR": "HAIR CLR", "ROLL ON": "ROLL ON"
+  },
+  "variant_qualifiers": ["SPORT"],
+  "series_rules": {
+    "SPRAY COLOGNE SERIES": {
+      "resolve_to_kelompok": ["CSBNCA FM - SPRAY COL - WHITE SR", "CSBNCA HM - SPRAY COLG - BLACK SR"],
+      "exclude_kelompok": ["CSBNCA FM - SPRAY COL - GLASS", "CSBNCA HM - SPRAY COLG - GLAS"]
+    }
+  },
+  "excluded_kelompok": ["CSBNCA FM - SPRAY COL - GLASS", "CSBNCA HM - SPRAY COLG - GLAS"]
+}

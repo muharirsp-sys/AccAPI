@@ -25,6 +25,15 @@ from golden_store import canonical_signature, golden_check_and_freeze
 from deterministic_output import enable_pdf_determinism, finalize_xlsx
 from parse_cache import parse_cache_key, parse_cache_get, parse_cache_put
 _VARIANT_MAPPING = load_variant_mapping()
+# Kelompok yang aturannya MENGECUALIKAN dari program (mis. Casablanca Spray Cologne GLASS).
+# Dikumpulkan sekali dari `exclude_kelompok` tiap aturan variant_mapping, dan distrip di AWAL
+# pencocokan — bukan di akhir. Baris yang tak ter-explode dulu mengembalikan kode mentahnya,
+# dan enam kode GLASS bocor ke klaim pada run live.
+_EXCLUDED_KELOMPOKS = {
+    " ".join(str(_k).strip().split()).upper()
+    for _rule in _VARIANT_MAPPING.values()
+    for _k in _rule.get("exclude_kelompok", [])
+}
 from typing import List, Dict, Tuple, Optional, Set, Any
 from urllib.parse import urlparse, unquote
 from auth import (
@@ -4598,6 +4607,83 @@ def _label_periode(mulai, selesai):
 
 
 def _apply_native_kelompok(rows_to_check, master_items):
+    # ROUTER MATCHER DETERMINISTIK.
+    #
+    # Tiga jalur pasti dicoba lebih dulu, dipilih dari PENANDA BARIS yang distempel router
+    # (bukan oleh model): `_gen_key` (FONTERRA/NATUR/ADNA/FORISA), `item_description` (URC),
+    # `group_item_text` (Priskila). Penanda yang berbeda membuat baris satu principal tidak
+    # pernah bisa nyasar ke matcher principal lain.
+    #
+    # Ketiganya dibuat Juli 2026 di `feat/urc-deterministic-matcher`, LULUS ujinya sendiri
+    # termasuk golden 118 baris Priskila, lalu tidak pernah sampai ke jalur ini. Selama dua
+    # bulan Summary Priskila jatuh ke pencocokan lama dan menghasilkan lembar yang kosong
+    # ketentuannya — sementara keluaran benarnya sudah ada di `data/e2e_live_output` sejak Juli.
+    # SEKALI SAJA, DAN INI BUKAN OPTIMASI.
+    #
+    # Fungsi ini dipanggil dua kali pada satu dokumen: sekali sesudah ekstraksi (supaya grid
+    # sudah terisi), sekali lagi saat Form/Dataset dibuat. Baris yang sudah diselesaikan matcher
+    # membawa kelompok master yang SUDAH digabung ("BLAGIO HM - EDT & BLAGIO HM - EDP -
+    # PRESTIGE"); menyodorkannya kembali ke matcher berarti menyuruhnya mencari kalimat itu di
+    # master, dan tentu saja tidak ada. Terbukti 2026-09-16: 64 baris Priskila yang sudah benar
+    # jadi 64 baris "(TIDAK ADA ITEM COCOK DI MASTER)" hanya karena lewat dua kali.
+    #
+    # Satu penanda yang tertinggal pun cukup — penjaganya memakai `any()`, jadi SATU baris tak
+    # tercocokkan yang masih menyimpan `group_item_text` menyeret seluruh batch ikut diulang.
+    if any(r.get("_matched_items_cache") or r.get("_priskila_unmatched") or r.get("_urc_unmatched")
+           for r in rows_to_check):
+        return list(rows_to_check)
+
+    # GENERIC GUARD (FONTERRA/NATUR deterministic matcher): rows carry
+    # ``_gen_key`` -- stamped by routers/summary.py (BUKAN oleh LLM), so it
+    # can never appear on legacy/Priskila/URC rows. Checked first.
+    try:
+        if any(r.get("_gen_key") for r in rows_to_check):
+            from generic_promo_pipeline import apply_generic_matching
+            return apply_generic_matching(rows_to_check, master_items)
+    except Exception as _gen_err:
+        try:
+            append_error_log("generic_pipeline_fallback", _gen_err,
+                             {"n_rows": len(rows_to_check)})
+        except Exception:
+            pass
+
+    # URC GUARD (deterministic matcher branch): the structure-only prompt
+    # (routers/summary.py, URC) emits rows carrying `item_description` -- a
+    # marker field NEVER used by Priskila's rows (`group_item_text`) or the
+    # legacy path, so URC and Priskila rows can never cross-route into each
+    # other's matcher+master by accident. Checked BEFORE the Priskila guard.
+    try:
+        if any(r.get("item_description") for r in rows_to_check):
+            from urc_pipeline import apply_urc_matching
+            return apply_urc_matching(rows_to_check, master_items)
+    except Exception as _urc_err:
+        try:
+            append_error_log("urc_pipeline_fallback", _urc_err,
+                             {"n_rows": len(rows_to_check)})
+        except Exception:
+            pass
+
+    # PRISKILA GUARD (deterministic matcher branch): the structure-only prompt
+    # (routers/summary.py, Priskila) emits rows carrying `group_item_text` -- that
+    # field is the unambiguous marker of the new path (the legacy prompt never
+    # emits it), so we route on its PRESENCE rather than on a principle string
+    # (the master's principle column is frequently blank). Those rows go to the
+    # offline-tested priskila_pipeline (surat line -> master SKUs, deterministic,
+    # renderer-ready). NON-Priskila rows fall straight through unchanged below.
+    try:
+        if any(r.get("group_item_text") for r in rows_to_check):
+            from priskila_pipeline import apply_priskila_matching
+            return apply_priskila_matching(rows_to_check, master_items)
+    except Exception as _prisk_err:
+        # Never let the Priskila branch break the shared endpoint; on any failure
+        # fall back to legacy matching -- but LOG it (a silent revert to the old
+        # buggy path would otherwise look like success at the PDF gate).
+        try:
+            append_error_log("priskila_pipeline_fallback", _prisk_err,
+                             {"n_rows": len(rows_to_check)})
+        except Exception:
+            pass
+
     final_rows_out = []
     def norm(x: object) -> str:
         return " ".join(str(x or "").strip().split()).upper()
@@ -4606,7 +4692,19 @@ def _apply_native_kelompok(rows_to_check, master_items):
         import re
         return [x.strip() for x in re.split(r'[,&]', str(val or "")) if x.strip()]
 
+    # Kode master yg kelompoknya di exclude-list variant_mapping (mis. Spray Cologne GLASS).
+    # Distrip dari kode_barangs di AWAL tiap baris -> tak lolos jalur manapun, termasuk fallback
+    # "row tak ter-explode" (yg dulu mengembalikan r mentah ber-GLASS -> 6 GLASS bocor run live).
+    _excluded_codes = {str(it.get("kode_barang", "")).strip() for it in master_items
+                       if norm(it.get("kelompok")) in _EXCLUDED_KELOMPOKS} if _EXCLUDED_KELOMPOKS else set()
+
     for r in rows_to_check:
+        if _excluded_codes:
+            _kb = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
+            _kb2 = [k for k in _kb if k not in _excluded_codes]
+            if len(_kb2) != len(_kb):
+                r = dict(r)
+                r["kode_barangs"] = ",".join(_kb2)
         matched_items = []
         # FASE 3b: resolusi varian data-driven (variant_mapping.json) DULU, sebelum LLM/
         # kode_barangs manapun -- kasus terbukti: "Spray Cologne Series" harus jadi White SR
@@ -4622,6 +4720,48 @@ def _apply_native_kelompok(rows_to_check, master_items):
             for it in master_items:
                 if str(it.get("kode_barang", "")).strip() in klist:
                     matched_items.append(it)
+
+        # "All Variant": LLM sering under-enumerate kode di channel belakangan (terbukti
+        # debug_ai.txt 2026-07-13: STAR OUTLET "Marie Jose All Variant" cuma kirim 1 dari 8
+        # kode -> 7 varian hilang diam-diam). Perbaiki dgn ANCHOR ke item yg sudah cocok (seed):
+        # tarik SEMUA varian se-(kelompok, gramasi) dari master, non-banded. Dibatasi ke
+        # kelompok+gramasi seed -> TIDAK meledak (beda dgn fallback string-match di bawah yg bisa
+        # jatuh ke SELURUH master saat kelompok LLM tak persis cocok). Aturan surat: banded (BND)
+        # dikecualikan dari klaim promo.
+        # _variant_hit is None: JANGAN ekspansi hasil FASE 3b (variant_resolver sengaja membatasi
+        # varian, mis. Regazza EDT Sport = HANYA 4 -- ekspansi se-kelompok akan merusak batasan itu).
+        if matched_items and _variant_hit is None:
+            _vlist_probe = split_list(r.get("variant", ""))
+            _v_all_probe = (not _vlist_probe) or any(norm(x) == "ALL VARIANT" for x in _vlist_probe)
+            if _v_all_probe:
+                _seed_keys = {(norm(it.get("kelompok")), norm(it.get("gramasi"))) for it in matched_items}
+                _seen_codes = {str(it.get("kode_barang", "")).strip() for it in matched_items}
+                # #3 (2026-07-15): kelompok yg BERPASANGAN per variant_mapping -- mis. surat
+                # "Casablanca Spray Cologne Series" = White SR + Black SR SEKALIGUS (dikonfirmasi
+                # user; SR=Series, lihat variant_mapping CASABLANCA_SPRAY_COLOGNE_SERIES). Kalau
+                # seed masuk salah satu kelompok di resolve_to_kelompok sebuah rule, tarik JUGA
+                # kelompok pasangannya (di gramasi seed) MINUS exclude_kelompok (GLASS di-EXCLUDE).
+                # Additive & tak menyentuh resolve_variant -> baris mega-merge multi-kelompok tak
+                # kehilangan kelompok lain (beda dgn kalau resolve_variant yg fire).
+                _seed_kels = {norm(it.get("kelompok")) for it in matched_items}
+                _seed_grams = {norm(it.get("gramasi")) for it in matched_items}
+                for _rule in _VARIANT_MAPPING.values():
+                    _rk = {norm(k) for k in _rule.get("resolve_to_kelompok", [])}
+                    if not _rk or not (_seed_kels & _rk):
+                        continue
+                    _excl = {norm(k) for k in _rule.get("exclude_kelompok", [])}
+                    for _k in _rk - _excl:
+                        for _g in _seed_grams:
+                            _seed_keys.add((_k, _g))
+                for it in master_items:
+                    _kode = str(it.get("kode_barang", "")).strip()
+                    if _kode in _seen_codes:
+                        continue
+                    if "BND" in norm(it.get("nama_barang")).split():
+                        continue
+                    if (norm(it.get("kelompok")), norm(it.get("gramasi"))) in _seed_keys:
+                        matched_items.append(it)
+                        _seen_codes.add(_kode)
                     
         # Fallback Match: String matching if AI failed to provide API keys or "ALL VARIANT"
         if not matched_items:            
@@ -4636,14 +4776,18 @@ def _apply_native_kelompok(rows_to_check, master_items):
                 kelompok = ""
                 
             # Filter pool initially based on Kelompok if provided
-            pool = []
-            if kelompok:
-                pool = [it for it in master_items if norm(it.get("kelompok")) == norm(kelompok)]
-            else:
-                pool = master_items
-
-            # If pool is empty (hallucinated kelompok), fallback to all items
-            if not pool: pool = master_items
+            # KELOMPOK KOSONG ATAU BUKAN KELOMPOK MASTER TIDAK MENCOCOK APA PUN.
+            #
+            # Dulu keduanya jatuh ke `master_items` — SELURUH katalog. Karena varian dan gramasi
+            # baris itu juga "ALL", setiap barang principal ikut cocok, dan barisnya pecah jadi
+            # satu baris per kelompok dengan kode barang NYATA. Yang membuatnya berbahaya:
+            # `issues` jadi KOSONG, jadi draftnya terlihat sah dan bisa diterbitkan. Terbukti
+            # 2026-09-16: satu draft berubah dari 7 baris menjadi 607 hanya karena disimpan ulang.
+            #
+            # Kelompok kosong justru keadaan NORMAL tiap baris sesudah ekstraksi (lihat
+            # `baca_surat_rapi`), jadi gagal-terbuka di sini berarti setiap surat berpeluang
+            # menerbitkan promo untuk seluruh katalog principal.
+            pool = [it for it in master_items if norm(it.get("kelompok")) == norm(kelompok)] if kelompok else []
 
             # Now filter the pool based on variants and gramasi
             for it in pool:
@@ -4688,9 +4832,22 @@ def _apply_native_kelompok(rows_to_check, master_items):
                             gramasi_match = True; break
                             
                 if not gramasi_match: continue
-                    
+
+                # Produk BANDED (nama ".. BTL BND") dikecualikan dari ekspansi promo -- aturan
+                # surat: "Untuk Klaim tidak berlaku Produk Banded". Master menaruh item banded
+                # di kelompok+gramasi+variant yg SAMA dgn non-banded (mis. Marie Jose ...011),
+                # jadi tanpa filter ini ekspansi All Variant akan keliru menambah SKU banded.
+                if "BND" in it_nama.split(): continue
+
                 matched_items.append(it)
                     
+        # EXCLUDE global: buang item ber-kelompok di exclude_kelompok variant_mapping (mis.
+        # Spray Cologne GLASS/GLAS) dari SEMUA jalur -- termasuk saat LLM mencantumkan kode GLASS
+        # langsung di kode_barangs (terbukti run live 2026-07-15: 18 baris GLASS bocor). Aturan
+        # surat: Spray Cologne Series = White SR + Black SR saja.
+        if _EXCLUDED_KELOMPOKS:
+            matched_items = [it for it in matched_items if norm(it.get("kelompok")) not in _EXCLUDED_KELOMPOKS]
+
         # Deterministic Kelompok String Builder strictly from Master DB
         # EXPLODE MAGIC: If a single AI row contains items from DIFFERENT Brand Prefixes (Nama KLPs),
         # we must split it into separate rows so the frontend and generator handle them cleanly!
