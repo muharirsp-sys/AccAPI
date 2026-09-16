@@ -105,6 +105,49 @@ def create_draft(user, title, content, source=None):
     return get_draft(draft_id, user)
 
 
+def find_open_draft(user, title):
+    """Draft yang MASIH `draft` dengan judul ini, yang terbaru. None kalau tidak ada.
+
+    Dipakai Summary yang menumpuk: surat kedua menyusul ke grid yang sama, bukan membuat draft
+    baru. Judulnya sengaja jadi kuncinya karena judul itulah yang dilihat orang di daftar
+    "Muat draft tersimpan" — kunci yang tidak terlihat akan membingungkan saat salah menumpuk.
+
+    Yang sudah `published` TIDAK pernah disusul: publikasi itu beku, dan aturan faktur yang
+    sudah terbit tidak boleh berubah di belakang punggung orang yang menandatanganinya.
+    """
+    with connect() as db:
+        row = db.execute(
+            "SELECT id FROM summary_draft WHERE owner=? AND title=? AND status='draft'"
+            " ORDER BY updated_at DESC,id DESC LIMIT 1",
+            (identity(user), title[:160])).fetchone()
+    return get_draft(row["id"], user) if row else None
+
+
+def append_rows(draft_id, user, rows, master=None):
+    """Susulkan baris ke draft yang sudah ada. Kembalikan draft terbaru.
+
+    Master ikut diperbarui supaya baris surat baru punya kamus barangnya; baris lama tetap
+    utuh karena kode barangnya sudah diturunkan dan disimpan pada barisnya sendiri.
+    """
+    draft = get_draft(draft_id, user)
+    if draft is None or draft["status"] != "draft":
+        return None
+    content = draft["content"]
+    lama = content.get("rows") or []
+    content["rows"] = [*lama, *rows]
+    for nomor, baris in enumerate(content["rows"], 1):
+        baris["no"] = str(nomor)
+    if master:
+        content["master"] = master
+    content.pop("programs", None)
+    with connect() as db:
+        db.execute(
+            "UPDATE summary_draft SET content=?,revision=revision+1,"
+            "updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND owner=? AND status='draft'",
+            (json.dumps(content, ensure_ascii=False, allow_nan=False), draft_id, identity(user)))
+    return get_draft(draft_id, user)
+
+
 def get_draft(draft_id, user):
     with connect() as db:
         row = db.execute("SELECT id,title,revision,status,content,created_at,updated_at FROM summary_draft WHERE id=? AND owner=?", (draft_id, identity(user))).fetchone()
