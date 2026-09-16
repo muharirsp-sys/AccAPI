@@ -87,12 +87,28 @@ function letterOf(terbit: Record<string, unknown>, draftId: string, principalCad
     const settings = (detail.settings ?? {}) as Record<string, unknown>;
     const master = (content.master ?? {}) as Record<string, unknown>;
     const items = Array.isArray(master.items) ? master.items as Record<string, unknown>[] : [];
+
+    // DUA BENTUK PUBLIKASI, dan keduanya sah.
+    //
+    // Paket review (`publish_detail`) menitipkan `review_detail`; pustaka Summary
+    // (`summary_library.publish`) menitipkan `rows` — baris grid yang dikoreksi orang. Sampai
+    // 2026-09-16 jembatan hanya mengenal yang pertama, jadi publikasi pustaka masuk ke sini
+    // dengan principal KOSONG dan nomor surat KOSONG.
+    //
+    // Itu bukan cacat tampilan: `promo_rule` disaring gerbang PER PRINCIPAL, dan irisan milik
+    // satu surat dikunci dengan nomornya. Aturan tanpa keduanya tersimpan rapi, terlihat benar
+    // di layar, dan tidak pernah ditanyakan siapa pun. Nama kolomnya saja yang berbeda di dua
+    // sisi; isinya sama-sama ada.
+    const rows = Array.isArray(content.rows) ? content.rows as Record<string, unknown>[] : [];
+    const baris = rows[0] ?? {};
+    const ambil = (dariDetail: unknown, dariBaris: unknown) => text(dariDetail) || text(dariBaris);
+
     return {
         draftId,
-        principal: text(detail.principal) || principalCadangan || "KINO NON FOOD",
-        suratProgram: text(detail.document_id),
-        promoLabel: text(detail.nama_program),
-        promoGroup: text(detail.variant_barang),
+        principal: ambil(detail.principal, baris.principle) || principalCadangan || "KINO NON FOOD",
+        suratProgram: ambil(detail.document_id, baris.surat_program),
+        promoLabel: ambil(detail.nama_program, baris.nama_program),
+        promoGroup: ambil(detail.variant_barang, baris.kelompok),
         programs: (Array.isArray(content.programs) ? content.programs : []) as SummaryProgram[],
         itemNames: Object.fromEntries(items.map((entry) => [text(entry.kode_barang), text(entry.nama_barang)])),
         settlement: text(settings.settlement),
