@@ -33,6 +33,48 @@ def minimum_of(tier):
         return tulisan
 
 
+def peserta(row, s):
+    """Siapa yang berhak ikut: SATU daftar, SATU arah — atau ditolak dengan sebabnya.
+
+    Kembalikan `(outlet_mode, outlet_classes, masalah)`.
+
+    Sebelum ini setiap surat yang membatasi pesertanya ditolak mentah, jadi yang terbit dari
+    Summary SELALU "semua outlet" dan pembatasannya harus dipasang tangan lewat impor Excel.
+    Tiga dari empat surat September produksi justru bentuk itu.
+
+    `promo_rule` hanya punya SATU tempat daftar peserta dan SATU arahnya, karena itulah yang
+    bisa ditanyakan gerbang atas satu baris faktur. Surat yang menyebut lebih dari satu daftar
+    tidak bisa dinyatakan utuh — dan separuh aturan peserta akan meloloskan potongan kepada
+    toko yang justru dikecualikan suratnya.
+
+    Daftar KODE outlet sengaja tidak dijawab di sini: jembatan sudah menamai daftarnya dengan
+    nomor suratnya sendiri dan menuliskan anggotanya ke `promo_outlet`. Yang diputuskan di sini
+    hanya KELAS outlet.
+    """
+    include=[t.strip() for t in (s.get('include_tags') or []) if str(t).strip()]
+    exclude=[t.strip() for t in (s.get('exclude_tags') or []) if str(t).strip()]
+    codes=[c for c in (s.get('outlet_codes') or []) if str(c).strip()]
+    kelas=include or exclude
+    if include and exclude:
+        return 'all',[],'Surat menyebut kelas outlet yang diikutkan DAN yang dikecualikan; satu aturan hanya bisa menunjuk satu daftar, satu arah'
+    if kelas and codes:
+        return 'all',[],'Surat menyebut kelas outlet DAN daftar kode outlet; pilih salah satu, karena satu aturan hanya menunjuk satu daftar'
+    if len(kelas)>1:
+        return 'all',[],f'Surat menyebut {len(kelas)} kelas outlet; satu aturan hanya bisa menunjuk SATU daftar peserta'
+    if kelas:
+        return ('only' if include else 'except'),[kelas[0]],None
+    if s.get('outlet_list_required') and not codes:
+        # "LIST OUTLET TERLAMPIR": daftarnya tidak ikut di setelan, jadi aturannya ditambatkan
+        # ke daftar bernama NOMOR SURATNYA — nama yang sama persis dengan yang dibuat layar
+        # "Daftar outlet peserta" saat suratnya diunggah. Selama lampirannya belum diunggah,
+        # daftar itu kosong, dan INCLUDE kosong berarti TIDAK ADA yang berhak. Gagal tertutup.
+        surat=str(row.get('document_id') or '').strip()
+        if not surat:
+            return 'all',[],'Surat menyebut lampiran daftar outlet tetapi nomor suratnya kosong, jadi daftarnya tidak punya nama untuk ditunjuk'
+        return 'only',[surat],None
+    return 'all',[],None
+
+
 def readiness(row, master):
     s=row['settings'];issues=[]
     if not row.get('start') or not row.get('end'):issues.append('Lengkapi tanggal mulai dan selesai')
@@ -41,8 +83,8 @@ def readiness(row, master):
     if s.get('aggregation')!='invoice':issues.append('Akumulasi lintas faktur belum dapat diterbitkan dari paket ini')
     for key,label in [('history_required','Riwayat pembelian'),('allocation_required','Alokasi outlet'),('max_per_period','Batas pemakaian per periode'),('region','Wilayah'),('exclusive_with','Pengecualian program')]:
         if s.get(key):issues.append(label+' harus diselesaikan sebelum aktivasi')
-    if s.get('outlet_codes') or s.get('outlet_list_required'):issues.append('Daftar outlet khusus belum terikat aturan paket ini')
-    if s.get('include_tags') or s.get('exclude_tags'):issues.append('Kelas outlet harus ditinjau melalui pustaka aturan Kino terlebih dahulu')
+    outlet_mode,outlet_classes,masalah_peserta=peserta(row,s)
+    if masalah_peserta:issues.append(masalah_peserta)
     if s.get('threshold_metric') not in ('quantity','value'):issues.append('Tentukan ambang kuantitas atau nilai')
     if s.get('mix_scope') not in ('same_sku','same_master_group_and_size','same_product_family'):issues.append('Tentukan cakupan mix')
     if s.get('repeat') is None:issues.append('Tentukan apakah berlaku kelipatan')
@@ -76,7 +118,8 @@ def readiness(row, master):
             built.append(tier)
         try:
             result.append(Program.model_validate(dict(id=row['row_id']+'-'+str(i),name=(row.get('nama_program') or row['row_id'])[:160],
-                start=row['start'],end=row['end'],codes=codes,channel=row.get('channel') or 'ALL',unit=s['unit'],
+                start=row['start'],end=row['end'],codes=codes,channel=row.get('channel') or 'ALL',
+                outlet_mode=outlet_mode,outlet_classes=outlet_classes,unit=s['unit'],
                 mix=s['mix_scope']!='same_sku',threshold=s['threshold_metric'],value_scope='eligible',basis='net' if s['price_basis']=='net' else 'gross',
                 stacking=False,priority=i,tiers=built,source_page=row.get('source_page') or 1,
                 source_quote=(row.get('source_quote') or row.get('ketentuan_pengambilan') or row['row_id'])[:4000])).model_dump(mode='json'))
