@@ -204,7 +204,9 @@ export function simulateLetter(letter: PublishedLetter, trialLines: TrialLine[] 
 
     return {
         ok: rows.length > 0,
-        suratProgram: letter.suratProgram,
+        // Semua surat yang benar-benar dimuat, bukan yang tertulis di kepala publikasi: satu
+        // Summary bisa memuat beberapa surat, dan yang dilihat pemeriksa harus yang akan ditulis.
+        suratProgram: [...new Set(rows.map((row) => row.suratProgram))].join(", ") || letter.suratProgram,
         ruleCount: rows.length,
         groups: [...groups.values()],
         refused, notes, trial, warnings,

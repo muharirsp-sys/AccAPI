@@ -289,16 +289,22 @@ export async function POST(request: NextRequest) {
             const base = no.split("-").length >= 3 ? no.slice(0, no.lastIndexOf("-")) : no;
             if (!internal.has(base)) internal.set(base, row.name);
         }
+        // Satu daftar PER SURAT, dengan nama yang persis dipakai aturannya. Publikasi yang
+        // menumpuk beberapa surat menghasilkan beberapa nama; menulis semuanya di bawah satu
+        // nama saja membuat aturan surat lain menunjuk daftar yang tidak pernah ada — dan
+        // daftar yang tidak ada MENAHAN semuanya.
         const anggota: (typeof promoOutlet.$inferInsert)[] = [];
-        for (const kode of letter.outletCodes) {
-            const atas = kode.toUpperCase();
-            const code = mapping.get(atas) ?? (internal.has(atas) ? atas : "");
-            if (!code || !internal.has(code)) { ditolak.push(`Outlet ${kode} pada daftar publikasi tidak ada di master pelanggan`); continue; }
-            anggota.push({
-                listName: letter.suratProgram.toUpperCase(), customerCode: code, customerName: internal.get(code) ?? "",
-                sourceCode: mapping.has(atas) ? atas : "", periodStart: null, periodEnd: null, active: true,
-                note: `dari publikasi Summary ${draftId.slice(0, 8)}`, importedBy: gate.email!,
-            });
+        for (const listName of hasil.outletLists) {
+            for (const kode of letter.outletCodes) {
+                const atas = kode.toUpperCase();
+                const code = mapping.get(atas) ?? (internal.has(atas) ? atas : "");
+                if (!code || !internal.has(code)) { ditolak.push(`Outlet ${kode} pada daftar publikasi tidak ada di master pelanggan`); continue; }
+                anggota.push({
+                    listName, customerCode: code, customerName: internal.get(code) ?? "",
+                    sourceCode: mapping.has(atas) ? atas : "", periodStart: null, periodEnd: null, active: true,
+                    note: `dari publikasi Summary ${draftId.slice(0, 8)}`, importedBy: gate.email!,
+                });
+            }
         }
         if (anggota.length) {
             const ditulis = await db.insert(promoOutlet).values(anggota)
@@ -348,7 +354,7 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json({
-        ok: true, suratProgram: letter.suratProgram, principal: letter.principal,
+        ok: true, suratProgram: suratDimuat.join(", "), principal: letter.principal,
         aturan: ditulis, outlet: outletDimuat,
         program: (letter.programs ?? []).length,
         ditolak, catatan,

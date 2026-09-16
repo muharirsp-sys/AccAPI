@@ -72,3 +72,32 @@ def test_kelayakan_outlet_tidak_boleh_hilang_saat_disimpan():
         [_baris(outlet_mode="only", outlet_classes="LOYALTY")], MASTER)
     assert hasil[0]["outlet_mode"] == "only"
     assert hasil[0]["outlet_classes"] == "LOYALTY"
+
+
+def test_kelompok_kosong_tidak_mencocok_seluruh_katalog():
+    """Kelompok kosong = "belum tahu", BUKAN "semuanya". Ini gagal-terbuka yang paling mahal.
+
+    Dulu `_apply_native_kelompok` memakai SELURUH master sebagai pool begitu kelompoknya kosong.
+    Karena varian dan gramasi baris itu juga "ALL", setiap barang principal ikut cocok, dan satu
+    baris pecah jadi satu baris per kelompok — masing-masing dengan kode barang NYATA. Yang
+    membuatnya berbahaya: `issues` jadi KOSONG, jadi draftnya terlihat sah dan bisa diterbitkan
+    sebagai aturan yang menahan faktur. Terbukti 2026-09-16: satu draft berubah dari 7 baris jadi
+    607 hanya karena disimpan ulang untuk mengganti judulnya.
+
+    Kelompok kosong justru keadaan NORMAL tiap baris SESUDAH ekstraksi (lihat `baca_surat_rapi`,
+    yang sengaja tidak menebak kelompok), jadi tanpa penjaga ini setiap surat berpeluang
+    menerbitkan promo untuk seluruh katalog principal.
+    """
+    hasil = resolve_kode_barangs([_baris(kelompok="", kode_barangs="")], MASTER)
+    assert len(hasil) == 1, f"baris tanpa kelompok tidak boleh pecah jadi {len(hasil)} baris"
+    assert hasil[0]["kode_barangs"] == "", hasil[0]["kode_barangs"]
+
+
+def test_kelompok_yang_bukan_kelompok_master_juga_tidak_mencocok_semuanya():
+    """Kelompok salah ketik/halusinasi jatuh ke jalur yang sama, dan diam-diam.
+
+    Dulu pool kosong (karena tak ada yang cocok) dibalikkan menjadi SELURUH master. Salah ketik
+    satu huruf berarti barisnya mengklaim seisi katalog, tanpa satu pun galat.
+    """
+    hasil = resolve_kode_barangs([_baris(kelompok="OVALE FACIAL LOTIONN", kode_barangs="")], MASTER)
+    assert len(hasil) == 1 and hasil[0]["kode_barangs"] == "", hasil

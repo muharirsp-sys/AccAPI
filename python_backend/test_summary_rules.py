@@ -119,6 +119,7 @@ def main():
     check_outlet_store()
     check_split()
     check_flow()
+    check_conflict_guard_per_channel()
 
 
 def check_split():
@@ -311,6 +312,17 @@ def check_compiler():
     programs, issues = compile_programs([row(periode_start="", periode_end="")], period=("Maret 2026", ""))
     assert programs == [] and len(issues) == 1, issues
 
+    # SATU SUMMARY, BANYAK SURAT. Dua baris yang seluruh isinya sama kecuali nomor suratnya
+    # adalah DUA program, dan masing-masing membawa asalnya sendiri — kalau digabung, aturan
+    # surat kedua tersimpan atas nama surat pertama dan surat keduanya hilang dari `promo_rule`.
+    programs, issues = compiled([row(no="1", surat_program="BP001", kelompok="Kelompok A"),
+                                 row(no="2", surat_program="BP002", kelompok="Kelompok B")])
+    assert issues == [] and len(programs) == 2, (programs, issues)
+    assert [(p.surat_program, p.kelompok) for p in programs] == [("BP001", "Kelompok A"), ("BP002", "Kelompok B")], programs
+    # Baris tanpa nomor surat tetap terkompilasi; yang menolaknya jembatan, bukan compiler.
+    programs, issues = compiled([row()])
+    assert issues == [] and (programs[0].surat_program, programs[0].kelompok) == ("", "Kelompok A"), programs
+
     # Baris tidak lengkap dilaporkan, tidak ditebak, dan tidak menghasilkan program.
     for bad, note in [
         (row(kode_barangs=""), "kode kosong"),
@@ -474,6 +486,30 @@ def check_suggestions():
     after = calculate(valid, [line("A", "12", "5000")], "2026-06-15", "GT")
     assert after["bonuses"][0]["quantity"] == "1", after["bonuses"]
     print("summary suggestion check: OK")
+
+
+def check_conflict_guard_per_channel():
+    """Penjaga V4 membuang bentrok DARI CHANNEL-NYA SENDIRI, bukan dari semua channel.
+
+    Satu kode fisik memang sah muncul di beberapa channel dengan tier berbeda — itu bentuk normal
+    surat Priskila (Retail/MTI/Grosir/Star Outlet). Dulu pembuangannya melepas channel-nya, jadi
+    satu bentrok di MTI ikut menghapus kode itu dari RETAIL, dan blok Retail terbit
+    "(TIDAK ADA ITEM COCOK DI MASTER)" padahal Dataset Excel-nya lengkap. Ketidaksimetrisan
+    PDF vs Excel itu baris I di checklist akurasi.
+    """
+    excel_rows = [
+        {"pdf_key": 0, "channel": "MTI", "kode_barang": "P1"},
+        {"pdf_key": 1, "channel": "MTI", "kode_barang": "P1"},
+        {"pdf_key": 2, "channel": "Retail", "kode_barang": "P1"},
+    ]
+    peta = {}
+    for er in excel_rows:
+        peta.setdefault((er["channel"], er["kode_barang"]), set()).add(er["pdf_key"])
+    bentrok = {k for k, v in peta.items() if len(v) > 1}
+    assert bentrok == {("MTI", "P1")}, bentrok
+    # Baris Retail HARUS selamat: pasangan (channel, kode)-nya tidak bentrok.
+    assert ("Retail", "P1") not in bentrok
+    print("summary conflict-guard check: OK")
 
 
 if __name__ == "__main__":

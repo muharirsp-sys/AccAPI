@@ -50,6 +50,7 @@ Side Effects: dokumen; tidak dieksekusi. Sinkronkan bila guard di kode berubah.
 | **M. Detail barang ikut dicetak ke PDF** | Form Summary memuat halaman daftar barang per program | Detail diperlakukan sebagai lampiran Summary | Detail HANYA ke Excel (dipakai menyaring & menyandingkan per baris); PDF = Summary (+ tabel diskon distributor) | PDF tidak punya halaman "Detail barang"; sheet `Detail` ada di Excel |
 | **N. Padanan merek surat -> master dikerjakan ulang tiap surat** | Merek yang sama ditanyakan lagi bulan berikutnya (mis. "OVALE 2IN1 CLEANSER") | Alias hanya hidup di skrip/ingatan, tidak tersimpan | `principal_mapping` kind=**'brand'** (migrasi 0010) + tab "Merek surat" di `/principal-mapping` | Sheet `Tidak_Cocok` kosong; tiap alias yang dipakai tercatat di kolom CATATAN Detail |
 | **O. Gramasi dikarang dari surat** | Kolom Gramasi berisi ukuran yang tidak dijual, atau kosong | Surat menyebut merek, bukan ukuran | Gramasi diambil dari BARANG hasil match di master, diurutkan menaik ("50ML, 90ML & 200ML") | Tiap ukuran di kolom Gramasi ada pada minimal 1 baris Detail kelompok itu |
+| **P. "All Variant" menelan varian milik baris lain** | Satu surat menyebut DUA program dalam satu kelompok master — yang umum dan yang bervarian (mis. `RESIK V KHASIAT MANJAKANI` dan `RESIK V MANJAKANI WHITENING`, keduanya kelompok `RESIK V MANJAKANI`) — lalu baris yang umum ikut menarik varian milik baris satunya, sehingga varian itu dapat bonus dua kali | Pemilih Varian di grid hanya menawarkan `ALL VARIANT` dan varian yang BERNAMA; barang bervarian kosong tidak bisa dipilih sendiri, jadi "non-whitening" tak bisa dinyatakan lewat layar. `_apply_native_kelompok` pun memperlakukan `ALL VARIANT` sebagai SELURUH kelompok | BELUM ADA. Untuk sekarang `kode_barangs` baris yang umum diisi tangan (resolver memakainya apa adanya bila terisi) | Keputusan pengguna 2026-09-16: **`ALL VARIANT` = semua varian KECUALI yang sudah diklaim baris lain pada kelompok yang sama di surat yang sama.** Jumlahkan barang tiap baris se-kelompok — tidak boleh ada kode yang muncul di dua baris |
 | **K. Cut price (MTI) salah** | MTI balas `[]` / cut price tak jadi DISC_RP | prompt tanpa contoh konkret Cut Price ("aturan 4b") | contoh Cut Price di prompt parse (jangan dihapus); MTI trigger "Beli 1", benefit DISC_RP | MTI ada isinya; benefit_type = DISC_RP, trigger Beli 1 |
 
 ---
@@ -94,3 +95,10 @@ Side Effects: dokumen; tidak dieksekusi. Sinkronkan bila guard di kode berubah.
   di-span di renderer sesuai aturan 2026-07-17.
   **Surat berlapis teks (Kino) TIDAK di-OCR**: `kino_letter.py` deterministik lebih dulu, Mistral hanya
   untuk surat hasil scan — OCR pada surat berteks hanya menambah biaya dan risiko salah baca.
+
+- **2026-09-16** — uji dua surat (BP2609007664 + BP2609007713) di produksi. Tambah baris **P**:
+  keputusan pengguna atas `RESIK V KHASIAT MANJAKANI` vs `RESIK V MANJAKANI WHITENING` — **"All Variant"
+  berarti semua varian KECUALI yang sudah diklaim baris lain pada kelompok yang sama**. Berlaku untuk
+  kasus serupa berikutnya, bukan hanya Resik V. Catatan: 13 aturan Excel BP2609007713 yang sudah ada
+  MELANGGAR aturan ini (`RESIK V KHASIAT MANJAKANI` memuat 6 kode, termasuk 3 kode whitening yang juga
+  dipegang baris `RESIK V MANJAKANI WHITENING`) — perlu dibetulkan jadi 3 kode.

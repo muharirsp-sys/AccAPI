@@ -275,6 +275,19 @@ def pull_once(owner, confirm_duplicate=False):
     """
     imported, duplicated, failed = [], [], []
     for entry in websales_store.pending():
+        # SUDAH DITARIK diperiksa LEBIH DULU, bukan diserahkan ke kunci unik.
+        #
+        # Selama ini jaminannya dipegang `sales_order_request`: pull kedua menabrak kunci unik,
+        # permintaannya ditandai, dan tidak ada order kedua. Gerbang order ganda yang datang
+        # kemudian menahan permintaan itu lebih awal dengan HTTP 409, jadi kunci uniknya tidak
+        # pernah sempat berbunyi — permintaan yang ordernya SUDAH ADA masuk ke `failed`, TIDAK
+        # ditandai `pulled`, dan muncul lagi sebagai "dugaan order ganda" pada setiap tarikan
+        # berikutnya. Yang ia gandakan memang dirinya sendiri; itu bukan pertanyaan untuk orang.
+        with connect() as db:
+            sudah = db.execute("SELECT id FROM sales_order WHERE request_id=?", (entry["id"],)).fetchone()
+        if sudah:
+            duplicated.append(entry["id"])
+            continue
         try:
             order_id = store_order(owner, entry["outlet"], entry["channel"], entry["order_date"],
                                    entry["note"], entry["lines"], request_id=entry["id"],

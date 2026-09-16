@@ -29,11 +29,20 @@ from typing import Optional
 _STORE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "golden_snapshots.jsonl")
 
 
+# Kunci yang LAHIR BARU tiap run dan tidak menyatakan apa pun tentang hasilnya.
+#
+# `id` baris dibuat `uuid4` tiap kali matcher memecah satu baris surat jadi beberapa baris
+# kelompok. Selama ia ikut ditandatangani, sidik jari golden BERBEDA di setiap run — jadi
+# gerbang determinisme selalu menjawab "new" dan tidak pernah sekali pun menahan apa pun,
+# padahal berkas PDF dan Excel-nya sendiri sudah byte-identik. Terbukti pada Priskila 2026-09-16.
+_VOLATIL = {"id", "_matched_items_cache"}
+
+
 def _canon(obj, sort_rows: bool):
     """Normalisasi rekursif -> struktur yg json.dumps-nya stabil (kunci dict terurut).
     List di-sort HANYA kalau sort_rows (dipakai utk key identitas input, bukan output)."""
     if isinstance(obj, dict):
-        return {k: _canon(obj[k], sort_rows) for k in sorted(obj.keys())}
+        return {k: _canon(obj[k], sort_rows) for k in sorted(obj.keys()) if k not in _VOLATIL}
     if isinstance(obj, list):
         items = [_canon(x, sort_rows) for x in obj]
         if sort_rows:

@@ -173,3 +173,51 @@ test("kembar yang ISINYA BERBEDA tetap ditolak: di situ memang ada dua jawaban",
     assert.equal(hasil.refused.length, 1);
     assert.match(hasil.refused[0], /isi BERBEDA \(1PCS lawan 2PCS\)/);
 });
+
+/* SATU PUBLIKASI, BANYAK SURAT (sejak #74 Summary menumpuk per principal + bulan). Sampai
+   2026-09-16 nomor surat dan kelompok diambil dari BARIS PERTAMA publikasi dan dipasang ke
+   SEMUA baris: aturan surat kedua tersimpan atas nama surat pertama, surat keduanya hilang
+   dari `promo_rule`, dan memuat ulang surat pertama kelak akan mencabut aturan surat kedua. */
+test("tiap program membawa nomor surat dan kelompoknya sendiri", () => {
+    const hasil = bridgeRows(letter({
+        programs: [
+            program({ id: "PN-A", surat_program: "BP2609007664", kelompok: "OVALE FACIAL LOTION", codes: ["K1330001006010"] }),
+            program({ id: "PN-B", surat_program: "BP2609007713", kelompok: "RESIK V MANJAKANI", codes: ["K1370000005010"] }),
+        ],
+    }));
+    assert.deepEqual(hasil.refused, []);
+    assert.deepEqual(hasil.rows.map((row) => [row.suratProgram, row.promoGroup]), [
+        ["BP2609007664", "OVALE FACIAL LOTION"],
+        ["BP2609007713", "RESIK V MANJAKANI"],
+    ]);
+});
+
+test("publikasi beku tanpa asal per program mundur ke nilai publikasi", () => {
+    const hasil = bridgeRows(letter({ programs: [program({ surat_program: "", kelompok: "" })] }));
+    assert.deepEqual(hasil.refused, []);
+    assert.equal(hasil.rows[0].suratProgram, "BP2609007713");
+    assert.equal(hasil.rows[0].promoGroup, "RESIK V KHASIAT MANJAKANI");
+});
+
+test("program tanpa nomor surat di mana pun ditolak sendirian, bukan menjatuhkan publikasinya", () => {
+    const hasil = bridgeRows(letter({
+        suratProgram: "",
+        programs: [program({ id: "PN-A", surat_program: "BP2609007664" }), program({ id: "PN-B", surat_program: "" })],
+    }));
+    assert.equal(hasil.rows.length, 2);
+    assert.deepEqual(hasil.rows.map((row) => row.suratProgram), ["BP2609007664", "BP2609007664"]);
+    assert.equal(hasil.refused.length, 1);
+    assert.match(hasil.refused[0], /PN-B.*nomor surat/);
+});
+
+test("daftar outlet dari setelan publikasi dibuat satu per surat", () => {
+    const hasil = bridgeRows(letter({
+        outletCodes: ["C-BA0003"],
+        programs: [
+            program({ id: "PN-A", surat_program: "BP2609007664", codes: ["K1330001006010"] }),
+            program({ id: "PN-B", surat_program: "BP2609007713", codes: ["K1370000005010"] }),
+        ],
+    }));
+    assert.deepEqual(hasil.outletLists, ["BP2609007664", "BP2609007713"]);
+    assert.deepEqual(hasil.rows.map((row) => row.outletList), ["BP2609007664", "BP2609007713"]);
+});

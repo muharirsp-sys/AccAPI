@@ -87,6 +87,18 @@ class Tier(StrictModel):
 class Program(StrictModel):
     id: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=160)
+    # ASAL program ini, dibawa PER PROGRAM dan bukan per publikasi.
+    #
+    # Sampai 2026-09-16 nomor surat dan kelompok hanya ada di tingkat publikasi, diambil dari
+    # BARIS PERTAMA. Bentuk itu sah selama satu publikasi = satu surat. Sejak satu Summary
+    # menumpuk banyak surat per principal + bulan, ia tidak sah lagi: seluruh aturan surat
+    # kedua tersimpan atas nama surat pertama, surat keduanya hilang dari `promo_rule`, dan
+    # memuat ulang surat pertama kelak akan MENCABUT aturan surat kedua.
+    #
+    # Kosong pada publikasi yang sudah beku sebelum tanggal itu; pembacanya mundur ke nilai
+    # tingkat publikasi supaya yang lama tetap terbaca sama.
+    surat_program: str = Field(default="", max_length=80)
+    kelompok: str = Field(default="", max_length=160)
     start: date
     end: date
     codes: list[str] = Field(min_length=1, max_length=2000)
@@ -400,7 +412,10 @@ def compile_programs(rows, period=None):
             issues.append(f"{label}: {problem}")
             continue
         blob = (ketentuan + " " + str(row.get("keterangan", ""))).lower()
-        key = (str(row.get("channel_gtmt", "")).strip().upper() or "ALL", start, end, unit, kind,
+        # Nomor surat ikut jadi kunci: dua surat yang kebetulan menyebut barang, periode, dan
+        # channel yang sama bukan satu program — menggabungkannya membuat salah satunya hilang.
+        key = (str(row.get("surat_program", "")).strip(),
+               str(row.get("channel_gtmt", "")).strip().upper() or "ALL", start, end, unit, kind,
                any(mark in ketentuan.lower() for mark in MIX_MARKS), any(mark in blob for mark in STACK_MARKS), tuple(sorted(codes)), outlet)
         group = groups.setdefault(key, {"rows": [], "tiers": {}})
         group["rows"].append(row)
@@ -412,7 +427,7 @@ def compile_programs(rows, period=None):
             group["tiers"][minimum] = tier
     programs, used = [], set()
     for index, (key, group) in enumerate(groups.items()):
-        channel, start, end, unit, kind, mix, stacking, codes, outlet = key
+        surat, channel, start, end, unit, kind, mix, stacking, codes, outlet = key
         first = group["rows"][0]
         identifier = str(first.get("promo_group_id", "")).strip() or f"P{index + 1}"
         if identifier in used:
@@ -421,6 +436,7 @@ def compile_programs(rows, period=None):
         page = first.get("source_page")
         programs.append(dict(
             id=identifier[:80], name=(str(first.get("nama_program", "")).strip() or str(first.get("kelompok", "")).strip() or identifier)[:160],
+            surat_program=surat[:80], kelompok=str(first.get("kelompok", "")).strip()[:160],
             start=start, end=end, codes=list(codes), channel=channel, unit=unit, mix=mix, threshold=kind,
             outlet_mode=outlet[0], outlet_classes=list(outlet[1]),
             value_scope="eligible", basis="gross", stacking=stacking, priority=index + 1,
