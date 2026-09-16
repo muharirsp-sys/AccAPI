@@ -97,33 +97,6 @@ def kino_extraction(raw, master):
             "on_faktur": result["on_faktur"], "mechanism": result["mechanism"],
             "source_hash": hashlib.sha256(raw).hexdigest()}
 
-
-def kino_extraction(raw, master):
-    """Surat Kino berlapis teks dibaca deterministik; surat lain (dan scan) tetap ke OCR.
-
-    Dipakai sebelum Mistral karena surat Kino dicetak dari sistem mereka: lapisan teksnya
-    utuh, jadi OCR hanya menambah biaya dan risiko salah baca. Gagal apa pun -> None supaya
-    jalur OCR tetap jalan; parser ini tidak boleh menjadi titik gagal baru.
-    """
-    import hashlib
-
-    from kino_letter import parse_pdf
-    from summary_mistral import attach_codes
-
-    try:
-        result = parse_pdf(raw)
-    except Exception:
-        return None
-    if not result["letter"].get("Kode Aju") or not result["letter"].get("Mekanisme Promo"):
-        return None
-    catalog = [{"code": str(item.get("kode_barang", "")).strip(), "name": str(item.get("nama_barang", "")),
-                "group": str(item.get("kelompok", ""))} for item in master.get("items", [])]
-    attach_codes(result["rows"], catalog, result["warnings"])
-    return {"rows": result["rows"], "warnings": result["warnings"][:400], "page_count": result["page_count"],
-            "model": "deterministic:kino_letter", "pipeline_version": 1, "cached": False,
-            "on_faktur": result["on_faktur"], "mechanism": result["mechanism"],
-            "source_hash": hashlib.sha256(raw).hexdigest()}
-
 @router.post("/summary/manual")
 async def summary_manual_auto_generate(
     request: Request,
@@ -974,9 +947,21 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
         judul = judul_summary(principle_name, result["rows"])
         berjalan = find_open_draft(user, judul)
         if berjalan is not None:
+            sebelum = len(berjalan["content"].get("rows") or [])
             draft = append_rows(berjalan["id"], user, result["rows"], master)
             if draft is not None:
-                return {"ok": True, "rows": draft["content"]["rows"], "draft": draft, "disusulkan": True}
+                # `rows` TETAP berarti "yang dihasilkan ekstraksi INI", bukan seluruh isi draft.
+                #
+                # Layar menambahkan hasil ekstraksi ke grid yang sudah ada
+                # (`setRows(prev => [...prev, ...parsedRows])`). Sempat dikembalikan seluruh isi
+                # draft di sini, dan akibatnya baris yang sudah ada di layar terhitung dua kali:
+                # 1 baris lama + 6 baris "baru" = 7, dengan surat pertama muncul dua kali.
+                #
+                # Mengubah arti sebuah field tanpa mengubah yang membacanya selalu berakhir
+                # begini. Yang dikembalikan adalah baris yang BENAR-BENAR bertambah — bukan yang
+                # dikirim, karena yang kembar tidak jadi ditambahkan.
+                bertambah = (draft["content"].get("rows") or [])[sebelum:]
+                return {"ok": True, "rows": bertambah, "draft": draft, "disusulkan": True}
         draft = create_draft(user, judul, {"rows": result["rows"], "programs": [], "master": master, "extraction": {key: value for key, value in result.items() if key != "rows"}}, raw)
         return {"ok": True, "rows": result["rows"], "draft": draft}
     except ValueError as error:
