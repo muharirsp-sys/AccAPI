@@ -4571,6 +4571,32 @@ def _ensure_dir(p: str):
     os.makedirs(p, exist_ok=True)
 
 
+BULAN_ID = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI",
+            "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
+
+
+def _label_periode(mulai, selesai):
+    """"2026-09-01".."2026-09-30" -> "SEPTEMBER 2026". Beda bulan -> kedua tanggalnya ditulis.
+
+    Satu bulan penuh ditulis sebagai nama bulannya karena itulah yang dibaca orang di Form
+    Summary, dan itu pula bentuk yang dipakai form-form sebelumnya. Yang MELINTASI bulan tidak
+    diringkas jadi satu nama bulan: meringkasnya akan menyembunyikan separuh periodenya.
+    """
+    from datetime import date as _date
+    def urai(teks):
+        try:
+            bagian = str(teks or "").strip().split("-")
+            return _date(int(bagian[0]), int(bagian[1]), int(bagian[2]))
+        except (ValueError, IndexError):
+            return None
+    a, b = urai(mulai), urai(selesai)
+    if not a or not b:
+        return ""
+    if (a.year, a.month) == (b.year, b.month):
+        return f"{BULAN_ID[a.month - 1]} {a.year}"
+    return f"{a.day:02d} {BULAN_ID[a.month - 1][:3]} {a.year} - {b.day:02d} {BULAN_ID[b.month - 1][:3]} {b.year}"
+
+
 def _apply_native_kelompok(rows_to_check, master_items):
     final_rows_out = []
     def norm(x: object) -> str:
@@ -4832,6 +4858,14 @@ def process_summary_generation_job(job_id: str, token: str, rows: List[Dict[str,
 
         # TAHAP 2: Native Master DB Mapping (Injects Kelompok perfectly)
         _apply_native_kelompok(rows, items)
+
+        # Kolom "Periode" pada Form Summary membaca `periode`, tetapi baris draft menyimpan
+        # `periode_start`/`periode_end` dan TIDAK ADA yang pernah menulis `periode` — jadi
+        # kolomnya selalu kosong di setiap Form Summary yang pernah dicetak. Diturunkan di sini,
+        # dan hanya bila belum diisi: yang sudah ditulis orang tidak ditimpa.
+        for _r in rows:
+            if not str(_r.get("periode", "")).strip():
+                _r["periode"] = _label_periode(_r.get("periode_start"), _r.get("periode_end"))
             
         def my_canvas(canvas_obj, doc_obj):
             canvas_obj.saveState()
