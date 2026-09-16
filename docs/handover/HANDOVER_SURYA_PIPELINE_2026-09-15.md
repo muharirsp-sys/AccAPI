@@ -116,7 +116,8 @@ ada di `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md` bagian **PIPELINE PENUH**.
 - Migrasi **0018 sudah dijalankan dan diverifikasi**; `promo_rule` 234 baris, seluruhnya
   ber-`channel` KOSONG, jadi tidak satu pun keputusan gerbang atas data lama berubah.
 - Migrasi **0019 lihat bagian terakhir** — harus dijalankan sebelum kode barunya naik.
-- `promo_outlet`: hanya `LOYALTY` (41 outlet). `BP2609007909` **belum** dimuat.
+- `promo_outlet`: `LOYALTY` (41 outlet) dan `BP2609007909` (2 outlet, INCLUDE, 105 aturan
+  menunjuknya) — **dimuat 16 Sep 2026** dari suratnya sendiri.
 - Order Sales: **nol order**. Penegakan channel di sana tidak menahan pekerjaan siapa pun.
 - Gerbang kirim faktur otomatis **TETAP TERTUTUP**.
 
@@ -128,24 +129,70 @@ kecuali suratnya memang menyebutnya — kalau diisi, SO 13044 berhenti dijelaska
 
 ## Yang MASIH menggantung — kerjakan dari sini
 
-1. **Dua langkah di layar produksi, keduanya butuh sesi login pengguna** (warisan dua sesi):
-   unggah `BP2609007909` lewat Aturan Promo → Daftar outlet peserta (kedua outletnya sudah
-   terpetakan), lalu tekan **Validasi** pada batch `ORDER_DETAIL_20260912_20260912.xlsx`.
-   Target tetap 48 lolos; alasannya baris demi baris ada di handover sesi kedua.
-2. **Jembatan Summary belum pernah dijalankan ujung ke ujung dengan sesi login sungguhan.**
-   Terbukti sampai dinding autentikasi saja. Gerbang persetujuan yang baru SUDAH terbukti
-   lengkap di lokal (kedelapan keadaannya), tetapi jalur penuhnya butuh publikasi Summary nyata.
-3. **Tiga CUST_ID2 belum ada di `principal_mapping`** — datanya sudah ada di
-   `promo_outlet.source_code`, tinggal disalin ke Mapping Principal.
+1. ~~**Dua langkah di layar produksi.**~~ **SELESAI 16 Sep 2026**, dikerjakan di layar produksi
+   dengan sesi login pengguna. Diperiksa, bukan dipercaya dari notifikasi layar:
+
+   | Yang diperiksa | Hasil |
+   |---|---|
+   | Anggota daftar `BP2609007909` | **2** — `C-BA0003` BAJI PAMAI (`5191202075409`), `C-WA0012` WANG MART (`5191202076135`), keduanya aktif, nol kode ditolak |
+   | Aturan yang menunjuk daftar itu | **105**, mode **INCLUDE** |
+   | Channel ke-105 aturan | **kosong** — peringatan operasional BAJI PAMAI/MT terhormati |
+   | Total `promo_rule` | tetap **234**; tidak ada aturan baru, hanya ditunjuk ke daftarnya |
+   | `LOYALTY` | tidak tersentuh: 41 toko, ketiga talinya utuh |
+   | Validasi ulang batch 12 Sep | `POST /api/principal-order/validate` → 200; **48 baris, 48 cocok, 0 perlu ditinjau** |
+   | Per SO | 13044 = 20 · 13050 = 3 · 13051 = 8 · 13054 = 17 — sama persis dengan tabel handover sesi kedua |
+
+   Yang dibuktikan menjalankan ulang: hasil 48 yang lama berasal dari 12 Sep, sebelum kuota
+   bonus, order ganda, channel, dan ambang beli ada, dan sebelum daftar peserta dimuat. Kelima
+   gerbang baru itu kini sudah melihat batch yang sama dan tidak satu pun menahannya. **SO 13044
+   tetap dijelaskan** — outletnya BAJI PAMAI, kini peserta INCLUDE surat itu, jadi kelima baris
+   3% di posisi 4 masih punya aturannya.
+2. **Jembatan Summary: dicoba 16 Sep, dan sebabnya akhirnya ketahuan — bukan autentikasi.**
+   Jalur ini tidak pernah bisa DICAPAI karena langkah **nol**-nya rusak di produksi. Diperiksa
+   langsung di container, bukan disimpulkan dari layar:
+
+   ```
+   data/masters      -> tidak ada
+   database.sqlite   -> 0 byte, tanpa tabel `principles`
+   ```
+
+   Dua kegagalan senyap bertumpuk: `MASTERS_DIR` tidak pernah dibuat (unggah master mati
+   HTTP 500, di layar berbunyi "Error jaringan"), dan registrinya memakai path relatif
+   terhadap cwd sehingga lahir di dalam image dan terhapus tiap deploy — tabelnya pun tidak
+   pernah dibuat, jadi tiap pembacaan jatuh ke `except:` telanjang dan menjawab "belum ada
+   principle". **Jawaban itu sama persis dengan jawaban yang benar ketika memang belum ada**,
+   dan itulah kenapa tidak ada yang pernah curiga.
+
+   **Sudah diperbaiki** (`3f363d0`): registry pindah ke `data/principles.sqlite3` (satu-satunya
+   folder yang terbukti bertahan antar deploy), tabel dan folder dipastikan ada, kedua fungsi
+   registry MELEMPAR alih-alih menelan, unggahan yang registrinya gagal membersihkan berkasnya
+   sendiri, dan layar membawa status aslinya. Ada tesnya: `test_principles_registry.py`.
+
+   **Yang masih menggantung: perbaikan ini belum naik ke produksi.** Sesudah ia naik, urutan
+   percobaannya: Master Principle (nama HARUS persis `KINO NON FOOD`, berkasnya
+   `master_barang_principle/MASTER BARANG KINO NON FOOD.xlsx` — dua kandidat lain gagal dibaca
+   parser) → Summary Promo → Gunakan Principle → unggah PDF surat → koreksi → terbitkan →
+   simulasi. **Berhenti di simulasi** (keputusan pengguna 16 Sep): tiap surat KINO yang ada
+   sudah punya aturannya dari impor Excel (`source` kosong), sedangkan jalur Summary menulis
+   dengan `source='surat'` dan hanya mengganti irisannya sendiri — jadi ia MENAMBAH set kedua,
+   bukan mengganti.
+3. ~~**Tiga CUST_ID2 belum ada di `principal_mapping`.**~~ **SELESAI 16 Sep** (butir 4.63),
+   di produksi: `52390254695`→`C-KOS005`, `2191200123409`→`C-KA0059`, `3210402085278`→`C-LO0019`.
+   Diperiksa ulang ke `promo_outlet.source_code` sebelum ditulis, dan dipastikan belum ada — baik
+   lewat kode Kino maupun kode internalnya — supaya upsert tidak menimpa pemetaan yang benar.
+   Customer mapping 1.435 → **1.438**; ketiganya ada di master dan ber-channel **GT**.
 4. **Konfirmasi Kino**: Indomaret 3,1% vs 3% (Rp 8,13 juta menggantung).
-5. **`readiness()` menolak surat yang membatasi peserta** (`include_tags`/`outlet_codes`), jadi
-   setiap program yang terbit dari Summary selalu "semua outlet". Tiga dari empat surat September
-   produksi justru bentuk itu, dan ketiganya masuk lewat impor Excel. Jalan keluarnya sekarang
-   dua langkah (terbitkan dulu, lalu unggah suratnya di Daftar outlet peserta yang akan menunjuk
-   aturannya). **Untuk surat EXCLUDE arahnya masih harus dibalik tangan.**
+5. ~~**`readiness()` menolak surat yang membatasi peserta.**~~ **SELESAI 16 Sep** (butir 4.60).
+   `peserta()` memetakan `include_tags`/`exclude_tags`/`outlet_codes`/`outlet_list_required` ke
+   `outlet_mode`/`outlet_classes`; jembatan dan `promo_rule.outlet_list` memang sudah siap sejak
+   awal, jadi tidak ada kolom baru dan tidak ada migrasi. Arah EXCLUDE **tidak perlu lagi dibalik
+   tangan**, dan "LIST OUTLET TERLAMPIR" kini menambatkan aturannya ke daftar bernama nomor
+   suratnya sendiri — kosong, jadi menahan, sampai lampirannya diunggah di Daftar outlet peserta.
 6. **Multi-principal.** Jalur `promo_rule` baru tersambung untuk KINO NON FOOD.
-7. **Order Sales**: channel diverifikasi, tetapi kolom channel di layarnya masih teks bebas
-   ("GT / RETAIL"). Mengubahnya jadi pilihan akan menghapus satu kelas kesalahan sekaligus.
+7. ~~**Order Sales**: kolom channel masih teks bebas.~~ **SELESAI 16 Sep** (butir 4.61).
+   Bukan jadi pilihan, melainkan jadi JAWABAN: Order Sales dan Order Masuk menanyakannya ke
+   `GET /api/outlet-channel` begitu kode pelanggan diisi, lalu memperlihatkannya. Daftar pilihan
+   masih menyisakan cara untuk salah, dan satu-satunya nilai yang sah memang cuma kata master.
 
 ---
 

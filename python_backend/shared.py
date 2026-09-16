@@ -5101,44 +5101,64 @@ def process_summary_generation_job(job_id: str, token: str, rows: List[Dict[str,
         if hasattr(e, '__traceback__'):
             append_error_log("background_summary_manual", e, {"user": user, "job_id": job_id})
 
-PRINCIPLES_JSON_PATH = os.path.join(BASE_DIR, "data", "principles.json")
 MASTERS_DIR = os.path.join(BASE_DIR, "data", "masters")
 
-def _load_principles() -> dict:
+# Registry principle HARUS ikut `data/`, dan ini bukan kerapian belaka: `data/` satu-satunya
+# folder yang bertahan antar deploy. Sebelumnya `sqlite3.connect("database.sqlite")` memakai
+# path RELATIF terhadap cwd, jadi berkasnya lahir DI DALAM image (`/app/python_backend/`) dan
+# ikut terhapus tiap kali container dibuat ulang.
+#
+# Dua kegagalan senyap yang bertumpuk di sini, dan keduanya diperiksa di produksi 2026-09-16:
+# tabelnya tidak pernah dibuat, jadi setiap pembacaan jatuh ke `except` telanjang dan menjawab
+# "belum ada principle" — jawaban yang SAMA PERSIS dengan jawaban yang benar ketika memang
+# belum ada, sehingga tidak ada yang pernah curiga. Lalu `MASTERS_DIR` tidak pernah dibuat,
+# jadi unggahannya mati dengan HTTP 500 yang di layar berbunyi "Error jaringan".
+#
+# Akibatnya jalur Summary Promo tidak pernah bisa dipakai sama sekali di produksi — bukan
+# karena jembatannya salah, melainkan karena langkah NOL-nya tidak pernah berhasil.
+PRINCIPLES_DB_PATH = os.path.join(BASE_DIR, "data", "principles.sqlite3")
+
+
+def _principles_db():
+    """Koneksi registry principle; folder dan tabelnya dipastikan ada lebih dulu."""
+    import sqlite3
+    os.makedirs(os.path.dirname(PRINCIPLES_DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(PRINCIPLES_DB_PATH)
     try:
-        import sqlite3
-        conn = sqlite3.connect("database.sqlite")
-        c = conn.cursor()
-        c.execute("SELECT id, name, filename, uploaded_by, created_at FROM principles")
-        res = {}
-        for row in c.fetchall():
-            res[row[0]] = {
-                "name": row[1],
-                "filename": row[2],
-                "uploaded_by": row[3],
-                "created_at": row[4]
-            }
+        conn.execute("CREATE TABLE IF NOT EXISTS principles("
+                     "id TEXT PRIMARY KEY, name TEXT NOT NULL, filename TEXT NOT NULL,"
+                     " uploaded_by TEXT, created_at TEXT)")
+    except Exception:
+        # Berkas registry yang rusak tetap harus MELEMPAR, tetapi koneksinya jangan ikut
+        # ditinggalkan terbuka: pemanggil tidak pernah memegangnya, jadi tidak ada yang
+        # bisa menutupnya, dan tiap pembacaan yang gagal menambah satu pegangan berkas.
         conn.close()
-        return res
-    except:
-        return {}
+        raise
+    return conn
+
+
+def _load_principles() -> dict:
+    """Peta pid -> keterangan. GAGAL BERSUARA: "tidak bisa dibaca" bukan "belum ada"."""
+    conn = _principles_db()
+    try:
+        rows = conn.execute("SELECT id, name, filename, uploaded_by, created_at FROM principles").fetchall()
+    finally:
+        conn.close()
+    return {r[0]: {"name": r[1], "filename": r[2], "uploaded_by": r[3], "created_at": r[4]} for r in rows}
 
 def _save_principles(data: dict):
+    """Tulis registry. Kegagalan DILEMPAR, tidak di-`print` lalu dilupakan: unggahan yang
+    berkasnya tersimpan tetapi registrinya gagal akan terlihat sukses dan hilang dari daftar."""
+    conn = _principles_db()
     try:
-        import sqlite3
-        conn = sqlite3.connect("database.sqlite")
-        c = conn.cursor()
-        c.execute("DELETE FROM principles")
-        for uid, info in data.items():
-            name = info.get("name", "")
-            filename = info.get("filename", "")
-            upb = info.get("uploaded_by", "")
-            ca = info.get("created_at", "")
-            c.execute("INSERT INTO principles (id, name, filename, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?)", (uid, name, filename, upb, ca))
-        conn.commit()
+        with conn:
+            conn.execute("DELETE FROM principles")
+            conn.executemany(
+                "INSERT INTO principles (id, name, filename, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?)",
+                [(uid, info.get("name", ""), info.get("filename", ""),
+                  info.get("uploaded_by", ""), info.get("created_at", "")) for uid, info in data.items()])
+    finally:
         conn.close()
-    except Exception as e:
-        print(f"Error saving principles to SQLite: {e}")
 
 # Tujuan: FastAPI backend untuk validator diskon, summary, payments, finance, dan principle.
 # Caller: Next.js dashboard, halaman HTML legacy FastAPI, dan workflow internal operasional.

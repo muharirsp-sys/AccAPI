@@ -36,7 +36,15 @@ const api = {
             body: isFormData ? data : JSON.stringify(data),
             headers: isFormData ? {} : { "Content-Type": "application/json" }
         });
-        if (!res.ok) throw new Error("Fetch POST failed");
+        // Sebab yang SEBENARNYA ikut dibawa. "Fetch POST failed" membuat HTTP 500 dari
+        // server tidak bisa dibedakan dari kabel yang putus, dan keduanya butuh orang yang
+        // berbeda untuk membetulkannya.
+        if (!res.ok) {
+            const teks = await res.text().catch(() => "");
+            let sebab = teks.slice(0, 300);
+            try { sebab = String(JSON.parse(teks).error ?? sebab); } catch { /* bukan JSON */ }
+            throw new Error(`HTTP ${res.status}${sebab ? ` — ${sebab}` : ""}`);
+        }
         return { data: await res.json(), status: res.status, ok: res.ok };
     }
 };
@@ -83,7 +91,7 @@ export default function PrincipleManagementPage() {
                 toast.success("Berhasil mengunggah Data Master.");
                 fetchPrinciples();
             } else toast.error("Gagal mengunggah: " + res.data.error);
-        } catch { toast.error("Error jaringan saat upload Master."); }
+        } catch (e) { toast.error(`Gagal mengunggah Master: ${e instanceof Error ? e.message : e}`, { duration: 15000 }); }
         finally { setIsUploading(false); }
     };
 
@@ -95,7 +103,7 @@ export default function PrincipleManagementPage() {
                 toast.success("Principle Master berhasil dihapus.");
                 fetchPrinciples();
             } else toast.error("Gagal menghapus: " + res.data.error);
-        } catch { toast.error("Error jaringan saat menghapus Master."); }
+        } catch (e) { toast.error(`Gagal menghapus Master: ${e instanceof Error ? e.message : e}`, { duration: 15000 }); }
     };
 
     return (

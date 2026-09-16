@@ -67,3 +67,36 @@ def test_minimum_tanpa_syarat_beli_jadi_satu():
     assert minimum_of({"minimum": "1000000"}) == "1000000"
     # Bukan angka sama sekali dibiarkan lewat, supaya `Tier` yang menolaknya dengan sebabnya.
     assert minimum_of({"minimum": "dua lusin"}) == "dua lusin"
+
+
+def test_pembatasan_peserta_ikut_terbit_bukan_ditolak():
+    """Surat yang membatasi pesertanya kini TERBIT dengan pembatasannya, bukan ditolak mentah.
+
+    Selama ini `readiness()` menolak `include_tags`/`exclude_tags`/`outlet_codes`, jadi yang
+    terbit dari Summary selalu "semua outlet" dan pembatasannya harus dipasang tangan lewat
+    impor Excel. Yang tidak bisa dinyatakan utuh tetap ditolak — satu daftar, satu arah.
+    """
+    from summary_review_publish import peserta
+
+    row = {"document_id": "BP2609007909"}
+    kosong = {}
+    assert peserta(row, kosong) == ("all", [], None)
+
+    # INCLUDE dan EXCLUDE masing-masing punya arahnya sendiri.
+    assert peserta(row, {"include_tags": ["LOYALTY"]}) == ("only", ["LOYALTY"], None)
+    assert peserta(row, {"exclude_tags": ["LOYALTY"]}) == ("except", ["LOYALTY"], None)
+
+    # Daftar KODE dijawab jembatan (dinamai nomor suratnya), bukan di sini — jadi 'all'.
+    assert peserta(row, {"outlet_codes": ["C-BA0003"]}) == ("all", [], None)
+
+    # "LIST OUTLET TERLAMPIR": ditambatkan ke daftar bernama nomor suratnya. Selama lampirannya
+    # belum diunggah daftarnya kosong, dan INCLUDE kosong berarti tidak ada yang berhak.
+    assert peserta(row, {"outlet_list_required": True}) == ("only", ["BP2609007909"], None)
+    assert peserta({}, {"outlet_list_required": True})[2], "nomor surat kosong harus ditolak"
+
+    # Yang tidak bisa dinyatakan utuh tetap ditolak, dengan sebabnya.
+    for tolak in [{"include_tags": ["A"], "exclude_tags": ["B"]},
+                  {"include_tags": ["A"], "outlet_codes": ["C-BA0003"]},
+                  {"include_tags": ["A", "B"]}]:
+        mode, classes, masalah = peserta(row, tolak)
+        assert masalah and (mode, classes) == ("all", []), tolak

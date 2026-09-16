@@ -58,6 +58,7 @@ export default function SalesOrderPage() {
     const [customer, setCustomer] = useState<CustomerMaster | null>(null);
     const [outlet, setOutlet] = useState("");
     const [channel, setChannel] = useState("");
+    const [channelMasalah, setChannelMasalah] = useState("");
     const [orderDate, setOrderDate] = useState(today);
     const [note, setNote] = useState("");
     const [lines, setLines] = useState<Line[]>([emptyLine()]);
@@ -75,9 +76,15 @@ export default function SalesOrderPage() {
 
     // Konfirmasi pelanggan: nama dan kategori harga. Outlet diisi otomatis supaya sales
     // tidak mengetik nama yang berbeda dari master.
+    //
+    // Channel ikut DITANYAKAN ke master, tidak diketik. Server sudah menolak order yang
+    // channelnya berbeda dari master (`outlet_channel.verify`), jadi kotak isian bebas hanya
+    // menyediakan satu cara untuk salah: perkiraan promo dihitung untuk channel yang diakui,
+    // lalu ordernya ditolak saat dikirim. Yang memutuskan promo per channel adalah master,
+    // jadi itu pula yang diperlihatkan.
     useEffect(() => {
         const code = customerNo.trim();
-        if (!code) { setCustomer(null); return; }
+        if (!code) { setCustomer(null); setChannel(""); setChannelMasalah(""); return; }
         const timer = setTimeout(async () => {
             try {
                 const res = await fetch(`/api/customers/lookup?no=${encodeURIComponent(code)}`);
@@ -86,6 +93,22 @@ export default function SalesOrderPage() {
                 setCustomer({ found: Boolean(data.found), name: String(data.name ?? ""), area: String(data.area ?? ""), priceCategoryName: String(data.priceCategoryName ?? "") });
                 if (data.found && !outlet.trim()) setOutlet(String(data.name ?? ""));
             } catch { setCustomer(null); }
+            try {
+                const res = await fetch(`/api/outlet-channel?no=${encodeURIComponent(code)}`);
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || !data.ok) throw new Error();
+                const channels = (data.channels ?? {}) as Record<string, string>;
+                const master = String(channels[code] ?? "");
+                setChannel(master);
+                // Tiga keadaan, tiga perbaikan yang berbeda — jadi tiga kalimat, bukan satu
+                // "channel tidak diketahui" yang tidak menyuruh siapa pun berbuat apa.
+                setChannelMasalah(!(code in channels)
+                    ? `Outlet ${code} tidak ada di master pelanggan Accurate; sinkronkan master atau betulkan kodenya.`
+                    : master ? "" : `Outlet ${code} belum punya kategori (TT/MT) di Accurate. Isi kategorinya di Accurate lebih dulu.`);
+            } catch {
+                setChannel("");
+                setChannelMasalah("Channel outlet tidak bisa ditanyakan ke master sekarang; coba lagi sebentar lagi.");
+            }
         }, 400);
         return () => clearTimeout(timer);
         // outlet sengaja tidak masuk deps: prefill hanya saat outlet masih kosong.
@@ -198,9 +221,12 @@ export default function SalesOrderPage() {
                     </p>
                 )}
                 <div className="grid gap-3 sm:grid-cols-3">
-                    <label className="text-xs text-slate-400">Channel
-                        <input value={channel} onChange={e => setChannel(e.target.value.toUpperCase())} placeholder="GT / RETAIL" className={field} />
-                    </label>
+                    <div className="text-xs text-slate-400">Channel
+                        <p className={`${field} ${channel ? "text-slate-300" : "text-slate-500"}`}>
+                            {channel || (customerNo.trim() ? "belum dipastikan" : "isi kode pelanggan dulu")}
+                        </p>
+                        <span className="mt-1 block text-[11px] leading-snug text-slate-500">Dari master Accurate, bukan diketik.</span>
+                    </div>
                     <label className="text-xs text-slate-400">Tanggal order
                         <input type="date" value={orderDate} onChange={e => setOrderDate(e.target.value)} className={field} />
                     </label>
@@ -208,6 +234,14 @@ export default function SalesOrderPage() {
                         <input value={note} onChange={e => setNote(e.target.value)} placeholder="opsional" className={field} />
                     </label>
                 </div>
+                {channelMasalah && (
+                    /* Ditahan, dan sebabnya disebut. Server menolak order tanpa channel juga;
+                       menyebutkan alasannya di sini membuat sales tahu SIAPA yang membetulkannya,
+                       bukan menekan Kirim sampai layarnya berhenti mengeluh. */
+                    <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs leading-snug text-amber-200">
+                        {channelMasalah}
+                    </p>
+                )}
 
                 <div className="space-y-3">
                     {lines.map((line, index) => {
