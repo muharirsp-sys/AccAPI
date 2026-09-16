@@ -58,7 +58,10 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - run: pip install -r python_backend/requirements.txt pyflakes
+      # `pytest` BUKAN hiasan: sepuluh berkas uji di sini hanya berisi `def test_*()` tanpa
+      # `__main__`, dan tanpa pytest mereka lulus tanpa menjalankan satu assert pun (59 uji).
+      # Ia tidak masuk `requirements.txt` karena image produksi tidak perlu menjalankan uji.
+      - run: pip install -r python_backend/requirements.txt pyflakes pytest
       # Gerbang NAMA TAK TERDEFINISI. `datetime` yang tak pernah di-import di `main.py` (#3)
       # hanya berbunyi saat jalurnya dilewati di produksi, dan pesannya menyamarkan. Satu baris
       # ini menutup seluruh kelasnya. Peringatan gaya (impor tak terpakai) TIDAK menahan:

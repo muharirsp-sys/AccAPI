@@ -19,6 +19,7 @@ saling mewarisi tambalan, dan uji yang lulus karena tambalan tetangganya lebih b
 uji yang tidak ada.
 """
 import os
+import re
 import subprocess
 import sys
 import time
@@ -54,6 +55,21 @@ SELF_CHECK_MODUL = [
 
 BATAS_DETIK = int(os.getenv("CHECK_TIMEOUT", "600"))
 
+# CARA MENJALANKANNYA MENENTUKAN APAKAH IA MENGUJI SAMA SEKALI.
+# Berkas bergaya pytest — hanya `def test_*()` tanpa `if __name__ == "__main__"` — TIDAK
+# menjalankan apa pun bila dipanggil `python berkas.py`: Python mengimpornya, mendefinisikan
+# fungsinya, lalu keluar dengan kode 0. Gerbangnya membaca 0 itu sebagai "OK".
+#
+# Sampai 17 September 2026 SEPULUH berkas di sini berbentuk begitu, dan gerbangnya melaporkan
+# "38/38 lulus" sementara 59 uji di dalamnya — termasuk `test_draft_resolve_kode` dan
+# `test_priskila_golden`, yang justru mengunci cacat "kelompok kosong mencocok seluruh katalog" —
+# tidak dijalankan satu pun. Uji yang tidak dijalankan lebih buruk daripada uji yang tidak ada:
+# ia membuat orang berhenti memeriksa.
+def _perlu_pytest(jalur):
+    isi = jalur.read_text(encoding="utf-8", errors="replace")
+    return bool(re.search(r"^def test_", isi, re.M)) and "__main__" not in isi
+
+
 
 def main():
     modul = []
@@ -77,13 +93,20 @@ def main():
             continue
         mulai = time.time()
         try:
-            hasil = subprocess.run([sys.executable, str(satu)], cwd=str(BASE), capture_output=True,
+            perintah = ([sys.executable, "-m", "pytest", str(satu), "-q"]
+                        if satu.suffix == ".py" and satu.name.startswith("test_") and _perlu_pytest(satu)
+                        else [sys.executable, str(satu)])
+            hasil = subprocess.run(perintah, cwd=str(BASE), capture_output=True,
                                    text=True, timeout=BATAS_DETIK)
         except subprocess.TimeoutExpired:
             print(f"GAGAL  {nama:<34} melebihi {BATAS_DETIK} detik")
             gagal.append((nama, f"timeout {BATAS_DETIK}s"))
             continue
         lama = time.time() - mulai
+        if "No module named pytest" in (hasil.stdout + hasil.stderr):
+            print(f"GAGAL  {nama:<34} butuh pytest, dan pytest tidak terpasang")
+            gagal.append((nama, "Berkas ini bergaya pytest; tanpa pytest ia tidak menguji apa pun. Pasang: pip install pytest"))
+            continue
         if hasil.returncode == 0:
             # LEWAT TIDAK BOLEH MENYAMAR SEBAGAI LULUS. Sebagian uji menuntut berkas yang sengaja
             # tidak ikut git (master principal `*.xlsx`, surat asli) dan melewat dengan sebabnya,
