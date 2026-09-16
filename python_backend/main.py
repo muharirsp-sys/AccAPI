@@ -425,12 +425,25 @@ async def add_principle(request: Request, name: str = Form(...), file: UploadFil
     filename = f"{pid}_{safe_name}"
     filepath = os.path.join(MASTERS_DIR, filename)
     content = await file.read()
-    with open(filepath, "wb") as f:
-        f.write(content)
-    
-    ps = _load_principles()
-    ps[pid] = {"name": name, "filename": filename, "uploaded_by": user, "created_at": datetime.date.today().isoformat()}
-    _save_principles(ps)
+    try:
+        # Folder ini tidak ikut image dan tidak pernah dibuat siapa pun: di produksi
+        # `data/masters` memang tidak ada, dan `open()` mati dengan FileNotFoundError yang
+        # sampai ke layar sebagai "Error jaringan saat upload Master".
+        os.makedirs(MASTERS_DIR, exist_ok=True)
+        with open(filepath, "wb") as f:
+            f.write(content)
+        ps = _load_principles()
+        ps[pid] = {"name": name, "filename": filename, "uploaded_by": user, "created_at": datetime.date.today().isoformat()}
+        _save_principles(ps)
+    except Exception as e:
+        # Berkas yang sudah telanjur ditulis TIDAK ditinggalkan: master yatim yang tidak
+        # terdaftar hanya akan membingungkan orang berikutnya yang membuka foldernya.
+        try:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+        except OSError:
+            pass
+        return JSONResponse(status_code=500, content={"ok": False, "error": f"Gagal menyimpan master: {e}"})
     return {"ok": True, "pid": pid}
 
 @app.post("/api/principles/{pid}/delete")
@@ -502,7 +515,12 @@ async def get_job_status(job_id: str, request: Request):
 def get_principles(request: Request):
     user = get_current_user(request)
     if not user: return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    ps = _load_principles()
+    try:
+        ps = _load_principles()
+    except Exception as e:
+        # "Registry tidak terbaca" dan "belum ada principle" dulu terlihat sama persis di
+        # layar. Yang pertama harus berteriak; yang kedua memang keadaan normal.
+        return JSONResponse(status_code=500, content={"ok": False, "error": f"Registry principle tidak terbaca: {e}"})
     return {"ok": True, "principles": ps}
 
 # ---------------------------
