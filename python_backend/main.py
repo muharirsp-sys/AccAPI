@@ -25,6 +25,12 @@
 #   python -m uvicorn main:app --reload --port 8000
 
 
+# `datetime` dipakai satu kali saja, saat mencatat tanggal unggah master principle — dan
+# selama ini TIDAK pernah di-import. Endpoint itu karena itu mustahil berhasil sejak ditulis;
+# cacatnya tidak pernah terlihat karena `open()` pada folder yang belum ada sudah mati lebih
+# dulu, satu baris di atasnya. Bug yang bersembunyi di balik bug.
+import datetime
+
 from shared import (
     AUTH_COOKIE,
     AUTH_COOKIE_SECURE,
