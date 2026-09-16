@@ -5036,9 +5036,26 @@ def process_summary_generation_job(job_id: str, token: str, rows: List[Dict[str,
             g_all = (not glist) or any(norm(x) == "ALL GRAMASI" for x in glist)
 
             ket = str(r.get("ketentuan","") or "").strip()
-            trig_has_num = has_number(ket)
-            trig_qty = parse_number_id(ket) if trig_has_num else ""
-            trig_unit = unit_from_text(ket) if trig_has_num else ""
+            # Ambang beli dibaca dengan PEMBACA YANG SAMA dengan aturan terbit (`threshold_of`),
+            # bukan dengan `parse_number_id` atas seluruh kalimat.
+            #
+            # `parse_number_id` membuang semua non-angka dari kalimatnya, jadi
+            # "Setiap pembelian 30 PCS OVALE 2IN1 CLEANSER MIX VARIANT" menjadi "3021" —
+            # 30, lalu 2 dan 1 yang terkeruk dari "2IN1". Kolom TRIGGER_QTY pada Excel Detail
+            # adalah kolom yang sama yang dimuat ke `promo_rule`, jadi angka itu menjadi
+            # "beli 3021 PCS": aturannya tersimpan rapi, terlihat benar, dan tidak pernah cocok
+            # dengan potongan mana pun. Gagal tertutup, tetapi tanpa sebab yang bisa dilihat.
+            #
+            # Dua pembaca untuk satu ambang pada satu program akan berbeda suatu hari, dan yang
+            # satu akan menuduh yang lain. Sekarang tinggal satu.
+            trig_qty, trig_unit = "", ""
+            if ket:
+                from summary_rules import threshold_of
+                jenis, minimum, satuan = threshold_of(ket)
+                if jenis == "quantity":
+                    trig_qty, trig_unit = minimum, satuan
+                elif jenis == "value":
+                    trig_qty, trig_unit = minimum, "RP"
             benefit_text_raw = str(r.get("benefit","") or "").strip()
             benefit_type = str(r.get("benefit_type","") or "").strip()
             
