@@ -12,6 +12,14 @@ from summary_store import connect, get_draft, identity
 from summary_rules import validate_programs, calculate, compile_programs
 from summary_mistral import FIELDS, status
 
+# Bidang yang DISIMPAN pada satu baris draft. Bukan `FIELDS` begitu saja: kelayakan outlet
+# (`outlet_mode`/`outlet_classes`) sudah dibaca pembaca surat dan sudah dipakai
+# `build_programs`, tetapi tidak pernah ada di `FIELDS` — jadi penyaring kunci di `save`
+# MEMBUANGNYA, dan surat "KHUSUS PESERTA LOYALTY" tersimpan sebagai berlaku untuk SEMUA outlet.
+# Kegagalan itu gagal TERBUKA: tidak ada galat, hanya bonus yang jatuh ke toko yang bukan
+# peserta. Diperiksa di produksi 2026-09-16 pada surat BP2609007664.
+BARIS_DRAFT = [*FIELDS, "outlet_mode", "outlet_classes", "id", "no", "source_page"]
+
 router = APIRouter(prefix="/summary/library")
 
 
@@ -54,7 +62,7 @@ def resolve_kode_barangs(rows, content):
     # supaya pesan galat "Baris N" menunjuk baris yang benar-benar dilihat orang di layar.
     bersih = []
     for nomor, row in enumerate(hasil[:2000], 1):
-        satu = {key: row.get(key, "") for key in [*FIELDS, "id", "source_page"]}
+        satu = {key: row.get(key, "") for key in BARIS_DRAFT if key != "no"}
         satu["no"] = str(nomor)
         bersih.append(satu)
     return bersih
@@ -166,7 +174,7 @@ async def save(request: Request, draft_id: str):
     if any(not isinstance(row, dict) or any(not isinstance(row.get(field, ""), str) for field in FIELDS) for row in rows):
         raise HTTPException(400, "Format baris draft tidak valid")
     content = draft["content"]
-    simpan = [{key: row.get(key, "") for key in [*FIELDS, "id", "no", "source_page"]} for row in rows]
+    simpan = [{key: row.get(key, "") for key in BARIS_DRAFT} for row in rows]
     content["rows"] = resolve_kode_barangs(simpan, content)
     content["period"] = period
     content.pop("programs", None)
