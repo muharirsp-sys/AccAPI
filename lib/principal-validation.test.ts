@@ -733,3 +733,43 @@ test("ambang MSG dan bonus TIDAK disaring di sini — pemeriksanya sudah ada mas
     assert.equal(needsTriggerCheck({ itemCode: "", customerCode: "C-AL0063", benefitType: "DISC_PCT" }), false, "tarif outlet");
     assert.equal(needsTriggerCheck({ itemCode: "K1", benefitType: "DISC_PCT" }), true, "inilah yang belum dijaga");
 });
+
+test("baris bonus TIDAK diadu dengan laporan principal yang nol", () => {
+    // Bonus barang masuk faktur Accurate sebagai baris berharga penuh lalu dipotong 100%; laporan
+    // principal menyebutnya BONUS, jadi kolom diskonnya nol. Keduanya benar. Contoh nyata batch
+    // 15 September: ALUBI KOSMETIK, OVALE FACIAL LOTION — 396 PCS dibeli, 13 bonus diterima
+    // (berhak 13,2; 0,2 PCS tidak mungkin diberikan), potongan principal Rp 0.
+    const bonus = checkLine(line({ discounts: [{ position: 1, percent: 100 }], reportDiscount: 0 }));
+    assert.equal(bonus.findings.filter((f) => f.includes("berbeda dari laporan")).length, 0,
+        bonus.findings.join(" | "));
+
+    // Yang TIDAK dilonggarkan: kalau principal justru MELAPORKAN potongan pada baris bonus,
+    // salah satu pihak salah dan itu tetap harus terlihat.
+    const bonusTapiDilaporkan = checkLine(line({ discounts: [{ position: 1, percent: 100 }], reportDiscount: 50000 }));
+    assert.match(bonusTapiDilaporkan.findings.join(" "), /berbeda dari laporan principal/);
+
+    // Diskon biasa 100% bukan bonus? Tidak ada bentuk seperti itu — 100% di satu posisi memang
+    // definisi baris bonus. Yang dijaga di sini: diskon WAJAR tetap diadu seperti biasa.
+    const biasa = checkLine(line({ discounts: [{ position: 1, percent: 4 }], reportDiscount: 0 }));
+    assert.match(biasa.findings.join(" "), /berbeda dari laporan principal/);
+});
+
+test("MSG: selisih koma-koma pembulatan sampai Rp 100 tidak ditahan, beda tier tetap ditahan", () => {
+    // Kasus nyata TK RAMADHANI COS, batch 15 September: tier 3 Rp 60.000, klaim DPP 54.070,26
+    // -> dengan PPN 60.017,99. Selisih Rp 17,99 dari nota Rp 4,2 juta, murni sisa pembulatan
+    // per baris yang dikalikan PPN. Toleransi Rp 1/baris tidak menampungnya dan menuduh klaim
+    // yang benar.
+    const tiers = [
+        msg(), msg({ tierNo: 2, triggerQty: 2_000_000, benefitValue: "40000" }),
+        msg({ tierNo: 3, triggerQty: 3_000_000, benefitValue: "60000" }),
+    ];
+    const ramadhani = checkSoPromo({ gross: 3_800_000, principalClaim: 54_070.26, lineCount: 3 }, tiers);
+    assert.match(ramadhani.explained, /tier 3/);
+    assert.deepEqual(ramadhani.findings, [], ramadhani.findings.join(" | "));
+
+    // Rp 100 masih JAUH di bawah beda tier terkecil (Rp 20.000), jadi tier yang salah tetap
+    // tertahan — toleransi ini menyembunyikan koma, bukan kesalahan tier.
+    const tierSalah = checkSoPromo({ gross: 3_800_000, principalClaim: 36_036.04, lineCount: 3 }, tiers);
+    assert.equal(tierSalah.explained, "");
+    assert.ok(tierSalah.findings[0].includes("60.000"), tierSalah.findings.join(" | "));
+});

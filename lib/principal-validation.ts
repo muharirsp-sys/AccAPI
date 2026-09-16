@@ -15,6 +15,20 @@ export const OWNER: Record<number, "distributor" | "principal"> = { 1: "distribu
 /** Rp 1 per baris; hanya menyerap pembulatan, bukan selisih aturan. Ditetapkan pengguna. */
 export const TOLERANCE = 1;
 
+/**
+ * Toleransi POTONGAN TINGKAT NOTA: Rp 100 (keputusan pengguna 2026-09-16).
+ *
+ * Manfaat tingkat nota nominalnya bulat di surat (Rp 60.000), tetapi sampai ke faktur setelah
+ * dibagi rata ke tiap baris, dibulatkan per baris, lalu dikalikan PPN. Sisa desimalnya menumpuk
+ * dan berhenti di belasan rupiah — TK RAMADHANI COS: Rp 60.017,99 lawan Rp 60.000, selisih
+ * Rp 17,99 dari nota Rp 4,2 juta.
+ *
+ * Toleransi Rp 1 per baris tidak cukup menampungnya dan menuduh klaim yang benar. Rp 100 masih
+ * jauh di bawah beda tier terkecil (Rp 20.000), jadi ia tidak bisa menyembunyikan tier yang
+ * salah — yang disembunyikannya hanya koma-koma pembulatan, dan itu memang yang dimaksud.
+ */
+export const TOLERANSI_NOTA = 100;
+
 export type DiscountAt = {
     position: number;
     percent: number;
@@ -653,9 +667,10 @@ export function checkSoPromo(
     const expected = Number(reached.benefitValue);
     if (!Number.isFinite(expected)) return { explained: "", findings: [] };
     const claimWithTax = cents(input.principalClaim * (1 + PPN));
-    // Toleransi Rp 1 PER BARIS: nominalnya dibagi rata lalu dibulatkan di tiap baris, jadi
-    // sisa pembulatannya menumpuk sebanyak barisnya. Satu baris tetap Rp 1, seperti gerbang lain.
-    const tolerance = TOLERANCE * Math.max(input.lineCount, 1);
+    // Toleransi Rp 1 PER BARIS, dengan lantai Rp 100: nominalnya dibagi rata lalu dibulatkan di
+    // tiap baris, jadi sisa pembulatannya menumpuk sebanyak barisnya — dan sesudah dikalikan PPN
+    // sisa itu berhenti di belasan rupiah meski barisnya sedikit. Lihat `TOLERANSI_NOTA`.
+    const tolerance = Math.max(TOLERANCE * Math.max(input.lineCount, 1), TOLERANSI_NOTA);
     if (Math.abs(claimWithTax - expected) > tolerance) {
         return {
             explained: "",
@@ -806,8 +821,25 @@ export function checkLine(line: LineInput): LineCheck {
             + "jadi betulkan kategorinya di Accurate atau tanyakan ke principal mana yang benar.");
     }
 
+    // BARIS BONUS TIDAK DIBANDINGKAN, dan itu bukan kelonggaran (keputusan pengguna 2026-09-16).
+    //
+    // Bonus barang masuk faktur Accurate sebagai baris berharga PENUH lalu dipotong 100% —
+    // itulah satu-satunya cara mencatat barang gratis di sana. Laporan principal menyebutnya
+    // BONUS, bukan diskon, jadi kolom diskonnya nol. Keduanya benar; yang berbeda cuma cara
+    // menuliskannya. Membandingkan keduanya berarti menuduh setiap baris bonus salah.
+    //
+    // Contoh dari batch 15 September: ALUBI KOSMETIK membeli 396 PCS OVALE FACIAL LOTION,
+    // berhak 13,2 bonus, menerima 13 (0,2 PCS tidak mungkin diberikan). Potongan principal
+    // memang Rp 0 — wajar, karena yang diberikan barang, bukan uang.
+    //
+    // Yang TIDAK dilonggarkan: kalau principal justru MELAPORKAN potongan pada baris bonus,
+    // salah satu pihak salah dan itu tetap harus terlihat. Yang dilewati hanya baris bonus yang
+    // laporannya memang nol — dan kuota bonusnya tetap diperiksa `bonusQuota` seperti biasa.
+    const barisBonusTanpaLaporan = isBonusLine(line.discounts)
+        && Math.abs(cents(line.reportDiscount)) <= TOLERANCE;
+
     // Angka kita harus sama dengan yang dilaporkan principal; beda berarti salah satu salah baca.
-    if (Math.abs(cents(split.total - line.reportDiscount)) > TOLERANCE) {
+    if (!barisBonusTanpaLaporan && Math.abs(cents(split.total - line.reportDiscount)) > TOLERANCE) {
         findings.push(`Total diskon hitungan kami Rp ${split.total.toLocaleString("id-ID")} berbeda dari laporan principal `
             + `Rp ${line.reportDiscount.toLocaleString("id-ID")}.`);
     }
