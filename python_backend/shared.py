@@ -4787,6 +4787,17 @@ def _format_corrections_for_prompt(corrections: List[Dict[str, Any]]) -> str:
     return ("\n\n=== KOREKSI DARI USER SEBELUMNYA (WAJIB DIPATUHI, JANGAN ULANGI KESALAHAN INI) ===\n"
             + "\n".join(blocks) + "\n=== AKHIR KOREKSI ===")
 
+# ==========================================================================================
+# TIDAK DIPANGGIL SIAPA PUN (diperiksa 2026-09-16: nol rujukan di seluruh python_backend).
+#
+# Ini salinan lama pembuat Form Summary + Dataset Excel. Yang BENAR-BENAR berjalan ada di
+# `routers/summary.py` (`summary_manual_generate`). Jangan menambal yang ini: perbaikan ambang
+# beli "3021" sempat mendarat di sini dan tidak mengubah apa pun di produksi — satu siklus
+# deploy terbuang sebelum ketahuan.
+#
+# Dibiarkan untuk sementara (bukan dihapus) karena penghapusan ~250 baris bukan bagian dari
+# pekerjaan yang sedang berjalan. Kalau ada yang menyentuh berkas ini lagi: hapus saja.
+# ==========================================================================================
 def process_summary_generation_job(job_id: str, token: str, rows: List[Dict[str, Any]], user: str):
     try:
         BACKGROUND_JOBS[job_id]["status"] = "processing"
