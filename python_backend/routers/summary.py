@@ -882,7 +882,13 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
     except Exception as e:
         append_error_log("summary_manual_generate", e, {"user": user, "token": token})
         payload = {"ok": False, "error": "Gagal membuat output summary manual."}
-        if APP_DEBUG and is_admin_user(user):
+        # Sebabnya diperlihatkan kepada ADMIN, tidak lagi menunggu APP_DEBUG. Di produksi
+        # APP_DEBUG mati, jadi selama ini satu-satunya orang yang berwenang membetulkannya
+        # justru satu-satunya orang yang tidak diberi tahu apa yang rusak — dan galatnya sudah
+        # ada di `error_log.jsonl` yang admin sama saja boleh baca. Kasus nyata 2026-09-16:
+        # "No module named 'reportlab'" terbaca sebagai "Gagal membuat output summary manual."
+        # Pengguna lain tetap hanya menerima kalimat umum.
+        if is_admin_user(user):
             payload["detail"] = str(e)
         return payload
 
