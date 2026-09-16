@@ -561,7 +561,13 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             promo_label = str(r.get("nama_program","") or "").strip()
             promo_group_id = str(r.get("promo_group_id","") or "").strip()
             promo_group = str(r.get("channel_gtmt","") or "").strip()
+            # Kolom "Periode" membaca `periode`, tetapi baris draft menyimpan
+            # `periode_start`/`periode_end` dan TIDAK ADA yang pernah menulis `periode` — jadi
+            # kolomnya kosong di setiap Form Summary yang pernah dicetak. Diturunkan bila kosong.
             periode = str(r.get("periode","") or "").strip()
+            if not periode:
+                from shared import _label_periode
+                periode = _label_periode(r.get("periode_start"), r.get("periode_end"))
             if not promo_group_id or promo_group_id.upper() == "NON_GROUP":
                 promo_group_id = promo_group
 
@@ -634,9 +640,22 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 _seen_kb.add(_kb); _dedup.append(_it)
             matched_items = _dedup
 
-            trig_has_num = has_number(ket)
-            trig_qty = parse_number_id(ket) if trig_has_num else ""
-            trig_unit = unit_from_text(ket) if trig_has_num else ""
+            # Ambang beli dibaca dengan PEMBACA YANG SAMA dengan aturan terbit (`threshold_of`).
+            #
+            # `parse_number_id` membuang semua non-angka dari kalimatnya lebih dulu, jadi
+            # "Setiap pembelian 30 PCS OVALE 2IN1 CLEANSER MIX VARIANT" menjadi "3021" —
+            # 30, lalu 2 dan 1 yang terkeruk dari "2IN1". Angka di dalam NAMA BARANG menular
+            # ke ambang belinya. Kolom TRIGGER_QTY ini kolom yang sama yang dimuat ke
+            # `promo_rule`, jadi aturannya tersimpan sebagai "beli 3021 PCS": rapi, terlihat
+            # benar, dan tidak pernah cocok dengan potongan mana pun.
+            trig_qty, trig_unit = "", ""
+            if ket:
+                from summary_rules import threshold_of
+                _jenis, _min, _satuan = threshold_of(ket)
+                if _jenis == "quantity":
+                    trig_qty, trig_unit = _min, _satuan
+                elif _jenis == "value":
+                    trig_qty, trig_unit = _min, "RP"
             benefit_text = str(r.get("benefit","") or "").strip()
             benefit_type = str(r.get("benefit_type","") or "").strip()
             benefit_unit = unit_from_text(benefit_text) if benefit_text else ""
