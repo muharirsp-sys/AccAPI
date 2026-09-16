@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from shared import get_current_user, user_has_permission, validate_csrf_request
 from summary_store import connect, get_draft, identity
 from summary_rules import validate_programs, calculate, compile_programs
-from summary_mistral import status
+from summary_mistral import FIELDS, status
 
 router = APIRouter(prefix="/summary/library")
 
@@ -24,6 +24,40 @@ def require_user(request, edit=False):
     if edit and not validate_csrf_request(request, request.headers.get("X-CSRF-Token", "")):
         raise HTTPException(403, "Permintaan lintas situs ditolak")
     return user
+
+
+def resolve_kode_barangs(rows, content):
+    """Turunkan `kode_barangs` dan kelompok KANONIK dari master, tiap kali draft disimpan.
+
+    KENAPA DI SINI, BUKAN HANYA SAAT PARSE. `_apply_native_kelompok` sudah lama ada dan sudah
+    benar, tetapi selama ini hanya dipanggil saat MEN-GENERATE PDF Summary. Akibatnya draft di
+    grid memegang keluaran mentah LLM: `kode_barangs` kosong, dan `kelompok` berisi kalimat
+    surat ("OVALE 2IN1 CLEANSER MIX VARIANT") yang bukan kelompok master mana pun.
+
+    Yang membuatnya buntu bukan cuma tebakan yang meleset, melainkan bahwa MANUSIA TIDAK BISA
+    MEMBETULKANNYA: `build_programs` mewajibkan `kode_barangs`, grid tidak punya pemilih SKU,
+    dan membetulkan kelompok di layar tidak pernah memicu resolusi ulang. Jadi sekali AI salah
+    membaca nama kelompok, draftnya mati dan tidak ada jalan kembali.
+
+    Dengan resolusi di titik simpan, alurnya jadi yang memang dimaksudkan: AI mengusulkan,
+    manusia membetulkan kelompok/varian/gramasi, sistem menurunkan kodenya dari master. Ini
+    juga yang membuat draft akhirnya berbentuk sama dengan PDF Summary — keduanya kini lewat
+    resolver yang sama, bukan dua jalan yang suatu hari berbeda.
+    """
+    items = ((content.get("master") or {}).get("items")) or []
+    if not items:
+        return rows
+    from shared import _apply_native_kelompok
+    hasil = _apply_native_kelompok(rows, items)
+    # `_apply_native_kelompok` boleh MEMECAH satu baris jadi beberapa (satu per merek), dan
+    # menitipkan `_matched_items_cache` yang tidak termasuk bidang draft. Nomornya disusun ulang
+    # supaya pesan galat "Baris N" menunjuk baris yang benar-benar dilihat orang di layar.
+    bersih = []
+    for nomor, row in enumerate(hasil[:2000], 1):
+        satu = {key: row.get(key, "") for key in [*FIELDS, "id", "source_page"]}
+        satu["no"] = str(nomor)
+        bersih.append(satu)
+    return bersih
 
 
 async def read_body(request):
@@ -129,11 +163,11 @@ async def save(request: Request, draft_id: str):
         raise HTTPException(400, "Isi judul dan baris draft yang valid")
     if not isinstance(period, list) or len(period) != 2 or any(not isinstance(value, str) or len(value) > 10 for value in period):
         raise HTTPException(400, "Periode draft harus dua tanggal YYYY-MM-DD atau dikosongkan")
-    from summary_mistral import FIELDS
     if any(not isinstance(row, dict) or any(not isinstance(row.get(field, ""), str) for field in FIELDS) for row in rows):
         raise HTTPException(400, "Format baris draft tidak valid")
     content = draft["content"]
-    content["rows"] = [{key: row.get(key, "") for key in [*FIELDS, "id", "no", "source_page"]} for row in rows]
+    simpan = [{key: row.get(key, "") for key in [*FIELDS, "id", "no", "source_page"]} for row in rows]
+    content["rows"] = resolve_kode_barangs(simpan, content)
     content["period"] = period
     content.pop("programs", None)
     with connect() as db:
