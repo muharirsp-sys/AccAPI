@@ -74,6 +74,8 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 | 4.59 | **Dua pernyataan manusia sebelum jembatan berjalan** | ✅ | **2026-09-15, migrasi `0019`.** Menerbitkan di Summary saja tidak cukup lagi. ① **Centang** "program ini sudah benar dan bisa berjalan", sengaja diletakkan DI BAWAH simulasinya. ② **Bukti PDF surat bertanda tangan OM dan tim**: sistem bisa menilai apakah aturannya terbaca, tetapi TIDAK BISA menilai apakah programnya memang disetujui yang berwenang — jadi yang disimpan bukan penilaian melainkan buktinya. Berkasnya di basis data, bukan cakram container yang dibuat ulang tiap deploy. Kuncinya id PUBLIKASI bukan nomor surat: menyetujui satu detail tidak boleh diam-diam menyetujui sisanya. Keduanya wajib; kurang satu, jembatan menjawab 409 dengan kalimat yang menyebut mana yang kurang |
 | 4.60 | **Surat yang membatasi pesertanya ikut terbit dari Summary** | ✅ | **2026-09-16.** `readiness()` menolak `include_tags`/`exclude_tags`/`outlet_codes`/`outlet_list_required` satu per satu, jadi yang bisa terbit dari Summary SELALU "semua outlet" — dan tiga dari empat surat September produksi justru bentuk itu, sehingga ketiganya harus masuk lewat impor Excel. Sekarang `peserta()` memetakannya ke `outlet_mode`/`outlet_classes` pada `Program`; jembatan dan `promo_rule.outlet_list` sudah siap sejak awal, jadi tidak ada kolom baru. INCLUDE atas daftar kosong berarti tidak ada yang berhak, dan EXCLUDE pun **gagal tertutup** sejak 2026-09-15 — jadi "LIST OUTLET TERLAMPIR" ditambatkan ke daftar bernama NOMOR SURATNYA dan menahan sendiri sampai lampirannya diunggah. Yang tidak bisa dinyatakan utuh tetap ditolak: dua arah sekaligus, kelas + daftar kode sekaligus, atau lebih dari satu kelas |
 | 4.61 | **Channel order tidak lagi diketik, di kedua layar** | ✅ | **2026-09-16.** Butir 4.56 sudah menyuruh server memastikan channel ke master dan MENOLAK yang berbeda, tetapi kotak isiannya masih teks bebas ("GT / RETAIL"). Yang tersisa bukan risiko keputusan, melainkan kerja sia-sia yang terlihat benar: perkiraan promo dihitung untuk channel yang DIAKUI, lalu ordernya ditolak saat dikirim — dan yang mengetik tidak tahu mana yang keliru. Kini Order Sales dan Order Masuk menanyakannya ke `GET /api/outlet-channel` begitu kode pelanggan diisi, lalu memperlihatkannya sebagai jawaban, bukan isian. Tiga keadaan punya tiga kalimatnya sendiri — di luar master, tanpa kategori, master tak terjangkau — karena ketiganya dibetulkan orang yang berbeda |
+| 4.62 | **Master barang wajib ada sebelum surat dibaca — tapi cukup diunggah sekali** | ✅ | **2026-09-16, pertanyaan pengguna.** Surat menyebut barang dengan NAMA DAGANG, gerbang faktur memerlukan KODE; master adalah satu-satunya kamus di antaranya, jadi tanpa master satu-satunya jalan adalah menebak — dan tebakan di sini tidak menimbulkan galat, cuma aturan yang tidak pernah cocok. Tiga tempat menolak: `check_detail` ("Kode barang harus berasal dari master paket", SELURUH paket), `readiness()` (mix `same_master_group_and_size` butuh `group`+`size`), dan jembatan (barang di luar master). **Yang perlu dikerjakan orang jauh lebih ringan daripada kelihatannya:** Excel master diunggah SEKALI di *Master Principle*, sesudah itu tiap surat cukup menekan "Gunakan Principle" — yang diunggah tiap kali hanya PDF suratnya. Token master hidup 2 jam; `handlePdfExtract` berhenti di `if (!pdfFile \|\| !masterToken)`. Master ikut DIBEKUKAN pada publikasi (`content.master.items`), jadi surat yang sudah terbit tidak berubah artinya saat Excel-nya diperbarui besok |
+| 4.63 | **Tiga CUST_ID2 terakhir masuk Mapping Principal** | ✅ | **2026-09-16, di produksi.** KOSMETIK MUNAWARAH (`52390254695` → `C-KOS005`), KAMIL STAND (`2191200123409` → `C-KA0059`), LOLLYPOP BABY (`3210402085278` → `C-LO0019`). Sumbernya `promo_outlet.source_code`, diperiksa ulang ke sumber itu sebelum ditulis, dan ketiganya dipastikan belum ada — baik lewat kode Kino maupun kode internalnya — supaya upsert tidak menimpa pemetaan yang benar. `principal_mapping` customer: 1.435 → **1.438**. Ketiganya ada di master Accurate dan ber-channel **GT**. Sebelum ini order dari ketiga toko itu tidak terbaca jalur batch. **Jebakan yang memakan waktu dan layak ditulis:** `principal_mapping.targetCode` menyimpan kode DASAR (`C-KOS005`), sedangkan `customer.customerNo` di master memakai akhiran cabang (`C-KOS005-KN`, dari `BRANCH_SUFFIX` pada `validate/route.ts`). Menanyakan kode dasar ke `/api/outlet-channel` menjawab "tidak ada di master" untuk SETIAP outlet, termasuk yang jelas-jelas berjalan — terlihat persis seperti master rusak, padahal cuma kurang akhiran |
 
 ## Langkah 4 tahap 1c — routing: cocok lanjut, tidak cocok ke admin review
 
@@ -709,6 +711,15 @@ Aturan seperti itu menahan barisnya dengan pesan yang menyuruh menulis ulang amb
 benar"; bagian ini menjawab "apa yang terjadi, berurutan, dan di mana ia bisa berhenti".*
 
 ```
+  MASTER BARANG  ──────────►  WAJIB LEBIH DULU; surat tidak bisa dibaca      butir 4.62
+        │                     tanpanya, dan ini bukan urutan yang dipilih
+        │                     sembarangan (lihat di bawah)
+        │
+        │  dua jalan, hasilnya sama — sebuah `token` master:
+        │   ① "Pilih Principle Tersimpan"  -> Excel yang sudah disimpan sekali di
+        │      Master Principle; TIDAK perlu unggah apa pun lagi  <-- jalur biasa
+        │   ② "Unggah Excel Master Baru"   -> sekali pakai, untuk master yang berubah
+        ▼
   SURAT PROGRAM (PDF)
         │
         │  lapisan teks, atau Mistral OCR 4.1 kalau hasil scan          butir 4.51
@@ -753,6 +764,41 @@ benar"; bagian ini menjawab "apa yang terjadi, berurutan, dan di mana ia bisa be
                                    butir 4.15         lalu Validasi lagi (4.17)
 ```
 
+### MASTER dulu, baru surat — dan kenapa ia tidak bisa dibalik
+
+*Ditambahkan 2026-09-16 atas pertanyaan pengguna: "kalau saya mau unggah di Summary Promo,
+harus tetap unggah master?"*
+
+**Jawaban singkat: master WAJIB ada, tetapi hampir tidak pernah perlu diunggah.** Unggah Excel
+masternya **sekali** di *Pengaturan → Master Principle*; sesudah itu setiap surat cukup menekan
+**"Gunakan Principle"** di *Summary Promo → Setup Master Barang*. Yang diunggah tiap kali hanya
+**surat PDF-nya**.
+
+| Cara | Kapan dipakai | Yang diunggah |
+|---|---|---|
+| **Pilih Principle Tersimpan** | jalur biasa, tiap hari | tidak ada — Excel-nya sudah tersimpan |
+| **Unggah Excel Master Baru** | master berubah, atau principal baru | Excel master, sekali |
+
+Keduanya menghasilkan hal yang sama: sebuah **token master** yang hidup **2 jam**. Tombol
+*Ekstrak dari Dokumen PDF* memang diam selama token itu belum ada — `handlePdfExtract` berhenti
+di `if (!pdfFile || !masterToken) return`, dan `parse_pdf_ai` menerima `token` bersama PDF-nya.
+
+**Kenapa tidak boleh dibalik — surat dulu, master belakangan.** Bukan soal urutan yang rapi,
+melainkan soal apa yang bisa diperiksa. Suratnya menyebut barang dengan NAMA DAGANG
+("ESK CG ENCHANTING WHITE 100ML"), sedangkan gerbang faktur memerlukan KODE. Master adalah
+satu-satunya kamus di antara keduanya, dan tanpa kamus itu satu-satunya jalan adalah menebak —
+tebakan yang tidak menimbulkan galat, cuma aturan yang tidak pernah cocok dengan potongan mana
+pun. Tiga tempat menolak kalau kamusnya tidak ada:
+
+- `check_detail` — "Kode barang harus berasal dari master paket", **seluruh paket ditolak**;
+- `readiness()` — mix `same_master_group_and_size` butuh `group` dan `size` dari master, kalau
+  kosong: "Kelompok atau gramasi master belum lengkap";
+- jembatan — barang di luar master tidak dimuat (lihat *Yang ditolak jembatan*).
+
+Master yang dimuat juga ikut **dibekukan pada publikasinya** (`content.master.items`), jadi surat
+yang sudah terbit tidak berubah artinya ketika Excel masternya diperbarui besok. Aturan yang
+sudah dipakai memvalidasi faktur tidak boleh bergerak di belakang punggung orang.
+
 ### Jalur ORDER, yang bertemu di gerbang yang sama
 
 ```
@@ -769,6 +815,9 @@ benar"; bagian ini menjawab "apa yang terjadi, berurutan, dan di mana ia bisa be
 
 | Berhenti di | Artinya | Yang membetulkannya |
 |---|---|---|
+| master belum dipilih | tombol Ekstrak PDF diam saja — tanpa master tidak ada yang bisa memvalidasi kode barangnya | pengunggah; pilih Principle atau unggah Excel master |
+| token master kedaluwarsa | lewat **2 jam** sejak master dimuat | pilih Principle-nya lagi; tidak perlu unggah ulang |
+| kode barang di luar master | `check_detail` menolak seluruh paket | betulkan kodenya, atau perbarui Excel master di Master Principle |
 | `readiness()` | surat belum lengkap atau mekanismenya bukan on faktur | peninjau Summary |
 | simulasi kosong | tidak satu aturan pun bisa dinyatakan | peninjau Summary; baca daftar penolakan |
 | dua pernyataan | belum dicentang, atau bukti tanda tangan belum diunggah | peninjau + OM |

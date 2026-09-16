@@ -150,8 +150,11 @@ kecuali suratnya memang menyebutnya — kalau diisi, SO 13044 berhenti dijelaska
 2. **Jembatan Summary belum pernah dijalankan ujung ke ujung dengan sesi login sungguhan.**
    Terbukti sampai dinding autentikasi saja. Gerbang persetujuan yang baru SUDAH terbukti
    lengkap di lokal (kedelapan keadaannya), tetapi jalur penuhnya butuh publikasi Summary nyata.
-3. **Tiga CUST_ID2 belum ada di `principal_mapping`** — datanya sudah ada di
-   `promo_outlet.source_code`, tinggal disalin ke Mapping Principal.
+3. ~~**Tiga CUST_ID2 belum ada di `principal_mapping`.**~~ **SELESAI 16 Sep** (butir 4.63),
+   di produksi: `52390254695`→`C-KOS005`, `2191200123409`→`C-KA0059`, `3210402085278`→`C-LO0019`.
+   Diperiksa ulang ke `promo_outlet.source_code` sebelum ditulis, dan dipastikan belum ada — baik
+   lewat kode Kino maupun kode internalnya — supaya upsert tidak menimpa pemetaan yang benar.
+   Customer mapping 1.435 → **1.438**; ketiganya ada di master dan ber-channel **GT**.
 4. **Konfirmasi Kino**: Indomaret 3,1% vs 3% (Rp 8,13 juta menggantung).
 5. ~~**`readiness()` menolak surat yang membatasi peserta.**~~ **SELESAI 16 Sep** (butir 4.60).
    `peserta()` memetakan `include_tags`/`exclude_tags`/`outlet_codes`/`outlet_list_required` ke
