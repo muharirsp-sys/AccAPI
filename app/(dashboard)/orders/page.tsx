@@ -77,6 +77,9 @@ export default function OrdersPage() {
     // AKAN ditolak saat disimpan — jadi sebabnya muncul sekarang, bukan setelah semua baris
     // diketik. Kalimatnya sama persis dengan yang nanti menolaknya.
     const [channelMasalah, setChannelMasalah] = useState("");
+    /** Kenapa channel belum bisa dipastikan dari master. Terpisah dari `channelMasalah` (yang
+     *  datang dari pratinjau) karena pratinjau mengosongkannya tiap kali ordernya belum lengkap. */
+    const [channelMaster, setChannelMaster] = useState("");
     const [previewNote, setPreviewNote] = useState("");
 
     const [connection, setConnection] = useState<ConnectionStatus | null>(null);
@@ -107,6 +110,34 @@ export default function OrdersPage() {
     }, []);
 
     useEffect(() => { loadOrders("mine"); loadConnection(); }, [loadOrders, loadConnection]);
+
+    // Channel DITANYAKAN ke master Accurate, tidak diketik. `store_order` sudah menolak order
+    // yang channelnya berbeda dari master (`outlet_channel.verify`), jadi kotak isian bebas cuma
+    // menyediakan satu cara untuk salah: pratinjau promo dihitung untuk channel yang DIAKUI,
+    // lalu ordernya ditolak saat disimpan. Yang memutuskan promo per channel adalah master.
+    useEffect(() => {
+        const code = customerNo.trim();
+        if (!code) { setChannel(""); setChannelMaster(""); return; }
+        const timer = setTimeout(async () => {
+            try {
+                const res = await fetch(`/api/outlet-channel?no=${encodeURIComponent(code)}`);
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || !data.ok) throw new Error();
+                const channels = (data.channels ?? {}) as Record<string, string>;
+                const dariMaster = String(channels[code] ?? "");
+                setChannel(dariMaster);
+                // Tiga keadaan, tiga perbaikan berbeda — jadi tiga kalimat, bukan satu
+                // "channel tidak diketahui" yang tidak menyuruh siapa pun berbuat apa.
+                setChannelMaster(!(code in channels)
+                    ? `Outlet ${code} tidak ada di master pelanggan Accurate; sinkronkan master atau betulkan kodenya.`
+                    : dariMaster ? "" : `Outlet ${code} belum punya kategori (TT/MT) di Accurate. Isi kategorinya di Accurate lebih dulu.`);
+            } catch {
+                setChannel("");
+                setChannelMaster("Channel outlet tidak bisa ditanyakan ke master sekarang; coba lagi sebentar lagi.");
+            }
+        }, 400);
+        return () => clearTimeout(timer);
+    }, [customerNo]);
 
     // Satuan dan nama barang dari master Accurate, satu permintaan per kode baru.
     const [master, setMaster] = useState<Record<string, ItemMaster>>({});
@@ -258,10 +289,12 @@ export default function OrdersPage() {
                         <input value={outlet} onChange={e => setOutlet(e.target.value)} placeholder="Nama / kode outlet"
                             className="block w-full sm:w-56 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
                     </label>
-                    <label className="text-xs text-slate-400 w-full sm:w-auto">Channel
-                        <input value={channel} onChange={e => setChannel(e.target.value.toUpperCase())} placeholder="GT / RETAIL"
-                            className="block w-full sm:w-32 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
-                    </label>
+                    <div className="text-xs text-slate-400 w-full sm:w-auto">Channel
+                        <p className={`block w-full sm:w-32 bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm ${channel ? "text-slate-300" : "text-slate-500"}`}>
+                            {channel || (customerNo.trim() ? "belum dipastikan" : "isi kode pelanggan")}
+                        </p>
+                        <span className="mt-1 block text-[11px] text-slate-500">Dari master, bukan diketik.</span>
+                    </div>
                     <label className="text-xs text-slate-400 w-full sm:w-auto">Tanggal order
                         <input type="date" value={orderDate} onChange={e => setOrderDate(e.target.value)}
                             className="block w-full sm:w-auto bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-slate-300" />
@@ -352,9 +385,9 @@ export default function OrdersPage() {
 
                 {previewNote && <p className="text-xs text-rose-600">{previewNote}</p>}
 
-                {channelMasalah && (
+                {(channelMaster || channelMasalah) && (
                     <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-                        {channelMasalah}
+                        {channelMaster || channelMasalah}
                     </div>
                 )}
 
