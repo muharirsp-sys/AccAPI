@@ -954,6 +954,11 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
     try:
         raw = await read_upload_file_limited(pdf, max_bytes=MAX_PDF_UPLOAD_BYTES, allowed_exts=(".pdf",), label="PDF Program")
         result = kino_extraction(raw, master) or await extract_mistral(raw, master, user, principle_name)
+        # Yang jawabannya sudah pasti tidak perlu ditanyakan kepada peninjau: principal yang
+        # sudah dipilih di layar, badan surat yang terbawa ke nama program, dan aturan
+        # "tidak menyebut varian/gramasi tertentu berarti SEMUA". Lihat `baca_surat_rapi`.
+        from baca_surat_rapi import rapikan_baris
+        result["rows"] = rapikan_baris(result["rows"], (master or {}).get("items") or [], principle_name)
         draft = create_draft(user, principle_name or "Summary Program", {"rows": result["rows"], "programs": [], "master": master, "extraction": {key: value for key, value in result.items() if key != "rows"}}, raw)
         return {"ok": True, "rows": result["rows"], "draft": draft}
     except ValueError as error:
