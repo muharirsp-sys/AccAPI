@@ -71,3 +71,29 @@ def rapikan_baris(rows, master_items, principle_name=""):
 
         hasil.append(r)
     return hasil
+
+
+BULAN_ID = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI",
+            "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
+
+
+def judul_summary(principle_name, rows):
+    """Judul Summary yang menumpuk: "<PRINCIPAL> - <BULAN TAHUN>".
+
+    Judulnya BUKAN sekadar label — ia kunci yang menentukan surat berikutnya menyusul ke mana.
+    Karena itu ia dibuat dari hal yang stabil: principal yang dipilih orang, dan bulan periode
+    suratnya. Dua surat September milik principal yang sama pasti bertemu; surat Oktober memulai
+    lembar berikutnya, sama seperti Form Summary yang memang bertajuk satu periode.
+
+    Tanpa periode yang terbaca, judulnya principal saja — lebih baik menumpuk di satu tempat
+    yang jelas daripada memencar ke judul yang tidak bisa ditebak orang.
+    """
+    principal = " ".join(str(principle_name or "").strip().split()) or "Summary Program"
+    for baris in rows or []:
+        mulai = str((baris or {}).get("periode_start") or "").strip()
+        bagian = mulai.split("-")
+        if len(bagian) >= 2 and bagian[0].isdigit() and bagian[1].isdigit():
+            bulan = int(bagian[1])
+            if 1 <= bulan <= 12:
+                return f"{principal} - {BULAN_ID[bulan - 1]} {bagian[0]}"
+    return principal

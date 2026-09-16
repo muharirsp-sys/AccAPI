@@ -957,9 +957,27 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
         # Yang jawabannya sudah pasti tidak perlu ditanyakan kepada peninjau: principal yang
         # sudah dipilih di layar, badan surat yang terbawa ke nama program, dan aturan
         # "tidak menyebut varian/gramasi tertentu berarti SEMUA". Lihat `baca_surat_rapi`.
-        from baca_surat_rapi import rapikan_baris
+        from baca_surat_rapi import rapikan_baris, judul_summary
         result["rows"] = rapikan_baris(result["rows"], (master or {}).get("items") or [], principle_name)
-        draft = create_draft(user, principle_name or "Summary Program", {"rows": result["rows"], "programs": [], "master": master, "extraction": {key: value for key, value in result.items() if key != "rows"}}, raw)
+
+        # SATU SUMMARY YANG MENUMPUK, per principal + per bulan (keputusan pengguna 2026-09-16).
+        #
+        # Surat kedua menyusul ke grid yang sama, bukan membuat draft baru. Alasannya bukan
+        # kerapian berkas: Form Summary itu SATU lembar yang ditandatangani OM, dan satu lembar
+        # per surat berarti tumpukan tanda tangan yang tidak ada yang bisa mengikutinya. Yang
+        # ditandatangani harus satu acuan.
+        #
+        # Yang sudah `published` tidak pernah disusul — publikasi itu beku, dan aturan faktur
+        # yang sudah terbit tidak boleh berubah di belakang punggung yang menandatanganinya.
+        # Surat yang datang setelah publikasi memulai Summary berikutnya.
+        from summary_store import append_rows, find_open_draft
+        judul = judul_summary(principle_name, result["rows"])
+        berjalan = find_open_draft(user, judul)
+        if berjalan is not None:
+            draft = append_rows(berjalan["id"], user, result["rows"], master)
+            if draft is not None:
+                return {"ok": True, "rows": draft["content"]["rows"], "draft": draft, "disusulkan": True}
+        draft = create_draft(user, judul, {"rows": result["rows"], "programs": [], "master": master, "extraction": {key: value for key, value in result.items() if key != "rows"}}, raw)
         return {"ok": True, "rows": result["rows"], "draft": draft}
     except ValueError as error:
         return JSONResponse(status_code=422, content={"ok": False, "error": str(error)})

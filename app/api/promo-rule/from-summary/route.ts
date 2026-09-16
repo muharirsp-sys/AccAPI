@@ -314,15 +314,29 @@ export async function POST(request: NextRequest) {
 
     // Irisan yang diganti: aturan `source='surat'` milik SURAT INI pada principal ini. Muat
     // ulang publikasi yang sama harus menghasilkan keadaan yang sama, bukan menumpuk.
+    // Irisan yang diganti dikunci per PRINCIPAL + NOMOR SURAT, bukan per publikasi
+    // (keputusan pengguna 2026-09-16).
+    //
+    // Summary kini MENUMPUK: surat kedua menyusul ke grid yang sama, lalu seluruhnya
+    // diterbitkan sebagai publikasi baru. Kalau irisannya dikunci per publikasi, memuat
+    // Summary v2 tidak mencabut apa pun dari v1 — surat pertama akan punya DUA set aturan yang
+    // sama-sama hidup, dan gerbang akan melihat keduanya. Itu persis yang hendak dihindari
+    // pengguna dengan "satu summary saja, surat lama tidak berlaku lagi".
+    //
+    // Konsekuensinya ditulis terang supaya tidak mengejutkan: satu surat harus dimuat
+    // SEKALIGUS. Memuat sebagian barangnya saja akan mencabut sisanya. Dalam bentuk Summary
+    // yang menumpuk itu memang selalu terjadi sekaligus, karena seluruh baris surat itu ada di
+    // grid yang sama.
+    const suratDimuat = [...new Set(rows.map((row) => row.suratProgram).filter(Boolean))];
+    if (!suratDimuat.length) {
+        return NextResponse.json({ ok: false, error: "Publikasi ini tidak menyebut nomor surat; aturan tanpa asal tidak boleh masuk gerbang", ditolak, catatan }, { status: 422 });
+    }
+
     const ditulis = await db.transaction(async (tx) => {
-        // Kunci irisannya PUBLIKASI, bukan nomor surat: satu surat bisa punya banyak detail,
-        // dan tiap detail diterbitkan sendiri-sendiri. Menghapus per nomor surat berarti memuat
-        // detail kedua akan mencabut aturan detail pertama dari surat yang sama.
-        // `publish_detail` menolak menerbitkan ulang detail yang sama, jadi satu detail selalu
-        // punya tepat satu publikasi — kunci ini stabil.
         await tx.delete(promoRule).where(and(
             eq(promoRule.source, "surat"),
-            eq(promoRule.sourceRef, draftId),
+            eq(promoRule.principal, letter.principal),
+            inArray(promoRule.suratProgram, suratDimuat),
         ));
         const values = rows.map((row) => ({
             ...row, prdId: "", importedBy: gate.email!, source: "surat", sourceRef: draftId,

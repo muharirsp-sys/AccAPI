@@ -53,3 +53,26 @@ def test_kelompok_yang_sudah_benar_tidak_disentuh():
 def test_tanpa_principle_terpilih_tebakan_model_dibiarkan():
     r = rapikan_baris([MENTAH], MASTER, "")[0]
     assert r["principle"] == "KINO"
+
+
+def test_judul_summary_mempertemukan_surat_sebulan_dan_memisahkan_bulan_lain():
+    """Judulnya bukan label — ia kunci yang menentukan surat berikutnya menyusul ke mana."""
+    from baca_surat_rapi import judul_summary
+
+    sept = [{"periode_start": "2026-09-01", "periode_end": "2026-09-30"}]
+    sept_lain = [{"periode_start": "2026-09-15", "periode_end": "2026-09-30"}]
+    okt = [{"periode_start": "2026-10-01", "periode_end": "2026-10-31"}]
+
+    assert judul_summary("KINO NON FOOD", sept) == "KINO NON FOOD - SEPTEMBER 2026"
+    # Dua surat September milik principal yang sama WAJIB bertemu di judul yang sama.
+    assert judul_summary("KINO NON FOOD", sept) == judul_summary("KINO NON FOOD", sept_lain)
+    # Bulan lain memulai lembar berikutnya, seperti Form Summary yang bertajuk satu periode.
+    assert judul_summary("KINO NON FOOD", okt) != judul_summary("KINO NON FOOD", sept)
+    # Principal lain tidak pernah tercampur.
+    assert judul_summary("PRISKILA", sept) != judul_summary("KINO NON FOOD", sept)
+
+
+def test_tanpa_periode_terbaca_menumpuk_di_satu_tempat_yang_jelas():
+    from baca_surat_rapi import judul_summary
+    assert judul_summary("KINO NON FOOD", [{"periode_start": ""}]) == "KINO NON FOOD"
+    assert judul_summary("", []) == "Summary Program"
