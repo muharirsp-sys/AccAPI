@@ -176,6 +176,43 @@ kecuali suratnya memang menyebutnya — kalau diisi, SO 13044 berhenti dijelaska
    sudah punya aturannya dari impor Excel (`source` kosong), sedangkan jalur Summary menulis
    dengan `source='surat'` dan hanya mengganti irisannya sendiri — jadi ia MENAMBAH set kedua,
    bukan mengganti.
+
+   **Dijalankan 16 Sep sesudah perbaikan naik. Langkah nol akhirnya lolos; rantainya berhenti
+   satu langkah kemudian, dan sebabnya sudah pasti.** Yang BERHASIL: master tersimpan dan
+   terbaca (101 kelompok), OCR jalan (1 baris dari 1 halaman — PDF-nya memang 1 halaman), dan
+   **ekstraksi maknanya bagus** — periode 2026-09-01..30, channel GT, BONUS_QTY 1 PCS, ambang
+   30 PCS, dan yang paling penting `outlet_mode: "only"` + `outlet_classes: "LOYALTY"`, persis
+   bentuk yang butir 4.60 sekarang bisa terbitkan.
+
+   Yang MENGHENTIKAN, empat cacat, semuanya di editor Summary:
+
+   | # | Cacat | Akibat |
+   |---|---|---|
+   | a | Parser mengembalikan **`kode_barangs: ""`** | `build_programs` menolak: "Baris 1: kode barang belum dipilih"; **0 aturan tersusun** |
+   | b | Parser menaruh frasa surat ("OVALE 2IN1 CLEANSER MIX VARIANT") ke **`kelompok`**, padahal itu bukan kelompok master | resolusi SKU tidak punya pegangan; kelompok yang benar = `OVALE FACIAL LOTION` |
+   | c | Membetulkan kelompok di layar **tidak memicu resolusi ulang** — resolusi hanya berjalan di server saat parse | manusia tidak bisa menyelamatkan draf dari UI; grid juga tidak punya pemilih SKU |
+   | d | `MultiSelect` tidak bisa membuang nilai teks-bebas yang tidak ada di master (tidak ada checkbox untuknya) | nilai bogus dari OCR menempel selamanya; satu-satunya jalan adalah menghapus barisnya |
+
+   Bukti bahwa (b) fatal: `master/options` dengan kelompok gabungan menjawab hanya `ALL VARIANT`,
+   sedangkan dengan `OVALE FACIAL LOTION` menjawab 7 varian (ANTI ACNE, EXTRA MILD, LEMON,
+   LUMI YAMBEAN, PAPAYA, PORE MIN) — persis nama barang pada 17 aturan Excel surat ini.
+
+   Cacat kecil ikut tercatat: periode draf tersimpan **2026-08-31 / 2026-09-16** padahal diisi
+   2026-09-01 / 2026-09-30 — awalnya tergeser zona waktu (WITA→UTC), akhirnya tidak terbaca
+   sama sekali.
+
+   **Jalur kedua juga tertutup:** `/summary/settings` (paket review, yang `publish_detail`-nya
+   benar-benar menyuapi jembatan) meminta **impor berkas paket**, artefak terpisah yang tidak
+   dihasilkan editor draf.
+
+   Jadi urutan kerja berikutnya bukan lagi mencoba-coba di layar: **perbaiki (a)+(c) lebih
+   dulu** — entah dengan meresolusi `kode_barangs` dari kelompok/varian/gramasi saat draf
+   disimpan, atau dengan memberi grid pemilih SKU. Sebelum itu, tidak ada surat KINO mana pun
+   yang bisa melewati editor ini.
+
+   **Keadaan produksi tidak berubah sedikit pun:** `promo_rule` tetap **234**, `promo_outlet`
+   tetap `LOYALTY:41` dan `BP2609007909:2`. Dua draf Summary tertinggal di pustaka sebagai
+   bukti (`f0348cef…`, `bdd8b9c9…`), keduanya berstatus draft dan tidak memengaruhi gerbang.
 3. ~~**Tiga CUST_ID2 belum ada di `principal_mapping`.**~~ **SELESAI 16 Sep** (butir 4.63),
    di produksi: `52390254695`→`C-KOS005`, `2191200123409`→`C-KA0059`, `3210402085278`→`C-LO0019`.
    Diperiksa ulang ke `promo_outlet.source_code` sebelum ditulis, dan dipastikan belum ada — baik
