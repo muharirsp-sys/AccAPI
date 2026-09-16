@@ -138,14 +138,17 @@ kecuali suratnya memang menyebutnya — kalau diisi, SO 13044 berhenti dijelaska
 3. **Tiga CUST_ID2 belum ada di `principal_mapping`** — datanya sudah ada di
    `promo_outlet.source_code`, tinggal disalin ke Mapping Principal.
 4. **Konfirmasi Kino**: Indomaret 3,1% vs 3% (Rp 8,13 juta menggantung).
-5. **`readiness()` menolak surat yang membatasi peserta** (`include_tags`/`outlet_codes`), jadi
-   setiap program yang terbit dari Summary selalu "semua outlet". Tiga dari empat surat September
-   produksi justru bentuk itu, dan ketiganya masuk lewat impor Excel. Jalan keluarnya sekarang
-   dua langkah (terbitkan dulu, lalu unggah suratnya di Daftar outlet peserta yang akan menunjuk
-   aturannya). **Untuk surat EXCLUDE arahnya masih harus dibalik tangan.**
+5. ~~**`readiness()` menolak surat yang membatasi peserta.**~~ **SELESAI 16 Sep** (butir 4.60).
+   `peserta()` memetakan `include_tags`/`exclude_tags`/`outlet_codes`/`outlet_list_required` ke
+   `outlet_mode`/`outlet_classes`; jembatan dan `promo_rule.outlet_list` memang sudah siap sejak
+   awal, jadi tidak ada kolom baru dan tidak ada migrasi. Arah EXCLUDE **tidak perlu lagi dibalik
+   tangan**, dan "LIST OUTLET TERLAMPIR" kini menambatkan aturannya ke daftar bernama nomor
+   suratnya sendiri — kosong, jadi menahan, sampai lampirannya diunggah di Daftar outlet peserta.
 6. **Multi-principal.** Jalur `promo_rule` baru tersambung untuk KINO NON FOOD.
-7. **Order Sales**: channel diverifikasi, tetapi kolom channel di layarnya masih teks bebas
-   ("GT / RETAIL"). Mengubahnya jadi pilihan akan menghapus satu kelas kesalahan sekaligus.
+7. ~~**Order Sales**: kolom channel masih teks bebas.~~ **SELESAI 16 Sep** (butir 4.61).
+   Bukan jadi pilihan, melainkan jadi JAWABAN: Order Sales dan Order Masuk menanyakannya ke
+   `GET /api/outlet-channel` begitu kode pelanggan diisi, lalu memperlihatkannya. Daftar pilihan
+   masih menyisakan cara untuk salah, dan satu-satunya nilai yang sah memang cuma kata master.
 
 ---
 

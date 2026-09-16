@@ -72,6 +72,8 @@ Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh 
 | 4.57 | **Ambang "beli minimal N" pada aturan PER BARANG non-bonus** | ✅ | **2026-09-15.** Sampai hari ini `trigger_qty` di jalur ini hanyalah keterangan: `matchItemRule` mencocokkan PERSENNYA saja. Jadi "beli 30 pcs dapat diskon 3%" yang diberikan pada pembelian 5 pcs lolos dengan sempurna — barangnya benar, persennya benar, dan tidak ada yang bertanya berapa yang dibeli. **Dinilai per SO dan per KELOMPOK**, bentuk yang sama persis dengan kuota bonus, karena suratnya berkata "MIX VARIANT": memeriksa per barang akan menahan pembelian yang sah (20 varian A + 15 varian B memang memenuhi ambang 30), dan program non-mix tetap terjaga karena jembatan menulis satu kelompok per barang untuk `same_sku`. **Baris bonus tidak ikut dihitung sebagai pembelian** — kalau ikut, bonus akan membantu memenuhi syaratnya sendiri. Satuan: PCS dinilai pada satuan terkecil; RP dinilai TERMASUK PPN mengikuti bukti MSG; **KRT sengaja TIDAK ditebak** karena isi karton berbeda tiap barang, dan ambang yang tidak terbaca tidak dianggap terpenuhi. Ambang MSG dan bonus TIDAK ikut disaring di sini (`needsTriggerCheck`): pemeriksanya sudah ada masing-masing, dan menyaringnya dua kali akan menghilangkannya sebelum pemeriksanya sempat melihat |
 | 4.58 | **SIMULASI sebelum publikasi jadi aturan** | ✅ | **2026-09-15, permintaan pengguna.** Yang menyusun Summary bukan yang menulis kodenya, dan ia diminta menyatakan "program ini sudah benar dan bisa berjalan" — pernyataan yang menahan faktur sungguhan. Tanpa diperlihatkan APA yang akan dibaca sistem, pernyataan itu cuma tanda tangan di atas sesuatu yang tidak bisa ia lihat, dan centang seperti itu hanya memindahkan tanggung jawab ke orang yang tidak punya cara memeriksa. `simulateLetter` menjawab tiga pertanyaan: **aturan apa yang akan terbaca** (dikelompokkan supaya bisa dibaca mata), **apa yang ditolak beserta sebabnya**, dan **apa hasilnya atas baris faktur SUNGGUHAN** (sampai 2.000 baris terbaru yang memuat barang surat itu). Ambangnya dihitung dengan cara yang sama persis dengan gerbangnya — kalau berbeda, simulasi akan menjanjikan sesuatu yang gerbangnya tidak tepati. **Tidak menulis apa pun**: simulasi yang bisa merusak akan berhenti dijalankan orang |
 | 4.59 | **Dua pernyataan manusia sebelum jembatan berjalan** | ✅ | **2026-09-15, migrasi `0019`.** Menerbitkan di Summary saja tidak cukup lagi. ① **Centang** "program ini sudah benar dan bisa berjalan", sengaja diletakkan DI BAWAH simulasinya. ② **Bukti PDF surat bertanda tangan OM dan tim**: sistem bisa menilai apakah aturannya terbaca, tetapi TIDAK BISA menilai apakah programnya memang disetujui yang berwenang — jadi yang disimpan bukan penilaian melainkan buktinya. Berkasnya di basis data, bukan cakram container yang dibuat ulang tiap deploy. Kuncinya id PUBLIKASI bukan nomor surat: menyetujui satu detail tidak boleh diam-diam menyetujui sisanya. Keduanya wajib; kurang satu, jembatan menjawab 409 dengan kalimat yang menyebut mana yang kurang |
+| 4.60 | **Surat yang membatasi pesertanya ikut terbit dari Summary** | ✅ | **2026-09-16.** `readiness()` menolak `include_tags`/`exclude_tags`/`outlet_codes`/`outlet_list_required` satu per satu, jadi yang bisa terbit dari Summary SELALU "semua outlet" — dan tiga dari empat surat September produksi justru bentuk itu, sehingga ketiganya harus masuk lewat impor Excel. Sekarang `peserta()` memetakannya ke `outlet_mode`/`outlet_classes` pada `Program`; jembatan dan `promo_rule.outlet_list` sudah siap sejak awal, jadi tidak ada kolom baru. INCLUDE atas daftar kosong berarti tidak ada yang berhak, dan EXCLUDE pun **gagal tertutup** sejak 2026-09-15 — jadi "LIST OUTLET TERLAMPIR" ditambatkan ke daftar bernama NOMOR SURATNYA dan menahan sendiri sampai lampirannya diunggah. Yang tidak bisa dinyatakan utuh tetap ditolak: dua arah sekaligus, kelas + daftar kode sekaligus, atau lebih dari satu kelas |
+| 4.61 | **Channel order tidak lagi diketik, di kedua layar** | ✅ | **2026-09-16.** Butir 4.56 sudah menyuruh server memastikan channel ke master dan MENOLAK yang berbeda, tetapi kotak isiannya masih teks bebas ("GT / RETAIL"). Yang tersisa bukan risiko keputusan, melainkan kerja sia-sia yang terlihat benar: perkiraan promo dihitung untuk channel yang DIAKUI, lalu ordernya ditolak saat dikirim — dan yang mengetik tidak tahu mana yang keliru. Kini Order Sales dan Order Masuk menanyakannya ke `GET /api/outlet-channel` begitu kode pelanggan diisi, lalu memperlihatkannya sebagai jawaban, bukan isian. Tiga keadaan punya tiga kalimatnya sendiri — di luar master, tanpa kategori, master tak terjangkau — karena ketiganya dibetulkan orang yang berbeda |
 
 ## Langkah 4 tahap 1c — routing: cocok lanjut, tidak cocok ke admin review
 
@@ -672,6 +674,29 @@ per SO, per kelompok, dalam satuan terkecil, dan tanpa menghitung baris bonus se
 Dua cara menghitung hal yang sama pada satu faktur akan berbeda suatu hari, dan yang satu akan
 menuduh yang lain.
 
+**Pembatasan peserta ikut terbit, tidak lagi ditolak mentah** (sejak 2026-09-16, butir 4.60).
+Sebelumnya `readiness()` menolak `include_tags`, `exclude_tags`, `outlet_codes` dan
+`outlet_list_required` satu per satu, jadi yang bisa terbit dari Summary SELALU "semua outlet" —
+dan tiga dari empat surat September produksi justru bentuk itu, sehingga ketiganya harus masuk
+lewat impor Excel. Sekarang surat menyatakan pesertanya sendiri:
+
+| Bunyi surat | Yang terbit | Yang menahan |
+|---|---|---|
+| "KHUSUS PESERTA LOYALTY" (`include_tags`) | `outlet_list='LOYALTY'`, mode **INCLUDE** | daftar kosong = tidak ada yang berhak |
+| "KECUALI PESERTA LOYALTY" (`exclude_tags`) | `outlet_list='LOYALTY'`, mode **EXCLUDE** | daftar kosong = ditahan, bukan diloloskan |
+| daftar kode outlet (`outlet_codes`) | daftar bernama NOMOR SURATNYA, mode INCLUDE; anggotanya ikut ditulis | — |
+| "LIST OUTLET TERLAMPIR" (`outlet_list_required`) | daftar bernama NOMOR SURATNYA, mode INCLUDE, **kosong** | kosong sampai lampirannya diunggah di Daftar outlet peserta |
+
+Yang terakhir itu yang menutup lingkarannya: nama daftarnya sama persis dengan yang dibuat layar
+*Aturan Promo → Daftar outlet peserta* saat suratnya diunggah, jadi unggahan itu mengisi daftar
+yang aturannya sudah menunjuk. Sebelum diunggah, INCLUDE atas daftar kosong berarti tidak ada
+yang berhak — **arah EXCLUDE pun tidak perlu lagi dibalik tangan.**
+
+Yang **tetap ditolak** adalah yang tidak bisa dinyatakan utuh: surat yang menyebut daftar yang
+diikutkan DAN yang dikecualikan sekaligus, kelas outlet DAN daftar kode sekaligus, atau lebih
+dari satu kelas. `promo_rule` punya satu tempat daftar dan satu arah, karena itulah yang bisa
+ditanyakan gerbang atas satu baris faktur.
+
 **Yang masih ditahan dengan sengaja:** ambang bersatuan **KRT**. Isi karton berbeda tiap barang,
 jadi mengubahnya ke satuan terkecil berarti mengarang angka yang tidak tertulis di aturannya.
 Aturan seperti itu menahan barisnya dengan pesan yang menyuruh menulis ulang ambangnya dalam PCS.
@@ -694,7 +719,7 @@ benar"; bagian ini menjawab "apa yang terjadi, berurutan, dan di mana ia bisa be
         ▼
   TERBITKAN  ─────────────►  readiness() menolak yang belum lengkap     butir 4.43
         │                     (mekanisme bukan on faktur, tanggal kosong,
-        │                      kelas outlet, daftar outlet, benefit tak terhitung)
+        │                      benefit tak terhitung, DUA daftar peserta sekaligus)
         ▼
   SIMULASI  ◄──── WAJIB DILIHAT sebelum dinyatakan benar                butir 4.58
         │         · aturan apa yang akan terbaca sistem
