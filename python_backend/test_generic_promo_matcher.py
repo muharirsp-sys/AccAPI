@@ -65,6 +65,17 @@ MUST_NOT_MATCH = [
     ("NATUR", "NATUR HAIR RECOVERY SERUM ARGAN OIL 60ML"),  # master hanya Almond+Argan 8ML
 ]
 
+# Master principal dan surat asli adalah dokumen bisnis nyata dan SENGAJA tidak ikut git
+# (`*.xlsx` dan `reference_surat_program/` di .gitignore). Tanpa berkasnya uji ini MELEWAT
+# dengan sebabnya, bukan mati dengan FileNotFoundError: CI tidak boleh menuntut berkas yang
+# tidak dikirim. `run_checks.py` mencetak sebab lewatnya dan menghitungnya di ringkasan,
+# jadi lewat tidak bisa menyamar sebagai lulus.
+_kurang = sorted(k for k, *_ in MUST_MATCH + MUST_NOT_MATCH
+                 if not os.path.isfile(os.path.join(RM, f"MASTER BARANG {k}.xlsx")))
+if _kurang:
+    print(f"LEWAT: master rebuild tidak ada di pohon kerja ini: {', '.join(dict.fromkeys(_kurang))}")
+    raise SystemExit(0)
+
 _cache = {}
 def items_for(key):
     if key not in _cache:

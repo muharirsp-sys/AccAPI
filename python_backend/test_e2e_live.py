@@ -111,8 +111,15 @@ def _punya_cache():
 
 
 def main():
+    # Master principal dan surat asli adalah dokumen bisnis nyata dan SENGAJA tidak ikut git
+    # (`*.xlsx` dan `reference_surat_program/` di .gitignore). Tanpa berkasnya uji ini MELEWAT
+    # dengan sebabnya, bukan mati dengan FileNotFoundError: CI tidak boleh menuntut berkas yang
+    # tidak dikirim. `run_checks.py` mencetak sebab lewatnya dan menghitungnya di ringkasan,
+    # jadi lewat tidak bisa menyamar sebagai lulus.
     for wajib in (SURAT, MASTER_CACHE):
-        assert wajib.is_file(), f"berkas contoh tidak ada: {wajib}"
+        if not wajib.is_file():
+            print(f"LEWAT: berkas contoh tidak ada di pohon kerja ini ({wajib})")
+            return
 
     if FRESH and not os.getenv("MISTRAL_API_KEY"):
         print("LEWAT: E2E_FRESH=1 menuntut panggilan API, tetapi MISTRAL_API_KEY tidak ada.")

@@ -37,6 +37,15 @@ def _load_master():
     return master
 
 
+# Master principal dan surat asli adalah dokumen bisnis nyata dan SENGAJA tidak ikut git
+# (`*.xlsx` dan `reference_surat_program/` di .gitignore). Tanpa berkasnya uji ini MELEWAT
+# dengan sebabnya, bukan mati dengan FileNotFoundError: CI tidak boleh menuntut berkas yang
+# tidak dikirim. `run_checks.py` mencetak sebab lewatnya dan menghitungnya di ringkasan,
+# jadi lewat tidak bisa menyamar sebagai lulus.
+if not os.path.isfile(_MASTER_PATH):
+    print(f"LEWAT: master URC tidak ada di pohon kerja ini ({_MASTER_PATH})")
+    raise SystemExit(0)
+
 MASTER = _load_master()
 RULES = um.load_rules()
 

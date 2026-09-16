@@ -69,6 +69,7 @@ def main():
         return 1
 
     gagal = []
+    lewat = []
     for satu in berkas:
         nama = satu.name
         if nama in BUTUH_LAYANAN:
@@ -84,7 +85,19 @@ def main():
             continue
         lama = time.time() - mulai
         if hasil.returncode == 0:
-            print(f"OK     {nama:<34} {lama:5.1f}s")
+            # LEWAT TIDAK BOLEH MENYAMAR SEBAGAI LULUS. Sebagian uji menuntut berkas yang sengaja
+            # tidak ikut git (master principal `*.xlsx`, surat asli) dan melewat dengan sebabnya,
+            # supaya CI tidak menuntut berkas yang tidak dikirim. Tetapi uji yang melewat tidak
+            # menjaga apa pun, dan "38/38 lulus" yang diam-diam memuat 4 lewat adalah persis
+            # kalimat yang membuat repo ini kehilangan kerja Juli selama dua bulan. Sebabnya
+            # dicetak, jumlahnya dihitung, dan ringkasannya menyebut keduanya.
+            sebab = next((b[len("LEWAT:"):].strip() for b in hasil.stdout.splitlines()
+                          if b.startswith("LEWAT:")), None)
+            if sebab:
+                print(f"LEWAT  {nama:<34} {sebab}")
+                lewat.append(nama)
+            else:
+                print(f"OK     {nama:<34} {lama:5.1f}s")
         else:
             print(f"GAGAL  {nama:<34} {lama:5.1f}s")
             gagal.append((nama, (hasil.stdout + hasil.stderr).strip()[-2000:]))
@@ -94,7 +107,12 @@ def main():
         for nama, pesan in gagal:
             print(f"--- {nama} ---\n{pesan}\n")
         return 1
-    print(f"\nSeluruh {len(berkas) - len(BUTUH_LAYANAN)} self-check Python lulus.")
+    jalan = len(berkas) - len(BUTUH_LAYANAN) - len(lewat)
+    if lewat:
+        print(f"\n{jalan} self-check Python lulus, {len(lewat)} MELEWAT: {', '.join(lewat)}")
+        print("Yang melewat tidak menjaga apa pun di sini, hanya di mesin yang punya berkasnya.")
+    else:
+        print(f"\nSeluruh {jalan} self-check Python lulus.")
     return 0
 
 
