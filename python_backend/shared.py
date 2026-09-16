@@ -4710,10 +4710,9 @@ def _apply_native_kelompok(rows_to_check, master_items):
         else:
             # Explode into multiple rows based on the prefix
             import copy
-            is_first = True
+            pertama = True
             for prefix, its in groups_by_prefix.items():
-                new_row = r if is_first else copy.deepcopy(r)
-                is_first = False
+                new_row = r if pertama else copy.deepcopy(r)
                 
                 # Assign this prefix's valid kelompoks & matched items
                 k_list = []
@@ -4728,11 +4727,17 @@ def _apply_native_kelompok(rows_to_check, master_items):
                 new_row["kode_barangs"] = ",".join(k_codes)
                 new_row["_matched_items_cache"] = its
                 
-                # Let's ensure no ID collisions if exploded
-                if not is_first:
-                     import uuid
-                     new_row["id"] = str(uuid.uuid4())
-                     
+                # Baris hasil PECAHAN dapat id sendiri supaya tidak bertabrakan. Baris PERTAMA
+                # mempertahankan id aslinya — dulu ia ikut diberi id baru karena `is_first`
+                # sudah dijadikan False satu baris di atas pemeriksaannya, jadi tiap penyimpanan
+                # mengganti id baris yang orangnya sedang sunting. Id itu yang dipakai layar
+                # untuk mengenali baris; menggantinya di belakang punggung membuat baris yang
+                # sama terlihat sebagai baris lain.
+                if not pertama:
+                    import uuid
+                    new_row["id"] = str(uuid.uuid4())
+                pertama = False
+
                 final_rows_out.append(new_row)
                 
     return final_rows_out

@@ -134,7 +134,35 @@ def append_rows(draft_id, user, rows, master=None):
         return None
     content = draft["content"]
     lama = content.get("rows") or []
-    content["rows"] = [*lama, *rows]
+
+    # SATU PROGRAM HANYA SEKALI DALAM SATU SUMMARY.
+    #
+    # Ini penjaga di sambungan, bukan tambalan atas satu bug tertentu: apa pun yang terjadi di
+    # hulu — pembaca surat yang mengembalikan baris berlebih, tombol yang tertekan dua kali,
+    # permintaan yang terkirim ulang — sebuah Summary yang memuat program yang sama dua kali
+    # selalu salah. Ia akan dicetak dua baris untuk ditandatangani, dan kalau kelompoknya
+    # sempat terisi, dimuat dua kali ke `promo_rule`.
+    #
+    # Terbukti perlu 2026-09-16: menyusulkan surat kedua menghasilkan satu salinan surat
+    # PERTAMA di draft, verbatim sampai `promo_group_id`-nya. Sebab hulunya belum ditemukan;
+    # penjaga ini tidak menunggu sebab itu ketemu, dan tetap benar setelah ia ketemu.
+    #
+    # Jati diri satu baris program: surat + ketentuan + benefit. Bukan `id` (baris dari pembaca
+    # surat belum punya), dan bukan kelompoknya (justru itu yang sedang dikoreksi orang).
+    def _jatidiri(baris):
+        return tuple(" ".join(str(baris.get(k) or "").split()).upper()
+                     for k in ("surat_program", "ketentuan", "benefit_type", "benefit"))
+
+    sudah = {_jatidiri(b) for b in lama}
+    baru_saja = []
+    for baris in rows or []:
+        kunci = _jatidiri(baris)
+        if kunci in sudah:
+            continue
+        sudah.add(kunci)
+        baru_saja.append(baris)
+
+    content["rows"] = [*lama, *baru_saja]
     for nomor, baris in enumerate(content["rows"], 1):
         baris["no"] = str(nomor)
     if master:
