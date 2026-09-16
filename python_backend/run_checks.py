@@ -49,6 +49,7 @@ SELF_CHECK_MODUL = [
     "ocr_cache.py",
     "ocr_text_compare.py",
     "parse_cache.py",
+    "periode_surat.py",
     "tier_parser.py",
     "variant_resolver.py",
 ]

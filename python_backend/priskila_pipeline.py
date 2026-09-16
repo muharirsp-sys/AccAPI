@@ -27,6 +27,8 @@ Public API:
 
 import re
 import uuid
+
+from periode_surat import rentang as _rentang
 from typing import Dict, List, Optional
 
 import priskila_matcher as pm
@@ -214,6 +216,12 @@ def apply_priskila_matching(rows: List[Dict], master: List[Dict], rules: Optiona
             "nama_program": acc["nama_program"],
             "channel_gtmt": acc["channel_gtmt"],
             "periode": acc["periode"],
+            # `compile_programs` MENOLAK baris tanpa rentang tanggal, jadi tanpa dua field ini
+            # draft Priskila tidak akan pernah bisa jadi `promo_rule` -- ia berhenti di Form
+            # Summary. Tanggalnya DITERJEMAHKAN dari `periode` yang sudah disalin verbatim,
+            # bukan ditebak model: lihat `periode_surat.py`.
+            "periode_start": _rentang(acc["periode"])[0],
+            "periode_end": _rentang(acc["periode"])[1],
             "promo_group_id": acc["promo_group_id"],
             "kelompok": " & ".join(acc["kelompoks"]),
             "variant": variant,
@@ -240,4 +248,40 @@ def apply_priskila_matching(rows: List[Dict], master: List[Dict], rules: Optiona
         ur["no"] = str(len(out) + 1)
         out.append(ur)
 
+    _satukan_periode(out)
     return out
+
+
+def _satukan_periode(rows: List[Dict]) -> None:
+    """Satu surat = SATU periode. Baris yang tanggalnya tidak terbaca memakai periode suratnya.
+
+    Periode dinyatakan SEKALI di kop surat, bukan per blok tabel. Tetapi blok MTI, Grosir, dan
+    Star Outlet tidak mengulanginya, dan model sempat mengisinya dari kalimat batas klaim: satu
+    surat Maret 2026 pulang dengan lima baris ber-`periode` "September" dan satu "31 Juni 2026"
+    -- tanggal yang bahkan tidak ada di kalender. Perintah "salin saja" sudah dipertajam, tetapi
+    perintah adalah permintaan, bukan jaminan.
+
+    Penjaga ini deterministik: periode surat = nilai TERBANYAK yang benar-benar terbaca sebagai
+    rentang tanggal, per nomor surat. Baris yang tidak terbaca mewarisi itu. Baris yang terbaca
+    TIDAK diubah -- surat yang memang menyebut periode berbeda per blok tetap dihormati.
+
+    Bila TIDAK ADA satu baris pun yang terbaca, seluruh barisnya dibiarkan tanpa tanggal, dan
+    `compile_programs` yang akan menahannya dengan sebabnya. Menebak tanggal di sini akan
+    menerbitkan aturan promo untuk bulan yang tidak pernah disebut surat.
+    """
+    from collections import Counter
+    per_surat = {}
+    for r in rows:
+        kunci = str(r.get("surat_program", "") or "").strip().upper()
+        mulai, selesai = str(r.get("periode_start", "") or ""), str(r.get("periode_end", "") or "")
+        if mulai and selesai:
+            per_surat.setdefault(kunci, Counter())[(str(r.get("periode", "") or ""), mulai, selesai)] += 1
+    if not per_surat:
+        return
+    baku = {k: c.most_common(1)[0][0] for k, c in per_surat.items()}
+    for r in rows:
+        if str(r.get("periode_start", "") or "") and str(r.get("periode_end", "") or ""):
+            continue
+        pilih = baku.get(str(r.get("surat_program", "") or "").strip().upper())
+        if pilih:
+            r["periode"], r["periode_start"], r["periode_end"] = pilih

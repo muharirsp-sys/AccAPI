@@ -65,9 +65,17 @@ FIELD PER OBJECT (huruf kecil, HANYA field ini):
 - "principle": (String) nama principle.
 - "surat_program": (String) nomor surat program.
 - "nama_program": (String) nama program/promo.
-- "periode": (String) periode surat.
+- "periode": (String) PERIODE PROGRAM, disalin dari JUDUL/KOP surat (mis. "TRADE PROGRAM
+  GT BULAN MARET 2026" -> "MARET 2026"). NILAINYA SAMA UNTUK SETIAP OBJECT tanpa kecuali,
+  termasuk baris blok MTI, Grosir, dan Star Outlet: periode dinyatakan SEKALI di kop surat,
+  bukan per blok dan bukan per baris.
+  DILARANG KERAS mengambilnya dari kalimat batas klaim. Kalimat seperti "claim ... paling
+  lambat tanggal 31 September 2026" adalah TENGGAT KLAIM, bukan periode program; ia milik
+  field "syarat_claim". Bila blok MTI/Grosir/Star Outlet tidak menuliskan periodenya sendiri,
+  SALIN periode dari kop surat -- JANGAN mengosongkannya, dan JANGAN mengarang tanggal.
 - "syarat_claim": (String) ringkasan SINGKAT bagian syarat/mekanisme klaim di surat
-  (batas waktu klaim + dokumen wajib). Jika surat tidak punya bagian itu, isi "".
+  (batas waktu klaim + dokumen wajib). Di sinilah kalimat "paling lambat tanggal ..." ditaruh.
+  Jika surat tidak punya bagian itu, isi "".
 
 SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
 """,
