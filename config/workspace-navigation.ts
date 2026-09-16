@@ -6,7 +6,7 @@
  * Side Effects: Tidak ada; tidak mengubah hak akses.
  */
 import {
-    FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, ClipboardList, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, type LucideIcon } from "lucide-react";
+    FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, ClipboardList, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, PackageSearch, type LucideIcon } from "lucide-react";
 
 export type WorkspaceItem = { name: string; href: string; icon: LucideIcon };
 export type WorkspaceGroup = { id: string; name: string; description: string; icon: LucideIcon; items: WorkspaceItem[] };
@@ -45,6 +45,7 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
     ] },
     { id: "settings", name: "Pengaturan", description: "Atur integrasi Accurate, master data, dan akses.", icon: Settings2, items: [
         { name: "AOL Form Engine", href: "/api-wrapper", icon: Settings2 },
+        { name: "Master Barang", href: "/master-barang", icon: PackageSearch },
         { name: "Master Principle", href: "/principles", icon: Database },
         { name: "Mapping Principal", href: "/principal-mapping", icon: Database },
         { name: "User & RBAC", href: "/admin/users", icon: Shield },

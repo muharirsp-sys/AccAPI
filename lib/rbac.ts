@@ -26,6 +26,7 @@ export const appModules = [
     "sppd",
     "finance",
     "principles",
+    "master_barang",
     "summary",
     "validator",
     "off_program_control",
@@ -51,6 +52,7 @@ export const moduleLabels: Record<AppModule, string> = {
     sppd: "SPPD",
     finance: "Finance",
     principles: "Principles",
+    master_barang: "Master Barang",
     summary: "Summary",
     validator: "Validator",
     off_program_control: "OFF Program Control",
@@ -153,6 +155,7 @@ export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     sppd: ["view", "edit_settings", "upload_excel", "generate", "download"],
     finance: ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"],
     principles: ["view", "upload", "delete"],
+    master_barang: ["view", "create", "upload", "edit", "generate", "export", "manage"],
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
     validator: ["view", "upload", "run", "download", "edit"],
     off_program_control: ["view", "create", "update", "approve", "export"],
@@ -296,6 +299,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/payments", module: "payments", action: "view" },
     { prefix: "/finance", module: "finance", action: "view" },
     { prefix: "/principal-mapping", module: "principles", action: "view" },
+    { prefix: "/master-barang", module: "master_barang", action: "view" },
     { prefix: "/principles", module: "principles", action: "view" },
     // /sales sebelum /orders TIDAK relevan (prefix beda), tapi urutannya tetap dijaga:
     // pencocokan memakai prefix terpanjang.

@@ -12,7 +12,11 @@ import { WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, activeNavigation
 test("all existing modules appear exactly once across six groups", () => {
     const items = WORKSPACE_GROUPS.flatMap(group => group.items);
     assert.equal(WORKSPACE_GROUPS.length, 6);
-    assert.equal(items.length, 25);
+    assert.equal(items.length, 26);
+    // Master Barang ikut katalog: ia yang MEMBUAT master principal baru, dan matcher
+    // deterministik jalur Summary menuntut master berpola `BRAND - JENIS`. Tanpa layar ini
+    // satu-satunya cara menambah principal adalah menyusun berkasnya di luar sistem.
+    assert.ok(items.some(item => item.href === "/master-barang"));
     // Mapping Principal ikut katalog: terjemahan kode principal -> internal adalah master
     // data yang harus bisa diperbaiki admin lewat UI, bukan lewat berkas di share.
     assert.ok(items.some(item => item.href === "/principal-mapping"));
