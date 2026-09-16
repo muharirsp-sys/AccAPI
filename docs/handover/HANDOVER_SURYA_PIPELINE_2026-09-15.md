@@ -147,9 +147,35 @@ kecuali suratnya memang menyebutnya — kalau diisi, SO 13044 berhenti dijelaska
    gerbang baru itu kini sudah melihat batch yang sama dan tidak satu pun menahannya. **SO 13044
    tetap dijelaskan** — outletnya BAJI PAMAI, kini peserta INCLUDE surat itu, jadi kelima baris
    3% di posisi 4 masih punya aturannya.
-2. **Jembatan Summary belum pernah dijalankan ujung ke ujung dengan sesi login sungguhan.**
-   Terbukti sampai dinding autentikasi saja. Gerbang persetujuan yang baru SUDAH terbukti
-   lengkap di lokal (kedelapan keadaannya), tetapi jalur penuhnya butuh publikasi Summary nyata.
+2. **Jembatan Summary: dicoba 16 Sep, dan sebabnya akhirnya ketahuan — bukan autentikasi.**
+   Jalur ini tidak pernah bisa DICAPAI karena langkah **nol**-nya rusak di produksi. Diperiksa
+   langsung di container, bukan disimpulkan dari layar:
+
+   ```
+   data/masters      -> tidak ada
+   database.sqlite   -> 0 byte, tanpa tabel `principles`
+   ```
+
+   Dua kegagalan senyap bertumpuk: `MASTERS_DIR` tidak pernah dibuat (unggah master mati
+   HTTP 500, di layar berbunyi "Error jaringan"), dan registrinya memakai path relatif
+   terhadap cwd sehingga lahir di dalam image dan terhapus tiap deploy — tabelnya pun tidak
+   pernah dibuat, jadi tiap pembacaan jatuh ke `except:` telanjang dan menjawab "belum ada
+   principle". **Jawaban itu sama persis dengan jawaban yang benar ketika memang belum ada**,
+   dan itulah kenapa tidak ada yang pernah curiga.
+
+   **Sudah diperbaiki** (`3f363d0`): registry pindah ke `data/principles.sqlite3` (satu-satunya
+   folder yang terbukti bertahan antar deploy), tabel dan folder dipastikan ada, kedua fungsi
+   registry MELEMPAR alih-alih menelan, unggahan yang registrinya gagal membersihkan berkasnya
+   sendiri, dan layar membawa status aslinya. Ada tesnya: `test_principles_registry.py`.
+
+   **Yang masih menggantung: perbaikan ini belum naik ke produksi.** Sesudah ia naik, urutan
+   percobaannya: Master Principle (nama HARUS persis `KINO NON FOOD`, berkasnya
+   `master_barang_principle/MASTER BARANG KINO NON FOOD.xlsx` — dua kandidat lain gagal dibaca
+   parser) → Summary Promo → Gunakan Principle → unggah PDF surat → koreksi → terbitkan →
+   simulasi. **Berhenti di simulasi** (keputusan pengguna 16 Sep): tiap surat KINO yang ada
+   sudah punya aturannya dari impor Excel (`source` kosong), sedangkan jalur Summary menulis
+   dengan `source='surat'` dan hanya mengganti irisannya sendiri — jadi ia MENAMBAH set kedua,
+   bukan mengganti.
 3. ~~**Tiga CUST_ID2 belum ada di `principal_mapping`.**~~ **SELESAI 16 Sep** (butir 4.63),
    di produksi: `52390254695`→`C-KOS005`, `2191200123409`→`C-KA0059`, `3210402085278`→`C-LO0019`.
    Diperiksa ulang ke `promo_outlet.source_code` sebelum ditulis, dan dipastikan belum ada — baik
