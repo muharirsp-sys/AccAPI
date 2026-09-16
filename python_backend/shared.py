@@ -4571,6 +4571,32 @@ def _ensure_dir(p: str):
     os.makedirs(p, exist_ok=True)
 
 
+BULAN_ID = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI",
+            "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
+
+
+def _label_periode(mulai, selesai):
+    """"2026-09-01".."2026-09-30" -> "SEPTEMBER 2026". Beda bulan -> kedua tanggalnya ditulis.
+
+    Satu bulan penuh ditulis sebagai nama bulannya karena itulah yang dibaca orang di Form
+    Summary, dan itu pula bentuk yang dipakai form-form sebelumnya. Yang MELINTASI bulan tidak
+    diringkas jadi satu nama bulan: meringkasnya akan menyembunyikan separuh periodenya.
+    """
+    from datetime import date as _date
+    def urai(teks):
+        try:
+            bagian = str(teks or "").strip().split("-")
+            return _date(int(bagian[0]), int(bagian[1]), int(bagian[2]))
+        except (ValueError, IndexError):
+            return None
+    a, b = urai(mulai), urai(selesai)
+    if not a or not b:
+        return ""
+    if (a.year, a.month) == (b.year, b.month):
+        return f"{BULAN_ID[a.month - 1]} {a.year}"
+    return f"{a.day:02d} {BULAN_ID[a.month - 1][:3]} {a.year} - {b.day:02d} {BULAN_ID[b.month - 1][:3]} {b.year}"
+
+
 def _apply_native_kelompok(rows_to_check, master_items):
     final_rows_out = []
     def norm(x: object) -> str:
@@ -4832,6 +4858,14 @@ def process_summary_generation_job(job_id: str, token: str, rows: List[Dict[str,
 
         # TAHAP 2: Native Master DB Mapping (Injects Kelompok perfectly)
         _apply_native_kelompok(rows, items)
+
+        # Kolom "Periode" pada Form Summary membaca `periode`, tetapi baris draft menyimpan
+        # `periode_start`/`periode_end` dan TIDAK ADA yang pernah menulis `periode` — jadi
+        # kolomnya selalu kosong di setiap Form Summary yang pernah dicetak. Diturunkan di sini,
+        # dan hanya bila belum diisi: yang sudah ditulis orang tidak ditimpa.
+        for _r in rows:
+            if not str(_r.get("periode", "")).strip():
+                _r["periode"] = _label_periode(_r.get("periode_start"), _r.get("periode_end"))
             
         def my_canvas(canvas_obj, doc_obj):
             canvas_obj.saveState()
@@ -5002,9 +5036,26 @@ def process_summary_generation_job(job_id: str, token: str, rows: List[Dict[str,
             g_all = (not glist) or any(norm(x) == "ALL GRAMASI" for x in glist)
 
             ket = str(r.get("ketentuan","") or "").strip()
-            trig_has_num = has_number(ket)
-            trig_qty = parse_number_id(ket) if trig_has_num else ""
-            trig_unit = unit_from_text(ket) if trig_has_num else ""
+            # Ambang beli dibaca dengan PEMBACA YANG SAMA dengan aturan terbit (`threshold_of`),
+            # bukan dengan `parse_number_id` atas seluruh kalimat.
+            #
+            # `parse_number_id` membuang semua non-angka dari kalimatnya, jadi
+            # "Setiap pembelian 30 PCS OVALE 2IN1 CLEANSER MIX VARIANT" menjadi "3021" —
+            # 30, lalu 2 dan 1 yang terkeruk dari "2IN1". Kolom TRIGGER_QTY pada Excel Detail
+            # adalah kolom yang sama yang dimuat ke `promo_rule`, jadi angka itu menjadi
+            # "beli 3021 PCS": aturannya tersimpan rapi, terlihat benar, dan tidak pernah cocok
+            # dengan potongan mana pun. Gagal tertutup, tetapi tanpa sebab yang bisa dilihat.
+            #
+            # Dua pembaca untuk satu ambang pada satu program akan berbeda suatu hari, dan yang
+            # satu akan menuduh yang lain. Sekarang tinggal satu.
+            trig_qty, trig_unit = "", ""
+            if ket:
+                from summary_rules import threshold_of
+                jenis, minimum, satuan = threshold_of(ket)
+                if jenis == "quantity":
+                    trig_qty, trig_unit = minimum, satuan
+                elif jenis == "value":
+                    trig_qty, trig_unit = minimum, "RP"
             benefit_text_raw = str(r.get("benefit","") or "").strip()
             benefit_type = str(r.get("benefit_type","") or "").strip()
             
