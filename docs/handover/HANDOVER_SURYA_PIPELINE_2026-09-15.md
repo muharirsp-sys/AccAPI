@@ -210,6 +210,42 @@ kecuali suratnya memang menyebutnya — kalau diisi, SO 13044 berhenti dijelaska
    disimpan, atau dengan memberi grid pemilih SKU. Sebelum itu, tidak ada surat KINO mana pun
    yang bisa melewati editor ini.
 
+   **Diselesaikan 16 Sep, PR #69 + #70.** Keempat cacat itu ternyata SATU akar:
+   `_apply_native_kelompok` sudah lama benar — ia yang membuat Form Summary punya kolom
+   *Kelompok Barang* yang rapi — tetapi hanya dipanggil saat men-generate PDF. Resolusi
+   dipindahkan ke titik SIMPAN, jadi (a) `kode_barangs` terisi, (b) `kelompok` ditulis ulang
+   dengan nama master sehingga kalimat surat yang nyasar hilang sendiri, dan (c) koreksi
+   manusia akhirnya berpengaruh. (d) dapat tombol "Bersihkan pilihan". Efek yang diminta
+   pengguna ikut didapat: draft dan PDF Summary kini lewat resolver yang SAMA.
+
+   **Diuji di produksi pada draft OVALE yang kemarin mati**, dimuat ulang persis dalam keadaan
+   gagalnya: kelompok dibetulkan → **18 kode barang** (seluruhnya `K13300…` OVALE FACIAL LOTION)
+   → "1 aturan tersusun", `issues: []`.
+
+   **Simulasi atas draft — lima dari enam saringan menahan:**
+
+   | Skenario | Hasil | |
+   |---|---|---|
+   | beli 30 PCS | bonus 1 PCS | ✅ |
+   | beli 29 PCS | tidak ada | ✅ ambang menahan |
+   | kelipatan 60 PCS | bonus 2 PCS | ✅ |
+   | channel MT (surat bilang GT) | tidak ada | ✅ |
+   | barang di luar surat | tidak ada | ✅ |
+   | tanggal 15 Okt (di luar periode) | tidak ada | ✅ |
+   | **outlet BUKAN peserta LOYALTY** | **bonus 1 PCS** | ❌ **gagal terbuka** |
+
+   Baris terakhir itu cacat KELIMA, ditemukan justru karena empat yang pertama sudah beres:
+   `outlet_mode`/`outlet_classes` dibuang penyaring kunci saat draft disimpan (tidak ada di
+   `FIELDS`), padahal pembaca surat dan `build_programs` sama-sama sudah menanganinya. Surat
+   "KHUSUS PESERTA LOYALTY" tersimpan sebagai berlaku untuk SEMUA outlet, tanpa satu galat pun.
+   **Diperbaiki di PR #70** (`BARIS_DRAFT`, satu daftar kunci untuk dua tempat).
+
+   **Draft SENGAJA belum diterbitkan.** Menerbitkan membekukan isinya, dan isi draft ini masih
+   kehilangan pembatasan LOYALTY sampai #70 naik — membekukan yang sudah diketahui salah adalah
+   kebalikan dari yang dijaga rantai ini. Urutan sesudah #70 naik: simpan ulang draft (supaya
+   kelayakan outletnya ikut tersimpan), terbitkan, lalu simulasi penuh butir 4.58 di layar
+   *Tarik dari Summary*, lalu dua pernyataan manusia.
+
    **Keadaan produksi tidak berubah sedikit pun:** `promo_rule` tetap **234**, `promo_outlet`
    tetap `LOYALTY:41` dan `BP2609007909:2`. Dua draf Summary tertinggal di pustaka sebagai
    bukti (`f0348cef…`, `bdd8b9c9…`), keduanya berstatus draft dan tidak memengaruhi gerbang.
