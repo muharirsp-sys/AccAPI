@@ -134,6 +134,17 @@ const MultiSelect = ({
                     <div className="fixed inset-0 z-10" onClick={() => setIsOpen(false)}></div>
                     <div className="absolute z-20 mt-1 w-48 bg-[#1a1c23] border border-white/10 rounded-lg shadow-xl shadow-black max-h-60 overflow-y-auto">
                         <div className="p-1 space-y-1">
+                            {/* Membuang pilihan, bukan cuma menambahnya. Nilai yang datang dari
+                                pembacaan surat sering BUKAN salah satu pilihan master — kalimat
+                                suratnya sendiri yang masuk ke sini. Nilai seperti itu tidak punya
+                                kotak centang, jadi sebelum ada tombol ini ia menempel selamanya
+                                dan satu-satunya jalan adalah menghapus seluruh barisnya. */}
+                            {value.trim() !== "" && (
+                                <button type="button" onClick={() => onChange("")}
+                                    className="w-full text-left px-1.5 py-1 rounded text-[11px] text-rose-300 hover:bg-rose-500/15">
+                                    Bersihkan pilihan
+                                </button>
+                            )}
                             {options.length === 0 ? (
                                 <div className="p-2 text-slate-500 italic text-[10px]">Pilih kelompok dulu</div>
                             ) : (
