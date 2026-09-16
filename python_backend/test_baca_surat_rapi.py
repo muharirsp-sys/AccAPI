@@ -36,6 +36,17 @@ def test_lima_koreksi_tangan_tinggal_satu():
     assert "OVALE 2IN1 CLEANSER MIX VARIANT" in r["keterangan"]
 
 
+def test_kelompok_yang_hampir_cocok_TIDAK_ditebak():
+    """Terbukti berbahaya pada surat pertama yang diuji: "OVALE 2IN1 CLEANSER MIX VARIANT"
+    MENGANDUNG kelompok master "OVALE", padahal yang benar "OVALE FACIAL LOTION". Keduanya sah,
+    jadi tidak ada yang terlihat salah — kolomnya terisi, layarnya rapi, dan barang yang dapat
+    promo jadi barang yang lain sama sekali."""
+    master = [*MASTER, {"kode_barang": "K9", "kelompok": "OVALE", "variant": "X", "gramasi": "1ML"}]
+    r = rapikan_baris([MENTAH], master, "KINO NON FOOD")[0]
+    assert r["kelompok"] == "", f"tebakan diam-diam kembali: {r['kelompok']}"
+    assert "OVALE 2IN1 CLEANSER MIX VARIANT" in r["keterangan"]
+
+
 def test_varian_yang_memang_disebut_surat_tidak_dilebarkan_jadi_semua():
     """Ini yang paling berbahaya kalau salah: melebarkan promo ke varian yang tidak berhak."""
     r = rapikan_baris([{**MENTAH, "variant": "ANTI ACNE"}], MASTER, "KINO NON FOOD")[0]
