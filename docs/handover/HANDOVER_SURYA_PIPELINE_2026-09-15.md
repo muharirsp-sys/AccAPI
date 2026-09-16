@@ -116,7 +116,8 @@ ada di `docs/CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md` bagian **PIPELINE PENUH**.
 - Migrasi **0018 sudah dijalankan dan diverifikasi**; `promo_rule` 234 baris, seluruhnya
   ber-`channel` KOSONG, jadi tidak satu pun keputusan gerbang atas data lama berubah.
 - Migrasi **0019 lihat bagian terakhir** — harus dijalankan sebelum kode barunya naik.
-- `promo_outlet`: hanya `LOYALTY` (41 outlet). `BP2609007909` **belum** dimuat.
+- `promo_outlet`: `LOYALTY` (41 outlet) dan `BP2609007909` (2 outlet, INCLUDE, 105 aturan
+  menunjuknya) — **dimuat 16 Sep 2026** dari suratnya sendiri.
 - Order Sales: **nol order**. Penegakan channel di sana tidak menahan pekerjaan siapa pun.
 - Gerbang kirim faktur otomatis **TETAP TERTUTUP**.
 
@@ -128,10 +129,24 @@ kecuali suratnya memang menyebutnya — kalau diisi, SO 13044 berhenti dijelaska
 
 ## Yang MASIH menggantung — kerjakan dari sini
 
-1. **Dua langkah di layar produksi, keduanya butuh sesi login pengguna** (warisan dua sesi):
-   unggah `BP2609007909` lewat Aturan Promo → Daftar outlet peserta (kedua outletnya sudah
-   terpetakan), lalu tekan **Validasi** pada batch `ORDER_DETAIL_20260912_20260912.xlsx`.
-   Target tetap 48 lolos; alasannya baris demi baris ada di handover sesi kedua.
+1. ~~**Dua langkah di layar produksi.**~~ **SELESAI 16 Sep 2026**, dikerjakan di layar produksi
+   dengan sesi login pengguna. Diperiksa, bukan dipercaya dari notifikasi layar:
+
+   | Yang diperiksa | Hasil |
+   |---|---|
+   | Anggota daftar `BP2609007909` | **2** — `C-BA0003` BAJI PAMAI (`5191202075409`), `C-WA0012` WANG MART (`5191202076135`), keduanya aktif, nol kode ditolak |
+   | Aturan yang menunjuk daftar itu | **105**, mode **INCLUDE** |
+   | Channel ke-105 aturan | **kosong** — peringatan operasional BAJI PAMAI/MT terhormati |
+   | Total `promo_rule` | tetap **234**; tidak ada aturan baru, hanya ditunjuk ke daftarnya |
+   | `LOYALTY` | tidak tersentuh: 41 toko, ketiga talinya utuh |
+   | Validasi ulang batch 12 Sep | `POST /api/principal-order/validate` → 200; **48 baris, 48 cocok, 0 perlu ditinjau** |
+   | Per SO | 13044 = 20 · 13050 = 3 · 13051 = 8 · 13054 = 17 — sama persis dengan tabel handover sesi kedua |
+
+   Yang dibuktikan menjalankan ulang: hasil 48 yang lama berasal dari 12 Sep, sebelum kuota
+   bonus, order ganda, channel, dan ambang beli ada, dan sebelum daftar peserta dimuat. Kelima
+   gerbang baru itu kini sudah melihat batch yang sama dan tidak satu pun menahannya. **SO 13044
+   tetap dijelaskan** — outletnya BAJI PAMAI, kini peserta INCLUDE surat itu, jadi kelima baris
+   3% di posisi 4 masih punya aturannya.
 2. **Jembatan Summary belum pernah dijalankan ujung ke ujung dengan sesi login sungguhan.**
    Terbukti sampai dinding autentikasi saja. Gerbang persetujuan yang baru SUDAH terbukti
    lengkap di lokal (kedelapan keadaannya), tetapi jalur penuhnya butuh publikasi Summary nyata.
