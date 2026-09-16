@@ -58,3 +58,17 @@ def test_tanpa_master_baris_dibiarkan_apa_adanya():
     rows = [_baris()]
     assert resolve_kode_barangs(rows, {}) == rows
     assert resolve_kode_barangs(rows, {"master": {"items": []}}) == rows
+
+
+def test_kelayakan_outlet_tidak_boleh_hilang_saat_disimpan():
+    """Pembatasan peserta yang hilang GAGAL TERBUKA: bonus jatuh ke toko yang bukan peserta.
+
+    `build_programs` sudah lama membaca `outlet_mode`/`outlet_classes`, dan pembaca surat sudah
+    lama mengeluarkannya ("KHUSUS CHANNEL GT PESERTA LOYALTY" -> only/LOYALTY). Yang membuangnya
+    adalah penyaring kunci saat menyimpan draft, karena keduanya tidak ada di `FIELDS`. Tidak ada
+    galat yang timbul — hanya surat yang berubah arti diam-diam.
+    """
+    hasil = resolve_kode_barangs(
+        [_baris(outlet_mode="only", outlet_classes="LOYALTY")], MASTER)
+    assert hasil[0]["outlet_mode"] == "only"
+    assert hasil[0]["outlet_classes"] == "LOYALTY"
