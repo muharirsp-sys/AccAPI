@@ -53,13 +53,18 @@ def rapikan_baris(rows, master_items, principle_name=""):
         # 3. Kelompok yang bukan kelompok master dikosongkan, katanya disimpan.
         kel = str(r.get("kelompok") or "").strip()
         if kel and _norm(kel) not in kelompok_master:
-            cocok = [k for k in kelompok_master if k and k in _norm(kel)]
-            if len(cocok) == 1:
-                r["kelompok"] = cocok[0]
-            else:
-                r["kelompok"] = ""
-                catatan = str(r.get("keterangan") or "").strip()
-                r["keterangan"] = (catatan + "; " if catatan else "") + f"surat menyebut: {kel}"
+            # HANYA cocok persis. Pencocokan "mengandung" sempat dipakai di sini dan langsung
+            # terbukti berbahaya pada surat pertama yang diujikan: dari frasa
+            # "OVALE 2IN1 CLEANSER MIX VARIANT" ia memilih kelompok master "OVALE" — satu-satunya
+            # yang terkandung di dalamnya — padahal yang benar "OVALE FACIAL LOTION". Keduanya
+            # kelompok master yang sah, jadi tidak ada yang terlihat salah: kolomnya terisi,
+            # layarnya rapi, dan barang yang dapat promo jadi barang yang lain sama sekali.
+            #
+            # Memilih kelompok berarti memilih BARANG MANA yang dapat promo. Tebakan sedekat
+            # apa pun tidak boleh menggantikan orang di titik itu.
+            r["kelompok"] = ""
+            catatan = str(r.get("keterangan") or "").strip()
+            r["keterangan"] = (catatan + "; " if catatan else "") + f"surat menyebut: {kel}"
 
         # 4 & 5. Tidak menyebut varian/gramasi tertentu = SEMUA. Nilai yang bukan varian master
         #        (mis. kalimat suratnya sendiri terbawa ke sini) juga berarti tidak menyebut.
