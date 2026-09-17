@@ -205,3 +205,63 @@ Dengan `periode_start`/`periode_end`, draft Priskila **sekarang bisa** jadi `pro
 > (small package) bersama pengguna; (3) 13 aturan Excel `BP2609007713` di produksi melanggar
 > aturan P — dibetulkan atau dicabut secara sadar; (4) terbitkan ulang publikasi `d086d243…`
 > sesudah deploy. Gerbang kirim faktur otomatis TETAP TERTUTUP.
+
+---
+
+## Tambahan sesudah keputusan pengguna (17 Sep 2026, malam)
+
+### Master Kino: kenapa tidak terbaca lengkap, dan sudah dijawab
+
+`loop_master_builder` menyusun master dari sheet **"Form Fix"**, dan pada workbook Kino 572 dari
+685 barisnya tidak punya `Nama KLP`. `_parse_master_barang_xlsx` MEMBUANG baris tanpa kelompok,
+jadi yang tersisa 113 — tanpa RESIK V maupun OVALE sama sekali. Sheet **"Fix Mapping"** justru
+lengkap (606 barang, 606 berkelompok), dan itulah yang `build_master_fixmapping.py` baca.
+
+Pengguna kemudian mengirim `master_barang_principle/MASTER BARANG KINO NON FOOD.xlsx` yang sudah
+berkode di tiap bagan. Berkas itu terbaca **663 barang, 107 kelompok, NOL terbuang** — lengkap.
+
+**Berkasnya tidak ikut git** (`*.xlsx` diabaikan supaya surat program tidak tercecer masuk repo),
+jadi ia harus **diunggah lewat menu Master Principle** supaya produksi memakainya.
+
+### Keputusan pengguna atas dua surat yang menggantung
+
+| Surat | Keputusan |
+|---|---|
+| `BP2609006016` MSG ALL BRAND | Seluruh master Kino adalah Home Personal Care, jadi berlaku untuk **semua barang** — kecuali peserta LOYALTY, dan hanya channel **GT/TT**. (Kelayakan outletnya memang sudah terbaca sendiri dari surat: "EXCLUDE LOYALTY DAN CONTRACTUAL".) |
+| `BP2609008021` SMALL PACKAGE | Program khusus **dalam Jawa**, tidak berlaku di sini. **Diabaikan** dengan sengaja, bukan ditahan karena gagal dibaca. |
+
+Sesudah itu: **nol baris ditahan**, tiga surat tembus ke `compile_programs`.
+
+### Cacat kesembilan: potongan tingkat nota ditulis sekali per kelompok
+
+`BP2609006016` menyentuh 53 kelompok master, dan Summary memang memecah satu baris menjadi satu
+baris per kelompok supaya Form-nya terbaca. Tiap pecahan membawa 10 strata yang sama persis, jadi
+jembatannya akan menulis **530 aturan tingkat-nota identik** — 53 kali lipat.
+
+Gerbangnya tidak salah menjawab (`checkSoPromo` memilih satu strata tertinggi, kembarnya sama
+isinya). Yang rusak isi tabelnya. Kelompok untuk potongan tingkat nota kini dilebur jadi
+`(TINGKAT NOTA)` per surat, dan penjaga kembar yang sudah ada menyatukannya sambil menyebutkannya.
+
+### Dokumen untuk meeting
+
+| Berkas | Untuk apa |
+|---|---|
+| `ALUR_FAKTUR_PRINCIPAL.pdf` (7 hal) | PROSA — kenapa alurnya begitu, untuk yang belum tahu apa pun |
+| `BAGAN_ALUR_FAKTUR_PRINCIPAL.pdf` (3 hal) | BAGAN bergaya SOP `BP-008` — urutan, PIC, percabangan, waktu baku |
+
+Keduanya berkolom paraf OM tiap halaman dan blok pengesahan di halaman terakhir. Keduanya dicetak
+dari script di `docs/`, bukan disunting tangan. PDF-nya sendiri tidak ikut git.
+
+### `d086d243` — HARUS dikerjakan di PRODUKSI, bukan dari sini
+
+Publikasi itu hidup di basis data produksi, dan sesi ini tidak punya (dan tidak boleh punya)
+aksesnya. Langkahnya, sesudah deploy hari ini:
+
+1. Buka **Summary Promo -> Pustaka**, cari publikasi `KINO NON FOOD - SEPTEMBER 2026` (`d086d243…`).
+2. Tekan **Tarik Kembali** (withdraw) — ia beku dengan bentuk LAMA (satu nomor surat untuk seluruh
+   publikasi), jadi Muat atasnya akan tetap menaruh semua Resik V di bawah `BP2609007664`.
+3. Unggah **master Kino yang baru** lewat Master Principle lebih dulu.
+4. Ekstrak ulang keempat surat, pilih kelompoknya, **Simpan**, lalu **Terbitkan** kembali.
+5. Baru sesudah itu Muat boleh ditekan — dan ingat: Muat **MENAMBAH**, tidak mencabut 30 baris
+   Excel lama yang ber-`channel` kosong.
+
