@@ -53,6 +53,18 @@ python_backend/data/*.json
 python_backend/data/*.jsonl
 python_backend/data/*.bak
 !python_backend/data/.gitkeep
+# ACUAN WAJIB IKUT GIT. `golden_*.json` adalah keluaran yang SEHARUSNYA — 118 baris Priskila,
+# disusun dari surat + master + keputusan manusia, dan satu-satunya alat ukur benar/salah yang
+# tidak menuntut mata orang. `master_cache.json` master yang dipakai menyusunnya; tanpa
+# keduanya uji goldennya tidak bisa jalan di mesin lain.
+#
+# Aturan `python_backend/data/*.json` di atas pernah menelannya: kerja matcher Juli 2026 lengkap
+# dengan goldennya tertinggal di satu cabang, tidak pernah sampai ke produksi, dan selama dua
+# bulan jalur Summary diperbaiki sebelas kali dengan mata manusia di layar produksi. Acuan yang
+# tidak ikut git adalah acuan yang akan hilang lagi.
+!python_backend/data/golden_*.json
+!python_backend/data/manual_cache/
+!python_backend/data/manual_cache/master_cache.json
 
 # generated outputs, uploads, and runtime logs
 python_backend/output/

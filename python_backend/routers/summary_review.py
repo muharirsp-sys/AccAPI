@@ -37,13 +37,39 @@ def _ringkas(row):
     content = json.loads(row[3])
     detail = content.get('review_detail') or {}
     programs = content.get('programs') or []
+    baris = content.get('rows') or []
+
+    def _unik(nilai):
+        """Nilai berbeda, urut kemunculannya. Kosong disaring — bukan jawaban, hanya ketiadaan."""
+        hasil = []
+        for satu in nilai:
+            satu = str(satu or '').strip()
+            if satu and satu not in hasil:
+                hasil.append(satu)
+        return hasil
+
+    # SATU PUBLIKASI BISA MEMUAT BANYAK SURAT (keputusan #74). Sampai 2026-09-16 kolom ini hanya
+    # membaca `review_detail`, yang milik paket review — pustaka Summary tidak menitipkannya, jadi
+    # daftar "Tarik dari Summary" menulis "tanpa nomor" untuk publikasi yang nomor suratnya jelas
+    # ada. Yang membaca daftar itu adalah orang yang akan menekan Muat, dan nomor surat inilah yang
+    # ikut tersimpan pada catatan persetujuannya.
+    surat = _unik([detail.get('document_id')] + [p.get('surat_program') for p in programs]
+                  + [r.get('surat_program') for r in baris])
+    mulai = _unik(p.get('start') for p in programs)
+    selesai = _unik(p.get('end') for p in programs)
+    periode = content.get('period')
+    if isinstance(periode, (list, tuple)):
+        periode = {'start': str(periode[0]) if periode else '', 'end': str(periode[1]) if len(periode) > 1 else ''}
+    periode = periode if isinstance(periode, dict) else {}
+
     return {
         'draft_id': row[0], 'title': row[1], 'published_at': row[2],
-        'surat_program': str(detail.get('document_id') or ''),
-        'principal': str(detail.get('principal') or ''),
+        'surat_program': ', '.join(surat),
+        'principal': str(detail.get('principal') or (baris[0].get('principle') if baris else '') or ''),
         'nama_program': str(detail.get('nama_program') or ''),
-        'kelompok': str(detail.get('variant_barang') or ''),
-        'period': content.get('period') or {},
+        'kelompok': ', '.join(_unik([detail.get('variant_barang')] + [p.get('kelompok') for p in programs])),
+        'period': {'start': periode.get('start') or (min(mulai) if mulai else ''),
+                   'end': periode.get('end') or (max(selesai) if selesai else '')},
         'programs': len(programs),
         'codes': sorted({code for program in programs for code in (program.get('codes') or [])}),
     }

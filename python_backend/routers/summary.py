@@ -583,8 +583,18 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 fb_kelompok = kelompok
                 if fb_kelompok and any(skip in fb_kelompok.lower() for skip in ["- kelompok -", "bisa meleset"]):
                     fb_kelompok = ""
-                pool = [it for it in items if norm(it.get("kelompok")) == norm(fb_kelompok)] if fb_kelompok else items
-                if not pool: pool = items
+                # BARIS TANPA KELOMPOK TIDAK MENCOCOK APA PUN — dan ini perbaikan mahal.
+                #
+                # Dulu kelompok kosong berarti `pool = items`: SELURUH master. Satu baris surat
+                # yang tak tercocokkan lalu mengklaim setiap kode di channelnya, penjaga V4
+                # melihat tiap kode dipakai dua baris, dan MEMBUANGNYA DARI KEDUANYA. Terbukti
+                # 2026-09-16 pada Priskila: satu baris sisa membuat seluruh blok RETAIL terbit
+                # "(TIDAK ADA ITEM COCOK DI MASTER)" padahal 163 kodenya sudah benar.
+                #
+                # Kelompok yang tidak ada di master diperlakukan sama. "Tidak tahu" bukan
+                # "semuanya" — baris begitu memang harus ditandai untuk ditinjau orang, dan
+                # itulah yang terjadi sekarang.
+                pool = [it for it in items if norm(it.get("kelompok")) == norm(fb_kelompok)] if fb_kelompok else []
                 for it in pool:
                     it_variant = norm(it.get("variant")); it_nama = norm(it.get("nama_barang"))
                     variant_match = v_all
@@ -680,9 +690,18 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 else:
                     kept_excel_rows.append(er)
             excel_rows = kept_excel_rows
-            conflicted_kodes = {kb for (_, kb) in conflicted}
+            # PEMBUANGANNYA WAJIB IKUT CHANNEL, sama seperti pendeteksiannya.
+            #
+            # Dulu channel-nya dilepas di sini (`{kb for (_, kb) in conflicted}`), jadi satu kode
+            # yang bentrok di MTI ikut dibuang dari RETAIL, GROSIR, dan STAR OUTLET — padahal di
+            # sana ia tidak bentrok dengan apa pun. Excel tetap menyimpannya karena Excel memang
+            # menyaring per pasangan (channel, kode); PDF-lah yang kehilangan. Hasilnya blok
+            # RETAIL surat Priskila terbit penuh "(TIDAK ADA ITEM COCOK DI MASTER)" sementara
+            # Dataset-nya berisi lengkap — persis ketidaksimetrisan yang dijaga baris I checklist.
             for i in pdf_items:
-                pdf_items[i] = [it for it in pdf_items[i] if str(it.get("kode_barang","")).strip() not in conflicted_kodes]
+                channel_baris = str(pdf_meta.get(i, {}).get("channel_gtmt", ""))
+                pdf_items[i] = [it for it in pdf_items[i]
+                                if (channel_baris, str(it.get("kode_barang", "")).strip()) not in conflicted]
 
         for i in range(len(rows)):
             meta = pdf_meta[i]
@@ -931,7 +950,29 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
         # sudah dipilih di layar, badan surat yang terbawa ke nama program, dan aturan
         # "tidak menyebut varian/gramasi tertentu berarti SEMUA". Lihat `baca_surat_rapi`.
         from baca_surat_rapi import rapikan_baris, judul_summary
-        result["rows"] = rapikan_baris(result["rows"], (master or {}).get("items") or [], principle_name)
+        import surat_struktur
+
+        # DUA JALUR, DAN KEDUANYA HARUS DIPILIH DI SINI.
+        #
+        # `rapikan_baris` dibuat untuk Kino: kelompok yang bukan nama master persis DIKOSONGKAN,
+        # supaya peninjau memilih dari daftar bersih. Itu benar selama kata surat memang sedekat
+        # itu dengan master kita. Untuk Priskila ia mengosongkan 124 dari 124 baris — surat itu
+        # berbunyi "Bellagio Eau de Toilette 100ml" sedangkan master menulis "BLAGIO HM - EDT",
+        # dan yang menjembatani keduanya adalah MATCHER, bukan orang.
+        #
+        # Jadi principal yang punya matcher deterministik tidak lewat `rapikan_baris` sama
+        # sekali: barisnya langsung diserahkan ke `_apply_native_kelompok`, yang memilih matcher
+        # dari penanda barisnya. Kino dan principal lain tetap di jalur lama, tidak berubah.
+        jalur_det = surat_struktur.jalur(principle_name)
+        if jalur_det:
+            if jalur_det in ("FONTERRA", "NATUR", "ADNA", "FORISA"):
+                # Penanda distempel DI SINI, bukan oleh model: baris satu principal tidak boleh
+                # bisa nyasar ke matcher principal lain hanya karena modelnya salah menulis.
+                for baris_gen in result["rows"]:
+                    baris_gen["_gen_key"] = jalur_det
+            result["rows"] = _apply_native_kelompok(result["rows"], (master or {}).get("items") or [])
+        else:
+            result["rows"] = rapikan_baris(result["rows"], (master or {}).get("items") or [], principle_name)
 
         # SATU SUMMARY YANG MENUMPUK, per principal + per bulan (keputusan pengguna 2026-09-16).
         #

@@ -540,6 +540,7 @@ from routers.summary import router as summary_router
 from routers.laporan_harian import router as laporan_harian_router
 from routers.orders import router as orders_router
 from routers.websales import router as websales_router
+from routers.master_barang import router as master_barang_router
 
 app.include_router(payments_router)
 app.include_router(sppd_router)
@@ -549,3 +550,4 @@ app.include_router(summary_router)
 app.include_router(orders_router)
 app.include_router(websales_router)
 app.include_router(laporan_harian_router)
+app.include_router(master_barang_router)

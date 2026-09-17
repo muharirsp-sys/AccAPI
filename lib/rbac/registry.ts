@@ -25,6 +25,7 @@ export const PERMISSION_REGISTRY = {
     sppd: ["view", "edit_settings", "upload_excel", "generate", "download"],
     finance: ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"],
     principles: ["view", "upload", "delete"],
+    master_barang: ["view", "create", "upload", "edit", "generate", "export", "manage"],
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
     validator: ["view", "upload", "run", "download", "edit"],
     reconciliation: ["view", "run", "manage"],

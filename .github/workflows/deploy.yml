@@ -1,7 +1,7 @@
 # Tujuan: Memvalidasi, membangun, memublikasikan image AccAPI, lalu memicu redeploy Coolify dari main.
 # Caller: Push ke main atau workflow_dispatch operator.
 # Dependensi: Git public fetch, npm, Docker Buildx, GHCR, serta secret URL/token Coolify.
-# Main Functions: lint/typecheck, build image bertag commit SHA + latest, push GHCR, trigger Coolify dengan timeout terbatas.
+# Main Functions: lint/typecheck/UJI (TypeScript + self-check Python), build image bertag commit SHA + latest, push GHCR, trigger Coolify dengan timeout terbatas.
 # Side Effects: Menulis package GHCR dan memicu deployment production; job se-branch diserialisasi agar publish/deploy tidak saling mendahului.
 name: Deploy to Coolify
 
@@ -9,6 +9,9 @@ on:
   push:
     branches:
       - main
+  # Uji ikut berjalan pada pull request; hanya `build-and-push` yang dibatasi ke push ke main,
+  # supaya yang menahan merge dan yang menahan deploy adalah gerbang yang SAMA.
+  pull_request: {}
   workflow_dispatch: {}
 
 env:
@@ -45,9 +48,39 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
+      # 72 uji TypeScript dan 21 self-check Python sudah ada di repo ini sejak lama, dan sampai
+      # 16 September 2026 TIDAK SATU PUN dijalankan alur mana pun. Empat self-check sudah rusak
+      # di `main` tanpa ada yang tahu — termasuk satu-satunya uji yang menghasilkan Form PDF dan
+      # Dataset Excel dari surat sungguhan. Selama itu jalur Summary diperbaiki sebelas kali
+      # lewat mata manusia di layar produksi.
+      - run: npm test
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+          cache: pip
+      # `pytest` BUKAN hiasan: sepuluh berkas uji di sini hanya berisi `def test_*()` tanpa
+      # `__main__`, dan tanpa pytest mereka lulus tanpa menjalankan satu assert pun (59 uji).
+      # Ia tidak masuk `requirements.txt` karena image produksi tidak perlu menjalankan uji.
+      - run: pip install -r python_backend/requirements.txt pyflakes pytest
+      # Gerbang NAMA TAK TERDEFINISI. `datetime` yang tak pernah di-import di `main.py` (#3)
+      # hanya berbunyi saat jalurnya dilewati di produksi, dan pesannya menyamarkan. Satu baris
+      # ini menutup seluruh kelasnya. Peringatan gaya (impor tak terpakai) TIDAK menahan:
+      # `shared.py` memang gerbang re-export, dan gerbang yang berisik akan dimatikan orang.
+      - name: pyflakes - nama tak terdefinisi
+        run: |
+          python -m pyflakes python_backend/*.py python_backend/routers/*.py > flakes.txt || true
+          if grep -E "undefined name|referenced before assignment" flakes.txt; then
+            echo "::error::pyflakes menemukan nama yang tidak terdefinisi"
+            exit 1
+          fi
+          echo "pyflakes: tidak ada nama tak terdefinisi"
+      # `test_e2e_live` melewat sendiri di sini (tanpa kunci Mistral dan tanpa cache), jadi
+      # gerbang ini tidak pernah membelanjakan uang API.
+      - run: npm run test:python
 
   build-and-push:
     needs: typecheck
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:

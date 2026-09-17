@@ -42,6 +42,13 @@ export type SummaryTier = {
 export type SummaryProgram = {
     id: string;
     name: string;
+    /**
+     * Nomor surat dan kelompok PROGRAM INI. Kosong pada publikasi yang dibekukan sebelum
+     * 2026-09-16; pembacanya mundur ke nilai tingkat publikasi. Lihat `Program` di
+     * `python_backend/summary_rules.py` untuk kenapa keduanya pindah ke sini.
+     */
+    surat_program?: string;
+    kelompok?: string;
     start: string;
     end: string;
     codes: string[];
@@ -64,7 +71,11 @@ export type SummaryProgram = {
 export type PublishedLetter = {
     draftId: string;
     principal: string;
-    /** Nomor surat; jadi kunci irisan `promo_rule` milik surat ini. */
+    /**
+     * Nomor surat dan kelompok tingkat PUBLIKASI — cadangan saja, dipakai hanya bila
+     * programnya sendiri tidak menyebutkannya (publikasi beku sebelum 2026-09-16). Satu
+     * publikasi kini bisa memuat banyak surat, jadi nilai ini tidak lagi mewakili semuanya.
+     */
     suratProgram: string;
     promoLabel: string;
     promoGroup: string;
@@ -113,6 +124,12 @@ export type BridgeResult = {
     refused: string[];
     /** Dimuat, tetapi ada yang wajib diketahui pemeriksanya. */
     notes: string[];
+    /**
+     * Nama daftar outlet yang DIBUAT dari nomor surat, karena publikasinya membawa daftar
+     * outletnya sendiri. Satu per surat: pemanggil menuliskan anggotanya ke `promo_outlet`
+     * dengan nama-nama ini, dan aturan yang menunjuknya harus menunjuk nama yang sama.
+     */
+    outletLists: string[];
 };
 
 const text = (value: unknown) => String(value ?? "").trim();
@@ -157,10 +174,10 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
     const rows: BridgeRow[] = [];
     const refused: string[] = [];
     const notes: string[] = [];
+    const outletLists = new Set<string>();
 
     const settlement = text(letter.settlement).toLowerCase();
     const beban = text(letter.beban).toUpperCase() === "DISTRIBUTOR" ? "DISTRIBUTOR" : "PRINCIPAL";
-    if (!letter.suratProgram) return { rows: [], refused: ["Publikasi ini tidak menyebut nomor surat; aturan tanpa asal tidak boleh masuk gerbang"], notes };
 
     // Rafaksi TIDAK memotong faktur — ia ditagihkan terpisah. Memuatnya sebagai aturan promo
     // berarti gerbang akan MEMBENARKAN potongan pada faktur yang seharusnya tidak ada di sana.
@@ -168,13 +185,20 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
         return {
             rows: [],
             refused: [`Cara penyelesaiannya "${settlement}", bukan on faktur. Programnya nyata, tetapi ia tidak memotong faktur — memuatnya jadi aturan promo akan membenarkan potongan yang seharusnya tidak ada.`],
-            notes,
+            notes, outletLists: [],
         };
     }
 
     for (const program of letter.programs) {
         const sebut = `${program.id} (${program.name})`;
         const tolak = (alasan: string) => refused.push(`${sebut}: ${alasan}`);
+
+        // Asal PER PROGRAM, dengan nilai publikasi sebagai cadangan. Diperiksa per program dan
+        // bukan sekali untuk seluruh publikasi: satu Summary kini memuat banyak surat, jadi
+        // "publikasi ini menyebut nomor surat" tidak lagi berarti semua programnya menyebutnya.
+        const surat = text(program.surat_program) || letter.suratProgram;
+        const kelompok = text(program.kelompok) || letter.promoGroup || program.name;
+        if (!surat) { tolak("tidak menyebut nomor surat; aturan tanpa asal tidak boleh masuk gerbang"); continue; }
 
         if (!program.start || !program.end) { tolak("periode belum lengkap"); continue; }
         if (!program.codes?.length) { tolak("tidak ada kode barang"); continue; }
@@ -202,8 +226,9 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
         } else if (letter.outletCodes.length) {
             // Daftar outlet yang ditulis pada setelan detail memakai nomor suratnya sendiri
             // sebagai nama daftar; pemanggil yang menuliskan anggotanya ke `promo_outlet`.
-            outletList = letter.suratProgram.toUpperCase();
+            outletList = surat.toUpperCase();
             outletListMode = "INCLUDE";
+            outletLists.add(outletList);
         }
 
         if (program.stacking) notes.push(`${sebut}: ditandai bisa bertumpuk; gerbang memeriksa per posisi, jadi tumpukannya harus punya aturannya sendiri-sendiri`);
@@ -220,10 +245,10 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
             if ("error" in benefit) { gagal = `strata ${index + 1}: ${benefit.error}`; return; }
             const dasar = {
                 principal: letter.principal,
-                suratProgram: letter.suratProgram,
+                suratProgram: surat,
                 promoLabel: letter.promoLabel || program.name,
                 promoGroupId: program.id,
-                promoGroup: letter.promoGroup || program.name,
+                promoGroup: kelompok,
                 customerCode: "",
                 periodStart: program.start,
                 periodEnd: program.end,
@@ -297,5 +322,5 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
         bersih.push(row);
     }
 
-    return { rows: bersih, refused, notes };
+    return { rows: bersih, refused, notes, outletLists: [...outletLists] };
 }

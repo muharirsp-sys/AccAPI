@@ -15,6 +15,7 @@ os.environ["SUMMARY_STORE_PATH"] = os.path.join(tempfile.mkdtemp(prefix="dupe-ch
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+import outlet_channel  # noqa: E402
 from routers import orders  # noqa: E402
 from summary_store import connect, create_draft  # noqa: E402
 
@@ -44,6 +45,9 @@ def line(code, qty="10"):
 
 
 def main():
+    # Channel outlet ditanyakan ke Next sejak PR #64. Self-check tidak boleh menuntut layanan
+    # hidup: yang diuji di sini alur order, bukan jembatan channelnya (itu `test_outlet_channel`).
+    outlet_channel.verify = lambda customer_no, channel: channel
     orders.get_current_user = lambda request: request.headers.get("X-Test-User") or None
     orders.user_has_permission = lambda user, area, action: True
     orders.validate_csrf_request = lambda request, token: True

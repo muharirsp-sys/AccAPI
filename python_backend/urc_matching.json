@@ -1,0 +1,15 @@
+{
+  "type_synonyms": {
+    "OAT KRUNCH": "OAT CRUNCH",
+    "TOPMIX": "TOP MIX",
+    "C.CHEESE": "CREAM CHEESE"
+  },
+  "token_map": {
+    "STRAWBERRY": "STRWBRY",
+    "BLACKCURRANT": "CRRNT",
+    "VEGETABLE": "VEGE"
+  },
+  "aroma_default": {
+    "CHOCOLATE": "DARK CHOCOLATE"
+  }
+}

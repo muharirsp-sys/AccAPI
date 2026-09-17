@@ -14,6 +14,7 @@ os.environ["WEBSALES_STORE_PATH"] = os.path.join(_root, "websales.sqlite3")
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+import outlet_channel  # noqa: E402
 import websales_store  # noqa: E402
 from routers import orders, websales  # noqa: E402
 from summary_store import connect, create_draft  # noqa: E402
@@ -49,6 +50,9 @@ def fake_auth(module):
 
 
 def main():
+    # Channel outlet ditanyakan ke Next sejak PR #64. Self-check tidak boleh menuntut layanan
+    # hidup: yang diuji di sini alur order, bukan jembatan channelnya (itu `test_outlet_channel`).
+    outlet_channel.verify = lambda customer_no, channel: channel
     fake_auth(orders)
     fake_auth(websales)
     app = FastAPI()
@@ -70,8 +74,11 @@ def main():
     assert created.json()["request"]["status"] == "pending"
 
     # Harga dari klien diabaikan: baris tersimpan hanya kode, satuan, jumlah.
+    # Outletnya sengaja BERBEDA dari `ask`: gerbang order ganda menahan dua order berbarang sama
+    # di outlet dan tanggal yang sama, dan yang diuji di sini bukan gerbang itu.
     with_price = client.post("/websales/orders", headers=SALES,
-                             json={**ask, "lines": [dict(code="A", unit="PCS", quantity="4", price="999999")]})
+                             json={**ask, "outlet": "TOKO SALES DUA", "customer_no": "C-003",
+                                   "lines": [dict(code="A", unit="PCS", quantity="4", price="999999")]})
     assert set(with_price.json()["request"]["lines"][0]) == {"code", "unit", "quantity"}, with_price.json()
 
     # Jumlah tidak wajar ditolak di pintu masuk Web Sales.
