@@ -20,7 +20,7 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent
 REPO = BASE.parent
 SURAT_DIR = Path(os.getenv("SURAT_DIR", r"C:\Users\Muhar\Downloads"))
-MASTER = BASE / "data" / "rebuild_master" / "MASTER BARANG KINO NON FOOD.xlsx"
+MASTER = REPO / "master_barang_principle" / "MASTER BARANG KINO NON FOOD.xlsx"
 PRINCIPAL = "KINO NON FOOD"
 SURAT = [
     "BP2609006016 - HPC_TP NAS_MSG PROGRAM ALL BRAND HPC PERIODE SEPTEMBER 2026.PDF",
@@ -124,12 +124,34 @@ def main():
     # "RESIK V KHASIAT MANJAKANI" dan "RESIK V MANJAKANI WHITENING" memakai kelompok master yang
     # SAMA dan dibedakan VARIAN — itulah kasus yang melahirkan aturan "All Variant".
     KEPUTUSAN = {
-        "OVALE 2IN1 CLEANSER":                      ("OVALE FACIAL LOTION", ""),
+        "OVALE 2IN1 CLEANSER":                      ("OVALE FACIAL", ""),
         "RESIK V KHASIAT MANJAKANI":                ("RESIK V MANJAKANI", ""),
-        "RESIK V MANJAKANI WHITENING":              ("RESIK V MANJAKANI", "WHITENING"),
-        "RESIK V KHASIAT RAMUAN MADURA WHITENING":  ("RESIK V RAMUAN MADURA", ""),
+        "RESIK V MANJAKANI WHITENING":              ("RESIK V", "MANJAKANI WHITENING"),
+        "RESIK V KHASIAT RAMUAN MADURA WHITENING":  ("RESIK V RAMUAN MADURA", "WHITENING"),
         "RESIK V GODOKAN SIRIH":                    ("RESIK V GODOKAN", "SIRIH"),
     }
+
+    # Keputusan pengguna 17 Sep 2026:
+    # - `BP2609006016` (MSG ALL BRAND): SELURUH master Kino adalah Home Personal Care, jadi
+    #   programnya berlaku untuk SEMUA barang - kecuali peserta LOYALTY, dan hanya channel
+    #   GT/TT. Kelayakan outletnya sudah terbaca sendiri dari surat ("EXCLUDE LOYALTY DAN
+    #   CONTRACTUAL"), jadi yang kurang hanya daftar barangnya.
+    # - `BP2609008021` (SMALL PACKAGE): program khusus DALAM JAWA, tidak berlaku di sini.
+    #   DIABAIKAN dengan sengaja, bukan ditahan karena gagal dibaca.
+    SEMUA_BARANG = {"BP2609006016"}
+    ABAIKAN = {"BP2609008021"}
+
+    semua_kode = ",".join(sorted({str(it.get("kode_barang", "")).strip() for it in items
+                                  if str(it.get("kode_barang", "")).strip()}))
+    dibuang = [r for r in rows if str(r.get("surat_program", "")).strip().upper() in ABAIKAN]
+    rows = [r for r in rows if str(r.get("surat_program", "")).strip().upper() not in ABAIKAN]
+    for r in dibuang:
+        print("DIABAIKAN %s - program khusus dalam Jawa, tidak berlaku di sini." % r.get("surat_program"))
+    for r in rows:
+        if str(r.get("surat_program", "")).strip().upper() in SEMUA_BARANG:
+            r["kelompok"] = "SEMUA BARANG (HOME PERSONAL CARE)"
+            r["variant"] = "ALL VARIANT"
+            r["kode_barangs"] = semua_kode
 
     print("\n" + "=" * 78)
     print("LANGKAH MANUSIA — memilih Kelompok Barang (di layar: dropdown)")
