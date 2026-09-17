@@ -5,6 +5,11 @@ langkah benar-benar bisa dijalankan**, bukan sekadar terdaftar sebagai rencana.
 
 Status: ✅ ada dan terbukti · 🟡 ada sebagian · ❌ belum ada · ❓ butuh keputusan pengguna
 
+> **Berkas ini acuan TEKNIK** — per butir, untuk yang mengerjakan sistemnya. Untuk orang yang baru
+> pertama kali mendengar semua ini, pakai **[`ALUR_FAKTUR_PRINCIPAL.pdf`](ALUR_FAKTUR_PRINCIPAL.pdf)**
+> (7 halaman, bahasa sehari-hari, berilustrasi, berkolom paraf OM tiap halaman dan tanda tangan OM
+> di halaman terakhir). Dicetak ulang dengan `python docs/alur_faktur_principal_pdf.py`.
+
 ---
 
 ## Langkah 1 — Sales input di sistem principal (Kino)
