@@ -201,6 +201,23 @@ def main():
     print(f"  surat yang tembus : {len(surat_lolos)} -> {surat_lolos}")
     semua = rows
 
+    # ---- FORM SUMMARY + DATASET, lewat jalur yang sama dengan tombol di layar --------------
+    hasil_gen = backend.summary_manual_generate(FakeRequest(), token=TOKEN, rows_json=json.dumps(rows))
+    if not hasil_gen.get("ok"):
+        print("GAGAL membuat Form Summary:", hasil_gen)
+        return 1
+    from shared import MANUAL_OUTPUTS
+    keluaran = MANUAL_OUTPUTS[hasil_gen["file_id"]]
+    tujuan = BASE / "data" / "e2e_kino_output"
+    tujuan.mkdir(parents=True, exist_ok=True)
+    import shutil
+    form = tujuan / "Form_Summary_KINO_SEPT2026.pdf"
+    dataset = tujuan / "Dataset_Summary_KINO_SEPT2026.xlsx"
+    shutil.copy2(keluaran["form"], form)
+    shutil.copy2(keluaran["dataset"], dataset)
+    print("\nForm Summary : %s" % form)
+    print("Dataset      : %s" % dataset)
+
     keluar = BASE / "data" / "e2e_kino_hasil.json"
     keluar.write_text(json.dumps({"rows": semua, "programs": programs, "issues": issues},
                                  ensure_ascii=False, indent=2), encoding="utf-8")

@@ -505,6 +505,16 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             b = str(r.get("benefit", "") or "").strip()
             bt = norm(r.get("benefit_type", ""))
             if bt == "DISC_RP" and has_number(b) and "/" not in b:
+                # AMBANG RUPIAH BERARTI POTONGAN SENOTA, BUKAN PER SATUAN.
+                #
+                # Program MSG berbunyi "minimal belanja Rp 1.000.000 potong Rp 20.000" — satu
+                # potongan untuk seluruh nota. Menuliskannya "20000/PCS" di lembar yang dibaca
+                # orang berarti menjanjikan Rp 20.000 per barang; pada nota sepuluh baris itu
+                # sepuluh kali lipat dari bunyi suratnya.
+                from summary_rules import threshold_of
+                _jenis, _, _ = threshold_of(str(r.get("ketentuan", "")))
+                if _jenis == "value":
+                    return f"{b}/NOTA"
                 unit = unit_from_text(str(r.get("ketentuan", "")) + " " + b)
                 return f"{b}/{unit}"
             return b
@@ -675,9 +685,23 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         # channel yg sama (terbukti live: "Pmd Wtr Bas" muncul di baris 4+1 DAN 7+1 sekaligus).
         # Akurasi finansial wajib -> JANGAN menebak salah satu benar, buang dari SEMUA sisi (Excel
         # & PDF) dan wajib direview manusia lewat tombol Laporkan Salah.
+        #
+        # POTONGAN SETINGKAT NOTA TIDAK IKUT DIUJI, dan itu bukan pelonggaran.
+        #
+        # Penjaga ini menangkap dua baris yang MENGKLAIM BARANG yang sama dengan paket berbeda —
+        # "Pmd Wtr Bas" di baris 4+1 sekaligus 7+1. Di situ memang ada dua jawaban untuk satu
+        # barang, dan menebak salah satunya berarti menebak uang.
+        #
+        # Program MSG tidak begitu. Ambangnya NILAI BELANJA (`trig_unit == "RP"`), potongannya
+        # untuk SELURUH nota, dan daftar barangnya cuma menyatakan belanja mana yang ikut
+        # dihitung — bukan klaim per barang. Sepuluh strata "Rp 1jt -> 20rb ... Rp 10jt -> 200rb"
+        # karena itu menyentuh 647 kode yang sama sepuluh kali, dan penjaga ini membuang
+        # SEMUANYA: Form Summary `BP2609006016` terbit penuh "(TIDAK ADA ITEM COCOK DI MASTER)"
+        # padahal tidak ada satu pun pertentangan di dalamnya. Strata bukan bentrok — strata
+        # justru bentuk yang sudah disatukan `compile_programs` menjadi satu program bertingkat.
         kode_channel_to_pdfkeys: Dict[Tuple[str, str], set] = {}
         for er in excel_rows:
-            if er["kode_barang"]:
+            if er["kode_barang"] and str(er.get("trig_unit", "")).upper() != "RP":
                 kode_channel_to_pdfkeys.setdefault((er["channel"], er["kode_barang"]), set()).add(er["pdf_key"])
         conflicted = {k for k, v in kode_channel_to_pdfkeys.items() if len(v) > 1}
         if conflicted:
@@ -706,6 +730,36 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         for i in range(len(rows)):
             meta = pdf_meta[i]
             items_in_row = pdf_items.get(i, [])
+
+            # PROGRAM SELURUH KATALOG DITULIS SEKALI, BUKAN DIURAIKAN.
+            #
+            # Surat seperti MSG (`BP2609006016`) berlaku untuk seluruh barang principal — 647
+            # kode, 107 kelompok. Menguraikannya membuat SATU sel setinggi 9.631 titik, dan
+            # ReportLab menolak mencetaknya sama sekali ("too large on page"): Form Summary-nya
+            # gagal terbit, bukan sekadar jelek.
+            #
+            # Dan seandainya muat pun, lembar berisi 107 nama kelompok yang sama di sepuluh
+            # strata bukan lembar yang lebih informatif. Yang perlu dibaca orang di meeting cuma:
+            # berlaku untuk SEMUA barang, dengan ketentuan ini. Keputusan pengguna 17 Sep 2026.
+            #
+            # Kode barangnya TIDAK hilang — Dataset Excel tetap memuat ke-647 barisnya, dan
+            # aturan yang dimuat ke `promo_rule` tetap dari daftar kode yang utuh.
+            if norm(meta.get("kelompok_fallback", "")) == "ALL KELOMPOK BARANG":
+                table_data.append([
+                    Paragraph(str(meta["no"]), cell_style),
+                    Paragraph(str(meta.get("surat_program", "")), cell_style),
+                    Paragraph(str(meta.get("nama_program", "")), cell_style),
+                    Paragraph(str(meta.get("channel_gtmt", "")), cell_style),
+                    Paragraph(str(meta.get("periode", "")), cell_style),
+                    Paragraph("ALL KELOMPOK BARANG", cell_style),
+                    Paragraph("All Variant", cell_style),
+                    Paragraph("All Gramasi", cell_style),
+                    Paragraph(str(meta.get("ketentuan", "")), cell_style),
+                    Paragraph(benefit_display(meta), cell_style),
+                    Paragraph(str(meta.get("syarat_claim", "")), cell_style),
+                    Paragraph(str(meta.get("keterangan", "")), cell_style),
+                ])
+                continue
 
             seen_kel, kel_order = set(), []
             for it in items_in_row:

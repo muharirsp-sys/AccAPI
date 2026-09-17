@@ -4848,6 +4848,33 @@ def _apply_native_kelompok(rows_to_check, master_items):
         if _EXCLUDED_KELOMPOKS:
             matched_items = [it for it in matched_items if norm(it.get("kelompok")) not in _EXCLUDED_KELOMPOKS]
 
+        # PROGRAM YANG MENYENTUH SELURUH KATALOG TIDAK DIPECAH.
+        #
+        # Pemecahan per kelompok di bawah ada supaya Form Summary terbaca: satu baris surat yang
+        # menyebut beberapa merek jadi satu baris per merek. Tetapi surat seperti MSG
+        # (`BP2609006016`) berlaku untuk SELURUH barang principal — dan memecahnya menghasilkan 53
+        # baris yang ketentuannya sama persis. Lembar 53 baris identik bukan lembar yang lebih
+        # jelas; ia lembar yang tidak bisa dibaca, dan ia menulis 53 aturan tingkat-nota kembar.
+        #
+        # Keputusan pengguna 17 Sep 2026: program yang mencakup semuanya cukup ditulis SEKALI
+        # sebagai "ALL KELOMPOK BARANG / All Variant / All Gramasi" beserta ketentuannya.
+        #
+        # Ambangnya SELURUH kelompok master, bukan "hampir semua": program yang melewatkan satu
+        # kelompok memang bukan program semua-barang, dan menyebutnya begitu di lembar yang
+        # ditandatangani berarti menjanjikan lebih luas daripada bunyi suratnya.
+        _kel_master = {norm(it.get("kelompok")) for it in master_items if str(it.get("kelompok", "")).strip()}
+        _kel_baris = {norm(it.get("kelompok")) for it in matched_items if str(it.get("kelompok", "")).strip()}
+        if _kel_master and len(_kel_master) > 1 and _kel_baris >= _kel_master:
+            r["kelompok"] = "ALL KELOMPOK BARANG"
+            r["variant"] = "ALL VARIANT"
+            r["gramasi"] = "ALL GRAMASI"
+            r["kode_barangs"] = ",".join(dict.fromkeys(
+                str(it.get("kode_barang", "")).strip() for it in matched_items
+                if str(it.get("kode_barang", "")).strip()))
+            r["_matched_items_cache"] = matched_items
+            final_rows_out.append(r)
+            continue
+
         # Deterministic Kelompok String Builder strictly from Master DB
         # EXPLODE MAGIC: If a single AI row contains items from DIFFERENT Brand Prefixes (Nama KLPs),
         # we must split it into separate rows so the frontend and generator handle them cleanly!
