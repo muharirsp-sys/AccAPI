@@ -96,6 +96,64 @@ const migrations = [
           ON reconciliation_run (mapping_version_id);
     `,
   },
+  {
+    // 2026-09-17. Modul Master Barang akhirnya tersambung (PR #79). Tanpa entri ini tabelnya
+    // TIDAK PERNAH dibuat di produksi: `db/migrations/*.sql` bukan yang dibaca runner ini,
+    // dan skema Postgres dibuat lewat `drizzle-kit push` yang tidak ikut deploy. Halaman
+    // /master-barang akan gagal saat dibuka, dan modul ini prasyarat untuk membuat master
+    // principal baru -- lihat db/migrations/0019_master_barang.sql untuk penjelasan bentuknya.
+    nama: "master_barang (+source, +audit)",
+    sudahAda: `SELECT 1 FROM information_schema.tables WHERE table_name = 'master_barang'`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS master_barang (
+          id                  text PRIMARY KEY,
+          principle_code      text NOT NULL,
+          principle_name      text NOT NULL,
+          principle_name_norm text NOT NULL,
+          status              text NOT NULL DEFAULT 'draft',
+          revision            integer NOT NULL DEFAULT 1,
+          revision_hash       text NOT NULL DEFAULT '',
+          source_items        jsonb NOT NULL DEFAULT '[]'::jsonb,
+          codebook            jsonb NOT NULL DEFAULT '[]'::jsonb,
+          form_rows           jsonb NOT NULL DEFAULT '[]'::jsonb,
+          qc                  jsonb NOT NULL DEFAULT '{}'::jsonb,
+          confirmation_state  jsonb NOT NULL DEFAULT '{}'::jsonb,
+          legacy_file_name    text,
+          created_by          text NOT NULL,
+          created_at          timestamp NOT NULL,
+          updated_at          timestamp NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_master_barang_principle_norm ON master_barang (principle_name_norm);
+      CREATE INDEX IF NOT EXISTS idx_master_barang_updated_at ON master_barang (updated_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS uidx_master_barang_legacy_file ON master_barang (legacy_file_name);
+
+      CREATE TABLE IF NOT EXISTS master_barang_source (
+          id           text PRIMARY KEY,
+          master_id    text NOT NULL REFERENCES master_barang(id) ON DELETE CASCADE,
+          file_name    text NOT NULL,
+          mime_type    text NOT NULL,
+          file_size    integer NOT NULL,
+          sha256       text NOT NULL,
+          storage_path text NOT NULL,
+          source_kind  text NOT NULL,
+          extraction   jsonb NOT NULL DEFAULT '{}'::jsonb,
+          created_by   text NOT NULL,
+          created_at   timestamp NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_master_barang_source_master_created ON master_barang_source (master_id, created_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS uidx_master_barang_source_sha ON master_barang_source (master_id, sha256);
+
+      CREATE TABLE IF NOT EXISTS master_barang_audit (
+          id         text PRIMARY KEY,
+          master_id  text NOT NULL REFERENCES master_barang(id) ON DELETE CASCADE,
+          actor_id   text NOT NULL,
+          action     text NOT NULL,
+          detail     jsonb NOT NULL DEFAULT '{}'::jsonb,
+          created_at timestamp NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_master_barang_audit_master_created ON master_barang_audit (master_id, created_at);
+    `,
+  },
 ];
 
 const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 15_000 });
