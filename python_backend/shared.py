@@ -4897,7 +4897,64 @@ def _apply_native_kelompok(rows_to_check, master_items):
 
                 final_rows_out.append(new_row)
                 
+    _terapkan_all_variant_eksklusif(final_rows_out)
     return final_rows_out
+
+
+def _terapkan_all_variant_eksklusif(rows):
+    """ATURAN P: "ALL VARIANT" = semua varian KECUALI yang sudah diklaim baris lain.
+
+    Satu surat sering menyebut DUA program dalam SATU kelompok master: yang umum dan yang
+    bervarian. `RESIK V KHASIAT MANJAKANI` dan `RESIK V MANJAKANI WHITENING` keduanya kelompok
+    master `RESIK V MANJAKANI`; yang pertama dipilih "ALL VARIANT", yang kedua varian
+    "WHITENING". Tanpa aturan ini yang pertama ikut menarik tiga kode whitening, dan barang
+    whitening mendapat bonus DUA KALI dari satu surat yang sama.
+
+    Itu bukan kekhawatiran teoretis: 13 aturan Excel `BP2609007713` yang sudah hidup di produksi
+    melanggarnya hari ini. Keputusan pengguna 16 September 2026 menutupnya, dan ini penegakannya.
+
+    Lingkupnya SEMPIT dengan sengaja: hanya baris dengan NOMOR SURAT dan KELOMPOK yang sama.
+    Dua surat berbeda boleh memberi bonus pada barang yang sama — itu keputusan principal, bukan
+    kekeliruan pembacaan. Dan hanya varian BERNAMA yang mencabut; dua baris yang sama-sama
+    "ALL VARIANT" tidak saling mencabut, karena tidak ada yang bisa dikatakan lebih spesifik.
+    """
+    def _norm_var(x):
+        return " ".join(str(x or "").strip().upper().split())
+
+    diklaim = {}
+    for r in rows:
+        v = _norm_var(r.get("variant"))
+        if not v or v == "ALL VARIANT":
+            continue
+        kunci = (str(r.get("surat_program", "") or "").strip().upper(),
+                 str(r.get("kelompok", "") or "").strip().upper())
+        for kode in str(r.get("kode_barangs", "") or "").split(","):
+            if kode.strip():
+                diklaim.setdefault(kunci, set()).add(kode.strip())
+    if not diklaim:
+        return
+
+    for r in rows:
+        if _norm_var(r.get("variant")) not in ("", "ALL VARIANT"):
+            continue
+        kunci = (str(r.get("surat_program", "") or "").strip().upper(),
+                 str(r.get("kelompok", "") or "").strip().upper())
+        milik_lain = diklaim.get(kunci)
+        if not milik_lain:
+            continue
+        semula = [k.strip() for k in str(r.get("kode_barangs", "") or "").split(",") if k.strip()]
+        sisa = [k for k in semula if k not in milik_lain]
+        if len(sisa) == len(semula):
+            continue
+        # Baris yang kehilangan SELURUH kodenya tidak dikosongkan diam-diam: ia ditinggalkan
+        # apa adanya supaya `compile_programs` menahannya dan orang melihatnya. Baris yang
+        # habis biasanya berarti suratnya dibaca keliru, bukan berarti programnya kosong.
+        if not sisa:
+            continue
+        r["kode_barangs"] = ",".join(sisa)
+        if r.get("_matched_items_cache"):
+            r["_matched_items_cache"] = [it for it in r["_matched_items_cache"]
+                                         if str(it.get("kode_barang", "")).strip() in set(sisa)]
 
 # ======================================================================================
 # "AI LEARNING" DARI KOREKSI MANUAL (tombol Laporkan Salah di grid)
