@@ -269,7 +269,23 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
             if (benefit.perFaktur) {
                 // Satu potongan untuk SELURUH nota: satu baris tanpa kode barang, dan ambangnya
                 // selalu nilai belanja — bentuk yang sama dengan program MSG yang sudah termuat.
-                calon.push({ ...dasar, itemCode: "", itemName: "", triggerUnit: "RP", benefitType: benefit.type });
+                //
+                // KELOMPOKNYA SENGAJA DILEBUR. Potongan setingkat nota tidak melihat kelompok
+                // sama sekali, tetapi Summary MEMECAH satu baris menjadi satu baris per kelompok
+                // master supaya Form-nya terbaca. Surat MSG yang berlaku untuk SELURUH barang
+                // karena itu pulang sebagai 53 program yang tier-nya sama persis, dan tanpa
+                // peleburan ini ia menulis 530 aturan yang isinya identik — 53 kali lipat dari
+                // yang dimaksud suratnya (diuji atas `BP2609006016`, 17 Sep 2026).
+                //
+                // Gerbangnya sendiri tidak salah menjawab: `checkSoPromo` memilih SATU tier
+                // tertinggi yang tercapai, dan ke-53 kembar itu isinya sama. Yang rusak adalah
+                // isi tabelnya — dan tabel yang dibanjiri kembar adalah tabel yang berhenti
+                // bisa dibaca orang saat ada yang bertanya "aturan mana yang memotong ini?".
+                //
+                // Dilebur ke satu nama per SURAT, jadi penjaga kembar di bawah menyatukannya
+                // menjadi satu baris per strata dan menyebutkan penyatuannya.
+                calon.push({ ...dasar, promoGroup: "(TINGKAT NOTA)", itemCode: "", itemName: "",
+                    triggerUnit: "RP", benefitType: benefit.type });
                 return;
             }
             for (const code of program.codes) {

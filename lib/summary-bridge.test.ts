@@ -221,3 +221,29 @@ test("daftar outlet dari setelan publikasi dibuat satu per surat", () => {
     assert.deepEqual(hasil.outletLists, ["BP2609007664", "BP2609007713"]);
     assert.deepEqual(hasil.rows.map((row) => row.outletList), ["BP2609007664", "BP2609007713"]);
 });
+
+test("potongan setingkat nota dilebur jadi satu kelompok per surat", () => {
+    // Surat MSG yang berlaku untuk SELURUH barang pulang sebagai banyak program: Summary
+    // memecah satu baris menjadi satu baris per kelompok master supaya Form-nya terbaca.
+    // Tier-nya sama persis di tiap pecahan, jadi tanpa peleburan ia menulis satu aturan
+    // tingkat-nota PER KELOMPOK — 53 kali lipat pada `BP2609006016` yang sebenarnya.
+    const program = (id: string, kelompok: string) => ({
+        id, name: "MSG ALL BRAND", surat_program: "BP2609006016", kelompok,
+        start: "2026-09-01", end: "2026-09-30", codes: ["A1"], channel: "GT",
+        unit: "PCS", mix: true, threshold: "value", outlet_mode: "except",
+        outlet_classes: ["LOYALTY"], value_scope: "eligible", basis: "gross",
+        stacking: false, priority: 1,
+        tiers: [{ minimum: "1000000", percentages: [], rupiah: "20000", rupiah_mode: "once",
+                  bonus_code: "", bonus_quantity: "0", bonus_unit: "PCS", bonus_scope: "code", repeat: false }],
+    });
+    const hasil = bridgeRows({
+        draftId: "d0000000-0000-0000-0000-000000000000", principal: "KINO NON FOOD",
+        suratProgram: "BP2609006016", promoGroup: "X", promoLabel: "MSG", itemNames: {},
+        outletLists: {}, programs: [program("PN1", "SLEEK HAND WASH"), program("PN2", "OVALE FACIAL")],
+    } as never);
+    const nota = hasil.rows.filter((r) => !r.itemCode);
+    assert.equal(nota.length, 1, "dua kelompok, satu strata -> satu baris tingkat nota");
+    assert.equal(nota[0].promoGroup, "(TINGKAT NOTA)");
+    assert.ok(hasil.notes.some((n) => n.includes("isi yang SAMA")),
+        "penyatuannya harus disebutkan, bukan diam-diam");
+});
