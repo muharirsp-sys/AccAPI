@@ -257,15 +257,21 @@ export function outletAllowed(
     //
     // Gabungannya UNION: peserta salah satu daftar = peserta. Untuk EXCLUDE itu berarti
     // dikecualikan bila ia ada di daftar mana pun — persis arti "exclude A dan B".
+    // DAFTAR YANG BELUM DIUNGGAH DILEWATI, SELAMA MASIH ADA YANG TERISI.
+    //
+    // Keputusan pengguna 18 Sep 2026: "kalau ada dua exclude, hanya exclude yang sudah ada
+    // listnya saja". Surat MSG berbunyi "exclude LOYALTY DAN CONTRACTUAL" sementara CONTRACTUAL
+    // belum pernah diunggah; menahan seluruh programnya berarti tidak seorang pun menerima
+    // potongan yang memang dijanjikan surat, padahal LOYALTY-nya sudah diketahui.
+    //
+    // HARGANYA, dan ini disengaja: outlet CONTRACTUAL akan ikut menerima potongan sampai
+    // daftarnya diunggah. Karena itu nama yang dilewati TIDAK didiamkan — `daftarKosong`
+    // tetap melaporkannya supaya orang tahu daftar mana yang masih hilang.
     const daftar = nama.split(",").map((x) => x.trim()).filter(Boolean);
     const anggota = new Set<string>();
     for (const satu of daftar) {
         const isi = lists.get(satu);
-        // GAGAL TERTUTUP per daftar: satu nama yang kosong membuat SELURUH aturan tidak
-        // berlaku, bukan sekadar mengurangi gabungannya. "Exclude LOYALTY dan CONTRACTUAL"
-        // dengan CONTRACTUAL yang belum diunggah bukan berarti "exclude LOYALTY saja" —
-        // ia berarti kita belum tahu siapa yang dikecualikan.
-        if (!isi || isi.size === 0) return false;
+        if (!isi || isi.size === 0) continue;
         for (const kode of isi) anggota.add(kode);
     }
     // DAFTAR KOSONG PADA TANGGAL ITU: aturannya tidak berlaku, apa pun arahnya.
@@ -295,21 +301,32 @@ export function daftarKosong(
     rules: { outletList?: string; outletListMode?: string; suratProgram?: string }[],
     lists: Map<string, Set<string>>,
 ): string[] {
-    const kurang = new Map<string, Set<string>>();
+    // Akibatnya kini ADA DUA, dan pesannya harus menyebut yang benar. Bila aturan itu masih
+    // punya daftar lain yang terisi, daftar yang kosong DILEWATI dan aturannya tetap berjalan —
+    // menulis "barisnya ditahan" di situ akan menyuruh orang mencari masalah yang tidak ada,
+    // dan menyembunyikan masalah yang nyata: ada outlet yang belum dikecualikan.
+    const kurang = new Map<string, { surat: Set<string>; dilewati: boolean }>();
     for (const rule of rules) {
         const nama = String(rule.outletList ?? "").trim().toUpperCase();
         if (!nama) continue;
+        const daftar = nama.split(",").map((x) => x.trim()).filter(Boolean);
+        const adaYangTerisi = daftar.some((satu) => (lists.get(satu)?.size ?? 0) > 0);
         // Disebut SATU PER SATU: aturan yang menunjuk "LOYALTY,CONTRACTUAL" dan kehilangan
         // salah satunya harus menyebut yang HILANG, bukan pasangannya.
-        for (const satu of nama.split(",").map((x) => x.trim()).filter(Boolean)) {
+        for (const satu of daftar) {
             if ((lists.get(satu)?.size ?? 0) > 0) continue;
-            if (!kurang.has(satu)) kurang.set(satu, new Set());
-            kurang.get(satu)!.add(String(rule.suratProgram ?? "").trim() || "(tanpa surat)");
+            if (!kurang.has(satu)) kurang.set(satu, { surat: new Set(), dilewati: false });
+            const catatan = kurang.get(satu)!;
+            catatan.surat.add(String(rule.suratProgram ?? "").trim() || "(tanpa surat)");
+            if (adaYangTerisi) catatan.dilewati = true;
         }
     }
-    return [...kurang].map(([nama, surat]) =>
+    return [...kurang].map(([nama, { surat, dilewati }]) =>
         `Daftar outlet "${nama}" tidak punya anggota pada tanggal ini, jadi aturan ${[...surat].sort().join(", ")} `
-        + "tidak berlaku untuk siapa pun dan barisnya ditahan. Muat daftarnya lewat Aturan Promo -> Daftar outlet peserta.");
+        + (dilewati
+            ? "BERJALAN TANPA daftar itu — outlet yang seharusnya masuk daftar ini belum diperlakukan berbeda. "
+            : "tidak berlaku untuk siapa pun dan barisnya ditahan. ")
+        + "Muat daftarnya lewat Aturan Promo -> Daftar outlet peserta.");
 }
 
 /**

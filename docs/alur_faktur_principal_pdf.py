@@ -220,10 +220,14 @@ def bangun():
          P("Sistem hanya <b>menyalin</b>, tidak menafsirkan. Menafsirkan berarti menebak, dan "
            "tebakan yang salah tidak pernah berbunyi.")],
         [P("<b>Periksa</b>"),
-         P("Orang memilih <b>Kelompok Barang</b> untuk tiap baris, lalu menyimpan. Sistem "
-           "menurunkan kode barangnya sendiri dari master."),
+         P("Orang memilih <b>Kelompok Barang</b> untuk tiap baris - bila perlu sampai <b>Varian</b>, "
+           "<b>Gramasi</b>, dan <b>Kemasan</b> - lalu menyimpan. Sistem menurunkan kode barangnya "
+           "sendiri dari master."),
          P("Surat menulis &#8220;OVALE 2IN1 CLEANSER&#8221;; master kita menyebutnya &#8220;OVALE "
-           "FACIAL LOTION&#8221;. Hanya orang yang tahu keduanya sama.")],
+           "FACIAL LOTION&#8221;. Hanya orang yang tahu keduanya sama. Kemasan dipilih saat master "
+           "memuat dua barang yang kelompok, varian, dan gramasinya sama persis dan hanya berbeda "
+           "kemasannya - misalnya &#8220;H.VIT SHINY BLACK 1ML&#8221; yang ada dalam BLR dan JAR, "
+           "sementara suratnya menyebut &#8220;ELLIPS HAIR VITAMIN JAR&#8221;.")],
         [P("<b>Terbitkan</b>"),
          P("Summary dikunci. Sesudah ini isinya tidak bisa diubah diam-diam."),
          P("Yang dipakai memotong uang harus punya bentuk tetap yang bisa ditunjuk ulang kapan pun "
@@ -234,13 +238,12 @@ def bangun():
            "benar&#8221;. Tiga gerbang, karena sesudah ini ia memotong uang.")],
     ], [2.5 * cm, (W - 2.5 * cm) / 2, (W - 2.5 * cm) / 2]),
         Spacer(1, 9),
-        Paragraph("Surat yang SENGAJA ditolak sistem", SUB),
+        Paragraph("Yang harus diperhatikan", SUB),
         Paragraph(
-            "Tidak semua surat boleh jadi aturan faktur. Surat ber-mekanisme <b>rafaksi</b> atau "
-            "<b>DISC ON PO</b> ditagihkan terpisah dan <b>tidak pernah muncul di faktur</b>. Kalau "
-            "surat seperti itu dimuat, gerbang justru akan <i>membenarkan</i> potongan yang seharusnya "
-            "tidak ada di sana - kebalikan dari gunanya gerbang. Sistem menolaknya sambil menyebut "
-            "alasannya, dan penolakan itu <b>benar</b>, bukan kerusakan.", TEKS)]
+            "Surat yang melampirkan daftar toko pesertanya <b>tetap dimuat</b>, tetapi <b>belum "
+            "berlaku untuk siapa pun</b> sampai daftar itu diunggah ke menu <i>Daftar outlet "
+            "peserta</i>. Selama daftarnya kosong, programnya tidak muncul di Order Masuk, Order "
+            "Principal, maupun Order Sales.", TEKS)]
 
     # ---------------------------------------------------------------- HALAMAN 4
     C += [PageBreak(), Paragraph("Empat pertanyaan gerbang", BAB),
