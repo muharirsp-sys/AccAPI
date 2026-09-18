@@ -254,7 +254,17 @@ def summary_manual_master_options(request: Request, token: str, group: str):
         variants = [{"value": "ALL VARIANT", "text": "ALL VARIANT", "disabled": False}] +                    [{"value": v, "text": v, "disabled": False} for v in vlist]
         gramasies = [{"value": "ALL GRAMASI", "text": "ALL GRAMASI", "disabled": False}] +                     [{"value": g, "text": g, "disabled": False} for g in glist]
 
-        return {"ok": True, "variants": variants, "gramasis": gramasies}
+        # SATUAN KEMASAN, diturunkan dari ekor nama barang ("... 1ML X 12 JAR"). Tidak ada
+        # kolomnya di master, tetapi ia SATU-SATUNYA pembeda dua SKU yang kelompok, varian,
+        # dan gramasinya sama persis — dan surat menyebutnya ("ELLIPS HAIR VITAMIN JAR").
+        # Hanya kemasan yang benar-benar ada di kelompok ini yang ditawarkan.
+        from shared import kemasan_of
+        ada = sorted({kemasan_of(it.get("nama_barang")) for it in (cache.get("items") or [])
+                      if norm(it.get("kelompok")) == norm(group)} - {""})
+        kemasans = [{"value": "ALL KEMASAN", "text": "ALL KEMASAN", "disabled": False}] + \
+                   [{"value": k, "text": k, "disabled": False} for k in ada]
+
+        return {"ok": True, "variants": variants, "gramasis": gramasies, "kemasans": kemasans}
     except Exception as e:
         append_error_log("summary_manual_master_options", e, {"user": user, "group": group, "token": token})
         payload = {"ok": False, "error": "Gagal memuat opsi master."}
@@ -526,9 +536,19 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         elements.append(Paragraph(f"CV. SURYA PERKASA {period_text}", sub_style))
         elements.append(Spacer(1, 15))
 
-        headers_str = ["No", "Surat Program", "Nama Program", "Channel", "Periode", 
-                   "Kelompok Barang", "Variant", "Gramasi", "Ketentuan", "Benefit", "Syarat Claim", "Keterangan"]
-        
+        # KEPALA DUA BARIS. "Channel Outlet" memayungi dua kolom: channelnya (GT/MT) dan
+        # ada-tidaknya daftar outlet peserta. Keduanya dipisah karena menjawab pertanyaan yang
+        # berbeda — "di jalur mana" dan "untuk toko mana".
+        KEPALA_ATAS = ["No.", "Surat Program", "Nama Program", "Channel Outlet", "", "Periode",
+                       "Kelompok Barang", "Variant Barang", "Gramasi Barang", "Ketentuan Pengambilan",
+                       "Benefit", "Syarat Claim", "Update", "Keterangan"]
+        KEPALA_BAWAH = ["", "", "", "GT / MT", "Daftar Outlet", "", "", "", "", "", "", "", "", ""]
+        KOL_OUTLET = 4
+        # Kolom yang boleh digabung ke bawah bila isinya sama persis. `No`, `Ketentuan
+        # Pengambilan`, dan `Benefit` TIDAK ikut: ketiganya yang membedakan baris satu sama lain,
+        # dan menggabungkannya akan menyembunyikan strata.
+        KOL_GABUNG = (1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 13)
+
         header_style = styles["Normal"].clone("HeaderStyle")
         header_style.fontSize = 7
         header_style.leading = 8
@@ -536,18 +556,58 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         header_style.alignment = TA_CENTER
         header_style.textColor = colors.whitesmoke
         
-        table_data = [[Paragraph(h, header_style) for h in headers_str]]
+        baris_teks: List[List[str]] = []
 
         cell_style = styles["Normal"].clone("CellStyle")
         cell_style.fontSize = 6
         cell_style.leading = 7
         cell_style.alignment = TA_CENTER
 
+        from shared import xml_escape
+
+        def sel(nilai):
+            # ReportLab membaca teks Paragraph sebagai markup: "B&B ALL VARIANT" tercetak
+            # "B&B; ALL VARIANT", dan satu "<" apa pun menggagalkan halaman. Isi sel adalah
+            # data dari surat, bukan markup.
+            return Paragraph(xml_escape(str(nilai)), cell_style)
+
+        # Angka rupiah dicetak berdesimal. Yang disimpan tetap polos — pemisah ribuan dipasang
+        # DI SINI saja, supaya yang menghitung tidak pernah menemukan titik di dalam angkanya.
+        # Sengaja hanya angka yang jelas rupiah (didahului "Rp" atau berdiri di awal benefit),
+        # supaya tahun seperti "2026" tidak ikut berubah jadi "2.026".
+        def _titik(angka: str) -> str:
+            return f"{int(angka):,}".replace(",", ".")
+
+        def desimal(teks) -> str:
+            return re.sub(r"(Rp\.?\s*)(\d{4,})", lambda m: m.group(1) + _titik(m.group(2)), str(teks or ""))
+
+        # Tiga keadaan, bukan dua. "Hanya" dan "Kecuali" sama-sama memakai daftar outlet tetapi
+        # ARAHNYA berlawanan; meleburnya jadi satu kata "Ada List" membalik arti surat pada
+        # lembar yang justru dipakai mencocokkan dengan suratnya.
+        def outlet_display(r) -> str:
+            mode = str(r.get("outlet_mode", "") or "").strip().lower()
+            return {"only": "Hanya List", "except": "Kecuali List"}.get(mode, "Tanpa List")
+
+        # Batas waktu klaim tidak dicetak di lembar ini (keputusan pengguna 18 Sep 2026): ia
+        # bukan bagian dari pencocokan fisik dengan surat, dan surat pernah mencantumkan tanggal
+        # yang tidak ada ("31 Juni"). Peringatannya tetap hidup di layar saat surat dibaca.
+        def syarat_display(r) -> str:
+            teks = str(r.get("syarat_claim", "") or "").strip()
+            return re.sub(r"[,;]?\s*selambat-?\s*lambatnya[^.]*\.?\s*$", "", teks, flags=re.I).strip()
+
+        # "surat menyebut: ..." tidak dicetak lagi. Kolom ini untuk batasan yang menentukan
+        # eksekusi, bukan untuk menggemakan kalimat suratnya.
+        def keterangan_display(r) -> str:
+            teks = str(r.get("keterangan", "") or "").strip()
+            return "" if teks.lower().startswith("surat menyebut") else teks
+
         def benefit_display(r) -> str:
             # ponytail: cut price (DISC_RP) tampilkan per-satuan (default PCS) -> "4700/PCS".
             # BONUS_QTY sudah "1 PCS", DISC_PCT sudah "5%" -> biarkan apa adanya.
             b = str(r.get("benefit", "") or "").strip()
             bt = norm(r.get("benefit_type", ""))
+            if bt == "DISC_RP" and re.fullmatch(r"\d{4,}", b):
+                b = _titik(b)
             if bt == "DISC_RP" and has_number(b) and "/" not in b:
                 # AMBANG RUPIAH BERARTI POTONGAN SENOTA, BUKAN PER SATUAN.
                 #
@@ -561,6 +621,11 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                     return f"{b}/NOTA"
                 unit = unit_from_text(str(r.get("ketentuan", "")) + " " + b)
                 return f"{b}/{unit}"
+            # Pembaca surat mengeluarkan persen sebagai angka telanjang ("3"), dan angka itulah
+            # yang dipakai menghitung. Di lembar yang diteken orang, "3" sendirian tidak berarti
+            # apa-apa — satuannya dipasang di sini, bukan disimpan ke datanya.
+            if bt == "DISC_PCT" and b and not b.endswith("%"):
+                return f"{b}%"
             return b
 
         # ============================================================
@@ -610,6 +675,10 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                                  or syarat_claim.untuk(principle_for_claim or r.get("principle", ""), r.get("benefit_type", ""))),
                 "keterangan": r.get("keterangan",""),
                 "variant_display": r.get("variant",""), "kelompok_fallback": r.get("kelompok",""),
+                # Kelayakan outlet ikut dicetak: tanpa ini lembarnya tidak bisa membedakan
+                # program untuk peserta daftar dari program yang justru mengecualikan mereka.
+                "outlet_mode": r.get("outlet_mode", ""),
+                "update": r.get("update", ""),
             }
             pdf_items[i] = []
 
@@ -795,19 +864,21 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             # Kode barangnya TIDAK hilang — Dataset Excel tetap memuat ke-647 barisnya, dan
             # aturan yang dimuat ke `promo_rule` tetap dari daftar kode yang utuh.
             if norm(meta.get("kelompok_fallback", "")) == "ALL KELOMPOK BARANG":
-                table_data.append([
-                    Paragraph(str(meta["no"]), cell_style),
-                    Paragraph(str(meta.get("surat_program", "")), cell_style),
-                    Paragraph(str(meta.get("nama_program", "")), cell_style),
-                    Paragraph(str(meta.get("channel_gtmt", "")), cell_style),
-                    Paragraph(str(meta.get("periode", "")), cell_style),
-                    Paragraph("ALL KELOMPOK BARANG", cell_style),
-                    Paragraph("All Variant", cell_style),
-                    Paragraph("All Gramasi", cell_style),
-                    Paragraph(str(meta.get("ketentuan", "")), cell_style),
-                    Paragraph(benefit_display(meta), cell_style),
-                    Paragraph(str(meta.get("syarat_claim", "")), cell_style),
-                    Paragraph(str(meta.get("keterangan", "")), cell_style),
+                baris_teks.append([
+                    str(meta["no"]),
+                    str(meta.get("surat_program", "")),
+                    str(meta.get("nama_program", "")),
+                    str(meta.get("channel_gtmt", "")),
+                    outlet_display(meta),
+                    str(meta.get("periode", "")),
+                    "ALL KELOMPOK BARANG",
+                    "All Variant",
+                    "All Gramasi",
+                    desimal(meta.get("ketentuan", "")),
+                    benefit_display(meta),
+                    syarat_display(meta),
+                    str(meta.get("update", "")),
+                    keterangan_display(meta),
                 ])
                 continue
 
@@ -853,52 +924,81 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                     gramasi_parts.append(",".join(gram_for_k))
             gramasi_display = join_human(gramasi_parts)
 
-            table_data.append([
-                Paragraph(str(meta["no"]), cell_style),
-                Paragraph(str(meta.get("surat_program","")), cell_style),
-                Paragraph(str(meta.get("nama_program","")), cell_style),
-                Paragraph(str(meta.get("channel_gtmt","")), cell_style),
-                Paragraph(str(meta.get("periode","")), cell_style),
-                Paragraph(kelompok_display, cell_style),
-                Paragraph(variant_display, cell_style),
-                Paragraph(gramasi_display, cell_style),
-                Paragraph(str(meta.get("ketentuan","")), cell_style),
-                Paragraph(benefit_display(meta), cell_style),
-                Paragraph(str(meta.get("syarat_claim","")), cell_style),
-                Paragraph(str(meta.get("keterangan","")), cell_style),
+            baris_teks.append([
+                str(meta["no"]),
+                str(meta.get("surat_program","")),
+                str(meta.get("nama_program","")),
+                str(meta.get("channel_gtmt","")),
+                outlet_display(meta),
+                str(meta.get("periode","")),
+                str(kelompok_display),
+                str(variant_display),
+                str(gramasi_display),
+                desimal(meta.get("ketentuan","")),
+                benefit_display(meta),
+                syarat_display(meta),
+                str(meta.get("update","")),
+                keterangan_display(meta),
             ])
             
         # Total A4 landscape width is ~842. Margins are 0.5cm each (approx 14 points each, total 28 pts margin)
         # Usable width = 842 - 28 = 814 points
         usable = landscape(A4)[0] - (1 * cm)
         cw = [
-            usable * 0.03, # No
-            usable * 0.12, # Surat Program
-            usable * 0.12, # Nama Program
-            usable * 0.05, # Channel
-            usable * 0.08, # Periode
-            usable * 0.09, # Kelompok
-            usable * 0.14, # Variant
-            usable * 0.08, # Gramasi
-            usable * 0.08, # Ketentuan
-            usable * 0.08, # Benefit
-            usable * 0.07, # Syarat Claim
-            usable * 0.06  # Keterangan
+            usable * 0.025, # No.
+            usable * 0.095, # Surat Program
+            usable * 0.105, # Nama Program
+            usable * 0.035, # GT / MT
+            usable * 0.055, # Daftar Outlet
+            usable * 0.065, # Periode
+            usable * 0.085, # Kelompok Barang
+            usable * 0.115, # Variant Barang
+            usable * 0.070, # Gramasi Barang
+            usable * 0.100, # Ketentuan Pengambilan
+            usable * 0.070, # Benefit
+            usable * 0.075, # Syarat Claim
+            usable * 0.045, # Update
+            usable * 0.060  # Keterangan
         ]
             
-        t = Table(table_data, repeatRows=1, colWidths=cw)
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#9E7C85')), # Match the brownish pink header color
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+        table_data = [[Paragraph(h, header_style) for h in KEPALA_ATAS],
+                      [Paragraph(h, header_style) for h in KEPALA_BAWAH]]
+        table_data += [[sel(nilai) for nilai in baris] for baris in baris_teks]
+
+        gaya = [
+            ('BACKGROUND', (0, 0), (-1, 1), colors.HexColor('#9E7C85')), # Match the brownish pink header color
+            ('TEXTCOLOR', (0, 0), (-1, 1), colors.black),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-            ('TOPPADDING', (0, 0), (-1, 0), 6),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+            ('FONTNAME', (0, 0), (-1, 1), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0, 0), (-1, 1), 6),
+            ('TOPPADDING', (0, 0), (-1, 1), 6),
+            ('BACKGROUND', (0, 2), (-1, -1), colors.white),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
             ('WORDWRAP', (0, 0), (-1, -1), True),
-        ]))
+            ('SPAN', (3, 0), (KOL_OUTLET, 0)),  # "Channel Outlet" memayungi dua kolom
+        ]
+        # Kepala satu kolom yang tidak punya sub-kolom membentang dua baris.
+        gaya += [('SPAN', (i, 0), (i, 1)) for i in range(len(KEPALA_ATAS)) if i not in (3, KOL_OUTLET)]
+
+        # SEL YANG ISINYA SAMA DIGABUNG KE BAWAH. Sepuluh strata MSG sebenarnya SATU program
+        # dengan sepuluh tier — di gerbang ia memang satu — jadi mengulang nomor surat, nama
+        # program, channel, dan periodenya sepuluh kali hanya membuat lembarnya sulit dibaca
+        # tanpa menambah satu pun keterangan.
+        AWAL = 2  # dua baris kepala
+        for kolom in KOL_GABUNG:
+            mulai = 0
+            for i in range(1, len(baris_teks) + 1):
+                sama = i < len(baris_teks) and baris_teks[i][kolom] == baris_teks[mulai][kolom] \
+                    and baris_teks[i][1] == baris_teks[mulai][1]  # jangan lintas surat program
+                if sama:
+                    continue
+                if i - mulai > 1:
+                    gaya.append(('SPAN', (kolom, AWAL + mulai), (kolom, AWAL + i - 1)))
+                mulai = i
+
+        t = Table(table_data, repeatRows=2, colWidths=cw)
+        t.setStyle(TableStyle(gaya))
         elements.append(t)
         
         # Add the Footer Signatures
@@ -913,24 +1013,37 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         footer_style_right.fontName = 'Helvetica-Bold'
         footer_style_right.alignment = TA_RIGHT
 
+        footer_style_center = styles["Normal"].clone("FooterCenter")
+        footer_style_center.fontSize = 8
+        footer_style_center.fontName = 'Helvetica-Bold'
+        footer_style_center.alignment = TA_CENTER
+        footer_style_center.leading = 10
+
+        # Lima penanda tangan, berurutan sesuai alur persetujuan: yang membuat, dua yang
+        # mengetahui, yang memeriksa klaim, dan yang menyetujui.
+        TANDA_TANGAN = [("Dibuat Oleh,", "Admin"),
+                        ("Diketahui Oleh,", "SM"),
+                        ("Diketahui Oleh,", "Kepala Accounting"),
+                        ("Diperiksa Oleh,", "Claim"),
+                        ("Disetujui Oleh,", "Operational Manager")]
+        garis = "(.............................)"
         sig_data = [
-            [Paragraph(f"Makassar , {dibuat_date}", footer_style_left), ""],
-            [Paragraph("Diajukan Oleh,", footer_style_left), Paragraph("Disetujui Oleh,", footer_style_right)],
-            [Spacer(1, 40), Spacer(1, 40)], # Space for signature
-            [Paragraph("SM<br/>(.................................................)", footer_style_left), 
-             Paragraph("OPERATIONAL MANAGER<br/>(.................................................)", footer_style_right)]
+            [Paragraph(peran, footer_style_center) for peran, _ in TANDA_TANGAN],
+            [Spacer(1, 42)] * len(TANDA_TANGAN),  # ruang untuk tanda tangan
+            [Paragraph(f"{nama}<br/>{garis}", footer_style_center) for _, nama in TANDA_TANGAN],
         ]
-        
-        # Table takes up full usable width so left is left, right is right
-        sig_table = Table(sig_data, colWidths=[usable/2.0, usable/2.0])
+
+        elements.append(Paragraph(f"Makassar , {dibuat_date}", footer_style_right))
+        elements.append(Spacer(1, 10))
+        lebar_ttd = usable / float(len(TANDA_TANGAN))
+        sig_table = Table(sig_data, colWidths=[lebar_ttd] * len(TANDA_TANGAN))
         sig_table.setStyle(TableStyle([
-            ('ALIGN', (0, 0), (0, -1), 'LEFT'),
-            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 0),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('LEFTPADDING', (0, 0), (-1, -1), 2),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 2),
         ]))
-        
+
         elements.append(sig_table)
         
         doc.build(elements, onFirstPage=my_canvas, onLaterPages=my_canvas)

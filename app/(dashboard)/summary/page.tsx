@@ -28,6 +28,7 @@ interface RowData {
     kelompok: string;
     variant: string;
     gramasi: string;
+    kemasan: string;
     ketentuan: string;
     benefit_type: string;
     benefit: string;
@@ -213,6 +214,7 @@ export default function SummaryManualPage() {
     const [rows, setRows] = useState<RowData[]>([]);
     const [variantOptions, setVariantOptions] = useState<Record<string, any[]>>({});
     const [gramasiOptions, setGramasiOptions] = useState<Record<string, any[]>>({});
+    const [kemasanOptions, setKemasanOptions] = useState<Record<string, any[]>>({});
 
     const [isGenerating, setIsGenerating] = useState(false);
     const [downloadId, setDownloadId] = useState<string | null>(null);
@@ -316,8 +318,10 @@ export default function SummaryManualPage() {
             if (res.data.ok) {
                 const variants = res.data.variants || [];
                 const gramasis = res.data.gramasis || [];
+                const kemasans = res.data.kemasans || [];
                 setVariantOptions(p => ({ ...p, [rowId]: variants }));
                 setGramasiOptions(p => ({ ...p, [rowId]: gramasis }));
+                setKemasanOptions(p => ({ ...p, [rowId]: kemasans }));
 
                 if (currentVariant || currentGramasi) {
                     setRows(prev => prev.map(r => {
@@ -463,7 +467,7 @@ export default function SummaryManualPage() {
         return {
             id: crypto.randomUUID(), no: "", principle: principleName, surat_program: "", nama_program: "",
             promo_group_id: "", channel_gtmt: "", channel_list: "", periode_start: firstDay, periode_end: today,
-            kelompok: "", variant: "", gramasi: "", ketentuan: "", benefit_type: "DISC_PCT", benefit: "",
+            kelompok: "", variant: "", gramasi: "", kemasan: "", ketentuan: "", benefit_type: "DISC_PCT", benefit: "",
             syarat_claim: "", update: today, keterangan: "Manual"
         };
     };
@@ -479,6 +483,7 @@ export default function SummaryManualPage() {
                         newR.gramasi = "ALL GRAMASI";
                         setVariantOptions(prev => ({ ...prev, [id]: [] }));
                         setGramasiOptions(prev => ({ ...prev, [id]: [] }));
+                        setKemasanOptions(prev => ({ ...prev, [id]: [] }));
                     } else {
                         fetchOptions(id, val, newR.variant, newR.gramasi);
                     }
@@ -881,6 +886,7 @@ export default function SummaryManualPage() {
                                         <th className="px-3 py-3 font-semibold">Kelompok</th>
                                         <th className="px-3 py-3 font-semibold">Variant</th>
                                         <th className="px-3 py-3 font-semibold">Gramasi</th>
+                                        <th className="px-3 py-3 font-semibold">Kemasan</th>
                                         <th className="px-3 py-3 font-semibold">Ketentuan</th>
                                         <th className="px-3 py-3 font-semibold">Benefit Type</th>
                                         <th className="px-3 py-3 font-semibold">Value</th>
@@ -908,6 +914,11 @@ export default function SummaryManualPage() {
                                             </td>
                                             <td className="px-2 py-2">
                                                 <MultiSelect options={gramasiOptions[r.id] || []} value={r.gramasi} onChange={g => updateRow(r.id, "gramasi", g)} placeholder="- Gramasi -" />
+                                            </td>
+                                            {/* Satuan kemasan: pembeda terakhir dua SKU yang kelompok, varian, dan
+                                                gramasinya sama persis (JAR vs BLR). Kosong berarti semua kemasan. */}
+                                            <td className="px-2 py-2">
+                                                <MultiSelect options={kemasanOptions[r.id] || []} value={r.kemasan || ""} onChange={k => updateRow(r.id, "kemasan", k)} placeholder="- Kemasan -" />
                                             </td>
                                             <td className="px-2 py-2"><input type="text" value={r.ketentuan} onChange={e => updateRow(r.id, "ketentuan", e.target.value)} className="w-20 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 outline-none focus:ring-1 focus:ring-blue-500" /></td>
                                             <td className="px-2 py-2">

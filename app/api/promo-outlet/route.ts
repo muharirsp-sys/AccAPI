@@ -559,6 +559,44 @@ export async function PATCH(request: NextRequest) {
     const gate = await gateOf("summary.edit");
     if (gate.response) return gate.response;
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+
+    // MENAMBATKAN daftar ke aturan sebuah surat, dari layar daftar peserta ini.
+    //
+    // Nama daftar adalah satu-satunya tali antara aturan dan pesertanya, dan sampai sekarang
+    // talinya hanya bisa diikat di layar LAIN ("Hanya untuk peserta daftar" pada aturannya)
+    // atau otomatis saat surat beserta lampirannya diunggah. Daftar yang datang terpisah —
+    // peserta yang dikirim susulan — karenanya menggantung: tersimpan, tetapi tidak
+    // memengaruhi gerbang mana pun, dan tidak ada apa pun yang salah di layar.
+    if (text(body?.aksi) === "tunjuk") {
+        const listName = text(body?.listName).toUpperCase();
+        const surat = text(body?.suratProgram).toUpperCase();
+        const mode = text(body?.mode).toUpperCase() === "EXCLUDE" ? "EXCLUDE" : "INCLUDE";
+        if (!listName || !surat) {
+            return NextResponse.json({ ok: false, error: "Nama daftar dan surat program wajib diisi" }, { status: 422 });
+        }
+        const aturan = await db.select({ id: promoRule.id, outletList: promoRule.outletList })
+            .from(promoRule).where(eq(promoRule.suratProgram, surat));
+        if (!aturan.length) {
+            return NextResponse.json({ ok: false, error: `Tidak ada aturan promo untuk surat ${surat}` }, { status: 404 });
+        }
+        // Menimpa daftar LAIN yang sudah tertunjuk berarti mencabut pesertanya tanpa jejak:
+        // aturannya tetap terlihat berlaku, tetapi untuk himpunan toko yang berbeda. Ditolak
+        // sampai diminta dua kali.
+        const lain = [...new Set(aturan.map((r) => text(r.outletList).toUpperCase())
+            .filter((nama) => nama && nama !== listName))];
+        if (lain.length && body?.paksa !== true) {
+            return NextResponse.json({
+                ok: false, perluPaksa: true, sudahMenunjuk: lain,
+                error: `Aturan surat ${surat} sudah menunjuk daftar ${lain.join(", ")}. `
+                    + `Menunjuknya ke ${listName} akan mengganti pesertanya.`,
+            }, { status: 409 });
+        }
+        const ditunjuk = await db.update(promoRule).set({ outletList: listName, outletListMode: mode })
+            .where(eq(promoRule.suratProgram, surat)).returning({ id: promoRule.id });
+        return NextResponse.json({ ok: true, listName, suratProgram: surat, mode,
+            aturanDitunjuk: ditunjuk.length, sebelumnya: lain });
+    }
+
     const id = Number(body?.id);
     if (!body || !Number.isFinite(id)) return NextResponse.json({ ok: false, error: "id wajib diisi" }, { status: 400 });
 

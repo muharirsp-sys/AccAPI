@@ -154,6 +154,41 @@ def main():
             r["variant"] = "ALL VARIANT"
             r["gramasi"] = "ALL GRAMASI"
 
+    # Keputusan pengguna 18 Sep 2026 untuk surat ON PO (BP2609007909). SATU KELOMPOK = SATU
+    # BARIS: daftar kelompok berkoma sengaja tidak diselesaikan sistem (menghasilkan 0 kode),
+    # jadi baris yang mencakup banyak kelompok dipecah di sini — persis seperti operator
+    # memecahnya di layar.
+    def semua_kelompok(awalan):
+        return sorted({str(i.get("kelompok", "")) for i in items
+                       if str(i.get("kelompok", "")).upper().startswith(awalan)})
+
+    # Nilai = (daftar kelompok, satuan kemasan). Kemasan kosong berarti semua kemasan.
+    ON_PO_KELOMPOK = {
+        "SLEEK BABY BABY BOTTLE NIPPLE": (["SLEEK BABY - BN CLEANSER"], ""),
+        "B&B ALL VARIANT":               (semua_kelompok("B&B"), ""),
+        "RESIK V CAIR":                  (semua_kelompok("RESIK V"), ""),
+        # "ELLIPS HAIR VITAMIN JAR": yang membedakannya dari kembarannya BUKAN kelompok,
+        # varian, atau gramasi — ketiganya sama persis — melainkan satuan kemasannya.
+        "ELLIPS HAIR VITAMIN JAR":       (semua_kelompok("ELLIPS"), "JAR"),
+    }
+
+    def sebutan(row):
+        return str(row.get("keterangan", "")).replace("surat menyebut:", "").replace("MIX VARIANT", "").strip()
+
+    pecah = []
+    for r in rows:
+        pilihan, kemasan = (ON_PO_KELOMPOK.get(sebutan(r)) or (None, "")) \
+            if not str(r.get("kelompok", "")).strip() else (None, "")
+        if not pilihan:
+            pecah.append(r)
+            continue
+        for nama_kelompok in pilihan:
+            pecah.append({**r, "kelompok": nama_kelompok, "variant": "ALL VARIANT",
+                          "gramasi": "ALL GRAMASI", "kemasan": kemasan})
+        print(f"  pecah  {sebutan(r)[:32]:34} -> {len(pilihan)} kelompok"
+              + (f", kemasan {kemasan}" if kemasan else ""))
+    rows = pecah
+
     print("\n" + "=" * 78)
     print("LANGKAH MANUSIA — memilih Kelompok Barang (di layar: dropdown)")
     print("=" * 78)
@@ -161,7 +196,7 @@ def main():
     for r in rows:
         if str(r.get("kelompok", "")).strip():
             continue
-        sebut = str(r.get("keterangan", "")).replace("surat menyebut:", "").replace("MIX VARIANT", "").strip()
+        sebut = sebutan(r)
         pilih = KEPUTUSAN.get(sebut)
         if pilih:
             r["kelompok"], r["variant"] = pilih[0], pilih[1] or "ALL VARIANT"
@@ -177,6 +212,27 @@ def main():
     # ---- SIMPAN: sistem menurunkan kode barang dari master --------------------------------
     from routers.summary_library import resolve_kode_barangs
     rows = resolve_kode_barangs(rows, isi)
+
+    # "RESIK V CAIR" = SELURUH RESIK V KECUALI yang sudah diklaim surat lain (keputusan
+    # pengguna 18 Sep 2026). Tanpa pengurangan ini kode yang sama dipegang dua baris, dan
+    # penjaga tumpang-tindih membuangnya DARI KEDUANYA — dua program hilang sekaligus, diam-diam.
+    # Program SEKATALOG (MSG, "ALL KELOMPOK BARANG") memegang seluruh 647 kode master menurut
+    # definisinya; ia tumpang-tindih dengan setiap program lain dan itu memang disengaja.
+    # Ia BUKAN klaim pesaing atas SKU tertentu, jadi ia tidak boleh ikut mengurangi.
+    diklaim = {kode.strip()
+               for r in rows
+               if str(r.get("surat_program", "")).strip() != "BP2609007909"
+               and str(r.get("kelompok", "")).strip().upper() != "ALL KELOMPOK BARANG"
+               for kode in str(r.get("kode_barangs", "")).split(",") if kode.strip()}
+    for r in rows:
+        if "RESIK V CAIR" not in str(r.get("keterangan", "")).upper():
+            continue
+        sisa = [k.strip() for k in str(r.get("kode_barangs", "")).split(",")
+                if k.strip() and k.strip() not in diklaim]
+        dibuang = len([k for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]) - len(sisa)
+        r["kode_barangs"] = ",".join(sisa)
+        if dibuang:
+            print(f"  RESIK V CAIR / {str(r.get('kelompok','')):26} -{dibuang} kode sudah diklaim BP2609007713")
     print(f"\nSesudah Simpan: {len(rows)} baris (baris boleh terpecah per kelompok)")
     berkode = [r for r in rows if str(r.get("kode_barangs", "")).strip()]
     print(f"  {len(berkode)} baris punya kode barang, {len(rows) - len(berkode)} belum")

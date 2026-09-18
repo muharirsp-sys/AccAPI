@@ -18,7 +18,11 @@ from summary_mistral import FIELDS, status
 # MEMBUANGNYA, dan surat "KHUSUS PESERTA LOYALTY" tersimpan sebagai berlaku untuk SEMUA outlet.
 # Kegagalan itu gagal TERBUKA: tidak ada galat, hanya bonus yang jatuh ke toko yang bukan
 # peserta. Diperiksa di produksi 2026-09-16 pada surat BP2609007664.
-BARIS_DRAFT = [*FIELDS, "outlet_mode", "outlet_classes", "id", "no", "source_page"]
+# `kemasan` sengaja DI SINI dan bukan di `FIELDS`: `FIELDS` juga skema JSON yang diwajibkan
+# ke pembaca surat, dan kemasan bukan hasil membaca surat melainkan PILIHAN OPERATOR di layar
+# — sama seperti kelompok. Menaruhnya di `FIELDS` akan mengubah kontrak ekstraksi semua
+# principal demi satu dimensi yang tidak pernah diisi mesin.
+BARIS_DRAFT = [*FIELDS, "kemasan", "outlet_mode", "outlet_classes", "id", "no", "source_page"]
 
 router = APIRouter(prefix="/summary/library")
 
