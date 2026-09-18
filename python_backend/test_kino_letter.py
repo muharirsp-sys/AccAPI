@@ -35,10 +35,13 @@ Detail Promo : MEKANISME : - PROGRAM INI KHUSUS CHANNEL GT PESERTA LOYALTY
 Outlet/Account : ALL"""
 
 MTI = """NO. PROMO ID : PN26006070 Kode Aju : BP2609007909
-Nama Program Promo : MTI - HPC CONSUMER PROMO ON PO
+Nama Program Promo : MTI - HPC CONSUMER PROMO ON PO 1 SEPTEMBER 2026 - 30 SEPTEMBER 2026
 Periode Promo : 1 September 2026 - 30 September 2026 Type Of Promo : CONSUMER PROMO
 Class Of Promo : DISC ON PO Mekanisme Promo : ADDITIONAL DISCOUNT
-Detail Promo : ELLIPS HAIR VITAMIN JAR ON PO 3% Pronas RAFAKSI / ON FAKTUR wajib melampirkan SKP LIST OUTLET TERLAMPIR
+Detail Promo : MTI - HPC CONSUMER PROMO ON PO 1 SEPTEMBER 2026 - 30 SEPTEMBER 2026
+ELLIPS HAIR VITAMIN JAR ON PO 3% ELLIPS HAIR MIST ON PO 3% SLEEK BABY BABY BOTTLE NIPPLE ON PO 3%
+RESIK V CAIR ON PO 3% B&B ALL VARIANT ON PO 3%
+Satu toko satu mekanisme (tidak diperbolehkan double mekanisme) Toko wajib menggunakan harga MT (Jika toko menggunakan harga GT maka promo tidak dapat di klaim), Pronas RAFAKSI / ON FAKTUR wajib melampirkan SKP LIST OUTLET TERLAMPIR
 Outlet/Account : ALL"""
 
 SMALL = f"""NO. PROMO ID : PN26006104 Kode Aju : BP2609008021
@@ -74,11 +77,49 @@ def main():
     assert "kelipatan" not in resik["rows"][1]["ketentuan"], resik["rows"][1]["ketentuan"]
     assert "MIX VARIANT" in resik["rows"][0]["ketentuan"] and "MIX" not in resik["rows"][1]["ketentuan"]
 
-    # Klasifikasi on-faktur dibaca dari field Mekanisme Promo, bukan dari badan teks yang
-    # kebetulan menyebut "ON FAKTUR".
+    # Surat yang diunggah ke program BERARTI on faktur (aturan pengguna 18 Sep 2026: "ON PO =
+    # ON Faktur"). Mekanisme yang tercetak tetap dicatat apa adanya untuk jejak audit.
     mti = parse_text(MTI)
-    assert not mti["on_faktur"] and mti["rows"] == []
-    assert any("bukan on faktur" in w for w in mti["warnings"]), mti["warnings"]
+    assert mti["on_faktur"] and mti["mechanism"] == "ADDITIONAL DISCOUNT", mti["mechanism"]
+    assert [r["kelompok"] for r in mti["rows"]] == ["ELLIPS HAIR VITAMIN JAR", "ELLIPS HAIR MIST",
+        "SLEEK BABY BABY BOTTLE NIPPLE", "RESIK V CAIR", "B&B ALL VARIANT"], mti["rows"]
+    assert all(r["benefit_type"] == "DISC_PCT" and r["benefit"] == "3" for r in mti["rows"]), mti["rows"]
+    # Ketentuan harus menyebut produknya: jati diri baris pada penjaga "satu program sekali"
+    # adalah surat+ketentuan+benefit, jadi ketentuan seragam akan meleburkan kelimanya jadi satu.
+    assert mti["rows"][1]["ketentuan"] == "Setiap pembelian ELLIPS HAIR MIST", mti["rows"][1]["ketentuan"]
+    assert len({r["ketentuan"] for r in mti["rows"]}) == 5, mti["rows"]
+    # "CONSUMER PROMO" bukan channel. Yang menentukan klaim adalah harga yang dipakai toko, dan
+    # surat mencetaknya; channel yang salah membuat aturan diam-diam tidak pernah cocok.
+    assert mti["rows"][0]["channel_gtmt"] == "MT", mti["rows"][0]["channel_gtmt"]
+    assert any("LAMPIRAN" in w for w in mti["warnings"]), mti["warnings"]
+    # Surat melampirkan daftar outlet pesertanya sendiri. Daftar yang belum dimuat berarti
+    # belum diketahui siapa yang berhak — BUKAN semua berhak. Programnya ditambatkan ke daftar
+    # bernama nomor suratnya, dan gerbang menahannya selama daftar itu kosong.
+    assert (mti["rows"][0]["outlet_mode"], mti["rows"][0]["outlet_classes"]) == ("only", "BP2609007909"), mti["rows"][0]
+    assert any("ditahan sampai" in w.lower() for w in mti["warnings"]), mti["warnings"]
+
+    # Aturannya TETAP MUAT — nama daftar = nomor suratnya sendiri diterima gerbang — tetapi
+    # TIDAK BERLAKU sampai daftar pesertanya diunggah. Potongan yang kurang bisa dibayar
+    # susulan; potongan yang terlanjur masuk faktur outlet yang salah tidak bisa ditarik.
+    program, tertahan = compile_programs([{**mti["rows"][1], "kode_barangs": "K1"}])
+    assert program and not tertahan, tertahan
+    aturan = validate_programs(program, {"K1"}, 1)
+    satu = [dict(code="K1", unit="PCS", quantity="1", price="100000")]
+    lepas = calculate(aturan, satu, "2026-09-03", "MT", outlet_classes=(), known_classes=())
+    assert lepas["discount"] == "0.00", lepas
+    assert "belum dimuat" in lepas["blocked"][0]["reason"], lepas["blocked"]
+    # Sesudah daftarnya dimuat, peserta dapat 3% dan yang bukan peserta tetap tidak.
+    kena = calculate(aturan, satu, "2026-09-03", "MT",
+                     outlet_classes=("BP2609007909",), known_classes=("BP2609007909",))
+    assert kena["discount"] == "3000.00", kena
+    bukan = calculate(aturan, satu, "2026-09-03", "MT",
+                      outlet_classes=("LOYALTY",), known_classes=("BP2609007909",))
+    assert bukan["discount"] == "0.00", bukan
+
+    # Tanpa kalimat harga itu, channel TIDAK ditebak: dikosongkan dan diperingatkan.
+    buta = parse_text(MTI.replace("menggunakan harga MT", "konfirmasi lebih dulu"))
+    assert buta["rows"][0]["channel_gtmt"] == "", buta["rows"][0]["channel_gtmt"]
+    assert any("bukan channel" in w for w in buta["warnings"]), buta["warnings"]
 
     check_end_to_end(msg, resik)
     print("kino letter check: OK")

@@ -137,7 +137,10 @@ class Program(StrictModel):
         if self.outlet_mode != "all":
             if not self.outlet_classes or len(self.outlet_classes) != len(set(self.outlet_classes)):
                 raise ValueError("Sebutkan kelas outlet, tanpa duplikat")
-            unknown = [c for c in self.outlet_classes if c not in OUTLET_CLASSES]
+            # Nomor surat sendiri = nama daftar outlet yang dilampirkan surat itu, bukan kelas.
+            # Lihat alasan lengkapnya di `outlet_rule_of`.
+            unknown = [c for c in self.outlet_classes
+                       if c not in OUTLET_CLASSES and c != self.surat_program.strip().upper()]
             if unknown:
                 raise ValueError("Kelas outlet tidak dikenal: " + ", ".join(unknown) + "; pilihan: " + ", ".join(OUTLET_CLASSES))
         return self
@@ -358,7 +361,13 @@ def outlet_rule_of(row):
         return (), "outlet_mode harus all, only, atau except"
     if (mode == "all") != (not classes):
         return (), "isi outlet_mode 'only'/'except' bersama kelas outletnya, atau kosongkan keduanya"
-    unknown = [c for c in classes if c not in OUTLET_CLASSES]
+    # Surat boleh melampirkan daftar outlet pesertanya SENDIRI, dan nama daftarnya adalah
+    # nomor surat itu (bentuk yang sama dipakai `summary-bridge.ts`). Itu nama DAFTAR, bukan
+    # kelas — satu-satunya nama di luar kosakata tetap yang diterima, dan hanya nomor suratnya
+    # sendiri, supaya aturannya TETAP BISA DIMUAT sementara daftarnya belum diunggah.
+    # Yang menahannya saat faktur adalah `outlet_allows`: daftar belum dimuat = tidak berlaku.
+    sendiri = str(row.get("surat_program", "")).strip().upper()
+    unknown = [c for c in classes if c not in OUTLET_CLASSES and c != sendiri]
     if unknown:
         return (), "kelas outlet tidak dikenal: " + ", ".join(unknown) + "; pilihan: " + ", ".join(OUTLET_CLASSES)
     return (mode, classes), ""

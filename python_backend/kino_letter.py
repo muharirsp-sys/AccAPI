@@ -28,6 +28,13 @@ JUTA = re.compile(r"([\d.,]+)\s*JT\b\s*(?:[" + BULLET + r"\-–]|s/?d)?\s*(?:[\d
                   r"POTONGAN\s+ON\s+FAKTUR\s+([\d.,]+)", re.I)
 BONUS = re.compile(r"SETIAP\s+PEMBELIAN\s+(\d+)\s+([A-Z]{2,4})\s+(.+?)\s+AKAN\s+MENDAPATKAN\s+BONUS\s+(\d+)\s+([A-Z]{2,4})", re.I)
 PERSEN = re.compile(r"DISC\.?\s*ON\s*FAKTUR\s*:?\s*([\d.,]+)\s*%", re.I)
+# "ELLIPS HAIR MIST ON PO 3%": satu butir per produk, tanpa tanda hubung pemisah.
+ON_PO = re.compile(r"\bON\s+PO\s+([\d.,]+)\s*%", re.I)
+# Channel diambil dari kalimat KEWAJIBAN saja. Surat yang sama memuat klausa kebalikannya
+# ("jika toko menggunakan harga GT maka promo tidak dapat di klaim"); membaca harga mana pun
+# yang lebih dulu muncul akan memungut channel yang justru dilarang.
+HARGA_CHANNEL = re.compile(r"\bWAJIB\s+(?:\w+\s+){0,3}HARGA\s+(GT|MT)\b", re.I)
+CHANNELS = ("GT", "MT", "ALL")
 ATTACHMENT = re.compile(r"TERLAMPIR|LAMPIRAN|HIT\s+LIST", re.I)
 
 
@@ -97,23 +104,45 @@ def parse_text(text, page_count=1):
     head = fields_of(text)
     detail = head.get("Detail Promo", "")
     mechanism = flatten(head.get("Mekanisme Promo", "")).upper()
-    # Klasifikasi on-faktur MEKANIS dari field Mekanisme Promo, bukan dari isi kalimat promo:
-    # surat DISC ON PO pun menyebut "ON FAKTUR" di badan teksnya.
-    on_faktur = bool(re.search(r"\bON\s+FAKTUR\b", mechanism))
+    # Surat yang diunggah ke program BERARTI on faktur (aturan pengguna 18 Sep 2026: "ON PO =
+    # ON Faktur", dan surat tanpa keterangan apa pun tetap dibuat karena ia diminta/diunggah).
+    # Mekanisme yang tercetak tetap dicatat apa adanya sebagai jejak audit, tidak dipakai menyaring.
+    on_faktur = True
     start, end = iso_period(head.get("Periode Promo", ""))
     mode, classes, quote = outlet_rule(detail)
+    # Surat yang MELAMPIRKAN daftar outlet pesertanya sendiri (BP2609007909: ±100 outlet di
+    # halaman 2-3) tidak boleh jatuh ke "semua outlet". Daftar yang belum dimuat berarti kita
+    # belum tahu siapa yang berhak — bukan berarti semua berhak. Programnya ditambatkan ke
+    # daftar bernama nomor suratnya sendiri; gerbang menahannya selama daftar itu kosong,
+    # dan jembatan sudah memetakan bentuk ini ke `promo_outlet` (summary-bridge.ts).
+    kode_aju = flatten(head.get("Kode Aju", "")).upper()
+    lampiran_outlet = mode == "all" and bool(ATTACHMENT.search(detail)) and bool(kode_aju)
+    if lampiran_outlet:
+        mode, classes, quote = "only", [kode_aju], "LIST OUTLET TERLAMPIR"
     warnings = []
-    if not on_faktur:
-        warnings.append(f"Mekanisme Promo '{mechanism or '(kosong)'}' bukan on faktur; surat ini tidak boleh menjadi aturan order.")
+    channel = flatten(head.get("Type Of Promo", "")).upper() or "ALL"
+    if channel not in CHANNELS:
+        # "CONSUMER PROMO" bukan channel. Yang menentukan klaim adalah harga yang dipakai toko,
+        # dan surat mencetaknya ("toko wajib menggunakan harga MT"). Tidak tercetak = dikosongkan,
+        # bukan ditebak: channel yang salah membuat aturan diam-diam tidak pernah cocok.
+        found = HARGA_CHANNEL.search(detail)
+        channel = found.group(1).upper() if found else ""
+        if not channel:
+            warnings.append(f"Type Of Promo '{flatten(head.get('Type Of Promo', ''))}' bukan channel "
+                            "(GT/MT/ALL) dan surat tidak menyebut harga GT/MT; isi channel manual.")
     if not (start and end):
         warnings.append("Periode Promo tidak terbaca; isi manual sebelum publikasi.")
-    if mode == "all":
+    if lampiran_outlet:
+        warnings.append(f"Surat melampirkan daftar outlet peserta. Program ditambatkan ke daftar "
+                        f"'{kode_aju}' dan DITAHAN SAMPAI anggotanya diunggah; daftar kosong berarti "
+                        "belum diketahui siapa yang berhak, bukan semua berhak.")
+    elif mode == "all":
         warnings.append("Surat tidak menyebut kelas outlet; aturan akan berlaku untuk SEMUA outlet.")
     else:
         warnings.append(f"Kelayakan outlet '{mode} {', '.join(classes)}' dibaca dari: {quote[:200]}")
 
     common = dict(principle="KINO", surat_program=head.get("Kode Aju", ""), nama_program=head.get("Nama Program Promo", ""),
-                  promo_group_id=head.get("NO. PROMO ID", ""), channel_gtmt=flatten(head.get("Type Of Promo", "")).upper() or "ALL",
+                  promo_group_id=head.get("NO. PROMO ID", ""), channel_gtmt=channel,
                   channel_list="", periode_start=start, periode_end=end, gramasi="", syarat_claim="",
                   keterangan="", kode_barangs="", source_page=1, outlet_mode=mode,
                   outlet_classes=",".join(classes))
@@ -137,6 +166,21 @@ def parse_text(text, page_count=1):
             ketentuan=f"Setiap pembelian {beli} {unit.upper()} {flatten(produk)} {kelipatan}".strip(),
             benefit_type="BONUS_QTY", benefit=f"{bonus} {unit_bonus.upper()}",
             source_quote=f"Setiap pembelian {beli} {unit} {produk} mendapatkan bonus {bonus} {unit_bonus}")
+    # Potongan ON PO per produk: nama produk adalah teks sejak butir sebelumnya.
+    # Ketentuan WAJIB menyebut produknya. Jati diri sebuah baris pada penjaga "satu program
+    # sekali dalam satu Summary" (summary_store.append_rows) adalah surat+ketentuan+benefit,
+    # sengaja tanpa kelompok; ketentuan yang seragam akan meleburkan kelima baris jadi satu.
+    body, batas = flatten(detail), 0
+    for found in ON_PO.finditer(body):
+        produk, batas = body[batas:found.start()], found.end()
+        # Judul program ikut terbawa pada butir pertama ("... ON PO 1 SEPTEMBER 2026 - 30
+        # SEPTEMBER 2026 ELLIPS HAIR VITAMIN JAR"). Nama barang tidak memuat tahun, jadi apa
+        # pun sampai tahun terakhir dibuang.
+        produk = re.sub(r"^.*\b(?:19|20)\d{2}\b", "", produk).strip(" :-,.")
+        if produk:
+            add(kelompok=produk, variant=produk, ketentuan=f"Setiap pembelian {produk}",
+                benefit_type="DISC_PCT", benefit=found.group(1),
+                source_quote=f"{produk} ON PO {found.group(1)}%")
     if not rows:
         for persen in PERSEN.findall(detail):
             add(kelompok=head.get("Brand", ""), variant="", ketentuan="Setiap pembelian",

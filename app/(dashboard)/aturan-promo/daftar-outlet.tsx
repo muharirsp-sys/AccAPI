@@ -47,13 +47,16 @@ const inputCls = "w-full rounded border border-white/15 bg-white/5 px-2.5 py-2 t
  * benar untuk surat), tetapi daftar yang tidak berasal dari surat mana pun — peserta loyalty
  * kuartalan — tetap bisa diketik. Select murni akan menutup jalur kedua itu.
  */
-function PilihDaftar({ id, value, onChange, lists, programs, className = "" }: {
+function PilihDaftar({ id, value, onChange, lists, programs, onTunjuk, className = "" }: {
     id: string; value: string; onChange: (value: string) => void;
-    lists: ListInfo[]; programs: Program[]; className?: string;
+    lists: ListInfo[]; programs: Program[]; onTunjuk?: (surat: string) => void; className?: string;
 }) {
     const nama = value.trim().toUpperCase();
     const cocok = lists.find((entry) => entry.name.toUpperCase() === nama);
     const linked = cocok?.linked ?? [];
+    const [tujuan, setTujuan] = useState("");
+    // Kalau namanya sendiri sudah berupa nomor surat yang punya aturan, itulah tebakan awalnya.
+    const pilihan = tujuan || (programs.some((p) => p.suratProgram.toUpperCase() === nama) ? nama : "");
     return (
         <div className={className}>
             <input list={id} value={value} onChange={(e) => onChange(e.target.value.toUpperCase())}
@@ -71,11 +74,27 @@ function PilihDaftar({ id, value, onChange, lists, programs, className = "" }: {
                 ? <span className="mt-1 block text-xs leading-snug text-emerald-400">
                     Tersambung ke {linked.map((l) => `${l.suratProgram} (${l.mode === "EXCLUDE" ? "semua KECUALI peserta" : "hanya peserta"}, ${l.rules} aturan)`).join("; ")}.
                 </span>
-                : <span className="mt-1 block rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs leading-snug text-amber-200">
+                : <div className="mt-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs leading-snug text-amber-200">
                     Belum ada aturan promo yang menunjuk nama ini. Selama begitu, daftarnya tidak
-                    memengaruhi gerbang mana pun. Pilih promo yang sedang berjalan, atau isi
-                    “Hanya untuk peserta daftar” pada aturannya dengan nama yang sama persis.
-                </span>)}
+                    memengaruhi gerbang mana pun.
+                    {onTunjuk && programs.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                            <select value={pilihan} onChange={(e) => setTujuan(e.target.value)}
+                                className="rounded border border-slate-700 bg-slate-900 px-1.5 py-1 text-xs text-slate-200">
+                                <option value="">pilih promo berjalan…</option>
+                                {programs.map((p) => (
+                                    <option key={p.suratProgram} value={p.suratProgram}>
+                                        {`${p.suratProgram}${p.promoLabel ? ` · ${p.promoLabel}` : ""} (${p.rules} aturan)`}
+                                    </option>
+                                ))}
+                            </select>
+                            <button type="button" disabled={!pilihan} onClick={() => onTunjuk(pilihan)}
+                                className="rounded border border-amber-400/50 px-2 py-1 font-medium text-amber-100 hover:bg-amber-500/20 disabled:opacity-40">
+                                Tunjuk ke daftar ini
+                            </button>
+                        </div>
+                    )}
+                </div>)}
         </div>
     );
 }
@@ -124,6 +143,35 @@ export default function DaftarOutlet() {
     }, [list, q]);
 
     useEffect(() => { void load(); }, [load]);
+
+    // Mengikat tali antara daftar ini dan aturan sebuah surat, tanpa pindah layar. Daftar yang
+    // tidak ditunjuk aturan mana pun tersimpan diam-diam tanpa memengaruhi apa pun; sebaliknya
+    // aturan yang menunjuk daftar kosong TIDAK berlaku untuk siapa pun (`outletAllowed`).
+    const tunjuk = useCallback(async (nama: string, surat: string, paksa = false) => {
+        const daftar = nama.trim().toUpperCase();
+        if (!daftar || !surat) return;
+        setBusy(true);
+        try {
+            const res = await fetch("/api/promo-outlet", {
+                method: "PATCH", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ aksi: "tunjuk", listName: daftar, suratProgram: surat, paksa }),
+            });
+            const body = await res.json();
+            if (!res.ok || !body.ok) {
+                // Mengganti daftar yang sudah tertunjuk berarti mengganti pesertanya; diminta dua kali.
+                if (body?.perluPaksa && window.confirm(`${body.error}\n\nGanti sekarang?`)) {
+                    setBusy(false);
+                    return tunjuk(daftar, surat, true);
+                }
+                throw new Error(body?.error ?? "Gagal menunjuk aturan ke daftar ini");
+            }
+            toast.success(`${body.aturanDitunjuk} aturan surat ${surat} kini menunjuk daftar ${daftar}`
+                + (body.sebelumnya?.length ? ` (sebelumnya ${body.sebelumnya.join(", ")})` : ""));
+            await load();
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Gagal menunjuk aturan");
+        } finally { setBusy(false); }
+    }, [load]);
 
     async function simpan() {
         if (!tambah) return;
@@ -253,7 +301,8 @@ export default function DaftarOutlet() {
                 </F>
                 <F label="Nama daftar (berkas terpisah)" hint="Hanya dipakai kalau yang diunggah BUKAN surat. Surat memakai nomornya sendiri sebagai nama daftar.">
                     <PilihDaftar id="daftar-unggah" value={listName} onChange={setListName}
-                        lists={lists} programs={programs} />
+                        lists={lists} programs={programs}
+                        onTunjuk={(surat) => void tunjuk(listName, surat)} />
                 </F>
             </div>
 
@@ -305,7 +354,8 @@ export default function DaftarOutlet() {
                         <F label="Nama daftar / promo" hint="Pilih promo yang sedang berjalan, atau ketik nama daftar yang berdiri sendiri. Tanpa kuartal: periodenya diisi per toko di bawah, karena keanggotaan berganti tiap kuartal sedangkan suratnya cuma menyebut “LOYALTY”.">
                             <PilihDaftar id="daftar-ketik" value={tambah.listName}
                                 onChange={(nilai) => setTambah({ ...tambah, listName: nilai })}
-                                lists={lists} programs={programs} />
+                                lists={lists} programs={programs}
+                                onTunjuk={(surat) => void tunjuk(tambah.listName, surat)} />
                         </F>
                         <F label="Keterangan" hint="Catatan bebas, mis. PLATINUM. Tidak dipakai memutuskan apa pun — tidak ada surat yang membedakan tingkat.">
                             <input value={tambah.tier} onChange={(e) => setTambah({ ...tambah, tier: e.target.value })} placeholder="mis. PLATINUM" className={inputCls} />

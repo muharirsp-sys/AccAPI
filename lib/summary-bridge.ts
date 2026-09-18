@@ -217,11 +217,13 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
         let outletList = "";
         let outletListMode = "";
         if (mode !== "all") {
-            if (classes.length !== 1) {
-                tolak(`kelas outlet berjumlah ${classes.length}; satu aturan hanya bisa menunjuk SATU daftar peserta`);
-                continue;
-            }
-            outletList = classes[0].toUpperCase();
+            if (!classes.length) { tolak("menyebut daftar peserta tetapi tidak menyebut kelasnya"); continue; }
+            // Beberapa kelas ditulis dipisah koma dan digabung UNION saat dibaca
+            // (`outletAllowed`). Surat MSG `BP2609006016` berbunyi "EXCLUDE LOYALTY DAN
+            // CONTRACTUAL": dua kelas, satu aturan. Sebelum 17 Sep 2026 program semacam itu
+            // DITOLAK di sini, dan penolakannya tak pernah terlihat karena uji e2e berhenti
+            // satu gerbang lebih awal.
+            outletList = [...new Set(classes.map((x) => x.toUpperCase()))].sort().join(",");
             outletListMode = mode === "except" ? "EXCLUDE" : "INCLUDE";
         } else if (letter.outletCodes.length) {
             // Daftar outlet yang ditulis pada setelan detail memakai nomor suratnya sendiri

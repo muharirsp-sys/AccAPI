@@ -4606,6 +4606,22 @@ def _label_periode(mulai, selesai):
     return f"{a.day:02d} {BULAN_ID[a.month - 1][:3]} {a.year} - {b.day:02d} {BULAN_ID[b.month - 1][:3]} {b.year}"
 
 
+_KEMASAN_EKOR = re.compile(r"\bX\s*\d+\s*([A-Z]{2,6})\s*$", re.I)
+
+
+def kemasan_of(nama_barang):
+    """Satuan kemasan dari EKOR nama master: "... 1ML X 12 JAR" -> "JAR".
+
+    Ini dimensi keempat di samping kelompok/varian/gramasi, dan ia ada karena master memang
+    membedakan dua SKU hanya di sini: "H.VIT SHINY BLACK 1ML X 72 BLR" dan "... 1ML X 12 JAR"
+    sama persis pada ketiga dimensi lain. Surat menyebutnya juga ("ELLIPS HAIR VITAMIN JAR").
+
+    Nama tanpa ekor semacam itu mengembalikan kosong — tidak dikarang jadi satuan apa pun.
+    """
+    found = _KEMASAN_EKOR.search(" ".join(str(nama_barang or "").split()))
+    return found.group(1).upper() if found else ""
+
+
 def _apply_native_kelompok(rows_to_check, master_items):
     # ROUTER MATCHER DETERMINISTIK.
     #
@@ -4706,16 +4722,34 @@ def _apply_native_kelompok(rows_to_check, master_items):
                 r = dict(r)
                 r["kode_barangs"] = ",".join(_kb2)
         matched_items = []
-        # FASE 3b: resolusi varian data-driven (variant_mapping.json) DULU, sebelum LLM/
-        # kode_barangs manapun -- kasus terbukti: "Spray Cologne Series" harus jadi White SR
-        # + Black SR (bukan cuma GLASS/salah satu), "EDT Sport" harus 4 varian tertentu
-        # (Azzuro/Bianco/Nero/Rosso), bukan tebakan LLM yg terbukti salah/tak konsisten.
-        _variant_hit = resolve_variant(str(r.get("kelompok", "")), master_items, _VARIANT_MAPPING)
-        if _variant_hit is not None:
-            matched_items = _variant_hit
-            klist = []  # skip jalur matching lama sepenuhnya utk baris ini
+        _variant_hit = None
+        klist = []
+        # Whole-master scope is explicit UI state; an empty group remains unresolved.
+        # DUA nilai diterima: sentinel dari layar, DAN nilai kanonik yang fungsi ini sendiri
+        # tulis balik ke draft. Sesudah simpan pertama, grid tidak lagi memegang sentinelnya,
+        # jadi tanpa baris kedua ini simpan KEDUA jatuh ke jalur "bukan kelompok master" ->
+        # 0 kode, dan Form Summary mencetak baris tanpa satu pun barang.
+        if str(r.get("kelompok", "")).strip().upper() in ("__ALL_MASTER__", "ALL KELOMPOK BARANG"):
+            matched_items = [it for it in master_items
+                             if str(it.get("kode_barang", "")).strip()
+                             and "BND" not in norm(it.get("nama_barang")).split()
+                             and norm(it.get("kelompok")) not in _EXCLUDED_KELOMPOKS]
+            r["kelompok"] = "ALL KELOMPOK BARANG"
+            r["variant"] = "ALL VARIANT"
+            r["gramasi"] = "ALL GRAMASI"
+            r["kode_barangs"] = ",".join(dict.fromkeys(
+                str(it.get("kode_barang", "")).strip() for it in matched_items))
+            r["_matched_items_cache"] = matched_items
+            final_rows_out.append(r)
+            continue
         else:
-            klist = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
+            # FASE 3b: resolusi varian data-driven (variant_mapping.json) DULU, sebelum LLM/
+            _variant_hit = resolve_variant(str(r.get("kelompok", "")), master_items, _VARIANT_MAPPING)
+            if _variant_hit is not None:
+                matched_items = _variant_hit
+                klist = []  # skip jalur matching lama sepenuhnya utk baris ini
+            else:
+                klist = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
         if klist:
             for it in master_items:
                 if str(it.get("kode_barang", "")).strip() in klist:
@@ -4770,6 +4804,8 @@ def _apply_native_kelompok(rows_to_check, master_items):
             glist = split_list(r.get("gramasi",""))
             v_all = (not vlist) or any(norm(x) == "ALL VARIANT" for x in vlist)
             g_all = (not glist) or any(norm(x) == "ALL GRAMASI" for x in glist)
+            klist = split_list(r.get("kemasan", ""))
+            k_all = (not klist) or any(norm(x) == "ALL KEMASAN" for x in klist)
 
             # Treat generic placeholders as empty
             if kelompok and any(skip in kelompok.lower() for skip in ["- kelompok -", "bisa meleset"]):
@@ -4832,6 +4868,15 @@ def _apply_native_kelompok(rows_to_check, master_items):
                             gramasi_match = True; break
                             
                 if not gramasi_match: continue
+
+                # SATUAN KEMASAN — dimensi keempat, dan satu-satunya yang memisahkan dua SKU
+                # yang kelompok, varian, dan gramasinya sama persis (BLR vs JAR). Tanpa ini
+                # baris "ELLIPS HAIR VITAMIN JAR" menarik kembarannya juga, dan separuh kode
+                # pada aturannya salah. Kemasan yang tidak ada di master tidak mencocok apa pun,
+                # bukan jatuh ke semua: salah ketik yang diam-diam melebarkan cakupan adalah
+                # cara paling sunyi memberi diskon ke barang yang tidak disebut surat.
+                if not k_all and kemasan_of(it.get("nama_barang")) not in {norm(x) for x in klist}:
+                    continue
 
                 # Produk BANDED (nama ".. BTL BND") dikecualikan dari ekspansi promo -- aturan
                 # surat: "Untuk Klaim tidak berlaku Produk Banded". Master menaruh item banded
@@ -5182,25 +5227,35 @@ def process_summary_generation_job(job_id: str, token: str, rows: List[Dict[str,
         cell_style.leading = 7
         cell_style.alignment = TA_CENTER
 
+        # ReportLab membaca teks Paragraph sebagai markup, jadi "B&B" tercetak "B&B;" dan satu
+        # "<" apa pun menggagalkan halaman. Nilai sel adalah data, bukan markup.
+        def sel(nilai):
+            return Paragraph(xml_escape(str(nilai)), cell_style)
+
         for r in rows:
             benefit_pdf_text = str(r.get("benefit",""))
-            if str(r.get("benefit_type","")).upper() == "DISC_RP":
+            benefit_kind = str(r.get("benefit_type","")).upper()
+            if benefit_kind == "DISC_RP":
                 if benefit_pdf_text and not benefit_pdf_text.lower().startswith("cut price"):
                     benefit_pdf_text = f"cut price {benefit_pdf_text}"
-                    
+            elif benefit_kind == "DISC_PCT":
+                # "3" sendirian di kolom Benefit tidak berarti apa-apa pada surat yang diteken.
+                if benefit_pdf_text and not benefit_pdf_text.endswith("%"):
+                    benefit_pdf_text = f"{benefit_pdf_text}%"
+
             table_data.append([
-                Paragraph(str(r.get("no","")), cell_style),
-                Paragraph(str(r.get("surat_program","")), cell_style),
-                Paragraph(str(r.get("nama_program","")), cell_style),
-                Paragraph(str(r.get("channel_gtmt","")), cell_style),
-                Paragraph(str(r.get("periode","")), cell_style),
-                Paragraph(str(r.get("kelompok","")), cell_style),
-                Paragraph(str(r.get("variant","")), cell_style),
-                Paragraph(str(r.get("gramasi","")), cell_style),
-                Paragraph(str(r.get("ketentuan","")), cell_style),
-                Paragraph(benefit_pdf_text, cell_style),
-                Paragraph(str(r.get("syarat_claim","")), cell_style),
-                Paragraph(str(r.get("keterangan","")), cell_style),
+                sel(r.get("no","")),
+                sel(r.get("surat_program","")),
+                sel(r.get("nama_program","")),
+                sel(r.get("channel_gtmt","")),
+                sel(r.get("periode","")),
+                sel(r.get("kelompok","")),
+                sel(r.get("variant","")),
+                sel(r.get("gramasi","")),
+                sel(r.get("ketentuan","")),
+                sel(benefit_pdf_text),
+                sel(r.get("syarat_claim","")),
+                sel(r.get("keterangan","")),
             ])
             
         # Total A4 landscape width is ~842. Margins are 0.5cm each (approx 14 points each, total 28 pts margin)

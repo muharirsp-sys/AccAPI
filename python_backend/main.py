@@ -498,6 +498,7 @@ def load_principle_master(request: Request, pid: str):
             "kelompok_list": k_list,
             "variant_map": variant_map,
             "gramasi_map": gramasi_map,
+            "principle_name": ps[pid].get("name", ""),
         }
         return {"ok": True, "token": token, "kelompok_list": k_list}
     except Exception as e:

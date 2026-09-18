@@ -773,3 +773,31 @@ test("MSG: selisih koma-koma pembulatan sampai Rp 100 tidak ditahan, beda tier t
     assert.equal(tierSalah.explained, "");
     assert.ok(tierSalah.findings[0].includes("60.000"), tierSalah.findings.join(" | "));
 });
+
+test("aturan yang menunjuk DUA daftar menggabungkannya, dan gagal tertutup bila salah satunya kosong", () => {
+    // "EXCLUDE LOYALTY DAN CONTRACTUAL" — peserta salah satu daftar ikut dikecualikan.
+    const rule = { outletList: "CONTRACTUAL,LOYALTY", outletListMode: "EXCLUDE" };
+    const keduanya = outletListsOn([
+        { listName: "LOYALTY", customerCode: "C-AD0021" },
+        { listName: "CONTRACTUAL", customerCode: "C-BA0003" },
+    ], "2026-09-15");
+    assert.equal(outletAllowed(rule, "C-AD0021-KN", keduanya), false);
+    assert.equal(outletAllowed(rule, "C-BA0003-KN", keduanya), false);
+    assert.equal(outletAllowed(rule, "C-WA0012-KN", keduanya), true);
+
+    // CONTRACTUAL belum diunggah. Itu BUKAN "exclude LOYALTY saja" — itu "belum tahu siapa
+    // yang dikecualikan", jadi seluruh aturannya ditahan.
+    const sebagian = outletListsOn([{ listName: "LOYALTY", customerCode: "C-AD0021" }], "2026-09-15");
+    assert.equal(outletAllowed(rule, "C-WA0012-KN", sebagian), false);
+    assert.equal(outletAllowed(rule, "C-AD0021-KN", sebagian), false);
+
+    // INCLUDE dua daftar: peserta salah satunya berhak.
+    const dua = { outletList: "CONTRACTUAL,LOYALTY", outletListMode: "INCLUDE" };
+    assert.equal(outletAllowed(dua, "C-AD0021-KN", keduanya), true);
+    assert.equal(outletAllowed(dua, "C-WA0012-KN", keduanya), false);
+
+    // Yang hilang disebut namanya sendiri, bukan pasangannya.
+    const pesan = daftarKosong([{ ...rule, suratProgram: "BP2609006016" }], sebagian);
+    assert.equal(pesan.length, 1);
+    assert.match(pesan[0], /CONTRACTUAL/);
+});
