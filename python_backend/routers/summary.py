@@ -258,7 +258,7 @@ def summary_manual_master_options(request: Request, token: str, group: str):
         # kolomnya di master, tetapi ia SATU-SATUNYA pembeda dua SKU yang kelompok, varian,
         # dan gramasinya sama persis — dan surat menyebutnya ("ELLIPS HAIR VITAMIN JAR").
         # Hanya kemasan yang benar-benar ada di kelompok ini yang ditawarkan.
-        from shared import kemasan_of
+        from shared import kemasan_of, norm
         ada = sorted({kemasan_of(it.get("nama_barang")) for it in (cache.get("items") or [])
                       if norm(it.get("kelompok")) == norm(group)} - {""})
         kemasans = [{"value": "ALL KEMASAN", "text": "ALL KEMASAN", "disabled": False}] + \
