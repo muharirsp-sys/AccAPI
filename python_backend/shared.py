@@ -4706,16 +4706,34 @@ def _apply_native_kelompok(rows_to_check, master_items):
                 r = dict(r)
                 r["kode_barangs"] = ",".join(_kb2)
         matched_items = []
-        # FASE 3b: resolusi varian data-driven (variant_mapping.json) DULU, sebelum LLM/
-        # kode_barangs manapun -- kasus terbukti: "Spray Cologne Series" harus jadi White SR
-        # + Black SR (bukan cuma GLASS/salah satu), "EDT Sport" harus 4 varian tertentu
-        # (Azzuro/Bianco/Nero/Rosso), bukan tebakan LLM yg terbukti salah/tak konsisten.
-        _variant_hit = resolve_variant(str(r.get("kelompok", "")), master_items, _VARIANT_MAPPING)
-        if _variant_hit is not None:
-            matched_items = _variant_hit
-            klist = []  # skip jalur matching lama sepenuhnya utk baris ini
+        _variant_hit = None
+        klist = []
+        # Whole-master scope is explicit UI state; an empty group remains unresolved.
+        # DUA nilai diterima: sentinel dari layar, DAN nilai kanonik yang fungsi ini sendiri
+        # tulis balik ke draft. Sesudah simpan pertama, grid tidak lagi memegang sentinelnya,
+        # jadi tanpa baris kedua ini simpan KEDUA jatuh ke jalur "bukan kelompok master" ->
+        # 0 kode, dan Form Summary mencetak baris tanpa satu pun barang.
+        if str(r.get("kelompok", "")).strip().upper() in ("__ALL_MASTER__", "ALL KELOMPOK BARANG"):
+            matched_items = [it for it in master_items
+                             if str(it.get("kode_barang", "")).strip()
+                             and "BND" not in norm(it.get("nama_barang")).split()
+                             and norm(it.get("kelompok")) not in _EXCLUDED_KELOMPOKS]
+            r["kelompok"] = "ALL KELOMPOK BARANG"
+            r["variant"] = "ALL VARIANT"
+            r["gramasi"] = "ALL GRAMASI"
+            r["kode_barangs"] = ",".join(dict.fromkeys(
+                str(it.get("kode_barang", "")).strip() for it in matched_items))
+            r["_matched_items_cache"] = matched_items
+            final_rows_out.append(r)
+            continue
         else:
-            klist = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
+            # FASE 3b: resolusi varian data-driven (variant_mapping.json) DULU, sebelum LLM/
+            _variant_hit = resolve_variant(str(r.get("kelompok", "")), master_items, _VARIANT_MAPPING)
+            if _variant_hit is not None:
+                matched_items = _variant_hit
+                klist = []  # skip jalur matching lama sepenuhnya utk baris ini
+            else:
+                klist = [k.strip() for k in str(r.get("kode_barangs", "")).split(",") if k.strip()]
         if klist:
             for it in master_items:
                 if str(it.get("kode_barang", "")).strip() in klist:

@@ -250,7 +250,24 @@ export function outletAllowed(
 ): boolean {
     const nama = String(rule.outletList ?? "").trim().toUpperCase();
     if (!nama) return true;
-    const anggota = lists.get(nama) ?? new Set<string>();
+    // BEBERAPA DAFTAR SEKALIGUS, dipisah koma. Surat MSG berbunyi "EXCLUDE LOYALTY DAN
+    // CONTRACTUAL" — dua kelas outlet, satu aturan. Sebelum ini `bridgeRows` menolak program
+    // semacam itu karena satu baris `promo_rule` hanya punya satu `outlet_list`; kolomnya
+    // sendiri teks, jadi gabungannya dibaca DI SINI dan tabelnya tidak perlu berubah.
+    //
+    // Gabungannya UNION: peserta salah satu daftar = peserta. Untuk EXCLUDE itu berarti
+    // dikecualikan bila ia ada di daftar mana pun — persis arti "exclude A dan B".
+    const daftar = nama.split(",").map((x) => x.trim()).filter(Boolean);
+    const anggota = new Set<string>();
+    for (const satu of daftar) {
+        const isi = lists.get(satu);
+        // GAGAL TERTUTUP per daftar: satu nama yang kosong membuat SELURUH aturan tidak
+        // berlaku, bukan sekadar mengurangi gabungannya. "Exclude LOYALTY dan CONTRACTUAL"
+        // dengan CONTRACTUAL yang belum diunggah bukan berarti "exclude LOYALTY saja" —
+        // ia berarti kita belum tahu siapa yang dikecualikan.
+        if (!isi || isi.size === 0) return false;
+        for (const kode of isi) anggota.add(kode);
+    }
     // DAFTAR KOSONG PADA TANGGAL ITU: aturannya tidak berlaku, apa pun arahnya.
     //
     // Untuk INCLUDE itu sudah jelas sejak awal — tidak ada peserta berarti tidak ada yang
@@ -282,9 +299,13 @@ export function daftarKosong(
     for (const rule of rules) {
         const nama = String(rule.outletList ?? "").trim().toUpperCase();
         if (!nama) continue;
-        if ((lists.get(nama)?.size ?? 0) > 0) continue;
-        if (!kurang.has(nama)) kurang.set(nama, new Set());
-        kurang.get(nama)!.add(String(rule.suratProgram ?? "").trim() || "(tanpa surat)");
+        // Disebut SATU PER SATU: aturan yang menunjuk "LOYALTY,CONTRACTUAL" dan kehilangan
+        // salah satunya harus menyebut yang HILANG, bukan pasangannya.
+        for (const satu of nama.split(",").map((x) => x.trim()).filter(Boolean)) {
+            if ((lists.get(satu)?.size ?? 0) > 0) continue;
+            if (!kurang.has(satu)) kurang.set(satu, new Set());
+            kurang.get(satu)!.add(String(rule.suratProgram ?? "").trim() || "(tanpa surat)");
+        }
     }
     return [...kurang].map(([nama, surat]) =>
         `Daftar outlet "${nama}" tidak punya anggota pada tanggal ini, jadi aturan ${[...surat].sort().join(", ")} `

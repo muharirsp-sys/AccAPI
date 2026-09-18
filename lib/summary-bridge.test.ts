@@ -98,12 +98,13 @@ test("kelas outlet jadi daftar peserta, dua arah", () => {
     }));
     assert.equal(kecuali.rows[0].outletListMode, "EXCLUDE");
 
-    // Dua kelas sekaligus tidak bisa dinyatakan satu aturan; ditolak, tidak dipilih salah satu.
+    // Dua kelas sekaligus jadi SATU aturan yang menunjuk keduanya (digabung UNION saat
+    // dibaca `outletAllowed`) — bukan ditolak, dan bukan dipilih salah satu.
     const dua = bridgeRows(letter({
         programs: [program({ outlet_mode: "only", outlet_classes: ["LOYALTY", "CONTRACTUAL"] })],
     }));
-    assert.deepEqual(dua.rows, []);
-    assert.match(dua.refused[0], /SATU daftar/);
+    assert.deepEqual(dua.refused, []);
+    assert.equal(dua.rows[0].outletList, "CONTRACTUAL,LOYALTY");
 
     // Daftar outlet khusus pada setelan detail memakai nomor suratnya sebagai nama daftar.
     const khusus = bridgeRows(letter({ outletCodes: ["C-BA0003", "C-WA0012"] }));
@@ -246,4 +247,24 @@ test("potongan setingkat nota dilebur jadi satu kelompok per surat", () => {
     assert.equal(nota[0].promoGroup, "(TINGKAT NOTA)");
     assert.ok(hasil.notes.some((n) => n.includes("isi yang SAMA")),
         "penyatuannya harus disebutkan, bukan diam-diam");
+});
+
+test("dua kelas outlet jadi SATU aturan yang menunjuk dua daftar, bukan ditolak", () => {
+    // `BP2609006016` (MSG ALL BRAND) berbunyi "EXCLUDE LOYALTY DAN CONTRACTUAL". Sebelum
+    // 17 Sep 2026 program ini DITOLAK di sini ("kelas outlet berjumlah 2"), dan penolakannya
+    // tak pernah terlihat karena uji e2e berhenti di `compile_programs`.
+    const hasil = bridgeRows(letter({
+        programs: [program({ outlet_mode: "except", outlet_classes: ["LOYALTY", "CONTRACTUAL"] })],
+    }));
+    assert.deepEqual(hasil.refused, []);
+    assert.equal(hasil.rows[0].outletList, "CONTRACTUAL,LOYALTY");
+    assert.equal(hasil.rows[0].outletListMode, "EXCLUDE");
+});
+
+test("mode selain `all` tanpa satu kelas pun tetap ditolak", () => {
+    const hasil = bridgeRows(letter({
+        programs: [program({ outlet_mode: "only", outlet_classes: [] })],
+    }));
+    assert.deepEqual(hasil.rows, []);
+    assert.match(hasil.refused[0], /tidak menyebut kelasnya/);
 });

@@ -63,6 +63,7 @@ from shared import (
 
 from summary_store import identity, owned, create_draft
 from summary_mistral import extract as extract_mistral
+import syarat_claim
 from routers.summary_library import router as library_router
 from routers.summary_review import router as review_router
 
@@ -222,7 +223,8 @@ async def summary_manual_master_upload(
             "variant_map": variant_map,
             "gramasi_map": gramasi_map,
             "items": items,
-            "customers": customers
+            "customers": customers,
+            "principle_name": ""
         }
         return {"ok": True, "token": token, "kelompok_list": kelompok_list}
     except ValueError as e:
@@ -260,6 +262,44 @@ def summary_manual_master_options(request: Request, token: str, group: str):
             payload["detail"] = str(e)
         return payload
 
+@router.get("/summary/syarat-claim")
+def summary_syarat_claim_get(request: Request, principle: str = ""):
+    """Syarat klaim baku satu principal, per jenis program. Lihat `syarat_claim.py`."""
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "summary", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    try:
+        return {"ok": True, "principle": principle, "jenis": list(syarat_claim.JENIS),
+                "syarat": syarat_claim.ambil(principle)}
+    except Exception as e:
+        append_error_log("summary_syarat_claim_get", e, {"user": user, "principle": principle})
+        return {"ok": False, "error": "Gagal memuat syarat klaim."}
+
+
+@router.post("/summary/syarat-claim")
+async def summary_syarat_claim_set(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "summary", "edit"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    if not validate_csrf_request(request, request.headers.get("X-CSRF-Token", "")):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
+    try:
+        body = await request.json()
+        syarat = body.get("syarat") or {}
+        if not isinstance(syarat, dict):
+            return JSONResponse(status_code=422, content={"ok": False, "error": "Isi syarat klaim tidak valid."})
+        return {"ok": True, "syarat": syarat_claim.simpan(body.get("principle", ""), syarat)}
+    except ValueError as e:
+        return JSONResponse(status_code=422, content={"ok": False, "error": str(e)})
+    except Exception as e:
+        append_error_log("summary_syarat_claim_set", e, {"user": user})
+        return {"ok": False, "error": "Gagal menyimpan syarat klaim."}
+
+
 @router.post("/summary/manual/generate")
 def summary_manual_generate(request: Request, token: str = Form(...), rows_json: str = Form(...)):
 
@@ -286,6 +326,10 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
 
         cache = MANUAL_MASTER_CACHE[token]
         items = cache.get("items", [])
+        principle_for_claim = str(cache.get("principle_name", "") or "").strip()
+        # Keep direct PDF generation identical to draft save: explicit whole-master scope
+        # resolves from the loaded master; an empty kelompok remains fail-closed.
+        rows = _apply_native_kelompok(rows, items)
 
         def norm(x: object) -> str:
             return " ".join(str(x or "").strip().split()).upper()
@@ -558,7 +602,13 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 "no": i + 1, "surat_program": r.get("surat_program",""), "nama_program": promo_label,
                 "channel_gtmt": promo_group, "periode": periode, "ketentuan": ket,
                 "benefit_type": r.get("benefit_type",""), "benefit": r.get("benefit",""),
-                "syarat_claim": r.get("syarat_claim",""), "keterangan": r.get("keterangan",""),
+                # Kolom "Syarat Claim" dicetak di setiap Form Summary dan tidak pernah ada
+                # isinya, karena tidak ada satu pun tempat untuk mengisinya. Setelan baku per
+                # principal + jenis program menempel di sini; baris yang punya syaratnya
+                # sendiri TIDAK ditimpa.
+                "syarat_claim": (str(r.get("syarat_claim", "") or "").strip()
+                                 or syarat_claim.untuk(principle_for_claim or r.get("principle", ""), r.get("benefit_type", ""))),
+                "keterangan": r.get("keterangan",""),
                 "variant_display": r.get("variant",""), "kelompok_fallback": r.get("kelompok",""),
             }
             pdf_items[i] = []

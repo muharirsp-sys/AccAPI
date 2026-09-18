@@ -5,7 +5,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Trash2, Plus, Upload, Play, FileText, Download, ChevronLeft, CalendarCheck2, Flag } from "lucide-react";
+import { Trash2, Plus, Play, FileText, Download, CalendarCheck2, Flag } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { resolveApiBase } from "@/lib/apiBase";
@@ -74,7 +74,7 @@ const api = {
         if (isBlob) return { data: await res.blob() };
         return { data: await res.json(), status: res.status, ok: res.ok };
     },
-    post: async (url: string, data?: any, opts?: any) => {
+    post: async (url: string, data?: any, _opts?: any) => {
         const fetchUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
         const isFormData = data instanceof FormData;
         const res = await fetch(fetchUrl, {
@@ -88,6 +88,12 @@ const api = {
     }
 };
 
+const ALL_MASTER_SCOPE = "__ALL_MASTER__";
+// Sesudah disimpan, backend mengembalikan NILAI KANONIK ini, bukan sentinelnya. Grid harus
+// mengenali keduanya, kalau tidak barisnya terlihat seperti kelompok asing sesudah simpan.
+const ALL_MASTER_LABEL = "ALL KELOMPOK BARANG";
+const isAllMaster = (v: string) => v === ALL_MASTER_SCOPE || v === ALL_MASTER_LABEL;
+
 const MultiSelect = ({
     options, value, onChange, placeholder
 }: {
@@ -97,11 +103,15 @@ const MultiSelect = ({
     const selectedValues = value ? value.split(/[,&]/).map(v => v.trim()).filter(Boolean) : [];
 
     const handleToggle = (optValue: string) => {
-        let newSelected;
-        if (selectedValues.includes(optValue)) newSelected = selectedValues.filter(v => v !== optValue);
-        else newSelected = [...selectedValues, optValue];
+        if (optValue === ALL_MASTER_SCOPE) {
+            onChange(selectedValues.includes(ALL_MASTER_SCOPE) ? "" : ALL_MASTER_SCOPE);
+            return;
+        }
+        let newSelected = selectedValues.filter(v => v !== ALL_MASTER_SCOPE);
+        if (newSelected.includes(optValue)) newSelected = newSelected.filter(v => v !== optValue);
+        else newSelected = [...newSelected, optValue];
 
-        if (newSelected.length === options.length && options.length > 0 && (placeholder.includes("Variant") || placeholder.includes("Gramasi"))) {
+        if (newSelected.length === options.filter(o => o.value !== ALL_MASTER_SCOPE).length && options.length > 0 && (placeholder.includes("Variant") || placeholder.includes("Gramasi"))) {
             onChange(placeholder.includes("Variant") ? "All Variant" : "All Gramasi");
         } else {
             onChange(newSelected.join(" & "));
@@ -109,7 +119,8 @@ const MultiSelect = ({
     };
 
     let displayText = placeholder;
-    if (value.toLowerCase().includes("all variant") || value.toLowerCase().includes("all gramasi")) {
+    if (isAllMaster(value)) displayText = "Semua barang (seluruh master)";
+    else if (value.toLowerCase().includes("all variant") || value.toLowerCase().includes("all gramasi")) {
         displayText = value;
     } else if (selectedValues.length > 0) {
         const displayTexts = selectedValues.map(v => {
@@ -149,7 +160,9 @@ const MultiSelect = ({
                                 <div className="p-2 text-slate-500 italic text-[10px]">Pilih kelompok dulu</div>
                             ) : (
                                 options.map((opt, i) => {
-                                    const isSelected = selectedValues.includes(opt.value) || value.toLowerCase().includes("all");
+                                    const isSelected = opt.value === ALL_MASTER_SCOPE
+                                        ? isAllMaster(value)
+                                        : (selectedValues.includes(opt.value) || value === "All Variant" || value === "All Gramasi");
                                     return (
                                         <label key={i} className="flex items-center gap-2 p-1.5 hover:bg-white/5 rounded cursor-pointer">
                                             <input
@@ -174,6 +187,8 @@ const MultiSelect = ({
 export default function SummaryManualPage() {
     const [principles, setPrinciples] = useState<Principle>({});
     const [selectedPrinciple, setSelectedPrinciple] = useState("");
+    const [syaratClaim, setSyaratClaim] = useState<Record<string, string>>({});
+    const [syaratStatus, setSyaratStatus] = useState("");
 
     const [masterToken, setMasterToken] = useState("");
     const [kelompokList, setKelompokList] = useState<string[]>([]);
@@ -216,6 +231,46 @@ export default function SummaryManualPage() {
         });
     }, []);
 
+    // SYARAT CLAIM BAKU — per principal, per jenis program. Kolomnya dicetak di setiap Form
+    // Summary dan tidak pernah ada isinya karena tidak ada tempat mengisinya (cacat #14).
+    // Diisi SEKALI di sini, lalu menempel sendiri ke tiap baris saat Form Summary dibuat;
+    // baris yang punya syaratnya sendiri tidak ditimpa.
+    const JENIS_PROGRAM: { kunci: string; label: string }[] = [
+        { kunci: "", label: "Baku (semua jenis)" },
+        { kunci: "DISC_PCT", label: "Diskon persen" },
+        { kunci: "DISC_RP", label: "Potongan rupiah" },
+        { kunci: "BONUS_QTY", label: "Bonus barang" },
+    ];
+    const principleName = principles[selectedPrinciple]?.name || "";
+
+    useEffect(() => {
+        setSyaratClaim({});
+        setSyaratStatus("");
+        if (!principleName) return;
+        let active = true;
+        api.get(`/summary/syarat-claim?principle=${encodeURIComponent(principleName)}`)
+            .then(res => { if (active) setSyaratClaim(res.data?.syarat || {}); })
+            .catch(() => { if (active) setSyaratStatus("Gagal memuat syarat klaim."); });
+        return () => { active = false; };
+    }, [principleName]);
+
+    const simpanSyaratClaim = async () => {
+        if (!principleName) return;
+        setSyaratStatus("Menyimpan...");
+        try {
+            const res = await api.post("/summary/syarat-claim", { principle: principleName, syarat: syaratClaim });
+            if (res.data?.ok) {
+                setSyaratClaim(res.data.syarat || {});
+                setSyaratStatus(`Tersimpan untuk ${principleName}.`);
+                toast.success("Syarat klaim tersimpan.");
+            } else {
+                setSyaratStatus("Gagal: " + (res.data?.error || "tidak diketahui"));
+            }
+        } catch {
+            setSyaratStatus("Gagal menyimpan syarat klaim.");
+        }
+    };
+
     const handleUsePrinciple = async () => {
         if (!selectedPrinciple) return;
         setMasterStatus("Memuat principle...");
@@ -255,7 +310,7 @@ export default function SummaryManualPage() {
     };
 
     const fetchOptions = async (rowId: string, kel: string, currentVariant?: string, currentGramasi?: string) => {
-        if (!masterToken || !kel) return;
+        if (!masterToken || !kel || isAllMaster(kel)) return;
         try {
             const res = await api.get(`/summary/manual/master/options?token=${masterToken}&group=${encodeURIComponent(kel)}`);
             if (res.data.ok) {
@@ -367,6 +422,10 @@ export default function SummaryManualPage() {
             const res = await send("PUT", `/summary/library/${draft.id}`, { title: draft.title, rows, revision: draft.revision, period: draftPeriod });
             if (!res.ok) { toast.error(res.error); return; }
             applyDraft(res.body);
+            const resolvedRows = res.body.draft?.content?.rows;
+            if (Array.isArray(resolvedRows)) {
+                setRows(resolvedRows.map((r: any) => ({ ...r, id: r.id || crypto.randomUUID() })));
+            }
             toast.success(res.body.issues?.length ? `Tersimpan dengan ${res.body.issues.length} catatan` : `Tersimpan; ${res.body.programs?.length || 0} aturan siap ditinjau`);
         } finally {
             setReviewBusy(false);
@@ -402,7 +461,7 @@ export default function SummaryManualPage() {
         const today = new Date().toISOString().split('T')[0];
         const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
         return {
-            id: crypto.randomUUID(), no: "", principle: "", surat_program: "", nama_program: "",
+            id: crypto.randomUUID(), no: "", principle: principleName, surat_program: "", nama_program: "",
             promo_group_id: "", channel_gtmt: "", channel_list: "", periode_start: firstDay, periode_end: today,
             kelompok: "", variant: "", gramasi: "", ketentuan: "", benefit_type: "DISC_PCT", benefit: "",
             syarat_claim: "", update: today, keterangan: "Manual"
@@ -414,7 +473,16 @@ export default function SummaryManualPage() {
         setRows(p => p.map(r => {
             if (r.id === id) {
                 const newR = { ...r, [field]: val };
-                if (field === 'kelompok') fetchOptions(id, val, newR.variant, newR.gramasi);
+                if (field === 'kelompok') {
+                    if (isAllMaster(val)) {
+                        newR.variant = "ALL VARIANT";
+                        newR.gramasi = "ALL GRAMASI";
+                        setVariantOptions(prev => ({ ...prev, [id]: [] }));
+                        setGramasiOptions(prev => ({ ...prev, [id]: [] }));
+                    } else {
+                        fetchOptions(id, val, newR.variant, newR.gramasi);
+                    }
+                }
                 return newR;
             }
             return r;
@@ -577,6 +645,35 @@ export default function SummaryManualPage() {
                         </div>
                     </div>
                     {masterStatus && <p className="mt-4 text-sm font-medium text-emerald-400 bg-emerald-500/10 inline-block px-3 py-1.5 rounded-md border border-emerald-500/20">{masterStatus}</p>}
+
+                    {principleName && (
+                        <div className="mt-6 p-4 bg-black/40 border border-white/5 rounded-xl relative">
+                            <label className="block text-sm font-medium text-slate-300 mb-1">
+                                Syarat Claim — {principleName}
+                            </label>
+                            <p className="text-xs text-slate-500 mb-3">
+                                Diisi sekali per principal. Terpakai otomatis di kolom Syarat Claim pada Form
+                                Summary untuk baris yang tidak menyebut syaratnya sendiri.
+                            </p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {JENIS_PROGRAM.map(({ kunci, label }) => (
+                                    <div key={kunci || "baku"}>
+                                        <span className="block text-xs text-slate-400 mb-1">{label}</span>
+                                        <input type="text" maxLength={400} value={syaratClaim[kunci] ?? ""}
+                                            onChange={e => setSyaratClaim({ ...syaratClaim, [kunci]: e.target.value })}
+                                            placeholder={kunci ? "(pakai baku)" : "mis. Klaim on faktur, lampirkan copy faktur"}
+                                            className="w-full bg-black/50 border border-white/10 rounded-lg text-sm text-white px-3 py-2 outline-none focus:ring-1 focus:ring-blue-500" />
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="flex items-center gap-3 mt-3">
+                                <button onClick={simpanSyaratClaim} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors">
+                                    Simpan Syarat Claim
+                                </button>
+                                {syaratStatus && <span className="text-xs text-slate-400">{syaratStatus}</span>}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
@@ -803,7 +900,8 @@ export default function SummaryManualPage() {
                                                 </select>
                                             </td>
                                             <td className="px-2 py-2">
-                                                <MultiSelect options={kelompokList.map(k => ({ value: k, text: k }))} value={r.kelompok} onChange={v => updateRow(r.id, "kelompok", v)} placeholder="- Kelompok -" />
+                                                <MultiSelect options={[{ value: ALL_MASTER_SCOPE, text: "Semua barang (seluruh master)" }, ...kelompokList.map(k => ({ value: k, text: k }))]} value={r.kelompok} onChange={v => updateRow(r.id, "kelompok", v)} placeholder="- Kelompok -" />
+                                                {isAllMaster(r.kelompok) && <div className="mt-1 text-[10px] text-amber-300">Semua SKU eligible pada master ini.</div>}
                                             </td>
                                             <td className="px-2 py-2">
                                                 <MultiSelect options={variantOptions[r.id] || []} value={r.variant} onChange={v => updateRow(r.id, "variant", v)} placeholder="- Variant -" />

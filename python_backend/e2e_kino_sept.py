@@ -141,17 +141,18 @@ def main():
     SEMUA_BARANG = {"BP2609006016"}
     ABAIKAN = {"BP2609008021"}
 
-    semua_kode = ",".join(sorted({str(it.get("kode_barang", "")).strip() for it in items
-                                  if str(it.get("kode_barang", "")).strip()}))
     dibuang = [r for r in rows if str(r.get("surat_program", "")).strip().upper() in ABAIKAN]
     rows = [r for r in rows if str(r.get("surat_program", "")).strip().upper() not in ABAIKAN]
     for r in dibuang:
         print("DIABAIKAN %s - program khusus dalam Jawa, tidak berlaku di sini." % r.get("surat_program"))
     for r in rows:
         if str(r.get("surat_program", "")).strip().upper() in SEMUA_BARANG:
-            r["kelompok"] = "SEMUA BARANG (HOME PERSONAL CARE)"
+            # Di layar: kelompok "Semua barang (seluruh master)". Yang dikirim hanyalah
+            # sentinelnya; kode barangnya DITURUNKAN SISTEM dari master, tidak ditempel di sini
+            # (dulu ditempel, dan itu menutupi apakah resolvernya benar-benar bekerja).
+            r["kelompok"] = "__ALL_MASTER__"
             r["variant"] = "ALL VARIANT"
-            r["kode_barangs"] = semua_kode
+            r["gramasi"] = "ALL GRAMASI"
 
     print("\n" + "=" * 78)
     print("LANGKAH MANUSIA — memilih Kelompok Barang (di layar: dropdown)")
