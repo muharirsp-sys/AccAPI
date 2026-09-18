@@ -422,6 +422,24 @@ test("daftar outlet peserta: INCLUDE hanya peserta, EXCLUDE justru sebaliknya", 
     // Aturan tanpa daftar tidak tersentuh sama sekali — 234 baris yang sudah termuat.
     assert.equal(outletAllowed({}, "C-NOV009-KN", lists), true);
 
+    // DUA DAFTAR, SATU BELUM DIUNGGAH. Keputusan pengguna 18 Sep 2026: yang dipakai hanya daftar
+    // yang sudah ada isinya. Surat MSG berbunyi "exclude LOYALTY DAN CONTRACTUAL" sementara
+    // CONTRACTUAL belum pernah diunggah; menahan seluruh programnya berarti tidak seorang pun
+    // dapat potongan yang memang dijanjikan, padahal LOYALTY-nya sudah diketahui.
+    const duaKecuali = { outletList: "LOYALTY,CONTRACTUAL", outletListMode: "EXCLUDE" };
+    assert.equal(outletAllowed(duaKecuali, "C-WIN013-KN", lists), false);   // peserta LOYALTY: tetap dikecualikan
+    assert.equal(outletAllowed(duaKecuali, "C-NOV009-KN", lists), true);    // bukan peserta: tetap dapat
+    const duaHanya = { outletList: "LOYALTY,CONTRACTUAL", outletListMode: "INCLUDE" };
+    assert.equal(outletAllowed(duaHanya, "C-WIN013-KN", lists), true);
+    assert.equal(outletAllowed(duaHanya, "C-NOV009-KN", lists), false);
+
+    // TETAPI kalau TIDAK SATU PUN daftarnya terisi, gagal-tertutup tetap berlaku: kita tidak tahu
+    // apa-apa tentang siapa, jadi tidak ada yang diloloskan. Ini yang menahan aturan ON PO selama
+    // daftar pesertanya belum diunggah.
+    const semuaKosong = { outletList: "CONTRACTUAL,HYBRID", outletListMode: "EXCLUDE" };
+    assert.equal(outletAllowed(semuaKosong, "C-NOV009-KN", lists), false);
+    assert.equal(outletAllowed({ outletList: "CONTRACTUAL", outletListMode: "INCLUDE" }, "C-WIN013-KN", lists), false);
+
     // Awalan dipenggal di tanda hubung: C-WIN01 tidak boleh ikut mengesahkan C-WIN013.
     assert.equal(outletAllowed(hanya, "C-WIN0131-KN", lists), false);
 
@@ -785,11 +803,24 @@ test("aturan yang menunjuk DUA daftar menggabungkannya, dan gagal tertutup bila 
     assert.equal(outletAllowed(rule, "C-BA0003-KN", keduanya), false);
     assert.equal(outletAllowed(rule, "C-WA0012-KN", keduanya), true);
 
-    // CONTRACTUAL belum diunggah. Itu BUKAN "exclude LOYALTY saja" — itu "belum tahu siapa
-    // yang dikecualikan", jadi seluruh aturannya ditahan.
+    // CONTRACTUAL belum diunggah, LOYALTY sudah. Keputusan pengguna 18 Sep 2026 MEMBALIK aturan
+    // lama di sini: yang dipakai hanya daftar yang sudah ada isinya, jadi ini dibaca "exclude
+    // LOYALTY saja" dan programnya tetap berjalan. Sebelumnya seluruh aturan ditahan, dan
+    // akibatnya tidak seorang pun menerima potongan yang memang dijanjikan surat.
+    //
+    // Harganya disengaja: outlet CONTRACTUAL ikut menerima potongan sampai daftarnya diunggah.
+    // `daftarKosong` tetap menyebut nama daftar yang hilang supaya itu tidak lewat diam-diam.
     const sebagian = outletListsOn([{ listName: "LOYALTY", customerCode: "C-AD0021" }], "2026-09-15");
-    assert.equal(outletAllowed(rule, "C-WA0012-KN", sebagian), false);
+    assert.equal(outletAllowed(rule, "C-WA0012-KN", sebagian), true);
     assert.equal(outletAllowed(rule, "C-AD0021-KN", sebagian), false);
+    // Yang TIDAK berubah: tidak satu pun daftar terisi = tetap ditahan.
+    assert.equal(outletAllowed(rule, "C-WA0012-KN", outletListsOn([], "2026-09-15")), false);
+    // Peringatannya harus menyebut akibat yang BENAR: daftarnya dilewati, bukan barisnya ditahan.
+    const peringatan = daftarKosong([rule], sebagian);
+    assert.equal(peringatan.length, 1);
+    assert.ok(peringatan[0].includes("CONTRACTUAL") && peringatan[0].includes("BERJALAN TANPA"), peringatan[0]);
+    const ditahan = daftarKosong([rule], outletListsOn([], "2026-09-15"));
+    assert.ok(ditahan[0].includes("barisnya ditahan"), ditahan[0]);
 
     // INCLUDE dua daftar: peserta salah satunya berhak.
     const dua = { outletList: "CONTRACTUAL,LOYALTY", outletListMode: "INCLUDE" };

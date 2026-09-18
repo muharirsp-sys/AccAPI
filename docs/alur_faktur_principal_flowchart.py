@@ -121,9 +121,9 @@ def kop(c, judul, halaman, total):
 
     y = T - 1.15 * cm
     kolom = [
-        (1.2, 7.4, 1.85, [("No. Dokumen", "SP-BP-001/OPS/Rev.00"), ("Divisi", "Operasional / Keuangan")]),
+        (1.2, 7.4, 1.85, [("No. Dokumen", "SP-BP-001/OPS/Rev.01"), ("Divisi", "Operasional / Keuangan")]),
         (8.8, 8.4, 1.75, [("Judul", "Alur Faktur Principal"), ("Departemen", "Admin Penjualan")]),
-        (17.4, 5.0, 1.30, [("Revisi", "00"), ("Berlaku", "17 September 2026")]),
+        (17.4, 5.0, 1.30, [("Revisi", "01"), ("Berlaku", "18 September 2026")]),
         (22.6, 5.9, 1.10, [("Terkait", "ALUR_FAKTUR_PRINCIPAL.pdf"), ("", "CHECKLIST_ALUR_FAKTUR_PRINCIPLE.md")]),
     ]
     c.setStrokeColor(GARIS)
@@ -300,15 +300,15 @@ def halaman_aturan(c, total):
             "berarti menebak, dan tebakan tidak berbunyi saat salah.", size=6.2)
     b.panah(xadmin + 2.8 * cm, Y(2), xsis - 4.1 * cm, Y(3))
 
-    b.ketupat(xsis, Y(4), 4.4 * cm, 1.05 * cm, "Mekanismenya\nON FAKTUR?")
+    b.ketupat(xsis, Y(4), 4.4 * cm, 1.05 * cm, "Periode & channel\nterbaca?")
     b.panah(xsis, Y(3) - 0.45 * cm, xsis, Y(4) + 0.53 * cm)
     b.kotak(xom, Y(4), 4.1 * cm, 1.05 * cm,
-            "DITOLAK, dan itu BENAR.\nRafaksi / DISC ON PO ditagih\nTERPISAH dan tidak pernah\nmemotong faktur.", MERAH)
+            "DITAHAN dan DITANYAKAN.\nYang tidak tertulis di surat\ntidak pernah ditebak sistem.", KUNING)
     b.panah(xsis + 2.2 * cm, Y(4), xom - 2.05 * cm, Y(4), "TIDAK")
 
     b.kotak(xadmin, Y(5), 5.6 * cm, 0.85 * cm,
-            "MEMERIKSA - memilih Kelompok Barang tiap baris.\n"
-            "Kata di surat sering beda dengan nama di master\n"
+            "MEMERIKSA - memilih Kelompok Barang tiap baris,\n"
+            "bila perlu sampai Varian, Gramasi, dan KEMASAN\n"
             "(\"OVALE 2IN1 CLEANSER\" jadi \"OVALE FACIAL\").", KUNING, size=6.2)
     b.siku(xsis, Y(4) - 0.53 * cm, xadmin + 2.8 * cm, Y(5), "YA")
 
@@ -347,8 +347,8 @@ def halaman_aturan(c, total):
     c.setFillColor(colors.HexColor("#C00000"))
     c.setFont("Helvetica-Bold", 6.8)
     c.drawString(1.2 * cm, 2.0 * cm,
-                 "Yang tidak diketahui DITAHAN, bukan diloloskan. Daftar peserta yang kosong berarti "
-                 "\"kita belum tahu siapa\" - bukan \"tidak ada yang dikecualikan\".")
+                 "Yang tidak diketahui DITAHAN, bukan diloloskan. Surat yang melampirkan daftar outlet TETAP DIMUAT tetapi "
+                 "BELUM BERLAKU sampai daftar pesertanya diunggah.")
     paraf(c)
 
 
