@@ -1050,7 +1050,16 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                     gaya.append(('SPAN', (kolom, AWAL + mulai), (kolom, AWAL + i - 1)))
                 mulai = i
 
-        t = Table(table_data, repeatRows=2, colWidths=cw)
+        # `splitInRow=1` WAJIB, bukan kosmetik. Sel `SPAN` yang menggabungkan satu surat ke
+        # bawah mengikat baris-barisnya menjadi satu blok yang tidak boleh dipotong; begitu
+        # blok itu lebih tinggi dari satu halaman, ReportLab menyerah dengan LayoutError dan
+        # Form Summary GAGAL TERBIT — bukan tercetak jelek, tetapi tidak jadi sama sekali.
+        # Terbukti 19 September 2026 pada surat DAHLIA yang `keterangan`-nya 402 karakter
+        # (peringatan "PERIKSA CAKUPAN" memang panjang, dan memang tidak boleh dipotong).
+        # Lebih buruk lagi: saat menyusun pesan LayoutError itu ReportLab sendiri jatuh di
+        # `max(rh)` atas tinggi baris yang masih None, jadi yang sampai ke layar adalah
+        # "'>' not supported between instances of 'NoneType' and 'int'" — sebab aslinya hilang.
+        t = Table(table_data, repeatRows=2, colWidths=cw, splitInRow=1)
         t.setStyle(TableStyle(gaya))
         elements.append(t)
         
