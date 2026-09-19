@@ -114,6 +114,35 @@ def kino_extraction(raw, master):
 #      cari kalimat kewajiban/penetapannya ("toko WAJIB memakai harga MT"), bukan kebalikannya.
 #   4. Fail-closed: data yang tidak ada atau ambigu DITAHAN + diberi keterangan, tidak ditebak
 #      dan tidak dikosongkan diam-diam.
+# Lebar kolom Form Summary sebagai pecahan lebar cetak, DIUKUR bukan dikira-kira. Patokannya
+# satu: sebuah kolom harus memuat KATA TERPANJANG yang pernah masuk ke situ, karena kata yang
+# lebih lebar dari kolomnya dipatahkan di tengah — "TOKO ONLINE" tercetak "TOK O ON LINE"
+# (DAHLIA, 19 September 2026). Angka ini dari `stringWidth` atas baris Kino DAN DAHLIA:
+#   Surat Program  butuh 75pt ("083/TMDH2/08/26#SUR030"), dulu hanya punya 71
+#   GT / MT        butuh 25pt ("PARETO", "ONLINE", "GROSIR"), dulu hanya punya 22
+#   Keterangan     butuh 54pt ("Independent=1000)."),       dulu hanya punya 43
+# Tambahannya diambil dari kolom yang kelebihan menurut ukuran yang sama: Variant (88 dipakai
+# 34), Nama Program (79 dipakai 38), Ketentuan (75 dipakai 34), Gramasi (51 dipakai 28).
+# Keterangan diberi lebih dari sekadar cukup karena ia memuat teks terpanjang (402 karakter
+# pada DAHLIA) dan makin sempit kolomnya makin tinggi barisnya.
+# JUMLAHNYA WAJIB 1.000 — `audit_lebar` di e2e_dahlia_endpoint.py menjaga keduanya.
+LEBAR_KOLOM = [
+    0.025,  # No.
+    0.108,  # Surat Program
+    0.090,  # Nama Program
+    0.050,  # GT / MT
+    0.050,  # Daftar Outlet
+    0.065,  # Periode
+    0.085,  # Kelompok Barang
+    0.095,  # Variant Barang
+    0.060,  # Gramasi Barang
+    0.085,  # Ketentuan Pengambilan
+    0.070,  # Benefit
+    0.070,  # Syarat Claim
+    0.045,  # Update
+    0.102,  # Keterangan
+]
+
 DETERMINISTIC_PARSERS = (
     ("dahlia_letter", lambda hasil: bool(hasil["rows"])),
     ("vinda_letter", lambda hasil: bool(hasil["rows"])),
@@ -997,22 +1026,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         # Total A4 landscape width is ~842. Margins are 0.5cm each (approx 14 points each, total 28 pts margin)
         # Usable width = 842 - 28 = 814 points
         usable = landscape(A4)[0] - (1 * cm)
-        cw = [
-            usable * 0.025, # No.
-            usable * 0.095, # Surat Program
-            usable * 0.105, # Nama Program
-            usable * 0.035, # GT / MT
-            usable * 0.055, # Daftar Outlet
-            usable * 0.065, # Periode
-            usable * 0.085, # Kelompok Barang
-            usable * 0.115, # Variant Barang
-            usable * 0.070, # Gramasi Barang
-            usable * 0.100, # Ketentuan Pengambilan
-            usable * 0.070, # Benefit
-            usable * 0.075, # Syarat Claim
-            usable * 0.045, # Update
-            usable * 0.060  # Keterangan
-        ]
+        cw = [usable * bagian for bagian in LEBAR_KOLOM]
             
         table_data = [[Paragraph(h, header_style) for h in KEPALA_ATAS],
                       [Paragraph(h, header_style) for h in KEPALA_BAWAH]]

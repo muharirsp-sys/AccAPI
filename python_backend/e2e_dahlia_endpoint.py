@@ -164,8 +164,55 @@ def main():
     shutil.copy2(keluaran["dataset"], dataset)
     print(f"\nForm Summary : {form}")
     print(f"Dataset      : {dataset}")
+
+    print("\n" + "=" * 78)
+    print("LEBAR KOLOM — tiap kolom harus memuat KATA TERPANJANG yang masuk ke situ")
+    print("=" * 78)
+    if audit_lebar(rows) != 0:
+        return 1
+
     print("\nTIDAK ADA satu baris pun ditulis ke `promo_rule`. Endpoint publish tidak disentuh.")
     return 0
+
+
+# Kolom yang lebih sempit daripada satu kata di dalamnya akan MEMATAHKAN kata itu di tengah:
+# "TOKO ONLINE" tercetak "TOK O ON LINE". Itu tidak terlihat dari uji parser mana pun dan tidak
+# menggagalkan apa pun -- ia hanya membuat Form yang ditandatangani OM jadi sulit dibaca. Jadi
+# lebarnya diperiksa di sini, terhadap baris SUNGGUHAN, bukan diingat-ingat.
+KOLOM_TEKS = [
+    (1, "Surat Program", "surat_program"), (2, "Nama Program", "nama_program"),
+    (3, "GT / MT", "channel_gtmt"), (5, "Periode", "periode"), (6, "Kelompok", "kelompok"),
+    (7, "Variant", "variant"), (8, "Gramasi", "gramasi"), (9, "Ketentuan", "ketentuan"),
+    (11, "Syarat Claim", "syarat_claim"), (13, "Keterangan", "keterangan"),
+]
+
+
+def audit_lebar(rows):
+    import re
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.units import cm
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    from routers.summary import LEBAR_KOLOM
+
+    assert abs(sum(LEBAR_KOLOM) - 1.0) < 1e-9, f"pecahan lebar kolom berjumlah {sum(LEBAR_KOLOM)}, wajib 1.0"
+    usable = landscape(A4)[0] - (1 * cm)
+    sempit = 0
+    for indeks, nama, kunci in KOLOM_TEKS:
+        tersedia = usable * LEBAR_KOLOM[indeks] - 6  # padding kiri + kanan
+        terburuk, lebar_terburuk = "", 0.0
+        for row in rows:
+            for kata in re.split(r"[\s,]+", str(row.get(kunci, "") or "")):
+                pt = stringWidth(kata, "Helvetica", 6)
+                if pt > lebar_terburuk:
+                    terburuk, lebar_terburuk = kata, pt
+        muat = lebar_terburuk <= tersedia
+        sempit += 0 if muat else 1
+        print(f"  {'OK ' if muat else '!! '}{nama:<16} punya {tersedia:>5.0f}pt  "
+              f"butuh {lebar_terburuk:>5.0f}pt  {terburuk[:30]}")
+    if sempit:
+        print(f"\n  {sempit} kolom lebih sempit daripada kata di dalamnya -- kata akan dipatahkan di tengah.")
+    return sempit
 
 
 if __name__ == "__main__":
