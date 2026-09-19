@@ -345,7 +345,7 @@ export async function POST(request: NextRequest) {
             inArray(promoRule.suratProgram, suratDimuat),
         ));
         const values = rows.map((row) => ({
-            ...row, prdId: "", importedBy: gate.email!, source: "surat", sourceRef: draftId,
+            ...row, importedBy: gate.email!, source: "surat", sourceRef: draftId,
         }));
         for (let start = 0; start < values.length; start += 500) {
             await tx.insert(promoRule).values(values.slice(start, start + 500));

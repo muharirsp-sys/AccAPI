@@ -1,5 +1,5 @@
 # main.py (PATCH v12) — Channel lookup uploader + Internal dataset optional + Required-file guard UI/API
-# Tujuan: FastAPI backend untuk validator, payments restore/SPPD, finance approval, RBAC, proof upload, dan helper export berformat.
+# Tujuan: FastAPI backend untuk payments restore/SPPD, finance approval, RBAC, proof upload, dan helper export berformat.
 # Caller: Next.js dashboard routes, browser uploads, dan service local AccAPI.
 # Dependensi: FastAPI, pandas/openpyxl, payments.py, template DOCX SPPD, Better Auth SQLite DB, filesystem JSON/output, auth utilities.
 # Main Functions: Summary master dengan owner/CSRF; render_sppd_docx, payments_upload, payments_update, payments_clear, parse_lpb_upload, payments_template_download, payments_sppd_settings_get/save/upload, payments_finance_data, payments_finance_proof, payments_finance_update.
@@ -533,7 +533,6 @@ def get_principles(request: Request):
 # ---------------------------
 # Routers per domain (dipindahkan mekanis dari file ini; lihat routers/*.py)
 # ---------------------------
-from routers.validator import router as validator_router
 from routers.payments import router as payments_router
 from routers.sppd import router as sppd_router
 from routers.finance import router as finance_router
@@ -546,7 +545,6 @@ from routers.master_barang import router as master_barang_router
 app.include_router(payments_router)
 app.include_router(sppd_router)
 app.include_router(finance_router)
-app.include_router(validator_router)
 app.include_router(summary_router)
 app.include_router(orders_router)
 app.include_router(websales_router)

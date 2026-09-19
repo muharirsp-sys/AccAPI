@@ -23,7 +23,6 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
     ] },
     { id: "promo", name: "Promo & Klaim", description: "Susun program, periksa diskon, dan kelola klaim.", icon: Tags, items: [
         { name: "Summary Promo", href: "/summary", icon: CalendarCheck2 },
-        { name: "Validator Diskon", href: "/validator", icon: Percent },
         { name: "OFF Program Control", href: "/off-program-control", icon: ClipboardCheck },
         { name: "Claim Workflow", href: "/claim-workflow", icon: ReceiptText },
         { name: "Aturan Promo", href: "/aturan-promo", icon: Percent },

@@ -576,7 +576,7 @@ export function parseTariff(
 ) {
     const out: {
         principal: string; suratProgram: string; promoLabel: string; promoGroupId: string; promoGroup: string;
-        itemCode: string; itemName: string; prdId: string; customerCode: string;
+        itemCode: string; itemName: string; customerCode: string;
         periodStart: string | null; periodEnd: string | null; active: boolean; tierNo: number;
         triggerQty: string; triggerUnit: string; benefitType: string; benefitValue: string;
         benefitUnit: string; benefitBeban: string; onFaktur: boolean; note: string; importedBy: string;
@@ -624,7 +624,7 @@ export function parseTariff(
             out.push({
                 principal: ctx.principal, suratProgram: TARIFF_PROGRAM, promoLabel: customerName,
                 promoGroupId: "", promoGroup: TARIFF_GROUP,
-                itemCode: "", itemName: "", prdId: "", customerCode,
+                itemCode: "", itemName: "", customerCode,
                 periodStart: periodStart || null, periodEnd: periodEnd || null, active: true, tierNo: position,
                 triggerQty: "0", triggerUnit: "PCS",
                 benefitType: "DISC_PCT", benefitValue: String(percent), benefitUnit: "%",

@@ -13,7 +13,7 @@ type UserRow = { id: string; name: string; email: string };
 const MOD_LABELS: Record<string, string> = {
     dashboard: "Dashboard", api_wrapper: "API Wrapper", payments: "Payments",
     sppd: "SPPD", finance: "Finance", principles: "Principles", summary: "Summary",
-    validator: "Validator", off_program_control: "OFF Program Control",
+    off_program_control: "OFF Program Control",
     claim_workflow: "Claim Workflow", users: "Users (Admin)",
     form_kontrol: "Form Kontrol", insentif_sales: "Insentif Sales",
     sales_history: "History Penjualan",

@@ -27,7 +27,6 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
             ...k("sppd", ["view", "generate", "download"]),
             ...k("finance", ["view", "approve", "export", "update"]),
             ...k("principles", ["view"]), ...k("summary", ["view", "export"]),
-            ...k("validator", ["view", "download"]),
             ...k("off_program_control", ["view", "update", "approve", "export"]),
             ...k("claim_workflow", ["view", "approve", "export"]),
             ...k("form_kontrol", ["view", "submit", "manage"]),
@@ -52,7 +51,6 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
             ...k("sppd", ["view", "generate", "download"]),
             ...k("principles", ["view"]),
             ...k("summary", ["view", "upload", "generate", "export", "edit", "update"]),
-            ...k("validator", ["view", "upload", "run", "download", "edit"]),
             ...k("off_program_control", ["view", "create", "update"]),
             ...k("claim_workflow", ["view"]),
         ],
@@ -61,7 +59,7 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
         name: "Viewer", desc: "Hanya lihat", keys: [
             ...k("dashboard", ["view"]), ...k("payments", ["view"]), ...k("sppd", ["view"]),
             ...k("finance", ["view"]), ...k("off_program_control", ["view"]),
-            ...k("claim_workflow", ["view"]), ...k("summary", ["view"]), ...k("validator", ["view"]),
+            ...k("claim_workflow", ["view"]), ...k("summary", ["view"]),
         ],
     },
     {
