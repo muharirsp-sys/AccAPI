@@ -98,6 +98,59 @@ def kino_extraction(raw, master):
             "on_faktur": result["on_faktur"], "mechanism": result["mechanism"],
             "source_hash": hashlib.sha256(raw).hexdigest()}
 
+
+# Parser deterministik untuk principal yang suratnya berlapis teks. Dicoba sebelum OCR
+# karena suratnya dicetak dari Word/Excel: lapisan teksnya utuh, jadi OCR hanya menambah
+# biaya dan risiko salah baca. Tiap entri: (modul, penjaga) -- penjaga menjawab "surat ini
+# memang milik parser saya", supaya parser DAHLIA tidak mengaku-aku surat VINDA.
+#
+# ATURAN LINTAS-PRINCIPAL yang ditegakkan SEMUA parser di daftar ini (keputusan pengguna
+# 2026-09-18, jangan diubah di satu parser saja):
+#   1. ON PO = ON FAKTUR. Surat yang diunggah ITULAH pernyataan on-fakturnya. Kata mekanisme
+#      yang tercetak dicatat sebagai jejak audit di `keterangan`, TIDAK PERNAH menyaring baris.
+#   2. Beban distributor bukan benefit. "Disc. Reg Dist" dan sejenisnya dicatat di
+#      `keterangan`, tidak pernah menjadi `benefit`.
+#   3. Kalau surat menyebut sesuatu dua kali dengan arah berbeda, jangan ambil yang pertama --
+#      cari kalimat kewajiban/penetapannya ("toko WAJIB memakai harga MT"), bukan kebalikannya.
+#   4. Fail-closed: data yang tidak ada atau ambigu DITAHAN + diberi keterangan, tidak ditebak
+#      dan tidak dikosongkan diam-diam.
+DETERMINISTIC_PARSERS = (
+    ("dahlia_letter", lambda hasil: bool(hasil["rows"])),
+    ("vinda_letter", lambda hasil: bool(hasil["rows"])),
+    ("primarasa_letter", lambda hasil: bool(hasil["rows"])),
+)
+
+
+def deterministic_extraction(raw, master):
+    """Surat berlapis teks dari principal ber-parser; bukan miliknya -> None supaya OCR jalan.
+
+    Sama disiplinnya dengan `kino_extraction`: gagal apa pun mengembalikan None, parser ini
+    tidak boleh menjadi titik gagal baru. Yang membedakannya cuma satu -- ia mencoba beberapa
+    modul berurutan, dan modul yang suratnya bukan miliknya akan mengangkat pengecualian di
+    `parse_pdf` (header tidak cocok / tidak ada lapisan teks) atau menghasilkan nol baris.
+    """
+    import hashlib
+    import importlib
+
+    items = master.get("items", [])
+    for module_name, cocok in DETERMINISTIC_PARSERS:
+        try:
+            module = importlib.import_module(module_name)
+            hasil = module.parse_pdf(raw)
+            if not cocok(hasil):
+                continue
+            module.match_items(hasil["rows"], items, hasil["warnings"])
+        except Exception:
+            continue
+        return {"rows": hasil["rows"], "warnings": hasil["warnings"][:400],
+                "page_count": hasil["page_count"], "model": f"deterministic:{module_name}",
+                "pipeline_version": 1, "cached": False,
+                "on_faktur": hasil.get("on_faktur", True),
+                "mechanism": hasil.get("mechanism", "") or hasil.get("mechanism_printed", ""),
+                "source_hash": hashlib.sha256(raw).hexdigest()}
+    return None
+
+
 @router.post("/summary/manual")
 async def summary_manual_auto_generate(
     request: Request,
@@ -1162,7 +1215,8 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
         return JSONResponse(status_code=404, content={"ok": False, "error": "Master tidak tersedia. Muat master kembali."})
     try:
         raw = await read_upload_file_limited(pdf, max_bytes=MAX_PDF_UPLOAD_BYTES, allowed_exts=(".pdf",), label="PDF Program")
-        result = kino_extraction(raw, master) or await extract_mistral(raw, master, user, principle_name)
+        result = (kino_extraction(raw, master) or deterministic_extraction(raw, master)
+                  or await extract_mistral(raw, master, user, principle_name))
         # Yang jawabannya sudah pasti tidak perlu ditanyakan kepada peninjau: principal yang
         # sudah dipilih di layar, badan surat yang terbawa ke nama program, dan aturan
         # "tidak menyebut varian/gramasi tertentu berarti SEMUA". Lihat `baca_surat_rapi`.
