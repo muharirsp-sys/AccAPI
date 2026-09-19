@@ -536,6 +536,22 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                     val2 = r.get(field, "")
                     if val2:
                         target[field] = f"{val1},{val2}" if val1 else val2
+
+                # KETERANGAN IKUT DIGABUNG, karena untuk baris yang DITAHAN ia satu-satunya
+                # tempat barang itu menyebut namanya. Sampai 19 September 2026 hanya keterangan
+                # baris pertama yang disimpan: surat DAHLIA 570 menahan DUA kode, `F601LB` dan
+                # `F601SB`, keduanya melebur jadi satu baris cetak dan `F601SB` TIDAK MUNCUL
+                # SAMA SEKALI di Form — pada lembar yang ditandatangani Operational Manager,
+                # satu barang tertahan lenyap tanpa jejak. Baris bercocok kode tidak kehilangan
+                # apa pun karena `kode_barangs` menyimpannya; baris tertahan tidak punya itu.
+                # Yang sama persis tidak diulang: boilerplate "beban distributor" pada sepuluh
+                # baris tetap tercetak sekali.
+                ket_lama = str(target.get("keterangan", "") or "").strip()
+                ket_baru = str(r.get("keterangan", "") or "").strip()
+                if ket_baru:
+                    sudah = [p.strip() for p in ket_lama.split(" | ") if p.strip()]
+                    if ket_baru not in sudah:
+                        target["keterangan"] = " | ".join(sudah + [ket_baru]) if sudah else ket_baru
                         
                 # Merge caches
                 incoming_cache = r.get("_matched_items_cache", [])
