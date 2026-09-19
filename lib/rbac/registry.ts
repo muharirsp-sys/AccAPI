@@ -27,7 +27,6 @@ export const PERMISSION_REGISTRY = {
     principles: ["view", "upload", "delete"],
     master_barang: ["view", "create", "upload", "edit", "generate", "export", "manage"],
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
-    validator: ["view", "upload", "run", "download", "edit"],
     reconciliation: ["view", "run", "manage"],
     off_program_control: [
         "view", "create", "update", "approve", "export",

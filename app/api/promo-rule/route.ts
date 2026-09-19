@@ -74,7 +74,7 @@ function draftOf(body: Record<string, unknown>, importedBy: string): { row: Draf
         principal: text(body.principal), suratProgram: text(body.suratProgram),
         promoLabel: text(body.promoLabel), promoGroupId: text(body.promoGroupId),
         promoGroup: text(body.promoGroup), itemCode, itemName: text(body.itemName),
-        prdId: text(body.prdId), customerCode,
+        customerCode,
         periodStart: text(body.periodStart).slice(0, 10) || null,
         periodEnd: text(body.periodEnd).slice(0, 10) || null,
         active: body.active !== false,

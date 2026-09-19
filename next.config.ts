@@ -80,7 +80,7 @@ const nextConfig: NextConfig = {
     },
     {
       // All authenticated dashboard routes — prevent bfcache serving stale content after logout
-      source: "/(principles|finance|payments|summary|validator|off-program-control|api-wrapper|insentif-sales|form-kontrol|claim-workflow|admin)/:path*",
+      source: "/(principles|finance|payments|summary|off-program-control|api-wrapper|insentif-sales|form-kontrol|claim-workflow|admin)/:path*",
       headers: [
         { key: "Cache-Control", value: "private, no-cache, no-store, must-revalidate" },
       ],

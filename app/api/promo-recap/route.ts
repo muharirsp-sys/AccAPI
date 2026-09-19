@@ -42,7 +42,7 @@ function defaultRange() {
  * berkas statis berarti suatu saat contohnya akan menjanjikan kolom yang tidak lagi dibaca.
  */
 const DETAIL_HEADER = ["SURAT_PROGRAM", "PROMO_LABEL", "PROMO_GROUP_ID", "PROMO_GROUP", "KODE_BARANG",
-    "NAMA_BARANG", "PRD_ID_KINO", "PERIODE", "PERIOD_START", "PERIOD_END", "PROMO_ACTIVE", "TIER_NO",
+    "NAMA_BARANG", "PERIODE", "PERIOD_START", "PERIOD_END", "PROMO_ACTIVE", "TIER_NO",
     "TRIGGER_QTY", "TRIGGER_UNIT", "BENEFIT_TYPE", "BENEFIT_VALUE", "BENEFIT_UNIT", "BENEFIT_BEBAN",
     "CARA_TAGIH", "CATATAN"];
 
@@ -64,10 +64,10 @@ export async function GET(request: NextRequest) {
         XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
             DETAIL_HEADER,
             ["BP2609007909", "MTI - HPC CONSUMER PROMO ON PO", "", "B&B ALL VARIANT", "K1041001025010",
-                "KNF B&B HAIR BODY WASH RIKO 250ML X 24", "", "September 2026", "2026-09-01", "2026-09-30",
+                "KNF B&B HAIR BODY WASH RIKO 250ML X 24", "September 2026", "2026-09-01", "2026-09-30",
                 "TRUE", 1, 1, "PCS", "DISC_PCT", "3", "%", "PRINCIPAL", "ON FAKTUR", "contoh"],
             ["BP2609007713", "PROMO BRAND RESIK V", "", "RESIK V KHASIAT MANJAKANI", "K1370000005010",
-                "KNF RESIK V MANJAKANI 50ML X 72 BTL", "", "September 2026", "2026-09-01", "2026-09-30",
+                "KNF RESIK V MANJAKANI 50ML X 72 BTL", "September 2026", "2026-09-01", "2026-09-30",
                 "TRUE", 1, 30, "PCS", "BONUS_QTY", "1", "PCS", "PRINCIPAL", "ON FAKTUR", "beli 30 gratis 1"],
         ]), "Detail");
         XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
@@ -182,7 +182,7 @@ export async function POST(request: NextRequest) {
             principal,
             suratProgram: text(row.SURAT_PROGRAM), promoLabel: text(row.PROMO_LABEL),
             promoGroupId: text(row.PROMO_GROUP_ID), promoGroup: text(row.PROMO_GROUP),
-            itemCode: text(row.KODE_BARANG), itemName: text(row.NAMA_BARANG), prdId: text(row.PRD_ID_KINO),
+            itemCode: text(row.KODE_BARANG), itemName: text(row.NAMA_BARANG),
             customerCode: "",
             periodStart: start || null, periodEnd: end || null,
             active: text(row.PROMO_ACTIVE).toLowerCase() !== "false",
@@ -206,15 +206,14 @@ export async function POST(request: NextRequest) {
 
     // Satu barang internal bisa punya DUA kode principal (pecahan berbeda di sistem Kino),
     // sehingga barisnya kembar. Aturan promo melekat pada barang internal, jadi yang kembar
-    // digabung dan kode principalnya dicatat berdampingan — bukan dibuang diam-diam.
+    // digabung — dan jumlahnya DILAPORKAN lewat `merged`, bukan dibuang diam-diam.
+    // Pemetaan kode principal -> kode internal tinggal di `principal_mapping`, bukan di sini.
     const unik = new Map<string, (typeof values)[number]>();
     let digabung = 0;
     for (const row of values) {
         const key = `${row.suratProgram}|${row.promoGroup}|${row.itemCode}|${row.customerCode}|${row.tierNo}`;
-        const ada = unik.get(key);
-        if (!ada) { unik.set(key, row); continue; }
+        if (!unik.has(key)) { unik.set(key, row); continue; }
         digabung += 1;
-        if (row.prdId && !ada.prdId.split(", ").includes(row.prdId)) ada.prdId = `${ada.prdId}, ${row.prdId}`;
     }
     const baris = [...unik.values()];
 

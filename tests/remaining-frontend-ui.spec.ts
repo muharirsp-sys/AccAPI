@@ -191,8 +191,6 @@ test("Office Calm remaining labels and controls meet AA contrast", async ({ page
     for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
         await page.setViewportSize(viewport);
 
-        await page.goto("/validator");
-        await expectAaContrast(page.getByText(/Proses sinkronisasi dan komputasi Validasi Excel/));
 
         await page.goto("/finance");
         await expectAaContrast(page.getByRole("button", { name: "Export Excel" }));
@@ -364,7 +362,7 @@ test("mobile navigation fits five primary links and keeps secondary links in the
     const bottomNav = page.getByRole("navigation", { name: "Navigasi utama" });
     const primaryLinks = bottomNav.getByRole("link");
     await expect(primaryLinks).toHaveCount(5);
-    for (const name of ["Dashboard", "AOL Form Engine", "Validator Diskon", "Summary Promo", "Finance"]) {
+    for (const name of ["Dashboard", "AOL Form Engine", "Summary Promo", "Finance"]) {
         await expect(bottomNav.getByRole("link", { name })).toBeVisible();
     }
     expect(await bottomNav.locator("div").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);

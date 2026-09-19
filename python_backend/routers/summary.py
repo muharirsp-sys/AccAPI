@@ -98,6 +98,88 @@ def kino_extraction(raw, master):
             "on_faktur": result["on_faktur"], "mechanism": result["mechanism"],
             "source_hash": hashlib.sha256(raw).hexdigest()}
 
+
+# Parser deterministik untuk principal yang suratnya berlapis teks. Dicoba sebelum OCR
+# karena suratnya dicetak dari Word/Excel: lapisan teksnya utuh, jadi OCR hanya menambah
+# biaya dan risiko salah baca. Tiap entri: (modul, penjaga) -- penjaga menjawab "surat ini
+# memang milik parser saya", supaya parser DAHLIA tidak mengaku-aku surat VINDA.
+#
+# ATURAN LINTAS-PRINCIPAL yang ditegakkan SEMUA parser di daftar ini (keputusan pengguna
+# 2026-09-18, jangan diubah di satu parser saja):
+#   1. ON PO = ON FAKTUR. Surat yang diunggah ITULAH pernyataan on-fakturnya. Kata mekanisme
+#      yang tercetak dicatat sebagai jejak audit di `keterangan`, TIDAK PERNAH menyaring baris.
+#   2. Beban distributor bukan benefit. "Disc. Reg Dist" dan sejenisnya dicatat di
+#      `keterangan`, tidak pernah menjadi `benefit`.
+#   3. Kalau surat menyebut sesuatu dua kali dengan arah berbeda, jangan ambil yang pertama --
+#      cari kalimat kewajiban/penetapannya ("toko WAJIB memakai harga MT"), bukan kebalikannya.
+#   4. Fail-closed: data yang tidak ada atau ambigu DITAHAN + diberi keterangan, tidak ditebak
+#      dan tidak dikosongkan diam-diam.
+# Lebar kolom Form Summary sebagai pecahan lebar cetak, DIUKUR bukan dikira-kira. Patokannya
+# satu: sebuah kolom harus memuat KATA TERPANJANG yang pernah masuk ke situ, karena kata yang
+# lebih lebar dari kolomnya dipatahkan di tengah — "TOKO ONLINE" tercetak "TOK O ON LINE"
+# (DAHLIA, 19 September 2026). Angka ini dari `stringWidth` atas baris Kino DAN DAHLIA:
+#   Surat Program  butuh 75pt ("083/TMDH2/08/26#SUR030"), dulu hanya punya 71
+#   GT / MT        butuh 25pt ("PARETO", "ONLINE", "GROSIR"), dulu hanya punya 22
+#   Keterangan     butuh 54pt ("Independent=1000)."),       dulu hanya punya 43
+# Tambahannya diambil dari kolom yang kelebihan menurut ukuran yang sama: Variant (88 dipakai
+# 34), Nama Program (79 dipakai 38), Ketentuan (75 dipakai 34), Gramasi (51 dipakai 28).
+# Keterangan diberi lebih dari sekadar cukup karena ia memuat teks terpanjang (402 karakter
+# pada DAHLIA) dan makin sempit kolomnya makin tinggi barisnya.
+# JUMLAHNYA WAJIB 1.000 — `audit_lebar` di e2e_dahlia_endpoint.py menjaga keduanya.
+LEBAR_KOLOM = [
+    0.025,  # No.
+    0.108,  # Surat Program
+    0.090,  # Nama Program
+    0.050,  # GT / MT
+    0.050,  # Daftar Outlet
+    0.065,  # Periode
+    0.085,  # Kelompok Barang
+    0.095,  # Variant Barang
+    0.060,  # Gramasi Barang
+    0.085,  # Ketentuan Pengambilan
+    0.070,  # Benefit
+    0.070,  # Syarat Claim
+    0.045,  # Update
+    0.102,  # Keterangan
+]
+
+DETERMINISTIC_PARSERS = (
+    ("dahlia_letter", lambda hasil: bool(hasil["rows"])),
+    ("vinda_letter", lambda hasil: bool(hasil["rows"])),
+    ("primarasa_letter", lambda hasil: bool(hasil["rows"])),
+)
+
+
+def deterministic_extraction(raw, master):
+    """Surat berlapis teks dari principal ber-parser; bukan miliknya -> None supaya OCR jalan.
+
+    Sama disiplinnya dengan `kino_extraction`: gagal apa pun mengembalikan None, parser ini
+    tidak boleh menjadi titik gagal baru. Yang membedakannya cuma satu -- ia mencoba beberapa
+    modul berurutan, dan modul yang suratnya bukan miliknya akan mengangkat pengecualian di
+    `parse_pdf` (header tidak cocok / tidak ada lapisan teks) atau menghasilkan nol baris.
+    """
+    import hashlib
+    import importlib
+
+    items = master.get("items", [])
+    for module_name, cocok in DETERMINISTIC_PARSERS:
+        try:
+            module = importlib.import_module(module_name)
+            hasil = module.parse_pdf(raw)
+            if not cocok(hasil):
+                continue
+            module.match_items(hasil["rows"], items, hasil["warnings"])
+        except Exception:
+            continue
+        return {"rows": hasil["rows"], "warnings": hasil["warnings"][:400],
+                "page_count": hasil["page_count"], "model": f"deterministic:{module_name}",
+                "pipeline_version": 1, "cached": False,
+                "on_faktur": hasil.get("on_faktur", True),
+                "mechanism": hasil.get("mechanism", "") or hasil.get("mechanism_printed", ""),
+                "source_hash": hashlib.sha256(raw).hexdigest()}
+    return None
+
+
 @router.post("/summary/manual")
 async def summary_manual_auto_generate(
     request: Request,
@@ -941,31 +1023,22 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 keterangan_display(meta),
             ])
             
-        # Total A4 landscape width is ~842. Margins are 0.5cm each (approx 14 points each, total 28 pts margin)
-        # Usable width = 842 - 28 = 814 points
-        usable = landscape(A4)[0] - (1 * cm)
-        cw = [
-            usable * 0.025, # No.
-            usable * 0.095, # Surat Program
-            usable * 0.105, # Nama Program
-            usable * 0.035, # GT / MT
-            usable * 0.055, # Daftar Outlet
-            usable * 0.065, # Periode
-            usable * 0.085, # Kelompok Barang
-            usable * 0.115, # Variant Barang
-            usable * 0.070, # Gramasi Barang
-            usable * 0.100, # Ketentuan Pengambilan
-            usable * 0.070, # Benefit
-            usable * 0.075, # Syarat Claim
-            usable * 0.045, # Update
-            usable * 0.060  # Keterangan
-        ]
+        # Ruang yang BENAR-BENAR bisa dipakai, bukan sekadar halaman dikurangi margin:
+        # ReportLab menambah padding 6pt di tiap sisi `Frame` (bawaan `Frame`), jadi isi
+        # halaman 12pt lebih sempit dan 12pt lebih pendek daripada `doc.width`/`doc.height`.
+        # Selama ini lebar tabel dihitung dari margin saja, sehingga tabelnya 12pt LEBIH LEBAR
+        # daripada frame yang memuatnya — ReportLab sendiri melaporkannya sebagai
+        # frame 'normal'(801.5 x 506.7) saat ia menyerah pada surat DAHLIA.
+        PADDING_FRAME = 6
+        usable = doc.width - 2 * PADDING_FRAME
+        tinggi_halaman = doc.height - 2 * PADDING_FRAME
+        cw = [usable * bagian for bagian in LEBAR_KOLOM]
             
         table_data = [[Paragraph(h, header_style) for h in KEPALA_ATAS],
                       [Paragraph(h, header_style) for h in KEPALA_BAWAH]]
         table_data += [[sel(nilai) for nilai in baris] for baris in baris_teks]
 
-        gaya = [
+        GAYA_DASAR = [
             ('BACKGROUND', (0, 0), (-1, 1), colors.HexColor('#9E7C85')), # Match the brownish pink header color
             ('TEXTCOLOR', (0, 0), (-1, 1), colors.black),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -979,27 +1052,95 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             ('SPAN', (3, 0), (KOL_OUTLET, 0)),  # "Channel Outlet" memayungi dua kolom
         ]
         # Kepala satu kolom yang tidak punya sub-kolom membentang dua baris.
-        gaya += [('SPAN', (i, 0), (i, 1)) for i in range(len(KEPALA_ATAS)) if i not in (3, KOL_OUTLET)]
-
-        # SEL YANG ISINYA SAMA DIGABUNG KE BAWAH. Sepuluh strata MSG sebenarnya SATU program
-        # dengan sepuluh tier — di gerbang ia memang satu — jadi mengulang nomor surat, nama
-        # program, channel, dan periodenya sepuluh kali hanya membuat lembarnya sulit dibaca
-        # tanpa menambah satu pun keterangan.
+        GAYA_DASAR += [('SPAN', (i, 0), (i, 1)) for i in range(len(KEPALA_ATAS)) if i not in (3, KOL_OUTLET)]
         AWAL = 2  # dua baris kepala
-        for kolom in KOL_GABUNG:
-            mulai = 0
-            for i in range(1, len(baris_teks) + 1):
-                sama = i < len(baris_teks) and baris_teks[i][kolom] == baris_teks[mulai][kolom] \
-                    and baris_teks[i][1] == baris_teks[mulai][1]  # jangan lintas surat program
-                if sama:
-                    continue
-                if i - mulai > 1:
-                    gaya.append(('SPAN', (kolom, AWAL + mulai), (kolom, AWAL + i - 1)))
-                mulai = i
 
-        t = Table(table_data, repeatRows=2, colWidths=cw)
-        t.setStyle(TableStyle(gaya))
-        elements.append(t)
+        def bangun_tabel(potongan, boleh_pecah_dalam_baris=True):
+            """Satu tabel utuh untuk SATU halaman, dengan penggabungan dihitung ULANG.
+
+            SEL YANG ISINYA SAMA DIGABUNG KE BAWAH: sepuluh strata MSG sebenarnya SATU
+            program dengan sepuluh tier, jadi mengulang nomor surat, nama program, channel,
+            dan periodenya sepuluh kali hanya membuat lembarnya sulit dibaca. Tetapi
+            penggabungan itu dihitung DI DALAM potongan ini saja — itulah inti perbaikannya,
+            lihat catatan di pemanggilnya.
+            """
+            data = [[Paragraph(h, header_style) for h in KEPALA_ATAS],
+                    [Paragraph(h, header_style) for h in KEPALA_BAWAH]]
+            data += [[sel(nilai) for nilai in baris] for baris in potongan]
+            gaya = list(GAYA_DASAR)
+            for kolom in KOL_GABUNG:
+                mulai = 0
+                for i in range(1, len(potongan) + 1):
+                    sama = i < len(potongan) and potongan[i][kolom] == potongan[mulai][kolom] \
+                        and potongan[i][1] == potongan[mulai][1]  # jangan lintas surat program
+                    if sama:
+                        continue
+                    if i - mulai > 1:
+                        gaya.append(('SPAN', (kolom, AWAL + mulai), (kolom, AWAL + i - 1)))
+                    mulai = i
+            tabel = Table(data, repeatRows=2, colWidths=cw,
+                          splitInRow=1 if boleh_pecah_dalam_baris else 0)
+            tabel.setStyle(TableStyle(gaya))
+            return tabel
+
+        # SATU TABEL PER HALAMAN, DIPECAH SENDIRI — bukan diserahkan ke ReportLab.
+        #
+        # Sebabnya bukan kerapian. `baris_teks` memuat nilai LENGKAP di setiap baris;
+        # penggabungan hanyalah gaya `SPAN`, dan ReportLab merender sel pertama sebuah span
+        # lalu MENYEMBUNYIKAN sisanya. Begitu satu span terpotong batas halaman, yang tersisa
+        # di halaman berikutnya adalah sel-sel tersembunyi itu: Surat Program, Nama Program,
+        # Channel, dan Periode tercetak KOSONG. Pada lembar yang ditandatangani Operational
+        # Manager itu bukan cacat tampilan — pembacanya tidak bisa tahu baris itu milik surat
+        # yang mana. Terlihat 19 September 2026 pada Form DAHLIA halaman 2.
+        #
+        # Maka batas halaman ditentukan lebih dulu, lalu penggabungan dihitung ULANG di dalam
+        # tiap potongan. Akibatnya setiap halaman selalu memulai bloknya sendiri dan nilai
+        # identitasnya muncul lagi di baris teratas halaman itu.
+        #
+        # Yang menentukan batasnya tetap ReportLab sendiri (`Table.split`), jadi tinggi baris
+        # tidak pernah kita tebak. `splitInRow=0` saat mengukur supaya pemotongan hanya terjadi
+        # di batas baris; satu baris yang lebih tinggi dari satu halaman ditangani terpisah di
+        # bawah, karena baris seperti itu memang tidak bisa utuh di mana pun.
+        from reportlab.platypus import PageBreak
+
+        # Halaman PERTAMA punya ruang lebih sedikit: judul dan nama perusahaan berdiri di atas
+        # tabel sebagai flowable, bukan digambar canvas. Tanpa memperhitungkannya, potongan
+        # pertama diukur terhadap halaman penuh, tidak muat bersama judulnya, lalu terdorong
+        # utuh ke halaman berikutnya — meninggalkan halaman pertama kosong.
+        tinggi_judul = sum(e.wrap(usable, tinggi_halaman)[1] for e in elements)
+
+        sisa = list(baris_teks)
+        halaman_pertama = True
+        while sisa:
+            tersedia = tinggi_halaman - (tinggi_judul if halaman_pertama else 0)
+            ukur = bangun_tabel(sisa, boleh_pecah_dalam_baris=False)
+            ukur.wrap(usable, tersedia)
+            bagian = ukur.split(usable, tersedia)
+            muat = len(sisa) if len(bagian) <= 1 else max(1, len(bagian[0]._cellvalues) - AWAL)
+
+            # Ukuran di atas baru TEBAKAN AWAL, dan harus diperiksa ulang: menghitung
+            # penggabungan per potongan MENGUBAH tinggi barisnya. Span yang di tabel penuh
+            # membentang sepuluh baris, di potongan ini mungkin hanya membentang tiga — teks
+            # yang sama kini harus muat di ruang yang lebih pendek, jadi barisnya meninggi.
+            # Tanpa pemeriksaan ini potongannya meluber dan ReportLab memecahnya lagi, persis
+            # kembali ke cacat yang sedang diperbaiki: halaman berikutnya tanpa identitas.
+            while muat > 1:
+                if bangun_tabel(sisa[:muat]).wrap(usable, tersedia)[1] <= tersedia:
+                    break
+                muat -= 1
+            # Pecah-dalam-baris hanya untuk potongan SATU baris, yaitu baris yang lebih tinggi
+            # daripada satu halaman dan memang tidak bisa utuh di mana pun. Untuk potongan yang
+            # sudah pasti muat, mengizinkannya justru membuat ReportLab memecah lebih dulu
+            # alih-alih menempatkan — hasilnya halaman berisi kepala tabel saja.
+            _t = bangun_tabel(sisa[:muat], boleh_pecah_dalam_baris=(muat == 1))
+            if os.getenv("SUMMARY_DEBUG_PAGINASI"):
+                print(f"[paginasi] potongan {muat} baris, tinggi {_t.wrap(usable, tersedia)[1]:.1f} "
+                      f"/ {tersedia:.1f}, sisa {len(sisa) - muat}")
+            elements.append(_t)
+            sisa = sisa[muat:]
+            halaman_pertama = False
+            if sisa:
+                elements.append(PageBreak())
         
         # Add the Footer Signatures
         elements.append(Spacer(1, 25))
@@ -1162,7 +1303,8 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
         return JSONResponse(status_code=404, content={"ok": False, "error": "Master tidak tersedia. Muat master kembali."})
     try:
         raw = await read_upload_file_limited(pdf, max_bytes=MAX_PDF_UPLOAD_BYTES, allowed_exts=(".pdf",), label="PDF Program")
-        result = kino_extraction(raw, master) or await extract_mistral(raw, master, user, principle_name)
+        result = (kino_extraction(raw, master) or deterministic_extraction(raw, master)
+                  or await extract_mistral(raw, master, user, principle_name))
         # Yang jawabannya sudah pasti tidak perlu ditanyakan kepada peninjau: principal yang
         # sudah dipilih di layar, badan surat yang terbawa ke nama program, dan aturan
         # "tidak menyebut varian/gramasi tertentu berarti SEMUA". Lihat `baca_surat_rapi`.

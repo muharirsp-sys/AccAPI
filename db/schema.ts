@@ -179,7 +179,6 @@ export const promoRule = pgTable("promo_rule", {
     promoGroup: text("promo_group").notNull().default(""),
     itemCode: text("item_code").notNull().default(""),
     itemName: text("item_name").notNull().default(""),
-    prdId: text("prd_id").notNull().default(""),
     // Kosong = berlaku semua pelanggan. Terisi = tarif Discount Reguler milik satu outlet
     // (kode internal, tanpa akhiran cabang). Pada baris tarif `tierNo` berarti POSISI DISC_n.
     customerCode: text("customer_code").notNull().default(""),

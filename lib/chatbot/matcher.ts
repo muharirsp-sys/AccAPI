@@ -26,7 +26,6 @@ const NAV_MAP: Record<string, { label: string; href: string }[]> = {
   principle: [{ label: "Master Principle", href: "/principles" }],
   principal: [{ label: "Master Principle", href: "/principles" }],
   summary: [{ label: "Summary Promo", href: "/summary" }],
-  validator: [{ label: "Validator Diskon", href: "/validator" }],
   finance: [{ label: "Finance", href: "/finance" }],
   accurate: [{ label: "AOL Form Engine", href: "/api-wrapper" }],
   aol: [{ label: "AOL Form Engine", href: "/api-wrapper" }],
