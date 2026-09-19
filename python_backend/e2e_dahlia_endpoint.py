@@ -160,6 +160,12 @@ def main():
     import shutil
     form = tujuan / "Form_Summary_DAHLIA_SEPT2026.pdf"
     dataset = tujuan / "Dataset_Summary_DAHLIA_SEPT2026.xlsx"
+    # Keluaran lama DIHAPUS lebih dulu. Kalau run ini gagal di tengah, yang tertinggal harus
+    # TIDAK ADA BERKAS, bukan berkas run sebelumnya — berkas usang tidak kelihatan usang, dan
+    # 19 September 2026 satu berkas hasil run yang sengaja disabotase sempat terkirim ke
+    # pengguna sebagai "hasil perbaikan". Tidak ada berkas jauh lebih jujur daripada itu.
+    for lama in (form, dataset):
+        lama.unlink(missing_ok=True)
     shutil.copy2(keluaran["form"], form)
     shutil.copy2(keluaran["dataset"], dataset)
     print(f"\nForm Summary : {form}")
