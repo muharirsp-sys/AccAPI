@@ -171,6 +171,12 @@ def main():
     if audit_lebar(rows) != 0:
         return 1
 
+    print("\n" + "=" * 78)
+    print("PAGINASI — tiap halaman badan harus membawa identitasnya sendiri")
+    print("=" * 78)
+    if audit_halaman(form) != 0:
+        return 1
+
     print("\nTIDAK ADA satu baris pun ditulis ke `promo_rule`. Endpoint publish tidak disentuh.")
     return 0
 
@@ -213,6 +219,35 @@ def audit_lebar(rows):
     if sempit:
         print(f"\n  {sempit} kolom lebih sempit daripada kata di dalamnya -- kata akan dipatahkan di tengah.")
     return sempit
+
+
+def audit_halaman(form):
+    """Halaman yang memuat baris program WAJIB menyebut nomor suratnya sendiri.
+
+    Nilai identitas (Surat Program, Nama Program, Channel, Periode) digabung ke bawah lewat
+    `SPAN`, dan ReportLab merender sel pertama sebuah span lalu menyembunyikan sisanya. Kalau
+    span itu terpotong batas halaman, halaman berikutnya mencetak kolom-kolom itu KOSONG dan
+    pembaca lembar yang ditandatangani OM tidak bisa tahu baris itu milik surat yang mana.
+    Halaman terakhir boleh tanpa surat -- itu lembar tanda tangan.
+    """
+    import re
+
+    import pypdf
+
+    halaman = pypdf.PdfReader(str(form)).pages
+    teks = [re.sub(r"\s+", " ", (h.extract_text() or "")).strip() for h in halaman]
+    tanpa_identitas = []
+    for nomor, isi in enumerate(teks, 1):
+        ada_badan = "Kelompok" in isi and "Benefit" in isi and "(...." not in isi
+        surat = sorted(set(re.findall(r"\d+/[A-Z]+\d*/\d+/\d+#\S*", isi)))
+        if ada_badan and not surat:
+            tanpa_identitas.append(nomor)
+        print(f"  {'!! ' if ada_badan and not surat else 'OK '}HAL {nomor}: "
+              f"{'badan' if ada_badan else 'tanda tangan'}  surat={surat or '-'}")
+    if tanpa_identitas:
+        print(f"\n  halaman {tanpa_identitas} memuat baris program tanpa nomor surat -- "
+              "sel gabungan terpotong batas halaman.")
+    return len(tanpa_identitas)
 
 
 if __name__ == "__main__":

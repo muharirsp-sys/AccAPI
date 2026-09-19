@@ -1023,16 +1023,22 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 keterangan_display(meta),
             ])
             
-        # Total A4 landscape width is ~842. Margins are 0.5cm each (approx 14 points each, total 28 pts margin)
-        # Usable width = 842 - 28 = 814 points
-        usable = landscape(A4)[0] - (1 * cm)
+        # Ruang yang BENAR-BENAR bisa dipakai, bukan sekadar halaman dikurangi margin:
+        # ReportLab menambah padding 6pt di tiap sisi `Frame` (bawaan `Frame`), jadi isi
+        # halaman 12pt lebih sempit dan 12pt lebih pendek daripada `doc.width`/`doc.height`.
+        # Selama ini lebar tabel dihitung dari margin saja, sehingga tabelnya 12pt LEBIH LEBAR
+        # daripada frame yang memuatnya — ReportLab sendiri melaporkannya sebagai
+        # frame 'normal'(801.5 x 506.7) saat ia menyerah pada surat DAHLIA.
+        PADDING_FRAME = 6
+        usable = doc.width - 2 * PADDING_FRAME
+        tinggi_halaman = doc.height - 2 * PADDING_FRAME
         cw = [usable * bagian for bagian in LEBAR_KOLOM]
             
         table_data = [[Paragraph(h, header_style) for h in KEPALA_ATAS],
                       [Paragraph(h, header_style) for h in KEPALA_BAWAH]]
         table_data += [[sel(nilai) for nilai in baris] for baris in baris_teks]
 
-        gaya = [
+        GAYA_DASAR = [
             ('BACKGROUND', (0, 0), (-1, 1), colors.HexColor('#9E7C85')), # Match the brownish pink header color
             ('TEXTCOLOR', (0, 0), (-1, 1), colors.black),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -1046,36 +1052,95 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             ('SPAN', (3, 0), (KOL_OUTLET, 0)),  # "Channel Outlet" memayungi dua kolom
         ]
         # Kepala satu kolom yang tidak punya sub-kolom membentang dua baris.
-        gaya += [('SPAN', (i, 0), (i, 1)) for i in range(len(KEPALA_ATAS)) if i not in (3, KOL_OUTLET)]
-
-        # SEL YANG ISINYA SAMA DIGABUNG KE BAWAH. Sepuluh strata MSG sebenarnya SATU program
-        # dengan sepuluh tier — di gerbang ia memang satu — jadi mengulang nomor surat, nama
-        # program, channel, dan periodenya sepuluh kali hanya membuat lembarnya sulit dibaca
-        # tanpa menambah satu pun keterangan.
+        GAYA_DASAR += [('SPAN', (i, 0), (i, 1)) for i in range(len(KEPALA_ATAS)) if i not in (3, KOL_OUTLET)]
         AWAL = 2  # dua baris kepala
-        for kolom in KOL_GABUNG:
-            mulai = 0
-            for i in range(1, len(baris_teks) + 1):
-                sama = i < len(baris_teks) and baris_teks[i][kolom] == baris_teks[mulai][kolom] \
-                    and baris_teks[i][1] == baris_teks[mulai][1]  # jangan lintas surat program
-                if sama:
-                    continue
-                if i - mulai > 1:
-                    gaya.append(('SPAN', (kolom, AWAL + mulai), (kolom, AWAL + i - 1)))
-                mulai = i
 
-        # `splitInRow=1` WAJIB, bukan kosmetik. Sel `SPAN` yang menggabungkan satu surat ke
-        # bawah mengikat baris-barisnya menjadi satu blok yang tidak boleh dipotong; begitu
-        # blok itu lebih tinggi dari satu halaman, ReportLab menyerah dengan LayoutError dan
-        # Form Summary GAGAL TERBIT — bukan tercetak jelek, tetapi tidak jadi sama sekali.
-        # Terbukti 19 September 2026 pada surat DAHLIA yang `keterangan`-nya 402 karakter
-        # (peringatan "PERIKSA CAKUPAN" memang panjang, dan memang tidak boleh dipotong).
-        # Lebih buruk lagi: saat menyusun pesan LayoutError itu ReportLab sendiri jatuh di
-        # `max(rh)` atas tinggi baris yang masih None, jadi yang sampai ke layar adalah
-        # "'>' not supported between instances of 'NoneType' and 'int'" — sebab aslinya hilang.
-        t = Table(table_data, repeatRows=2, colWidths=cw, splitInRow=1)
-        t.setStyle(TableStyle(gaya))
-        elements.append(t)
+        def bangun_tabel(potongan, boleh_pecah_dalam_baris=True):
+            """Satu tabel utuh untuk SATU halaman, dengan penggabungan dihitung ULANG.
+
+            SEL YANG ISINYA SAMA DIGABUNG KE BAWAH: sepuluh strata MSG sebenarnya SATU
+            program dengan sepuluh tier, jadi mengulang nomor surat, nama program, channel,
+            dan periodenya sepuluh kali hanya membuat lembarnya sulit dibaca. Tetapi
+            penggabungan itu dihitung DI DALAM potongan ini saja — itulah inti perbaikannya,
+            lihat catatan di pemanggilnya.
+            """
+            data = [[Paragraph(h, header_style) for h in KEPALA_ATAS],
+                    [Paragraph(h, header_style) for h in KEPALA_BAWAH]]
+            data += [[sel(nilai) for nilai in baris] for baris in potongan]
+            gaya = list(GAYA_DASAR)
+            for kolom in KOL_GABUNG:
+                mulai = 0
+                for i in range(1, len(potongan) + 1):
+                    sama = i < len(potongan) and potongan[i][kolom] == potongan[mulai][kolom] \
+                        and potongan[i][1] == potongan[mulai][1]  # jangan lintas surat program
+                    if sama:
+                        continue
+                    if i - mulai > 1:
+                        gaya.append(('SPAN', (kolom, AWAL + mulai), (kolom, AWAL + i - 1)))
+                    mulai = i
+            tabel = Table(data, repeatRows=2, colWidths=cw,
+                          splitInRow=1 if boleh_pecah_dalam_baris else 0)
+            tabel.setStyle(TableStyle(gaya))
+            return tabel
+
+        # SATU TABEL PER HALAMAN, DIPECAH SENDIRI — bukan diserahkan ke ReportLab.
+        #
+        # Sebabnya bukan kerapian. `baris_teks` memuat nilai LENGKAP di setiap baris;
+        # penggabungan hanyalah gaya `SPAN`, dan ReportLab merender sel pertama sebuah span
+        # lalu MENYEMBUNYIKAN sisanya. Begitu satu span terpotong batas halaman, yang tersisa
+        # di halaman berikutnya adalah sel-sel tersembunyi itu: Surat Program, Nama Program,
+        # Channel, dan Periode tercetak KOSONG. Pada lembar yang ditandatangani Operational
+        # Manager itu bukan cacat tampilan — pembacanya tidak bisa tahu baris itu milik surat
+        # yang mana. Terlihat 19 September 2026 pada Form DAHLIA halaman 2.
+        #
+        # Maka batas halaman ditentukan lebih dulu, lalu penggabungan dihitung ULANG di dalam
+        # tiap potongan. Akibatnya setiap halaman selalu memulai bloknya sendiri dan nilai
+        # identitasnya muncul lagi di baris teratas halaman itu.
+        #
+        # Yang menentukan batasnya tetap ReportLab sendiri (`Table.split`), jadi tinggi baris
+        # tidak pernah kita tebak. `splitInRow=0` saat mengukur supaya pemotongan hanya terjadi
+        # di batas baris; satu baris yang lebih tinggi dari satu halaman ditangani terpisah di
+        # bawah, karena baris seperti itu memang tidak bisa utuh di mana pun.
+        from reportlab.platypus import PageBreak
+
+        # Halaman PERTAMA punya ruang lebih sedikit: judul dan nama perusahaan berdiri di atas
+        # tabel sebagai flowable, bukan digambar canvas. Tanpa memperhitungkannya, potongan
+        # pertama diukur terhadap halaman penuh, tidak muat bersama judulnya, lalu terdorong
+        # utuh ke halaman berikutnya — meninggalkan halaman pertama kosong.
+        tinggi_judul = sum(e.wrap(usable, tinggi_halaman)[1] for e in elements)
+
+        sisa = list(baris_teks)
+        halaman_pertama = True
+        while sisa:
+            tersedia = tinggi_halaman - (tinggi_judul if halaman_pertama else 0)
+            ukur = bangun_tabel(sisa, boleh_pecah_dalam_baris=False)
+            ukur.wrap(usable, tersedia)
+            bagian = ukur.split(usable, tersedia)
+            muat = len(sisa) if len(bagian) <= 1 else max(1, len(bagian[0]._cellvalues) - AWAL)
+
+            # Ukuran di atas baru TEBAKAN AWAL, dan harus diperiksa ulang: menghitung
+            # penggabungan per potongan MENGUBAH tinggi barisnya. Span yang di tabel penuh
+            # membentang sepuluh baris, di potongan ini mungkin hanya membentang tiga — teks
+            # yang sama kini harus muat di ruang yang lebih pendek, jadi barisnya meninggi.
+            # Tanpa pemeriksaan ini potongannya meluber dan ReportLab memecahnya lagi, persis
+            # kembali ke cacat yang sedang diperbaiki: halaman berikutnya tanpa identitas.
+            while muat > 1:
+                if bangun_tabel(sisa[:muat]).wrap(usable, tersedia)[1] <= tersedia:
+                    break
+                muat -= 1
+            # Pecah-dalam-baris hanya untuk potongan SATU baris, yaitu baris yang lebih tinggi
+            # daripada satu halaman dan memang tidak bisa utuh di mana pun. Untuk potongan yang
+            # sudah pasti muat, mengizinkannya justru membuat ReportLab memecah lebih dulu
+            # alih-alih menempatkan — hasilnya halaman berisi kepala tabel saja.
+            _t = bangun_tabel(sisa[:muat], boleh_pecah_dalam_baris=(muat == 1))
+            if os.getenv("SUMMARY_DEBUG_PAGINASI"):
+                print(f"[paginasi] potongan {muat} baris, tinggi {_t.wrap(usable, tersedia)[1]:.1f} "
+                      f"/ {tersedia:.1f}, sisa {len(sisa) - muat}")
+            elements.append(_t)
+            sisa = sisa[muat:]
+            halaman_pertama = False
+            if sisa:
+                elements.append(PageBreak())
         
         # Add the Footer Signatures
         elements.append(Spacer(1, 25))
