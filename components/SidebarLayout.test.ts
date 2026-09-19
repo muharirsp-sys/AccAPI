@@ -12,7 +12,9 @@ import { WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, activeNavigation
 test("all existing modules appear exactly once across six groups", () => {
     const items = WORKSPACE_GROUPS.flatMap(group => group.items);
     assert.equal(WORKSPACE_GROUPS.length, 6);
-    assert.equal(items.length, 26);
+    // 25 sejak Validator Diskon dihapus (19 Sep 2026): menunya memakan Excel unggahan manual
+    // dan tidak pernah membaca `promo_rule`, jadi ia tak pernah memeriksa aturan yang berlaku.
+    assert.equal(items.length, 25);
     // Master Barang ikut katalog: ia yang MEMBUAT master principal baru, dan matcher
     // deterministik jalur Summary menuntut master berpola `BRAND - JENIS`. Tanpa layar ini
     // satu-satunya cara menambah principal adalah menyusun berkasnya di luar sistem.
