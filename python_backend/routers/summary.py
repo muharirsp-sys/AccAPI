@@ -1117,7 +1117,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         # tidak pernah kita tebak. `splitInRow=0` saat mengukur supaya pemotongan hanya terjadi
         # di batas baris; satu baris yang lebih tinggi dari satu halaman ditangani terpisah di
         # bawah, karena baris seperti itu memang tidak bisa utuh di mana pun.
-        from reportlab.platypus import PageBreak
+        from reportlab.platypus import CondPageBreak, KeepTogether, PageBreak
 
         # Halaman PERTAMA punya ruang lebih sedikit: judul dan nama perusahaan berdiri di atas
         # tabel sebagai flowable, bukan digambar canvas. Tanpa memperhitungkannya, potongan
@@ -1190,8 +1190,6 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             [Paragraph(f"{nama}<br/>{garis}", footer_style_center) for _, nama in TANDA_TANGAN],
         ]
 
-        elements.append(Paragraph(f"Makassar , {dibuat_date}", footer_style_right))
-        elements.append(Spacer(1, 10))
         lebar_ttd = usable / float(len(TANDA_TANGAN))
         sig_table = Table(sig_data, colWidths=[lebar_ttd] * len(TANDA_TANGAN))
         sig_table.setStyle(TableStyle([
@@ -1201,7 +1199,21 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             ('RIGHTPADDING', (0, 0), (-1, -1), 2),
         ]))
 
-        elements.append(sig_table)
+        # BLOK TANDA TANGAN TIDAK BOLEH TERBELAH HALAMAN.
+        #
+        # Tanpa penjagaan ini Platypus bebas memotongnya begitu sisa ruang halaman terakhir
+        # cukup untuk sebagiannya saja: label peran ("Diketahui Oleh") mendarat di satu
+        # halaman, kolom "(.............................)"-nya di halaman berikutnya. Lembar
+        # seperti itu tidak sah ditandatangani — dan itu bukan hipotesis: Form DAHLIA
+        # 20 September 2026 terbit dengan peran di halaman 5 dan kolomnya di halaman 6.
+        #
+        # Tingginya DIUKUR, tidak dipatok: jumlah penanda tangan berbeda per cabang, dan
+        # angka mati akan salah begitu susunannya berubah.
+        blok_ttd = [Paragraph(f"Makassar , {dibuat_date}", footer_style_right),
+                    Spacer(1, 10), sig_table]
+        tinggi_ttd = sum(f.wrap(usable, tinggi_halaman)[1] for f in blok_ttd)
+        elements.append(CondPageBreak(tinggi_ttd))
+        elements.append(KeepTogether(blok_ttd))
         
         doc.build(elements, onFirstPage=my_canvas, onLaterPages=my_canvas)
 
