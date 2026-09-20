@@ -9,7 +9,7 @@ const aturan = (over: Partial<PromoRule> = {}): PromoRule => ({
     principal: "KINO NON FOOD", suratProgram: "BP2609007909", promoLabel: "MTI - HPC CONSUMER PROMO ON PO",
     promoGroup: "ELLIPS HAIR MIST", itemCode: "K1010001006010", customerCode: "",
     periodStart: "2026-09-01", periodEnd: "2026-09-30",
-    benefitType: "DISC_PCT", benefitValue: "3", benefitUnit: "%", onFaktur: false,
+    benefitType: "DISC_PCT", benefitValue: "3", benefitUnit: "%",
     benefitBeban: "PRINCIPAL", tierNo: 1, triggerQty: 0, triggerUnit: "PCS", ...over,
 });
 

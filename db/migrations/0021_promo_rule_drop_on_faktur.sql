@@ -1,0 +1,21 @@
+-- =====================================================================
+-- Hapus `promo_rule.on_faktur` — bendera yang tidak pernah menentukan apa pun.
+--
+-- Jejaknya sebelum penghapusan: diisi dari kolom Excel `CARA_TAGIH` saat impor Rekap
+-- Promo, disetel `true` oleh jalur publikasi Summary, dan disimpan. Tidak ada satu pun
+-- pembacanya: Validator Order Principal tidak menyebutnya sama sekali, dan mesin Rekap
+-- Promo hanya menyalinnya ke objek aturan lalu tidak pernah mengujinya.
+--
+-- Kenapa dihapus dan bukan dibetulkan: di produksi 20 September 2026, 123 aturan surat
+-- `BP2609007909` tersimpan `on_faktur = false` — berlawanan dengan keputusan pengguna
+-- 18 September 2026 bahwa surat yang diunggah BERARTI surat yang diklaim on faktur.
+-- Selama tidak ada yang membacanya, salah itu tidak merugikan; begitu seseorang
+-- menyambungkannya — hal paling wajar yang akan dilakukan orang berikutnya — 123 aturan
+-- ON PO berhenti membenarkan potongan di faktur, diam-diam.
+--
+-- Bendera yang salah dan tidak dibaca lebih berbahaya daripada bendera yang tidak ada.
+-- Kolom `CARA_TAGIH` ikut dicabut dari template impor karena itulah satu-satunya
+-- pemakainya.
+-- =====================================================================
+
+ALTER TABLE promo_rule DROP COLUMN IF EXISTS on_faktur;

@@ -619,9 +619,36 @@ export function bonusQuota(lines: BonusLine[], rules: BonusQuotaRule[]): BonusQu
     return [...out.values()];
 }
 
-/** Aturan berlaku pada tanggal itu. Kosong di salah satu ujung = tidak dibatasi di ujung itu. */
+/**
+ * Rentang terbuka: kosong di salah satu ujung = tidak dibatasi di ujung itu.
+ *
+ * INI UNTUK KEANGGOTAAN DAFTAR OUTLET, BUKAN UNTUK ATURAN. Lampiran daftar outlet sebuah
+ * surat memang tidak membawa tanggalnya sendiri — dua anggota daftar `BP2609007909` di
+ * produksi berperiode kosong, dan itu benar: yang membatasi masa berlakunya adalah periode
+ * ATURANnya, bukan keanggotaannya. Menutup ujung yang kosong di sini akan mencabut kedua
+ * outlet itu dan membuat 123 aturan ON PO berhenti berlaku untuk siapa pun.
+ *
+ * Untuk aturan promo pakai `aturanBerlaku` — di sana tanggal yang hilang justru cacat.
+ */
 export function berlakuPada(rule: { periodStart?: string | null; periodEnd?: string | null }, date: string): boolean {
     return (!rule.periodStart || rule.periodStart <= date) && (!rule.periodEnd || date <= rule.periodEnd);
+}
+
+/**
+ * Aturan promo berlaku pada tanggal itu — DAN periodenya lengkap.
+ *
+ * Aturan tanpa tanggal akhir tidak pernah kedaluwarsa, dan itu bukan keadaan yang sah:
+ * setiap surat program punya masa berlaku. Sampai 20 September 2026 `berlakuPada` dipakai
+ * langsung di sini, sehingga satu baris Excel dengan `PERIODE` salah ketik menghasilkan
+ * aturan yang membenarkan potongan SELAMANYA, di tanggal mana pun.
+ *
+ * Mesin Python (`summary_rules.Program`) sudah menolaknya sejak awal — `start` dan `end`
+ * wajib. Jalur inilah yang longgar, dan justru jalur ini yang membenarkan potongan pada
+ * FAKTUR NYATA. Sekarang keduanya sama-sama fail-closed.
+ */
+export function aturanBerlaku(rule: { periodStart?: string | null; periodEnd?: string | null }, date: string): boolean {
+    if (!rule.periodStart || !rule.periodEnd) return false;
+    return rule.periodStart <= date && date <= rule.periodEnd;
 }
 
 /** Bentuk minimum satu baris tarif; dipakai gerbang validasi maupun Rekap Promo. */

@@ -81,7 +81,7 @@ function draftOf(body: Record<string, unknown>, importedBy: string): { row: Draf
         tierNo, triggerQty: String(Number(body.triggerQty) || 0),
         triggerUnit: text(body.triggerUnit).toUpperCase() || "PCS",
         benefitType, benefitValue, benefitUnit: text(body.benefitUnit),
-        benefitBeban, onFaktur: body.onFaktur !== false,
+        benefitBeban,
         channel, outletList, outletListMode,
         note: text(body.note), importedBy,
         // Diketik di layar; jalur impor mana pun tidak boleh menghapusnya.

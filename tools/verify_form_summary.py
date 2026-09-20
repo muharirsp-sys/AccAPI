@@ -90,14 +90,31 @@ class Check:
     id: str
     title: str
     ok: bool = True
+    skipped: bool = False
     details: list[str] = field(default_factory=list)
 
     def fail(self, msg: str) -> None:
         self.ok = False
+        self.skipped = False
+        self.details.append(msg)
+
+    def skip(self, msg: str) -> None:
+        """Invariant tidak dijalankan — BUKAN lulus.
+
+        Tanpa status terpisah, gate melaporkan '12/12 hijau' padahal empat
+        invariant tidak pernah dievaluasi. Laporan seperti itu berbohong, dan
+        entri ledger yang mengutipnya jadi tidak bernilai.
+        """
+        if self.ok:
+            self.skipped = True
         self.details.append(msg)
 
     def note(self, msg: str) -> None:
         self.details.append(msg)
+
+    @property
+    def status(self) -> str:
+        return "FAIL" if not self.ok else ("SKIP" if self.skipped else "PASS")
 
 
 # --------------------------------------------------------------------------
@@ -106,12 +123,27 @@ class Check:
 
 @dataclass
 class Master:
-    """Isi master barang yang relevan untuk verifikasi."""
-    kelompok: set[str] = field(default_factory=set)              # "DH AIR F"
+    """Isi master barang yang relevan untuk verifikasi.
+
+    PENTING — granularitas kelompok berbeda antar principal:
+
+      DAHLIA   : Nama KLP 'DH AEROSOL' + Sub KLP 'MTC' + Sub KLP2 'HER'
+                 -> 11 nilai datar, tapi 49 kelompok komposit
+      PRISKILA : Nama KLP 'BLAGIO HM BODY SPRAY', Sub KLP kosong seluruhnya
+                 -> 38 datar = 38 komposit
+
+    Karena itu `groups` (komposit) yang jadi acuan, bukan `kelompok` (datar).
+    Memakai yang datar akan menyatakan seluruh penamaan Dahlia salah.
+    """
+    kelompok: set[str] = field(default_factory=set)              # "DH AIR F" (datar)
+    groups: set[str] = field(default_factory=set)                # "DH AIR F - RD DIFSR"
     codes: set[str] = field(default_factory=set)                 # "F601TM"
     code_to_kelompok: dict[str, str] = field(default_factory=dict)
     kelompok_to_gramasi: dict[str, set[str]] = field(default_factory=dict)
     code_to_gramasi: dict[str, str] = field(default_factory=dict)
+    # True kalau token pertama 'Nama Barang' memang kode barang (Dahlia), False
+    # kalau yang di depan justru nama merek (Priskila: 'BLAGIO HM BODY SPRAY ...').
+    has_short_codes: bool = False
 
 
 def _norm(s: Any) -> str:
@@ -152,28 +184,51 @@ def load_master(paths: list[Path]) -> Master:
 
             i_nama = col("nama barang")
             i_klp = col("nama klp")
+            i_sub = col("nama sub klp")
+            i_sub2 = col("nama sub klp2")
             i_gram = col("gramasi")
             if i_nama is None or i_klp is None:
                 continue
 
+            n_rows = n_coded = 0
             for r in rows:
-                nama = _norm(r[i_nama] if i_nama < len(r) else "")
-                klp = _norm(r[i_klp] if i_klp < len(r) else "")
-                gram = _norm(r[i_gram] if (i_gram is not None and i_gram < len(r)) else "")
+                def cell(idx: int | None) -> str:
+                    return _norm(r[idx]) if (idx is not None and idx < len(r)) else ""
+
+                nama = cell(i_nama)
+                klp = cell(i_klp).upper()
+                sub = cell(i_sub).upper()
+                sub2 = cell(i_sub2).upper()
+                gram = cell(i_gram).upper()
                 if not nama:
                     continue
+                n_rows += 1
+
+                # kelompok komposit: KLP [- Sub [- Sub2]]
+                group = " - ".join(p for p in (klp, sub, sub2) if p)
                 if klp:
-                    m.kelompok.add(klp.upper())
+                    m.kelompok.add(klp)
+                if group:
+                    m.groups.add(group)
                     if gram:
-                        m.kelompok_to_gramasi.setdefault(klp.upper(), set()).add(gram.upper())
-                # kode pendek = token pertama "Nama Barang"
+                        m.kelompok_to_gramasi.setdefault(group, set()).add(gram)
+
                 code = nama.split()[0].upper()
-                if re.fullmatch(r"[A-Z0-9][A-Z0-9\-]{2,}", code):
+                # Jangan pakai pola bentuk: Dahlia punya beberapa keluarga kode
+                # (F601TM, F607AD, K27, K24SA, K24-WD, BC-001) dan regex apa pun
+                # akan melewatkan salah satunya. Cirinya yang andal: token
+                # pertama mengandung angka. Nama merek (BLAGIO, CSBNCA) tidak.
+                is_code = len(code) <= 14 and any(ch.isdigit() for ch in code)
+                if is_code:
+                    n_coded += 1
                     m.codes.add(code)
-                    if klp:
-                        m.code_to_kelompok[code] = klp.upper()
+                    if group:
+                        m.code_to_kelompok[code] = group
                     if gram:
-                        m.code_to_gramasi[code] = gram.upper()
+                        m.code_to_gramasi[code] = gram
+            # Token pertama dianggap kode barang hanya kalau mayoritas baris begitu.
+            if n_rows and n_coded / n_rows > 0.5:
+                m.has_short_codes = True
         wb.close()
     return m
 
@@ -456,13 +511,58 @@ def split_tails(cell: str) -> list[str]:
     return parts
 
 
-def parse_kelompok_cell(cell: str) -> tuple[str, list[str]]:
-    """'BLAGIO HM - EDP, CLAY & ROLL ON' -> ('BLAGIO HM', ['EDP','CLAY','ROLL ON'])."""
+# Penanda eksplisit yang BOLEH tercetak di kolom Kelompok untuk baris tertahan.
+# Daftar tertutup — sel bebas di kolom itu justru tempat kelompok karangan lolos.
+HELD_SENTINELS = {
+    "(TIDAK ADA ITEM COCOK DI MASTER -- PERLU REVIEW MANUAL)",
+    "(TIDAK ADA ITEM COCOK DI MASTER - PERLU REVIEW MANUAL)",
+    "-",
+}
+
+
+def expand_group_cell(cell: str) -> tuple[str, list[str]]:
+    """Pecah sel Kelompok jadi (base, daftar ekor).
+
+    Ekor yang diperluas selalu SEGMEN TERAKHIR, supaya kelompok tiga tingkat
+    ikut tertangani:
+
+      'DH KAMPER - RUANGAN AS, TOILET 3P & TOILET 5P'
+          -> base 'DH KAMPER',        ekor [RUANGAN AS, TOILET 3P, TOILET 5P]
+      'DH AEROSOL - MTC - HER & AER'
+          -> base 'DH AEROSOL - MTC', ekor [HER, AER]
+      'BLAGIO HM - EDP, CLAY'
+          -> base 'BLAGIO HM',        ekor [EDP, CLAY]
+    """
     cell = _norm(cell).upper()
-    if " - " in cell:
-        prefix, rest = cell.split(" - ", 1)
-        return _norm(prefix), split_tails(rest)
-    return "", ([cell] if cell else [])
+    if not cell:
+        return "", []
+    if " - " not in cell:
+        return "", [cell]
+    parts = [p.strip() for p in cell.split(" - ")]
+    base = " - ".join(parts[:-1])
+    return base, split_tails(parts[-1])
+
+
+def resolve_group(cell: str, master: Master) -> tuple[list[str], list[str]]:
+    """-> (nama_kelompok_penuh_yang_cocok, ekor_yang_tidak_terpetakan).
+
+    Dicoba dua perangkai, karena principal menyimpannya berbeda:
+      DAHLIA   komposit dengan ' - '  ('DH AIR F - RD DIFSR')
+      PRISKILA datar dengan spasi     ('BLAGIO HM BODY SPRAY')
+    """
+    universe = master.groups or master.kelompok
+    cell_u = _norm(cell).upper()
+    if cell_u in universe:
+        return [cell_u], []
+    base, tails = expand_group_cell(cell)
+    if not tails:
+        return [], []
+    matched, missing = [], []
+    for t in tails:
+        cands = [t] if not base else [f"{base} - {t}", f"{base} {t}"]
+        hit = next((c for c in cands if c in universe), None)
+        (matched.append(hit) if hit else missing.append(t))
+    return matched, missing
 
 
 def extract_column_cells(pages: list[PageView], label: str) -> list[tuple[int, str]]:
@@ -517,13 +617,12 @@ def check_semantics(rows: list[dict] | None, master: Master) -> list[Check]:
 
     if rows is None:
         for c in (c7, c8, c12):
-            c.note("tidak ada --rows: generator belum meng-emit sidecar JSON. "
-                   "Tambahkan itu — semantik tidak boleh diverifikasi dengan "
-                   "menebak posisi teks di PDF.")
+            c.skip("tidak ada --rows: generator belum meng-emit sidecar JSON. "
+                   "Invariant ini TIDAK dievaluasi — jangan laporkan sebagai lulus.")
         return [c7, c8, c12]
-    if not master.kelompok:
+    if not (master.groups or master.kelompok):
         for c in (c7, c8, c12):
-            c.note("master kosong — dilewati")
+            c.skip("master kosong — invariant tidak dievaluasi")
         return [c7, c8, c12]
 
     for row in rows:
@@ -534,31 +633,37 @@ def check_semantics(rows: list[dict] | None, master: Master) -> list[Check]:
         held = bool(row.get("held"))
 
         if held or not kel_cell:
-            # baris tertahan: justru WAJIB kosong — menebak kelompok itu cacat
-            if kel_cell or gram_cell:
-                c7.fail(f"baris {no}: baris tertahan tapi Kelompok/Gramasi terisi "
-                        f"('{kel_cell}' / '{gram_cell}') — ini tebakan, bukan data")
+            # Baris tertahan tidak boleh diberi kelompok hasil tebakan, TAPI
+            # penanda eksplisit justru lebih jujur daripada sel kosong yang
+            # terbaca sebagai kelalaian. Yang dilarang adalah teks bebas.
+            if kel_cell.upper() not in HELD_SENTINELS and kel_cell:
+                c7.fail(f"baris {no}: baris tertahan tapi kolom Kelompok berisi "
+                        f"'{kel_cell}' yang bukan penanda terdaftar — kalau ini "
+                        f"penanda baru, daftarkan di HELD_SENTINELS; kalau ini "
+                        f"nama kelompok, itu tebakan")
+            if gram_cell and gram_cell.upper() not in HELD_SENTINELS:
+                c7.fail(f"baris {no}: baris tertahan tapi Gramasi terisi "
+                        f"'{gram_cell}' — tidak ada sumber datanya")
             continue
 
-        prefix, tails = parse_kelompok_cell(kel_cell)
-        if not tails:
+        matched, missing = resolve_group(kel_cell, master)
+        for t in missing:
+            c7.fail(f"baris {no}: ekor '{t}' dari sel '{kel_cell}' tidak punya "
+                    f"padanan di master (dicoba sebagai komposit KLP - Sub - Sub2 "
+                    f"maupun nama datar) — kelompok dikarang atau base salah")
+        if not matched and not missing:
             c7.fail(f"baris {no}: kolom Kelompok kosong padahal baris tidak ditahan")
             continue
-        full_names = [f"{prefix} {t}".strip() if prefix else t for t in tails]
-        for full in full_names:
-            if _norm(full).upper() not in master.kelompok:
-                c7.fail(f"baris {no}: '{full}' (dari sel '{kel_cell}') tidak ada di "
-                        f"kolom 'Nama KLP' master — prefix di-faktor keliru atau "
-                        f"kelompok dikarang")
 
+        n_tails = len(matched) + len(missing)
         grams = split_tails(gram_cell)
-        if len(grams) != len(tails):
-            c8.fail(f"baris {no}: {len(tails)} tail kelompok ({', '.join(tails)}) "
-                    f"tapi {len(grams)} nilai gramasi ('{gram_cell}') — "
-                    f"pembaca tidak bisa tahu gramasi mana milik kelompok mana")
-        else:
-            for full, g in zip(full_names, grams):
-                known = master.kelompok_to_gramasi.get(_norm(full).upper(), set())
+        if len(grams) != n_tails:
+            c8.fail(f"baris {no}: {n_tails} ekor kelompok pada '{kel_cell}' tapi "
+                    f"{len(grams)} nilai gramasi ('{gram_cell}') — pembaca tidak "
+                    f"bisa tahu gramasi mana milik kelompok mana")
+        elif len(matched) == n_tails:
+            for full, g in zip(matched, grams):
+                known = master.kelompok_to_gramasi.get(full, set())
                 if known and _norm(g).upper() not in known:
                     c8.fail(f"baris {no}: gramasi '{g}' tidak ada untuk kelompok "
                             f"'{full}' di master (yang ada: {sorted(known)})")
@@ -568,11 +673,12 @@ def check_semantics(rows: list[dict] | None, master: Master) -> list[Check]:
             if real is None:
                 c12.fail(f"baris {no}: kode '{code}' tercetak sebagai barang cocok "
                          f"tapi tidak ada di master — seharusnya masuk baris tertahan")
-            elif real not in {_norm(f).upper() for f in full_names}:
+            elif real not in set(matched):
                 c12.fail(f"baris {no}: kode '{code}' sebenarnya kelompok '{real}', "
                          f"tapi dicetak di baris kelompok '{kel_cell}'")
 
-    c7.note(f"{len(rows)} baris diperiksa terhadap {len(master.kelompok)} kelompok master")
+    c7.note(f"{len(rows)} baris diperiksa terhadap {len(master.groups)} kelompok "
+            f"komposit ({len(master.kelompok)} Nama KLP datar) di master")
     return [c7, c8, c12]
 
 
@@ -585,7 +691,14 @@ def check_code_coverage(pages: list[PageView], master: Master,
     c9 = Check("C9_KODE_COVERAGE",
                "Setiap kode barang di surat muncul di Form (tercetak atau ditahan)")
     if not surat_paths:
-        c9.note("tidak ada --surat, dilewati")
+        c9.skip("tidak ada --surat — invariant tidak dievaluasi")
+        return c9
+    if not master.has_short_codes:
+        c9.skip("master ini tidak memakai kode pendek di depan 'Nama Barang' "
+                "(mis. PRISKILA: 'BLAGIO HM BODY SPRAY ACCELERATE ...'). Aturan "
+                "'token pertama = kode barang' hanya berlaku untuk DAHLIA. "
+                "Pencocokan untuk principal ini harus lewat 'Kode Barang' atau "
+                "nama — sampai itu ada, C9 TIDAK menjaga apa pun di sini.")
         return c9
 
     form_text = " ".join(p.text for p in pages).upper()
@@ -594,6 +707,18 @@ def check_code_coverage(pages: list[PageView], master: Master,
         with pdfplumber.open(sp) as pdf:
             for page in pdf.pages:
                 raw += (page.extract_text() or "") + "\n"
+        # Surat promo hampir selalu membawa lampiran daftar toko, dan kode toko
+        # (T022175, JK00026377, MMMU8235, CL29150) berbentuk mirip kode barang.
+        # Tanpa dipotong, C9 melaporkan belasan 'kode hilang' palsu dan gate
+        # jadi bising sampai orang berhenti membacanya.
+        for marker in ("TOKO PANTAUAN", "DAFTAR TOKO", "KODE TOKO", "NAMA TOKO"):
+            pos = raw.upper().find(marker)
+            if pos > 0:
+                raw = raw[:pos]
+                c9.note(f"{sp.name}: teks dipotong di '{marker}' — lampiran daftar "
+                        f"toko tidak ikut dipindai")
+                break
+
         if not raw.strip():
             c9.fail(f"{sp.name}: PDF tanpa layer teks (hasil scan). "
                     f"Coverage kode tidak bisa dibuktikan otomatis — "
@@ -601,8 +726,10 @@ def check_code_coverage(pages: list[PageView], master: Master,
                     f"menyimpan daftar kode hasil ekstraksi untuk diperiksa di sini.")
             continue
         cands = {m.group(0).upper() for m in CODE_CANDIDATE_RE.finditer(raw.upper())}
-        # hanya kode yang memang dikenal master ATAU berpola kode barang principal
-        codes = {c for c in cands if c in master.codes or re.fullmatch(r"[A-Z]\d{3}[A-Z]{1,3}", c)}
+        # Kode yang dikenal master + kandidat berbentuk kode yang TIDAK dikenal
+        # (justru inilah yang berbahaya: barang tertahan seperti F601SB).
+        codes = {c for c in cands
+                 if c in master.codes or re.fullmatch(r"[A-Z]{1,3}\d{2,4}[A-Z0-9]{0,4}", c)}
         if not codes:
             c9.note(f"{sp.name}: tidak ada kandidat kode barang terdeteksi")
             continue
@@ -648,7 +775,11 @@ def check_held_rows(pages: list[PageView], rows: list[dict] | None) -> Check:
     c10 = Check("C10_HELD_CODE_PRINTED",
                 "Setiap kode yang ditahan tercetak di kolom Keterangan")
     if rows is None:
-        c10.note("tidak ada --rows: butuh sidecar JSON untuk tahu kode mana yang ditahan")
+        c10.skip("tidak ada --rows: butuh sidecar JSON untuk tahu kode mana yang "
+                 "ditahan. Ini invariant yang menjaga regresi F601SB — dan ia "
+                 "hanya butuh field 'held', 'kode_ditahan', 'keterangan'. "
+                 "Ketiganya tidak bergantung pada model kelompok, jadi tidak ada "
+                 "alasan menundanya.")
         return c10
 
     form_text = " ".join(p.text for p in pages).upper()
@@ -686,6 +817,12 @@ def main() -> int:
     ap.add_argument("--json", type=Path, help="tulis laporan JSON ke file ini")
     ap.add_argument("--x-tolerance", type=float, default=DEFAULT_X_TOLERANCE)
     ap.add_argument("--edge-margin", type=float, default=DEFAULT_EDGE_MARGIN)
+    ap.add_argument("--headers", nargs="*", default=None,
+                    help="daftar kolom wajib untuk principal/cabang ini. AMBIL DARI "
+                         "GOLDEN yang sudah diterima, jangan dari daftar bawaan — "
+                         "Form Dahlia punya 14 kolom (termasuk 'Channel Outlet', "
+                         "'Daftar Outlet', 'Update') yang tidak ada di bawaan, dan "
+                         "kolom yang tidak didaftarkan TIDAK dijaga sama sekali.")
     ap.add_argument("--expect-roles", nargs="*", default=None,
                     help="nama penanda tangan wajib menurut aturan cabang, mis. "
                          "Admin SM 'Kepala Accounting' Claim 'Operational Manager'")
@@ -696,6 +833,9 @@ def main() -> int:
     if not args.form.exists():
         print(f"ERROR: {args.form} tidak ada", file=sys.stderr)
         return 2
+
+    if args.headers:
+        REQUIRED_HEADERS[:] = list(args.headers)
 
     pages = read_pages(args.form)
     if not pages:
@@ -716,20 +856,29 @@ def main() -> int:
     checks.append(check_held_rows(pages, rows))
 
     width = max(len(c.id) for c in checks)
-    print(f"\n  {args.form.name} — {len(pages)} halaman, "
-          f"master: {len(master.kelompok)} kelompok / {len(master.codes)} kode\n")
+    print(f"\n  {args.form.name} — {len(pages)} halaman, master: "
+          f"{len(master.groups)} kelompok komposit / {len(master.kelompok)} Nama KLP "
+          f"datar / {len(master.codes)} kode\n")
     for c in checks:
-        mark = "PASS" if c.ok else "FAIL"
-        print(f"  [{mark}] {c.id:<{width}}  {c.title}")
+        print(f"  [{c.status}] {c.id:<{width}}  {c.title}")
         for d in c.details:
             print(f"         - {d}")
     failed = [c for c in checks if not c.ok]
+    skipped = [c for c in checks if c.skipped]
+    passed = [c for c in checks if c.ok and not c.skipped]
     print()
+    print(f"  {len(passed)} PASS · {len(skipped)} SKIP · {len(failed)} FAIL "
+          f"(dari {len(checks)} invariant)")
     if failed:
-        print(f"  GATE MERAH — {len(failed)}/{len(checks)} invariant gagal: "
-              f"{', '.join(c.id for c in failed)}\n")
+        print(f"  GATE MERAH — gagal: {', '.join(c.id for c in failed)}\n")
+    elif skipped:
+        # Tanpa baris ini, laporan 'semua hijau' menutupi invariant yang tidak
+        # pernah dijalankan, dan entri ledger yang mengutipnya jadi tidak bernilai.
+        print(f"  GATE BELUM PENUH — {len(skipped)} invariant tidak dievaluasi: "
+              f"{', '.join(c.id for c in skipped)}")
+        print(f"  Jangan catat ini sebagai '{len(checks)}/{len(checks)} hijau'.\n")
     else:
-        print(f"  GATE HIJAU — {len(checks)}/{len(checks)} invariant lolos\n")
+        print(f"  GATE HIJAU PENUH — {len(checks)}/{len(checks)} invariant lolos\n")
 
     if args.json:
         args.json.write_text(json.dumps(

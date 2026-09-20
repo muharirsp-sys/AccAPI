@@ -2,7 +2,7 @@
    "cuma warning". Toleransi Rp 1 hanya menyerap pembulatan, bukan selisih aturan. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { berlakuPada, bonusQuota, channelAllowed, channelLaporan, channelOutlet, checkLine, checkSoPromo,
+import { aturanBerlaku, bonusQuota, channelAllowed, channelLaporan, channelOutlet, checkLine, checkSoPromo,
     daftarKosong, needsTriggerCheck, outletAllowed, outletListsOn, purchaseByGroup, splitDiscounts, triggerGroupKey,
     triggerReached,
     type LineInput, type PublishedRule } from "./principal-validation.ts";
@@ -370,11 +370,29 @@ test("aturan per barang dicocokkan PER KOLOM, bukan pada jumlahnya", () => {
 
 test("aturan yang sudah lewat masa berlakunya tidak menjelaskan apa pun", () => {
     const berlaku = aturan({ periodStart: "2026-09-01", periodEnd: "2026-09-30" });
-    assert.equal(berlakuPada(berlaku, "2026-09-12"), true);
-    assert.equal(berlakuPada(berlaku, "2026-10-01"), false);
-    assert.equal(berlakuPada(berlaku, "2026-08-31"), false);
-    // Tanpa batas = berlaku kapan pun; itu yang dipakai tarif reguler tanpa periode.
-    assert.equal(berlakuPada(aturan(), "2020-01-01"), true);
+    assert.equal(aturanBerlaku(berlaku, "2026-09-12"), true);
+    assert.equal(aturanBerlaku(berlaku, "2026-09-01"), true);
+    assert.equal(aturanBerlaku(berlaku, "2026-09-30"), true);
+    assert.equal(aturanBerlaku(berlaku, "2026-10-01"), false);
+    assert.equal(aturanBerlaku(berlaku, "2026-08-31"), false);
+});
+
+test("ATURAN tanpa tanggal tidak berlaku kapan pun; KEANGGOTAAN tanpa tanggal berlaku terus", () => {
+    // Aturan promo WAJIB berperiode. Sampai 20 September 2026 aturan tanpa tanggal akhir
+    // membenarkan potongan SELAMANYA — satu salah ketik `PERIODE` di Excel cukup membuatnya,
+    // dan mesin Python sudah menolaknya sejak awal sementara jalur faktur ini menerimanya.
+    assert.equal(aturanBerlaku(aturan({ periodStart: "2026-09-01", periodEnd: null }), "2030-12-31"), false);
+    assert.equal(aturanBerlaku(aturan({ periodStart: null, periodEnd: "2026-09-30" }), "2000-01-01"), false);
+    assert.equal(aturanBerlaku(aturan({ periodStart: null, periodEnd: null }), "2026-09-15"), false);
+
+    // KEANGGOTAAN daftar outlet BEDA, dan bedanya disengaja: lampiran daftar outlet sebuah
+    // surat tidak membawa tanggalnya sendiri — dua anggota daftar `BP2609007909` di produksi
+    // memang berperiode kosong, dan yang membatasi masa berlakunya adalah periode ATURANnya.
+    // Menutup ujung yang kosong di sini akan mencabut kedua outlet itu dan membuat 123 aturan
+    // ON PO berhenti berlaku untuk siapa pun.
+    const anggota = [{ listName: "BP2609007909", customerCode: "C-BA0003", periodStart: null, periodEnd: null, active: true }];
+    assert.equal(outletListsOn(anggota, "2026-09-15").get("BP2609007909")?.has("C-BA0003"), true);
+    assert.equal(outletListsOn(anggota, "2030-01-01").get("BP2609007909")?.has("C-BA0003"), true);
 });
 
 test("baris bonus: potongan 100% dijelaskan aturan BONUS_QTY, bebannya principal", () => {

@@ -33,7 +33,6 @@ test("bonus barang jadi satu aturan BONUS_QTY per kode barang", () => {
     assert.equal(hasil.rows[0].itemCode, "K1370000005010");
     assert.equal(hasil.rows[1].itemCode, "K1370000009010");
     assert.equal(hasil.rows[0].benefitBeban, "PRINCIPAL");
-    assert.equal(hasil.rows[0].onFaktur, true);
 });
 
 test("potongan rupiah SELURUH NOTA jadi satu aturan tingkat faktur, bukan per barang", () => {

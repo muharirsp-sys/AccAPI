@@ -18,7 +18,7 @@ import { customer, item, orderDupeAck, principalMapping, principalOrderBatch, pr
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { syncItemPrices } from "@/lib/item-price-sync";
-import { berlakuPada, bonusQuota, channelAllowed, channelOutlet, checkLine, checkSoPromo, daftarKosong,
+import { aturanBerlaku, bonusQuota, channelAllowed, channelOutlet, checkLine, checkSoPromo, daftarKosong,
     isBonusLine, matchItemRule, needsTriggerCheck, outletAllowed, outletListsOn, purchaseByGroup,
     splitDiscounts, triggerGroupKey, triggerReached,
     type DiscountAt, type PublishedRule, type TriggerBuy } from "@/lib/principal-validation";
@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
      * keduanya ikut disaring di sini mereka akan hilang sebelum pemeriksanya sempat melihat.
      */
     const berlaku = (rules: PublishedRule[], date: string, customerNo?: string | null, soNo?: string) =>
-        rules.filter((rule) => berlakuPada(rule, date)
+        rules.filter((rule) => aturanBerlaku(rule, date)
             && outletAllowed(rule, customerNo, listsOn(date))
             && channelAllowed(rule, customerNo ? channelOf.get(customerNo) : "")
             && (!needsTriggerCheck(rule) || triggerReached(rule, belanjaOn(String(soNo ?? ""), rule)).ok));
@@ -172,7 +172,7 @@ export async function POST(request: NextRequest) {
     const sebabTerhalang = (rules: PublishedRule[], date: string, customerNo?: string | null, soNo?: string) => {
         const sebab = new Set<string>();
         for (const rule of rules) {
-            if (!berlakuPada(rule, date)) continue;
+            if (!aturanBerlaku(rule, date)) continue;
             const chan = customerNo ? channelOf.get(customerNo) ?? "" : "";
             if (!channelAllowed(rule, chan)) {
                 sebab.add(`Aturan ${rule.suratProgram} dibatasi channel ${rule.channel}, sedangkan outlet ini `
@@ -301,7 +301,7 @@ export async function POST(request: NextRequest) {
         for (const [soNo, isi] of perSoLines) {
             const date = dateOf(isi[0]);
             const aturanBonus = publishedRules
-                .filter((rule) => rule.benefitType === "BONUS_QTY" && rule.itemCode && berlakuPada(rule, date)
+                .filter((rule) => rule.benefitType === "BONUS_QTY" && rule.itemCode && aturanBerlaku(rule, date)
                     && outletAllowed(rule, customerNoOf(isi[0]), listsOn(date)))
                 .map((rule) => ({
                     itemCode: rule.itemCode, suratProgram: rule.suratProgram, promoGroup: rule.promoGroup,

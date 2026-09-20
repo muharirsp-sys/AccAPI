@@ -33,7 +33,6 @@ export type PromoRule = {
     benefitType: string;
     benefitValue: string;
     benefitUnit: string;
-    onFaktur: boolean;
     /** PRINCIPAL (bisa ditagihkan) atau DISTRIBUTOR (tanggungan sendiri). */
     benefitBeban: string;
     tierNo: number;
@@ -579,7 +578,7 @@ export function parseTariff(
         itemCode: string; itemName: string; customerCode: string;
         periodStart: string | null; periodEnd: string | null; active: boolean; tierNo: number;
         triggerQty: string; triggerUnit: string; benefitType: string; benefitValue: string;
-        benefitUnit: string; benefitBeban: string; onFaktur: boolean; note: string; importedBy: string;
+        benefitUnit: string; benefitBeban: string; note: string; importedBy: string;
         source: string;
     }[] = [];
     raw.forEach((row, index) => {
@@ -628,7 +627,7 @@ export function parseTariff(
                 periodStart: periodStart || null, periodEnd: periodEnd || null, active: true, tierNo: position,
                 triggerQty: "0", triggerUnit: "PCS",
                 benefitType: "DISC_PCT", benefitValue: String(percent), benefitUnit: "%",
-                benefitBeban: beban, onFaktur: true,
+                benefitBeban: beban,
                 note: pick("CATATAN", "PERIKSA", "KETERANGAN"), importedBy: ctx.importedBy, source: "tarif",
             });
         }
