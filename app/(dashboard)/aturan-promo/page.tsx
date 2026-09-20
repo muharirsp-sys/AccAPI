@@ -26,7 +26,7 @@ type Rule = {
     periodStart: string | null; periodEnd: string | null; active: boolean;
     tierNo: number; triggerQty: string; triggerUnit: string;
     benefitType: string; benefitValue: string; benefitUnit: string; benefitBeban: string;
-    onFaktur: boolean; channel: string; outletList: string; outletListMode: string; note: string; importedBy: string;
+    channel: string; outletList: string; outletListMode: string; note: string; importedBy: string;
 };
 
 const KOSONG: Partial<Rule> = {
@@ -34,7 +34,7 @@ const KOSONG: Partial<Rule> = {
     promoLabel: "", itemCode: "", itemName: "", customerCode: "",
     periodStart: "", periodEnd: "", active: true, tierNo: 1, triggerQty: "0", triggerUnit: "PCS",
     benefitType: "DISC_PCT", benefitValue: "", benefitUnit: "%", benefitBeban: "DISTRIBUTOR",
-    onFaktur: true, channel: "", outletList: "", outletListMode: "", note: "",
+    channel: "", outletList: "", outletListMode: "", note: "",
 };
 
 /** Bentuk aturan, dibaca dari isinya — bukan dari kolom penanda yang bisa berbeda dari isinya. */
