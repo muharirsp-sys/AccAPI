@@ -192,7 +192,6 @@ export const promoRule = pgTable("promo_rule", {
     benefitValue: text("benefit_value").notNull().default(""),
     benefitUnit: text("benefit_unit").notNull().default(""),
     benefitBeban: text("benefit_beban").notNull().default("PRINCIPAL"),
-    onFaktur: boolean("on_faktur").notNull().default(true),
     /**
      * Channel yang disebut surat pada kolom "Type Of Promo": GT, MT, atau kosong/ALL.
      * Dicocokkan dengan channel OUTLET yang diturunkan dari `customer.category_name`

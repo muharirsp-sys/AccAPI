@@ -110,7 +110,6 @@ export type BridgeRow = {
     benefitValue: string;
     benefitUnit: string;
     benefitBeban: string;
-    onFaktur: boolean;
     /** Channel yang disebut surat: "GT", "MT", atau kosong/"ALL" = di mana saja. */
     channel: string;
     outletList: string;
@@ -261,7 +260,6 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
                 benefitValue: benefit.value,
                 benefitUnit: benefit.unit,
                 benefitBeban: beban,
-                onFaktur: true,
                 // Channel dari suratnya sendiri. "ALL" disimpan kosong supaya satu arti punya
                 // satu bentuk di basis data, dan supaya baris lama yang kosong berarti sama.
                 channel: text(program.channel).toUpperCase() === "ALL" ? "" : text(program.channel).toUpperCase(),

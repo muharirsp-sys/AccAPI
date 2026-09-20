@@ -44,7 +44,7 @@ function defaultRange() {
 const DETAIL_HEADER = ["SURAT_PROGRAM", "PROMO_LABEL", "PROMO_GROUP_ID", "PROMO_GROUP", "KODE_BARANG",
     "NAMA_BARANG", "PERIODE", "PERIOD_START", "PERIOD_END", "PROMO_ACTIVE", "TIER_NO",
     "TRIGGER_QTY", "TRIGGER_UNIT", "BENEFIT_TYPE", "BENEFIT_VALUE", "BENEFIT_UNIT", "BENEFIT_BEBAN",
-    "CARA_TAGIH", "CATATAN"];
+    "CATATAN"];
 
 const TARIFF_HEADER = ["KODE_OUTLET", "PELANGGAN", "POSISI 1", "POSISI 2", "POSISI 3", "POSISI 4",
     "POSISI 5", "PAKAI", "PERIODE MULAI", "PERIODE SAMPAI", "CATATAN"];
@@ -65,10 +65,10 @@ export async function GET(request: NextRequest) {
             DETAIL_HEADER,
             ["BP2609007909", "MTI - HPC CONSUMER PROMO ON PO", "", "B&B ALL VARIANT", "K1041001025010",
                 "KNF B&B HAIR BODY WASH RIKO 250ML X 24", "September 2026", "2026-09-01", "2026-09-30",
-                "TRUE", 1, 1, "PCS", "DISC_PCT", "3", "%", "PRINCIPAL", "ON FAKTUR", "contoh"],
+                "TRUE", 1, 1, "PCS", "DISC_PCT", "3", "%", "PRINCIPAL", "contoh"],
             ["BP2609007713", "PROMO BRAND RESIK V", "", "RESIK V KHASIAT MANJAKANI", "K1370000005010",
                 "KNF RESIK V MANJAKANI 50ML X 72 BTL", "September 2026", "2026-09-01", "2026-09-30",
-                "TRUE", 1, 30, "PCS", "BONUS_QTY", "1", "PCS", "PRINCIPAL", "ON FAKTUR", "beli 30 gratis 1"],
+                "TRUE", 1, 30, "PCS", "BONUS_QTY", "1", "PCS", "PRINCIPAL", "beli 30 gratis 1"],
         ]), "Detail");
         XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
             TARIFF_HEADER,
@@ -102,7 +102,7 @@ export async function GET(request: NextRequest) {
         promoGroup: row.promoGroup, itemCode: row.itemCode, customerCode: row.customerCode,
         periodStart: row.periodStart, periodEnd: row.periodEnd,
         benefitType: row.benefitType, benefitValue: row.benefitValue, benefitUnit: row.benefitUnit,
-        onFaktur: row.onFaktur, benefitBeban: row.benefitBeban,
+        benefitBeban: row.benefitBeban,
         tierNo: row.tierNo, triggerQty: Number(row.triggerQty), triggerUnit: row.triggerUnit,
         outletList: row.outletList, outletListMode: row.outletListMode,
     }));
@@ -173,28 +173,39 @@ export async function POST(request: NextRequest) {
     const raw = sheet ? XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" }) : [];
 
     const issues: string[] = [];
-    const values = raw.map((row, index) => {
+    // BARIS TANPA PERIODE LENGKAP TIDAK DIMUAT, bukan sekadar dilaporkan.
+    //
+    // Sampai 20 September 2026 baris seperti ini hanya menambah satu kalimat di `issues`
+    // lalu tetap ikut transaksi, tersimpan dengan `period_start`/`period_end` NULL. Aturan
+    // tanpa tanggal akhir membenarkan potongan SELAMANYA — satu salah ketik `PERIODE` di
+    // Excel cukup untuk membuatnya, dan satu-satunya tandanya adalah catatan yang bisa saja
+    // tidak dibaca siapa pun. Sekarang barisnya DITAHAN, sejalan dengan seluruh jalur lain:
+    // yang tidak terbaca tidak ditebak dan tidak dimuat.
+    const values = raw.flatMap((row, index) => {
         const periode = text(row.PERIODE);
         const start = text(row.PERIOD_START) || monthStart(periode);
         const end = text(row.PERIOD_END) || monthEnd(periode);
-        if (!start || !end) issues.push(`Baris ${index + 2}: periode "${periode}" tidak terbaca`);
-        return {
+        if (!start || !end) {
+            issues.push(`Baris ${index + 2}: periode "${periode}" tidak terbaca — baris TIDAK DIMUAT. `
+                + "Isi PERIODE (mis. \"September 2026\") atau PERIOD_START dan PERIOD_END.");
+            return [];
+        }
+        return [{
             principal,
             suratProgram: text(row.SURAT_PROGRAM), promoLabel: text(row.PROMO_LABEL),
             promoGroupId: text(row.PROMO_GROUP_ID), promoGroup: text(row.PROMO_GROUP),
             itemCode: text(row.KODE_BARANG), itemName: text(row.NAMA_BARANG),
             customerCode: "",
-            periodStart: start || null, periodEnd: end || null,
+            periodStart: start, periodEnd: end,
             active: text(row.PROMO_ACTIVE).toLowerCase() !== "false",
             tierNo: Number(row.TIER_NO) || 1,
             triggerQty: String(Number(row.TRIGGER_QTY) || 0),
             triggerUnit: text(row.TRIGGER_UNIT) || "PCS",
             benefitType: text(row.BENEFIT_TYPE), benefitValue: text(row.BENEFIT_VALUE),
             benefitUnit: text(row.BENEFIT_UNIT), benefitBeban: text(row.BENEFIT_BEBAN) || "PRINCIPAL",
-            onFaktur: !text(row.CARA_TAGIH).toUpperCase().startsWith("BUKAN"),
             note: text(row.CATATAN), importedBy: String(gate.session?.user?.email ?? ""),
             source: "excel", sourceRef: file.name.slice(0, 200),
-        };
+        }];
     });
     const tariff = tariffSheet
         ? parseTariff(XLSX.utils.sheet_to_json<Record<string, unknown>>(tariffSheet, { defval: "" }),

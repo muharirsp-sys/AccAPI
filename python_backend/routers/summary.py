@@ -472,9 +472,15 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             order = []
             for k in unique_k:
                 if " - " in k:
-                    prefix, suffix = k.split(" - ", 1)
-                    # "EDP - PRESTIGE" -> "EDP PRESTIGE" (rapikan dash internal sub-kelompok)
-                    suffix = suffix.replace(" - ", " ").strip()
+                    # INDUKNYA SELURUH SEGMEN KECUALI YANG TERAKHIR, dan pemisahnya DIPERTAHANKAN.
+                    #
+                    # Sampai 20 September 2026 baris ini berbunyi `k.split(" - ", 1)` lalu
+                    # `suffix.replace(" - ", " ")`, yang meratakan tingkat ketiga: kelompok master
+                    # `DH KAMPER - TOILET - 3P` tercetak `DH KAMPER - TOILET 3P`. Nama itu TIDAK
+                    # ADA di master — orang yang merekonsiliasi lembar bertanda tangan ke master
+                    # tidak akan menemukannya. Terdampak 32 dari 49 kelompok DAHLIA.
+                    prefix, suffix = k.rsplit(" - ", 1)
+                    suffix = suffix.strip()
                 else:
                     prefix, suffix = k, ""
                 if prefix not in groups:
@@ -496,9 +502,16 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         idx_counter = 1
         
         for r in rows:
-            # Safely extract prefix (e.g., 'BLAGIO HM' from 'BLAGIO HM - EDT')
+            # INDUK = seluruh segmen kecuali yang terakhir ('DH KAMPER - TOILET' dari
+            # 'DH KAMPER - TOILET - 3P'), sama dengan yang dipakai merangkai selnya.
+            #
+            # Dulu hanya segmen PERTAMA. Akibatnya `DH KAMPER - TOILET - 3P` dan
+            # `DH KAMPER - RUANGAN - AS` melebur jadi satu baris cetak, dan satu sel harus
+            # memuat DUA induk sekaligus — bentuk yang tidak bisa dibaca ulang tanpa menebak
+            # induk mana milik ekor mana. Dengan induk penuh, keduanya tetap dua baris dan
+            # tiap sel hanya membawa satu induk.
             raw_k = str(r.get("kelompok", "")).strip()
-            prefix = raw_k.split(" - ")[0] if " - " in raw_k else raw_k
+            prefix = raw_k.rsplit(" - ", 1)[0] if " - " in raw_k else raw_k
             
             # The composite key dictates what gets merged together
             merge_key = (
@@ -536,6 +549,22 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                     val2 = r.get(field, "")
                     if val2:
                         target[field] = f"{val1},{val2}" if val1 else val2
+
+                # KETERANGAN IKUT DIGABUNG, karena untuk baris yang DITAHAN ia satu-satunya
+                # tempat barang itu menyebut namanya. Sampai 19 September 2026 hanya keterangan
+                # baris pertama yang disimpan: surat DAHLIA 570 menahan DUA kode, `F601LB` dan
+                # `F601SB`, keduanya melebur jadi satu baris cetak dan `F601SB` TIDAK MUNCUL
+                # SAMA SEKALI di Form — pada lembar yang ditandatangani Operational Manager,
+                # satu barang tertahan lenyap tanpa jejak. Baris bercocok kode tidak kehilangan
+                # apa pun karena `kode_barangs` menyimpannya; baris tertahan tidak punya itu.
+                # Yang sama persis tidak diulang: boilerplate "beban distributor" pada sepuluh
+                # baris tetap tercetak sekali.
+                ket_lama = str(target.get("keterangan", "") or "").strip()
+                ket_baru = str(r.get("keterangan", "") or "").strip()
+                if ket_baru:
+                    sudah = [p.strip() for p in ket_lama.split(" | ") if p.strip()]
+                    if ket_baru not in sudah:
+                        target["keterangan"] = " | ".join(sudah + [ket_baru]) if sudah else ket_baru
                         
                 # Merge caches
                 incoming_cache = r.get("_matched_items_cache", [])
@@ -1101,7 +1130,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         # tidak pernah kita tebak. `splitInRow=0` saat mengukur supaya pemotongan hanya terjadi
         # di batas baris; satu baris yang lebih tinggi dari satu halaman ditangani terpisah di
         # bawah, karena baris seperti itu memang tidak bisa utuh di mana pun.
-        from reportlab.platypus import PageBreak
+        from reportlab.platypus import CondPageBreak, KeepTogether, PageBreak
 
         # Halaman PERTAMA punya ruang lebih sedikit: judul dan nama perusahaan berdiri di atas
         # tabel sebagai flowable, bukan digambar canvas. Tanpa memperhitungkannya, potongan
@@ -1174,8 +1203,6 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             [Paragraph(f"{nama}<br/>{garis}", footer_style_center) for _, nama in TANDA_TANGAN],
         ]
 
-        elements.append(Paragraph(f"Makassar , {dibuat_date}", footer_style_right))
-        elements.append(Spacer(1, 10))
         lebar_ttd = usable / float(len(TANDA_TANGAN))
         sig_table = Table(sig_data, colWidths=[lebar_ttd] * len(TANDA_TANGAN))
         sig_table.setStyle(TableStyle([
@@ -1185,7 +1212,21 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             ('RIGHTPADDING', (0, 0), (-1, -1), 2),
         ]))
 
-        elements.append(sig_table)
+        # BLOK TANDA TANGAN TIDAK BOLEH TERBELAH HALAMAN.
+        #
+        # Tanpa penjagaan ini Platypus bebas memotongnya begitu sisa ruang halaman terakhir
+        # cukup untuk sebagiannya saja: label peran ("Diketahui Oleh") mendarat di satu
+        # halaman, kolom "(.............................)"-nya di halaman berikutnya. Lembar
+        # seperti itu tidak sah ditandatangani — dan itu bukan hipotesis: Form DAHLIA
+        # 20 September 2026 terbit dengan peran di halaman 5 dan kolomnya di halaman 6.
+        #
+        # Tingginya DIUKUR, tidak dipatok: jumlah penanda tangan berbeda per cabang, dan
+        # angka mati akan salah begitu susunannya berubah.
+        blok_ttd = [Paragraph(f"Makassar , {dibuat_date}", footer_style_right),
+                    Spacer(1, 10), sig_table]
+        tinggi_ttd = sum(f.wrap(usable, tinggi_halaman)[1] for f in blok_ttd)
+        elements.append(CondPageBreak(tinggi_ttd))
+        elements.append(KeepTogether(blok_ttd))
         
         doc.build(elements, onFirstPage=my_canvas, onLaterPages=my_canvas)
 
@@ -1226,7 +1267,60 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 "mismatch_count": len(flagged_mismatches), "conflict_count": len(flagged_conflicts),
             })
 
-        MANUAL_OUTPUTS[file_id] = {"owner": identity(user), "form": form_path, "dataset": dataset_path}
+        # SIDECAR JSON — baris PERSIS seperti yang dirender, di sebelah PDF-nya.
+        #
+        # Kenapa bukan membongkar ulang PDF-nya: menebak posisi x/y sel ReportLab terbukti
+        # rapuh; teks kolom tetangga bocor ke rentang-x kolom sebelahnya dan menghasilkan
+        # temuan palsu. Geometri diperiksa dari PDF, semantik dari berkas ini.
+        #
+        # `kode_ditahan` adalah alasan utama berkas ini ada. Baris yang DITAHAN tidak punya
+        # `kode_barangs`, jadi satu-satunya tempat barang itu menyebut namanya adalah
+        # `keterangan` — dan saat dua baris tertahan dilebur, nama yang kedua pernah hilang
+        # sama sekali dari lembar yang ditandatangani (F601SB, 19 September 2026). Invariant
+        # C10 pada `tools/verify_form_summary.py` menjaganya, dan ia butuh daftar ini.
+        sidecar_path = os.path.join(out_dir, f"{file_id}_rows.json")
+        kode_ditahan_re = re.compile(r"kode '([^']+)'")
+        sidecar_rows = []
+        for i, baris in enumerate(baris_teks):
+            # Kodenya diambil dari BARANG YANG BENAR-BENAR COCOK (`pdf_items`), sumber yang sama
+            # dengan kolom Kelompok dan Gramasi pada barisnya. `meta["kode_barangs"]` adalah
+            # klaim baris SEBELUM pencocokan dan bisa kosong padahal barangnya ketemu — memakai
+            # itu membuat baris yang sehat tertandai "ditahan".
+            cocok_i = pdf_items.get(i, [])
+            kodes = [str(it.get("kode_barang", "")).strip()
+                     for it in cocok_i if str(it.get("kode_barang", "")).strip()]
+            # DUA KOSAKATA KODE, dan keduanya perlu ditulis.
+            #
+            # `kode_barang` master adalah kode INTERNAL 14 digit (U3073101015010); yang disebut
+            # SURAT principal adalah kode pendek di depan `nama_barang` (F601TM). Pemeriksa
+            # kelompok mencocokkan lewat kosakata surat, jadi menulis kode internal saja membuat
+            # setiap baris sehat dilaporkan "tidak ada di master". Yang pendek tidak selalu ada —
+            # master KINO menulis "KNF ..." tanpa kode — maka dipakai bila ada, kalau tidak
+            # internalnya yang ditulis.
+            def kode_principal(item):
+                token = str(item.get("nama_barang", "")).strip().split(" ")[0].upper()
+                return token if (len(token) <= 14 and any(c.isdigit() for c in token)) else ""
+            pendek = [kode_principal(it) for it in cocok_i]
+            ket = baris[13]
+            sidecar_rows.append({
+                "no": baris[0], "surat_program": baris[1], "nama_program": baris[2],
+                "channel": baris[3], "daftar_outlet": baris[4], "periode": baris[5],
+                "kelompok": baris[6], "variant": baris[7], "gramasi": baris[8],
+                "ketentuan": baris[9], "benefit": baris[10], "syarat_claim": baris[11],
+                "keterangan": ket,
+                "kode_barangs": [k for k in pendek if k] or kodes,
+                "kode_internal": kodes,
+                # Kode yang disebut surat tetapi tidak punya padanan master. Diambil dari
+                # keterangan barisnya, tempat parser menuliskannya secara literal.
+                "kode_ditahan": kode_ditahan_re.findall(ket),
+                "held": not kodes,
+            })
+        with open(sidecar_path, "w", encoding="utf-8") as sidecar_file:
+            json.dump({"principal": principle_for_claim, "rows": sidecar_rows},
+                      sidecar_file, ensure_ascii=False, indent=2)
+
+        MANUAL_OUTPUTS[file_id] = {"owner": identity(user), "form": form_path,
+                                   "dataset": dataset_path, "rows": sidecar_path}
 
         # FASE 5: golden snapshot. Input baris identik (dok+approval sama) HARUS -> output identik.
         # input_key: urutan baris diabaikan (identitas dok). output_sig: urutan DIPERTAHANKAN
