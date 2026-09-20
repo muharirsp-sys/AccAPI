@@ -153,13 +153,31 @@ def append_rows(draft_id, user, rows, master=None):
         return tuple(" ".join(str(baris.get(k) or "").split()).upper()
                      for k in ("surat_program", "ketentuan", "benefit_type", "benefit"))
 
-    sudah = {_jatidiri(b) for b in lama}
+    # Baris kembar DIBUANG, tetapi KETERANGANNYA DISELAMATKAN.
+    #
+    # Jati diri sengaja tidak memuat kelompok, jadi satu surat yang menghasilkan enam baris
+    # berketentuan seragam ("Beli 12 LSN") melebur jadi satu. Itu benar untuk barisnya —
+    # tetapi keterangan adalah satu-satunya tempat barang yang DITAHAN menyebut namanya, dan
+    # membuangnya berarti barang itu lenyap dari Summary sebelum Form sempat melihatnya.
+    #
+    # Terbukti 20 September 2026: surat 570 menahan `F601LB` dan `F601SB`; keduanya hilang di
+    # sini, bukan di perender. Gerbang `tools/verify_form_summary.py` (C9) yang menemukannya.
+    # Perbaikan yang sama sudah dipasang di `summary_manual_generate`; ini sambungan keduanya.
+    sudah = {}
+    for b in lama:
+        sudah.setdefault(_jatidiri(b), b)
     baru_saja = []
     for baris in rows or []:
         kunci = _jatidiri(baris)
-        if kunci in sudah:
+        kembar = sudah.get(kunci)
+        if kembar is not None:
+            ket_baru = " ".join(str(baris.get("keterangan") or "").split())
+            if ket_baru:
+                bagian = [p.strip() for p in str(kembar.get("keterangan") or "").split(" | ") if p.strip()]
+                if ket_baru not in bagian:
+                    kembar["keterangan"] = " | ".join([*bagian, ket_baru]) if bagian else ket_baru
             continue
-        sudah.add(kunci)
+        sudah[kunci] = baris
         baru_saja.append(baris)
 
     content["rows"] = [*lama, *baru_saja]

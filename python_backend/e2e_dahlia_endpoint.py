@@ -166,6 +166,9 @@ def main():
     # pengguna sebagai "hasil perbaikan". Tidak ada berkas jauh lebih jujur daripada itu.
     for lama in (form, dataset):
         lama.unlink(missing_ok=True)
+    sidecar = tujuan / "Form_Summary_DAHLIA_SEPT2026.rows.json"
+    for lama2 in (sidecar,): lama2.unlink(missing_ok=True)
+    shutil.copy2(keluaran["rows"], sidecar)
     shutil.copy2(keluaran["form"], form)
     shutil.copy2(keluaran["dataset"], dataset)
     print(f"\nForm Summary : {form}")
