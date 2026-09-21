@@ -182,6 +182,41 @@ sebelum ada yang lewat.
 
 ---
 
+## 5b. Deploy dan migrasi — SUDAH DIJALANKAN
+
+| | |
+|---|---|
+| PR [#88](https://github.com/muharirsp-sys/AccAPI/pull/88) | merged `8e58e3a9` |
+| Deploy Coolify | run `35516147353` **success**; container dibuat 2026-09-20 22:28 |
+| Migrasi `0020` (drop `prd_id`) | **dijalankan 2026-09-21**, `ALTER TABLE` |
+| Migrasi `0021` (drop `on_faktur`) | **dijalankan 2026-09-21**, `ALTER TABLE` |
+| Sesudahnya | kolom sisa **0**, baris **249**, aktif **249** |
+| Cadangan | `python_backend/data/cadangan_promo_rule_kolom_2026-09-20.json` — 249 baris berikut `id`, `surat_program`, `item_code`; **109 `prd_id` terisi**, 123 `on_faktur = false` |
+
+**URUTANNYA BUKAN SELERA — DEPLOY DULU, BARU DROP.** `db.select().from(promoRule)` milik
+Drizzle menyusun **daftar kolom eksplisit**. Kode lama masih meminta `prd_id` dan `on_faktur`;
+menjatuhkan kolomnya sebelum image baru hidup akan membuat setiap pembacaan `promo_rule`
+gagal seketika — Validator Diskon, Rekap Promo, dan Aturan Promo sekaligus.
+
+Bukti image baru hidup sebelum DROP dijalankan: `grep` atas `/app/.next/server` di container
+frontend yang sedang berjalan tidak menemukan `on_faktur` maupun `prd_id`. Sesudah DROP,
+daftar 27 kolom yang kini disusun Drizzle diuji langsung ke Postgres produksi dan
+mengembalikan baris nyata.
+
+Untuk migrasi DROP berikutnya, tempuh urutan yang sama. `scripts/migrate-pg.mjs` **sengaja
+menolak DROP** ("JANGAN: DROP apa pun") supaya ada yang menekan tombolnya secara sadar:
+
+```bash
+ssh root@43.156.118.114 \
+  "docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1" \
+  < db/migrations/00XX_nama.sql
+```
+
+Catatan: role Postgres-nya **`accapi`**, bukan `postgres` — `postgres` tidak ada dan
+memakainya gagal dengan `FATAL: role "postgres" does not exist`.
+
+---
+
 ## 6. Gerbang yang harus hijau sebelum push
 
 ```bash
