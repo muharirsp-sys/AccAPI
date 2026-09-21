@@ -269,6 +269,45 @@ fungsi yang benar-benar dipasang di rute.
 | **Parser URC (6 surat), ABC/Heinz (538), GONDOWANGI** | Belum. GONDOWANGI blokirnya master basi, bukan parser |
 | **Daftar outlet CONTRACTUAL** | Dinyatakan pengguna **beres** — hanya berlaku bila ada outlet CONTRACTUAL; kalau tidak ada, cukup LOYALTY |
 
+### 8b. Cacat pada verifier itu sendiri — belum diperbaiki
+
+Ditemukan saat membaca `tools/verify_form_summary.py`, dan semuanya sudah diverifikasi:
+
+1. **`--strict-kelompok` adalah bendera mati.** Terdaftar di `argparse`, ditulis di contoh
+   perintah, dan **tidak pernah dibaca kode mana pun**. Siapa pun yang menjalankan perintah
+   contoh akan percaya ia sedang di mode ketat. Ini persis jenis cacat yang gerbang ini
+   dibuat untuk mencegah: penjaga yang tampak menjaga.
+
+2. **`extract_column_cells` sudah mati** sejak semantik pindah ke sidecar — masih ada, dan
+   godaan untuk memakainya kembali (membongkar sel dari posisi x/y PDF) ikut ada.
+
+3. **C9 mencocokkan tanpa batas kata.** `if c in form_text` adalah pencarian substring.
+   Master DAHLIA punya **20 pasang kode yang satu awalan dari yang lain** (`F601A` ⊂
+   `F601AH`, `F601TK` ⊂ `F601TKN`, `D112` ⊂ `D112H-N`), jadi kode yang TIDAK tercetak bisa
+   dilaporkan "terwakili". Invariant yang paling menjaga uang justru yang paling longgar
+   pencocokannya. Perbaikannya: cocokkan dengan batas kata, bukan substring.
+
+4. **Pemotongan di `TOKO PANTAUAN`** membuang **seluruh** teks surat setelahnya. Aturan
+   produk yang tercetak di bawah lampiran daftar toko tidak akan pernah diperiksa C9.
+
+### 8c. Belum diuji lewat tombol di layar produksi
+
+Perbaikan penamaan kelompok dan sidecar sudah ter-deploy dan terbukti lewat
+`e2e_dahlia_endpoint.py` (yang memanggil fungsi endpoint sungguhan) serta lewat gerbang
+12/12. Tetapi **belum ada yang menekan tombol Generate Summary Final di produksi** sejak
+image ini hidup. Itu langkah yang sama dengan pelajaran 2.3 handover sebelumnya: kode di
+dalam endpoint diverifikasi lewat endpoint itu — dan verifikasi lewat layar masih satu
+lapis lagi di atasnya.
+
+### 8d. Cadangan hanya ada di satu mesin
+
+`python_backend/data/cadangan_promo_rule_kolom_2026-09-20.json` (37 KB) **tidak ikut
+repo** — `.gitignore:52` mengabaikan `python_backend/data/*.json`. Nasib yang sama menimpa
+`cadangan_promo_rule_2026-09-18.json`. Artinya satu-satunya salinan nilai `prd_id` untuk 109
+baris ada di laptop, bukan di mana pun yang tahan kehilangan mesin. Beberapa berkas di
+folder itu memang pernah di-`add -f` (lihat `golden_*.json`), jadi jalurnya ada — tinggal
+diputuskan apakah data produksi boleh masuk repo.
+
 ---
 
 ## 9. Berkas rujukan
