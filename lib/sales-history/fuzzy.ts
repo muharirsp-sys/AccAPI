@@ -105,8 +105,8 @@ let loading: Promise<Vocab> | null = null;
 
 async function loadVocab(): Promise<Vocab> {
     const [namesRes, objsRes] = await Promise.all([
-        salesClient.execute("SELECT DISTINCT nama_produk FROM sales_history_item WHERE nama_produk <> ''"),
-        salesClient.execute("SELECT DISTINCT kode_objek FROM sales_history_item WHERE kode_objek <> ''"),
+        salesClient.execute("SELECT DISTINCT nama_produk FROM sales_history_item WHERE nama_produk <> '' AND published = 1"),
+        salesClient.execute("SELECT DISTINCT kode_objek FROM sales_history_item WHERE kode_objek <> '' AND published = 1"),
     ]);
     const names = namesRes.rows.map((r) => String(r.nama_produk));
     const objs = objsRes.rows.map((r) => String(r.kode_objek));
