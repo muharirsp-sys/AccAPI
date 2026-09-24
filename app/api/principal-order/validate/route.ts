@@ -19,9 +19,9 @@ import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { syncItemPrices } from "@/lib/item-price-sync";
 import { aturanBerlaku, bonusQuota, channelAllowed, channelOutlet, checkLine, checkSoPromo, daftarKosong,
-    isBonusLine, matchItemRule, needsTriggerCheck, outletAllowed, outletListsOn, purchaseByGroup,
+    isBonusLine, JARINGAN_POSISI_BEBAS, matchItemRule, needsTriggerCheck, normalisasiJaringan, outletAllowed, outletListsOn, purchaseByGroup,
     splitDiscounts, triggerGroupKey, triggerReached,
-    type DiscountAt, type PublishedRule, type TriggerBuy } from "@/lib/principal-validation";
+    type DiscountAt, type Normalisasi, type PublishedRule, type TriggerBuy } from "@/lib/principal-validation";
 import { duplicateFinding, findDuplicate, type OrderFingerprint } from "@/lib/order-duplicate";
 
 export const runtime = "nodejs";
@@ -214,7 +214,7 @@ export async function POST(request: NextRequest) {
 
     const [knownItems, knownCustomers, unitsByCode] = await Promise.all([
         itemCodes.length ? db.select({ no: item.no }).from(item).where(inArray(item.no, itemCodes)) : Promise.resolve([]),
-        customerNos.length ? db.select({ no: customer.customerNo, branchId: customer.branchId, categoryName: customer.categoryName }).from(customer).where(inArray(customer.customerNo, customerNos)) : Promise.resolve([]),
+        customerNos.length ? db.select({ no: customer.customerNo, name: customer.name, branchId: customer.branchId, categoryName: customer.categoryName }).from(customer).where(inArray(customer.customerNo, customerNos)) : Promise.resolve([]),
         itemUnits(itemCodes),
     ]);
     const itemSet = new Set(knownItems.map((row) => row.no));
@@ -252,6 +252,25 @@ export async function POST(request: NextRequest) {
         for (const result of results) priceByKey.set(`${customerNo}|${result.code}|${result.unit}`, { price: result.price, source: result.source });
     }
 
+    // POSISI DISKON JARINGAN (Indomaret, Alfamart, Indogrosir, Alfamidi — nama di MASTER) mengikuti
+    // tarif outletnya, dihitung SEKALI dan dipakai setiap pemeriksaan di bawah (lihat
+    // `normalisasiJaringan`). Hasilnya DISIMPAN ke baris: faktur harus terbit dengan posisi yang
+    // sama dengan yang dinilai gerbang — 2,25% Alfamart di posisi 2, bukan di posisi 4 laporan.
+    const nameOf = new Map(knownCustomers.map((row) => [row.no, row.name ?? ""]));
+    const normalOf = new Map<number, Normalisasi>(lines.map((line): [number, Normalisasi] => {
+        const asli = ((line.discounts as DiscountAt[]) ?? []).map(({ reportPosition, ...entry }) =>
+            ({ ...entry, position: reportPosition ?? entry.position }));
+        const itemCode = items.get(line.productCode) ?? null;
+        const customerNo = customerNoOf(line);
+        if (!customerNo || !JARINGAN_POSISI_BEBAS.test(nameOf.get(customerNo) ?? "")) return [line.rowNumber, { discounts: asli }];
+        const rules = berlaku([
+            ...(itemCode ? (rulesByItem.get(itemCode) ?? []) : []),
+            ...tariffOf(customers.get(line.customerCode) ?? null, customerNo),
+        ], dateOf(line), customerNo, String(line.soNo));
+        return [line.rowNumber, normalisasiJaringan(asli, rules, itemCode)];
+    }));
+    const discountsOfLine = new Map([...normalOf].map(([row, hasil]) => [row, hasil.discounts]));
+
     // Potongan tingkat FAKTUR diputuskan PER SO, bukan per baris: satu nominal untuk seluruh
     // SO yang dibagi rata, sehingga barang yang tidak masuk program pun ikut kebagian. Kalau
     // diperiksa per baris, justru baris yang benar yang akan dituduh.
@@ -262,7 +281,7 @@ export async function POST(request: NextRequest) {
         for (const line of lines) {
             const key = String(line.soNo);
             const entry = perSo.get(key) ?? { gross: 0, claim: 0, lines: 0, date: dateOf(line), customerNo: customerNoOf(line) };
-            const discounts = (line.discounts as DiscountAt[]) ?? [];
+            const discounts = discountsOfLine.get(line.rowNumber) ?? [];
             const split = splitDiscounts(Number(line.reportGross), discounts);
             // Ambangnya dihitung dari SELURUH belanja SO; yang dicocokkan hanya SISA klaim
             // yang belum dijelaskan aturan per barang.
@@ -401,7 +420,7 @@ export async function POST(request: NextRequest) {
                 // terkecil) dibagi qty faktur. Baris yang tidak naik ke KRT menghasilkan 1.
                 unitRatio: Number(line.qty) > 0 ? Number(line.reportQty) / Number(line.qty) : 1,
                 gross: Number(line.reportGross), reportDiscount: Number(line.reportDiscount),
-                discounts: (line.discounts as DiscountAt[]) ?? [], bonus: line.bonus,
+                discounts: discountsOfLine.get(line.rowNumber) ?? [], bonus: line.bonus,
                 rules: berlaku([
                     ...(itemCode ? (rulesByItem.get(itemCode) ?? []) : []),
                     ...tariffOf(base, customerNo),
@@ -421,7 +440,8 @@ export async function POST(request: NextRequest) {
             // Temuan order ganda juga menahan SELURUH SO: yang diduga ganda adalah ordernya,
             // bukan satu barisnya.
             const dupe = dupeFindings.get(String(line.soNo));
-            const findings = [...checked.findings, ...sisi, ...(dupe ? [dupe] : [])];
+            const jaringan = normalOf.get(line.rowNumber)?.finding;
+            const findings = [...(jaringan ? [jaringan] : []), ...checked.findings, ...sisi, ...(dupe ? [dupe] : [])];
             const status = findings.length ? "review" : "ok";
             if (status === "ok") ok += 1; else review += 1;
 
@@ -429,6 +449,7 @@ export async function POST(request: NextRequest) {
                 itemCode, customerNo, salesmanInternal,
                 expectedPrice: found?.price === null || found?.price === undefined ? null : String(found.price),
                 priceSource: found?.source ?? null,
+                discounts: discountsOfLine.get(line.rowNumber) ?? [],
                 discDistributor: String(checked.split.distributor),
                 discPrincipal: String(checked.split.principal),
                 discUnowned: String(checked.split.unowned),

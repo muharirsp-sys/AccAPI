@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { aturanBerlaku, bonusQuota, channelAllowed, channelLaporan, channelOutlet, checkLine, checkSoPromo,
-    daftarKosong, needsTriggerCheck, outletAllowed, outletListsOn, purchaseByGroup, splitDiscounts, triggerGroupKey,
+    daftarKosong, JARINGAN_POSISI_BEBAS, needsTriggerCheck, normalisasiJaringan, outletAllowed, outletListsOn, purchaseByGroup, splitDiscounts, triggerGroupKey,
     triggerReached,
     type LineInput, type PublishedRule } from "./principal-validation.ts";
 
@@ -849,4 +849,104 @@ test("aturan yang menunjuk DUA daftar menggabungkannya, dan gagal tertutup bila 
     const pesan = daftarKosong([{ ...rule, suratProgram: "BP2609006016" }], sebagian);
     assert.equal(pesan.length, 1);
     assert.match(pesan[0], /CONTRACTUAL/);
+});
+
+/* ---------------------------------------------------------------- JARINGAN: posisi dimaklumi, nilai tidak
+
+   ORDER_DETAIL 16 Sep 2026: ALFAMART C-AL0063 dilaporkan Kino DISC_1 4 lalu DISC_4 2,25, sedangkan
+   tarifnya posisi 1 4% dan posisi 2 2,25%, keduanya tanggungan distributor. Keputusan pengguna
+   2026-09-24: untuk Indomaret, Alfamart, Indogrosir, dan Alfamidi posisi yang salah dimaklumi,
+   nilai yang berbeda dari tarif ditolak — "3.96+3.1+3.1 itu baru ditolak". */
+
+const alfa = (over: Partial<PublishedRule> = {}) => tarif({ customerCode: "C-AL0063", benefitValue: "4", ...over });
+const indomaret = [tarif({ customerCode: "C-IN0050", benefitValue: "3.96" }),
+    tarif({ customerCode: "C-IN0050", tierNo: 2, benefitValue: "3.1" })];
+
+test("jaringan: persen yang posisinya salah dipindah ke posisi tarifnya", () => {
+    const tarifAlfa = [alfa(), alfa({ tierNo: 2, benefitValue: "2.25" })];
+    const hasil = normalisasiJaringan([{ position: 1, percent: 4 }, { position: 4, percent: 2.25 }], tarifAlfa, "K1330001020010");
+    assert.equal(hasil.finding, undefined);
+    assert.deepEqual(hasil.discounts, [{ position: 1, percent: 4 }, { position: 2, percent: 2.25, reportPosition: 4 }]);
+
+    // Barisnya lolos, bebannya distributor, total tetap sama dengan laporan.
+    const cek = checkLine(line({ gross: 901621.62, reportDiscount: 55539.89, discounts: hasil.discounts, rules: tarifAlfa }));
+    assert.equal(cek.status, "ok", cek.findings.join(" | "));
+    assert.equal(cek.split.principal, 0);
+    assert.equal(cek.split.distributor, 55539.89);
+
+    // Urutan tertukar pun dimaklumi: yang dinilai nilainya, bukan kolomnya.
+    assert.deepEqual(normalisasiJaringan([{ position: 1, percent: 3.1 }, { position: 4, percent: 3.96 }], indomaret, "K1").discounts,
+        [{ position: 1, percent: 3.96, reportPosition: 4 }, { position: 2, percent: 3.1, reportPosition: 1 }]);
+
+    // Kurang dari tarif bukan kerugian perusahaan: tidak ditahan.
+    assert.equal(normalisasiJaringan([{ position: 1, percent: 3.96 }], indomaret, "K1").finding, undefined);
+
+    // Validasi ULANG memakai posisi LAPORAN: tarif dicabut -> kembali ke DISC_4, tidak tertinggal di posisi 2.
+    assert.deepEqual(normalisasiJaringan(hasil.discounts, [alfa()], "K1").discounts,
+        [{ position: 1, percent: 4 }, { position: 4, percent: 2.25 }]);
+    assert.deepEqual(normalisasiJaringan(hasil.discounts, tarifAlfa, "K1").discounts, hasil.discounts, "berulang kali hasilnya sama");
+});
+
+test("jaringan: nilai yang tidak ada di tarif DITOLAK, dengan sebabnya", () => {
+    // Contoh pengguna: 3,96 + 3,1 + 3,1 lawan tarif 3,96 + 3,1 -> kelebihan 3,1 tidak punya dasar.
+    const d = [{ position: 1, percent: 3.96 }, { position: 4, percent: 3.1 }, { position: 5, percent: 3.1 }];
+    const hasil = normalisasiJaringan(d, indomaret, "K1");
+    assert.deepEqual(hasil.discounts, d, "barisnya dikembalikan apa adanya");
+    assert.match(hasil.finding ?? "", /3\.96 \+ 3\.1 \+ 3\.1 tidak sama dengan tarif outlet ini \(3\.96 \+ 3\.1\): 3\.1% di DISC_5/);
+
+    // Nilai berbeda (3% lawan 3,1%) juga ditolak — keputusan Indomaret 14 Sep: tarifnya 3,1 bukan 3.
+    assert.match(normalisasiJaringan([{ position: 1, percent: 3.96 }, { position: 4, percent: 3 }], indomaret, "K1").finding ?? "", /3% di DISC_4/);
+
+    // Surat principal untuk barang itu membenarkan persen tambahannya -> tetap di posisinya.
+    const surat = aturan({ itemCode: "K1", benefitValue: "3" });
+    const denganSurat = normalisasiJaringan([{ position: 1, percent: 3.96 }, { position: 4, percent: 3.1 }, { position: 5, percent: 3 }],
+        [...indomaret, surat], "K1");
+    assert.equal(denganSurat.finding, undefined);
+    assert.deepEqual(denganSurat.discounts,
+        [{ position: 1, percent: 3.96 }, { position: 2, percent: 3.1, reportPosition: 4 }, { position: 5, percent: 3 }]);
+
+    // Tanpa tarif tidak ada acuan posisi: dibiarkan, pemeriksaan biasa yang menahannya.
+    assert.deepEqual(normalisasiJaringan([{ position: 4, percent: 2.25 }], [], "K1"), { discounts: [{ position: 4, percent: 2.25 }] });
+    // Nominal rupiah (MSG) dan baris bonus tidak disentuh.
+    const rp = [{ position: 1, percent: 4 }, { position: 5, percent: 0.5, amount: 1000 }];
+    assert.deepEqual(normalisasiJaringan(rp, [alfa()], "K1").discounts, rp);
+});
+
+test("jaringan dicocokkan pada NAMA master: Indomaret, Alfamart, Indogrosir, Alfamidi saja", () => {
+    for (const nama of ["ALFAMART {C-AL0063}", "ALFAMART PALOPO {C-ALF052}", "ALFAMIDI {C-AL0064}",
+        "INDOMARET {C-IN0050}", "INDOGROSIR - GORONTALO"]) assert.ok(JARINGAN_POSISI_BEBAS.test(nama), nama);
+    for (const nama of ["PT. SUPRA BOGA LESTARI {C-PT0029}", "LOTTE MART", "HERO SUPERMARKET", "TK. SUBHAN {C-SU0275}", "ALFAMARTINI"]) {
+        assert.equal(JARINGAN_POSISI_BEBAS.test(nama), false, nama);
+    }
+});
+
+test("tarif PRINCIPAL di posisi 4 menjelaskan klaimnya (PT SUPRA BOGA 0,5%)", () => {
+    // Sampai 2026-09-24 hanya tarif distributor yang dicocokkan; tarif principal yang dimuat
+    // pengguna ditolak dengan pesan "0,5% tidak sama dengan ... posisi 4 0,5%".
+    const supra = [tarif({ customerCode: "C-PT0029", benefitValue: "3" }),
+        tarif({ customerCode: "C-PT0029", tierNo: 4, benefitValue: "0.5", benefitBeban: "PRINCIPAL" })];
+    const hasil = checkLine(line({ discounts: [{ position: 1, percent: 3 }, { position: 4, percent: 0.5 }],
+        reportDiscount: 11302.7, rules: supra }));
+    assert.equal(hasil.status, "ok", hasil.findings.join(" | "));
+    assert.equal(hasil.split.principal, 1572.97);
+
+    // Beban tetap dicocokkan: tarif principal tidak membenarkan potongan di posisi distributor.
+    const salah = checkLine(line({ discounts: [{ position: 2, percent: 0.5 }], reportDiscount: 1621.62, rules: supra }));
+    assert.equal(salah.status, "review");
+});
+
+test("NKA tergolong Modern Trade saat dibandingkan dengan channel laporan principal", () => {
+    // ALFAMART disebut "Modern Trade" oleh Kino dan NKA oleh master — bukan dua jawaban yang
+    // berbeda. Sebelumnya gerbang menyuruh orang mengganti kategori Accurate-nya.
+    const alfamart = checkLine(line({ discounts: [{ position: 1, percent: 2 }], reportDiscount: 6486.49,
+        rules: [tarif()], outletChannel: channelOutlet("NKA"), reportChannel: "Modern Trade" }));
+    assert.equal(alfamart.status, "ok", alfamart.findings.join(" | "));
+
+    // Selisih yang sungguhan tetap terlihat.
+    const beda = checkLine(line({ discounts: [{ position: 1, percent: 2 }], reportDiscount: 6486.49,
+        rules: [tarif()], outletChannel: channelOutlet("NKA"), reportChannel: "General Trade" }));
+    assert.match(beda.findings.join(" "), /master Accurate menyimpannya NKA/);
+
+    // Kelayakan promo ber-channel TIDAK ikut dilebarkan: surat MT tetap hanya untuk kategori MT.
+    assert.equal(channelAllowed({ channel: "MT" }, channelOutlet("NKA")), false);
 });

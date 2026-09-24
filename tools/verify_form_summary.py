@@ -28,10 +28,13 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
-try:
-    import pdfplumber
-except ImportError:  # pragma: no cover
-    sys.exit("butuh pdfplumber: pip install pdfplumber")
+def _pdfplumber():
+    """Diimpor saat PDF benar-benar dibaca, supaya logika C9 bisa diuji tanpa pdfplumber (CI)."""
+    try:
+        import pdfplumber
+    except ImportError:  # pragma: no cover
+        sys.exit("butuh pdfplumber: pip install pdfplumber")
+    return pdfplumber
 try:
     import openpyxl
 except ImportError:  # pragma: no cover
@@ -248,7 +251,7 @@ class PageView:
 
 def read_pages(path: Path) -> list[PageView]:
     pages: list[PageView] = []
-    with pdfplumber.open(path) as pdf:
+    with _pdfplumber().open(path) as pdf:
         for i, page in enumerate(pdf.pages, start=1):
             words = page.extract_words(
                 use_text_flow=False, keep_blank_chars=False, extra_attrs=[]
@@ -565,41 +568,6 @@ def resolve_group(cell: str, master: Master) -> tuple[list[str], list[str]]:
     return matched, missing
 
 
-def extract_column_cells(pages: list[PageView], label: str) -> list[tuple[int, str]]:
-    """Ambil teks kolom `label` per baris-visual.
-
-    Batas kolom diambil dari x0 header `label` sampai x0 header berikutnya.
-    Baris dibentuk dengan mengelompokkan kata berdasarkan `top` (toleransi 3pt),
-    lalu baris-baris berdekatan yang masih satu sel digabung oleh pemanggil.
-    """
-    out: list[tuple[int, str]] = []
-    for p in pages:
-        hdrs, _, header_bottom = locate_headers(p)
-        if label not in hdrs:
-            continue
-        xs = sorted(hdrs.values())
-        x0 = hdrs[label]
-        nxt = [x for x in xs if x > x0 + 1]
-        x1 = min(nxt) if nxt else p.width
-        cell_words = [
-            w for w in p.words
-            if x0 - 2 <= w["x0"] < x1 - 2 and w["top"] > header_bottom + 2
-        ]
-        # kelompokkan per baris visual
-        lines: dict[int, list[dict]] = {}
-        for w in cell_words:
-            key = int(round(w["top"] / 3.0))
-            lines.setdefault(key, []).append(w)
-        ordered = [
-            " ".join(w["text"] for w in sorted(ws, key=lambda w: w["x0"]))
-            for _, ws in sorted(lines.items())
-        ]
-        for line in ordered:
-            if line.strip():
-                out.append((p.index, line.strip()))
-    return out
-
-
 def check_semantics(rows: list[dict] | None, master: Master) -> list[Check]:
     """C7/C8/C12 — dijalankan atas SIDECAR JSON, bukan hasil bongkar PDF.
 
@@ -686,8 +654,125 @@ def check_semantics(rows: list[dict] | None, master: Master) -> list[Check]:
 # C9 — coverage kode barang dari surat
 # --------------------------------------------------------------------------
 
-def check_code_coverage(pages: list[PageView], master: Master,
-                        surat_paths: list[Path]) -> Check:
+TOKEN_RE = re.compile(r"[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?")
+FAMILY_RE = re.compile(r"^([A-Z]+\d+)")
+
+
+def code_key(code: str) -> str:
+    """Kode dibandingkan TANPA tanda hubung. Surat menulis `BC002` dan `LT122N`, master
+    menulis `BC-002` dan `LT122-N` — barang yang sama, ejaan berbeda."""
+    return str(code or "").upper().replace("-", "")
+
+
+def family(code: str) -> str:
+    """Keluarga kode: huruf depan + angka sesudahnya. `F601LB` -> `F601`, `K24SGRA` -> `K24`."""
+    m = FAMILY_RE.match(code_key(code))
+    return m.group(1) if m else ""
+
+
+def tokens(text: str) -> set[str]:
+    """Token UTUH dalam bentuk `code_key`. Pencarian substring menyatakan `F601A` tercetak
+    hanya karena `F601AH` tercetak; di master DAHLIA ada 20 pasang kode seperti itu."""
+    return {code_key(t) for t in TOKEN_RE.findall(str(text or "").upper())}
+
+
+def letter_codes(text: str, master: Master) -> set[str]:
+    """Kode barang yang disebut surat, dalam bentuk `code_key`.
+
+    Acuannya MASTER, bukan pola bentuk: token yang ada di master pasti kode barang; token yang
+    tidak ada di master dihitung kode barang bila KELUARGANYA ada di master (`F601LB` dari
+    keluarga `F601`, `F610` dari "F610 ALL") — justru barang tertahan seperti inilah yang paling
+    berbahaya hilang. Kode toko pada lampiran (T022175, JK00026377, MMMU8235) dan potongan nomor
+    proposal (SUR030) tidak punya keluarga di master, jadi tersaring dengan sendirinya — tanpa
+    perlu memotong teks surat di mana pun.
+    """
+    keys = {code_key(c) for c in master.codes}
+    families = {family(c) for c in master.codes} - {""}
+    return {t for t in tokens(text) if t in keys or family(t) in families}
+
+
+def surat_programs(text: str, rows: list[dict]) -> set[str]:
+    """Nomor surat pada baris Form yang disebut di teks surat ini ("No. Proposal : 570/TMDH1/8/26#")."""
+    flat = re.sub(r"\s+", "", str(text or "")).upper()
+    return {p for p in {str(r.get("surat_program") or "").strip() for r in rows}
+            if p and re.sub(r"\s+", "", p).upper() in flat}
+
+
+def coverage_findings(letter_name: str, text: str, master: Master, rows: list[dict] | None,
+                      form_text: str, strict_kelompok: bool) -> tuple[list[str], list[str], int, int]:
+    """-> (fail, note, jumlah_kode, terwakili) untuk SATU surat.
+
+    Dengan sidecar, dicocokkan PER SURAT: kode surat 083 harus ada di baris surat 083 — tercetak
+    di baris milik surat lain bukan berarti surat ini terwakili. Terwakili berarti:
+      1. disebut sebagai kode baris (kode_barangs / kode_ditahan / kode_internal) surat itu, atau
+      2. kode keluarga ("F610 ALL") dan ada kode keluarga itu di baris surat itu, atau
+      3. disebut utuh di Keterangan baris TERTAHAN surat itu.
+    Selain itu, kode yang KELOMPOK dan GRAMASI-nya tercetak pada baris surat itu dianggap terwakili
+    lewat kelompok — dengan `--strict-kelompok` itu FAIL, tanpanya PERINGATAN yang tetap tercatat.
+    """
+    fails: list[str] = []
+    notes: list[str] = []
+    codes = letter_codes(text, master)
+    if not codes:
+        notes.append(f"{letter_name}: tidak ada kode barang yang dikenal master di surat ini")
+        return fails, notes, 0, 0
+    by_key = {code_key(c): c for c in master.codes}
+
+    if rows is not None:
+        programs = surat_programs(text, rows)
+        if not programs:
+            fails.append(f"{letter_name}: nomor surat ini tidak ada di baris Form mana pun — "
+                         f"seluruh {len(codes)} kodenya tidak terwakili")
+            return fails, notes, len(codes), 0
+        mine = [r for r in rows if str(r.get("surat_program") or "").strip() in programs]
+        row_codes = {code_key(c) for r in mine
+                     for c in (r.get("kode_barangs") or []) + (r.get("kode_ditahan") or []) + (r.get("kode_internal") or [])}
+        # Keterangan hanya mewakili barang pada baris yang DITAHAN. Baris biasa yang menulis
+        # "surat menyebut: F601TK" di keterangannya tetapi tidak memuat F601TK sebagai kodenya
+        # (surat 083: kelompoknya pun salah) justru cacat yang harus terlihat, bukan terwakili.
+        printed = set().union(set(), *(tokens(r.get("keterangan", "")) for r in mine if r.get("held")))
+        cells = [(r, resolve_group(_norm(r.get("kelompok", "")), master)[0]) for r in mine]
+    else:
+        row_codes, printed, cells = set(), tokens(form_text), []
+        notes.append(f"{letter_name}: tanpa --rows kode dicari di SELURUH Form, tidak per surat")
+    row_families = {family(c) for c in row_codes}
+
+    covered = 0
+    for c in sorted(codes):
+        if c in row_codes or c in printed or (c == family(c) and c in row_families):
+            covered += 1
+            continue
+        real = by_key.get(c)
+        klp = master.code_to_kelompok.get(real or "")
+        gram = master.code_to_gramasi.get(real or "")
+        if not klp:
+            lewat_kelompok = False
+        elif rows is not None:
+            lewat_kelompok = any(klp in matched and (not gram or gram in {_norm(g).upper() for g in split_tails(r.get("gramasi", ""))})
+                                 for r, matched in cells)
+        else:
+            lewat_kelompok = re.search(rf"(?<![A-Z0-9]){re.escape(klp)}(?![A-Z0-9])", form_text) is not None
+        if lewat_kelompok:
+            pesan = (f"{letter_name}: kode '{real}' tidak disebut di baris mana pun — hanya terwakili "
+                     f"lewat kelompok '{klp}'" + (f" / gramasi '{gram}'" if gram else ""))
+            if strict_kelompok:
+                fails.append(pesan + " (--strict-kelompok)")
+            else:
+                covered += 1
+                notes.append("PERINGATAN " + pesan)
+            continue
+        if real:
+            fails.append(f"{letter_name}: kode '{real}' ada di surat dan di master (kelompok '{klp}'), "
+                         f"tapi tidak terwakili di baris surat ini")
+        else:
+            fails.append(f"{letter_name}: kode '{c}' TIDAK ada di master dan TIDAK tercetak di Form — "
+                         f"barang tertahan lenyap tanpa jejak dari lembar yang ditandatangani; kode "
+                         f"tertahan wajib disebut literal di kolom Keterangan")
+    return fails, notes, len(codes), covered
+
+
+def check_code_coverage(pages: list[PageView], master: Master, surat_paths: list[Path],
+                        rows: list[dict] | None = None, strict_kelompok: bool = False) -> Check:
     c9 = Check("C9_KODE_COVERAGE",
                "Setiap kode barang di surat muncul di Form (tercetak atau ditahan)")
     if not surat_paths:
@@ -704,60 +789,21 @@ def check_code_coverage(pages: list[PageView], master: Master,
     form_text = " ".join(p.text for p in pages).upper()
     for sp in surat_paths:
         raw = ""
-        with pdfplumber.open(sp) as pdf:
+        with _pdfplumber().open(sp) as pdf:
             for page in pdf.pages:
                 raw += (page.extract_text() or "") + "\n"
-        # Surat promo hampir selalu membawa lampiran daftar toko, dan kode toko
-        # (T022175, JK00026377, MMMU8235, CL29150) berbentuk mirip kode barang.
-        # Tanpa dipotong, C9 melaporkan belasan 'kode hilang' palsu dan gate
-        # jadi bising sampai orang berhenti membacanya.
-        for marker in ("TOKO PANTAUAN", "DAFTAR TOKO", "KODE TOKO", "NAMA TOKO"):
-            pos = raw.upper().find(marker)
-            if pos > 0:
-                raw = raw[:pos]
-                c9.note(f"{sp.name}: teks dipotong di '{marker}' — lampiran daftar "
-                        f"toko tidak ikut dipindai")
-                break
-
         if not raw.strip():
             c9.fail(f"{sp.name}: PDF tanpa layer teks (hasil scan). "
                     f"Coverage kode tidak bisa dibuktikan otomatis — "
                     f"pipeline wajib mencatat extraction_mode=vision dan "
                     f"menyimpan daftar kode hasil ekstraksi untuk diperiksa di sini.")
             continue
-        cands = {m.group(0).upper() for m in CODE_CANDIDATE_RE.finditer(raw.upper())}
-        # Kode yang dikenal master + kandidat berbentuk kode yang TIDAK dikenal
-        # (justru inilah yang berbahaya: barang tertahan seperti F601SB).
-        codes = {c for c in cands
-                 if c in master.codes or re.fullmatch(r"[A-Z]{1,3}\d{2,4}[A-Z0-9]{0,4}", c)}
-        if not codes:
-            c9.note(f"{sp.name}: tidak ada kandidat kode barang terdeteksi")
-            continue
-        covered, missing = 0, []
-        for c in sorted(codes):
-            if c in form_text:
-                covered += 1
-                continue
-            # Kode yang COCOK ke master boleh diwakili barisnya: kalau kelompok
-            # DAN gramasi-nya tercetak, pembaca masih bisa mengenali barangnya.
-            klp = master.code_to_kelompok.get(c)
-            gram = master.code_to_gramasi.get(c)
-            if klp and klp in form_text and (not gram or gram in form_text):
-                covered += 1
-                continue
-            missing.append(c)
-        c9.note(f"{sp.name}: {len(codes)} kode di surat, {covered} terwakili di Form")
-        for c in missing:
-            if c in master.codes:
-                c9.fail(f"{sp.name}: kode '{c}' ada di surat, cocok ke master "
-                        f"(kelompok '{master.code_to_kelompok.get(c)}'), tapi baris "
-                        f"kelompok/gramasi-nya TIDAK tercetak — barang ini tidak "
-                        f"terwakili di lembar")
-            else:
-                c9.fail(f"{sp.name}: kode '{c}' TIDAK ada di master dan TIDAK tercetak "
-                        f"di Form — barang tertahan lenyap tanpa jejak dari lembar "
-                        f"yang ditandatangani; kode tertahan wajib disebut literal "
-                        f"di kolom Keterangan")
+        fails, notes, total, covered = coverage_findings(sp.name, raw, master, rows, form_text, strict_kelompok)
+        for n in notes:
+            c9.note(n)
+        c9.note(f"{sp.name}: {total} kode di surat, {covered} terwakili di Form")
+        for f in fails:
+            c9.fail(f)
     return c9
 
 
@@ -790,11 +836,11 @@ def check_held_rows(pages: list[PageView], rows: list[dict] | None) -> Check:
         ket = _norm(row.get("keterangan", "")).upper()
         for code in (str(c).upper() for c in (row.get("kode_ditahan") or [])):
             total += 1
-            if code not in ket:
+            if code_key(code) not in tokens(ket):
                 c10.fail(f"baris {row.get('no','?')}: kode ditahan '{code}' tidak "
                          f"disebut di Keterangan baris itu — kemungkinan hilang saat "
                          f"merge (keterangan tidak ikut digabung)")
-            elif code not in form_text:
+            elif code_key(code) not in tokens(form_text):
                 c10.fail(f"kode ditahan '{code}' ada di data tapi TIDAK tercetak di "
                          f"PDF — pada lembar yang ditandatangani barang ini lenyap")
     c10.note(f"{total} kode tertahan diperiksa")
@@ -827,7 +873,8 @@ def main() -> int:
                     help="nama penanda tangan wajib menurut aturan cabang, mis. "
                          "Admin SM 'Kepala Accounting' Claim 'Operational Manager'")
     ap.add_argument("--strict-kelompok", action="store_true",
-                    help="kelompok yang tidak terpetakan menjadi FAIL, bukan WARN")
+                    help="C9: kode surat yang tidak disebut di baris mana pun dan hanya "
+                         "terwakili lewat kelompok+gramasi jadi FAIL, bukan PERINGATAN")
     args = ap.parse_args()
 
     if not args.form.exists():
@@ -852,7 +899,8 @@ def main() -> int:
     checks += check_signature(pages, args.edge_margin, args.expect_roles)
     checks += check_grid(pages, args.x_tolerance, args.edge_margin)
     checks += check_semantics(rows, master)
-    checks.append(check_code_coverage(pages, master, [p for p in args.surat if p.exists()]))
+    checks.append(check_code_coverage(pages, master, [p for p in args.surat if p.exists()],
+                                      rows, args.strict_kelompok))
     checks.append(check_held_rows(pages, rows))
 
     width = max(len(c.id) for c in checks)

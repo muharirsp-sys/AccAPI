@@ -149,7 +149,10 @@ MASTER_ITEMS = [
 
 
 def by_code(rows, code):
-    return next(r for r in rows if code in str(r.get("kelompok", "")))
+    # Baris matriks MT membawa kelompok MASTER (lihat `_exact_item`), jadi kodenya dicari juga
+    # pada kutipan suratnya.
+    return next(r for r in rows if code in str(r.get("kelompok", ""))
+                or f"Strata Account {code}:" in str(r.get("source_quote", "")))
 
 
 def main():

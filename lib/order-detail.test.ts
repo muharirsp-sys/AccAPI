@@ -108,9 +108,28 @@ test("kolom DISC_n yang berisi RUPIAH dibedakan dari yang berisi persen", () => 
     // Baris bonus tetap 100% di posisi 1, tidak ikut ditebak-tebak.
     assert.deepEqual(discountsOf({ DISC_1: 0, GROSS: 1000, TOTAL_DISC: 1000 }, true), [{ position: 1, percent: 100 }]);
 
-    // Dua posisi terisi: tidak dibedakan, jatuh ke persen. Kalau ternyata salah, selisih
-    // totalnya yang menahan barisnya — gagal tertutup.
+    // Dua posisi yang sama-sama persen: tafsir persen-semua sudah mereproduksi TOTAL_DISC.
     const campur = discountsOf({ DISC_1: 4, DISC_4: 2.25, GROSS: 345945.95, TOTAL_DISC: 21310.27 }, false);
     assert.deepEqual(campur, [{ position: 1, percent: 4 }, { position: 4, percent: 2.25 }]);
 });
 
+
+test("persen dan RUPIAH pada SATU baris dibedakan per kolom, bukan dianggap persen semua", () => {
+    // TK SUBHAN (C-SU0275), ORDER_DETAIL 16 Sep 2026: DISC_1 2% (tarif distributor) lalu DISC_5
+    // Rp 1.918,9189 (bagian baris dari potongan faktur MSG Rp 100.000). Dibaca persen semua,
+    // DISC_5 jadi 1918,92% dan klaim se-SO terbaca Rp 1,17 MILIAR lawan manfaat Rp 100.000.
+    const baris = discountsOf({ DISC_1: 2, DISC_5: 1918.9189, GROSS: 97297.2972, TOTAL_DISC: 3864.8648 }, false);
+    assert.equal(baris.length, 2);
+    assert.deepEqual(baris[0], { position: 1, percent: 2 });
+    assert.equal(baris[1].position, 5);
+    assert.equal(baris[1].amount, 1918.9189);
+    // Persen setara dihitung atas SISA sesudah DISC_1, karena rantainya memotong sisa: 2% dulu
+    // (Rp 1.945,95), lalu rupiahnya persis — total sama dengan TOTAL_DISC yang dilaporkan.
+    const sisa = 97297.2972 - 1945.95;
+    assert.ok(Math.abs(sisa * baris[1].percent / 100 - 1918.92) <= 0.01);
+
+    // Tafsir yang tidak mereproduksi TOTAL_DISC tidak dipilih: tetap persen, dan selisih
+    // totalnya yang menahan baris — gagal tertutup, sama seperti sebelumnya.
+    assert.deepEqual(discountsOf({ DISC_1: 2, DISC_5: 1918.9189, GROSS: 97297.2972, TOTAL_DISC: 5000 }, false),
+        [{ position: 1, percent: 2 }, { position: 5, percent: 1918.9189 }]);
+});

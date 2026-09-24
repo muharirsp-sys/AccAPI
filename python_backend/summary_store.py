@@ -147,18 +147,24 @@ def append_rows(draft_id, user, rows, master=None):
     # PERTAMA di draft, verbatim sampai `promo_group_id`-nya. Sebab hulunya belum ditemukan;
     # penjaga ini tidak menunggu sebab itu ketemu, dan tetap benar setelah ia ketemu.
     #
-    # Jati diri satu baris program: surat + ketentuan + benefit. Bukan `id` (baris dari pembaca
-    # surat belum punya), dan bukan kelompoknya (justru itu yang sedang dikoreksi orang).
+    # Jati diri satu baris program: surat + ketentuan + benefit + BARANGNYA (kode dan kutipan
+    # baris surat). Bukan `id` (baris dari pembaca surat belum punya), dan bukan kelompoknya
+    # (justru itu yang sedang dikoreksi orang).
+    #
+    # Barang WAJIB ikut. Sampai 24 September 2026 jati dirinya tanpa barang, dan surat DAHLIA
+    # 083 yang memberi rafaksi Rp 1.000 kepada tujuh kode berbeda kehilangan enam di antaranya
+    # di sini: ketujuh baris "kembar", yang pertama disimpan, sisanya dibuang. Surat 234
+    # kehilangan lima dari enam grupnya dengan cara yang sama. Surat yang sama yang diunggah
+    # dua kali tetap tertangkap -- kode dan kutipannya pun sama persis.
     def _jatidiri(baris):
         return tuple(" ".join(str(baris.get(k) or "").split()).upper()
-                     for k in ("surat_program", "ketentuan", "benefit_type", "benefit"))
+                     for k in ("surat_program", "ketentuan", "benefit_type", "benefit", "kode_barangs", "source_quote"))
 
     # Baris kembar DIBUANG, tetapi KETERANGANNYA DISELAMATKAN.
     #
-    # Jati diri sengaja tidak memuat kelompok, jadi satu surat yang menghasilkan enam baris
-    # berketentuan seragam ("Beli 12 LSN") melebur jadi satu. Itu benar untuk barisnya —
-    # tetapi keterangan adalah satu-satunya tempat barang yang DITAHAN menyebut namanya, dan
-    # membuangnya berarti barang itu lenyap dari Summary sebelum Form sempat melihatnya.
+    # Jati diri sengaja tidak memuat kelompok. Baris tertahan tanpa kode dan tanpa kutipan
+    # bisa melebur -- dan keterangan adalah satu-satunya tempat barang yang DITAHAN menyebut
+    # namanya, jadi membuangnya berarti barang itu lenyap sebelum Form sempat melihatnya.
     #
     # Terbukti 20 September 2026: surat 570 menahan `F601LB` dan `F601SB`; keduanya hilang di
     # sini, bukan di perender. Gerbang `tools/verify_form_summary.py` (C9) yang menemukannya.

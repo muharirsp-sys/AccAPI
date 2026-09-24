@@ -27,6 +27,7 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
         { name: "Claim Workflow", href: "/claim-workflow", icon: ReceiptText },
         { name: "Aturan Promo", href: "/aturan-promo", icon: Percent },
         { name: "Rekap Promo", href: "/rekap-promo", icon: Percent },
+        { name: "Normalisasi Diskon", href: "/normalisasi-diskon", icon: Percent },
     ] },
     { id: "warehouse", name: "Gudang", description: "Susun rekapan dan siapkan pengambilan barang.", icon: PackageCheck, items: [
         { name: "Rekapan Nota", href: "/rekapan-nota", icon: PackageCheck },

@@ -182,6 +182,41 @@ sebelum ada yang lewat.
 
 ---
 
+## 5b. Deploy dan migrasi — SUDAH DIJALANKAN
+
+| | |
+|---|---|
+| PR [#88](https://github.com/muharirsp-sys/AccAPI/pull/88) | merged `8e58e3a9` |
+| Deploy Coolify | run `35516147353` **success**; container dibuat 2026-09-20 22:28 |
+| Migrasi `0020` (drop `prd_id`) | **dijalankan 2026-09-21**, `ALTER TABLE` |
+| Migrasi `0021` (drop `on_faktur`) | **dijalankan 2026-09-21**, `ALTER TABLE` |
+| Sesudahnya | kolom sisa **0**, baris **249**, aktif **249** |
+| Cadangan | `python_backend/data/cadangan_promo_rule_kolom_2026-09-20.json` — 249 baris berikut `id`, `surat_program`, `item_code`; **109 `prd_id` terisi**, 123 `on_faktur = false` |
+
+**URUTANNYA BUKAN SELERA — DEPLOY DULU, BARU DROP.** `db.select().from(promoRule)` milik
+Drizzle menyusun **daftar kolom eksplisit**. Kode lama masih meminta `prd_id` dan `on_faktur`;
+menjatuhkan kolomnya sebelum image baru hidup akan membuat setiap pembacaan `promo_rule`
+gagal seketika — Validator Diskon, Rekap Promo, dan Aturan Promo sekaligus.
+
+Bukti image baru hidup sebelum DROP dijalankan: `grep` atas `/app/.next/server` di container
+frontend yang sedang berjalan tidak menemukan `on_faktur` maupun `prd_id`. Sesudah DROP,
+daftar 27 kolom yang kini disusun Drizzle diuji langsung ke Postgres produksi dan
+mengembalikan baris nyata.
+
+Untuk migrasi DROP berikutnya, tempuh urutan yang sama. `scripts/migrate-pg.mjs` **sengaja
+menolak DROP** ("JANGAN: DROP apa pun") supaya ada yang menekan tombolnya secara sadar:
+
+```bash
+ssh root@43.156.118.114 \
+  "docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1" \
+  < db/migrations/00XX_nama.sql
+```
+
+Catatan: role Postgres-nya **`accapi`**, bukan `postgres` — `postgres` tidak ada dan
+memakainya gagal dengan `FATAL: role "postgres" does not exist`.
+
+---
+
 ## 6. Gerbang yang harus hijau sebelum push
 
 ```bash
@@ -233,6 +268,45 @@ fungsi yang benar-benar dipasang di rute.
 | **Invariant Form-vs-Surat** | Tidak ada. Lihat batas gerbang di bagian 3 |
 | **Parser URC (6 surat), ABC/Heinz (538), GONDOWANGI** | Belum. GONDOWANGI blokirnya master basi, bukan parser |
 | **Daftar outlet CONTRACTUAL** | Dinyatakan pengguna **beres** — hanya berlaku bila ada outlet CONTRACTUAL; kalau tidak ada, cukup LOYALTY |
+
+### 8b. Cacat pada verifier itu sendiri — belum diperbaiki
+
+Ditemukan saat membaca `tools/verify_form_summary.py`, dan semuanya sudah diverifikasi:
+
+1. **`--strict-kelompok` adalah bendera mati.** Terdaftar di `argparse`, ditulis di contoh
+   perintah, dan **tidak pernah dibaca kode mana pun**. Siapa pun yang menjalankan perintah
+   contoh akan percaya ia sedang di mode ketat. Ini persis jenis cacat yang gerbang ini
+   dibuat untuk mencegah: penjaga yang tampak menjaga.
+
+2. **`extract_column_cells` sudah mati** sejak semantik pindah ke sidecar — masih ada, dan
+   godaan untuk memakainya kembali (membongkar sel dari posisi x/y PDF) ikut ada.
+
+3. **C9 mencocokkan tanpa batas kata.** `if c in form_text` adalah pencarian substring.
+   Master DAHLIA punya **20 pasang kode yang satu awalan dari yang lain** (`F601A` ⊂
+   `F601AH`, `F601TK` ⊂ `F601TKN`, `D112` ⊂ `D112H-N`), jadi kode yang TIDAK tercetak bisa
+   dilaporkan "terwakili". Invariant yang paling menjaga uang justru yang paling longgar
+   pencocokannya. Perbaikannya: cocokkan dengan batas kata, bukan substring.
+
+4. **Pemotongan di `TOKO PANTAUAN`** membuang **seluruh** teks surat setelahnya. Aturan
+   produk yang tercetak di bawah lampiran daftar toko tidak akan pernah diperiksa C9.
+
+### 8c. Belum diuji lewat tombol di layar produksi
+
+Perbaikan penamaan kelompok dan sidecar sudah ter-deploy dan terbukti lewat
+`e2e_dahlia_endpoint.py` (yang memanggil fungsi endpoint sungguhan) serta lewat gerbang
+12/12. Tetapi **belum ada yang menekan tombol Generate Summary Final di produksi** sejak
+image ini hidup. Itu langkah yang sama dengan pelajaran 2.3 handover sebelumnya: kode di
+dalam endpoint diverifikasi lewat endpoint itu — dan verifikasi lewat layar masih satu
+lapis lagi di atasnya.
+
+### 8d. Cadangan hanya ada di satu mesin
+
+`python_backend/data/cadangan_promo_rule_kolom_2026-09-20.json` (37 KB) **tidak ikut
+repo** — `.gitignore:52` mengabaikan `python_backend/data/*.json`. Nasib yang sama menimpa
+`cadangan_promo_rule_2026-09-18.json`. Artinya satu-satunya salinan nilai `prd_id` untuk 109
+baris ada di laptop, bukan di mana pun yang tahan kehilangan mesin. Beberapa berkas di
+folder itu memang pernah di-`add -f` (lihat `golden_*.json`), jadi jalurnya ada — tinggal
+diputuskan apakah data produksi boleh masuk repo.
 
 ---
 

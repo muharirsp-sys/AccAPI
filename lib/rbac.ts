@@ -303,6 +303,7 @@ export const pagePermissions: Array<{ prefix: string; module: AppModule; action:
     { prefix: "/orders", module: "order", action: "view" },
     { prefix: "/aturan-promo", module: "summary", action: "view" },
     { prefix: "/rekap-promo", module: "summary", action: "view" },
+    { prefix: "/normalisasi-diskon", module: "summary", action: "view" },
     { prefix: "/summary", module: "summary", action: "view" },
     { prefix: "/api-wrapper", module: "api_wrapper", action: "view" },
     { prefix: "/off-program-control", module: "off_program_control", action: "view" },
