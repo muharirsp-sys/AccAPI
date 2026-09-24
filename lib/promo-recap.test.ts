@@ -3,7 +3,7 @@
    tak bertuan (posisi 6+) dan klaim principal tanpa aturan terbit. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fakturRuleFor, invoiceLines, isoDate, parseTariff, recap, ruleFor, type PromoRule } from "./promo-recap.ts";
+import { fakturRuleFor, invoiceLines, isoDate, kunciNormalisasi, NORMALISASI, parseTariff, recap, ruleFor, type PromoRule, type Putusan } from "./promo-recap.ts";
 
 const aturan = (over: Partial<PromoRule> = {}): PromoRule => ({
     principal: "KINO NON FOOD", suratProgram: "BP2609007909", promoLabel: "MTI - HPC CONSUMER PROMO ON PO",
@@ -190,6 +190,21 @@ test("tarif Discount Reguler outlet menjelaskan potongan distributor di rekap", 
     const lain = recap(invoiceLines({ ...faktur, customer: { customerNo: "C-XXX999-KN" } }), [aturan(), tarif]);
     assert.equal(lain.distributor, 0);
     assert.equal(lain.unowned, 40000);
+});
+
+test("tarif PRINCIPAL di posisi 4 juga diakui rekap, sama seperti gerbang", () => {
+    // PT SUPRA BOGA: tarifnya 3% distributor di posisi 1 dan 0,5% PRINCIPAL di posisi 4. Sampai
+    // 2026-09-24 rekap hanya mencocokkan sisi distributor, jadi klaim 0,5%-nya tak bertuan.
+    const tarif = (over: Partial<PromoRule>) => aturan({ suratProgram: "DISCOUNT REGULER", promoGroup: "TANGGUNGAN DISTRIBUTOR",
+        itemCode: "", customerCode: "C-TRU001", ...over });
+    const supra = { ...faktur, detailItem: [{ ...faktur.detailItem[0], itemDiscPercent: "3+0+0+0.5+0" }] };
+    const hasil = recap(invoiceLines(supra), [
+        tarif({ tierNo: 1, benefitValue: "3", benefitBeban: "DISTRIBUTOR" }),
+        tarif({ tierNo: 4, benefitValue: "0.5", benefitBeban: "PRINCIPAL" }),
+    ]);
+    assert.equal(hasil.distributor, 30000);
+    assert.equal(hasil.principal, 4850);
+    assert.equal(hasil.unowned, 0);
 });
 
 test("sheet Discount Reguler dipecah jadi satu aturan per (outlet x posisi)", () => {
@@ -387,4 +402,42 @@ test("bonus yang MELEWATI KUOTA ditolak, meski aturannya ada dan barangnya benar
         ],
     };
     assert.equal(recap(invoiceLines(karton), [bonusRule]).principal, 35135.2);
+});
+
+test("normalisasi manual: potongan tak bertuan di faktur luar web digolongkan sesuai keputusan", () => {
+    // Faktur Alfamart lama yang diketik langsung di Accurate: "2,25" di posisi 1, tanpa tarif
+    // yang cocok. Pengguna memutuskannya lewat menu Normalisasi Diskon.
+    const lama = { ...faktur, detailItem: [{ ...faktur.detailItem[0], id: 777, itemDiscPercent: "2,25" }] };
+    const lines = invoiceLines(lama);
+    assert.equal(lines[0].lineId, "777");
+    const sebelum = recap(lines, []);
+    assert.equal(sebelum.unowned, 22500);
+    const row = sebelum.rows.find((entry) => entry.bucket === "unowned")!;
+    assert.equal(kunciNormalisasi(row), "777|1");
+
+    const keputusan = (over: Partial<Putusan>) => new Map([[kunciNormalisasi(row), { bucket: "distributor", amount: 22500, by: "ari", ...over } as Putusan]]);
+    const distributor = recap(lines, [], [], keputusan({}));
+    assert.equal(distributor.unowned, 0);
+    assert.equal(distributor.distributor, 22500);
+    assert.equal(distributor.rows[0].suratProgram, NORMALISASI);
+    assert.deepEqual(distributor.programs, [], "tanggungan sendiri bukan program klaim");
+
+    // Disc claim masuk daftar program tersendiri — tidak dicampur dengan program surat.
+    const klaim = recap(lines, [], [], keputusan({ bucket: "principal" }));
+    assert.equal(klaim.principal, 22500);
+    assert.equal(klaim.programs[0].suratProgram, NORMALISASI);
+    assert.equal(klaim.programs[0].amount, 22500);
+
+    // Faktur diubah sesudah diputuskan -> keputusan tidak dipakai, dan sebabnya disebut.
+    const berubah = recap(lines, [], [], keputusan({ amount: 30000 }));
+    assert.equal(berubah.unowned, 22500);
+    assert.match(berubah.rows[0].reason, /TIDAK dipakai: diputuskan atas Rp 30\.000/);
+
+    // Aturan terbit selalu didahulukan: baris yang dijelaskan aturan tidak disentuh keputusan.
+    const tarif = aturan({ suratProgram: "DISCOUNT REGULER", itemCode: "", customerCode: "C-TRU001",
+        benefitBeban: "DISTRIBUTOR", benefitValue: "2.25" });
+    const beraturan = recap(lines, [tarif], [], keputusan({ bucket: "principal" }));
+    assert.equal(beraturan.principal, 0);
+    assert.equal(beraturan.distributor, 22500);
+    assert.equal(beraturan.rows[0].suratProgram, "DISCOUNT REGULER");
 });

@@ -14,7 +14,8 @@ test("all existing modules appear exactly once across six groups", () => {
     assert.equal(WORKSPACE_GROUPS.length, 6);
     // 25 sejak Validator Diskon dihapus (19 Sep 2026): menunya memakan Excel unggahan manual
     // dan tidak pernah membaca `promo_rule`, jadi ia tak pernah memeriksa aturan yang berlaku.
-    assert.equal(items.length, 25);
+    // 26 sejak Normalisasi Diskon (24 Sep 2026).
+    assert.equal(items.length, 26);
     // Master Barang ikut katalog: ia yang MEMBUAT master principal baru, dan matcher
     // deterministik jalur Summary menuntut master berpola `BRAND - JENIS`. Tanpa layar ini
     // satu-satunya cara menambah principal adalah menyusun berkasnya di luar sistem.
@@ -27,6 +28,8 @@ test("all existing modules appear exactly once across six groups", () => {
     assert.ok(items.some(item => item.href === "/antrean-faktur"));
     // Rekap promo ikut katalog: rekap akhir bulan dibaca dari faktur nyata Accurate.
     assert.ok(items.some(item => item.href === "/rekap-promo"));
+    // Normalisasi Diskon ikut katalog: potongan tak bertuan di faktur luar web digolongkan di sana.
+    assert.ok(items.some(item => item.href === "/normalisasi-diskon"));
     // Aturan promo ikut katalog: aturan terbit harus bisa dibuat dan diperbaiki dengan tangan,
     // bukan hanya dimuat dari berkas — satu outlet baru tidak boleh menunggu berkas disusun ulang.
     assert.ok(items.some(item => item.href === "/aturan-promo"));

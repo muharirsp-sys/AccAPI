@@ -67,6 +67,8 @@ export type InvoiceLine = {
     gross: number;
     discounts: DiscountAt[];
     cashDiscount: number;
+    /** `detailItem[].id` Accurate: kunci baris yang tetap walau urutan baris faktur berubah. */
+    lineId: string;
 };
 
 const cents = (value: number) => Math.round(value * 100) / 100;
@@ -140,6 +142,7 @@ export function invoiceLines(raw: unknown): InvoiceLine[] {
             gross: cents(quantity * unitPrice),
             discounts: percents,
             cashDiscount: num(detail.itemCashDiscount),
+            lineId: String(detail.id ?? ""),
         };
     });
 }
@@ -153,6 +156,13 @@ export type Bucket = "principal" | "distributor" | "unowned";
 export type DetailRow = {
     bucket: Bucket;
     invoiceNo: string;
+    /** Id faktur Accurate; dipakai memisahkan faktur yang terbit lewat web dari yang tidak. */
+    invoiceId: string;
+    /**
+     * Kunci baris faktur untuk keputusan normalisasi: id baris Accurate, atau `<faktur>#faktur`
+     * untuk potongan tingkat faktur. Lihat `kunciNormalisasi`.
+     */
+    lineKey: string;
     transDate: string;
     branchName: string;
     customerNo: string;
@@ -168,6 +178,18 @@ export type DetailRow = {
     /** Kosong bila tidak ada yang perlu dijelaskan; terisi kalau tak bertuan. */
     reason: string;
 };
+
+/** Penanda `suratProgram` baris yang digolongkan lewat menu Normalisasi Diskon, bukan aturan terbit. */
+export const NORMALISASI = "NORMALISASI";
+
+/** Keputusan manusia atas satu potongan tak bertuan (tabel `discount_normalization`). */
+export type Putusan = { bucket: "principal" | "distributor"; amount: number; by: string };
+
+/**
+ * Kunci satu potongan: baris faktur + posisi. Satu baris bisa punya dua potongan tak bertuan
+ * (posisi 1-3 dan 4-5) yang diputuskan berbeda, jadi posisinya ikut.
+ */
+export const kunciNormalisasi = (row: { lineKey: string; positions: string }) => `${row.lineKey}|${row.positions}`;
 
 /** PPN yang dipakai mengembalikan potongan tingkat faktur ke nilai surat programnya. */
 export const PPN = 0.11;
@@ -199,13 +221,13 @@ export function ruleFor(line: InvoiceLine, rules: PromoRule[], beban: string, pe
  * Kode outlet pada faktur Accurate membawa akhiran cabang (`C-MA0056-KN`) sedangkan tarifnya
  * tercetak dengan kode internal (`C-MA0056`), jadi dicocokkan dengan awalan — bukan sama persis.
  */
-export function tariffFor(line: InvoiceLine, rules: PromoRule[]): PromoRule[] | null {
+export function tariffFor(line: InvoiceLine, rules: PromoRule[], owner: "distributor" | "principal" = "distributor"): PromoRule[] | null {
     const no = line.customerNo.toUpperCase();
     if (!no) return null;
     const milikOutlet = rules.filter((rule) => rule.customerCode
         && inPeriod(rule, line.transDate)
         && (no === rule.customerCode.toUpperCase() || no.startsWith(`${rule.customerCode.toUpperCase()}-`)));
-    return milikOutlet.length ? matchTariff(line.discounts, milikOutlet) : null;
+    return milikOutlet.length ? matchTariff(line.discounts, milikOutlet, owner) : null;
 }
 
 /**
@@ -298,7 +320,9 @@ export type OutletTanpaAturan = {
  * Rekap satu periode. Angka yang dilaporkan adalah angka Accurate; aturan hanya dipakai untuk
  * MENJELASKAN angka itu, tidak pernah untuk menggantinya.
  */
-export function recap(lines: InvoiceLine[], rules: PromoRule[], members: OutletMember[] = []): Recap {
+export function recap(
+    lines: InvoiceLine[], rules: PromoRule[], members: OutletMember[] = [], normalisasi: Map<string, Putusan> = new Map(),
+): Recap {
     // Keanggotaan daftar berganti tiap kuartal sementara rekap membentang sebulan, jadi ia
     // disusun PER TANGGAL BARIS — bukan sekali untuk seluruh periode. Hasilnya disimpan
     // supaya sebulan faktur tidak menyusun ulang daftar yang sama ratusan kali.
@@ -323,7 +347,7 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[], members: OutletM
     const byProgram = new Map<string, ProgramRecap>();
     const programInvoices = new Map<string, Set<string>>();
 
-    const add = (rule: PromoRule, amount: number, invoiceNo: string) => {
+    const add = (rule: Pick<PromoRule, "suratProgram" | "promoGroup" | "promoLabel">, amount: number, invoiceNo: string) => {
         const key = `${rule.suratProgram}|${rule.promoGroup}`;
         const entry = byProgram.get(key) ?? {
             key, suratProgram: rule.suratProgram, promoLabel: rule.promoLabel,
@@ -390,7 +414,8 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[], members: OutletM
             .map((entry) => String(entry.position)).join("+");
 
         const base = {
-            invoiceNo: line.invoiceNo, transDate: line.transDate, branchName: line.branchName,
+            invoiceNo: line.invoiceNo, invoiceId: line.invoiceId, lineKey: line.lineId || kunciBaris(line, urutan),
+            transDate: line.transDate, branchName: line.branchName,
             customerNo: line.customerNo, customerName: line.customerName,
             itemCode: line.itemCode, itemName: line.itemName,
         };
@@ -428,7 +453,8 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[], members: OutletM
             const beban = owner === "distributor" ? "DISTRIBUTOR" : "PRINCIPAL";
             // Tarif outlet dicoba setelah aturan per barang: yang per barang lebih sempit,
             // jadi kalau keduanya bisa menjelaskan, yang menyebut barangnya yang dipakai.
-            const cocokTarif = owner === "distributor" ? tariffFor(line, berlakuDiOutlet) : null;
+            // Kedua sisi, sama seperti gerbang: tabel tarif memuat posisi 4-5 PRINCIPAL juga.
+            const cocokTarif = tariffFor(line, berlakuDiOutlet, owner);
             const matched = ruleFor(line, berlakuDiOutlet, beban, percent) ?? cocokTarif?.[0] ?? null;
             if (matched) {
                 for (const dipakai of cocokTarif ?? [matched]) terpakai.add(kunci(dipakai));
@@ -440,7 +466,7 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[], members: OutletM
             }
             out.unowned = cents(out.unowned + amount);
             const adaAturan = berlakuDiOutlet.some((rule) => rule.itemCode === line.itemCode && !rule.customerCode && rule.benefitBeban === beban);
-            const adaTarif = owner === "distributor" && berlakuDiOutlet.some((rule) => rule.customerCode
+            const adaTarif = berlakuDiOutlet.some((rule) => rule.customerCode && rule.benefitBeban === beban
                 && line.customerNo.toUpperCase().startsWith(rule.customerCode.toUpperCase()));
             out.rows.push({ ...base, bucket: "unowned", positions: positionsAt(owner), percent, amount,
                 suratProgram: "", promoGroup: "",
@@ -470,7 +496,8 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[], members: OutletM
         const matched = fakturRuleFor(rules.filter((rule) => outletAllowed(rule, first.customerNo, listsOn(first.transDate))),
             "PRINCIPAL", first.transDate, invoice.gross, invoice.leftover, invoice.lines.length);
         const base = {
-            invoiceNo: first.invoiceNo, transDate: first.transDate, branchName: first.branchName,
+            invoiceNo: first.invoiceNo, invoiceId: first.invoiceId, lineKey: `${first.invoiceId || first.invoiceNo}#faktur`,
+            transDate: first.transDate, branchName: first.branchName,
             customerNo: first.customerNo, customerName: first.customerName,
             itemCode: "", itemName: "(potongan tingkat faktur)", positions: "faktur", percent: 0,
             amount: invoice.leftover,
@@ -485,6 +512,34 @@ export function recap(lines: InvoiceLine[], rules: PromoRule[], members: OutletM
         out.unowned = cents(out.unowned + invoice.leftover);
         out.rows.push({ ...base, bucket: "unowned", suratProgram: "", promoGroup: "",
             reason: "potongan rupiah tanpa aturan tingkat faktur yang cocok" });
+    }
+
+    // NORMALISASI MANUAL: potongan tak bertuan pada faktur yang dibuat DI LUAR web, yang sudah
+    // diputuskan manusia sebagai klaim principal atau tanggungan distributor (menu Normalisasi
+    // Diskon). Diterapkan PALING AKHIR dan hanya pada baris tak bertuan: aturan terbit selalu
+    // didahulukan, dan keputusan manusia tidak pernah menimpa baris yang sudah dijelaskan aturan.
+    //
+    // Nominalnya ikut dijaga. Keputusan diambil atas angka tertentu; kalau fakturnya diubah di
+    // Accurate sesudahnya, keputusan itu bukan lagi tentang angka yang sama — barisnya tetap tak
+    // bertuan dengan sebab yang disebut, bukan diam-diam ikut berpindah.
+    for (const row of out.rows) {
+        if (row.bucket !== "unowned") continue;
+        const putusan = normalisasi.get(kunciNormalisasi(row));
+        if (!putusan) continue;
+        if (Math.abs(cents(putusan.amount - row.amount)) > TOLERANCE) {
+            row.reason = `${row.reason} — normalisasi oleh ${putusan.by} TIDAK dipakai: diputuskan atas `
+                + `Rp ${putusan.amount.toLocaleString("id-ID")}, fakturnya kini Rp ${row.amount.toLocaleString("id-ID")}`;
+            continue;
+        }
+        out.unowned = cents(out.unowned - row.amount);
+        out[putusan.bucket] = cents(out[putusan.bucket] + row.amount);
+        row.bucket = putusan.bucket;
+        row.suratProgram = NORMALISASI;
+        row.promoGroup = putusan.bucket === "principal" ? "DISC CLAIM (manual)" : "DISC DISTRIBUTOR (manual)";
+        row.reason = `dinormalisasi oleh ${putusan.by}`;
+        if (putusan.bucket === "principal") {
+            add({ suratProgram: NORMALISASI, promoGroup: row.promoGroup, promoLabel: "Normalisasi faktur di luar web" }, row.amount, row.invoiceNo);
+        }
     }
 
     for (const [key, program] of byProgram) program.invoices = programInvoices.get(key)?.size ?? 0;

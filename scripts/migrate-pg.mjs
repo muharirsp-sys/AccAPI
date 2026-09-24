@@ -154,6 +154,31 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS idx_master_barang_audit_master_created ON master_barang_audit (master_id, created_at);
     `,
   },
+  {
+    // 2026-09-24. Menu Normalisasi Diskon: keputusan pengguna atas potongan tak bertuan pada
+    // faktur Accurate yang dibuat di luar web. Lihat db/migrations/0022_discount_normalization.sql.
+    nama: "discount_normalization",
+    sudahAda: `SELECT 1 FROM information_schema.tables WHERE table_name = 'discount_normalization'`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS discount_normalization (
+          line_key    text NOT NULL,
+          positions   text NOT NULL,
+          bucket      text NOT NULL CHECK (bucket IN ('principal', 'distributor')),
+          amount      numeric(18,2) NOT NULL,
+          percent     numeric(9,4) NOT NULL DEFAULT 0,
+          invoice_no  text NOT NULL DEFAULT '',
+          invoice_id  text NOT NULL DEFAULT '',
+          trans_date  date,
+          customer_no text NOT NULL DEFAULT '',
+          item_code   text NOT NULL DEFAULT '',
+          note        text NOT NULL DEFAULT '',
+          decided_by  text NOT NULL DEFAULT '',
+          decided_at  timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (line_key, positions)
+      );
+      CREATE INDEX IF NOT EXISTS idx_discount_normalization_date ON discount_normalization (trans_date);
+    `,
+  },
 ];
 
 const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 15_000 });

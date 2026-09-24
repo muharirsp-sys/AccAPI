@@ -312,6 +312,29 @@ export const orderDupeAck = pgTable("order_dupe_ack", {
     primaryKey({ columns: [t.principal, t.soNo] }),
 ]);
 
+// Keputusan manusia atas potongan TAK BERTUAN pada faktur Accurate yang dibuat di luar web
+// (menu Normalisasi Diskon, db/migrations/0022). `amount` diadu saat rekap: faktur yang berubah
+// sesudah diputuskan membuat keputusannya tidak dipakai.
+export const discountNormalization = pgTable("discount_normalization", {
+    lineKey: text("line_key").notNull(),
+    positions: text("positions").notNull(),
+    bucket: text("bucket").notNull(),
+    amount: numeric("amount", { precision: 18, scale: 2 }).notNull(),
+    percent: numeric("percent", { precision: 9, scale: 4 }).notNull().default("0"),
+    invoiceNo: text("invoice_no").notNull().default(""),
+    invoiceId: text("invoice_id").notNull().default(""),
+    transDate: date("trans_date"),
+    customerNo: text("customer_no").notNull().default(""),
+    itemCode: text("item_code").notNull().default(""),
+    note: text("note").notNull().default(""),
+    decidedBy: text("decided_by").notNull().default(""),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    primaryKey({ columns: [t.lineKey, t.positions] }),
+    index("idx_discount_normalization_date").on(t.transDate),
+    check("discount_normalization_bucket", sql`${t.bucket} IN ('principal', 'distributor')`),
+]);
+
 // Master cabang Accurate. Penomoran faktur Accurate berjalan PER CABANG, dan harga jual
 // juga per cabang, jadi id cabang di sini adalah id milik Accurate — bukan id lokal.
 export const branch = pgTable("branch", {
