@@ -111,9 +111,16 @@ export function fixLine(qty: number, price: number, pack: PackInfo): { qty: numb
  * dengan persen SETARA (supaya seluruh hitungan di hilir tidak berubah) plus `amount`, karena
  * rupiah aslinya itulah yang harus muncul di faktur, bukan persen hasil pembagian.
  *
- * ponytail: hanya dibedakan saat TEPAT SATU posisi terisi. Berkas bercampur persen dan rupiah
- * pada satu baris belum pernah ada; kalau suatu saat muncul, tafsirnya jatuh ke persen dan
- * selisih totalnya tetap menahan barisnya — gagal tertutup, bukan salah diam-diam.
+ * Persen dan rupiah juga bisa bercampur pada SATU baris — ORDER_DETAIL 16 Sep 2026, TK SUBHAN:
+ * DISC_1 2 (persen, tarif distributor) lalu DISC_5 1.918,9189 (rupiah, bagian baris dari
+ * potongan faktur MSG). Karena itu tiap kolom ditafsir sendiri: semua gabungan persen/rupiah
+ * dicoba, rantainya memotong SISA seperti `splitDiscounts`, dan yang dipakai adalah SATU-SATUNYA
+ * gabungan yang mereproduksi TOTAL_DISC. Persen setara dihitung atas sisa sebelum posisinya,
+ * supaya rantai di hilir memotong rupiah yang persis sama.
+ *
+ * ponytail: dicoba semua, paling banyak 2^8 = 256 gabungan per baris. Tafsir persen-semua
+ * didahulukan; bila tidak ada gabungan yang cocok, atau lebih dari satu, jatuh ke persen dan
+ * selisih totalnya menahan barisnya — gagal tertutup, bukan salah diam-diam.
  */
 export function discountsOf(row: Record<string, unknown>, bonus: boolean): DiscountAt[] {
     const found: DiscountAt[] = [];
@@ -121,18 +128,31 @@ export function discountsOf(row: Record<string, unknown>, bonus: boolean): Disco
         const percent = position === 1 && bonus ? 100 : num(row[`DISC_${position}`]);
         if (percent > 0) found.push({ position, percent });
     }
-    if (bonus || found.length !== 1) return found;
+    if (bonus || found.length === 0) return found;
 
     const gross = num(row.GROSS);
     const reported = num(row.TOTAL_DISC);
     if (gross <= 0 || reported <= 0) return found;
-    const only = found[0];
-    const asPercent = Math.round(gross * only.percent) / 100;
-    if (Math.abs(asPercent - reported) <= 1) return found;
-    if (Math.abs(only.percent - reported) <= 1) {
-        return [{ position: only.position, percent: (only.percent / gross) * 100, amount: only.percent }];
+    /** Bit ke-i menyala = kolom ke-i dibaca RUPIAH. Null bila rantainya menghabiskan bruto. */
+    const read = (mask: number): DiscountAt[] | null => {
+        let remaining = gross;
+        const out: DiscountAt[] = [];
+        for (const [index, entry] of found.entries()) {
+            if (remaining <= 0) return null;
+            const rupiah = ((mask >> index) & 1) === 1;
+            const amount = rupiah ? entry.percent : Math.round(remaining * entry.percent) / 100;
+            out.push(rupiah ? { position: entry.position, percent: (entry.percent / remaining) * 100, amount: entry.percent } : entry);
+            remaining -= amount;
+        }
+        return Math.abs(gross - remaining - reported) <= 1 ? out : null;
+    };
+    if (read(0)) return found;
+    const cocok: DiscountAt[][] = [];
+    for (let mask = 1; mask < 1 << found.length; mask += 1) {
+        const hasil = read(mask);
+        if (hasil) cocok.push(hasil);
     }
-    return found;
+    return cocok.length === 1 ? cocok[0] : found;
 }
 
 function headerIndex(rows: unknown[][]): number {

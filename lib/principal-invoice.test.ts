@@ -66,8 +66,8 @@ test("diskon bertingkat, dan nilai baris payload sama dengan bruto laporan", () 
     assert.equal(payload.transDate, "11/09/2026");
     // Nolnya IKUT: posisi 4 adalah klaim principal, dan "4+2.25" akan membuatnya terbaca
     // sebagai posisi 2 alias tanggungan distributor saat faktur dibaca kembali.
-    assert.equal(payload.detailItem[0].itemDiscPercent, "4+0+0+2.25");
-    assert.equal(payload.detailItem[1].itemDiscPercent, "100");
+    assert.equal(payload.detailItem[0].itemDiscPercent, "4+0+0+2.25+0");
+    assert.equal(payload.detailItem[1].itemDiscPercent, "100+0+0+0+0");
     // Baris bonus tetap berharga penuh; yang membuatnya gratis adalah persennya.
     for (const item of payload.detailItem) {
         assert.equal(item.unitPrice, 345945.95);
@@ -81,10 +81,12 @@ test("rantai persen mempertahankan POSISI dengan nol, bukan dimampatkan", () => 
     // akan terbaca sebagai posisi 1 — tanggungan distributor — oleh siapa pun yang membaca
     // fakturnya kembali. Terbukti pada INV/2609/KN00450: Rp 28.921 yang bisa ditagihkan ke
     // principal tersimpan sebagai biaya sendiri, tanpa satu pun galat.
-    assert.deepEqual(percentChain([{ position: 4, percent: 3 }]), ["0", "0", "0", "3"]);
-    assert.deepEqual(percentChain([{ position: 1, percent: 2 }]), ["2"]);
+    assert.deepEqual(percentChain([{ position: 4, percent: 3 }]), ["0", "0", "0", "3", "0"]);
+    // SELALU lima slot (permintaan pengguna 2026-09-24): "3.96+3.1+0+0+0", bukan "3.96+3.1".
+    assert.deepEqual(percentChain([{ position: 1, percent: 2 }]), ["2", "0", "0", "0", "0"]);
+    assert.deepEqual(percentChain([{ position: 1, percent: 3.96 }, { position: 2, percent: 3.1 }]).join("+"), "3.96+3.1+0+0+0");
     assert.deepEqual(percentChain([{ position: 1, percent: 4 }, { position: 4, percent: 2.25 }]),
-        ["4", "0", "0", "2.25"]);
+        ["4", "0", "0", "2.25", "0"]);
     // Potongan berupa RUPIAH tidak punya tempat di rantai persen; nominalnya dikirim terpisah.
     assert.deepEqual(percentChain([{ position: 5, percent: 1.5, amount: 446.85 }]), []);
 });

@@ -49,14 +49,15 @@ export type SkippedSo = { soNo: string; reason: string };
 const cents = (value: number) => Math.round(value * 100) / 100;
 
 /**
- * Rantai persen yang POSISINYA terjaga: setiap slot sampai posisi terisi tertinggi diisi,
- * yang kosong jadi "0". Diskon yang di laporan berupa RUPIAH tidak punya tempat di rantai
+ * Rantai persen yang POSISINYA terjaga: SELALU lima slot d1+d2+d3+d4+d5, yang kosong jadi "0" —
+ * "3.96+3.1+0+0+0", bukan "3.96+3.1" (permintaan pengguna 2026-09-24: semua posisi diskon
+ * terlihat di Accurate). Diskon yang di laporan berupa RUPIAH tidak punya tempat di rantai
  * persen — nominalnya dikirim terpisah — jadi slotnya tetap "0" dan rantainya boleh kosong.
  */
 export function percentChain(discounts: DiscountAt[]): string[] {
     const byPercent = discounts.filter((entry) => entry.amount === undefined);
     if (byPercent.length === 0) return [];
-    const last = Math.max(...byPercent.map((entry) => entry.position));
+    const last = Math.max(5, ...byPercent.map((entry) => entry.position));
     const chain: string[] = [];
     for (let position = 1; position <= last; position += 1) {
         const found = byPercent.find((entry) => entry.position === position);

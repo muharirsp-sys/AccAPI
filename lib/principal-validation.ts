@@ -39,6 +39,11 @@ export type DiscountAt = {
      * karena membulatkan ulang dari persen bisa meleset beberapa rupiah dari yang dilaporkan.
      */
     amount?: number;
+    /**
+     * Posisi yang DILAPORKAN principal, bila `position` sudah dipindah ke posisi tarif outlet
+     * (lihat `keposisiTarif`). Kosong = posisinya memang apa adanya dari laporan.
+     */
+    reportPosition?: number;
 };
 
 export type Split = { distributor: number; principal: number; unowned: number; total: number };
@@ -365,6 +370,14 @@ export function channelLaporan(value: string | null | undefined): string {
     return "";
 }
 
+/**
+ * Keluarga channel kategori master, HANYA untuk dibandingkan dengan channel laporan principal.
+ * NKA (National Key Account) di master memuat Alfamart, Indomaret, Hero, Lotte, Hypermart —
+ * semuanya disebut "Modern Trade" oleh Kino, jadi NKA lawan MT bukan selisih. Kelayakan promo
+ * ber-channel TIDAK memakai ini: `channelAllowed` tetap membandingkan kategori apa adanya.
+ */
+const keluargaLaporan = (outletChannel: string) => (outletChannel === "NKA" ? "MT" : outletChannel);
+
 export function channelAllowed(rule: { channel?: string }, outletChannel: string | null | undefined): boolean {
     const diminta = String(rule.channel ?? "").trim().toUpperCase();
     if (!diminta || diminta === "ALL") return true;
@@ -671,26 +684,99 @@ export type TariffRule = {
  * dengan rantai persen yang dimampatkan (2026-09-12): begitu posisi hilang, potongan berpindah
  * penanggung tanpa ada yang tahu.
  *
- * Mengembalikan aturan yang menjelaskan SELURUH potongan distributor pada baris itu, atau null
+ * Mengembalikan aturan yang menjelaskan SELURUH potongan beban itu pada baris tersebut, atau null
  * bila ada SATU posisi saja yang tidak punya tarifnya — separuh penjelasan bukan penjelasan.
+ *
+ * Tabel yang sama juga memuat tarif PRINCIPAL di posisi 4-5 (PT SUPRA BOGA 0,5% di posisi 4).
+ * Sampai 2026-09-24 hanya sisi distributor yang dicocokkan, sehingga tarif principal yang
+ * dimuat pengguna tidak pernah bisa menjelaskan apa pun dan barisnya ditahan dengan pesan
+ * "0,5% tidak sama dengan ... posisi 4 0,5%". `owner` memilih sisinya.
  *
  * Pemanggil WAJIB sudah menyaring `rules` ke outlet baris ini (dan, untuk rekap, ke periodenya).
  * Yang dijaga di sini: `customerCode` harus terisi, supaya aturan yang berlaku umum tidak
  * pernah ikut membenarkan tarif outlet.
  */
-export function matchTariff<T extends TariffRule>(discounts: DiscountAt[], rules: T[]): T[] | null {
-    const worn = discounts.filter((entry) => OWNER[entry.position] === "distributor" && entry.percent > 0);
+export function matchTariff<T extends TariffRule>(
+    discounts: DiscountAt[], rules: T[], owner: "distributor" | "principal" = "distributor",
+): T[] | null {
+    const worn = discounts.filter((entry) => OWNER[entry.position] === owner && entry.percent > 0);
     if (worn.length === 0) return null;
+    const beban = owner === "principal" ? "PRINCIPAL" : "DISTRIBUTOR";
     const matched: T[] = [];
     for (const entry of worn) {
         const rule = rules.find((candidate) => candidate.customerCode && !candidate.itemCode
-            && candidate.benefitBeban === "DISTRIBUTOR" && candidate.benefitType === "DISC_PCT"
+            && candidate.benefitBeban === beban && candidate.benefitType === "DISC_PCT"
             && candidate.tierNo === entry.position
             && Math.abs(cents(Number(candidate.benefitValue) - entry.percent)) <= 0.01);
         if (!rule) return null;
         matched.push(rule);
     }
     return matched;
+}
+
+/**
+ * Jaringan yang POSISI diskonnya dimaklumi, dicocokkan pada NAMA pelanggan di master Accurate.
+ * Keputusan pengguna 2026-09-24: Kino melaporkan tarif jaringan ini di posisi yang salah
+ * (2,25% Alfamart di DISC_4, padahal tarifnya tanggungan distributor di posisi 2), jadi posisinya
+ * dinormalisasi mengikuti tarif. Outlet lain tetap dinilai per posisi apa adanya.
+ */
+export const JARINGAN_POSISI_BEBAS = /\b(INDOMARET|ALFAMART|INDOGROSIR|ALFAMIDI)\b/i;
+
+export type Normalisasi = { discounts: DiscountAt[]; finding?: string };
+
+const rantai = (values: number[]) => values.map((value) => String(value)).join(" + ");
+
+/**
+ * Diskon jaringan (`JARINGAN_POSISI_BEBAS`) -> posisi menurut TARIF outletnya.
+ *
+ * Aturan pengguna: posisi yang salah DIMAKLUMI, nilai yang berbeda DITOLAK. Setiap persen pada
+ * laporan dipasangkan dengan satu posisi tarif yang nilainya sama — yang sudah di posisinya tetap,
+ * yang salah posisi dipindah. Persen yang tidak punya pasangan hanya boleh tinggal bila surat
+ * principal untuk barang itu membenarkannya; selain itu SELURUH barisnya dikembalikan apa adanya
+ * dengan temuan, mis. laporan 3,96 + 3,1 + 3,1 lawan tarif 3,96 + 3,1: kelebihan 3,1-nya tidak
+ * punya dasar, dan outlet tidak boleh menerima lebih dari tarifnya.
+ *
+ * Yang TIDAK disentuh: potongan rupiah (MSG) dan baris bonus. Outlet tanpa tarif juga tidak —
+ * tanpa tarif tidak ada yang bisa dijadikan acuan posisi, jadi pemeriksaan biasa yang menilainya.
+ *
+ * Selalu dihitung ulang dari posisi LAPORAN (`reportPosition`): baris yang divalidasi ulang
+ * sesudah tarifnya berubah dinilai dengan tarif baru, bukan tertinggal di posisi lama.
+ * Pemanggil WAJIB sudah menyaring `rules` ke outlet, barang, dan tanggal baris ini.
+ */
+export function normalisasiJaringan(discounts: DiscountAt[], rules: PublishedRule[], itemCode?: string | null): Normalisasi {
+    const asli = discounts.map(({ reportPosition, ...entry }) => ({ ...entry, position: reportPosition ?? entry.position }))
+        .sort((a, b) => a.position - b.position);
+    const tarif = rules.filter((rule) => rule.customerCode && !rule.itemCode && rule.benefitType === "DISC_PCT")
+        .sort((a, b) => a.tierNo - b.tierNo);
+    if (tarif.length === 0 || isBonusLine(asli)) return { discounts: asli };
+    const sama = (rule: PublishedRule, percent: number) => Math.abs(cents(Number(rule.benefitValue) - percent)) <= 0.01;
+    const persen = (entry: DiscountAt) => entry.amount === undefined && entry.percent > 0;
+
+    const terpakai = new Set<PublishedRule>();
+    const hasil: DiscountAt[] = asli.filter((entry) => !persen(entry));
+    const salahPosisi: DiscountAt[] = [];
+    for (const entry of asli.filter(persen)) {
+        const tepat = tarif.find((rule) => !terpakai.has(rule) && rule.tierNo === entry.position && sama(rule, entry.percent));
+        if (tepat) { terpakai.add(tepat); hasil.push(entry); } else salahPosisi.push(entry);
+    }
+    const tanpaPasangan: DiscountAt[] = [];
+    for (const entry of salahPosisi) {
+        const slot = tarif.find((rule) => !terpakai.has(rule) && sama(rule, entry.percent));
+        if (slot) { terpakai.add(slot); hasil.push({ ...entry, position: slot.tierNo, reportPosition: entry.position }); }
+        else if (matchItemRule([entry], rules, itemCode, "principal")) hasil.push(entry);
+        else tanpaPasangan.push(entry);
+    }
+    const posisi = hasil.map((entry) => entry.position);
+    if (tanpaPasangan.length === 0 && new Set(posisi).size === posisi.length) {
+        return { discounts: hasil.sort((a, b) => a.position - b.position) };
+    }
+    const lebih = tanpaPasangan.map((entry) => `${entry.percent}% di DISC_${entry.position}`).join(", ") || "posisinya bertabrakan";
+    return {
+        discounts: asli,
+        finding: `Diskon laporan ${rantai(asli.filter(persen).map((entry) => entry.percent))} tidak sama dengan tarif outlet ini `
+            + `(${rantai(tarif.map((rule) => Number(rule.benefitValue)))}): ${lebih} tidak punya pasangan di tarif maupun surat. `
+            + "Posisi yang salah dimaklumi untuk jaringan ini, nilai yang berbeda tidak.",
+    };
 }
 
 export type SoPromo = {
@@ -833,14 +919,14 @@ export function checkLine(line: LineInput): LineCheck {
 
         if (matchItemRule(line.discounts, line.rules, line.itemCode, owner)) continue;
         // Tarif Discount Reguler: melekat pada OUTLET dan berlaku semua barang, jadi tidak
-        // pernah ketemu lewat aturan per barang di atas.
-        if (owner === "distributor" && matchTariff(line.discounts, line.rules)) continue;
+        // pernah ketemu lewat aturan per barang di atas. Kedua sisi: tabelnya memuat keduanya.
+        if (matchTariff(line.discounts, line.rules, owner)) continue;
         // Potongan tingkat faktur: nominalnya milik SELURUH SO dan sudah diperiksa di sana.
         if (owner === "principal" && line.fakturPromo) continue;
 
         const percentRules = line.rules.filter((rule) => rule.benefitType === "DISC_PCT"
             && rule.benefitBeban === beban
-            // Aturan per barang, ATAU tarif outlet (berlaku semua barang) di sisi distributor.
+            // Aturan per barang, ATAU tarif outlet (berlaku semua barang).
             && (rule.itemCode ? (!line.itemCode || rule.itemCode === line.itemCode) : Boolean(rule.customerCode)));
         const actual = cents(line.discounts
             .filter((entry) => OWNER[entry.position] === owner)
@@ -880,7 +966,7 @@ export function checkLine(line: LineInput): LineCheck {
     // Sudah ada contohnya di produksi: HINDA MART (C-HIL009) disebut General Trade oleh Kino
     // sedangkan master kita menyimpannya MT.
     if (split.total > 0 && line.outletChannel && line.reportChannel
-        && channelLaporan(line.reportChannel) && channelLaporan(line.reportChannel) !== line.outletChannel) {
+        && channelLaporan(line.reportChannel) && channelLaporan(line.reportChannel) !== keluargaLaporan(line.outletChannel)) {
         findings.push(`Laporan principal menyebut outlet ini ${line.reportChannel} (${channelLaporan(line.reportChannel)}), `
             + `sedangkan master Accurate menyimpannya ${line.outletChannel}. Promo per channel diputuskan dari MASTER, `
             + "jadi betulkan kategorinya di Accurate atau tanyakan ke principal mana yang benar.");

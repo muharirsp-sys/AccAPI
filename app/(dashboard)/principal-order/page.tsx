@@ -25,7 +25,7 @@ type Line = {
     rowNumber: number; soNo: string; soDate: string | null; customerCode: string; customerName: string;
     customerType: string; productCode: string; productName: string;
     reportQty: string; reportGross: string; qty: string; unit: string; price: string;
-    discounts: { position: number; percent: number }[]; bonus: boolean;
+    discounts: { position: number; percent: number; amount?: number; reportPosition?: number }[]; bonus: boolean;
     itemCode: string | null; customerNo: string | null; expectedPrice: string | null;
     discDistributor: string; discPrincipal: string; discUnowned: string;
     status: "pending" | "ok" | "review"; findings: string[];
@@ -517,7 +517,7 @@ export default function PrincipalOrderPage() {
                     )}
                     <div className="overflow-x-auto rounded-lg border border-white/10 max-h-[28rem]">
                         <table className="w-full text-sm">
-                            <thead className="bg-white/5 text-slate-400 sticky top-0">
+                            <thead className="sticky top-0 z-10 bg-slate-950/95 text-slate-400 backdrop-blur">
                                 <tr>
                                     <th className="px-3 py-2 text-left">SO</th>
                                     <th className="px-3 py-2 text-left">Outlet</th>
@@ -550,8 +550,11 @@ export default function PrincipalOrderPage() {
                                         <td className="px-3 py-1.5 text-xs">
                                             {line.bonus && <span className="mr-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-emerald-300">BONUS</span>}
                                             {line.discounts.map((entry) => (
-                                                <span key={entry.position} className={`mr-1 rounded px-1.5 py-0.5 ${entry.position <= 3 ? "bg-white/10" : entry.position <= 5 ? "bg-blue-500/20 text-blue-200" : "bg-red-500/20 text-red-200"}`}>
-                                                    D{entry.position} {entry.percent}%
+                                                <span key={entry.position}
+                                                    title={entry.reportPosition ? `Dilaporkan principal di DISC_${entry.reportPosition}; dipindah ke posisi ${entry.position} sesuai tarif outlet (tanggungan distributor).` : undefined}
+                                                    className={`mr-1 rounded px-1.5 py-0.5 ${entry.position <= 3 ? "bg-white/10" : entry.position <= 5 ? "bg-blue-500/20 text-blue-200" : "bg-red-500/20 text-red-200"}`}>
+                                                    D{entry.position} {entry.amount !== undefined ? `Rp ${money(entry.amount)}` : `${entry.percent}%`}
+                                                    {entry.reportPosition ? ` (lap. D${entry.reportPosition})` : ""}
                                                 </span>
                                             ))}
                                             {!line.discounts.length && <span className="text-slate-600">—</span>}
