@@ -3554,6 +3554,12 @@ def kemasan_of(nama_barang):
     return found.group(1).upper() if found else ""
 
 
+# Barang BANDED tidak pernah ikut klaim promo. Dua penanda, keduanya dari master nyata:
+# "... BND" dan "... BDD" (DAHLIA `F601TK-BND ... 75GRX72PCS BDD`). Dulu hanya "BND" sebagai
+# kata utuh yang dikenali, jadi `F601TK-BND` ikut dimekarkan ke baris DH AIR F - HER.
+_BANDED = re.compile(r"\b(BND|BDD)\b")
+
+
 def _apply_native_kelompok(rows_to_check, master_items):
     # ROUTER MATCHER DETERMINISTIK.
     #
@@ -3664,7 +3670,7 @@ def _apply_native_kelompok(rows_to_check, master_items):
         if str(r.get("kelompok", "")).strip().upper() in ("__ALL_MASTER__", "ALL KELOMPOK BARANG"):
             matched_items = [it for it in master_items
                              if str(it.get("kode_barang", "")).strip()
-                             and "BND" not in norm(it.get("nama_barang")).split()
+                             and not _BANDED.search(norm(it.get("nama_barang")))
                              and norm(it.get("kelompok")) not in _EXCLUDED_KELOMPOKS]
             r["kelompok"] = "ALL KELOMPOK BARANG"
             r["variant"] = "ALL VARIANT"
@@ -3723,7 +3729,7 @@ def _apply_native_kelompok(rows_to_check, master_items):
                     _kode = str(it.get("kode_barang", "")).strip()
                     if _kode in _seen_codes:
                         continue
-                    if "BND" in norm(it.get("nama_barang")).split():
+                    if _BANDED.search(norm(it.get("nama_barang"))):
                         continue
                     if (norm(it.get("kelompok")), norm(it.get("gramasi"))) in _seed_keys:
                         matched_items.append(it)

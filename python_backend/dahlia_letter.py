@@ -11,7 +11,7 @@ TIGA BENTUK SURAT, SATU PRINCIPAL. Empat surat nyata September 2026 memakai tiga
   A. "PROMO NASIONAL ..." -- tabel Regional/Group Product/Item/Strata/Disc/ITEM/Suggest HET
      (542-11410 C61 Toko Online, 570-11410 C62 GT Grosir).
   B. "Strata Account" -- matriks kode barang x strata outlet berisi nilai rafaksi (MT Pareto).
-  C. "Mekanisme Program" -- grid Grup Produk tanpa kode barang (MT Silver).
+  C. "Mekanisme Program" -- grid Grup Produk, target per outlet di lampiran (MT Silver).
 
 ATURAN YANG DITEGAKKAN DI SINI
   - Mekanisme yang tercetak ("Rafraksi", "Consumer Promo GT", "Add. Disc (On faktur)") DICATAT
@@ -281,7 +281,10 @@ def _parse_strata_matrix(lines, blob, page_count):
         by_strata = per_code.get(code) or {}
         row = _base_row(head, len(rows) + 1)
         detail = "; ".join(f"{k}={v}" for k, v in by_strata.items())
-        row.update(kelompok=code, _item_code=code, _item_text=code,
+        # `_exact_item`: kolom matriks adalah SATU barang, bukan wakil keluarganya (lihat
+        # `match_items`). Surat 083 menyebut K31GJ dan K31SF tetapi TIDAK K31CV/K31GL; tanpa
+        # penanda ini pemekaran "ALL VARIANT" hilir memberi rafaksi kepada keduanya.
+        row.update(kelompok=code, _item_code=code, _item_text=code, _exact_item=True,
                    ketentuan="Tidak ada minimum pembelian",
                    source_quote=f"Strata Account {code}: {detail}"[:400])
         nilai = set(by_strata.values())
@@ -303,9 +306,33 @@ def _parse_strata_matrix(lines, blob, page_count):
 # BENTUK C -- grid "Mekanisme Program" tanpa kode barang (MT Silver)
 # =========================================================================================
 GROUP_ROW = re.compile(r"^\s*(\d{1,2})\s+([A-Za-z][A-Za-z0-9 .\-/()]{3,60}?)\s*(?:\*|$)")
+# Kode barang yang DITULIS surat: "(F617TK)" pada nama grup, "WAJIB ada item K316EU", dan
+# kepala lampiran per outlet ("F601AD F601TK", "LT122N LT123").
+KODE_SURAT = re.compile(r"\b([A-Z]{1,3}\d{2,4}[A-Z0-9]*(?:-[A-Z0-9]+)?)\b")
+ADD_DISC = re.compile(r"%\s+(\d+(?:[.,]\d+)?)\s+-\s+-\s*$")
+KODE_OUTLET = re.compile(r"\{\s*C-\s*([A-Z0-9]+)\s*\}")
+LAMPIRAN = "DETAIL ITEM PER DISTRIBUTOR"
+
+
+def _kutip_kode(codes):
+    """`kode 'X'` per kode: bentuk yang dibaca sidecar Form (`kode_ditahan`) dan gerbang C9/C10."""
+    return ", ".join(f"kode '{c}'" for c in codes)
 
 
 def _parse_grup_produk(lines, blob, page_count):
+    """Bentuk C: tiap baris "Mekanisme Program" satu baris Summary, SEMUANYA DITAHAN.
+
+    Minimum qty dan bonusnya ditetapkan PER OUTLET di lampiran ("Detail Item per Distributor /
+    Account": BENTENG BARU 72 pcs F601TK bonus 6, TOP MURAH 24 bonus 2, ...). Model baris belum
+    bisa menyatakan target per outlet, dan menerbitkan "12 bonus 1" untuk semua outlet MT Pareto
+    berarti memberi bonus kepada outlet yang tidak disebut surat -- jadi tidak ada yang diterbitkan.
+
+    Yang TIDAK boleh hilang adalah isi suratnya: tiap grup membawa manfaat yang tertulis, kode
+    yang disebut surat untuk grup itu, dan daftar outlet lampiran; kode yang hanya disebut di
+    kepala lampiran dicatat pada satu baris lampiran. Sampai 24 September 2026 keenam grup
+    melebur jadi SATU baris tanpa satu kode pun (lihat `summary_store.append_rows`), dan gerbang
+    lama meloloskannya karena kode-kode itu kebetulan tercetak di baris surat lain.
+    """
     judul = flatten(lines[0]) if lines else "PROMO NASIONAL MT SILVER"
     nomor = PROPOSAL_MT.search(blob)
     start, end = iso_period_dash(blob)
@@ -316,23 +343,73 @@ def _parse_grup_produk(lines, blob, page_count):
             "periode_start": start, "periode_end": end,
             "channel_gtmt": flatten(channel.group(1)).upper() if channel else "",
             "area": "", "syarat_claim": ("Batas klaim " + flatten(klaim.group(1))) if klaim else ""}
-    rows, warnings = [], []
-    for line in lines:
+
+    upper_lines = [line.upper() for line in lines]
+    batas = next((i for i, line in enumerate(upper_lines) if LAMPIRAN in line), len(lines))
+    outlets = sorted(set(KODE_OUTLET.findall(re.sub(r"\s+", "", blob.upper()))))
+    catatan_outlet = (f" Berlaku hanya untuk outlet lampiran: {', '.join('C-' + o for o in outlets)}."
+                      if outlets else "")
+
+    # Grup dan baris-baris sesudahnya (sampai grup berikutnya / lampiran) -- di situlah manfaat,
+    # "(Boleh Campur ...)", dan "WAJIB ada item ..." milik grup itu tercetak.
+    groups = []
+    for index, line in enumerate(lines[:batas]):
         found = GROUP_ROW.match(line)
         if not found:
             continue
         nama = flatten(found.group(2))
         if len(nama) < 4 or nama.lower().startswith(("melampirkan", "distributor", "program", "wajib", "faktur")):
             continue
+        groups.append((index, nama))
+
+    rows, warnings, disebut = [], [], set()
+    for position, (index, nama) in enumerate(groups):
+        akhir = groups[position + 1][0] if position + 1 < len(groups) else batas
+        blok = [flatten(line) for line in lines[index:akhir]]
+        teks = " ".join(blok)
+        kode = list(dict.fromkeys(KODE_SURAT.findall(teks.upper())))
+        disebut.update(kode)
+        manfaat = [flatten(f"{m.group(1)} bonus {m.group(2)}") for m in BONUS.finditer(teks)]
+        add = ADD_DISC.search(" ".join(blok[-2:]))
+        if add:
+            manfaat.append(f"Add. Disc (On Faktur) {add.group(1)} (satuannya tidak tertulis)")
+        reg = DISC_REG.search(teks)
+        campur = re.search(r"\((Tidak\s+Boleh\s+Campur|Boleh\s+Campur)[^)]*\)", teks, re.I)
         row = _base_row(head, len(rows) + 1)
-        row.update(kelompok=nama, _item_code="", _item_text=nama,
-                   ketentuan="", benefit_type="", benefit="",
-                   source_quote=flatten(line)[:400],
-                   keterangan="DITAHAN: surat menyebut GRUP PRODUK tanpa kode barang, dan minimal "
-                               "qty-nya ada di lampiran per-outlet; pilih kelompok + kode barang manual.")
+        # Kelompok DIKOSONGKAN: nama grup surat ("AF Gel - Heritage") bukan kelompok master, dan
+        # memilih kelompoknya berarti memilih barang yang dapat promo. Namanya ada di keterangan.
+        row.update(kelompok="", _item_code="", _item_text=nama,
+                   ketentuan="Sesuai Min. Qty Pembelian terlampir (per outlet)", benefit_type="", benefit="",
+                   source_quote=flatten(" ".join(blok[:3]))[:400],
+                   keterangan=flatten(
+                       f"DITAHAN: grup {nama}, min. qty dan bonus PER OUTLET di lampiran -- pilih kelompok "
+                       "+ kode manual."
+                       + (f" Tertulis: {'; '.join(manfaat)}." if manfaat else "")
+                       + (f" {campur.group(0)}." if campur else "")
+                       + (f" Disc. Reg Dist {reg.group(0)} = beban distributor, bukan benefit principal." if reg else "")
+                       + (f" Surat menyebut {_kutip_kode(kode)}." if kode else "")
+                       + catatan_outlet))
+        rows.append(row)
+
+    # Kepala lampiran menyebut kode per kolom grup ("F601AD F601TK", "LT122N LT123"). Kolomnya
+    # tidak bisa dipasangkan ke grup tanpa menebak tata letak, jadi kode yang belum disebut grup
+    # mana pun dicatat pada SATU baris lampiran -- tercetak, bukan hilang.
+    lampiran = []
+    for line in lines[batas:]:
+        for code in KODE_SURAT.findall(line.upper()):
+            if code not in outlets and code not in disebut and code not in lampiran:
+                lampiran.append(code)
+    if lampiran:
+        row = _base_row(head, len(rows) + 1)
+        row.update(kelompok="", _item_code="", _item_text="", ketentuan="Sesuai Min. Qty Pembelian terlampir (per outlet)",
+                   benefit_type="", benefit="",
+                   source_quote=flatten(f"Detail Item per Distributor / Account: {' '.join(lampiran)}")[:400],
+                   keterangan=flatten(
+                       f"DITAHAN: lampiran per outlet menyebut {_kutip_kode(lampiran)} beserta min. qty dan bonus "
+                       "PER OUTLET; kolomnya per grup produk, pasangkan ke grupnya secara manual." + catatan_outlet))
         rows.append(row)
     if rows:
-        warnings.append(f"{len(rows)} grup produk terbaca tanpa kode barang; semua ditahan untuk dipilih operator.")
+        warnings.append(f"{len(groups)} grup produk bertarget per outlet; semua ditahan untuk dipilih operator.")
     return {"format": "GRUP_PRODUK", "letter": head, "rows": rows, "warnings": warnings,
             "page_count": page_count, "mechanism_printed": flatten(jenis.group(1)) if jenis else ""}
 
@@ -388,6 +465,7 @@ def match_items(rows, items, warnings=None):
         key = norm_code(code_text)
         milik_surat = claimed.get(str(row.get("surat_program", "")), set())
         row.pop("_item_code", None)
+        exact_item = bool(row.pop("_exact_item", False))
         item_text = str(row.pop("_item_text", "") or "")
         context = str(row.pop("_context", "") or "")
         if not key:
@@ -409,6 +487,16 @@ def match_items(rows, items, warnings=None):
         hit = [e for e in exact.get(key, []) if not e["banded"]]
         if hit:
             row["kode_barangs"] = ",".join(sorted({e["item"]["kode_barang"] for e in hit}))
+            if exact_item:
+                # Kelompok, varian, dan gramasi MASTER barang itu sendiri. Hanya kolom yang
+                # tersimpan di draft yang bertahan sampai Form dibuat, dan hanya varian yang
+                # BUKAN "ALL VARIANT" yang mencegah pemekaran se-kelompok -- penanda lain hilang
+                # di `BARIS_DRAFT`. Satu nilai saja; nilai ganda dibiarkan, dan kodenya tetap.
+                for field in ("kelompok", "variant", "gramasi"):
+                    nilai = {str(e["item"].get(field, "") or "").strip() for e in hit} - {""}
+                    if len(nilai) == 1:
+                        row[field] = nilai.pop()
+                continue
             # Kode persis ADA, tetapi surat menyebut KELUARGA ("SG533 P/W", "K31 Series").
             # Tidak diperluas diam-diam (bisa over-claim) dan tidak didiamkan (bisa
             # under-claim): saudara kodenya DITULIS supaya operator memutuskan.

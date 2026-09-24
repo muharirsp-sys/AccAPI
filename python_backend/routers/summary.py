@@ -512,6 +512,16 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             # tiap sel hanya membawa satu induk.
             raw_k = str(r.get("kelompok", "")).strip()
             prefix = raw_k.rsplit(" - ", 1)[0] if " - " in raw_k else raw_k
+            # KEDALAMAN ikut kunci. `DH AIR F` (kelompok utuh) dan `DH AIR F - HER` (anaknya)
+            # punya "induk" yang sama menurut `rsplit`, jadi dulu dilebur -- dan selnya tercetak
+            # `DH AIR F - HER` saja, sehingga F601AH dan F601JO tampil sebagai Heritage (surat 083,
+            # 24 September 2026; C12 yang menangkapnya). Saudara setingkat (3P & 5P) tetap dilebur.
+            kedalaman = raw_k.count(" - ")
+            # Baris tertahan TANPA benefit dan TANPA kode tidak punya jati diri program untuk
+            # dilebur: surat 234 punya enam grup bertarget per outlet, dan meleburnya membuat
+            # SATU sel keterangan lebih tinggi dari satu halaman (identitas suratnya lalu hilang
+            # di halaman lanjutan). Kutipan barisnya membuat masing-masing tetap barisnya sendiri.
+            tanpa_identitas = "" if (str(r.get("benefit", "")).strip() or str(r.get("kode_barangs", "")).strip())                 else str(r.get("source_quote", ""))
             
             # The composite key dictates what gets merged together
             merge_key = (
@@ -520,6 +530,8 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                 r.get("channel_gtmt", ""),
                 r.get("periode", ""),
                 prefix,
+                kedalaman,
+                tanpa_identitas,
                 norm(r.get("ketentuan", "")),
                 norm(r.get("benefit", "")),
                 norm(r.get("benefit_type", ""))
