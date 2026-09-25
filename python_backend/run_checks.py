@@ -51,6 +51,7 @@ SELF_CHECK_MODUL = [
     "parse_cache.py",
     "build_master_fixmapping.py",
     "periode_surat.py",
+    "self_correction.py",
     "syarat_claim.py",
     "tier_parser.py",
     "variant_resolver.py",

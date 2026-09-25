@@ -1,7 +1,8 @@
 """Tujuan: OCR 4.1 langsung ke Mistral dengan kelengkapan halaman dan draft terstruktur.
-Caller: router Summary. Dependensi: httpx, PyMuPDF, summary_store.
+Caller: router Summary. Dependensi: httpx, PyMuPDF, summary_store, self_correction.
 Main Functions: extract (anotasi per halaman), status, attach_codes; tidak menebak kode atau memperbaiki JSON terpotong.
-Side Effects: HTTPS berbayar hanya ke api.mistral.ai, satu panggilan per halaman; cache terenkripsi oleh volume runtime (bila dikonfigurasi), tanpa log dokumen/key.
+Side Effects: HTTPS berbayar ke api.mistral.ai, satu panggilan per halaman, plus satu panggilan editor QA ke MiMo per surat
+bila MIMO_API_KEY diset (SUMMARY_SELF_CORRECT=0 mematikannya); cache terenkripsi oleh volume runtime (bila dikonfigurasi), tanpa log dokumen/key.
 """
 import asyncio
 import base64
@@ -11,6 +12,7 @@ import os
 import uuid
 import fitz
 import httpx
+import self_correction
 import surat_struktur
 from summary_store import JsonStore, identity
 
@@ -137,10 +139,13 @@ async def extract(raw, master, user, principal, client=None):
         "Output Indonesian descriptions. "
         "These are drafts for human review, never approval to publish.\nPrincipal: " + principal[:160] + "\nCATALOG DATA:\n" + encoded_master
     )
-    # Kunci cache memuat SIDIK JARI PERINTAHNYA. Tanpa itu, mengubah perintah akan tetap
-    # menjawab dengan hasil perintah lama, dan perbaikannya terlihat tidak berpengaruh.
+    editor = os.getenv("SUMMARY_EDITOR_MODEL", "mimo-v2.6-flash")
+    editing = os.getenv("SUMMARY_SELF_CORRECT", "1") != "0" and bool(os.getenv("MIMO_API_KEY", "").strip())
+    # Kunci cache memuat SIDIK JARI PERINTAHNYA (dan editornya). Tanpa itu, mengubah perintah akan
+    # tetap menjawab dengan hasil perintah lama, dan perbaikannya terlihat tidak berpengaruh.
     key = hashlib.sha256(json.dumps([identity(user), source_hash, master_hash, MODEL, VERSION,
-                                     principal, hashlib.sha256(prompt.encode()).hexdigest()]).encode()).hexdigest()
+                                     principal, hashlib.sha256(prompt.encode()).hexdigest(),
+                                     editor + ":" + hashlib.sha256(self_correction._EDITOR_PROMPT.encode()).hexdigest() if editing else ""]).encode()).hexdigest()
     cache = JsonStore("mistral-v1")
     cached = cache.get(key)
     if cached:
@@ -194,6 +199,18 @@ async def extract(raw, master, user, principal, client=None):
                 rows.append({**{field: row[field] for field in bidang}, "source_page": index + 1, "id": str(uuid.uuid4()), "no": str(len(rows) + 1)})
         if not 1 <= len(rows) <= 2000:
             raise ValueError("Mistral tidak menghasilkan baris promo yang dapat ditinjau dari dokumen ini")
+        patches = None
+        if editing:
+            # Editor QA membaca ulang teks OCR yang sama dan hanya boleh menambal field hasil
+            # salinan; tiap tambalan tampil sebagai peringatan supaya peninjau melihat asal-usulnya.
+            source = "\n\n".join(f"=== HALAMAN {page['index'] + 1} ===\n{page['text']}" for page in pages)
+            rows, patches = await self_correction.verify_and_correct_rows(source, rows, self_correction.mimo_post, editor,
+                                                                          set(bidang) - {"kode_barangs", "source_quote"})
+            if patches is None:
+                warnings.append("Editor QA tidak berjalan; nilai di bawah ini hasil OCR apa adanya.")
+            nomor = {row["id"]: row["no"] for row in rows}
+            warnings.extend(f"Baris {nomor[p['id']]}: {p['field']} diubah editor QA dari \"{p['from']}\" menjadi \"{p['to']}\" "
+                            f"(kutipan surat: \"{str(p['alasan'])[:160]}\"); periksa sebelum publikasi." for p in patches or [])
         # `attach_codes` MENEBAK kode dari nama barang. Pada jalur "salin saja" tebakan itu
         # justru yang hendak dihindari — matcher deterministik yang memutuskan, dan tebakan di
         # sini akan mendahuluinya lewat `kode_barangs` yang sudah terisi.
@@ -201,7 +218,8 @@ async def extract(raw, master, user, principal, client=None):
             attach_codes(rows, catalog, warnings)
         result = {"rows": rows, "warnings": warnings[:400], "model": MODEL, "pipeline_version": VERSION, "source_hash": source_hash,
                   "master_hash": master_hash, "page_count": count, "cached": False,
-                  "pages_with_rows": sorted({row["source_page"] for row in rows}), "pages": pages}
+                  "pages_with_rows": sorted({row["source_page"] for row in rows}), "pages": pages,
+                  "self_correction": {"model": editor, "patches": patches} if editing else None}
         # First successful response wins across workers; no partial results are cached.
         from summary_store import connect
         with connect() as db:

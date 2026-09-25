@@ -1,6 +1,6 @@
 # Tujuan: Ekstraksi item sumber Master Barang dari Excel/CSV, PDF teks/scan, dan gambar menjadi JSON terstruktur untuk AccAPI.
 # Caller: Next.js app/api/master-barang (multipart upload setelah guard RBAC).
-# Dependensi: FastAPI shared auth/upload guard, pandas/openpyxl, PyMuPDF, httpx, dan OCR vision Sumopod opsional.
+# Dependensi: FastAPI shared auth/upload guard, pandas/openpyxl, PyMuPDF, httpx, dan OCR vision MiMo opsional (MIMO_API_KEY).
 # Main Functions: master_barang_extract(), _extract_table_file(), _extract_pdf_or_image().
 # Side Effects: Membaca upload dan dapat melakukan HTTP call OCR/AI; tidak menulis DB/file permanen.
 import base64
@@ -147,10 +147,16 @@ def _heuristic_text_items(text: str) -> List[Dict[str, Any]]:
 
 def _json_array(content: str) -> List[Dict[str, Any]]:
     cleaned = re.sub(r"```(?:json)?", "", content, flags=re.IGNORECASE).replace("```", "").strip()
-    match = re.search(r"\[.*\]", cleaned, flags=re.DOTALL)
-    if not match:
-        raise ValueError("OCR/AI tidak mengembalikan array JSON.")
-    parsed = json.loads(match.group(0))
+    try:
+        # Mode JSON MiMo mewajibkan akar berupa objek: {"items": [...]}.
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\[.*\]", cleaned, flags=re.DOTALL)
+        if not match:
+            raise ValueError("OCR/AI tidak mengembalikan array JSON.")
+        parsed = json.loads(match.group(0))
+    if isinstance(parsed, dict):
+        parsed = parsed.get("items")
     if not isinstance(parsed, list):
         raise ValueError("Respons OCR/AI bukan array.")
     result = []
@@ -173,21 +179,32 @@ def _json_array(content: str) -> List[Dict[str, Any]]:
 
 
 async def _vision_extract(images: List[Tuple[int, bytes]], native_text: str) -> List[Dict[str, Any]]:
-    api_key = os.getenv("SUMOPOD_API_KEY", "").strip()
+    api_key = os.getenv("MIMO_API_KEY", "").strip()
     if not api_key:
         heuristic_items = _heuristic_text_items(native_text) if native_text.strip() else []
         if heuristic_items:
             return heuristic_items
-        raise ValueError("Dokumen adalah scan/gambar tetapi SUMOPOD_API_KEY belum dikonfigurasi untuk OCR.")
-    prompt = """Ekstrak daftar SKU/barang dari price list/master barang ini. Salin nama produk, ISI/KARTON, gramasi, dan kemasan PERSIS dari sumber; jangan mengarang nilai yang kosong. Abaikan semua harga. Pecah setiap produk/SKU menjadi satu objek. Kembalikan HANYA array JSON dengan field: sourcePage, kodePcpl, kelompokPcpl, namaBarang, isiCtn, satuan, klp, subKlp, subKlp2, aroma, gramasi, kemasan, promo, sachet, golongan, confidence (0..1), reviewNotes (array string). Untuk tabel multi-variant, setiap variant adalah item tersendiri. Nama dan gramasi harus sama dengan dokumen."""
+        raise ValueError("Dokumen adalah scan/gambar tetapi MIMO_API_KEY belum dikonfigurasi untuk OCR.")
+    prompt = """Ekstrak daftar SKU/barang dari price list/master barang ini. Salin nama produk, ISI/KARTON, gramasi, dan kemasan PERSIS dari sumber; jangan mengarang nilai yang kosong. Abaikan semua harga. Pecah setiap produk/SKU menjadi satu objek. Kembalikan objek JSON {"items": [...]}; setiap item punya field: sourcePage, kodePcpl, kelompokPcpl, namaBarang, isiCtn, satuan, klp, subKlp, subKlp2, aroma, gramasi, kemasan, promo, sachet, golongan, confidence (0..1), reviewNotes (array string). Untuk tabel multi-variant, setiap variant adalah item tersendiri. Nama dan gramasi harus sama dengan dokumen."""
     content: List[Dict[str, Any]] = [{"type": "text", "text": prompt + (f"\n\nTeks native pendukung:\n{native_text[:30000]}" if native_text.strip() else "")}]
     for page_no, image in images:
         content.append({"type": "text", "text": f"HALAMAN {page_no}"})
         content.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii")}})
-    payload = {"model": os.getenv("MASTER_BARANG_OCR_MODEL", "gemini/gemini-2.5-flash"), "messages": [{"role": "user", "content": content}], "temperature": 0, "max_tokens": int(os.getenv("MASTER_BARANG_OCR_MAX_TOKENS", "16000"))}
-    base_url = os.getenv("SUMOPOD_BASE_URL", "https://ai.sumopod.com/v1").rstrip("/")
+    # thinking MiMo aktif secara default dan memaksa temperature=1.0; dimatikan supaya
+    # temperature 0 berlaku dan salinan nama/gramasi tidak berubah-ubah antar-unggahan.
+    payload = {"model": os.getenv("MASTER_BARANG_OCR_MODEL", "mimo-v2.6-flash"), "messages": [{"role": "user", "content": content}],
+               "temperature": 0, "thinking": {"type": "disabled"}, "response_format": {"type": "json_object"},
+               "max_tokens": int(os.getenv("MASTER_BARANG_OCR_MAX_TOKENS", "16000"))}
+    base_url = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1").rstrip("/")
     async with httpx.AsyncClient(timeout=300.0) as client:
         response = await client.post(f"{base_url}/chat/completions", json=payload, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
+        # Kode galat resmi MiMo (mimo.mi.com/docs/en-US/api/guidance/error-codes). Tanpa pesan ini
+        # saldo habis tampil sebagai "Gagal mengekstrak" dan terlihat seperti dokumennya yang salah.
+        problem = {402: "Saldo akun MiMo habis; isi ulang saldo akun, lalu unggah ulang.",
+                   401: "MIMO_API_KEY ditolak MiMo (tidak valid); periksa kunci di server.",
+                   429: "MiMo menolak permintaan: terlalu sering atau kuota paket habis; coba lagi nanti atau isi ulang saldo."}.get(response.status_code)
+        if problem:
+            raise ValueError(problem)
         response.raise_for_status()
         message = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
     return _json_array(message)
@@ -226,7 +243,7 @@ async def _extract_pdf_or_image(raw: bytes, extension: str) -> Tuple[List[Dict[s
         items = _heuristic_text_items(native_text)
     if not items:
         raise ValueError("Tidak ada item yang berhasil diekstrak dari dokumen.")
-    engine = "vision_ai" if os.getenv("SUMOPOD_API_KEY", "").strip() else "native_text_heuristic"
+    engine = "vision_ai" if os.getenv("MIMO_API_KEY", "").strip() else "native_text_heuristic"
     return items, {"engine": engine, "pages": len(images), "nativeTextChars": len(native_text), "warnings": [] if engine == "vision_ai" else ["OCR/AI tidak aktif; seluruh hasil wajib review."]}
 
 
