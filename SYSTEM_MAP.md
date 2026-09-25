@@ -423,37 +423,27 @@ byte-level. Semua modul additive (jalur lama tetap sbg fallback). Refactor F10: 
 hidup di `python_backend/routers/summary.py` (BUKAN `main.py`, yang kini 559 baris app-setup saja).
 
 ```
-surat (bytes) + principle_name
-  │  parse_key = sha256(bytes + "|" + PRINCIPLE_UPPER)
+surat (PDF) + principle_name → summary_manual_parse_pdf_ai (routers/summary.py)
+  │
+  ├─ kino_extraction / deterministic_extraction — surat berlapis teks, 0 panggilan API
+  │
+  └─ summary_mistral.extract — Mistral OCR 4.1, 1 panggilan per halaman, skema JSON ketat
+       │  perintah: surat_struktur.kontrak (principal ber-matcher, "salin saja") atau generik
+       │  cache `mistral-v1`: kunci = pemilik + hash PDF + hash master + model + versi
+       │  + sidik perintah + editor → ganti perintah = OCR ulang sekali (berbayar)
+       ▼
+     Pass 3 self_correction.py :: verify_and_correct_rows — aktif bila MIMO_API_KEY diset
+       (SUMMARY_SELF_CORRECT=0 mematikan; model SUMMARY_EDITOR_MODEL, default mimo-v2.6-flash)
+       editor QA PATCH-BASED: model HANYA boleh kirim {id, field, to, alasan} atas field hasil
+       salinan perintahnya (tanpa kode_barangs/source_quote); DILARANG tambah/hapus baris.
+       `alasan` WAJIB kutipan yang benar-benar ada di teks OCR, selain itu patch dibuang.
+       Tiap patch → peringatan "Baris N: … diubah editor QA"; editor gagal → rows utuh +
+       peringatan "Editor QA tidak berjalan" (beda dari editor bersih = 0 patch).
+       Yang dibekukan di cache = hasil terkoreksi (run ke-2 = 0 panggilan API).
   ▼
-[FASE 1b] parse_cache.py ── cache hit? ── ya ─▶ rows FINAL BEKU (0 panggilan API sama sekali)
-  │ tidak:
-  │  ocr_cache_key = sha256(bytes)
+_apply_native_kelompok (principal ber-matcher; variant_resolver di dalamnya) / rapikan_baris (lainnya)
   ▼
-  [FASE 1] ocr_cache.py ── cache hit? ── ya ─▶ teks OCR BEKU (Gemini 0 panggilan, determinis)
-  │ tidak: OCR per-halaman (gemini) → simpan (freeze, tak pernah ditimpa)
-  ▼
-LLM parse per-channel (gpt-4.1-mini, 1 chunk = 1 channel biar tak kehabisan max_tokens)
-  ▼
-Pass 3 self_correction.py :: verify_and_correct_rows  (SUMMARY_SELF_CORRECT=1 default)
-  editor QA PATCH-BASED: model HANYA boleh kirim {id, field, to, alasan} atas field di
-  _PATCHABLE_FIELDS (ketentuan/benefit/kelompok/variant/gramasi/...). DILARANG tambah/hapus
-  baris atau sentuh id/kode_barangs. Patch invalid/id asing/gagal apa pun → rows utuh (no-op).
-  Log SELALU (termasuk 0 patch) → "editor bersih" beda dari "editor gagal diam-diam".
-  ▼
-_apply_native_kelompok (match ke master)
-  │                            [FASE 3b] variant_resolver.py + variant_mapping.json
-  │                            resolusi varian via TABEL deklaratif (bukan tebakan LLM):
-  │                            cth "Spray Cologne Series" → White+Black SR (GLASS excluded),
-  │                            "EDT Sport" → 4 varian tertentu. Return None → fallback jalur lama.
-  ▼
-[FASE 2b] tier_parser.py :: regroup_rows_by_tier
-  parser POSISIONAL tabel OCR (kolom PAKET/CUT PRICE by posisi) = tier OTORITATIF, bukan LLM.
-  kode_barang ter-bridge keyakinan-tinggi (overlap token + gramasi sama) → trigger/benefit
-  di-override & baris ber-tier sama DIGABUNG (fix Bellagio EDT & EDP Prestige ke-split).
-  Ragu → kode TIDAK disentuh (no silent guess).
-  ▼
-[FASE 1b] parse_cache_put(rows final) — freeze; run ke-2 dok+principle sama = 0 API total
+draft Summary (summary_store.create_draft / append_rows)
   ▼
 summary_manual_generate → excel_rows (single source of truth utk Excel + PDF)
   │  guard V3b (cross-check gramasi), V4 (buang duplikat lintas-tier)
@@ -478,20 +468,19 @@ summary_manual_generate → excel_rows (single source of truth utk Excel + PDF)
 
 | File | Fungsi Utama | Peran |
 |---|---|---|
-| `python_backend/ocr_cache.py` | `ocr_cache_key`, `ocr_cache_get/put` | FASE 1: cache OCR by content-hash, freeze-on-first-write (run ke-2 dok sama = 0 panggilan Gemini) |
-| `python_backend/parse_cache.py` | `parse_cache_key`, `parse_cache_get/put` | FASE 1b: freeze rows FINAL per (doc_hash, principle) — run ke-2 = 0 panggilan API sama sekali (bukan cuma OCR) |
-| `python_backend/tier_parser.py` | `parse_positional_tables`, `match_item_to_tablerow`, `regroup_rows_by_tier` | FASE 2/2b: tier dari POSISI tabel OCR (no LLM); regroup baris LLM ke tier otoritatif; self-check `__main__` |
+| `python_backend/ocr_cache.py` | `ocr_cache_key`, `ocr_cache_get/put` | FASE 1 (jalur Gemini lama): **tidak dipanggil** jalur parse sejak pindah ke Mistral; cache yang berlaku kini `mistral-v1` di `summary_mistral` |
+| `python_backend/parse_cache.py` | `parse_cache_key`, `parse_cache_get/put` | FASE 1b (jalur lama): **tidak dipanggil** `summary_manual_parse_pdf_ai` lagi |
+| `python_backend/tier_parser.py` | `parse_positional_tables`, `match_item_to_tablerow`, `regroup_rows_by_tier` | FASE 2/2b (jalur lama): tier dari POSISI tabel OCR; `regroup_rows_by_tier` **tidak dipanggil** jalur parse lagi; self-check `__main__` |
 | `python_backend/variant_resolver.py` + `variant_mapping.json` | `load_variant_mapping`, `resolve_variant` | FASE 3/3b: resolusi varian via tabel deklaratif; None = fallback; anti-halusinasi |
 | `python_backend/correction_store.py` | `save_correction`, `apply_corrections`, `correction_key` | FASE 4/4b: koreksi manusia stable-key, override deterministik (bukan hint prompt); ditulis otomatis dari endpoint `report_correction` |
 | `python_backend/golden_store.py` | `canonical_signature`, `golden_check_and_freeze`, `approve_golden` | FASE 5: snapshot determinisme; deteksi drift output utk input identik; self-check `__main__` |
 | `python_backend/deterministic_output.py` | `enable_pdf_determinism`, `finalize_xlsx` | FASE 6: paku non-determinisme BYTE-LEVEL (ReportLab doc-id/CreationDate; openpyxl zip-timestamp + `docProps/core.xml`). **Bug ditemukan+diperbaiki 2026-07-13**: `\1`/`\2` di replacement regex diikuti digit literal ditafsir Python `re` sbg backreference/octal → `docProps/core.xml` corrupt (file tak bisa dibuka) walau tetap "byte-identik" antar-run (self-check lama cuma cek hash, tak cek well-formed). Fix: `\g<1>`/`\g<2>`; self-check kini juga `load_workbook` ulang + parse XML. |
-| `python_backend/self_correction.py` | `verify_and_correct_rows` | Pass 3 (arsitektur ala Reducto): editor LLM QA PATCH-BASED atas hasil parse; whitelist field, dilarang sentuh id/kode_barangs/jumlah baris; gagal apa pun → no-op; `SUMMARY_SELF_CORRECT=0` utk nonaktifkan |
+| `python_backend/self_correction.py` | `verify_and_correct_rows`, `mimo_post` | Pass 3 (arsitektur ala Reducto), dipanggil `summary_mistral.extract`: editor LLM QA PATCH-BASED via MiMo; whitelist field = field perintah, kutipan wajib ada di teks OCR, dilarang sentuh id/kode_barangs/jumlah baris; gagal apa pun → no-op + peringatan; `SUMMARY_SELF_CORRECT=0` utk nonaktifkan; uji `test_summary_editor.py` |
 
 Titik integrasi (F10: **BUKAN** `main.py`, lihat `python_backend/routers/summary.py`):
-import blok FASE 1/1b/2b/3b/4b/5/6 + Pass 3 di `shared.py` (~baris 19–25) & re-export ke router;
-`parse_cache_get` di awal + Pass 3 + `regroup_rows_by_tier` + `parse_cache_put` di akhir
-`summary_manual_parse_pdf_ai`; `apply_stable_corrections` + `enable_pdf_determinism`/`finalize_xlsx`
-+ golden check di `summary_manual_generate`.
+parse = `summary_manual_parse_pdf_ai` → `summary_mistral.extract` (Pass 3 di dalamnya) →
+`_apply_native_kelompok`/`rapikan_baris`; generate = `apply_stable_corrections` +
+`enable_pdf_determinism`/`finalize_xlsx` + golden check di `summary_manual_generate`.
 
 ---
 
@@ -853,7 +842,7 @@ menu sidebar `Rekapan Nota`.
 | `ACCURATE_CLIENT_ID` / `ACCURATE_CLIENT_SECRET` | OAuth2 Accurate |
 | `ADMIN_SETUP_TOKEN` | Token one-time bootstrap admin pertama |
 | `SMTP_*` | Konfigurasi email (host/port/user/pass/from) |
-| `SUMOPOD_API_KEY` | AI/OCR backend (opsional) |
+| `MIMO_API_KEY` | MiMo (OpenAI-compatible, `MIMO_BASE_URL` default `https://api.xiaomimimo.com/v1`): OCR vision Master Barang + editor QA Summary (opsional) |
 
 ### Skema Data (Tabel Inti & Relasi)
 

@@ -40,19 +40,18 @@ def jalur(principle_name):
 PROMPT = {
     "PRISKILA": """
 Dokumen promosi ini milik principle: {principle_name.upper()}.
-Tugas Anda HANYA menyalin STRUKTUR tabel surat apa adanya ke ARRAY JSON. JANGAN mencocokkan
+Tugas Anda HANYA menyalin STRUKTUR tabel surat apa adanya ke JSON. JANGAN mencocokkan
 ke daftar barang, JANGAN menebak kode/kelompok. Sistem lain yang akan mencocokkan ke master.
 
 ATURAN MUTLAK:
-1. Kembalikan HANYA JSON array valid (tanpa teks pembuka/penutup, tutup dengan `]`).
+1. Isi skema JSON: satu object per baris di `rows`. Nilai yang tidak terbaca diisi "" dan
+   dijelaskan di `warnings` sambil menyebut barisnya.
 2. SATU object JSON = SATU baris "GROUP ITEM" di tabel surat. DILARANG KERAS menggabungkan
    beberapa baris/varian/merek menjadi satu object. Kalau tabel punya 20 baris GROUP ITEM,
    keluarkan TEPAT 20 object.
 3. Salin teks sel "GROUP ITEM" APA ADANYA (verbatim) ke field "group_item_text" -- termasuk
    kata merek, jenis, dan gramasi (mis. "Bellagio Eau de Toilette 100ml"). JANGAN diringkas,
    JANGAN diubah ejaan/satuannya.
-4. DILARANG mengeluarkan field "kelompok", "variant", "gramasi", ATAU "kode_barangs".
-   Field-field itu akan diisi oleh sistem pencocokan, BUKAN oleh Anda.
 
 FIELD PER OBJECT (huruf kecil, HANYA field ini):
 - "channel_gtmt": (String) nama channel sesuai header tabel (Retail / MTI / Grosir / Star Outlet).
@@ -76,16 +75,15 @@ FIELD PER OBJECT (huruf kecil, HANYA field ini):
 - "syarat_claim": (String) ringkasan SINGKAT bagian syarat/mekanisme klaim di surat
   (batas waktu klaim + dokumen wajib). Di sinilah kalimat "paling lambat tanggal ..." ditaruh.
   Jika surat tidak punya bagian itu, isi "".
-
-SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
 """,
     "URC": """
 Dokumen promosi ini milik principle: {principle_name.upper()}.
-Tugas Anda HANYA menyalin STRUKTUR surat apa adanya ke ARRAY JSON. JANGAN mencocokkan ke daftar
+Tugas Anda HANYA menyalin STRUKTUR surat apa adanya ke JSON. JANGAN mencocokkan ke daftar
 barang, JANGAN menebak kode/kelompok. Sistem lain yang akan mencocokkan ke master.
 
 ATURAN MUTLAK:
-1. Kembalikan HANYA JSON array valid (tanpa teks pembuka/penutup, tutup dengan `]`).
+1. Isi skema JSON: satu object per baris di `rows`. Nilai yang tidak terbaca diisi "" dan
+   dijelaskan di `warnings` sambil menyebut barisnya.
 2. SATU object JSON = SATU baris di tabel "Details SKU" (kolom Details SKU + Category).
    Kalau tabelnya punya 20 baris, keluarkan TEPAT 20 object.
 3. Salin teks sel "Details SKU" APA ADANYA (verbatim) ke field "item_description" --
@@ -97,8 +95,6 @@ ATURAN MUTLAK:
 5. ABAIKAN SELURUH tabel lampiran/alokasi kuota per RD/kota/bulan (biasanya di halaman
    setelah tabel "Details SKU", berjudul "Lampiran" dengan kolom Area/City/RD/QTY ED per
    bulan). JANGAN membacanya, JANGAN mengekstrak isinya ke JSON manapun.
-6. DILARANG mengeluarkan field "kelompok", "variant", "gramasi", ATAU "kode_barangs".
-   Field-field itu akan diisi oleh sistem pencocokan, BUKAN oleh Anda.
 
 FIELD PER OBJECT (huruf kecil, HANYA field ini):
 - "nama_program": (String) isi baris "Nama Program" di header surat, verbatim.
@@ -114,23 +110,20 @@ FIELD PER OBJECT (huruf kecil, HANYA field ini):
   waktu klaim + dokumen yang wajib dilampirkan (mis. "Klaim maks 45 hari setelah promo
   berakhir; lampiran: AL, Cover Klaim URC, Faktur Pajak, Rekap Data Penjualan & print out
   system; nilai dari DBP/RBP exc PPN"). Jika bagian itu TIDAK ADA di surat, isi "".
-
-SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
 """,
     "FONTERRA": """
 Dokumen promosi ini milik principle: {principle_name.upper()}.
-Tugas Anda HANYA menyalin STRUKTUR surat apa adanya ke ARRAY JSON. JANGAN mencocokkan ke daftar
+Tugas Anda HANYA menyalin STRUKTUR surat apa adanya ke JSON. JANGAN mencocokkan ke daftar
 barang, JANGAN menebak kode/kelompok. Sistem lain yang akan mencocokkan ke master.
 
 ATURAN MUTLAK:
-1. Kembalikan HANYA JSON array valid (tanpa teks pembuka/penutup, tutup dengan `]`).
+1. Isi skema JSON: satu object per baris di `rows`. Nilai yang tidak terbaca diisi "" dan
+   dijelaskan di `warnings` sambil menyebut barisnya.
 2. SATU object JSON = SATU baris promo produk (baris bullet ">" berpola
    "BELI N <PRODUK> <GRAMASI> ... GRATIS <HADIAH>"). Kalau surat punya 17 baris promo,
    keluarkan TEPAT 17 object. JANGAN menggabung, JANGAN melewatkan baris.
 3. Salin baris promo VERBATIM (termasuk kata BELI, angka, gramasi, GRATIS, dan hadiahnya)
    ke field "product_line_text". JANGAN diringkas, JANGAN diubah ejaan/satuannya.
-4. DILARANG mengeluarkan field "kelompok", "variant", "gramasi", ATAU "kode_barangs".
-   Field-field itu akan diisi oleh sistem pencocokan, BUKAN oleh Anda.
 
 FIELD PER OBJECT (huruf kecil, HANYA field ini):
 - "product_line_text": (String) baris promo verbatim (lihat aturan 3).
@@ -141,16 +134,15 @@ FIELD PER OBJECT (huruf kecil, HANYA field ini):
 - "channel_gtmt": (String) channel program (mis. MTI / GT), ringkas.
 - "syarat_claim": (String) ringkasan SINGKAT syarat/mekanisme klaim (dokumen wajib +
   batas waktu). Jika surat tidak punya bagian itu, isi "".
-
-SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
 """,
     "ADNA": """
 Dokumen promosi ini milik principle: {principle_name.upper()} (PT Gumindo Bogamanis, merek Kuaci Rebo).
-Tugas Anda HANYA menyalin STRUKTUR surat apa adanya ke ARRAY JSON. JANGAN mencocokkan ke daftar
+Tugas Anda HANYA menyalin STRUKTUR surat apa adanya ke JSON. JANGAN mencocokkan ke daftar
 barang, JANGAN menebak kode/kelompok. Sistem lain yang akan mencocokkan ke master.
 
 ATURAN MUTLAK:
-1. Kembalikan HANYA JSON array valid (tanpa teks pembuka/penutup, tutup dengan `]`).
+1. Isi skema JSON: satu object per baris di `rows`. Nilai yang tidak terbaca diisi "" dan
+   dijelaskan di `warnings` sambil menyebut barisnya.
 2. SATU object JSON = SATU aturan pembelian produk di bagian "Mekanisme Program"
    (kalimat berpola "Setiap pembelian <PRODUK+GRAMASI> (min N ctn) ... maka mendapatkan
    disc <NILAI>"). Kalau ada 2 aturan produk, keluarkan TEPAT 2 object.
@@ -159,7 +151,6 @@ ATURAN MUTLAK:
 3. Salin bagian PRODUK + GRAMASI verbatim ke "product_line_text", termasuk bila satu
    aturan menyebut DUA gramasi (mis. "Kuaci Rebo 150 gr/ 140 gr"). JANGAN dipecah,
    JANGAN diringkas, JANGAN diubah satuannya.
-4. DILARANG mengeluarkan field "kelompok", "variant", "gramasi", ATAU "kode_barangs".
 
 FIELD PER OBJECT (huruf kecil, HANYA field ini):
 - "product_line_text": (String) produk + gramasi verbatim (lihat aturan 3).
@@ -173,23 +164,20 @@ FIELD PER OBJECT (huruf kecil, HANYA field ini):
 - "channel_gtmt": (String) isi baris "Lokasi" (mis. "Nasional").
 - "syarat_claim": (String) ringkasan SINGKAT syarat klaim (dokumen wajib + batas waktu
   klaim grosir/subdist). Jika bagian itu TIDAK ADA, isi "".
-
-SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
 """,
     "NATUR": """
 Dokumen promosi ini milik principle: {principle_name.upper()} (merek NATUR, AZALEA, HG).
-Tugas Anda HANYA menyalin STRUKTUR tabel surat apa adanya ke ARRAY JSON. JANGAN mencocokkan
+Tugas Anda HANYA menyalin STRUKTUR tabel surat apa adanya ke JSON. JANGAN mencocokkan
 ke daftar barang, JANGAN menebak kode/kelompok. Sistem lain yang akan mencocokkan ke master.
 
 ATURAN MUTLAK:
-1. Kembalikan HANYA JSON array valid (tanpa teks pembuka/penutup, tutup dengan `]`).
+1. Isi skema JSON: satu object per baris di `rows`. Nilai yang tidak terbaca diisi "" dan
+   dijelaskan di `warnings` sambil menyebut barisnya.
 2. SATU object JSON = SATU baris produk/SKU di tabel promo surat. Kalau tabel punya 20
    baris produk, keluarkan TEPAT 20 object. JANGAN menggabung, JANGAN melewatkan baris.
 3. Salin sel nama produk VERBATIM (termasuk merek dan gramasi, mis.
    "NATUR SHAMPOO GINSENG 140ML") ke field "product_line_text". JANGAN diringkas,
    JANGAN diubah ejaan/satuannya.
-4. DILARANG mengeluarkan field "kelompok", "variant", "gramasi", ATAU "kode_barangs".
-   Field-field itu akan diisi oleh sistem pencocokan, BUKAN oleh Anda.
 
 FIELD PER OBJECT (huruf kecil, HANYA field ini):
 - "product_line_text": (String) sel nama produk verbatim (lihat aturan 3).
@@ -205,8 +193,6 @@ FIELD PER OBJECT (huruf kecil, HANYA field ini):
   "/ONLINE/" -> "ONLINE"; selain itu "".
 - "syarat_claim": (String) ringkasan SINGKAT syarat klaim (mis. kalimat "maksimal
   diklaim ..."). Jika surat tidak punya bagian itu, isi "".
-
-SANGAT PENTING: JANGAN BERIKAN TEKS APAPUN SELAIN JSON ARRAY VALID! PASTIKAN JSON DITUTUP SEMPURNA DENGAN `]` PADA AKHIRNYA!
 """,
 }
 
