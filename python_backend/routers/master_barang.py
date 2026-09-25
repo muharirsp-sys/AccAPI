@@ -198,6 +198,13 @@ async def _vision_extract(images: List[Tuple[int, bytes]], native_text: str) -> 
     base_url = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1").rstrip("/")
     async with httpx.AsyncClient(timeout=300.0) as client:
         response = await client.post(f"{base_url}/chat/completions", json=payload, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
+        # Kode galat resmi MiMo (mimo.mi.com/docs/en-US/api/guidance/error-codes). Tanpa pesan ini
+        # saldo habis tampil sebagai "Gagal mengekstrak" dan terlihat seperti dokumennya yang salah.
+        problem = {402: "Saldo akun MiMo habis; isi ulang saldo akun, lalu unggah ulang.",
+                   401: "MIMO_API_KEY ditolak MiMo (tidak valid); periksa kunci di server.",
+                   429: "MiMo menolak permintaan: terlalu sering atau kuota paket habis; coba lagi nanti atau isi ulang saldo."}.get(response.status_code)
+        if problem:
+            raise ValueError(problem)
         response.raise_for_status()
         message = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
     return _json_array(message)
