@@ -2,7 +2,7 @@
  * Tujuan: Baca/tulis setelan aturan insentif yang boleh diubah tanpa deploy.
  * Caller: app/api/insentif-sales/dashboard, app/api/insentif-sales/settings.
  * Dependensi: lib/db, db/schema (appSetting).
- * Main Functions: getGtAoTargetMode, setGtAoTargetMode, getDaftar, setDaftar,
+ * Main Functions: getGtAoTargetMode, setGtAoTargetMode, aoFileKey/aoFileRowKey, getDaftar, setDaftar,
  *   getBranchNilaiJual, getSmBerhak, getKonstanta, setKonstanta.
  * Side Effects: DB read; setter menulis satu baris app_setting.
  */
@@ -56,6 +56,19 @@ export async function setGtAoTargetMode(mode: GtAoTargetMode, actor: string | nu
             set: { value: mode, updatedBy: actor, updatedAt: now },
         });
 }
+
+/**
+ * Pengecualian PER BARIS dari ambang 240: daftar "KODE|PRINCIPAL" yang AO-nya dinilai terhadap
+ * Target AO di file target. Per periode — sama seperti Status Insentif per baris — supaya
+ * menekan tombol bulan ini tidak menggeser nominal bulan yang sudah dibayar.
+ * ponytail: daftar JSON baca-ubah-tulis; dua penekanan di detik yang sama bisa saling menimpa.
+ *   Pindah ke kolom sales_targets kalau yang menekan tombol ini lebih dari satu-dua orang.
+ */
+export const aoFileKey = (month: number, year: number) =>
+    `insentif_ao_file:${year}-${String(month).padStart(2, "0")}`;
+/** Normalisasinya HARUS sama dengan getDaftar, kalau tidak lookup-nya diam-diam tidak pernah cocok. */
+export const aoFileRowKey = (salesCode: string, principle: string) =>
+    `${salesCode}|${principle}`.trim().toUpperCase().replace(/\s+/g, " ");
 
 // ── Setelan berbentuk DAFTAR ────────────────────────────────────────────
 // Dua aturan di bawah ini sebelumnya konstanta di kode, dan keduanya SUDAH pernah berubah
