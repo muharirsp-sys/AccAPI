@@ -11,12 +11,12 @@
  * dipakai untuk menjelaskan siapa menanggung apa. Selisihnya justru temuan yang dicari.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, gte, inArray, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, lte, ne, or, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
 import { discountNormalization, invoiceOutbox, promoOutlet, promoRule, salesInvoiceCache } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { invoiceLines, parseTariff, pemberianPertama, recap, TARIFF_SHEET, type PromoRule, type Putusan } from "@/lib/promo-recap";
+import { invoiceLines, parseTariff, pemberianPertama, recap, TARIFF_SHEET, type InvoiceLine, type PromoRule, type Putusan } from "@/lib/promo-recap";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -88,13 +88,18 @@ export async function GET(request: NextRequest) {
     const to = (request.nextUrl.searchParams.get("to") || fallback.to).slice(0, 10);
 
     // `trans_date` disimpan apa adanya dari Accurate (dd/MM/yyyy), jadi penyaringan tanggal
-    // dilakukan atas bentuk ISO-nya. Bukan pekerjaan berat: satu bulan faktur, bukan semua.
-    const rows = await db.select({ id: salesInvoiceCache.id, raw: salesInvoiceCache.rawData })
-        .from(salesInvoiceCache)
-        .where(and(
-            gte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${from}::date`),
-            lte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${to}::date`),
-        ));
+    // dilakukan atas bentuk ISO-nya.
+    const dalamRentang = and(
+        gte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${from}::date`),
+        lte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${to}::date`),
+    );
+    // Faktur yang `raw_data`-nya belum memuat rincian baris: hanya jalur webhook (detail.do)
+    // yang membawanya, faktur hasil sync daftar tidak. Wajib terlihat, bukan hilang diam-diam.
+    // Dihitung di SQL, tanpa menarik isinya ke memori.
+    const [hitungan] = await db.select({
+        semua: sql<number>`count(*)::int`,
+        tanpaRincian: sql<number>`(count(*) filter (where ${salesInvoiceCache.rawData}::text not like '%detailItem%'))::int`,
+    }).from(salesInvoiceCache).where(dalamRentang);
 
     const ruleRows = await db.select().from(promoRule).where(eq(promoRule.active, true));
     const rules: PromoRule[] = ruleRows.map((row) => ({
@@ -124,10 +129,31 @@ export async function GET(request: NextRequest) {
     // Cabang faktur = principal pemiliknya, ruang nama yang sama dengan `promo_rule.principal`.
     // Tanpa saringan ini rekap mencampur SEMUA principal sementara aturan hanya ada untuk
     // sebagian — dan klaim principal lain pasti tampak "tanpa aturan terbit" selamanya.
-    const semua = rows.flatMap((row) => invoiceLines(row.raw));
-    const lines = principal
-        ? semua.filter((line) => line.branchName.trim().toUpperCase() === principal.toUpperCase())
-        : semua;
+    //
+    // DIBACA PER POTONGAN, dan hanya faktur ber-rincian milik principal itu. Sampai 26 Sep 2026
+    // seluruh `raw_data` rentang ini ditarik sekaligus untuk principal mana pun, lalu disaring di
+    // JavaScript. Sesudah webhook-backfill mengisi rincian 11.389 faktur, September menjadi
+    // 1.084 MB teks: heap Node 2 GB habis saat JSON.parse dan container frontend crash tiga kali.
+    // Saringan teks cabang di SQL setara dengan saringan di bawah (diuji: 1.368 = 1.368 faktur
+    // September) dan tetap dibarengi saringan JavaScript sebagai penentunya.
+    // ponytail: keyset 1.000 faktur; teks mentah dibuang begitu dibongkar jadi baris.
+    const milikCabang = (line: InvoiceLine) => line.branchName.trim().toUpperCase() === principal.toUpperCase();
+    const cabang = principal
+        ? sql`(${salesInvoiceCache.rawData} #>> '{}') ilike ${`%"branchName":"${principal.replace(/[\\%_]/g, (c) => `\\${c}`)}"%`}`
+        : undefined;
+    const lines: InvoiceLine[] = [];
+    for (let setelah = 0; ;) {
+        const potong = await db.select({ id: salesInvoiceCache.id, raw: salesInvoiceCache.rawData })
+            .from(salesInvoiceCache)
+            .where(and(dalamRentang, sql`${salesInvoiceCache.rawData}::text like '%detailItem%'`, cabang,
+                gt(salesInvoiceCache.id, setelah)))
+            .orderBy(asc(salesInvoiceCache.id)).limit(1000);
+        for (const row of potong) {
+            for (const line of invoiceLines(row.raw)) if (!principal || milikCabang(line)) lines.push(line);
+        }
+        if (potong.length < 1000) break;
+        setelah = potong[potong.length - 1].id;
+    }
     const scopedRules = principal
         ? rules.filter((rule) => rule.principal.trim().toUpperCase() === principal.toUpperCase())
         : rules;
@@ -157,18 +183,10 @@ export async function GET(request: NextRequest) {
     const webInvoiceIds = (await db.select({ id: invoiceOutbox.accurateId }).from(invoiceOutbox)
         .where(and(eq(invoiceOutbox.state, "posted"), ne(invoiceOutbox.accurateId, "")))).map((row) => row.id);
 
-    // Faktur yang `raw_data`-nya belum memuat rincian baris: hanya jalur webhook (detail.do)
-    // yang membawanya, faktur hasil sync daftar tidak. Wajib terlihat, bukan hilang diam-diam.
-    // Dihitung dari hasil bongkar, bukan dari bentuk mentahnya: `raw_data` tersimpan sebagai
-    // TEKS JSON (lihat catatan di lib/promo-recap), jadi memeriksa `raw.detailItem` langsung
-    // selalu menjawab "tidak ada rincian" untuk semua faktur.
-    const withDetail = new Set(semua.map((line) => line.invoiceId || line.invoiceNo));
-    const withoutDetail = rows.length - withDetail.size;
-
     return NextResponse.json({
         ok: true, from, to, principal, principals,
-        invoicesInRange: rows.length,
-        invoicesWithoutDetail: withoutDetail,
+        invoicesInRange: hitungan?.semua ?? 0,
+        invoicesWithoutDetail: hitungan?.tanpaRincian ?? 0,
         rules: rules.length,
         recap: result,
         webInvoiceIds,
