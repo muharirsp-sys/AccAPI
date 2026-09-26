@@ -206,6 +206,12 @@ export const promoRule = pgTable("promo_rule", {
     /** INCLUDE = hanya peserta daftar; EXCLUDE = semua kecuali peserta. Kosong = tanpa batas. */
     outletListMode: text("outlet_list_mode").notNull().default(""),
     /**
+     * Hanya PO PERTAMA per outlet per barang yang berhak (BP2609008707: listing Indomaret "DISC
+     * 3% (FIRST PO)"). Faktur berikutnya yang membawa potongan sama untuk outlet dan barang itu
+     * tidak dibenarkan aturan ini — di gerbang ditahan, di Rekap Promo tak bertuan.
+     */
+    firstPo: boolean("first_po").notNull().default(false),
+    /**
      * ASAL baris ini: `surat` (publikasi Summary lewat jembatan), `excel` (impor sheet Detail),
      * `tarif` (impor Discount Reguler), `manual` (diketik di layar). Kosong = baris lama,
      * diperlakukan milik jalur excel/tarif. Tiap penulis hanya boleh mengganti IRISANNYA

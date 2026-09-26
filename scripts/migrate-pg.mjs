@@ -179,6 +179,15 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS idx_discount_normalization_date ON discount_normalization (trans_date);
     `,
   },
+  {
+    // 2026-09-25. Aturan "hanya PO pertama" (surat listing BP2609008707). Lihat
+    // db/migrations/0023_promo_rule_first_po.sql. ADD COLUMN dengan DEFAULT: baris lama terisi
+    // false seketika, jadi NOT NULL-nya aman pada tabel berisi (bukan SET NOT NULL belakangan).
+    nama: "promo_rule.first_po",
+    sudahAda: `SELECT 1 FROM information_schema.columns
+               WHERE table_name = 'promo_rule' AND column_name = 'first_po'`,
+    sql: "ALTER TABLE promo_rule ADD COLUMN IF NOT EXISTS first_po boolean NOT NULL DEFAULT false",
+  },
 ];
 
 const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 15_000 });

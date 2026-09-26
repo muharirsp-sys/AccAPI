@@ -1,13 +1,17 @@
 /*
- * Tujuan: Normalisasi diskon pada faktur Accurate yang dibuat DI LUAR web — potongan yang Rekap
- *         Promo sebut "tak bertuan" digolongkan manusia jadi Disc Claim atau Disc Distributor.
+ * Tujuan: Normalisasi diskon pada faktur Accurate — potongan yang Rekap Promo sebut "tak bertuan"
+ *         digolongkan manusia jadi Disc Claim atau Disc Distributor.
  * Caller: Route dashboard `/normalisasi-diskon`.
  * Dependensi: GET /api/promo-recap (baris), /api/promo-recap/normalisasi (simpan/cabut), sonner.
  * Main Functions: NormalisasiDiskonPage, simpan, cabut.
  * Side Effects: HTTP; menulis `discount_normalization`. TIDAK menulis ke Accurate.
  *
- * Faktur yang terbit lewat web tidak ditampilkan: potongannya sudah dinilai gerbang validasi,
- * dan menggolongkannya di sini berarti menimpa putusan gerbang dengan tangan.
+ * Faktur yang terbit lewat web IKUT ditampilkan, ditandai "web". Sampai 2026-09-25 disembunyikan
+ * dengan alasan gerbang sudah menilainya — tetapi gerbang menilai ORDER, bukan faktur yang akhirnya
+ * ada di Accurate. INV/2609/KN00450 terbit dengan 3% principal di kolom 1 (bug rantai persen yang
+ * sudah diperbaiki), INV/2609/KN00617 kehilangan satu baris karena diubah di Accurate sesudah
+ * terbit; keduanya tak bertuan dan tidak bisa diputuskan di mana pun. Tidak ada putusan gerbang
+ * yang tertimpa: normalisasi hanya berlaku pada baris yang TIDAK dijelaskan aturan mana pun.
  */
 "use client";
 
@@ -16,7 +20,7 @@ import { RefreshCw, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 
 type Row = {
-    bucket: "principal" | "distributor" | "unowned";
+    bucket: "principal" | "distributor" | "unowned"; web?: boolean;
     invoiceNo: string; invoiceId: string; lineKey: string; transDate: string;
     customerNo: string; customerName: string; itemCode: string; itemName: string;
     positions: string; percent: number; amount: number;
@@ -25,26 +29,30 @@ type Row = {
 
 type Data = { principals: string[]; recap: { rows: Row[] }; webInvoiceIds: string[] };
 
-type Grup = { key: string; customerNo: string; customerName: string; positions: string; percent: number;
-    bucket: Row["bucket"]; rows: Row[]; amount: number; invoices: number; reason: string };
+type Grup = { key: string; invoiceNo: string; transDate: string; customerNo: string; customerName: string;
+    positions: string; percent: number; bucket: Row["bucket"]; rows: Row[]; amount: number; reason: string };
 
 const rp = (value: number) => `Rp ${Number(value).toLocaleString("id-ID", { maximumFractionDigits: 2 })}`;
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const NORMALISASI = "NORMALISASI";
 
-/** Satu grup = outlet x posisi x persen: satu keputusan biasanya berlaku untuk pola yang sama. */
+/**
+ * Satu grup = faktur x posisi x persen: keputusan diambil per faktur, karena dasar keputusannya
+ * (fakturnya di Accurate) juga per faktur. Diurutkan per outlet supaya faktur satu outlet berdampingan.
+ */
 function kelompokkan(rows: Row[]): Grup[] {
     const map = new Map<string, Grup>();
     for (const row of rows) {
-        const key = `${row.bucket}|${row.customerNo}|${row.positions}|${row.percent}`;
-        const grup = map.get(key) ?? { key, customerNo: row.customerNo, customerName: row.customerName,
-            positions: row.positions, percent: row.percent, bucket: row.bucket, rows: [], amount: 0, invoices: 0, reason: row.reason };
+        const key = `${row.bucket}|${row.invoiceId}|${row.positions}|${row.percent}`;
+        const grup = map.get(key) ?? { key, invoiceNo: row.invoiceNo, transDate: row.transDate, customerNo: row.customerNo,
+            customerName: row.customerName, positions: row.positions, percent: row.percent, bucket: row.bucket,
+            rows: [], amount: 0, reason: row.reason };
         grup.rows.push(row);
         grup.amount = Math.round((grup.amount + row.amount) * 100) / 100;
         map.set(key, grup);
     }
-    for (const grup of map.values()) grup.invoices = new Set(grup.rows.map((row) => row.invoiceNo)).size;
-    return [...map.values()].sort((a, b) => b.amount - a.amount);
+    return [...map.values()].sort((a, b) => a.customerName.localeCompare(b.customerName)
+        || a.transDate.localeCompare(b.transDate) || a.invoiceNo.localeCompare(b.invoiceNo));
 }
 
 export default function NormalisasiDiskonPage() {
@@ -71,10 +79,10 @@ export default function NormalisasiDiskonPage() {
 
     const { calon, sudah } = useMemo(() => {
         const web = new Set(data?.webInvoiceIds ?? []);
-        const luarWeb = (data?.recap.rows ?? []).filter((row) => !web.has(row.invoiceId));
+        const rows = (data?.recap.rows ?? []).map((row) => ({ ...row, web: web.has(row.invoiceId) }));
         return {
-            calon: kelompokkan(luarWeb.filter((row) => row.bucket === "unowned")),
-            sudah: kelompokkan(luarWeb.filter((row) => row.suratProgram === NORMALISASI)),
+            calon: kelompokkan(rows.filter((row) => row.bucket === "unowned")),
+            sudah: kelompokkan(rows.filter((row) => row.suratProgram === NORMALISASI)),
         };
     }, [data]);
 
@@ -151,11 +159,11 @@ export default function NormalisasiDiskonPage() {
                                     return baru;
                                 })} />
                         </th>
+                        <th className="px-3 py-2 text-left">Faktur</th>
                         <th className="px-3 py-2 text-left">Outlet</th>
                         <th className="px-3 py-2 text-left">Posisi</th>
                         <th className="px-3 py-2 text-right">Persen</th>
-                        <th className="px-3 py-2 text-right">Baris</th>
-                        <th className="px-3 py-2 text-right">Faktur</th>
+                        <th className="px-3 py-2 text-left">Barang</th>
                         <th className="px-3 py-2 text-right">Nominal</th>
                         <th className="px-3 py-2 text-left">{sudahDiputuskan ? "Digolongkan" : "Sebab"}</th>
                     </tr>
@@ -164,7 +172,14 @@ export default function NormalisasiDiskonPage() {
                     {grup.map((entry) => (
                         <tr key={entry.key} className="border-t border-white/5 align-top">
                             <td className="px-3 py-1.5">
-                                <input type="checkbox" aria-label={`Pilih ${entry.customerName}`} checked={pilih.has(entry.key)} onChange={() => toggle(entry.key)} />
+                                <input type="checkbox" aria-label={`Pilih ${entry.invoiceNo}`} checked={pilih.has(entry.key)} onChange={() => toggle(entry.key)} />
+                            </td>
+                            <td className="px-3 py-1.5">
+                                <div className="font-mono text-xs">
+                                    {entry.invoiceNo}
+                                    {entry.rows[0].web && <span className="ml-1.5 rounded bg-blue-500/20 px-1 text-[10px] text-blue-200" title="Terbit lewat web ini">web</span>}
+                                </div>
+                                <div className="text-xs text-slate-500">{entry.transDate}</div>
                             </td>
                             <td className="px-3 py-1.5">
                                 <div className="font-mono text-xs">{entry.customerNo}</div>
@@ -172,8 +187,21 @@ export default function NormalisasiDiskonPage() {
                             </td>
                             <td className="px-3 py-1.5 font-mono text-xs">{entry.positions === "faktur" ? "tingkat faktur" : `D${entry.positions.replaceAll("+", "+D")}`}</td>
                             <td className="px-3 py-1.5 text-right">{entry.percent ? `${entry.percent}%` : "—"}</td>
-                            <td className="px-3 py-1.5 text-right">{entry.rows.length}</td>
-                            <td className="px-3 py-1.5 text-right">{entry.invoices}</td>
+                            <td className="px-3 py-1.5 text-xs">
+                                {/* ponytail: <details> bawaan, tanpa state buka-tutup */}
+                                <details>
+                                    <summary className="cursor-pointer text-slate-300">{entry.rows.length} baris</summary>
+                                    <ul className="mt-1 space-y-0.5">
+                                        {entry.rows.map((row) => (
+                                            <li key={row.lineKey} className="flex gap-3 whitespace-nowrap">
+                                                <span className="font-mono">{row.itemCode || "—"}</span>
+                                                <span className="text-slate-500 truncate max-w-56">{row.itemName}</span>
+                                                <span className="ml-auto">{rp(row.amount)}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </details>
+                            </td>
                             <td className="px-3 py-1.5 text-right">{rp(entry.amount)}</td>
                             <td className="px-3 py-1.5 text-xs max-w-md">
                                 {sudahDiputuskan
@@ -186,7 +214,7 @@ export default function NormalisasiDiskonPage() {
                     ))}
                     {!grup.length && (
                         <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-500">
-                            {sudahDiputuskan ? "Belum ada yang dinormalisasi pada periode ini." : "Tidak ada potongan tak bertuan di faktur luar web pada periode ini."}
+                            {sudahDiputuskan ? "Belum ada yang dinormalisasi pada periode ini." : "Tidak ada potongan tak bertuan pada periode ini."}
                         </td></tr>
                     )}
                 </tbody>
@@ -199,8 +227,8 @@ export default function NormalisasiDiskonPage() {
             <header className="space-y-1">
                 <h1 className="text-2xl font-semibold text-white">Normalisasi Diskon</h1>
                 <p className="text-sm text-slate-400">
-                    Potongan tak bertuan pada faktur yang dibuat langsung di Accurate (bukan lewat web ini).
-                    Golongkan jadi <b>Disc Claim</b> atau <b>Disc Distributor</b> supaya keluar dari tak bertuan di
+                    Potongan tak bertuan pada faktur Accurate, termasuk yang terbit lewat web (bertanda <b>web</b>).
+                    Satu baris = satu faktur, satu posisi. Golongkan jadi <b>Disc Claim</b> atau <b>Disc Distributor</b> supaya keluar dari tak bertuan di
                     Rekap Promo. Faktur di Accurate tidak diubah; bila fakturnya diubah sesudah diputuskan,
                     keputusannya otomatis tidak dipakai.
                 </p>
@@ -231,7 +259,7 @@ export default function NormalisasiDiskonPage() {
                 <div className="flex flex-wrap items-end gap-3">
                     <div>
                         <h2 className="text-lg font-semibold text-white">Tak bertuan · {rp(totalCalon)}</h2>
-                        <p className="text-xs text-slate-500">Dikelompokkan per outlet, posisi, dan persen. Terpilih: {rp(totalTerpilih)}</p>
+                        <p className="text-xs text-slate-500">Satu baris per faktur, posisi, dan persen. Terpilih: {rp(totalTerpilih)}</p>
                     </div>
                     <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Catatan (opsional), mis. dasar keputusannya"
                         className="ml-auto min-w-64 bg-black/40 border border-white/10 rounded px-3 py-2 text-sm" />

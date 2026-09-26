@@ -11,12 +11,12 @@
  * dipakai untuk menjelaskan siapa menanggung apa. Selisihnya justru temuan yang dicari.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, ne, or, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
 import { discountNormalization, invoiceOutbox, promoOutlet, promoRule, salesInvoiceCache } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { invoiceLines, parseTariff, recap, TARIFF_SHEET, type PromoRule, type Putusan } from "@/lib/promo-recap";
+import { invoiceLines, parseTariff, pemberianPertama, recap, TARIFF_SHEET, type PromoRule, type Putusan } from "@/lib/promo-recap";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -104,7 +104,7 @@ export async function GET(request: NextRequest) {
         benefitType: row.benefitType, benefitValue: row.benefitValue, benefitUnit: row.benefitUnit,
         benefitBeban: row.benefitBeban,
         tierNo: row.tierNo, triggerQty: Number(row.triggerQty), triggerUnit: row.triggerUnit,
-        outletList: row.outletList, outletListMode: row.outletListMode,
+        outletList: row.outletList, outletListMode: row.outletListMode, firstPo: row.firstPo,
     }));
 
     // Daftar outlet peserta (mis. LOYALTY). Dibaca UTUH lalu disaring per tanggal baris di
@@ -137,7 +137,22 @@ export async function GET(request: NextRequest) {
         .where(and(gte(discountNormalization.transDate, from), lte(discountNormalization.transDate, to)));
     const normalisasi = new Map<string, Putusan>(putusan.map((row) => [`${row.lineKey}|${row.positions}`,
         { bucket: row.bucket === "principal" ? "principal" : "distributor", amount: Number(row.amount), by: row.decidedBy }]));
-    const result = recap(lines, scopedRules, members, normalisasi);
+    // PO PERTAMA dinilai atas RIWAYAT sejak awal periode aturan first-PO, bukan hanya rentang ini:
+    // PO kedua bulan Oktober tidak boleh tampak "pertama" hanya karena rekapnya dibuka per Oktober.
+    // Dibaca hanya faktur yang memuat kode barangnya — belasan faktur, bukan seluruh kuartal.
+    const aturanPertama = scopedRules.filter((rule) => rule.firstPo && rule.itemCode);
+    let pertama;
+    if (aturanPertama.length) {
+        const sejak = aturanPertama.map((rule) => rule.periodStart || from).sort()[0];
+        const kode = [...new Set(aturanPertama.map((rule) => rule.itemCode))];
+        const riwayat = await db.select({ raw: salesInvoiceCache.rawData }).from(salesInvoiceCache).where(and(
+            gte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${sejak}::date`),
+            lte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${to}::date`),
+            or(...kode.map((code) => sql`${salesInvoiceCache.rawData}::text like ${`%${code}%`}`)),
+        ));
+        pertama = pemberianPertama(riwayat.flatMap((row) => invoiceLines(row.raw)), aturanPertama);
+    }
+    const result = recap(lines, scopedRules, members, normalisasi, pertama);
     // Faktur yang terbit LEWAT web sudah dinilai gerbang; menu normalisasi hanya untuk yang tidak.
     const webInvoiceIds = (await db.select({ id: invoiceOutbox.accurateId }).from(invoiceOutbox)
         .where(and(eq(invoiceOutbox.state, "posted"), ne(invoiceOutbox.accurateId, "")))).map((row) => row.id);

@@ -3,7 +3,7 @@
    tak bertuan (posisi 6+) dan klaim principal tanpa aturan terbit. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fakturRuleFor, invoiceLines, isoDate, kunciNormalisasi, NORMALISASI, parseTariff, recap, ruleFor, type PromoRule, type Putusan } from "./promo-recap.ts";
+import { fakturRuleFor, invoiceLines, isoDate, kunciNormalisasi, NORMALISASI, parseTariff, pemberianPertama, recap, ruleFor, temuanPoPertama, type PromoRule, type Putusan } from "./promo-recap.ts";
 
 const aturan = (over: Partial<PromoRule> = {}): PromoRule => ({
     principal: "KINO NON FOOD", suratProgram: "BP2609007909", promoLabel: "MTI - HPC CONSUMER PROMO ON PO",
@@ -160,6 +160,137 @@ test("potongan tingkat faktur (MSG) dicocokkan per FAKTUR, dengan PPN dikembalik
     // ini jatuh ke tier 2 dan Rp 54.058 yang sah ikut tercatat tak bertuan.
     const tier3 = { ...tier, tierNo: 3, triggerQty: 3_000_000, benefitValue: "60000" };
     assert.equal(fakturRuleFor([tier, tier3], "PRINCIPAL", "2026-09-07", 2_817_304.8, 54_058, 19)?.tierNo, 3);
+
+    // Lantai Rp 100 seperti gerbang. IKSAN 24 Sep 2026 (produksi): 17 baris, Rp 180.218 =
+    // Rp 200.041,98 dengan PPN lawan tier 10 Rp 200.000 — selisih Rp 42 melewati 17 x Rp 1,
+    // padahal gerbang meloloskannya.
+    const tier10 = { ...tier, tierNo: 10, triggerQty: 10_000_000, benefitValue: "200000" };
+    assert.equal(fakturRuleFor([tier, tier10], "PRINCIPAL", "2026-09-24", 9_514_143.1, 180_218, 17)?.tierNo, 10);
+    // Lantainya bukan pintu belakang: A3 KOSMETIK kurang Rp 2.937 dari tier tetap ditolak.
+    assert.equal(fakturRuleFor([tier, tier10], "PRINCIPAL", "2026-09-08", 9_222_445.5, 177_534, 52), null);
+});
+
+test("PER POSISI: yang cocok aturan diakui, hanya sisanya tak bertuan", () => {
+    // PT SUPRA BOGA INV/2609/KN00760 (21 Sep 2026, produksi): `3+0.5` di posisi 1-2, tarifnya 3%
+    // posisi 1 (distributor) dan 0,5% posisi 4 (principal). Digabung, 3,5% seluruhnya tak bertuan.
+    const tarif = (tierNo: number, value: string, beban: string) => aturan({ suratProgram: "DISCOUNT REGULER",
+        promoGroup: "PT. SUPRA BOGA", itemCode: "", customerCode: "C-PT0029", tierNo, benefitValue: value, benefitBeban: beban });
+    const aturanSupra = [tarif(1, "3", "DISTRIBUTOR"), tarif(4, "0.5", "PRINCIPAL")];
+    const supra = {
+        id: 1, number: "INV/2609/KN00760", transDate: "21/09/2026", customer: { customerNo: "C-PT0029-KN", name: "PT. SUPRA BOGA LESTARI {C-PT0029}" },
+        detailItem: [{ id: 11, itemNo: "K1010001015010", item: { name: "KNF ABSOLUTE CHAMOMILE" }, quantity: 12, unitPrice: 51261.3,
+            itemDiscPercent: "3+0.5", itemCashDiscount: 21437.48 }],
+    };
+    const hasil = recap(invoiceLines(supra), aturanSupra);
+    assert.equal(hasil.distributor, 18454.07);
+    assert.equal(hasil.unowned, 2983.41);
+    const tak = hasil.rows.find((row) => row.bucket === "unowned")!;
+    assert.equal(tak.positions, "2");
+    // Bahan keputusannya ikut disebut: nilai yang sama ada di tarif, hanya kolomnya lain.
+    assert.match(tak.reason, /0\.5% ada di tarif outlet posisi 4 \(principal\)/);
+    // Dan menu Normalisasi kini bisa memutuskan 0,5%-nya SAJA.
+    const putusan = new Map<string, Putusan>([[kunciNormalisasi(tak), { bucket: "principal", amount: 2983.41, by: "admin" }]]);
+    const diputuskan = recap(invoiceLines(supra), aturanSupra, [], putusan);
+    assert.equal(diputuskan.unowned, 0);
+    assert.equal(diputuskan.principal, 2983.41);
+    assert.equal(diputuskan.distributor, 18454.07);
+});
+
+test("jaringan: posisi dimaklumi, nilai tidak — surat principal terbaca walau di kolom distributor", () => {
+    // INDOMARET INV/2609/KN01059 (25 Sep 2026, produksi): `3.96+3+3.1`, tarifnya 3,96 + 3,1.
+    const tarif = (tierNo: number, value: string) => aturan({ suratProgram: "DISCOUNT REGULER", promoGroup: "Indomaret",
+        itemCode: "", customerCode: "C-IN0050", tierNo, benefitValue: value, benefitBeban: "DISTRIBUTOR" });
+    const indomaret = {
+        id: 2, number: "INV/2609/KN01059", transDate: "25/09/2026", customer: { customerNo: "C-IN0050-KN", name: "INDOMARET {C-IN0050}" },
+        detailItem: [{ id: 21, itemNo: "K1531001003011", item: { name: "KNF SASHA SHAMPOO COLOR NATURA" }, quantity: 61,
+            unitPrice: 603243.2, itemDiscPercent: "3.96+3+3.1", itemCashDiscount: 3580106.57 }],
+    };
+    const tanpaSurat = recap(invoiceLines(indomaret), [tarif(1, "3.96"), tarif(2, "3.1")]);
+    // 3,1% di posisi 3 dipasangkan ke slot tarif posisi 2; 3% tidak punya pasangan. Rupiahnya
+    // menurut URUTAN FAKTUR: 3% dihitung atas sisa sesudah 3,96%, bukan sesudah 3,1%.
+    assert.equal(tanpaSurat.distributor, 2519887.34);
+    assert.equal(tanpaSurat.unowned, 1060219.23);
+    assert.equal(tanpaSurat.rows.find((row) => row.bucket === "unowned")?.positions, "2");
+
+    // Surat BP2609008707 untuk barang itu. Fakturnya diketik langsung di Accurate dengan 3% di kolom 2.
+    const surat = aturan({ suratProgram: "SURAT-INDOMARET", itemCode: "K1531001003011", benefitValue: "3" });
+    const denganSurat = recap(invoiceLines(indomaret), [tarif(1, "3.96"), tarif(2, "3.1"), surat]);
+    assert.equal(denganSurat.unowned, 0);
+    assert.equal(denganSurat.principal, 1060219.23);
+    assert.equal(denganSurat.programs.find((program) => program.suratProgram === "SURAT-INDOMARET")?.amount, 1060219.23);
+
+    // Outlet BUKAN jaringan tetap dinilai per posisi apa adanya: kolom distributor tidak
+    // dibenarkan surat principal, dan 3,1% di posisi 3 tidak dipindah ke slot posisi 2.
+    const biasa = { ...indomaret, customer: { customerNo: "C-IN0050-KN", name: "TOKO BIASA" } };
+    assert.equal(recap(invoiceLines(biasa), [tarif(1, "3.96"), tarif(2, "3.1"), surat]).unowned, 2122912.3);
+
+    // Lintas beban: Alfamart dengan 2,25% tarif distributor yang dilaporkan di kolom 4.
+    const alfa = (tierNo: number, value: string) => ({ ...tarif(tierNo, value), customerCode: "C-AL0063" });
+    const alfamart = { ...indomaret, customer: { customerNo: "C-AL0063-KN", name: "ALFAMART {C-AL0063}" },
+        detailItem: [{ ...indomaret.detailItem[0], quantity: 1, unitPrice: 345945.95, itemDiscPercent: "4+0+0+2.25", itemCashDiscount: 21310.27 }] };
+    const hasilAlfa = recap(invoiceLines(alfamart), [alfa(1, "4"), alfa(2, "2.25")]);
+    assert.equal(hasilAlfa.unowned, 0);
+    assert.equal(hasilAlfa.distributor, 21310.27);
+});
+
+test("first PO: hanya faktur PERTAMA per outlet x barang yang dibenarkan surat listing", () => {
+    // BP2609008707: "DISC 3% (FIRST PO)" SASHA NATURAL BLACK 30ML untuk Indomaret, 15 Sep - 31 Des.
+    const listing = aturan({ suratProgram: "BP2609008707", promoGroup: "SASHA SHAMPOO - COLOR", itemCode: "K1531001003011",
+        periodStart: "2026-09-15", periodEnd: "2026-12-31", firstPo: true });
+    const faktur = (id: number, no: string, tanggal: string, outlet = "C-IN0050-KN") => ({
+        id, number: no, transDate: tanggal, customer: { customerNo: outlet, name: "INDOMARET {C-IN0050}" },
+        detailItem: [{ id: id * 10, itemNo: "K1531001003011", item: { name: "KNF SASHA SHAMPOO COLOR NATURAL BLACK 30ML" },
+            quantity: 1, unitPrice: 100000, itemDiscPercent: "0+0+0+3", itemCashDiscount: 3000 }],
+    });
+    const baris = [faktur(2, "INV/2609/KN01100", "30/09/2026"), faktur(1, "INV/2609/KN01059", "25/09/2026"),
+        faktur(3, "INV/2609/KN01101", "30/09/2026", "C-IN0086-KN")].flatMap((f) => invoiceLines(f));
+    const hasil = recap(baris, [listing]);
+    // Urutan masukan tidak menentukan: yang pertama menurut TANGGAL faktur yang berhak.
+    const milik = (no: string) => hasil.rows.find((row) => row.invoiceNo === no)!;
+    assert.equal(milik("INV/2609/KN01059").bucket, "principal");
+    assert.equal(milik("INV/2609/KN01100").bucket, "unowned");
+    assert.match(milik("INV/2609/KN01100").reason, /hanya untuk PO PERTAMA.*INV\/2609\/KN01059 \(2026-09-25\)/);
+    // Outlet lain punya PO pertamanya sendiri.
+    assert.equal(milik("INV/2609/KN01101").bucket, "principal");
+    assert.equal(hasil.principal, 6000);
+    assert.equal(hasil.unowned, 3000);
+
+    // Riwayat dari luar rentang rekap (dihitung pemanggil sejak awal periode aturan): PO Oktober
+    // bukan "pertama" hanya karena rekapnya dibuka per Oktober.
+    const oktober = invoiceLines(faktur(4, "INV/2610/KN00001", "02/10/2026"));
+    const riwayat = pemberianPertama([...baris, ...oktober], [listing]);
+    assert.equal(recap(oktober, [listing], [], new Map(), riwayat).unowned, 3000);
+    assert.equal(recap(oktober, [listing]).principal, 3000, "tanpa riwayat, rekap bulannya sendiri mengira pertama");
+
+    // Aturan tanpa first PO tidak tersentuh: kedua faktur outlet yang sama tetap sah.
+    const biasa = recap(baris, [{ ...listing, firstPo: false }]);
+    assert.equal(biasa.unowned, 0);
+    assert.equal(biasa.principal, 9000);
+});
+
+test("first PO di GERBANG: SO yang outletnya sudah mendapatkannya ditahan, dengan sebabnya", () => {
+    const listing = { suratProgram: "BP2609008707", itemCode: "K1531001003011", benefitType: "DISC_PCT", benefitValue: "3",
+        periodStart: "2026-09-15", periodEnd: "2026-12-31", firstPo: true };
+    const so = (key: string, soNo: string, soDate: string, customerNo = "C-IN0050-KN", percent = 3) => ({
+        key, soNo, soDate, customerNo, itemCode: "K1531001003011",
+        discounts: [{ position: 1, percent: 3.96 }, { position: 2, percent: 3.1 }, { position: 4, percent }],
+    });
+    const sudahDiberikan = new Map([["C-IN0050-KN|K1531001003011|BP2609008707",
+        { invoiceId: "335001", invoiceNo: "INV/2609/KN01059", transDate: "2026-09-25" }]]);
+
+    // Riwayat faktur lain -> ditahan, dengan nomor fakturnya.
+    const tahan = temuanPoPertama([so("1", "SO-2", "2026-10-02")], [listing], sudahDiberikan, new Set());
+    assert.match(tahan.get("1") ?? "", /hanya untuk PO PERTAMA.*INV\/2609\/KN01059 \(2026-09-25\)/);
+    // Faktur itu milik SO ini sendiri (validasi ulang sesudah terbit) -> tidak menahan dirinya.
+    assert.equal(temuanPoPertama([so("1", "SO-1", "2026-09-25")], [listing], sudahDiberikan, new Set(["335001"])).size, 0);
+    // Belum pernah diberikan: dari dua SO di batch yang sama, hanya yang LEBIH AWAL yang pertama.
+    const dua = temuanPoPertama([so("7", "SO-B", "2026-09-26"), so("3", "SO-A", "2026-09-25")], [listing], new Map(), new Set());
+    assert.equal(dua.has("3"), false);
+    assert.match(dua.get("7") ?? "", /SO SO-A yang lebih awal/);
+    // Outlet lain, SO tanpa potongan itu, dan aturan tanpa first PO tidak tersentuh.
+    assert.equal(temuanPoPertama([so("1", "SO-2", "2026-10-02", "C-IN0086-KN")], [listing], sudahDiberikan, new Set()).size, 0);
+    assert.equal(temuanPoPertama([so("1", "SO-2", "2026-10-02", "C-IN0050-KN", 2)], [listing], sudahDiberikan, new Set()).size, 0);
+    assert.equal(temuanPoPertama([so("1", "SO-2", "2026-10-02")], [{ ...listing, firstPo: false }], sudahDiberikan, new Set()).size, 0);
 });
 
 test("raw_data yang tersimpan sebagai TEKS JSON tetap terbaca", () => {

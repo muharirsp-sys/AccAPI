@@ -35,6 +35,13 @@ test("bonus barang jadi satu aturan BONUS_QTY per kode barang", () => {
     assert.equal(hasil.rows[0].benefitBeban, "PRINCIPAL");
 });
 
+test("syarat PO pertama menyeberang ke promo_rule, dan tanpanya tetap false", () => {
+    const listing = program({ tiers: [{ minimum: "1", percentages: ["3"] }], first_po: true });
+    assert.ok(bridgeRows(letter({ programs: [listing] })).rows.every((row) => row.firstPo === true));
+    // Publikasi lama tidak membawa field ini sama sekali: bukan first PO.
+    assert.ok(bridgeRows(letter()).rows.every((row) => row.firstPo === false));
+});
+
 test("potongan rupiah SELURUH NOTA jadi satu aturan tingkat faktur, bukan per barang", () => {
     // Bentuk program MSG: Rp 20.000 untuk seluruh nota bila belanja >= Rp 1 juta. Kalau ia
     // dimuat per barang, satu potongan nota akan dikalikan sebanyak barisnya.

@@ -111,6 +111,9 @@ class Program(StrictModel):
     value_scope: Literal["eligible", "order"] = "eligible"
     basis: Literal["gross", "net"] = "gross"
     stacking: bool = False
+    # Hanya PO PERTAMA per outlet per barang yang berhak (lihat FIRST_PO_MARKS). Publikasi lama
+    # tidak membawanya = False, perilakunya tidak berubah.
+    first_po: bool = False
     priority: int = Field(ge=0, le=10000)
     tiers: list[Tier] = Field(min_length=1, max_length=30)
     source_page: int = Field(ge=1, le=1000)
@@ -255,6 +258,9 @@ UNITS = {"PCS", "PC", "CTN", "DUS", "BOX", "PAK", "PACK", "RTG", "KRT", "LSN", "
 DATE_TEXT = re.compile(r"\d{4}-\d{2}-\d{2}")
 MIX_MARKS = ("mix", "campur")
 STACK_MARKS = ("stack", "digabung", "digabungkan", "berlaku bersama")
+# "Hanya PO pertama" (listing BP2609008707). Dibaca dari ketentuan/keterangan yang TERLIHAT dan bisa
+# disunting peninjau: menghapus kalimatnya berarti mencabut syaratnya, tanpa kolom tersembunyi.
+FIRST_PO_MARKS = ("po pertama", "first po")
 
 
 def clean_number(raw):
@@ -425,7 +431,8 @@ def compile_programs(rows, period=None):
         # channel yang sama bukan satu program — menggabungkannya membuat salah satunya hilang.
         key = (str(row.get("surat_program", "")).strip(),
                str(row.get("channel_gtmt", "")).strip().upper() or "ALL", start, end, unit, kind,
-               any(mark in ketentuan.lower() for mark in MIX_MARKS), any(mark in blob for mark in STACK_MARKS), tuple(sorted(codes)), outlet)
+               any(mark in ketentuan.lower() for mark in MIX_MARKS), any(mark in blob for mark in STACK_MARKS), tuple(sorted(codes)), outlet,
+               any(mark in blob for mark in FIRST_PO_MARKS))
         group = groups.setdefault(key, {"rows": [], "tiers": {}})
         group["rows"].append(row)
         if minimum in group["tiers"]:
@@ -436,7 +443,7 @@ def compile_programs(rows, period=None):
             group["tiers"][minimum] = tier
     programs, used = [], set()
     for index, (key, group) in enumerate(groups.items()):
-        surat, channel, start, end, unit, kind, mix, stacking, codes, outlet = key
+        surat, channel, start, end, unit, kind, mix, stacking, codes, outlet, first_po = key
         first = group["rows"][0]
         identifier = str(first.get("promo_group_id", "")).strip() or f"P{index + 1}"
         if identifier in used:
@@ -448,7 +455,7 @@ def compile_programs(rows, period=None):
             surat_program=surat[:80], kelompok=str(first.get("kelompok", "")).strip()[:160],
             start=start, end=end, codes=list(codes), channel=channel, unit=unit, mix=mix, threshold=kind,
             outlet_mode=outlet[0], outlet_classes=list(outlet[1]),
-            value_scope="eligible", basis="gross", stacking=stacking, priority=index + 1,
+            value_scope="eligible", basis="gross", stacking=stacking, first_po=first_po, priority=index + 1,
             tiers=[group["tiers"][minimum] for minimum in sorted(group["tiers"], key=number)],
             source_page=page if isinstance(page, int) and page >= 1 else 1,
             source_quote=(str(first.get("source_quote", "")).strip() or str(first.get("ketentuan", "")).strip() or "-")[:4000]))
