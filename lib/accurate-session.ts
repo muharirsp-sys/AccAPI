@@ -6,7 +6,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { accurateOAuthSession } from "@/db/schema";
+import { accurateOAuthSession, user } from "@/db/schema";
 import type { AccurateCredentials } from "@/lib/sync";
 
 const ALGORITHM = "aes-256-gcm";
@@ -125,22 +125,33 @@ export async function upsertAccurateSession(userId: string, update: AccurateSess
 }
 
 /**
+ * Fallback identitas proses non-interaktif: sesi TERBARU milik admin, bukan sesi terbaru siapa
+ * saja. Hak baca cron = hak akun Accurate pemilik sesi. Insiden 2026-09-19: fakturist (viewer)
+ * menghubungkan akun Accurate-nya sendiri, cron ikut memakainya, lalu retur/barang/karyawan
+ * ditolak "tidak memiliki hak" dan faktur tinggal yang boleh dilihat akun itu — enam hari tanpa suara.
+ * `sessions` wajib sudah urut updatedAt menurun.
+ */
+export function pickSyncUserId(sessions: Array<{ userId: string; role: string | null }>) {
+    return sessions.find((s) => s.role === "admin")?.userId ?? "";
+}
+
+/**
  * Kredensial Accurate untuk proses non-interaktif (cron sync, webhook) — tidak ada user
  * yang sedang login saat kode ini jalan. userId dari ACCURATE_SYNC_USER_ID, fallback sesi
- * OAuth terbaru. Mengembalikan { error } (bukan throw) supaya caller bisa memilih HTTP status.
+ * OAuth terbaru milik admin. Mengembalikan { error } (bukan throw) supaya caller bisa memilih HTTP status.
  */
 export async function resolveSyncCredentials(): Promise<
     { creds: AccurateCredentials; error?: undefined } | { creds?: undefined; error: string }
 > {
     let userId = (process.env.ACCURATE_SYNC_USER_ID || "").trim();
     if (!userId) {
-        const [latest] = await db.select({ userId: accurateOAuthSession.userId })
+        const sessions = await db.select({ userId: accurateOAuthSession.userId, role: user.role })
             .from(accurateOAuthSession)
-            .orderBy(desc(accurateOAuthSession.updatedAt))
-            .limit(1);
-        userId = latest?.userId ?? "";
+            .innerJoin(user, eq(user.id, accurateOAuthSession.userId))
+            .orderBy(desc(accurateOAuthSession.updatedAt));
+        userId = pickSyncUserId(sessions);
     }
-    if (!userId) return { error: "Tidak ada sesi Accurate. Set ACCURATE_SYNC_USER_ID atau login Accurate dulu." };
+    if (!userId) return { error: "Tidak ada sesi Accurate milik admin. Set ACCURATE_SYNC_USER_ID atau login Accurate sebagai admin di /api-wrapper." };
 
     let session = await getAccurateSession(userId);
     if (!session?.accessToken) return { error: "Tidak ada access token Accurate. Login ulang di /api-wrapper." };
