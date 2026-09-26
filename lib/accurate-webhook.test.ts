@@ -3,7 +3,7 @@
    dikenali wajib dilewati, bukan ditebak. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { flattenCustomerIds, flattenItemIds, flattenSalesInvoiceIds } from "./accurate-webhook.ts";
+import { extractLoggedInvoiceIdsSince, flattenCustomerIds, flattenItemIds, flattenSalesInvoiceIds } from "./accurate-webhook.ts";
 
 test("envelope faktur dibaca seperti bentuk nyata produksi", () => {
     const payload = [{
@@ -30,4 +30,22 @@ test("yang tidak dikenali DILEWATI, tidak ditebak dari field lain", () => {
     assert.deepEqual(flattenItemIds([{ type: "ITEM", data: [{ itemId: 0 }, { itemId: -3 }, { itemId: "abc" }] }]), []);
     assert.deepEqual(flattenItemIds(null), []);
     assert.deepEqual(flattenItemIds({ type: "ITEM" }), []);
+});
+
+test("penambal log melewati faktur yang aksi terakhirnya DELETE, dan jendela waktunya dihormati", () => {
+    // Bentuk baris nyata webhook_events.log (produksi, September 2026).
+    const baris = (at: string, id: number, action: string) => JSON.stringify({ receivedAt: at, payload: [{ type: "SALES_INVOICE",
+        data: [{ salesInvoiceId: id, salesInvoiceNo: `INV/2609/KN${id}`, isDownPayment: false, action }] }] });
+    const log = [
+        baris("2026-09-25T01:00:00.000Z", 1, "WRITE"),
+        baris("2026-09-25T01:00:00.000Z", 2, "WRITE"),
+        baris("2026-09-25T02:00:00.000Z", 2, "DELETE"),
+        // Dua objek dalam satu event: aksi tiap objek miliknya sendiri, tidak dipinjam tetangganya.
+        JSON.stringify({ receivedAt: "2026-09-25T03:00:00.000Z", payload: [{ type: "SALES_INVOICE",
+            data: [{ salesInvoiceId: 3, action: "DELETE" }, { salesInvoiceId: 4, action: "WRITE" }] }] }),
+        baris("2026-09-20T00:00:00.000Z", 5, "WRITE"),
+        // Terpotong di 100.000 karakter: tanpa aksi, tetap dicoba.
+        '{"receivedAt":"2026-09-25T04:00:00.000Z","payload":[{"data":[{"salesInvoiceId":6,"salesInv',
+    ].join("\n");
+    assert.deepEqual(extractLoggedInvoiceIdsSince(log, Date.parse("2026-09-24T00:00:00.000Z")).sort(), [1, 4, 6]);
 });

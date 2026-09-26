@@ -6,7 +6,8 @@
  * Caller: cron VPS (Bearer CRON_SECRET). `?check=1` hanya melaporkan, tidak mengubah apa pun.
  * Dependensi: webhook_events.log, lib/accurate-webhook (ekstraksi id), lib/sync (upsert), RBAC cron.
  * Main Functions: GET memilih log runtime, menemukan invoice hilang, dan menambalnya dengan batas per run.
- * Side Effects: upsert baris sales_invoice yang hilang. Idempoten — aman diulang.
+ * Side Effects: upsert baris sales_invoice yang hilang ATAU tersimpan tanpa rincian baris
+ *   (`detailItem`). Idempoten — aman diulang. `?from=&to=` (yyyy-MM-dd) menyapu yang tanpa rincian per tanggal faktur.
  *
  * Kenapa berbasis log, bukan menyapu Accurate: log sudah menyimpan TEPAT id mana yang pernah
  * dikirim Accurate, jadi penambalan ini hanya menyentuh faktur yang benar-benar hilang. Jauh
@@ -15,7 +16,7 @@
 import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
-import { inArray } from "drizzle-orm";
+import { and, asc, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { salesInvoiceCache } from "@/db/schema";
 import { requireCronSecret } from "@/lib/api-security";
@@ -45,6 +46,34 @@ export async function GET(req: Request) {
     const hours = Math.min(Math.max(Number(searchParams.get("hours")) || DEFAULT_HOURS, 1), 24 * 365);
     const limit = Math.min(Math.max(Number(searchParams.get("limit")) || DEFAULT_LIMIT, 1), 2000);
 
+    // `?from=2026-09-01&to=2026-09-30`: faktur TERSIMPAN tanpa rincian baris pada rentang tanggal
+    // faktur itu, semua principal — tidak lewat log. Sebelum penjagaan di lib/sync (2026-09-12
+    // 09:19), sync cron menimpa `raw_data` hasil webhook dengan jawaban list.do yang tidak membawa
+    // `detailItem`. Rinciannya hilang, barisnya tetap ada, jadi penambal "yang hilang" di bawah tidak
+    // pernah menyentuhnya: 280 faktur KINO bertanggal 1-11 Sep 2026 (Rp 1,46 miliar, diukur 25 Sep) tak terbaca
+    // Rekap Promo, dan 57 di antaranya tidak tercatat di log webhook sama sekali.
+    // ponytail: rentang dibatasi 93 hari; faktur lama banyak yang sudah dihapus di Accurate dan
+    // hanya membakar panggilan API. Perlebar bila memang perlu menambal satu kuartal lebih.
+    const from = searchParams.get("from") ?? "";
+    const to = searchParams.get("to") ?? "";
+    if (from || to) {
+        const iso = /^\d{4}-\d{2}-\d{2}$/;
+        const hari = (Date.parse(to) - Date.parse(from)) / 86_400_000;
+        if (!iso.test(from) || !iso.test(to) || !(hari >= 0 && hari <= 93)) {
+            return NextResponse.json({ ok: false, error: "from dan to wajib yyyy-MM-dd, from <= to, paling lebar 93 hari" }, { status: 400 });
+        }
+        const rows = await db.select({ id: salesInvoiceCache.id }).from(salesInvoiceCache)
+            .where(and(
+                sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY') between ${from}::date and ${to}::date`,
+                sql`${salesInvoiceCache.rawData}::text not like '%detailItem%'`,
+            ))
+            .orderBy(asc(salesInvoiceCache.id));
+        const ids = rows.map((row) => row.id);
+        if (checkOnly || ids.length === 0) return NextResponse.json({ ok: true, checkOnly, from, to, missing: ids.length });
+        const hasil = await tambal(ids, limit);
+        return NextResponse.json({ from, to, ...hasil }, { status: "error" in hasil ? 503 : 200 });
+    }
+
     // Sama seperti route webhook: hanya /app/data yang persisten (volume docker-compose).
     const logDir = fs.existsSync("/app/data") ? "/app/data" : process.cwd();
     const files = [path.join(logDir, "webhook_events.log"), path.join(logDir, "webhook_events.log.1")]
@@ -65,12 +94,16 @@ export async function GET(req: Request) {
     }
 
     // Chunk 1000 id per query — batas parameter Postgres, bukan pilihan gaya.
+    // "Ada" = tersimpan DENGAN rincian baris. Baris tanpa `detailItem` sama saja hilang bagi Rekap
+    // Promo dan verifikasi balik. Itu bisa terjadi bila detail.do gagal saat webhook lalu sync cron
+    // menyimpan barisnya dari list.do — tanpa ini ia tidak pernah diambil ulang.
     const present = new Set<number>();
     for (let i = 0; i < loggedIds.length; i += 1000) {
         const rows = await db
             .select({ id: salesInvoiceCache.id })
             .from(salesInvoiceCache)
-            .where(inArray(salesInvoiceCache.id, loggedIds.slice(i, i + 1000)));
+            .where(and(inArray(salesInvoiceCache.id, loggedIds.slice(i, i + 1000)),
+                sql`${salesInvoiceCache.rawData}::text like '%detailItem%'`));
         for (const r of rows) present.add(r.id);
     }
 
@@ -86,15 +119,19 @@ export async function GET(req: Request) {
         });
     }
 
+    const hasil = await tambal(missing, limit);
+    return NextResponse.json({ hours, loggedIds: loggedIds.length, ...hasil }, { status: "error" in hasil ? 503 : 200 });
+}
+
+/** Ambil ulang `detail.do` untuk `ids` (paling banyak `limit`) dan simpan; dipakai kedua mode. */
+async function tambal(ids: number[], limit: number) {
     const accurate = await resolveSyncCredentials();
-    if (!accurate.creds) {
-        return NextResponse.json({ ok: false, error: accurate.error }, { status: 503 });
-    }
+    if (!accurate.creds) return { ok: false, error: accurate.error, missing: ids.length };
 
     const processed: unknown[] = [];
     const gone: number[] = [];
     const failed: Array<{ id: number; error: string }> = [];
-    for (const id of missing.slice(0, limit)) {
+    for (const id of ids.slice(0, limit)) {
         try {
             const summary = await upsertSalesInvoiceById(id, accurate.creds);
             console.log(`[BACKFILL] Faktur ditambal: ${summary.number ?? id} | ${summary.customerName ?? "-"} | total ${summary.totalAmount} | sisa ${summary.outstanding}`);
@@ -113,15 +150,13 @@ export async function GET(req: Request) {
         }
     }
 
-    console.log(`[BACKFILL] ${processed.length} ditambal, ${gone.length} sudah dihapus di Accurate, ${failed.length} gagal, ${Math.max(0, missing.length - limit)} sisa`);
-    return NextResponse.json({
+    console.log(`[BACKFILL] ${processed.length} ditambal, ${gone.length} sudah dihapus di Accurate, ${failed.length} gagal, ${Math.max(0, ids.length - limit)} sisa`);
+    return {
         ok: failed.length === 0,
-        hours,
-        loggedIds: loggedIds.length,
-        missing: missing.length,
-        remaining: Math.max(0, missing.length - limit),
+        missing: ids.length,
+        remaining: Math.max(0, ids.length - limit),
         processed,
         gone,
         failed,
-    });
+    };
 }
