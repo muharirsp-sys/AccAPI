@@ -11,7 +11,7 @@
  * dipakai untuk menjelaskan siapa menanggung apa. Selisihnya justru temuan yang dicari.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, asc, eq, gt, gte, inArray, lte, ne, or, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
 import { discountNormalization, invoiceOutbox, promoOutlet, promoRule, salesInvoiceCache } from "@/db/schema";
@@ -93,14 +93,6 @@ export async function GET(request: NextRequest) {
         gte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${from}::date`),
         lte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${to}::date`),
     );
-    // Faktur yang `raw_data`-nya belum memuat rincian baris: hanya jalur webhook (detail.do)
-    // yang membawanya, faktur hasil sync daftar tidak. Wajib terlihat, bukan hilang diam-diam.
-    // Dihitung di SQL, tanpa menarik isinya ke memori.
-    const [hitungan] = await db.select({
-        semua: sql<number>`count(*)::int`,
-        tanpaRincian: sql<number>`(count(*) filter (where ${salesInvoiceCache.rawData}::text not like '%detailItem%'))::int`,
-    }).from(salesInvoiceCache).where(dalamRentang);
-
     const ruleRows = await db.select().from(promoRule).where(eq(promoRule.active, true));
     const rules: PromoRule[] = ruleRows.map((row) => ({
         principal: row.principal, suratProgram: row.suratProgram, promoLabel: row.promoLabel,
@@ -129,30 +121,36 @@ export async function GET(request: NextRequest) {
     // Cabang faktur = principal pemiliknya, ruang nama yang sama dengan `promo_rule.principal`.
     // Tanpa saringan ini rekap mencampur SEMUA principal sementara aturan hanya ada untuk
     // sebagian — dan klaim principal lain pasti tampak "tanpa aturan terbit" selamanya.
+    // Karena itu "Semua principal" = semua principal di dropdown (yang punya aturan), BUKAN
+    // seluruh cabang: 28 Sep 2026 itu 1 GB teks dari 20 cabang demi satu cabang beraturan (KINO).
+    const dicari = new Set((principal ? [principal] : principals).map((nama) => nama.toUpperCase()));
+
+    // SATU pindaian rentang, hanya kolom kecil: penanda rincian dan nama cabang. `raw_data` utuh
+    // lalu dibaca lewat primary key untuk faktur terpilih saja.
     //
-    // DIBACA PER POTONGAN, dan hanya faktur ber-rincian milik principal itu. Sampai 26 Sep 2026
-    // seluruh `raw_data` rentang ini ditarik sekaligus untuk principal mana pun, lalu disaring di
-    // JavaScript. Sesudah webhook-backfill mengisi rincian 11.389 faktur, September menjadi
-    // 1.084 MB teks: heap Node 2 GB habis saat JSON.parse dan container frontend crash tiga kali.
-    // Saringan teks cabang di SQL setara dengan saringan di bawah (diuji: 1.368 = 1.368 faktur
-    // September) dan tetap dibarengi saringan JavaScript sebagai penentunya.
-    // ponytail: keyset 1.000 faktur; teks mentah dibuang begitu dibongkar jadi baris.
-    const milikCabang = (line: InvoiceLine) => line.branchName.trim().toUpperCase() === principal.toUpperCase();
-    const cabang = principal
-        ? sql`(${salesInvoiceCache.rawData} #>> '{}') ilike ${`%"branchName":"${principal.replace(/[\\%_]/g, (c) => `\\${c}`)}"%`}`
-        : undefined;
+    // Riwayat: sampai 26 Sep seluruh `raw_data` ditarik sekaligus (heap 2 GB habis, container
+    // crash). Perbaikannya memotong per 1.000 faktur, tetapi TIAP potongan mengulang pindaian
+    // penuh (tanpa indeks, 9 dtk/potongan di VPS 2 core; `ilike` cabang ±30 dtk lagi) —
+    // "Semua principal" = 21 potongan, statement timeout 60 dtk, halaman tidak pernah termuat.
+    // Faktur tanpa rincian (hanya jalur webhook/detail.do yang membawanya) wajib terhitung,
+    // bukan hilang diam-diam. Saringan cabang di sini setara dengan `ilike` lama (diuji di
+    // produksi: 1.406 = 1.406 faktur KINO September, selisih 0) dan saringan JavaScript atas
+    // `branchName` tiap baris tetap penentunya.
+    const teks = sql`(${salesInvoiceCache.rawData} #>> '{}')`;
+    const pindai = await db.select({
+        id: salesInvoiceCache.id,
+        rinci: sql<boolean>`${teks} like '%detailItem%'`,
+        cabang: sql<string>`split_part(split_part(${teks}, '"branchName":"', 2), '"', 1)`,
+    }).from(salesInvoiceCache).where(dalamRentang);
+    const ids = pindai.filter((row) => row.rinci && dicari.has(row.cabang.trim().toUpperCase())).map((row) => row.id);
     const lines: InvoiceLine[] = [];
-    for (let setelah = 0; ;) {
-        const potong = await db.select({ id: salesInvoiceCache.id, raw: salesInvoiceCache.rawData })
-            .from(salesInvoiceCache)
-            .where(and(dalamRentang, sql`${salesInvoiceCache.rawData}::text like '%detailItem%'`, cabang,
-                gt(salesInvoiceCache.id, setelah)))
-            .orderBy(asc(salesInvoiceCache.id)).limit(1000);
+    // ponytail: 1.000 id per baca; teks mentah dibuang begitu dibongkar jadi baris.
+    for (let start = 0; start < ids.length; start += 1000) {
+        const potong = await db.select({ raw: salesInvoiceCache.rawData }).from(salesInvoiceCache)
+            .where(inArray(salesInvoiceCache.id, ids.slice(start, start + 1000)));
         for (const row of potong) {
-            for (const line of invoiceLines(row.raw)) if (!principal || milikCabang(line)) lines.push(line);
+            for (const line of invoiceLines(row.raw)) if (dicari.has(line.branchName.trim().toUpperCase())) lines.push(line);
         }
-        if (potong.length < 1000) break;
-        setelah = potong[potong.length - 1].id;
     }
     const scopedRules = principal
         ? rules.filter((rule) => rule.principal.trim().toUpperCase() === principal.toUpperCase())
@@ -174,7 +172,8 @@ export async function GET(request: NextRequest) {
         const riwayat = await db.select({ raw: salesInvoiceCache.rawData }).from(salesInvoiceCache).where(and(
             gte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${sejak}::date`),
             lte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${to}::date`),
-            or(...kode.map((code) => sql`${salesInvoiceCache.rawData}::text like ${`%${code}%`}`)),
+            // Satu ekspresi untuk semua kode: `or` per kode membongkar `raw_data` sekali per kode.
+            sql`${teks} like any (array[${sql.join(kode.map((code) => sql`${`%${code}%`}`), sql`, `)}])`,
         ));
         pertama = pemberianPertama(riwayat.flatMap((row) => invoiceLines(row.raw)), aturanPertama);
     }
@@ -185,8 +184,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
         ok: true, from, to, principal, principals,
-        invoicesInRange: hitungan?.semua ?? 0,
-        invoicesWithoutDetail: hitungan?.tanpaRincian ?? 0,
+        invoicesInRange: pindai.length,
+        invoicesWithoutDetail: pindai.filter((row) => !row.rinci).length,
         rules: rules.length,
         recap: result,
         webInvoiceIds,
