@@ -24,7 +24,7 @@ import {
     getTargetsForPeriod,
 } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
-import { getGtAoTargetMode, getKonstanta, getDaftar, aoFileKey, aoFileRowKey } from "@/lib/insentif-settings";
+import { getGtAoTargetMode, getKonstanta, getDaftar, aoFileKey, pasanganKey } from "@/lib/insentif-settings";
 import { getScopeForUser, getUserHierarchyIdentity } from "@/lib/insentif-hierarchy-scope";
 import { isOfficeRow } from "@/lib/insentif-sm-calc";
 import {
@@ -120,7 +120,7 @@ export async function GET(req: NextRequest) {
     // Selain setelan global, satu baris bisa dipindah ke target file lewat tombol per baris
     // (aoFileKey, per periode).
     const aoFileOf = (t: { salesCode: string; principle: string }) =>
-        aoFileSet.has(aoFileRowKey(t.salesCode, t.principle));
+        aoFileSet.has(pasanganKey(t.salesCode, t.principle));
     const aoTargetOf = (t: { salesCode: string; principle: string; targetAo: number }) =>
         (gtAoMode === "file" || aoFileOf(t)) && t.targetAo > 0 ? t.targetAo : undefined;
 

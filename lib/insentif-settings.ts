@@ -2,7 +2,7 @@
  * Tujuan: Baca/tulis setelan aturan insentif yang boleh diubah tanpa deploy.
  * Caller: app/api/insentif-sales/dashboard, app/api/insentif-sales/settings.
  * Dependensi: lib/db, db/schema (appSetting).
- * Main Functions: getGtAoTargetMode, setGtAoTargetMode, aoFileKey/aoFileRowKey, getDaftar, setDaftar,
+ * Main Functions: getGtAoTargetMode, setGtAoTargetMode, aoFileKey/spvIkutKey/pasanganKey, toggleDaftar, getDaftar, setDaftar,
  *   getBranchNilaiJual, getSmBerhak, getKonstanta, setKonstanta.
  * Side Effects: DB read; setter menulis satu baris app_setting.
  */
@@ -66,9 +66,29 @@ export async function setGtAoTargetMode(mode: GtAoTargetMode, actor: string | nu
  */
 export const aoFileKey = (month: number, year: number) =>
     `insentif_ao_file:${year}-${String(month).padStart(2, "0")}`;
-/** Normalisasinya HARUS sama dengan getDaftar, kalau tidak lookup-nya diam-diam tidak pernah cocok. */
-export const aoFileRowKey = (salesCode: string, principle: string) =>
-    `${salesCode}|${principle}`.trim().toUpperCase().replace(/\s+/g, " ");
+/**
+ * Pengecualian per SPV × principal: principal yang TETAP dihitung untuk SPV walau semua sales
+ * bawahannya "principle" (sales dibayar principal, SPV-nya dibayar distributor — kasus VINDA
+ * Agustus 2026). Daftar "NAMA SPV|PRINCIPAL", per periode, ceiling sama dengan aoFileKey.
+ */
+export const spvIkutKey = (month: number, year: number) =>
+    `insentif_spv_ikut:${year}-${String(month).padStart(2, "0")}`;
+/** Kunci "A|B" untuk daftar di atas. Normalisasinya HARUS sama dengan getDaftar, kalau tidak lookup-nya diam-diam tidak pernah cocok. */
+export const pasanganKey = (a: string, b: string) =>
+    `${a}|${b}`.trim().toUpperCase().replace(/\s+/g, " ");
+
+/**
+ * Nyalakan/matikan satu anggota daftar. Dibaca KETAT, bukan lewat getDaftar: getDaftar menelan
+ * galat jadi [], dan [] yang ditulis balik menghapus seluruh anggota LAIN pada periode itu.
+ * Galat baca / JSON rusak → melempar, tidak menulis apa pun.
+ */
+export async function toggleDaftar(key: string, item: string, nyala: boolean, actor: string | null): Promise<boolean> {
+    const [row] = await db.select({ value: appSetting.value }).from(appSetting).where(eq(appSetting.key, key)).limit(1);
+    const sekarang: unknown = row?.value ? JSON.parse(row.value) : [];
+    if (!Array.isArray(sekarang)) throw new Error(`${key}: isi app_setting bukan daftar`);
+    const baru = nyala ? [...sekarang, item] : sekarang.filter((v) => v !== item);
+    return (await setDaftar(key, baru.map(String), actor)).includes(item);
+}
 
 // ── Setelan berbentuk DAFTAR ────────────────────────────────────────────
 // Dua aturan di bawah ini sebelumnya konstanta di kode, dan keduanya SUDAH pernah berubah

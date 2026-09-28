@@ -1011,7 +1011,7 @@ function SmDashboard({ rows, rowsApi, apiRows, progress, month, year, onSaved }:
             {/* SPV ikut dibayar dari periode yang sama, jadi SM perlu melihatnya di sini —
                 sama seperti tab Finance. Rate per principal SPV bergantung pada jumlah
                 principal valid yang ia tangani, jadi tabel ini juga tidak ikut disaring. */}
-            <SpvIncentiveTable month={month} year={year} />
+            <SpvIncentiveTable month={month} year={year} muatUlang={apiRows} />
             <IncentiveTable apiRows={rowsApi} />
         </>
     );
@@ -1157,7 +1157,12 @@ interface SpvIncentiveRow {
     total: number;
 }
 
-function SpvIncentiveTable({ month, year }: { month: number; year: number }) {
+/**
+ * `muatUlang`: nilai apa pun yang berganti saat data dashboard dimuat ulang (apiRows). Tanpa ini
+ * tabel hanya memuat ulang saat periode berganti — simpan support SPV / tombol ikut-hitung lalu
+ * menampilkan nominal lama sampai halaman di-refresh.
+ */
+function SpvIncentiveTable({ month, year, muatUlang }: { month: number; year: number; muatUlang?: unknown }) {
     const [rows, setRows] = useState<SpvIncentiveRow[]>([]);
     const [loading, setLoading] = useState(true);
     const { open, rowProps } = useExpandableRows();
@@ -1177,7 +1182,7 @@ function SpvIncentiveTable({ month, year }: { month: number; year: number }) {
             }
         })();
         return () => { cancelled = true; };
-    }, [month, year]);
+    }, [month, year, muatUlang]);
 
     const grandTotal = rows.reduce((a, r) => a + r.total, 0);
 
@@ -3197,8 +3202,23 @@ function SpvSupportInputSection({ apiRows, month, year, onSaved }: { apiRows: Ap
     const [saved, setSaved] = useState<Record<string, number>>({});
     const [draft, setDraft] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
+    const [ikut, setIkut] = useState<Set<string>>(new Set());
+    const [ubahIkut, setUbahIkut] = useState("");
 
     const keyOf = (p: { spvName: string; principle: string }) => `${p.spvName}|${p.principle}`;
+    // Normalisasi HARUS sama dengan pasanganKey (lib/insentif-settings) — itu yang dibandingkan server.
+    const ikutKey = (p: { spvName: string; principle: string }) => keyOf(p).trim().toUpperCase().replace(/s+/g, " ");
+    // Tombol hanya bermakna kalau SEMUA sales bawahan pasangan ini "principle" — kalau ada satu
+    // saja yang distributor, principal itu sudah dihitung untuk SPV tanpa tombol.
+    const semuaPrinciple = useMemo(() => {
+        const status = new Map<string, boolean>();
+        for (const r of apiRows) {
+            if (!r.spvName) continue;
+            const k = `${r.spvName}|${r.principle}`;
+            status.set(k, (status.get(k) ?? true) && r.statusInsentif === "principle");
+        }
+        return status;
+    }, [apiRows]);
 
     const load = useCallback(async () => {
         try {
@@ -3208,6 +3228,9 @@ function SpvSupportInputSection({ apiRows, month, year, onSaved }: { apiRows: Ap
             const map: Record<string, number> = {};
             for (const r of data.rows ?? []) map[`${r.spvName}|${r.principle}`] = r.supportAmount;
             setSaved(map);
+            const resIkut = await fetch(`/api/insentif-sales/spv-ikut?month=${month}&year=${year}`);
+            const dataIkut = await resIkut.json();
+            if (resIkut.ok) setIkut(new Set<string>(dataIkut.ikut ?? []));
         } catch (e) {
             toast.error(e instanceof Error ? e.message : "Gagal memuat support SPV");
         }
@@ -3236,6 +3259,36 @@ function SpvSupportInputSection({ apiRows, month, year, onSaved }: { apiRows: Ap
             toast.error(e instanceof Error ? e.message : "Gagal simpan support SPV");
         }
         setSaving(false);
+    }
+
+    /**
+     * Principal yang semua sales-nya dibayar principal, tapi SPV-nya tetap dibayar distributor
+     * (VINDA Agustus 2026). Menaikkan jumlah principal SPV → rate per principal ikut berubah.
+     */
+    async function gantiIkut(p: { spvName: string; principle: string }) {
+        const nyala = !ikut.has(ikutKey(p));
+        if (!window.confirm(nyala
+            ? `Hitung ${p.principle} untuk SPV ${p.spvName} periode ${month}/${year}, walau semua sales-nya berstatus Principle?
+
+Jumlah principal SPV ini bertambah, sehingga rate per principal-nya ikut berubah. Periode lain tidak berubah.`
+            : `Keluarkan lagi ${p.principle} dari hitungan SPV ${p.spvName} periode ${month}/${year}?`)) return;
+        setUbahIkut(keyOf(p));
+        try {
+            const res = await fetch("/api/insentif-sales/spv-ikut", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ spvName: p.spvName, principle: p.principle, periodMonth: month, periodYear: year, ikut: nyala }),
+            });
+            const data = await readApi(res);
+            if (!res.ok) throw new Error(String(data.error ?? "Gagal mengubah hitungan SPV."));
+            toast.success(`${p.spvName} / ${p.principle}: ${nyala ? "ikut dihitung" : "dikeluarkan"}. Insentif SPV dihitung ulang.`);
+            await load();
+            onSaved?.();
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal mengubah hitungan SPV.");
+        } finally {
+            setUbahIkut("");
+        }
     }
 
     if (pairs.length === 0) return null;
@@ -3273,6 +3326,19 @@ function SpvSupportInputSection({ apiRows, month, year, onSaved }: { apiRows: Ap
                         <div key={k} className="flex items-center gap-2 px-3 py-2 text-xs">
                             <span className="text-amber-300 w-28 shrink-0 truncate" title={p.spvName}>{p.spvName}</span>
                             <span className="text-slate-400 flex-1 truncate" title={p.principle}>{p.principle}</span>
+                            {(semuaPrinciple.get(k) || ikut.has(ikutKey(p))) && (
+                                <button
+                                    type="button"
+                                    aria-pressed={ikut.has(ikutKey(p))}
+                                    aria-label={`Hitung ${p.principle} untuk SPV ${p.spvName} walau sales-nya Principle`}
+                                    title="Semua sales pasangan ini berstatus Principle, jadi principal ini tidak dihitung untuk SPV kecuali tombol ini dinyalakan."
+                                    disabled={ubahIkut === k}
+                                    onClick={() => void gantiIkut(p)}
+                                    className={`shrink-0 px-2 py-1 rounded border text-[11px] font-medium disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400 ${ikut.has(ikutKey(p)) ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300" : "bg-white/5 border-white/15 text-slate-300 hover:bg-white/10"}`}
+                                >
+                                    {ikut.has(ikutKey(p)) ? "Dihitung utk SPV ✓" : "Sales Principle · hitung utk SPV"}
+                                </button>
+                            )}
                             <input
                                 type="number" min={0}
                                 className="bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-amber-500 w-32 text-right font-mono"
@@ -4300,7 +4366,7 @@ export default function InsentifSalesPage() {
                         <>
                             <PerformanceBlock rows={salesmen} apiRows={apiRows} progress={tg} />
                             <SpvView rows={salesmen} progress={tg} />
-                            <SpvIncentiveTable month={month} year={year} />
+                            <SpvIncentiveTable month={month} year={year} muatUlang={apiRows} />
                             <IncentiveTable apiRows={apiRows} />
                         </>
                     )}
