@@ -761,12 +761,28 @@ export function normalisasiJaringan(discounts: DiscountAt[], rules: PublishedRul
         const tepat = tarif.find((rule) => !terpakai.has(rule) && rule.tierNo === entry.position && sama(rule, entry.percent));
         if (tepat) { terpakai.add(tepat); hasil.push(entry); } else salahPosisi.push(entry);
     }
-    const tanpaPasangan: DiscountAt[] = [];
+    const sisa: DiscountAt[] = [];
     for (const entry of salahPosisi) {
         const slot = tarif.find((rule) => !terpakai.has(rule) && sama(rule, entry.percent));
         if (slot) { terpakai.add(slot); hasil.push({ ...entry, position: slot.tierNo, reportPosition: entry.position }); }
-        else if (matchItemRule([entry], rules, itemCode, "principal")) hasil.push(entry);
-        else tanpaPasangan.push(entry);
+        else sisa.push(entry);
+    }
+    // Sisanya hanya sah bila surat principal barang itu membenarkannya. Yang sudah di kolom
+    // principal tetap di tempatnya; yang diketik di kolom DISTRIBUTOR dipindah ke kolom principal
+    // pertama yang kosong — posisinya dimaklumi, nilainya tetap harus sama dengan surat.
+    // Kasus nyata 2026-09-28, SO 1671-SOP-260013677 (Indomaret C-IN0087, SASHA): laporan
+    // 3,96 @D1 + 3 @D3 + 3,1 @D4 lawan tarif 3,96 + 3,1 dan surat BP2609008707 3%.
+    // Satu aturan surat membenarkan SATU potongan: 3% surat bukan izin untuk 3% di D4 dan D5 sekaligus.
+    const suratBebas = () => rules.filter((rule) => !terpakai.has(rule));
+    const tanpaPasangan: DiscountAt[] = [];
+    for (const entry of sisa) {
+        const dipakai = new Set([...hasil, ...sisa.filter((other) => other !== entry && OWNER[other.position] === "principal")]
+            .map((other) => other.position));
+        const kosong = [4, 5].find((position) => !dipakai.has(position));
+        const tempat = OWNER[entry.position] === "principal" ? entry
+            : kosong ? { ...entry, position: kosong, reportPosition: entry.position } : null;
+        const aturan = tempat && matchItemRule([tempat], suratBebas(), itemCode, "principal");
+        if (tempat && aturan) { terpakai.add(aturan); hasil.push(tempat); } else tanpaPasangan.push(entry);
     }
     const posisi = hasil.map((entry) => entry.position);
     if (tanpaPasangan.length === 0 && new Set(posisi).size === posisi.length) {
