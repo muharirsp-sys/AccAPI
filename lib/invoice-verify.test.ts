@@ -4,7 +4,7 @@
    bisa diperiksa tidak boleh pernah berstatus cocok. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizePercentChain, readAccurateInvoice, verifyInvoice } from "./invoice-verify.ts";
+import { jenisTemuan, normalizePercentChain, readAccurateInvoice, sidikTemuan, terapkanPenjelasan, verifyInvoice } from "./invoice-verify.ts";
 import type { InvoicePayload } from "./accurate-invoice-write.ts";
 
 /** Bentuk nyata faktur uji INV/2609/KN00403 (2026-09-12), diringkas ke field yang diperiksa. */
@@ -275,3 +275,43 @@ test("itemCashDiscount pada jawaban Accurate adalah TOTAL potongan baris, bukan 
     assert.ok(verifyInvoice(kirim, keliru).findings.some((f) => f.field === "total diskon baris"));
 });
 
+
+test("penjelasan: sales dan isi terpisah, faktur ganda tidak bisa dijelaskan, sidik ikut isi temuan", () => {
+    const sales = { line: null, field: "sales (masterSalesmanId)", expected: "3457", actual: "5450" };
+    const qty = { line: 3, field: "qty", expected: "3", actual: "1" };
+    const ganda = { line: null, field: "faktur ganda di Accurate", expected: "1 faktur untuk SO ini", actual: "2 faktur" };
+    assert.equal(jenisTemuan(sales), "sales");
+    assert.equal(jenisTemuan(qty), "isi");
+    assert.equal(jenisTemuan(ganda), null);
+    // Menerima sales tidak ikut menutup selisih isi: sidiknya hanya memuat temuan jenisnya sendiri.
+    assert.equal(sidikTemuan([sales, qty], "sales"), sidikTemuan([sales], "sales"));
+    assert.notEqual(sidikTemuan([sales, qty], "isi"), sidikTemuan([sales], "isi"));
+    // Faktur berubah lagi sesudah dijelaskan -> sidik lain -> penjelasan lama tidak berlaku.
+    assert.notEqual(sidikTemuan([{ ...qty, actual: "2" }], "isi"), sidikTemuan([qty], "isi"));
+});
+
+test("terapkanPenjelasan: berlaku hanya untuk temuan persis, sales tidak menutup isi, ganda tetap terbuka", () => {
+    const sales = { line: null, field: "sales (masterSalesmanId)", expected: "3457", actual: "5450" };
+    const qty = { line: 3, field: "qty", expected: "3", actual: "1" };
+    const ganda = { line: null, field: "faktur ganda di Accurate", expected: "1 faktur untuk SO ini", actual: "2 faktur" };
+    const catat = (jenis: string, findings: typeof qty[]) => ({ jenis, sidik: sidikTemuan(findings, jenis as "sales" | "isi"), note: "x", by: "a@b", at: "2026-09-28T00:00:00Z" });
+
+    // Sales diterima, isi belum: satu temuan tetap terbuka.
+    const satu = terapkanPenjelasan([sales, qty], [catat("sales", [sales])]);
+    assert.equal(satu.terbuka, 1);
+    assert.deepEqual(satu.findings.map((f) => f.dijelaskan), [true, false]);
+
+    // Keduanya dijelaskan -> tidak ada yang terbuka.
+    assert.equal(terapkanPenjelasan([sales, qty], [catat("sales", [sales]), catat("isi", [qty])]).terbuka, 0);
+
+    // Faktur berubah lagi sesudah dijelaskan -> penjelasan lama tidak berlaku.
+    assert.equal(terapkanPenjelasan([{ ...qty, actual: "2" }], [catat("isi", [qty])]).terbuka, 1);
+
+    // Faktur ganda tidak pernah tertutup, walau isi di sebelahnya dijelaskan.
+    const g = terapkanPenjelasan([ganda, qty], [catat("isi", [qty])]);
+    assert.equal(g.terbuka, 1);
+    assert.equal(g.findings[0].jenis, null);
+
+    // Penjelasan untuk jenis yang temuannya tidak ada ("[]") tidak dihitung.
+    assert.deepEqual(terapkanPenjelasan([qty], [catat("sales", [])]).penjelasan, {});
+});

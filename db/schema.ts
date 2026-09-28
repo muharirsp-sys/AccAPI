@@ -167,6 +167,20 @@ export const invoiceOutbox = pgTable("invoice_outbox", {
     index("idx_invoice_outbox_identity").on(t.accurateDbId, t.accurateId).where(sql`${t.state} = 'posted'`),
 ]);
 
+// Penjelasan manusia atas selisih verifikasi balik (db/migrations/0024). Satu baris per SO ×
+// jenis ("sales" | "isi"). `sidik` = temuan persis yang dijelaskan; berubah = tidak berlaku.
+export const invoiceVerifyNote = pgTable("invoice_verify_note", {
+    orderId: text("order_id").notNull(),
+    jenis: text("jenis").notNull(),
+    sidik: text("sidik").notNull(),
+    note: text("note").notNull().default(""),
+    decidedBy: text("decided_by").notNull().default(""),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    primaryKey({ columns: [t.orderId, t.jenis] }),
+    check("invoice_verify_note_jenis", sql`${t.jenis} IN ('sales', 'isi')`),
+]);
+
 // Aturan promo terbit dalam bentuk yang bisa dibandingkan dengan faktur nyata (db/migrations/0011).
 // Skema kolomnya sama dengan yang dibaca mesin Validator Diskon, supaya satu bentuk aturan
 // dipakai dua tempat. `item_code` KOSONG = aturan tingkat faktur (berlaku semua barang).
@@ -193,7 +207,7 @@ export const promoRule = pgTable("promo_rule", {
     benefitUnit: text("benefit_unit").notNull().default(""),
     benefitBeban: text("benefit_beban").notNull().default("PRINCIPAL"),
     /**
-     * Channel yang disebut surat pada kolom "Type Of Promo": GT, MT, atau kosong/ALL.
+     * Channel yang disebut surat pada kolom "Type Of Promo": GT, MT, NKA, atau kosong/ALL.
      * Dicocokkan dengan channel OUTLET yang diturunkan dari `customer.category_name`
      * (GT = TT saja, keputusan pengguna 15 Sep 2026). Kosong = berlaku di channel mana pun,
      * dan itu bentuk seluruh 234 baris yang sudah termuat.

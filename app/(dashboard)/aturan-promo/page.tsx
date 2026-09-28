@@ -316,11 +316,12 @@ export default function AturanPromoPage() {
                             <input value={draft.itemCode ?? ""} onChange={(e) => setDraft({ ...draft, itemCode: e.target.value })} placeholder="kosong = semua barang" className={inputCls} />
                         </F>
                         <F label="Channel (Type Of Promo)"
-                            hint="Diambil dari kolom “Type Of Promo” pada surat. GT dicocokkan dengan outlet berkategori TT di Accurate; MT dengan MT. Dikosongkan = berlaku di channel mana pun.">
+                            hint="Diambil dari kolom “Type Of Promo” pada surat. GT dicocokkan dengan outlet berkategori TT di Accurate; MT dengan MT; NKA dengan NKA. Dikosongkan = berlaku di channel mana pun — pakai ini untuk surat akun yang pesertanya sudah dibatasi daftar outlet.">
                             <select value={draft.channel ?? ""} onChange={(e) => setDraft({ ...draft, channel: e.target.value })} className={inputCls}>
                                 <option value="">— semua channel —</option>
                                 <option value="GT">GT (outlet TT)</option>
                                 <option value="MT">MT</option>
+                                <option value="NKA">NKA</option>
                             </select>
                         </F>
                         <F label="Hanya untuk peserta daftar"

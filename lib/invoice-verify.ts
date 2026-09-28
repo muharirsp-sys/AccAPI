@@ -287,3 +287,45 @@ export function verifyInvoice(payload: InvoicePayload, raw: unknown): VerifyResu
         invoiceDate: invoice.transDate,
     };
 }
+
+/**
+ * Jenis penjelasan untuk satu temuan (Antrean Faktur, keputusan pengguna 2026-09-28). Dua
+ * sebab selisih yang SAH sesudah faktur terkirim, dan keduanya diselesaikan terpisah:
+ * - "sales": sales diganti di Accurate (mis. pemetaan sales lama sudah pindah divisi) — cukup
+ *   diterima;
+ * - "isi": isi faktur dikoreksi saat pengiriman (barang, qty, harga, baris) — wajib ada
+ *   penjelasannya. Sales yang sudah diterima tidak ikut menutup selisih isi.
+ * `null` = faktur ganda: tidak bisa dijelaskan, harus dibereskan di Accurate.
+ */
+export type JenisTemuan = "sales" | "isi";
+export function jenisTemuan(finding: Finding): JenisTemuan | null {
+    if (finding.field === "faktur ganda di Accurate") return null;
+    return finding.field === "sales (masterSalesmanId)" ? "sales" : "isi";
+}
+
+/** Sidik temuan satu jenis. Penjelasan hanya berlaku untuk temuan PERSIS ini: kalau fakturnya
+ *  berubah lagi sesudah dijelaskan, temuannya terbuka kembali. */
+export function sidikTemuan(findings: Finding[], jenis: JenisTemuan): string {
+    return JSON.stringify(findings.filter((finding) => jenisTemuan(finding) === jenis)
+        .map((finding) => [finding.line, finding.field, finding.expected, finding.actual]));
+}
+
+export type Penjelasan = { note: string; by: string; at: string };
+
+/**
+ * Pasangkan penjelasan tersimpan dengan temuan SAAT INI. Penjelasan hanya berlaku bila sidiknya
+ * sama persis; temuan faktur ganda tidak pernah tertutup. `terbuka` = temuan yang belum dijelaskan.
+ */
+export function terapkanPenjelasan(findings: Finding[], notes: { jenis: string; sidik: string; note: string; by: string; at: string }[]) {
+    const sidik = { sales: sidikTemuan(findings, "sales"), isi: sidikTemuan(findings, "isi") };
+    const penjelasan: Partial<Record<JenisTemuan, Penjelasan>> = {};
+    for (const jenis of ["sales", "isi"] as const) {
+        const note = notes.find((entry) => entry.jenis === jenis);
+        if (note && sidik[jenis] !== "[]" && note.sidik === sidik[jenis]) penjelasan[jenis] = { note: note.note, by: note.by, at: note.at };
+    }
+    const annotated = findings.map((finding) => {
+        const jenis = jenisTemuan(finding);
+        return { ...finding, jenis, dijelaskan: Boolean(jenis && penjelasan[jenis]) };
+    });
+    return { findings: annotated, terbuka: annotated.filter((finding) => !finding.dijelaskan).length, sidik, penjelasan };
+}

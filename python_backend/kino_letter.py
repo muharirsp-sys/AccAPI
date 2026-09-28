@@ -42,7 +42,7 @@ FIRST_PO = re.compile(r"\bFIRST\s+PO\b", re.I)
 # ("jika toko menggunakan harga GT maka promo tidak dapat di klaim"); membaca harga mana pun
 # yang lebih dulu muncul akan memungut channel yang justru dilarang.
 HARGA_CHANNEL = re.compile(r"\bWAJIB\s+(?:\w+\s+){0,3}HARGA\s+(GT|MT)\b", re.I)
-CHANNELS = ("GT", "MT", "ALL")
+CHANNELS = ("GT", "MT", "NKA", "ALL")
 ATTACHMENT = re.compile(r"TERLAMPIR|LAMPIRAN|HIT\s+LIST", re.I)
 
 

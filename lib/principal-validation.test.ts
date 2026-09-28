@@ -630,6 +630,10 @@ test("GT = TT saja; kategori master yang lain tidak ikut mendapat promo GT", () 
     // Aturan tanpa channel berlaku di mana saja — bentuk sebagian besar surat.
     assert.equal(channelAllowed({ channel: "" }, ""), true);
     assert.equal(channelAllowed({ channel: "ALL" }, channelOutlet("MT")), true);
+    // NKA pilihan tersendiri (2026-09-28): outlet Indomaret/Indogrosir berkategori NKA, bukan MT.
+    // BP2609008707 ber-channel MT tidak pernah berlaku untuk mereka.
+    assert.equal(channelAllowed({ channel: "NKA" }, channelOutlet("NKA")), true);
+    assert.equal(channelAllowed({ channel: "MT" }, channelOutlet("NKA")), false);
 });
 
 test("aturan EXCLUDE yang daftarnya KOSONG tidak berlaku untuk siapa pun, bukan untuk semua", () => {
@@ -904,6 +908,30 @@ test("jaringan: nilai yang tidak ada di tarif DITOLAK, dengan sebabnya", () => {
     assert.equal(denganSurat.finding, undefined);
     assert.deepEqual(denganSurat.discounts,
         [{ position: 1, percent: 3.96 }, { position: 2, percent: 3.1, reportPosition: 4 }, { position: 5, percent: 3 }]);
+
+    // Surat yang diketik di kolom DISTRIBUTOR (SO 1671-SOP-260013677, Indomaret C-IN0087, 28 Sep):
+    // 3,96 @D1 + 3 @D3 + 3,1 @D4 -> 3,1 ke posisi tarifnya, 3% surat ke kolom principal pertama.
+    const soC0087 = [{ position: 1, percent: 3.96 }, { position: 3, percent: 3 }, { position: 4, percent: 3.1 }];
+    const dipindah = normalisasiJaringan(soC0087, [...indomaret, surat], "K1");
+    assert.equal(dipindah.finding, undefined);
+    assert.deepEqual(dipindah.discounts, [{ position: 1, percent: 3.96 }, { position: 2, percent: 3.1, reportPosition: 4 },
+        { position: 4, percent: 3, reportPosition: 3 }]);
+    assert.deepEqual(normalisasiJaringan(dipindah.discounts, [...indomaret, surat], "K1").discounts, dipindah.discounts,
+        "validasi ulang memberi hasil yang sama");
+    // Gerbang meloloskan barisnya: 3,96 + 3,1 tanggungan distributor, 3% klaim principal (surat).
+    const bruto = 20510270.27;
+    const cekSo = checkLine(line({ gross: bruto, reportDiscount: Math.round((bruto - bruto * 0.9604 * 0.969 * 0.97) * 100) / 100,
+        discounts: dipindah.discounts, rules: [...indomaret, surat], itemCode: "K1" }));
+    assert.equal(cekSo.status, "ok", cekSo.findings.join(" | "));
+    assert.ok(cekSo.split.principal > 0 && cekSo.split.distributor > 0, JSON.stringify(cekSo.split));
+    // Tanpa surat, 3% di kolom distributor tetap ditolak; surat barang LAIN pun tidak membenarkannya.
+    assert.match(normalisasiJaringan(soC0087, indomaret, "K1").finding ?? "", /3% di DISC_3/);
+    assert.match(normalisasiJaringan(soC0087, [...indomaret, surat], "K2").finding ?? "", /3% di DISC_3/);
+    // Satu surat 3% tidak membenarkan DUA potongan 3%, di kolom mana pun keduanya diketik.
+    assert.match(normalisasiJaringan([...soC0087, { position: 5, percent: 3 }], [...indomaret, surat], "K1").finding ?? "",
+        /tidak punya pasangan/);
+    assert.match(normalisasiJaringan([{ position: 1, percent: 3.96 }, { position: 4, percent: 3 }, { position: 5, percent: 3 }],
+        [...indomaret, surat], "K1").finding ?? "", /3% di DISC_5/);
 
     // Tanpa tarif tidak ada acuan posisi: dibiarkan, pemeriksaan biasa yang menahannya.
     assert.deepEqual(normalisasiJaringan([{ position: 4, percent: 2.25 }], [], "K1"), { discounts: [{ position: 4, percent: 2.25 }] });

@@ -188,6 +188,23 @@ const migrations = [
                WHERE table_name = 'promo_rule' AND column_name = 'first_po'`,
     sql: "ALTER TABLE promo_rule ADD COLUMN IF NOT EXISTS first_po boolean NOT NULL DEFAULT false",
   },
+  {
+    // 2026-09-28. Penjelasan selisih verifikasi balik (sales diganti / isi dikoreksi saat
+    // pengiriman). Lihat db/migrations/0024_invoice_verify_note.sql.
+    nama: "invoice_verify_note",
+    sudahAda: `SELECT 1 FROM information_schema.tables WHERE table_name = 'invoice_verify_note'`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS invoice_verify_note (
+          order_id   text NOT NULL,
+          jenis      text NOT NULL CHECK (jenis IN ('sales', 'isi')),
+          sidik      text NOT NULL,
+          note       text NOT NULL DEFAULT '',
+          decided_by text NOT NULL DEFAULT '',
+          decided_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (order_id, jenis)
+      );
+    `,
+  },
 ];
 
 const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 15_000 });
