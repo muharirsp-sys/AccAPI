@@ -1,7 +1,7 @@
 /*
  * Tujuan: Trigger sync terjadwal Accurate -> cache lokal (Audit F2+F3, prasyarat PRD 02/03/04).
  * Caller: Scheduler eksternal (Coolify scheduled task / cron) dengan Bearer CRON_SECRET.
- * Kredensial Accurate: userId dari env ACCURATE_SYNC_USER_ID, fallback sesi OAuth terbaru.
+ * Kredensial Accurate: userId dari env ACCURATE_SYNC_USER_ID, fallback sesi OAuth terbaru milik admin.
  * Side Effects: tulis tabel item/customer/sales_invoice/sales_return + sync_state.
  */
 import { NextResponse } from "next/server";
