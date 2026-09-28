@@ -902,7 +902,7 @@ export default function SummaryManualPage() {
                                             <td className="px-2 py-2"><input type="text" value={r.nama_program} onChange={e => updateRow(r.id, "nama_program", e.target.value)} className="w-32 bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-300 focus:ring-1 focus:ring-blue-500 outline-none" /></td>
                                             <td className="px-2 py-2">
                                                 <select value={r.channel_gtmt} onChange={e => updateRow(r.id, "channel_gtmt", e.target.value)} className="bg-black/40 border border-white/10 rounded px-2 py-1.5 text-slate-300 focus:ring-1 focus:ring-blue-500 outline-none">
-                                                    <option value="">-</option><option value="GT">GT</option><option value="MT">MT</option>
+                                                    <option value="">-</option><option value="GT">GT</option><option value="MT">MT</option><option value="NKA">NKA</option>
                                                 </select>
                                             </td>
                                             <td className="px-2 py-2">

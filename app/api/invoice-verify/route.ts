@@ -3,8 +3,9 @@
  *         disandingkan dengan payload beku antrean, per baris, lalu selisihnya ditandai.
  * Caller: halaman Antrean Faktur (/antrean-faktur), bagian "Verifikasi balik".
  * Dependensi: db (invoice_outbox, sales_invoice), lib/invoice-verify, lib/accurate-invoice-write, rbac.
- * Main Functions: GET.
- * Side Effects: TIDAK ADA. Read-only — tidak menulis DB dan tidak menyentuh Accurate.
+ * Main Functions: GET, POST (jelaskan selisih), DELETE (cabut penjelasan).
+ * Side Effects: GET read-only. POST/DELETE hanya menulis `invoice_verify_note`; tidak menyentuh
+ *               Accurate dan tidak mengubah antrean.
  *
  * Kenapa read-only meski hasilnya bisa "menyelesaikan" baris TIDAK PASTI: menemukan fakturnya
  * di Accurate memang bukti kuat, tetapi mengubah status antrean atas dasar pencocokan otomatis
@@ -22,15 +23,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq, inArray, or, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { invoiceOutbox, salesInvoiceCache } from "@/db/schema";
+import { invoiceOutbox, invoiceVerifyNote, salesInvoiceCache } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { toAccurateDate, type InvoicePayload } from "@/lib/accurate-invoice-write";
-import { readAccurateInvoice, verifyInvoice, type VerifyResult } from "@/lib/invoice-verify";
+import { readAccurateInvoice, terapkanPenjelasan, verifyInvoice, type JenisTemuan, type VerifyResult } from "@/lib/invoice-verify";
 
 export const runtime = "nodejs";
 
 /** Yang berpotensi punya faktur di Accurate: `posted` pasti, `unknown` mungkin. */
 const VERIFIABLE = ["posted", "unknown"];
+const JENIS: JenisTemuan[] = ["sales", "isi"];
 
 export async function GET(request: NextRequest) {
     const gate = await resolveRequestPermissionsH();
@@ -51,7 +53,7 @@ export async function GET(request: NextRequest) {
         .orderBy(desc(invoiceOutbox.updatedAt)).limit(limit);
 
     if (rows.length === 0) {
-        return NextResponse.json({ ok: true, checked: 0, summary: { cocok: 0, selisih: 0, "tak-terperiksa": 0 }, rows: [] });
+        return NextResponse.json({ ok: true, checked: 0, summary: { cocok: 0, selisih: 0, dijelaskan: 0, "tak-terperiksa": 0 }, rows: [] });
     }
 
     const ids = [...new Set(rows.map((row) => Number(row.accurateId)).filter((id) => Number.isFinite(id) && id > 0))];
@@ -89,7 +91,12 @@ export async function GET(request: NextRequest) {
         byKey.get(key)!.push({ id, raw: candidate.raw });
     }
 
-    const summary: Record<string, number> = { cocok: 0, selisih: 0, "tak-terperiksa": 0 };
+    // Penjelasan hanya berlaku untuk temuan PERSIS yang dijelaskan (`sidik`). Selisih yang semua
+    // temuannya sudah dijelaskan dihitung "dijelaskan", bukan "selisih" — angka merah di layar
+    // harus berarti "belum ada yang tahu kenapa", bukan "pernah berbeda".
+    const catatan = await db.select().from(invoiceVerifyNote)
+        .where(inArray(invoiceVerifyNote.orderId, rows.map((row) => row.orderId)));
+    const summary: Record<string, number> = { cocok: 0, selisih: 0, dijelaskan: 0, "tak-terperiksa": 0 };
     const results = rows.map((row) => {
         const sameKey = byKey.get(row.orderId) ?? [];
         // Kalau ada lebih dari satu, yang dibandingkan adalah yang record id-nya kita catat
@@ -116,7 +123,10 @@ export async function GET(request: NextRequest) {
                 expected: "1 faktur untuk SO ini", actual: `${duplicates.length} faktur (id ${duplicates.join(", ")})`,
             }, ...result.findings];
         }
-        summary[result.status] += 1;
+        const { findings, terbuka, sidik, penjelasan } = terapkanPenjelasan(result.findings, catatan
+            .filter((entry) => entry.orderId === row.orderId)
+            .map((entry) => ({ jenis: entry.jenis, sidik: entry.sidik, note: entry.note, by: entry.decidedBy, at: entry.decidedAt.toISOString() })));
+        summary[result.status === "selisih" && terbuka === 0 ? "dijelaskan" : result.status] += 1;
         return {
             orderId: row.orderId,
             soNo: row.orderId.includes(":") ? row.orderId.slice(row.orderId.indexOf(":") + 1) : null,
@@ -129,6 +139,7 @@ export async function GET(request: NextRequest) {
             foundWhileUnknown: row.state === "unknown" && Boolean(raw),
             duplicates,
             ...result,
+            findings, terbuka, sidik, penjelasan,
         };
     });
 
@@ -139,4 +150,57 @@ export async function GET(request: NextRequest) {
         mismatched: summary.selisih,
         rows: results,
     });
+}
+
+/**
+ * Jelaskan satu jenis selisih: `sales` cukup diterima (sales diganti di Accurate), `isi` wajib
+ * disertai penjelasan (koreksi saat pengiriman). `sidik` = temuan yang dilihat penjelas; kalau
+ * sudah basi, penjelasannya tersimpan tetapi tidak berlaku — gagalnya tertutup, bukan terbuka.
+ */
+export async function POST(request: NextRequest) {
+    const gate = await resolveRequestPermissionsH();
+    if (gate.response) return gate.response;
+    if (!gate.perms?.has("order.edit")) {
+        return NextResponse.json({ ok: false, error: "Hanya pengelola order yang boleh menjelaskan selisih" }, { status: 403 });
+    }
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    const orderId = String(body.orderId ?? "").trim();
+    const jenis = String(body.jenis ?? "") as JenisTemuan;
+    const sidik = String(body.sidik ?? "");
+    const note = String(body.note ?? "").trim().slice(0, 500);
+    if (!orderId || !JENIS.includes(jenis) || !sidik.startsWith("[") || sidik === "[]" || sidik.length > 20_000) {
+        return NextResponse.json({ ok: false, error: "orderId, jenis (sales/isi), dan temuan yang dijelaskan wajib diisi" }, { status: 400 });
+    }
+    if (jenis === "isi" && !note) {
+        return NextResponse.json({ ok: false, error: "Selisih isi faktur wajib dijelaskan, mis. \"koreksi qty saat pengiriman\"" }, { status: 400 });
+    }
+    const [ada] = await db.select({ orderId: invoiceOutbox.orderId }).from(invoiceOutbox).where(eq(invoiceOutbox.orderId, orderId));
+    if (!ada) return NextResponse.json({ ok: false, error: "SO ini tidak ada di antrean faktur" }, { status: 404 });
+
+    const values = {
+        orderId, jenis, sidik, note: note || "Sales diganti di Accurate sesudah terkirim",
+        decidedBy: String(gate.session?.user?.email ?? ""), decidedAt: new Date(),
+    };
+    await db.insert(invoiceVerifyNote).values(values).onConflictDoUpdate({
+        target: [invoiceVerifyNote.orderId, invoiceVerifyNote.jenis],
+        set: { sidik: values.sidik, note: values.note, decidedBy: values.decidedBy, decidedAt: values.decidedAt },
+    });
+    return NextResponse.json({ ok: true });
+}
+
+/** Cabut penjelasan: selisihnya terbuka lagi. */
+export async function DELETE(request: NextRequest) {
+    const gate = await resolveRequestPermissionsH();
+    if (gate.response) return gate.response;
+    if (!gate.perms?.has("order.edit")) {
+        return NextResponse.json({ ok: false, error: "Hanya pengelola order yang boleh mencabut penjelasan" }, { status: 403 });
+    }
+    const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+    const orderId = String(body.orderId ?? "").trim();
+    const jenis = String(body.jenis ?? "") as JenisTemuan;
+    if (!orderId || !JENIS.includes(jenis)) {
+        return NextResponse.json({ ok: false, error: "orderId dan jenis (sales/isi) wajib diisi" }, { status: 400 });
+    }
+    await db.delete(invoiceVerifyNote).where(and(eq(invoiceVerifyNote.orderId, orderId), eq(invoiceVerifyNote.jenis, jenis)));
+    return NextResponse.json({ ok: true });
 }

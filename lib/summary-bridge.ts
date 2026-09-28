@@ -112,7 +112,7 @@ export type BridgeRow = {
     benefitValue: string;
     benefitUnit: string;
     benefitBeban: string;
-    /** Channel yang disebut surat: "GT", "MT", atau kosong/"ALL" = di mana saja. */
+    /** Channel yang disebut surat: "GT", "MT", "NKA", atau kosong/"ALL" = di mana saja. */
     channel: string;
     outletList: string;
     outletListMode: string;
