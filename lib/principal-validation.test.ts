@@ -630,6 +630,10 @@ test("GT = TT saja; kategori master yang lain tidak ikut mendapat promo GT", () 
     // Aturan tanpa channel berlaku di mana saja — bentuk sebagian besar surat.
     assert.equal(channelAllowed({ channel: "" }, ""), true);
     assert.equal(channelAllowed({ channel: "ALL" }, channelOutlet("MT")), true);
+    // NKA pilihan tersendiri (2026-09-28): outlet Indomaret/Indogrosir berkategori NKA, bukan MT.
+    // BP2609008707 ber-channel MT tidak pernah berlaku untuk mereka.
+    assert.equal(channelAllowed({ channel: "NKA" }, channelOutlet("NKA")), true);
+    assert.equal(channelAllowed({ channel: "MT" }, channelOutlet("NKA")), false);
 });
 
 test("aturan EXCLUDE yang daftarnya KOSONG tidak berlaku untuk siapa pun, bukan untuk semua", () => {

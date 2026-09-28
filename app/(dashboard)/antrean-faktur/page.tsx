@@ -2,9 +2,10 @@
  * Tujuan: Satu layar untuk antrean faktur Accurate — yang menunggu, yang ditolak, yang TIDAK
  *         PASTI — dengan umur masalah dan eskalasi ke OM setelah 2 jam.
  * Caller: Route dashboard `/antrean-faktur`.
- * Dependensi: /api/invoice-outbox, toast Sonner, lucide-react.
- * Main Functions: AntreanFakturPage, load, act.
- * Side Effects: HTTP; tindakan hanya `resend` dan `discard`, keduanya khusus yang DITOLAK.
+ * Dependensi: /api/invoice-outbox, /api/invoice-verify, toast Sonner, lucide-react.
+ * Main Functions: AntreanFakturPage, load, act, jelaskan.
+ * Side Effects: HTTP; tindakan antrean hanya `resend` dan `discard` (khusus yang DITOLAK), dan
+ *               penjelasan selisih verifikasi balik (tidak menyentuh Accurate).
  *
  * Laporan OM bukan halaman terpisah: saringan "hanya lewat 2 jam" pada layar ini adalah
  * laporannya — daftar yang sama, isian yang sama (faktur, sales, jenis masalah, umurnya),
@@ -27,13 +28,15 @@ type Batch = {
     reviewCount: number; lineCount: number; ageMinutes: number; overdue: boolean;
 };
 
-type Finding = { line: number | null; field: string; expected: string; actual: string };
+type Jenis = "sales" | "isi";
+type Finding = { line: number | null; field: string; expected: string; actual: string; jenis: Jenis | null; dijelaskan: boolean };
 
 type Verified = {
     orderId: string; soNo: string | null; state: string; customerNo: string; orderDate: string;
     matchedBy: string; foundWhileUnknown: boolean; status: "cocok" | "selisih" | "tak-terperiksa";
     reason: string; findings: Finding[]; invoiceNumber: string; linesChecked: number; salesman: string;
-    invoiceDate: string;
+    invoiceDate: string; terbuka: number; sidik: Record<Jenis, string>;
+    penjelasan: Partial<Record<Jenis, { note: string; by: string; at: string }>>;
 };
 
 type Verify = { checked: number; summary: Record<string, number>; rows: Verified[] };
@@ -65,6 +68,8 @@ export default function AntreanFakturPage() {
     const [picked, setPicked] = useState<string[]>([]);
     const [onlyOverdue, setOnlyOverdue] = useState(false);
     const [busy, setBusy] = useState(false);
+    const [semuaVerifikasi, setSemuaVerifikasi] = useState(false);
+    const [catatan, setCatatan] = useState<Record<string, string>>({});
 
     const load = useCallback(async () => {
         const query = new URLSearchParams();
@@ -133,7 +138,7 @@ export default function AntreanFakturPage() {
             }
             if (body.rejected > 0) toast.warning(`${body.rejected} ditolak Accurate; alasannya ada di kolom Jawaban Accurate`);
             if (body.mismatched > 0) {
-                toast.error(`${body.mismatched} faktur terkirim TAPI isinya berselisih — lihat Verifikasi balik di bawah`);
+                toast.error(`${body.mismatched} faktur terkirim TAPI isinya berselisih — buka Verifikasi balik`);
             } else if (body.unchecked > 0) {
                 toast.warning(`${body.sent} terkirim, ${body.unchecked} belum bisa dibaca balik dari Accurate`);
             } else if (body.verifiedOk > 0) {
@@ -146,6 +151,36 @@ export default function AntreanFakturPage() {
             setBusy(false);
         }
     }
+
+    /**
+     * Jelaskan (atau cabut penjelasan) satu jenis selisih. Sales cukup diterima; isi faktur wajib
+     * diberi alasan. Keduanya terpisah: menerima sales tidak ikut menutup selisih isi.
+     */
+    async function jelaskan(row: Verified, jenis: Jenis, cabut = false) {
+        const note = jenis === "sales" ? "" : (catatan[row.orderId] ?? "").trim();
+        if (!cabut && jenis === "isi" && !note) { toast.error("Tulis penjelasannya dulu, mis. koreksi qty saat pengiriman"); return; }
+        setBusy(true);
+        try {
+            const res = await fetch("/api/invoice-verify", {
+                method: cabut ? "DELETE" : "POST", credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ orderId: row.orderId, jenis, sidik: row.sidik[jenis], note }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body.ok) throw new Error(body.error ?? "Penjelasan gagal disimpan");
+            toast.success(cabut ? "Penjelasan dicabut" : jenis === "sales" ? "Sales di Accurate diterima" : "Selisih isi dijelaskan");
+            await load();
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Penjelasan gagal disimpan");
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    // Yang perlu perhatian saja: selisih yang belum dijelaskan, dan baris TIDAK PASTI yang
+    // fakturnya ternyata ada. Yang cocok atau sudah dijelaskan hanya tampil bila diminta.
+    const verifyRows = (verify?.rows ?? []).filter((row) => semuaVerifikasi
+        || (row.status === "selisih" && row.terbuka > 0) || row.foundWhileUnknown);
 
     const toggle = (key: string) => setPicked((current) => current.includes(key) ? current.filter((value) => value !== key) : [...current, key]);
 
@@ -204,103 +239,150 @@ export default function AntreanFakturPage() {
                 </button>
             </section>
 
-            <section className="space-y-2">
-                <div className="flex flex-wrap items-center gap-3">
-                    <h2 className="text-lg font-medium text-white">Verifikasi balik faktur Accurate</h2>
+            {/* Ringkas satu baris, dibuka bila perlu: antrean kirim di bawahnya harus terlihat tanpa
+                menggulir. Angka merahnya tetap selalu terlihat di baris ringkasan. */}
+            <details className="rounded-lg border border-white/10 bg-black/20">
+                <summary className="flex cursor-pointer flex-wrap items-center gap-3 px-4 py-3">
+                    <span className="font-medium text-white">Verifikasi balik faktur Accurate</span>
                     {verify && (
                         <span className="text-xs text-slate-400">
-                            {verify.checked} faktur diperiksa ·{" "}
+                            {verify.checked} diperiksa ·{" "}
                             <span className="text-emerald-300">{verify.summary.cocok ?? 0} cocok</span> ·{" "}
-                            <span className="text-red-300">{verify.summary.selisih ?? 0} selisih</span> ·{" "}
+                            <span className={verify.summary.selisih ? "font-semibold text-red-300" : "text-slate-400"}>
+                                {verify.summary.selisih ?? 0} selisih belum dijelaskan
+                            </span> ·{" "}
+                            <span className="text-slate-300">{verify.summary.dijelaskan ?? 0} sudah dijelaskan</span> ·{" "}
                             <span className="text-amber-300">{verify.summary["tak-terperiksa"] ?? 0} belum bisa diperiksa</span>
                         </span>
                     )}
-                </div>
-                <p className="text-xs text-slate-500">
-                    Isi faktur di Accurate disandingkan dengan payload yang dikirim — satuan, qty, harga,
-                    diskon persen, nilai baris, PPN, dan cabang penomoran — dihubungkan lewat{" "}
-                    <span className="font-mono">charField1</span>. Yang berselisih ditandai di sini; tidak
-                    ada yang perlu dipelototi satu per satu di Accurate.
-                </p>
-                {!!verify?.summary?.selisih && (
-                    <div className="flex items-center gap-3 rounded-lg border border-red-500/40 bg-red-500/10 p-3">
-                        <ShieldAlert className="text-red-300" size={18} />
-                        <p className="text-sm text-red-200">
-                            {verify.summary.selisih} faktur di Accurate TIDAK sama dengan yang dikirim.
-                            Faktur yang sudah terbentuk tidak bisa ditarik — perbaikannya di Accurate,
-                            dan gerbang kirim harus ditutup sampai sebabnya ketemu.
-                        </p>
-                    </div>
-                )}
-                <div className="overflow-x-auto rounded-lg border border-white/10">
-                    <table className="w-full text-sm">
-                        <thead className="bg-white/5 text-slate-400">
-                            <tr>
-                                <th className="px-3 py-2 text-left">SO</th>
-                                <th className="px-3 py-2 text-left">Faktur Accurate</th>
-                                <th className="px-3 py-2 text-left">Hasil</th>
-                                <th className="px-3 py-2 text-left">Temuan</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {verify?.rows.map((row) => (
-                                <tr key={row.orderId} className={`border-t border-white/5 ${row.status === "selisih" ? "bg-red-500/5" : ""}`}>
-                                    <td className="px-3 py-2 font-mono text-xs">
-                                        {row.soNo ?? row.orderId}
-                                        <div className="text-slate-500">{row.customerNo}</div>
-                                    </td>
-                                    <td className="px-3 py-2 text-xs">
-                                        {row.invoiceNumber || "—"}
-                                        <div className="text-slate-500">
-                                            {row.matchedBy ? `dicocokkan lewat ${row.matchedBy}` : "belum ketemu"}
-                                            {row.invoiceDate ? ` · tgl ${row.invoiceDate}` : ""}
-                                            {row.salesman ? ` · sales ${row.salesman}` : " · tanpa sales"}
-                                        </div>
-                                    </td>
-                                    <td className="px-3 py-2 text-xs whitespace-nowrap">
-                                        {row.status === "cocok" && (
-                                            <span className="text-emerald-300">
-                                                <ShieldCheck size={13} className="mr-1 inline" />
-                                                cocok ({row.linesChecked} baris)
-                                            </span>
-                                        )}
-                                        {row.status === "selisih" && (
-                                            <span className="text-red-300">
-                                                <ShieldAlert size={13} className="mr-1 inline" />
-                                                {row.findings.length} selisih
-                                            </span>
-                                        )}
-                                        {row.status === "tak-terperiksa" && (
-                                            <span className="text-amber-300">
-                                                <HelpCircle size={13} className="mr-1 inline" /> belum bisa diperiksa
-                                            </span>
-                                        )}
-                                        {row.foundWhileUnknown && (
-                                            <div className="text-red-300">fakturnya ADA di Accurate padahal berstatus TIDAK PASTI</div>
-                                        )}
-                                    </td>
-                                    <td className="px-3 py-2 text-xs">
-                                        {row.status === "tak-terperiksa" && <span className="text-amber-200/90">{row.reason}</span>}
-                                        {row.findings.map((finding, index) => (
-                                            <div key={index} className="text-red-200/90">
-                                                {finding.line ? `baris ${finding.line} · ` : ""}{finding.field}: dikirim{" "}
-                                                <span className="font-mono">{finding.expected}</span>, di Accurate{" "}
-                                                <span className="font-mono">{finding.actual}</span>
-                                            </div>
-                                        ))}
-                                        {row.status === "cocok" && <span className="text-slate-500">—</span>}
-                                    </td>
+                </summary>
+                <div className="space-y-2 border-t border-white/10 p-4">
+                    <p className="text-xs text-slate-500">
+                        Isi faktur di Accurate disandingkan dengan payload yang dikirim — satuan, qty, harga,
+                        diskon persen, nilai baris, PPN, sales, dan cabang penomoran — dihubungkan lewat{" "}
+                        <span className="font-mono">charField1</span>. Sales yang diganti di Accurate cukup diterima;
+                        isi yang dikoreksi saat pengiriman wajib dijelaskan. Keduanya terpisah, dan penjelasan
+                        berhenti berlaku kalau fakturnya berubah lagi.
+                    </p>
+                    <label className="flex items-center gap-2 text-xs text-slate-300">
+                        <input type="checkbox" checked={semuaVerifikasi} onChange={(event) => setSemuaVerifikasi(event.target.checked)} />
+                        Tampilkan semua (termasuk yang cocok dan yang sudah dijelaskan)
+                    </label>
+                    <div className="overflow-x-auto rounded-lg border border-white/10">
+                        <table className="w-full text-sm">
+                            <thead className="bg-white/5 text-slate-400">
+                                <tr>
+                                    <th className="px-3 py-2 text-left">SO</th>
+                                    <th className="px-3 py-2 text-left">Faktur Accurate</th>
+                                    <th className="px-3 py-2 text-left">Hasil</th>
+                                    <th className="px-3 py-2 text-left">Temuan</th>
                                 </tr>
-                            ))}
-                            {!verify?.rows.length && (
-                                <tr><td colSpan={4} className="px-3 py-6 text-center text-slate-500">
-                                    Belum ada faktur yang terkirim ke Accurate untuk diperiksa.
-                                </td></tr>
-                            )}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {verifyRows.map((row) => (
+                                    <tr key={row.orderId} className={`border-t border-white/5 ${row.terbuka > 0 ? "bg-red-500/5" : ""}`}>
+                                        <td className="px-3 py-2 font-mono text-xs">
+                                            {row.soNo ?? row.orderId}
+                                            <div className="text-slate-500">{row.customerNo}</div>
+                                        </td>
+                                        <td className="px-3 py-2 text-xs">
+                                            {row.invoiceNumber || "—"}
+                                            <div className="text-slate-500">
+                                                {row.matchedBy ? `dicocokkan lewat ${row.matchedBy}` : "belum ketemu"}
+                                                {row.invoiceDate ? ` · tgl ${row.invoiceDate}` : ""}
+                                                {row.salesman ? ` · sales ${row.salesman}` : " · tanpa sales"}
+                                            </div>
+                                        </td>
+                                        <td className="px-3 py-2 text-xs whitespace-nowrap">
+                                            {row.status === "cocok" && (
+                                                <span className="text-emerald-300">
+                                                    <ShieldCheck size={13} className="mr-1 inline" />
+                                                    cocok ({row.linesChecked} baris)
+                                                </span>
+                                            )}
+                                            {row.status === "selisih" && row.terbuka > 0 && (
+                                                <span className="text-red-300">
+                                                    <ShieldAlert size={13} className="mr-1 inline" />
+                                                    {row.terbuka} selisih belum dijelaskan
+                                                </span>
+                                            )}
+                                            {row.status === "selisih" && row.terbuka === 0 && (
+                                                <span className="text-slate-300">
+                                                    <CheckCircle2 size={13} className="mr-1 inline" />
+                                                    {row.findings.length} selisih dijelaskan
+                                                </span>
+                                            )}
+                                            {row.status === "tak-terperiksa" && (
+                                                <span className="text-amber-300">
+                                                    <HelpCircle size={13} className="mr-1 inline" /> belum bisa diperiksa
+                                                </span>
+                                            )}
+                                            {row.foundWhileUnknown && (
+                                                <div className="text-red-300">fakturnya ADA di Accurate padahal berstatus TIDAK PASTI</div>
+                                            )}
+                                        </td>
+                                        <td className="px-3 py-2 text-xs">
+                                            {row.status === "tak-terperiksa" && <span className="text-amber-200/90">{row.reason}</span>}
+                                            {row.findings.map((finding, index) => (
+                                                <div key={index} className={finding.dijelaskan ? "text-slate-500" : "text-red-200/90"}>
+                                                    {finding.line ? `baris ${finding.line} · ` : ""}{finding.field}: dikirim{" "}
+                                                    <span className="font-mono">{finding.expected}</span>, di Accurate{" "}
+                                                    <span className="font-mono">{finding.actual}</span>
+                                                    {finding.jenis === null && <span className="text-red-300"> — bereskan di Accurate, tidak bisa dijelaskan</span>}
+                                                </div>
+                                            ))}
+                                            {(["sales", "isi"] as const).filter((jenis) => row.findings.some((finding) => finding.jenis === jenis)).map((jenis) => {
+                                                const sudah = row.penjelasan[jenis];
+                                                return (
+                                                    <div key={jenis} className="mt-2 flex flex-wrap items-center gap-2">
+                                                        {sudah ? (
+                                                            <>
+                                                                <span className="text-emerald-300">
+                                                                    <CheckCircle2 size={12} className="mr-1 inline" />
+                                                                    {jenis === "sales" ? "Sales di Accurate diterima" : `Isi dijelaskan: ${sudah.note}`}
+                                                                </span>
+                                                                <span className="text-slate-500">{sudah.by} · {new Date(sudah.at).toLocaleString("id-ID")}</span>
+                                                                <button onClick={() => void jelaskan(row, jenis, true)} disabled={busy}
+                                                                    className="rounded bg-white/10 px-2 py-0.5 text-slate-300 disabled:opacity-40">Cabut</button>
+                                                            </>
+                                                        ) : jenis === "sales" ? (
+                                                            <button onClick={() => void jelaskan(row, "sales")} disabled={busy}
+                                                                title="Sales sudah diganti di Accurate (mis. sales lama pindah divisi). Selisih isi faktur, kalau ada, tetap terbuka."
+                                                                className="rounded bg-blue-500/20 px-2 py-1 text-blue-100 disabled:opacity-40">
+                                                                Terima sales di Accurate
+                                                            </button>
+                                                        ) : (
+                                                            <>
+                                                                <input value={catatan[row.orderId] ?? ""} maxLength={500}
+                                                                    onChange={(event) => setCatatan((lama) => ({ ...lama, [row.orderId]: event.target.value }))}
+                                                                    placeholder="Penjelasan, mis. koreksi qty saat pengiriman"
+                                                                    aria-label={`Penjelasan selisih isi ${row.soNo ?? row.orderId}`}
+                                                                    className="min-w-56 flex-1 rounded border border-white/10 bg-black/30 px-2 py-1 text-slate-200" />
+                                                                <button onClick={() => void jelaskan(row, "isi")} disabled={busy}
+                                                                    className="rounded bg-amber-500/20 px-2 py-1 text-amber-100 disabled:opacity-40">
+                                                                    Jelaskan selisih isi
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                            {row.status === "cocok" && <span className="text-slate-500">—</span>}
+                                        </td>
+                                    </tr>
+                                ))}
+                                {!verifyRows.length && (
+                                    <tr><td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                                        {verify?.rows.length
+                                            ? "Tidak ada selisih yang belum dijelaskan."
+                                            : "Belum ada faktur yang terkirim ke Accurate untuk diperiksa."}
+                                    </td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-            </section>
+            </details>
 
             {!!data?.pendingBatches?.length && (
                 <section className="space-y-2">
