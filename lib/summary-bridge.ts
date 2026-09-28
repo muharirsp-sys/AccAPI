@@ -61,6 +61,8 @@ export type SummaryProgram = {
     value_scope?: "eligible" | "order";
     basis?: "gross" | "net";
     stacking?: boolean;
+    /** Hanya PO pertama per outlet per barang (`FIRST_PO_MARKS` di summary_rules.py). */
+    first_po?: boolean;
     priority?: number;
     tiers: SummaryTier[];
     source_page?: number;
@@ -114,6 +116,8 @@ export type BridgeRow = {
     channel: string;
     outletList: string;
     outletListMode: string;
+    /** Hanya PO pertama per outlet per barang yang dibenarkan (kolom `promo_rule.first_po`). */
+    firstPo: boolean;
     note: string;
 };
 
@@ -264,6 +268,7 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
                 // satu bentuk di basis data, dan supaya baris lama yang kosong berarti sama.
                 channel: text(program.channel).toUpperCase() === "ALL" ? "" : text(program.channel).toUpperCase(),
                 outletList, outletListMode,
+                firstPo: program.first_po === true,
                 note: `dari publikasi Summary ${letter.draftId.slice(0, 8)} (${program.id})`,
             };
             if (benefit.perFaktur) {
@@ -316,7 +321,7 @@ export function bridgeRows(letter: PublishedLetter): BridgeResult {
     const terpakai = new Map<string, BridgeRow>();
     const bersih: BridgeRow[] = [];
     const isinya = (row: BridgeRow) => [row.benefitType, row.benefitValue, row.benefitUnit,
-        row.triggerQty, row.triggerUnit, row.benefitBeban, row.channel, row.outletList, row.outletListMode].join("|");
+        row.triggerQty, row.triggerUnit, row.benefitBeban, row.channel, row.outletList, row.outletListMode, row.firstPo].join("|");
     for (const row of rows) {
         const kunci = `${row.suratProgram}|${row.promoGroup}|${row.itemCode}|${row.tierNo}`;
         const kembar = terpakai.get(kunci);

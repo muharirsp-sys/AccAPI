@@ -16,7 +16,7 @@ import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
 import { discountNormalization, invoiceOutbox, promoOutlet, promoRule, salesInvoiceCache } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { invoiceLines, parseTariff, recap, TARIFF_SHEET, type PromoRule, type Putusan } from "@/lib/promo-recap";
+import { invoiceLines, parseTariff, pemberianPertama, recap, TARIFF_SHEET, type InvoiceLine, type PromoRule, type Putusan } from "@/lib/promo-recap";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -88,14 +88,11 @@ export async function GET(request: NextRequest) {
     const to = (request.nextUrl.searchParams.get("to") || fallback.to).slice(0, 10);
 
     // `trans_date` disimpan apa adanya dari Accurate (dd/MM/yyyy), jadi penyaringan tanggal
-    // dilakukan atas bentuk ISO-nya. Bukan pekerjaan berat: satu bulan faktur, bukan semua.
-    const rows = await db.select({ id: salesInvoiceCache.id, raw: salesInvoiceCache.rawData })
-        .from(salesInvoiceCache)
-        .where(and(
-            gte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${from}::date`),
-            lte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${to}::date`),
-        ));
-
+    // dilakukan atas bentuk ISO-nya.
+    const dalamRentang = and(
+        gte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${from}::date`),
+        lte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${to}::date`),
+    );
     const ruleRows = await db.select().from(promoRule).where(eq(promoRule.active, true));
     const rules: PromoRule[] = ruleRows.map((row) => ({
         principal: row.principal, suratProgram: row.suratProgram, promoLabel: row.promoLabel,
@@ -104,7 +101,7 @@ export async function GET(request: NextRequest) {
         benefitType: row.benefitType, benefitValue: row.benefitValue, benefitUnit: row.benefitUnit,
         benefitBeban: row.benefitBeban,
         tierNo: row.tierNo, triggerQty: Number(row.triggerQty), triggerUnit: row.triggerUnit,
-        outletList: row.outletList, outletListMode: row.outletListMode,
+        outletList: row.outletList, outletListMode: row.outletListMode, firstPo: row.firstPo,
     }));
 
     // Daftar outlet peserta (mis. LOYALTY). Dibaca UTUH lalu disaring per tanggal baris di
@@ -124,10 +121,37 @@ export async function GET(request: NextRequest) {
     // Cabang faktur = principal pemiliknya, ruang nama yang sama dengan `promo_rule.principal`.
     // Tanpa saringan ini rekap mencampur SEMUA principal sementara aturan hanya ada untuk
     // sebagian — dan klaim principal lain pasti tampak "tanpa aturan terbit" selamanya.
-    const semua = rows.flatMap((row) => invoiceLines(row.raw));
-    const lines = principal
-        ? semua.filter((line) => line.branchName.trim().toUpperCase() === principal.toUpperCase())
-        : semua;
+    // Karena itu "Semua principal" = semua principal di dropdown (yang punya aturan), BUKAN
+    // seluruh cabang: 28 Sep 2026 itu 1 GB teks dari 20 cabang demi satu cabang beraturan (KINO).
+    const dicari = new Set((principal ? [principal] : principals).map((nama) => nama.toUpperCase()));
+
+    // SATU pindaian rentang, hanya kolom kecil: penanda rincian dan nama cabang. `raw_data` utuh
+    // lalu dibaca lewat primary key untuk faktur terpilih saja.
+    //
+    // Riwayat: sampai 26 Sep seluruh `raw_data` ditarik sekaligus (heap 2 GB habis, container
+    // crash). Perbaikannya memotong per 1.000 faktur, tetapi TIAP potongan mengulang pindaian
+    // penuh (tanpa indeks, 9 dtk/potongan di VPS 2 core; `ilike` cabang ±30 dtk lagi) —
+    // "Semua principal" = 21 potongan, statement timeout 60 dtk, halaman tidak pernah termuat.
+    // Faktur tanpa rincian (hanya jalur webhook/detail.do yang membawanya) wajib terhitung,
+    // bukan hilang diam-diam. Saringan cabang di sini setara dengan `ilike` lama (diuji di
+    // produksi: 1.406 = 1.406 faktur KINO September, selisih 0) dan saringan JavaScript atas
+    // `branchName` tiap baris tetap penentunya.
+    const teks = sql`(${salesInvoiceCache.rawData} #>> '{}')`;
+    const pindai = await db.select({
+        id: salesInvoiceCache.id,
+        rinci: sql<boolean>`${teks} like '%detailItem%'`,
+        cabang: sql<string>`split_part(split_part(${teks}, '"branchName":"', 2), '"', 1)`,
+    }).from(salesInvoiceCache).where(dalamRentang);
+    const ids = pindai.filter((row) => row.rinci && dicari.has(row.cabang.trim().toUpperCase())).map((row) => row.id);
+    const lines: InvoiceLine[] = [];
+    // ponytail: 1.000 id per baca; teks mentah dibuang begitu dibongkar jadi baris.
+    for (let start = 0; start < ids.length; start += 1000) {
+        const potong = await db.select({ raw: salesInvoiceCache.rawData }).from(salesInvoiceCache)
+            .where(inArray(salesInvoiceCache.id, ids.slice(start, start + 1000)));
+        for (const row of potong) {
+            for (const line of invoiceLines(row.raw)) if (dicari.has(line.branchName.trim().toUpperCase())) lines.push(line);
+        }
+    }
     const scopedRules = principal
         ? rules.filter((rule) => rule.principal.trim().toUpperCase() === principal.toUpperCase())
         : rules;
@@ -137,23 +161,31 @@ export async function GET(request: NextRequest) {
         .where(and(gte(discountNormalization.transDate, from), lte(discountNormalization.transDate, to)));
     const normalisasi = new Map<string, Putusan>(putusan.map((row) => [`${row.lineKey}|${row.positions}`,
         { bucket: row.bucket === "principal" ? "principal" : "distributor", amount: Number(row.amount), by: row.decidedBy }]));
-    const result = recap(lines, scopedRules, members, normalisasi);
+    // PO PERTAMA dinilai atas RIWAYAT sejak awal periode aturan first-PO, bukan hanya rentang ini:
+    // PO kedua bulan Oktober tidak boleh tampak "pertama" hanya karena rekapnya dibuka per Oktober.
+    // Dibaca hanya faktur yang memuat kode barangnya — belasan faktur, bukan seluruh kuartal.
+    const aturanPertama = scopedRules.filter((rule) => rule.firstPo && rule.itemCode);
+    let pertama;
+    if (aturanPertama.length) {
+        const sejak = aturanPertama.map((rule) => rule.periodStart || from).sort()[0];
+        const kode = [...new Set(aturanPertama.map((rule) => rule.itemCode))];
+        const riwayat = await db.select({ raw: salesInvoiceCache.rawData }).from(salesInvoiceCache).where(and(
+            gte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${sejak}::date`),
+            lte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${to}::date`),
+            // Satu ekspresi untuk semua kode: `or` per kode membongkar `raw_data` sekali per kode.
+            sql`${teks} like any (array[${sql.join(kode.map((code) => sql`${`%${code}%`}`), sql`, `)}])`,
+        ));
+        pertama = pemberianPertama(riwayat.flatMap((row) => invoiceLines(row.raw)), aturanPertama);
+    }
+    const result = recap(lines, scopedRules, members, normalisasi, pertama);
     // Faktur yang terbit LEWAT web sudah dinilai gerbang; menu normalisasi hanya untuk yang tidak.
     const webInvoiceIds = (await db.select({ id: invoiceOutbox.accurateId }).from(invoiceOutbox)
         .where(and(eq(invoiceOutbox.state, "posted"), ne(invoiceOutbox.accurateId, "")))).map((row) => row.id);
 
-    // Faktur yang `raw_data`-nya belum memuat rincian baris: hanya jalur webhook (detail.do)
-    // yang membawanya, faktur hasil sync daftar tidak. Wajib terlihat, bukan hilang diam-diam.
-    // Dihitung dari hasil bongkar, bukan dari bentuk mentahnya: `raw_data` tersimpan sebagai
-    // TEKS JSON (lihat catatan di lib/promo-recap), jadi memeriksa `raw.detailItem` langsung
-    // selalu menjawab "tidak ada rincian" untuk semua faktur.
-    const withDetail = new Set(semua.map((line) => line.invoiceId || line.invoiceNo));
-    const withoutDetail = rows.length - withDetail.size;
-
     return NextResponse.json({
         ok: true, from, to, principal, principals,
-        invoicesInRange: rows.length,
-        invoicesWithoutDetail: withoutDetail,
+        invoicesInRange: pindai.length,
+        invoicesWithoutDetail: pindai.filter((row) => !row.rinci).length,
         rules: rules.length,
         recap: result,
         webInvoiceIds,

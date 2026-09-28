@@ -1,6 +1,6 @@
 /*
- * Tujuan: Menyimpan / mencabut keputusan atas potongan TAK BERTUAN pada faktur Accurate yang
- *         dibuat di luar web: klaim principal atau tanggungan distributor.
+ * Tujuan: Menyimpan / mencabut keputusan atas potongan TAK BERTUAN pada faktur Accurate (termasuk
+ *         yang terbit lewat web): klaim principal atau tanggungan distributor.
  * Caller: halaman Normalisasi Diskon (/normalisasi-diskon). Barisnya dibaca dari GET /api/promo-recap.
  * Dependensi: db (discount_normalization), rbac. Main Functions: POST, DELETE.
  * Side Effects: menulis `discount_normalization`. TIDAK menulis ke Accurate — fakturnya tetap

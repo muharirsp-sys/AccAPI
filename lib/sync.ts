@@ -516,7 +516,13 @@ export async function upsertSalesInvoiceById(id: number, creds: AccurateCredenti
         if (body?.s === true && creds.databaseId) await recordInvoiceRealization(creds.databaseId, String(id), null);
         throw new AccurateInvoiceGoneError(id);
     }
-    if (!body?.s) throw new Error(`detail.do faktur ${id}: ${body?.m || "respons gagal"}`);
+    // Accurate menaruh pesan galatnya di `d` (daftar kalimat), bukan di `m`: 31 faktur September
+    // gagal ditambal 26 Sep 2026 dengan pesan kosong "respons gagal", sebabnya tidak terbaca.
+    if (!body?.s) {
+        const pesan = [body?.m, ...(Array.isArray(body?.d) ? body.d : [body?.d])]
+            .filter((bagian): bagian is string => typeof bagian === "string" && bagian.trim() !== "").join("; ");
+        throw new Error(`detail.do faktur ${id}: ${pesan || `respons gagal ${JSON.stringify(body).slice(0, 300)}`}`);
+    }
 
     const row = body.d as Record<string, unknown>;
     await SYNC_MODULES.sales_invoice.upsertPage([row]);

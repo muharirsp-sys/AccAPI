@@ -291,6 +291,13 @@ def check_compiler():
     assert programs[0].mix is True and programs[0].stacking is False, programs[0]
     programs, _ = compiled([row(keterangan="Dapat digabung dengan promo lain")])
     assert programs[0].stacking is True, programs[0]
+    # "PO pertama" (listing BP2609008707) dari keterangan yang terlihat peninjau -> first_po. Baris
+    # dengan dan tanpa syarat itu bukan satu program, meski barang dan manfaatnya sama.
+    programs, _ = compiled([row(keterangan="Hanya PO pertama (listing) per outlet")])
+    assert programs[0].first_po is True, programs[0]
+    assert compiled([row()])[0][0].first_po is False
+    programs, _ = compiled([row(keterangan="Hanya PO pertama (listing) per outlet"), row(no="2")])
+    assert sorted(p.first_po for p in programs) == [False, True], programs
 
     # Nilai rupiah minimum menjadi batas nilai, bukan kuantitas.
     programs, _ = compiled([row(ketentuan="Pembelian Rp 5.000.000", benefit_type="DISC_RP", benefit="100000")])

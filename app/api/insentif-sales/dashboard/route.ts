@@ -24,7 +24,7 @@ import {
     getTargetsForPeriod,
 } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
-import { getGtAoTargetMode, getKonstanta } from "@/lib/insentif-settings";
+import { getGtAoTargetMode, getKonstanta, getDaftar, aoFileKey, aoFileRowKey } from "@/lib/insentif-settings";
 import { getScopeForUser, getUserHierarchyIdentity } from "@/lib/insentif-hierarchy-scope";
 import { isOfficeRow } from "@/lib/insentif-sm-calc";
 import {
@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
     const principle = searchParams.get("principle") ?? undefined;
     const branch = searchParams.get("branch") ?? undefined;
 
-    const [rawTargets, realByPrinciple, supportRows, paymentRows, scope, gtAoMode, konstanta] = await Promise.all([
+    const [rawTargets, realByPrinciple, supportRows, paymentRows, scope, gtAoMode, konstanta, aoFileRows] = await Promise.all([
         getTargetsForPeriod(month, year),
         computeMtdByPrinciple(month, year),
         db
@@ -65,7 +65,9 @@ export async function GET(req: NextRequest) {
         getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
         getGtAoTargetMode(),
         getKonstanta(),
+        getDaftar(aoFileKey(month, year), []),
     ]);
+    const aoFileSet = new Set(aoFileRows);
     // scope null = tidak ada scoping (perilaku existing/default). Non-null = user SPV/SM
     // opt-in (lib/insentif-hierarchy-scope) — cuma lihat salesCode bawahannya sendiri.
     const scopedTargets = scope === null ? rawTargets : rawTargets.filter((t) => scope.has(t.salesCode));
@@ -115,8 +117,12 @@ export async function GET(req: NextRequest) {
     // Target AO 0 = kolom tidak diisi, BUKAN "ambangnya nol". Skema GT selama ini memakai
     // konstanta 240 sehingga kolom itu memang sering kosong; meneruskan 0 akan membuat pengali
     // AO nol dan menghapus komponen 70% (Rp 700.000/baris) hanya karena toggle dipindah.
-    const aoTargetOf = (targetAo: number) =>
-        gtAoMode === "file" && targetAo > 0 ? targetAo : undefined;
+    // Selain setelan global, satu baris bisa dipindah ke target file lewat tombol per baris
+    // (aoFileKey, per periode).
+    const aoFileOf = (t: { salesCode: string; principle: string }) =>
+        aoFileSet.has(aoFileRowKey(t.salesCode, t.principle));
+    const aoTargetOf = (t: { salesCode: string; principle: string; targetAo: number }) =>
+        (gtAoMode === "file" || aoFileOf(t)) && t.targetAo > 0 ? t.targetAo : undefined;
 
     // Skema konstanta-bobot 2-KPI berlaku untuk GT/TT (sinonim); MT punya skema 4-KPI sendiri.
     const isSchemeChannel = (ch: string) => ch === "GT" || ch === "TT";
@@ -138,7 +144,7 @@ export async function GET(req: NextRequest) {
             nama: t.principle,
             status: t.statusInsentif as StatusInsentif,
             target_value: t.targetValue,
-            target_ao: aoTargetOf(t.targetAo),
+            target_ao: aoTargetOf(t),
             realisasi_value: r.realValue,
             realisasi_ao: r.realAo,
             nilai_support_principal: supportMap.get(key(t.salesCode, t.principle)) ?? 0,
@@ -208,7 +214,7 @@ export async function GET(req: NextRequest) {
                     const ex = computeExclusive({
                         status: t.statusInsentif as StatusInsentif,
                         target_value: t.targetValue,
-                        target_ao: aoTargetOf(t.targetAo),
+                        target_ao: aoTargetOf(t),
                         realisasi_value: real.realValue,
                         realisasi_ao: real.realAo,
                         nilai_support_principal: supportMap.get(key(t.salesCode, t.principle)) ?? 0,
@@ -258,6 +264,10 @@ export async function GET(req: NextRequest) {
                 real: { value: real.realValue, ec: real.realEc, ao: real.realAo, ia: real.realIa, isq: isqReal },
                 pct: { value: pVal, ec: pEc, ao: pAo, isq: pIsq, total: totalAchieve },
                 incentive,
+                // Penyebut AO yang BENAR-BENAR dipakai membayar baris ini. Dikirim supaya layar
+                // tidak menebak ulang dari setelan global dan membantah nominalnya sendiri.
+                ambangAo: isSchemeChannel(t.channel) ? aoTargetOf(t) ?? konstanta.gt.aoAmbang : t.targetAo,
+                aoFile: aoFileOf(t),
                 paymentStatus: paymentMap.get(key(t.salesCode, t.principle)) ?? "belum",
             };
     });

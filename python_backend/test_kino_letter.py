@@ -6,7 +6,7 @@ Side Effects: Tidak ada. Teks di bawah adalah salinan verbatim lapisan teks sura
 import sys
 
 sys.path.insert(0, ".")
-from kino_letter import parse_text  # noqa: E402
+from kino_letter import match_products, parse_text  # noqa: E402
 from summary_rules import calculate, compile_programs, validate_programs  # noqa: E402
 
 # U+FFFD adalah bullet dan tanda rentang surat Kino; font simbolnya tidak punya padanan Unicode.
@@ -53,7 +53,38 @@ Detail Promo : MEKANISME : {B} PROGRAM INI KHUSUS CHANNEL GT EXCLUDE PESERTA PRO
 Outlet/Account : ALL"""
 
 
+NKA = """NO. PROMO ID : PN26006696 Tanggal Aju : 15 September 2026 Kode Aju : BP2609008707
+Nama Program Promo : NKA - INDOMARET LISTING & SUPPORT DISC 3% (FIRST PO) ELLIPS ULTRA LIGHT, SASHA HAIR SHAMPOO SEPTEMBER 2026 - DESEMBER 2026
+Periode Promo : 15 September 2026 - 31 December 2026 Divisi : HOME PERSONAL CARE Group Of Promo : MODERN
+Type Of Promo : LISTING FEE & SUPPORT Class Of Promo : FEE Mekanisme Promo : LISTING FEE
+Detail Promo : NKA - INDOMARET LISTING & SUPPORT DISC 3% (FIRST PO) ELLIPS ULTRA LIGHT, SASHA HAIR SHAMPOO SEPTEMBER 2026 - DESEMBER 2026
+ELLIPS HAIR VITAMIN ULTRA LIGHT BTL 45ML
+SASHA SHAMPOO COLOR NATURAL BLACK 30ML
+DISC ON PO 3%
+INDOGROSIR COVER INDOMARET
+Outlet/Account : ALL"""
+
+
 def main():
+    # Surat akun NKA (BP2609008707, 22 Sep 2026). Dua produk sebelum SATU "DISC ON PO 3%" harus
+    # jadi dua baris — dulu terbaca satu kelompok "... 45ML SASHA ... 30ML DISC" tanpa kode barang.
+    nka = parse_text(NKA)
+    assert [r["kelompok"] for r in nka["rows"]] == ["ELLIPS HAIR VITAMIN ULTRA LIGHT BTL 45ML",
+        "SASHA SHAMPOO COLOR NATURAL BLACK 30ML"], nka["rows"]
+    assert all(r["benefit_type"] == "DISC_PCT" and r["benefit"] == "3" for r in nka["rows"]), nka["rows"]
+    assert (nka["rows"][0]["periode_start"], nka["rows"][0]["periode_end"]) == ("2026-09-15", "2026-12-31")
+    # "Outlet/Account : ALL" tercetak, tetapi suratnya khusus akun Indomaret (+ Indogrosir). Dibaca
+    # semua outlet, 3% itu membenarkan potongan yang sama di toko mana pun. Ditahan sampai daftarnya ada.
+    assert (nka["rows"][0]["outlet_mode"], nka["rows"][0]["outlet_classes"]) == ("only", "BP2609008707"), nka["rows"][0]
+    assert nka["rows"][0]["channel_list"] == "INDOMARET, INDOGROSIR", nka["rows"][0]
+    # Outlet Indomaret berkategori NKA di master: channel MT akan membuat aturannya tidak pernah berlaku.
+    assert nka["rows"][0]["channel_gtmt"] == "ALL", nka["rows"][0]
+    assert all("PO pertama" in r["keterangan"] for r in nka["rows"]), nka["rows"]
+    assert any("PO PERTAMA" in w for w in nka["warnings"]), nka["warnings"]
+    assert not any("SEMUA outlet" in w for w in nka["warnings"]), nka["warnings"]
+
+    check_match_products(nka)
+
     msg = parse_text(MSG)
     assert msg["on_faktur"] and msg["mechanism"] == "CB ON FAKTUR VALUE", msg["mechanism"]
     assert len(msg["rows"]) == 4, msg["rows"]
@@ -123,6 +154,39 @@ def main():
 
     check_end_to_end(msg, resik)
     print("kino letter check: OK")
+
+
+def check_match_products(nka):
+    """Nama produk surat -> kode master tanpa ditebak. Nama master persis dari MASTER BARANG KINO."""
+    master = [dict(kode_barang=k, nama_barang=n, kelompok=g, variant=v, gramasi=s) for k, n, g, v, s in (
+        ("K1100010004520", "KNF ELLIPS H.VIT ULTRA LIGHT 45ML X 36 BTL", "ELLIPS", "H.VIT ULTRA LIGHT", "45ML"),
+        ("K1531001003011", "KNF SASHA SHAMPOO COLOR NATURAL BLACK 30ML X 72 SCH", "SASHA SHAMPOO - COLOR", "NATURAL BLACK", "30ML"),
+        ("K1531002003011", "KNF SASHA SHAMPOO COLOR NAT. DARK BROWN 30ML X 72 SCH", "SASHA SHAMPOO - COLOR", "NAT. DARK BROWN", "30ML"),
+        ("K1100001000110", "KNF ELLIPS H.VIT HAIR TREATMENT 1ML X 72 BLR", "ELLIPS", "H.VIT HAIR TREATMENT", "1ML"),
+        ("K1100001000140", "KNF ELLIPS H.VIT HAIR TREATMENT 1ML X 12 JAR", "ELLIPS", "H.VIT HAIR TREATMENT", "1ML"),
+        ("K1041001025010", "KNF B&B HAIR BODY WASH RIKO 250ML X 24 BTL", "B&B", "HAIR BODY WASH RIKO", "250ML"),
+        ("K1041001025011", "KNF B&B HAIR BODY WASH RIKO 250ML X 36 BTL", "B&B", "HAIR BODY WASH RIKO", "250ML"))]
+    rows = [dict(r) for r in nka["rows"]]
+    warnings = []
+    match_products(rows, master, warnings)
+    # "H.VIT" = "HAIR VITAMIN" (tiap bagian singkatan = awalan kata berurutan); NATURAL BLACK bukan DARK BROWN.
+    assert [r["kode_barangs"] for r in rows] == ["K1100010004520", "K1531001003011"], rows
+    # Kolom master ikut ditulis, supaya `_apply_native_kelompok` saat simpan menemukan barang yang sama.
+    assert (rows[1]["kelompok"], rows[1]["variant"], rows[1]["gramasi"]) == ("SASHA SHAMPOO - COLOR", "NATURAL BLACK", "30ML")
+
+    def kode(frasa):
+        row = {"no": "1", "kelompok": frasa, "ketentuan": frasa, "benefit_type": "DISC_PCT", "kode_barangs": ""}
+        match_products([row], master, [])
+        return row["kode_barangs"]
+    # KEMASAN membedakan produk: BLR dan JAR dua barang. Disebut -> hanya itu; tidak disebut -> ditahan.
+    assert kode("ELLIPS HAIR VITAMIN HAIR TREATMENT JAR 1ML") == "K1100001000140"
+    assert kode("ELLIPS HAIR VITAMIN HAIR TREATMENT 1ML") == ""
+    # Karton berbeda (X 24 / X 36) untuk kemasan yang sama tetap satu produk; "B&B" = dua kata B.
+    assert kode("B&B HAIR BODY WASH RIKO 250ML") == "K1041001025010,K1041001025011"
+    # Ukuran lain, kata yang tidak dijelaskan master, atau nama tanpa ukuran -> tidak diisi.
+    assert kode("SASHA SHAMPOO COLOR NATURAL BLACK 60ML") == ""
+    assert kode("SASHA SHAMPOO COLOR NATURAL BLACK EXTRA 30ML") == ""
+    assert kode("ELLIPS HAIR MIST") == ""
 
 
 def check_end_to_end(msg, resik):

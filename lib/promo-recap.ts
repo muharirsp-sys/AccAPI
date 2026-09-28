@@ -16,8 +16,8 @@
  * Gerbang kita memang menahan keduanya sebelum faktur naik, tetapi faktur juga bisa dibuat
  * langsung di Accurate di luar jalur ini. Angka nol harus DIBUKTIKAN, bukan diasumsikan.
  */
-import { bonusQuota, isBonusLine, matchBonusRule, matchTariff, outletAllowed, outletListsOn, OWNER,
-    splitDiscounts, TOLERANCE, type BonusQuota, type DiscountAt, type OutletMember } from "@/lib/principal-validation";
+import { bonusQuota, isBonusLine, JARINGAN_POSISI_BEBAS, matchBonusRule, matchTariff, outletAllowed, outletListsOn, OWNER,
+    splitDiscounts, TOLERANCE, TOLERANSI_NOTA, type BonusQuota, type DiscountAt, type OutletMember } from "@/lib/principal-validation";
 
 export type PromoRule = {
     principal: string;
@@ -43,6 +43,8 @@ export type PromoRule = {
     outletList?: string;
     /** INCLUDE = hanya peserta daftar; EXCLUDE = semua kecuali peserta. */
     outletListMode?: string;
+    /** Hanya PO pertama per outlet per barang (`promo_rule.first_po`). Lihat `pemberianPertama`. */
+    firstPo?: boolean;
 };
 
 
@@ -194,7 +196,7 @@ export const kunciNormalisasi = (row: { lineKey: string; positions: string }) =>
 /** PPN yang dipakai mengembalikan potongan tingkat faktur ke nilai surat programnya. */
 export const PPN = 0.11;
 
-const inPeriod = (rule: PromoRule, date: string) =>
+const inPeriod = (rule: { periodStart?: string | null; periodEnd?: string | null }, date: string) =>
     (!rule.periodStart || rule.periodStart <= date) && (!rule.periodEnd || date <= rule.periodEnd);
 
 /**
@@ -222,12 +224,115 @@ export function ruleFor(line: InvoiceLine, rules: PromoRule[], beban: string, pe
  * tercetak dengan kode internal (`C-MA0056`), jadi dicocokkan dengan awalan — bukan sama persis.
  */
 export function tariffFor(line: InvoiceLine, rules: PromoRule[], owner: "distributor" | "principal" = "distributor"): PromoRule[] | null {
-    const no = line.customerNo.toUpperCase();
-    if (!no) return null;
-    const milikOutlet = rules.filter((rule) => rule.customerCode
-        && inPeriod(rule, line.transDate)
-        && (no === rule.customerCode.toUpperCase() || no.startsWith(`${rule.customerCode.toUpperCase()}-`)));
-    return milikOutlet.length ? matchTariff(line.discounts, milikOutlet, owner) : null;
+    if (!line.customerNo) return null;
+    const tarif = rules.filter((rule) => rule.customerCode && inPeriod(rule, line.transDate) && milikOutlet(rule, line.customerNo));
+    return tarif.length ? matchTariff(line.discounts, tarif, owner) : null;
+}
+
+/** `C-MA0056-KN` (faktur) milik tarif `C-MA0056`: kodenya sama, atau berawalan kode + "-". */
+function milikOutlet(rule: PromoRule, customerNo: string) {
+    const no = customerNo.toUpperCase();
+    const code = rule.customerCode.toUpperCase();
+    return Boolean(code) && (no === code || no.startsWith(`${code}-`));
+}
+
+/** Faktur yang PERTAMA memberi potongan aturan first-PO kepada satu outlet untuk satu barang. */
+export type Pemberian = { invoiceId: string; invoiceNo: string; transDate: string };
+
+export const kunciPertama = (customerNo: string, itemCode: string, suratProgram: string) =>
+    `${customerNo.toUpperCase()}|${itemCode}|${suratProgram}`;
+
+/** Bagian aturan yang dibaca penjaga first PO; `PromoRule` maupun `PublishedRule` gerbang memenuhinya. */
+export type AturanPertama = {
+    firstPo?: boolean; itemCode: string; benefitType: string; benefitValue: string; suratProgram: string;
+    periodStart?: string | null; periodEnd?: string | null;
+};
+
+const bawaPersen = (rule: AturanPertama, discounts: DiscountAt[]) =>
+    discounts.some((entry) => entry.amount === undefined && Math.abs(cents(Number(rule.benefitValue) - entry.percent)) <= 0.01);
+
+/**
+ * PO PERTAMA per outlet x barang x surat untuk aturan `firstPo`: faktur paling awal (tanggal, lalu
+ * nomor) yang baris barangnya MEMBAWA persen aturan itu, dalam periode aturannya. Posisinya tidak
+ * dinilai di sini — "sudah pernah dapat" berarti potongannya sudah diberikan, di kolom mana pun.
+ *
+ * Satu fungsi untuk gerbang dan Rekap Promo, supaya keduanya tidak pernah menjawab berbeda tentang
+ * faktur mana yang pertama. Batasnya: hanya faktur yang `raw_data`-nya memuat rincian baris yang
+ * terlihat; faktur tanpa rincian (lihat webhook-backfill) tidak bisa dihitung sebagai pemberian.
+ */
+export function pemberianPertama(lines: InvoiceLine[], rules: AturanPertama[]): Map<string, Pemberian> {
+    const aturan = rules.filter((rule) => rule.firstPo && rule.itemCode && rule.benefitType === "DISC_PCT");
+    const hasil = new Map<string, Pemberian>();
+    if (!aturan.length) return hasil;
+    const urut = [...lines].sort((a, b) => a.transDate.localeCompare(b.transDate) || a.invoiceNo.localeCompare(b.invoiceNo));
+    for (const line of urut) {
+        for (const rule of aturan) {
+            if (rule.itemCode !== line.itemCode || !inPeriod(rule, line.transDate)) continue;
+            if (!bawaPersen(rule, line.discounts)) continue;
+            const key = kunciPertama(line.customerNo, line.itemCode, rule.suratProgram);
+            if (!hasil.has(key)) hasil.set(key, { invoiceId: line.invoiceId || line.invoiceNo, invoiceNo: line.invoiceNo, transDate: line.transDate });
+        }
+    }
+    return hasil;
+}
+
+/** Satu baris SO di gerbang, sebatas yang dibutuhkan penjaga first PO. */
+export type BarisSo = { key: string; soNo: string; soDate: string; customerNo: string | null; itemCode: string | null; discounts: DiscountAt[] };
+
+/**
+ * Penjaga first PO di GERBANG: baris SO yang membawa potongan aturan first-PO padahal outlet itu
+ * sudah mendapatkannya -> temuan (barisnya ditahan). "Sudah" berarti salah satu dari dua:
+ * - faktur di `riwayat` (lihat `pemberianPertama`) yang BUKAN faktur SO ini sendiri
+ *   (`milikSendiri` = id faktur Accurate hasil SO batch ini; validasi ulang sesudah terbit tidak
+ *   boleh menahan dirinya sendiri);
+ * - SO yang lebih awal (tanggal, lalu nomor) di batch yang sama — dua SO pertama sekaligus
+ *   hanya satu yang pertama.
+ */
+export function temuanPoPertama(
+    baris: BarisSo[], rules: AturanPertama[], riwayat: Map<string, Pemberian>, milikSendiri: Set<string>,
+): Map<string, string> {
+    const aturan = rules.filter((rule) => rule.firstPo && rule.itemCode && rule.benefitType === "DISC_PCT");
+    const temuan = new Map<string, string>();
+    const soPertama = new Map<string, string>();
+    const urut = [...baris].sort((a, b) => a.soDate.localeCompare(b.soDate) || a.soNo.localeCompare(b.soNo));
+    for (const line of urut) {
+        if (!line.customerNo || !line.itemCode) continue;
+        for (const rule of aturan) {
+            if (rule.itemCode !== line.itemCode || !inPeriod(rule, line.soDate) || !bawaPersen(rule, line.discounts)) continue;
+            const key = kunciPertama(line.customerNo, line.itemCode, rule.suratProgram);
+            const grant = riwayat.get(key);
+            if (grant && !milikSendiri.has(grant.invoiceId)) {
+                temuan.set(line.key, `Surat ${rule.suratProgram} hanya untuk PO PERTAMA: potongan ${rule.benefitValue}% `
+                    + `untuk ${line.itemCode} sudah diberikan ke outlet ini di ${grant.invoiceNo} (${grant.transDate}).`);
+                continue;
+            }
+            const lebihAwal = soPertama.get(key);
+            if (lebihAwal && lebihAwal !== line.soNo) {
+                temuan.set(line.key, `Surat ${rule.suratProgram} hanya untuk PO PERTAMA: potongan ${rule.benefitValue}% `
+                    + `untuk ${line.itemCode} sudah dipakai SO ${lebihAwal} yang lebih awal di batch ini.`);
+                continue;
+            }
+            soPertama.set(key, line.soNo);
+        }
+    }
+    return temuan;
+}
+
+/** Satu posisi rantai persen beserta RUPIAH-nya, dihitung menurut urutan rantai faktur. */
+type Potongan = { position: number; percent: number; rupiah: number };
+
+/**
+ * Rupiah tiap posisi, persis seperti `splitDiscounts` menghitungnya (tiap posisi memotong SISA),
+ * hanya tidak digabung per beban. Urutan faktur yang dipakai, bukan urutan tarif: itulah angka
+ * yang benar-benar dihitung Accurate.
+ */
+function perPosisi(gross: number, discounts: DiscountAt[]): Potongan[] {
+    let remaining = gross;
+    return [...discounts].sort((a, b) => a.position - b.position).map(({ position, percent }) => {
+        const rupiah = cents(remaining * percent / 100);
+        remaining -= rupiah;
+        return { position, percent, rupiah };
+    });
 }
 
 /**
@@ -247,8 +352,11 @@ export function fakturRuleFor(
     if (!reached) return null;
     const expected = Number(reached.benefitValue);
     if (!Number.isFinite(expected)) return null;
-    // Toleransi Rp 1 per baris: nominalnya dibagi rata lalu dibulatkan di tiap baris.
-    return Math.abs(cents(claim * (1 + PPN)) - expected) <= TOLERANCE * Math.max(lineCount, 1) ? reached : null;
+    // Toleransi SAMA dengan gerbang (checkSoPromo): Rp 1 per baris, lantai Rp 100. Tanpa lantai
+    // itu faktur yang lolos gerbang tercatat tak bertuan di sini — 8 faktur September 2026,
+    // mis. IKSAN Rp 200.041,98 lawan tier Rp 200.000 atas 17 baris. Lihat `TOLERANSI_NOTA`.
+    const tolerance = Math.max(TOLERANCE * Math.max(lineCount, 1), TOLERANSI_NOTA);
+    return Math.abs(cents(claim * (1 + PPN)) - expected) <= tolerance ? reached : null;
 }
 
 export type ProgramRecap = {
@@ -322,6 +430,12 @@ export type OutletTanpaAturan = {
  */
 export function recap(
     lines: InvoiceLine[], rules: PromoRule[], members: OutletMember[] = [], normalisasi: Map<string, Putusan> = new Map(),
+    /**
+     * Pemberian pertama aturan first-PO, dihitung pemanggil atas RIWAYAT sejak awal periode
+     * aturannya — bukan hanya rentang rekap ini. Tanpa riwayat, PO kedua di bulan berikutnya akan
+     * terlihat "pertama" di rekap bulannya sendiri. Bawaannya hanya faktur rentang ini.
+     */
+    pertama: Map<string, Pemberian> = pemberianPertama(lines, rules),
 ): Recap {
     // Keanggotaan daftar berganti tiap kuartal sementara rekap membentang sebulan, jadi ia
     // disusun PER TANGGAL BARIS — bukan sekali untuk seluruh periode. Hasilnya disimpan
@@ -403,9 +517,18 @@ export function recap(
         out.gross = cents(out.gross + line.gross);
 
         const split = splitDiscounts(line.gross, line.discounts);
+        const potongan = perPosisi(line.gross, line.discounts);
         // Aturan yang OUTLET ini memang jadi pesertanya. Disaring di sini sekali, lalu dipakai
         // semua pencocokan di bawah — supaya tidak ada satu pun jalur yang lupa menanyakannya.
-        const berlakuDiOutlet = rules.filter((rule) => outletAllowed(rule, line.customerNo, listsOn(line.transDate)));
+        // Aturan first-PO hanya berlaku di faktur yang PERTAMA memberikannya (lihat `pemberianPertama`).
+        // Tanpa catatan pemberian sama sekali juga tidak berlaku: gagal tertutup.
+        const pemberianLain = (rule: PromoRule) => {
+            if (!rule.firstPo) return null;
+            const grant = pertama.get(kunciPertama(line.customerNo, line.itemCode, rule.suratProgram));
+            return grant?.invoiceId === (line.invoiceId || line.invoiceNo) ? null : grant ?? { invoiceId: "", invoiceNo: "(tidak tercatat)", transDate: "" };
+        };
+        const bolehDiOutlet = rules.filter((rule) => outletAllowed(rule, line.customerNo, listsOn(line.transDate)));
+        const berlakuDiOutlet = bolehDiOutlet.filter((rule) => !pemberianLain(rule));
         const percentAt = (owner: string) => cents(line.discounts
             .filter((entry) => (OWNER[entry.position] ?? "unowned") === owner)
             .reduce((total, entry) => total + entry.percent, 0));
@@ -446,6 +569,10 @@ export function recap(
                 promoGroup: bonusRule.promoGroup, reason: "" });
         }
 
+        // Potongan yang tidak terjelaskan UTUH per beban, dinilai lagi per posisi di bawah.
+        const sisa: Potongan[] = [];
+        // Slot tarif yang sudah menjelaskan sesuatu di baris ini; satu slot hanya sekali.
+        const slotTerpakai = new Set<PromoRule>();
         for (const owner of (bonusRule && bonusAmount > 0) ? [] : (["distributor", "principal"] as const)) {
             const amount = owner === "distributor" ? split.distributor : split.principal;
             if (amount <= 0) continue;
@@ -458,21 +585,90 @@ export function recap(
             const matched = ruleFor(line, berlakuDiOutlet, beban, percent) ?? cocokTarif?.[0] ?? null;
             if (matched) {
                 for (const dipakai of cocokTarif ?? [matched]) terpakai.add(kunci(dipakai));
+                for (const slot of cocokTarif ?? []) slotTerpakai.add(slot);
                 out[owner] = cents(out[owner] + amount);
                 if (owner === "principal") add(matched, amount, line.invoiceNo);
                 out.rows.push({ ...base, bucket: owner, positions: positionsAt(owner), percent, amount,
                     suratProgram: matched.suratProgram, promoGroup: matched.promoGroup, reason: "" });
                 continue;
             }
-            out.unowned = cents(out.unowned + amount);
+            sisa.push(...potongan.filter((entry) => OWNER[entry.position] === owner));
+        }
+
+        // PER POSISI. Gerbang menahan baris yang hanya separuh terjelaskan — sebelum faktur terbit,
+        // memang harus semua-atau-tidak. Rekap menilai faktur yang SUDAH terbit: setiap rupiah
+        // dicari pemiliknya, dan hanya yang tidak punya dasar yang tak bertuan. PT SUPRA BOGA
+        // 21 Sep 2026: `3+0.5` di posisi 1-2, tarifnya 3% posisi 1 (distributor) dan 0,5% posisi 4
+        // (principal). Digabung, 3,5% seluruhnya tak bertuan, padahal 3%-nya jelas milik tarif, dan
+        // menu Normalisasi tidak bisa memutuskan 0,5%-nya sendiri.
+        const penjelasan = new Map<Potongan, { rule: PromoRule; bucket: "distributor" | "principal"; note: string }>();
+        const sama = (rule: PromoRule, entry: Potongan) => Math.abs(cents(Number(rule.benefitValue) - entry.percent)) <= 0.01;
+        const slotTarif = (rule: PromoRule) => !rule.itemCode && rule.benefitType === "DISC_PCT" && !slotTerpakai.has(rule);
+        const tarifOutlet = berlakuDiOutlet.filter((rule) => rule.customerCode && inPeriod(rule, line.transDate)
+            && milikOutlet(rule, line.customerNo));
+        for (const entry of sisa) {
+            const beban = OWNER[entry.position] === "principal" ? "PRINCIPAL" : "DISTRIBUTOR";
+            const rule = ruleFor(line, berlakuDiOutlet, beban, entry.percent)
+                ?? tarifOutlet.find((slot) => slotTarif(slot) && slot.benefitBeban === beban && slot.tierNo === entry.position && sama(slot, entry));
+            if (!rule) continue;
+            if (rule.customerCode) slotTerpakai.add(rule);
+            penjelasan.set(entry, { rule, bucket: OWNER[entry.position], note: "" });
+        }
+        // Jaringan: posisi DIMAKLUMI, nilai tidak (keputusan pengguna 2026-09-24, sama dengan
+        // `normalisasiJaringan` di gerbang). Posisi tepat didahulukan di atas, baru sisanya
+        // dipasangkan ke slot tarif bernilai sama, lalu ke surat principal barang itu.
+        // INV/2609/KN01059 (25 Sep 2026, dibuat langsung di Accurate) menulis 3% listing
+        // BP2609008707 di kolom 2 — surat principal-nya tidak akan pernah terbaca bila kolomnya
+        // ikut dinilai. Gerbang TIDAK dilonggarkan dengan cara ini: belum ada laporan Kino yang
+        // menaruh potongan surat di kolom distributor, dan memindahkannya mengubah urutan hitung.
+        if (JARINGAN_POSISI_BEBAS.test(line.customerName)) {
+            for (const entry of sisa) {
+                if (penjelasan.has(entry)) continue;
+                const slot = tarifOutlet.find((rule) => slotTarif(rule) && sama(rule, entry));
+                const surat = slot ? null : ruleFor(line, berlakuDiOutlet, "PRINCIPAL", entry.percent);
+                const rule = slot ?? surat;
+                if (!rule) continue;
+                if (slot) slotTerpakai.add(slot);
+                penjelasan.set(entry, { rule, bucket: rule.benefitBeban === "PRINCIPAL" ? "principal" : "distributor",
+                    note: `posisi ${entry.position} dimaklumi (jaringan): ${slot ? `tarif posisi ${slot.tierNo}` : `surat ${rule.suratProgram}`}` });
+            }
+        }
+        for (const entry of sisa) {
+            const jelas = penjelasan.get(entry);
+            if (jelas) {
+                terpakai.add(kunci(jelas.rule));
+                out[jelas.bucket] = cents(out[jelas.bucket] + entry.rupiah);
+                if (jelas.bucket === "principal") add(jelas.rule, entry.rupiah, line.invoiceNo);
+                out.rows.push({ ...base, bucket: jelas.bucket, positions: String(entry.position), percent: entry.percent,
+                    amount: entry.rupiah, suratProgram: jelas.rule.suratProgram, promoGroup: jelas.rule.promoGroup, reason: jelas.note });
+                continue;
+            }
+            const owner = OWNER[entry.position];
+            const beban = owner === "principal" ? "PRINCIPAL" : "DISTRIBUTOR";
+            out.unowned = cents(out.unowned + entry.rupiah);
             const adaAturan = berlakuDiOutlet.some((rule) => rule.itemCode === line.itemCode && !rule.customerCode && rule.benefitBeban === beban);
-            const adaTarif = berlakuDiOutlet.some((rule) => rule.customerCode && rule.benefitBeban === beban
-                && line.customerNo.toUpperCase().startsWith(rule.customerCode.toUpperCase()));
-            out.rows.push({ ...base, bucket: "unowned", positions: positionsAt(owner), percent, amount,
-                suratProgram: "", promoGroup: "",
-                reason: adaAturan || adaTarif
-                    ? `${percent}% (posisi ${positionsAt(owner)}) tidak sama dengan aturan ${beban.toLowerCase()} yang berlaku`
-                    : `tidak ada aturan ${beban.toLowerCase()} untuk ${owner === "distributor" ? "outlet ini" : "barang ini"}`,
+            const adaTarif = tarifOutlet.some((rule) => rule.benefitBeban === beban);
+            // Nilai yang SAMA di tempat lain disebutkan: itulah bahan keputusan di menu Normalisasi.
+            const serupa = [...tarifOutlet, ...berlakuDiOutlet.filter((rule) => rule.itemCode === line.itemCode && !rule.customerCode
+                && rule.benefitType === "DISC_PCT" && inPeriod(rule, line.transDate))].find((rule) => sama(rule, entry));
+            // Surat first-PO yang nilainya cocok tetapi sudah dipakai faktur lain: sebab yang sebenarnya.
+            const bekasPertama = bolehDiOutlet.find((rule) => rule.firstPo && rule.itemCode === line.itemCode
+                && rule.benefitType === "DISC_PCT" && inPeriod(rule, line.transDate) && sama(rule, entry) && pemberianLain(rule));
+            if (bekasPertama) {
+                const grant = pemberianLain(bekasPertama)!;
+                out.rows.push({ ...base, bucket: "unowned", positions: String(entry.position), percent: entry.percent,
+                    amount: entry.rupiah, suratProgram: "", promoGroup: "",
+                    reason: `${entry.percent}% surat ${bekasPertama.suratProgram} hanya untuk PO PERTAMA; outlet ini sudah `
+                        + `mendapatkannya untuk barang ini di ${grant.invoiceNo}${grant.transDate ? ` (${grant.transDate})` : ""}` });
+                continue;
+            }
+            out.rows.push({ ...base, bucket: "unowned", positions: String(entry.position), percent: entry.percent,
+                amount: entry.rupiah, suratProgram: "", promoGroup: "",
+                reason: (adaAturan || adaTarif
+                    ? `${entry.percent}% (posisi ${entry.position}) tidak sama dengan aturan ${beban.toLowerCase()} yang berlaku`
+                    : `tidak ada aturan ${beban.toLowerCase()} untuk ${owner === "distributor" ? "outlet ini" : "barang ini"}`)
+                    + (serupa ? ` — ${entry.percent}% ada di ${serupa.customerCode ? `tarif outlet posisi ${serupa.tierNo}` : `surat ${serupa.suratProgram}`} `
+                        + `(${serupa.benefitBeban.toLowerCase()})` : ""),
             });
         }
 

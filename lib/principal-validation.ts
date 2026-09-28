@@ -149,6 +149,8 @@ export type PublishedRule = {
     channel?: string;
     /** INCLUDE = hanya peserta daftar; EXCLUDE = semua kecuali peserta. */
     outletListMode?: string;
+    /** Hanya PO pertama per outlet per barang (`promo_rule.first_po`). */
+    firstPo?: boolean;
 };
 
 /**

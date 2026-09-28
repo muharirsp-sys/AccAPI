@@ -12,9 +12,10 @@
  * benar-benar dilihat manusia.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, gte, inArray, ne, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { customer, item, orderDupeAck, principalMapping, principalOrderBatch, principalOrderLine, promoOutlet, promoRule } from "@/db/schema";
+import { customer, invoiceOutbox, item, orderDupeAck, principalMapping, principalOrderBatch, principalOrderLine, promoOutlet, promoRule,
+    salesInvoiceCache } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { itemUnits, resolvePrices } from "@/lib/item-price";
 import { syncItemPrices } from "@/lib/item-price-sync";
@@ -23,6 +24,8 @@ import { aturanBerlaku, bonusQuota, channelAllowed, channelOutlet, checkLine, ch
     splitDiscounts, triggerGroupKey, triggerReached,
     type DiscountAt, type Normalisasi, type PublishedRule, type TriggerBuy } from "@/lib/principal-validation";
 import { duplicateFinding, findDuplicate, type OrderFingerprint } from "@/lib/order-duplicate";
+import { invoiceKey } from "@/lib/principal-invoice";
+import { invoiceLines, pemberianPertama, temuanPoPertama } from "@/lib/promo-recap";
 
 export const runtime = "nodejs";
 
@@ -74,7 +77,7 @@ export async function POST(request: NextRequest) {
         tierNo: promoRule.tierNo, triggerQty: promoRule.triggerQty, triggerUnit: promoRule.triggerUnit,
         benefitType: promoRule.benefitType, benefitValue: promoRule.benefitValue, benefitBeban: promoRule.benefitBeban,
         channel: promoRule.channel,
-        outletList: promoRule.outletList, outletListMode: promoRule.outletListMode,
+        outletList: promoRule.outletList, outletListMode: promoRule.outletListMode, firstPo: promoRule.firstPo,
     }).from(promoRule).where(eq(promoRule.active, true));
 
     // Daftar outlet peserta (mis. LOYALTY). Surat sendiri yang menyebutnya: BP2609007713 dan
@@ -392,6 +395,30 @@ export async function POST(request: NextRequest) {
         }
     }
 
+    // PO PERTAMA (aturan first-PO, mis. listing BP2609008707 "DISC 3% (FIRST PO)"). Riwayatnya
+    // dibaca dari faktur Accurate sejak awal periode aturan, untuk outlet batch ini dan hanya faktur
+    // yang memuat kode barangnya. Faktur milik SO batch ini sendiri tidak dihitung melawan dirinya
+    // (validasi ulang sesudah terbit). Celahnya: faktur yang sudah diantre tetapi belum terbit belum
+    // ada di cache, jadi dua SO di batch BERBEDA yang diantre bersamaan baru ketahuan di Rekap Promo.
+    let firstPoFindings = new Map<string, string>();
+    const aturanPertama = publishedRules.filter((rule) => rule.firstPo && rule.itemCode);
+    if (aturanPertama.length && customerNos.length) {
+        const sejak = aturanPertama.map((rule) => String(rule.periodStart ?? "") || batchDate).sort()[0];
+        const kode = [...new Set(aturanPertama.map((rule) => rule.itemCode))];
+        const riwayat = await db.select({ raw: salesInvoiceCache.rawData }).from(salesInvoiceCache).where(and(
+            inArray(salesInvoiceCache.customerNo, customerNos),
+            gte(sql`to_date(${salesInvoiceCache.transDate}, 'DD/MM/YYYY')`, sql`${sejak}::date`),
+            or(...kode.map((code) => sql`${salesInvoiceCache.rawData}::text like ${`%${code}%`}`)),
+        ));
+        const milikSendiri = new Set((await db.select({ id: invoiceOutbox.accurateId }).from(invoiceOutbox)
+            .where(inArray(invoiceOutbox.orderId, [...new Set(lines.map((line) => invoiceKey(batch.principal, String(line.soNo))))])))
+            .map((row) => row.id).filter(Boolean));
+        firstPoFindings = temuanPoPertama(lines.map((line) => ({
+            key: String(line.rowNumber), soNo: String(line.soNo), soDate: dateOf(line), customerNo: customerNoOf(line),
+            itemCode: items.get(line.productCode) ?? null, discounts: discountsOfLine.get(line.rowNumber) ?? [],
+        })), aturanPertama, pemberianPertama(riwayat.flatMap((row) => invoiceLines(row.raw)), aturanPertama), milikSendiri);
+    }
+
     // PERINGATAN SE-BATCH: daftar outlet yang DITUNJUK aturan tetapi kosong pada tanggal SO.
     // Barisnya memang sudah tertahan sendiri (daftar kosong = aturan tidak berlaku untuk siapa
     // pun), tetapi sebabnya harus sampai ke manusia yang bisa membetulkannya — kalau tidak, ia
@@ -441,7 +468,8 @@ export async function POST(request: NextRequest) {
             // bukan satu barisnya.
             const dupe = dupeFindings.get(String(line.soNo));
             const jaringan = normalOf.get(line.rowNumber)?.finding;
-            const findings = [...(jaringan ? [jaringan] : []), ...checked.findings, ...sisi, ...(dupe ? [dupe] : [])];
+            const pertama = firstPoFindings.get(String(line.rowNumber));
+            const findings = [...(jaringan ? [jaringan] : []), ...(pertama ? [pertama] : []), ...checked.findings, ...sisi, ...(dupe ? [dupe] : [])];
             const status = findings.length ? "review" : "ok";
             if (status === "ok") ok += 1; else review += 1;
 

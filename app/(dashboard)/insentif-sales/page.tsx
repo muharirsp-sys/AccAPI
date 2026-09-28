@@ -49,6 +49,10 @@ interface ApiRow {
     real: { value: number; ec: number; ao: number; ia: number; isq: number };
     pct: { value: number; ec: number; ao: number; isq: number; total: number };
     incentive: { value: number; ec: number; ao: number; isq: number; total: number };
+    /** Penyebut AO yang dipakai membayar (240 atau Target AO file). */
+    ambangAo: number;
+    /** Tombol per baris "pakai Target AO file" menyala untuk periode ini. */
+    aoFile: boolean;
     paymentStatus: string;
 }
 
@@ -237,14 +241,14 @@ const useKonstanta = () => useContext(KonstantaCtx);
  * dapat / tidak dapat", dan angka nol sendirian tidak pernah menjawabnya — orang lalu menebak
  * bahwa sistemnya salah. Urutannya mengikuti urutan penolakan di kalkulasi.
  */
-function sebabNol(r: ApiRow, gtAoMode: "fixed240" | "file" | undefined, k: Konstanta): string | null {
+function sebabNol(r: ApiRow, k: Konstanta): string | null {
     if (r.incentive.total > 0) return null;
     if (r.statusInsentif === "principle") return "tidak ikut skema";
     if (!(r.target.value > 0)) return "target belum diisi";
     if (!(r.real.value > 0)) return "penjualan bersih ≤ 0";
     if (r.channel !== "GT" && r.channel !== "TT" && r.channel !== "MT") return `channel "${r.channel}" tak dikenal`;
     if ((r.support ?? 0) >= k.gt.pool1) return "ditanggung principle";
-    const ambangAo = r.channel === "MT" || gtAoMode === "file" ? r.target.ao : k.gt.aoAmbang;
+    const ambangAo = r.ambangAo;
     const pctAoDibayar = ambangAo > 0 ? (r.real.ao / ambangAo) * 100 : 0;
     const ambangPct = k.gt.ambangBayar * 100;
     if (r.pct.value < ambangPct && pctAoDibayar < ambangPct) {
@@ -323,12 +327,12 @@ function useExpandableRows() {
  * Finance: kalau keduanya punya salinan sendiri, cepat atau lambat yang satu menampilkan
  * dasar perhitungan yang berbeda dari yang lain untuk baris yang sama.
  */
-function SalesBreakdown({ r, semuaBaris, gtAoMode }: { r: ApiRow; semuaBaris?: ApiRow[]; gtAoMode?: "fixed240" | "file" }) {
+function SalesBreakdown({ r, semuaBaris }: { r: ApiRow; semuaBaris?: ApiRow[] }) {
     const k = useKonstanta();
     const isMt = r.channel === "MT";
-    // Ambang AO yang dipakai membayar. Menuliskan 240 mati di sini berbahaya: setelah toggle
-    // dimatikan, layar akan mengklaim angka yang tidak lagi dipakai menghitung.
-    const ambangAo = isMt || gtAoMode === "file" ? r.target.ao : k.gt.aoAmbang;
+    // Ambang AO yang dipakai membayar, dari server (setelan global + tombol per baris).
+    // Menebaknya ulang di sini dari setelan global membuat layar membantah nominalnya sendiri.
+    const ambangAo = r.ambangAo;
 
     // MT membayar 4 KPI (Value 350rb, EC 150rb, OA 150rb, IA 350rb); GT/TT hanya 2 (Value 30%,
     // AO 70%). Menampilkan dua komponen untuk semua channel membuat baris MT memperlihatkan
@@ -374,10 +378,10 @@ function SalesBreakdown({ r, semuaBaris, gtAoMode }: { r: ApiRow; semuaBaris?: A
                 { label: isMt ? "Target" : "Target (file)", value: formatQty(r.target.ao) },
                 { label: "Realisasi", value: formatQty(r.real.ao) },
                 { label: "Pencapaian", value: formatPctText(r.pct.ao) },
-                // GT/TT membayar AO terhadap ambang tetap 240 (TARGET_AO_MIN), BUKAN target di
-                // file target. Tanpa baris ini, pencapaian 18% di layar tidak akan pernah cocok
-                // dengan nominal yang dibayar.
-                ...(isMt || gtAoMode === "file" ? [] : [
+                // GT/TT membayar AO terhadap ambang 240, BUKAN target di file target — kecuali
+                // baris ini dipindah ke target file (tombol per baris / setelan global). Tanpa baris
+                // ini, pencapaian 18% di layar tidak akan pernah cocok dengan nominal yang dibayar.
+                ...(isMt || ambangAo === r.target.ao ? [] : [
                     { label: "Ambang skema", value: formatQty(ambangAo), tone: "muted" as const },
                     { label: "Pencapaian dibayar", value: formatPctText(ambangAo > 0 ? (r.real.ao / ambangAo) * 100 : 0) },
                 ]),
@@ -760,7 +764,7 @@ function AchievementTable({ rows, progress: tg }: { rows: Salesman[]; progress: 
 }
 
 // ── Incentive Table — pakai data incentive dari API ────────────────────────
-function IncentiveTable({ apiRows, gtAoMode }: { apiRows: ApiRow[]; gtAoMode?: "fixed240" | "file" }) {
+function IncentiveTable({ apiRows }: { apiRows: ApiRow[] }) {
     const k = useKonstanta();
     const { open, rowProps } = useExpandableRows();
     const grand = apiRows.reduce(
@@ -799,7 +803,7 @@ function IncentiveTable({ apiRows, gtAoMode }: { apiRows: ApiRow[]; gtAoMode?: "
                             const statusLabel: Record<string, string> = { lunas: "Lunas", tunggakan: "Tunggakan", belum: "Belum" };
                             const sc = statusMap[r.paymentStatus] ?? statusMap.belum;
                             const key = `${r.salesCode}|${r.principle}`;
-                            const sebab = sebabNol(r, gtAoMode, k);
+                            const sebab = sebabNol(r, k);
                             return (
                                 <Fragment key={key}>
                                     <tr {...rowProps(key)}>
@@ -824,7 +828,7 @@ function IncentiveTable({ apiRows, gtAoMode }: { apiRows: ApiRow[]; gtAoMode?: "
                                     {open[key] && (
                                         <tr className="bg-black/30">
                                             <td colSpan={8} className="px-4 py-4">
-                                                <SalesBreakdown r={r} semuaBaris={apiRows} gtAoMode={gtAoMode} />
+                                                <SalesBreakdown r={r} semuaBaris={apiRows} />
                                             </td>
                                         </tr>
                                     )}
@@ -986,7 +990,7 @@ function SmView({ rows, progress }: { rows: Salesman[]; progress: WorkdayProgres
 // dalam tab: dua baris filter mirip yang bertumpuk membuat yang kedua tidak terlihat.
 // Panel support sengaja menerima apiRows PENUH, bukan yang tersaring — pasangan yang sedang
 // disembunyikan filter tetap harus bisa diisi nominal support-nya.
-function SmDashboard({ rows, rowsApi, apiRows, progress, month, year, onSaved, gtAoMode }: {
+function SmDashboard({ rows, rowsApi, apiRows, progress, month, year, onSaved }: {
     rows: Salesman[];
     rowsApi: ApiRow[];
     apiRows: ApiRow[];
@@ -994,7 +998,6 @@ function SmDashboard({ rows, rowsApi, apiRows, progress, month, year, onSaved, g
     month: number;
     year: number;
     onSaved: () => void;
-    gtAoMode?: "fixed240" | "file";
 }) {
     return (
         <>
@@ -1009,7 +1012,7 @@ function SmDashboard({ rows, rowsApi, apiRows, progress, month, year, onSaved, g
                 sama seperti tab Finance. Rate per principal SPV bergantung pada jumlah
                 principal valid yang ia tangani, jadi tabel ini juga tidak ikut disaring. */}
             <SpvIncentiveTable month={month} year={year} />
-            <IncentiveTable apiRows={rowsApi} gtAoMode={gtAoMode} />
+            <IncentiveTable apiRows={rowsApi} />
         </>
     );
 }
@@ -1984,8 +1987,8 @@ function GtAoTargetToggle() {
                     {mode === null ? "Memuat setelan…" : aktif ? (
                         <>
                             <span className="text-emerald-400 font-semibold">ON</span> — semua sales GT/TT dinilai
-                            terhadap <span className="font-mono text-slate-200">240</span>. Target AO di file target
-                            diabaikan untuk perhitungan (tetap tampil sebagai pembanding).
+                            terhadap <span className="font-mono text-slate-200">240</span>, kecuali baris yang tombol
+                            &quot;Pakai target file&quot;-nya dinyalakan di tabel Input Support Principle (tab SM).
                         </>
                     ) : (
                         <>
@@ -3299,9 +3302,43 @@ function SupportInputSection({ apiRows, month, year, onSaved }: { apiRows: ApiRo
     const [draft, setDraft] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
     const [ubahStatus, setUbahStatus] = useState("");
+    const [ubahAo, setUbahAo] = useState("");
+    const k = useKonstanta();
 
     const keyOf = (r: ApiRow) => `${r.salesCode}|${r.principle}`;
     const valueOf = (r: ApiRow) => draft[keyOf(r)] ?? String(r.support ?? 0);
+
+    /**
+     * Tombol per baris: AO baris GT/TT ini dinilai terhadap Target AO di file target, bukan 240.
+     * Hanya periode yang sedang dibuka — bulan yang sudah dibayar tidak ikut bergeser. Disimpan
+     * langsung (bukan draft) dengan alasan yang sama seperti Status di atas.
+     */
+    async function gantiAo(r: ApiRow) {
+        const pakaiFile = !r.aoFile;
+        const dari = formatQty(r.ambangAo);
+        const ke = formatQty(pakaiFile ? r.target.ao : k.gt.aoAmbang);
+        if (!window.confirm(
+            `AO ${r.salesCode} / ${r.principle} periode ${month}/${year}\n`
+            + `dinilai terhadap ${pakaiFile ? "Target AO file" : "ambang tetap"} ${ke} (sebelumnya ${dari})?\n\n`
+            + "Nominal AO baris ini dihitung ulang. Periode lain tidak berubah.",
+        )) return;
+        setUbahAo(keyOf(r));
+        try {
+            const res = await fetch("/api/insentif-sales/targets/ao-file", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ salesCode: r.salesCode, principle: r.principle, periodMonth: month, periodYear: year, pakaiFile }),
+            });
+            const data = await readApi(res);
+            if (!res.ok) throw new Error(String(data.error ?? "Gagal mengubah ambang AO."));
+            toast.success(`AO ${r.salesCode}/${r.principle} → ÷ ${ke}. Insentif dihitung ulang.`);
+            onSaved?.();
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Gagal mengubah ambang AO.");
+        } finally {
+            setUbahAo("");
+        }
+    }
 
     /**
      * Ubah Status Insentif satu baris. Disimpan langsung, bukan lewat draft seperti Support:
@@ -3405,6 +3442,7 @@ ${efek}`,
                             <th className="px-3 py-2">Nama</th>
                             <th className="px-3 py-2">Principal</th>
                             <th className="px-3 py-2">Tipe / Status</th>
+                            <th className="px-3 py-2">Ambang AO</th>
                             <th className="px-3 py-2 text-right">Support (Rp)</th>
                             <th className="px-3 py-2 text-right">Insentif</th>
                         </tr>
@@ -3428,6 +3466,27 @@ ${efek}`,
                                             <option key={o.value} value={o.value}>{o.label}</option>
                                         ))}
                                     </select>
+                                </td>
+                                <td className="px-3 py-2 text-xs whitespace-nowrap">
+                                    <div className="font-mono text-slate-200 mb-1">÷ {formatQty(r.ambangAo)}</div>
+                                    {r.channel === "MT" ? (
+                                        <span className="text-slate-500">target baris</span>
+                                    ) : !(r.target.ao > 0) ? (
+                                        <span className="text-slate-500">Target AO file kosong</span>
+                                    ) : !r.aoFile && r.ambangAo === r.target.ao ? (
+                                        <span className="text-slate-500">sudah = target file</span>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            aria-pressed={r.aoFile}
+                                            aria-label={`Ambang AO ${r.salesCode} ${r.principle} pakai target file`}
+                                            disabled={ubahAo === keyOf(r)}
+                                            onClick={() => void gantiAo(r)}
+                                            className={`px-2 py-1 rounded border text-[11px] font-medium disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400 ${r.aoFile ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300" : "bg-white/5 border-white/15 text-slate-300 hover:bg-white/10"}`}
+                                        >
+                                            {r.aoFile ? `Kembali ke ${formatQty(k.gt.aoAmbang)}` : `Pakai target file (${formatQty(r.target.ao)})`}
+                                        </button>
+                                    )}
                                 </td>
                                 <td className="px-3 py-2 text-right">
                                     <input
@@ -3453,9 +3512,8 @@ ${efek}`,
     );
 }
 
-function FinanceView({ apiRows, month, year, gtAoMode, onPilihBulan }: {
+function FinanceView({ apiRows, month, year, onPilihBulan }: {
     apiRows: ApiRow[]; month: number; year: number;
-    gtAoMode?: "fixed240" | "file";
     /** Ganti periode yang sedang dimuat. Strip 12 bulan adalah SATU-SATUNYA pemilih di tab ini. */
     onPilihBulan: (bulan: number) => void;
 }) {
@@ -3877,7 +3935,7 @@ function FinanceView({ apiRows, month, year, gtAoMode, onPilihBulan }: {
                                     {open[selectionKey] && (
                                         <tr className="bg-black/30">
                                             <td colSpan={10} className="px-4 py-4">
-                                                {sales ? <SalesBreakdown r={sales} semuaBaris={apiRows} gtAoMode={gtAoMode} />
+                                                {sales ? <SalesBreakdown r={sales} semuaBaris={apiRows} />
                                                     : spv ? <SpvBreakdown rincian={spv.rincian} />
                                                         : sm ? <SmBreakdown r={sm} />
                                                             : (
@@ -3945,9 +4003,6 @@ export default function InsentifSalesPage() {
     const now = new Date();
     const [apiRows, setApiRows] = useState<ApiRow[]>([]);
     const [progressFeed, setProgressFeed] = useState<ProgressFeedStatus | null>(null);
-    // Ambang AO yang dipakai server menghitung baris-baris ini. Diteruskan ke rincian supaya
-    // layar tidak pernah mengklaim ambang yang berbeda dari yang dipakai membayar.
-    const [gtAoMode, setGtAoMode] = useState<"fixed240" | "file">("fixed240");
     // Konstanta yang dipakai server saat menghitung baris yang sedang tampil.
     const [konstanta, setKonstanta] = useState<Konstanta>(DEFAULT_KONSTANTA);
     const [cakupan, setCakupan] = useState<{
@@ -4004,7 +4059,6 @@ export default function InsentifSalesPage() {
             const data = await res.json();
             setApiRows(data.rows as ApiRow[]);
             setProgressFeed(data.progressFeed as ProgressFeedStatus);
-            setGtAoMode(data.gtAoMode === "file" ? "file" : "fixed240");
             setKonstanta(parseKonstanta(data.konstanta));
             setCakupan(data.cakupan ?? { dibatasi: false });
             setOpsiFilter(data.opsiFilter ?? { principles: [], branches: [], sm: [] });
@@ -4233,7 +4287,7 @@ export default function InsentifSalesPage() {
                         <>
                             <PerformanceBlock rows={salesmen} apiRows={apiRows} progress={tg} />
                             <AchievementTable rows={salesmen} progress={tg} />
-                            <IncentiveTable apiRows={apiRows} gtAoMode={gtAoMode} />
+                            <IncentiveTable apiRows={apiRows} />
                         </>
                     )}
                     {viewBoleh === "spv" && (
@@ -4241,15 +4295,15 @@ export default function InsentifSalesPage() {
                             <PerformanceBlock rows={salesmen} apiRows={apiRows} progress={tg} />
                             <SpvView rows={salesmen} progress={tg} />
                             <SpvIncentiveTable month={month} year={year} />
-                            <IncentiveTable apiRows={apiRows} gtAoMode={gtAoMode} />
+                            <IncentiveTable apiRows={apiRows} />
                         </>
                     )}
                     {viewBoleh === "sm" && (
                         <SmDashboard rows={salesmenSm} rowsApi={apiRowsSm} apiRows={apiRows} progress={tg}
-                            month={month} year={year} onSaved={fetchDashboard} gtAoMode={gtAoMode} />
+                            month={month} year={year} onSaved={fetchDashboard} />
                     )}
                     {viewBoleh === "admin" && <AdminView rows={salesmen} />}
-                    {viewBoleh === "finance" && <FinanceView apiRows={apiRows} month={month} year={year} gtAoMode={gtAoMode}
+                    {viewBoleh === "finance" && <FinanceView apiRows={apiRows} month={month} year={year}
                             onPilihBulan={(bulan) => updateContext({ month: String(bulan) })} />}
                 </div>
             )}

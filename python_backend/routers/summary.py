@@ -78,7 +78,7 @@ def kino_extraction(raw, master):
     """
     import hashlib
 
-    from kino_letter import parse_pdf
+    from kino_letter import match_products, parse_pdf
     from summary_mistral import attach_codes
 
     try:
@@ -90,6 +90,7 @@ def kino_extraction(raw, master):
     catalog = [{"code": str(item.get("kode_barang", "")).strip(), "name": str(item.get("nama_barang", "")),
                 "group": str(item.get("kelompok", ""))} for item in master.get("items", [])]
     attach_codes(result["rows"], catalog, result["warnings"])
+    match_products(result["rows"], master.get("items", []), result["warnings"])
     return {"rows": result["rows"], "warnings": result["warnings"][:400], "page_count": result["page_count"],
             "model": "deterministic:kino_letter", "pipeline_version": 1, "cached": False,
             "on_faktur": result["on_faktur"], "mechanism": result["mechanism"],

@@ -76,8 +76,13 @@ export function extractLoggedInvoiceIds(logText: string): number[] {
 // Perlu karena log menyimpan SELURUH riwayat, dan mayoritas id lama sudah dihapus di Accurate
 // (1.189 dari 15.436 per 2026-08-21) — tanpa batas ini penambal mengejar hantu tiap jam.
 // Per baris, bukan seluruh teks: satu baris log = satu event dengan satu receivedAt.
+//
+// Faktur yang aksi TERAKHIRNYA "DELETE" dilewati: ia sudah dihapus di Accurate, jadi detail.do
+// hanya menjawab kosong. Penambal dijadwalkan tiap menit (keputusan pengguna 2026-09-25); tanpa
+// ini setiap faktur yang dihapus diminta ulang tiap menit selama jendela 48 jamnya. Log urut waktu, jadi aksi yang
+// terbaca belakangan menang — WRITE sesudah DELETE tidak terjadi pada id yang sama.
 export function extractLoggedInvoiceIdsSince(logText: string, sinceMs: number): number[] {
-    const ids = new Set<number>();
+    const aksi = new Map<number, string>();
     for (const line of logText.split("\n")) {
         if (!line) continue;
         const stamp = line.match(/"receivedAt":"([^"]+)"/)?.[1];
@@ -87,10 +92,12 @@ export function extractLoggedInvoiceIdsSince(logText: string, sinceMs: number): 
             const at = new Date(stamp).getTime();
             if (Number.isFinite(at) && at < sinceMs) continue;
         }
-        for (const m of line.matchAll(/"salesInvoiceId":\s*(\d+)/g)) {
+        // `action` ada di objek yang sama dengan id-nya; `[^{}]` menjaga agar tidak meminjam
+        // aksi milik objek berikutnya. Baris terpotong tanpa aksi dianggap WRITE (dicoba).
+        for (const m of line.matchAll(/"salesInvoiceId":\s*(\d+)(?:[^{}]*?"action":\s*"([A-Z_]+)")?/g)) {
             const id = Number(m[1]);
-            if (Number.isFinite(id) && id > 0) ids.add(id);
+            if (Number.isFinite(id) && id > 0) aksi.set(id, m[2] ?? "WRITE");
         }
     }
-    return [...ids];
+    return [...aksi].filter(([, terakhir]) => terakhir !== "DELETE").map(([id]) => id);
 }
