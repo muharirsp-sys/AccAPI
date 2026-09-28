@@ -2342,9 +2342,10 @@ function AdminView({ rows, onSaved }: { rows: Salesman[]; onSaved?: () => void }
                 return [...inner.entries()].sort((a, b) => b[1] - a[1])[0][0];
             };
 
-            // Tanggal transaksi asli dari file. XLSX dibaca dgn cellDates sehingga TANGGAL
-            // berupa Date; kalau gagal dibaca, jatuh ke tanggal 1 periode itu (bukan hari ini,
-            // supaya upload ulang di hari berbeda tetap menghasilkan baris yang sama).
+            // Tanggal transaksi asli dari file. Sel berformat tanggal datang sebagai Date
+            // (cellDates), sel berformat angka sebagai serial Excel "46235" — excelDateToIso
+            // menangani keduanya. Kosong → tanggal 1 periode itu (bukan hari ini, supaya upload
+            // ulang di hari berbeda tetap menghasilkan baris yang sama).
             const isoDate = (raw: string) => {
                 const d = excelDateToIso(raw);
                 return d ?? `${year}-${String(month).padStart(2, "0")}-01`;
