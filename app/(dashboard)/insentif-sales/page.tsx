@@ -1269,7 +1269,7 @@ const EMPTY_ROW: TargetRow = {
     targetValue: 0, targetEc: 0, targetAo: 0, targetIa: 0, splmValue: 0,
 };
 
-function TargetInputSection() {
+function TargetInputSection({ onSaved }: { onSaved?: () => void }) {
     const now = new Date();
     const [month, setMonth] = useState(now.getMonth() + 1);
     const [year, setYear] = useState(now.getFullYear());
@@ -1368,6 +1368,7 @@ function TargetInputSection() {
                 toast.success(`Baris target ${r.salesCode}/${r.principle} dihapus.`);
             }
             await fetchTargets();
+            onSaved?.();
         } catch (e) {
             toast.error(e instanceof Error ? e.message : "Gagal menghapus baris target.");
         } finally {
@@ -1394,6 +1395,7 @@ function TargetInputSection() {
             if (!res.ok) throw new Error(data.error ?? "Server error");
             toast.success(`${data.upserted} target berhasil disimpan.`);
             fetchTargets();
+            onSaved?.();
         } catch (err) {
             toast.error(`Gagal simpan: ${err instanceof Error ? err.message : "Error"}`);
         } finally {
@@ -1486,6 +1488,7 @@ function TargetInputSection() {
             toast.success(`${data.upserted} target dari Excel berhasil disimpan.`);
             setInputMethod("manual");
             fetchTargets();
+            onSaved?.();
         } catch (err) {
             toast.error(`Gagal upload Excel: ${err instanceof Error ? err.message : "Error"}`);
         } finally {
@@ -2142,7 +2145,7 @@ const EMPTY_PROGRESS_ROW: ManualProgressRow = {
     achievedValueDpp: 0, achievedEc: 0, achievedAo: 0, achievedIa: 0,
 };
 
-function AdminView({ rows }: { rows: Salesman[] }) {
+function AdminView({ rows, onSaved }: { rows: Salesman[]; onSaved?: () => void }) {
     const now = new Date();
     const [period, setPeriod] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
     const [progressMethod, setProgressMethod] = useState<"manual" | "excel">("manual");
@@ -2434,7 +2437,9 @@ function AdminView({ rows }: { rows: Salesman[] }) {
                 contoh={"HENDRIK"}
                 catatan="Langsung mengubah nominal insentif SM periode mana pun yang dihitung setelah ini."
             />
-            <TargetInputSection />
+            {/* onSaved: tanpa ini tab SM/Finance tetap memajang target & ambang AO lama
+                sampai halaman di-refresh (dilaporkan user 2026-09-28: ÷ 230,4 padahal target 180). */}
+            <TargetInputSection onSaved={onSaved} />
             <div className="bg-[#1a1c23]/60 rounded-xl border border-white/10 p-5">
                 <SectionTitle icon={Upload} no={2} title="Input Progress Harian" desc="Principal dan cabang dibaca per baris. Satu file dapat berisi beberapa principal." />
 
@@ -4302,7 +4307,7 @@ export default function InsentifSalesPage() {
                         <SmDashboard rows={salesmenSm} rowsApi={apiRowsSm} apiRows={apiRows} progress={tg}
                             month={month} year={year} onSaved={fetchDashboard} />
                     )}
-                    {viewBoleh === "admin" && <AdminView rows={salesmen} />}
+                    {viewBoleh === "admin" && <AdminView rows={salesmen} onSaved={fetchDashboard} />}
                     {viewBoleh === "finance" && <FinanceView apiRows={apiRows} month={month} year={year}
                             onPilihBulan={(bulan) => updateContext({ month: String(bulan) })} />}
                 </div>
