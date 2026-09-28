@@ -2,7 +2,7 @@
  * Tujuan: Tombol per baris — AO satu baris GT/TT dinilai terhadap Target AO di file target,
  *   bukan ambang 240, tanpa memindah setelan global.
  * Caller: app/(dashboard)/insentif-sales/page.tsx → SupportInputSection (kolom Ambang AO).
- * Dependensi: lib/db, db/schema (appSetting), lib/insentif-settings (aoFileKey, aoFileRowKey, setDaftar),
+ * Dependensi: lib/insentif-settings (aoFileKey, pasanganKey, toggleDaftar),
  *   lib/rbac/resolve, lib/insentif-hierarchy-scope.
  * Main Functions: PATCH { salesCode, principle, periodMonth, periodYear, pakaiFile }.
  * Side Effects: Menulis app_setting dan MENGUBAH NOMINAL AO baris itu pada periode itu saja.
@@ -10,12 +10,9 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { appSetting } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
-import { aoFileKey, aoFileRowKey, setDaftar } from "@/lib/insentif-settings";
+import { aoFileKey, pasanganKey, toggleDaftar } from "@/lib/insentif-settings";
 
 export async function PATCH(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.upload_target");
@@ -47,13 +44,6 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ error: `Baris ${salesCode}: di luar cakupan tim Anda.` }, { status: 403 });
     }
 
-    const key = aoFileKey(bulan, tahun);
-    const baris = aoFileRowKey(salesCode, principle);
-    // Baca KETAT, bukan getDaftar: getDaftar menelan galat jadi [], dan di sini [] lalu ditulis
-    // balik berarti tombol baris LAIN pada periode ini ikut terhapus. Galat → 500, tidak menulis.
-    const [row] = await db.select({ value: appSetting.value }).from(appSetting).where(eq(appSetting.key, key)).limit(1);
-    const sekarang: string[] = row?.value ? JSON.parse(row.value) : [];
-    const baru = body.pakaiFile ? [...sekarang, baris] : sekarang.filter((v) => v !== baris);
-    const tersimpan = await setDaftar(key, baru, gate.session.user.id);
-    return NextResponse.json({ pakaiFile: tersimpan.includes(baris) });
+    const pakaiFile = await toggleDaftar(aoFileKey(bulan, tahun), pasanganKey(salesCode, principle), body.pakaiFile, gate.session.user.id);
+    return NextResponse.json({ pakaiFile });
 }

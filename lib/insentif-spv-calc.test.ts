@@ -222,4 +222,22 @@ console.log("OK support SPV");
     assert.strictEqual(r.rincian.find((d) => d.principle === "A"), undefined, "A tidak dibayar");
 }
 
+// === Principal yang sales-nya SEMUA "principle" tapi SPV-nya tetap dibayar distributor ===
+// Kasus nyata SUMARTONO Agustus 2026: sales VINDA dibayar principal, SPV-nya DISTRIBUTOR/PRINCIPAL.
+{
+    const tim = [
+        row("CUSSONS", 100, 116), row("ABC", 100, 139), row("FOKUS", 100, 109),
+        row("VINDA", 628, 913, "principle"),
+    ];
+    const tanpa = calculateInsentifSPV(tim);
+    assert.strictEqual(tanpa.jumlahValid, 3, "tanpa tombol: VINDA keluar (semua sales principle)");
+    approx(tanpa.total, 1_800_000, "3 × 600rb");
+    const ikut = calculateInsentifSPV(tim, undefined, undefined, new Set(["VINDA"]));
+    assert.strictEqual(ikut.jumlahValid, 4, "tombol menyala: VINDA ikut dihitung");
+    approx(ikut.total, 2_000_000, "4 × 500rb (VINDA 145%)");
+    // Tombol TIDAK menghidupkan principal tanpa target — aturan 2026-08-29 tetap berlaku.
+    const nol = calculateInsentifSPV([row("VINDA", 0, 913, "principle")], undefined, undefined, new Set(["VINDA"]));
+    assert.strictEqual(nol.jumlahValid, 0, "target 0 tetap tidak dihitung");
+}
+
 console.log("OK — all insentif-spv-calc checks passed");
