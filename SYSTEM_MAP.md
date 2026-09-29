@@ -227,8 +227,19 @@ Record pembayaran dari principal:
 ```
 UI: API Wrapper page (/api-wrapper)
   -> POST /api/proxy
-     -> route.ts [POST] — forward ke Accurate API (sessionHost + Bearer apiKey)
+     -> route.ts [POST] — forward ke Accurate API (sessionHost + Bearer apiKey) lewat lib/accurate-forward.ts
+        (menolak 403 tulis purchase-payment/(bulk-)save.do — hanya lewat command Finance di bawah)
      <- JSON response
+
+Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
+  UI Finance (/finance) approveTransfer
+  -> POST /api/finance/purchase-payment (finance.update)
+     -> lib/accurate-write-attempt.ts runGuardedWrite: INSERT accurate_write_attempt state=sending
+        (unique partial index per himpunan faktur; attempt hidup -> 409 {live}) SEBELUM kirim
+     -> forwardAccurate purchase-payment/bulk-save.do (tanpa transaksi DB terbuka)
+     -> classifyProviderReply -> posted / rejected / unknown / not_sent (dicatat per tahap)
+  -> UI melaporkan status ke FastAPI POST /payments/finance/update (payments.json) seperti semula
+  Penyelesaian TIDAK PASTI: POST /api/finance/purchase-payment/resolve (atestasi manual + sumber cek)
 
 Idempotency guard (bulk sales receipt):
   -> POST /api/idempotency/lock — cek & kunci fingerprint di SQLite idempotency_log
@@ -793,7 +804,9 @@ AccAPI/_github_clean/
 | File | Fungsi Utama | Peran |
 |---|---|---|
 | `lib/sync.ts` | `AccuratePaginator`, `syncModule` | Sync paginated data Accurate ke SQLite lokal (item/customer) dengan checkpoint |
-| `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening) |
+| `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment |
+| `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance: klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
+| `app/api/finance/purchase-payment/resolve/route.ts` | `POST` | Atestasi manual attempt purchase-payment tidak pasti (alasan + sumber pemeriksaan) |
 | `app/api/auth/callback/route.ts` | `GET` | OAuth2 callback dari Accurate (tukar code ke token) |
 | `app/api/faktur/route.ts` | `GET` | Daftar faktur dari cache `sales_invoice` (cari nomor/pelanggan, default hanya nomor mengandung INV, `?all=1` untuk semua) |
 | `app/api/faktur/[id]/route.ts` | `GET` | Detail 1 faktur + baris item (qty/harga) live dari `sales-invoice/detail.do`; `?raw=1` menampilkan respons Accurate mentah |

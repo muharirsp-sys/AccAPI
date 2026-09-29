@@ -3,7 +3,7 @@
 /*
  * Tujuan: Halaman Finance untuk review, mapping Accurate, upload bukti transfer, format nilai decimal, dan posting purchase-payment.
  * Caller: Next.js App Router route `/finance`.
- * Dependensi: FastAPI payments finance endpoints, accurateFetch Accurate proxy, DatePickerField, lucide-react, sonner.
+ * Dependensi: FastAPI payments finance endpoints, command /api/finance/purchase-payment (klaim attempt server), DatePickerField, lucide-react, sonner.
  * Main Functions: FinancePage, fetchData, formatMoneyDisplay, handleSaveMapping, handleMarkStatus, handleApproveTransfer.
  * Side Effects: HTTP call ke FastAPI, upload bukti transfer, post Accurate purchase-payment/bulk-save.do, update payments.json.
  */
@@ -11,7 +11,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, AlertTriangle, CheckCircle2, DollarSign, Download, FileUp, RefreshCcw, Save, Search, Send, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import { accurateFetch, classifyBulkSaveResponse, classifyWriteError } from "@/lib/apiFetcher";
 import DatePickerField from "@/components/ui/DatePickerField";
 import { fuzzyMatch } from "@/lib/fuzzySearch";
 import { resolveApiBase } from "@/lib/apiBase";
@@ -404,6 +403,8 @@ export default function FinancePage() {
         let payload: PurchasePaymentPayload[] = [];
         let sent = false;
         let accurateRes: unknown;
+        // Command server menolak SEBELUM klaim (4xx) = pasti belum terkirim ke Accurate.
+        let notSent = false;
         // AM-014: "failed" hanya bila Accurate MENJAWAB menolak (atau gagal sebelum terkirim).
         // Timeout/non-JSON/gateway/sukses tanpa id = "unknown": tombol posting dikunci sampai
         // seseorang memeriksa purchase-payment di Accurate — mengulang buta = bayar dua kali.
@@ -436,31 +437,57 @@ export default function FinancePage() {
             proof = await uploadProof(key, record.transfer_proof);
             payload = buildPurchasePaymentPayload(record, mapping, proof, transferDate);
             sent = true;
-            accurateRes = await accurateFetch("/api/purchase-payment/bulk-save.do", "POST", payload);
-            const outcome = classifyBulkSaveResponse(accurateRes);
-            if (outcome.kind !== "posted") {
-                await recordNotPosted(outcome.kind === "rejected" ? "failed" : "unknown", outcome.message, accurateRes);
-                toast.error(outcome.kind === "rejected" ? outcome.message : unknownMessage(outcome.message), { duration: 15000 });
+            // AM-014 / C.12: server mengklaim attempt SEBELUM kirim, jadi reload / tab lain / user
+            // lain untuk himpunan faktur yang sama mendapat 409, bukan purchase-payment kedua.
+            const res = await fetch("/api/finance/purchase-payment", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ clientRef: key, payload }),
+            });
+            const out = await res.json().catch(() => null) as {
+                state?: string; accurateId?: string; accurateNumber?: string; message?: string; response?: unknown; error?: string;
+                live?: { attemptId: string; state: string; accurateId: string; accurateNumber: string } | null;
+            } | null;
+            let posted: { id: string; number: string; note?: string } | null = null;
+            if (res.status === 409 && out?.live?.state === "posted") {
+                // Attempt sebelumnya SUDAH posted (mis. browser ditutup sebelum sempat mencatat).
+                posted = { id: out.live.accurateId, number: out.live.accurateNumber, note: `attempt server ${out.live.attemptId} sudah posted ${out.live.accurateNumber}` };
+            } else if (res.status === 409) {
+                await recordNotPosted("unknown", out?.error || "attempt sebelumnya belum pasti", out?.live);
+                toast.error(unknownMessage(out?.error || "attempt sebelumnya belum pasti"), { duration: 15000 });
                 return;
+            } else if (!res.ok || !out?.state) {
+                notSent = res.status >= 400 && res.status < 500;
+                throw new Error(out?.error || `Command posting gagal (HTTP ${res.status})`);
+            } else {
+                accurateRes = out.response;
+                if (out.state !== "posted") {
+                    const failed = out.state === "rejected" || out.state === "not_sent";
+                    await recordNotPosted(failed ? "failed" : "unknown", out.message || out.state, out.response);
+                    toast.error(failed ? (out.message || out.state) : unknownMessage(out.message || out.state), { duration: 15000 });
+                    return;
+                }
+                posted = { id: out.accurateId || "", number: out.accurateNumber || "" };
             }
             await updateFinanceStatus(record, {
                 status_pembayaran: "Sudah Transfer",
                 transfer_date: transferDate,
                 proof_id: proof.proof_id,
                 accurate_post_status: "posted",
-                accurate_purchase_payment_number: outcome.number,
-                accurate_purchase_payment_id: outcome.id,
-                accurate_post_response: accurateRes,
+                accurate_purchase_payment_number: posted.number,
+                accurate_purchase_payment_id: posted.id,
+                accurate_post_response: accurateRes ?? out?.live,
                 accurate_payload_digest: `${proof.sha256 || ""}:${JSON.stringify(payload).length}`,
+                ...(posted.note ? { resolution_note: posted.note } : {}),
             });
-            toast.success("Sudah transfer dan posted ke Accurate.");
+            toast.success(`Sudah transfer dan posted ke Accurate (${posted.number}).`);
             await fetchData(dateFilter);
         } catch (err: unknown) {
             const message = getErrorMessage(err, "Gagal posting purchase-payment Accurate.");
-            // accurateRes terisi = Accurate SUDAH menjawab (mis. pencatatan "posted" ke server gagal):
-            // tidak pasti, dan jawabannya ikut disimpan agar nomor PP tidak hilang.
-            const outcome = accurateRes !== undefined ? ({ kind: "unknown", message } as const)
-                : sent ? classifyWriteError(err) : ({ kind: "rejected", message } as const);
+            // Belum sampai command, atau command menolak sebelum klaim = pasti tidak terkirim.
+            // Selain itu (jaringan putus ke command, 5xx, pencatatan "posted" ke FastAPI gagal)
+            // server MUNGKIN sudah mengirim: tidak pasti, attempt server tetap memblokir.
+            const outcome = !sent || notSent ? ({ kind: "rejected", message } as const) : ({ kind: "unknown", message } as const);
             await recordNotPosted(outcome.kind === "rejected" ? "failed" : "unknown", message, accurateRes);
             toast.error(outcome.kind === "rejected" ? message : unknownMessage(message), { duration: 15000 });
         } finally {
@@ -483,9 +510,31 @@ export default function FinancePage() {
             return;
         }
         const number = typed.toUpperCase() === "TIDAK ADA" ? "" : typed;
+        // C.15: sumber pemeriksaan wajib — "TIDAK ADA" tanpa jejak di mana dicek bukan bukti.
+        const checked = window.prompt("Di mana Anda memeriksa? (mis. Accurate > Pembayaran Pembelian, database X, rentang tanggal Y)");
+        if (!checked?.trim()) {
+            toast.error("Sumber pemeriksaan wajib diisi. Tidak ada yang diubah.");
+            return;
+        }
         const key = recordKey(record);
         setBusyKey(key);
         try {
+            const note = number ? `dicek manual di Accurate: ${number} ada` : "dicek manual di Accurate: tidak ditemukan";
+            const r = await fetch("/api/finance/purchase-payment/resolve", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    invoiceNos: (record.detail_invoices || []).map((it) => it.invoiceNo),
+                    decision: number ? "posted" : "absent",
+                    accurateNumber: number,
+                    reason: note,
+                    checkedSource: checked.trim(),
+                }),
+            });
+            const rOut = await r.json().catch(() => ({})) as { code?: string; error?: string };
+            // 404 = unknown lama tanpa attempt server (sebelum command ada): lanjut ke catatan FastAPI.
+            const serverOk = r.ok || r.status === 404 || (rOut.code === "already_posted" && Boolean(number));
+            if (!serverOk) throw new Error(rOut.error || `Penyelesaian attempt server gagal (HTTP ${r.status})`);
             await updateFinanceStatus(record, {
                 status_pembayaran: "Sudah Transfer",
                 transfer_date: record.transfer_date || "",

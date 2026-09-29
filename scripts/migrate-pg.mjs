@@ -221,6 +221,36 @@ const migrations = [
                WHERE table_name = 'discount_normalization' AND column_name = 'promo_rule_key'`,
     sql: "ALTER TABLE discount_normalization ADD COLUMN IF NOT EXISTS promo_rule_key text",
   },
+  {
+    // 2026-09-29 (AM-014 / C.12, DRAFT — zona Accurate write, butuh review manusia). Klaim
+    // attempt tulis Accurate SEBELUM kirim: satu attempt hidup per operation × subject lewat
+    // unique partial index, sehingga reload / dua tab / dua user tidak bisa mengirim dua kali.
+    // Role aplikasi butuh SELECT/INSERT/UPDATE (default privileges runbook L1g — cek sebelum deploy).
+    nama: "accurate_write_attempt",
+    sudahAda: `SELECT 1 FROM information_schema.tables WHERE table_name = 'accurate_write_attempt'`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS accurate_write_attempt (
+          id              text PRIMARY KEY,
+          operation       text NOT NULL,
+          subject_key     text NOT NULL,
+          client_ref      text NOT NULL DEFAULT '',
+          target_db_id    text NOT NULL,
+          payload_hash    text NOT NULL,
+          actor           text NOT NULL,
+          state           text NOT NULL CONSTRAINT accurate_write_attempt_state
+                          CHECK (state IN ('sending', 'posted', 'rejected', 'unknown', 'not_sent', 'resolved_absent')),
+          outcome         jsonb NOT NULL DEFAULT '{}'::jsonb,
+          accurate_id     text NOT NULL DEFAULT '',
+          accurate_number text NOT NULL DEFAULT '',
+          resolution      jsonb,
+          created_at      timestamptz NOT NULL DEFAULT now(),
+          updated_at      timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_accurate_write_attempt_live
+          ON accurate_write_attempt (operation, subject_key)
+          WHERE state IN ('sending', 'posted', 'unknown');
+    `,
+  },
 ];
 
 const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 15_000 });

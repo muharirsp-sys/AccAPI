@@ -181,6 +181,31 @@ export const invoiceVerifyNote = pgTable("invoice_verify_note", {
     check("invoice_verify_note_jenis", sql`${t.jenis} IN ('sales', 'isi')`),
 ]);
 
+// Klaim tulis Accurate SEBELUM kirim (AM-014 / C.12, scripts/migrate-pg.mjs). Satu attempt
+// HIDUP (sending/posted/unknown) per operation × subject — dijaga unique partial index, bukan
+// kode aplikasi. Hanya server Next yang menulis; browser tidak bisa menghapus klaim. Baris
+// tidak pernah dihapus: penyelesaian manusia dicatat di `resolution`, attempt lama tetap ada.
+export const accurateWriteAttempt = pgTable("accurate_write_attempt", {
+    id: text("id").primaryKey(),
+    operation: text("operation").notNull(),
+    subjectKey: text("subject_key").notNull(),
+    clientRef: text("client_ref").notNull().default(""),
+    targetDbId: text("target_db_id").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    actor: text("actor").notNull(),
+    state: text("state").notNull(),
+    outcome: jsonb("outcome").notNull().default({}),
+    accurateId: text("accurate_id").notNull().default(""),
+    accurateNumber: text("accurate_number").notNull().default(""),
+    resolution: jsonb("resolution"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    uniqueIndex("uq_accurate_write_attempt_live").on(t.operation, t.subjectKey)
+        .where(sql`${t.state} IN ('sending', 'posted', 'unknown')`),
+    check("accurate_write_attempt_state", sql`${t.state} IN ('sending', 'posted', 'rejected', 'unknown', 'not_sent', 'resolved_absent')`),
+]);
+
 // Aturan promo terbit dalam bentuk yang bisa dibandingkan dengan faktur nyata (db/migrations/0011).
 // Skema kolomnya sama dengan yang dibaca mesin Validator Diskon, supaya satu bentuk aturan
 // dipakai dua tempat. `item_code` KOSONG = aturan tingkat faktur (berlaku semua barang).

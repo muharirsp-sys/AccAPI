@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
+import { forwardAccurate, isGuardedAccurateWrite } from "@/lib/accurate-forward";
 
 export async function POST(req: NextRequest) {
     try {
@@ -9,6 +10,13 @@ export async function POST(req: NextRequest) {
 
         const body = await req.json();
         const { endpointPath, method, payload } = body;
+        // AM-014 / C.14: tulis purchase-payment hanya lewat command server yang mengklaim attempt
+        // sebelum kirim; lewat proxy generik guard pengiriman ganda bisa dilewati.
+        if (endpointPath && method && isGuardedAccurateWrite(String(endpointPath), String(method))) {
+            return NextResponse.json({
+                error: "Posting purchase-payment hanya lewat halaman Finance (pencegahan posting ganda). Proxy generik menolak operasi ini.",
+            }, { status: 403 });
+        }
         const accurateSession = await getAccurateSession(String(authCheck.session.user.id));
         const sessionHost = accurateSession?.sessionHost;
         const sessionId = accurateSession?.sessionId;
@@ -21,73 +29,10 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Session host Accurate tidak diizinkan" }, { status: 400 });
         }
 
-        // Berdasarkan Swagger, Base URL Accurate adalah https://{host}/accurate
-        const baseUrl = `${sessionHost}/accurate/api`;
-        let url = `${baseUrl}${endpointPath.replace("/api", "")}`;
+        // Audit F5: log tanpa query string (bisa berisi data bisnis).
+        console.log(`[PROXY FIRE] ${String(method).toUpperCase()} ${endpointPath}`);
 
-        // Handle GET method query strings
-        if (method.toUpperCase() === "GET" && payload) {
-            const query = new URLSearchParams();
-            Object.keys(payload as Record<string, unknown>).forEach((key) => {
-                const val = (payload as Record<string, unknown>)[key];
-                if (val !== undefined && val !== null) {
-                    query.append(key, String(val));
-                }
-            });
-            // Accurate API doesn't parse %2C properly for comma-separated fields, it expects literal commas
-            url = `${url}?${query.toString().replace(/%2C/g, ',')}`;
-        }
-
-        // Helper untuk nge-flatten JSON bersarang atau array ke dalam format properti dot/bracket (data[0].key)
-        const flattenPayload = (obj: unknown, prefix = ''): Record<string, unknown> => {
-            const result: Record<string, unknown> = {};
-            if (typeof obj !== "object" || obj === null) return result;
-            for (const key in obj) {
-                if (Object.prototype.hasOwnProperty.call(obj, key)) {
-                    const source = obj as Record<string, unknown>;
-                    const newKey = prefix ? (Array.isArray(obj) ? `${prefix}[${key}]` : `${prefix}.${key}`) : key;
-                    if (typeof source[key] === 'object' && source[key] !== null && !(source[key] instanceof Date)) {
-                        Object.assign(result, flattenPayload(source[key], newKey));
-                    } else {
-                        result[newKey] = source[key];
-                    }
-                }
-            }
-            return result;
-        };
-
-        let finalBody: string | undefined = undefined;
-
-        if (method.toUpperCase() !== "GET" && payload) {
-            // Jika payload adalah Array (misal hasil Excel) dan endpoint adalah bulk-save,
-            // Accurate memaksa bentuk { "data[0].field": "value", "data[1].field": "value" }
-            if (endpointPath.includes("bulk-save.do") && Array.isArray(payload)) {
-                 const flatObj = flattenPayload(payload, 'data');
-                 finalBody = JSON.stringify(flatObj);
-            } else {
-                 finalBody = JSON.stringify(payload);
-            }
-        }
-
-        // Audit F5: log tanpa query string (bisa berisi data bisnis); timeout 30s agar
-        // request menggantung ke Accurate tidak menahan koneksi tanpa batas.
-        console.log(`[PROXY FIRE] ${method.toUpperCase()} ${endpointPath}`);
-
-        const response = await fetch(url, {
-            method: method.toUpperCase(),
-            headers: {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Authorization": `Bearer ${apiKey}`,
-                "X-Session-ID": sessionId,
-            },
-            body: finalBody,
-            redirect: "manual",
-            signal: AbortSignal.timeout(30_000),
-        });
-
-        const rawText = await response.text();
+        const { status, text: rawText } = await forwardAccurate({ sessionHost, sessionId, accessToken: apiKey }, endpointPath, method, payload);
         let data: unknown;
 
         try {
@@ -99,7 +44,7 @@ export async function POST(req: NextRequest) {
 
         // SERVER LOG FOR DEBUGGING
         const accurateResult = data as { s?: boolean };
-        if (!response.ok || !accurateResult.s) {
+        if (status < 200 || status >= 300 || !accurateResult.s) {
             console.error("[ACCURATE API ERROR FORMAT JSON]", JSON.stringify(data, null, 2));
         }
 
