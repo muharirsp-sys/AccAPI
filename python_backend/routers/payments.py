@@ -862,12 +862,7 @@ async def payments_cart_submit(request: Request):
                     "amount": amount,
                 }
             )
-        _, sppd_no, sppd_settings = next_sppd_number(db, submit_dt)
-        sppd_name = f"sppd_{submission_id}.docx"
-        sppd_path = os.path.join(PAYMENTS_FILES_DIR, sppd_name)
-        render_sppd_docx(SPPD_TEMPLATE_PATH, sppd_path, submit_dt, sppd_no, transfer_items, sppd_settings)
-        files.append({"label": "SPPD Bank Panin", "url": f"/payments/files/{sppd_name}"})
-        sppd_file = sppd_name
+        # Nomor SPPD & dokumennya dibuat di dalam write lock di bawah (AM-012).
 
     payment_alloc_by_lpb: Dict[str, float] = {}
     potongan_alloc_by_lpb: Dict[str, float] = {}
@@ -893,6 +888,15 @@ async def payments_cart_submit(request: Request):
     # Tulis semua perubahan ke DB di dalam lock
     async with _PAYMENTS_DB_LOCK:
         db = await asyncio.to_thread(load_payments_db)
+        if method == "BANK_PANIN":
+            # AM-012: nomor diambil dari ledger yang AKAN disimpan, di dalam lock yang sama.
+            # Dulu diambil dari objek bagian lock pertama dan hanya bertahan karena load
+            # berbagi objek cache; render gagal kini tidak menghabiskan nomor.
+            _, sppd_no, sppd_settings = next_sppd_number(db, submit_dt)
+            sppd_file = f"sppd_{submission_id}.docx"
+            await asyncio.to_thread(render_sppd_docx, SPPD_TEMPLATE_PATH, os.path.join(PAYMENTS_FILES_DIR, sppd_file),
+                                    submit_dt, sppd_no, transfer_items, sppd_settings)
+            files.append({"label": "SPPD Bank Panin", "url": f"/payments/files/{sppd_file}"})
         for rec in selected:
             key = s(rec.get("record_id", ""))
             if key in db.get("lpb", {}):

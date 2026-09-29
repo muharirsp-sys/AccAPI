@@ -1192,40 +1192,39 @@ def append_error_log(where: str, err: Exception, context: Optional[Dict[str, Any
 # ---------------------------
 # Payments (LPB) helpers
 # ---------------------------
-_PAYMENTS_DB_CACHE: Optional[Dict[str, Any]] = None
-_PAYMENTS_DB_MTIME: float = 0.0
-_PAYMENTS_DB_EMPTY: Dict[str, Any] = {"lpb": {}, "submissions": {}, "drafts": {}, "finance_mappings": {}, "proofs": {}, "sppd_settings": {}}
+_PAYMENTS_DB_SECTIONS = ("lpb", "submissions", "drafts", "finance_mappings", "proofs", "sppd_settings")
+
+
+class PaymentsStoreError(RuntimeError):
+    """payments.json ada tetapi tidak bisa dibaca sebagai ledger — BUKAN ledger kosong."""
 # ponytail: satu lock global cukup karena payments.json adalah satu file tunggal.
 # Ceiling: serializes semua write — tidak ada parallelism untuk mutation routes.
 # Upgrade path: per-resource lock jika ada multiple JSON stores.
 _PAYMENTS_DB_LOCK: asyncio.Lock = asyncio.Lock()
 
 def load_payments_db() -> Dict[str, Any]:
-    global _PAYMENTS_DB_CACHE, _PAYMENTS_DB_MTIME
+    """Ledger payments sebagai objek BARU per panggilan.
+
+    AM-012: dulu objek cache modul dibagikan by reference, jadi mutasi request yang lalu
+    `return 400` tanpa save tetap tersaji dan ikut tersimpan oleh save berikutnya; dan
+    read/parse error dijawab ledger kosong yang boleh ditulis balik (seluruh LPB hilang).
+    ponytail: baca+parse file tiap panggilan (tanpa cache). Ceiling: O(ukuran file) per
+    request; kembalikan cache teks ber-mtime bila payments.json membesar dan terukur lambat.
+    """
     if not PAYMENTS_DB_PATH or not os.path.exists(PAYMENTS_DB_PATH):
-        return dict(_PAYMENTS_DB_EMPTY)
+        return {k: {} for k in _PAYMENTS_DB_SECTIONS}  # belum diinisialisasi = kosong sah
     try:
-        mtime = os.path.getmtime(PAYMENTS_DB_PATH)
-        if _PAYMENTS_DB_CACHE is not None and mtime == _PAYMENTS_DB_MTIME:
-            return _PAYMENTS_DB_CACHE
         with open(PAYMENTS_DB_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:
-        return dict(_PAYMENTS_DB_EMPTY)
+    except Exception as e:
+        raise PaymentsStoreError(f"payments.json tidak bisa dibaca: {e}") from e
     if not isinstance(data, dict):
-        return dict(_PAYMENTS_DB_EMPTY)
-    data.setdefault("lpb", {})
-    data.setdefault("submissions", {})
-    data.setdefault("drafts", {})
-    data.setdefault("finance_mappings", {})
-    data.setdefault("proofs", {})
-    data.setdefault("sppd_settings", {})
-    _PAYMENTS_DB_CACHE = data
-    _PAYMENTS_DB_MTIME = mtime
+        raise PaymentsStoreError(f"payments.json bukan objek JSON ({type(data).__name__})")
+    for k in _PAYMENTS_DB_SECTIONS:
+        data.setdefault(k, {})
     return data
 
 def save_payments_db(data: Dict[str, Any]) -> None:
-    global _PAYMENTS_DB_CACHE, _PAYMENTS_DB_MTIME
     if not PAYMENTS_DB_PATH:
         return
     os.makedirs(os.path.dirname(PAYMENTS_DB_PATH), exist_ok=True)
@@ -1233,8 +1232,6 @@ def save_payments_db(data: Dict[str, Any]) -> None:
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=True, indent=2)
     os.replace(tmp_path, PAYMENTS_DB_PATH)
-    _PAYMENTS_DB_CACHE = data
-    _PAYMENTS_DB_MTIME = os.path.getmtime(PAYMENTS_DB_PATH)
 
 async def load_and_lock_payments_db():
     """Acquire _PAYMENTS_DB_LOCK lalu load payments.json.
