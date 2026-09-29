@@ -115,11 +115,65 @@ def check_failed_batch_leaves_no_mutation():
     assert json.load(open(DB_PATH, encoding="utf-8"))["lpb"]["A"]["tgl_invoice"] == "2026-09-01", "mutasi A ikut tersimpan"
 
 
+def check_stale_draft_cannot_resubmit():
+    """AM-013 (H12-A): dua draft untuk LPB yang sama; setelah draft 1 diajukan, draft 2 ditolak."""
+    client = payments_client()
+    write_db({"lpb": {"L9": lpb("L9")}})
+    drafts = []
+    for _ in range(2):
+        r = client.post("/payments/cart/create", json={"method": "NON_PANIN", "record_ids": ["L9"], "target_payment_date": "2026-10-01"})
+        assert r.status_code == 200, r.text[:300]
+        drafts.append(r.json()["draft_id"])
+    items = [{"group_key": "PT UJI||LPB", "jenis_pembayaran": "TRF", "potongan": 0}]
+    r = client.post("/payments/cart/submit", json={"draft_id": drafts[0], "items": items})
+    assert r.status_code == 200 and r.json().get("ok"), r.text[:300]
+    first = shared.load_payments_db()["lpb"]["L9"]
+    r = client.post("/payments/cart/submit", json={"draft_id": drafts[1], "items": items})
+    assert r.status_code == 409 and r.json().get("ok") is False, f"draft basi mengajukan LPB lagi: {r.status_code} {r.text[:200]}"
+    after = shared.load_payments_db()
+    assert after["lpb"]["L9"] == first, "record berubah oleh pengajuan yang ditolak"
+    assert len(after["submissions"]) == 1, after["submissions"].keys()
+
+
+def check_concurrent_submit_single_winner():
+    """AM-013: dua submit BERSAMAAN atas LPB sama. Barrier di antara dua bagian lock memaksa
+    keduanya lolos cek pertama dulu; cek ulang di dalam write lock harus menolak satu."""
+    import threading
+
+    import httpx
+    from routers import payments
+
+    client = payments_client()
+    write_db({"lpb": {"C1": lpb("C1")}})
+    drafts = [client.post("/payments/cart/create", json={"method": "NON_PANIN", "record_ids": ["C1"],
+                                                         "target_payment_date": "2026-10-01"}).json()["draft_id"] for _ in range(2)]
+    barrier = threading.Barrier(2, timeout=20)
+    original = payments.write_invoice_excel
+    payments.write_invoice_excel = lambda rows, path: barrier.wait()  # dijalankan via to_thread di antara dua lock
+    app = FastAPI()
+    app.include_router(payments.router)
+    items = [{"group_key": "PT UJI||LPB", "jenis_pembayaran": "TRF", "potongan": 0}]
+
+    async def both():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            return await asyncio.gather(*(c.post("/payments/cart/submit", json={"draft_id": d, "items": items}) for d in drafts))
+
+    try:
+        results = asyncio.run(both())
+    finally:
+        payments.write_invoice_excel = original
+    codes = sorted(r.status_code for r in results)
+    assert codes == [200, 409], f"dua submit bersamaan: {codes} {[r.text[:120] for r in results]}"
+    assert len(shared.load_payments_db()["submissions"]) == 1
+
+
 def main():
     check_isolation()
     check_corrupt_is_not_empty()
     check_sppd_sequence_survives_isolation()
     check_failed_batch_leaves_no_mutation()
+    check_stale_draft_cannot_resubmit()
+    check_concurrent_submit_single_winner()
     print("OK test_payments_db_isolation")
 
 

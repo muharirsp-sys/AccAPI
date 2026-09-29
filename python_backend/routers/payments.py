@@ -63,6 +63,11 @@ from shared import (
 
 router = APIRouter()
 
+
+def _already_submitted(rec: Dict[str, Any]) -> bool:
+    """Record sudah punya pengajuan aktif (bukan 'Ajukan Ulang') — satu aturan untuk create & submit."""
+    return bool(s(rec.get("submission_id", ""))) and s(rec.get("status_pembayaran", "")).lower() != "ajukan ulang"
+
 @router.get("/payments/data")
 def payments_data(request: Request):
     user = get_current_user(request)
@@ -600,7 +605,7 @@ async def payments_cart_create(request: Request):
             return JSONResponse(status_code=400, content={"ok": False, "error": f"Nilai Invoice kosong untuk principle {principle}."})
         if tipe == "LPB" and has_submitted_duplicate_payment(db, s(rec.get("record_id", "")), rec):
             return JSONResponse(status_code=400, content={"ok": False, "error": f"LPB untuk principle {principle} terindikasi sudah pernah diajukan (kemungkinan case CBD). Cek data finance terlebih dulu."})
-        if s(rec.get("submission_id", "")) and s(rec.get("status_pembayaran", "")).lower() != "ajukan ulang":
+        if _already_submitted(rec):
             return JSONResponse(status_code=400, content={"ok": False, "error": f"Record {no_lpb or rec.get('record_id','')} sudah pernah diajukan ke finance."})
 
     order_keys: List[str] = []
@@ -782,6 +787,10 @@ async def payments_cart_submit(request: Request):
                 selected.append({**rec, "record_id": key})
         if not selected:
             return JSONResponse(status_code=400, content={"ok": False, "error": "Data pengajuan tidak ditemukan."})
+        # AM-013: draft tidak me-reserve record; draft lain bisa sudah mengajukan record yang sama.
+        taken = [s(r.get("no_lpb", "")) or r["record_id"] for r in selected if _already_submitted(r)]
+        if taken:
+            return JSONResponse(status_code=409, content={"ok": False, "error": f"Sudah diajukan lewat pengajuan lain: {', '.join(taken)}. Buat draft baru."})
 
     submission_id = str(uuid.uuid4())[:8]
     submit_dt = pd.Timestamp.now()
@@ -888,6 +897,10 @@ async def payments_cart_submit(request: Request):
     # Tulis semua perubahan ke DB di dalam lock
     async with _PAYMENTS_DB_LOCK:
         db = await asyncio.to_thread(load_payments_db)
+        # Lock dilepas di antara dua bagian: cek ulang sebelum mengubah apa pun (AM-013).
+        taken = [k for k in (s(r.get("record_id", "")) for r in selected) if _already_submitted(db.get("lpb", {}).get(k, {}))]
+        if taken:
+            return JSONResponse(status_code=409, content={"ok": False, "error": f"Sudah diajukan lewat pengajuan lain: {', '.join(taken)}. Buat draft baru."})
         if method == "BANK_PANIN":
             # AM-012: nomor diambil dari ledger yang AKAN disimpan, di dalam lock yang sama.
             # Dulu diambil dari objek bagian lock pertama dan hanya bertahan karena load
