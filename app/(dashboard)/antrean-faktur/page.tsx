@@ -70,8 +70,6 @@ export default function AntreanFakturPage() {
     const [busy, setBusy] = useState(false);
     const [semuaVerifikasi, setSemuaVerifikasi] = useState(false);
     const [catatan, setCatatan] = useState<Record<string, string>>({});
-    // Tanggal faktur pilihan saat kirim; kosong = tanggal SO masing-masing.
-    const [tanggalFaktur, setTanggalFaktur] = useState("");
 
     const load = useCallback(async () => {
         const query = new URLSearchParams();
@@ -121,20 +119,17 @@ export default function AntreanFakturPage() {
     async function kirim() {
         const menunggu = data?.summary?.queued ?? 0;
         if (!menunggu) { toast.info("Tidak ada faktur yang menunggu kirim"); return; }
-        const tanggal = tanggalFaktur ? tanggalFaktur.split("-").reverse().join("/") : "";
         if (!confirm(
             `Kirim ${menunggu} faktur ke Accurate sekarang?
 
 `
-            + `Tanggal faktur: ${tanggal || "tanggal SO masing-masing"}.`
-            + (tanggal ? " Tanggal ini juga menentukan periode Accurate dan periode promo di Rekap Promo." : "")
-            + "\n\nFaktur yang sudah terbentuk di Accurate TIDAK BISA ditarik. Setelah terkirim, "
+            + "Faktur yang sudah terbentuk di Accurate TIDAK BISA ditarik. Setelah terkirim, "
             + "isinya langsung dibaca balik dari Accurate dan dibandingkan per baris.")) return;
         setBusy(true);
         try {
             const res = await fetch("/api/invoice-outbox/send", {
                 method: "POST", credentials: "include",
-                headers: { "Content-Type": "application/json" }, body: JSON.stringify({ invoiceDate: tanggalFaktur || undefined }),
+                headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
             });
             const body = await res.json();
             if (!res.ok) throw new Error(body.error ?? "Pengiriman gagal");
@@ -237,16 +232,6 @@ export default function AntreanFakturPage() {
                 <button onClick={() => void load()} className="inline-flex items-center gap-1 rounded bg-white/10 px-3 py-1.5 text-xs">
                     <RefreshCw size={13} /> Muat ulang
                 </button>
-                <label className="inline-flex items-center gap-1 text-xs text-slate-300"
-                    title="Kosong = tanggal SO masing-masing. Isi untuk memfakturkan order yang kemarin belum terproses dengan tanggal hari ini. Tidak boleh lebih awal dari tanggal SO.">
-                    Tanggal faktur
-                    <input type="date" value={tanggalFaktur} max={new Date().toLocaleDateString("en-CA")}
-                        onChange={(event) => setTanggalFaktur(event.target.value)}
-                        className="rounded border border-white/10 bg-black/30 px-2 py-1 text-xs text-slate-200 [color-scheme:dark]" />
-                    {tanggalFaktur && (
-                        <button onClick={() => setTanggalFaktur("")} className="text-slate-400 underline" title="Kembali ke tanggal SO">tanggal SO</button>
-                    )}
-                </label>
                 <button onClick={() => void kirim()} disabled={busy || !(data?.summary?.queued ?? 0)}
                     title="Kirim semua faktur yang menunggu ke Accurate, lalu baca balik hasilnya dari Accurate dan bandingkan per baris"
                     className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-3 py-1.5 text-xs text-emerald-200 disabled:opacity-40">
