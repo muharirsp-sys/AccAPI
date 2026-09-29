@@ -15,7 +15,7 @@
  * supaya satu request HTTP tidak perlu hidup 21 menit.
  * Laju dibatasi di bawah batas resmi Accurate (8 request/detik).
  */
-import { asc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { resolveSyncCredentials } from "@/lib/accurate-session";
 import { db } from "@/lib/db";
 import { item, itemSellingPrice, syncState } from "@/db/schema";
@@ -186,23 +186,38 @@ export async function syncItemPrices(options: SyncItemPricesOptions = {}): Promi
             await db.update(item).set(units).where(eq(item.id, id));
         }
         skipped += results.filter((result) => result === null).length;
-        for (let index = 0; index < rows.length; index += 1000) {
-            const chunk = rows.slice(index, index + 1000);
-            await db.insert(itemSellingPrice).values(chunk).onConflictDoUpdate({
-                target: [itemSellingPrice.itemNo, itemSellingPrice.priceCategoryId,
-                         itemSellingPrice.unitName, itemSellingPrice.branchId, itemSellingPrice.effectiveDate],
-                set: {
-                    price: sql`excluded."price"`,
-                    priceCategoryName: sql`excluded."price_category_name"`,
-                    branchName: sql`excluded."branch_name"`,
-                    defaultBranch: sql`excluded."default_branch"`,
-                    defaultCategory: sql`excluded."default_category"`,
-                    currencyCode: sql`excluded."currency_code"`,
-                    itemId: sql`excluded."item_id"`,
-                    syncedAt: sql`now()`,
-                },
-            });
-        }
+        // Barang yang jawabannya memuat harga = daftar harganya yang BERLAKU di Accurate. Baris
+        // cache yang tidak lagi dikirim (penyesuaian diubah/dihapus di Accurate) dibuang: sampai
+        // 28 Sep 2026 baris basi menetap selamanya (K1470001006510 TT 6.801,8 per 1 Apr tertinggal
+        // sesudah penyesuaiannya diubah), dan baris basi bertanggal terbaru akan dipilih gerbang.
+        // Upsert + hapus satu transaksi: `now()` tetap sepanjang transaksi, jadi yang terhapus
+        // tepat baris yang tidak ikut ditulis ulang. Gagal ambil / jawaban kosong = tidak disentuh.
+        // ponytail: percaya penuh pada identitas sync (admin, PR #92 + ACCURATE_SYNC_USER_ID) —
+        // akun yang hanya melihat sebagian cabang akan membuang harga cabang lain.
+        const segar = [...new Set(rows.map((row) => row.itemNo))];
+        await db.transaction(async (tx) => {
+            for (let index = 0; index < rows.length; index += 1000) {
+                const chunk = rows.slice(index, index + 1000);
+                await tx.insert(itemSellingPrice).values(chunk).onConflictDoUpdate({
+                    target: [itemSellingPrice.itemNo, itemSellingPrice.priceCategoryId,
+                             itemSellingPrice.unitName, itemSellingPrice.branchId, itemSellingPrice.effectiveDate],
+                    set: {
+                        price: sql`excluded."price"`,
+                        priceCategoryName: sql`excluded."price_category_name"`,
+                        branchName: sql`excluded."branch_name"`,
+                        defaultBranch: sql`excluded."default_branch"`,
+                        defaultCategory: sql`excluded."default_category"`,
+                        currencyCode: sql`excluded."currency_code"`,
+                        itemId: sql`excluded."item_id"`,
+                        syncedAt: sql`now()`,
+                    },
+                });
+            }
+            if (segar.length) {
+                await tx.delete(itemSellingPrice)
+                    .where(and(inArray(itemSellingPrice.itemNo, segar), lt(itemSellingPrice.syncedAt, sql`now()`)));
+            }
+        });
         priceRows += rows.length;
         done += batch.length;
         // Penyegaran bertarget TIDAK menggeser checkpoint: kalau digeser, sync penuh berikutnya
