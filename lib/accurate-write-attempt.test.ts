@@ -12,8 +12,8 @@ import { eq } from "drizzle-orm";
 import { Pool } from "pg";
 import { accurateWriteAttempt } from "../db/schema.ts";
 import {
-    classifyProviderReply, purchasePaymentSubject, resolveAttempt, runGuardedWrite,
-    validatePurchasePaymentPayload, SENDING_STALE_MS, type PurchasePaymentItem,
+    classifyProviderReply, normalizePurchasePaymentPayload, purchasePaymentSubject, resolveAttempt, runGuardedWrite,
+    type PurchasePaymentItem,
 } from "./accurate-write-attempt.ts";
 
 const item = (over: Partial<PurchasePaymentItem> = {}): PurchasePaymentItem => ({
@@ -47,15 +47,26 @@ test("klasifikasi jawaban provider: hanya amplop penolakan yang rejected (C.16)"
     assert.equal(classifyProviderReply({ error: new DOMException("t", "TimeoutError") }).state, "unknown");
 });
 
-test("validasi payload di batas kepercayaan + subjek diturunkan server", () => {
-    assert.equal(validatePurchasePaymentPayload([item()]), null);
-    assert.match(String(validatePurchasePaymentPayload([item(), item()])), /tepat 1/);
-    assert.match(String(validatePurchasePaymentPayload(item())), /array/);
-    assert.match(String(validatePurchasePaymentPayload([item({ chequeAmount: Number.NaN })])), /chequeAmount/);
-    assert.match(String(validatePurchasePaymentPayload([item({ chequeAmount: "150000" as unknown as number })])), /chequeAmount/);
-    assert.match(String(validatePurchasePaymentPayload([item({ transDate: "2026-09-29" })])), /dd\/mm/);
-    assert.match(String(validatePurchasePaymentPayload([item({ detailInvoice: [{ invoiceNo: "BELUM ADA", paymentAmount: 1 }] })])), /BELUM ADA/);
-    assert.match(String(validatePurchasePaymentPayload([item({ detailInvoice: [{ invoiceNo: "A", paymentAmount: 0 }] })])), /paymentAmount/);
+test("payload dibangun ulang dari allowlist di batas kepercayaan + subjek diturunkan server", () => {
+    const err = (payload: unknown) => { const r = normalizePurchasePaymentPayload(payload); return "error" in r ? r.error : ""; };
+    const good = normalizePurchasePaymentPayload([item()]);
+    assert.ok("item" in good);
+    assert.match(err([item(), item()]), /tepat 1/);
+    assert.match(err(item()), /array/);
+    assert.match(err([item({ chequeAmount: Number.NaN })]), /chequeAmount/);
+    assert.match(err([item({ chequeAmount: "150000" as unknown as number })]), /chequeAmount/);
+    assert.match(err([item({ transDate: "2026-09-29" })]), /dd\/mm/);
+    assert.match(err([item({ detailInvoice: [{ invoiceNo: "BELUM ADA", paymentAmount: 1 }] })]), /BELUM ADA/);
+    assert.match(err([item({ detailInvoice: [{ invoiceNo: "A", paymentAmount: 0 }] })]), /paymentAmount/);
+    // Review M2: invoiceNo bukan teks ditolak; kunci tambahan TIDAK ikut ke objek yang dikirim.
+    assert.match(err([item({ detailInvoice: [{ invoiceNo: { x: 1 } as unknown as string, paymentAmount: 1 }] })]), /invoiceNo/);
+    const sneaky = normalizePurchasePaymentPayload([{ ...item(), id: "999", number: "PP-OLD", "detailInvoice[5].invoiceNo": "INV-X",
+        detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 5, id: "7" }] }]);
+    assert.ok("item" in sneaky);
+    assert.deepEqual(Object.keys(sneaky.item).sort(), ["bankNo", "chequeAmount", "chequeDate", "description", "detailInvoice", "paymentMethod", "transDate", "vendorNo"]);
+    assert.deepEqual(sneaky.item.detailInvoice, [{ invoiceNo: "INV-1", paymentAmount: 5 }]);
+    const many = Array.from({ length: 200 }, (_, i) => ({ invoiceNo: `PI/2026/09/${String(i).padStart(5, "0")}`, paymentAmount: 1 }));
+    assert.match(purchasePaymentSubject({ detailInvoice: many }), /^sha256:[0-9a-f]{64}$/, "subjek panjang melewati batas index btree");
     // Urutan faktur, spasi dan huruf tidak mengubah identitas; ganti vendor TIDAK membuka subjek baru.
     assert.equal(purchasePaymentSubject(item()), "INV-1,INV-2");
     assert.equal(purchasePaymentSubject(item({ detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 1 }, { invoiceNo: "inv-2", paymentAmount: 1 }] })), "INV-1,INV-2");
@@ -179,10 +190,13 @@ test("PG: hasil gagal tersimpan setelah kirim -> baris tetap sending & memblokir
         assert.equal(first.claimed && first.outcome.state, "posted", "jawaban provider tetap dilaporkan ke pemanggil");
         const again = await runGuardedWrite({ ...base, db, send: async () => { throw new Error("TIDAK BOLEH"); } });
         assert.equal(again.claimed === false && again.live?.state, "sending");
-        const resolveBase = { db, operation: base.operation, subjectKey, accurateNumber: "", reason: "dicek di daftar Pembayaran Pembelian", checkedSource: "Accurate DB-1 list 29/09", actor: "spv" };
+        const resolveBase = { db, operation: base.operation, subjectKey, accurateNumber: "", reason: "dicek di daftar Pembayaran Pembelian", checkedSource: "Accurate DB-1 list 29/09", actor: "spv", resolverDbId: "DB-1" };
         const early = await resolveAttempt({ ...resolveBase, decision: "absent" });
         assert.equal(!early.ok && early.code, "in_flight");
-        const later = await resolveAttempt({ ...resolveBase, decision: "posted", accurateNumber: "PP-001", now: new Date(Date.now() + SENDING_STALE_MS + 60_000) });
+        const earlyPosted = await resolveAttempt({ ...resolveBase, decision: "posted", accurateNumber: "PP-001" });
+        assert.equal(!earlyPosted.ok && earlyPosted.code, "in_flight", "sending segar bisa masih ditulis request yang berjalan");
+        await pool.query("UPDATE accurate_write_attempt SET updated_at = now() - interval '3 minutes' WHERE subject_key = $1", [subjectKey]);
+        const later = await resolveAttempt({ ...resolveBase, decision: "posted", accurateNumber: "PP-001" });
         assert.equal(later.ok && later.state, "posted");
     } finally {
         await pool.end();
@@ -210,8 +224,15 @@ test("PG: ditolak / tak terhubung boleh diulang; atestasi 'tidak ada' membuka ul
 
         const unkKey = `test|${randomUUID()}`;
         await run(unkKey, async () => ({ status: 504, text: "Gateway Timeout" }));
-        const r = { db, operation: "purchase-payment/bulk-save", subjectKey: unkKey, accurateNumber: "", checkedSource: "Accurate DB-1", actor: "spv" };
+        const r = { db, operation: "purchase-payment/bulk-save", subjectKey: unkKey, accurateNumber: "", checkedSource: "Accurate DB-1", actor: "spv", resolverDbId: "DB-1" };
         assert.equal((await resolveAttempt({ ...r, decision: "absent", reason: "pendek" })).ok, false, "alasan wajib");
+        // Review M1: unknown segar -> "tidak ada" ditolak (Accurate mungkin masih memproses).
+        const fresh = await resolveAttempt({ ...r, decision: "absent", reason: "dicek manual: tidak ada di daftar PP" });
+        assert.equal(!fresh.ok && fresh.code, "in_flight");
+        // Review M3: diperiksa di database lain -> ditolak.
+        await pool.query("UPDATE accurate_write_attempt SET updated_at = now() - interval '3 minutes' WHERE subject_key = $1", [unkKey]);
+        const otherDb = await resolveAttempt({ ...r, resolverDbId: "DB-2", decision: "absent", reason: "dicek manual: tidak ada di daftar PP" });
+        assert.equal(!otherDb.ok && otherDb.code, "wrong_database");
         const res = await resolveAttempt({ ...r, decision: "absent", reason: "dicek manual: tidak ada di daftar PP" });
         assert.equal(res.ok && res.state, "resolved_absent");
         const reopened = await run(unkKey, async () => ({ status: 200, text: ok("88", "PP-088") }));

@@ -39,12 +39,19 @@ test("gate purchase-payment: variasi path/huruf/encoding tetap ditolak; baca & e
         "/api/purchase-payment/bulk-save.do?x=1",
         " /api/purchase-payment/bulk-save.do ",
         "/api/%E0%A4%A/bulk-save.do", // encoding rusak -> fail-closed
+        // Review sesi 2 H1: `replace("/api","")` di URL kabel menghapus "/api" PERTAMA di mana pun.
+        "/purchase-payment/bulk-save.do/api",
+        "/purchase-pay/apiment/bulk-save.do",
+        "/purchase-payment/bulk-save.d/apio",
+        "/api/purchase-payment/bulk-save.do;jsessionid=x",
+        "/api/purchase-payment\\bulk-save.do",
     ]) {
-        assert.equal(isGuardedAccurateWrite(p, "POST"), true, p);
+        assert.equal(isGuardedAccurateWrite(p), true, p);
+        // Gate dan URL kabel harus sepakat: yang lolos gate tidak boleh tiba di save.do.
     }
-    assert.equal(isGuardedAccurateWrite("/api/purchase-payment/bulk-save.do", "put"), true);
-    assert.equal(isGuardedAccurateWrite("/api/purchase-payment/list.do", "GET"), false);
-    assert.equal(isGuardedAccurateWrite("/api/purchase-payment/detail.do", "POST"), false);
-    assert.equal(isGuardedAccurateWrite("/api/sales-receipt/bulk-save.do", "POST"), false);
-    assert.equal(isGuardedAccurateWrite("/api/purchase-payment/bulk-save.do", "GET"), false);
+    for (const p of ["/api/purchase-payment/list.do", "/api/purchase-payment/detail.do", "/api/sales-receipt/bulk-save.do", "/api/item/list.do"]) {
+        assert.equal(isGuardedAccurateWrite(p), false, p);
+        const { url } = buildAccurateRequest(target, p, "POST", null);
+        assert.doesNotMatch(new URL(url).pathname, /purchase-payment\/(bulk-)?save\.do/i);
+    }
 });

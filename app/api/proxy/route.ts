@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
         const { endpointPath, method, payload } = body;
         // AM-014 / C.14: tulis purchase-payment hanya lewat command server yang mengklaim attempt
         // sebelum kirim; lewat proxy generik guard pengiriman ganda bisa dilewati.
-        if (endpointPath && method && isGuardedAccurateWrite(String(endpointPath), String(method))) {
+        if (endpointPath && isGuardedAccurateWrite(String(endpointPath))) {
             return NextResponse.json({
                 error: "Posting purchase-payment hanya lewat halaman Finance (pencegahan posting ganda). Proxy generik menolak operasi ini.",
             }, { status: 403 });

@@ -14,8 +14,7 @@ import { getAccurateSession } from "@/lib/accurate-session";
 import { isAllowedAccurateHost } from "@/lib/api-security";
 import { forwardAccurate } from "@/lib/accurate-forward";
 import {
-    PURCHASE_PAYMENT_OPERATION, purchasePaymentSubject, runGuardedWrite, validatePurchasePaymentPayload,
-    type PurchasePaymentItem,
+    normalizePurchasePaymentPayload, payloadHash, PURCHASE_PAYMENT_OPERATION, purchasePaymentSubject, runGuardedWrite,
 } from "@/lib/accurate-write-attempt";
 
 const ENDPOINT = "/api/purchase-payment/bulk-save.do";
@@ -27,9 +26,11 @@ export async function POST(request: Request) {
     if (gate.response) return gate.response;
 
     const body = await request.json().catch(() => null) as { clientRef?: unknown; payload?: unknown } | null;
-    const invalid = validatePurchasePaymentPayload(body?.payload);
-    if (invalid) return NextResponse.json({ error: invalid }, { status: 400 });
-    const payload = body!.payload as PurchasePaymentItem[];
+    const normalized = normalizePurchasePaymentPayload(body?.payload);
+    if ("error" in normalized) return NextResponse.json({ error: normalized.error }, { status: 400 });
+    // Yang dikirim, di-hash dan dijadikan subjek = objek hasil allowlist, bukan kiriman browser.
+    const payload = [normalized.item];
+    const clientRef = String(body?.clientRef ?? "").slice(0, 300);
 
     // Semua pemeriksaan yang bisa gagal SEBELUM klaim: gagal di sini = pasti tidak terkirim.
     const session = await getAccurateSession(String(gate.session.user.id));
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
             db,
             operation: PURCHASE_PAYMENT_OPERATION,
             subjectKey: purchasePaymentSubject(payload[0]),
-            clientRef: String(body?.clientRef ?? "").slice(0, 300),
+            clientRef,
             targetDbId: String(session.databaseId),
             actor: String(gate.session.user.id),
             payload,
@@ -61,13 +62,18 @@ export async function POST(request: Request) {
 
     if (!result.claimed) {
         const live = result.live;
+        // UI hanya boleh merekonsiliasi "posted" ke record yang SAMA pada database yang SAMA
+        // (review sesi 2 M3); selain itu diperlakukan tidak pasti.
         return NextResponse.json({
             error: live?.state === "posted"
                 ? `Himpunan faktur ini SUDAH diposting (${live.accurateNumber || live.accurateId}).`
                 : "Ada attempt posting yang belum pasti untuk faktur ini — periksa Accurate lalu selesaikan manual.",
             live: live && {
                 attemptId: live.id, state: live.state, accurateId: live.accurateId, accurateNumber: live.accurateNumber,
-                targetDbId: live.targetDbId, actor: live.actor, createdAt: live.createdAt, updatedAt: live.updatedAt,
+                targetDbId: live.targetDbId, clientRef: live.clientRef, payloadHash: live.payloadHash,
+                actor: live.actor, createdAt: live.createdAt, updatedAt: live.updatedAt,
+                sameRecord: live.clientRef === clientRef && live.payloadHash === payloadHash(payload),
+                sameTarget: live.targetDbId === String(session.databaseId),
             },
         }, { status: 409 });
     }

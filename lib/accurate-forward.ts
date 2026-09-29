@@ -27,10 +27,13 @@ export const flattenPayload = (obj: unknown, prefix = ""): Record<string, unknow
 
 export type AccurateTarget = { sessionHost: string; sessionId: string; accessToken: string };
 
+/** Path persis yang dikirim ke host (dipakai request DAN gate — satu sumber, review sesi 2 H1). */
+const wirePath = (endpointPath: string) => `/accurate/api${String(endpointPath).replace("/api", "")}`;
+
 export function buildAccurateRequest(target: AccurateTarget, endpointPath: string, method: string, payload: unknown) {
     const verb = method.toUpperCase();
     // Berdasarkan Swagger, Base URL Accurate adalah https://{host}/accurate
-    let url = `${target.sessionHost}/accurate/api${endpointPath.replace("/api", "")}`;
+    let url = `${target.sessionHost}${wirePath(endpointPath)}`;
     if (verb === "GET" && payload) {
         const query = new URLSearchParams();
         Object.keys(payload as Record<string, unknown>).forEach((key) => {
@@ -73,16 +76,19 @@ export async function forwardAccurate(target: AccurateTarget, endpointPath: stri
 /**
  * Tulis Accurate yang hanya boleh lewat command server ber-klaim (AM-014 / C.14): proxy generik
  * menolaknya agar guard pengiriman ganda tidak bisa dilewati dari browser.
+ * ponytail: denylist satu operasi; allowlist penuh proxy = AM-024 (butuh keputusan daftar endpoint).
  */
-export function isGuardedAccurateWrite(endpointPath: string, method: string) {
-    if (method.toUpperCase() === "GET") return false;
-    let path: string;
+export function isGuardedAccurateWrite(endpointPath: string) {
+    // Semua method: tidak ada pemakaian sah GET ke save.do (review sesi 2 M4).
+    const raw = String(endpointPath);
+    if (raw.includes(";")) return true; // path parameter (;jsessionid=…) bisa diabaikan host Java
+    const guarded = /\/purchase-payment\/(bulk-)?save\.do/i;
     try {
-        // Normalisasi seperti yang dilakukan fetch/host: dot-segment (juga %2e), percent-encoding, "//".
-        path = decodeURIComponent(new URL(String(endpointPath).trim(), "http://normalize.invalid").pathname).replace(/\/+/g, "/");
+        // Nilai path YANG DIKIRIM (wirePath), dinormalisasi seperti fetch/host: dot-segment (juga
+        // %2e), backslash, percent-encoding, "//". Path mentah juga diuji.
+        return [wirePath(raw), raw].some((p) =>
+            guarded.test(decodeURIComponent(new URL(p.trim(), "http://normalize.invalid").pathname).replace(/\/+/g, "/")));
     } catch {
         return true; // path rusak = tolak (fail-closed)
     }
-    // ponytail: denylist satu operasi; allowlist penuh proxy = AM-024 (butuh keputusan daftar endpoint).
-    return /\/purchase-payment\/(bulk-)?save\.do\/?$/i.test(path);
 }

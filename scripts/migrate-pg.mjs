@@ -227,7 +227,8 @@ const migrations = [
     // unique partial index, sehingga reload / dua tab / dua user tidak bisa mengirim dua kali.
     // Role aplikasi butuh SELECT/INSERT/UPDATE (default privileges runbook L1g — cek sebelum deploy).
     nama: "accurate_write_attempt",
-    sudahAda: `SELECT 1 FROM information_schema.tables WHERE table_name = 'accurate_write_attempt'`,
+    // Cek INDEX, bukan tabel: tabel tanpa unique partial index = klaim ganda diam-diam.
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE indexname = 'uq_accurate_write_attempt_live'`,
     sql: `
       CREATE TABLE IF NOT EXISTS accurate_write_attempt (
           id              text PRIMARY KEY,

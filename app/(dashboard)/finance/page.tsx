@@ -446,15 +446,19 @@ export default function FinancePage() {
             });
             const out = await res.json().catch(() => null) as {
                 state?: string; accurateId?: string; accurateNumber?: string; message?: string; response?: unknown; error?: string;
-                live?: { attemptId: string; state: string; accurateId: string; accurateNumber: string } | null;
+                live?: { attemptId: string; state: string; accurateId: string; accurateNumber: string; targetDbId: string; sameRecord: boolean; sameTarget: boolean } | null;
             } | null;
             let posted: { id: string; number: string; note?: string } | null = null;
-            if (res.status === 409 && out?.live?.state === "posted") {
-                // Attempt sebelumnya SUDAH posted (mis. browser ditutup sebelum sempat mencatat).
+            if (res.status === 409 && out?.live?.state === "posted" && out.live.sameRecord && out.live.sameTarget) {
+                // Attempt record INI di database INI sudah posted (mis. browser ditutup sebelum mencatat).
+                // Record/draft/database lain dengan faktur yang sama TIDAK ditandai posted (review M3).
                 posted = { id: out.live.accurateId, number: out.live.accurateNumber, note: `attempt server ${out.live.attemptId} sudah posted ${out.live.accurateNumber}` };
             } else if (res.status === 409) {
-                await recordNotPosted("unknown", out?.error || "attempt sebelumnya belum pasti", out?.live);
-                toast.error(unknownMessage(out?.error || "attempt sebelumnya belum pasti"), { duration: 15000 });
+                const why = out?.live?.state === "posted"
+                    ? `${out.error} Dari record/database lain (${out.live.targetDbId}) — periksa sebelum menandai apa pun.`
+                    : out?.error || "attempt sebelumnya belum pasti";
+                await recordNotPosted("unknown", why, out?.live);
+                toast.error(unknownMessage(why), { duration: 15000 });
                 return;
             } else if (!res.ok || !out?.state) {
                 notSent = res.status >= 400 && res.status < 500;
