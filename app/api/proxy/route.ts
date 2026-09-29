@@ -10,6 +10,9 @@ export async function POST(req: NextRequest) {
 
         const body = await req.json();
         const { endpointPath, method, payload } = body;
+        if (typeof endpointPath !== "string" || typeof method !== "string") {
+            return NextResponse.json({ error: "endpointPath dan method wajib teks" }, { status: 400 });
+        }
         // AM-014 / C.14: tulis purchase-payment hanya lewat command server yang mengklaim attempt
         // sebelum kirim; lewat proxy generik guard pengiriman ganda bisa dilewati.
         if (endpointPath && isGuardedAccurateWrite(String(endpointPath))) {

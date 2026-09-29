@@ -14,7 +14,7 @@ import { getAccurateSession } from "@/lib/accurate-session";
 import { isAllowedAccurateHost } from "@/lib/api-security";
 import { forwardAccurate } from "@/lib/accurate-forward";
 import {
-    normalizePurchasePaymentPayload, payloadHash, PURCHASE_PAYMENT_OPERATION, purchasePaymentSubject, runGuardedWrite,
+    normalizePurchasePaymentPayload, PURCHASE_PAYMENT_OPERATION, purchasePaymentSubject, runGuardedWrite,
 } from "@/lib/accurate-write-attempt";
 
 const ENDPOINT = "/api/purchase-payment/bulk-save.do";
@@ -72,7 +72,10 @@ export async function POST(request: Request) {
                 attemptId: live.id, state: live.state, accurateId: live.accurateId, accurateNumber: live.accurateNumber,
                 targetDbId: live.targetDbId, clientRef: live.clientRef, payloadHash: live.payloadHash,
                 actor: live.actor, createdAt: live.createdAt, updatedAt: live.updatedAt,
-                sameRecord: live.clientRef === clientRef && live.payloadHash === payloadHash(payload),
+                // Record yang sama = clientRef sama. payloadHash sengaja TIDAK dibandingkan: deskripsi
+                // memuat nama file bukti (uuid baru tiap upload) dan tanggal diketik ulang setelah
+                // reload — kasus "browser ditutup setelah kirim" tidak akan pernah cocok (re-review N1).
+                sameRecord: live.clientRef === clientRef,
                 sameTarget: live.targetDbId === String(session.databaseId),
             },
         }, { status: 409 });
