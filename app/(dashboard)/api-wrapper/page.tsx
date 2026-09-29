@@ -2190,10 +2190,13 @@ export default function Home() {
               const row = chunkPayload[idx];
               try {
                 const indData = await accurateFetch(routeConfig.path, routeConfig.method, [row]);
-                const isSuccess = Array.isArray(indData) ? indData[0]?.s : indData.s;
+                // Hasil PER ITEM: amplop bulk-save bisa s:true dengan item d[0].s:false (H09).
+                const indItem = Array.isArray(indData) ? indData[0] : Array.isArray(indData?.d) ? indData.d[0] : indData;
+                const isSuccess = !!indItem?.s;
 
                 if (isSuccess) {
-                  combinedResults.push(Array.isArray(indData) ? indData[0] : indData);
+                  combinedResults.push(indItem);
+                  markIdempotency(row, true); // AM-041 review: tanpa ini baris sukses tertahan PROCESSING
                 } else {
                   const indReasonStr = extractReasonStr(Array.isArray(indData) ? indData[0] : indData, "Error validasi individual");
                   const match = indReasonStr.match(/"([^"]+)"/);
