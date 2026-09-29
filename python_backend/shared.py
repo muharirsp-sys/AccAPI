@@ -128,6 +128,9 @@ PERMISSION_MODULES = [
     "sppd",
     "finance",
     "principles",
+    # Ada di registry Next (lib/rbac/registry.ts) dan dicek routers/master_barang.py. Tanpa
+    # entri ini izin group-nya dibuang diam-diam oleh normalize_permissions -> hanya admin lolos.
+    "master_barang",
     "summary",
     "validator",
     "users",
@@ -928,6 +931,9 @@ def _verify_session_via_next(ba_token: str, raw_cookie: str) -> Optional[str]:
     if cached and cached[0] > time.time():
         return cached[1]
     result: Optional[str] = None
+    # Satu cap waktu untuk sesi & izin: dulu dua time.time() terpisah membuat izin kedaluwarsa
+    # sesaat sebelum sesinya, dan di celah itu user_has_permission jatuh ke preset role legacy.
+    expires = time.time() + _AUTH_VERIFY_TTL
     try:
         import requests
         r = requests.get(AUTH_VERIFY_URL, headers={"cookie": raw_cookie}, timeout=5)
@@ -940,13 +946,33 @@ def _verify_session_via_next(ba_token: str, raw_cookie: str) -> Optional[str]:
                 identity = s(data.get("email")).lower() or s(data.get("name"))
                 result = f"betterauth|{role}|{identity}"
                 if s(data.get("email")):
-                    _AUTH_VERIFY_PERMS[s(data.get("email")).lower()] = (
-                        time.time() + _AUTH_VERIFY_TTL, data.get("permissions"))
+                    # AM-010: izin EFEKTIF dari resolver Next (group otoritatif) bila tersedia.
+                    # ponytail: jalur `permissions` legacy hanya untuk Next lama saat deploy
+                    # tidak serempak; hapus setelah semua image Next mengirim effectivePermissions.
+                    effective = data.get("effectivePermissions")
+                    profile = ({"__custom": True, "__effective": True, "permissions": effective}
+                               if isinstance(effective, list) else data.get("permissions"))
+                    _AUTH_VERIFY_PERMS[s(data.get("email")).lower()] = (expires, profile)
     except Exception as e:
         print(f"[AUTH VERIFY] gagal panggil {AUTH_VERIFY_URL}: {e}")
         return None  # jangan cache kegagalan network — fallback sqlite di caller
-    _AUTH_VERIFY_CACHE[ba_token] = (time.time() + _AUTH_VERIFY_TTL, result)
+    _AUTH_VERIFY_CACHE[ba_token] = (expires, result)
     return result
+
+
+def _effective_permissions(username: str) -> Optional[Dict[str, Set[str]]]:
+    """Izin efektif Next untuk identitas ini, atau None bila tidak ada (jalur legacy)."""
+    if not AUTH_VERIFY_URL or not s(username).startswith("betterauth|"):
+        return None
+    import time
+    email = s(username.split("|", 2)[2] if username.count("|") >= 2 else "").lower()
+    cached = _AUTH_VERIFY_PERMS.get(email)
+    if not cached or cached[0] <= time.time():
+        return None
+    profile = cached[1]
+    if not (isinstance(profile, dict) and profile.get("__effective") is True):
+        return None
+    return normalize_permissions(profile.get("permissions", []))
 
 def get_current_user(request: Request) -> Optional[str]:
     # ponytail: auth Python paralel dihapus (#7) — satu-satunya sumber identitas
@@ -1057,6 +1083,12 @@ def get_user_permissions_info(username: str) -> Tuple[Dict[str, Set[str]], bool]
 def user_has_permission(username: Optional[str], module: str, action: str) -> bool:
     if not username:
         return False
+    # AM-010: izin efektif Next = satu sumber kebijakan. Role legacy (termasuk jalan pintas
+    # admin dan preset viewer untuk role tak dikenal) tidak boleh memberi kembali akses yang
+    # sudah dibatasi Access Group.
+    effective = _effective_permissions(username)
+    if effective is not None:
+        return s(action).lower() in effective.get(s(module).lower(), set())
     if is_admin_user(username):
         return True
     module = s(module).lower()

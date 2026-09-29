@@ -198,8 +198,8 @@ async def upload_bank_data(request: Request, file: UploadFile = File(None)):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    if not user_has_permission(user, "payments", "view"):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.view"})
+    if not user_has_permission(user, "sppd", "edit_settings"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.edit_settings"})
     if file is None:
         return JSONResponse(status_code=400, content={"ok": False, "error": "File Excel belum diupload."})
     try:
@@ -300,8 +300,8 @@ async def replace_principle_name(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    if not user_has_permission(user, "payments", "view"):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.view"})
+    if not user_has_permission(user, "payments", "edit"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.edit"})
     try:
         payload = await request.json()
     except Exception:
@@ -352,13 +352,15 @@ async def auto_fix_principle_names(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    if not user_has_permission(user, "payments", "view"):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.view"})
     try:
         payload = await request.json()
     except Exception:
         payload = {}
     confirm = bool(payload.get("confirm", False))
+    # Preview (dry-run) cukup izin lihat; eksekusi mengubah payments.json massal -> izin edit.
+    need = "edit" if confirm else "view"
+    if not user_has_permission(user, "payments", need):
+        return JSONResponse(status_code=403, content={"ok": False, "error": f"Forbidden: butuh permission payments.{need}"})
 
     bank_map, norm_keys = load_bank_map_with_normalized_keys()
     db = load_payments_db()
@@ -426,6 +428,8 @@ def health():
 async def add_principle(request: Request, name: str = Form(...), file: UploadFile = File(...)):
     user = get_current_user(request)
     if not user: return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "principles", "upload"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission principles.upload"})
     pid = str(uuid.uuid4())
     safe_name = "".join(c for c in file.filename if c.isalnum() or c in " ._-")
     filename = f"{pid}_{safe_name}"
@@ -456,6 +460,8 @@ async def add_principle(request: Request, name: str = Form(...), file: UploadFil
 def delete_principle(request: Request, pid: str):
     user = get_current_user(request)
     if not user: return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "principles", "delete"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission principles.delete"})
     ps = _load_principles()
     if pid in ps:
         filepath = os.path.join(MASTERS_DIR, ps[pid]["filename"])

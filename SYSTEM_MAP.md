@@ -38,7 +38,7 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 - **Route Group** `(auth)` untuk halaman login/register, `(dashboard)` untuk seluruh halaman aplikasi yang dilindungi guard layout.
 - Layer `lib/*` memisahkan business logic dari route handler.
 - `lib/db.ts`, `lib/auth.ts`, `db/schema.ts`, dan `drizzle.config.ts` memakai PostgreSQL. `sqlite.db` adalah sumber/rollback migrasi lama, bukan runtime route Next.js.
-- RBAC tiga lapis: **Dynamic Permission-Group** (access_group + group_permission + user_group, default-deny) ∪ legacy **role global** (Better Auth) ∪ legacy **custom permissions** (user.permissions). Union resolver di `lib/rbac/resolve.ts`; sistem lama tetap berjalan selama transisi.
+- RBAC: **Dynamic Permission-Group** (access_group + group_permission + user_group, default-deny) OTORITATIF begitu user punya ≥1 group; legacy **role global** / **custom permissions** (user.permissions) hanya fallback untuk user yang belum pernah ber-group. Resolver tunggal `getUserPermissions()` di `lib/rbac/resolve.ts`. FastAPI tidak menghitung izin sendiri: `/api/auth/verify` mengirim `effectivePermissions` dari resolver yang sama dan `python_backend/shared.py` `user_has_permission` memakainya (ADR-001, `docs/modernization/ARCHITECTURE_ADR.md`).
 - Permission key format: `"module.action"` (mis. `"off_program_control.sm_approve"`). Sumber tunggal: `lib/rbac/registry.ts` (92 key). Endpoint wajib pakai `requirePermission`/`requirePermissionH` — key tidak terdaftar → 403.
 - Email-domain role inference dihapus. OFF-specific role (`resolveOffRoleFromUser`) tetap ada untuk audit/state-machine, TIDAK untuk authz.
 
@@ -252,7 +252,7 @@ Browser -> NEXT_PUBLIC_FASTAPI_BASE_URL (port 8000)
      -> /validator/upload — upload data penjualan/channel
      -> /validator/run — validator_engine.py [compare expected vs actual]
      -> /sppd/generate — render_sppd_docx() — buat DOCX SPPD
-     -> auth.py — RBAC + rate limiter login internal FastAPI
+     -> auth.py — rate limiter login + security headers; izin = effectivePermissions dari Next /api/auth/verify (shared.user_has_permission)
 ```
 
 ### 6A. Repository Guardian & Risk Issue Sync
