@@ -462,8 +462,11 @@ async def payments_finance_update(request: Request):
                 current = s(rec.get("accurate_post_status", ""))
                 if current == "posted":
                     return f"LPB {s(rec.get('no_lpb', ''))} sudah posted ke Accurate ({s(rec.get('accurate_purchase_payment_number', '')) or s(rec.get('accurate_purchase_payment_id', ''))}); status tidak bisa diubah dari sini."
-                if current == "unknown" and accurate_post_status != "unknown" and not resolution_note:
-                    return f"Status posting LPB {s(rec.get('no_lpb', ''))} TIDAK PASTI: cek purchase-payment di Accurate, lalu selesaikan dengan catatan."
+                if current == "unknown" and accurate_post_status != "unknown":
+                    # Review #3: keluar dari unknown hanya ke posted/failed yang EKSPLISIT dengan catatan
+                    # pemeriksaan yang bermakna — bukan string kosong/sekadar isi.
+                    if accurate_post_status not in ("posted", "failed") or len(resolution_note) < 15:
+                        return f"Status posting LPB {s(rec.get('no_lpb', ''))} TIDAK PASTI: cek purchase-payment di Accurate, lalu selesaikan sebagai posted/failed dengan catatan pemeriksaan."
                 return None
 
             def apply_finance_update(rec: Dict[str, Any]) -> None:
@@ -474,8 +477,15 @@ async def payments_finance_update(request: Request):
                     if previous_post_status == "unknown" and accurate_post_status != "unknown":
                         # Atestasi MANUSIA, bukan verifikasi provider — dilabeli agar tidak menyamar.
                         rec["accurate_post_resolution"] = {
-                            "from": "unknown", "to": accurate_post_status or "skipped", "source": "manual_attestation",
+                            "from": "unknown", "to": accurate_post_status, "source": "manual_attestation",
                             "by": user, "at": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"), "note": resolution_note[:500],
+                            # Bukti yang membuatnya unknown TIDAK dihapus oleh penyelesaian (review #3).
+                            "previous": {
+                                "error": s(rec.get("accurate_post_error", "")),
+                                "response": rec.get("accurate_post_response", {}),
+                                "digest": s(rec.get("accurate_payload_digest", "")),
+                                "posted_by": s(rec.get("accurate_posted_by", "")),
+                            },
                         }
                     rec["transfer_date"] = transfer_date
                     rec["proof_id"] = proof_id

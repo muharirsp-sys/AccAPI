@@ -8,7 +8,7 @@
  * Side Effects: HTTP call ke FastAPI, upload bukti transfer, post Accurate purchase-payment/bulk-save.do, update payments.json.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, AlertTriangle, CheckCircle2, DollarSign, Download, FileUp, RefreshCcw, Save, Search, Send, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { accurateFetch, classifyBulkSaveResponse, classifyWriteError } from "@/lib/apiFetcher";
@@ -194,6 +194,7 @@ export default function FinancePage() {
     const [transferDates, setTransferDates] = useState<Record<string, string>>({});
     const [proofFiles, setProofFiles] = useState<Record<string, File | null>>({});
     const [busyKey, setBusyKey] = useState("");
+    const postingRef = useRef(new Set<string>());
 
     useEffect(() => {
         const today = new Date().toISOString().split("T")[0];
@@ -365,6 +366,18 @@ export default function FinancePage() {
 
     const handleApproveTransfer = async (record: FinanceRecord) => {
         const key = recordKey(record);
+        // Review #3: dua klik cepat sama-sama lolos sebelum state busy ter-render -> dua
+        // purchase-payment. Ref sinkron menahan klik kedua sejak awal.
+        if (postingRef.current.has(key)) return;
+        postingRef.current.add(key);
+        try {
+            await approveTransfer(record, key);
+        } finally {
+            postingRef.current.delete(key);
+        }
+    };
+
+    const approveTransfer = async (record: FinanceRecord, key: string) => {
         const transferDate = transferDates[key] || "";
         const mapping = mappingDrafts[key] || record.mapping || {};
         if (record.accurate_post_status === "posted") {
@@ -390,10 +403,15 @@ export default function FinancePage() {
         let proof: ProofMeta | undefined;
         let payload: PurchasePaymentPayload[] = [];
         let sent = false;
+        let accurateRes: unknown;
         // AM-014: "failed" hanya bila Accurate MENJAWAB menolak (atau gagal sebelum terkirim).
         // Timeout/non-JSON/gateway/sukses tanpa id = "unknown": tombol posting dikunci sampai
         // seseorang memeriksa purchase-payment di Accurate — mengulang buta = bayar dua kali.
         const recordNotPosted = async (postStatus: "failed" | "unknown", message: string, response?: unknown) => {
+            // Kunci LOKAL dulu: bila pencatatan ke server gagal, tombol tetap terkunci (review #3).
+            if (postStatus === "unknown") {
+                setRecords((prev) => prev.map((r) => recordKey(r) === key ? { ...r, accurate_post_status: "unknown", accurate_post_error: message } : r));
+            }
             if (!proof?.proof_id) return;
             try {
                 await updateFinanceStatus(record, {
@@ -418,7 +436,7 @@ export default function FinancePage() {
             proof = await uploadProof(key, record.transfer_proof);
             payload = buildPurchasePaymentPayload(record, mapping, proof, transferDate);
             sent = true;
-            const accurateRes = await accurateFetch("/api/purchase-payment/bulk-save.do", "POST", payload);
+            accurateRes = await accurateFetch("/api/purchase-payment/bulk-save.do", "POST", payload);
             const outcome = classifyBulkSaveResponse(accurateRes);
             if (outcome.kind !== "posted") {
                 await recordNotPosted(outcome.kind === "rejected" ? "failed" : "unknown", outcome.message, accurateRes);
@@ -439,8 +457,11 @@ export default function FinancePage() {
             await fetchData(dateFilter);
         } catch (err: unknown) {
             const message = getErrorMessage(err, "Gagal posting purchase-payment Accurate.");
-            const outcome = sent ? classifyWriteError(err) : ({ kind: "rejected", message } as const);
-            await recordNotPosted(outcome.kind === "rejected" ? "failed" : "unknown", message);
+            // accurateRes terisi = Accurate SUDAH menjawab (mis. pencatatan "posted" ke server gagal):
+            // tidak pasti, dan jawabannya ikut disimpan agar nomor PP tidak hilang.
+            const outcome = accurateRes !== undefined ? ({ kind: "unknown", message } as const)
+                : sent ? classifyWriteError(err) : ({ kind: "rejected", message } as const);
+            await recordNotPosted(outcome.kind === "rejected" ? "failed" : "unknown", message, accurateRes);
             toast.error(outcome.kind === "rejected" ? message : unknownMessage(message), { duration: 15000 });
         } finally {
             setBusyKey("");
@@ -452,10 +473,16 @@ export default function FinancePage() {
     const handleResolveUnknown = async (record: FinanceRecord) => {
         const found = window.prompt(
             "Status posting TIDAK PASTI. Cek purchase-payment di Accurate.\n" +
-            "Ketik NOMOR purchase-payment bila SUDAH ADA di Accurate, atau kosongkan bila TIDAK ADA (boleh posting ulang).",
+            "Ketik NOMOR purchase-payment bila SUDAH ADA, atau ketik TIDAK ADA bila benar-benar tidak ada (posting ulang dibuka).",
         );
         if (found === null) return;
-        const number = found.trim();
+        const typed = found.trim();
+        // Review #3: pilihan berbahaya (buka posting ulang) harus diketik, bukan default Enter kosong.
+        if (!typed) {
+            toast.error("Tidak ada yang diubah. Ketik nomor purchase-payment, atau TIDAK ADA.");
+            return;
+        }
+        const number = typed.toUpperCase() === "TIDAK ADA" ? "" : typed;
         const key = recordKey(record);
         setBusyKey(key);
         try {

@@ -70,6 +70,22 @@ def main():
     res = after.get("accurate_post_resolution") or {}
     assert res.get("from") == "unknown" and res.get("source") == "manual_attestation" and res.get("by"), res
 
+    # 3b) review #3: penyelesaian tidak menghapus bukti yang membuatnya unknown, dan butuh
+    #     catatan bermakna serta status tujuan eksplisit (posted/failed).
+    seed("")
+    r = update(accurate_post_status="unknown", accurate_post_error="timeout 30s",
+               accurate_post_response={"raw": "potongan"}, accurate_payload_digest="abc:123")
+    assert r.status_code == 200, r.text[:200]
+    for bad in [dict(accurate_post_status="failed", resolution_note="x"),
+                dict(accurate_post_status="", resolution_note="dicek manual di Accurate: tidak ditemukan")]:
+        r = update(**bad)
+        assert r.status_code in (400, 409), f"penyelesaian lemah diterima: {bad} -> {r.status_code}"
+        assert rec()["accurate_post_status"] == "unknown"
+    r = update(accurate_post_status="failed", resolution_note="dicek manual di Accurate: tidak ditemukan")
+    assert r.status_code == 200, r.text[:200]
+    prev = (rec().get("accurate_post_resolution") or {}).get("previous") or {}
+    assert prev.get("error") == "timeout 30s" and prev.get("response") == {"raw": "potongan"} and prev.get("digest") == "abc:123", prev
+
     # 4) status tak dikenal ditolak, bukan dipaksa 'failed'.
     seed("")
     r = update(accurate_post_status="verified")
