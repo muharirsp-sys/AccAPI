@@ -2053,7 +2053,11 @@ export default function Home() {
     routeConfig: typeof accurateRoutes[RouteKey],
     duplicateOptions?: { allowDuplicateKeys?: string[]; allowLockedKeys?: string[] }
   ) => {
-    if (document.location.pathname.includes('/sales-receipt')) {
+    // AM-041: dulu `document.location.pathname` — URL HALAMAN, yang selalu "/api-wrapper",
+    // sehingga lock idempotency, penandaan hasil, dan preview duplikat sales-receipt tidak
+    // pernah berjalan. Yang menentukan adalah endpoint yang dieksekusi.
+    const isSalesReceipt = routeConfig.path.includes('/sales-receipt/');
+    if (isSalesReceipt) {
       toast.loading("Mengunci batch idempotency...", { id: 'exec' });
       const keysPayload = rows.map((row: any) => buildSalesReceiptIdempotencyPayload(row));
       const lockRes = await fetch('/api/idempotency/lock', {
@@ -2094,7 +2098,7 @@ export default function Home() {
     const confirmedReceiptNumbersByKey = new Map<string, string[]>();
 
     const markIdempotency = async (row: any, isSuccess: boolean) => {
-      if (!document.location.pathname.includes('/sales-receipt')) return;
+      if (!isSalesReceipt) return;
       try {
         const rowKey = buildSalesReceiptIdempotencyPayload(row).key;
         if (overrideLockedKeySet.has(rowKey)) return;
@@ -2457,7 +2461,7 @@ export default function Home() {
     try {
       // Chunking Engine for Bulk Save (Handles both Max 100 Limit bypass AND Auto-Healing logic for any size)
       if (isBulk && Array.isArray(payloadObj)) {
-          if (document.location.pathname.includes('/sales-receipt')) {
+          if (routeConfig.path.includes('/sales-receipt/')) { // AM-041, lihat executeBulkPayload
               toast.loading("Menganalisis potensi pembayaran ganda...", { id: 'exec' });
               const reviewState = await previewSalesReceiptDuplicates(payloadObj, selectedRoute);
               if (reviewState) {
