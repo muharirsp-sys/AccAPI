@@ -44,6 +44,7 @@ test("gate purchase-payment: variasi path/huruf/encoding tetap ditolak; baca & e
         "/purchase-pay/apiment/bulk-save.do",
         "/purchase-payment/bulk-save.d/apio",
         "/api/purchase-payment/bulk-save.do;jsessionid=x",
+        "/api/purchase-payment;v=1/bulk-save.do", // host Java membuang ;param per segmen
         "/api/purchase-payment\\bulk-save.do",
     ]) {
         assert.equal(isGuardedAccurateWrite(p), true, p);
