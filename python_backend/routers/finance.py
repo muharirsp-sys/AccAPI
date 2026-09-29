@@ -3,8 +3,10 @@
 from fastapi import APIRouter
 
 from shared import (
+    _PAYMENTS_DB_LOCK,
     Any,
     Dict,
+    Optional,
     File,
     FileResponse,
     JSONResponse,
@@ -419,68 +421,98 @@ async def payments_finance_update(request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "error": "Format data tidak valid."})
     if not items:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Data finance yang akan diupdate tidak boleh kosong."})
-    db = load_payments_db()
-    updated_count = 0
-    for item in items:
-        no = normalize_lpb_no(s(item.get("no_lpb", "")))
-        status = s(item.get("status_pembayaran", ""))
-        principle = s(item.get("principle", "")).upper()
-        tipe_pengajuan = normalize_pengajuan_type(item.get("tipe_pengajuan", ""))
-        date_filter = s(item.get("date", ""))
-        submission_id = s(item.get("submission_id", ""))
-        draft_id = s(item.get("draft_id", ""))
-        if status not in ["Belum Transfer", "Sudah Transfer", "Ajukan Ulang"]:
-            continue
-        transfer_date = _normalize_yyyy_mm_dd(s(item.get("transfer_date", "")))
-        proof_id = s(item.get("proof_id", ""))
-        proof_meta = db.get("proofs", {}).get(proof_id, {}) if proof_id else {}
-        accurate_post_status = s(item.get("accurate_post_status", ""))
-        if accurate_post_status not in ["", "posted", "failed", "skipped"]:
-            accurate_post_status = "failed"
-        if status == "Sudah Transfer":
-            if not transfer_date:
-                return JSONResponse(status_code=400, content={"ok": False, "error": "Tanggal transfer wajib diisi untuk status Sudah Transfer."})
-            if not proof_id or not isinstance(proof_meta, dict) or not proof_meta:
-                return JSONResponse(status_code=400, content={"ok": False, "error": "Bukti transfer wajib diupload sebelum status Sudah Transfer."})
-
-        def apply_finance_update(rec: Dict[str, Any]) -> None:
-            nonlocal updated_count
-            rec["status_pembayaran"] = status
+    # AM-014: load..save di bawah lock yang sama dengan route payments; dulu tanpa lock, save
+    # payments dari worker thread bisa menimpa status posting yang baru ditulis di sini.
+    async with _PAYMENTS_DB_LOCK:
+        db = load_payments_db()
+        updated_count = 0
+        for item in items:
+            no = normalize_lpb_no(s(item.get("no_lpb", "")))
+            status = s(item.get("status_pembayaran", ""))
+            principle = s(item.get("principle", "")).upper()
+            tipe_pengajuan = normalize_pengajuan_type(item.get("tipe_pengajuan", ""))
+            date_filter = s(item.get("date", ""))
+            submission_id = s(item.get("submission_id", ""))
+            draft_id = s(item.get("draft_id", ""))
+            if status not in ["Belum Transfer", "Sudah Transfer", "Ajukan Ulang"]:
+                continue
+            transfer_date = _normalize_yyyy_mm_dd(s(item.get("transfer_date", "")))
+            proof_id = s(item.get("proof_id", ""))
+            proof_meta = db.get("proofs", {}).get(proof_id, {}) if proof_id else {}
+            accurate_post_status = s(item.get("accurate_post_status", ""))
+            # AM-014: "unknown" = Accurate mungkin sudah menyimpan (timeout/non-JSON/gateway). Status
+            # tak dikenal DITOLAK — dulu dipaksa "failed", yang membuka tombol posting ulang.
+            if accurate_post_status not in ["", "posted", "failed", "skipped", "unknown"]:
+                return JSONResponse(status_code=400, content={"ok": False, "error": f"Status posting Accurate tidak dikenal: {accurate_post_status}"})
+            resolution_note = s(item.get("resolution_note", ""))
             if status == "Sudah Transfer":
-                rec["transfer_date"] = transfer_date
-                rec["proof_id"] = proof_id
-                rec["transfer_proof"] = proof_meta
-                rec["accurate_post_status"] = accurate_post_status or "skipped"
-                rec["accurate_post_error"] = s(item.get("accurate_post_error", ""))
-                rec["accurate_purchase_payment_number"] = s(item.get("accurate_purchase_payment_number", ""))
-                rec["accurate_purchase_payment_id"] = s(item.get("accurate_purchase_payment_id", ""))
-                rec["accurate_post_response"] = item.get("accurate_post_response", {})
-                rec["accurate_payload_digest"] = s(item.get("accurate_payload_digest", ""))
-                rec["accurate_posted_at"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S") if rec["accurate_post_status"] == "posted" else s(rec.get("accurate_posted_at", ""))
-                rec["accurate_posted_by"] = user if rec["accurate_post_status"] == "posted" else s(rec.get("accurate_posted_by", ""))
-            updated_count += 1
+                if not transfer_date:
+                    return JSONResponse(status_code=400, content={"ok": False, "error": "Tanggal transfer wajib diisi untuk status Sudah Transfer."})
+                if not proof_id or not isinstance(proof_meta, dict) or not proof_meta:
+                    return JSONResponse(status_code=400, content={"ok": False, "error": "Bukti transfer wajib diupload sebelum status Sudah Transfer."})
 
-        if no and no in db.get("lpb", {}):
-            apply_finance_update(db["lpb"][no])
-            continue
-        if principle:
-            for k, r in db.get("lpb", {}).items():
-                submitted_at = s(r.get("submitted_at", ""))
-                submitted_date = _normalize_yyyy_mm_dd(submitted_at.split(" ")[0]) if submitted_at else ""
-                target_date = _normalize_yyyy_mm_dd(s(r.get("target_payment_date", ""))) or submitted_date
-                if date_filter and target_date != date_filter:
-                    continue
-                if submission_id and s(r.get("submission_id", "")) != submission_id:
-                    continue
-                if draft_id and s(r.get("draft_id", "")) != draft_id:
-                    continue
-                if tipe_pengajuan and normalize_pengajuan_type(r.get("tipe_pengajuan", "LPB")) != tipe_pengajuan:
-                    continue
-                if s(r.get("principle", "")).upper() == principle:
-                    apply_finance_update(db["lpb"][k])
-    if updated_count <= 0:
-        return JSONResponse(status_code=404, content={"ok": False, "error": "Tidak ada data finance yang cocok untuk diupdate."})
-    save_payments_db(db)
-    append_audit_log(user, "payments_finance_update", "lpb", {"count": updated_count, "items": len(items)})
-    return JSONResponse({"ok": True, "updated": updated_count})
+            def post_status_conflict(rec: Dict[str, Any]) -> Optional[str]:
+                """posted final dari layar ini; unknown hanya keluar lewat catatan penyelesaian."""
+                if status != "Sudah Transfer":
+                    return None
+                current = s(rec.get("accurate_post_status", ""))
+                if current == "posted":
+                    return f"LPB {s(rec.get('no_lpb', ''))} sudah posted ke Accurate ({s(rec.get('accurate_purchase_payment_number', '')) or s(rec.get('accurate_purchase_payment_id', ''))}); status tidak bisa diubah dari sini."
+                if current == "unknown" and accurate_post_status != "unknown" and not resolution_note:
+                    return f"Status posting LPB {s(rec.get('no_lpb', ''))} TIDAK PASTI: cek purchase-payment di Accurate, lalu selesaikan dengan catatan."
+                return None
+
+            def apply_finance_update(rec: Dict[str, Any]) -> None:
+                nonlocal updated_count
+                previous_post_status = s(rec.get("accurate_post_status", ""))
+                rec["status_pembayaran"] = status
+                if status == "Sudah Transfer":
+                    if previous_post_status == "unknown" and accurate_post_status != "unknown":
+                        # Atestasi MANUSIA, bukan verifikasi provider — dilabeli agar tidak menyamar.
+                        rec["accurate_post_resolution"] = {
+                            "from": "unknown", "to": accurate_post_status or "skipped", "source": "manual_attestation",
+                            "by": user, "at": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"), "note": resolution_note[:500],
+                        }
+                    rec["transfer_date"] = transfer_date
+                    rec["proof_id"] = proof_id
+                    rec["transfer_proof"] = proof_meta
+                    rec["accurate_post_status"] = accurate_post_status or "skipped"
+                    rec["accurate_post_error"] = s(item.get("accurate_post_error", ""))
+                    rec["accurate_purchase_payment_number"] = s(item.get("accurate_purchase_payment_number", ""))
+                    rec["accurate_purchase_payment_id"] = s(item.get("accurate_purchase_payment_id", ""))
+                    rec["accurate_post_response"] = item.get("accurate_post_response", {})
+                    rec["accurate_payload_digest"] = s(item.get("accurate_payload_digest", ""))
+                    rec["accurate_posted_at"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S") if rec["accurate_post_status"] == "posted" else s(rec.get("accurate_posted_at", ""))
+                    rec["accurate_posted_by"] = user if rec["accurate_post_status"] == "posted" else s(rec.get("accurate_posted_by", ""))
+                updated_count += 1
+
+            if no and no in db.get("lpb", {}):
+                conflict = post_status_conflict(db["lpb"][no])
+                if conflict:
+                    return JSONResponse(status_code=409, content={"ok": False, "error": conflict})
+                apply_finance_update(db["lpb"][no])
+                continue
+            if principle:
+                for k, r in db.get("lpb", {}).items():
+                    submitted_at = s(r.get("submitted_at", ""))
+                    submitted_date = _normalize_yyyy_mm_dd(submitted_at.split(" ")[0]) if submitted_at else ""
+                    target_date = _normalize_yyyy_mm_dd(s(r.get("target_payment_date", ""))) or submitted_date
+                    if date_filter and target_date != date_filter:
+                        continue
+                    if submission_id and s(r.get("submission_id", "")) != submission_id:
+                        continue
+                    if draft_id and s(r.get("draft_id", "")) != draft_id:
+                        continue
+                    if tipe_pengajuan and normalize_pengajuan_type(r.get("tipe_pengajuan", "LPB")) != tipe_pengajuan:
+                        continue
+                    if s(r.get("principle", "")).upper() == principle:
+                        conflict = post_status_conflict(db["lpb"][k])
+                        if conflict:
+                            return JSONResponse(status_code=409, content={"ok": False, "error": conflict})
+                        apply_finance_update(db["lpb"][k])
+        if updated_count <= 0:
+            return JSONResponse(status_code=404, content={"ok": False, "error": "Tidak ada data finance yang cocok untuk diupdate."})
+        save_payments_db(db)
+        append_audit_log(user, "payments_finance_update", "lpb", {"count": updated_count, "items": len(items)})
+        return JSONResponse({"ok": True, "updated": updated_count})
 

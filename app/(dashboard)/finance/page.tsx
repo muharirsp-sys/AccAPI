@@ -9,9 +9,9 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, DollarSign, Download, FileUp, RefreshCcw, Save, Search, Send, XCircle } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, DollarSign, Download, FileUp, RefreshCcw, Save, Search, Send, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import { accurateFetch } from "@/lib/apiFetcher";
+import { accurateFetch, classifyBulkSaveResponse, classifyWriteError } from "@/lib/apiFetcher";
 import DatePickerField from "@/components/ui/DatePickerField";
 import { fuzzyMatch } from "@/lib/fuzzySearch";
 import { resolveApiBase } from "@/lib/apiBase";
@@ -179,34 +179,8 @@ function toAccurateDate(ymd: string) {
     return `${day}/${month}/${year}`;
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-    return value && typeof value === "object" ? value as Record<string, unknown> : {};
-}
-
 function getErrorMessage(err: unknown, fallback: string) {
     return err instanceof Error ? err.message : fallback;
-}
-
-function extractAccurateIdentity(data: unknown) {
-    const first = Array.isArray(data) ? data[0] : data;
-    const firstRecord = asRecord(first);
-    const body = asRecord(firstRecord.d || firstRecord.data || firstRecord);
-    const nestedR = asRecord(body.r);
-    const nestedD = asRecord(body.d);
-    return {
-        number: String(body.number || nestedR.number || nestedD.number || ""),
-        id: String(body.id || nestedR.id || nestedD.id || ""),
-    };
-}
-
-function assertBulkSuccess(data: unknown) {
-    if (Array.isArray(data)) {
-        const failed = data.filter((item) => !asRecord(item).s);
-        if (failed.length > 0) {
-            const first = asRecord(failed[0]);
-            throw new Error(JSON.stringify(first.d || first, null, 2));
-        }
-    }
 }
 
 export default function FinancePage() {
@@ -415,21 +389,49 @@ export default function FinancePage() {
         setBusyKey(key);
         let proof: ProofMeta | undefined;
         let payload: PurchasePaymentPayload[] = [];
+        let sent = false;
+        // AM-014: "failed" hanya bila Accurate MENJAWAB menolak (atau gagal sebelum terkirim).
+        // Timeout/non-JSON/gateway/sukses tanpa id = "unknown": tombol posting dikunci sampai
+        // seseorang memeriksa purchase-payment di Accurate — mengulang buta = bayar dua kali.
+        const recordNotPosted = async (postStatus: "failed" | "unknown", message: string, response?: unknown) => {
+            if (!proof?.proof_id) return;
+            try {
+                await updateFinanceStatus(record, {
+                    status_pembayaran: "Sudah Transfer",
+                    transfer_date: transferDate,
+                    proof_id: proof.proof_id,
+                    accurate_post_status: postStatus,
+                    accurate_post_error: message.slice(0, 1000),
+                    ...(response === undefined ? {} : { accurate_post_response: response }),
+                    accurate_payload_digest: `${proof.sha256 || ""}:${JSON.stringify(payload).length}`,
+                });
+                await fetchData(dateFilter);
+            } catch {
+                // keep the original Accurate error visible
+            }
+        };
+        const unknownMessage = (message: string) =>
+            `Status posting TIDAK PASTI (${message}). Cek purchase-payment di Accurate sebelum mencoba lagi.`;
         try {
             const saved = await handleSaveMapping(record);
             if (!saved) return;
             proof = await uploadProof(key, record.transfer_proof);
             payload = buildPurchasePaymentPayload(record, mapping, proof, transferDate);
+            sent = true;
             const accurateRes = await accurateFetch("/api/purchase-payment/bulk-save.do", "POST", payload);
-            assertBulkSuccess(accurateRes);
-            const identity = extractAccurateIdentity(accurateRes);
+            const outcome = classifyBulkSaveResponse(accurateRes);
+            if (outcome.kind !== "posted") {
+                await recordNotPosted(outcome.kind === "rejected" ? "failed" : "unknown", outcome.message, accurateRes);
+                toast.error(outcome.kind === "rejected" ? outcome.message : unknownMessage(outcome.message), { duration: 15000 });
+                return;
+            }
             await updateFinanceStatus(record, {
                 status_pembayaran: "Sudah Transfer",
                 transfer_date: transferDate,
                 proof_id: proof.proof_id,
                 accurate_post_status: "posted",
-                accurate_purchase_payment_number: identity.number,
-                accurate_purchase_payment_id: identity.id,
+                accurate_purchase_payment_number: outcome.number,
+                accurate_purchase_payment_id: outcome.id,
                 accurate_post_response: accurateRes,
                 accurate_payload_digest: `${proof.sha256 || ""}:${JSON.stringify(payload).length}`,
             });
@@ -437,22 +439,38 @@ export default function FinancePage() {
             await fetchData(dateFilter);
         } catch (err: unknown) {
             const message = getErrorMessage(err, "Gagal posting purchase-payment Accurate.");
-            if (proof?.proof_id) {
-                try {
-                    await updateFinanceStatus(record, {
-                        status_pembayaran: "Sudah Transfer",
-                        transfer_date: transferDate,
-                        proof_id: proof.proof_id,
-                        accurate_post_status: "failed",
-                        accurate_post_error: message.slice(0, 1000),
-                        accurate_payload_digest: `${proof.sha256 || ""}:${JSON.stringify(payload).length}`,
-                    });
-                    await fetchData(dateFilter);
-                } catch {
-                    // keep the original Accurate error visible
-                }
-            }
-            toast.error(message);
+            const outcome = sent ? classifyWriteError(err) : ({ kind: "rejected", message } as const);
+            await recordNotPosted(outcome.kind === "rejected" ? "failed" : "unknown", message);
+            toast.error(outcome.kind === "rejected" ? message : unknownMessage(message), { duration: 15000 });
+        } finally {
+            setBusyKey("");
+        }
+    };
+
+    // Penyelesaian status TIDAK PASTI oleh manusia: dicatat server sebagai atestasi manual
+    // (accurate_post_resolution.source = "manual_attestation"), bukan verifikasi provider.
+    const handleResolveUnknown = async (record: FinanceRecord) => {
+        const found = window.prompt(
+            "Status posting TIDAK PASTI. Cek purchase-payment di Accurate.\n" +
+            "Ketik NOMOR purchase-payment bila SUDAH ADA di Accurate, atau kosongkan bila TIDAK ADA (boleh posting ulang).",
+        );
+        if (found === null) return;
+        const number = found.trim();
+        const key = recordKey(record);
+        setBusyKey(key);
+        try {
+            await updateFinanceStatus(record, {
+                status_pembayaran: "Sudah Transfer",
+                transfer_date: record.transfer_date || "",
+                proof_id: record.transfer_proof?.proof_id || "",
+                accurate_post_status: number ? "posted" : "failed",
+                ...(number ? { accurate_purchase_payment_number: number } : { accurate_post_error: "dicek manual: tidak ada di Accurate" }),
+                resolution_note: number ? `dicek manual di Accurate: ${number} ada` : "dicek manual di Accurate: tidak ditemukan",
+            });
+            toast.success(number ? `Ditandai posted (manual): ${number}` : "Ditandai tidak ada di Accurate — boleh posting ulang.");
+            await fetchData(dateFilter);
+        } catch (err: unknown) {
+            toast.error(getErrorMessage(err, "Gagal menyimpan penyelesaian."));
         } finally {
             setBusyKey("");
         }
@@ -526,6 +544,7 @@ export default function FinancePage() {
                                     const isBusy = busyKey === key;
                                     const posted = record.accurate_post_status === "posted";
                                     const failedPost = record.accurate_post_status === "failed";
+                                    const unknownPost = record.accurate_post_status === "unknown";
                                     return (
                                         <tr key={key} className="hover:bg-white/[0.02] align-top">
                                             <td className="px-4 py-3 font-mono font-bold text-slate-300 whitespace-nowrap">
@@ -573,12 +592,18 @@ export default function FinancePage() {
                                                 </span>
                                                 {posted && <div className="mt-2 text-[11px] text-emerald-400">Posted Accurate {record.accurate_purchase_payment_number || ""}</div>}
                                                 {failedPost && <div className="mt-2 max-w-[220px] text-[11px] text-red-300 truncate" title={record.accurate_post_error}>Post gagal: {record.accurate_post_error}</div>}
+                                                {unknownPost && <div className="mt-2 max-w-[220px] text-[11px] text-amber-300" title={record.accurate_post_error}>Status Accurate TIDAK PASTI — cek purchase-payment sebelum posting ulang</div>}
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div className="flex flex-col gap-2 w-[190px]">
-                                                    <button disabled={isBusy || posted} onClick={() => handleApproveTransfer(record)} className="inline-flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold px-3 py-2 rounded hover:bg-emerald-500 disabled:opacity-50">
+                                                    <button disabled={isBusy || posted || unknownPost} onClick={() => handleApproveTransfer(record)} className="inline-flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold px-3 py-2 rounded hover:bg-emerald-500 disabled:opacity-50">
                                                         <Send size={14} /> Sudah Transfer
                                                     </button>
+                                                    {unknownPost && (
+                                                        <button disabled={isBusy} onClick={() => handleResolveUnknown(record)} className="inline-flex items-center justify-center gap-1 bg-amber-500/10 border border-amber-500/30 text-amber-300 px-2 py-1.5 rounded hover:bg-amber-500/20 disabled:opacity-50">
+                                                            <AlertTriangle size={13} /> Sudah dicek di Accurate
+                                                        </button>
+                                                    )}
                                                     <div className="grid grid-cols-2 gap-2">
                                                         <button disabled={isBusy} onClick={() => handleMarkStatus(record, "Belum Transfer")} className="inline-flex items-center justify-center gap-1 bg-white/5 border border-white/10 text-slate-300 px-2 py-1.5 rounded hover:bg-white/10 disabled:opacity-50">
                                                             <XCircle size={13} /> Belum
