@@ -924,6 +924,7 @@ _AUTH_VERIFY_CACHE: Dict[str, Tuple[float, Optional[str]]] = {}
 # D4: permissions per email hasil verify — pengganti baca kolom user.permissions dari sqlite.
 _AUTH_VERIFY_PERMS: Dict[str, Tuple[float, Any]] = {}
 _AUTH_VERIFY_TTL = 60.0
+_AUTH_VERIFY_PERMS_GRACE = 30.0  # izin > sesi: cek izin dalam request yang sesinya baru divalidasi tidak pernah kosong
 
 def _verify_session_via_next(ba_token: str, raw_cookie: str) -> Optional[str]:
     import time
@@ -931,28 +932,35 @@ def _verify_session_via_next(ba_token: str, raw_cookie: str) -> Optional[str]:
     if cached and cached[0] > time.time():
         return cached[1]
     result: Optional[str] = None
-    # Satu cap waktu untuk sesi & izin: dulu dua time.time() terpisah membuat izin kedaluwarsa
-    # sesaat sebelum sesinya, dan di celah itu user_has_permission jatuh ke preset role legacy.
     expires = time.time() + _AUTH_VERIFY_TTL
     try:
         import requests
         r = requests.get(AUTH_VERIFY_URL, headers={"cookie": raw_cookie}, timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            if data.get("ok"):
-                role = s(data.get("role")).lower() or "viewer"
-                if role not in {"admin", "manager", "finance", "staff", "viewer"}:
-                    role = "viewer"
-                identity = s(data.get("email")).lower() or s(data.get("name"))
-                result = f"betterauth|{role}|{identity}"
-                if s(data.get("email")):
-                    # AM-010: izin EFEKTIF dari resolver Next (group otoritatif) bila tersedia.
-                    # ponytail: jalur `permissions` legacy hanya untuk Next lama saat deploy
-                    # tidak serempak; hapus setelah semua image Next mengirim effectivePermissions.
-                    effective = data.get("effectivePermissions")
-                    profile = ({"__custom": True, "__effective": True, "permissions": effective}
-                               if isinstance(effective, list) else data.get("permissions"))
-                    _AUTH_VERIFY_PERMS[s(data.get("email")).lower()] = (expires, profile)
+        if r.status_code not in (200, 401, 403):
+            # 5xx/lainnya = verify sesaat gagal (mis. DB Next), BUKAN sesi invalid: jangan
+            # di-cache, supaya satu gangguan tidak mengunci user selama TTL.
+            print(f"[AUTH VERIFY] {AUTH_VERIFY_URL} HTTP {r.status_code}")
+            return None
+        data = r.json() if r.status_code == 200 else {}
+        if data.get("ok"):
+            role = s(data.get("role")).lower() or "viewer"
+            if role not in {"admin", "manager", "finance", "staff", "viewer"}:
+                role = "viewer"
+            identity = s(data.get("email")).lower() or s(data.get("name"))
+            result = f"betterauth|{role}|{identity}"
+            if s(data.get("email")):
+                # AM-010: izin EFEKTIF dari resolver Next (group otoritatif) bila tersedia.
+                # ponytail: jalur `permissions` legacy hanya untuk Next lama saat deploy
+                # tidak serempak; hapus setelah semua image Next mengirim effectivePermissions.
+                if "effectivePermissions" in data:
+                    effective = data["effectivePermissions"]
+                    profile = {"__custom": True, "__effective": True,
+                               "permissions": effective if isinstance(effective, list) else []}
+                else:
+                    profile = data.get("permissions")
+                # Izin hidup sedikit lebih lama dari sesinya: selama sesi ter-cache valid, izinnya
+                # pasti ada. Profil hilang/kedaluwarsa ditolak (fail-closed) di _effective_permissions.
+                _AUTH_VERIFY_PERMS[s(data.get("email")).lower()] = (expires + _AUTH_VERIFY_PERMS_GRACE, profile)
     except Exception as e:
         print(f"[AUTH VERIFY] gagal panggil {AUTH_VERIFY_URL}: {e}")
         return None  # jangan cache kegagalan network — fallback sqlite di caller
@@ -961,14 +969,19 @@ def _verify_session_via_next(ba_token: str, raw_cookie: str) -> Optional[str]:
 
 
 def _effective_permissions(username: str) -> Optional[Dict[str, Set[str]]]:
-    """Izin efektif Next untuk identitas ini, atau None bila tidak ada (jalur legacy)."""
+    """Izin efektif Next untuk identitas ini.
+
+    None = jalur legacy sah (tanpa AUTH_VERIFY_URL, atau Next lama tanpa effectivePermissions).
+    {}   = verify aktif tetapi tidak ada profil hidup -> tolak semua (fail-closed; dulu jatuh ke
+           preset role, termasuk jalan pintas admin).
+    """
     if not AUTH_VERIFY_URL or not s(username).startswith("betterauth|"):
         return None
     import time
     email = s(username.split("|", 2)[2] if username.count("|") >= 2 else "").lower()
     cached = _AUTH_VERIFY_PERMS.get(email)
     if not cached or cached[0] <= time.time():
-        return None
+        return {}
     profile = cached[1]
     if not (isinstance(profile, dict) and profile.get("__effective") is True):
         return None

@@ -501,8 +501,9 @@ async def payments_clear(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    if not is_admin_user(user):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Hanya admin yang bisa clear seluruh data payments."})
+    # Review F2: key eksplisit dari izin efektif, bukan role admin (yang mengabaikan group).
+    if not user_has_permission(user, "payments", "delete"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.delete untuk clear seluruh data payments."})
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})

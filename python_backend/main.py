@@ -150,6 +150,8 @@ def get_bank_data(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "sppd", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.view"})
     bank_map = load_bank_map()
     items = []
     for key, info in bank_map.items():
@@ -172,6 +174,8 @@ def get_bank_data_match_report(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "sppd", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.view"})
     bank_map = load_bank_map()
     # Kumpulkan semua principle names dari payments DB
     db = load_payments_db()
@@ -270,6 +274,8 @@ def lookup_bank_data(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "sppd", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.view"})
     principle_name = s(request.query_params.get("principle", ""))
     if not principle_name:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Parameter 'principle' wajib diisi."})
