@@ -167,6 +167,53 @@ def check_concurrent_submit_single_winner():
     assert len(shared.load_payments_db()["submissions"]) == 1
 
 
+def check_concurrent_writer_not_lost():
+    """Review AM-012 #1: penulis lain (mapping finance) yang mendarat saat submit BANK_PANIN sedang
+    me-render SPPD di dalam lock tidak boleh hilang ditimpa save submit (salinan per request)."""
+    import time
+
+    import httpx
+    from routers import finance, payments
+
+    payments_client()  # tambal identitas/izin router payments
+    # asyncio.Lock terikat ke loop tempat ia pertama diperebutkan; tiap asyncio.run = loop baru
+    # (produksi: satu loop). SATU objek lock baru untuk kedua router supaya tetap saling mengunci.
+    payments._PAYMENTS_DB_LOCK = finance._PAYMENTS_DB_LOCK = asyncio.Lock()
+    finance.get_current_user = lambda request: "betterauth|admin|uji@x.test"
+    finance.user_has_permission = lambda user, module, action: True
+    finance.validate_csrf_request = lambda request, token: True
+    finance.append_audit_log = lambda *a, **k: None
+    buf = io.BytesIO()
+    pd.DataFrame([{"PRINCIPLE": "PT UJI", "NAMA BANK": "PANIN", "NOMOR REKENING": "123", "NAMA PENERIMA": "PT UJI"}]).to_excel(buf, index=False)
+    open(shared.BANK_DATA_PATH, "wb").write(buf.getvalue())
+    write_db({"lpb": {"R1": lpb("R1")}, "sppd_settings": {"last_sequence": 1}})
+    app = FastAPI()
+    app.include_router(payments.router)
+    app.include_router(finance.router)
+    draft = TestClient(app).post("/payments/cart/create", json={"method": "BANK_PANIN", "record_ids": ["R1"],
+                                                                 "target_payment_date": "2026-10-01"}).json()["draft_id"]
+    original = payments.render_sppd_docx
+    payments.render_sppd_docx = lambda *a, **k: time.sleep(0.6)  # render lambat, dijalankan via to_thread di dalam lock
+
+    async def both():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            async def mapping():
+                await asyncio.sleep(0.2)
+                return await c.post("/payments/finance/mapping", json={"principle": "PT UJI", "vendorNo": "V-9", "bankNo": "B-9"})
+            return await asyncio.gather(
+                c.post("/payments/cart/submit", json={"draft_id": draft, "items": [{"group_key": "PT UJI||LPB", "jenis_pembayaran": "TRF", "potongan": 0}]}),
+                mapping())
+
+    try:
+        submit, mapped = asyncio.run(both())
+    finally:
+        payments.render_sppd_docx = original
+    assert submit.status_code == 200 and mapped.status_code == 200, (submit.text[:120], mapped.text[:120])
+    saved = json.load(open(DB_PATH, encoding="utf-8"))
+    assert saved.get("finance_mappings"), "mapping finance hilang ditimpa save cart submit (lost update)"
+    assert len(saved["submissions"]) == 1
+
+
 def main():
     check_isolation()
     check_corrupt_is_not_empty()
@@ -174,6 +221,7 @@ def main():
     check_failed_batch_leaves_no_mutation()
     check_stale_draft_cannot_resubmit()
     check_concurrent_submit_single_winner()
+    check_concurrent_writer_not_lost()
     print("OK test_payments_db_isolation")
 
 

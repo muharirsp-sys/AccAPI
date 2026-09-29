@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from shared import (
+    _PAYMENTS_DB_LOCK,
     Dict,
     File,
     JSONResponse,
@@ -56,50 +57,52 @@ async def payments_sppd_upload(request: Request, file: UploadFile = File(None)):
         rows, ignored_columns, blocked_columns = parse_sppd_excel_rows(content)
         if not rows:
             return JSONResponse(status_code=400, content={"ok": False, "error": "Tidak ada baris valid untuk diupdate."})
-        db = load_payments_db()
-        updated: List[str] = []
-        not_found: List[str] = []
-        changed_fields: Dict[str, int] = {}
-        for item in rows:
-            row_id = s(item.get("record_id", "")) or s(item.get("no_lpb", ""))
-            key = resolve_payment_record_key(db, row_id)
-            if not key or key not in db.get("lpb", {}):
-                not_found.append(row_id or "-")
-                continue
-            rec = db["lpb"][key]
-            next_no_lpb = s(item.get("no_lpb", rec.get("no_lpb", "")))
-            if next_no_lpb:
-                dup_key = find_lpb_duplicate_key(db, next_no_lpb, exclude_key=key)
-                if dup_key:
-                    return JSONResponse(status_code=400, content={"ok": False, "error": f"No. LPB {next_no_lpb} sudah dipakai record lain."})
-            for field, value in item.items():
-                if field == "record_id" or field in SPPD_EXCEL_FORBIDDEN_FIELDS:
+        # AM-012: satu lock untuk semua penulis ledger (salinan per request -> tanpa lock = lost update).
+        async with _PAYMENTS_DB_LOCK:
+            db = load_payments_db()
+            updated: List[str] = []
+            not_found: List[str] = []
+            changed_fields: Dict[str, int] = {}
+            for item in rows:
+                row_id = s(item.get("record_id", "")) or s(item.get("no_lpb", ""))
+                key = resolve_payment_record_key(db, row_id)
+                if not key or key not in db.get("lpb", {}):
+                    not_found.append(row_id or "-")
                     continue
-                rec[field] = value
-                changed_fields[field] = changed_fields.get(field, 0) + 1
-            if "nilai_invoice" in item or "nilai_win" in item:
-                try:
-                    rec["gap_nilai"] = float(parse_number_id(rec.get("nilai_win", 0))) - float(parse_number_id(rec.get("nilai_invoice", 0)))
-                except Exception:
-                    rec["gap_nilai"] = 0.0
-            updated.append(key)
-        if not updated:
-            return JSONResponse(status_code=400, content={"ok": False, "error": "Tidak ada record yang cocok untuk diupdate.", "not_found": not_found[:20]})
-        save_payments_db(db)
-        append_audit_log(user, "payments_sppd_excel_upload", "lpb", {
-            "updated": len(updated),
-            "not_found": len(not_found),
-            "changed_fields": changed_fields,
-            "blocked_columns": blocked_columns,
-        })
-        return JSONResponse({
-            "ok": True,
-            "updated": len(updated),
-            "not_found": not_found[:20],
-            "ignored_columns": ignored_columns[:30],
-            "blocked_columns": blocked_columns[:30],
-            "changed_fields": changed_fields,
-        })
+                rec = db["lpb"][key]
+                next_no_lpb = s(item.get("no_lpb", rec.get("no_lpb", "")))
+                if next_no_lpb:
+                    dup_key = find_lpb_duplicate_key(db, next_no_lpb, exclude_key=key)
+                    if dup_key:
+                        return JSONResponse(status_code=400, content={"ok": False, "error": f"No. LPB {next_no_lpb} sudah dipakai record lain."})
+                for field, value in item.items():
+                    if field == "record_id" or field in SPPD_EXCEL_FORBIDDEN_FIELDS:
+                        continue
+                    rec[field] = value
+                    changed_fields[field] = changed_fields.get(field, 0) + 1
+                if "nilai_invoice" in item or "nilai_win" in item:
+                    try:
+                        rec["gap_nilai"] = float(parse_number_id(rec.get("nilai_win", 0))) - float(parse_number_id(rec.get("nilai_invoice", 0)))
+                    except Exception:
+                        rec["gap_nilai"] = 0.0
+                updated.append(key)
+            if not updated:
+                return JSONResponse(status_code=400, content={"ok": False, "error": "Tidak ada record yang cocok untuk diupdate.", "not_found": not_found[:20]})
+            save_payments_db(db)
+            append_audit_log(user, "payments_sppd_excel_upload", "lpb", {
+                "updated": len(updated),
+                "not_found": len(not_found),
+                "changed_fields": changed_fields,
+                "blocked_columns": blocked_columns,
+            })
+            return JSONResponse({
+                "ok": True,
+                "updated": len(updated),
+                "not_found": not_found[:20],
+                "ignored_columns": ignored_columns[:30],
+                "blocked_columns": blocked_columns[:30],
+                "changed_fields": changed_fields,
+            })
     except ValueError as e:
         return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
     except Exception as e:
@@ -141,26 +144,45 @@ async def payments_sppd_settings_save(request: Request):
         payload = await request.json()
     except Exception:
         payload = {}
-    db = load_payments_db()
-    current = get_sppd_settings(db)
-    settings = normalize_sppd_settings({**current, **(payload if isinstance(payload, dict) else {})}, db)
-    settings["updated_at"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
-    settings["updated_by"] = user
-    db["sppd_settings"] = settings
-    db["sppd_seq"] = int(settings.get("last_sequence", 0))
-    save_payments_db(db)
-    append_audit_log(user, "payments_sppd_settings_save", "sppd_settings", {
-        "last_sequence": settings.get("last_sequence"),
-        "fixed_jaminan_date": settings.get("fixed_jaminan_date"),
-        "maturity_months": settings.get("maturity_months"),
-    })
-    next_seq = int(settings.get("last_sequence", 0)) + 1
-    preview_dt = pd.Timestamp.today()
-    return JSONResponse({
-        "ok": True,
-        "settings": settings,
-        "next_sequence": next_seq,
-        "preview_number": format_sppd_number_with_template(next_seq, preview_dt, s(settings.get("number_template", ""))),
-    })
+    # AM-012: satu lock untuk semua penulis ledger (salinan per request -> tanpa lock = lost update).
+    async with _PAYMENTS_DB_LOCK:
+        db = load_payments_db()
+        current = get_sppd_settings(db)
+        payload = payload if isinstance(payload, dict) else {}
+        # AM-019 (H08): urutan SPPD hanya boleh diubah oleh halaman yang MELIHAT nilai sekarang.
+        # Halaman basi (submit BANK_PANIN sudah menaikkan urutan) atau yang gagal memuat (default 0)
+        # dulu memundurkan urutan diam-diam -> nomor SPPD ganda. Mundur sengaja (reset) tetap boleh.
+        if "last_sequence" in payload:
+            expected = payload.pop("expected_last_sequence", None)
+            try:
+                matches = expected is not None and int(expected) == int(current.get("last_sequence", 0))
+            except (TypeError, ValueError):
+                matches = False
+            if not matches:
+                return JSONResponse(status_code=409, content={
+                    "ok": False, "current_last_sequence": current.get("last_sequence"),
+                    "error": f"Urutan SPPD sudah {current.get('last_sequence')} (halaman basi atau gagal dimuat). Muat ulang lalu ulangi.",
+                })
+        previous_sequence = current.get("last_sequence")
+        settings = normalize_sppd_settings({**current, **payload}, db)
+        settings["updated_at"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        settings["updated_by"] = user
+        db["sppd_settings"] = settings
+        db["sppd_seq"] = int(settings.get("last_sequence", 0))
+        save_payments_db(db)
+        append_audit_log(user, "payments_sppd_settings_save", "sppd_settings", {
+            "previous_last_sequence": previous_sequence,
+            "last_sequence": settings.get("last_sequence"),
+            "fixed_jaminan_date": settings.get("fixed_jaminan_date"),
+            "maturity_months": settings.get("maturity_months"),
+        })
+        next_seq = int(settings.get("last_sequence", 0)) + 1
+        preview_dt = pd.Timestamp.today()
+        return JSONResponse({
+            "ok": True,
+            "settings": settings,
+            "next_sequence": next_seq,
+            "preview_number": format_sppd_number_with_template(next_seq, preview_dt, s(settings.get("number_template", ""))),
+        })
 
 

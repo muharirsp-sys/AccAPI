@@ -348,20 +348,22 @@ async def payments_finance_mapping_save(request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "error": "Principle wajib diisi."})
     if not vendor_no or not bank_no:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Vendor No dan Bank No Accurate wajib diisi."})
-    db = load_payments_db()
-    mapping = {
-        "principle": principle,
-        "vendorNo": vendor_no,
-        "vendorName": s(payload.get("vendorName", "")),
-        "bankNo": bank_no,
-        "bankName": s(payload.get("bankName", "")),
-        "updated_at": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "updated_by": user,
-    }
-    db.setdefault("finance_mappings", {})[finance_mapping_key(principle)] = mapping
-    save_payments_db(db)
-    append_audit_log(user, "payments_finance_mapping_save", "finance_mapping", {"principle": principle, "vendorNo": vendor_no, "bankNo": bank_no})
-    return JSONResponse({"ok": True, "mapping": mapping})
+    # AM-012: satu lock untuk semua penulis ledger (salinan per request -> tanpa lock = lost update).
+    async with _PAYMENTS_DB_LOCK:
+        db = load_payments_db()
+        mapping = {
+            "principle": principle,
+            "vendorNo": vendor_no,
+            "vendorName": s(payload.get("vendorName", "")),
+            "bankNo": bank_no,
+            "bankName": s(payload.get("bankName", "")),
+            "updated_at": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "updated_by": user,
+        }
+        db.setdefault("finance_mappings", {})[finance_mapping_key(principle)] = mapping
+        save_payments_db(db)
+        append_audit_log(user, "payments_finance_mapping_save", "finance_mapping", {"principle": principle, "vendorNo": vendor_no, "bankNo": bank_no})
+        return JSONResponse({"ok": True, "mapping": mapping})
 
 @router.post("/payments/finance/proof")
 async def payments_finance_proof_upload(request: Request, file: UploadFile = File(None)):
@@ -391,11 +393,13 @@ async def payments_finance_proof_upload(request: Request, file: UploadFile = Fil
         with open(out_path, "wb") as f:
             f.write(content)
         meta = build_proof_metadata(proof_id, stored_name, original_name, content, user)
-        db = load_payments_db()
-        db.setdefault("proofs", {})[proof_id] = meta
-        save_payments_db(db)
-        append_audit_log(user, "payments_finance_proof_upload", "proof", {"proof_id": proof_id, "stored_filename": stored_name, "size": len(content)})
-        return JSONResponse({"ok": True, "proof": meta})
+        # AM-012: satu lock untuk semua penulis ledger (salinan per request -> tanpa lock = lost update).
+        async with _PAYMENTS_DB_LOCK:
+            db = load_payments_db()
+            db.setdefault("proofs", {})[proof_id] = meta
+            save_payments_db(db)
+            append_audit_log(user, "payments_finance_proof_upload", "proof", {"proof_id": proof_id, "stored_filename": stored_name, "size": len(content)})
+            return JSONResponse({"ok": True, "proof": meta})
     except ValueError as e:
         return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
     except Exception as e:
