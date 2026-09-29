@@ -134,6 +134,9 @@ export async function POST(request: NextRequest) {
                 typeAutoNumber: resolved.branch.autoNumberId,
                 label: candidate.soNo,
                 masterSalesmanId: salesmanIds.get(salesmanBySo.get(candidate.soNo) ?? ""),
+                // Nomor pegawai yang SAMA dengan id di atas, hanya bila id-nya ketemu (aktif, sales).
+                salesmanNumber: salesmanIds.has(salesmanBySo.get(candidate.soNo) ?? "")
+                    ? salesmanBySo.get(candidate.soNo) : undefined,
             });
             ready.push({
                 key: candidate.key, soNo: candidate.soNo, customerNo: candidate.customerNo,

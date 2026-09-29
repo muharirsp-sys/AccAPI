@@ -62,6 +62,8 @@ export type InvoiceLinePayload = {
     itemCashDiscount: number;
     detailNotes: string;
     charField1: string;
+    /** Sales per baris (nomor pegawai Accurate). Lihat `salesmanNumber` di buildInvoicePayload. */
+    salesmanListNumber?: string[];
 };
 
 export type InvoicePayload = {
@@ -104,7 +106,7 @@ export function buildInvoicePayload(
     // `label` = penanda pendek pada catatan tiap baris faktur. Default potongan id order;
     // jalur laporan principal mengirim nomor SO-nya, yang jauh lebih berarti bagi pembukuan.
     options: { unitIds: Map<string, number>; branchId: number; typeAutoNumber: number; label?: string;
-        masterSalesmanId?: number },
+        masterSalesmanId?: number; salesmanNumber?: string },
 ): InvoicePayload {
     if (!order.customer_no?.trim()) throw new Error("Order tanpa kode pelanggan Accurate tidak bisa difakturkan");
     if (order.result?.pending_price) throw new Error("Order berstatus needs_price; isi harga dulu sebelum difakturkan");
@@ -112,6 +114,12 @@ export function buildInvoicePayload(
     if (resultLines.length === 0) throw new Error("Order tidak punya baris hasil yang dibekukan");
 
     const frozen = new Map(order.lines.map((line) => [`${line.code}|${line.unit}`, line]));
+    // Sales PER BARIS, bukan hanya di kepala faktur. Layar Accurate menyimpan sales per baris
+    // (`salesmanList`); faktur API yang hanya membawa `masterSalesmanId` kehilangan salesnya
+    // begitu disimpan ulang dari layar Accurate — terjadi 2026-09-29 09:25 WITA pada
+    // KN01225-KN01227 semenit sesudah terkirim. Dikirim hanya bila salesnya sah (sama dengan
+    // syarat `masterSalesmanId`); verifikasi balik membuktikan apakah Accurate menyimpannya.
+    const perBaris = options.salesmanNumber ? { salesmanListNumber: [options.salesmanNumber] } : {};
     const detailItem = resultLines.map((line, index) => {
         const key = `${line.code}|${line.unit}`;
         const input = frozen.get(key);
@@ -148,6 +156,7 @@ export function buildInvoicePayload(
             itemCashDiscount: cash,
             detailNotes: `order ${options.label ?? order.id.slice(0, 8)} baris ${index + 1}`,
             charField1: order.id,
+            ...perBaris,
         };
     });
 
@@ -160,7 +169,7 @@ export function buildInvoicePayload(
         // bukan dihilangkan: field yang absen membuat Accurate memakai nilai bawaannya sendiri.
         detailItem.push({ itemNo: bonus.code, quantity, unitPrice: 0, itemUnitId: unitId,
             itemDiscPercent: "", itemCashDiscount: 0,
-            detailNotes: `Bonus ${bonus.program_id}`.slice(0, 250), charField1: order.id });
+            detailNotes: `Bonus ${bonus.program_id}`.slice(0, 250), charField1: order.id, ...perBaris });
     }
 
     const sources = order.sources.map((source) => `${source.draft_id.slice(0, 8)}r${source.revision}`).join(",");
