@@ -2271,11 +2271,14 @@ export default function Home() {
 
                     repostAttempted = true;
                     const retryData = await accurateFetch(routeConfig.path, routeConfig.method, [healedRow]);
-                    const isRetrySuccess = Array.isArray(retryData) ? retryData[0]?.s : retryData.s;
+                    // Hasil PER ITEM seperti mode individu (H09): amplop s:true bisa membawa d[0].s:false —
+                    // dulu dibaca sukses -> baris ditandai SUCCESS padahal koreksi ditolak (review AM-025 M1).
+                    const retryItem = Array.isArray(retryData) ? retryData[0] : Array.isArray(retryData?.d) ? retryData.d[0] : retryData;
+                    const isRetrySuccess = !!retryItem?.s;
 
                     if (isRetrySuccess) {
                       isHealed = true;
-                      combinedResults.push(Array.isArray(retryData) ? retryData[0] : retryData);
+                      combinedResults.push(retryItem);
                       markIdempotency(row, true);
                       toast.success(`Self-Healing Berhasil! ${failedInvoiceNo} dikoreksi ke ${actualPrimeOwing}`, { id: `heal-${failedInvoiceNo}` });
 
