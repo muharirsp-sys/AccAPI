@@ -26,10 +26,12 @@ export async function authorizeSalesReceiptWrite(
     if (!rows.length) return "Payload sales-receipt kosong.";
 
     const locked = await db
-        .select({ customerNo: idempotencyLog.customerNo, transDate: idempotencyLog.transDate, invoiceNo: idempotencyLog.invoiceNo })
+        .select({ key: idempotencyLog.key, customerNo: idempotencyLog.customerNo, transDate: idempotencyLog.transDate, invoiceNo: idempotencyLog.invoiceNo })
         .from(idempotencyLog)
         .where(and(eq(idempotencyLog.lockId, lockId), eq(idempotencyLog.lockedBy, userId), eq(idempotencyLog.status, "PROCESSING")));
-    const need = rowsNeedingOverride(rows, locked, buildSalesReceiptIdempotencyPayload, salesReceiptBaseIdentity);
+    const rowKeys = [...new Set(rows.map((r) => buildSalesReceiptIdempotencyPayload(r).key))];
+    const known = await db.select({ key: idempotencyLog.key }).from(idempotencyLog).where(inArray(idempotencyLog.key, rowKeys));
+    const need = rowsNeedingOverride(rows, locked, new Set(known.map((k) => k.key)), buildSalesReceiptIdempotencyPayload, salesReceiptBaseIdentity);
     if (!need.length) return null;
 
     // Sisa baris: SATU override tercatat per baris, dihabiskan atomik (semua atau tidak sama sekali).

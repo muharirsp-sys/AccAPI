@@ -92,10 +92,19 @@ export const isCompleteStatus = (s: unknown): s is "SUCCESS" | "FAILED" | "UNKNO
  */
 export function rowsNeedingOverride(
     rows: Record<string, unknown>[],
-    lockedProcessing: Array<{ customerNo?: unknown; transDate?: unknown; invoiceNo?: unknown }>,
+    lockedProcessing: Array<{ key: string; customerNo?: unknown; transDate?: unknown; invoiceNo?: unknown }>,
+    knownKeys: Set<string>,
     fingerprint: (row: Record<string, unknown>) => { key: string; customerNo?: unknown; transDate?: unknown; invoiceNo?: unknown },
     identity: (r: { customerNo?: unknown; transDate?: unknown; invoiceNo?: unknown }) => string,
 ): string[] {
-    const covered = new Set(lockedProcessing.map(identity));
-    return rows.map(fingerprint).filter((fp) => !covered.has(identity(fp))).map((fp) => fp.key);
+    const owned = new Set(lockedProcessing.map((r) => r.key));
+    const coveredIdentity = new Set(lockedProcessing.map(identity));
+    return rows.map(fingerprint).filter((fp) => {
+        if (owned.has(fp.key)) return false; // fingerprint persis dikunci lock ini
+        // Fingerprint yang SUDAH tercatat (SUCCESS/UNKNOWN/milik lock lain) tidak boleh "ditutupi" oleh
+        // identitas yang sama: identitas di idempotency_log berasal dari entri kiriman klien, jadi klien
+        // non-Finance bisa mengunci key palsu beridentitas sama lalu mengirim ulang baris SUCCESS.
+        if (knownKeys.has(fp.key)) return true;
+        return !coveredIdentity.has(identity(fp)); // fingerprint baru (koreksi self-heal) beridentitas terkunci
+    }).map((fp) => fp.key);
 }

@@ -68,11 +68,17 @@ test("D-18: override yang benar-benar dipakai dilaporkan (untuk izin Finance + j
 test("AM-024: baris proxy tercakup lock bila identitas dasar sama (nominal koreksi boleh beda)", () => {
     const fp = (r: Record<string, unknown>) => ({ key: `K:${r.customerNo}:${r.amount}`, customerNo: r.customerNo, transDate: r.transDate, invoiceNo: r.invoiceNo });
     const id = (r: { customerNo?: unknown; transDate?: unknown; invoiceNo?: unknown }) => `${r.customerNo}|${r.transDate}|${r.invoiceNo}`;
-    const locked = [{ customerNo: "C1", transDate: "01/09/2026", invoiceNo: "INV-1" }];
+    const locked = [{ key: "K:C1:100000", customerNo: "C1", transDate: "01/09/2026", invoiceNo: "INV-1" }];
     const rows = [
-        { customerNo: "C1", transDate: "01/09/2026", invoiceNo: "INV-1", amount: 99_900 }, // self-heal: nominal berubah
+        { customerNo: "C1", transDate: "01/09/2026", invoiceNo: "INV-1", amount: 100_000 }, // persis dikunci
+        { customerNo: "C1", transDate: "01/09/2026", invoiceNo: "INV-1", amount: 99_900 },  // self-heal: fingerprint baru
         { customerNo: "C2", transDate: "01/09/2026", invoiceNo: "INV-2", amount: 5 },       // tidak terkunci
     ];
-    assert.deepEqual(rowsNeedingOverride(rows, locked, fp, id), ["K:C2:5"]);
-    assert.deepEqual(rowsNeedingOverride(rows, [], fp, id), ["K:C1:99900", "K:C2:5"], "tanpa lock: semua butuh override");
+    const known = new Set(["K:C1:100000"]);
+    assert.deepEqual(rowsNeedingOverride(rows, locked, known, fp, id), ["K:C2:5"]);
+    assert.deepEqual(rowsNeedingOverride(rows, [], known, fp, id), ["K:C1:100000", "K:C1:99900", "K:C2:5"], "tanpa lock: semua butuh override");
+    // Serangan: key palsu beridentitas sama dikunci, lalu kirim ulang baris yang fingerprint-nya SUDAH tercatat
+    // (SUCCESS) -> identitas tidak boleh menutupinya.
+    const fake = [{ key: "PALSU", customerNo: "C1", transDate: "01/09/2026", invoiceNo: "INV-1" }];
+    assert.deepEqual(rowsNeedingOverride([rows[0]], fake, known, fp, id), ["K:C1:100000"]);
 });
