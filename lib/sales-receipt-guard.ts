@@ -12,7 +12,15 @@ import { idempotencyLog, idempotencyOverride } from "@/db/schema";
 import { rowsNeedingOverride } from "@/lib/idempotency-lock";
 import { buildSalesReceiptIdempotencyPayload, salesReceiptBaseIdentity } from "@/lib/sales-receipt-fingerprint";
 
-/** null = boleh diteruskan; string = alasan penolakan (409). */
+const hasFlatKey = (v: unknown): boolean => Array.isArray(v)
+    ? v.some(hasFlatKey)
+    : Boolean(v) && typeof v === "object" && Object.entries(v as Record<string, unknown>).some(([k, x]) => /[.[\]]/.test(k) || hasFlatKey(x));
+
+/**
+ * null = boleh diteruskan; string = alasan penolakan (409).
+ * ponytail: override dihabiskan SEBELUM proxy memeriksa sesi Accurate — sesi yang belum lengkap membuat
+ * override hangus (Finance mengulang override). Diterima: sesi hampir selalu ada saat unggah.
+ */
 export async function authorizeSalesReceiptWrite(
     db: NodePgDatabase,
     input: { lockId: unknown; userId: string; payload: unknown },
@@ -21,9 +29,16 @@ export async function authorizeSalesReceiptWrite(
     if (typeof lockId !== "string" || !lockId) {
         return "Tulis sales-receipt hanya lewat unggah API Wrapper (bulk-save) dengan lock idempotency — proxy generik menolak kiriman tanpa lock.";
     }
-    const rows = (Array.isArray(input.payload) ? input.payload : [input.payload])
-        .filter((r): r is Record<string, unknown> => Boolean(r) && typeof r === "object");
-    if (!rows.length) return "Payload sales-receipt kosong.";
+    // Yang diperiksa HARUS sama dengan yang dikirim (review e641e571 HIGH): flattenPayload menulis kunci
+    // literal "detailInvoice[0].invoiceNo" / "data[0].x" ke kabel dan menimpa nilai bersarang yang diperiksa
+    // di sini. Kunci ber-titik/kurung ditolak di kedalaman mana pun; detailInvoice wajib array.
+    if (hasFlatKey(input.payload)) return "Payload sales-receipt tidak boleh memuat kunci ber-titik/kurung (bentuk rata).";
+    const list = Array.isArray(input.payload) ? input.payload : [input.payload];
+    if (!list.length || list.some((r) => !r || typeof r !== "object" || Array.isArray(r)
+        || ((r as Record<string, unknown>).detailInvoice !== undefined && !Array.isArray((r as Record<string, unknown>).detailInvoice)))) {
+        return "Payload sales-receipt tidak valid: setiap baris objek, detailInvoice berupa daftar.";
+    }
+    const rows = list as Record<string, unknown>[];
 
     const locked = await db
         .select({ key: idempotencyLog.key, customerNo: idempotencyLog.customerNo, transDate: idempotencyLog.transDate, invoiceNo: idempotencyLog.invoiceNo })

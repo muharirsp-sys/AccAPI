@@ -463,6 +463,11 @@ async def payments_finance_update(request: Request):
                 if current == "posted":
                     return f"LPB {s(rec.get('no_lpb', ''))} sudah posted ke Accurate ({s(rec.get('accurate_purchase_payment_number', '')) or s(rec.get('accurate_purchase_payment_id', ''))}); status tidak bisa diubah dari sini."
                 if current == "unknown" and accurate_post_status != "unknown":
+                    # D-14 (owner 2026-09-30): keluar dari unknown = menyelesaikan posting tidak pasti -> hanya
+                    # Finance (finance.retry_post), sama dengan /api/finance/purchase-payment/resolve. Tanpa ini
+                    # unknown lama (tanpa attempt server) bisa diselesaikan pemegang finance.update saja.
+                    if not user_has_permission(user, "finance", "retry_post"):
+                        return "Penyelesaian status posting TIDAK PASTI hanya untuk kewenangan Finance (finance.retry_post)."
                     # Review #3: keluar dari unknown hanya ke posted/failed yang EKSPLISIT dengan catatan
                     # pemeriksaan yang bermakna — bukan string kosong/sekadar isi.
                     if accurate_post_status not in ("posted", "failed") or len(resolution_note) < 15:

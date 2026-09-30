@@ -628,7 +628,10 @@ export const idempotencyLog = pgTable("idempotency_log", {
     // menutup baris PROCESSING dan mengirimnya lewat /api/proxy. NULL = baris sebelum migrasi.
     lockId: text("lockId"),
     lockedBy: text("lockedBy"),
-});
+}, (t) => [
+    // Guard /api/proxy mencari baris per lockId pada setiap kirim sales-receipt (review e641e571 LOW).
+    index("idx_idempotency_log_lock").on(t.lockId),
+]);
 
 // AM-052 (owner D-18): jejak override blok duplikat sales-receipt — hanya INSERT (plus penandaan
 // `consumedAt` saat proxy memakai izin kirim ulang), tahan restart. scripts/migrate-pg.mjs.

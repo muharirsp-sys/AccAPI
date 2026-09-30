@@ -82,3 +82,10 @@ test("AM-024: baris proxy tercakup lock bila identitas dasar sama (nominal korek
     const fake = [{ key: "PALSU", customerNo: "C1", transDate: "01/09/2026", invoiceNo: "INV-1" }];
     assert.deepEqual(rowsNeedingOverride([rows[0]], fake, known, fp, id), ["K:C1:100000"]);
 });
+
+test("AM-024: salinan kembar dalam satu payload proxy butuh override per salinan", () => {
+    const fp = (r: Record<string, unknown>) => ({ key: String(r.k), customerNo: "C", transDate: "D", invoiceNo: "I" });
+    const id = () => "C|D|I";
+    const locked = [{ key: "K1", customerNo: "C", transDate: "D", invoiceNo: "I" }];
+    assert.deepEqual(rowsNeedingOverride([{ k: "K1" }, { k: "K1" }, { k: "K1" }], locked, new Set(["K1"]), fp, id), ["K1", "K1"]);
+});

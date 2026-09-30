@@ -99,7 +99,12 @@ export function rowsNeedingOverride(
 ): string[] {
     const owned = new Set(lockedProcessing.map((r) => r.key));
     const coveredIdentity = new Set(lockedProcessing.map(identity));
+    const seen = new Set<string>();
     return rows.map(fingerprint).filter((fp) => {
+        // Salinan kedua dst. dari fingerprint yang sama dalam SATU payload = kirim ganda -> butuh override
+        // allow_duplicate per salinan (review e641e571: lock [r] lalu proxy [r, r, r]).
+        if (seen.has(fp.key)) return true;
+        seen.add(fp.key);
         if (owned.has(fp.key)) return false; // fingerprint persis dikunci lock ini
         // Fingerprint yang SUDAH tercatat (SUCCESS/UNKNOWN/milik lock lain) tidak boleh "ditutupi" oleh
         // identitas yang sama: identitas di idempotency_log berasal dari entri kiriman klien, jadi klien

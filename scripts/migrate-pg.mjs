@@ -280,6 +280,12 @@ const migrations = [
       CREATE INDEX IF NOT EXISTS idx_idempotency_override_lock_key ON idempotency_override (lock_id, key);
     `,
   },
+  {
+    // 2026-09-30 (review e641e571 LOW): guard /api/proxy mencari idempotency_log per lockId.
+    nama: "idempotency_log_lock_index",
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_idempotency_log_lock'`,
+    sql: `CREATE INDEX IF NOT EXISTS idx_idempotency_log_lock ON idempotency_log ("lockId");`,
+  },
 ];
 
 const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 15_000 });
