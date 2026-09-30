@@ -25,7 +25,7 @@ type LogState = {
   data?: any;
 };
 
-type DuplicateConflictReason = "DUPLICATE_IN_UPLOAD" | "ALREADY_SUCCESS" | "STILL_PROCESSING" | "ACCURATE_HISTORY";
+type DuplicateConflictReason = "DUPLICATE_IN_UPLOAD" | "ALREADY_SUCCESS" | "STILL_PROCESSING" | "UNKNOWN_OUTCOME" | "ACCURATE_HISTORY";
 
 type DuplicateReviewEntry = {
   reviewId: string;
@@ -1893,6 +1893,8 @@ export default function Home() {
     if (reason === "DUPLICATE_IN_UPLOAD") return "Duplikat dalam upload ini";
     if (reason === "ALREADY_SUCCESS") return "Sudah pernah sukses diupload";
     if (reason === "ACCURATE_HISTORY") return "Mirip histori Accurate";
+    // AM-025: kiriman sebelumnya macet >15 menit atau tak diketahui hasilnya — mungkin SUDAH masuk Accurate.
+    if (reason === "UNKNOWN_OUTCOME") return "Hasil kiriman sebelumnya tidak diketahui — cek Accurate dulu";
     return "Masih diproses dalam 15 menit terakhir";
   };
 
@@ -2420,7 +2422,7 @@ export default function Home() {
       .filter((item) => item.reasons.includes("DUPLICATE_IN_UPLOAD"))
       .map((item) => item.key)));
     const allowLockedKeys = Array.from(new Set(selectedReviewRows
-      .filter((item) => item.reasons.includes("ALREADY_SUCCESS") || item.reasons.includes("STILL_PROCESSING"))
+      .filter((item) => item.reasons.includes("ALREADY_SUCCESS") || item.reasons.includes("STILL_PROCESSING") || item.reasons.includes("UNKNOWN_OUTCOME"))
       .map((item) => item.key)));
 
     const routeConfig = accurateRoutes[duplicateReview.routeKey];

@@ -1,15 +1,16 @@
 /**
  * Tujuan: mengunci fingerprint idempotency upload sales receipt agar submit ganda tidak lolos.
  * Caller: `app/(dashboard)/api-wrapper/page.tsx` sebelum bulk `sales-receipt/bulk-save.do`.
- * Dependensi: `db`, `idempotencyLog`, Drizzle `inArray`.
+ * Dependensi: `db`, `idempotencyLog`, `decideLock` (lib/idempotency-lock).
  * Main Functions: `POST`.
- * Side Effects: baca/tulis tabel SQLite `idempotency_log`, atau preview duplicate tanpa write saat mode review dipakai.
+ * Side Effects: baca/tulis tabel `idempotency_log`, atau preview duplicate tanpa write saat mode review dipakai.
  */
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { idempotencyLog } from '@/db/schema';
-import { inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { requireApiSession } from '@/lib/api-security';
+import { decideLock, type LockEntry } from '@/lib/idempotency-lock';
 
 export async function POST(req: Request) {
     try {
@@ -22,112 +23,55 @@ export async function POST(req: Request) {
         if (!keys || !Array.isArray(keys) || keys.length === 0) {
             return NextResponse.json({ ok: true, blockedKeys: [], blockedEntries: [] });
         }
+        if (keys.some((k: unknown) => typeof (k as LockEntry)?.key !== 'string' || !(k as LockEntry).key)) {
+            return NextResponse.json({ error: 'Setiap key idempotency wajib berupa teks.' }, { status: 400 });
+        }
 
-        const exactKeys = keys.map((k: { key: string }) => k.key);
-        // Check existing keys
-        const existing = await db.select().from(idempotencyLog).where(inArray(idempotencyLog.key, exactKeys));
-
+        const entries = keys as LockEntry[];
+        const existing = await db.select().from(idempotencyLog).where(inArray(idempotencyLog.key, entries.map((k) => k.key)));
         const now = new Date();
-        const FIFTEEN_MINUTES = 15 * 60 * 1000;
+        // AM-025 (H05): PROCESSING basi/UNKNOWN tidak lagi diambil alih diam-diam — lihat lib/idempotency-lock.
+        const { blocked, toInsert, toRetry } = decideLock(
+            entries,
+            new Map(existing.map((r) => [r.key, r])),
+            now,
+            new Set(Array.isArray(allowDuplicateKeys) ? allowDuplicateKeys : []),
+            new Set(Array.isArray(allowLockedKeys) ? allowLockedKeys : []),
+        );
 
-        const blockedKeys: string[] = [];
-        const blockedEntries: Array<Record<string, unknown>> = [];
-        const toUpdateToProcessing: string[] = [];
-        const toInsert: Array<typeof idempotencyLog.$inferInsert> = [];
-
-        const existingMap = new Map(existing.map((r) => [r.key, r]));
-        const seenInRequest = new Set<string>();
-        const allowDuplicateKeySet = new Set(Array.isArray(allowDuplicateKeys) ? allowDuplicateKeys : []);
-        const allowLockedKeySet = new Set(Array.isArray(allowLockedKeys) ? allowLockedKeys : []);
-
-        for (const item of keys) {
-            if (seenInRequest.has(item.key)) {
-                if (!allowDuplicateKeySet.has(item.key)) {
-                    blockedKeys.push(item.key);
-                    blockedEntries.push({
-                        key: item.key,
-                        invoiceNo: item.invoiceNo,
-                        customerNo: item.customerNo,
-                        amount: item.amount,
-                        transDate: item.transDate,
-                        paymentMethod: item.paymentMethod,
-                        status: 'IN_REQUEST_DUPLICATE',
-                        reason: 'DUPLICATE_IN_UPLOAD'
-                    });
-                }
-                continue;
+        if (!preview) {
+            // Tulis ATOMIK per key: dua lock bersamaan atas key yang sama -> hanya satu yang menang;
+            // yang kalah diblokir STILL_PROCESSING (dulu cek-lalu-tulis: keduanya lolos lalu mengirim).
+            const won = new Set<string>();
+            if (toInsert.length > 0) {
+                const rows = await db.insert(idempotencyLog).values(toInsert.map((item) => ({
+                    key: item.key,
+                    status: 'PROCESSING',
+                    invoiceNo: item.invoiceNo,
+                    customerNo: item.customerNo,
+                    amount: item.amount,
+                    transDate: item.transDate,
+                    paymentMethod: item.paymentMethod,
+                    source: item.source,
+                    createdAt: now,
+                    updatedAt: now,
+                }))).onConflictDoNothing().returning({ key: idempotencyLog.key });
+                rows.forEach((r) => won.add(r.key));
             }
-            seenInRequest.add(item.key);
-            const ex = existingMap.get(item.key);
-            if (ex) {
-                if (ex.status === 'SUCCESS') {
-                    if (!allowLockedKeySet.has(item.key)) {
-                        blockedKeys.push(item.key);
-                        blockedEntries.push({
-                            key: item.key,
-                            invoiceNo: ex.invoiceNo || item.invoiceNo,
-                            customerNo: ex.customerNo || item.customerNo,
-                            amount: ex.amount ?? item.amount,
-                            transDate: ex.transDate || item.transDate,
-                            paymentMethod: ex.paymentMethod || item.paymentMethod,
-                            status: ex.status,
-                            reason: 'ALREADY_SUCCESS'
-                        });
-                    }
-                } else if (ex.status === 'PROCESSING') {
-                    const lastUpdated = new Date(ex.updatedAt || ex.createdAt || now);
-                    if (now.getTime() - lastUpdated.getTime() > FIFTEEN_MINUTES) {
-                        // Expired! We can overtake this.
-                        if (!preview) toUpdateToProcessing.push(item.key);
-                    } else {
-                        // Still actively processing
-                        if (!allowLockedKeySet.has(item.key)) {
-                            blockedKeys.push(item.key);
-                            blockedEntries.push({
-                                key: item.key,
-                                invoiceNo: ex.invoiceNo || item.invoiceNo,
-                                customerNo: ex.customerNo || item.customerNo,
-                                amount: ex.amount ?? item.amount,
-                                transDate: ex.transDate || item.transDate,
-                                paymentMethod: ex.paymentMethod || item.paymentMethod,
-                                status: ex.status,
-                                reason: 'STILL_PROCESSING'
-                            });
-                        }
-                    }
-                } else {
-                    // FAILED or UNKNOWN -> allow retry
-                    if (!preview) toUpdateToProcessing.push(item.key);
-                }
-            } else {
-                if (!preview) {
-                    toInsert.push({
-                        key: item.key,
-                        status: 'PROCESSING',
-                        invoiceNo: item.invoiceNo,
-                        customerNo: item.customerNo,
-                        amount: item.amount,
-                        transDate: item.transDate,
-                        paymentMethod: item.paymentMethod,
-                        source: item.source,
-                        createdAt: now,
-                        updatedAt: now
-                    });
-                }
-            }
-        }
-
-        if (!preview && toInsert.length > 0) {
-            await db.insert(idempotencyLog).values(toInsert);
-        }
-        
-        if (!preview && toUpdateToProcessing.length > 0) {
-            await db.update(idempotencyLog)
+            if (toRetry.length > 0) {
+                const rows = await db.update(idempotencyLog)
                     .set({ status: 'PROCESSING', updatedAt: now })
-                    .where(inArray(idempotencyLog.key, toUpdateToProcessing));
+                    .where(and(inArray(idempotencyLog.key, toRetry), eq(idempotencyLog.status, 'FAILED')))
+                    .returning({ key: idempotencyLog.key });
+                rows.forEach((r) => won.add(r.key));
+            }
+            const byKey = new Map(entries.map((e) => [e.key, e]));
+            for (const key of [...toInsert.map((e) => e.key), ...toRetry]) {
+                if (!won.has(key)) blocked.push({ ...byKey.get(key)!, status: 'PROCESSING', reason: 'STILL_PROCESSING' });
+            }
         }
 
-        return NextResponse.json({ ok: true, blockedKeys, blockedEntries });
+        return NextResponse.json({ ok: true, blockedKeys: blocked.map((b) => b.key), blockedEntries: blocked });
     } catch (e: unknown) {
         console.error("Failed idempotency lock:", e);
         return NextResponse.json({ error: e instanceof Error ? e.message : "Failed idempotency lock" }, { status: 500 });
