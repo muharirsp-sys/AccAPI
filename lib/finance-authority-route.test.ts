@@ -76,3 +76,17 @@ test("AM-024: proxy menolak tulis sales-receipt tanpa lock (409) sebelum sesi Ac
         assert.equal((await res.json()).code, "SALES_RECEIPT_LOCK_REQUIRED");
     }
 });
+
+test("AM-024 (re-review M1): path non-kanonik & bentuk payload salah ditolak 409 walau membawa lockId", async () => {
+    const cases: Array<[string, unknown]> = [
+        ["/api/sales-receipt/BULK-SAVE.DO", [{ customerNo: "C1" }]],        // lolos regex, tidak di-flatten
+        ["/api/sales-receipt/bulk%2Dsave.do", [{ customerNo: "C1" }]],
+        ["/api/sales-receipt/bulk-save.do", { data: [{ customerNo: "C1" }] }], // objek ke bulk-save: kabel tak rata
+        ["/api/sales-receipt/save.do", [{ customerNo: "C1" }]],               // daftar ke save.do
+        ["/api/sales-receipt/bulk-save.do", [{ customerNo: "C1", "detailInvoice[0].invoiceNo": "X" }]],
+    ];
+    for (const [endpointPath, payload] of cases) {
+        const res = await asUserWith([], () => proxyPost(jsonPost("/api/proxy", { endpointPath, method: "POST", payload, idempotencyLockId: "lock-x" })));
+        assert.equal(res.status, 409, `${endpointPath} ${JSON.stringify(payload)}`);
+    }
+});

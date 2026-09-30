@@ -12,6 +12,11 @@ import { idempotencyLog, idempotencyOverride } from "@/db/schema";
 import { rowsNeedingOverride } from "@/lib/idempotency-lock";
 import { buildSalesReceiptIdempotencyPayload, salesReceiptBaseIdentity } from "@/lib/sales-receipt-fingerprint";
 
+const CANONICAL_PATHS: Record<string, "bulk" | "single"> = {
+    "/api/sales-receipt/bulk-save.do": "bulk",
+    "/api/sales-receipt/save.do": "single",
+};
+
 const hasFlatKey = (v: unknown): boolean => Array.isArray(v)
     ? v.some(hasFlatKey)
     : Boolean(v) && typeof v === "object" && Object.entries(v as Record<string, unknown>).some(([k, x]) => /[.[\]]/.test(k) || hasFlatKey(x));
@@ -23,11 +28,19 @@ const hasFlatKey = (v: unknown): boolean => Array.isArray(v)
  */
 export async function authorizeSalesReceiptWrite(
     db: NodePgDatabase,
-    input: { lockId: unknown; userId: string; payload: unknown },
+    input: { lockId: unknown; userId: string; payload: unknown; endpointPath: string },
 ): Promise<string | null> {
     const { lockId, userId } = input;
     if (typeof lockId !== "string" || !lockId) {
         return "Tulis sales-receipt hanya lewat unggah API Wrapper (bulk-save) dengan lock idempotency — proxy generik menolak kiriman tanpa lock.";
+    }
+    // Re-review 5cf065b0 M1: bentuk kabel ditentukan path MENTAH (flatten hanya bila mengandung "bulk-save.do"
+    // dan payload array). Varian path (huruf besar, %2D) atau bentuk payload lain = yang diperiksa di sini
+    // berbeda dari yang dikirim -> hanya path kanonik katalog, dengan bentuk yang sesuai.
+    const kind = CANONICAL_PATHS[input.endpointPath];
+    if (!kind) return "Path tulis sales-receipt harus persis /api/sales-receipt/bulk-save.do atau /api/sales-receipt/save.do.";
+    if (kind === "bulk" ? !Array.isArray(input.payload) : Array.isArray(input.payload)) {
+        return "Bentuk payload tidak sesuai endpoint: bulk-save = daftar baris, save = satu objek.";
     }
     // Yang diperiksa HARUS sama dengan yang dikirim (review e641e571 HIGH): flattenPayload menulis kunci
     // literal "detailInvoice[0].invoiceNo" / "data[0].x" ke kabel dan menimpa nilai bersarang yang diperiksa

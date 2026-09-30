@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
         // ini yang mencakup setiap baris (atau override Finance tercatat). Diperiksa SEBELUM sesi & kirim.
         if (isSalesReceiptWrite(endpointPath)) {
             const denied = await authorizeSalesReceiptWrite(db, {
-                lockId: body.idempotencyLockId, userId: String(authCheck.session.user.id), payload,
+                lockId: body.idempotencyLockId, userId: String(authCheck.session.user.id), payload, endpointPath,
             });
             if (denied) return NextResponse.json({ error: denied, code: "SALES_RECEIPT_LOCK_REQUIRED" }, { status: 409 });
         }
