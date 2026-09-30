@@ -27,6 +27,15 @@ test("masukan tak terbaca dilaporkan null, bukan ditebak", () => {
     assert.equal(excelDateToIso("bukan tanggal"), null);
 });
 
+test("sel berformat ANGKA (serial Excel) dibaca sebagai tanggal, bukan tahun", () => {
+    // Closing Agustus 2026 (Pak Hendrik/Adnan): kolom TANGGAL berformat General, jadi SheetJS
+    // mengembalikan 46235 dan halaman mengirimnya sebagai teks "46235". new Date("46235") =
+    // TAHUN 46235 → "+046235-01", upload ditolak.
+    assert.equal(excelDateToIso("46235"), "2026-08-01");
+    assert.equal(excelDateToIso(46254), "2026-08-20");
+    assert.equal(excelDateToIso("46235.75"), "2026-08-01"); // pecahan = jam, harinya tetap
+});
+
 test("jam kerja sungguhan tidak ikut dinaikkan ke hari berikutnya", () => {
     // Pembulatan ke hari terdekat akan menjawab "2026-07-04" untuk dua kasus pertama.
     assert.equal(excelDateToIso(new Date(2026, 6, 3, 13, 0, 0)), "2026-07-03");

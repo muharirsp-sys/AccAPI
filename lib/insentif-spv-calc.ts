@@ -107,14 +107,17 @@ interface PrincipleAgg {
     hasScheme: boolean;
 }
 
-/** Group baris sales per principle: SUM target/realisasi, valid jika minimal 1 baris berstatus skema. */
-function groupByPrinciple(rows: SpvSalesRow[]): Map<string, PrincipleAgg> {
+/**
+ * Group baris sales per principle: SUM target/realisasi, valid jika minimal 1 baris berstatus skema
+ * ATAU principal itu ada di `ikutPaksa` (sales-nya dibayar principal, SPV-nya tetap distributor).
+ */
+function groupByPrinciple(rows: SpvSalesRow[], ikutPaksa?: ReadonlySet<string>): Map<string, PrincipleAgg> {
     const map = new Map<string, PrincipleAgg>();
     for (const r of rows) {
         const g = map.get(r.principle) ?? { targetValue: 0, realisasiValue: 0, hasScheme: false };
         g.targetValue += r.targetValue;
         g.realisasiValue += r.realisasiValue;
-        if (isSchemePrincipal(r.statusInsentif)) g.hasScheme = true;
+        if (isSchemePrincipal(r.statusInsentif) || ikutPaksa?.has(r.principle)) g.hasScheme = true;
         map.set(r.principle, g);
     }
     return map;
@@ -153,13 +156,16 @@ function resolveValidSet(
 /**
  * Insentif SPV — agregat per principal dari seluruh sales bawahan, murni berbasis Value.
  * `supportByPrinciple` = support principle utk SPV ini per principal (opsional, default 0).
+ * `ikutPaksa` = principal yang tetap dihitung walau SEMUA sales bawahannya "principle" — tombol
+ *   per SPV × principal × periode (lib/insentif-settings spvIkutKey). Aturan target 0 tetap berlaku.
  */
 export function calculateInsentifSPV(
     rows: SpvSalesRow[],
     supportByPrinciple?: Map<string, number>,
     k: Konstanta = DEFAULT_KONSTANTA,
+    ikutPaksa?: ReadonlySet<string>,
 ): SpvInsentifResult {
-    const grouped = groupByPrinciple(rows);
+    const grouped = groupByPrinciple(rows, ikutPaksa);
     const supportOf = (p: string) => supportByPrinciple?.get(p) ?? 0;
     // Principal tanpa target tidak ikut menghitung `n` (keputusan user 2026-08-29). Ia pasti
     // tidak dibayar (pengali terhadap target 0 = 0), jadi membiarkannya masuk hitungan hanya

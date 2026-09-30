@@ -25,6 +25,15 @@ const TOLERANSI_MS = 5 * 60_000;
  */
 export function excelDateToIso(raw: unknown): string | null {
     if (raw === null || raw === undefined || raw === "") return null;
+    // Sel TANGGAL berformat General/Number (bukan Date) datang sebagai SERIAL Excel, mis. 46235.
+    // new Date("46235") membacanya sebagai TAHUN 46235 → "+046235-01" dan seluruh closing
+    // Agustus 2026 ditolak. Serial = hari sejak 1899-12-30; pecahannya jam, dibuang. Dihitung
+    // di UTC, jadi tidak kena geser zona waktu seperti jalur Date di bawah.
+    const serial = typeof raw === "number" ? raw
+        : /^\d+(\.\d+)?$/.test(String(raw).trim()) ? Number(String(raw).trim()) : NaN;
+    if (Number.isFinite(serial)) {
+        return new Date(Date.UTC(1899, 11, 30) + Math.floor(serial) * HARI_MS).toISOString().slice(0, 10);
+    }
     const d = raw instanceof Date ? raw : new Date(String(raw));
     if (Number.isNaN(d.getTime())) return null;
     // Geser ke "jam dinding" supaya perhitungan memakai hari lokal, bukan hari UTC.

@@ -10,6 +10,8 @@
  *   opsional — tidak breaking selama admin belum mengisi Kelola Hierarki.
  *   Support principle per SPV per principal dibaca dari spv_support: yang menutup penuh rate
  *   mengeluarkan principal itu dari hitungan jumlah principal (lihat lib/insentif-spv-calc).
+ *   Principal yang semua sales-nya "principle" tetap dihitung kalau tombolnya dinyalakan
+ *   (app_setting spvIkutKey, lewat /api/insentif-sales/spv-ikut).
  * Side Effects: DB read only.
  */
 
@@ -21,7 +23,7 @@ import { getTargetsForPeriod, computeMtdByPrinciple } from "@/lib/insentif-sales
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
 import { calculateInsentifSPV, type SpvSalesRow } from "@/lib/insentif-spv-calc";
-import { getKonstanta } from "@/lib/insentif-settings";
+import { getKonstanta, getDaftar, spvIkutKey, pasanganKey } from "@/lib/insentif-settings";
 import { isOfficeRow } from "@/lib/insentif-sm-calc";
 import type { StatusInsentif } from "@/lib/insentif-sales-calc";
 
@@ -34,7 +36,7 @@ export async function GET(req: NextRequest) {
     const month = parseInt(searchParams.get("month") ?? String(now.getMonth() + 1), 10);
     const year = parseInt(searchParams.get("year") ?? String(now.getFullYear()), 10);
 
-    const [rawTargets, realByPrinciple, assignments, supportRows, scope, konstanta] = await Promise.all([
+    const [rawTargets, realByPrinciple, assignments, supportRows, scope, konstanta, spvIkut] = await Promise.all([
         getTargetsForPeriod(month, year),
         computeMtdByPrinciple(month, year),
         db.select().from(spvSalesAssignment),
@@ -44,7 +46,9 @@ export async function GET(req: NextRequest) {
             .where(and(eq(spvSupport.periodMonth, month), eq(spvSupport.periodYear, year))),
         getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
         getKonstanta(),
+        getDaftar(spvIkutKey(month, year), []),
     ]);
+    const spvIkutSet = new Set(spvIkut);
     // support[spvName][principle] — dipakai calculateInsentifSPV utk mengeluarkan principal
     // yang sudah ditanggung penuh principle.
     const supportBySpv = new Map<string, Map<string, number>>();
@@ -79,7 +83,9 @@ export async function GET(req: NextRequest) {
 
     const rows = [...bySpv.entries()].map(([spvName, spvRows]) => ({
         spvName,
-        ...calculateInsentifSPV(spvRows, supportBySpv.get(spvName), konstanta),
+        // Principal yang tetap dihitung walau semua sales-nya "principle" (tombol per SPV × principal).
+        ...calculateInsentifSPV(spvRows, supportBySpv.get(spvName), konstanta,
+            new Set(spvRows.map((r) => r.principle).filter((p) => spvIkutSet.has(pasanganKey(spvName, p))))),
     }));
 
     return NextResponse.json({ month, year, rows, konstanta });
