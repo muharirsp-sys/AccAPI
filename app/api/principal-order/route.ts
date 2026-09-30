@@ -10,11 +10,11 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { principalMapping, principalOrderBatch, principalOrderLine } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { readOrderDetail, type PackInfo } from "@/lib/order-detail";
+import { belumTermapping, readOrderDetail, type PackInfo } from "@/lib/order-detail";
 
 export const runtime = "nodejs";
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -26,6 +26,15 @@ async function packsOf(principal: string) {
     const packs = new Map<string, PackInfo>();
     for (const row of rows) packs.set(row.source, { unit: row.unit ?? "", packSize: Number(row.pack ?? 0) });
     return packs;
+}
+
+/** Kode sumber pelanggan & salesman yang sudah dimapping — untuk daftar "belum termapping". */
+async function knownCodesOf(principal: string) {
+    const rows = await db.select({ kind: principalMapping.kind, source: principalMapping.sourceCode })
+        .from(principalMapping)
+        .where(and(eq(principalMapping.principal, principal), inArray(principalMapping.kind, ["customer", "salesman"])));
+    const of = (kind: string) => new Set(rows.filter((row) => row.kind === kind).map((row) => row.source));
+    return { customer: of("customer"), salesman: of("salesman") };
 }
 
 export async function GET(request: NextRequest) {
@@ -82,6 +91,7 @@ export async function POST(request: NextRequest) {
         fileName: file.name, principal, branch: parsed.branch, period: parsed.period,
         lineCount: parsed.lines.length, skipped: parsed.issues.length,
         issues: parsed.issues.slice(0, 200), unmappedProducts: parsed.unmappedProducts,
+        ...belumTermapping(parsed.lines, await knownCodesOf(principal)),
         sample: parsed.lines.slice(0, 8),
         duplicateOf: existing ? { id: existing.id, fileName: existing.fileName, uploadedAt: existing.uploadedAt } : null,
     };

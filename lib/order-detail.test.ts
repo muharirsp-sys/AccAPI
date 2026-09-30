@@ -3,7 +3,7 @@
    baris QTY nol, dan produk tanpa mapping harus keluar — bukan ditebak. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { discountsOf, fixLine, isoDate, parseOrderDetail, type PackInfo } from "./order-detail.ts";
+import { belumTermapping, discountsOf, fixLine, isoDate, parseOrderDetail, type PackInfo } from "./order-detail.ts";
 
 const PACKS = new Map<string, PackInfo>([
     ["106052", { unit: "BTL", packSize: 36 }],
@@ -75,7 +75,7 @@ test("baris rekap, QTY nol, dan produk tanpa mapping dikeluarkan dan dilaporkan"
         ...HEAD,
         line(),
         line({ QTY: 0 }),
-        line({ PRD_ID: "999999" }),
+        line({ SO_NO: "1671-SOP-2", PRD_ID: "999999" }),
         ["Total for 1201671", "", "", "", "", "", "", "", "", "", 1236, 0, 24488648],
         ["Grand Total", "", "", "", "", "", "", "", "", "", 1236, 0, 24488648],
     ], PACKS);
@@ -83,6 +83,31 @@ test("baris rekap, QTY nol, dan produk tanpa mapping dikeluarkan dan dilaporkan"
     assert.deepEqual(result.unmappedProducts, ["999999"]);
     assert.match(result.issues.join(" "), /QTY 0/);
     assert.match(result.issues.join(" "), /belum ada di mapping/);
+});
+
+test("produk tanpa mapping menahan SO-nya UTUH, bukan hanya barisnya", () => {
+    // INV/2609/KN01340 (30 Sep 2026): 105093 belum dimapping, 26 dari 27 baris SO
+    // 1671-SOP-260013972 tetap terbit jadi faktur — kurang Rp 405.000 tanpa satu pun galat.
+    const result = parseOrderDetail([
+        ...HEAD,
+        line({ SO_NO: "SO-A" }),
+        line({ SO_NO: "SO-A", PRD_ID: "999999" }),
+        line({ SO_NO: "SO-B" }),
+        line({ SO_NO: "SO-B", QTY: 0, PRD_ID: "888888" }), // QTY nol bernilai nol: tidak menahan.
+    ], PACKS);
+    assert.deepEqual(result.lines.map((l) => l.soNo), ["SO-B"]);
+    assert.match(result.issues[0], /SO-A ditahan utuh.*999999/);
+});
+
+test("pelanggan dan salesman tanpa mapping terdeteksi saat pratinjau, termasuk kode kosong", () => {
+    const { lines } = parseOrderDetail([
+        ...HEAD,
+        line(),
+        line({ CUST_ID1: "C-BARU", SLSMAN_ID: "S-BARU" }),
+        line({ CUST_ID1: "", SLSMAN_ID: "S-BARU" }),
+    ], PACKS);
+    const known = { customer: new Set(["16710223162"]), salesman: new Set(["1671GR4102"]) };
+    assert.deepEqual(belumTermapping(lines, known), { unmappedCustomers: ["(kosong)", "C-BARU"], unmappedSalesmen: ["S-BARU"] });
 });
 
 test("berkas yang bukan Order Detail ditolak, bukan menghasilkan nol baris diam-diam", () => {

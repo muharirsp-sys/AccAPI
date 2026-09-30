@@ -36,6 +36,8 @@ type Plan = {
     ready: {
         key: string; soNo: string; customerNo: string; orderDate: string; lineCount: number;
         gross: number; net: number; branch: string;
+        /** Kode sales internal; `salesmanId` 0 = tidak ketemu/nonaktif di Accurate -> faktur terbit TANPA sales. */
+        salesman: string; salesmanId: number;
     }[];
     skipped: { soNo: string; reason: string }[];
 };
@@ -45,7 +47,7 @@ type Ack = { principal: string; soNo: string; reason: string; note: string; conf
 
 type Preview = {
     fileName: string; branch: string; period: string; lineCount: number; skipped: number;
-    issues: string[]; unmappedProducts: string[];
+    issues: string[]; unmappedProducts: string[]; unmappedCustomers: string[]; unmappedSalesmen: string[];
     duplicateOf: { id: string; fileName: string; uploadedAt: string } | null;
 };
 
@@ -308,12 +310,20 @@ export default function PrincipalOrderPage() {
                         </p>
                         <p><strong className="text-emerald-300">{preview.lineCount}</strong> baris siap disimpan
                             {preview.skipped > 0 && <> · <strong className="text-amber-300">{preview.skipped}</strong> baris dilewati</>}</p>
-                        {preview.unmappedProducts.length > 0 && (
-                            <p className="text-amber-200">
-                                Kode produk belum ada di mapping: {preview.unmappedProducts.slice(0, 12).join(", ")}
-                                {preview.unmappedProducts.length > 12 && ` … (+${preview.unmappedProducts.length - 12})`}.
-                                Perbaiki di halaman Mapping Principal, lalu unggah ulang.
-                            </p>
+                        {(preview.unmappedProducts.length + preview.unmappedCustomers.length + preview.unmappedSalesmen.length) > 0 && (
+                            <div className="space-y-1 rounded border border-red-500/40 bg-red-500/10 p-2 text-red-200">
+                                <p className="flex items-center gap-2 font-medium"><AlertTriangle size={16} /> Belum termapping — lengkapi di halaman Mapping Principal</p>
+                                {([
+                                    ["Produk", preview.unmappedProducts, "SO-nya ditahan utuh sekarang; unggah ulang sesudah mapping dilengkapi."],
+                                    ["Pelanggan", preview.unmappedCustomers, "SO-nya tertahan di Validasi; cukup Validasi ulang sesudah dilengkapi."],
+                                    ["Salesman", preview.unmappedSalesmen, "SO-nya tertahan di Validasi; cukup Validasi ulang sesudah dilengkapi."],
+                                ] as const).filter(([, codes]) => codes.length > 0).map(([label, codes, akibat]) => (
+                                    <p key={label}>
+                                        <strong>{label} ({codes.length}):</strong> <span className="font-mono text-xs">{codes.slice(0, 12).join(", ")}
+                                        {codes.length > 12 && ` … (+${codes.length - 12})`}</span> — {akibat}
+                                    </p>
+                                ))}
+                            </div>
                         )}
                         {preview.issues.length > 0 && (
                             <ul className="list-disc pl-5 text-amber-200/80">
@@ -408,6 +418,13 @@ export default function PrincipalOrderPage() {
                         </span>
                         <button onClick={() => setPlan(null)} className="ml-auto text-xs text-slate-400 hover:text-slate-200">Tutup</button>
                     </div>
+                    {plan.ready.some((entry) => !entry.salesmanId) && (
+                        <p className="flex items-center gap-2 rounded border border-amber-500/40 bg-amber-500/10 p-2 text-sm text-amber-200">
+                            <AlertTriangle size={16} />
+                            {plan.ready.filter((entry) => !entry.salesmanId).length} faktur akan terbit TANPA sales — kodenya belum
+                            termapping, atau pegawainya tidak ada/nonaktif di Accurate. Lihat kolom Sales.
+                        </p>
+                    )}
                     {plan.ready.length > 0 && (
                         <div className="overflow-x-auto rounded border border-white/10">
                             <table className="w-full text-sm">
@@ -416,6 +433,7 @@ export default function PrincipalOrderPage() {
                                         <th className="px-3 py-2 text-left">SO</th>
                                         <th className="px-3 py-2 text-left">Pelanggan</th>
                                         <th className="px-3 py-2 text-left">Cabang</th>
+                                        <th className="px-3 py-2 text-left">Sales</th>
                                         <th className="px-3 py-2 text-left">Tanggal</th>
                                         <th className="px-3 py-2 text-right">Baris</th>
                                         <th className="px-3 py-2 text-right">Bruto</th>
@@ -428,6 +446,9 @@ export default function PrincipalOrderPage() {
                                             <td className="px-3 py-1.5 font-mono text-xs">{entry.soNo}</td>
                                             <td className="px-3 py-1.5 font-mono text-xs">{entry.customerNo}</td>
                                             <td className="px-3 py-1.5 text-xs text-slate-400">{entry.branch}</td>
+                                            <td className="px-3 py-1.5 font-mono text-xs">
+                                                {entry.salesmanId ? entry.salesman : <span className="text-amber-300">{entry.salesman || "—"} · tanpa sales</span>}
+                                            </td>
                                             <td className="px-3 py-1.5 text-xs">{entry.orderDate}</td>
                                             <td className="px-3 py-1.5 text-right">{entry.lineCount}</td>
                                             <td className="px-3 py-1.5 text-right">{money(entry.gross)}</td>
