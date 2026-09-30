@@ -34,7 +34,8 @@ export async function POST(req: Request) {
 
         // SUCCESS juga boleh menaikkan FAILED/UNKNOWN (hanya mempersempit kiriman ulang): baris duplikat
         // yang diizinkan dalam satu upload bisa tiba FAILED lebih dulu lalu SUCCESS (review AM-025 F3).
-        const from = status === 'SUCCESS' ? ['PROCESSING', 'FAILED', 'UNKNOWN'] : ['PROCESSING'];
+        // UNKNOWN juga boleh menaikkan FAILED (hanya mempersempit kiriman ulang; re-review AM-025 MEDIUM).
+        const from = status === 'SUCCESS' ? ['PROCESSING', 'FAILED', 'UNKNOWN'] : status === 'UNKNOWN' ? ['PROCESSING', 'FAILED'] : ['PROCESSING'];
         const now = new Date();
         await db.update(idempotencyLog)
                 .set({ status, updatedAt: now })

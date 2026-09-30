@@ -11,7 +11,7 @@ import { useState, useEffect } from "react";
 import { Key, Upload, FileJson, Play, ServerCrash, ExternalLink, Settings2, Database, FileSpreadsheet, CheckCircle2, Loader2, LogOut, CalendarIcon } from "lucide-react";
 import { toast } from "sonner";
 import { accurateRoutes } from "@/config/accurateRoutes";
-import { accurateFetch } from "@/lib/apiFetcher";
+import { accurateFetch, classifyWriteError } from "@/lib/apiFetcher";
 import DatePickerField from "@/components/ui/DatePickerField";
 import Dialog from "@/components/ui/Dialog";
 import { workbookRouteParsers } from "./parsers";
@@ -2209,7 +2209,7 @@ export default function Home() {
               } catch (indErr: any) {
                 const indReasonStr = indErr.rawDetails && indErr.rawDetails.length > 0 ? extractReasonStr(indErr.rawDetails[0], indErr.message) : indErr.message;
                 const match = indReasonStr.match(/"([^"]+)"/);
-                await processAutoHeal(row, match ? match[1] : null, indReasonStr, i, start, idx, false);
+                await processAutoHeal(row, match ? match[1] : null, indReasonStr, i, start, idx, false, classifyWriteError(indErr).kind === "unknown");
               }
             }
           } else {
@@ -2227,9 +2227,12 @@ export default function Home() {
             }
           }
 
-          async function processAutoHeal(row: any, failedInvoiceNo: string | null, reasonStr: string, chunkIdx: number, startIdx: number, rowIdx: number, isOverall: boolean) {
+          // noAnswer: kiriman baris ini gagal TANPA jawaban Accurate (timeout/jaringan) — hasil tak diketahui.
+          async function processAutoHeal(row: any, failedInvoiceNo: string | null, reasonStr: string, chunkIdx: number, startIdx: number, rowIdx: number, isOverall: boolean, noAnswer = false) {
             const mainId = row.invoiceNo || row.customerNo || row.bankNo || row.description || `Baris Eksekusi ${startIdx + rowIdx + 1}`;
             let isHealed = false;
+            let unknownOutcome = noAnswer;
+            let repostAttempted = false;
 
             if (failedInvoiceNo && reasonStr.includes("melebihi nilai piutang")) {
               toast.loading(`Mencoba Auto-Correction untuk ${failedInvoiceNo}...`, { id: `heal-${failedInvoiceNo}` });
@@ -2266,6 +2269,7 @@ export default function Home() {
                       healedRow.chequeAmount = normalizePayloadMoney(actualPrimeOwing);
                     }
 
+                    repostAttempted = true;
                     const retryData = await accurateFetch(routeConfig.path, routeConfig.method, [healedRow]);
                     const isRetrySuccess = Array.isArray(retryData) ? retryData[0]?.s : retryData.s;
 
@@ -2290,6 +2294,8 @@ export default function Home() {
                   }
                 }
               } catch (healErr) {
+                // Kiriman koreksi yang gagal tanpa jawaban bisa SUDAH tersimpan (review AM-025 F4).
+                if (repostAttempted && classifyWriteError(healErr).kind === "unknown") unknownOutcome = true;
                 console.error("Self-healing error:", healErr);
                 toast.error(`Gagal mengecek referensi invoice ${failedInvoiceNo}`, { id: `heal-${failedInvoiceNo}` });
               }
@@ -2315,13 +2321,13 @@ export default function Home() {
                 return;
               }
 
-              markIdempotency(row, false);
+              markIdempotency(row, unknownOutcome ? "UNKNOWN" : false);
               chunkHadUnresolvedFailure = true;
               errorLogForExcel.push({
                 "Paket/Batch": `Tahap ${chunkIdx+1}`,
                 "Baris Ke": startIdx + rowIdx + 1 + (isOverall ? " (Penyebab Blok)" : ""),
                 "Ref / Invoice No": mainId,
-                "Status": "Gagal",
+                "Status": unknownOutcome ? "TIDAK DIKETAHUI (cek Accurate sebelum kirim ulang)" : "Gagal",
                 "Pesan Error Accurate": reasonStr
               });
             }
@@ -2353,13 +2359,15 @@ export default function Home() {
 
             // AM-025 review F4: tanpa jawaban Accurate dan tidak ada di histori (yang dibatasi & bisa ikut
             // gagal) bukan bukti gagal — tandai UNKNOWN agar upload ulang menunggu pengecekan manusia.
-            markIdempotency(row, "UNKNOWN");
+            // Penolakan beramplop (s:false + d) = pasti tidak tersimpan -> FAILED (review re-review LOW).
+            const tanpaJawaban = classifyWriteError(chunkErr).kind === "unknown";
+            markIdempotency(row, tanpaJawaban ? "UNKNOWN" : false);
             chunkHadUnresolvedFailure = true;
             errorLogForExcel.push({
               "Paket/Batch": `Tahap ${i+1}`,
               "Baris Ke": start + idx + 1,
               "Ref / Invoice No": mainId,
-              "Status": "TIDAK DIKETAHUI (cek Accurate sebelum kirim ulang)",
+              "Status": tanpaJawaban ? "TIDAK DIKETAHUI (cek Accurate sebelum kirim ulang)" : "Gagal",
               "Pesan Error Accurate": chunkErr.message || "Unknown error parsing chunk return"
             });
           });
