@@ -79,10 +79,21 @@ export async function forwardAccurate(target: AccurateTarget, endpointPath: stri
  * ponytail: denylist satu operasi; allowlist penuh proxy = AM-024 (butuh keputusan daftar endpoint).
  */
 export function isGuardedAccurateWrite(endpointPath: string) {
+    return matchesWritePath(endpointPath, /\/purchase-payment\/(bulk-)?save\.do/i);
+}
+
+/**
+ * AM-024 (owner D-18): tulis sales-receipt lewat proxy hanya dengan lock idempotency pemilik
+ * (lib/sales-receipt-guard.ts). Normalisasi sama dengan purchase-payment; path rusak/";" = dianggap tulis.
+ */
+export function isSalesReceiptWrite(endpointPath: string) {
+    return matchesWritePath(endpointPath, /\/sales-receipt\/(bulk-)?save\.do/i);
+}
+
+function matchesWritePath(endpointPath: string, guarded: RegExp) {
     // Semua method: tidak ada pemakaian sah GET ke save.do (review sesi 2 M4).
     const raw = String(endpointPath);
     if (raw.includes(";")) return true; // path parameter (;jsessionid=…) bisa diabaikan host Java
-    const guarded = /\/purchase-payment\/(bulk-)?save\.do/i;
     try {
         // Nilai path YANG DIKIRIM (wirePath), dinormalisasi seperti fetch/host: dot-segment (juga
         // %2e), backslash, percent-encoding, "//". Path mentah juga diuji.

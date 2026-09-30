@@ -13,7 +13,8 @@ export class AccurateError extends Error {
     }
 }
 
-export async function accurateFetch(endpointPath: string, method: string, payload?: unknown) {
+// options.idempotencyLockId: tulis sales-receipt wajib membawa lock idempotency (AM-024; proxy menolak tanpa lock).
+export async function accurateFetch(endpointPath: string, method: string, payload?: unknown, options?: { idempotencyLockId?: string | null }) {
     if (typeof window === "undefined") {
         throw new Error("accurateFetch hanya bisa dijalankan di client-side.");
     }
@@ -28,6 +29,7 @@ export async function accurateFetch(endpointPath: string, method: string, payloa
                 endpointPath,
                 method: method.toUpperCase(),
                 payload: payload || null,
+                ...(options?.idempotencyLockId ? { idempotencyLockId: options.idempotencyLockId } : {}),
             }),
         });
 

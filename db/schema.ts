@@ -623,8 +623,30 @@ export const idempotencyLog = pgTable("idempotency_log", {
     paymentMethod: text("paymentMethod"),
     source: text("source"),
     createdAt: timestamp('createdAt'),
-    updatedAt: timestamp('updatedAt')
+    updatedAt: timestamp('updatedAt'),
+    // AM-050 (owner D-18): pemilik lock — hanya request pemegang lockId (dan user yang sama) yang boleh
+    // menutup baris PROCESSING dan mengirimnya lewat /api/proxy. NULL = baris sebelum migrasi.
+    lockId: text("lockId"),
+    lockedBy: text("lockedBy"),
 });
+
+// AM-052 (owner D-18): jejak override blok duplikat sales-receipt — hanya INSERT (plus penandaan
+// `consumedAt` saat proxy memakai izin kirim ulang), tahan restart. scripts/migrate-pg.mjs.
+export const idempotencyOverride = pgTable("idempotency_override", {
+    id: text("id").primaryKey(),
+    lockId: text("lock_id").notNull(),
+    key: text("key").notNull(),
+    actor: text("actor").notNull(),
+    reason: text("reason").notNull(),
+    blockReason: text("block_reason").notNull(),
+    previousStatus: text("previous_status"),
+    action: text("action").notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_idempotency_override_lock_key").on(t.lockId, t.key),
+    check("idempotency_override_action", sql`${t.action} IN ('takeover', 'resend_success', 'allow_duplicate')`),
+]);
 
 export const accurateOAuthSession = pgTable("accurate_oauth_session", {
     userId: text("user_id").primaryKey().references(() => user.id),

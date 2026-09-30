@@ -12,6 +12,7 @@ import { Key, Upload, FileJson, Play, ServerCrash, ExternalLink, Settings2, Data
 import { toast } from "sonner";
 import { accurateRoutes } from "@/config/accurateRoutes";
 import { accurateFetch, classifyWriteError } from "@/lib/apiFetcher";
+import { buildSalesReceiptIdempotencyPayload } from "@/lib/sales-receipt-fingerprint";
 import DatePickerField from "@/components/ui/DatePickerField";
 import Dialog from "@/components/ui/Dialog";
 import { workbookRouteParsers } from "./parsers";
@@ -2053,12 +2054,14 @@ export default function Home() {
   const executeBulkPayload = async (
     rows: any[],
     routeConfig: typeof accurateRoutes[RouteKey],
-    duplicateOptions?: { allowDuplicateKeys?: string[]; allowLockedKeys?: string[] }
+    duplicateOptions?: { allowDuplicateKeys?: string[]; allowLockedKeys?: string[]; overrideReason?: string }
   ) => {
     // AM-041: dulu `document.location.pathname` — URL HALAMAN, yang selalu "/api-wrapper",
     // sehingga lock idempotency, penandaan hasil, dan preview duplikat sales-receipt tidak
     // pernah berjalan. Yang menentukan adalah endpoint yang dieksekusi.
     const isSalesReceipt = routeConfig.path.includes('/sales-receipt/');
+    // AM-050/AM-024: lock milik request ini — wajib untuk kirim lewat proxy dan untuk /complete.
+    let idempotencyLockId: string | null = null;
     if (isSalesReceipt) {
       toast.loading("Mengunci batch idempotency...", { id: 'exec' });
       const keysPayload = rows.map((row: any) => buildSalesReceiptIdempotencyPayload(row));
@@ -2068,7 +2071,8 @@ export default function Home() {
         body: JSON.stringify({
           keys: keysPayload,
           allowDuplicateKeys: duplicateOptions?.allowDuplicateKeys || [],
-          allowLockedKeys: duplicateOptions?.allowLockedKeys || []
+          allowLockedKeys: duplicateOptions?.allowLockedKeys || [],
+          overrideReason: duplicateOptions?.overrideReason || ""
         })
       });
       const lockData = await lockRes.json();
@@ -2076,6 +2080,8 @@ export default function Home() {
       if (Array.isArray(lockData.blockedKeys) && lockData.blockedKeys.length > 0) {
         throw new Error("Beberapa baris berubah status duplikat saat review. Buka ulang review lalu pilih kembali.");
       }
+      if (!lockData.lockId) throw new Error("Lock idempotency tidak diterbitkan server — tidak ada yang dikirim.");
+      idempotencyLockId = lockData.lockId;
     }
 
     if (rows.length === 0) {
@@ -2109,7 +2115,7 @@ export default function Home() {
         fetch('/api/idempotency/complete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keys: [rowKey], status: outcome === "UNKNOWN" ? 'UNKNOWN' : outcome ? 'SUCCESS' : 'FAILED' })
+          body: JSON.stringify({ keys: [rowKey], lockId: idempotencyLockId, status: outcome === "UNKNOWN" ? 'UNKNOWN' : outcome ? 'SUCCESS' : 'FAILED' })
         });
       } catch (e) {}
     };
@@ -2143,7 +2149,7 @@ export default function Home() {
       toast.loading(`[Tahap ${i+1}/${totalChunks}] Memproses baris ${start+1}-${end}...`, { id: 'exec' });
 
       try {
-        const data = await accurateFetch(routeConfig.path, routeConfig.method, chunkPayload);
+        const data = await accurateFetch(routeConfig.path, routeConfig.method, chunkPayload, { idempotencyLockId });
 
         if (Array.isArray(data)) {
           combinedResults = combinedResults.concat(data);
@@ -2193,7 +2199,7 @@ export default function Home() {
             for (let idx = 0; idx < chunkPayload.length; idx++) {
               const row = chunkPayload[idx];
               try {
-                const indData = await accurateFetch(routeConfig.path, routeConfig.method, [row]);
+                const indData = await accurateFetch(routeConfig.path, routeConfig.method, [row], { idempotencyLockId });
                 // Hasil PER ITEM: amplop bulk-save bisa s:true dengan item d[0].s:false (H09).
                 const indItem = Array.isArray(indData) ? indData[0] : Array.isArray(indData?.d) ? indData.d[0] : indData;
                 const isSuccess = !!indItem?.s;
@@ -2270,7 +2276,7 @@ export default function Home() {
                     }
 
                     repostAttempted = true;
-                    const retryData = await accurateFetch(routeConfig.path, routeConfig.method, [healedRow]);
+                    const retryData = await accurateFetch(routeConfig.path, routeConfig.method, [healedRow], { idempotencyLockId });
                     // Hasil PER ITEM seperti mode individu (H09): amplop s:true bisa membawa d[0].s:false —
                     // dulu dibaca sukses -> baris ditandai SUCCESS padahal koreksi ditolak (review AM-025 M1).
                     const retryItem = Array.isArray(retryData) ? retryData[0] : Array.isArray(retryData?.d) ? retryData.d[0] : retryData;
@@ -2440,12 +2446,24 @@ export default function Home() {
       .filter((item) => item.reasons.includes("ALREADY_SUCCESS") || item.reasons.includes("STILL_PROCESSING") || item.reasons.includes("UNKNOWN_OUTCOME"))
       .map((item) => item.key)));
 
+    // D-18 (owner): override = membuka kiriman ulang ke Accurate — hanya Finance (server menolak 403 tanpa
+    // finance.retry_post) dan alasan wajib tercatat di jejak override.
+    let overrideReason = "";
+    if (allowDuplicateKeys.length > 0 || allowLockedKeys.length > 0) {
+      const typed = window.prompt(`Alasan meng-override ${allowDuplicateKeys.length + allowLockedKeys.length} blok duplikat (min. 15 karakter). Hanya kewenangan Finance.`);
+      if (!typed || typed.trim().length < 15) {
+        toast.error("Alasan override minimal 15 karakter. Tidak ada yang dikirim.");
+        return;
+      }
+      overrideReason = typed.trim();
+    }
+
     const routeConfig = accurateRoutes[duplicateReview.routeKey];
     setDuplicateReview(null);
     setIsLoading(true);
 
     try {
-      await executeBulkPayload(finalRows, routeConfig, { allowDuplicateKeys, allowLockedKeys });
+      await executeBulkPayload(finalRows, routeConfig, { allowDuplicateKeys, allowLockedKeys, overrideReason });
     } catch (err: unknown) {
       if (err instanceof Error) {
         setResponseLog({ status: "error", message: err.message });
@@ -2979,47 +2997,3 @@ export default function Home() {
     </div>
   );
 }
-  const buildSalesReceiptIdempotencyPayload = (row: any) => {
-    const normalizeMoney = (value: any) => Number((Number(value) || 0).toFixed(2));
-    const detailSignature = (row.detailInvoice || [])
-      .map((detail: any) => {
-        const discountSignature = (detail.detailDiscount || [])
-          .map((discount: any) => [
-            String(discount.accountNo || "").trim(),
-            String(discount.discountNotes || "").trim(),
-            normalizeMoney(discount.amount)
-          ].join(":"))
-          .sort()
-          .join("&");
-        return [
-          String(detail.invoiceNo || "").trim(),
-          normalizeMoney(detail.paymentAmount),
-          discountSignature
-        ].join("|");
-      })
-      .sort()
-      .join(";");
-
-    const invoices = (row.detailInvoice || [])
-      .map((detail: any) => String(detail.invoiceNo || "").trim())
-      .filter(Boolean)
-      .sort()
-      .join(",");
-
-    const appliedAmount = Number(
-      (row.detailInvoice || []).reduce((sum: number, detail: any) => {
-        const discountTotal = (detail.detailDiscount || []).reduce((discountSum: number, discount: any) => discountSum + normalizeMoney(discount.amount), 0);
-        return sum + normalizeMoney(detail.paymentAmount) + discountTotal;
-      }, 0).toFixed(2)
-    );
-
-    return {
-      key: `PAY_${String(row.customerNo || "").trim()}_${String(row.transDate || "").trim()}_${detailSignature}`,
-      invoiceNo: invoices,
-      customerNo: row.customerNo,
-      amount: appliedAmount,
-      transDate: String(row.transDate || "").trim(),
-      paymentMethod: row.paymentMethod,
-      source: 'Excel Upload'
-    };
-  };

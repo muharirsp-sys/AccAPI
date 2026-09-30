@@ -252,6 +252,34 @@ const migrations = [
           WHERE state IN ('sending', 'posted', 'unknown');
     `,
   },
+  {
+    // 2026-09-30 (AM-050 + AM-052, keputusan owner D-18; DRAFT — zona idempotency, butuh review manusia).
+    // EXPAND saja: kolom nullable pemilik lock + tabel jejak override. Tanpa backfill, tanpa drop.
+    // idempotency_log dibuat drizzle-kit push (tidak ada migrasi repo) — ALTER memakai IF NOT EXISTS.
+    // Role aplikasi butuh SELECT/INSERT/UPDATE pada idempotency_override (runbook L1g).
+    nama: "idempotency_lock_owner_override",
+    sudahAda: `SELECT 1 FROM information_schema.columns c
+               JOIN information_schema.tables t ON t.table_name = 'idempotency_override' AND t.table_schema = 'public'
+               WHERE c.table_name = 'idempotency_log' AND c.column_name = 'lockedBy'`,
+    sql: `
+      ALTER TABLE idempotency_log ADD COLUMN IF NOT EXISTS "lockId" text;
+      ALTER TABLE idempotency_log ADD COLUMN IF NOT EXISTS "lockedBy" text;
+      CREATE TABLE IF NOT EXISTS idempotency_override (
+          id              text PRIMARY KEY,
+          lock_id         text NOT NULL,
+          key             text NOT NULL,
+          actor           text NOT NULL,
+          reason          text NOT NULL,
+          block_reason    text NOT NULL,
+          previous_status text,
+          action          text NOT NULL CONSTRAINT idempotency_override_action
+                          CHECK (action IN ('takeover', 'resend_success', 'allow_duplicate')),
+          consumed_at     timestamptz,
+          created_at      timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_idempotency_override_lock_key ON idempotency_override (lock_id, key);
+    `,
+  },
 ];
 
 const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 15_000 });

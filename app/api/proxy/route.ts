@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
-import { forwardAccurate, isGuardedAccurateWrite } from "@/lib/accurate-forward";
+import { forwardAccurate, isGuardedAccurateWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
+import { authorizeSalesReceiptWrite } from "@/lib/sales-receipt-guard";
+import { db } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
     try {
@@ -19,6 +21,14 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({
                 error: "Posting purchase-payment hanya lewat halaman Finance (pencegahan posting ganda). Proxy generik menolak operasi ini.",
             }, { status: 403 });
+        }
+        // AM-024 (owner D-18): tulis sales-receipt tidak boleh melewati idempotency — wajib lock milik user
+        // ini yang mencakup setiap baris (atau override Finance tercatat). Diperiksa SEBELUM sesi & kirim.
+        if (isSalesReceiptWrite(endpointPath)) {
+            const denied = await authorizeSalesReceiptWrite(db, {
+                lockId: body.idempotencyLockId, userId: String(authCheck.session.user.id), payload,
+            });
+            if (denied) return NextResponse.json({ error: denied, code: "SALES_RECEIPT_LOCK_REQUIRED" }, { status: 409 });
         }
         const accurateSession = await getAccurateSession(String(authCheck.session.user.id));
         const sessionHost = accurateSession?.sessionHost;

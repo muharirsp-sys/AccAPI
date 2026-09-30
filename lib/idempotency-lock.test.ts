@@ -2,7 +2,7 @@
  * Accurate (SUCCESS, PROCESSING aktif/basi, UNKNOWN) TIDAK boleh diambil alih diam-diam. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decideLock, isCompleteStatus, STALE_PROCESSING_MS } from "./idempotency-lock.ts";
+import { decideLock, isCompleteStatus, rowsNeedingOverride, STALE_PROCESSING_MS } from "./idempotency-lock.ts";
 
 const now = new Date("2026-09-30T10:00:00Z");
 const row = (key: string, status: string, ageMs = 0) => ({ key, status, updatedAt: new Date(now.getTime() - ageMs), createdAt: null });
@@ -51,4 +51,28 @@ test("duplikat dalam satu upload diblokir kecuali diizinkan", () => {
 test("complete hanya menerima status akhir yang dikenal", () => {
     for (const s of ["SUCCESS", "FAILED", "UNKNOWN"]) assert.ok(isCompleteStatus(s), s);
     for (const s of ["PROCESSING", "success", "", null, 1]) assert.ok(!isCompleteStatus(s), String(s));
+});
+
+test("D-18: override yang benar-benar dipakai dilaporkan (untuk izin Finance + jejak audit)", () => {
+    const basi = row("basi", "PROCESSING", STALE_PROCESSING_MS + 1);
+    const d = decide(["s", "basi", "a", "a"], [row("s", "SUCCESS"), basi], ["s", "basi"], ["a"]);
+    assert.deepEqual(d.overrides.map((o) => [o.key, o.action, o.blockReason, o.previousStatus]), [
+        ["s", "resend_success", "ALREADY_SUCCESS", "SUCCESS"],
+        ["basi", "takeover", "UNKNOWN_OUTCOME", "PROCESSING"],
+        ["a", "allow_duplicate", "DUPLICATE_IN_UPLOAD", null],
+    ]);
+    // Tanpa izin override apa pun: tidak ada override tercatat (blok biasa).
+    assert.deepEqual(decide(["s"], [row("s", "SUCCESS")]).overrides, []);
+});
+
+test("AM-024: baris proxy tercakup lock bila identitas dasar sama (nominal koreksi boleh beda)", () => {
+    const fp = (r: Record<string, unknown>) => ({ key: `K:${r.customerNo}:${r.amount}`, customerNo: r.customerNo, transDate: r.transDate, invoiceNo: r.invoiceNo });
+    const id = (r: { customerNo?: unknown; transDate?: unknown; invoiceNo?: unknown }) => `${r.customerNo}|${r.transDate}|${r.invoiceNo}`;
+    const locked = [{ customerNo: "C1", transDate: "01/09/2026", invoiceNo: "INV-1" }];
+    const rows = [
+        { customerNo: "C1", transDate: "01/09/2026", invoiceNo: "INV-1", amount: 99_900 }, // self-heal: nominal berubah
+        { customerNo: "C2", transDate: "01/09/2026", invoiceNo: "INV-2", amount: 5 },       // tidak terkunci
+    ];
+    assert.deepEqual(rowsNeedingOverride(rows, locked, fp, id), ["K:C2:5"]);
+    assert.deepEqual(rowsNeedingOverride(rows, [], fp, id), ["K:C1:99900", "K:C2:5"], "tanpa lock: semua butuh override");
 });
