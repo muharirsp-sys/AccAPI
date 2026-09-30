@@ -37,6 +37,8 @@ export type AccurateLine = {
     totalPrice: number;
     /** Nomor baris yang KITA tulis di detailNotes saat mengirim; 0 kalau tidak terbaca. */
     ourLine: number;
+    /** Nomor pegawai sales per baris (`salesmanList[].number`), huruf besar. */
+    salesmen: string[];
 };
 
 export type AccurateInvoice = {
@@ -112,6 +114,8 @@ export function readAccurateInvoice(raw: unknown): AccurateInvoice {
                 cashDiscount: num(detail.itemCashDiscount),
                 totalPrice: num(detail.totalPrice),
                 ourLine: ourLineNumber(str(detail.detailNotes)),
+                salesmen: (Array.isArray(detail.salesmanList) ? detail.salesmanList : [])
+                    .map((entry) => str(obj(entry).number).trim().toUpperCase()).filter(Boolean),
             };
         }),
     };
@@ -259,6 +263,13 @@ export function verifyInvoice(payload: InvoicePayload, raw: unknown): VerifyResu
             });
         }
         near("qty", sent.quantity, got.quantity, 0.0001);
+        // Sales per baris hanya diperiksa bila kita mengirimnya: faktur lama tanpa field ini tidak
+        // dituduh. Kosong di Accurate = field-nya dibuang diam-diam (belum terbukti diterima).
+        if (sent.salesmanListNumber?.length) {
+            same("sales baris (salesmanListNumber)",
+                sent.salesmanListNumber.map((no) => no.trim().toUpperCase()).sort().join(", "),
+                got.salesmen.slice().sort().join(", ") || "kosong");
+        }
         near("harga satuan", sent.unitPrice, got.unitPrice, 0.01);
         same("diskon persen", normalizePercentChain(sent.itemDiscPercent), normalizePercentChain(got.discPercent));
 
@@ -300,7 +311,7 @@ export function verifyInvoice(payload: InvoicePayload, raw: unknown): VerifyResu
 export type JenisTemuan = "sales" | "isi";
 export function jenisTemuan(finding: Finding): JenisTemuan | null {
     if (finding.field === "faktur ganda di Accurate") return null;
-    return finding.field === "sales (masterSalesmanId)" ? "sales" : "isi";
+    return finding.field.startsWith("sales ") ? "sales" : "isi";
 }
 
 /** Sidik temuan satu jenis. Penjelasan hanya berlaku untuk temuan PERSIS ini: kalau fakturnya

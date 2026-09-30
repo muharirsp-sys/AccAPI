@@ -315,3 +315,19 @@ test("terapkanPenjelasan: berlaku hanya untuk temuan persis, sales tidak menutup
     // Penjelasan untuk jenis yang temuannya tidak ada ("[]") tidak dihitung.
     assert.deepEqual(terapkanPenjelasan([qty], [catat("sales", [])]).penjelasan, {});
 });
+
+test("sales per baris: diperiksa hanya bila dikirim; dibuang Accurate = temuan jenis sales", () => {
+    const base = payload();
+    const kirim = { ...base, detailItem: base.detailItem.map((line) => ({ ...line, salesmanListNumber: ["M-YAM"] })) };
+    // Accurate menyimpannya -> cocok (nomor dibandingkan tanpa peduli huruf besar/kecil).
+    assert.equal(verifyInvoice(kirim, accurate({}, { salesmanList: [{ id: 3464, number: "m-yam" }] })).status, "cocok");
+    // Dibuang diam-diam oleh save.do -> temuan, dan tombol "Terima sales" ikut menutupnya.
+    const buang = verifyInvoice(kirim, accurate()).findings.find((f) => f.field === "sales baris (salesmanListNumber)");
+    assert.equal(buang?.actual, "kosong");
+    assert.equal(jenisTemuan(buang!), "sales");
+    // Sales lain di Accurate juga temuan.
+    assert.ok(verifyInvoice(kirim, accurate({}, { salesmanList: [{ id: 5450, number: "M-MOH" }] }))
+        .findings.some((f) => f.field === "sales baris (salesmanListNumber)"));
+    // Faktur lama tanpa field ini tidak dituduh.
+    assert.equal(verifyInvoice(base, accurate()).status, "cocok");
+});

@@ -22,7 +22,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox } from "@/db/schema";
-import { nextOutboxState, pakaiTanggalFaktur, readInvoiceIdentity, type InvoicePayload, type SendOutcome } from "@/lib/accurate-invoice-write";
+import { nextOutboxState, readInvoiceIdentity, type SendOutcome } from "@/lib/accurate-invoice-write";
 import { refreshRealization } from "@/lib/program-realization-store";
 
 export type SenderSession = {
@@ -42,15 +42,11 @@ export type SendResult = {
 /**
  * Ambil yang `queued` lalu kirim satu per satu. `orderIds` mempersempit ke baris tertentu;
  * tanpa itu, seluruh antrean yang menunggu (sampai `limit`) ikut.
- *
- * `invoiceDate` (yyyy-MM-dd) = tanggal faktur pilihan petugas. Diperiksa untuk SEMUA baris
- * sebelum satu pun terkirim: satu baris yang SO-nya lebih baru dari tanggal itu menggagalkan
- * seluruh tekanan, bukan sebagian terkirim sebagian tidak.
  */
 export async function sendQueuedInvoices(
     session: SenderSession,
-    options: { targetDb: string; limit: number; orderIds?: string[]; invoiceDate?: string },
-): Promise<{ results: SendResult[]; sent: number; unknown: number; rejected: number; error?: string }> {
+    options: { targetDb: string; limit: number; orderIds?: string[] },
+): Promise<{ results: SendResult[]; sent: number; unknown: number; rejected: number }> {
     const picked = (options.orderIds ?? []).map((id) => id.trim()).filter(Boolean);
     const rows = await db.select().from(invoiceOutbox)
         .where(picked.length
@@ -58,21 +54,11 @@ export async function sendQueuedInvoices(
             : eq(invoiceOutbox.state, "queued"))
         .orderBy(asc(invoiceOutbox.createdAt)).limit(options.limit);
 
-    const siap = rows.map((row) => ({ row, ...pakaiTanggalFaktur(row.payload as InvoicePayload, String(row.orderDate), options.invoiceDate) }));
-    const ditolak = siap.filter((entry) => entry.error);
-    if (ditolak.length) {
-        return {
-            results: [], sent: 0, unknown: 0, rejected: 0,
-            error: `Tidak ada faktur dikirim: ${ditolak.map((entry) => `${entry.row.orderId} (${entry.error})`).join("; ")}`,
-        };
-    }
-
     const results: SendResult[] = [];
-    for (const { row, payload } of siap) {
-        // Klaim dulu: `sending` menandai bahwa request MUNGKIN sudah terkirim. Payload bertanggal
-        // pilihan disimpan DI KLAIM YANG SAMA, jadi yang tercatat = yang benar-benar dikirim.
+    for (const row of rows) {
+        // Klaim dulu: `sending` menandai bahwa request MUNGKIN sudah terkirim.
         const claimed = await db.update(invoiceOutbox)
-            .set({ state: "sending", attempts: row.attempts + 1, updatedAt: new Date(), ...(options.invoiceDate ? { payload } : {}) })
+            .set({ state: "sending", attempts: row.attempts + 1, updatedAt: new Date() })
             .where(and(eq(invoiceOutbox.orderId, row.orderId), eq(invoiceOutbox.state, row.state)))
             .returning({ orderId: invoiceOutbox.orderId });
         if (claimed.length === 0) continue; // diklaim proses lain
@@ -87,7 +73,7 @@ export async function sendQueuedInvoices(
                     Authorization: `Bearer ${session.accessToken}`,
                     "X-Session-ID": session.sessionId,
                 },
-                body: JSON.stringify(payload),
+                body: JSON.stringify(row.payload),
                 signal: AbortSignal.timeout(60_000),
             });
             const text = await response.text();
