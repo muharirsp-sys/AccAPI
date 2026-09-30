@@ -130,9 +130,13 @@ test("yang boleh DIBUANG hanya yang pasti belum ada fakturnya di Accurate", () =
 test("sales per baris ikut di SETIAP baris, hanya bila salesnya sah", () => {
     // KN01225-KN01227 (2026-09-29): sales hanya di kepala faktur hilang begitu faktur disimpan
     // ulang dari layar Accurate, yang menyimpan sales per baris.
-    const dengan = buildInvoicePayload(order(), { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702,
+    // Baris BONUS disusun di jalur terpisah; tanpanya faktur terbit dengan sales hanya di
+    // sebagian barang (keluhan pengguna 2026-09-30).
+    const withBonus = order();
+    withBonus.result.bonuses = [{ program_id: "P-1", code: "M5012001000740", unit: "KRT", quantity: "1" }];
+    const dengan = buildInvoicePayload(withBonus, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702,
         masterSalesmanId: 3464, salesmanNumber: "M-YAM" });
-    assert.ok(dengan.detailItem.length > 0);
+    assert.equal(dengan.detailItem.length, 2);
     assert.ok(dengan.detailItem.every((line) => line.salesmanListNumber?.length === 1 && line.salesmanListNumber[0] === "M-YAM"));
     // Tanpa sales yang sah: field tidak dikirim sama sekali (bukan daftar kosong).
     const tanpa = buildInvoicePayload(order(), { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 });
