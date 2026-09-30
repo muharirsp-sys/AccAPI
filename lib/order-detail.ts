@@ -178,6 +178,8 @@ export function parseOrderDetail(rows: unknown[][], packs: Map<string, PackInfo>
     const header = rows[at].map((cell) => text(cell).toUpperCase());
     const lines: OrderDetailLine[] = [];
     const unmapped = new Set<string>();
+    /** SO -> kode produk tanpa mapping di dalamnya. */
+    const held = new Map<string, Set<string>>();
 
     for (let index = at + 1; index < rows.length; index += 1) {
         const raw = rows[index] ?? [];
@@ -199,6 +201,7 @@ export function parseOrderDetail(rows: unknown[][], packs: Map<string, PackInfo>
         const pack = packs.get(productCode);
         if (!pack) {
             unmapped.add(productCode);
+            held.set(soNo, (held.get(soNo) ?? new Set<string>()).add(productCode));
             issues.push(`Baris ${rowNumber}: kode produk ${productCode} belum ada di mapping principal; baris dilewati.`);
             continue;
         }
@@ -227,8 +230,32 @@ export function parseOrderDetail(rows: unknown[][], packs: Map<string, PackInfo>
             bonus,
         });
     }
-    if (lines.length === 0) issues.push("Tidak ada satu pun baris yang bisa dipakai dari berkas ini.");
-    return { ...meta, lines, issues, unmappedProducts: [...unmapped].sort() };
+    // Baris bernilai yang dibuang membuat SO-nya kurang isi, dan sisanya tetap jadi faktur:
+    // INV/2609/KN01340 (30 Sep 2026) terbit 26 dari 27 baris, kurang Rp 405.000. Verifikasi
+    // balik pun buta, karena ia membandingkan Accurate dengan payload yang memang tak pernah
+    // memuat baris itu. Jadi SO-nya ditahan UTUH di sini (aturan 1 lib/principal-invoice), dan
+    // peringatannya ditaruh PALING ATAS supaya tidak tenggelam di bawah deretan "QTY 0".
+    const kept = lines.filter((line) => !held.has(line.soNo));
+    const heldIssues = [...held].map(([so, codes]) =>
+        `SO ${so} ditahan utuh (${lines.filter((line) => line.soNo === so).length} baris lain ikut ditahan): `
+        + `kode produk ${[...codes].join(", ")} belum ada di mapping. Tambahkan mapping-nya, lalu unggah ulang berkas ini dengan "ganti batch lama".`);
+    if (kept.length === 0) issues.push("Tidak ada satu pun baris yang bisa dipakai dari berkas ini.");
+    return { ...meta, lines: kept, issues: [...heldIssues, ...issues], unmappedProducts: [...unmapped].sort() };
+}
+
+/**
+ * Kode pelanggan & salesman laporan yang belum punya mapping, untuk PRATINJAU unggah. Gerbang
+ * validasi memang menahan SO-nya (checkLine), tetapi baru sesudah batch tersimpan dan satu
+ * temuan per baris; daftar ini memberi tahu SEBELUM itu, sekaligus, apa yang harus dilengkapi.
+ * Kode kosong ikut dilaporkan — kosong pun belum termapping.
+ */
+export function belumTermapping(lines: OrderDetailLine[], known: { customer: Set<string>; salesman: Set<string> }) {
+    const missing = (codes: string[], set: Set<string>) =>
+        [...new Set(codes)].filter((code) => !set.has(code)).map((code) => code || "(kosong)").sort();
+    return {
+        unmappedCustomers: missing(lines.map((line) => line.customerCode), known.customer),
+        unmappedSalesmen: missing(lines.map((line) => line.salesmanCode), known.salesman),
+    };
 }
 
 /** Berkas -> baris. SheetJS membaca stylesheet rusak bawaan laporan ini tanpa perbaikan apa pun. */
