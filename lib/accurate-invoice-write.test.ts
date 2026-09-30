@@ -2,7 +2,7 @@
    dan timeout tidak boleh dianggap gagal (faktur ganda di Accurate tidak bisa dibatalkan). */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { discardable, buildInvoicePayload, nextOutboxState, pakaiTanggalFaktur, readInvoiceIdentity, resendable, sendable, toAccurateDate, type InvoiceOrder, type InvoicePayload } from "./accurate-invoice-write.ts";
+import { discardable, buildInvoicePayload, nextOutboxState, readInvoiceIdentity, resendable, sendable, toAccurateDate, type InvoiceOrder } from "./accurate-invoice-write.ts";
 
 const UNITS = new Map([["KRT", 100], ["BAG", 350]]);
 
@@ -127,17 +127,18 @@ test("yang boleh DIBUANG hanya yang pasti belum ada fakturnya di Accurate", () =
 });
 
 
-test("tanggal faktur pilihan: hanya transDate yang diganti, tidak boleh sebelum SO", () => {
-    const beku = { customerNo: "C-MAJ010-KN", transDate: "28/09/2026", typeAutoNumber: 1702, taxable: true,
-        inclusiveTax: false, description: "Order X", detailItem: [], charField1: "KINO-NON-FOOD:SO1", charField2: "" } as InvoicePayload;
-    // Kosong = tanggal SO apa adanya (objek yang sama, tidak disalin).
-    assert.equal(pakaiTanggalFaktur(beku, "2026-09-28").payload, beku);
-    // Order kemarin difakturkan hari ini: hanya transDate yang berubah, kunci charField1 tetap.
-    const hariIni = pakaiTanggalFaktur(beku, "2026-09-28", "2026-09-29");
-    assert.equal(hariIni.error, undefined);
-    assert.deepEqual(hariIni.payload, { ...beku, transDate: "29/09/2026" });
-    assert.equal(beku.transDate, "28/09/2026", "payload beku tidak ikut berubah");
-    // Hari yang sama boleh; lebih awal dari SO ditolak.
-    assert.equal(pakaiTanggalFaktur(beku, "2026-09-28", "2026-09-28").error, undefined);
-    assert.match(pakaiTanggalFaktur(beku, "2026-09-28", "2026-09-27").error ?? "", /lebih awal dari tanggal SO 28\/09\/2026/);
+test("sales per baris ikut di SETIAP baris, hanya bila salesnya sah", () => {
+    // KN01225-KN01227 (2026-09-29): sales hanya di kepala faktur hilang begitu faktur disimpan
+    // ulang dari layar Accurate, yang menyimpan sales per baris.
+    // Baris BONUS disusun di jalur terpisah; tanpanya faktur terbit dengan sales hanya di
+    // sebagian barang (keluhan pengguna 2026-09-30).
+    const withBonus = order();
+    withBonus.result.bonuses = [{ program_id: "P-1", code: "M5012001000740", unit: "KRT", quantity: "1" }];
+    const dengan = buildInvoicePayload(withBonus, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702,
+        masterSalesmanId: 3464, salesmanNumber: "M-YAM" });
+    assert.equal(dengan.detailItem.length, 2);
+    assert.ok(dengan.detailItem.every((line) => line.salesmanListNumber?.length === 1 && line.salesmanListNumber[0] === "M-YAM"));
+    // Tanpa sales yang sah: field tidak dikirim sama sekali (bukan daftar kosong).
+    const tanpa = buildInvoicePayload(order(), { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 });
+    assert.ok(tanpa.detailItem.every((line) => !("salesmanListNumber" in line)));
 });
