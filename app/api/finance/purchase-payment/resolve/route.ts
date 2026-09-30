@@ -14,8 +14,9 @@ import { getAccurateSession } from "@/lib/accurate-session";
 import { PURCHASE_PAYMENT_OPERATION, purchasePaymentSubject, resolveAttempt } from "@/lib/accurate-write-attempt";
 
 export async function POST(request: Request) {
-    // ponytail: gate sama dengan penyelesaian di FastAPI (finance.update); finance.retry_post = D-01.
-    const gate = await requirePermission(request, "finance.update");
+    // D-14 (owner 2026-09-30): hanya kewenangan Finance — finance.retry_post (makna di lib/rbac/registry.ts).
+    // Tidak ada aturan pengirim ≠ penyelesai (belum diputuskan owner).
+    const gate = await requirePermission(request, "finance.retry_post");
     if (gate.response) return gate.response;
 
     const b = await request.json().catch(() => null) as Record<string, unknown> | null;

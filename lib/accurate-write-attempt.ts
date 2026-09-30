@@ -259,6 +259,7 @@ export async function resolveAttempt(input: ResolveInput): Promise<ResolveResult
             target_db_id: live.targetDbId,
             accurate_number: input.accurateNumber.trim(),
             previous_state: live.state,
+            resulting_state: next, // D-14: state sebelum & sesudah tercatat
             previous_outcome: live.outcome,
         },
         updatedAt: sql`now()`,

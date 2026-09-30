@@ -242,6 +242,7 @@ test("PG: ditolak / tak terhubung boleh diulang; atestasi 'tidak ada' membuka ul
         const resolved = rows.find((x) => x.state === "resolved_absent");
         assert.equal((resolved?.resolution as { previous_state?: string; checked_source?: string })?.previous_state, "unknown");
         assert.equal((resolved?.resolution as { checked_source?: string })?.checked_source, "Accurate DB-1");
+        assert.equal((resolved?.resolution as { resulting_state?: string })?.resulting_state, "resolved_absent"); // D-14
         const posted = await resolveAttempt({ ...r, decision: "absent", reason: "coba tandai tidak ada padahal posted" });
         assert.equal(!posted.ok && posted.code, "already_posted", "posted tidak bisa diatestasi 'tidak ada'");
     } finally {

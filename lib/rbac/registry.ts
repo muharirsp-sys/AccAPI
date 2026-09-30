@@ -23,6 +23,9 @@ export const PERMISSION_REGISTRY = {
     websales: ["view", "create"],
     payments: ["view", "create", "edit", "update", "delete", "upload", "export", "submit"],
     sppd: ["view", "edit_settings", "upload_excel", "generate", "download"],
+    // retry_post = satu-satunya izin untuk aksi yang MEMBUKA kiriman ulang ke Accurate (owner D-14/D-15/D-18,
+    //   2026-09-30): resolve attempt purchase-payment tidak pasti, override blok duplikat sales-receipt,
+    //   reopen/repost purchase-payment. Pemegangnya = kewenangan Finance.
     finance: ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"],
     principles: ["view", "upload", "delete"],
     master_barang: ["view", "create", "upload", "edit", "generate", "export", "manage"],

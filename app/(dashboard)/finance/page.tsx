@@ -520,10 +520,15 @@ export default function FinancePage() {
             toast.error("Sumber pemeriksaan wajib diisi. Tidak ada yang diubah.");
             return;
         }
+        // D-14: alasan WAJIB diketik manusia (dulu diisi otomatis "dicek manual di Accurate: …").
+        const reason = window.prompt("Alasan penyelesaian (min. 15 karakter): apa yang Anda lihat di Accurate dan mengapa?");
+        if (!reason || reason.trim().length < 15) {
+            toast.error("Alasan minimal 15 karakter. Tidak ada yang diubah.");
+            return;
+        }
         const key = recordKey(record);
         setBusyKey(key);
         try {
-            const note = number ? `dicek manual di Accurate: ${number} ada` : "dicek manual di Accurate: tidak ditemukan";
             const r = await fetch("/api/finance/purchase-payment/resolve", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -531,7 +536,7 @@ export default function FinancePage() {
                     invoiceNos: (record.detail_invoices || []).map((it) => it.invoiceNo),
                     decision: number ? "posted" : "absent",
                     accurateNumber: number,
-                    reason: note,
+                    reason: reason.trim(),
                     checkedSource: checked.trim(),
                 }),
             });
