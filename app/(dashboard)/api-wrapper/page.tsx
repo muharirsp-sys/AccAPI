@@ -2096,18 +2096,20 @@ export default function Home() {
     let combinedResults: any[] = [];
     let errorLogForExcel: any[] = [];
     let errorCount = 0;
-    const overrideLockedKeySet = new Set(duplicateOptions?.allowLockedKeys || []);
     const confirmedReceiptNumbersByKey = new Map<string, string[]>();
 
-    const markIdempotency = async (row: any, isSuccess: boolean) => {
+    // outcome "UNKNOWN": galat tanpa jawaban Accurate (timeout/jaringan) — kiriman MUNGKIN sudah tersimpan,
+    // jadi upload berikutnya diblokir sampai manusia mengecek (dulu FAILED -> dicoba ulang otomatis).
+    const markIdempotency = async (row: any, outcome: boolean | "UNKNOWN") => {
       if (!isSalesReceipt) return;
       try {
         const rowKey = buildSalesReceiptIdempotencyPayload(row).key;
-        if (overrideLockedKeySet.has(rowKey)) return;
+        // AM-025: key yang di-override kini dikunci ulang oleh lock, jadi hasilnya WAJIB dicatat;
+        // SUCCESS yang dikirim ulang tidak tersentuh (complete hanya menaikkan, tak pernah menurunkan).
         fetch('/api/idempotency/complete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keys: [rowKey], status: isSuccess ? 'SUCCESS' : 'FAILED' })
+          body: JSON.stringify({ keys: [rowKey], status: outcome === "UNKNOWN" ? 'UNKNOWN' : outcome ? 'SUCCESS' : 'FAILED' })
         });
       } catch (e) {}
     };
@@ -2349,13 +2351,15 @@ export default function Home() {
               return;
             }
 
-            markIdempotency(row, false);
+            // AM-025 review F4: tanpa jawaban Accurate dan tidak ada di histori (yang dibatasi & bisa ikut
+            // gagal) bukan bukti gagal — tandai UNKNOWN agar upload ulang menunggu pengecekan manusia.
+            markIdempotency(row, "UNKNOWN");
             chunkHadUnresolvedFailure = true;
             errorLogForExcel.push({
               "Paket/Batch": `Tahap ${i+1}`,
               "Baris Ke": start + idx + 1,
               "Ref / Invoice No": mainId,
-              "Status": "Gagal",
+              "Status": "TIDAK DIKETAHUI (cek Accurate sebelum kirim ulang)",
               "Pesan Error Accurate": chunkErr.message || "Unknown error parsing chunk return"
             });
           });

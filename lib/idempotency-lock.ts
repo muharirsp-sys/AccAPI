@@ -24,6 +24,9 @@ export function decideLock(entries: LockEntry[], existing: Map<string, LockRow>,
     const blocked: BlockedEntry[] = [];
     const toInsert: LockEntry[] = [];
     const toRetry: string[] = [];
+    // Dikonfirmasi manusia & bukan SUCCESS: kunci ulang HANYA bila baris masih persis yang dilihat
+    // (status + updatedAt) — dua override bersamaan tidak boleh sama-sama menang (review AM-025 F1).
+    const toTakeover: Array<{ key: string; status: string; updatedAt: Date | null }> = [];
     const seen = new Set<string>();
     const block = (item: LockEntry, ex: LockRow | undefined, status: string, reason: BlockReason) => blocked.push({
         key: item.key,
@@ -45,13 +48,15 @@ export function decideLock(entries: LockEntry[], existing: Map<string, LockRow>,
         const ex = existing.get(item.key);
         if (!ex) toInsert.push(item);
         else if (ex.status === "FAILED") toRetry.push(item.key);
-        else if (allowLocked.has(item.key)) continue; // dikonfirmasi manusia: kirim, tanpa menulis ulang status
-        else if (ex.status === "SUCCESS") block(item, ex, ex.status, "ALREADY_SUCCESS");
+        else if (allowLocked.has(item.key)) {
+            // SUCCESS yang dikirim ulang atas konfirmasi tetap SUCCESS (complete tak menyentuhnya).
+            if (ex.status !== "SUCCESS") toTakeover.push({ key: item.key, status: ex.status, updatedAt: ex.updatedAt ?? null });
+        } else if (ex.status === "SUCCESS") block(item, ex, ex.status, "ALREADY_SUCCESS");
         else if (ex.status === "PROCESSING" && now.getTime() - (ex.updatedAt ?? ex.createdAt ?? now).getTime() <= STALE_PROCESSING_MS) {
             block(item, ex, ex.status, "STILL_PROCESSING");
         } else block(item, ex, "UNKNOWN", "UNKNOWN_OUTCOME"); // PROCESSING basi, UNKNOWN, status asing
     }
-    return { blocked, toInsert, toRetry };
+    return { blocked, toInsert, toRetry, toTakeover };
 }
 
 const COMPLETE_STATUSES = new Set(["SUCCESS", "FAILED", "UNKNOWN"]);

@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { idempotencyLog } from '@/db/schema';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, inArray } from 'drizzle-orm';
 import { isCompleteStatus } from '@/lib/idempotency-lock';
 import { requireApiSession } from '@/lib/api-security';
 
@@ -32,10 +32,13 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'status harus SUCCESS, FAILED, atau UNKNOWN; keys harus teks.' }, { status: 400 });
         }
 
+        // SUCCESS juga boleh menaikkan FAILED/UNKNOWN (hanya mempersempit kiriman ulang): baris duplikat
+        // yang diizinkan dalam satu upload bisa tiba FAILED lebih dulu lalu SUCCESS (review AM-025 F3).
+        const from = status === 'SUCCESS' ? ['PROCESSING', 'FAILED', 'UNKNOWN'] : ['PROCESSING'];
         const now = new Date();
         await db.update(idempotencyLog)
                 .set({ status, updatedAt: now })
-                .where(and(inArray(idempotencyLog.key, keys), eq(idempotencyLog.status, 'PROCESSING')));
+                .where(and(inArray(idempotencyLog.key, keys), inArray(idempotencyLog.status, from)));
 
         return NextResponse.json({ ok: true });
     } catch (e: unknown) {

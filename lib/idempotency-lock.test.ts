@@ -30,11 +30,17 @@ test("SUCCESS, PROCESSING aktif, UNKNOWN, status asing: diblokir", () => {
     assert.deepEqual(d.toRetry, []);
 });
 
-test("konfirmasi manusia (allowLockedKeys): tidak diblokir, tetapi juga tidak ditulis ulang", () => {
-    const d = decide(["s", "basi"], [row("s", "SUCCESS"), row("basi", "PROCESSING", STALE_PROCESSING_MS + 1)], ["s", "basi"]);
+test("konfirmasi manusia (allowLockedKeys): SUCCESS tak ditulis; lainnya diambil alih dengan CAS status+updatedAt", () => {
+    const basi = row("basi", "PROCESSING", STALE_PROCESSING_MS + 1);
+    const d = decide(["s", "basi", "u"], [row("s", "SUCCESS"), basi, row("u", "UNKNOWN")], ["s", "basi", "u"]);
     assert.equal(d.blocked.length, 0);
     assert.deepEqual(d.toRetry, []);
     assert.deepEqual(d.toInsert, []);
+    // Dulu (review F1): override dibiarkan PROCESSING selamanya -> hasil kirimnya tak pernah tercatat.
+    assert.deepEqual(d.toTakeover, [
+        { key: "basi", status: "PROCESSING", updatedAt: basi.updatedAt },
+        { key: "u", status: "UNKNOWN", updatedAt: row("u", "UNKNOWN").updatedAt },
+    ]);
 });
 
 test("duplikat dalam satu upload diblokir kecuali diizinkan", () => {
