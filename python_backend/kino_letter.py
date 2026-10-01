@@ -44,6 +44,8 @@ FIRST_PO = re.compile(r"\bFIRST\s+PO\b", re.I)
 HARGA_CHANNEL = re.compile(r"\bWAJIB\s+(?:\w+\s+){0,3}HARGA\s+(GT|MT)\b", re.I)
 CHANNELS = ("GT", "MT", "NKA", "ALL")
 ATTACHMENT = re.compile(r"TERLAMPIR|LAMPIRAN|HIT\s+LIST", re.I)
+# "PROGRAM INI KHUSUS LD JAWA" (Small Package). "LUAR JAWA" sengaja tidak cocok.
+KHUSUS_JAWA = re.compile(r"\bKHUSUS\s+(?:LD\s+|DALAM\s+|WILAYAH\s+|AREA\s+)?JAWA\b", re.I)
 
 
 def flatten(text):
@@ -210,6 +212,137 @@ def match_products(rows, items, warnings):
                         f"'{row['ketentuan'].replace('Setiap pembelian ', '')}'.")
 
 
+# Padanan frasa surat -> kelompok master yang TIDAK bisa diturunkan dari kata-katanya sendiri,
+# karena nama dagang Kino berbeda dari nama master. Tiap entri = keputusan pengguna yang
+# tercatat. Tambahkan hanya dari keputusan baru, jangan dari tebakan.
+ALIAS_KELOMPOK = {
+    # 11 Sep 2026 (checklist N): Ovale 2 in 1 = Ovale Facial Lotion.
+    "OVALE 2 IN 1 CLEANSER": ("OVALE FACIAL",),
+    "OVALE 2IN1 CLEANSER": ("OVALE FACIAL",),
+    # 16-17 Sep 2026 (checklist P): "Khasiat Manjakani" = Manjakani TANPA varian whitening.
+    "RESIK V KHASIAT MANJAKANI": ("RESIK V MANJAKANI",),
+    "RESIK V KHASIAT RAMUAN MADURA WHITENING": ("RESIK V RAMUAN MADURA",),
+    # 1 Okt 2026: Cologne Gel Rejuvenation = relaunch "ECG DAY ..." menjadi "ESK CG <warna>".
+    # Seluruh kelompok, termasuk nama lama yang masih tersisa di master.
+    "ESKULIN COLOGNE GEL REJUVENATION": ("ESKULIN - COLOGNE",),
+    "ESKULIN COLOGNE GEL REJUV": ("ESKULIN - COLOGNE",),
+    # 1 Okt 2026: shampo pewarna (surat NKA Sep menyebut barang ini "SASHA HAIR SHAMPOO"),
+    # bukan krim cat rambut SASHA HAIR COLORANT.
+    "SASHA HAIR HAIR SHAMPOO COLORANT": ("SASHA SHAMPOO - COLOR",),
+}
+# Kata kemasan di surat -> satuan di ekor nama master ("... 1ML X 72 BLR").
+KEMASAN_SURAT = {"BLISTER": "BLR", "BLR": "BLR", "JAR": "JAR", "SACHET": "SCH", "SCH": "SCH",
+                 "POUCH": "PCH", "PCH": "PCH", "BOTOL": "BTL", "BTL": "BTL", "PACKAGE": "PACK", "PACK": "PACK"}
+SEBUTAN_SEMUA = re.compile(r"\b(?:MIX|ALL)\s+VARIANTS?\b|\bSEMUA\s+VARIAN\b", re.I)
+
+
+def _token_master(nama):
+    """Kata nama master tanpa KNF dan ekor karton. "B&B" tetap satu kata; "SMOOTH&SILKY" juga per bagian."""
+    inti = re.split(r"\sX\s+\d", " " + flatten(nama).upper() + " ")[0].split()
+    kata = {t for t in (inti[1:] if inti[:1] == ["KNF"] else inti) if t not in ("&", "-")}
+    return kata | {b for t in kata if "&" in t for b in t.split("&") if b}
+
+
+def _eja(huruf, kata, i):
+    """Indeks sesudah kata terakhir yang awalannya berurutan mengeja `huruf`; -1 = tidak bisa."""
+    if not huruf:
+        return i
+    for n in range(len(huruf), 0, -1):
+        if i < len(kata) and kata[i].startswith(huruf[:n]):
+            ujung = _eja(huruf[n:], kata, i + 1)
+            if ujung >= 0:
+                return ujung
+    return -1
+
+
+def _tercakup(kata, token):
+    """Setiap kata surat dijelaskan nama master: persis, atau singkatan yang bagian-bagiannya
+    awalan kata surat berurutan — bertitik ("H.VIT" = HAIR VITAMIN, "VIT." = VITAMIN) atau rapat
+    dengan huruf pertama sendiri ("HVIT" = HAIR VITAMIN, "BN" = BOTTLE NIPPLE). Rentang singkatan
+    boleh menimpa kata yang sudah cocok persis: "H.VIT HAIR TREATMENT" tetap menjelaskan
+    "HAIR VITAMIN" walau HAIR-nya juga ada utuh."""
+    sisa = [k not in token for k in kata]
+    for t in token - set(kata):
+        bagian = [b for b in t.split(".") if b]
+        for mulai in range(len(kata)):
+            if "." in t:
+                ujung = mulai + len(bagian) if all(
+                    mulai + i < len(kata) and kata[mulai + i].startswith(b) for i, b in enumerate(bagian)) else -1
+            elif t.isalpha() and 2 <= len(t) <= 5 and kata[mulai].startswith(t[0]):
+                ujung = _eja(t[1:], kata, mulai + 1)
+            else:
+                ujung = -1
+            if ujung > mulai + (0 if "." in t else 1):
+                sisa[mulai:ujung] = [False] * (ujung - mulai)
+                break
+    return not any(sisa)
+
+
+def _kode_dari(rows):
+    return {k.strip() for r in rows for k in str(r.get("kode_barangs", "")).split(",") if k.strip()}
+
+
+def match_groups(rows, items, warnings):
+    """Frasa kelompok surat -> kelompok/varian/kemasan/kode master, untuk baris yang belum berkode.
+
+    Barang = yang SETIAP kata frasanya dijelaskan nama master (`_tercakup`), dipersempit kata
+    kemasan surat; atau seluruh kelompok padanan di `ALIAS_KELOMPOK`. Satu baris per kelompok
+    master (keputusan 18 Sep: satu kelompok = satu baris). Tiap baris HANYA diterima bila
+    resolver yang dipakai saat Simpan dan saat Form dibuat (`_apply_native_kelompok`) menurunkan
+    kode yang sama persis dari kolom-kolomnya — kalau tidak, layar dan Form akan berbeda dari
+    aturan promo. Tidak cocok, atau tidak bisa dinyatakan begitu = baris DITAHAN apa adanya.
+    Frasa berukuran ("... 45ML") milik `match_products`, tidak disentuh di sini.
+    """
+    from shared import _BANDED, _EXCLUDED_KELOMPOKS, _apply_native_kelompok, kemasan_of
+
+    master = [it for it in items if str(it.get("kode_barang", "")).strip()
+              and not _BANDED.search(flatten(it.get("nama_barang")).upper())
+              and flatten(it.get("kelompok")).upper() not in _EXCLUDED_KELOMPOKS]
+    hasil = []
+    for row in rows:
+        asli = flatten(row.get("kelompok", "")).upper()
+        frasa = flatten(SEBUTAN_SEMUA.sub(" ", asli))
+        kata = list(dict.fromkeys(t for t in frasa.split() if t not in ("&", "-")))
+        if (str(row.get("kode_barangs", "")).strip() or not kata or asli == "__ALL_MASTER__"
+                or any(UKURAN.match(t) for t in kata)):
+            hasil.append(row)
+            continue
+        alias = ALIAS_KELOMPOK.get(frasa)
+        kemasan = "" if alias else next((KEMASAN_SURAT[t] for t in kata if t in KEMASAN_SURAT), "")
+        kata = [t for t in kata if t not in KEMASAN_SURAT]
+        cocok = [it for it in master
+                 if (flatten(it.get("kelompok")).upper() in alias if alias else
+                     kata and (not kemasan or kemasan_of(it.get("nama_barang")) == kemasan)
+                     and _tercakup(kata, _token_master(it.get("nama_barang"))))]
+        per_kelompok = {}
+        for it in cocok:
+            per_kelompok.setdefault(str(it.get("kelompok")), {})[str(it.get("kode_barang")).strip()] = it
+        baris = []
+        for kelompok, barang in per_kelompok.items():
+            varian = sorted({flatten(it.get("variant")).upper() for it in barang.values()})
+            for pilihan in ["ALL VARIANT"] + ([",".join(varian)] if all(varian) else []):
+                calon = {**row, "kelompok": kelompok, "variant": pilihan, "gramasi": "ALL GRAMASI",
+                         "kemasan": kemasan, "kode_barangs": ",".join(barang)}
+                if (_kode_dari(_apply_native_kelompok([{**calon, "kode_barangs": ""}], items)) == set(barang)
+                        and _kode_dari(_apply_native_kelompok([dict(calon)], items)) == set(barang)):
+                    catatan = flatten(row.get("keterangan", ""))
+                    baris.append({**calon, "keterangan": (catatan + "; " if catatan else "") + f"surat menyebut: {asli}"})
+                    break
+            else:
+                baris = []
+                break
+        if not baris:
+            warnings.append(f"'{asli}': " + ("kelompok tidak bisa dinyatakan tanpa ikut menarik barang lain"
+                                             if cocok else "tidak ditemukan di master") + "; pilih kelompok manual.")
+            hasil.append(row)
+            continue
+        warnings.append(f"'{asli}' -> {', '.join(b['kelompok'] for b in baris)} "
+                        f"({len(_kode_dari(baris))} kode{', kemasan ' + kemasan if kemasan else ''}), dipilih otomatis"
+                        f"{' lewat padanan tersimpan' if alias else ' dari nama barang master'}.")
+        hasil.extend(baris)
+    return hasil
+
+
 def rupiah(text):
     """"20.000" -> "20000"; pemisah ribuan surat Kino selalu titik."""
     return re.sub(r"[.,]", "", text.strip())
@@ -288,13 +421,19 @@ def parse_text(text, page_count=1):
                   keterangan="Hanya PO pertama (listing) per outlet" if first_po else "",
                   kode_barangs="", source_page=1, outlet_mode=mode,
                   outlet_classes=",".join(classes))
+    # Brand = Divisi ("HOME PERSONAL CARE") berarti SELURUH katalog principal: master Kino memang
+    # seluruhnya HPC (keputusan pengguna 17 Sep 2026 atas MSG ALL BRAND BP2609006016). Surat yang
+    # merujuk lampiran (paket, hit list) TIDAK — cakupan barangnya ada di lampiran itu.
+    brand = flatten(head.get("Brand", ""))
+    semua = brand.upper() == flatten(head.get("Divisi", "")).upper() and not ATTACHMENT.search(detail)
+    kelompok_brand = "__ALL_MASTER__" if brand and semua else brand
     rows = []
 
     def add(**row):
         rows.append({**common, **row, "no": str(len(rows) + 1)})
 
     for minimum, potongan in JUTA.findall(detail):
-        add(kelompok=head.get("Brand", ""), variant="", ketentuan=f"Minimal belanja Rp {juta(minimum)}",
+        add(kelompok=kelompok_brand, variant="", ketentuan=f"Minimal belanja Rp {juta(minimum)}",
             benefit_type="DISC_RP", benefit=rupiah(potongan), source_quote=f"{minimum}JT potongan on faktur {potongan}")
     # Bonus dibaca PER BUTIR: satu surat bisa memuat empat sub-program, dan "berlaku
     # kelipatan" milik butirnya sendiri, bukan milik seluruh surat.
@@ -330,14 +469,15 @@ def parse_text(text, page_count=1):
                 source_quote=f"{nama} ON PO {found.group(1)}%")
     if not rows:
         for persen in PERSEN.findall(detail):
-            add(kelompok=head.get("Brand", ""), variant="", ketentuan="Setiap pembelian",
+            add(kelompok=kelompok_brand, variant="", ketentuan="Setiap pembelian",
                 benefit_type="DISC_PCT", benefit=persen, source_quote=f"Disc. on faktur {persen}%")
     if not rows:
         warnings.append("Tidak ada mekanisme yang terbaca; isi baris manual dari Detail Promo.")
     if ATTACHMENT.search(detail):
         warnings.append("Surat merujuk LAMPIRAN (hit list / size paket). Aturan belum lengkap tanpa lampiran itu.")
     return {"letter": head, "mechanism": mechanism, "on_faktur": on_faktur, "rows": rows,
-            "warnings": warnings, "page_count": page_count, "detail": flatten(detail)}
+            "warnings": warnings, "page_count": page_count, "detail": flatten(detail),
+            "khusus_jawa": bool(KHUSUS_JAWA.search(flatten(detail)))}
 
 
 def parse_pdf(raw):

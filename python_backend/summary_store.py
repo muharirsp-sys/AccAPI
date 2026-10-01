@@ -123,11 +123,13 @@ def find_open_draft(user, title):
     return get_draft(row["id"], user) if row else None
 
 
-def append_rows(draft_id, user, rows, master=None):
+def append_rows(draft_id, user, rows, master=None, warnings=None):
     """Susulkan baris ke draft yang sudah ada. Kembalikan draft terbaru.
 
     Master ikut diperbarui supaya baris surat baru punya kamus barangnya; baris lama tetap
     utuh karena kode barangnya sudah diturunkan dan disimpan pada barisnya sendiri.
+    Peringatan surat susulan ikut ditambahkan: layar hanya membaca peringatan draft, dan
+    tanpa ini catatan surat kedua dst. (kelompok dipilih otomatis, surat dilewati) tak terlihat.
     """
     draft = get_draft(draft_id, user)
     if draft is None or draft["status"] != "draft":
@@ -191,6 +193,9 @@ def append_rows(draft_id, user, rows, master=None):
         baris["no"] = str(nomor)
     if master:
         content["master"] = master
+    if warnings:
+        ekstraksi = content.setdefault("extraction", {})
+        ekstraksi["warnings"] = [*(ekstraksi.get("warnings") or []), *warnings][-400:]
     content.pop("programs", None)
     with connect() as db:
         db.execute(

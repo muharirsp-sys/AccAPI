@@ -52,7 +52,8 @@ def rapikan_baris(rows, master_items, principle_name=""):
 
         # 3. Kelompok yang bukan kelompok master dikosongkan, katanya disimpan.
         kel = str(r.get("kelompok") or "").strip()
-        if kel and _norm(kel) not in kelompok_master:
+        # "__ALL_MASTER__" = seluruh katalog, sentinel yang sama dengan pilihan di layar.
+        if kel and _norm(kel) not in kelompok_master and kel != "__ALL_MASTER__":
             # HANYA cocok persis. Pencocokan "mengandung" sempat dipakai di sini dan langsung
             # terbukti berbahaya pada surat pertama yang diujikan: dari frasa
             # "OVALE 2IN1 CLEANSER MIX VARIANT" ia memilih kelompok master "OVALE" — satu-satunya
@@ -69,7 +70,8 @@ def rapikan_baris(rows, master_items, principle_name=""):
         # 4 & 5. Tidak menyebut varian/gramasi tertentu = SEMUA. Nilai yang bukan varian master
         #        (mis. kalimat suratnya sendiri terbawa ke sini) juga berarti tidak menyebut.
         var = str(r.get("variant") or "").strip()
-        if not var or (_norm(var) not in varian_master and _norm(var) != "ALL VARIANT"):
+        # Daftar varian dari dropdown dipisah koma ("GEL MONDAY,GEL SATURDAY").
+        if not var or (any(_norm(v) not in varian_master for v in var.split(",")) and _norm(var) != "ALL VARIANT"):
             r["variant"] = "ALL VARIANT"
         if not str(r.get("gramasi") or "").strip():
             r["gramasi"] = "ALL GRAMASI"

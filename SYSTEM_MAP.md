@@ -68,7 +68,7 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 - `db/migrations/0005_program_realization.sql`: tiga kolom nullable pada outbox + indeks periode dan identitas faktur; baris lama tidak diberi snapshot karangan. `lib/program-realization.test.ts` menguji diskon per PCS, bonus, mismatch, dan pengulangan pemeriksaan.
 - Pengiriman Accurate tetap memerlukan gate aktif, database tujuan cocok, petugas eksplisit, dan pemeriksaan satu faktur uji. Memasang fitur tidak mengirim faktur atau mengaktifkan draft secara otomatis.
 
-Surat Kino berlapis teks -> `python_backend/kino_letter.py` -> draft; scan memakai Mistral OCR 4.1. `summary_rules.py` memeriksa kelas outlet; `outlet_class.py` menyimpan keanggotaan kode outlet dasar, `import_outlet_class.py` memuat hit list. Kelas belum dimuat menahan program. `test_kino_letter.py` dan `test_summary_rules.py` menguji parser, tier, dan kelas outlet.
+Surat Kino berlapis teks -> `python_backend/kino_letter.py` -> draft; scan memakai Mistral OCR 4.1. Kelompok/varian/kemasan/kode diisi otomatis oleh `kino_letter.match_groups` (kata surat dijelaskan nama master, atau padanan `ALIAS_KELOMPOK`), diterima hanya bila `_apply_native_kelompok` menurunkan kode yang sama; yang tidak pasti tetap kosong untuk operator. Surat "KHUSUS LD JAWA" tidak dibuat barisnya. `summary_rules.py` memeriksa kelas outlet; `outlet_class.py` menyimpan keanggotaan kode outlet dasar, `import_outlet_class.py` memuat hit list. Kelas belum dimuat menahan program. `test_kino_letter.py` dan `test_summary_rules.py` menguji parser, tier, dan kelas outlet.
 
 ### Ruang Kerja Surya (Redesign September 2026)
 ```
