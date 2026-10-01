@@ -90,6 +90,23 @@ export function toAccurateDate(ymd: string): string {
     return `${day}/${month}/${year}`;
 }
 
+/**
+ * Tanggal faktur PILIHAN petugas saat menekan Kirim (keputusan pengguna 2026-09-29): order yang
+ * kemarin belum terproses boleh difakturkan hari ini dengan tanggal hari ini. Payload beku saat
+ * antre membawa tanggal SO; yang diganti HANYA `transDate`, dan payload hasilnya yang disimpan
+ * serta dikirim — verifikasi balik membandingkan dengan tanggal yang benar-benar dikirim.
+ * Lebih awal dari tanggal SO ditolak: penjualan tidak boleh tercatat sebelum pesanannya ada.
+ * `invoiceDate` kosong = tanggal SO apa adanya.
+ */
+export function pakaiTanggalFaktur(payload: InvoicePayload, orderDate: string, invoiceDate?: string):
+    { payload: InvoicePayload; error?: string } {
+    if (!invoiceDate) return { payload };
+    if (invoiceDate < orderDate) {
+        return { payload, error: `tanggal faktur ${toAccurateDate(invoiceDate)} lebih awal dari tanggal SO ${toAccurateDate(orderDate)}` };
+    }
+    return { payload: { ...payload, transDate: toAccurateDate(invoiceDate) } };
+}
+
 function money(raw: string | undefined, label: string): number {
     const value = Number(raw);
     if (!Number.isFinite(value)) throw new Error(`${label} bukan angka: ${raw}`);
