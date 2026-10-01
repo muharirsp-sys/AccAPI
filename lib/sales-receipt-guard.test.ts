@@ -2,11 +2,11 @@
  * SERVER. Butuh Postgres EVALUASI (AM-040, bukan produksi) lewat AM040_DATABASE_URL dengan tabel idempotency_log
  * (+ lockId/lockedBy) & idempotency_override (scripts/migrate-pg.mjs). Tanpa env itu dilewati dengan sebabnya.
  * Jawaban Accurate di sini = objek JSON SIMULASI, bukan bukti provider. */
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { and, eq, inArray, like } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { Pool } from "pg";
 import { idempotencyLog, idempotencyOverride } from "../db/schema.ts";
 import * as guard from "./sales-receipt-guard.ts";
@@ -61,7 +61,11 @@ const statusOf = async (db: ReturnType<typeof drizzle>, k: string) =>
     (await db.select({ s: idempotencyLog.status }).from(idempotencyLog).where(eq(idempotencyLog.key, k)))[0]?.s;
 const authorize = (db: ReturnType<typeof drizzle>, lockId: string, payload: unknown) =>
     g.authorizeSalesReceiptWrite(db, { lockId, userId: ME, payload, endpointPath: PATH, method: "POST" });
-/** Route /api/idempotency/complete ASLI (re-review 597a4b82 MEDIUM): sesi dipalsukan sebagai ME, DB nyata. */
+// Pool @/lib/db milik route asli ditutup agar proses uji tidak menggantung (re-review c8e5663c nit).
+after(async () => { if (PG_URL) await (await import("./db.ts")).pool.end(); });
+
+/** Route /api/idempotency/complete ASLI (re-review 597a4b82 MEDIUM): sesi dipalsukan sebagai ME, DB nyata.
+ * Mengembalikan body {ok, updated} — kasus negatif memeriksa updated === 0 (tidak lolos secara kosong). */
 async function clientComplete(_db: ReturnType<typeof drizzle>, lockId: string, k: string, status: string) {
     const { POST } = await import("../app/api/idempotency/complete/route.ts");
     const { auth } = await import("./auth.ts");
@@ -74,6 +78,7 @@ async function clientComplete(_db: ReturnType<typeof drizzle>, lockId: string, k
             method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: [k], lockId, status }),
         }));
         assert.equal(res.status, 200, `complete route ${res.status}`);
+        return (await res.json()) as { ok: boolean; updated: number };
     } finally {
         if (saved) Object.defineProperty(auth.api, "getSession", saved);
         if (bypass !== undefined) process.env.LOCAL_AUTH_BYPASS = bypass;
@@ -102,7 +107,7 @@ test("PG: skenario B — klien melapor FAILED setelah terkirim sukses tidak memb
     assert.ok(!isDenied(d));
     await g.recordSalesReceiptOutcome!(db, d, l.classifySalesReceiptReply!(1, [{ s: true, d: ["ok"] }]));
     assert.equal(await statusOf(db, k), "SUCCESS", "server mencatat SUCCESS dari jawaban Accurate");
-    await clientComplete(db, L1, k, "FAILED");
+    assert.equal((await clientComplete(db, L1, k, "FAILED")).updated, 0);
     assert.equal(await statusOf(db, k), "SUCCESS", "klien tidak bisa menurunkan hasil yang dicatat server");
     const ex = (await db.select().from(idempotencyLog).where(eq(idempotencyLog.key, k)))[0];
     const { blocked } = lock.decideLock([{ key: k }], new Map([[k, ex]]), new Date(), new Set(), new Set());
@@ -139,7 +144,7 @@ test("PG: proses mati setelah dispatch -> baris tetap memblokir; klien tak bisa 
     const L1 = await lockRows(db, [r]);
     assert.ok(!isDenied(await authorize(db, L1, [r])));
     // Tidak ada recordSalesReceiptOutcome (proses mati / timeout tanpa catatan).
-    await clientComplete(db, L1, k, "FAILED");
+    assert.equal((await clientComplete(db, L1, k, "FAILED")).updated, 0);
     assert.notEqual(await statusOf(db, k), "FAILED", "baris yang sudah dikirim tidak bisa dilaporkan FAILED oleh klien");
     const ex = (await db.select().from(idempotencyLog).where(eq(idempotencyLog.key, k)))[0];
     const { blocked, toRetry } = lock.decideLock([{ key: k }], new Map([[k, ex]]), new Date(), new Set(), new Set());
@@ -147,6 +152,18 @@ test("PG: proses mati setelah dispatch -> baris tetap memblokir; klien tak bisa 
     assert.equal(blocked[0]?.reason, "STILL_PROCESSING");
     const later = new Date(Date.now() + lock.STALE_PROCESSING_MS + 60_000);
     assert.equal(lock.decideLock([{ key: k }], new Map([[k, ex]]), later, new Set(), new Set()).blocked[0]?.reason, "UNKNOWN_OUTCOME");
+    // Menaikkan SENDING -> UNKNOWN lewat route asli boleh (mempersempit kiriman ulang).
+    assert.equal((await clientComplete(db, L1, k, "UNKNOWN")).updated, 1);
+    assert.equal(await statusOf(db, k), "UNKNOWN");
+}));
+
+test("PG: kontrol positif route /complete asli — baris belum dikirim boleh FAILED oleh pemilik lock", { skip: pgSkip }, () => withDb(async (db, tag) => {
+    const r = rowOf(tag, "INV-P", 300);
+    const k = keyOf(r);
+    const L1 = await lockRows(db, [r]);
+    assert.equal((await clientComplete(db, randomUUID(), k, "FAILED")).updated, 0, "lock lain tidak bisa menutup");
+    assert.equal((await clientComplete(db, L1, k, "FAILED")).updated, 1, "pemilik lock menutup baris PROCESSING");
+    assert.equal(await statusOf(db, k), "FAILED");
 }));
 
 test("PG: timeout / non-JSON -> UNKNOWN, tidak bisa dikirim ulang tanpa override", { skip: pgSkip }, () => withDb(async (db, tag) => {
