@@ -2,16 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
 import { forwardAccurate, isGuardedAccurateWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
-import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, recordSalesReceiptOutcome, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
-import { classifySalesReceiptReply, type RowOutcome } from "@/lib/idempotency-lock";
+import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
 import { db } from "@/lib/db";
-
-/** Gagal mencatat hasil = baris tetap SENDING (memblokir) — dicatat di log, respons Accurate tetap diteruskan. */
-async function recordQuietly(dispatch: SalesReceiptDispatch | null, outcomes: (n: number) => RowOutcome[]) {
-    if (!dispatch) return;
-    await recordSalesReceiptOutcome(db, dispatch, outcomes(dispatch.anchors.length))
-        .catch((e: unknown) => console.error("[PROXY] gagal mencatat hasil sales-receipt (baris tetap SENDING):", e));
-}
 
 export async function POST(req: NextRequest) {
     try {
@@ -65,24 +57,13 @@ export async function POST(req: NextRequest) {
         // Audit F5: log tanpa query string (bisa berisi data bisnis).
         console.log(`[PROXY FIRE] ${String(method).toUpperCase()} ${endpointPath}`);
 
-        let reply: { status: number; text: string };
-        try {
-            reply = await forwardAccurate({ sessionHost, sessionId, accessToken: apiKey }, endpointPath, method, payload);
-        } catch (e) {
-            await recordQuietly(dispatch, (n) => classifySalesReceiptReply(n, undefined)); // timeout/jaringan = UNKNOWN
-            throw e;
-        }
-        const { status, text: rawText } = reply;
-        let data: unknown;
-
-        try {
-            data = JSON.parse(rawText);
-        } catch {
-            await recordQuietly(dispatch, (n) => classifySalesReceiptReply(n, undefined));
+        // Hasil per baris sales-receipt dicatat SERVER di sendSalesReceipt (timeout/non-JSON/5xx = UNKNOWN).
+        const { status, text: rawText, json, data } = await sendSalesReceipt(db, dispatch,
+            () => forwardAccurate({ sessionHost, sessionId, accessToken: apiKey }, endpointPath, method, payload));
+        if (!json) {
             console.error("[ACCURATE API RETURNED NON-JSON]", rawText);
             return NextResponse.json({ error: "Accurate mengembalikan respons non-JSON (Gagal)", detail: rawText.substring(0, 1000) }, { status: 502 });
         }
-        await recordQuietly(dispatch, (n) => classifySalesReceiptReply(n, data, status));
 
         // SERVER LOG FOR DEBUGGING
         const accurateResult = data as { s?: boolean };

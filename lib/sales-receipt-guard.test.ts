@@ -15,9 +15,16 @@ import { buildSalesReceiptIdempotencyPayload } from "./sales-receipt-fingerprint
 
 const PG_URL = process.env.AM040_DATABASE_URL ?? "";
 const pgSkip = PG_URL ? false : "AM040_DATABASE_URL tidak di-set (Postgres evaluasi lokal AM-040)";
+// Route asli (/api/idempotency/complete) memakai @/lib/db -> arahkan ke DB evaluasi SEBELUM import dinamis.
+if (PG_URL) process.env.DATABASE_URL = PG_URL;
 const PATH = "/api/sales-receipt/bulk-save.do";
 const ME = "srg-user";
-type G = { authorizeSalesReceiptWrite: (...a: unknown[]) => Promise<unknown>; recordSalesReceiptOutcome?: (...a: unknown[]) => Promise<void> };
+type Reply = { status: number; text: string };
+type G = {
+    authorizeSalesReceiptWrite: (...a: unknown[]) => Promise<unknown>;
+    recordSalesReceiptOutcome?: (...a: unknown[]) => Promise<void>;
+    sendSalesReceipt?: (db: unknown, dispatch: unknown, forward: () => Promise<Reply>) => Promise<{ json: boolean; data?: unknown; status: number }>;
+};
 const g = guard as unknown as G;
 type L = { classifySalesReceiptReply?: (n: number, json: unknown) => string[]; completeFromStatuses?: (s: string) => string[] };
 const l = lock as unknown as L;
@@ -54,12 +61,23 @@ const statusOf = async (db: ReturnType<typeof drizzle>, k: string) =>
     (await db.select({ s: idempotencyLog.status }).from(idempotencyLog).where(eq(idempotencyLog.key, k)))[0]?.s;
 const authorize = (db: ReturnType<typeof drizzle>, lockId: string, payload: unknown) =>
     g.authorizeSalesReceiptWrite(db, { lockId, userId: ME, payload, endpointPath: PATH, method: "POST" });
-/** Setara /api/idempotency/complete dengan aturan transisi yang sama. */
-async function clientComplete(db: ReturnType<typeof drizzle>, lockId: string, k: string, status: string) {
-    await db.update(idempotencyLog).set({ status, updatedAt: new Date() }).where(and(
-        eq(idempotencyLog.key, k), eq(idempotencyLog.lockId, lockId), eq(idempotencyLog.lockedBy, ME),
-        inArray(idempotencyLog.status, l.completeFromStatuses!(status)),
-    ));
+/** Route /api/idempotency/complete ASLI (re-review 597a4b82 MEDIUM): sesi dipalsukan sebagai ME, DB nyata. */
+async function clientComplete(_db: ReturnType<typeof drizzle>, lockId: string, k: string, status: string) {
+    const { POST } = await import("../app/api/idempotency/complete/route.ts");
+    const { auth } = await import("./auth.ts");
+    const saved = Object.getOwnPropertyDescriptor(auth.api, "getSession");
+    const bypass = process.env.LOCAL_AUTH_BYPASS;
+    delete process.env.LOCAL_AUTH_BYPASS;
+    Object.defineProperty(auth.api, "getSession", { configurable: true, value: async () => ({ user: { id: ME, role: "staff" }, session: { id: "s" } }) });
+    try {
+        const res = await POST(new Request("http://app.test/api/idempotency/complete", {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ keys: [k], lockId, status }),
+        }));
+        assert.equal(res.status, 200, `complete route ${res.status}`);
+    } finally {
+        if (saved) Object.defineProperty(auth.api, "getSession", saved);
+        if (bypass !== undefined) process.env.LOCAL_AUTH_BYPASS = bypass;
+    }
 }
 
 test("PG: kontrol positif — baris milik lock lolos guard", { skip: pgSkip }, () => withDb(async (db, tag) => {
@@ -167,4 +185,27 @@ test("PG: override resend_success Finance sekali pakai; baris SUCCESS tidak ditu
     } finally {
         await db.delete(idempotencyOverride).where(eq(idempotencyOverride.lockId, L1));
     }
+}));
+
+test("PG: kirim + catat (glue proxy) — 5xx beramplop / non-JSON / timeout = UNKNOWN; 4xx beramplop = FAILED; per baris", { skip: pgSkip }, () => withDb(async (db, tag) => {
+    const send = g.sendSalesReceipt!;
+    const run = async (inv: string, forward: () => Promise<Reply>) => {
+        const r = rowOf(tag, inv, 100);
+        const L1 = await lockRows(db, [r]);
+        const d = await authorize(db, L1, [r]);
+        assert.ok(!isDenied(d));
+        const out = await send(db, d, forward).catch((e: unknown) => ({ thrown: e }));
+        return { out, status: await statusOf(db, keyOf(r)) };
+    };
+    const env = (status: number, body: unknown) => async () => ({ status, text: JSON.stringify(body) });
+    assert.equal((await run("G-500", env(500, { s: false, d: ["gateway"] }))).status, "UNKNOWN", "5xx beramplop = tidak pasti");
+    assert.equal((await run("G-302", env(302, { s: false, d: ["x"] }))).status, "UNKNOWN");
+    assert.equal((await run("G-422", env(422, { s: false, d: ["Data tidak valid"] }))).status, "FAILED", "4xx beramplop = Accurate menjawab menolak");
+    const nonJson = await run("G-HTML", async () => ({ status: 200, text: "<html>" }));
+    assert.equal(nonJson.status, "UNKNOWN");
+    assert.equal((nonJson.out as { json?: boolean }).json, false, "proxy menjawab 502 untuk non-JSON");
+    const timeout = await run("G-TO", async () => { throw new DOMException("t", "TimeoutError"); });
+    assert.equal(timeout.status, "UNKNOWN");
+    assert.ok("thrown" in (timeout.out as object), "galat kirim dilempar ulang ke proxy (504)");
+    assert.equal((await run("G-OK", env(200, [{ s: true, d: ["ok"] }]))).status, "SUCCESS");
 }));

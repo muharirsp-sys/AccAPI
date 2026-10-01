@@ -123,3 +123,11 @@ test("SENDING (sudah dikirim, hasil belum dicatat) diblokir: segar = STILL_PROCE
     const later = new Date(now.getTime() + STALE_PROCESSING_MS + 1);
     assert.equal(decideLock([{ key: "S" }], new Map([["S", row]]), later, new Set(), new Set()).blocked[0]?.reason, "UNKNOWN_OUTCOME");
 });
+
+test("re-review 597a4b82: status HTTP ikut menentukan — 3xx/5xx beramplop = UNKNOWN, 4xx beramplop = FAILED", () => {
+    const c = lockModule.classifySalesReceiptReply;
+    assert.deepEqual(c(2, { s: false, d: ["x"] }, 500), ["UNKNOWN", "UNKNOWN"]);
+    assert.deepEqual(c(1, { s: false, d: ["x"] }, 302), ["UNKNOWN"]);
+    assert.deepEqual(c(1, { s: false, d: ["x"] }, 422), ["FAILED"]);
+    assert.deepEqual(c(1, [{ s: true }], 503), ["UNKNOWN"], "5xx walau per baris sukses = tidak pasti");
+});

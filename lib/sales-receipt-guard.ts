@@ -12,7 +12,7 @@
 import { and, asc, eq, inArray, isNull, sql, TransactionRollbackError } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { idempotencyLog, idempotencyOverride } from "@/db/schema";
-import { planSalesReceiptRows, type RowOutcome } from "@/lib/idempotency-lock";
+import { classifySalesReceiptReply, planSalesReceiptRows, type RowOutcome } from "@/lib/idempotency-lock";
 import { buildSalesReceiptIdempotencyPayload, salesReceiptBaseIdentity } from "@/lib/sales-receipt-fingerprint";
 
 const CANONICAL_PATHS: Record<string, "bulk" | "single"> = {
@@ -25,8 +25,14 @@ const isObj = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof
 const hasFlatKey = (v: unknown): boolean => Array.isArray(v)
     ? v.some(hasFlatKey)
     : Boolean(v) && typeof v === "object" && Object.entries(v as Record<string, unknown>).some(([k, x]) => /[.[\]]/.test(k) || hasFlatKey(x));
-// Elemen yang dibaca rumus fingerprint harus objek; selain itu fingerprint melempar (500) — re-review LOW.
-const badDetail = (d: unknown) => !isObj(d) || (d.detailDiscount !== undefined && (!Array.isArray(d.detailDiscount) || !d.detailDiscount.every(isObj)));
+// Elemen yang dibaca rumus fingerprint harus objek dan field yang di-String()/Number()-kan harus skalar; selain itu
+// fingerprint melempar (500) — re-review d60433f2 & 597a4b82 LOW.
+const scalar = (v: unknown) => v === null || typeof v !== "object";
+const badDiscount = (x: unknown) => !isObj(x) || ![x.accountNo, x.discountNotes, x.amount].every(scalar);
+const badDetail = (d: unknown) => !isObj(d) || ![d.invoiceNo, d.paymentAmount].every(scalar)
+    || (d.detailDiscount !== undefined && (!Array.isArray(d.detailDiscount) || d.detailDiscount.some(badDiscount)));
+const badRow = (r: unknown) => !isObj(r) || ![r.customerNo, r.transDate].every(scalar)
+    || (r.detailInvoice !== undefined && (!Array.isArray(r.detailInvoice) || r.detailInvoice.some(badDetail)));
 
 export type SalesReceiptWrite = { lockId: unknown; userId: string; payload: unknown; endpointPath: string; method: string };
 /** Lolos guard: `anchors[i]` = key idempotency_log yang hasilnya ditentukan baris payload ke-i. */
@@ -52,9 +58,8 @@ export function checkSalesReceiptWrite(input: Omit<SalesReceiptWrite, "userId">)
     // di sini. Kunci ber-titik/kurung ditolak di kedalaman mana pun; detailInvoice wajib array.
     if (hasFlatKey(input.payload)) return "Payload sales-receipt tidak boleh memuat kunci ber-titik/kurung (bentuk rata).";
     const list = Array.isArray(input.payload) ? input.payload : [input.payload];
-    if (!list.length || list.some((r) => !isObj(r) || (r.detailInvoice !== undefined
-        && (!Array.isArray(r.detailInvoice) || r.detailInvoice.some(badDetail))))) {
-        return "Payload sales-receipt tidak valid: setiap baris objek, detailInvoice daftar objek, detailDiscount daftar objek.";
+    if (!list.length || list.some(badRow)) {
+        return "Payload sales-receipt tidak valid: setiap baris objek, detailInvoice/detailDiscount daftar objek, field identitas & nominal skalar.";
     }
     return null;
 }
@@ -149,4 +154,39 @@ export async function recordSalesReceiptOutcome(db: NodePgDatabase, dispatch: Sa
             inArray(idempotencyLog.key, keys),
         ));
     }
+}
+
+/** Gagal mencatat hasil = baris tetap SENDING (memblokir) — dicatat di log, respons Accurate tetap diteruskan. */
+async function recordQuietly(db: NodePgDatabase, dispatch: SalesReceiptDispatch | null, outcomes: (n: number) => RowOutcome[]) {
+    if (!dispatch) return;
+    await recordSalesReceiptOutcome(db, dispatch, outcomes(dispatch.anchors.length))
+        .catch((e: unknown) => console.error("[PROXY] gagal mencatat hasil sales-receipt (baris tetap SENDING):", e));
+}
+
+/**
+ * Kirim lewat `forward` (proxy: forwardAccurate) lalu catat hasil per baris dari jawaban yang DILIHAT server.
+ * Galat kirim (timeout/jaringan) dicatat UNKNOWN lalu dilempar ulang; bukan JSON = UNKNOWN + `json: false`.
+ * `dispatch` null (bukan tulis sales-receipt) = hanya kirim & parse.
+ */
+export async function sendSalesReceipt(
+    db: NodePgDatabase,
+    dispatch: SalesReceiptDispatch | null,
+    forward: () => Promise<{ status: number; text: string }>,
+): Promise<{ status: number; text: string; json: boolean; data?: unknown }> {
+    let reply: { status: number; text: string };
+    try {
+        reply = await forward();
+    } catch (e) {
+        await recordQuietly(db, dispatch, (n) => classifySalesReceiptReply(n, undefined));
+        throw e;
+    }
+    let data: unknown;
+    try {
+        data = JSON.parse(reply.text);
+    } catch {
+        await recordQuietly(db, dispatch, (n) => classifySalesReceiptReply(n, undefined));
+        return { ...reply, json: false };
+    }
+    await recordQuietly(db, dispatch, (n) => classifySalesReceiptReply(n, data, reply.status));
+    return { ...reply, json: true, data };
 }

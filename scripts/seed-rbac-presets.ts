@@ -173,7 +173,7 @@ try {
     }
     await client.query("COMMIT");
     console.log(`Backfill user_group: ${assigned} assignment baru, ${skipped} tanpa preset.`);
-    console.log("Seed RBAC preset selesai (additive, idempotent).");
+    console.log("Seed RBAC preset selesai (izin grup preset DIGANTI sesuai definisi; user_group hanya ditambah).");
 } catch (error) {
     await client.query("ROLLBACK");
     throw error;

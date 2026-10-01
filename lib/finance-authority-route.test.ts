@@ -111,3 +111,16 @@ test("AM-024 (re-review d60433f2 LOW): tulis sales-receipt hanya POST; elemen de
         assert.equal(res.status, 409, `${method} ${JSON.stringify(payload)}`);
     }
 });
+
+test("AM-024 (re-review 597a4b82 LOW): field skalar berbentuk objek = 409, bukan 500", async () => {
+    for (const payload of [
+        [{ customerNo: { toString: 1 }, detailInvoice: [] }],
+        [{ customerNo: "C1", transDate: ["01/09/2026"], detailInvoice: [] }],
+        [{ customerNo: "C1", detailInvoice: [{ invoiceNo: { a: 1 }, paymentAmount: 1 }] }],
+        [{ customerNo: "C1", detailInvoice: [{ invoiceNo: "I1", paymentAmount: { v: 1 } }] }],
+        [{ customerNo: "C1", detailInvoice: [{ invoiceNo: "I1", detailDiscount: [{ accountNo: { a: 1 }, amount: 1 }] }] }],
+    ]) {
+        const res = await asUserWith([], () => proxyPost(jsonPost("/api/proxy", { endpointPath: "/api/sales-receipt/bulk-save.do", method: "POST", payload, idempotencyLockId: "lock-x" })));
+        assert.equal(res.status, 409, JSON.stringify(payload));
+    }
+});
