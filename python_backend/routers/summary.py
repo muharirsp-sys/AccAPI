@@ -78,7 +78,7 @@ def kino_extraction(raw, master):
     """
     import hashlib
 
-    from kino_letter import match_products, parse_pdf
+    from kino_letter import flatten, match_groups, match_products, parse_pdf
     from summary_mistral import attach_codes
 
     try:
@@ -91,7 +91,19 @@ def kino_extraction(raw, master):
                 "group": str(item.get("kelompok", ""))} for item in master.get("items", [])]
     attach_codes(result["rows"], catalog, result["warnings"])
     match_products(result["rows"], master.get("items", []), result["warnings"])
-    return {"rows": result["rows"], "warnings": result["warnings"][:400], "page_count": result["page_count"],
+    # Program "KHUSUS LD JAWA" tidak berlaku: cabang ini di Makassar (keputusan pengguna
+    # 17 Sep 2026 atas Small Package BP2609008021). Barisnya tidak dibuat; bulannya tetap
+    # dipakai untuk judul Summary supaya surat ini tidak membuka lembar baru.
+    rows, abaikan = result["rows"], []
+    if result.get("khusus_jawa"):
+        abaikan, rows = rows, []
+        result["warnings"].append("Program KHUSUS JAWA; cabang di luar Jawa, jadi barisnya tidak dibuat.")
+    rows = match_groups(rows, master.get("items", []), result["warnings"])
+    for nomor, row in enumerate(rows, 1):
+        row["no"] = str(nomor)
+    kode_aju = flatten(result["letter"].get("Kode Aju", ""))
+    return {"rows": rows, "abaikan": abaikan, "page_count": result["page_count"],
+            "warnings": [f"{kode_aju}: {w}" for w in result["warnings"]][:400],
             "model": "deterministic:kino_letter", "pipeline_version": 1, "cached": False,
             "on_faktur": result["on_faktur"], "mechanism": result["mechanism"],
             "source_hash": hashlib.sha256(raw).hexdigest()}
@@ -1448,11 +1460,11 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
         # yang sudah terbit tidak boleh berubah di belakang punggung yang menandatanganinya.
         # Surat yang datang setelah publikasi memulai Summary berikutnya.
         from summary_store import append_rows, find_open_draft
-        judul = judul_summary(principle_name, result["rows"])
+        judul = judul_summary(principle_name, result["rows"] or result.get("abaikan") or [])
         berjalan = find_open_draft(user, judul)
         if berjalan is not None:
             sebelum = len(berjalan["content"].get("rows") or [])
-            draft = append_rows(berjalan["id"], user, result["rows"], master)
+            draft = append_rows(berjalan["id"], user, result["rows"], master, result.get("warnings"))
             if draft is not None:
                 # `rows` TETAP berarti "yang dihasilkan ekstraksi INI", bukan seluruh isi draft.
                 #

@@ -102,3 +102,12 @@ Side Effects: dokumen; tidak dieksekusi. Sinkronkan bila guard di kode berubah.
   kasus serupa berikutnya, bukan hanya Resik V. Catatan: 13 aturan Excel BP2609007713 yang sudah ada
   MELANGGAR aturan ini (`RESIK V KHASIAT MANJAKANI` memuat 6 kode, termasuk 3 kode whitening yang juga
   dipegang baris `RESIK V MANJAKANI WHITENING`) — perlu dibetulkan jadi 3 kode.
+
+- **2026-10-01** — uji empat surat Kino Oktober 2026 (BP2610008789, 009052, 009096, 009097). Koreksi pengguna:
+  **"Eskulin Cologne Gel Rejuvenation" = seluruh kelompok `ESKULIN - COLOGNE`**. Ini relaunch "ECG DAY ..."
+  menjadi "ESK CG <warna>", dan nama GEL lama yang masih ada di master tetap ikut. Pengguna juga meminta
+  **semua kolom terisi otomatis** (surat, periode, kelompok, varian, gramasi, dll.). Diterapkan di
+  `kino_letter.match_groups` + `ALIAS_KELOMPOK`. Dua bug ikut diperbaiki di `_apply_native_kelompok`:
+  (1) varian master yang dipilih kini dicocokkan persis, karena dulu "GEL ENCHANTING" ikut menarik
+  "ENCHANTING WHITE"; (2) kemasan baris kini mengikat saat Form dibuat, karena dulu Excel ELLIPS BLR memuat
+  kode JAR padahal `promo_rule` tidak. Cek baru: **kode di Dataset Excel = kode di aturan promo, per surat**.

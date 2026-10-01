@@ -3550,11 +3550,18 @@ def _apply_native_kelompok(rows_to_check, master_items):
                     for _k in _rk - _excl:
                         for _g in _seed_grams:
                             _seed_keys.add((_k, _g))
+                # Kemasan baris tetap mengikat di sini. Tanpa ini, baris "ELLIPS ... BLR" yang
+                # sudah benar saat disimpan (10 kode BLR) menarik 8 kembaran JAR-nya begitu Form
+                # dibuat, karena kelompok+gramasinya sama persis — Excel Summary lalu berbeda
+                # dari `promo_rule` (Kino Okt 2026; Sept terbalik: baris JAR menarik BLR).
+                _kem = {norm(x) for x in split_list(r.get("kemasan", ""))} - {"ALL KEMASAN"}
                 for it in master_items:
                     _kode = str(it.get("kode_barang", "")).strip()
                     if _kode in _seen_codes:
                         continue
                     if _BANDED.search(norm(it.get("nama_barang"))):
+                        continue
+                    if _kem and kemasan_of(it.get("nama_barang")) not in _kem:
                         continue
                     if (norm(it.get("kelompok")), norm(it.get("gramasi"))) in _seed_keys:
                         matched_items.append(it)
@@ -3588,15 +3595,27 @@ def _apply_native_kelompok(rows_to_check, master_items):
             # menerbitkan promo untuk seluruh katalog principal.
             pool = [it for it in master_items if norm(it.get("kelompok")) == norm(kelompok)] if kelompok else []
 
+            # Varian yang PERSIS ada di master kelompok ini (dipilih dari dropdown, dipisah koma)
+            # dicocokkan persis, utuh — "SMOOTH & SHINY" tidak dipecah di "&". Hanya teks yang
+            # bukan varian master yang boleh lewat pencocokan longgar di bawah. Dulu satu kata
+            # sama sudah cukup: "GEL ENCHANTING" menarik "ENCHANTING WHITE" (Kino Okt 2026).
+            _pool_variants = {norm(it.get("variant")) for it in pool if norm(it.get("variant"))}
+            _exact_v, _loose_v = set(), []
+            for _part in str(r.get("variant", "")).split(","):
+                if norm(_part) in _pool_variants:
+                    _exact_v.add(norm(_part))
+                else:
+                    _loose_v += [norm(x) for x in _part.split("&") if x.strip()]
+
             # Now filter the pool based on variants and gramasi
             for it in pool:
                 it_variant = norm(it.get("variant"))
                 it_nama = norm(it.get("nama_barang"))
                 variant_match = False
-                if v_all:
+                if v_all or it_variant in _exact_v:
                     variant_match = True
                 else:
-                    for v in [norm(x) for x in vlist]:
+                    for v in _loose_v:
                         if "- variant -" in v.lower() or "all variant" in v.lower() or "bisa meleset" in v.lower():
                             variant_match = True; break
                             

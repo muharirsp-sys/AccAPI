@@ -153,7 +153,66 @@ def main():
     assert any("bukan channel" in w for w in buta["warnings"]), buta["warnings"]
 
     check_end_to_end(msg, resik)
+    # Brand = Divisi tanpa lampiran = seluruh katalog (keputusan 17 Sep 2026, MSG ALL BRAND).
+    assert {r["kelompok"] for r in msg["rows"]} == {"__ALL_MASTER__"}, msg["rows"]
+    # "KHUSUS LD JAWA" ditandai (router tidak membuat barisnya); "LUAR JAWA" tidak.
+    assert small["khusus_jawa"] and not mti["khusus_jawa"]
+    assert not parse_text(SMALL.replace("KHUSUS LD JAWA", "KHUSUS LUAR JAWA"))["khusus_jawa"]
+    check_match_groups()
     print("kino letter check: OK")
+
+
+def check_match_groups():
+    """Frasa kelompok surat -> kelompok/varian/kemasan/kode tanpa operator (Kino Okt 2026)."""
+    from kino_letter import match_groups
+    from shared import _apply_native_kelompok
+
+    master = [dict(kode_barang=k, nama_barang=n, kelompok=g, variant=v, gramasi=s) for k, n, g, v, s in (
+        ("K1100001000110", "KNF ELLIPS H.VIT HAIR TREATMENT 1ML X 72 BLR", "ELLIPS", "H.VIT HAIR TREATMENT", "1ML"),
+        ("K1100001000140", "KNF ELLIPS H.VIT HAIR TREATMENT 1ML X 12 JAR", "ELLIPS", "H.VIT HAIR TREATMENT", "1ML"),
+        ("K1100007000110", "KNF ELLIPS H.VIT SHINY BLACK 1ML X 72 BLR", "ELLIPS", "H.VIT SHINY BLACK", "1ML"),
+        ("K1100007000140", "KNF ELLIPS H.VIT SHINY BLACK 1ML X 12 JAR", "ELLIPS", "H.VIT SHINY BLACK", "1ML"),
+        ("K1101011000110", "KNF ELLIPS H.VIT BALI NOURISH&PROTECT 1ML X 72 BLR", "ELLIPS - H.VIT BALI", "NOURISH&PROTECT", "1ML"),
+        ("K1102106000120", "KNF ELLIPS HVIT KERATIN 15C HAIR REPAIR 1ML X 24 JAR", "ELLIPS - HVIT KERATIN 15C HAIR", "REPAIR", "1ML"),
+        ("K1090001010010", "KNF ELLIPS HAIR MIST FRESH&SMOOTH 100ML X 24 BTL", "ELLIPS HAIR MIST", "FRESH&SMOOTH", "100ML"),
+        ("K1502000007020", "KNF SLEEK BABY BN CLEANSER 70ML X 36 PCH", "SLEEK BABY - BN CLEANSER", "", "70ML"),
+        # Kode dipakai ulang Kino: nama lama (GEL MONDAY) dan baru (DREAMY BLUE) pada satu kode.
+        ("K1111002005010", "KNF ESKULIN COLOGNE DREAMY BLUE 50ML X 36 BTL", "ESKULIN - COLOGNE", "DREAMY BLUE", "50ML"),
+        ("K1111002005010", "KNF ESKULIN COLOGNE GEL MONDAY 50ML X 36 BTL", "ESKULIN - COLOGNE", "GEL MONDAY", "50ML"),
+        ("K1111009005010", "KNF ESKULIN COLOGNE ENCHANTING WHITE 50ML X 36 BTL", "ESKULIN - COLOGNE", "ENCHANTING WHITE", "50ML"),
+        ("K1111009010010", "KNF ESKULIN COLOGNE GEL ENCHANTING 100ML X 36 BTL", "ESKULIN - COLOGNE", "GEL ENCHANTING", "100ML"),
+        ("K1122001010010", "KNF ESKULIN HIJAB C.GEL FRESH DAY 100ML X 36 BTL", "ESKULIN HIJAB - C.GEL", "FRESH DAY", "100ML"),
+        ("K1041001025010", "KNF B&B HAIR BODY WASH RIKO 250ML X 24 BTL", "B&B - HAIR BODY WASH", "RIKO", "250ML"),
+        ("K1045001006010", "KNF B&B POWDER BLOSSOM 60GR X 36 BTL", "B&B - POWDER", "BLOSSOM", "60GR"))]
+
+    def pilih(frasa):
+        row = dict(no="1", kelompok=frasa, variant=frasa, kode_barangs="", keterangan="", benefit_type="DISC_PCT")
+        return [(r["kelompok"], r["variant"], r.get("kemasan", ""), r["kode_barangs"]) for r in match_groups([row], master, [])]
+
+    # Kata kemasan surat mempersempit; H.VIT dan HVIT = HAIR VITAMIN; satu baris per kelompok master.
+    assert pilih("ELLIPS HAIR VITAMIN BLISTER") == [
+        ("ELLIPS", "ALL VARIANT", "BLR", "K1100001000110,K1100007000110"),
+        ("ELLIPS - H.VIT BALI", "ALL VARIANT", "BLR", "K1101011000110")], pilih("ELLIPS HAIR VITAMIN BLISTER")
+    assert pilih("ELLIPS HAIR VITAMIN JAR") == [
+        ("ELLIPS", "ALL VARIANT", "JAR", "K1100001000140,K1100007000140"),
+        ("ELLIPS - HVIT KERATIN 15C HAIR", "ALL VARIANT", "JAR", "K1102106000120")], pilih("ELLIPS HAIR VITAMIN JAR")
+    # Inisial master "BN" = BOTTLE NIPPLE; kata ganda surat ("BABY BABY") tidak mengganggu.
+    assert pilih("SLEEK BABY BABY BOTTLE NIPPLE") == [("SLEEK BABY - BN CLEANSER", "ALL VARIANT", "", "K1502000007020")]
+    assert [g for g, *_ in pilih("B&B ALL VARIANT")] == ["B&B - HAIR BODY WASH", "B&B - POWDER"]
+    # Padanan tersimpan 1 Okt 2026: seluruh ESKULIN - COLOGNE termasuk nama lama; Hijab C.GEL tidak.
+    assert pilih("ESKULIN COLOGNE GEL REJUVENATION MIX VARIANT") == [
+        ("ESKULIN - COLOGNE", "ALL VARIANT", "", "K1111002005010,K1111009005010,K1111009010010")]
+    # Tidak ditemukan -> baris dibiarkan (ditahan untuk operator), tidak ditebak.
+    assert pilih("RESIK V CAIR") == [("RESIK V CAIR", "RESIK V CAIR", "", "")]
+
+    def kode(**row):
+        base = dict(no="1", kelompok="", variant="ALL VARIANT", gramasi="ALL GRAMASI", kemasan="", kode_barangs="")
+        return {k for r in _apply_native_kelompok([{**base, **row}], master) for k in r["kode_barangs"].split(",") if k}
+    # Bug 2: varian master dipilih persis — "GEL ENCHANTING" tidak menarik "ENCHANTING WHITE".
+    assert kode(kelompok="ESKULIN - COLOGNE", variant="GEL ENCHANTING") == {"K1111009010010"}
+    # Bug 3: kode yang sudah terisi + ALL VARIANT tidak dimekarkan ke kemasan lain saat Form dibuat.
+    assert kode(kelompok="ELLIPS", kemasan="BLR", kode_barangs="K1100001000110,K1100007000110") == {
+        "K1100001000110", "K1100007000110"}
 
 
 def check_match_products(nka):
