@@ -97,3 +97,17 @@ test("AM-024 (re-review M1): path non-kanonik & bentuk payload salah ditolak 409
         assert.equal(res.status, 409, `${endpointPath} ${JSON.stringify(payload)}`);
     }
 });
+
+test("AM-024 (re-review d60433f2 LOW): tulis sales-receipt hanya POST; elemen detail rusak = 409, bukan 500", async () => {
+    const cases: Array<[string, unknown]> = [
+        ["GET", [{ customerNo: "C1", detailInvoice: [{ invoiceNo: "I1", paymentAmount: 1 }] }]],
+        ["POST", [{ customerNo: "C1", detailInvoice: [null] }]],
+        ["POST", [{ customerNo: "C1", detailInvoice: [[{ invoiceNo: "I1" }]] }]],
+        ["POST", [{ customerNo: "C1", detailInvoice: [{ invoiceNo: "I1", detailDiscount: { amount: 1 } }] }]],
+        ["POST", [{ customerNo: "C1", detailInvoice: [{ invoiceNo: "I1", detailDiscount: [null] }] }]],
+    ];
+    for (const [method, payload] of cases) {
+        const res = await asUserWith([], () => proxyPost(jsonPost("/api/proxy", { endpointPath: "/api/sales-receipt/bulk-save.do", method, payload, idempotencyLockId: "lock-x" })));
+        assert.equal(res.status, 409, `${method} ${JSON.stringify(payload)}`);
+    }
+});

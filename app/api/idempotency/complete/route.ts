@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { idempotencyLog } from '@/db/schema';
 import { and, eq, inArray } from 'drizzle-orm';
-import { isCompleteStatus } from '@/lib/idempotency-lock';
+import { completeFromStatuses, isCompleteStatus } from '@/lib/idempotency-lock';
 import { requireApiSession } from '@/lib/api-security';
 
 export async function POST(req: Request) {
@@ -35,10 +35,9 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'lockId wajib (dari /api/idempotency/lock).' }, { status: 400 });
         }
 
-        // SUCCESS juga boleh menaikkan FAILED/UNKNOWN (hanya mempersempit kiriman ulang): baris duplikat
-        // yang diizinkan dalam satu upload bisa tiba FAILED lebih dulu lalu SUCCESS (review AM-025 F3).
-        // UNKNOWN juga boleh menaikkan FAILED (hanya mempersempit kiriman ulang; re-review AM-025 MEDIUM).
-        const from = status === 'SUCCESS' ? ['PROCESSING', 'FAILED', 'UNKNOWN'] : status === 'UNKNOWN' ? ['PROCESSING', 'FAILED'] : ['PROCESSING'];
+        // Hanya menaikkan (SUCCESS/UNKNOWN boleh di atas FAILED — review AM-025 F3 & MEDIUM). FAILED hanya untuk
+        // baris yang belum pernah diteruskan proxy; hasil baris SENDING dicatat server (re-review d60433f2).
+        const from = completeFromStatuses(status);
         const now = new Date();
         const updated = await db.update(idempotencyLog)
                 .set({ status, updatedAt: now })

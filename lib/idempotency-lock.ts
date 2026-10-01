@@ -28,11 +28,13 @@ export type OverrideUse = {
     action: "takeover" | "resend_success" | "allow_duplicate";
 };
 
-/** Alasan blok untuk baris tersimpan yang bukan FAILED. */
+/** Alasan blok untuk baris tersimpan yang bukan FAILED. SENDING = proxy sudah meneruskan baris ke Accurate,
+ * hasilnya belum tercatat (sedang berjalan, atau proses mati setelah kirim). */
 function blockReasonFor(ex: LockRow, now: Date): BlockReason {
     if (ex.status === "SUCCESS") return "ALREADY_SUCCESS";
-    if (ex.status === "PROCESSING" && now.getTime() - (ex.updatedAt ?? ex.createdAt ?? now).getTime() <= STALE_PROCESSING_MS) return "STILL_PROCESSING";
-    return "UNKNOWN_OUTCOME"; // PROCESSING basi, UNKNOWN, status asing
+    if ((ex.status === "PROCESSING" || ex.status === "SENDING")
+        && now.getTime() - (ex.updatedAt ?? ex.createdAt ?? now).getTime() <= STALE_PROCESSING_MS) return "STILL_PROCESSING";
+    return "UNKNOWN_OUTCOME"; // PROCESSING/SENDING basi, UNKNOWN, status asing
 }
 
 export function decideLock(entries: LockEntry[], existing: Map<string, LockRow>, now: Date, allowDuplicate: Set<string>, allowLocked: Set<string>) {
@@ -82,34 +84,76 @@ const COMPLETE_STATUSES = new Set(["SUCCESS", "FAILED", "UNKNOWN"]);
 export const isCompleteStatus = (s: unknown): s is "SUCCESS" | "FAILED" | "UNKNOWN" => typeof s === "string" && COMPLETE_STATUSES.has(s);
 
 /**
- * AM-024 (D-18): guard /api/proxy untuk tulis sales-receipt. Baris payload lolos bila identitas dasarnya
- * (pelanggan + tanggal + himpunan faktur) cocok dengan baris PROCESSING milik lock ini — nominal sengaja
- * tidak ikut agar kiriman koreksi self-heal tetap lolos. Sisanya harus menghabiskan satu override tercatat
- * (resend_success / allow_duplicate) per baris; kembalian = fingerprint key yang perlu override.
- * ponytail: baris PROCESSING milik lock sendiri bisa dikirim berulang oleh klien yang sengaja memanggil
- * proxy berkali-kali sebelum `complete`; plafon = command server sales-receipt yang mencatat hasil per baris
- * (seperti purchase-payment AM-014).
+ * Transisi yang boleh dilaporkan KLIEN lewat /api/idempotency/complete. Hanya menaikkan (mempersempit kiriman
+ * ulang); FAILED hanya untuk baris yang BELUM pernah dikirim (PROCESSING). Baris yang sudah diteruskan proxy
+ * (SENDING) hasilnya dicatat server dari jawaban Accurate — klien tidak bisa melapor FAILED palsu lalu
+ * mengunci ulang otomatis (re-review d60433f2 MEDIUM skenario B).
  */
-export function rowsNeedingOverride(
+export function completeFromStatuses(status: "SUCCESS" | "FAILED" | "UNKNOWN"): string[] {
+    if (status === "SUCCESS") return ["PROCESSING", "SENDING", "FAILED", "UNKNOWN"];
+    if (status === "UNKNOWN") return ["PROCESSING", "SENDING", "FAILED"];
+    return ["PROCESSING"];
+}
+
+export type RowOutcome = "SUCCESS" | "FAILED" | "UNKNOWN";
+
+/**
+ * Hasil per baris payload dari jawaban Accurate yang DILIHAT proxy (bukan laporan klien). `json` undefined =
+ * timeout / bukan JSON. Ragu = UNKNOWN (memblokir sampai Finance). Galat menyeluruh beramplop (`{s:false,
+ * d:["pesan"]}`, bukan per baris) = tidak ada baris tersimpan -> FAILED; 5xx/3xx = UNKNOWN walau beramplop
+ * (seperti classifyProviderReply AM-014).
+ * ponytail: "amplop s:false tanpa hasil per baris = tidak tersimpan" ASSUMED dari perilaku klien lama
+ * (mode individu); bukti provider = D-16.
+ */
+export function classifySalesReceiptReply(n: number, json: unknown, httpStatus = 200): RowOutcome[] {
+    const all = (o: RowOutcome): RowOutcome[] => Array.from({ length: n }, () => o);
+    if (httpStatus >= 300 && !(httpStatus >= 400 && httpStatus < 500)) return all("UNKNOWN");
+    const isItem = (x: unknown) => Boolean(x) && typeof x === "object" && typeof (x as { s?: unknown }).s === "boolean";
+    const perRow = (list: unknown[]): RowOutcome[] => list.length === n
+        ? list.map((x) => (isItem(x) ? ((x as { s: boolean }).s ? "SUCCESS" : "FAILED") : "UNKNOWN"))
+        : all("UNKNOWN");
+    if (Array.isArray(json)) return perRow(json);
+    if (!json || typeof json !== "object") return all("UNKNOWN");
+    const env = json as { s?: unknown; d?: unknown };
+    if (Array.isArray(env.d) && env.d.some(isItem)) return perRow(env.d);
+    return typeof env.s === "boolean" ? all(env.s ? "SUCCESS" : "FAILED") : all("UNKNOWN");
+}
+
+type Identified = { key: string; customerNo?: unknown; transDate?: unknown; invoiceNo?: unknown };
+
+/**
+ * AM-024 (D-18): rencana guard /api/proxy untuk tulis sales-receipt. `owned` = baris lock ini yang BELUM
+ * terkirim atau DITOLAK Accurate (PROCESSING/FAILED). Baris payload lolos bila fingerprint-nya milik lock, atau
+ * identitas dasarnya (pelanggan + tanggal + himpunan faktur) sama dengan baris milik lock — nominal sengaja tidak
+ * ikut agar kiriman koreksi self-heal lolos (semantik nominal/tanggal = D-22, owner). Sisanya (`need`) harus
+ * menghabiskan satu override tercatat per baris. `anchors[i]` = key idempotency_log yang hasilnya ditentukan
+ * baris i (ditandai SENDING sebelum kirim, lalu hasil Accurate dicatat server) — kosong untuk baris override.
+ */
+export function planSalesReceiptRows(
     rows: Record<string, unknown>[],
-    lockedProcessing: Array<{ key: string; customerNo?: unknown; transDate?: unknown; invoiceNo?: unknown }>,
+    owned: Identified[],
     knownKeys: Set<string>,
-    fingerprint: (row: Record<string, unknown>) => { key: string; customerNo?: unknown; transDate?: unknown; invoiceNo?: unknown },
-    identity: (r: { customerNo?: unknown; transDate?: unknown; invoiceNo?: unknown }) => string,
-): string[] {
-    const owned = new Set(lockedProcessing.map((r) => r.key));
-    const coveredIdentity = new Set(lockedProcessing.map(identity));
+    fingerprint: (row: Record<string, unknown>) => Identified,
+    identity: (r: Omit<Identified, "key">) => string,
+): { need: string[]; anchors: string[][] } {
+    const ownedKeys = new Set(owned.map((r) => r.key));
+    const byIdentity = new Map<string, string[]>();
+    for (const r of owned) byIdentity.set(identity(r), [...(byIdentity.get(identity(r)) ?? []), r.key]);
     const seen = new Set<string>();
-    return rows.map(fingerprint).filter((fp) => {
+    const need: string[] = [];
+    const anchors = rows.map(fingerprint).map((fp) => {
         // Salinan kedua dst. dari fingerprint yang sama dalam SATU payload = kirim ganda -> butuh override
         // allow_duplicate per salinan (review e641e571: lock [r] lalu proxy [r, r, r]).
-        if (seen.has(fp.key)) return true;
+        const copy = seen.has(fp.key);
         seen.add(fp.key);
-        if (owned.has(fp.key)) return false; // fingerprint persis dikunci lock ini
-        // Fingerprint yang SUDAH tercatat (SUCCESS/UNKNOWN/milik lock lain) tidak boleh "ditutupi" oleh
-        // identitas yang sama: identitas di idempotency_log berasal dari entri kiriman klien, jadi klien
-        // non-Finance bisa mengunci key palsu beridentitas sama lalu mengirim ulang baris SUCCESS.
-        if (knownKeys.has(fp.key)) return true;
-        return !coveredIdentity.has(identity(fp)); // fingerprint baru (koreksi self-heal) beridentitas terkunci
-    }).map((fp) => fp.key);
+        // Fingerprint yang SUDAH tercatat (SUCCESS/UNKNOWN/SENDING/milik lock lain) tidak boleh "ditutupi"
+        // identitas yang sama: identitas di idempotency_log berasal dari entri klien (key palsu beridentitas sama).
+        const anchor = ownedKeys.has(fp.key) ? [fp.key] : knownKeys.has(fp.key) ? [] : byIdentity.get(identity(fp)) ?? [];
+        if (copy || anchor.length === 0) need.push(fp.key);
+        return anchor;
+    });
+    return { need, anchors };
 }
+
+/** Kunci yang perlu override (bentuk lama, dipakai uji). */
+export const rowsNeedingOverride = (...a: Parameters<typeof planSalesReceiptRows>) => planSalesReceiptRows(...a).need;

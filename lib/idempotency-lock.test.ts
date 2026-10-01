@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decideLock, isCompleteStatus, rowsNeedingOverride, STALE_PROCESSING_MS } from "./idempotency-lock.ts";
+import * as lockModule from "./idempotency-lock.ts";
 
 const now = new Date("2026-09-30T10:00:00Z");
 const row = (key: string, status: string, ageMs = 0) => ({ key, status, updatedAt: new Date(now.getTime() - ageMs), createdAt: null });
@@ -88,4 +89,37 @@ test("AM-024: salinan kembar dalam satu payload proxy butuh override per salinan
     const id = () => "C|D|I";
     const locked = [{ key: "K1", customerNo: "C", transDate: "D", invoiceNo: "I" }];
     assert.deepEqual(rowsNeedingOverride([{ k: "K1" }, { k: "K1" }, { k: "K1" }], locked, new Set(["K1"]), fp, id), ["K1", "K1"]);
+});
+
+// Re-review d60433f2 / 748b73aa MEDIUM: hasil per baris dicatat SERVER dari jawaban Accurate yang dilihat proxy.
+const L = lockModule as unknown as {
+    classifySalesReceiptReply?: (n: number, json: unknown) => string[];
+    completeFromStatuses?: (s: string) => string[];
+};
+test("jawaban sales-receipt -> hasil per baris (SUCCESS/FAILED/UNKNOWN), ragu = UNKNOWN", () => {
+    const c = L.classifySalesReceiptReply!;
+    assert.deepEqual(c(2, [{ s: true }, { s: false, d: ["x"] }]), ["SUCCESS", "FAILED"], "array per baris");
+    assert.deepEqual(c(2, { s: false, d: [{ s: true }, { s: false }] }), ["SUCCESS", "FAILED"], "amplop dengan d per baris");
+    assert.deepEqual(c(2, { s: true, d: [{ s: true }, { s: false }] }), ["SUCCESS", "FAILED"], "amplop s:true bisa membawa baris gagal (H09)");
+    assert.deepEqual(c(3, { s: false, d: ["Data tidak valid"] }), ["FAILED", "FAILED", "FAILED"], "galat menyeluruh: tak ada yang tersimpan");
+    assert.deepEqual(c(1, { s: true, d: ["ok"] }), ["SUCCESS"], "save.do satu objek");
+    assert.deepEqual(c(2, { s: false, d: [{ s: true }] }), ["UNKNOWN", "UNKNOWN"], "per baris tapi jumlah beda -> ragu");
+    assert.deepEqual(c(2, [{ s: true }]), ["UNKNOWN", "UNKNOWN"], "array jumlah beda -> ragu");
+    assert.deepEqual(c(1, [{ x: 1 }]), ["UNKNOWN"], "item tanpa s boolean");
+    assert.deepEqual(c(1, undefined), ["UNKNOWN"], "timeout / non-JSON");
+    assert.deepEqual(c(1, null), ["UNKNOWN"]);
+    assert.deepEqual(c(1, { error: "x" }), ["UNKNOWN"], "tanpa amplop Accurate");
+});
+test("complete dari klien: FAILED hanya dari PROCESSING (belum dikirim); SENDING tidak bisa diturunkan", () => {
+    const f = L.completeFromStatuses!;
+    assert.deepEqual(f("FAILED"), ["PROCESSING"]);
+    assert.ok(f("SUCCESS").includes("SENDING") && f("UNKNOWN").includes("SENDING"), "menaikkan SENDING boleh (mempersempit)");
+    assert.ok(!f("UNKNOWN").includes("SUCCESS") && !f("FAILED").includes("SUCCESS"));
+});
+test("SENDING (sudah dikirim, hasil belum dicatat) diblokir: segar = STILL_PROCESSING, basi = UNKNOWN_OUTCOME", () => {
+    const now = new Date();
+    const row = { key: "S", status: "SENDING", updatedAt: now };
+    assert.equal(decideLock([{ key: "S" }], new Map([["S", row]]), now, new Set(), new Set()).blocked[0]?.reason, "STILL_PROCESSING");
+    const later = new Date(now.getTime() + STALE_PROCESSING_MS + 1);
+    assert.equal(decideLock([{ key: "S" }], new Map([["S", row]]), later, new Set(), new Set()).blocked[0]?.reason, "UNKNOWN_OUTCOME");
 });

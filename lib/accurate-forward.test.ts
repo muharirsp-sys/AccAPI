@@ -2,7 +2,7 @@
  * bisa dilewati lewat variasi path. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildAccurateRequest, isGuardedAccurateWrite } from "./accurate-forward.ts";
+import { buildAccurateRequest, isGuardedAccurateWrite, isSalesReceiptWrite } from "./accurate-forward.ts";
 
 const target = { sessionHost: "https://zeus.accurate.id", sessionId: "SID", accessToken: "TOK" };
 
@@ -55,4 +55,17 @@ test("gate purchase-payment: variasi path/huruf/encoding tetap ditolak; baca & e
         const { url } = buildAccurateRequest(target, p, "POST", null);
         assert.doesNotMatch(new URL(url).pathname, /purchase-payment\/(bulk-)?save\.do/i);
     }
+});
+
+test("re-review d60433f2 LOW: %5C (backslash ter-encode) & encoding ganda tetap dianggap tulis", () => {
+    for (const p of [
+        "/api/sales-receipt%5Csave.do",
+        "/api/sales-receipt/save%252Edo",
+        "/api/sales-receipt%252Fbulk-save.do",
+        "/api/purchase-payment%5Cbulk-save.do",
+        "/api/purchase-payment/bulk-save%25252Edo",
+    ]) {
+        assert.equal(p.includes("purchase") ? isGuardedAccurateWrite(p) : isSalesReceiptWrite(p), true, p);
+    }
+    for (const p of ["/api/sales-receipt/list.do", "/api/sales-receipt/detail.do"]) assert.equal(isSalesReceiptWrite(p), false, p);
 });

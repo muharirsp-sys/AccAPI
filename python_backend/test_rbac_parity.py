@@ -95,10 +95,21 @@ def check_registry_parity():
     assert not missing, f"key FastAPI tidak ada di lib/rbac/registry.ts: {missing}"
     unknown = sorted(f"{m}.{a}" for m, a in used if m not in shared.PERMISSION_MODULES or a not in shared.PERMISSION_ACTIONS)
     assert not unknown, f"key FastAPI dibuang normalize_permissions: {unknown}"
+    # Re-review 748b73aa LOW: SEMUA action registry dari modul yang dikenal Python harus lolos filter, bukan
+    # hanya yang sudah dipanggil — key yang kelak dicek FastAPI tidak boleh ditolak diam-diam.
+    dropped = sorted(f"{m}.{a}" for m in shared.PERMISSION_MODULES for a in declared.get(m, set()) if a not in shared.PERMISSION_ACTIONS)
+    assert not dropped, f"action registry dibuang normalize_permissions: {dropped}"
 
 
 def check_policy():
     has = shared.user_has_permission
+    # Sesi 5 (owner): kapabilitas Finance terpisah lewat jalur izin efektif NYATA — retry_post lama dan kunci
+    # kapabilitas lain tidak memberi resolve_unknown.
+    fin = identity("fin5", role="finance", permissions="{}",
+                   effectivePermissions=["finance.update", "finance.retry_post", "finance.override_duplicate", "finance.repost_payment"])
+    assert not has(fin, "finance", "resolve_unknown"), "kunci finance lain memberi resolve_unknown"
+    res = identity("res5", role="viewer", permissions="{}", effectivePermissions=["finance.resolve_unknown"])
+    assert has(res, "finance", "resolve_unknown"), "finance.resolve_unknown dibuang filter Python"
     # User ber-group "Salesman": role legacy tak dikenal -> dulu jatuh ke preset viewer yang
     # memuat payments/finance.view. Izin efektif Next tidak memuatnya -> wajib ditolak.
     sales = identity("sls", role="salesman", permissions="{}", effectivePermissions=["websales.view", "websales.create"])
