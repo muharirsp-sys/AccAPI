@@ -23,10 +23,14 @@ export const PERMISSION_REGISTRY = {
     websales: ["view", "create"],
     payments: ["view", "create", "edit", "update", "delete", "upload", "export", "submit"],
     sppd: ["view", "edit_settings", "upload_excel", "generate", "download"],
-    // retry_post = satu-satunya izin untuk aksi yang MEMBUKA kiriman ulang ke Accurate (owner D-14/D-15/D-18,
-    //   2026-09-30): resolve attempt purchase-payment tidak pasti, override blok duplikat sales-receipt,
-    //   reopen/repost purchase-payment. Pemegangnya = kewenangan Finance.
-    finance: ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"],
+    // Aksi yang MEMBUKA kiriman ulang ke Accurate (owner D-14/D-15/D-18, 2026-09-30) = kewenangan Finance,
+    //   satu kunci per kapabilitas (tidak saling menggantikan, ditegakkan backend):
+    //   resolve_unknown    = selesaikan attempt purchase-payment sending/unknown (D-14);
+    //   override_duplicate = override blok duplikat sales-receipt (D-18);
+    //   repost_payment     = reopen/repost purchase-payment posted yang dihapus/void di Accurate (D-15,
+    //                        belum ada route — menunggu ADR-004).
+    //   retry_post = kunci lama; TIDAK memberi satu pun kapabilitas di atas (tidak ditegakkan, lihat D-01).
+    finance: ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update", "resolve_unknown", "override_duplicate", "repost_payment"],
     principles: ["view", "upload", "delete"],
     master_barang: ["view", "create", "upload", "edit", "generate", "export", "manage"],
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],

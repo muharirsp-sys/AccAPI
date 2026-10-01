@@ -20,7 +20,7 @@ export type LockRow = LockEntry & { status: string; updatedAt?: Date | null; cre
 export type BlockReason = "DUPLICATE_IN_UPLOAD" | "ALREADY_SUCCESS" | "STILL_PROCESSING" | "UNKNOWN_OUTCOME";
 export type BlockedEntry = LockEntry & { status: string; reason: BlockReason };
 
-/** Satu override manusia yang BENAR-BENAR dipakai (D-18): butuh finance.retry_post + alasan, dicatat audit. */
+/** Satu override manusia yang BENAR-BENAR dipakai (D-18): butuh finance.override_duplicate + alasan, dicatat audit. */
 export type OverrideUse = {
     key: string;
     blockReason: BlockReason;

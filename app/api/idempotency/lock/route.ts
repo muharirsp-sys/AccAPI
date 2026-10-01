@@ -42,11 +42,11 @@ export async function POST(req: Request) {
         );
 
         // D-18 (owner 2026-09-30): override blok duplikat = membuka kiriman ulang ke Accurate -> hanya
-        // Finance (finance.retry_post), alasan wajib, ditegakkan di sini — bukan hanya UI.
+        // Finance (finance.override_duplicate), alasan wajib, ditegakkan di sini — bukan hanya UI.
         const reason = typeof overrideReason === 'string' ? overrideReason.trim() : '';
         if (!preview && overrides.length > 0) {
-            if (!access.perms!.has('finance.retry_post')) {
-                return NextResponse.json({ error: 'Override blok duplikat hanya untuk kewenangan Finance (finance.retry_post).' }, { status: 403 });
+            if (!access.perms!.has('finance.override_duplicate')) {
+                return NextResponse.json({ error: 'Override blok duplikat hanya untuk kewenangan Finance (finance.override_duplicate).' }, { status: 403 });
             }
             if (reason.length < 15) {
                 return NextResponse.json({ error: 'Alasan override wajib (minimal 15 karakter).' }, { status: 400 });

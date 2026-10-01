@@ -1,5 +1,8 @@
-/* Owner D-14/D-18 (2026-09-30): aksi yang membuka kiriman ulang ke Accurate hanya untuk kewenangan Finance
- * (`finance.retry_post`), DITEGAKKAN backend. Uji perilaku: sesi & grup dipalsukan, tanpa DB/jaringan. */
+/* Owner D-14/D-18 (2026-09-30): aksi yang membuka kiriman ulang ke Accurate hanya untuk kewenangan Finance,
+ * DITEGAKKAN backend, satu kunci semantik per kapabilitas (sesi 5): resolve = `finance.resolve_unknown`,
+ * override = `finance.override_duplicate` (repost D-15 = `finance.repost_payment`, belum ada route).
+ * Memegang kunci kapabilitas LAIN (termasuk `finance.retry_post` lama) tidak cukup.
+ * Uji perilaku: sesi & grup dipalsukan, tanpa DB/jaringan. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
@@ -43,20 +46,24 @@ export const jsonPost = (url: string, body: unknown) => new NextRequest(`http://
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
 });
 
-test("D-14 resolve purchase-payment: finance.update saja -> 403; finance.retry_post -> lolos gate", async () => {
-    const denied = await asUserWith(["finance.update", "finance.view"], () => resolvePurchasePayment(jsonPost("/api/finance/purchase-payment/resolve", {})));
-    assert.equal(denied.status, 403, "tanpa finance.retry_post harus 403");
+/** Semua kunci finance KECUALI `except` — membuktikan kapabilitas tidak saling menggantikan. */
+const financeAllBut = (except: string) => ["finance.view", "finance.update", "finance.retry_post", "finance.resolve_unknown",
+    "finance.override_duplicate", "finance.repost_payment", "api_wrapper.view", "api_wrapper.execute"].filter((k) => k !== except);
+
+test("D-14 resolve purchase-payment: hanya finance.resolve_unknown (retry_post/override/repost tidak cukup)", async () => {
+    const denied = await asUserWith(financeAllBut("finance.resolve_unknown"), () => resolvePurchasePayment(jsonPost("/api/finance/purchase-payment/resolve", {})));
+    assert.equal(denied.status, 403, "tanpa finance.resolve_unknown harus 403");
     // Kontrol positif: gate lolos, lalu validasi body (kosong) menjawab 400 — 403 di atas memang dari izin.
-    const allowed = await asUserWith(["finance.retry_post"], () => resolvePurchasePayment(jsonPost("/api/finance/purchase-payment/resolve", {})));
+    const allowed = await asUserWith(["finance.resolve_unknown"], () => resolvePurchasePayment(jsonPost("/api/finance/purchase-payment/resolve", {})));
     assert.equal(allowed.status, 400);
 });
 
-test("D-18 override sales-receipt: non-Finance -> 403; Finance tanpa alasan -> 400; tanpa tulis DB", async () => {
+test("D-18 override sales-receipt: hanya finance.override_duplicate -> lolos; alasan wajib; tanpa tulis DB", async () => {
     const successRow = [{ key: "PAY_C1_01/09/2026_INV-1|1000|", status: "SUCCESS", updatedAt: new Date(), createdAt: null }];
     const body = (overrideReason = "") => ({ keys: [{ key: successRow[0].key }], allowLockedKeys: [successRow[0].key], overrideReason });
-    const denied = await asUserWith(["api_wrapper.view", "finance.update"], () => lockIdempotency(jsonPost("/api/idempotency/lock", body("alasan override yang cukup panjang"))), successRow);
-    assert.equal(denied.status, 403, "override tanpa finance.retry_post harus 403");
-    const noReason = await asUserWith(["finance.retry_post"], () => lockIdempotency(jsonPost("/api/idempotency/lock", body("pendek"))), successRow);
+    const denied = await asUserWith(financeAllBut("finance.override_duplicate"), () => lockIdempotency(jsonPost("/api/idempotency/lock", body("alasan override yang cukup panjang"))), successRow);
+    assert.equal(denied.status, 403, "override tanpa finance.override_duplicate harus 403");
+    const noReason = await asUserWith(["finance.override_duplicate"], () => lockIdempotency(jsonPost("/api/idempotency/lock", body("pendek"))), successRow);
     assert.equal(noReason.status, 400, "alasan < 15 karakter harus 400");
     // Kontrol positif: tanpa override, non-Finance tetap boleh melihat blok (preview) — 200, tanpa tulis.
     const preview = await asUserWith(["api_wrapper.view"], () => lockIdempotency(jsonPost("/api/idempotency/lock", { keys: [{ key: successRow[0].key }], preview: true })), successRow);

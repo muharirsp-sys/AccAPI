@@ -37,7 +37,7 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
         name: "Finance", desc: "Keuangan / pembayaran", keys: [
             ...k("dashboard", ["view"]), ...k("payments", ["view", "export"]),
             ...k("sppd", ["view", "download"]),
-            ...k("finance", ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"]),
+            ...k("finance", ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update", "resolve_unknown", "override_duplicate", "repost_payment"]),
             ...k("off_program_control", ["view", "update", "finance_payment", "submit_refund"]),
             ...k("claim_workflow", ["view", "update", "export"]),
             ...k("principles", ["view"]),

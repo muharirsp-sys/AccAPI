@@ -9,7 +9,7 @@ import assert from "node:assert";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { canAccessPathWithKeys, getPagePermission } from "../rbac.ts";
+import { canAccessPathWithKeys, getPagePermission, rolePermissionPresets } from "../rbac.ts";
 import { PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey } from "./registry.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +24,13 @@ const keys = allPermissionKeys();
 assert.ok(keys.size > 0, "registry kosong");
 assert.ok(isValidPermissionKey("off_program_control.sm_approve"), "key OPC valid harus dikenali");
 assert.ok(!isValidPermissionKey("off_program_control.nope"), "key tak terdaftar harus ditolak");
+// Sesi 5: tiga kapabilitas Finance yang membuka kiriman ulang ke Accurate = tiga kunci terpisah, preset
+// role finance memuat ketiganya, manager tidak (owner D-14/D-15/D-18).
+for (const action of ["resolve_unknown", "override_duplicate", "repost_payment"] as const) {
+    assert.ok(isValidPermissionKey(`finance.${action}`), `finance.${action} wajib terdaftar`);
+    assert.ok(rolePermissionPresets.finance.finance?.includes(action), `preset finance tanpa ${action}`);
+    assert.ok(!rolePermissionPresets.manager.finance?.includes(action), `preset manager memuat ${action}`);
+}
 assert.ok(isValidPermissionKey("reconciliation.view"));
 assert.ok(isValidPermissionKey("reconciliation.run"));
 assert.ok(isValidPermissionKey("reconciliation.manage"));

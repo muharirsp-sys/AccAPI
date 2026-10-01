@@ -2447,7 +2447,7 @@ export default function Home() {
       .map((item) => item.key)));
 
     // D-18 (owner): override = membuka kiriman ulang ke Accurate — hanya Finance (server menolak 403 tanpa
-    // finance.retry_post) dan alasan wajib tercatat di jejak override.
+    // finance.override_duplicate) dan alasan wajib tercatat di jejak override.
     let overrideReason = "";
     if (allowDuplicateKeys.length > 0 || allowLockedKeys.length > 0) {
       const typed = window.prompt(`Alasan meng-override ${allowDuplicateKeys.length + allowLockedKeys.length} blok duplikat (min. 15 karakter). Hanya kewenangan Finance.`);

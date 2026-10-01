@@ -154,6 +154,9 @@ PERMISSION_ACTIONS = [
     "upload_proof",
     "post_accurate",
     "retry_post",
+    "resolve_unknown",
+    "override_duplicate",
+    "repost_payment",
     "run",
     "email",
     "sync",
@@ -1124,7 +1127,7 @@ def user_has_permission(username: Optional[str], module: str, action: str) -> bo
             "dashboard": {"view"},
             "payments": {"view", "export"},
             "sppd": {"view", "download"},
-            "finance": {"view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update", "edit"},
+            "finance": {"view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update", "edit", "resolve_unknown", "override_duplicate", "repost_payment"},
             "principles": {"view"},
         },
         "staff": {

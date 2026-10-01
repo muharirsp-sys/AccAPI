@@ -92,13 +92,13 @@ def main():
     assert r.status_code == 400, f"status tak dikenal: {r.status_code} {r.text[:200]}"
     assert rec()["accurate_post_status"] == ""
 
-    # 5) D-14 (owner 2026-09-30): keluar dari unknown hanya kewenangan Finance (finance.retry_post) —
-    #    pemegang finance.update saja (mis. preset manager) ditolak walau catatannya lengkap.
+    # 5) D-14 (owner 2026-09-30): keluar dari unknown hanya kewenangan Finance (finance.resolve_unknown,
+    #    sesi 5) — pemegang semua izin lain, termasuk finance.retry_post lama, ditolak walau catatannya lengkap.
     seed("unknown")
-    finance.user_has_permission = lambda user, module, action: not (module == "finance" and action == "retry_post")
+    finance.user_has_permission = lambda user, module, action: not (module == "finance" and action == "resolve_unknown")
     try:
         r = update(accurate_post_status="failed", resolution_note="dicek manual di Accurate: tidak ditemukan")
-        assert r.status_code == 409 and "retry_post" in r.text, f"non-Finance menyelesaikan unknown: {r.status_code} {r.text[:200]}"
+        assert r.status_code == 409 and "resolve_unknown" in r.text, f"non-Finance menyelesaikan unknown: {r.status_code} {r.text[:200]}"
         assert rec()["accurate_post_status"] == "unknown"
     finally:
         finance.user_has_permission = lambda user, module, action: True
