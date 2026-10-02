@@ -20,6 +20,8 @@ import { bonusQuota, isBonusLine, JARINGAN_POSISI_BEBAS, matchBonusRule, matchTa
     splitDiscounts, TOLERANCE, TOLERANSI_NOTA, type BonusQuota, type DiscountAt, type OutletMember } from "@/lib/principal-validation";
 
 export type PromoRule = {
+    /** `promo_rule.id`. Rujukan keputusan Normalisasi Diskon; aturan tanpa id tidak bisa dirujuk. */
+    id?: number;
     principal: string;
     suratProgram: string;
     promoLabel: string;
@@ -179,13 +181,32 @@ export type DetailRow = {
     promoGroup: string;
     /** Kosong bila tidak ada yang perlu dijelaskan; terisi kalau tak bertuan. */
     reason: string;
+    /** Baris tak bertuan: id aturan yang BOLEH jadi dasar normalisasi, per golongan. Lihat `alasanTakBerlaku`. */
+    calonAturan?: Record<Golongan, number[]>;
+    /** Baris yang dinormalisasi: id aturan dasarnya. */
+    aturanId?: number;
+    /** Baris tak bertuan yang PERNAH dinormalisasi tetapi keputusannya tidak dipakai: golongannya dulu. */
+    bekasNormalisasi?: Golongan;
 };
 
-/** Penanda `suratProgram` baris yang digolongkan lewat menu Normalisasi Diskon, bukan aturan terbit. */
-export const NORMALISASI = "NORMALISASI";
+/** Golongan keputusan Normalisasi Diskon: Disc Claim (principal) atau Disc Distributor. */
+export type Golongan = "principal" | "distributor";
 
-/** Keputusan manusia atas satu potongan tak bertuan (tabel `discount_normalization`). */
-export type Putusan = { bucket: "principal" | "distributor"; amount: number; by: string };
+/**
+ * Keputusan manusia atas satu potongan tak bertuan (tabel `discount_normalization`).
+ * `ruleKey` = `kunciAturan` dasar keputusannya (rujukan utama); `ruleId` = id saat diputuskan (jejak,
+ * dan cadangan bila kunci kosong). Keduanya kosong = keputusan sebelum aturan wajib, TIDAK dipakai rekap.
+ */
+export type Putusan = { bucket: Golongan; amount: number; by: string; ruleId?: number | null; ruleKey?: string | null };
+
+/**
+ * Kunci ALAMI aturan — kolom yang sama dengan indeks unik `idx_promo_rule_key`. Impor Summary / Excel
+ * MENGGANTI baris aturan (hapus + sisip, id baru); kunci ini tetap sama selama surat, kelompok,
+ * barang, outlet, dan tingkatnya sama. Karena itu keputusan normalisasi merujuk lewat kunci, bukan id
+ * (keputusan pengguna 2 Okt 2026). Isi aturannya tetap dinilai ulang tiap rekap (`alasanTakBerlaku`).
+ */
+export const kunciAturan = (rule: Pick<PromoRule, "principal" | "suratProgram" | "promoGroup" | "itemCode" | "customerCode" | "tierNo">) =>
+    JSON.stringify([rule.principal, rule.suratProgram, rule.promoGroup, rule.itemCode, rule.customerCode, rule.tierNo]);
 
 /**
  * Kunci satu potongan: baris faktur + posisi. Satu baris bisa punya dua potongan tak bertuan
@@ -234,6 +255,65 @@ function milikOutlet(rule: PromoRule, customerNo: string) {
     const no = customerNo.toUpperCase();
     const code = rule.customerCode.toUpperCase();
     return Boolean(code) && (no === code || no.startsWith(`${code}-`));
+}
+
+/**
+ * Masa berlaku aturan BERSINGGUNGAN dengan rentang `dari`..`sampai` (saringan Periode di Aturan
+ * Promo). Ujung yang kosong = tak terbatas, di aturan maupun di saringan: surat 15 Sep - 15 Okt
+ * ikut tampil untuk saringan September, dan aturan tanpa tanggal akhir tampil di periode mana pun.
+ */
+export const bersinggungan = (rule: { periodStart?: string | null; periodEnd?: string | null }, dari = "", sampai = "") =>
+    (!sampai || !rule.periodStart || rule.periodStart <= sampai) && (!dari || !rule.periodEnd || dari <= rule.periodEnd);
+
+/** Baris rekap yang dibaca penjaga normalisasi — bentuk `DetailRow`, atau isian layar yang sama. */
+export type KonteksPotongan = Pick<DetailRow, "branchName" | "transDate" | "customerNo" | "itemCode" | "invoiceId" | "invoiceNo" | "positions">;
+
+/**
+ * Kenapa `rule` TIDAK bisa menjadi dasar normalisasi `golongan` atas satu potongan tak bertuan;
+ * `null` = bisa. Satu fungsi untuk tiga tempat — calon di layar, penjaga simpan di API, dan
+ * penerapan di `recap` — supaya ketiganya tidak pernah menjawab berbeda.
+ *
+ * "Berlaku" memakai dimensi yang SUDAH dipakai rekap ini: principal (= cabang faktur), tanggal
+ * faktur di dalam periode, outlet (daftar peserta; tarif milik outlet itu), BENTUK potongan
+ * (potongan rupiah tingkat faktur hanya oleh aturan tingkat faktur — `fakturRuleFor`; potongan
+ * per barang hanya oleh aturan barang itu atau tarif outlet — `ruleFor`/`tariffFor`), PO
+ * pertama, dan BEBAN: Disc Claim butuh aturan PRINCIPAL, Disc Distributor butuh DISTRIBUTOR.
+ * NILAI dan POSISI sengaja tidak dicocokkan — kalau cocok, potongannya tidak akan tak bertuan.
+ * Selisih itulah yang diputuskan manusia, dengan aturan ini sebagai dasarnya.
+ */
+export function alasanTakBerlaku(
+    rule: PromoRule, row: KonteksPotongan, golongan: Golongan, lists: Map<string, Set<string>>,
+    /** Pemberian PO pertama. Penjaga simpan tidak punya riwayatnya; syarat itu lalu dinilai `recap`. */
+    pertama?: Map<string, Pemberian>,
+): string | null {
+    const beban = golongan === "principal" ? "PRINCIPAL" : "DISTRIBUTOR";
+    if (rule.benefitBeban !== beban) {
+        return `aturan beban ${rule.benefitBeban.toLowerCase()}, sedangkan ${golongan === "principal" ? "Disc Claim" : "Disc Distributor"} `
+            + `butuh aturan beban ${beban.toLowerCase()}`;
+    }
+    if (rule.principal.trim().toUpperCase() !== row.branchName.trim().toUpperCase()) {
+        return `aturan milik ${rule.principal}, faktur milik ${row.branchName || "(cabang kosong)"}`;
+    }
+    if (!inPeriod(rule, row.transDate)) {
+        return `tanggal faktur ${row.transDate} di luar periode aturan ${rule.periodStart ?? "awal"} s/d ${rule.periodEnd ?? "dicabut"}`;
+    }
+    if (!outletAllowed(rule, row.customerNo, lists)) {
+        return `outlet ${row.customerNo} ${rule.outletListMode === "EXCLUDE" ? "peserta" : "bukan peserta"} daftar ${rule.outletList}`;
+    }
+    const aturanFaktur = !rule.itemCode && !rule.customerCode;
+    if (row.positions === "faktur" && !aturanFaktur) return "potongan tingkat faktur hanya bisa didasari aturan tingkat faktur (seluruh nota)";
+    if (row.positions !== "faktur" && aturanFaktur) return "aturan tingkat faktur (seluruh nota) tidak mendasari potongan per barang";
+    if (rule.customerCode && !milikOutlet(rule, row.customerNo)) return `tarif milik outlet ${rule.customerCode}, bukan ${row.customerNo}`;
+    if (!rule.customerCode && rule.itemCode && rule.itemCode !== row.itemCode) {
+        return `aturan untuk barang ${rule.itemCode}, bukan ${row.itemCode || "potongan tingkat faktur"}`;
+    }
+    if (rule.firstPo && pertama) {
+        const grant = pertama.get(kunciPertama(row.customerNo, row.itemCode, rule.suratProgram));
+        if (grant?.invoiceId !== (row.invoiceId || row.invoiceNo)) {
+            return `hanya untuk PO pertama; outlet ini sudah mendapatkannya di ${grant?.invoiceNo ?? "faktur lain"}`;
+        }
+    }
+    return null;
 }
 
 /** Faktur yang PERTAMA memberi potongan aturan first-PO kepada satu outlet untuk satu barang. */
@@ -367,6 +447,9 @@ export type ProgramRecap = {
     amount: number;
     lines: number;
     invoices: number;
+    /** Bagian `amount` yang berasal dari Normalisasi Diskon (Disc Claim yang merujuk surat ini). */
+    normalisasi: number;
+    normalisasiBaris: number;
 };
 
 export type Recap = {
@@ -461,14 +544,18 @@ export function recap(
     const byProgram = new Map<string, ProgramRecap>();
     const programInvoices = new Map<string, Set<string>>();
 
-    const add = (rule: Pick<PromoRule, "suratProgram" | "promoGroup" | "promoLabel">, amount: number, invoiceNo: string) => {
+    const add = (rule: Pick<PromoRule, "suratProgram" | "promoGroup" | "promoLabel">, amount: number, invoiceNo: string, manual = false) => {
         const key = `${rule.suratProgram}|${rule.promoGroup}`;
         const entry = byProgram.get(key) ?? {
             key, suratProgram: rule.suratProgram, promoLabel: rule.promoLabel,
-            promoGroup: rule.promoGroup, amount: 0, lines: 0, invoices: 0,
+            promoGroup: rule.promoGroup, amount: 0, lines: 0, invoices: 0, normalisasi: 0, normalisasiBaris: 0,
         };
         entry.amount = cents(entry.amount + amount);
         entry.lines += 1;
+        if (manual) {
+            entry.normalisasi = cents(entry.normalisasi + amount);
+            entry.normalisasiBaris += 1;
+        }
         byProgram.set(key, entry);
         if (!programInvoices.has(key)) programInvoices.set(key, new Set());
         programInvoices.get(key)!.add(invoiceNo);
@@ -718,24 +805,57 @@ export function recap(
     // Nominalnya ikut dijaga. Keputusan diambil atas angka tertentu; kalau fakturnya diubah di
     // Accurate sesudahnya, keputusan itu bukan lagi tentang angka yang sama — barisnya tetap tak
     // bertuan dengan sebab yang disebut, bukan diam-diam ikut berpindah.
+    //
+    // Aturan dasarnya juga dijaga, dengan alasan yang sama: keputusan diambil atas aturan tertentu.
+    // Aturan yang dihapus, dimuat ulang (id baru), dinonaktifkan, atau tidak lagi mencakup potongan
+    // ini membuat keputusannya tidak dipakai. Keputusan LAMA tanpa aturan (sebelum 1 Okt 2026) juga
+    // TIDAK dipakai — keputusan pengguna 2 Okt 2026: tanpa rujukan program, ia tidak sah.
+    //
+    // Keputusan yang tidak dipakai tetap MELEKAT di barisnya (`bekasNormalisasi` + sebabnya), supaya
+    // operator bisa menemukannya dan merujukkannya ulang ke aturan; simpan ulang menimpa keputusan lama.
+    // Disc Claim yang dipakai masuk ke PROGRAM SURAT yang dirujuk (bisa langsung ditagih per surat),
+    // dengan bagian normalisasinya tetap terhitung terpisah di program itu (opsi C, 2 Okt 2026).
+    const byId = new Map(rules.filter((rule) => rule.id !== undefined).map((rule) => [rule.id!, rule]));
     for (const row of out.rows) {
         if (row.bucket !== "unowned") continue;
+        const lists = listsOn(row.transDate);
+        const calon = (golongan: Golongan) => rules
+            .filter((rule) => rule.id !== undefined && !alasanTakBerlaku(rule, row, golongan, lists, pertama))
+            .map((rule) => rule.id!);
+        row.calonAturan = { principal: calon("principal"), distributor: calon("distributor") };
         const putusan = normalisasi.get(kunciNormalisasi(row));
         if (!putusan) continue;
+        const golongan = putusan.bucket === "principal" ? "Disc Claim" : "Disc Distributor";
+        const tolak = (sebab: string) => {
+            row.bekasNormalisasi = putusan.bucket;
+            row.reason = `${row.reason} — normalisasi ${golongan} oleh ${putusan.by} TIDAK dipakai: ${sebab}`;
+        };
         if (Math.abs(cents(putusan.amount - row.amount)) > TOLERANCE) {
-            row.reason = `${row.reason} — normalisasi oleh ${putusan.by} TIDAK dipakai: diputuskan atas `
-                + `Rp ${putusan.amount.toLocaleString("id-ID")}, fakturnya kini Rp ${row.amount.toLocaleString("id-ID")}`;
+            tolak(`diputuskan atas Rp ${putusan.amount.toLocaleString("id-ID")}, fakturnya kini Rp ${row.amount.toLocaleString("id-ID")}`);
+            continue;
+        }
+        if (!putusan.ruleKey && (putusan.ruleId ?? null) === null) {
+            tolak("keputusan lama tanpa aturan promo dasar — putuskan ulang dengan aturan");
+            continue;
+        }
+        const sama = (rule: PromoRule) => (putusan.ruleKey ? kunciAturan(rule) === putusan.ruleKey : rule.id === putusan.ruleId);
+        const dasar = row.calonAturan[putusan.bucket].map((id) => byId.get(id)!).find(sama);
+        if (!dasar) {
+            const ada = rules.find(sama);
+            const nama = putusan.ruleKey ? String(JSON.parse(putusan.ruleKey)[1]) : `#${putusan.ruleId}`;
+            tolak(ada
+                ? `aturan ${ada.suratProgram} #${ada.id} tidak berlaku (${alasanTakBerlaku(ada, row, putusan.bucket, lists, pertama)}) — putuskan ulang`
+                : `aturan ${nama} sudah tidak ada atau nonaktif (dihapus, atau dimuat ulang dengan surat/kelompok/barang/outlet/tingkat lain) — putuskan ulang`);
             continue;
         }
         out.unowned = cents(out.unowned - row.amount);
         out[putusan.bucket] = cents(out[putusan.bucket] + row.amount);
         row.bucket = putusan.bucket;
-        row.suratProgram = NORMALISASI;
-        row.promoGroup = putusan.bucket === "principal" ? "DISC CLAIM (manual)" : "DISC DISTRIBUTOR (manual)";
-        row.reason = `dinormalisasi oleh ${putusan.by}`;
-        if (putusan.bucket === "principal") {
-            add({ suratProgram: NORMALISASI, promoGroup: row.promoGroup, promoLabel: "Normalisasi faktur di luar web" }, row.amount, row.invoiceNo);
-        }
+        row.suratProgram = dasar.suratProgram;
+        row.promoGroup = dasar.promoGroup;
+        row.aturanId = dasar.id;
+        row.reason = `dinormalisasi (${golongan}) oleh ${putusan.by}`;
+        if (putusan.bucket === "principal") add(dasar, row.amount, row.invoiceNo, true);
     }
 
     for (const [key, program] of byProgram) program.invoices = programInvoices.get(key)?.size ?? 0;
