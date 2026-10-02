@@ -34,7 +34,7 @@ type Row = {
     customerNo: string; customerName: string; itemCode: string; itemName: string;
     positions: string; percent: number; amount: number;
     suratProgram: string; promoGroup: string; reason: string;
-    calonAturan?: Record<Golongan, number[]>; aturanId?: number | null;
+    calonAturan?: Record<Golongan, number[]>; aturanId?: number;
 };
 
 type Aturan = {
@@ -301,9 +301,7 @@ export default function NormalisasiDiskonPage() {
                                     {sudahDiputuskan ? (
                                         <>
                                             <span className="font-medium text-slate-200">{LABEL[entry.bucket as Golongan] ?? entry.bucket}</span>
-                                            {dasar
-                                                ? <span className="text-slate-300"> · {dasar.suratProgram}{dasar.promoGroup ? ` ${dasar.promoGroup}` : ""}</span>
-                                                : <span className="text-amber-300"> · tanpa aturan dasar (keputusan lama)</span>}
+                                            {dasar && <span className="text-slate-300"> · {dasar.suratProgram}{dasar.promoGroup ? ` ${dasar.promoGroup}` : ""}</span>}
                                             <div className="text-slate-500">{entry.rows[0].reason}</div>
                                         </>
                                     ) : (

@@ -183,8 +183,8 @@ export type DetailRow = {
     reason: string;
     /** Baris tak bertuan: id aturan yang BOLEH jadi dasar normalisasi, per golongan. Lihat `alasanTakBerlaku`. */
     calonAturan?: Record<Golongan, number[]>;
-    /** Baris yang dinormalisasi: id aturan dasarnya; `null` = keputusan lama tanpa aturan. */
-    aturanId?: number | null;
+    /** Baris yang dinormalisasi: id aturan dasarnya. */
+    aturanId?: number;
 };
 
 /** Golongan keputusan Normalisasi Diskon: Disc Claim (principal) atau Disc Distributor. */
@@ -195,7 +195,7 @@ export const NORMALISASI = "NORMALISASI";
 
 /**
  * Keputusan manusia atas satu potongan tak bertuan (tabel `discount_normalization`).
- * `ruleId` = `promo_rule.id` dasar keputusannya; kosong hanya pada keputusan sebelum aturan wajib.
+ * `ruleId` = `promo_rule.id` dasar keputusannya; kosong = keputusan sebelum aturan wajib, TIDAK dipakai rekap.
  */
 export type Putusan = { bucket: Golongan; amount: number; by: string; ruleId?: number | null };
 
@@ -792,8 +792,8 @@ export function recap(
     //
     // Aturan dasarnya juga dijaga, dengan alasan yang sama: keputusan diambil atas aturan tertentu.
     // Aturan yang dihapus, dimuat ulang (id baru), dinonaktifkan, atau tidak lagi mencakup potongan
-    // ini membuat keputusannya tidak dipakai. Keputusan LAMA tanpa aturan (sebelum 1 Okt 2026)
-    // tetap dipakai supaya rekap bulan yang sudah ditagih tidak berubah diam-diam — ditandai.
+    // ini membuat keputusannya tidak dipakai. Keputusan LAMA tanpa aturan (sebelum 1 Okt 2026) juga
+    // TIDAK dipakai — keputusan pengguna 2 Okt 2026: tanpa rujukan program, ia tidak sah.
     for (const row of out.rows) {
         if (row.bucket !== "unowned") continue;
         const lists = listsOn(row.transDate);
@@ -809,7 +809,12 @@ export function recap(
             continue;
         }
         const ruleId = putusan.ruleId ?? null;
-        if (ruleId !== null && !row.calonAturan[putusan.bucket].includes(ruleId)) {
+        if (ruleId === null) {
+            row.reason = `${row.reason} — normalisasi oleh ${putusan.by} TIDAK dipakai: keputusan lama tanpa aturan promo dasar `
+                + "— putuskan ulang dengan aturan";
+            continue;
+        }
+        if (!row.calonAturan[putusan.bucket].includes(ruleId)) {
             const dasar = rules.find((rule) => rule.id === ruleId);
             row.reason = `${row.reason} — normalisasi oleh ${putusan.by} TIDAK dipakai: aturan #${ruleId} `
                 + (dasar ? `tidak berlaku (${alasanTakBerlaku(dasar, row, putusan.bucket, lists, pertama)})`
@@ -822,7 +827,7 @@ export function recap(
         row.suratProgram = NORMALISASI;
         row.promoGroup = putusan.bucket === "principal" ? "DISC CLAIM (manual)" : "DISC DISTRIBUTOR (manual)";
         row.aturanId = ruleId;
-        row.reason = ruleId === null ? `dinormalisasi oleh ${putusan.by} — keputusan lama tanpa aturan dasar` : `dinormalisasi oleh ${putusan.by}`;
+        row.reason = `dinormalisasi oleh ${putusan.by}`;
         if (putusan.bucket === "principal") {
             add({ suratProgram: NORMALISASI, promoGroup: row.promoGroup, promoLabel: "Normalisasi faktur di luar web" }, row.amount, row.invoiceNo);
         }

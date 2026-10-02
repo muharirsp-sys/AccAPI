@@ -8,7 +8,9 @@
 -- lagi oleh Rekap Promo setiap kali rekap dihitung.
 --
 -- NULL-able dan TANPA foreign key, sengaja:
---   - keputusan lama (sebelum kolom ini ada) tetap sah apa adanya;
+--   - keputusan lama (sebelum kolom ini ada) tetap tersimpan, tetapi Rekap Promo
+--     TIDAK memakainya: tanpa rujukan program ia tidak sah (keputusan pengguna
+--     2 Okt 2026). Potongannya kembali tak bertuan sampai diputuskan ulang;
 --   - impor aturan MENGGANTI irisannya (hapus + sisip, id baru). FK akan
 --     menahan impor itu atau ikut menghapus keputusannya. Yang benar: rekap
 --     tidak memakai keputusan yang aturannya hilang, dan menyebut sebabnya.

@@ -24,15 +24,18 @@ Cabang `feat/ui-ux-normalisasi-aturan`. Temuan lengkap: `docs/UI_UX_AUDIT.md`. T
   nonaktif, dimuat ulang (id baru), atau tidak lagi berlaku — sebabnya ditulis di kolom Sebab.
 - **Skema:** `db/migrations/0025_discount_normalization_rule.sql` — `promo_rule_id bigint` NULL-able,
   tanpa FK; juga terdaftar di `scripts/migrate-pg.mjs` (otomatis saat container start).
-- **Keputusan lama** (tanpa aturan) tetap dipakai dan ditandai "keputusan lama tanpa aturan dasar",
-  supaya rekap bulan yang sudah ditagih tidak berubah diam-diam.
+- **Keputusan lama** (tanpa aturan) TIDAK dipakai lagi — keputusan pengguna 2 Okt 2026: tanpa rujukan
+  program ia tidak sah. Barisnya tetap tersimpan; potongannya kembali ke Tak bertuan dengan sebab
+  "keputusan lama tanpa aturan promo dasar — putuskan ulang". **Akibat:** angka Rekap Promo bulan yang
+  memuat keputusan lama berubah (Klaim principal / Tanggungan distributor turun, Tak bertuan naik)
+  sampai diputuskan ulang dengan aturan.
 - **Why:** golongan klaim/beban adalah keputusan uang; tanpa dasar ia tidak bisa dipertanggungjawabkan.
 - **Verification:** `lib/promo-recap.test.ts` (24/24; mutasi penjaga beban dan periode membuat uji
   gagal); `tests/normalisasi-aturan-promo.spec.ts` (Playwright, API dipalsukan); E2E nyata ke dev
   server + DB sintetis: 17/17 PASS (tanpa aturan → 400 untuk kedua golongan, beban salah → 422, di luar
   periode → 422, id tak dikenal → 409, principal lain → 422, aturan berlaku → 200 dengan id kanonik
   tersimpan, rekap memakai keputusan, aturan dinonaktifkan → keputusan tidak dipakai, keputusan lama
-  tetap dipakai & ditandai).
+  tanpa aturan → tidak dipakai).
 
 ### Aturan Promo: saringan Periode
 - **Before:** Principal, Berlaku untuk, Tanggungan, Cari.
