@@ -597,6 +597,31 @@ export async function PATCH(request: NextRequest) {
             aturanDitunjuk: ditunjuk.length, sebelumnya: lain });
     }
 
+    // PERIODE SAJA, untuk anggota tertentu (`ids`) atau SELURUH anggota satu daftar (`listName`).
+    // Hanya dua kolom itu yang ditulis — keterangan, catatan, dan kode Kino tetap — dalam SATU
+    // UPDATE, jadi gagal di tengah jalan tidak meninggalkan daftar yang setengah berubah.
+    // Kedua tanggal wajib: aturan pengguna 2 Okt 2026, keanggotaan tidak boleh lewat periodenya.
+    if (text(body?.aksi) === "periode") {
+        const mulai = text(body?.periodStart).slice(0, 10);
+        const sampai = text(body?.periodEnd).slice(0, 10);
+        const iso = /^\d{4}-\d{2}-\d{2}$/;
+        if (!iso.test(mulai) || !iso.test(sampai) || mulai > sampai) {
+            return NextResponse.json({ ok: false,
+                error: "Isi tanggal mulai dan sampai; tanggal sampai tidak boleh sebelum tanggal mulai" }, { status: 422 });
+        }
+        const listName = text(body?.listName).toUpperCase();
+        const ids = Array.isArray(body?.ids) ? body.ids.map(Number).filter(Number.isFinite) : [];
+        if (!listName && !ids.length) {
+            return NextResponse.json({ ok: false, error: "Sebutkan daftar atau anggotanya" }, { status: 400 });
+        }
+        const diubah = await db.update(promoOutlet)
+            .set({ periodStart: mulai, periodEnd: sampai, importedBy: gate.email!, importedAt: new Date() })
+            .where(listName ? sql`upper(${promoOutlet.listName}) = ${listName}` : inArray(promoOutlet.id, ids))
+            .returning({ id: promoOutlet.id });
+        if (!diubah.length) return NextResponse.json({ ok: false, error: "Anggota tidak ditemukan" }, { status: 404 });
+        return NextResponse.json({ ok: true, diubah: diubah.length, periodStart: mulai, periodEnd: sampai });
+    }
+
     const id = Number(body?.id);
     if (!body || !Number.isFinite(id)) return NextResponse.json({ ok: false, error: "id wajib diisi" }, { status: 400 });
 

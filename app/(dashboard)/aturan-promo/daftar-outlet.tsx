@@ -15,7 +15,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CalendarRange, Download, FileUp, Plus, RefreshCw, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 
@@ -121,6 +121,8 @@ export default function DaftarOutlet() {
     const [busy, setBusy] = useState(false);
     const [tambah, setTambah] = useState<{ listName: string; codes: string; tier: string; periodStart: string; periodEnd: string; note: string } | null>(null);
     const [ubah, setUbah] = useState<{ id: number; periodStart: string; periodEnd: string } | null>(null);
+    const [ubahSemua, setUbahSemua] = useState<{ list: string; periodStart: string; periodEnd: string; galat: string } | null>(null);
+    const menyimpanSemua = useRef(false);
     // Kode distributor kita, datang dari server (diturunkan dari batch laporan principal
     // terakhir). Lampiran surat memuat outlet SELURUH distributor nasional; kode inilah yang
     // memisahkan milik kita dari milik orang lain.
@@ -226,9 +228,8 @@ export default function DaftarOutlet() {
     }
 
     /**
-     * Ubah periode SATU anggota. PATCH menimpa keterangan, catatan, dan status aktif sekaligus,
-     * jadi nilai lamanya ikut dikirim apa adanya — yang berubah hanya periodenya. Kedua tanggal
-     * wajib: aturan pengguna 2 Okt 2026, keanggotaan tidak boleh berlaku lewat periodenya.
+     * Ubah periode SATU anggota lewat aksi `periode`, yang hanya menulis kolom periode. Kedua
+     * tanggal wajib: aturan pengguna 2 Okt 2026, keanggotaan tidak boleh berlaku lewat periodenya.
      */
     async function simpanPeriode(member: Member) {
         if (!ubah) return;
@@ -240,8 +241,7 @@ export default function DaftarOutlet() {
         try {
             const res = await fetch("/api/promo-outlet", {
                 method: "PATCH", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id: member.id, tier: member.tier, note: member.note, active: member.active,
-                    periodStart: ubah.periodStart, periodEnd: ubah.periodEnd }),
+                body: JSON.stringify({ aksi: "periode", ids: [member.id], periodStart: ubah.periodStart, periodEnd: ubah.periodEnd }),
             });
             const body = await res.json();
             if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal mengubah periode");
@@ -251,6 +251,41 @@ export default function DaftarOutlet() {
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Gagal mengubah periode");
         } finally { setBusy(false); }
+    }
+
+    /**
+     * Ubah periode SELURUH anggota daftar yang sedang dipilih, dalam satu UPDATE di server.
+     * Untuk keanggotaan yang sama dibawa ke bulan berikutnya (LOYALTY Q3 dipakai Oktober):
+     * keterangan, catatan, dan kode Kino tidak tersentuh, beda dengan mengetik ulang daftarnya.
+     */
+    async function simpanPeriodeSemua() {
+        if (!ubahSemua || menyimpanSemua.current) return;
+        const { list: daftar, periodStart: mulai, periodEnd: sampai } = ubahSemua;
+        if (!mulai || !sampai || mulai > sampai) {
+            setUbahSemua({ ...ubahSemua, galat: "Isi tanggal mulai dan sampai; tanggal sampai tidak boleh sebelum tanggal mulai." });
+            return;
+        }
+        const info = lists.find((entry) => entry.name === daftar);
+        const tgl = (iso: string) => iso.split("-").reverse().join("/");
+        const dipakai = info?.linked.length ? `\n\nDipakai aturan surat: ${info.linked.map((l) => l.suratProgram).join(", ")}.` : "";
+        if (!confirm(`Ubah periode ${info?.members ?? members.length} anggota daftar ${daftar} menjadi ${tgl(mulai)} s/d ${tgl(sampai)}?${dipakai}`)) return;
+        menyimpanSemua.current = true;
+        setBusy(true);
+        try {
+            const res = await fetch("/api/promo-outlet", {
+                method: "PATCH", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ aksi: "periode", listName: daftar, periodStart: mulai, periodEnd: sampai }),
+            });
+            const body = await res.json();
+            if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal mengubah periode");
+            toast.success(`${body.diubah} anggota ${daftar} kini ${tgl(mulai)} s/d ${tgl(sampai)}`);
+            setUbahSemua(null);
+            await load();
+        } catch (error) {
+            const pesan = error instanceof Error ? error.message : "Gagal mengubah periode";
+            setUbahSemua({ ...ubahSemua, galat: pesan });
+            toast.error(pesan);
+        } finally { menyimpanSemua.current = false; setBusy(false); }
     }
 
     async function hapus(ids: number[], sebutan: string) {
@@ -411,6 +446,36 @@ export default function DaftarOutlet() {
                     </div>
                 </div>
             )}
+
+            {/* Periode SELURUH anggota daftar terpilih — mis. LOYALTY Q3 yang sama dibawa ke Oktober.
+                Hanya muncul saat satu daftar dipilih, supaya cakupannya selalu satu daftar yang terlihat. */}
+            {list && (ubahSemua?.list === list ? (
+                <div className="flex flex-wrap items-end gap-2 rounded border border-blue-500/30 bg-blue-500/5 p-3">
+                    <div role="group" aria-label={`Periode baru semua anggota ${list}`} className="flex flex-wrap items-end gap-2">
+                        <F label="Ikut mulai">
+                            <input type="date" aria-label="Ikut mulai, semua anggota" value={ubahSemua.periodStart}
+                                onChange={(e) => setUbahSemua({ ...ubahSemua, periodStart: e.target.value, galat: "" })} className={inputCls} />
+                        </F>
+                        <F label="Ikut sampai">
+                            <input type="date" aria-label="Ikut sampai, semua anggota" value={ubahSemua.periodEnd}
+                                onChange={(e) => setUbahSemua({ ...ubahSemua, periodEnd: e.target.value, galat: "" })} className={inputCls} />
+                        </F>
+                    </div>
+                    <button onClick={() => void simpanPeriodeSemua()} disabled={busy}
+                        className="rounded bg-blue-600 px-3 py-2 text-sm disabled:opacity-40">
+                        {busy ? "Menyimpan…" : `Simpan untuk ${lists.find((entry) => entry.name === list)?.members ?? members.length} anggota`}
+                    </button>
+                    <button onClick={() => setUbahSemua(null)} className="rounded bg-white/10 px-3 py-2 text-sm">Batal</button>
+                    {ubahSemua.galat && <p role="alert" className="basis-full text-xs text-red-300">{ubahSemua.galat}</p>}
+                </div>
+            ) : (
+                <div>
+                    <button onClick={() => setUbahSemua({ list, periodStart: "", periodEnd: "", galat: "" })} disabled={busy}
+                        className="inline-flex items-center gap-2 rounded bg-white/10 px-2.5 py-1.5 text-xs disabled:opacity-40">
+                        <CalendarRange size={13} /> Ubah periode semua anggota {list} ({lists.find((entry) => entry.name === list)?.members ?? members.length})
+                    </button>
+                </div>
+            ))}
 
             <div className="max-h-96 overflow-auto rounded border border-white/10">
                 <table className="w-full text-sm">
