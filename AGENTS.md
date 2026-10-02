@@ -24,3 +24,26 @@ Rules:
 Not lazy about: input validation at trust boundaries, error handling that prevents data loss, security, accessibility, the calibration real hardware needs (the platform is never the spec ideal, a clock drifts, a sensor reads off), anything explicitly requested. Lazy code without its check is unfinished: non-trivial logic leaves ONE runnable check behind, the smallest thing that fails if the logic breaks (an assert-based demo/self-check or one small test file; no frameworks, no fixtures). Trivial one-liners need no test.
 
 (Yes, this file also applies to agents working on the ponytail repo itself. Especially to them.)
+
+## UI/UX Rule
+
+Never redesign UI based on aesthetic preference alone.
+
+Before modifying an existing screen:
+1. inspect the rendered page,
+2. understand its workflow,
+3. identify the concrete UX problem,
+4. preserve business semantics and information density,
+5. implement the smallest coherent improvement,
+6. verify it in the browser.
+
+Do not introduce generic AI-dashboard patterns.
+
+When using external UI libraries, reuse individual primitives/components
+instead of replacing the project's visual identity.
+
+For frontend/library questions, consult current documentation through Context7
+when available.
+
+For completed UI work, validate the rendered result using Playwright and,
+when relevant, Chrome DevTools.

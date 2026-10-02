@@ -2,7 +2,7 @@
  * Tujuan: Menyusun aturan promo dengan tangan — tambah, ubah, hapus (satuan maupun borongan),
  *         dan salin tarif ke beberapa outlet sekaligus.
  * Caller: pengguna lewat menu Promo & Klaim > Aturan Promo.
- * Dependensi: /api/promo-rule. Main Functions: AturanPromoPage.
+ * Dependensi: /api/promo-rule (saringan principal/jenis/beban/q/dari/sampai), components/ui/AsyncState. Main Functions: AturanPromoPage.
  * Side Effects: HTTP; setiap simpan langsung menulis `promo_rule`.
  *
  * Halaman ini dan importir berkas di Rekap Promo menulis TABEL YANG SAMA. Impor dipakai saat
@@ -14,9 +14,10 @@
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Save, Trash2, Copy, RefreshCw, X, Info } from "lucide-react";
 import { toast } from "sonner";
+import { LoadingState } from "@/components/ui/AsyncState";
 import DaftarOutlet from "./daftar-outlet";
 import DariSummary from "./dari-summary";
 
@@ -46,6 +47,17 @@ function bentuk(rule: Pick<Rule, "customerCode" | "itemCode">) {
 
 const rupiah = (value: string | number) => Number(value || 0).toLocaleString("id-ID");
 const persen = (value: string) => String(value).replace(".", ",");
+/** ISO -> dd/mm/yyyy: bentuk tanggal yang dibaca pengguna di Accurate dan di surat. */
+const tgl = (iso: string | null) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "");
+const hariIni = () => new Date().toLocaleDateString("en-CA");
+
+/** Status masa berlaku hari ini, sebagai KATA — bukan hanya warna. */
+function masaBerlaku(rule: Pick<Rule, "periodStart" | "periodEnd">) {
+    const now = hariIni();
+    if (rule.periodEnd && rule.periodEnd < now) return "berakhir";
+    if (rule.periodStart && rule.periodStart > now) return "belum mulai";
+    return "";
+}
 
 /** Satu kalimat yang menjelaskan arti sebuah aturan, untuk orang yang tidak membaca kolom. */
 function artinya(rule: Partial<Rule>): string {
@@ -125,9 +137,19 @@ export default function AturanPromoPage() {
     const [principal, setPrincipal] = useState("");
     const [jenis, setJenis] = useState("");
     const [beban, setBeban] = useState("");
+    // Kotak Cari menulis `qKetik` tiap huruf; permintaan baru berangkat 300 ms sesudah berhenti
+    // mengetik, bukan satu permintaan per huruf.
+    const [qKetik, setQKetik] = useState("");
     const [q, setQ] = useState("");
+    // Periode: aturan yang masa berlakunya bersinggungan dengan rentang ini. Kosong = semua.
+    const [dari, setDari] = useState("");
+    const [sampai, setSampai] = useState("");
     const [total, setTotal] = useState(0);
     const [busy, setBusy] = useState(false);
+    const [status, setStatus] = useState<"memuat" | "siap" | "galat">("memuat");
+    const [galat, setGalat] = useState("");
+    const [pernahMuat, setPernahMuat] = useState(false);
+    const permintaan = useRef<AbortController | null>(null);
     const [draft, setDraft] = useState<Partial<Rule> | null>(null);
     const [salin, setSalin] = useState<{ rule: Rule; kode: string } | null>(null);
     const [pilih, setPilih] = useState<Set<number>>(new Set());
@@ -137,25 +159,41 @@ export default function AturanPromoPage() {
     // menggulung akan dianggap tidak ada. Satu tab berarti satu pekerjaan.
     const [tab, setTab] = useState<"aturan" | "summary" | "outlet">("aturan");
 
+    // Memuat ulang TIDAK mengosongkan tabel: baris lama tetap terlihat (diredupkan) sampai jawaban
+    // baru tiba. Tabel kosong selama memuat terbaca "tidak ada aturan" — kesimpulan yang salah.
     const load = useCallback(async () => {
-        setBusy(true);
+        permintaan.current?.abort();
+        const ctrl = new AbortController();
+        permintaan.current = ctrl;
+        setStatus("memuat");
         try {
             const params = new URLSearchParams();
             if (principal) params.set("principal", principal);
             if (jenis) params.set("jenis", jenis);
             if (beban) params.set("beban", beban);
             if (q) params.set("q", q);
-            const res = await fetch(`/api/promo-rule?${params}`);
-            const body = await res.json();
-            if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal memuat aturan");
+            if (dari) params.set("dari", dari);
+            if (sampai) params.set("sampai", sampai);
+            const res = await fetch(`/api/promo-rule?${params}`, { signal: ctrl.signal });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body.ok) throw new Error(body.error ?? `Gagal memuat aturan promo (HTTP ${res.status})`);
             setRules(body.rules); setPrincipals(body.principals); setTotal(body.total);
             setPilih(new Set());
+            setPernahMuat(true);
+            setStatus("siap");
         } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Gagal memuat aturan");
-        } finally { setBusy(false); }
-    }, [principal, jenis, beban, q]);
+            // Permintaan yang dibatalkan saringan berikutnya bukan galat.
+            if (ctrl.signal.aborted) return;
+            setGalat(error instanceof Error ? error.message : "Gagal memuat aturan promo");
+            setStatus("galat");
+        }
+    }, [principal, jenis, beban, q, dari, sampai]);
 
-    useEffect(() => { void load(); }, [load]);
+    useEffect(() => { void load(); return () => permintaan.current?.abort(); }, [load]);
+    useEffect(() => {
+        const timer = setTimeout(() => setQ(qKetik.trim()), 300);
+        return () => clearTimeout(timer);
+    }, [qKetik]);
 
     const semuaTerpilih = rules.length > 0 && pilih.size === rules.length;
     const terpilih = useMemo(() => rules.filter((rule) => pilih.has(rule.id)), [rules, pilih]);
@@ -273,12 +311,30 @@ export default function AturanPromoPage() {
                         <option value="PRINCIPAL">Principal (bisa ditagih)</option>
                     </select>
                 </F>
+                {/* Dua tanggal satu pertanyaan ("berlaku kapan?"), jadi satu kelompok berlabel —
+                    bukan dua label yang bisa dibaca sebagai dua saringan terpisah. */}
+                <div role="group" aria-labelledby="label-periode" className="flex flex-col text-sm">
+                    <span id="label-periode" className="mb-1.5 block font-medium text-slate-300">Periode berlaku</span>
+                    <div className="flex items-center gap-1.5">
+                        <input type="date" value={dari} max={sampai || undefined} onChange={(e) => setDari(e.target.value)}
+                            aria-label="Periode dari" className={`${inputCls} w-[9.5rem]`} />
+                        <span className="text-slate-500" aria-hidden="true">–</span>
+                        <input type="date" value={sampai} min={dari || undefined} onChange={(e) => setSampai(e.target.value)}
+                            aria-label="Periode sampai" className={`${inputCls} w-[9.5rem]`} />
+                        {(dari || sampai) && (
+                            <button type="button" onClick={() => { setDari(""); setSampai(""); }}
+                                className="rounded p-1.5 text-slate-400 hover:bg-white/10" aria-label="Hapus saringan periode" title="Hapus saringan periode">
+                                <X size={15} />
+                            </button>
+                        )}
+                    </div>
+                </div>
                 <F label="Cari">
-                    <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="kode outlet, barang, atau surat" className={`${inputCls} min-w-56`} />
+                    <input type="search" value={qKetik} onChange={(e) => setQKetik(e.target.value)} placeholder="kode outlet, barang, atau surat" className={`${inputCls} min-w-56`} />
                 </F>
-                <button onClick={() => void load()} disabled={busy}
-                    className="inline-flex items-center gap-2 rounded bg-white/10 px-3 py-2 text-sm disabled:opacity-40">
-                    <RefreshCw size={15} /> Muat ulang
+                <button type="button" onClick={() => void load()} disabled={status === "memuat"}
+                    className="inline-flex items-center gap-2 rounded bg-white/10 px-3 py-2 text-sm disabled:opacity-60">
+                    <RefreshCw size={15} className={status === "memuat" ? "animate-spin" : ""} /> {status === "memuat" ? "Memuat…" : "Muat ulang"}
                 </button>
                 <button onClick={() => setDraft({ ...KOSONG })} disabled={busy}
                     className="ml-auto inline-flex items-center gap-2 rounded bg-blue-600 px-3 py-2 text-sm disabled:opacity-40">
@@ -435,8 +491,10 @@ export default function AturanPromoPage() {
             )}
 
             <div className="flex flex-wrap items-center gap-3">
-                <p className="text-sm text-slate-400">
-                    Menampilkan {rules.length} dari {total} aturan.
+                <p className="text-sm text-slate-400" role="status" aria-live="polite">
+                    {status === "memuat" && !pernahMuat ? "Memuat aturan promo…"
+                        : `Menampilkan ${rules.length} dari ${total} aturan${dari || sampai ? ` yang berlaku ${tgl(dari) || "kapan pun"} – ${tgl(sampai) || "seterusnya"}` : ""}.`}
+                    {status === "memuat" && pernahMuat && <span className="ml-2 text-slate-500">Memperbarui…</span>}
                 </p>
                 {terpilih.length > 0 && (
                     <div className="flex items-center gap-2 rounded border border-red-500/30 bg-red-500/5 px-3 py-1.5">
@@ -453,7 +511,17 @@ export default function AturanPromoPage() {
 
             {/* Tinggi dibatasi supaya daftar yang panjang tidak mendorong apa pun keluar layar,
                 dan kepalanya menempel supaya kolom masih terbaca di baris ke-200. */}
-            <div className="max-h-[32rem] overflow-auto rounded border border-white/10">
+            {status === "galat" && (
+                <div className="flex flex-wrap items-center gap-3 rounded border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm" role="alert">
+                    <span className="text-red-300">
+                        {pernahMuat ? `Gagal memperbarui aturan promo: ${galat}. Tabel masih hasil pemuatan sebelumnya.` : `Gagal memuat aturan promo: ${galat}.`}
+                    </span>
+                    <button type="button" onClick={() => void load()} className="rounded bg-white/10 px-2.5 py-1 text-xs">Coba lagi</button>
+                </div>
+            )}
+
+            <div className={`max-h-[32rem] overflow-auto rounded border border-white/10 transition-opacity ${status === "memuat" && pernahMuat ? "opacity-60" : ""}`}
+                aria-busy={status === "memuat"}>
                 <table className="w-full text-sm">
                     <thead className="sticky top-0 z-10 bg-white/5 text-slate-300 backdrop-blur">
                         <tr>
@@ -485,12 +553,12 @@ export default function AturanPromoPage() {
                                         {/* Aturan yang dibatasi DAFTAR PESERTA tidak boleh tetap tertulis
                                             "semua outlet": kolom ini yang dibaca orang untuk menjawab
                                             "berlaku di toko mana", dan jawabannya jadi kebalikannya. */}
+                                        {/* Batas peserta adalah CAKUPAN, bukan galat: warna netral, kata
+                                            kuncinya yang ditebalkan. Merah di sini terbaca "aturan rusak". */}
                                         {rule.customerCode || (rule.outletList
-                                            ? <span className={rule.outletListMode === "EXCLUDE" ? "text-rose-300" : "text-sky-300"}>
-                                                {rule.outletListMode === "EXCLUDE"
-                                                    ? `semua KECUALI peserta ${rule.outletList}`
-                                                    : `hanya peserta ${rule.outletList}`}
-                                            </span>
+                                            ? (rule.outletListMode === "EXCLUDE"
+                                                ? <span>semua <strong className="font-semibold">KECUALI</strong> peserta {rule.outletList}</span>
+                                                : <span><strong className="font-semibold">hanya</strong> peserta {rule.outletList}</span>)
                                             : <span className="text-slate-500">semua outlet</span>)}
                                         {rule.channel && (
                                             <span className="ml-1 rounded bg-white/10 px-1.5 py-0.5 text-xs">{rule.channel}</span>
@@ -520,28 +588,34 @@ export default function AturanPromoPage() {
                                         {rule.suratProgram}
                                         <span className="block text-xs text-slate-500">{rule.promoGroup || rule.promoLabel}</span>
                                     </td>
-                                    <td className="whitespace-nowrap px-2 py-1.5 align-top text-xs text-slate-400">
-                                        {rule.periodStart ?? "kapan pun"}<br />s/d {rule.periodEnd ?? "dicabut"}
+                                    <td className="whitespace-nowrap px-2 py-1.5 align-top text-xs tabular-nums text-slate-400">
+                                        {tgl(rule.periodStart) || "kapan pun"}<br />s/d {tgl(rule.periodEnd) || "dicabut"}
+                                        {masaBerlaku(rule) && <span className="block text-slate-500">{masaBerlaku(rule)}</span>}
                                     </td>
                                     <td className="whitespace-nowrap px-2 py-1.5 text-right align-top">
-                                        <button onClick={() => setDraft({ ...rule, periodStart: rule.periodStart ?? "", periodEnd: rule.periodEnd ?? "" })}
+                                        <button type="button" onClick={() => setDraft({ ...rule, periodStart: rule.periodStart ?? "", periodEnd: rule.periodEnd ?? "" })}
                                             className="rounded px-2 py-1 text-xs hover:bg-white/10">Ubah</button>
                                         {rule.customerCode && !rule.itemCode && (
-                                            <button onClick={() => setSalin({ rule, kode: "" })}
-                                                className="rounded px-2 py-1 text-xs hover:bg-white/10" title="Salin ke outlet lain">
+                                            <button type="button" onClick={() => setSalin({ rule, kode: "" })}
+                                                className="rounded px-2 py-1 text-xs hover:bg-white/10" title="Salin ke outlet lain" aria-label={`Salin tarif ${rule.customerCode} ke outlet lain`}>
                                                 <Copy size={13} />
                                             </button>
                                         )}
-                                        <button onClick={() => void hapus([rule.id], `aturan ${rule.suratProgram} ${rule.customerCode || rule.itemCode || "(seluruh nota)"}`)}
-                                            className="rounded px-2 py-1 text-xs text-red-300 hover:bg-white/10" title="Hapus">
+                                        <button type="button" onClick={() => void hapus([rule.id], `aturan ${rule.suratProgram} ${rule.customerCode || rule.itemCode || "(seluruh nota)"}`)}
+                                            className="rounded px-2 py-1 text-xs text-red-300 hover:bg-white/10" title="Hapus" aria-label={`Hapus aturan ${rule.id}`}>
                                             <Trash2 size={13} />
                                         </button>
                                     </td>
                                 </tr>
                             );
                         })}
-                        {rules.length === 0 && (
-                            <tr><td colSpan={8} className="px-2 py-6 text-center text-slate-400">Tidak ada aturan yang cocok dengan saringan ini.</td></tr>
+                        {status === "memuat" && !pernahMuat && (
+                            <tr><td colSpan={8} className="px-2 py-2"><LoadingState embedded rows={5} label="Memuat aturan promo" /></td></tr>
+                        )}
+                        {rules.length === 0 && pernahMuat && status !== "galat" && (
+                            <tr><td colSpan={8} className="px-2 py-6 text-center text-slate-400">
+                                {total ? "Tidak ada aturan promo yang sesuai saringan." : "Belum ada aturan promo."}
+                            </td></tr>
                         )}
                     </tbody>
                 </table>

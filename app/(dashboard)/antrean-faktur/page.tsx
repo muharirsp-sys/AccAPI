@@ -2,7 +2,7 @@
  * Tujuan: Satu layar untuk antrean faktur Accurate — yang menunggu, yang ditolak, yang TIDAK
  *         PASTI — dengan umur masalah dan eskalasi ke OM setelah 2 jam.
  * Caller: Route dashboard `/antrean-faktur`.
- * Dependensi: /api/invoice-outbox, /api/invoice-verify, toast Sonner, lucide-react.
+ * Dependensi: /api/invoice-outbox, /api/invoice-verify, components/ui/AsyncState, toast Sonner, lucide-react.
  * Main Functions: AntreanFakturPage, load, act, jelaskan.
  * Side Effects: HTTP; tindakan antrean hanya `resend` dan `discard` (khusus yang DITOLAK), dan
  *               penjelasan selisih verifikasi balik (tidak menyentuh Accurate).
@@ -13,9 +13,10 @@
  */
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, RefreshCw, Send, Trash2, HelpCircle, CheckCircle2, Clock, ShieldCheck, ShieldAlert, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { LoadingState } from "@/components/ui/AsyncState";
 
 type Row = {
     orderId: string; soNo: string | null; source: string; customerNo: string; outlet: string; salesman: string;
@@ -60,6 +61,8 @@ const STATES: { key: string; label: string; hint: string; className: string }[] 
     { key: "posted", label: "Terkirim", hint: "faktur sudah terbentuk di Accurate", className: "text-emerald-300" },
 ];
 
+/** ISO -> dd/mm/yyyy, sama dengan tanggal di Accurate. */
+const tgl = (iso: string) => (/^\d{4}-\d{2}-\d{2}/.test(iso) ? iso.slice(0, 10).split("-").reverse().join("/") : iso);
 const usia = (minutes: number) => (minutes < 60 ? `${minutes} menit` : `${Math.floor(minutes / 60)} jam ${minutes % 60} menit`);
 
 export default function AntreanFakturPage() {
@@ -73,23 +76,48 @@ export default function AntreanFakturPage() {
     // Tanggal faktur pilihan saat kirim; kosong = tanggal SO masing-masing.
     const [tanggalFaktur, setTanggalFaktur] = useState("");
 
+    // Memuat / siap / galat harus terlihat berbeda: tabel kosong saat masih memuat terbaca "tidak
+    // ada faktur yang menggantung" — persis kesimpulan yang tidak boleh diambil di layar ini.
+    const [status, setStatus] = useState<"memuat" | "siap" | "galat">("memuat");
+    const [galat, setGalat] = useState("");
+    const [verifyStatus, setVerifyStatus] = useState<"memuat" | "siap" | "galat">("memuat");
+    const permintaan = useRef<AbortController | null>(null);
+
     const load = useCallback(async () => {
-        const query = new URLSearchParams();
-        if (picked.length) query.set("state", picked.join(","));
-        if (onlyOverdue) query.set("overdue", "1");
-        const res = await fetch(`/api/invoice-outbox?${query.toString()}`, { credentials: "include" });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok || !body.ok) { toast.error(body.error ?? "Antrean gagal dimuat"); return; }
-        setData(body);
+        permintaan.current?.abort();
+        const ctrl = new AbortController();
+        permintaan.current = ctrl;
+        setStatus("memuat");
+        try {
+            const query = new URLSearchParams();
+            if (picked.length) query.set("state", picked.join(","));
+            if (onlyOverdue) query.set("overdue", "1");
+            const res = await fetch(`/api/invoice-outbox?${query.toString()}`, { credentials: "include", signal: ctrl.signal });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body.ok) throw new Error(body.error ?? `Antrean gagal dimuat (HTTP ${res.status})`);
+            setData(body);
+            setStatus("siap");
+        } catch (error) {
+            if (ctrl.signal.aborted) return;
+            setGalat(error instanceof Error ? error.message : "Antrean gagal dimuat");
+            setStatus("galat");
+            return;
+        }
 
         // Verifikasi balik ikut dimuat sendiri, tanpa tombol: kalau harus ditekan, ia akan
         // lupa ditekan justru pada hari yang fakturnya salah.
-        const check = await fetch("/api/invoice-verify", { credentials: "include" });
-        const checked = await check.json().catch(() => ({}));
-        setVerify(check.ok && checked.ok ? checked : null);
+        setVerifyStatus("memuat");
+        try {
+            const check = await fetch("/api/invoice-verify", { credentials: "include", signal: ctrl.signal });
+            const checked = await check.json().catch(() => ({}));
+            setVerify(check.ok && checked.ok ? checked : null);
+            setVerifyStatus(check.ok && checked.ok ? "siap" : "galat");
+        } catch {
+            if (!ctrl.signal.aborted) setVerifyStatus("galat");
+        }
     }, [picked, onlyOverdue]);
 
-    useEffect(() => { void load(); }, [load]);
+    useEffect(() => { void load(); return () => permintaan.current?.abort(); }, [load]);
 
     async function act(orderId: string, action: "resend" | "discard") {
         if (action === "discard" && !confirm(
@@ -200,65 +228,86 @@ export default function AntreanFakturPage() {
                 </p>
             </header>
 
+            {/* Ringkas: satu kalimat + satu tombol. Penjelasan laporan OM dipindah ke `title`
+                supaya peringatan tidak menenggelamkan antrean di bawahnya. */}
             {!!data?.overdue && (
-                <div className="flex items-center gap-3 rounded-lg border border-red-500/40 bg-red-500/10 p-4">
-                    <AlertTriangle className="text-red-300" size={20} />
-                    <div className="flex-1">
-                        <p className="font-medium text-red-200">
-                            {data.overdue} masalah menggantung lebih dari 2 jam
-                            {data.overdueBatches > 0 && (
-                                <span className="font-normal"> — {data.overdueQueue} di antrean faktur,
-                                    {" "}{data.overdueBatches} batch belum diantrekan ({data.reviewLinesOverdue} baris perlu ditinjau)</span>
-                            )}
-                        </p>
-                        <p className="text-xs text-red-200/80">
-                            Ini isi laporan OM. Batch yang barisnya masih perlu ditinjau ikut dihitung:
-                            belum masuk antrean bukan berarti tidak ada masalah, justru itu masalah yang diabaikan.
-                        </p>
-                    </div>
-                    <button onClick={() => setOnlyOverdue(true)} className="rounded bg-red-500/20 px-3 py-1.5 text-sm text-red-100">
-                        Tampilkan
+                <div className="flex flex-wrap items-center gap-3 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2.5" role="alert"
+                    title="Ini isi laporan OM. Batch yang barisnya masih perlu ditinjau ikut dihitung: belum masuk antrean bukan berarti tidak ada masalah, justru itu masalah yang diabaikan.">
+                    <AlertTriangle className="shrink-0 text-red-300" size={18} aria-hidden="true" />
+                    <p className="flex-1 text-sm text-red-200">
+                        <strong className="font-semibold">{data.overdue} masalah lewat 2 jam</strong>
+                        {" "}— {data.overdueQueue} di antrean faktur
+                        {data.overdueBatches > 0 && <>, {data.overdueBatches} batch belum diantrekan ({data.reviewLinesOverdue} baris perlu ditinjau)</>}.
+                        {" "}Masuk laporan OM.
+                    </p>
+                    <button type="button" onClick={() => setOnlyOverdue(true)} disabled={onlyOverdue}
+                        className="rounded bg-red-500/20 px-3 py-1.5 text-sm text-red-100 disabled:opacity-60">
+                        {onlyOverdue ? "Sedang ditampilkan" : "Tampilkan saja yang lewat 2 jam"}
                     </button>
                 </div>
             )}
 
-            <section className="flex flex-wrap items-center gap-2">
-                {STATES.map((state) => (
-                    <button key={state.key} onClick={() => toggle(state.key)} title={state.hint}
-                        className={`rounded-full border px-3 py-1.5 text-xs ${picked.includes(state.key) ? "border-blue-400 bg-blue-500/20" : "border-white/10 bg-black/20"}`}>
-                        <span className={state.className}>{state.label}</span>
-                        <span className="ml-2 text-slate-400">{data?.summary?.[state.key] ?? 0}</span>
+            {/* Dua kelompok yang tidak boleh terpisah: SARINGAN di kiri, TINDAKAN kirim (tidak bisa
+                ditarik) di kanan bersama tanggal fakturnya. Sebelumnya tombol Kirim terbungkus ke
+                baris sendiri, jauh dari pemilih tanggal yang menentukan isinya. */}
+            <section className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+                <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Saring status antrean">
+                    {STATES.map((state) => {
+                        const jumlah = data?.summary?.[state.key] ?? 0;
+                        const aktif = picked.includes(state.key);
+                        return (
+                            <button key={state.key} type="button" onClick={() => toggle(state.key)} title={state.hint} aria-pressed={aktif}
+                                className={`rounded-full border px-3 py-1.5 text-xs ${aktif ? "border-blue-400 bg-blue-500/20" : "border-white/10 bg-black/20"}`}>
+                                {/* Warna status hanya bila ADA isinya; nol tidak perlu menarik mata. */}
+                                <span className={jumlah ? state.className : "text-slate-400"}>{state.label}</span>
+                                <span className={`ml-2 tabular-nums ${jumlah ? "font-semibold text-slate-200" : "text-slate-500"}`}>{data ? jumlah : "…"}</span>
+                            </button>
+                        );
+                    })}
+                    <label className="ml-1 flex items-center gap-2 text-sm text-slate-300">
+                        <input type="checkbox" checked={onlyOverdue} onChange={(event) => setOnlyOverdue(event.target.checked)} />
+                        Hanya yang lewat 2 jam (laporan OM)
+                    </label>
+                    <button type="button" onClick={() => void load()} disabled={status === "memuat"}
+                        className="inline-flex items-center gap-1 rounded bg-white/10 px-3 py-1.5 text-xs disabled:opacity-60">
+                        <RefreshCw size={13} className={status === "memuat" ? "animate-spin" : ""} /> {status === "memuat" ? "Memuat…" : "Muat ulang"}
                     </button>
-                ))}
-                <label className="ml-auto flex items-center gap-2 text-sm text-slate-300">
-                    <input type="checkbox" checked={onlyOverdue} onChange={(event) => setOnlyOverdue(event.target.checked)} />
-                    Hanya yang lewat 2 jam (laporan OM)
-                </label>
-                <button onClick={() => void load()} className="inline-flex items-center gap-1 rounded bg-white/10 px-3 py-1.5 text-xs">
-                    <RefreshCw size={13} /> Muat ulang
-                </button>
-                <label className="inline-flex items-center gap-1 text-xs text-slate-300"
-                    title="Kosong = tanggal SO masing-masing. Isi untuk memfakturkan order yang kemarin belum terproses dengan tanggal hari ini. Tidak boleh lebih awal dari tanggal SO.">
-                    Tanggal faktur
-                    <input type="date" value={tanggalFaktur} max={new Date().toLocaleDateString("en-CA")}
-                        onChange={(event) => setTanggalFaktur(event.target.value)}
-                        className="rounded border border-white/10 bg-black/30 px-2 py-1 text-xs text-slate-200 [color-scheme:dark]" />
-                    {tanggalFaktur && (
-                        <button onClick={() => setTanggalFaktur("")} className="text-slate-400 underline" title="Kembali ke tanggal SO">tanggal SO</button>
-                    )}
-                </label>
-                <button onClick={() => void kirim()} disabled={busy || !(data?.summary?.queued ?? 0)}
-                    title="Kirim semua faktur yang menunggu ke Accurate, lalu baca balik hasilnya dari Accurate dan bandingkan per baris"
-                    className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-3 py-1.5 text-xs text-emerald-200 disabled:opacity-40">
-                    <Upload size={13} /> Kirim {data?.summary?.queued ?? 0} faktur ke Accurate
-                </button>
+                </div>
+                <div className="ml-auto flex flex-wrap items-center justify-end gap-2" role="group" aria-label="Kirim ke Accurate">
+                    <label className="inline-flex items-center gap-1.5 text-xs text-slate-300"
+                        title="Kosong = tanggal SO masing-masing. Isi untuk memfakturkan order yang kemarin belum terproses dengan tanggal hari ini. Tidak boleh lebih awal dari tanggal SO.">
+                        Tanggal faktur
+                        <input type="date" value={tanggalFaktur} max={new Date().toLocaleDateString("en-CA")}
+                            onChange={(event) => setTanggalFaktur(event.target.value)}
+                            className="rounded border border-white/10 bg-black/30 px-2 py-1 text-xs text-slate-200" />
+                    </label>
+                    {tanggalFaktur
+                        ? <button type="button" onClick={() => setTanggalFaktur("")} className="text-xs text-slate-400 underline" title="Kembali ke tanggal SO">pakai tanggal SO</button>
+                        : <span className="text-xs text-slate-500">kosong = tanggal SO</span>}
+                    <button type="button" onClick={() => void kirim()} disabled={busy || !(data?.summary?.queued ?? 0)}
+                        title="Kirim semua faktur yang menunggu ke Accurate, lalu baca balik hasilnya dari Accurate dan bandingkan per baris"
+                        className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40">
+                        <Upload size={14} /> {busy ? "Memproses…" : `Kirim ${data?.summary?.queued ?? 0} faktur ke Accurate`}
+                    </button>
+                </div>
             </section>
+
+            {status === "galat" && (
+                <div className="flex flex-wrap items-center gap-3 rounded border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm" role="alert">
+                    <span className="text-red-300">
+                        {data ? `Gagal memperbarui antrean: ${galat}. Angka di bawah hasil pemuatan sebelumnya.` : `Antrean gagal dimuat: ${galat}.`}
+                    </span>
+                    <button type="button" onClick={() => void load()} className="rounded bg-white/10 px-2.5 py-1 text-xs">Coba lagi</button>
+                </div>
+            )}
 
             {/* Ringkas satu baris, dibuka bila perlu: antrean kirim di bawahnya harus terlihat tanpa
                 menggulir. Angka merahnya tetap selalu terlihat di baris ringkasan. */}
             <details className="rounded-lg border border-white/10 bg-black/20">
                 <summary className="flex cursor-pointer flex-wrap items-center gap-3 px-4 py-3">
                     <span className="font-medium text-white">Verifikasi balik faktur Accurate</span>
+                    {!verify && verifyStatus === "memuat" && <span className="text-xs text-slate-500" role="status">Memeriksa faktur di Accurate…</span>}
+                    {!verify && verifyStatus === "galat" && <span className="text-xs text-red-300" role="alert">Verifikasi balik gagal dimuat — buka Muat ulang</span>}
                     {verify && (
                         <span className="text-xs text-slate-400">
                             {verify.checked} diperiksa ·{" "}
@@ -424,7 +473,8 @@ export default function AntreanFakturPage() {
                                         <td className="px-3 py-2 text-right">{batch.lineCount}</td>
                                         <td className="px-3 py-2 text-right text-amber-300">{batch.reviewCount}</td>
                                         <td className={`px-3 py-2 text-xs ${batch.overdue ? "text-red-300" : "text-slate-400"}`}>
-                                            <Clock size={12} className="mr-1 inline" />{usia(batch.ageMinutes)}
+                                            <Clock size={12} className="mr-1 inline" aria-hidden="true" />{usia(batch.ageMinutes)}
+                                            {batch.overdue && <span className="ml-1 whitespace-nowrap font-semibold">· lewat 2 jam</span>}
                                         </td>
                                         <td className="px-3 py-2 text-xs text-slate-500">
                                             {new Date(batch.uploadedAt).toLocaleString("id-ID")}{batch.uploadedBy ? ` · ${batch.uploadedBy}` : ""}
@@ -440,7 +490,8 @@ export default function AntreanFakturPage() {
                 </section>
             )}
 
-            <div className="overflow-x-auto rounded-lg border border-white/10">
+            <div className={`overflow-x-auto rounded-lg border border-white/10 transition-opacity ${status === "memuat" && data ? "opacity-60" : ""}`}
+                aria-busy={status === "memuat"}>
                 <table className="w-full text-sm">
                     <thead className="bg-white/5 text-slate-400">
                         <tr>
@@ -467,7 +518,7 @@ export default function AntreanFakturPage() {
                                     <div className="text-xs text-slate-500">{row.outlet || "—"}</div>
                                 </td>
                                 <td className="px-3 py-2 font-mono text-xs">{row.salesman || "—"}</td>
-                                <td className="px-3 py-2 text-xs">{row.orderDate}</td>
+                                <td className="px-3 py-2 text-xs tabular-nums">{tgl(row.orderDate)}</td>
                                 <td className="px-3 py-2 text-xs">
                                     <span className={STATES.find((state) => state.key === row.state)?.className ?? ""}>
                                         {row.state === "posted" && <CheckCircle2 size={13} className="mr-1 inline" />}
@@ -478,7 +529,8 @@ export default function AntreanFakturPage() {
                                 <td className={`px-3 py-2 text-xs ${row.overdue ? "text-red-300" : "text-slate-400"}`}>
                                     {row.state === "posted" ? "—" : (
                                         <>
-                                            <Clock size={12} className="mr-1 inline" />{usia(row.ageMinutes)}
+                                            <Clock size={12} className="mr-1 inline" aria-hidden="true" />{usia(row.ageMinutes)}
+                                            {row.overdue && <span className="ml-1 whitespace-nowrap font-semibold">· lewat 2 jam</span>}
                                             {row.attempts > 0 && (
                                                 <div className="text-slate-500">coba terakhir {new Date(row.updatedAt).toLocaleString("id-ID")}</div>
                                             )}
@@ -515,8 +567,16 @@ export default function AntreanFakturPage() {
                                 </td>
                             </tr>
                         ))}
-                        {!data?.rows.length && (
-                            <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-500">Tidak ada faktur yang menggantung.</td></tr>
+                        {!data && status === "memuat" && (
+                            <tr><td colSpan={9} className="px-3 py-2"><LoadingState embedded rows={4} label="Memuat antrean faktur" /></td></tr>
+                        )}
+                        {!data && status === "galat" && (
+                            <tr><td colSpan={9} className="px-3 py-8 text-center text-red-300">Antrean belum bisa ditampilkan — lihat pesan di atas.</td></tr>
+                        )}
+                        {data && !data.rows.length && (
+                            <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-500">
+                                {picked.length || onlyOverdue ? "Tidak ada faktur yang sesuai saringan." : "Tidak ada faktur yang menggantung."}
+                            </td></tr>
                         )}
                     </tbody>
                 </table>

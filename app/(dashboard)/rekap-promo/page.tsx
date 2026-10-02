@@ -14,10 +14,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Upload, RefreshCw, CheckCircle2, FileWarning, Download } from "lucide-react";
 import { toast } from "sonner";
+import { LoadingState } from "@/components/ui/AsyncState";
 
 type Program = {
     key: string; suratProgram: string; promoLabel: string; promoGroup: string;
     amount: number; lines: number; invoices: number;
+    /** Bagian `amount` dari Normalisasi Diskon yang merujuk surat ini; tetap terlihat, tidak dilebur. */
+    normalisasi?: number; normalisasiBaris?: number;
 };
 
 type DetailRow = {
@@ -89,13 +92,23 @@ export default function RekapPromoPage() {
     const [principal, setPrincipal] = useState("");
     const [buka, setBuka] = useState<Buka>(kosong);
 
+    // Rekap sebulan bisa puluhan detik; tanpa tanda memuat halaman tampak kosong dan "macet".
+    const [status, setStatus] = useState<"memuat" | "siap" | "galat">("memuat");
+    const [galat, setGalat] = useState("");
     const load = useCallback(async () => {
+        setStatus("memuat");
         const query = new URLSearchParams({ from, to });
         if (principal) query.set("principal", principal);
-        const res = await fetch(`/api/promo-recap?${query.toString()}`, { credentials: "include" });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok || !body.ok) { toast.error(body.error ?? "Rekap gagal dimuat"); return; }
-        setData(body);
+        try {
+            const res = await fetch(`/api/promo-recap?${query.toString()}`, { credentials: "include" });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body.ok) throw new Error(body.error ?? `Rekap gagal dimuat (HTTP ${res.status})`);
+            setData(body);
+            setStatus("siap");
+        } catch (error) {
+            setGalat(error instanceof Error ? error.message : "Rekap gagal dimuat");
+            setStatus("galat");
+        }
     }, [from, to, principal]);
 
     useEffect(() => { void load(); }, [load]);
@@ -219,6 +232,15 @@ export default function RekapPromoPage() {
                 </p>
             )}
 
+            {status === "memuat" && !r && <LoadingState rows={6} label="Menghitung rekap promo" />}
+            {status === "memuat" && r && <p className="text-xs text-slate-500" role="status">Menghitung ulang rekap…</p>}
+            {status === "galat" && (
+                <div className="flex flex-wrap items-center gap-3 rounded border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm" role="alert">
+                    <span className="text-red-300">{r ? `Gagal menghitung ulang: ${galat}. Angka di bawah hasil sebelumnya.` : `Rekap gagal dimuat: ${galat}.`}</span>
+                    <button type="button" onClick={() => void load()} className="rounded bg-white/10 px-2.5 py-1 text-xs">Coba lagi</button>
+                </div>
+            )}
+
             {r && (
                 <>
                     <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -303,7 +325,14 @@ export default function RekapPromoPage() {
                                             <td className="px-3 py-2">{program.promoGroup}</td>
                                             <td className="px-3 py-2 text-right">{program.invoices}</td>
                                             <td className="px-3 py-2 text-right">{program.lines}</td>
-                                            <td className="px-3 py-2 text-right text-emerald-300">{rp(program.amount)}</td>
+                                            <td className="px-3 py-2 text-right text-emerald-300">
+                                                {rp(program.amount)}
+                                                {!!program.normalisasi && (
+                                                    <div className="whitespace-nowrap text-xs text-slate-400">
+                                                        termasuk {rp(program.normalisasi)} dari normalisasi ({program.normalisasiBaris} baris)
+                                                    </div>
+                                                )}
+                                            </td>
                                             <td className="px-3 py-2 text-right">
                                                 <button type="button" className="text-xs text-blue-300 hover:underline"
                                                     onClick={() => setBuka(buka.jenis === "program" && buka.nilai === program.key

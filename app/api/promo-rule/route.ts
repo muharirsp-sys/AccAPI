@@ -20,6 +20,7 @@ import { db } from "@/lib/db";
 import { promoRule } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { OWNER } from "@/lib/principal-validation";
+import { bersinggungan } from "@/lib/promo-recap";
 
 export const runtime = "nodejs";
 
@@ -106,6 +107,18 @@ export async function GET(request: NextRequest) {
     const jenis = (request.nextUrl.searchParams.get("jenis") ?? "").trim();
     const beban = (request.nextUrl.searchParams.get("beban") ?? "").trim().toUpperCase();
     const cari = (request.nextUrl.searchParams.get("q") ?? "").trim().toUpperCase();
+    // Periode: aturan yang masa berlakunya BERSINGGUNGAN dengan rentang ini (lib/promo-recap
+    // `bersinggungan`). Bukan "seluruhnya di dalam rentang": surat 15 Sep - 15 Okt berlaku di
+    // September, dan menyembunyikannya dari saringan September berarti menyembunyikan aturan aktif.
+    const tanggal = (key: string) => {
+        const value = (request.nextUrl.searchParams.get(key) ?? "").trim();
+        return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+    };
+    const dari = tanggal("dari");
+    const sampai = tanggal("sampai");
+    if (dari && sampai && dari > sampai) {
+        return NextResponse.json({ ok: false, error: "Tanggal awal periode lebih akhir dari tanggal akhirnya" }, { status: 400 });
+    }
 
     const rows = await db.select().from(promoRule)
         .where(principal ? eq(promoRule.principal, principal) : undefined)
@@ -120,6 +133,7 @@ export async function GET(request: NextRequest) {
         if (jenis === "barang" && (isTarif(row) || !row.itemCode)) return false;
         if (jenis === "faktur" && (isTarif(row) || row.itemCode)) return false;
         if (beban && row.benefitBeban.toUpperCase() !== beban) return false;
+        if (!bersinggungan(row, dari, sampai)) return false;
         if (!cari) return true;
         return [row.suratProgram, row.promoGroup, row.promoLabel, row.itemCode, row.itemName, row.customerCode, row.outletList, row.channel]
             .some((field) => String(field).toUpperCase().includes(cari));
