@@ -1,5 +1,19 @@
 # UI/UX Changelog
 
+## 2026-10-02 — Normalisasi: "Otomatis per baris"
+
+- **Before:** banyak potongan dengan surat berbeda-beda (mis. merujuk ulang keputusan lama) harus dicentang
+  per surat; mencentang semuanya berakhir "Tidak ada satu surat yang berlaku untuk semua potongan terpilih".
+- **After:** pilihan **Otomatis per baris** di pemilih surat. Sistem memilih sendiri HANYA untuk potongan yang
+  punya TEPAT SATU aturan berlaku bernilai sama persis (persen sama; bonus untuk potongan 100%). Yang tanpa
+  aturan bernilai sama, atau dengan lebih dari satu (ambigu), dilewati dan tetap tak bertuan — tidak ditebak.
+  Petunjuk dan konfirmasi menyebut berapa yang disimpan dan berapa yang dilewati. Potongan tingkat faktur
+  (rupiah) selalu dilewati. Tidak ada perubahan API/skema: tiap baris tetap dikirim dengan aturannya sendiri
+  dan diperiksa server.
+- **Verification:** Playwright 7/7 (1 dari 3 terkirim, yang ambigu dan yang tanpa aturan dilewati; pilihan
+  tetap terlihat terpilih); uji nyata tanpa tiruan: 6 potongan tak bertuan → tepat 2 yang tidak ambigu
+  tersimpan (id + kunci) dan dipakai rekap.
+
 ## 2026-10-02 — Normalisasi: pilih SURAT, aturan per barang
 
 - **Before:** pemilih mencari SATU aturan yang berlaku untuk semua potongan terpilih. Aturan surat dibuat per

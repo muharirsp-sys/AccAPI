@@ -172,7 +172,7 @@ test("Normalisasi: satu faktur, dua barang — satu surat, tiap barang memakai a
     await page.getByRole("checkbox", { name: "Pilih INV/2610/KN00011 posisi 1" }).check();
     await page.getByLabel("Jenis normalisasi").selectOption("principal");
     const dasar = page.getByLabel("Aturan promo dasar (surat)");
-    await expect(dasar.locator("option").nth(1)).toContainText("BP2610009097 · ESKULIN - COLOGNE · bonus 1 · 2 aturan (per barang)");
+    await expect(dasar.locator("option", { hasText: "BP2610009097" })).toContainText("BP2610009097 · ESKULIN - COLOGNE · bonus 1 · 2 aturan (per barang)");
     await dasar.selectOption("BP2610009097");
     const kiriman: Array<{ rows: Array<{ promoRuleId: number; itemCode: string }> }> = [];
     await page.route((url) => url.pathname === "/api/promo-recap/normalisasi", async (route) => {
@@ -183,4 +183,34 @@ test("Normalisasi: satu faktur, dua barang — satu surat, tiap barang memakai a
     await page.getByRole("button", { name: "Simpan sebagai Disc Claim" }).click();
     await expect(page.getByText("2 potongan dinormalisasi sebagai Disc Claim")).toBeVisible();
     expect(kiriman[0].rows.map((row) => [row.itemCode, row.promoRuleId])).toEqual([["K1111005005010", 490], ["K1111009010010", 499]]);
+});
+
+test("Normalisasi: otomatis per baris hanya untuk yang punya tepat satu aturan bernilai sama; sisanya dilewati", async ({ page }) => {
+    const ambigu = baris({ invoiceNo: "INV/2610/KN00006", invoiceId: "9000006", lineKey: "6", positions: "1", percent: 2.5, amount: 4500,
+        customerName: "TOKO WINDA", calonAturan: { principal: [21, 22], distributor: [] } });
+    const dua = (id: number, surat: string) => aturan(id, { suratProgram: surat, benefitValue: "2.5" });
+    await bukaNormalisasi(page, (route) => json(route, { ...rekap, recap: { rows: [...rekap.recap.rows, ambigu] },
+        aturan: [...rekap.aturan, dua(21, "BP2609009001"), dua(22, "BP2609009002")] }));
+    await page.getByRole("checkbox", { name: "Pilih semua potongan tak bertuan" }).check();
+    await page.getByLabel("Jenis normalisasi").selectOption("principal");
+    // Tiga faktur, surat berbeda: tidak ada satu surat untuk semuanya.
+    await expect(page.getByText('Tidak ada satu surat untuk semua potongan terpilih — pilih "Otomatis per baris"', { exact: false })).toBeVisible();
+    const dasar = page.getByLabel("Aturan promo dasar (surat)");
+    await expect(dasar.locator("option", { hasText: "Otomatis per baris — 1 dari 3 potongan" })).toHaveCount(1);
+    await dasar.selectOption("__otomatis__");
+    // Pilihan otomatis tetap TERLIHAT terpilih, bukan kembali ke placeholder.
+    await expect(dasar).toHaveValue("__otomatis__");
+    await expect(page.getByText("Otomatis per baris: 1 potongan memakai aturan yang nilainya sama persis (surat DISCOUNT REGULER); 2 dilewati", { exact: false })).toBeVisible();
+
+    const kiriman: Array<{ rows: Array<{ promoRuleId: number; invoiceNo: string }> }> = [];
+    await page.route((url) => url.pathname === "/api/promo-recap/normalisasi", async (route) => {
+        kiriman.push(route.request().postDataJSON());
+        await json(route, { ok: true, disimpan: 1, bucket: "principal", aturan: "DISCOUNT REGULER" });
+    });
+    page.on("dialog", (dialog) => void dialog.accept());
+    await page.getByRole("button", { name: "Simpan sebagai Disc Claim" }).click();
+    await expect(page.getByText("1 potongan dinormalisasi sebagai Disc Claim; 2 dilewati, tetap tak bertuan")).toBeVisible();
+    // Hanya potongan yang tidak ambigu yang terkirim, dengan aturan bernilai sama (0,75% tarif posisi 4).
+    expect(kiriman).toHaveLength(1);
+    expect(kiriman[0].rows.map((row) => [row.invoiceNo, row.promoRuleId])).toEqual([["INV/2610/KN00001", 12]]);
 });
