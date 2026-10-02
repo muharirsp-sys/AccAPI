@@ -406,6 +406,24 @@ async def summary_syarat_claim_set(request: Request):
         return {"ok": False, "error": "Gagal menyimpan syarat klaim."}
 
 
+def kode_bentrok(excel_rows, pdf_meta):
+    """(channel, surat, kode) yang diklaim lebih dari satu baris surat — penjaga V4.
+
+    BENTROK HANYA DI DALAM SATU SURAT. Dua surat berbeda yang menyebut barang yang sama adalah
+    dua program, masing-masing dengan daftar outlet dan periodenya sendiri — `promo_rule` pun
+    berkunci surat (`lib/summary-bridge.ts`). Dulu suratnya tidak ikut dikunci, dan Summary
+    bulanan Oktober 2026 mencetak 8707 Indomaret DAN baris ULTRA LIGHT 8789 MTI sebagai
+    "(TIDAK ADA ITEM COCOK DI MASTER)": keduanya MT, keduanya menyebut ELLIPS H.VIT ULTRA LIGHT
+    45ML, dan penjaga membuang kode itu dari keduanya.
+    """
+    peta: Dict[Tuple[str, str, str], set] = {}
+    for er in excel_rows:
+        if er["kode_barang"] and str(er.get("trig_unit", "")).upper() != "RP":
+            surat = str(pdf_meta.get(er["pdf_key"], {}).get("surat_program", "") or "").strip()
+            peta.setdefault((er["channel"], surat, er["kode_barang"]), set()).add(er["pdf_key"])
+    return {k for k, v in peta.items() if len(v) > 1}
+
+
 @router.post("/summary/manual/generate")
 def summary_manual_generate(request: Request, token: str = Form(...), rows_json: str = Form(...)):
 
@@ -937,7 +955,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                                         "trig_unit": trig_unit, "benefit_type": benefit_type, "benefit_text": benefit_text,
                                         "benefit_unit": benefit_unit})
 
-        # ponytail: guard V4 -- 1 kode fisik tidak boleh nyantol di >1 baris-surat (tier beda) dlm
+        # ponytail: guard V4 -- 1 kode fisik tidak boleh nyantol di >1 baris-surat (tier beda) dlm SURAT &
         # channel yg sama (terbukti live: "Pmd Wtr Bas" muncul di baris 4+1 DAN 7+1 sekaligus).
         # Akurasi finansial wajib -> JANGAN menebak salah satu benar, buang dari SEMUA sisi (Excel
         # & PDF) dan wajib direview manusia lewat tombol Laporkan Salah.
@@ -955,15 +973,13 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         # SEMUANYA: Form Summary `BP2609006016` terbit penuh "(TIDAK ADA ITEM COCOK DI MASTER)"
         # padahal tidak ada satu pun pertentangan di dalamnya. Strata bukan bentrok — strata
         # justru bentuk yang sudah disatukan `compile_programs` menjadi satu program bertingkat.
-        kode_channel_to_pdfkeys: Dict[Tuple[str, str], set] = {}
-        for er in excel_rows:
-            if er["kode_barang"] and str(er.get("trig_unit", "")).upper() != "RP":
-                kode_channel_to_pdfkeys.setdefault((er["channel"], er["kode_barang"]), set()).add(er["pdf_key"])
-        conflicted = {k for k, v in kode_channel_to_pdfkeys.items() if len(v) > 1}
+        conflicted = kode_bentrok(excel_rows, pdf_meta)
         if conflicted:
+            def surat_of(pdf_key):
+                return str(pdf_meta.get(pdf_key, {}).get("surat_program", "") or "").strip()
             kept_excel_rows = []
             for er in excel_rows:
-                ck = (er["channel"], er["kode_barang"])
+                ck = (er["channel"], surat_of(er["pdf_key"]), er["kode_barang"])
                 if er["kode_barang"] and ck in conflicted:
                     flagged_conflicts.append({"kode_barang": er["kode_barang"], "nama_barang": er["nama_barang"],
                                                "channel": er["channel"], "pg_id": er["pg_id"]})
@@ -981,7 +997,7 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             for i in pdf_items:
                 channel_baris = str(pdf_meta.get(i, {}).get("channel_gtmt", ""))
                 pdf_items[i] = [it for it in pdf_items[i]
-                                if (channel_baris, str(it.get("kode_barang", "")).strip()) not in conflicted]
+                                if (channel_baris, surat_of(i), str(it.get("kode_barang", "")).strip()) not in conflicted]
 
         for i in range(len(rows)):
             meta = pdf_meta[i]

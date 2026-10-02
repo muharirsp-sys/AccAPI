@@ -496,26 +496,33 @@ def check_suggestions():
 
 
 def check_conflict_guard_per_channel():
-    """Penjaga V4 membuang bentrok DARI CHANNEL-NYA SENDIRI, bukan dari semua channel.
+    """Penjaga V4 hanya membuang bentrok di dalam SATU SURAT dan SATU CHANNEL.
 
     Satu kode fisik memang sah muncul di beberapa channel dengan tier berbeda — itu bentuk normal
     surat Priskila (Retail/MTI/Grosir/Star Outlet). Dulu pembuangannya melepas channel-nya, jadi
     satu bentrok di MTI ikut menghapus kode itu dari RETAIL, dan blok Retail terbit
     "(TIDAK ADA ITEM COCOK DI MASTER)" padahal Dataset Excel-nya lengkap. Ketidaksimetrisan
     PDF vs Excel itu baris I di checklist akurasi.
+
+    Surat yang BERBEDA juga bukan bentrok: Summary bulanan (2 Okt 2026) mencetak 8707 Indomaret
+    dan 8789 MTI dalam satu Form, keduanya MT dan sama-sama menyebut ELLIPS ULTRA LIGHT 45ML.
+    Keduanya program sendiri dengan daftar outlet sendiri — `promo_rule` pun berkunci surat.
     """
+    from routers.summary import kode_bentrok
+
+    meta = {0: {"surat_program": "S1"}, 1: {"surat_program": "S1"}, 2: {"surat_program": "S1"},
+            3: {"surat_program": "S2"}}
     excel_rows = [
         {"pdf_key": 0, "channel": "MTI", "kode_barang": "P1"},
         {"pdf_key": 1, "channel": "MTI", "kode_barang": "P1"},
         {"pdf_key": 2, "channel": "Retail", "kode_barang": "P1"},
+        {"pdf_key": 3, "channel": "MTI", "kode_barang": "P1"},
+        # Strata nilai belanja (MSG) bukan bentrok sama sekali.
+        {"pdf_key": 0, "channel": "MTI", "kode_barang": "P2", "trig_unit": "RP"},
+        {"pdf_key": 1, "channel": "MTI", "kode_barang": "P2", "trig_unit": "RP"},
     ]
-    peta = {}
-    for er in excel_rows:
-        peta.setdefault((er["channel"], er["kode_barang"]), set()).add(er["pdf_key"])
-    bentrok = {k for k, v in peta.items() if len(v) > 1}
-    assert bentrok == {("MTI", "P1")}, bentrok
-    # Baris Retail HARUS selamat: pasangan (channel, kode)-nya tidak bentrok.
-    assert ("Retail", "P1") not in bentrok
+    bentrok = kode_bentrok(excel_rows, meta)
+    assert bentrok == {("MTI", "S1", "P1")}, bentrok
     print("summary conflict-guard check: OK")
 
 
