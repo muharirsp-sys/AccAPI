@@ -19,6 +19,8 @@ import { LoadingState } from "@/components/ui/AsyncState";
 type Program = {
     key: string; suratProgram: string; promoLabel: string; promoGroup: string;
     amount: number; lines: number; invoices: number;
+    /** Bagian `amount` dari Normalisasi Diskon yang merujuk surat ini; tetap terlihat, tidak dilebur. */
+    normalisasi?: number; normalisasiBaris?: number;
 };
 
 type DetailRow = {
@@ -323,7 +325,14 @@ export default function RekapPromoPage() {
                                             <td className="px-3 py-2">{program.promoGroup}</td>
                                             <td className="px-3 py-2 text-right">{program.invoices}</td>
                                             <td className="px-3 py-2 text-right">{program.lines}</td>
-                                            <td className="px-3 py-2 text-right text-emerald-300">{rp(program.amount)}</td>
+                                            <td className="px-3 py-2 text-right text-emerald-300">
+                                                {rp(program.amount)}
+                                                {!!program.normalisasi && (
+                                                    <div className="whitespace-nowrap text-xs text-slate-400">
+                                                        termasuk {rp(program.normalisasi)} dari normalisasi ({program.normalisasiBaris} baris)
+                                                    </div>
+                                                )}
+                                            </td>
                                             <td className="px-3 py-2 text-right">
                                                 <button type="button" className="text-xs text-blue-300 hover:underline"
                                                     onClick={() => setBuka(buka.jenis === "program" && buka.nilai === program.key

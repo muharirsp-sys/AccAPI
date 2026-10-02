@@ -3,7 +3,7 @@
    tak bertuan (posisi 6+) dan klaim principal tanpa aturan terbit. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { alasanTakBerlaku, bersinggungan, fakturRuleFor, invoiceLines, isoDate, kunciNormalisasi, kunciPertama, NORMALISASI, parseTariff, pemberianPertama, recap, ruleFor, temuanPoPertama, type PromoRule, type Putusan } from "./promo-recap.ts";
+import { alasanTakBerlaku, bersinggungan, fakturRuleFor, invoiceLines, isoDate, kunciAturan, kunciNormalisasi, kunciPertama, parseTariff, pemberianPertama, recap, ruleFor, temuanPoPertama, type PromoRule, type Putusan } from "./promo-recap.ts";
 
 const aturan = (over: Partial<PromoRule> = {}): PromoRule => ({
     principal: "KINO NON FOOD", suratProgram: "BP2609007909", promoLabel: "MTI - HPC CONSUMER PROMO ON PO",
@@ -555,14 +555,18 @@ test("normalisasi manual: potongan tak bertuan di faktur luar web digolongkan se
     const distributor = recap(lines, dasar, [], keputusan({}));
     assert.equal(distributor.unowned, 0);
     assert.equal(distributor.distributor, 22500);
-    assert.equal(distributor.rows[0].suratProgram, NORMALISASI);
+    // Baris mencatat surat aturan dasarnya, bukan penanda "NORMALISASI".
+    assert.equal(distributor.rows[0].suratProgram, "DISCOUNT REGULER");
+    assert.equal(distributor.rows[0].aturanId, 31);
     assert.deepEqual(distributor.programs, [], "tanggungan sendiri bukan program klaim");
 
-    // Disc claim masuk daftar program tersendiri — tidak dicampur dengan program surat.
+    // Disc Claim masuk PROGRAM SURAT yang dirujuk (opsi C, 2 Okt 2026), bagian normalisasinya terlihat.
     const klaim = recap(lines, dasar, [], keputusan({ bucket: "principal", ruleId: 32 }));
     assert.equal(klaim.principal, 22500);
-    assert.equal(klaim.programs[0].suratProgram, NORMALISASI);
+    assert.equal(klaim.programs[0].suratProgram, "BP2609007909");
     assert.equal(klaim.programs[0].amount, 22500);
+    assert.equal(klaim.programs[0].normalisasi, 22500);
+    assert.equal(klaim.programs[0].normalisasiBaris, 1);
 
     // Faktur diubah sesudah diputuskan -> keputusan tidak dipakai, dan sebabnya disebut.
     const berubah = recap(lines, dasar, [], keputusan({ amount: 30000 }));
@@ -627,20 +631,64 @@ test("normalisasi WAJIB beraturan: calon, penerimaan, dan penolakan memakai satu
     // Aturan yang tidak berlaku untuk golongannya -> TIDAK dipakai (2/5: tanpa aturan ditolak di API).
     const salahGolongan = recap(lines, rules, [], putus({ ruleId: 12 }));
     assert.equal(salahGolongan.unowned, row.amount);
-    assert.match(salahGolongan.rows[0].reason, /TIDAK dipakai: aturan #12 tidak berlaku \(aturan beban distributor/);
+    assert.match(salahGolongan.rows[0].reason, /normalisasi Disc Claim oleh ari TIDAK dipakai: aturan DISCOUNT REGULER #12 tidak berlaku \(aturan beban distributor/);
     // Aturan dihapus / dimuat ulang (id lama hilang) -> TIDAK dipakai, minta diputuskan ulang.
     const basi = recap(lines, rules, [], putus({ ruleId: 999 }));
     assert.equal(basi.unowned, row.amount);
     assert.match(basi.rows[0].reason, /aturan #999 sudah tidak ada atau nonaktif .* putuskan ulang/);
     // Aturan kadaluarsa untuk tanggal fakturnya -> TIDAK dipakai.
-    assert.match(recap(lines, rules, [], putus({ ruleId: 13 })).rows[0].reason, /aturan #13 tidak berlaku \(tanggal faktur 2026-09-11 di luar periode/);
+    assert.match(recap(lines, rules, [], putus({ ruleId: 13 })).rows[0].reason, /aturan BP2609007909 #13 tidak berlaku \(tanggal faktur 2026-09-11 di luar periode/);
     // Keputusan LAMA tanpa aturan TIDAK dipakai (keputusan pengguna 2 Okt 2026): tanpa rujukan program, tidak sah.
     const lama = recap(lines, rules, [], putus({}));
     assert.equal(lama.unowned, row.amount);
     assert.equal(lama.principal, 0);
     assert.equal(lama.rows[0].aturanId, undefined);
     assert.match(lama.rows[0].reason, /TIDAK dipakai: keputusan lama tanpa aturan promo dasar — putuskan ulang/);
+    // ...tetapi tetap MELEKAT di barisnya, supaya bisa ditemukan dan dirujukkan ulang.
+    assert.equal(lama.rows[0].bekasNormalisasi, "principal");
+    assert.equal(basi.rows[0].bekasNormalisasi, "principal");
+    assert.equal(sah.rows[0].bekasNormalisasi, undefined);
 });
+
+test("rujukan lewat KUNCI aturan: impor ulang yang mengganti id tidak memutus keputusan", () => {
+    const luar = { ...faktur, branchName: "KINO NON FOOD",
+        detailItem: [{ ...faktur.detailItem[0], id: 902, itemDiscPercent: "2,25" }] };
+    const lines = invoiceLines(luar);
+    const awal = aturan({ id: 11 });
+    const row = recap(lines, [awal]).rows.find((entry) => entry.bucket === "unowned")!;
+    const putus = new Map([[kunciNormalisasi(row), { bucket: "principal", amount: row.amount, by: "ari", ruleId: 11, ruleKey: kunciAturan(awal) } as Putusan]]);
+
+    // Surat dimuat ulang: baris aturan dihapus lalu dibuat lagi -> id baru, kunci sama -> tetap dipakai.
+    const dimuatUlang = recap(lines, [aturan({ id: 57 })], [], putus);
+    assert.equal(dimuatUlang.principal, row.amount);
+    assert.equal(dimuatUlang.rows[0].aturanId, 57, "baris menunjuk aturan yang BERLAKU sekarang");
+    // Isinya tetap dinilai ulang: periodenya dikoreksi sehingga tidak mencakup faktur -> tidak dipakai.
+    const dikoreksi = recap(lines, [aturan({ id: 58, periodStart: "2026-10-01", periodEnd: "2026-10-31" })], [], putus);
+    assert.equal(dikoreksi.unowned, row.amount);
+    assert.match(dikoreksi.rows[0].reason, /aturan BP2609007909 #58 tidak berlaku \(tanggal faktur 2026-09-11 di luar periode/);
+    // Kelompoknya diganti (kunci lain) -> keputusan kehilangan dasarnya, minta diputuskan ulang.
+    const kelompokLain = recap(lines, [aturan({ id: 59, promoGroup: "ELLIPS LAIN" })], [], putus);
+    assert.equal(kelompokLain.unowned, row.amount);
+    assert.match(kelompokLain.rows[0].reason, /aturan BP2609007909 sudah tidak ada atau nonaktif .* putuskan ulang/);
+    assert.equal(kelompokLain.rows[0].bekasNormalisasi, "principal");
+});
+
+test("Disc Claim normalisasi bergabung dengan klaim surat yang sama, bagiannya tetap terlihat", () => {
+    // Baris 1: 4% posisi 1 tanpa aturan distributor (tak bertuan) + 3% posisi 4 cocok surat (klaim biasa).
+    const surat = aturan({ id: 11 });
+    const lines = invoiceLines({ ...faktur, branchName: "KINO NON FOOD" });
+    const tak = recap(lines, [surat]).rows.find((entry) => entry.bucket === "unowned")!;
+    assert.equal(tak.amount, 40000);
+    const putus = new Map([[kunciNormalisasi(tak), { bucket: "principal", amount: 40000, by: "ari", ruleId: 11, ruleKey: kunciAturan(surat) } as Putusan]]);
+    const hasil = recap(lines, [surat], [], putus);
+    assert.equal(hasil.programs.length, 1, "satu baris program per surat — tidak ada baris NORMALISASI terpisah");
+    assert.equal(hasil.programs[0].suratProgram, "BP2609007909");
+    assert.equal(hasil.programs[0].amount, 28800 + 40000);
+    assert.equal(hasil.programs[0].normalisasi, 40000);
+    assert.equal(hasil.programs[0].normalisasiBaris, 1);
+    assert.equal(hasil.principal, 68800);
+});
+
 
 test("PO pertama: aturan first-PO yang sudah dipakai faktur lain bukan dasar normalisasi", () => {
     const pertama = aturan({ id: 21, firstPo: true });

@@ -352,6 +352,8 @@ export const discountNormalization = pgTable("discount_normalization", {
      * hilang membuat keputusannya tidak dipakai rekap — bukan menghapusnya atau menahan impor.
      */
     promoRuleId: bigint("promo_rule_id", { mode: "number" }),
+    /** Kunci alami aturan dasar (`kunciAturan`): rujukan UTAMA, bertahan saat impor mengganti id. */
+    promoRuleKey: text("promo_rule_key"),
     note: text("note").notNull().default(""),
     decidedBy: text("decided_by").notNull().default(""),
     decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),

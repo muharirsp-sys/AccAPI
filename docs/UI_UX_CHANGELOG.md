@@ -22,13 +22,22 @@ Cabang `feat/ui-ux-normalisasi-aturan`. Temuan lengkap: `docs/UI_UX_AUDIT.md`. T
   per baris tak bertuan, `aturanId` pada baris yang dinormalisasi, dan daftar `aturan` yang dirujuk
   (aditif; kolom lama tidak berubah). Rekap TIDAK memakai keputusan yang aturannya sudah hilang,
   nonaktif, dimuat ulang (id baru), atau tidak lagi berlaku — sebabnya ditulis di kolom Sebab.
-- **Skema:** `db/migrations/0025_discount_normalization_rule.sql` — `promo_rule_id bigint` NULL-able,
+- **Rujukan lewat kunci aturan** (keputusan 2 Okt 2026, opsi B): yang dirujuk adalah principal + surat +
+  kelompok + barang + outlet + tingkat (`kunciAturan`, sama dengan indeks unik aturan), bukan nomor
+  baris. Memuat ulang surat/sheet yang mengganti id aturan TIDAK memutus keputusan; isi aturannya tetap
+  dinilai ulang tiap rekap. Id disimpan sebagai jejak.
+- **Disc Claim masuk program surat yang dirujuk** (opsi C): baris program surat itu bertambah, dengan
+  keterangan "termasuk Rp … dari normalisasi (N baris)"; CSV menyebut nomor surat dan "dinormalisasi
+  (Disc Claim) oleh …". Tidak ada lagi baris program "NORMALISASI". Total kartu tidak berubah.
+- **Skema:** `db/migrations/0025_discount_normalization_rule.sql` — `promo_rule_id bigint` + `promo_rule_key text` NULL-able,
   tanpa FK; juga terdaftar di `scripts/migrate-pg.mjs` (otomatis saat container start).
 - **Keputusan lama** (tanpa aturan) TIDAK dipakai lagi — keputusan pengguna 2 Okt 2026: tanpa rujukan
   program ia tidak sah. Barisnya tetap tersimpan; potongannya kembali ke Tak bertuan dengan sebab
   "keputusan lama tanpa aturan promo dasar — putuskan ulang". **Akibat:** angka Rekap Promo bulan yang
   memuat keputusan lama berubah (Klaim principal / Tanggungan distributor turun, Tak bertuan naik)
-  sampai diputuskan ulang dengan aturan.
+  sampai diputuskan ulang dengan aturan. Keputusan yang tidak dipakai (karena alasan apa pun) tetap
+  melekat di barisnya dan bisa disaring ("Hanya yang pernah dinormalisasi tetapi tidak dipakai lagi")
+  lalu dirujukkan ulang ke aturan.
 - **Why:** golongan klaim/beban adalah keputusan uang; tanpa dasar ia tidak bisa dipertanggungjawabkan.
 - **Verification:** `lib/promo-recap.test.ts` (24/24; mutasi penjaga beban dan periode membuat uji
   gagal); `tests/normalisasi-aturan-promo.spec.ts` (Playwright, API dipalsukan); E2E nyata ke dev

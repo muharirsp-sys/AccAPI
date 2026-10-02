@@ -161,7 +161,7 @@ export async function GET(request: NextRequest) {
         .where(and(gte(discountNormalization.transDate, from), lte(discountNormalization.transDate, to)));
     const normalisasi = new Map<string, Putusan>(putusan.map((row) => [`${row.lineKey}|${row.positions}`,
         { bucket: row.bucket === "principal" ? "principal" : "distributor", amount: Number(row.amount), by: row.decidedBy,
-            ruleId: row.promoRuleId }]));
+            ruleId: row.promoRuleId, ruleKey: row.promoRuleKey }]));
     // PO PERTAMA dinilai atas RIWAYAT sejak awal periode aturan first-PO, bukan hanya rentang ini:
     // PO kedua bulan Oktober tidak boleh tampak "pertama" hanya karena rekapnya dibuka per Oktober.
     // Dibaca hanya faktur yang memuat kode barangnya — belasan faktur, bukan seluruh kuartal.

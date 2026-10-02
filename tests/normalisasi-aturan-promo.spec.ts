@@ -143,3 +143,16 @@ test("Aturan Promo: Periode bergabung dengan saringan lain, bisa dihapus; memuat
     await page.getByRole("button", { name: "Muat ulang" }).click();
     await expect(page.getByRole("alert").filter({ hasText: "koneksi database putus" })).toBeVisible();
 });
+
+test("Normalisasi: keputusan yang tidak dipakai lagi bisa disaring dan dirujukkan ulang", async ({ page }) => {
+    const bekas = baris({ invoiceNo: "INV/2609/KN00999", invoiceId: "9000999", lineKey: "9", bekasNormalisasi: "principal",
+        reason: "0.75% (posisi 4) tidak sama — normalisasi Disc Claim oleh ari TIDAK dipakai: keputusan lama tanpa aturan promo dasar — putuskan ulang dengan aturan" });
+    await bukaNormalisasi(page, (route) => json(route, { ...rekap, recap: { rows: [...rekap.recap.rows, bekas] } }));
+    const saring = page.getByRole("checkbox", { name: /Hanya yang pernah dinormalisasi tetapi tidak dipakai lagi \(1\)/ });
+    await saring.check();
+    await expect(page.getByText("TOKO BERKAH")).toHaveCount(0);
+    await page.getByRole("checkbox", { name: "Pilih INV/2609/KN00999 posisi 4" }).check();
+    await page.getByLabel("Jenis normalisasi").selectOption("principal");
+    await page.getByLabel("Aturan promo dasar").selectOption("11");
+    await expect(page.getByRole("button", { name: "Simpan sebagai Disc Claim" })).toBeEnabled();
+});

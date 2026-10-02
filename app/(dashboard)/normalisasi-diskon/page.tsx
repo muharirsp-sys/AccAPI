@@ -34,7 +34,7 @@ type Row = {
     customerNo: string; customerName: string; itemCode: string; itemName: string;
     positions: string; percent: number; amount: number;
     suratProgram: string; promoGroup: string; reason: string;
-    calonAturan?: Record<Golongan, number[]>; aturanId?: number;
+    calonAturan?: Record<Golongan, number[]>; aturanId?: number; bekasNormalisasi?: Golongan;
 };
 
 type Aturan = {
@@ -53,7 +53,6 @@ const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 /** ISO -> dd/mm/yyyy, bentuk tanggal yang dibaca pengguna di Accurate. */
 const tgl = (iso: string | null | undefined) => (iso ? iso.slice(0, 10).split("-").reverse().join("/") : "");
 const persen = (value: number | string) => `${String(value).replace(".", ",")}%`;
-const NORMALISASI = "NORMALISASI";
 const LABEL: Record<Golongan, string> = { principal: "Disc Claim", distributor: "Disc Distributor" };
 
 /** Irisan calon aturan: satu keputusan untuk banyak potongan hanya sah bila aturannya berlaku untuk semuanya. */
@@ -103,6 +102,9 @@ export default function NormalisasiDiskonPage() {
     const [status, setStatus] = useState<"memuat" | "siap" | "galat">("memuat");
     const [galat, setGalat] = useState("");
     const [pilih, setPilih] = useState<Set<string>>(new Set());
+    // Keputusan yang tidak dipakai lagi (tanpa aturan, aturannya hilang, nominal berubah) dicari di sini
+    // untuk dirujukkan ulang — di antara ratusan potongan tak bertuan lain.
+    const [hanyaBekas, setHanyaBekas] = useState(false);
     const [golongan, setGolongan] = useState<Golongan | "">("");
     const [aturanId, setAturanId] = useState("");
     const [cariAturan, setCariAturan] = useState("");
@@ -142,7 +144,8 @@ export default function NormalisasiDiskonPage() {
         const rows = (data?.recap.rows ?? []).map((row) => ({ ...row, web: web.has(row.invoiceId) }));
         return {
             calon: kelompokkan(rows.filter((row) => row.bucket === "unowned")),
-            sudah: kelompokkan(rows.filter((row) => row.suratProgram === NORMALISASI)),
+            // Yang dinormalisasi = yang membawa aturan dasarnya (Disc Claim kini tercatat di program suratnya).
+            sudah: kelompokkan(rows.filter((row) => row.aturanId !== undefined)),
             aturanById: new Map((data?.aturan ?? []).map((a) => [a.id, a])),
         };
     }, [data]);
@@ -230,6 +233,8 @@ export default function NormalisasiDiskonPage() {
     }
 
     const totalCalon = calon.reduce((sum, grup) => sum + grup.amount, 0);
+    const bekas = calon.filter((grup) => grup.rows.some((row) => row.bekasNormalisasi));
+    const calonTabel = hanyaBekas && bekas.length ? bekas : calon;
     const memuatAwal = status === "memuat" && !data;
     const fieldCls = "rounded border border-white/10 bg-black/40 px-3 py-2 text-sm disabled:opacity-50";
 
@@ -431,7 +436,13 @@ export default function NormalisasiDiskonPage() {
                         {galatSimpan ? `Tidak tersimpan: ${galatSimpan}` : petunjuk}
                     </p>
                 </div>
-                {tabel(calon, false)}
+                {bekas.length > 0 && (
+                    <label className="flex items-center gap-2 text-sm text-slate-300">
+                        <input type="checkbox" checked={hanyaBekas} onChange={(e) => { setHanyaBekas(e.target.checked); setPilih(new Set()); }} />
+                        Hanya yang pernah dinormalisasi tetapi tidak dipakai lagi ({bekas.length}) — rujukkan ulang ke aturan promo
+                    </label>
+                )}
+                {tabel(calonTabel, false)}
             </section>
 
             <section className="space-y-3" aria-labelledby="judul-sudah">

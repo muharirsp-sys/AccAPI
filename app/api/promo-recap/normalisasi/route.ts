@@ -20,7 +20,7 @@ import { and, eq, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { discountNormalization, promoOutlet, promoRule } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { alasanTakBerlaku } from "@/lib/promo-recap";
+import { alasanTakBerlaku, kunciAturan } from "@/lib/promo-recap";
 import { outletListsOn } from "@/lib/principal-validation";
 
 export const runtime = "nodejs";
@@ -62,6 +62,8 @@ export async function POST(request: NextRequest) {
             + "(mungkin baru dimuat ulang). Muat ulang halaman, lalu pilih aturannya lagi." }, { status: 409 });
     }
     const dasar = { ...rule, triggerQty: Number(rule.triggerQty) };
+    // Rujukan utama = KUNCI aturan (bertahan saat impor mengganti id); id ikut disimpan sebagai jejak.
+    const promoRuleKey = kunciAturan(dasar);
     const members = rule.outletList ? await db.select().from(promoOutlet) : [];
     const note = text(body?.note, 500);
     const values = [];
@@ -82,7 +84,7 @@ export async function POST(request: NextRequest) {
         values.push({
             ...kunci, bucket, amount: String(amount), percent: String(Number(row.percent) || 0),
             invoiceNo, invoiceId: konteks.invoiceId, transDate,
-            customerNo: konteks.customerNo, itemCode: konteks.itemCode, promoRuleId,
+            customerNo: konteks.customerNo, itemCode: konteks.itemCode, promoRuleId, promoRuleKey,
             note, decidedBy: gate.email!,
         });
     }
@@ -90,7 +92,7 @@ export async function POST(request: NextRequest) {
         target: [discountNormalization.lineKey, discountNormalization.positions],
         set: {
             bucket: sql`excluded.bucket`, amount: sql`excluded.amount`, percent: sql`excluded.percent`,
-            promoRuleId: sql`excluded.promo_rule_id`,
+            promoRuleId: sql`excluded.promo_rule_id`, promoRuleKey: sql`excluded.promo_rule_key`,
             note: sql`excluded.note`, decidedBy: sql`excluded.decided_by`, decidedAt: new Date(),
         },
     });
