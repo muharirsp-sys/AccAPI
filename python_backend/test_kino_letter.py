@@ -64,6 +64,17 @@ DISC ON PO 3%
 INDOGROSIR COVER INDOMARET
 Outlet/Account : ALL"""
 
+# BP2608008343: besaran HANYA di judul; Detail = produk berukuran + kalimat akun.
+NKA_JUDUL = """NO. PROMO ID : PN26006192 Tanggal Aju : 28 August 2026 Kode Aju : BP2608008343
+Nama Program Promo : NKA - INDOMARET LISTING & SUPPORT DISC 3% (FIRST PO) THEORY EXTRAIT AGUSTUS 2026 - DESEMBER 2026
+Periode Promo : 28 August 2026 - 31 December 2026 Divisi : HOME PERSONAL CARE Brand : HOME PERSONAL CARE
+Group Of Promo : MODERN Type Of Promo : LISTING FEE & SUPPORT Class Of Promo : FEE Mekanisme Promo : LISTING FEE
+Detail Promo : NKA - INDOMARET LISTING & SUPPORT DISC 3% (FIRST PO) THEORY EXTRAIT AGUSTUS 2026 - DESEMBER 2026
+Theory Extrait De Parfum Royal Oud 40ML
+Theory Extrait De Parfum Midnight Wave 40ML
+Indogrosir cover indomaret.
+Outlet/Account : ALL"""
+
 
 def main():
     # Surat akun NKA (BP2609008707, 22 Sep 2026). Dua produk sebelum SATU "DISC ON PO 3%" harus
@@ -158,6 +169,16 @@ def main():
     # "KHUSUS LD JAWA" ditandai (router tidak membuat barisnya); "LUAR JAWA" tidak.
     assert small["khusus_jawa"] and not mti["khusus_jawa"]
     assert not parse_text(SMALL.replace("KHUSUS LD JAWA", "KHUSUS LUAR JAWA"))["khusus_jawa"]
+    # Besaran dari judul: dua produk berukuran jadi dua baris 3%, kalimat akun bukan produk;
+    # tetap khusus akun Indomaret + Indogrosir dan tetap PO pertama.
+    judul = parse_text(NKA_JUDUL)
+    assert [(r["kelompok"], r["benefit_type"], r["benefit"]) for r in judul["rows"]] == [
+        ("Theory Extrait De Parfum Royal Oud 40ML", "DISC_PCT", "3"),
+        ("Theory Extrait De Parfum Midnight Wave 40ML", "DISC_PCT", "3")], judul["rows"]
+    assert (judul["rows"][0]["outlet_mode"], judul["rows"][0]["outlet_classes"], judul["rows"][0]["channel_list"]) == (
+        "only", "BP2608008343", "INDOMARET, INDOGROSIR"), judul["rows"][0]
+    assert (judul["rows"][0]["periode_start"], judul["rows"][0]["periode_end"]) == ("2026-08-28", "2026-12-31")
+    assert all("PO pertama" in r["keterangan"] for r in judul["rows"])
     check_match_groups()
     print("kino letter check: OK")
 
@@ -183,7 +204,9 @@ def check_match_groups():
         ("K1111009010010", "KNF ESKULIN COLOGNE GEL ENCHANTING 100ML X 36 BTL", "ESKULIN - COLOGNE", "GEL ENCHANTING", "100ML"),
         ("K1122001010010", "KNF ESKULIN HIJAB C.GEL FRESH DAY 100ML X 36 BTL", "ESKULIN HIJAB - C.GEL", "FRESH DAY", "100ML"),
         ("K1041001025010", "KNF B&B HAIR BODY WASH RIKO 250ML X 24 BTL", "B&B - HAIR BODY WASH", "RIKO", "250ML"),
-        ("K1045001006010", "KNF B&B POWDER BLOSSOM 60GR X 36 BTL", "B&B - POWDER", "BLOSSOM", "60GR"))]
+        ("K1045001006010", "KNF B&B POWDER BLOSSOM 60GR X 36 BTL", "B&B - POWDER", "BLOSSOM", "60GR"),
+        ("K1521001004010", "KNF THEORY EXT DP ROYAL OUD 40ML X 36 BTL", "THEORY - EXT DP", "ROYAL OUD", "40ML"),
+        ("K1521002004010", "KNF THEORY EXT DP MIDNIGHT WAVE 40ML X 36 BTL", "THEORY - EXT DP", "MIDNIGHT WAVE", "40ML"))]
 
     def pilih(frasa):
         row = dict(no="1", kelompok=frasa, variant=frasa, kode_barangs="", keterangan="", benefit_type="DISC_PCT")
@@ -204,6 +227,12 @@ def check_match_groups():
         ("ESKULIN - COLOGNE", "ALL VARIANT", "", "K1111002005010,K1111009005010,K1111009010010")]
     # Tidak ditemukan -> baris dibiarkan (ditahan untuk operator), tidak ditebak.
     assert pilih("RESIK V CAIR") == [("RESIK V CAIR", "RESIK V CAIR", "", "")]
+    # Produk berukuran lewat singkatan master: "EXT" = EXTRAIT, "DP" = DE PARFUM; ukuran wajib sama.
+    assert pilih("Theory Extrait De Parfum Royal Oud 40ML") == [
+        ("THEORY - EXT DP", "ROYAL OUD", "", "K1521001004010")], pilih("Theory Extrait De Parfum Royal Oud 40ML")
+    assert pilih("Theory Extrait De Parfum Royal Oud 100ML")[0][3] == ""
+    # Satu produk berukuran dalam DUA kemasan (BLR dan JAR) yang tidak disebut surat tetap ditahan.
+    assert pilih("ELLIPS HAIR VITAMIN HAIR TREATMENT 1ML")[0][3] == ""
 
     def kode(**row):
         base = dict(no="1", kelompok="", variant="ALL VARIANT", gramasi="ALL GRAMASI", kemasan="", kode_barangs="")

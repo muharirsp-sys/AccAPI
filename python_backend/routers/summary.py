@@ -78,7 +78,7 @@ def kino_extraction(raw, master):
     """
     import hashlib
 
-    from kino_letter import flatten, match_groups, match_products, parse_pdf
+    from kino_letter import flatten, iso_period, match_groups, match_products, parse_pdf
     from summary_mistral import attach_codes
 
     try:
@@ -102,7 +102,11 @@ def kino_extraction(raw, master):
     for nomor, row in enumerate(rows, 1):
         row["no"] = str(nomor)
     kode_aju = flatten(result["letter"].get("Kode Aju", ""))
-    return {"rows": rows, "abaikan": abaikan, "page_count": result["page_count"],
+    # Periode surat untuk judul Summary saat tidak ada baris sama sekali (surat tanpa mekanisme),
+    # supaya ia tidak menempel ke draft lama yang judulnya cuma nama principal.
+    mulai, selesai = iso_period(result["letter"].get("Periode Promo", ""))
+    return {"rows": rows, "abaikan": abaikan, "periode": {"periode_start": mulai, "periode_end": selesai},
+            "page_count": result["page_count"],
             "warnings": [f"{kode_aju}: {w}" for w in result["warnings"]][:400],
             "model": "deterministic:kino_letter", "pipeline_version": 1, "cached": False,
             "on_faktur": result["on_faktur"], "mechanism": result["mechanism"],
@@ -1460,7 +1464,7 @@ async def summary_manual_parse_pdf_ai(request: Request, token: str = Form(...), 
         # yang sudah terbit tidak boleh berubah di belakang punggung yang menandatanganinya.
         # Surat yang datang setelah publikasi memulai Summary berikutnya.
         from summary_store import append_rows, find_open_draft
-        judul = judul_summary(principle_name, result["rows"] or result.get("abaikan") or [])
+        judul = judul_summary(principle_name, result["rows"] or result.get("abaikan") or [result.get("periode") or {}])
         berjalan = find_open_draft(user, judul)
         if berjalan is not None:
             sebelum = len(berjalan["content"].get("rows") or [])

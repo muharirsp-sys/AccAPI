@@ -38,6 +38,8 @@ PRODUK_BERUKURAN = re.compile(r".+?\b\d+(?:[.,]\d+)?\s?(?:ML|GR|GRAM|G|KG|L|LTR)
 AKUN_NKA = re.compile(r"\bNKA\s*-\s*([A-Z0-9]+)", re.I)
 AKUN_COVER = re.compile(r"\b([A-Z0-9]+)\s+COVER\s+([A-Z0-9]+)\b", re.I)
 FIRST_PO = re.compile(r"\bFIRST\s+PO\b", re.I)
+# "NKA - INDOMARET LISTING & SUPPORT DISC 3% (FIRST PO) ...": besaran yang hanya tercetak di judul.
+DISC_JUDUL = re.compile(r"\bDISC\.?\s*([\d.,]+)\s*%", re.I)
 # Channel diambil dari kalimat KEWAJIBAN saja. Surat yang sama memuat klausa kebalikannya
 # ("jika toko menggunakan harga GT maka promo tidak dapat di klaim"); membaca harga mana pun
 # yang lebih dulu muncul akan memungut channel yang justru dilarang.
@@ -199,8 +201,7 @@ def match_products(rows, items, warnings):
             if cocok:
                 warnings.append(f"Baris {row['no']}: '{row['kelompok']}' cocok dengan {len(produk)} produk master "
                                 f"({', '.join(sorted(str(i['kode_barang']) for _, i in cocok))}); kode tidak diisi, pilih manual.")
-            else:
-                warnings.append(f"Baris {row['no']}: '{row['kelompok']}' tidak ditemukan di master; kode tidak diisi.")
+            # Tidak cocok persis: `match_groups` mencoba lagi lewat singkatan dan melapor sendiri.
             continue
         barang = [item for _, item in cocok]
         row["kode_barangs"] = ",".join(sorted({str(item["kode_barang"]).strip() for item in barang}))
@@ -258,21 +259,26 @@ def _eja(huruf, kata, i):
 def _tercakup(kata, token):
     """Setiap kata surat dijelaskan nama master: persis, atau singkatan yang bagian-bagiannya
     awalan kata surat berurutan — bertitik ("H.VIT" = HAIR VITAMIN, "VIT." = VITAMIN) atau rapat
-    dengan huruf pertama sendiri ("HVIT" = HAIR VITAMIN, "BN" = BOTTLE NIPPLE). Rentang singkatan
-    boleh menimpa kata yang sudah cocok persis: "H.VIT HAIR TREATMENT" tetap menjelaskan
-    "HAIR VITAMIN" walau HAIR-nya juga ada utuh."""
+    dengan huruf pertama sendiri ("HVIT" = HAIR VITAMIN, "BN" = BOTTLE NIPPLE, "DP" = DE PARFUM),
+    atau awalan satu kata minimal tiga huruf ("EXT" = EXTRAIT). Rentang singkatan boleh menimpa
+    kata yang sudah cocok persis: "H.VIT HAIR TREATMENT" tetap menjelaskan "HAIR VITAMIN" walau
+    HAIR-nya juga ada utuh."""
     sisa = [k not in token for k in kata]
     for t in token - set(kata):
         bagian = [b for b in t.split(".") if b]
         for mulai in range(len(kata)):
+            # `minimal`: rentang wajib lebih panjang dari ini. Inisial rapat butuh >= 2 kata.
             if "." in t:
+                minimal = mulai
                 ujung = mulai + len(bagian) if all(
                     mulai + i < len(kata) and kata[mulai + i].startswith(b) for i, b in enumerate(bagian)) else -1
+            elif t.isalpha() and 3 <= len(t) <= 5 and kata[mulai].startswith(t):
+                minimal, ujung = mulai, mulai + 1
             elif t.isalpha() and 2 <= len(t) <= 5 and kata[mulai].startswith(t[0]):
-                ujung = _eja(t[1:], kata, mulai + 1)
+                minimal, ujung = mulai + 1, _eja(t[1:], kata, mulai + 1)
             else:
-                ujung = -1
-            if ujung > mulai + (0 if "." in t else 1):
+                minimal, ujung = mulai, -1
+            if ujung > minimal:
                 sisa[mulai:ujung] = [False] * (ujung - mulai)
                 break
     return not any(sisa)
@@ -303,17 +309,25 @@ def match_groups(rows, items, warnings):
         asli = flatten(row.get("kelompok", "")).upper()
         frasa = flatten(SEBUTAN_SEMUA.sub(" ", asli))
         kata = list(dict.fromkeys(t for t in frasa.split() if t not in ("&", "-")))
-        if (str(row.get("kode_barangs", "")).strip() or not kata or asli == "__ALL_MASTER__"
-                or any(UKURAN.match(t) for t in kata)):
+        if str(row.get("kode_barangs", "")).strip() or not kata or asli == "__ALL_MASTER__":
             hasil.append(row)
             continue
         alias = ALIAS_KELOMPOK.get(frasa)
         kemasan = "" if alias else next((KEMASAN_SURAT[t] for t in kata if t in KEMASAN_SURAT), "")
-        kata = [t for t in kata if t not in KEMASAN_SURAT]
+        # Frasa BERUKURAN ("... ROYAL OUD 40ML") yang tidak cocok persis di `match_products`:
+        # ukurannya wajib sama dengan barang master.
+        ukuran = {t for t in kata if UKURAN.match(t)}
+        kata = [t for t in kata if t not in KEMASAN_SURAT and t not in ukuran]
         cocok = [it for it in master
                  if (flatten(it.get("kelompok")).upper() in alias if alias else
                      kata and (not kemasan or kemasan_of(it.get("nama_barang")) == kemasan)
+                     and ukuran <= _token_master(it.get("nama_barang"))
                      and _tercakup(kata, _token_master(it.get("nama_barang"))))]
+        # Satu produk berukuran dalam dua kemasan (BLR dan JAR) yang tidak disebut surat = ambigu.
+        if ukuran and len({kemasan_of(it.get("nama_barang")) for it in cocok}) > 1:
+            warnings.append(f"'{asli}': cocok dengan lebih dari satu kemasan; pilih kelompok manual.")
+            hasil.append(row)
+            continue
         per_kelompok = {}
         for it in cocok:
             per_kelompok.setdefault(str(it.get("kelompok")), {})[str(it.get("kode_barang")).strip()] = it
@@ -471,6 +485,15 @@ def parse_text(text, page_count=1):
         for persen in PERSEN.findall(detail):
             add(kelompok=kelompok_brand, variant="", ketentuan="Setiap pembelian",
                 benefit_type="DISC_PCT", benefit=persen, source_quote=f"Disc. on faktur {persen}%")
+    # Surat listing NKA (BP2608008343): besaran potongannya HANYA di judul ("SUPPORT DISC 3%
+    # (FIRST PO)"), Detail cuma menderetkan produk berukuran lalu kalimat akunnya. Satu baris per
+    # produk berukuran; kalimat lain ("Indogrosir cover indomaret") bukan produk dan dilewati.
+    disc_judul = DISC_JUDUL.search(head.get("Nama Program Promo", ""))
+    if not rows and disc_judul:
+        badan = re.sub(r"^.*\b(?:19|20)\d{2}\b", "", flatten(detail))
+        for nama in (part.strip(" ,.:-") for part in PRODUK_BERUKURAN.findall(badan)):
+            add(kelompok=nama, variant=nama, ketentuan=f"Setiap pembelian {nama}", benefit_type="DISC_PCT",
+                benefit=disc_judul.group(1), source_quote=f"{nama}; judul program: DISC {disc_judul.group(1)}%")
     if not rows:
         warnings.append("Tidak ada mekanisme yang terbaca; isi baris manual dari Detail Promo.")
     if ATTACHMENT.search(detail):
