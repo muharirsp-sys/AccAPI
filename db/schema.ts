@@ -346,6 +346,12 @@ export const discountNormalization = pgTable("discount_normalization", {
     transDate: date("trans_date"),
     customerNo: text("customer_no").notNull().default(""),
     itemCode: text("item_code").notNull().default(""),
+    /**
+     * `promo_rule.id` yang menjadi dasar keputusan (db/migrations/0025). Wajib sejak 1 Okt 2026;
+     * NULL hanya pada keputusan lama. Tanpa FK: impor ulang mengganti id aturan, dan aturan yang
+     * hilang membuat keputusannya tidak dipakai rekap — bukan menghapusnya atau menahan impor.
+     */
+    promoRuleId: bigint("promo_rule_id", { mode: "number" }),
     note: text("note").notNull().default(""),
     decidedBy: text("decided_by").notNull().default(""),
     decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),

@@ -95,7 +95,7 @@ export async function GET(request: NextRequest) {
     );
     const ruleRows = await db.select().from(promoRule).where(eq(promoRule.active, true));
     const rules: PromoRule[] = ruleRows.map((row) => ({
-        principal: row.principal, suratProgram: row.suratProgram, promoLabel: row.promoLabel,
+        id: row.id, principal: row.principal, suratProgram: row.suratProgram, promoLabel: row.promoLabel,
         promoGroup: row.promoGroup, itemCode: row.itemCode, customerCode: row.customerCode,
         periodStart: row.periodStart, periodEnd: row.periodEnd,
         benefitType: row.benefitType, benefitValue: row.benefitValue, benefitUnit: row.benefitUnit,
@@ -160,7 +160,8 @@ export async function GET(request: NextRequest) {
     const putusan = await db.select().from(discountNormalization)
         .where(and(gte(discountNormalization.transDate, from), lte(discountNormalization.transDate, to)));
     const normalisasi = new Map<string, Putusan>(putusan.map((row) => [`${row.lineKey}|${row.positions}`,
-        { bucket: row.bucket === "principal" ? "principal" : "distributor", amount: Number(row.amount), by: row.decidedBy }]));
+        { bucket: row.bucket === "principal" ? "principal" : "distributor", amount: Number(row.amount), by: row.decidedBy,
+            ruleId: row.promoRuleId }]));
     // PO PERTAMA dinilai atas RIWAYAT sejak awal periode aturan first-PO, bukan hanya rentang ini:
     // PO kedua bulan Oktober tidak boleh tampak "pertama" hanya karena rekapnya dibuka per Oktober.
     // Dibaca hanya faktur yang memuat kode barangnya — belasan faktur, bukan seluruh kuartal.
@@ -181,6 +182,17 @@ export async function GET(request: NextRequest) {
     // Faktur yang terbit LEWAT web sudah dinilai gerbang; menu normalisasi hanya untuk yang tidak.
     const webInvoiceIds = (await db.select({ id: invoiceOutbox.accurateId }).from(invoiceOutbox)
         .where(and(eq(invoiceOutbox.state, "posted"), ne(invoiceOutbox.accurateId, "")))).map((row) => row.id);
+    // Aturan yang DIRUJUK baris rekap (calon normalisasi dan dasar keputusan), supaya menu
+    // Normalisasi bisa menamai pilihannya tanpa memuat seluruh tabel aturan ke peramban.
+    const dirujuk = new Set(result.rows.flatMap((row) => [...(row.calonAturan?.principal ?? []),
+        ...(row.calonAturan?.distributor ?? []), ...(row.aturanId ? [row.aturanId] : [])]));
+    const aturan = ruleRows.filter((row) => dirujuk.has(row.id)).map((row) => ({
+        id: row.id, suratProgram: row.suratProgram, promoGroup: row.promoGroup, promoLabel: row.promoLabel,
+        itemCode: row.itemCode, itemName: row.itemName, customerCode: row.customerCode,
+        periodStart: row.periodStart, periodEnd: row.periodEnd, tierNo: row.tierNo,
+        benefitType: row.benefitType, benefitValue: row.benefitValue, benefitBeban: row.benefitBeban,
+        outletList: row.outletList, outletListMode: row.outletListMode,
+    }));
 
     return NextResponse.json({
         ok: true, from, to, principal, principals,
@@ -189,6 +201,7 @@ export async function GET(request: NextRequest) {
         rules: rules.length,
         recap: result,
         webInvoiceIds,
+        aturan,
     });
 }
 

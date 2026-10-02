@@ -205,6 +205,14 @@ const migrations = [
       );
     `,
   },
+  {
+    // 2026-10-01. Normalisasi Diskon wajib menyebut aturan promo dasarnya. Kolom NULL-able:
+    // keputusan lama tetap sah apa adanya. Lihat db/migrations/0025_discount_normalization_rule.sql.
+    nama: "discount_normalization.promo_rule_id",
+    sudahAda: `SELECT 1 FROM information_schema.columns
+               WHERE table_name = 'discount_normalization' AND column_name = 'promo_rule_id'`,
+    sql: "ALTER TABLE discount_normalization ADD COLUMN IF NOT EXISTS promo_rule_id bigint",
+  },
 ];
 
 const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 15_000 });

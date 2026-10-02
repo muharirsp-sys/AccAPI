@@ -1,0 +1,22 @@
+-- =====================================================================
+-- Normalisasi Diskon wajib menyebut ATURAN PROMO dasarnya (2026-10-01).
+--
+-- Sebelumnya potongan tak bertuan bisa digolongkan jadi Disc Claim atau Disc
+-- Distributor tanpa dasar apa pun. Sekarang keputusan menunjuk satu baris
+-- `promo_rule` yang berlaku untuk potongan itu (principal, periode, outlet,
+-- barang, beban) — dipilih di layar, diperiksa ulang saat simpan, dan diperiksa
+-- lagi oleh Rekap Promo setiap kali rekap dihitung.
+--
+-- NULL-able dan TANPA foreign key, sengaja:
+--   - keputusan lama (sebelum kolom ini ada) tetap sah apa adanya;
+--   - impor aturan MENGGANTI irisannya (hapus + sisip, id baru). FK akan
+--     menahan impor itu atau ikut menghapus keputusannya. Yang benar: rekap
+--     tidak memakai keputusan yang aturannya hilang, dan menyebut sebabnya.
+--
+-- Apply otomatis lewat scripts/migrate-pg.mjs saat container start. Manual:
+--   docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 \
+--     --single-transaction < db/migrations/0025_discount_normalization_rule.sql
+-- Idempoten dan aditif; tidak menyentuh satu baris data pun.
+-- =====================================================================
+
+ALTER TABLE discount_normalization ADD COLUMN IF NOT EXISTS promo_rule_id bigint;

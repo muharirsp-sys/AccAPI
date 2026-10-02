@@ -3,7 +3,7 @@
    tak bertuan (posisi 6+) dan klaim principal tanpa aturan terbit. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fakturRuleFor, invoiceLines, isoDate, kunciNormalisasi, NORMALISASI, parseTariff, pemberianPertama, recap, ruleFor, temuanPoPertama, type PromoRule, type Putusan } from "./promo-recap.ts";
+import { alasanTakBerlaku, bersinggungan, fakturRuleFor, invoiceLines, isoDate, kunciNormalisasi, kunciPertama, NORMALISASI, parseTariff, pemberianPertama, recap, ruleFor, temuanPoPertama, type PromoRule, type Putusan } from "./promo-recap.ts";
 
 const aturan = (over: Partial<PromoRule> = {}): PromoRule => ({
     principal: "KINO NON FOOD", suratProgram: "BP2609007909", promoLabel: "MTI - HPC CONSUMER PROMO ON PO",
@@ -571,4 +571,96 @@ test("normalisasi manual: potongan tak bertuan di faktur luar web digolongkan se
     assert.equal(beraturan.principal, 0);
     assert.equal(beraturan.distributor, 22500);
     assert.equal(beraturan.rows[0].suratProgram, "DISCOUNT REGULER");
+});
+
+test("normalisasi WAJIB beraturan: calon, penerimaan, dan penolakan memakai satu penjaga", () => {
+    // Faktur luar web, Disc 2,25 di posisi 1 (beban distributor) tanpa aturan yang cocok nilainya.
+    const luar = { ...faktur, branchName: "KINO NON FOOD",
+        detailItem: [{ ...faktur.detailItem[0], id: 901, itemDiscPercent: "2,25" }] };
+    const lines = invoiceLines(luar);
+    const klaim = aturan({ id: 11 });
+    const tarifDistributor = aturan({ id: 12, suratProgram: "DISCOUNT REGULER", itemCode: "", customerCode: "C-TRU001",
+        benefitBeban: "DISTRIBUTOR", benefitValue: "4", tierNo: 1 });
+    const kadaluarsa = aturan({ id: 13, periodStart: "2026-08-01", periodEnd: "2026-08-31" });
+    const barangLain = aturan({ id: 14, itemCode: "K0000000000000" });
+    const principalLain = aturan({ id: 15, principal: "GODREJ" });
+    const rules = [klaim, tarifDistributor, kadaluarsa, barangLain, principalLain];
+
+    const row = recap(lines, rules).rows.find((entry) => entry.bucket === "unowned")!;
+    // Calon per golongan: hanya aturan yang benar-benar berlaku untuk potongan ini.
+    assert.deepEqual(row.calonAturan, { principal: [11], distributor: [12] });
+
+    const lists = new Map<string, Set<string>>();
+    // 1. Disc Claim + aturan principal yang berlaku -> diterima.
+    assert.equal(alasanTakBerlaku(klaim, row, "principal", lists), null);
+    // 3. Disc Claim + aturan yang tidak berlaku (beban distributor) -> ditolak, sebabnya disebut.
+    assert.match(alasanTakBerlaku(tarifDistributor, row, "principal", lists)!, /beban distributor/);
+    // 4. Disc Distributor + tarif distributor outlet ini -> diterima.
+    assert.equal(alasanTakBerlaku(tarifDistributor, row, "distributor", lists), null);
+    // 6. Di luar periode -> ditolak.
+    assert.match(alasanTakBerlaku(kadaluarsa, row, "principal", lists)!, /di luar periode/);
+    assert.match(alasanTakBerlaku(barangLain, row, "principal", lists)!, /untuk barang K0000000000000/);
+    assert.match(alasanTakBerlaku(principalLain, row, "principal", lists)!, /milik GODREJ/);
+    // Bentuk potongan: aturan seluruh nota (program MSG) tidak mendasari potongan per barang, dan
+    // potongan rupiah tingkat faktur hanya didasari aturan seluruh nota — sama dengan pencocokan rekap.
+    const msg = aturan({ id: 17, itemCode: "", benefitType: "DISC_RP", benefitValue: "20000", triggerUnit: "RP", triggerQty: 1000000 });
+    assert.match(alasanTakBerlaku(msg, row, "principal", lists)!, /tidak mendasari potongan per barang/);
+    const nota = { ...row, positions: "faktur", itemCode: "" };
+    assert.equal(alasanTakBerlaku(msg, nota, "principal", lists), null);
+    assert.match(alasanTakBerlaku(klaim, nota, "principal", lists)!, /hanya bisa didasari aturan tingkat faktur/);
+    assert.deepEqual(recap(lines, [...rules, msg]).rows.find((entry) => entry.bucket === "unowned")!.calonAturan, { principal: [11], distributor: [12] });
+    // Daftar peserta: outlet yang DIKECUALIKAN tidak bisa memakai aturan itu.
+    const kecuali = aturan({ id: 16, outletList: "LOYALTY", outletListMode: "EXCLUDE" });
+    assert.match(alasanTakBerlaku(kecuali, row, "principal", new Map([["LOYALTY", new Set(["C-TRU001-KN"])]]))!, /peserta daftar LOYALTY/);
+
+    const putus = (over: Partial<Putusan>) => new Map([[kunciNormalisasi(row), { bucket: "principal", amount: row.amount, by: "ari", ...over } as Putusan]]);
+    // Keputusan beraturan yang berlaku -> dipakai, dan aturannya tercatat di baris.
+    const sah = recap(lines, rules, [], putus({ ruleId: 11 }));
+    assert.equal(sah.unowned, 0);
+    assert.equal(sah.principal, row.amount);
+    assert.equal(sah.rows[0].aturanId, 11);
+    // Aturan yang tidak berlaku untuk golongannya -> TIDAK dipakai (2/5: tanpa aturan ditolak di API).
+    const salahGolongan = recap(lines, rules, [], putus({ ruleId: 12 }));
+    assert.equal(salahGolongan.unowned, row.amount);
+    assert.match(salahGolongan.rows[0].reason, /TIDAK dipakai: aturan #12 tidak berlaku \(aturan beban distributor/);
+    // Aturan dihapus / dimuat ulang (id lama hilang) -> TIDAK dipakai, minta diputuskan ulang.
+    const basi = recap(lines, rules, [], putus({ ruleId: 999 }));
+    assert.equal(basi.unowned, row.amount);
+    assert.match(basi.rows[0].reason, /aturan #999 sudah tidak ada atau nonaktif .* putuskan ulang/);
+    // Aturan kadaluarsa untuk tanggal fakturnya -> TIDAK dipakai.
+    assert.match(recap(lines, rules, [], putus({ ruleId: 13 })).rows[0].reason, /aturan #13 tidak berlaku \(tanggal faktur 2026-09-11 di luar periode/);
+    // Keputusan LAMA tanpa aturan tetap dipakai (rekap yang sudah ditagih tidak bergeser), dan ditandai.
+    const lama = recap(lines, rules, [], putus({}));
+    assert.equal(lama.unowned, 0);
+    assert.equal(lama.rows[0].aturanId, null);
+    assert.match(lama.rows[0].reason, /keputusan lama tanpa aturan dasar/);
+});
+
+test("PO pertama: aturan first-PO yang sudah dipakai faktur lain bukan dasar normalisasi", () => {
+    const pertama = aturan({ id: 21, firstPo: true });
+    const row = { branchName: "KINO NON FOOD", transDate: "2026-09-11", customerNo: "C-TRU001-KN",
+        itemCode: "K1010001006010", invoiceId: "2", invoiceNo: "INV-2", positions: "4" };
+    const grant = new Map([[kunciPertama(row.customerNo, row.itemCode, pertama.suratProgram), { invoiceId: "1", invoiceNo: "INV-1", transDate: "2026-09-02" }]]);
+    assert.match(alasanTakBerlaku(pertama, row, "principal", new Map(), grant)!, /PO pertama; outlet ini sudah mendapatkannya di INV-1/);
+    assert.equal(alasanTakBerlaku(pertama, { ...row, invoiceId: "1", invoiceNo: "INV-1" }, "principal", new Map(), grant), null);
+});
+
+test("saringan Periode Aturan Promo: bersinggungan, ujung kosong = tak terbatas", () => {
+    const sep = { periodStart: "2026-09-01", periodEnd: "2026-09-30" };
+    const lintas = { periodStart: "2026-09-15", periodEnd: "2026-10-15" };
+    const agustus = { periodStart: "2026-08-01", periodEnd: "2026-08-31" };
+    const selamanya = { periodStart: null, periodEnd: null };
+    const dari = "2026-09-01", sampai = "2026-09-30";
+    assert.equal(bersinggungan(sep, dari, sampai), true);
+    // Surat 15 Sep - 15 Okt tumpang-tindih dengan September -> ikut.
+    assert.equal(bersinggungan(lintas, dari, sampai), true);
+    assert.equal(bersinggungan(agustus, dari, sampai), false);
+    assert.equal(bersinggungan(selamanya, dari, sampai), true);
+    // Saringan dikosongkan -> semua ikut.
+    assert.equal(bersinggungan(agustus), true);
+    // Hanya "dari": yang berakhir sebelumnya tersaring.
+    assert.equal(bersinggungan(agustus, "2026-09-01"), false);
+    assert.equal(bersinggungan(lintas, "2026-10-15"), true);
+    // Hanya "sampai": yang belum mulai tersaring.
+    assert.equal(bersinggungan(lintas, "", "2026-09-14"), false);
 });
