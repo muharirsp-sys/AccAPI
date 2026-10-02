@@ -16,7 +16,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Download, FileUp, Plus, RefreshCw, Trash2, Users } from "lucide-react";
+import { CalendarRange, Download, FileUp, Plus, RefreshCw, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 
 type Member = {
@@ -120,6 +120,7 @@ export default function DaftarOutlet() {
     const [q, setQ] = useState("");
     const [busy, setBusy] = useState(false);
     const [tambah, setTambah] = useState<{ listName: string; codes: string; tier: string; periodStart: string; periodEnd: string; note: string } | null>(null);
+    const [ubah, setUbah] = useState<{ id: number; periodStart: string; periodEnd: string } | null>(null);
     // Kode distributor kita, datang dari server (diturunkan dari batch laporan principal
     // terakhir). Lampiran surat memuat outlet SELURUH distributor nasional; kode inilah yang
     // memisahkan milik kita dari milik orang lain.
@@ -221,6 +222,34 @@ export default function DaftarOutlet() {
             await load();
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Gagal membaca berkas", { duration: 15000 });
+        } finally { setBusy(false); }
+    }
+
+    /**
+     * Ubah periode SATU anggota. PATCH menimpa keterangan, catatan, dan status aktif sekaligus,
+     * jadi nilai lamanya ikut dikirim apa adanya — yang berubah hanya periodenya. Kedua tanggal
+     * wajib: aturan pengguna 2 Okt 2026, keanggotaan tidak boleh berlaku lewat periodenya.
+     */
+    async function simpanPeriode(member: Member) {
+        if (!ubah) return;
+        if (!ubah.periodStart || !ubah.periodEnd || ubah.periodStart > ubah.periodEnd) {
+            toast.error("Isi tanggal mulai dan sampai; tanggal sampai tidak boleh sebelum tanggal mulai.");
+            return;
+        }
+        setBusy(true);
+        try {
+            const res = await fetch("/api/promo-outlet", {
+                method: "PATCH", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: member.id, tier: member.tier, note: member.note, active: member.active,
+                    periodStart: ubah.periodStart, periodEnd: ubah.periodEnd }),
+            });
+            const body = await res.json();
+            if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal mengubah periode");
+            toast.success(`Periode ${member.customerCode} kini ${ubah.periodStart} s/d ${ubah.periodEnd}`);
+            setUbah(null);
+            await load();
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Gagal mengubah periode");
         } finally { setBusy(false); }
     }
 
@@ -405,9 +434,28 @@ export default function DaftarOutlet() {
                                     {member.sourceCode || <span className="text-slate-600">diketik langsung</span>}
                                 </td>
                                 <td className="whitespace-nowrap px-2 py-1.5 align-top text-xs text-slate-400">
-                                    {member.periodStart ?? "kapan pun"}<br />s/d {member.periodEnd ?? "dikeluarkan"}
+                                    {ubah?.id === member.id ? (
+                                        <div className="flex flex-col gap-1">
+                                            <input type="date" aria-label="Ikut mulai" value={ubah.periodStart}
+                                                onChange={(e) => setUbah({ ...ubah, periodStart: e.target.value })} className={inputCls} />
+                                            <input type="date" aria-label="Ikut sampai" value={ubah.periodEnd}
+                                                onChange={(e) => setUbah({ ...ubah, periodEnd: e.target.value })} className={inputCls} />
+                                            <div className="flex gap-1">
+                                                <button onClick={() => void simpanPeriode(member)} disabled={busy}
+                                                    className="rounded bg-blue-600 px-2 py-1 text-xs text-white disabled:opacity-40">Simpan</button>
+                                                <button onClick={() => setUbah(null)} className="rounded bg-white/10 px-2 py-1 text-xs">Batal</button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <>{member.periodStart ?? "kapan pun"}<br />s/d {member.periodEnd ?? "dikeluarkan"}</>
+                                    )}
                                 </td>
                                 <td className="whitespace-nowrap px-2 py-1.5 text-right align-top">
+                                    <button onClick={() => setUbah({ id: member.id, periodStart: member.periodStart ?? "", periodEnd: member.periodEnd ?? "" })}
+                                        disabled={busy} className="rounded px-2 py-1 text-xs text-blue-300 hover:bg-white/10 disabled:opacity-40"
+                                        title="Ubah periode" aria-label={`Ubah periode ${member.customerCode}`}>
+                                        <CalendarRange size={13} />
+                                    </button>
                                     <button onClick={() => void hapus([member.id], `${member.customerCode} ${member.customerName}`)}
                                         className="rounded px-2 py-1 text-xs text-red-300 hover:bg-white/10" title="Keluarkan dari daftar">
                                         <Trash2 size={13} />
