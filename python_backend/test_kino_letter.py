@@ -64,6 +64,15 @@ DISC ON PO 3%
 INDOGROSIR COVER INDOMARET
 Outlet/Account : ALL"""
 
+# BP2601000851 (Farmers/Ranch Market): surat hanya judul + periode; ketentuannya keputusan pengguna.
+FARMERS = """NO. PROMO ID : PN26000322 Tanggal Aju : 26 December 2025 Kode Aju : BP2601000851
+Nama Program Promo : RANCH MARKET HPC OTHERS JANUARY - DECEMBER 2026
+Periode Promo : 1 January 2026 - 31 December 2026 Divisi : HOME PERSONAL CARE Brand : HOME PERSONAL CARE
+Group Of Promo : MODERN Type Of Promo : TRADING TERM (TT) EXPENSE Class Of Promo : OTHERS (GO DISCOUNT, RELAUNCH, SEASONAL, ANNIVERSARY)
+Activity Promo : OTHERS Mekanisme Promo : OTHERS
+Detail Promo : RANCH MARKET HPC OTHERS JANUARY - DECEMBER 2026
+Outlet/Account : ALL"""
+
 # BP2608008343: besaran HANYA di judul; Detail = produk berukuran + kalimat akun.
 NKA_JUDUL = """NO. PROMO ID : PN26006192 Tanggal Aju : 28 August 2026 Kode Aju : BP2608008343
 Nama Program Promo : NKA - INDOMARET LISTING & SUPPORT DISC 3% (FIRST PO) THEORY EXTRAIT AGUSTUS 2026 - DESEMBER 2026
@@ -179,6 +188,14 @@ def main():
         "only", "BP2608008343", "INDOMARET, INDOGROSIR"), judul["rows"][0]
     assert (judul["rows"][0]["periode_start"], judul["rows"][0]["periode_end"]) == ("2026-08-28", "2026-12-31")
     assert all("PO pertama" in r["keterangan"] for r in judul["rows"])
+    # Surat tanpa mekanisme tercetak + keputusan pengguna: satu baris 0,5% All Brand HPC, sepanjang
+    # periode suratnya, HANYA daftar bernama nomor surat itu (Farmers C-PT0029), channel ALL.
+    farmers = parse_text(FARMERS)
+    assert [(r["kelompok"], r["benefit_type"], r["benefit"], r["outlet_mode"], r["outlet_classes"], r["channel_gtmt"],
+             r["periode_start"], r["periode_end"]) for r in farmers["rows"]] == [
+        ("__ALL_MASTER__", "DISC_PCT", "0.5", "only", "BP2601000851", "ALL", "2026-01-01", "2026-12-31")], farmers["rows"]
+    assert "C-PT0029" in farmers["rows"][0]["keterangan"], farmers["rows"][0]
+    assert not any("bukan channel" in w or "SEMUA outlet" in w for w in farmers["warnings"]), farmers["warnings"]
     check_match_groups()
     print("kino letter check: OK")
 

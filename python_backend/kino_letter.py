@@ -231,6 +231,14 @@ ALIAS_KELOMPOK = {
     # bukan krim cat rambut SASHA HAIR COLORANT.
     "SASHA HAIR HAIR SHAMPOO COLORANT": ("SASHA SHAMPOO - COLOR",),
 }
+# Ketentuan program yang TIDAK tercetak di suratnya (surat hanya judul + periode), diputuskan
+# pengguna. Kunci = Kode Aju. Outletnya lewat daftar bernama nomor surat itu sendiri.
+KETENTUAN_SURAT = {
+    # 2 Okt 2026: Ranch Market HPC Others = setiap pembelian diskon 0,5%, All Brand HPC, hanya
+    # outlet Farmers (PT Supra Boga) C-PT0029.
+    "BP2601000851": dict(kelompok="__ALL_MASTER__", ketentuan="Setiap pembelian", benefit_type="DISC_PCT",
+                         benefit="0.5", outlet="C-PT0029 FARMERS (PT SUPRA BOGA)", tanggal="2 Okt 2026"),
+}
 # Kata kemasan di surat -> satuan di ekor nama master ("... 1ML X 72 BLR").
 KEMASAN_SURAT = {"BLISTER": "BLR", "BLR": "BLR", "JAR": "JAR", "SACHET": "SCH", "SCH": "SCH",
                  "POUCH": "PCH", "PCH": "PCH", "BOTOL": "BTL", "BTL": "BTL", "PACKAGE": "PACK", "PACK": "PACK"}
@@ -393,8 +401,13 @@ def parse_text(text, page_count=1):
     akun = accounts(head.get("Nama Program Promo", "") + " " + detail) if mode == "all" and kode_aju else []
     if lampiran_outlet or akun:
         mode, classes, quote = "only", [kode_aju], ("AKUN NKA " + ", ".join(akun)) if akun else "LIST OUTLET TERLAMPIR"
+    # Ketentuan yang diputuskan pengguna untuk surat yang tidak mencetaknya: outletnya juga lewat
+    # daftar bernama nomor surat itu, ditahan sampai anggotanya diisi di Daftar outlet peserta.
+    tetap = KETENTUAN_SURAT.get(kode_aju)
+    if tetap:
+        mode, classes, quote = "only", [kode_aju], f"keputusan pengguna: hanya outlet {tetap['outlet']}"
     warnings = []
-    channel = flatten(head.get("Type Of Promo", "")).upper() or "ALL"
+    channel = "ALL" if tetap else (flatten(head.get("Type Of Promo", "")).upper() or "ALL")
     if channel not in CHANNELS and akun:
         # Outlet akun NKA berkategori NKA di master Accurate, bukan MT: channel MT akan membuat
         # aturannya diam-diam tidak pernah berlaku. Yang membatasi sudah daftar akunnya.
@@ -494,6 +507,12 @@ def parse_text(text, page_count=1):
         for nama in (part.strip(" ,.:-") for part in PRODUK_BERUKURAN.findall(badan)):
             add(kelompok=nama, variant=nama, ketentuan=f"Setiap pembelian {nama}", benefit_type="DISC_PCT",
                 benefit=disc_judul.group(1), source_quote=f"{nama}; judul program: DISC {disc_judul.group(1)}%")
+    if not rows and tetap:
+        add(kelompok=tetap["kelompok"], variant="", ketentuan=tetap["ketentuan"], benefit_type=tetap["benefit_type"],
+            benefit=tetap["benefit"], keterangan=f"Khusus outlet {tetap['outlet']}",
+            source_quote=f"keputusan pengguna {tetap['tanggal']}; surat tidak mencetak mekanismenya")
+        warnings.append(f"Surat tidak mencetak mekanismenya; ketentuan diambil dari keputusan pengguna {tetap['tanggal']}. "
+                        f"Ditahan sampai outlet {tetap['outlet']} diisi di daftar '{kode_aju}'.")
     if not rows:
         warnings.append("Tidak ada mekanisme yang terbaca; isi baris manual dari Detail Promo.")
     if ATTACHMENT.search(detail):
