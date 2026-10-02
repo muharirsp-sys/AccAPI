@@ -68,7 +68,7 @@ test("Normalisasi: memuat, lalu Disc Claim wajib memilih aturan yang berlaku; ki
     // Nilai yang sama dengan potongannya (0,75%) didahulukan.
     await expect(dasar.locator("option").nth(1)).toContainText("nilai sama");
     await expect(simpan).toBeDisabled();
-    await dasar.selectOption("12");
+    await dasar.selectOption("DISCOUNT REGULER");
     await expect(simpan).toBeEnabled();
 
     const kiriman: unknown[] = [];
@@ -81,14 +81,14 @@ test("Normalisasi: memuat, lalu Disc Claim wajib memilih aturan yang berlaku; ki
     await simpan.dblclick();
     await expect(page.getByText("1 potongan dinormalisasi sebagai Disc Claim")).toBeVisible();
     expect(kiriman).toHaveLength(1);
-    expect(kiriman[0]).toMatchObject({ bucket: "principal", promoRuleId: 12, rows: [{ lineKey: "1", positions: "4", branchName: "KINO NON FOOD" }] });
+    expect(kiriman[0]).toMatchObject({ bucket: "principal", rows: [{ promoRuleId: 12, lineKey: "1", positions: "4", branchName: "KINO NON FOOD" }] });
 });
 
 test("Normalisasi: penolakan server ditampilkan dan pilihan tidak hilang", async ({ page }) => {
     await bukaNormalisasi(page);
     await page.getByRole("checkbox", { name: "Pilih INV/2610/KN00001 posisi 4" }).check();
     await page.getByLabel("Jenis normalisasi").selectOption("principal");
-    await page.getByLabel("Aturan promo dasar").selectOption("11");
+    await page.getByLabel("Aturan promo dasar").selectOption("BP2610007911");
     await page.route((url) => url.pathname === "/api/promo-recap/normalisasi", (route) =>
         json(route, { ok: false, error: "Aturan BP2610007911 tidak berlaku untuk INV/2610/KN00001: tanggal faktur di luar periode" }, 422));
     page.on("dialog", (dialog) => void dialog.accept());
@@ -153,6 +153,34 @@ test("Normalisasi: keputusan yang tidak dipakai lagi bisa disaring dan dirujukka
     await expect(page.getByText("TOKO BERKAH")).toHaveCount(0);
     await page.getByRole("checkbox", { name: "Pilih INV/2609/KN00999 posisi 4" }).check();
     await page.getByLabel("Jenis normalisasi").selectOption("principal");
-    await page.getByLabel("Aturan promo dasar").selectOption("11");
+    await page.getByLabel("Aturan promo dasar").selectOption("BP2610007911");
     await expect(page.getByRole("button", { name: "Simpan sebagai Disc Claim" })).toBeEnabled();
+});
+
+test("Normalisasi: satu faktur, dua barang — satu surat, tiap barang memakai aturannya sendiri", async ({ page }) => {
+    // INV/2610/KN00011: bonus Amusing Vanilla + Gel Enchanting dalam satu baris (faktur x posisi x persen).
+    const dua = [
+        baris({ invoiceNo: "INV/2610/KN00011", invoiceId: "355605", lineKey: "a", itemCode: "K1111005005010", positions: "1", percent: 100,
+            amount: 45946.2, calonAturan: { principal: [490], distributor: [] } }),
+        baris({ invoiceNo: "INV/2610/KN00011", invoiceId: "355605", lineKey: "b", itemCode: "K1111009010010", positions: "1", percent: 100,
+            amount: 81081, calonAturan: { principal: [499], distributor: [] } }),
+    ];
+    const eskulin = (id: number, itemCode: string) => aturan(id, { suratProgram: "BP2610009097", promoGroup: "ESKULIN - COLOGNE", itemCode,
+        benefitType: "BONUS_QTY", benefitValue: "1", outletList: "LOYALTY", outletListMode: "INCLUDE" });
+    await bukaNormalisasi(page, (route) => json(route, { ...rekap, recap: { rows: dua }, aturan: [eskulin(490, "K1111005005010"), eskulin(499, "K1111009010010")] }));
+    await expect(page.getByText("Surat berlaku: 1 untuk Disc Claim · 0 untuk Disc Distributor")).toBeVisible();
+    await page.getByRole("checkbox", { name: "Pilih INV/2610/KN00011 posisi 1" }).check();
+    await page.getByLabel("Jenis normalisasi").selectOption("principal");
+    const dasar = page.getByLabel("Aturan promo dasar (surat)");
+    await expect(dasar.locator("option").nth(1)).toContainText("BP2610009097 · ESKULIN - COLOGNE · bonus 1 · 2 aturan (per barang)");
+    await dasar.selectOption("BP2610009097");
+    const kiriman: Array<{ rows: Array<{ promoRuleId: number; itemCode: string }> }> = [];
+    await page.route((url) => url.pathname === "/api/promo-recap/normalisasi", async (route) => {
+        kiriman.push(route.request().postDataJSON());
+        await json(route, { ok: true, disimpan: 2, bucket: "principal", aturan: "BP2610009097" });
+    });
+    page.on("dialog", (dialog) => void dialog.accept());
+    await page.getByRole("button", { name: "Simpan sebagai Disc Claim" }).click();
+    await expect(page.getByText("2 potongan dinormalisasi sebagai Disc Claim")).toBeVisible();
+    expect(kiriman[0].rows.map((row) => [row.itemCode, row.promoRuleId])).toEqual([["K1111005005010", 490], ["K1111009010010", 499]]);
 });
