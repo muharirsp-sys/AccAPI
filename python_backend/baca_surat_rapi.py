@@ -84,7 +84,7 @@ BULAN_ID = ["JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI",
             "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
 
 
-def judul_summary(principle_name, rows):
+def judul_summary(principle_name, rows, hari_ini=None):
     """Judul Summary yang menumpuk: "<PRINCIPAL> - <BULAN TAHUN>".
 
     Judulnya BUKAN sekadar label — ia kunci yang menentukan surat berikutnya menyusul ke mana.
@@ -92,12 +92,22 @@ def judul_summary(principle_name, rows):
     suratnya. Dua surat September milik principal yang sama pasti bertemu; surat Oktober memulai
     lembar berikutnya, sama seperti Form Summary yang memang bertajuk satu periode.
 
+    Surat yang MASIH BERJALAN bulan ini (Agustus–Desember diunggah Oktober) masuk lembar bulan
+    berjalan, bukan bulan mulainya yang sudah lewat — ia susulan Oktober. Bulan-bulan lain yang
+    dicakupnya tetap memuatnya lewat Summary bulanan (`gabung_bulan`), yang menyaring periode.
+
     Tanpa periode yang terbaca, judulnya principal saja — lebih baik menumpuk di satu tempat
     yang jelas daripada memencar ke judul yang tidak bisa ditebak orang.
     """
+    from datetime import date
+
     principal = " ".join(str(principle_name or "").strip().split()) or "Summary Program"
+    sekarang = (hari_ini or date.today().isoformat())[:7]
     for baris in rows or []:
         mulai = str((baris or {}).get("periode_start") or "").strip()
+        selesai = str((baris or {}).get("periode_end") or "").strip()
+        if mulai[:7] < sekarang <= selesai[:7]:
+            mulai = sekarang
         bagian = mulai.split("-")
         if len(bagian) >= 2 and bagian[0].isdigit() and bagian[1].isdigit():
             bulan = int(bagian[1])

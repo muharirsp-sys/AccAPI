@@ -220,6 +220,8 @@ export default function SummaryManualPage() {
     const [downloadId, setDownloadId] = useState<string | null>(null);
     const [downloadLinks, setDownloadLinks] = useState<{ form: string, dataset: string } | null>(null);
     const [pollStatus, setPollStatus] = useState("");
+    // Bulan Summary yang dibuat. Kosong = bulan surat pertama di grid (atau bulan berjalan).
+    const [bulanSummary, setBulanSummary] = useState("");
 
     const [emailTarget, setEmailTarget] = useState("");
     const [emailStatus, setEmailStatus] = useState("");
@@ -368,7 +370,14 @@ export default function SummaryManualPage() {
                 return;
             }
             const parsedRows = (data.rows || []).map((r: any) => ({ ...r, id: r.id || crypto.randomUUID(), _original: { ...r } }));
-            setRows(prev => [...prev, ...parsedRows]);
+            // Grid = SATU draft. Surat yang masuk ke draft LAIN (bulan lain, atau Summary bulan ini
+            // sudah terbit) mengganti isi grid dengan draft itu; kalau ditumpuk, Simpan akan
+            // menulis baris draft sebelumnya ke draft yang baru.
+            const draftLain = !!data.draft && data.draft.id !== draft?.id;
+            const isiGrid = draftLain
+                ? (data.draft.content?.rows || []).map((r: any) => ({ ...r, id: r.id || crypto.randomUUID(), _original: { ...r } }))
+                : parsedRows;
+            setRows(prev => draftLain ? isiGrid : [...prev, ...parsedRows]);
             setDraft(data.draft ? { id: data.draft.id, revision: data.draft.revision, status: data.draft.status, title: data.draft.title } : null);
             setWarnings(data.draft?.content?.extraction?.warnings || []);
             setRules([]);
@@ -378,7 +387,7 @@ export default function SummaryManualPage() {
             setPdfStatus(`Draft dibuat: ${parsedRows.length} baris dari ${data.draft?.content?.extraction?.page_count ?? "?"} halaman. Periksa sebelum menerbitkan aturan.`);
             refreshDraftList();
             toast.success(`Ekstraksi selesai (${parsedRows.length} baris)`);
-            for (const row of parsedRows) {
+            for (const row of isiGrid) {
                 if (row.kelompok) fetchOptions(row.id, row.kelompok, row.variant, row.gramasi);
             }
         } catch {
@@ -523,6 +532,12 @@ export default function SummaryManualPage() {
         }
     };
 
+    const bulanAktif = bulanSummary
+        || String(rows.find((r) => r.periode_start)?.periode_start ?? "").slice(0, 7)
+        || new Date().toISOString().slice(0, 7);
+
+    // SATU Summary per principal per bulan: yang sudah terbit di bulan itu, lalu baris grid ini
+    // di BAWAHNYA. Surat lintas bulan ikut di tiap bulan yang dicakupnya (keputusan 2 Okt 2026).
     const handleGenerate = async () => {
         if (!masterToken) return;
         setIsGenerating(true);
@@ -533,11 +548,9 @@ export default function SummaryManualPage() {
 
         try {
             const cleanRows = rows.map(({ id, ...rest }) => rest);
-            const fd = new FormData();
-            fd.append("token", masterToken);
-            fd.append("rows_json", JSON.stringify(cleanRows));
-
-            const res = await api.post("/summary/manual/generate", fd);
+            const kirim = await send("POST", "/summary/library/bulanan",
+                { token: masterToken, principal: principleName, bulan: bulanAktif, rows: cleanRows });
+            const res = { data: kirim.ok ? kirim.body : { ok: false, error: kirim.error } };
 
             if (res.data.ok) {
                 if (res.data.file_id) {
@@ -549,7 +562,7 @@ export default function SummaryManualPage() {
                     });
                     setIsGenerating(false);
                     setPollStatus("Selesai!");
-                    toast.success("Summary generated directly!");
+                    toast.success(`Summary ${bulanAktif}: ${res.data.baris} baris dari ${res.data.surat?.length ?? 0} surat.`);
                 } else if (res.data.job_id) {
                     pollJobStatus(res.data.job_id);
                 }
@@ -950,8 +963,18 @@ export default function SummaryManualPage() {
                             </table>
                         </div>
 
-                        {rows.length > 0 && (
+                        {(rows.length > 0 || masterToken) && (
                             <div className="mt-6 flex flex-col gap-4 p-6 bg-black/40 border border-white/5 rounded-xl justify-center items-center">
+                                <label className="flex flex-col items-center gap-1 text-sm text-slate-300">
+                                    Bulan Summary
+                                    <input type="month" value={bulanAktif} aria-label="Bulan Summary"
+                                        onChange={(e) => { setBulanSummary(e.target.value); setDownloadLinks(null); setPollStatus(""); }}
+                                        className="rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500" />
+                                    <span className="max-w-md text-center text-xs text-slate-500">
+                                        Memuat semua surat {principleName || "principal ini"} yang sudah terbit dan berlaku di bulan ini;
+                                        baris grid di atas ditambahkan di bawahnya.
+                                    </span>
+                                </label>
                                 {!downloadLinks ? (
                                     <>
                                         <button onClick={handleGenerate} disabled={isGenerating} className="flex items-center gap-2 bg-blue-600 text-white px-8 py-3.5 rounded-xl font-bold hover:bg-blue-500 disabled:opacity-50 shadow-lg shadow-blue-500/20 transition-colors">

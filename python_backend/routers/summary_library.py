@@ -144,6 +144,74 @@ def published(request: Request, after: str = "", after_id: str = ""):
             "next": {"after": rows[-1]["updated_at"], "after_id": rows[-1]["id"]} if rows else None}
 
 
+def _norm(value):
+    return " ".join(str(value or "").split()).upper()
+
+
+def gabung_bulan(sumber, principal, awal, akhir):
+    """SATU Summary per principal per bulan (keputusan pengguna 2 Okt 2026).
+
+    `sumber` = daftar kumpulan baris, urut dari yang terbit paling dulu; baris editor yang
+    belum terbit paling akhir. Yang diambil hanya baris principal itu yang periodenya menyentuh
+    [awal, akhir] — surat Agustus–Desember ikut di September DAN Oktober. Satu surat tampil
+    sekali: isinya dari sumber TERBARU yang memuatnya (terbit ulang menggantikan), posisinya di
+    tempat surat itu PERTAMA muncul, sehingga surat susulan jatuh di bawah, bukan jadi PDF baru.
+    """
+    urutan, isi = [], {}
+    for nomor, baris_sumber in enumerate(sumber):
+        per_surat = {}
+        for urut, row in enumerate(baris_sumber):
+            if principal and _norm(row.get("principle")) != principal:
+                continue
+            mulai, selesai = str(row.get("periode_start") or "")[:10], str(row.get("periode_end") or "")[:10]
+            if (mulai and mulai > akhir) or (selesai and selesai < awal):
+                continue
+            # Baris tanpa nomor surat tidak pernah dianggap kembar dengan baris lain.
+            kunci = _norm(row.get("surat_program")) or f"#{nomor}-{urut}"
+            per_surat.setdefault(kunci, []).append(row)
+        for kunci, baris in per_surat.items():
+            if kunci not in isi:
+                urutan.append(kunci)
+            isi[kunci] = baris
+    return [row for kunci in urutan for row in isi[kunci]]
+
+
+@router.post("/bulanan")
+async def bulanan(request: Request):
+    """Form Summary + Dataset SATU BULAN: publikasi principal itu ditambah baris editor di bawahnya."""
+    import calendar
+    import re
+    from datetime import date
+
+    from routers.summary import summary_manual_generate
+
+    user = require_user(request, True)
+    body = await read_body(request)
+    bulan = str(body.get("bulan") or "")
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", bulan):
+        raise HTTPException(422, "Pilih bulan Summary (tahun-bulan)")
+    tahun, nomor_bulan = int(bulan[:4]), int(bulan[5:])
+    awal = date(tahun, nomor_bulan, 1).isoformat()
+    akhir = date(tahun, nomor_bulan, calendar.monthrange(tahun, nomor_bulan)[1]).isoformat()
+    editor = body.get("rows") or []
+    if not isinstance(editor, list) or any(not isinstance(row, dict) for row in editor):
+        raise HTTPException(422, "Baris editor tidak valid")
+    principal = _norm(body.get("principal"))
+    terbit = []
+    if principal:
+        with connect() as db:
+            terbit = db.execute("SELECT content FROM summary_draft WHERE owner=? AND status='published' "
+                                "ORDER BY updated_at,id", (identity(user),)).fetchall()
+    rows = gabung_bulan([json.loads(r["content"]).get("rows") or [] for r in terbit] + [editor], principal, awal, akhir)
+    if not rows:
+        raise HTTPException(404, f"Belum ada baris {principal or 'principal ini'} yang berlaku pada {bulan}")
+    hasil = summary_manual_generate(request, token=str(body.get("token") or ""), rows_json=json.dumps(rows))
+    if not isinstance(hasil, dict):
+        return hasil
+    surat = list(dict.fromkeys(str(row.get("surat_program") or "") for row in rows))
+    return {**hasil, "bulan": bulan, "baris": len(rows), "surat": [s for s in surat if s]}
+
+
 @router.get("/{draft_id}")
 def detail(request: Request, draft_id: str):
     user = require_user(request)
