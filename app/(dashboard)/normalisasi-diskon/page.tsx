@@ -55,21 +55,53 @@ const tgl = (iso: string | null | undefined) => (iso ? iso.slice(0, 10).split("-
 const persen = (value: number | string) => `${String(value).replace(".", ",")}%`;
 const LABEL: Record<Golongan, string> = { principal: "Disc Claim", distributor: "Disc Distributor" };
 
-/** Irisan calon aturan: satu keputusan untuk banyak potongan hanya sah bila aturannya berlaku untuk semuanya. */
-const irisan = (rows: Row[], golongan: Golongan) => rows.length === 0 ? []
-    : rows.map((row) => row.calonAturan?.[golongan] ?? []).reduce((a, b) => a.filter((id) => b.includes(id)));
-
 function nilaiAturan(a: Aturan) {
     if (a.benefitType === "DISC_RP") return rp(Number(a.benefitValue));
     if (a.benefitType === "BONUS_QTY") return `bonus ${a.benefitValue}`;
     return persen(a.benefitValue);
 }
 
-/** Satu baris pilihan: cukup untuk membedakan aturan tanpa membuka halaman Aturan Promo. */
-function labelAturan(a: Aturan) {
-    const cakupan = a.customerCode ? `tarif ${a.customerCode} posisi ${a.tierNo}` : a.itemCode || "seluruh nota";
+const kunciBaris = (row: Pick<Row, "lineKey" | "positions">) => `${row.lineKey}|${row.positions}`;
+
+/**
+ * Calon dasar = SURAT yang punya aturan berlaku untuk SETIAP potongan terpilih. Aturan surat dibuat PER
+ * BARANG, jadi faktur berisi beberapa barang (INV/2610/KN00011: bonus Amusing Vanilla + Gel Enchanting)
+ * merujuk beberapa aturan dari surat yang sama — tiap potongan memakai aturannya sendiri. Sampai 2 Okt
+ * 2026 dicari SATU aturan untuk semua barang, dan irisannya selalu kosong untuk faktur multi-barang.
+ * Per potongan, aturan yang nilainya sama dengan potongannya didahulukan.
+ */
+type CalonSurat = { surat: string; pilihan: Map<string, Aturan>; sama: boolean };
+function calonSurat(rows: Row[], golongan: Golongan, aturanById: Map<number, Aturan>): CalonSurat[] {
+    if (!rows.length) return [];
+    const perBaris = rows.map((row) => (row.calonAturan?.[golongan] ?? [])
+        .map((id) => aturanById.get(id)).filter((a): a is Aturan => Boolean(a)));
+    const surat = [...new Set(perBaris[0].map((a) => a.suratProgram))]
+        .filter((nama) => perBaris.every((daftar) => daftar.some((a) => a.suratProgram === nama)));
+    const nilaiSama = (a: Aturan, row: Row) => (a.benefitType === "DISC_PCT" && Number(a.benefitValue) === row.percent)
+        || (a.benefitType === "BONUS_QTY" && row.percent === 100);
+    return surat.map((nama) => {
+        const pilihan = new Map<string, Aturan>();
+        let sama = true;
+        rows.forEach((row, index) => {
+            const milik = perBaris[index].filter((a) => a.suratProgram === nama);
+            const cocok = milik.find((a) => nilaiSama(a, row));
+            if (!cocok) sama = false;
+            pilihan.set(kunciBaris(row), cocok ?? milik[0]);
+        });
+        return { surat: nama, pilihan, sama };
+    }).sort((x, y) => Number(y.sama) - Number(x.sama) || x.surat.localeCompare(y.surat));
+}
+
+/** Satu baris pilihan: cukup untuk membedakan surat tanpa membuka halaman Aturan Promo. */
+function labelCalon(c: CalonSurat) {
+    const aturan = [...new Set(c.pilihan.values())];
+    const a = aturan[0];
+    const kelompok = [...new Set(aturan.map((x) => x.promoGroup || x.promoLabel).filter(Boolean))];
+    const cakupan = aturan.length > 1 ? `${aturan.length} aturan (per barang)`
+        : a.customerCode ? `tarif ${a.customerCode} posisi ${a.tierNo}` : a.itemCode || "seluruh nota";
     const periode = a.periodStart || a.periodEnd ? `${tgl(a.periodStart) || "…"}–${tgl(a.periodEnd) || "dicabut"}` : "tanpa batas waktu";
-    return [a.suratProgram, a.promoGroup || a.promoLabel, nilaiAturan(a), cakupan, periode].filter(Boolean).join(" · ");
+    return [c.surat, kelompok.slice(0, 2).join(", ") + (kelompok.length > 2 ? ` +${kelompok.length - 2}` : ""),
+        [...new Set(aturan.map(nilaiAturan))].join(" / "), cakupan, periode].filter(Boolean).join(" · ");
 }
 
 /**
@@ -106,7 +138,7 @@ export default function NormalisasiDiskonPage() {
     // untuk dirujukkan ulang — di antara ratusan potongan tak bertuan lain.
     const [hanyaBekas, setHanyaBekas] = useState(false);
     const [golongan, setGolongan] = useState<Golongan | "">("");
-    const [aturanId, setAturanId] = useState("");
+    const [suratDipilih, setSuratDipilih] = useState("");
     const [cariAturan, setCariAturan] = useState("");
     const [note, setNote] = useState("");
     const [busy, setBusy] = useState(false);
@@ -159,36 +191,36 @@ export default function NormalisasiDiskonPage() {
 
     const barisTerpilih = terpilih(calon).flatMap((entry) => entry.rows);
     const totalTerpilih = barisTerpilih.reduce((sum, row) => sum + row.amount, 0);
-    // Calon untuk pilihan saat ini; yang nilainya SAMA dengan potongannya didahulukan — itu bukti terkuat.
-    const persenTerpilih = new Set(barisTerpilih.map((row) => row.percent));
-    const calonAturan = (golongan ? irisan(barisTerpilih, golongan) : [])
-        .map((id) => aturanById.get(id)).filter((a): a is Aturan => Boolean(a))
-        .map((a) => ({ a, sama: a.benefitType === "DISC_PCT" && persenTerpilih.has(Number(a.benefitValue)) }))
-        .sort((x, y) => Number(y.sama) - Number(x.sama) || x.a.suratProgram.localeCompare(y.a.suratProgram));
+    // Calon untuk pilihan saat ini; surat yang nilainya SAMA dengan potongannya didahulukan — itu bukti terkuat.
+    const calonAturan = golongan ? calonSurat(barisTerpilih, golongan, aturanById) : [];
     const cari = cariAturan.trim().toUpperCase();
-    const calonTampil = cari ? calonAturan.filter(({ a }) => `${labelAturan(a)} ${a.itemName}`.toUpperCase().includes(cari)) : calonAturan;
-    const dipilih = calonAturan.find(({ a }) => String(a.id) === aturanId)?.a ?? null;
+    const calonTampil = cari ? calonAturan.filter((c) => `${labelCalon(c)} ${[...c.pilihan.values()].map((a) => a.itemName).join(" ")}`
+        .toUpperCase().includes(cari)) : calonAturan;
+    const dipilih = calonAturan.find((c) => c.surat === suratDipilih) ?? null;
+    const dipilihAturan = dipilih ? [...new Set(dipilih.pilihan.values())] : [];
 
     const petunjuk = !barisTerpilih.length ? "Centang potongan di tabel yang akan dinormalisasi."
         : !golongan ? "Pilih jenis normalisasi."
             : !calonAturan.length ? (terpilih(calon).length > 1
-                ? `Tidak ada satu aturan ${golongan} yang berlaku untuk semua ${terpilih(calon).length} potongan terpilih. Pilih lebih sedikit, atau tambahkan aturannya di Aturan Promo.`
+                ? `Tidak ada satu surat yang berlaku untuk semua ${terpilih(calon).length} potongan terpilih. Pilih lebih sedikit, atau tambahkan aturannya di Aturan Promo.`
                 : "Tidak ada aturan promo yang berlaku untuk potongan ini. Tambahkan aturannya di Aturan Promo bila memang ada dasarnya.")
-                : !dipilih ? "Pilih aturan promo yang menjadi dasar keputusan."
-                    : `Dasar: ${dipilih.suratProgram}${dipilih.promoLabel ? ` — ${dipilih.promoLabel}` : ""}, beban ${dipilih.benefitBeban.toLowerCase()}.`;
+                : !dipilih ? "Pilih surat/program yang menjadi dasar keputusan."
+                    : `Dasar: surat ${dipilih.surat}${dipilihAturan[0].promoLabel ? ` — ${dipilihAturan[0].promoLabel}` : ""}, `
+                        + `${dipilihAturan.length > 1 ? `${dipilihAturan.length} aturan, masing-masing untuk barangnya` : "1 aturan"}, beban ${dipilihAturan[0].benefitBeban.toLowerCase()}.`;
     const bisaSimpan = Boolean(barisTerpilih.length && golongan && dipilih) && !busy;
 
     async function simpan() {
         if (!golongan || !dipilih || !barisTerpilih.length || sedangKirim.current) return;
         if (!window.confirm(`${barisTerpilih.length} potongan senilai ${rp(totalTerpilih)} akan digolongkan sebagai `
-            + `${LABEL[golongan]} berdasarkan aturan ${labelAturan(dipilih)}. Lanjutkan?`)) return;
+            + `${LABEL[golongan]} berdasarkan surat ${labelCalon(dipilih)}. Lanjutkan?`)) return;
         sedangKirim.current = true;
         setBusy(true);
         setGalatSimpan("");
         try {
             const res = await fetch("/api/promo-recap/normalisasi", {
                 method: "POST", credentials: "include", headers: { "content-type": "application/json" },
-                body: JSON.stringify({ bucket: golongan, promoRuleId: dipilih.id, note, rows: barisTerpilih.map((row) => ({
+                body: JSON.stringify({ bucket: golongan, note, rows: barisTerpilih.map((row) => ({
+                    promoRuleId: dipilih.pilihan.get(kunciBaris(row))!.id,
                     lineKey: row.lineKey, positions: row.positions, amount: row.amount, percent: row.percent,
                     invoiceNo: row.invoiceNo, invoiceId: row.invoiceId, transDate: row.transDate, branchName: row.branchName,
                     customerNo: row.customerNo, itemCode: row.itemCode })) }),
@@ -196,7 +228,7 @@ export default function NormalisasiDiskonPage() {
             const body = await res.json().catch(() => ({}));
             if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal menyimpan");
             toast.success(`${body.disimpan} potongan dinormalisasi sebagai ${LABEL[golongan]}`);
-            setNote(""); setAturanId(""); setCariAturan("");
+            setNote(""); setSuratDipilih(""); setCariAturan("");
             await load();
         } catch (error) {
             // Pilihan dibiarkan apa adanya supaya bisa langsung diperbaiki; sebabnya tetap terlihat.
@@ -266,8 +298,8 @@ export default function NormalisasiDiskonPage() {
                 <tbody>
                     {grup.map((entry) => {
                         const dasar = entry.rows[0].aturanId ? aturanById.get(entry.rows[0].aturanId) : undefined;
-                        const klaim = irisan(entry.rows, "principal").length;
-                        const distributor = irisan(entry.rows, "distributor").length;
+                        const klaim = calonSurat(entry.rows, "principal", aturanById).length;
+                        const distributor = calonSurat(entry.rows, "distributor", aturanById).length;
                         return (
                             <tr key={entry.key} className={`border-t border-white/5 align-top ${pilih.has(entry.key) ? "bg-blue-500/10" : ""}`}>
                                 <td className="px-3 py-1.5">
@@ -315,7 +347,7 @@ export default function NormalisasiDiskonPage() {
                                             {/* Bisa atau tidaknya diputuskan, terlihat sebelum dicentang. */}
                                             <div className="mt-0.5 text-slate-500">
                                                 {klaim || distributor
-                                                    ? `Aturan berlaku: ${klaim} untuk Disc Claim · ${distributor} untuk Disc Distributor`
+                                                    ? `Surat berlaku: ${klaim} untuk Disc Claim · ${distributor} untuk Disc Distributor`
                                                     : "Belum ada aturan promo yang berlaku"}
                                             </div>
                                         </>
@@ -397,7 +429,7 @@ export default function NormalisasiDiskonPage() {
                 <div className="flex flex-wrap items-end gap-3 rounded-lg border border-white/10 bg-black/20 p-3">
                     <label className="text-sm">
                         <span className="block text-slate-400 mb-1">Jenis normalisasi</span>
-                        <select value={golongan} onChange={(e) => { setGolongan(e.target.value as Golongan | ""); setAturanId(""); setGalatSimpan(""); }}
+                        <select value={golongan} onChange={(e) => { setGolongan(e.target.value as Golongan | ""); setSuratDipilih(""); setGalatSimpan(""); }}
                             className={`${fieldCls} min-w-60`}>
                             <option value="">— pilih jenis —</option>
                             <option value="principal">Disc Claim (ditagihkan ke principal)</option>
@@ -405,19 +437,19 @@ export default function NormalisasiDiskonPage() {
                         </select>
                     </label>
                     <div className="min-w-[min(30rem,100%)] flex-[2] text-sm">
-                        <label htmlFor="aturan-dasar" className="block text-slate-400 mb-1">Aturan promo dasar</label>
+                        <label htmlFor="aturan-dasar" className="block text-slate-400 mb-1">Aturan promo dasar (surat)</label>
                         <div className="flex gap-2">
                             {calonAturan.length > 8 && (
                                 <input value={cariAturan} onChange={(e) => setCariAturan(e.target.value)} aria-label="Cari aturan promo"
                                     placeholder="Cari surat, kelompok, barang…" className={`${fieldCls} w-56`} />
                             )}
-                            <select id="aturan-dasar" value={dipilih ? aturanId : ""} onChange={(e) => { setAturanId(e.target.value); setGalatSimpan(""); }}
+                            <select id="aturan-dasar" value={dipilih ? suratDipilih : ""} onChange={(e) => { setSuratDipilih(e.target.value); setGalatSimpan(""); }}
                                 disabled={!golongan || !calonAturan.length} className={`${fieldCls} w-full min-w-0`}>
                                 <option value="">
-                                    {!golongan ? "Pilih jenis normalisasi dulu" : calonAturan.length ? `— pilih dari ${calonAturan.length} aturan yang berlaku —` : "Tidak ada aturan yang berlaku"}
+                                    {!golongan ? "Pilih jenis normalisasi dulu" : calonAturan.length ? `— pilih dari ${calonAturan.length} surat yang berlaku —` : "Tidak ada aturan yang berlaku"}
                                 </option>
-                                {calonTampil.map(({ a, sama }) => (
-                                    <option key={a.id} value={a.id}>{labelAturan(a)}{sama ? " — nilai sama" : ""}</option>
+                                {calonTampil.map((c) => (
+                                    <option key={c.surat} value={c.surat}>{labelCalon(c)}{c.sama ? " — nilai sama" : ""}</option>
                                 ))}
                             </select>
                         </div>

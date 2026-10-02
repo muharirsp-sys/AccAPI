@@ -9,14 +9,14 @@
  * Nominal tiap baris ikut disimpan dan diadu saat rekap (lib/promo-recap `recap`): keputusan yang
  * dikirim dengan nominal karangan tidak berbahaya — ia hanya tidak pernah cocok dan tidak dipakai.
  *
- * Sejak 1 Okt 2026 setiap keputusan WAJIB menunjuk aturan promo (`promoRuleId`) yang berlaku untuk
+ * Sejak 1 Okt 2026 setiap keputusan WAJIB menunjuk aturan promo (`rows[].promoRuleId`, per barang) yang berlaku untuk
  * potongannya. Diperiksa di sini dengan `alasanTakBerlaku` — fungsi yang sama dengan calon di layar
  * dan penerapan di rekap. Konteks baris (tanggal, outlet, barang) datang dari peramban; rekap
  * memeriksanya ulang atas faktur Accurate yang sebenarnya, jadi konteks karangan juga hanya
  * menghasilkan keputusan yang tidak dipakai. Syarat PO pertama hanya dinilai rekap (butuh riwayat).
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, or, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { discountNormalization, promoOutlet, promoRule } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
@@ -48,26 +48,29 @@ export async function POST(request: NextRequest) {
     if (bucket !== "principal" && bucket !== "distributor") {
         return NextResponse.json({ ok: false, error: "Pilih Disc Claim (principal) atau Disc Distributor" }, { status: 400 });
     }
-    const promoRuleId = Number(body?.promoRuleId);
-    if (!Number.isSafeInteger(promoRuleId) || promoRuleId <= 0) {
-        return NextResponse.json({ ok: false, error: "Pilih aturan promo yang menjadi dasar keputusan ini" }, { status: 400 });
-    }
     const rows = Array.isArray(body?.rows) ? body.rows as Record<string, unknown>[] : [];
     if (rows.length === 0 || rows.length > MAX_ROWS) {
         return NextResponse.json({ ok: false, error: `Jumlah baris harus 1-${MAX_ROWS}` }, { status: 400 });
     }
-    const [rule] = await db.select().from(promoRule).where(eq(promoRule.id, promoRuleId));
-    if (!rule || !rule.active) {
-        return NextResponse.json({ ok: false, error: `Aturan promo #${promoRuleId} sudah tidak ada atau nonaktif `
+    // Aturan dasar PER BARIS: aturan surat dibuat per barang, jadi satu faktur berisi beberapa barang
+    // merujuk beberapa aturan (dari surat yang sama). `promoRuleId` di tingkat badan = cadangan untuk
+    // pemanggil lama yang mengirim satu aturan untuk semua baris.
+    const idBaris = rows.map((row) => Number(row.promoRuleId ?? body?.promoRuleId));
+    if (idBaris.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+        return NextResponse.json({ ok: false, error: "Pilih aturan promo yang menjadi dasar keputusan ini" }, { status: 400 });
+    }
+    const ruleRows = await db.select().from(promoRule).where(inArray(promoRule.id, [...new Set(idBaris)]));
+    const byId = new Map(ruleRows.filter((rule) => rule.active).map((rule) => [rule.id, { ...rule, triggerQty: Number(rule.triggerQty) }]));
+    const hilang = idBaris.find((id) => !byId.has(id));
+    if (hilang) {
+        return NextResponse.json({ ok: false, error: `Aturan promo #${hilang} sudah tidak ada atau nonaktif `
             + "(mungkin baru dimuat ulang). Muat ulang halaman, lalu pilih aturannya lagi." }, { status: 409 });
     }
-    const dasar = { ...rule, triggerQty: Number(rule.triggerQty) };
-    // Rujukan utama = KUNCI aturan (bertahan saat impor mengganti id); id ikut disimpan sebagai jejak.
-    const promoRuleKey = kunciAturan(dasar);
-    const members = rule.outletList ? await db.select().from(promoOutlet) : [];
+    const members = ruleRows.some((rule) => rule.outletList) ? await db.select().from(promoOutlet) : [];
     const note = text(body?.note, 500);
     const values = [];
-    for (const row of rows) {
+    for (const [index, row] of rows.entries()) {
+        const dasar = byId.get(idBaris[index])!;
         const kunci = kunciDari(row);
         const amount = Number(row.amount);
         const transDate = text(row.transDate, 10);
@@ -79,12 +82,15 @@ export async function POST(request: NextRequest) {
             itemCode: text(row.itemCode, 80), invoiceId: text(row.invoiceId, 40), invoiceNo };
         const alasan = alasanTakBerlaku(dasar, konteks, bucket, outletListsOn(members, transDate));
         if (alasan) {
-            return NextResponse.json({ ok: false, error: `Aturan ${rule.suratProgram} tidak berlaku untuk ${invoiceNo}: ${alasan}` }, { status: 422 });
+            return NextResponse.json({ ok: false, error: `Aturan ${dasar.suratProgram} tidak berlaku untuk ${invoiceNo} `
+                + `${konteks.itemCode || "(tingkat faktur)"}: ${alasan}` }, { status: 422 });
         }
         values.push({
             ...kunci, bucket, amount: String(amount), percent: String(Number(row.percent) || 0),
             invoiceNo, invoiceId: konteks.invoiceId, transDate,
-            customerNo: konteks.customerNo, itemCode: konteks.itemCode, promoRuleId, promoRuleKey,
+            customerNo: konteks.customerNo, itemCode: konteks.itemCode,
+            // Rujukan utama = KUNCI aturan (bertahan saat impor mengganti id); id ikut disimpan sebagai jejak.
+            promoRuleId: dasar.id, promoRuleKey: kunciAturan(dasar),
             note, decidedBy: gate.email!,
         });
     }
@@ -96,7 +102,7 @@ export async function POST(request: NextRequest) {
             note: sql`excluded.note`, decidedBy: sql`excluded.decided_by`, decidedAt: new Date(),
         },
     });
-    return NextResponse.json({ ok: true, disimpan: values.length, bucket, aturan: rule.suratProgram });
+    return NextResponse.json({ ok: true, disimpan: values.length, bucket, aturan: [...new Set(ruleRows.map((rule) => rule.suratProgram))].join(", ") });
 }
 
 /** Mencabut keputusan: potongannya kembali tak bertuan di Rekap Promo. */

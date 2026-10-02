@@ -1,5 +1,18 @@
 # UI/UX Changelog
 
+## 2026-10-02 — Normalisasi: pilih SURAT, aturan per barang
+
+- **Before:** pemilih mencari SATU aturan yang berlaku untuk semua potongan terpilih. Aturan surat dibuat per
+  barang, jadi faktur yang barisnya berisi beberapa barang (INV/2610/KN00011: bonus Amusing Vanilla + Gel
+  Enchanting) selalu "Tidak ada aturan yang berlaku", walau aturan tiap barangnya ada.
+- **After:** yang dipilih adalah **surat**; tiap potongan memakai aturan surat itu untuk barangnya sendiri
+  (yang nilainya sama didahulukan). API menerima `rows[].promoRuleId` dan memeriksa tiap baris dengan aturannya.
+- **Verification:** Playwright (dua barang → dua id aturan terkirim), E2E nyata 22/22 (dua barang satu surat
+  diterima; aturan barang A dipaksakan ke barang B ditolak 422).
+- **Catatan data (bukan kode):** KN00011 tetap tak bertuan karena keanggotaan LOYALTY Dream Beauty berakhir
+  30/09/2026, sedangkan surat BP2610009097 hanya untuk peserta LOYALTY. Dibuktikan dengan rekap atas data
+  produksi: begitu keanggotaan mencakup Oktober, kedua bonus otomatis jadi klaim principal tanpa normalisasi.
+
 ## 2026-10-01 — Normalisasi beraturan, Periode Aturan Promo, keadaan async, warna status
 
 Cabang `feat/ui-ux-normalisasi-aturan`. Temuan lengkap: `docs/UI_UX_AUDIT.md`. Tangkapan layar:
