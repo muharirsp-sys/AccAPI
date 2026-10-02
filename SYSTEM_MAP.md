@@ -70,6 +70,17 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 
 Surat Kino berlapis teks -> `python_backend/kino_letter.py` -> draft; scan memakai Mistral OCR 4.1. Kelompok/varian/kemasan/kode diisi otomatis oleh `kino_letter.match_groups` (kata surat dijelaskan nama master, atau padanan `ALIAS_KELOMPOK`), diterima hanya bila `_apply_native_kelompok` menurunkan kode yang sama; yang tidak pasti tetap kosong untuk operator. Surat "KHUSUS LD JAWA" tidak dibuat barisnya. `summary_rules.py` memeriksa kelas outlet; `outlet_class.py` menyimpan keanggotaan kode outlet dasar, `import_outlet_class.py` memuat hit list. Kelas belum dimuat menahan program. `test_kino_letter.py` dan `test_summary_rules.py` menguji parser, tier, dan kelas outlet.
 
+### Aturan Promo, Rekap Promo & Normalisasi Diskon (Oktober 2026)
+`/aturan-promo` -> `GET/POST/PATCH/DELETE/PUT /api/promo-rule` -> tabel `promo_rule` (sama dengan importir Rekap Promo dan jembatan Summary).
+`/rekap-promo`, `/normalisasi-diskon` -> `GET /api/promo-recap` -> `lib/promo-recap.ts recap()` atas `sales_invoice.raw_data` + `promo_rule` aktif + `promo_outlet` + `discount_normalization`.
+
+- Saringan **Periode** Aturan Promo: `?dari=&sampai=` (ISO), semantik BERSINGGUNGAN (`bersinggungan()` di `lib/promo-recap.ts`): ujung kosong = tak terbatas di aturan maupun saringan; digabung dengan principal/jenis/beban/q di server. Rentang terbalik -> 400.
+- **Normalisasi wajib beraturan**: `alasanTakBerlaku(rule, baris, golongan, daftarOutlet, poPertama)` = satu-satunya definisi "aturan berlaku" — principal = cabang faktur, tanggal dalam periode, outlet diizinkan daftar peserta / tarif milik outlet, bentuk potongan (tingkat faktur ↔ aturan seluruh nota; per barang ↔ aturan barang itu atau tarif outlet), PO pertama, beban (Disc Claim = PRINCIPAL, Disc Distributor = DISTRIBUTOR). Nilai/posisi sengaja tidak dicocokkan.
+  - `recap()` mengisi `calonAturan` per baris tak bertuan dan hanya memakai keputusan yang aturannya masih berlaku; `aturanId` tercatat di baris yang dinormalisasi. Keputusan lama (`promo_rule_id` NULL) tetap dipakai, ditandai "keputusan lama tanpa aturan dasar".
+  - `POST /api/promo-recap/normalisasi` wajib `promoRuleId`; aturan hilang/nonaktif -> 409, tidak berlaku -> 422 dengan sebabnya. Syarat PO pertama hanya dinilai rekap (butuh riwayat).
+  - `db/migrations/0025_discount_normalization_rule.sql`: `discount_normalization.promo_rule_id bigint` NULL-able, TANPA FK (impor mengganti id aturan; keputusan yang aturannya hilang tidak dipakai rekap, bukan dihapus).
+- Uji: `lib/promo-recap.test.ts` (penjaga + periode, logika murni), `tests/normalisasi-aturan-promo.spec.ts` (Playwright, API dipalsukan).
+
 ### Ruang Kerja Surya (Redesign September 2026)
 ```
 DashboardLayout -> session + RBAC union -> SidebarLayout (identitas akun)
