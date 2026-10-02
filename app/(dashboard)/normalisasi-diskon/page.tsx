@@ -63,6 +63,30 @@ function nilaiAturan(a: Aturan) {
 
 const kunciBaris = (row: Pick<Row, "lineKey" | "positions">) => `${row.lineKey}|${row.positions}`;
 
+/** Aturan yang NILAINYA sama persis dengan potongan: persen sama, atau bonus untuk potongan 100%. */
+const nilaiSama = (a: Aturan, row: Row) => (a.benefitType === "DISC_PCT" && Number(a.benefitValue) === row.percent)
+    || (a.benefitType === "BONUS_QTY" && row.percent === 100);
+
+/** Nilai pilihan "Otomatis per baris" pada pemilih surat. */
+const OTOMATIS = "__otomatis__";
+
+/**
+ * OTOMATIS PER BARIS (2 Okt 2026): untuk merujuk ulang banyak potongan sekaligus yang suratnya berbeda-beda.
+ * Sistem memilih sendiri HANYA bila potongan itu punya TEPAT SATU aturan berlaku yang nilainya sama persis —
+ * bukti yang tidak ambigu. Potongan tanpa aturan bernilai sama, atau dengan lebih dari satu, DILEWATI dan
+ * tetap tak bertuan untuk dipilih manual: tidak ada yang ditebak. Potongan tingkat faktur (rupiah) selalu
+ * dilewati — nilainya tidak sebanding langsung dengan nominal surat yang termasuk PPN.
+ */
+function otomatisPerBaris(rows: Row[], golongan: Golongan, aturanById: Map<number, Aturan>) {
+    const pilihan = new Map<string, Aturan>();
+    for (const row of rows) {
+        const sama = (row.calonAturan?.[golongan] ?? []).map((id) => aturanById.get(id))
+            .filter((a): a is Aturan => Boolean(a) && nilaiSama(a!, row));
+        if (sama.length === 1) pilihan.set(kunciBaris(row), sama[0]);
+    }
+    return { pilihan, lewat: rows.length - pilihan.size, surat: [...new Set([...pilihan.values()].map((a) => a.suratProgram))].sort() };
+}
+
 /**
  * Calon dasar = SURAT yang punya aturan berlaku untuk SETIAP potongan terpilih. Aturan surat dibuat PER
  * BARANG, jadi faktur berisi beberapa barang (INV/2610/KN00011: bonus Amusing Vanilla + Gel Enchanting)
@@ -77,8 +101,6 @@ function calonSurat(rows: Row[], golongan: Golongan, aturanById: Map<number, Atu
         .map((id) => aturanById.get(id)).filter((a): a is Aturan => Boolean(a)));
     const surat = [...new Set(perBaris[0].map((a) => a.suratProgram))]
         .filter((nama) => perBaris.every((daftar) => daftar.some((a) => a.suratProgram === nama)));
-    const nilaiSama = (a: Aturan, row: Row) => (a.benefitType === "DISC_PCT" && Number(a.benefitValue) === row.percent)
-        || (a.benefitType === "BONUS_QTY" && row.percent === 100);
     return surat.map((nama) => {
         const pilihan = new Map<string, Aturan>();
         let sama = true;
@@ -198,36 +220,52 @@ export default function NormalisasiDiskonPage() {
         .toUpperCase().includes(cari)) : calonAturan;
     const dipilih = calonAturan.find((c) => c.surat === suratDipilih) ?? null;
     const dipilihAturan = dipilih ? [...new Set(dipilih.pilihan.values())] : [];
+    const otomatis = golongan ? otomatisPerBaris(barisTerpilih, golongan, aturanById) : null;
+    const modeOtomatis = suratDipilih === OTOMATIS && Boolean(otomatis?.pilihan.size);
+    const adaPilihan = calonAturan.length > 0 || Boolean(otomatis?.pilihan.size);
+    const barisKirim = modeOtomatis ? barisTerpilih.filter((row) => otomatis!.pilihan.has(kunciBaris(row))) : barisTerpilih;
+    const totalKirim = barisKirim.reduce((sum, row) => sum + row.amount, 0);
 
     const petunjuk = !barisTerpilih.length ? "Centang potongan di tabel yang akan dinormalisasi."
         : !golongan ? "Pilih jenis normalisasi."
-            : !calonAturan.length ? (terpilih(calon).length > 1
+            : modeOtomatis ? `Otomatis per baris: ${otomatis!.pilihan.size} potongan memakai aturan yang nilainya sama persis `
+                + `(surat ${otomatis!.surat.join(", ")})`
+                + (otomatis!.lewat ? `; ${otomatis!.lewat} dilewati karena tidak ada atau ada lebih dari satu aturan bernilai sama — tetap tak bertuan, pilih manual sesudahnya.` : ".")
+            : !adaPilihan ? (terpilih(calon).length > 1
                 ? `Tidak ada satu surat yang berlaku untuk semua ${terpilih(calon).length} potongan terpilih. Pilih lebih sedikit, atau tambahkan aturannya di Aturan Promo.`
                 : "Tidak ada aturan promo yang berlaku untuk potongan ini. Tambahkan aturannya di Aturan Promo bila memang ada dasarnya.")
+                : !calonAturan.length && !dipilih ? `Tidak ada satu surat untuk semua potongan terpilih — pilih "Otomatis per baris", atau centang per surat.`
                 : !dipilih ? "Pilih surat/program yang menjadi dasar keputusan."
                     : `Dasar: surat ${dipilih.surat}${dipilihAturan[0].promoLabel ? ` — ${dipilihAturan[0].promoLabel}` : ""}, `
                         + `${dipilihAturan.length > 1 ? `${dipilihAturan.length} aturan, masing-masing untuk barangnya` : "1 aturan"}, beban ${dipilihAturan[0].benefitBeban.toLowerCase()}.`;
-    const bisaSimpan = Boolean(barisTerpilih.length && golongan && dipilih) && !busy;
+    const bisaSimpan = Boolean(barisTerpilih.length && golongan && (dipilih || modeOtomatis)) && !busy;
 
     async function simpan() {
-        if (!golongan || !dipilih || !barisTerpilih.length || sedangKirim.current) return;
-        if (!window.confirm(`${barisTerpilih.length} potongan senilai ${rp(totalTerpilih)} akan digolongkan sebagai `
-            + `${LABEL[golongan]} berdasarkan surat ${labelCalon(dipilih)}. Lanjutkan?`)) return;
+        if (!golongan || !(dipilih || modeOtomatis) || !barisKirim.length || sedangKirim.current) return;
+        const pilihan = modeOtomatis ? otomatis!.pilihan : dipilih!.pilihan;
+        if (!window.confirm(modeOtomatis
+            ? `${barisKirim.length} potongan senilai ${rp(totalKirim)} akan digolongkan sebagai ${LABEL[golongan]}, masing-masing `
+                + `dengan aturan yang nilainya sama persis (surat ${otomatis!.surat.join(", ")}).`
+                + (otomatis!.lewat ? ` ${otomatis!.lewat} potongan lain dilewati dan tetap tak bertuan.` : "") + " Lanjutkan?"
+            : `${barisKirim.length} potongan senilai ${rp(totalKirim)} akan digolongkan sebagai `
+                + `${LABEL[golongan]} berdasarkan surat ${labelCalon(dipilih!)}. Lanjutkan?`)) return;
+        const dilewati = modeOtomatis ? otomatis!.lewat : 0;
         sedangKirim.current = true;
         setBusy(true);
         setGalatSimpan("");
         try {
             const res = await fetch("/api/promo-recap/normalisasi", {
                 method: "POST", credentials: "include", headers: { "content-type": "application/json" },
-                body: JSON.stringify({ bucket: golongan, note, rows: barisTerpilih.map((row) => ({
-                    promoRuleId: dipilih.pilihan.get(kunciBaris(row))!.id,
+                body: JSON.stringify({ bucket: golongan, note, rows: barisKirim.map((row) => ({
+                    promoRuleId: pilihan.get(kunciBaris(row))!.id,
                     lineKey: row.lineKey, positions: row.positions, amount: row.amount, percent: row.percent,
                     invoiceNo: row.invoiceNo, invoiceId: row.invoiceId, transDate: row.transDate, branchName: row.branchName,
                     customerNo: row.customerNo, itemCode: row.itemCode })) }),
             });
             const body = await res.json().catch(() => ({}));
             if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal menyimpan");
-            toast.success(`${body.disimpan} potongan dinormalisasi sebagai ${LABEL[golongan]}`);
+            toast.success(`${body.disimpan} potongan dinormalisasi sebagai ${LABEL[golongan]}`
+                + (dilewati ? `; ${dilewati} dilewati, tetap tak bertuan` : ""));
             setNote(""); setSuratDipilih(""); setCariAturan("");
             await load();
         } catch (error) {
@@ -443,11 +481,18 @@ export default function NormalisasiDiskonPage() {
                                 <input value={cariAturan} onChange={(e) => setCariAturan(e.target.value)} aria-label="Cari aturan promo"
                                     placeholder="Cari surat, kelompok, barang…" className={`${fieldCls} w-56`} />
                             )}
-                            <select id="aturan-dasar" value={dipilih ? suratDipilih : ""} onChange={(e) => { setSuratDipilih(e.target.value); setGalatSimpan(""); }}
-                                disabled={!golongan || !calonAturan.length} className={`${fieldCls} w-full min-w-0`}>
+                            <select id="aturan-dasar" value={dipilih || modeOtomatis ? suratDipilih : ""} onChange={(e) => { setSuratDipilih(e.target.value); setGalatSimpan(""); }}
+                                disabled={!golongan || !adaPilihan} className={`${fieldCls} w-full min-w-0`}>
                                 <option value="">
-                                    {!golongan ? "Pilih jenis normalisasi dulu" : calonAturan.length ? `— pilih dari ${calonAturan.length} surat yang berlaku —` : "Tidak ada aturan yang berlaku"}
+                                    {!golongan ? "Pilih jenis normalisasi dulu"
+                                        : calonAturan.length ? `— pilih dari ${calonAturan.length} surat yang berlaku —`
+                                            : adaPilihan ? "— pilih \"Otomatis per baris\" —" : "Tidak ada aturan yang berlaku"}
                                 </option>
+                                {!!otomatis?.pilihan.size && (
+                                    <option value={OTOMATIS}>
+                                        Otomatis per baris — {otomatis.pilihan.size} dari {barisTerpilih.length} potongan punya tepat satu aturan bernilai sama
+                                    </option>
+                                )}
                                 {calonTampil.map((c) => (
                                     <option key={c.surat} value={c.surat}>{labelCalon(c)}{c.sama ? " — nilai sama" : ""}</option>
                                 ))}
@@ -463,7 +508,7 @@ export default function NormalisasiDiskonPage() {
                         className="rounded bg-blue-600 px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40">
                         {busy ? "Menyimpan…" : golongan ? `Simpan sebagai ${LABEL[golongan]}` : "Simpan normalisasi"}
                     </button>
-                    <p className={`basis-full text-xs ${galatSimpan ? "text-red-300" : barisTerpilih.length && golongan && !calonAturan.length ? "text-amber-300" : "text-slate-400"}`}
+                    <p className={`basis-full text-xs ${galatSimpan ? "text-red-300" : barisTerpilih.length && golongan && (!adaPilihan || (modeOtomatis && otomatis!.lewat)) ? "text-amber-300" : "text-slate-400"}`}
                         role={galatSimpan ? "alert" : "status"} aria-live="polite">
                         {galatSimpan ? `Tidak tersimpan: ${galatSimpan}` : petunjuk}
                     </p>
