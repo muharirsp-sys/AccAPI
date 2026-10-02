@@ -40,6 +40,7 @@ export default function PrincipalMappingPage() {
     const [total, setTotal] = useState(0);
     const [offset, setOffset] = useState(0);
     const [busy, setBusy] = useState(false);
+    const [gagalMuat, setGagalMuat] = useState(false);
     const [draft, setDraft] = useState<Row | null>(null);
     const [preview, setPreview] = useState<ImportEntry[] | null>(null);
     const [file, setFile] = useState<File | null>(null);
@@ -56,8 +57,10 @@ export default function PrincipalMappingPage() {
             if (!res.ok || !data.ok) throw new Error(data.error ?? "Gagal memuat");
             setRows(data.rows);
             setTotal(data.total);
+            setGagalMuat(false);
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Gagal memuat mapping");
+            setGagalMuat(true);
         } finally {
             setBusy(false);
         }
@@ -228,7 +231,7 @@ export default function PrincipalMappingPage() {
                             ))}
                             {!rows.length && !draft && (
                                 <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-500">
-                                    {busy ? "Memuat…" : "Belum ada mapping. Impor berkas principal atau tambah baris."}
+                                    {busy ? "Memuat…" : gagalMuat ? "Mapping gagal dimuat — ubah saringan untuk mencoba lagi." : "Belum ada mapping. Impor berkas principal atau tambah baris."}
                                 </td></tr>
                             )}
                         </tbody>

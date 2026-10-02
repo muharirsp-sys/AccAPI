@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Upload, RefreshCw, CheckCircle2, FileWarning, Download } from "lucide-react";
 import { toast } from "sonner";
+import { LoadingState } from "@/components/ui/AsyncState";
 
 type Program = {
     key: string; suratProgram: string; promoLabel: string; promoGroup: string;
@@ -89,13 +90,23 @@ export default function RekapPromoPage() {
     const [principal, setPrincipal] = useState("");
     const [buka, setBuka] = useState<Buka>(kosong);
 
+    // Rekap sebulan bisa puluhan detik; tanpa tanda memuat halaman tampak kosong dan "macet".
+    const [status, setStatus] = useState<"memuat" | "siap" | "galat">("memuat");
+    const [galat, setGalat] = useState("");
     const load = useCallback(async () => {
+        setStatus("memuat");
         const query = new URLSearchParams({ from, to });
         if (principal) query.set("principal", principal);
-        const res = await fetch(`/api/promo-recap?${query.toString()}`, { credentials: "include" });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok || !body.ok) { toast.error(body.error ?? "Rekap gagal dimuat"); return; }
-        setData(body);
+        try {
+            const res = await fetch(`/api/promo-recap?${query.toString()}`, { credentials: "include" });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body.ok) throw new Error(body.error ?? `Rekap gagal dimuat (HTTP ${res.status})`);
+            setData(body);
+            setStatus("siap");
+        } catch (error) {
+            setGalat(error instanceof Error ? error.message : "Rekap gagal dimuat");
+            setStatus("galat");
+        }
     }, [from, to, principal]);
 
     useEffect(() => { void load(); }, [load]);
@@ -217,6 +228,15 @@ export default function RekapPromoPage() {
                     {" "}Tekan <strong>Muat aturan</strong>. Yang diganti hanya bagian yang dibawa berkas ini:
                     {" "}sheet Detail mengganti aturan surat, sheet Discount Reguler mengganti tarif outlet.
                 </p>
+            )}
+
+            {status === "memuat" && !r && <LoadingState rows={6} label="Menghitung rekap promo" />}
+            {status === "memuat" && r && <p className="text-xs text-slate-500" role="status">Menghitung ulang rekap…</p>}
+            {status === "galat" && (
+                <div className="flex flex-wrap items-center gap-3 rounded border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm" role="alert">
+                    <span className="text-red-300">{r ? `Gagal menghitung ulang: ${galat}. Angka di bawah hasil sebelumnya.` : `Rekap gagal dimuat: ${galat}.`}</span>
+                    <button type="button" onClick={() => void load()} className="rounded bg-white/10 px-2.5 py-1 text-xs">Coba lagi</button>
+                </div>
             )}
 
             {r && (

@@ -66,10 +66,19 @@ export default function PrincipalOrderPage() {
     const [acks, setAcks] = useState<Ack[]>([]);
     const [dupeNote, setDupeNote] = useState<Record<string, string>>({});
 
+    // Gagal memuat TIDAK boleh tampil sebagai "Belum ada batch": batch yang menunggu akan dianggap tidak ada.
+    const [batchStatus, setBatchStatus] = useState<"memuat" | "siap" | "galat">("memuat");
     const loadBatches = useCallback(async () => {
-        const res = await fetch("/api/principal-order", { credentials: "include" });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.ok) setBatches(data.batches);
+        setBatchStatus("memuat");
+        try {
+            const res = await fetch("/api/principal-order", { credentials: "include" });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+            setBatches(data.batches);
+            setBatchStatus("siap");
+        } catch {
+            setBatchStatus("galat");
+        }
     }, []);
 
     useEffect(() => { void loadBatches(); }, [loadBatches]);
@@ -401,7 +410,16 @@ export default function PrincipalOrderPage() {
                                     </td>
                                 </tr>
                             ))}
-                            {!batches.length && (
+                            {!batches.length && batchStatus === "memuat" && (
+                                <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-500" role="status">Memuat batch…</td></tr>
+                            )}
+                            {batchStatus === "galat" && (
+                                <tr><td colSpan={7} className="px-3 py-6 text-center text-red-300" role="alert">
+                                    Daftar batch gagal dimuat.{" "}
+                                    <button type="button" onClick={() => void loadBatches()} className="ml-2 rounded bg-white/10 px-2 py-1 text-xs text-slate-200">Coba lagi</button>
+                                </td></tr>
+                            )}
+                            {!batches.length && batchStatus === "siap" && (
                                 <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-500">Belum ada batch. Unggah berkas Order Detail di atas.</td></tr>
                             )}
                         </tbody>
