@@ -5,14 +5,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
+import { eq, type SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { PATCH } from "../app/api/admin/groups/[id]/route.ts";
 import { accessGroup, groupPermission, permissionAuditLog, userGroup } from "../db/schema.ts";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
 
 type Via = "db" | "tx";
-type Write = { via: Via; op: "insert" | "delete"; table: unknown; values?: unknown };
-type Read = { via: Via; table: unknown; lock?: string };
+type Write = { via: Via; op: "insert" | "delete"; table: unknown; values?: unknown; where?: string };
+type Read = { via: Via; table: unknown; lock?: string; where?: string };
+
+/** Kondisi WHERE drizzle -> teks SQL + parameter, supaya uji melihat kolom & id yang dipakai. */
+const show = (cond: unknown) => {
+    const q = new PgDialect().sqlToQuery(cond as SQL);
+    return `${q.sql} ${JSON.stringify(q.params)}`;
+};
+const PERMS_OF_G1 = show(eq(groupPermission.groupId, "g1"));
 
 /** db palsu: select dijawab per tabel; setiap baca/tulis dicatat beserta jalurnya (db langsung vs transaksi).
  * `groupInTx` = baris grup yang terlihat di dalam transaksi (kosong = grup terhapus sesudah cek awal). */
@@ -31,13 +40,19 @@ async function patchAs(body: unknown, groupKeys: string[], groupInTx = true) {
             const q = {
                 from: (t: unknown) => { read.table = t; reads.push(read); return q; },
                 for: (lock: string) => { read.lock = lock; return q; },
-                leftJoin: () => q, where: () => q, limit: () => q,
+                where: (c: unknown) => { read.where = show(c); return q; },
+                leftJoin: () => q, limit: () => q,
                 then: (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise.resolve(rows()).then(ok, ko),
             };
             return q;
         },
         insert: (table: unknown) => ({ values: async (values: unknown) => { writes.push({ via, op: "insert", table, values }); } }),
-        delete: (table: unknown) => ({ where: async () => { writes.push({ via, op: "delete", table }); } }),
+        // Dicatat saat dipanggil (urutan tulis terlihat); delete tanpa .where() = tercatat tanpa kondisi.
+        delete: (table: unknown) => {
+            const w: Write = { via, op: "delete", table };
+            writes.push(w);
+            return { where: async (c: unknown) => { w.where = show(c); } };
+        },
     });
     const fakes: Record<string, unknown> = { ...writer("db"), transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(writer("tx")) };
     const saved = Object.keys(fakes).map((k) => [k, Object.getOwnPropertyDescriptor(db, k)] as const);
@@ -72,8 +87,18 @@ test("sinkron izin grup: audit memuat added/removed terurut, kunci ganda dibuang
     const inserted = writes.find((w) => w.op === "insert" && w.table === groupPermission);
     assert.deepEqual(inserted?.values, ["users.manage", "finance.view", "finance.export"].map((permissionKey) => ({ groupId: "g1", permissionKey })));
     assert.deepEqual(writes.filter((w) => w.via !== "tx"), [], "hapus/isi ulang/audit harus lewat transaksi");
-    assert.ok(reads.some((r) => r.via === "tx" && r.table === accessGroup && r.lock === "update"), "baris grup wajib dikunci FOR UPDATE di transaksi");
-    assert.deepEqual(reads.filter((r) => r.table === groupPermission).map((r) => r.via), ["tx"], "kunci lama wajib dibaca di dalam transaksi");
+    // Re-review 72000761: urutan & kondisi dijaga — hapus HANYA kunci grup ini, lalu isi ulang, lalu audit.
+    const del = writes.findIndex((w) => w.op === "delete" && w.table === groupPermission);
+    const ins = writes.findIndex((w) => w.op === "insert" && w.table === groupPermission);
+    const aud = writes.findIndex((w) => w.table === permissionAuditLog);
+    assert.ok(del >= 0 && del < ins && ins < aud, "urutan wajib: hapus kunci grup -> isi ulang -> audit");
+    assert.equal(writes[del].where, PERMS_OF_G1);
+    // Kunci baris grup ini DULU, baru baca kunci lama (baca sebelum kunci = `before` basi saat PATCH bersamaan).
+    const lock = reads.findIndex((r) => r.via === "tx" && r.table === accessGroup && r.lock === "update");
+    const old = reads.findIndex((r) => r.table === groupPermission);
+    assert.ok(lock >= 0 && lock < old, "baris grup wajib dikunci FOR UPDATE sebelum kunci lama dibaca");
+    assert.equal(reads[lock].where, show(eq(accessGroup.id, "g1")));
+    assert.deepEqual(reads.filter((r) => r.table === groupPermission).map((r) => [r.via, r.where]), [["tx", PERMS_OF_G1]], "kunci lama wajib dibaca di dalam transaksi");
 });
 
 test("kosongkan izin: semua kunci lama tercatat dicabut, tanpa insert kosong", async () => {
@@ -81,6 +106,7 @@ test("kosongkan izin: semua kunci lama tercatat dicabut, tanpa insert kosong", a
     assert.equal(status, 200);
     assert.deepEqual(audit?.detail, { keyCount: 0, added: [], removed: ["finance.approve", "finance.view"] });
     assert.ok(!writes.some((w) => w.op === "insert" && w.table === groupPermission));
+    assert.deepEqual(writes.filter((w) => w.op === "delete").map((w) => [w.via, w.table === groupPermission, w.where]), [["tx", true, PERMS_OF_G1]], "kunci lama wajib benar-benar dihapus");
 });
 
 test("grup kosong -> semua added; isi sama -> added & removed kosong", async () => {
