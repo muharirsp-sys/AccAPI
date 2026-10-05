@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { PERMISSION_REGISTRY } from "@/lib/rbac/registry";
+import { CAPABILITY_KEYS, PERMISSION_REGISTRY, toggleModuleKeys, type PermissionModule } from "@/lib/rbac/registry";
 import { jsonOrThrow, getJson } from "@/lib/json-fetch";
 
 type Group = { id: string; name: string; description: string | null; isPreset: boolean | number; permCount: number; memberCount: number };
@@ -149,16 +149,7 @@ export default function GroupManagement() {
             return n;
         });
 
-    const toggleModule = (mod: string, actions: readonly string[]) => {
-        const keys = actions.map((a) => `${mod}.${a}`);
-        const allOn = keys.every((k) => editPerms.has(k));
-        setEditPerms((p) => {
-            const n = new Set(p);
-            if (allOn) keys.forEach((k) => n.delete(k));
-            else keys.forEach((k) => n.add(k));
-            return n;
-        });
-    };
+    const toggleModule = (mod: PermissionModule) => setEditPerms((p) => toggleModuleKeys(p, mod));
 
     const nonMembers = allUsers.filter((u) => !detail?.members.some((m) => m.userId === u.id));
 
@@ -220,7 +211,8 @@ export default function GroupManagement() {
                             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(270px, 1fr))", gap: 12 }}>
                                 {Object.entries(PERMISSION_REGISTRY).map(([mod, actions]) => {
                                     const keys = (actions as readonly string[]).map((a) => `${mod}.${a}`);
-                                    const allOn = keys.every((k) => editPerms.has(k));
+                                    const capability = keys.filter((k) => CAPABILITY_KEYS.has(k));
+                                    const allOn = keys.filter((k) => !CAPABILITY_KEYS.has(k)).every((k) => editPerms.has(k));
                                     const someOn = keys.some((k) => editPerms.has(k));
                                     return (
                                         <div key={mod} style={{ border: "1px solid #e0e0e0", borderRadius: 6, padding: 10 }}>
@@ -229,10 +221,15 @@ export default function GroupManagement() {
                                                     type="checkbox"
                                                     checked={allOn}
                                                     ref={(el) => { if (el) el.indeterminate = !allOn && someOn; }}
-                                                    onChange={() => toggleModule(mod, actions as readonly string[])}
+                                                    onChange={() => toggleModule(mod as PermissionModule)}
                                                 />
                                                 {MOD_LABELS[mod] ?? mod}
                                             </label>
+                                            {capability.length > 0 && (
+                                                <p style={{ margin: "4px 0 0", fontSize: 11, color: "#a15c00" }}>
+                                                    Tidak ikut centang modul, centang satu per satu: {capability.map((k) => k.split(".")[1]).join(", ")}
+                                                </p>
+                                            )}
                                             <div style={{ marginTop: 6, ...F, flexWrap: "wrap", gap: "3px 10px" }}>
                                                 {(actions as readonly string[]).map((action) => {
                                                     const key = `${mod}.${action}`;

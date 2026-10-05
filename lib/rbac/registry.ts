@@ -1,7 +1,7 @@
 /*
  * Tujuan: SUMBER TUNGGAL daftar permission key valid untuk Dynamic RBAC (Fase 2/4 — Opsi A).
  * Caller: lib/rbac/resolve.ts (guard route), UI admin RBAC (P6), registry.test.ts (guard test).
- * Main Functions: PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey.
+ * Main Functions: PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey, CAPABILITY_KEYS, toggleModuleKeys.
  * Side Effects: Tidak ada; pure registry permission in-memory.
  * Dependensi: TIDAK ADA (pure data) — sengaja bebas import agar bisa di-test di mana saja.
  * Catatan: permission baru = tambah action di sini → otomatis terbaca RBAC. Default-deny:
@@ -82,4 +82,19 @@ export function allPermissionKeys(): Set<string> {
 
 export function isValidPermissionKey(key: string): boolean {
     return allPermissionKeys().has(key);
+}
+
+/** Kunci kapabilitas yang membuka kiriman ulang ke Accurate (D-14/D-15/D-18). UI grup tidak menyalakannya
+ * lewat centang modul — harus dicentang satu per satu (AM-057). UI bukan otoritas; backend tetap menegakkan. */
+export const CAPABILITY_KEYS: ReadonlySet<string> = new Set(["finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment"]);
+
+/** Centang modul di UI grup: semua kunci non-kapabilitas sudah aktif -> cabut SEMUA kunci modul (termasuk
+ * kapabilitas); selain itu nyalakan kunci non-kapabilitas saja. */
+export function toggleModuleKeys(current: ReadonlySet<string>, mod: PermissionModule): Set<string> {
+    const keys = PERMISSION_REGISTRY[mod].map((a) => `${mod}.${a}`);
+    const bulk = keys.filter((k) => !CAPABILITY_KEYS.has(k));
+    const next = new Set(current);
+    if (bulk.every((k) => current.has(k))) keys.forEach((k) => next.delete(k));
+    else bulk.forEach((k) => next.add(k));
+    return next;
 }

@@ -54,14 +54,22 @@ export async function PATCH(request: NextRequest, context: Context) {
     }
 
     if (Array.isArray(body.permissions)) {
-        const keys = body.permissions as string[];
+        const keys = [...new Set(body.permissions as string[])];
         const invalid = keys.filter((k) => !isValidPermissionKey(k));
         if (invalid.length > 0) return NextResponse.json({ error: `Key tidak valid: ${invalid.join(", ")}` }, { status: 400 });
-        await db.delete(groupPermission).where(eq(groupPermission.groupId, id));
-        if (keys.length > 0) await db.insert(groupPermission).values(keys.map((k) => ({ groupId: id, permissionKey: k })));
-        await db.insert(permissionAuditLog).values({
-            id: randomUUID(), actorUserId: actor.id, actorName: actor.name,
-            action: "group_permission.sync", targetGroupId: id, detail: { keyCount: keys.length }, createdAt: now,
+        // AM-057: satu transaksi (baris grup dikunci) -> kunci lama terbaca pasti, hapus-isi-ulang tidak pernah
+        // setengah jalan, dan audit mencatat kunci yang ditambah/dicabut, bukan hanya jumlahnya.
+        await db.transaction(async (tx) => {
+            await tx.select({ id: accessGroup.id }).from(accessGroup).where(eq(accessGroup.id, id)).for("update");
+            const before = new Set((await tx.select({ key: groupPermission.permissionKey }).from(groupPermission).where(eq(groupPermission.groupId, id))).map((r) => r.key));
+            const added = keys.filter((k) => !before.has(k));
+            const removed = [...before].filter((k) => !keys.includes(k));
+            await tx.delete(groupPermission).where(eq(groupPermission.groupId, id));
+            if (keys.length > 0) await tx.insert(groupPermission).values(keys.map((k) => ({ groupId: id, permissionKey: k })));
+            await tx.insert(permissionAuditLog).values({
+                id: randomUUID(), actorUserId: actor.id, actorName: actor.name,
+                action: "group_permission.sync", targetGroupId: id, detail: { keyCount: keys.length, added, removed }, createdAt: now,
+            });
         });
     }
 

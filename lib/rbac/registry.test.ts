@@ -10,7 +10,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { canAccessPathWithKeys, getPagePermission, rolePermissionPresets } from "../rbac.ts";
-import { PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey } from "./registry.ts";
+import { CAPABILITY_KEYS, PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey, toggleModuleKeys } from "./registry.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_DIR = path.resolve(__dirname, "../../app/api");
@@ -31,6 +31,15 @@ for (const action of ["resolve_unknown", "override_duplicate", "repost_payment"]
     assert.ok(rolePermissionPresets.finance.finance?.includes(action), `preset finance tanpa ${action}`);
     assert.ok(!rolePermissionPresets.manager.finance?.includes(action), `preset manager memuat ${action}`);
 }
+// AM-057: centang modul di UI grup TIDAK menyalakan kunci kapabilitas Finance (harus satu per satu);
+// mematikan modul mencabut semuanya, termasuk kapabilitas.
+assert.ok([...CAPABILITY_KEYS].every(isValidPermissionKey), "kunci kapabilitas wajib terdaftar");
+const moduleOn = toggleModuleKeys(new Set(), "finance");
+assert.ok(moduleOn.has("finance.view") && moduleOn.has("finance.post_accurate"), "centang modul menyalakan kunci biasa");
+for (const k of CAPABILITY_KEYS) assert.ok(!moduleOn.has(k), `centang modul menyalakan ${k}`);
+const partial = toggleModuleKeys(new Set(["finance.view", "finance.override_duplicate"]), "finance");
+assert.ok(partial.has("finance.export") && partial.has("finance.override_duplicate") && !partial.has("finance.resolve_unknown"));
+assert.deepEqual([...toggleModuleKeys(new Set([...moduleOn, "finance.resolve_unknown", "dashboard.view"]), "finance")], ["dashboard.view"]);
 assert.ok(isValidPermissionKey("reconciliation.view"));
 assert.ok(isValidPermissionKey("reconciliation.run"));
 assert.ok(isValidPermissionKey("reconciliation.manage"));
