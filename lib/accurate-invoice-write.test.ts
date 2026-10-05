@@ -2,7 +2,7 @@
    dan timeout tidak boleh dianggap gagal (faktur ganda di Accurate tidak bisa dibatalkan). */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { discardable, buildInvoicePayload, nextOutboxState, pakaiTanggalFaktur, readInvoiceIdentity, resendable, sendable, toAccurateDate, type InvoiceOrder, type InvoicePayload } from "./accurate-invoice-write.ts";
+import { barisPersenRupiah, discardable, buildInvoicePayload, nextOutboxState, pakaiTanggalFaktur, readInvoiceIdentity, resendable, sendable, toAccurateDate, type InvoiceOrder, type InvoicePayload } from "./accurate-invoice-write.ts";
 
 const UNITS = new Map([["KRT", 100], ["BAG", 350]]);
 
@@ -48,13 +48,19 @@ test("payload memakai angka beku dan tidak pernah mengarang nomor faktur", () =>
         detailNotes: "order 11111111 baris 1", charField1: order().id,
     });
 
-    // Faktur menampilkan persen DAN rupiah: rantai persen apa adanya, sisanya rupiah.
-    // Mengirim seluruh diskon di kedua field akan membuat Accurate memotong dua kali.
+    // Persen + rupiah pada satu baris: Accurate MEMBUANG rupiahnya begitu persen terisi
+    // (INV/2609/KN01376). Rupiahnya ikut masuk rantai sebagai persen setara, rupiah dikirim 0.
     const beku = order();
-    beku.result.lines = [{ ...beku.result.lines![0], percents: ["10", "5"], cash: "8960" }];
+    beku.result.lines = [{ ...beku.result.lines![0], percents: ["5"], cash: "114480" }];
     const campur = buildInvoicePayload(beku, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 });
-    assert.equal(campur.detailItem[0].itemDiscPercent, "10+5");
-    assert.equal(campur.detailItem[0].itemCashDiscount, 8960);
+    assert.equal(campur.detailItem[0].itemDiscPercent, "5+5.2632");
+    assert.equal(campur.detailItem[0].itemCashDiscount, 0);
+    assert.deepEqual(barisPersenRupiah(campur), []);
+
+    // Rantai yang tidak menghasilkan netto beku ditahan, bukan dikirim lalu ketahuan belakangan.
+    const meleset = order();
+    meleset.result.lines = [{ ...meleset.result.lines![0], percents: ["10", "5"], cash: "8960" }];
+    assert.throws(() => buildInvoicePayload(meleset, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }), /tidak menghasilkan netto/);
 
     // Bagian rupiah tidak boleh melebihi total diskon baris.
     const salah = order();
@@ -156,4 +162,14 @@ test("tanggal faktur pilihan: hanya transDate yang diganti, tidak boleh sebelum 
     // Hari yang sama boleh; lebih awal dari SO ditolak.
     assert.equal(pakaiTanggalFaktur(beku, "2026-09-28", "2026-09-28").error, undefined);
     assert.match(pakaiTanggalFaktur(beku, "2026-09-28", "2026-09-27").error ?? "", /lebih awal dari tanggal SO 28\/09\/2026/);
+});
+
+test("payload beku lama berbentuk persen + rupiah ketahuan sebelum dikirim", () => {
+    // Bentuk persis INV/2609/KN01376 (diantrekan 30 Sep 2026): Accurate memakai 2% saja.
+    const lama = buildInvoicePayload(order(), { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 });
+    lama.detailItem[0] = { ...lama.detailItem[0], itemDiscPercent: "2+0+0+0+0", itemCashDiscount: 4933.33 };
+    assert.deepEqual(barisPersenRupiah(lama), [lama.detailItem[0].detailNotes]);
+    // Rupiah saja (tanpa persen) dan "0+0" tanpa rupiah bukan campuran.
+    lama.detailItem[0] = { ...lama.detailItem[0], itemDiscPercent: "", itemCashDiscount: 4933.33 };
+    assert.deepEqual(barisPersenRupiah(lama), []);
 });

@@ -16,7 +16,7 @@
  *    primary key `invoice_outbox` dan dilewati.
  */
 import { splitDiscounts, type DiscountAt } from "@/lib/principal-validation";
-import type { InvoiceOrder } from "@/lib/accurate-invoice-write";
+import { persenSetara, type InvoiceOrder } from "@/lib/accurate-invoice-write";
 
 export type BatchLine = {
     rowNumber: number;
@@ -51,19 +51,20 @@ const cents = (value: number) => Math.round(value * 100) / 100;
 /**
  * Rantai persen yang POSISINYA terjaga: SELALU lima slot d1+d2+d3+d4+d5, yang kosong jadi "0" —
  * "3.96+3.1+0+0+0", bukan "3.96+3.1" (permintaan pengguna 2026-09-24: semua posisi diskon
- * terlihat di Accurate). Diskon yang di laporan berupa RUPIAH tidak punya tempat di rantai
- * persen — nominalnya dikirim terpisah — jadi slotnya tetap "0" dan rantainya boleh kosong.
+ * terlihat di Accurate). Diskon yang di laporan berupa RUPIAH masuk sebagai persen SETARA di
+ * posisinya sendiri, dihitung atas sisa sebelum posisi itu: Accurate membuang `itemCashDiscount`
+ * begitu `itemDiscPercent` terisi (INV/2609/KN01376), dan D5 harus tetap terbaca klaim principal.
  */
-export function percentChain(discounts: DiscountAt[]): string[] {
-    const byPercent = discounts.filter((entry) => entry.amount === undefined);
-    if (byPercent.length === 0) return [];
-    const last = Math.max(5, ...byPercent.map((entry) => entry.position));
-    const chain: string[] = [];
-    for (let position = 1; position <= last; position += 1) {
-        const found = byPercent.find((entry) => entry.position === position);
-        chain.push(found ? String(found.percent) : "0");
+export function percentChain(discounts: DiscountAt[], gross: number): string[] {
+    if (discounts.length === 0) return [];
+    let remaining = gross;
+    const byPosition = new Map<number, string>();
+    for (const entry of [...discounts].sort((a, b) => a.position - b.position)) {
+        byPosition.set(entry.position, entry.amount === undefined ? String(entry.percent) : persenSetara(entry.amount, remaining));
+        remaining -= entry.amount ?? cents(remaining * entry.percent / 100);
     }
-    return chain;
+    const last = Math.max(5, ...byPosition.keys());
+    return Array.from({ length: last }, (_, index) => byPosition.get(index + 1) ?? "0");
 }
 
 /** Kunci antrean; sengaja tidak memuat id batch (lihat catatan kepala berkas). */
@@ -127,12 +128,7 @@ export function groupCandidates(
             const rowNet = cents(rowGross - split.total);
             gross = cents(gross + rowGross);
             net = cents(net + rowNet);
-            // Potongan yang di laporan memang berupa RUPIAH (potongan tingkat faktur yang
-            // dibagi rata) dikirim sebagai rupiah, bukan dipaksa jadi persen: membulatkan ulang
-            // dari persen hasil pembagian bisa meleset beberapa rupiah dari yang dilaporkan
-            // principal, dan selisih itulah yang nanti ditandai verifikasi balik sebagai salah.
             const sorted = [...row.discounts].sort((a, b) => a.position - b.position);
-            const cash = cents(sorted.reduce((total, entry) => total + (entry.amount ?? 0), 0));
             return {
                 code: row.itemCode!,
                 unit: row.unit,
@@ -147,8 +143,9 @@ export function groupCandidates(
                 // membacanya kembali — Rekap Promo, laporan klaim, maupun pemeriksa. Terbukti
                 // pada INV/2609/KN00450 (12 Sep 2026): klaim Rp 28.921 tersimpan sebagai 3% di
                 // posisi 1. Uang yang bisa ditagihkan berubah jadi biaya sendiri, tanpa galat.
-                percents: percentChain(sorted),
-                cash: String(cash),
+                // Semua potongan sebagai persen, rupiah 0 — lihat percentChain.
+                percents: percentChain(sorted, rowGross),
+                cash: "0",
                 price: String(price),
             };
         });

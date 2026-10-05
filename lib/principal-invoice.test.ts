@@ -81,13 +81,35 @@ test("rantai persen mempertahankan POSISI dengan nol, bukan dimampatkan", () => 
     // akan terbaca sebagai posisi 1 — tanggungan distributor — oleh siapa pun yang membaca
     // fakturnya kembali. Terbukti pada INV/2609/KN00450: Rp 28.921 yang bisa ditagihkan ke
     // principal tersimpan sebagai biaya sendiri, tanpa satu pun galat.
-    assert.deepEqual(percentChain([{ position: 4, percent: 3 }]), ["0", "0", "0", "3", "0"]);
+    assert.deepEqual(percentChain([{ position: 4, percent: 3 }], 100), ["0", "0", "0", "3", "0"]);
     // SELALU lima slot (permintaan pengguna 2026-09-24): "3.96+3.1+0+0+0", bukan "3.96+3.1".
-    assert.deepEqual(percentChain([{ position: 1, percent: 2 }]), ["2", "0", "0", "0", "0"]);
-    assert.deepEqual(percentChain([{ position: 1, percent: 3.96 }, { position: 2, percent: 3.1 }]).join("+"), "3.96+3.1+0+0+0");
-    assert.deepEqual(percentChain([{ position: 1, percent: 4 }, { position: 4, percent: 2.25 }]),
+    assert.deepEqual(percentChain([{ position: 1, percent: 2 }], 100), ["2", "0", "0", "0", "0"]);
+    assert.deepEqual(percentChain([{ position: 1, percent: 3.96 }, { position: 2, percent: 3.1 }], 100).join("+"), "3.96+3.1+0+0+0");
+    assert.deepEqual(percentChain([{ position: 1, percent: 4 }, { position: 4, percent: 2.25 }], 100),
         ["4", "0", "0", "2.25", "0"]);
-    // Potongan berupa RUPIAH tidak punya tempat di rantai persen; nominalnya dikirim terpisah.
-    assert.deepEqual(percentChain([{ position: 5, percent: 1.5, amount: 446.85 }]), []);
+    // Potongan RUPIAH masuk rantai sebagai persen setara DI POSISINYA (D5 = klaim principal).
+    assert.deepEqual(percentChain([{ position: 5, percent: 1.5, amount: 446.85 }], 29729.73), ["0", "0", "0", "0", "1.503"]);
+});
+
+test("persen + rupiah satu baris dikirim sebagai rantai persen saja (INV/2609/KN01376)", () => {
+    // TK SUBHAN 30 Sep 2026: DISC_1 2% + DISC_5 Rp 4.933,33 (potongan faktur MSG dibagi rata).
+    // Dikirim "2+0+0+0+0" + itemCashDiscount 4.933,33, Accurate membuang rupiahnya.
+    const { candidates } = groupCandidates("KINO", [line({
+        qty: "24", price: "14414.4144",
+        discounts: [{ position: 1, percent: 2 }, { position: 5, percent: 4933.33 / 339027.03 * 100, amount: 4933.33 }],
+    })], { fallbackDate: "2026-09-30" });
+    const [item] = buildInvoicePayload(candidates[0].order, { unitIds: new Map([["KRT", 100]]), branchId: 50, typeAutoNumber: 7 }).detailItem;
+    assert.equal(item.itemDiscPercent, "2+0+0+0+1.4551");
+    assert.equal(item.itemCashDiscount, 0);
+    assert.equal(candidates[0].net, 334093.7);
+
+    // Batas 4 desimal (yang terbukti disimpan Accurate): baris besar yang melesetnya lewat Rp 1
+    // DITAHAN, bukan dikirim dengan netto lain.
+    const besar = groupCandidates("KINO", [line({
+        qty: "1", price: "50000000",
+        discounts: [{ position: 1, percent: 2 }, { position: 5, percent: 712345.67 / 49000000 * 100, amount: 712345.67 }],
+    })], { fallbackDate: "2026-09-30" });
+    assert.throws(() => buildInvoicePayload(besar.candidates[0].order, { unitIds: new Map([["KRT", 100]]), branchId: 50, typeAutoNumber: 7 }),
+        /tidak menghasilkan netto/);
 });
 

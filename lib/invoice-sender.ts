@@ -22,7 +22,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox } from "@/db/schema";
-import { nextOutboxState, pakaiTanggalFaktur, readInvoiceIdentity, type InvoicePayload, type SendOutcome } from "@/lib/accurate-invoice-write";
+import { barisPersenRupiah, nextOutboxState, pakaiTanggalFaktur, readInvoiceIdentity, type InvoicePayload, type SendOutcome } from "@/lib/accurate-invoice-write";
 import { refreshRealization } from "@/lib/program-realization-store";
 
 export type SenderSession = {
@@ -58,7 +58,15 @@ export async function sendQueuedInvoices(
             : eq(invoiceOutbox.state, "queued"))
         .orderBy(asc(invoiceOutbox.createdAt)).limit(options.limit);
 
-    const siap = rows.map((row) => ({ row, ...pakaiTanggalFaktur(row.payload as InvoicePayload, String(row.orderDate), options.invoiceDate) }));
+    const siap = rows.map((row) => {
+        const hasil = pakaiTanggalFaktur(row.payload as InvoicePayload, String(row.orderDate), options.invoiceDate);
+        // Antrean dari sebelum 5 Okt 2026 bisa membawa persen + rupiah pada satu baris; Accurate
+        // membuang rupiahnya (INV/2609/KN01376). Dibuang dari antrean lalu diantrekan ulang.
+        const campur = barisPersenRupiah(hasil.payload);
+        return campur.length && !hasil.error
+            ? { row, ...hasil, error: `${campur.length} baris persen + rupiah (Accurate membuang rupiahnya) — buang dari antrean lalu antrekan ulang` }
+            : { row, ...hasil };
+    });
     const ditolak = siap.filter((entry) => entry.error);
     if (ditolak.length) {
         return {
