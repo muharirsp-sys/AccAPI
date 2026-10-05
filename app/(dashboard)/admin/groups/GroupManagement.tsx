@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { CAPABILITY_KEYS, PERMISSION_REGISTRY, toggleModuleKeys, type PermissionModule } from "@/lib/rbac/registry";
+import { CAPABILITY_KEYS, PERMISSION_REGISTRY, moduleAllOn, toggleModuleKeys, type PermissionModule } from "@/lib/rbac/registry";
 import { jsonOrThrow, getJson } from "@/lib/json-fetch";
 
 type Group = { id: string; name: string; description: string | null; isPreset: boolean | number; permCount: number; memberCount: number };
@@ -212,7 +212,7 @@ export default function GroupManagement() {
                                 {Object.entries(PERMISSION_REGISTRY).map(([mod, actions]) => {
                                     const keys = (actions as readonly string[]).map((a) => `${mod}.${a}`);
                                     const capability = keys.filter((k) => CAPABILITY_KEYS.has(k));
-                                    const allOn = keys.filter((k) => !CAPABILITY_KEYS.has(k)).every((k) => editPerms.has(k));
+                                    const allOn = moduleAllOn(editPerms, mod as PermissionModule);
                                     const someOn = keys.some((k) => editPerms.has(k));
                                     return (
                                         <div key={mod} style={{ border: "1px solid #e0e0e0", borderRadius: 6, padding: 10 }}>

@@ -10,7 +10,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { canAccessPathWithKeys, getPagePermission, rolePermissionPresets } from "../rbac.ts";
-import { CAPABILITY_KEYS, PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey, toggleModuleKeys } from "./registry.ts";
+import { CAPABILITY_KEYS, PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey, moduleAllOn, toggleModuleKeys } from "./registry.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_DIR = path.resolve(__dirname, "../../app/api");
@@ -33,10 +33,16 @@ for (const action of ["resolve_unknown", "override_duplicate", "repost_payment"]
 }
 // AM-057: centang modul di UI grup TIDAK menyalakan kunci kapabilitas Finance (harus satu per satu);
 // mematikan modul mencabut semuanya, termasuk kapabilitas.
-assert.ok([...CAPABILITY_KEYS].every(isValidPermissionKey), "kunci kapabilitas wajib terdaftar");
+// Kunci ditulis literal (re-review b955f836 #1): iterasi CAPABILITY_KEYS sendiri lulus walau satu kunci dibuang.
+assert.equal(CAPABILITY_KEYS.size, 3);
 const moduleOn = toggleModuleKeys(new Set(), "finance");
 assert.ok(moduleOn.has("finance.view") && moduleOn.has("finance.post_accurate"), "centang modul menyalakan kunci biasa");
-for (const k of CAPABILITY_KEYS) assert.ok(!moduleOn.has(k), `centang modul menyalakan ${k}`);
+for (const k of ["finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment"]) {
+    assert.ok(isValidPermissionKey(k) && CAPABILITY_KEYS.has(k), `${k} wajib kunci kapabilitas terdaftar`);
+    assert.ok(!moduleOn.has(k), `centang modul menyalakan ${k}`);
+}
+// Status centang modul (UI) = helper yang sama dengan toggle: aktif walau kapabilitas mati.
+assert.ok(moduleAllOn(moduleOn, "finance") && !moduleAllOn(new Set(["finance.view"]), "finance"));
 const partial = toggleModuleKeys(new Set(["finance.view", "finance.override_duplicate"]), "finance");
 assert.ok(partial.has("finance.export") && partial.has("finance.override_duplicate") && !partial.has("finance.resolve_unknown"));
 assert.deepEqual([...toggleModuleKeys(new Set([...moduleOn, "finance.resolve_unknown", "dashboard.view"]), "finance")], ["dashboard.view"]);

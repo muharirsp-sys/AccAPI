@@ -59,18 +59,21 @@ export async function PATCH(request: NextRequest, context: Context) {
         if (invalid.length > 0) return NextResponse.json({ error: `Key tidak valid: ${invalid.join(", ")}` }, { status: 400 });
         // AM-057: satu transaksi (baris grup dikunci) -> kunci lama terbaca pasti, hapus-isi-ulang tidak pernah
         // setengah jalan, dan audit mencatat kunci yang ditambah/dicabut, bukan hanya jumlahnya.
-        await db.transaction(async (tx) => {
-            await tx.select({ id: accessGroup.id }).from(accessGroup).where(eq(accessGroup.id, id)).for("update");
+        const found = await db.transaction(async (tx) => {
+            const [locked] = await tx.select({ id: accessGroup.id }).from(accessGroup).where(eq(accessGroup.id, id)).for("update");
+            if (!locked) return false; // terhapus sesudah cek awal
             const before = new Set((await tx.select({ key: groupPermission.permissionKey }).from(groupPermission).where(eq(groupPermission.groupId, id))).map((r) => r.key));
-            const added = keys.filter((k) => !before.has(k));
-            const removed = [...before].filter((k) => !keys.includes(k));
+            const added = keys.filter((k) => !before.has(k)).sort();
+            const removed = [...before].filter((k) => !keys.includes(k)).sort();
             await tx.delete(groupPermission).where(eq(groupPermission.groupId, id));
             if (keys.length > 0) await tx.insert(groupPermission).values(keys.map((k) => ({ groupId: id, permissionKey: k })));
             await tx.insert(permissionAuditLog).values({
                 id: randomUUID(), actorUserId: actor.id, actorName: actor.name,
                 action: "group_permission.sync", targetGroupId: id, detail: { keyCount: keys.length, added, removed }, createdAt: now,
             });
+            return true;
         });
+        if (!found) return NextResponse.json({ error: "Group tidak ditemukan" }, { status: 404 });
     }
 
     return NextResponse.json({ ok: true });

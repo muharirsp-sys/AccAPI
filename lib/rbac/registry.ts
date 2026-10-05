@@ -1,7 +1,7 @@
 /*
  * Tujuan: SUMBER TUNGGAL daftar permission key valid untuk Dynamic RBAC (Fase 2/4 — Opsi A).
  * Caller: lib/rbac/resolve.ts (guard route), UI admin RBAC (P6), registry.test.ts (guard test).
- * Main Functions: PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey, CAPABILITY_KEYS, toggleModuleKeys.
+ * Main Functions: PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey, CAPABILITY_KEYS, moduleAllOn, toggleModuleKeys.
  * Side Effects: Tidak ada; pure registry permission in-memory.
  * Dependensi: TIDAK ADA (pure data) — sengaja bebas import agar bisa di-test di mana saja.
  * Catatan: permission baru = tambah action di sini → otomatis terbaca RBAC. Default-deny:
@@ -88,13 +88,19 @@ export function isValidPermissionKey(key: string): boolean {
  * lewat centang modul — harus dicentang satu per satu (AM-057). UI bukan otoritas; backend tetap menegakkan. */
 export const CAPABILITY_KEYS: ReadonlySet<string> = new Set(["finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment"]);
 
-/** Centang modul di UI grup: semua kunci non-kapabilitas sudah aktif -> cabut SEMUA kunci modul (termasuk
- * kapabilitas); selain itu nyalakan kunci non-kapabilitas saja. */
+const moduleKeys = (mod: PermissionModule) => PERMISSION_REGISTRY[mod].map((a) => `${mod}.${a}`);
+
+/** Status centang modul di UI grup: semua kunci NON-kapabilitas modul aktif. */
+export function moduleAllOn(current: ReadonlySet<string>, mod: PermissionModule): boolean {
+    return moduleKeys(mod).filter((k) => !CAPABILITY_KEYS.has(k)).every((k) => current.has(k));
+}
+
+/** Centang modul di UI grup: sudah `moduleAllOn` -> cabut SEMUA kunci modul (termasuk kapabilitas); selain itu
+ * nyalakan kunci non-kapabilitas saja. */
 export function toggleModuleKeys(current: ReadonlySet<string>, mod: PermissionModule): Set<string> {
-    const keys = PERMISSION_REGISTRY[mod].map((a) => `${mod}.${a}`);
-    const bulk = keys.filter((k) => !CAPABILITY_KEYS.has(k));
+    const keys = moduleKeys(mod);
     const next = new Set(current);
-    if (bulk.every((k) => current.has(k))) keys.forEach((k) => next.delete(k));
-    else bulk.forEach((k) => next.add(k));
+    if (moduleAllOn(current, mod)) keys.forEach((k) => next.delete(k));
+    else keys.filter((k) => !CAPABILITY_KEYS.has(k)).forEach((k) => next.add(k));
     return next;
 }
