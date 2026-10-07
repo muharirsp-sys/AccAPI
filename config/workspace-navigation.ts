@@ -74,10 +74,10 @@ export function roleProfile(permKeys: ReadonlySet<string>) {
     return ROLE_PROFILES.find(profile => permKeys.has(profile.when));
 }
 
-/** Tiga pintasan peran yang boleh dibuka; kurang dari tiga diisi item lain sesuai urutan katalog. */
-export function roleShortcuts(permKeys: ReadonlySet<string>, allowed: WorkspaceItem[]): WorkspaceItem[] {
-    const preferred = (roleProfile(permKeys)?.shortcuts ?? []).map(href => allowed.find(item => item.href === href)).filter((item): item is WorkspaceItem => Boolean(item));
-    return [...preferred, ...allowed.filter(item => !preferred.includes(item))].slice(0, 3);
+/** Pintasan peran yang boleh dibuka (bawaan 3 untuk navigasi bawah); kekurangan diisi item lain sesuai urutan katalog. */
+export function roleShortcuts(permKeys: ReadonlySet<string>, allowed: WorkspaceItem[], count = 3, profile = roleProfile(permKeys)): WorkspaceItem[] {
+    const preferred = (profile?.shortcuts ?? []).map(href => allowed.find(item => item.href === href)).filter((item): item is WorkspaceItem => Boolean(item));
+    return [...preferred, ...allowed.filter(item => !preferred.includes(item))].slice(0, count);
 }
 
 export function activeNavigationItem(pathname: string, items: WorkspaceItem[]): WorkspaceItem | undefined {

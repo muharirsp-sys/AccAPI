@@ -88,7 +88,7 @@ Surat Kino berlapis teks -> `python_backend/kino_letter.py` -> draft; scan memak
 DashboardLayout -> session + RBAC union -> SidebarLayout (identitas akun)
   -> config/workspace-navigation.ts: 18 modul dalam 6 kelompok + Beranda
   -> navigasi samping Fiori (kelompok dari izin) + cari menu Ctrl K; favorit/rail lama dihapus (S1a)
-Beranda -> katalog yang sama, disaring RBAC -> akses cepat + direktori kelompok
+Beranda (Fiori, S1b) -> profil peran dari izin -> tile tugas (lib/beranda.ts, GET endpoint yang ada) + Pintasan + Pantauan + Semua aplikasi
 RootLayout -> html[data-theme="surya"] statis (Office Calm/Neon/iOS pensiun, Okt 2026)
   -> app/workspace.css: remap Surya untuk isi halaman yang belum dimigrasi
 SidebarLayout (shell Fiori, S1a) -> shell bar: logo resmi, cari menu Ctrl K, menu profil (Mode/Density, Bantuan -> ChatWidget, Keluar)
