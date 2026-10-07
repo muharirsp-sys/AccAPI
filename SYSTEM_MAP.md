@@ -98,6 +98,17 @@ Validasi: `npx tsx --test components/SidebarLayout.test.ts` dan
 `npx playwright test tests/workspace-redesign.spec.ts tests/sidebar-tooltip-contrast.spec.ts tests/office-calm-theme.spec.ts`
 pada server development lokal (10 browser checks: navigasi, mobile/resize, unggah, kontras, kompatibilitas tema).
 Referensi visual: `docs/design/surya-workspace-reference.png`.
+
+### Design system Fiori (S0, Oktober 2026)
+```
+RootLayout -> app/fiori.css (token + kelas fi-*, di-scope ke .fiori; halaman lama tidak berubah)
+  -> skrip pra-render components/fiori/scheme.ts: localStorage fiori-scheme/fiori-density -> html[data-scheme|data-density]
+Halaman yang dimigrasi -> <FioriScope> (components/fiori/Scope.tsx: Plus Jakarta Sans + Geist Mono)
+  -> components/fiori/core.tsx (presentasional) + interactive.tsx (dialog, form, filter bar, SchemeSwitcher)
+/dev/ui-kit -> semua komponen x 6 keadaan; 404 di build produksi
+```
+Validasi: `npx playwright test tests/fiori-ui-kit.spec.ts` pada server development lokal (LOCAL_AUTH_BYPASS);
+baseline di `tests/fiori-ui-kit.spec.ts-snapshots/`. Aturan: `docs/UI_DESIGN_SYSTEM.md`.
 Hasil browser desktop/mobile: `docs/design/surya-workspace-desktop.png`, `docs/design/surya-workspace-mobile.png`.
 Checkpoint implementasi dan instruksi resume: `docs/SURYA_IMPLEMENTATION.md` (keputusan, bukti validasi, file yang disentuh, lingkungan uji, dan langkah berikutnya).
 Status: UI redesign tervalidasi lokal. Audit build menemukan tracing `webhook-backfill -> next.config.ts` memasukkan kunci OCR lokal; pengemasan dihentikan dan salinan kunci di artefak dihapus. Lihat handover sebelum deployment.
@@ -596,6 +607,7 @@ AccAPI/_github_clean/
 │   ├── PWAInstallPrompt.tsx
 │   ├── ServiceWorkerRegistration.tsx
 │   ├── ThemeSwitcher.tsx
+│   ├── fiori/                          # Design system Fiori: Scope (font + .fiori), core, interactive, scheme
 │   ├── off-program-control/
 │   │   ├── OffBreadcrumb.tsx
 │   │   ├── OffGlobalSearch.tsx
