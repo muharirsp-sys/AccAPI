@@ -246,6 +246,11 @@ def check_match_groups():
     # Inisial master "BN" = BOTTLE NIPPLE; kata ganda surat ("BABY BABY") tidak mengganggu.
     assert pilih("SLEEK BABY BABY BOTTLE NIPPLE") == [("SLEEK BABY - BN CLEANSER", "ALL VARIANT", "", "K1502000007020")]
     assert [g for g, *_ in pilih("B&B ALL VARIANT")] == ["B&B - HAIR BODY WASH & B&B - POWDER"]
+    # Perapi baris (jalur parse Kino) tidak mengosongkan kelompok gabungan yang tiap bagiannya master.
+    from baca_surat_rapi import rapikan_baris
+    rapi = rapikan_baris([dict(kelompok="ELLIPS & ELLIPS - H.VIT BALI", variant="ALL VARIANT", gramasi="ALL GRAMASI"),
+                          dict(kelompok="ELLIPS & RESIK V CAIR", variant="ALL VARIANT", gramasi="ALL GRAMASI")], master)
+    assert [r["kelompok"] for r in rapi] == ["ELLIPS & ELLIPS - H.VIT BALI", ""], rapi
     # Padanan tersimpan 1 Okt 2026: seluruh ESKULIN - COLOGNE termasuk nama lama; Hijab C.GEL tidak.
     assert pilih("ESKULIN COLOGNE GEL REJUVENATION MIX VARIANT") == [
         ("ESKULIN - COLOGNE", "ALL VARIANT", "", "K1111002005010,K1111009005010,K1111009010010")]
