@@ -281,7 +281,7 @@ test.describe("Nota kanvas", () => {
 
 test.describe("Mapping area", () => {
     test("default: saring keyakinan, draf area final → footer Simpan; Terima usulan Tinggi lewat dialog", async ({ page }) => {
-        let disimpan: unknown[] = [];
+        const disimpan: unknown[] = [];
         await page.route(path("/api/rekapan-nota/area"), (route) => {
             if (route.request().method() === "POST") { disimpan.push(route.request().postDataJSON()); return route.fulfill(json({ tersimpan: 1, gagal: [] })); }
             return route.fulfill(json(AREA));
