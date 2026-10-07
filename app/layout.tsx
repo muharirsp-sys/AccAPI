@@ -1,16 +1,18 @@
 /*
  * Tujuan: Root layout Next.js untuk font, tema Surya/alternatif, dan toaster aplikasi.
  * Caller: Next.js App Router root.
- * Dependensi: next/font, sonner, ThemeSwitcher, globals.css dan workspace.css.
+ * Dependensi: next/font, sonner, ThemeSwitcher, fiori/scheme, globals.css, workspace.css dan fiori.css.
  * Main Functions: RootLayout, metadata, ambient background layer, suppress theme hydration warning.
- * Side Effects: Inject script tema dari localStorage sebelum paint dan render toaster global.
+ * Side Effects: Inject script tema lama + mode/density Fiori dari localStorage sebelum paint dan render toaster global.
  */
 import type { Metadata, Viewport } from "next";
 import { Geist, Exo_2, Rajdhani, Share_Tech_Mono } from "next/font/google";
 import { Toaster } from "sonner";
 import { applyStoredThemeScript } from "@/components/ThemeSwitcher";
+import { applyStoredSchemeScript } from "@/components/fiori/scheme";
 import "./globals.css";
 import "./workspace.css";
+import "./fiori.css";
 
 const geist = Geist({ variable: "--font-workspace", subsets: ["latin"], display: "swap" });
 
@@ -40,7 +42,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 5,
   viewportFit: "cover",
-  themeColor: "#c79a3f",
+  themeColor: "#004c97",
 };
 
 export const metadata: Metadata = {
@@ -72,6 +74,7 @@ export default function RootLayout({
     <html lang="id-ID" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: applyStoredThemeScript }} />
+        <script dangerouslySetInnerHTML={{ __html: applyStoredSchemeScript }} />
       </head>
       <body
         className={`${geist.variable} ${exo2.variable} ${rajdhani.variable} ${shareTechMono.variable} antialiased bg-[#0f1015] text-slate-200 min-h-screen selection:bg-indigo-500/30 selection:text-indigo-200 overflow-x-hidden`}

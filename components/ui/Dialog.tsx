@@ -30,8 +30,10 @@ export default function Dialog({
     closeOnBackdrop = false,
 }: DialogProps) {
     const dialogRef = useRef<HTMLDialogElement>(null);
+    const openRef = useRef(open);
 
     useEffect(() => {
+        openRef.current = open;
         const dialog = dialogRef.current;
         if (!dialog) return;
 
@@ -55,6 +57,12 @@ export default function Dialog({
             onCancel={(event) => {
                 event.preventDefault();
                 onClose();
+            }}
+            // Escape kedua tanpa aktivasi pengguna tidak bisa dibatalkan di Chromium dan menutup dialog walau
+            // pemanggil menahannya (mis. sedang mengirim). Buka lagi selama prop `open` masih true.
+            onClose={() => {
+                const dialog = dialogRef.current;
+                if (openRef.current && dialog?.isConnected && !dialog.open) dialog.showModal();
             }}
             onClick={handleBackdropClick}
             className={`m-auto max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] p-0 text-left backdrop:bg-black/75 backdrop:backdrop-blur-sm ${className}`}
