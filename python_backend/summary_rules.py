@@ -257,6 +257,13 @@ def calculate(programs, raw_lines, order_date, channel, outlet_classes=(), known
 UNITS = {"PCS", "PC", "CTN", "DUS", "BOX", "PAK", "PACK", "RTG", "KRT", "LSN", "BAL", "SET", "KG", "GR", "LTR", "ML", "BTL", "SCH", "REN"}
 DATE_TEXT = re.compile(r"\d{4}-\d{2}-\d{2}")
 MIX_MARKS = ("mix", "campur")
+# "MIX VARIANT" = campur varian DALAM GRAMASI YANG SAMA — keputusan pengguna 7 Okt 2026, berlaku
+# SEMUA principal. 10 pcs 70ML + 20 pcs 900ML bukan 30 pcs; bonusnya pun "produk dengan harga yang
+# sama". Lintas gramasi hanya bila ketentuannya menyebut (LINTAS_GRAMASI); ketentuan mix yang
+# diam soal gramasi DITOLAK saat disusun supaya peninjau menuliskannya, bukan ditebak.
+LINTAS_GRAMASI = re.compile(r"\b(?:beda|mix|campur|lintas|semua|all)\s+(?:gramasi|ukuran|size)\b"
+                            r"|\b(?:gramasi|ukuran|size)\s+(?:berbeda|beda|campur|bebas)\b", re.I)
+GRAMASI_SAMA = re.compile(r"\b(?:gramasi|ukuran|size)(?:\s+barang)?\s+(?:yang\s+)?sama\b", re.I)
 STACK_MARKS = ("stack", "digabung", "digabungkan", "berlaku bersama")
 # "Hanya PO pertama" (listing BP2609008707). Dibaca dari ketentuan/keterangan yang TERLIHAT dan bisa
 # disunting peninjau: menghapus kalimatnya berarti mencabut syaratnya, tanpa kolom tersembunyi.
@@ -394,11 +401,14 @@ def merge_tier(target, extra):
     return ""
 
 
-def compile_programs(rows, period=None):
+def compile_programs(rows, period=None, items=None):
     """Baris draft -> kontrak program. Baris tak lengkap dilaporkan, tidak ditebak.
     Baris dengan barang/periode/channel/satuan sama menjadi satu program bertingkat.
     `period` adalah (start, end) tingkat draft yang diisi peninjau bila surat hanya
     mencetak periode di kepala; periode pada baris selalu menang.
+    `items` = master draft; dengan itu program MIX dipecah satu program per gramasi
+    (lihat LINTAS_GRAMASI), sehingga gerbang yang mengunci ambang per (surat, kelompok)
+    ikut menghitung per gramasi tanpa kolom baru.
     """
     fallback_start, fallback_end = (str(period[0]).strip(), str(period[1]).strip()) if period else ("", "")
     groups, issues = {}, []
@@ -427,12 +437,17 @@ def compile_programs(rows, period=None):
             issues.append(f"{label}: {problem}")
             continue
         blob = (ketentuan + " " + str(row.get("keterangan", ""))).lower()
+        mix = any(mark in ketentuan.lower() for mark in MIX_MARKS)
+        lintas = bool(LINTAS_GRAMASI.search(ketentuan))
+        if mix and kind == "quantity" and not lintas and not GRAMASI_SAMA.search(ketentuan):
+            issues.append(f"{label}: ketentuan 'mix' belum menyebut gramasi; tulis 'gramasi sama' atau 'beda gramasi' sesuai surat.")
+            continue
         # Nomor surat ikut jadi kunci: dua surat yang kebetulan menyebut barang, periode, dan
         # channel yang sama bukan satu program — menggabungkannya membuat salah satunya hilang.
         key = (str(row.get("surat_program", "")).strip(),
                str(row.get("channel_gtmt", "")).strip().upper() or "ALL", start, end, unit, kind,
-               any(mark in ketentuan.lower() for mark in MIX_MARKS), any(mark in blob for mark in STACK_MARKS), tuple(sorted(codes)), outlet,
-               any(mark in blob for mark in FIRST_PO_MARKS))
+               mix, any(mark in blob for mark in STACK_MARKS), tuple(sorted(codes)), outlet,
+               any(mark in blob for mark in FIRST_PO_MARKS), lintas)
         group = groups.setdefault(key, {"rows": [], "tiers": {}})
         group["rows"].append(row)
         if minimum in group["tiers"]:
@@ -443,7 +458,7 @@ def compile_programs(rows, period=None):
             group["tiers"][minimum] = tier
     programs, used = [], set()
     for index, (key, group) in enumerate(groups.items()):
-        surat, channel, start, end, unit, kind, mix, stacking, codes, outlet, first_po = key
+        surat, channel, start, end, unit, kind, mix, stacking, codes, outlet, first_po, lintas = key
         first = group["rows"][0]
         identifier = str(first.get("promo_group_id", "")).strip() or f"P{index + 1}"
         if identifier in used:
@@ -458,8 +473,41 @@ def compile_programs(rows, period=None):
             value_scope="eligible", basis="gross", stacking=stacking, first_po=first_po, priority=index + 1,
             tiers=[group["tiers"][minimum] for minimum in sorted(group["tiers"], key=number)],
             source_page=page if isinstance(page, int) and page >= 1 else 1,
-            source_quote=(str(first.get("source_quote", "")).strip() or str(first.get("ketentuan", "")).strip() or "-")[:4000]))
-    return programs, issues
+            source_quote=(str(first.get("source_quote", "")).strip() or str(first.get("ketentuan", "")).strip() or "-")[:4000],
+            _lintas=lintas))
+    return split_per_gramasi(programs, items), issues
+
+
+def split_per_gramasi(programs, items):
+    """Program MIX (tanpa izin lintas gramasi) -> satu program per gramasi master.
+
+    Kelompoknya diberi akhiran gramasi ("SLEEK BABY - BN CLEANSER 70ML"), jadi jembatan dan
+    gerbang — yang mengunci ambang per (surat, kelompok) — menghitung 30 PCS per ukuran dengan
+    sendirinya. Tanpa master (`items` kosong) gramasinya tidak diketahui: program dibiarkan
+    utuh, dan ketentuannya tetap wajib menyebut gramasi (lihat compile_programs).
+    """
+    gramasi_of = {str(it.get("kode_barang", "")).strip(): " ".join(str(it.get("gramasi", "") or "").split()).upper()
+                  for it in (items or [])}
+    hasil = []
+    for program in programs:
+        lintas = program.pop("_lintas", False)
+        if not (program["mix"] and program["threshold"] == "quantity" and not lintas and gramasi_of):
+            hasil.append(program)
+            continue
+        per_gramasi = {}
+        for code in program["codes"]:
+            per_gramasi.setdefault(gramasi_of.get(code, ""), []).append(code)
+        if len(per_gramasi) == 1:
+            hasil.append(program)
+            continue
+        for gramasi, codes in per_gramasi.items():
+            akhiran = gramasi or "TANPA GRAMASI"
+            hasil.append({**program, "id": f"{program['id']}-{akhiran}"[:80], "codes": codes,
+                          "kelompok": f"{program['kelompok']} {akhiran}".strip()[:160],
+                          "tiers": [dict(tier) for tier in program["tiers"]]})
+    for index, program in enumerate(hasil):
+        program["priority"] = index + 1
+    return hasil
 
 def rupiah(value):
     """Rp dengan pemisah ribuan titik; dibulatkan ke rupiah utuh untuk pesan ke sales."""

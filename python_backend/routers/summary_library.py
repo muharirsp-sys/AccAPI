@@ -92,7 +92,7 @@ def programs_for(draft):
     pages = content["extraction"]["page_count"]
     if draft["status"] != "draft" and content.get("programs"):
         return validate_programs(content["programs"], codes, pages)
-    programs, issues = compile_programs(content.get("rows", []), content.get("period"))
+    programs, issues = compile_programs(content.get("rows", []), content.get("period"), content["master"].get("items", []))
     if issues:
         raise ValueError("Perbaiki baris draft sebelum aturan dapat disusun: " + "; ".join(issues[:8]))
     return validate_programs(programs, codes, pages)
@@ -107,7 +107,8 @@ def preview(draft):
     """Pratinjau aturan untuk ditinjau manusia; kegagalan dilaporkan, bukan disembunyikan."""
     if draft['status']!='draft' and draft['content'].get('programs'):
         return [p.model_dump(mode='json') for p in programs_for(draft)],[]
-    issues = compile_programs(draft["content"].get("rows", []), draft["content"].get("period"))[1]
+    issues = compile_programs(draft["content"].get("rows", []), draft["content"].get("period"),
+                              (draft["content"].get("master") or {}).get("items", []))[1]
     try:
         return [program.model_dump(mode="json") for program in programs_for(draft)], issues
     except (ValueError, KeyError, ValidationError) as error:

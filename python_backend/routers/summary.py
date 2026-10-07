@@ -502,6 +502,11 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             from collections import defaultdict
             groups = defaultdict(list)
             order = []
+            # Kelompok yang namanya PERSIS sama dengan induk ("ELLIPS" di samping "ELLIPS - H.VIT
+            # BALI") adalah kelompok master tersendiri. Dulu ia lenyap ditelan induknya — satu
+            # baris 7 Okt 2026 tercetak "ELLIPS - H.VIT BALI" saja padahal 8 dari 12 kodenya
+            # kelompok "ELLIPS" — jadi dicetak sendiri, utuh seperti di master.
+            bare = set()
             for k in unique_k:
                 if " - " in k:
                     # INDUKNYA SELURUH SEGMEN KECUALI YANG TERAKHIR, dan pemisahnya DIPERTAHANKAN.
@@ -515,7 +520,10 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
                     suffix = suffix.strip()
                 else:
                     prefix, suffix = k, ""
-                if prefix not in groups:
+                    bare.add(prefix)
+                # `groups` adalah defaultdict: induk tanpa ekor belum jadi kuncinya, jadi
+                # memeriksa `groups` mendaftarkan induk yang sama dua kali.
+                if prefix not in order:
                     order.append(prefix)
                 if suffix and suffix not in groups[prefix]:
                     groups[prefix].append(suffix)
@@ -523,9 +531,9 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             result_parts = []
             for prefix in order:
                 clean = groups[prefix]
-                if not clean:
+                if prefix in bare or not clean:
                     result_parts.append(prefix)
-                else:
+                if clean:
                     result_parts.append(f"{prefix} - {join_human(clean)}")
             return join_human(result_parts)
 

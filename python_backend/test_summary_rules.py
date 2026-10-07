@@ -291,6 +291,17 @@ def check_compiler():
     assert programs[0].mix is True and programs[0].stacking is False, programs[0]
     programs, _ = compiled([row(keterangan="Dapat digabung dengan promo lain")])
     assert programs[0].stacking is True, programs[0]
+    # 7 Okt 2026, semua principal: ketentuan mix yang diam soal gramasi DITOLAK, bukan ditebak.
+    programs, issues = compile_programs([row(ketentuan="Beli 10 mix variant", kode_barangs="A,B")])
+    assert programs == [] and "gramasi" in issues[0], issues
+    # Dengan master, mix gramasi-sama dipecah satu program per gramasi; lintas gramasi tidak.
+    master = [dict(kode_barang="A", gramasi="50ML"), dict(kode_barang="B", gramasi="50ML"), dict(kode_barang="C", gramasi="200ML")]
+    programs, issues = compile_programs([row(ketentuan="Beli 10 mix variant gramasi sama", kode_barangs="A,B,C", kelompok="K")], None, master)
+    assert issues == [] and [(p["kelompok"], p["codes"], p["priority"]) for p in programs] == [
+        ("K 50ML", ["A", "B"], 1), ("K 200ML", ["C"], 2)], programs
+    assert validate_programs(programs, MASTER, 1)[0].mix is True
+    programs, issues = compile_programs([row(ketentuan="Beli 10 mix variant beda gramasi", kode_barangs="A,B,C", kelompok="K")], None, master)
+    assert issues == [] and [(p["kelompok"], p["codes"]) for p in programs] == [("K", ["A", "B", "C"])], programs
     # "PO pertama" (listing BP2609008707) dari keterangan yang terlihat peninjau -> first_po. Baris
     # dengan dan tanpa syarat itu bukan satu program, meski barang dan manfaatnya sama.
     programs, _ = compiled([row(keterangan="Hanya PO pertama (listing) per outlet")])
