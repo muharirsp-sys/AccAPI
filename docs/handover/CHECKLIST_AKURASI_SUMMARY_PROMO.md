@@ -12,7 +12,7 @@ Side Effects: dokumen; tidak dieksekusi. Sinkronkan bila guard di kode berubah.
 > **Cara pakai:** untuk SETIAP surat program baru, jalankan pipeline lalu cek SEMUA baris di bawah
 > terhadap output nyata (Excel + PDF), bukan cuma "pipeline jalan tanpa error".
 > **Kebijakan update:** checklist ini hanya bertambah/berubah kalau user memberi revisi/koreksi baru.
-> Terakhir diperbarui: 2026-07-15.
+> Terakhir diperbarui: 2026-10-07.
 
 ---
 
@@ -51,6 +51,9 @@ Side Effects: dokumen; tidak dieksekusi. Sinkronkan bila guard di kode berubah.
 | **N. Padanan merek surat -> master dikerjakan ulang tiap surat** | Merek yang sama ditanyakan lagi bulan berikutnya (mis. "OVALE 2IN1 CLEANSER") | Alias hanya hidup di skrip/ingatan, tidak tersimpan | `principal_mapping` kind=**'brand'** (migrasi 0010) + tab "Merek surat" di `/principal-mapping` | Sheet `Tidak_Cocok` kosong; tiap alias yang dipakai tercatat di kolom CATATAN Detail |
 | **O. Gramasi dikarang dari surat** | Kolom Gramasi berisi ukuran yang tidak dijual, atau kosong | Surat menyebut merek, bukan ukuran | Gramasi diambil dari BARANG hasil match di master, diurutkan menaik ("50ML, 90ML & 200ML") | Tiap ukuran di kolom Gramasi ada pada minimal 1 baris Detail kelompok itu |
 | **P. "All Variant" menelan varian milik baris lain** | Satu surat menyebut DUA program dalam satu kelompok master — yang umum dan yang bervarian (mis. `RESIK V KHASIAT MANJAKANI` dan `RESIK V MANJAKANI WHITENING`, keduanya kelompok `RESIK V MANJAKANI`) — lalu baris yang umum ikut menarik varian milik baris satunya, sehingga varian itu dapat bonus dua kali | Pemilih Varian di grid hanya menawarkan `ALL VARIANT` dan varian yang BERNAMA; barang bervarian kosong tidak bisa dipilih sendiri, jadi "non-whitening" tak bisa dinyatakan lewat layar. `_apply_native_kelompok` pun memperlakukan `ALL VARIANT` sebagai SELURUH kelompok | BELUM ADA. Untuk sekarang `kode_barangs` baris yang umum diisi tangan (resolver memakainya apa adanya bila terisi) | Keputusan pengguna 2026-09-16: **`ALL VARIANT` = semua varian KECUALI yang sudah diklaim baris lain pada kelompok yang sama di surat yang sama.** Jumlahkan barang tiap baris se-kelompok — tidak boleh ada kode yang muncul di dua baris |
+| **Q. Satu frasa surat jadi dua baris ("varian dobel")** | Surat menyebut SATU produk ("ELLIPS HAIR VITAMIN BLISTER", "B&B ALL VARIANT") tetapi Summary mencetak dua baris berketentuan dan berbenefit sama persis, karena frasa itu mencakup dua kelompok master (`ELLIPS` + `ELLIPS - H.VIT BALI`; `B&B - HAIR BODY WASH` + `B&B - HAIR BODY WASH - ALL IN`) | `match_groups` membuat satu baris per kelompok master; konsolidasi renderer tidak melebur baris yang kedalaman nama kelompoknya berbeda | `kino_letter.match_groups`: satu frasa = satu baris, kelompok digabung " & ", kode disatukan, dipecah hanya per merek (awalan sebelum " - ", sama dengan `_apply_native_kelompok`); `format_kelompoks_human_readable` mencetak induk tanpa ekor sebagai kelompoknya sendiri | Keputusan pengguna 2026-10-07: **yang membedakan baris adalah KETENTUAN dan BENEFIT; beda kelompok di surat baru beda baris.** Tidak boleh ada dua baris se-surat dengan ketentuan+benefit identik; sel Kelompok memuat semua kelompok master yang tercakup |
+| **R. "MIX VARIANT" dihitung lintas gramasi** | Ambang "30 PCS ... MIX VARIANT" terpenuhi dari 10 pcs 70ML + 20 pcs 900ML, lalu bonus keluar; teks ketentuan juga tidak menyebut gramasi | `mix` = seluruh kode kelompok dicampur di evaluator (`summary_rules.calculate`) dan gerbang mengunci ambang per (surat, kelompok) tanpa gramasi | Berlaku SEMUA principal: `summary_rules.LINTAS_GRAMASI`/`GRAMASI_SAMA`; `compile_programs(rows, period, items)` memecah program mix jadi satu program per gramasi (kelompok berakhiran gramasi) sehingga gerbang menghitung per ukuran; ketentuan mix yang diam soal gramasi DITOLAK saat disusun; parser Kino menulis "MIX VARIANT, GRAMASI SAMA" | Keputusan pengguna 2026-10-07: **mix variant = campur varian DALAM GRAMASI YANG SAMA**, kecuali surat menyebut beda gramasi. Tiap baris mix: ketentuan menyebut "gramasi sama" atau "beda gramasi"; aturan terbit per gramasi; faktur campur ukuran tidak berbonus |
+| **S. Rentang minimal belanja hanya batas bawah** | Surat "1JT – 1.99 JT … 10JT UP" tercetak "Minimal belanja Rp 1.000.000" saja; batas atas tiap strata hilang | Regex `JUTA` sengaja menelan angka kedua | `kino_letter.JUTA` menangkap maksimum dan "UP": "Minimal belanja Rp 1.000.000 s/d Rp 1.990.000", strata teratas "… Rp 10.000.000 UP"; pembaca ambang tetap memakai angka pertama | Keputusan pengguna 2026-10-07: rentang tiap strata dicetak seperti bunyi surat (semua principal). Tiap strata bernilai di PDF menyebut batas atasnya bila surat menyebutnya; tier yang dipilih mesin tidak berubah |
 | **K. Cut price (MTI) salah** | MTI balas `[]` / cut price tak jadi DISC_RP | prompt tanpa contoh konkret Cut Price ("aturan 4b") | contoh Cut Price di prompt parse (jangan dihapus); MTI trigger "Beli 1", benefit DISC_RP | MTI ada isinya; benefit_type = DISC_RP, trigger Beli 1 |
 
 ---
@@ -111,3 +114,11 @@ Side Effects: dokumen; tidak dieksekusi. Sinkronkan bila guard di kode berubah.
   (1) varian master yang dipilih kini dicocokkan persis, karena dulu "GEL ENCHANTING" ikut menarik
   "ENCHANTING WHITE"; (2) kemasan baris kini mengikat saat Form dibuat, karena dulu Excel ELLIPS BLR memuat
   kode JAR padahal `promo_rule` tidak. Cek baru: **kode di Dataset Excel = kode di aturan promo, per surat**.
+
+- **2026-10-07** — revisi pengguna atas Summary Kino Oktober 2026 (Form_Summary_Program (14).pdf), berlaku
+  SEMUA principal sebagai acuan: tambah baris **Q** (satu frasa surat = satu baris; yang membedakan baris
+  adalah ketentuan + benefit, beda kelompok di surat baru beda baris — `ELLIPS` dan `ELLIPS - H.VIT BALI`
+  satu baris), **R** ("MIX VARIANT" = campur varian dalam GRAMASI YANG SAMA kecuali surat menyebut beda
+  gramasi; aturan terbit dipecah per gramasi, ketentuan mix tanpa sebutan gramasi ditolak saat disusun),
+  dan **S** (rentang minimal belanja dicetak dengan batas atasnya seperti bunyi surat: "Rp 1.000.000 s/d
+  Rp 1.990.000", teratas "Rp 10.000.000 UP").
