@@ -41,18 +41,25 @@ export default function ChatWidget() {
     if (open) inputRef.current?.focus();
   }, [open]);
 
+  // Tanpa tombol mengambang, fokus dikembalikan ke pemicu (avatar menu profil) saat chat ditutup.
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const close = useCallback(() => { setOpen(false); returnFocus.current?.focus(); }, []);
+
   useEffect(() => {
-    const show = () => setOpen(true);
+    const show = (event: Event) => {
+      returnFocus.current = (event as CustomEvent<{ returnFocus?: HTMLElement | null }>).detail?.returnFocus ?? null;
+      setOpen(true);
+    };
     window.addEventListener(OPEN_HELP_EVENT, show);
     return () => window.removeEventListener(OPEN_HELP_EVENT, show);
   }, []);
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, close]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -115,7 +122,7 @@ export default function ChatWidget() {
             <Bot size={18} className="text-[var(--luxury-soft)]" />
             <span className="text-sm font-semibold text-[var(--luxury-text)]">AI Assistant</span>
             <span className="ml-auto text-[10px] text-[var(--luxury-subtle)]">Rule-Based</span>
-            <button type="button" onClick={() => setOpen(false)} aria-label="Tutup chat" className="rounded-md p-1 text-[var(--luxury-muted)] hover:bg-[var(--surface)]">
+            <button type="button" onClick={close} aria-label="Tutup chat" className="rounded-md p-1 text-[var(--luxury-muted)] hover:bg-[var(--surface)]">
               <X size={16} />
             </button>
           </div>

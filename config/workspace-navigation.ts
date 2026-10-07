@@ -14,10 +14,10 @@ export type WorkspaceGroup = { id: string; name: string; description: string; ic
 export const HOME_ITEM: WorkspaceItem = { name: "Beranda", href: "/", icon: Home };
 export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
     { id: "sales", name: "Penjualan", description: "Telusuri faktur dan riwayat transaksi pelanggan.", icon: TrendingUp, items: [
-        { name: "Order Masuk", href: "/orders", icon: ClipboardList },
+        { name: "Order Masuk", href: "/orders", icon: ClipboardList, short: "Masuk" },
         { name: "Order Principal", href: "/principal-order", icon: FileSpreadsheet },
         // Halaman sales di lapangan; hanya tampil untuk akun berizin `websales.create`.
-        { name: "Order Sales", href: "/sales", icon: Smartphone },
+        { name: "Order Sales", href: "/sales", icon: Smartphone, short: "Sales" },
         { name: "Faktur Penjualan", href: "/faktur", icon: ReceiptText },
         { name: "Antrean Faktur", href: "/antrean-faktur", icon: Send },
         { name: "History Penjualan", href: "/sales-history", icon: History },
@@ -46,7 +46,7 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
     ] },
     { id: "settings", name: "Pengaturan", description: "Atur integrasi Accurate, master data, dan akses.", icon: Settings2, items: [
         { name: "AOL Form Engine", href: "/api-wrapper", icon: Settings2, short: "AOL" },
-        { name: "Master Barang", href: "/master-barang", icon: PackageSearch },
+        { name: "Master Barang", href: "/master-barang", icon: PackageSearch, short: "Barang" },
         { name: "Master Principle", href: "/principles", icon: Database, short: "Master" },
         { name: "Mapping Principal", href: "/principal-mapping", icon: Database },
         { name: "User & RBAC", href: "/admin/users", icon: Shield },

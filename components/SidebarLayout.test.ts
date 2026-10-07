@@ -66,3 +66,7 @@ test("bottom-nav shortcuts follow the role guessed from permissions and never le
     assert.equal(roleProfile(new Set(["dashboard.view"])), undefined);
     assert.deepEqual(roleShortcuts(new Set(), []), []);
 });
+test("bottom-nav labels are unique across the whole catalog", () => {
+    const labels = [HOME_ITEM, ...WORKSPACE_GROUPS.flatMap(group => group.items)].map(item => item.short ?? item.name.split(" ")[0]);
+    assert.deepEqual(labels.filter((label, index) => labels.indexOf(label) !== index), []);
+});

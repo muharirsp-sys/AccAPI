@@ -56,6 +56,8 @@ test("profile menu switches the Fiori mode and opens Bantuan", async ({ page }) 
     await expect(chat).toBeVisible();
     await chat.getByRole("button", { name: "Tutup chat" }).click();
     await expect(chat).toBeHidden();
+    // Tanpa tombol chat mengambang, fokus kembali ke pemicu menu profil.
+    await expect(page.getByRole("button", { name: /^Menu profil/ })).toBeFocused();
 });
 
 test("mobile: drawer, role bottom navigation, and chat stay usable", async ({ page }) => {
@@ -116,5 +118,8 @@ test("desktop reference capture", async ({ page }) => {
     await page.setViewportSize({ width: 1536, height: 1024 });
     await page.goto("/");
     await expect(page.getByRole("navigation", { name: "Menu ruang kerja", exact: true })).toBeVisible();
+    // Beranda lama (sampai S1b) tetap bergaya: variabel --ws-* tersedia di area konten shell baru.
+    await expect(page.getByRole("heading", { name: "Selamat bekerja." })).toHaveCSS("color", "rgb(24, 45, 41)");
+    await expect(page.locator(".workspace-directory-group").first()).toHaveCSS("border-bottom-style", "solid");
     await page.screenshot({ path: "test-results/fiori-shell-desktop.png" });
 });

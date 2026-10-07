@@ -33,6 +33,10 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
     const active = activeNavigationItem(pathname, [...home, ...items]);
     const roleLabel = roleProfile(keys)?.label ?? "CV. Surya Perkasa";
     const [drawerOpen, setDrawerOpen] = useState(false);
+    // Tutup drawer pada setiap pindah rute (klik tautan, Back, router.push) — disesuaikan saat render, bukan di effect.
+    const [drawerPath, setDrawerPath] = useState(pathname);
+    if (drawerPath !== pathname) { setDrawerPath(pathname); setDrawerOpen(false); }
+    const avatarRef = useRef<HTMLButtonElement>(null);
     const drawerTitle = useId();
     const initials = userName.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase();
 
@@ -62,7 +66,7 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
                 <button type="button" className="fi-btn fi-btn--icon fi-shell-searchbtn" popoverTarget="fi-menu-search" aria-label="Cari menu">
                     <Search className="fi-icon" aria-hidden />
                 </button>
-                <button type="button" className="fi-btn fi-btn--icon fi-btn--avatar" popoverTarget="fi-menu-profile" aria-label={`Menu profil ${userName}`}>
+                <button ref={avatarRef} type="button" className="fi-btn fi-btn--icon fi-btn--avatar" popoverTarget="fi-menu-profile" aria-label={`Menu profil ${userName}`}>
                     <span className="fi-avatar" aria-hidden>{initials}</span>
                 </button>
             </div>
@@ -72,7 +76,7 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
                 <hr />
                 <div className="fi-menu-row"><SchemeSwitcher /></div>
                 <hr />
-                <button type="button" className="fi-menu-item" popoverTarget="fi-menu-profile" popoverTargetAction="hide" onClick={() => window.dispatchEvent(new Event(OPEN_HELP_EVENT))}>
+                <button type="button" className="fi-menu-item" popoverTarget="fi-menu-profile" popoverTargetAction="hide" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_HELP_EVENT, { detail: { returnFocus: avatarRef.current } }))}>
                     <LifeBuoy className="fi-icon" aria-hidden /><b>Bantuan</b><small>Asisten dan panduan</small>
                 </button>
                 <button type="button" className="fi-menu-item" onClick={async () => { await authClient.signOut().catch(() => undefined); window.location.href = "/login"; }}>
@@ -137,7 +141,8 @@ function MenuSearch({ id, groups, home }: { id: string; groups: WorkspaceGroup[]
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
             // OPC punya quick jump sendiri (Ctrl K) dan memanggil preventDefault; shell mengalah di sana.
-            if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "k" && !event.defaultPrevented) {
+            // Selama dialog modal terbuka, shell bar inert: popover akan tampil tapi tak bisa dipakai.
+            if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "k" && !event.defaultPrevented && !document.querySelector("dialog:modal")) {
                 event.preventDefault();
                 ref.current?.showPopover();
             }
@@ -150,7 +155,7 @@ function MenuSearch({ id, groups, home }: { id: string; groups: WorkspaceGroup[]
     return <div id={id} ref={ref} popover="auto" role="dialog" aria-label="Cari menu" className="fi-menu fi-menu--search"
         onToggle={(event) => { if ((event.nativeEvent as ToggleEvent).newState === "open") inputRef.current?.focus(); else setQuery(""); }}>
         <div className="fi-menu-q">
-            <input ref={inputRef} className="fi-input" type="search" aria-label="Cari menu" aria-controls={`${id}-list`} placeholder="Ketik nama menu" value={query}
+            <input ref={inputRef} className="fi-input" type="search" aria-label="Cari menu" aria-controls={hits.length ? `${id}-list` : undefined} placeholder="Ketik nama menu" value={query}
                 onChange={event => setQuery(event.target.value)}
                 onKeyDown={event => {
                     if (event.key === "Enter" && hits[0]) { event.preventDefault(); close(); router.push(hits[0].item.href); }
@@ -159,7 +164,13 @@ function MenuSearch({ id, groups, home }: { id: string; groups: WorkspaceGroup[]
         </div>
         <h2>Menu</h2>
         {hits.length ? (
-            <ul id={`${id}-list`} ref={listRef}>
+            <ul id={`${id}-list`} ref={listRef} onKeyDown={event => {
+                if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+                event.preventDefault();
+                const links = [...(listRef.current?.querySelectorAll("a") ?? [])];
+                const next = links.indexOf(document.activeElement as HTMLAnchorElement) + (event.key === "ArrowDown" ? 1 : -1);
+                if (next < 0) inputRef.current?.focus(); else links[Math.min(next, links.length - 1)]?.focus();
+            }}>
                 {hits.map(({ item, group }) => {
                     const Icon = item.icon;
                     return <li key={item.href}><Link href={item.href} prefetch={false} className="fi-menu-item" onClick={close}><Icon className="fi-icon" aria-hidden /><b>{item.name}</b><small>{group}</small></Link></li>;
