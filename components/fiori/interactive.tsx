@@ -202,16 +202,19 @@ const DENSITIES = [["auto", "Otomatis"], ["compact", "Compact"], ["cozy", "Cozy"
 export function SchemeSwitcher() {
     const scheme = useHtmlAttr("data-scheme", "system");
     const density = useHtmlAttr("data-density", "auto");
+    const id = useId();
     return (
-        <div className="fi-btnrow">
-            <div className="fi-segs" role="group" aria-label="Mode">
+        <div className="fi-scheme">
+            <span id={`${id}-mode`} className="fi-caption">Mode</span>
+            <div className="fi-segs" role="group" aria-labelledby={`${id}-mode`}>
                 {SCHEMES.map(([value, label, Icon]) => (
                     <button key={value} type="button" aria-pressed={scheme === value} onClick={() => savePref("data-scheme", FIORI_SCHEME_KEY, value, "system")}>
                         <Icon className="fi-icon" aria-hidden />{label}
                     </button>
                 ))}
             </div>
-            <div className="fi-segs" role="group" aria-label="Density">
+            <span id={`${id}-density`} className="fi-caption">Density</span>
+            <div className="fi-segs" role="group" aria-labelledby={`${id}-density`}>
                 {DENSITIES.map(([value, label]) => (
                     <button key={value} type="button" aria-pressed={density === value} onClick={() => savePref("data-density", FIORI_DENSITY_KEY, value, "auto")}>{label}</button>
                 ))}

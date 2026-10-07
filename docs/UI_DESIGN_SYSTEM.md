@@ -10,12 +10,13 @@ Contoh hidup: `/dev/ui-kit` (hanya `npm run dev`; 404 di build produksi). Baseli
 
 | Slice | Isi | Status |
 |---|---|---|
-| S0 | Token, font, mode/density, komponen inti, halaman kit, dokumen ini | selesai di cabang `feat/fiori-s0-fondasi` |
-| S1 | Shell bar, navigasi dari izin, Beranda per peran; `ShellBar`, `SideNav` + navigasi bawah ponsel; pengalih tema lama diganti `SchemeSwitcher` | belum |
+| S0 | Token, font, mode/density, komponen inti, halaman kit, dokumen ini | di `feat/fiori` (PR #116) |
+| S1a | Shell: shell bar (logo resmi, cari menu Ctrl K, menu profil berisi Mode/Density, Bantuan, Keluar), navigasi samping dari izin, drawer + navigasi bawah ponsel per peran; tema lama pensiun | cabang `feat/fiori-s1-shell` |
+| S1b | Beranda per peran (tile tugas dari endpoint yang ada) | belum |
 | S2–S7 | Per layar (urutan di paket Tahap 4) | belum |
 
-Halaman yang belum dimigrasi tetap memakai tema lama (`html[data-theme]`, remap kelas Tailwind di `app/globals.css` dan
-`app/workspace.css`). Jangan mencampur: halaman lama tidak memakai kelas `fi-*`; halaman Fiori tidak memakai kelas warna
+Halaman yang belum dimigrasi tetap memakai remap tema Surya (`html[data-theme="surya"]` statis di root layout; kelas Tailwind lama
+di `app/globals.css` dan `app/workspace.css`). Sejak S1 shell sudah Fiori; isi halaman lama di `<main>` tidak dibungkus `.fiori`. Jangan mencampur: halaman lama tidak memakai kelas `fi-*`; halaman Fiori tidak memakai kelas warna
 Tailwind lama (`text-slate-*`, `bg-white/10`, `bg-[#…]`) yang diremap tema lama.
 
 ## Cara memigrasikan satu halaman
@@ -55,9 +56,10 @@ Breakpoint: S < 600 · M 600–1023 · L 1024–1439 · XL ≥ 1440. Tabel memak
 - Disimpan di localStorage `fiori-scheme` / `fiori-density`; diterapkan sebelum paint oleh skrip di `app/layout.tsx`
   (`components/fiori/scheme.ts`).
 - Atributnya `data-scheme`, bukan `data-theme`, supaya tidak bentrok dengan pilihan tema lama selama migrasi.
-- Tema Neon, Office Calm, dan iOS pensiun (keputusan owner 6 Okt 2026); pilihannya dicabut saat shell dimigrasi (S1).
-  Sampai itu, halaman Fiori diuji dengan tema lama bawaan (Surya); di Neon/iOS beberapa aturan elemen lama (judul miring,
-  warna input) masih bisa bocor ke `.fiori`.
+- Tema Neon, Office Calm, dan iOS pensiun (keputusan owner 6 Okt 2026): pengalih tema lama dihapus di S1, `data-theme`
+  selalu `surya`. CSS ketiga tema itu kini mati dan dihapus bertahap.
+- Pengalih Mode/Density ada di menu profil shell (`SchemeSwitcher`). Mode hanya mengubah bagian Fiori (shell dan halaman yang
+  sudah dimigrasi); isi halaman lama tetap terang.
 - Logo resmi CV. Surya Perkasa tetap (`public/brand/surya-perkasa-logo-horizontal.png`). Warna PWA: `#004c97`.
 
 ## Komponen
@@ -81,8 +83,15 @@ Breakpoint: S < 600 · M 600–1023 · L 1024–1439 · XL ≥ 1440. Tabel memak
 | `EmptyState`, `ErrorState`, `Skeleton` | core | tiga keadaan yang selalu berbeda |
 | `useUnsavedGuard` | interactive | peringatan peramban saat meninggalkan halaman dengan draf |
 
-Belum dibangun (dibangun di slice yang memakainya): `ShellBar`, `SideNav` + navigasi bawah ponsel (S1), `ValueHelp`
-(form pertama yang merujuk data master), menciutnya header Object Page.
+Shell (`components/SidebarLayout.tsx`, S1a): shell bar dengan logo resmi (lockup; tanda SP di ponsel; versi putih di mode gelap
+lewat token `--logo-full`/`--logo-mark`), cari menu (Ctrl K; OPC tetap memakai quick jump sendiri), menu profil (Mode, Density,
+Bantuan = chat asisten, Keluar), navigasi samping berkelompok dari izin, drawer ponsel, navigasi bawah = Beranda + 3 pintasan
+profil peran (`ROLE_PROFILES` di `config/workspace-navigation.ts`, ditebak dari izin sampai grup utama BL-37 ada) + Menu.
+Belum: pencarian nomor dokumen lintas modul (BL-38) dan lonceng Kotak Tugas (BL-34) — menunggu logic di tracker AM.
+Favorit menu dan sidebar ciut (rail) dari shell lama tidak ada di desain yang disetujui dan dihapus.
+
+Belum dibangun (dibangun di slice yang memakainya): `ValueHelp` (form pertama yang merujuk data master), menciutnya header
+Object Page.
 
 ## Enam keadaan per layar
 

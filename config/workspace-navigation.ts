@@ -1,14 +1,15 @@
 /*
  * Tujuan: Katalog navigasi berkelompok yang sama untuk sidebar dan Beranda.
- * Caller: WorkspaceNavigation, DashboardLanding, pengujian navigasi.
+ * Caller: SidebarLayout (shell Fiori), DashboardLanding, pengujian navigasi.
  * Dependensi: lucide-react; caller menyaring href menggunakan RBAC.
- * Main Functions: WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions.
+ * Main Functions: WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, roleProfile, roleShortcuts.
  * Side Effects: Tidak ada; tidak mengubah hak akses.
  */
 import {
     FileSpreadsheet, Home, TrendingUp, Tags, PackageCheck, Wallet, Users, Settings2, ReceiptText, History, CalendarCheck2, Percent, ClipboardCheck, DollarSign, FileText, GitCompareArrows, ClipboardList, Trophy, Send, Database, Shield, ShieldCheck, Smartphone, PackageSearch, type LucideIcon } from "lucide-react";
 
-export type WorkspaceItem = { name: string; href: string; icon: LucideIcon };
+/** `short` = label navigasi bawah ponsel (≤ 10 huruf); bawaan kata pertama `name`. */
+export type WorkspaceItem = { name: string; href: string; icon: LucideIcon; short?: string };
 export type WorkspaceGroup = { id: string; name: string; description: string; icon: LucideIcon; items: WorkspaceItem[] };
 export const HOME_ITEM: WorkspaceItem = { name: "Beranda", href: "/", icon: Home };
 export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
@@ -23,8 +24,8 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
     ] },
     { id: "promo", name: "Promo & Klaim", description: "Susun program, periksa diskon, dan kelola klaim.", icon: Tags, items: [
         { name: "Summary Promo", href: "/summary", icon: CalendarCheck2 },
-        { name: "OFF Program Control", href: "/off-program-control", icon: ClipboardCheck },
-        { name: "Claim Workflow", href: "/claim-workflow", icon: ReceiptText },
+        { name: "OFF Program Control", href: "/off-program-control", icon: ClipboardCheck, short: "OPC" },
+        { name: "Claim Workflow", href: "/claim-workflow", icon: ReceiptText, short: "Klaim" },
         { name: "Aturan Promo", href: "/aturan-promo", icon: Percent },
         { name: "Rekap Promo", href: "/rekap-promo", icon: Percent },
         { name: "Normalisasi Diskon", href: "/normalisasi-diskon", icon: Percent },
@@ -34,27 +35,49 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
     ] },
     { id: "finance", name: "Keuangan", description: "Kelola pembayaran, perjalanan, dan rekonsiliasi.", icon: Wallet, items: [
         { name: "Finance", href: "/finance", icon: DollarSign },
-        { name: "Pembayaran / SPPD", href: "/payments", icon: Wallet },
+        { name: "Pembayaran / SPPD", href: "/payments", icon: Wallet, short: "Pembayaran" },
         { name: "Format SPPD", href: "/payments/sppd", icon: FileText },
         { name: "Rekonsiliasi", href: "/reconciliation", icon: GitCompareArrows },
     ] },
     { id: "operations", name: "Operasional Sales", description: "Pantau aktivitas tim, insentif, dan laporan harian.", icon: Users, items: [
-        { name: "Form Kontrol", href: "/form-kontrol", icon: ClipboardList },
+        { name: "Form Kontrol", href: "/form-kontrol", icon: ClipboardList, short: "Kontrol" },
         { name: "Insentif Sales", href: "/insentif-sales", icon: Trophy },
         { name: "Laporan Harian", href: "/laporan-harian", icon: Send },
     ] },
     { id: "settings", name: "Pengaturan", description: "Atur integrasi Accurate, master data, dan akses.", icon: Settings2, items: [
-        { name: "AOL Form Engine", href: "/api-wrapper", icon: Settings2 },
+        { name: "AOL Form Engine", href: "/api-wrapper", icon: Settings2, short: "AOL" },
         { name: "Master Barang", href: "/master-barang", icon: PackageSearch },
-        { name: "Master Principle", href: "/principles", icon: Database },
+        { name: "Master Principle", href: "/principles", icon: Database, short: "Master" },
         { name: "Mapping Principal", href: "/principal-mapping", icon: Database },
         { name: "User & RBAC", href: "/admin/users", icon: Shield },
-        { name: "Kelola Akses Group", href: "/admin/groups", icon: ShieldCheck },
+        { name: "Kelola Akses Group", href: "/admin/groups", icon: ShieldCheck, short: "Akses" },
     ] },
 ];
 
 export function navigationForPermissions(canAccess: (href: string) => boolean): WorkspaceGroup[] {
     return WORKSPACE_GROUPS.map(group => ({ ...group, items: group.items.filter(item => canAccess(item.href)) })).filter(group => group.items.length > 0);
+}
+
+// ponytail: grup utama per user (BL-37) belum ada; profil ditebak dari izin, profil pertama yang cocok menang.
+// Ganti dengan grup utama saat BL-37 masuk lewat tracker AM.
+export const ROLE_PROFILES: Array<{ id: string; label: string; when: string; shortcuts: string[] }> = [
+    { id: "admin", label: "Admin", when: "users.manage", shortcuts: ["/admin/groups", "/api-wrapper", "/principles"] },
+    { id: "finance", label: "Finance", when: "finance.transfer", shortcuts: ["/finance", "/payments", "/off-program-control"] },
+    { id: "salesman", label: "Salesman", when: "websales.create", shortcuts: ["/form-kontrol", "/sales", "/insentif-sales"] },
+    { id: "sm", label: "Sales Manager", when: "off_program_control.approve", shortcuts: ["/off-program-control", "/form-kontrol", "/insentif-sales"] },
+    { id: "claim", label: "Claim", when: "claim_workflow.create", shortcuts: ["/off-program-control", "/claim-workflow", "/rekap-promo"] },
+    { id: "fakturist", label: "Fakturist", when: "order.create", shortcuts: ["/principal-order", "/antrean-faktur", "/faktur"] },
+    { id: "gudang", label: "Admin Gudang", when: "rekapan_nota.manage", shortcuts: ["/rekapan-nota"] },
+];
+
+export function roleProfile(permKeys: ReadonlySet<string>) {
+    return ROLE_PROFILES.find(profile => permKeys.has(profile.when));
+}
+
+/** Tiga pintasan peran yang boleh dibuka; kurang dari tiga diisi item lain sesuai urutan katalog. */
+export function roleShortcuts(permKeys: ReadonlySet<string>, allowed: WorkspaceItem[]): WorkspaceItem[] {
+    const preferred = (roleProfile(permKeys)?.shortcuts ?? []).map(href => allowed.find(item => item.href === href)).filter((item): item is WorkspaceItem => Boolean(item));
+    return [...preferred, ...allowed.filter(item => !preferred.includes(item))].slice(0, 3);
 }
 
 export function activeNavigationItem(pathname: string, items: WorkspaceItem[]): WorkspaceItem | undefined {

@@ -1,41 +1,19 @@
 /*
- * Tujuan: Root layout Next.js untuk font, tema Surya/alternatif, dan toaster aplikasi.
+ * Tujuan: Root layout Next.js untuk font, tema Surya (isi lama) + token Fiori, dan toaster aplikasi.
  * Caller: Next.js App Router root.
- * Dependensi: next/font, sonner, ThemeSwitcher, fiori/scheme, globals.css, workspace.css dan fiori.css.
+ * Dependensi: next/font, sonner, fiori/scheme, globals.css, workspace.css dan fiori.css.
  * Main Functions: RootLayout, metadata, ambient background layer, suppress theme hydration warning.
- * Side Effects: Inject script tema lama + mode/density Fiori dari localStorage sebelum paint dan render toaster global.
+ * Side Effects: Inject script mode/density Fiori dari localStorage sebelum paint dan render toaster global.
  */
 import type { Metadata, Viewport } from "next";
-import { Geist, Exo_2, Rajdhani, Share_Tech_Mono } from "next/font/google";
+import { Geist } from "next/font/google";
 import { Toaster } from "sonner";
-import { applyStoredThemeScript } from "@/components/ThemeSwitcher";
 import { applyStoredSchemeScript } from "@/components/fiori/scheme";
 import "./globals.css";
 import "./workspace.css";
 import "./fiori.css";
 
 const geist = Geist({ variable: "--font-workspace", subsets: ["latin"], display: "swap" });
-
-// Font khusus tema "neon" (data-theme="neon"); tidak dipakai tema warm.
-// Font sans/mono dasar memakai fallback CSS variable di globals.css (:root).
-const exo2 = Exo_2({
-  variable: "--font-exo2",
-  subsets: ["latin"],
-  weight: ["600", "800"],
-  style: ["normal", "italic"],
-});
-
-const rajdhani = Rajdhani({
-  variable: "--font-rajdhani",
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
-});
-
-const shareTechMono = Share_Tech_Mono({
-  variable: "--font-tech-mono",
-  subsets: ["latin"],
-  weight: "400",
-});
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -71,13 +49,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="id-ID" suppressHydrationWarning>
+    // Tema lama Office Calm, Neon, dan iOS pensiun (keputusan owner 6 Okt 2026): isi halaman yang belum dimigrasi
+    // selalu memakai remap Surya; mode terang/gelap Fiori lewat data-scheme.
+    <html lang="id-ID" data-theme="surya" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: applyStoredThemeScript }} />
         <script dangerouslySetInnerHTML={{ __html: applyStoredSchemeScript }} />
       </head>
       <body
-        className={`${geist.variable} ${exo2.variable} ${rajdhani.variable} ${shareTechMono.variable} antialiased bg-[#0f1015] text-slate-200 min-h-screen selection:bg-indigo-500/30 selection:text-indigo-200 overflow-x-hidden`}
+        className={`${geist.variable} antialiased bg-[#0f1015] text-slate-200 min-h-screen selection:bg-indigo-500/30 selection:text-indigo-200 overflow-x-hidden`}
       >
         <div className="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_70%_60%_at_50%_-15%,rgba(242,210,138,0.34),rgba(255,255,255,0))]"></div>
         <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_760px_at_100%_180px,rgba(199,154,63,0.18),transparent)]"></div>

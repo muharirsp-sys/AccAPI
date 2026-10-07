@@ -320,3 +320,78 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-segs button { font:600 .8125rem/1 var(--font-sans); color:var(--ink-muted); background:transparent; border:0; border-radius:var(--r-sm); padding:0 10px; height:28px; min-height:0; min-width:0; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:background var(--dur-fast) var(--ease-standard), color var(--dur-fast); }
 .fi-segs button[aria-pressed="true"] { background:var(--brand-tint-strong); color:var(--brand); }
 @media (pointer: coarse) { .fi-segs button { height:40px; } }
+.fi-scheme { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 12px; align-items:center; justify-items:start; }
+
+/* ===== Shell: shell bar, navigasi samping, navigasi bawah ponsel, menu ===== */
+/* ponytail: .fiori dipasang per bagian shell (bar, nav), bukan di seluruh shell — isi halaman yang belum
+   dimigrasi tetap bergaya lama sampai halamannya sendiri dibungkus FioriScope. */
+.fiori { --logo-full:url("/brand/logo_SP_lockup.png"); --logo-mark:url("/brand/logo_SP_mark.png"); }
+@media (prefers-color-scheme: dark) { html:not([data-scheme="light"]) .fiori { --logo-full:url("/brand/logo_SP_lockup_white.png"); --logo-mark:url("/brand/logo_SP_mark_white.png"); } }
+html[data-scheme="dark"] .fiori { --logo-full:url("/brand/logo_SP_lockup_white.png"); --logo-mark:url("/brand/logo_SP_mark_white.png"); }
+.fi-shell { display:grid; grid-template-columns:236px minmax(0,1fr); grid-template-rows:auto minmax(0,1fr) auto; height:100dvh; overflow:hidden; }
+.fi-shellbar { grid-column:1 / -1; height:var(--shell-h); background:var(--surface); border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; padding:0 12px; position:relative; z-index:var(--z-header); }
+.fi-logo { display:block; flex:0 0 auto; width:146px; height:26px; background:var(--logo-full) left center / contain no-repeat; }
+.fi-apptitle { font:650 .9375rem/1 var(--font-sans); color:var(--ink); padding-left:12px; border-left:1px solid var(--line-strong); white-space:nowrap; }
+.fi-shell-search { margin-left:auto; flex:0 1 380px; display:flex; align-items:center; gap:8px; height:var(--ctl-h); min-height:0; min-width:0; padding:0 8px 0 11px; border:1px solid transparent; border-radius:var(--r-pill); background:var(--surface-2); color:var(--ink-subtle); font:var(--fs-body); cursor:text; text-align:left; }
+.fi-shell-search:hover { border-color:var(--line-strong); }
+.fi-shell-search > span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fi-kbd { font:500 .6875rem/1 var(--font-mono); color:var(--ink-subtle); border:1px solid var(--line-strong); border-radius:4px; padding:2px 5px; }
+.fi-shell-acts { display:flex; align-items:center; gap:4px; }
+.fi-shell-searchbtn, .fi-shell-menubtn { display:none; }
+.fi-avatar { width:30px; height:30px; border-radius:50%; background:var(--brand-tint-strong); color:var(--brand); display:grid; place-items:center; font:700 .75rem/1 var(--font-sans); flex:0 0 auto; }
+.fi-btn--avatar { width:auto; padding:0 2px; }
+.fi-sidenav { background:var(--surface); border-right:1px solid var(--line); overflow:auto; padding:12px 10px; display:flex; flex-direction:column; gap:2px; min-height:0; }
+.fi-sidenav-grp { font:var(--fs-caption); color:var(--ink-subtle); text-transform:uppercase; letter-spacing:.08em; padding:12px 10px 4px; }
+.fi-sidenav a { display:flex; align-items:center; gap:10px; padding:0 10px; min-height:var(--ctl-h); border-radius:var(--r-md); color:var(--ink); text-decoration:none; font:500 .8125rem/1.2 var(--font-sans); }
+.fi-sidenav a:hover { background:var(--surface-2); }
+.fi-sidenav a[aria-current="page"] { background:var(--brand-tint); color:var(--brand); font-weight:650; }
+.fi-sidenav-foot { margin-top:auto; border-top:1px solid var(--line); padding:10px 8px 2px; font:var(--fs-small); color:var(--ink-subtle); }
+.fi-sidenav-foot b { display:block; color:var(--ink); font-weight:600; }
+.fi-shell-main { overflow:auto; min-width:0; min-height:0; position:relative; padding:28px 32px 40px; }
+/* Halaman yang sudah dimigrasi mengisi seluruh area konten (latar ikut mode) dan mengatur jaraknya sendiri. */
+.fi-shell-main:has(> .fiori) { padding:0; }
+.fi-shell-main > .fiori { min-height:100%; }
+.fi-skip { position:fixed; top:10px; left:10px; z-index:var(--z-toast); transform:translateY(-160%); padding:10px 16px; border-radius:var(--r-md); background:var(--surface); color:var(--brand); border:2px solid var(--brand); font:600 .875rem/1 var(--font-sans); }
+.fi-skip:focus { transform:none; }
+.fi-bnav { display:none; grid-column:1 / -1; background:var(--surface); border-top:1px solid var(--line); padding:4px 4px calc(4px + env(safe-area-inset-bottom, 0px)); }
+.fi-bnav > a, .fi-bnav > button { flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; min-height:52px; border:0; border-radius:var(--r-md); background:none; color:var(--ink-muted); text-decoration:none; font:600 .75rem/1 var(--font-sans); cursor:pointer; }
+.fi-bnav span { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fi-bnav [aria-current="page"] { color:var(--brand); background:var(--brand-tint); }
+.fi-bnav .fi-icon { width:20px; height:20px; }
+dialog.fi-drawer { margin:0 auto 0 0; height:100dvh; max-height:100dvh; width:min(300px, 86vw); max-width:86vw; border:0; padding:0; background:var(--surface); color:var(--ink); box-shadow:var(--shadow-3); }
+dialog.fi-drawer::backdrop { background:var(--scrim, rgba(14,20,28,.45)); }
+dialog.fi-drawer .fi-sidenav { border-right:0; }
+.fi-drawer-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 10px 4px 16px; }
+/* Menu (pencarian menu, profil): native [popover], selalu tepat di bawah shell bar. */
+.fi-menu { position:fixed; inset:calc(var(--shell-h) + 6px) 8px auto auto; margin:0; border:0; padding:6px; width:min(400px, calc(100vw - 16px)); max-height:min(480px, calc(100dvh - var(--shell-h) - 24px)); overflow:auto; background:var(--surface); color:var(--ink); border-radius:var(--r-lg); box-shadow:var(--shadow-3); }
+.fi-menu--search { inset:calc(var(--shell-h) + 6px) 48px auto auto; }
+@media (max-width:767px) { .fi-menu--search { inset:calc(var(--shell-h) + 6px) 8px auto auto; } }
+.fi-menu h2 { font:var(--fs-caption); text-transform:uppercase; letter-spacing:.06em; color:var(--ink-subtle); padding:8px 10px 4px; }
+.fi-menu hr { border:0; border-top:1px solid var(--line); margin:4px 0; }
+.fi-menu ul { list-style:none; padding:0; }
+.fi-menu-item { box-sizing:border-box; width:100%; display:grid; grid-template-columns:auto minmax(0,1fr); gap:0 10px; align-items:center; padding:8px 10px; min-height:var(--ctl-h); border:0; border-radius:var(--r-md); background:none; color:var(--ink); text-align:left; text-decoration:none; font:inherit; cursor:pointer; }
+.fi-menu-item:hover, .fi-menu-item[aria-selected="true"] { background:var(--surface-2); }
+.fi-menu-item > .fi-icon { color:var(--ink-subtle); grid-row:1 / span 2; }
+.fi-menu-item b { font:600 .8125rem/1.25rem var(--font-sans); }
+.fi-menu-item small { grid-column:2; font:var(--fs-small); color:var(--ink-subtle); }
+.fi-menu-row { display:grid; gap:6px; padding:8px 10px; }
+.fi-menu-prof { display:flex; gap:10px; align-items:center; padding:10px; }
+.fi-menu-prof b { display:block; }
+.fi-menu-prof small { font:var(--fs-small); color:var(--ink-subtle); }
+.fi-menu-note { font:var(--fs-small); color:var(--ink-subtle); padding:8px 10px; border-top:1px solid var(--line); margin-top:4px; }
+.fi-menu-q { padding:6px 8px 8px; border-bottom:1px solid var(--line); margin-bottom:4px; }
+.fi-menu-q .fi-input { border-radius:var(--r-pill); background:var(--surface-2); border-color:transparent; }
+@media (min-width:1600px) { .fi-shell-main { padding:40px 48px; } }
+@media (max-width:1100px) { .fi-shell-main { padding-inline:24px; } }
+@media (max-width:767px) {
+  .fi-shell { grid-template-columns:minmax(0,1fr); }
+  .fi-shell > .fi-sidenav { display:none; }
+  .fi-bnav { display:flex; }
+  .fi-shellbar .fi-logo { width:36px; background-image:var(--logo-mark); }
+  .fi-apptitle { border-left:0; padding-left:0; }
+  .fi-shell-search { display:none; }
+  .fi-shell-searchbtn, .fi-shell-menubtn { display:inline-flex; }
+  .fi-shell-searchbtn { margin-left:auto; }
+  .fi-shell-main { padding:20px 18px 24px; }
+}
+@media print { .fi-shellbar, .fi-sidenav, .fi-bnav, .fi-skip { display:none !important; } .fi-shell { display:block; height:auto; overflow:visible; } .fi-shell-main { overflow:visible; padding:0; } }

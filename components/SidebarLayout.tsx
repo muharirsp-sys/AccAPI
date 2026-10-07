@@ -1,99 +1,171 @@
 /*
- * Tujuan: Shell ruang kerja dengan sidebar accordion, favorit, breadcrumb, dan drawer mobile.
+ * Tujuan: Shell Fiori ruang kerja: shell bar (logo resmi, cari menu Ctrl K, menu profil), navigasi samping dari izin,
+ *   drawer + navigasi bawah ponsel per peran.
  * Caller: app/(dashboard)/layout.tsx.
- * Dependensi: Better Auth, RBAC, WorkspaceNavigation, ThemeSwitcher, katalog navigasi.
+ * Dependensi: Better Auth client, RBAC, katalog workspace-navigation, components/fiori (token, SchemeSwitcher), ChatWidget (Bantuan).
  * Main Functions: SidebarLayout, useLocalAuthRole; drawer menutup saat kembali ke desktop.
- * Side Effects: Membaca/menyimpan preferensi sidebar lokal, navigasi, dan sign-out.
+ * Side Effects: Navigasi, sign-out, membuka chat bantuan; preferensi mode/density lewat SchemeSwitcher.
  */
 "use client";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { Menu, LogOut, PanelLeftClose, PanelLeftOpen, Sun, X } from "lucide-react";
-import { authClient } from "@/lib/auth-client";
-import { usePathname } from "next/navigation";
+import { createContext, Fragment, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { LifeBuoy, LogOut, Menu, Search, X } from "lucide-react";
+import { authClient } from "@/lib/auth-client";
 import { canAccessPathWithKeys } from "@/lib/rbac";
-import { HOME_ITEM, activeNavigationItem, navigationForPermissions } from "@/config/workspace-navigation";
-import WorkspaceNavigation from "@/components/WorkspaceNavigation";
-import ThemeSwitcher from "@/components/ThemeSwitcher";
+import { HOME_ITEM, activeNavigationItem, navigationForPermissions, roleProfile, roleShortcuts, type WorkspaceGroup, type WorkspaceItem } from "@/config/workspace-navigation";
+import { fioriClass } from "@/components/fiori/Scope";
+import { SchemeSwitcher } from "@/components/fiori/interactive";
+import Dialog from "@/components/ui/Dialog";
+import { OPEN_HELP_EVENT } from "@/components/ChatWidget";
 
 const LocalAuthRoleContext = createContext<string | null>(null);
 export function useLocalAuthRole() { return useContext(LocalAuthRoleContext); }
-const EXPANDED_KEY = "smart-erp:sidebar-expanded";
 
-export default function SidebarLayout({ children, localAuthRole, permKeys, userName = "Akun", userId = "local" }: {
-    children: React.ReactNode; localAuthRole?: string | null; permKeys: string[]; userName?: string; userId?: string;
-}) {
+type ShellProps = { children: React.ReactNode; localAuthRole?: string | null; permKeys: string[]; userName?: string; userId?: string };
+
+export default function SidebarLayout({ children, localAuthRole, permKeys, userName = "Akun" }: ShellProps) {
     const pathname = usePathname();
-    const [expanded, setExpanded] = useState(true);
-    const [hydrated, setHydrated] = useState(false);
-    const [mobileOpen, setMobileOpen] = useState(false);
-    const dialogRef = useRef<HTMLDialogElement>(null);
-    const menuRef = useRef<HTMLButtonElement>(null);
-    const canAccess = (href: string) => canAccessPathWithKeys(href, permKeys);
-    const groups = navigationForPermissions(canAccess);
+    const keys = useMemo(() => new Set(permKeys), [permKeys]);
+    const groups = navigationForPermissions(href => canAccessPathWithKeys(href, keys));
     const items = groups.flatMap(group => group.items);
-    const active = activeNavigationItem(pathname, [HOME_ITEM, ...items]);
-    const activeGroup = groups.find(group => group.items.some(item => item.href === active?.href));
-    const favoritesKey = `surya:nav-favorites:${userId}`;
+    const home = canAccessPathWithKeys("/", keys) ? [HOME_ITEM] : [];
+    const active = activeNavigationItem(pathname, [...home, ...items]);
+    const roleLabel = roleProfile(keys)?.label ?? "CV. Surya Perkasa";
+    const [drawerOpen, setDrawerOpen] = useState(false);
+    const drawerTitle = useId();
     const initials = userName.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase();
 
     useEffect(() => {
-        const frame = requestAnimationFrame(() => {
-            try { setExpanded(localStorage.getItem(EXPANDED_KEY) !== "false"); } catch { /* Browser privacy mode: expanded default. */ }
-            setHydrated(true);
-        });
-        return () => cancelAnimationFrame(frame);
-    }, []);
-    useEffect(() => {
-        const dialog = dialogRef.current;
-        if (mobileOpen && dialog && !dialog.open) dialog.showModal();
-        if (!mobileOpen && dialog?.open) dialog.close();
-    }, [mobileOpen]);
-    useEffect(() => {
         const desktop = window.matchMedia("(min-width: 768px)");
-        const closeOnDesktop = () => { if (desktop.matches) setMobileOpen(false); };
+        const closeOnDesktop = () => { if (desktop.matches) setDrawerOpen(false); };
         desktop.addEventListener("change", closeOnDesktop);
         return () => desktop.removeEventListener("change", closeOnDesktop);
     }, []);
-    const changeExpanded = (value: boolean) => {
-        setExpanded(value);
-        try { localStorage.setItem(EXPANDED_KEY, String(value)); } catch { /* Session preference still works. */ }
-    };
-    const closeMobile = () => { setMobileOpen(false); menuRef.current?.focus(); };
-    const handleSignOut = async () => {
-        await authClient.signOut().catch(() => undefined);
-        window.location.href = "/login";
-    };
-    const brand = <span className="workspace-wordmark"><Sun size={28} strokeWidth={1.6} aria-hidden="true" /><span>surya<small>PERKASA</small></span></span>;
-    const navProps = { groups, pathname, homeVisible: canAccess("/"), storageKey: favoritesKey };
-    return <div className="workspace-shell" data-sidebar-expanded={expanded}>
-        <a className="workspace-skip" href="#workspace-content">Langsung ke konten</a>
-        <aside className="workspace-sidebar" aria-label="Sidebar">
-            <div className="workspace-brand-row">{expanded ? brand : <Sun size={25} aria-label="Surya Perkasa" />}
-                <button type="button" disabled={!hydrated} className="workspace-icon-button" onClick={() => changeExpanded(!expanded)} aria-label="Buka/tutup sidebar" aria-expanded={expanded}>{expanded ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}</button>
+
+    const nav = (label: string, onNavigate?: () => void) => (
+        <SideNav label={label} home={home} groups={groups} activeHref={active?.href} userName={userName} roleLabel={roleLabel} onNavigate={onNavigate} />
+    );
+
+    return <div className="fi-shell">
+        <a className={`${fioriClass} fi-skip`} href="#workspace-content">Langsung ke konten</a>
+        <header className={`${fioriClass} fi-shellbar`}>
+            <button type="button" className="fi-btn fi-btn--icon fi-shell-menubtn" aria-label="Buka menu navigasi" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}>
+                <Menu className="fi-icon" aria-hidden />
+            </button>
+            <Link href="/" prefetch={false} className="fi-logo" aria-label="CV. Surya Perkasa, ke Beranda" />
+            <span className="fi-apptitle">Ruang Kerja</span>
+            <button type="button" className="fi-shell-search" popoverTarget="fi-menu-search" aria-keyshortcuts="Control+K">
+                <Search className="fi-icon" aria-hidden /><span>Cari menu…</span><kbd className="fi-kbd">Ctrl K</kbd>
+            </button>
+            <div className="fi-shell-acts">
+                <button type="button" className="fi-btn fi-btn--icon fi-shell-searchbtn" popoverTarget="fi-menu-search" aria-label="Cari menu">
+                    <Search className="fi-icon" aria-hidden />
+                </button>
+                <button type="button" className="fi-btn fi-btn--icon fi-btn--avatar" popoverTarget="fi-menu-profile" aria-label={`Menu profil ${userName}`}>
+                    <span className="fi-avatar" aria-hidden>{initials}</span>
+                </button>
             </div>
-            <nav className="workspace-nav" aria-label="Menu ruang kerja"><WorkspaceNavigation {...navProps} collapsed={!expanded} onNavigate={() => {}} onExpand={() => changeExpanded(true)} /></nav>
-            <div className="workspace-account"><span className="workspace-avatar">{initials}</span>{expanded && <div><strong>{userName}</strong><span>CV. Surya Perkasa</span></div>}</div>
-        </aside>
-        <dialog ref={dialogRef} className="workspace-drawer" aria-label="Menu navigasi" onCancel={closeMobile} onClose={() => setMobileOpen(false)} onClick={event => { if (event.target === dialogRef.current) closeMobile(); }}>
-            <div className="workspace-drawer-inner"><div className="workspace-brand-row">{brand}<button type="button" className="workspace-icon-button" aria-label="Tutup menu" onClick={closeMobile}><X size={19} /></button></div>
-                <nav className="workspace-nav" aria-label="Menu mobile"><WorkspaceNavigation {...navProps} onNavigate={closeMobile} onExpand={() => {}} /></nav>
+            <MenuSearch id="fi-menu-search" groups={groups} home={home} />
+            <div id="fi-menu-profile" popover="auto" role="dialog" aria-label="Menu profil" className="fi-menu">
+                <div className="fi-menu-prof"><span className="fi-avatar" aria-hidden>{initials}</span><div><b>{userName}</b><small>{roleLabel}</small></div></div>
+                <hr />
+                <div className="fi-menu-row"><SchemeSwitcher /></div>
+                <hr />
+                <button type="button" className="fi-menu-item" popoverTarget="fi-menu-profile" popoverTargetAction="hide" onClick={() => window.dispatchEvent(new Event(OPEN_HELP_EVENT))}>
+                    <LifeBuoy className="fi-icon" aria-hidden /><b>Bantuan</b><small>Asisten dan panduan</small>
+                </button>
+                <button type="button" className="fi-menu-item" onClick={async () => { await authClient.signOut().catch(() => undefined); window.location.href = "/login"; }}>
+                    <LogOut className="fi-icon" aria-hidden /><b>Keluar</b><small>Akhiri sesi</small>
+                </button>
             </div>
-        </dialog>
-        <div className="workspace-body">
-            <header className="workspace-topbar">
-                <div className="workspace-breadcrumb"><button ref={menuRef} type="button" disabled={!hydrated} className="workspace-mobile-menu workspace-icon-button" aria-label="Buka menu navigasi" aria-expanded={mobileOpen} onClick={() => setMobileOpen(true)}><Menu size={21} /></button><span className="workspace-breadcrumb-parent">{activeGroup?.name || "Ruang kerja"}</span><span aria-hidden="true" className="workspace-breadcrumb-parent">/</span><strong>{active?.name || "Ruang kerja"}</strong></div>
-                <div className="workspace-top-actions"><span className="workspace-company">CV. Surya Perkasa</span><ThemeSwitcher /><button type="button" className="workspace-icon-button" onClick={handleSignOut} title="Keluar" aria-label="Keluar"><LogOut size={18} /></button></div>
-            </header>
-            <main id="workspace-content" tabIndex={-1} className="workspace-content"><LocalAuthRoleContext.Provider value={localAuthRole ?? null}>{children}</LocalAuthRoleContext.Provider></main>
-            <nav aria-label="Navigasi utama" className="workspace-bottom-nav">
-                {[...(canAccess("/") ? [HOME_ITEM] : []), ...["/summary", "/faktur", "/rekapan-nota"].map(href => items.find(item => item.href === href)).filter(item => Boolean(item))].map(item => {
-                    if (!item) return null;
-                    const Icon = item.icon;
-                    return <Link key={item.href} href={item.href} prefetch={false} aria-label={item.name} aria-current={active?.href === item.href ? "page" : undefined}><Icon size={19} /><span>{item.name.split(" ")[0]}</span></Link>;
-                })}
-                <button type="button" disabled={!hydrated} onClick={() => setMobileOpen(true)} aria-label="Semua menu"><Menu size={20} /><span>Menu</span></button>
-            </nav>
+        </header>
+        {nav("Menu ruang kerja")}
+        <Dialog open={drawerOpen} onClose={() => setDrawerOpen(false)} labelledBy={drawerTitle} className={`${fioriClass} fi-drawer`} closeOnBackdrop>
+            <div className="fi-drawer-head">
+                <h2 id={drawerTitle} className="fi-title-3">Menu</h2>
+                <button type="button" className="fi-btn fi-btn--icon" aria-label="Tutup menu" onClick={() => setDrawerOpen(false)}><X className="fi-icon" aria-hidden /></button>
+            </div>
+            {drawerOpen && nav("Menu mobile", () => setDrawerOpen(false))}
+        </Dialog>
+        <main id="workspace-content" tabIndex={-1} className="fi-shell-main">
+            <LocalAuthRoleContext.Provider value={localAuthRole ?? null}>{children}</LocalAuthRoleContext.Provider>
+        </main>
+        <nav className={`${fioriClass} fi-bnav`} aria-label="Navigasi utama">
+            {[...home, ...roleShortcuts(keys, items)].map(item => {
+                const Icon = item.icon;
+                return <Link key={item.href} href={item.href} prefetch={false} title={item.name} aria-current={active?.href === item.href ? "page" : undefined}>
+                    <Icon className="fi-icon" aria-hidden /><span>{item.short ?? item.name.split(" ")[0]}</span>
+                </Link>;
+            })}
+            <button type="button" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)}><Menu className="fi-icon" aria-hidden /><span>Menu</span></button>
+        </nav>
+    </div>;
+}
+
+function SideNav({ label, home, groups, activeHref, userName, roleLabel, onNavigate }: {
+    label: string; home: WorkspaceItem[]; groups: WorkspaceGroup[]; activeHref?: string; userName: string; roleLabel: string; onNavigate?: () => void;
+}) {
+    const link = (item: WorkspaceItem) => {
+        const Icon = item.icon;
+        return <Link key={item.href} href={item.href} prefetch={false} onClick={onNavigate} aria-current={activeHref === item.href ? "page" : undefined}>
+            <Icon className="fi-icon" aria-hidden />{item.name}
+        </Link>;
+    };
+    return <nav className={`${fioriClass} fi-sidenav`} aria-label={label}>
+        {home.map(link)}
+        {groups.map(group => <Fragment key={group.id}>
+            <p className="fi-sidenav-grp">{group.name}</p>
+            {group.items.map(link)}
+        </Fragment>)}
+        {!home.length && !groups.length && <p className="fi-small fi-subtle">Belum ada modul yang dapat diakses. Hubungi admin.</p>}
+        <p className="fi-sidenav-foot"><b>{userName}</b>{roleLabel}</p>
+    </nav>;
+}
+
+/** Cari menu (Ctrl K). Pencarian nomor dokumen lintas modul menyusul lewat tracker AM; sampai itu hanya katalog menu yang sudah tersaring izin. */
+function MenuSearch({ id, groups, home }: { id: string; groups: WorkspaceGroup[]; home: WorkspaceItem[] }) {
+    const [query, setQuery] = useState("");
+    const ref = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
+    const listRef = useRef<HTMLUListElement>(null);
+    const router = useRouter();
+    const entries = [...home.map(item => ({ item, group: "Beranda" })), ...groups.flatMap(group => group.items.map(item => ({ item, group: group.name })))];
+    const q = query.trim().toLocaleLowerCase("id-ID");
+    const hits = q ? entries.filter(entry => `${entry.group} ${entry.item.name}`.toLocaleLowerCase("id-ID").includes(q)) : entries;
+
+    useEffect(() => {
+        const onKey = (event: KeyboardEvent) => {
+            // OPC punya quick jump sendiri (Ctrl K) dan memanggil preventDefault; shell mengalah di sana.
+            if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "k" && !event.defaultPrevented) {
+                event.preventDefault();
+                ref.current?.showPopover();
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, []);
+
+    const close = () => { ref.current?.hidePopover(); setQuery(""); };
+    return <div id={id} ref={ref} popover="auto" role="dialog" aria-label="Cari menu" className="fi-menu fi-menu--search"
+        onToggle={(event) => { if ((event.nativeEvent as ToggleEvent).newState === "open") inputRef.current?.focus(); else setQuery(""); }}>
+        <div className="fi-menu-q">
+            <input ref={inputRef} className="fi-input" type="search" aria-label="Cari menu" aria-controls={`${id}-list`} placeholder="Ketik nama menu" value={query}
+                onChange={event => setQuery(event.target.value)}
+                onKeyDown={event => {
+                    if (event.key === "Enter" && hits[0]) { event.preventDefault(); close(); router.push(hits[0].item.href); }
+                    if (event.key === "ArrowDown") { event.preventDefault(); listRef.current?.querySelector("a")?.focus(); }
+                }} />
         </div>
+        <h2>Menu</h2>
+        {hits.length ? (
+            <ul id={`${id}-list`} ref={listRef}>
+                {hits.map(({ item, group }) => {
+                    const Icon = item.icon;
+                    return <li key={item.href}><Link href={item.href} prefetch={false} className="fi-menu-item" onClick={close}><Icon className="fi-icon" aria-hidden /><b>{item.name}</b><small>{group}</small></Link></li>;
+                })}
+            </ul>
+        ) : <p className="fi-menu-row fi-small" role="status">Menu “{query.trim()}” tidak ditemukan.</p>}
+        <p className="fi-menu-note">Saat ini mencari nama menu. Pencarian nomor dokumen dan pelanggan menyusul.</p>
     </div>;
 }

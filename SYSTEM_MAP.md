@@ -83,20 +83,20 @@ Surat Kino berlapis teks -> `python_backend/kino_letter.py` -> draft; scan memak
   - `db/migrations/0025_discount_normalization_rule.sql`: `discount_normalization.promo_rule_id bigint` + `promo_rule_key text`, NULL-able, TANPA FK (impor mengganti id aturan; keputusan yang kuncinya hilang tidak dipakai rekap, bukan dihapus).
 - Uji: `lib/promo-recap.test.ts` (penjaga + periode, logika murni), `tests/normalisasi-aturan-promo.spec.ts` (Playwright, API dipalsukan).
 
-### Ruang Kerja Surya (Redesign September 2026)
+### Ruang Kerja (shell Fiori sejak S1a, Oktober 2026)
 ```
 DashboardLayout -> session + RBAC union -> SidebarLayout (identitas akun)
   -> config/workspace-navigation.ts: 18 modul dalam 6 kelompok + Beranda
-  -> WorkspaceNavigation: accordion, pencarian, 3 favorit lokal per akun
-  -> route tujuan; navigasi tidak mengubah preferensi lebar sidebar
+  -> navigasi samping Fiori (kelompok dari izin) + cari menu Ctrl K; favorit/rail lama dihapus (S1a)
 Beranda -> katalog yang sama, disaring RBAC -> akses cepat + direktori kelompok
-RootLayout -> ThemeSwitcher: Surya default + tiga tema alternatif
-  -> app/workspace.css: Geist, hijau/putih, unggah dengan kontras jelas, reduced-motion, print
-  -> mobile dialog native: latar inert, Escape, otomatis menutup saat kembali ke desktop
+RootLayout -> html[data-theme="surya"] statis (Office Calm/Neon/iOS pensiun, Okt 2026)
+  -> app/workspace.css: remap Surya untuk isi halaman yang belum dimigrasi
+SidebarLayout (shell Fiori, S1a) -> shell bar: logo resmi, cari menu Ctrl K, menu profil (Mode/Density, Bantuan -> ChatWidget, Keluar)
+  -> navigasi samping dari izin; drawer ponsel (Dialog native); navigasi bawah = Beranda + 3 pintasan ROLE_PROFILES + Menu
 ```
 Validasi: `npx tsx --test components/SidebarLayout.test.ts` dan
-`npx playwright test tests/workspace-redesign.spec.ts tests/sidebar-tooltip-contrast.spec.ts tests/office-calm-theme.spec.ts`
-pada server development lokal (10 browser checks: navigasi, mobile/resize, unggah, kontras, kompatibilitas tema).
+`npx playwright test tests/workspace-redesign.spec.ts tests/sidebar-tooltip-contrast.spec.ts`
+pada server development lokal (navigasi, Ctrl K, menu profil, drawer/navigasi bawah ponsel, chat, kontras terang/gelap).
 Referensi visual: `docs/design/surya-workspace-reference.png`.
 
 ### Design system Fiori (S0, Oktober 2026)
@@ -606,7 +606,6 @@ AccAPI/_github_clean/
 │   ├── AccessDenied.tsx                # Pesan "Akses ditolak" eksplisit (guard layout + page admin)
 │   ├── PWAInstallPrompt.tsx
 │   ├── ServiceWorkerRegistration.tsx
-│   ├── ThemeSwitcher.tsx
 │   ├── fiori/                          # Design system Fiori: Scope (font + .fiori), core, interactive, scheme
 │   ├── off-program-control/
 │   │   ├── OffBreadcrumb.tsx
