@@ -40,6 +40,7 @@ html[data-theme="surya"] ::selection { background: #cbe6d7; color: #123d2c; }
 html[data-theme="surya"] input[type="file"] { color: var(--luxury-muted) !important; max-width: 100%; }
 html[data-theme="surya"] input[type="file"]::file-selector-button { background: var(--btn-primary-bg) !important; color: var(--btn-primary-text) !important; border: 1px solid var(--btn-primary-border); border-radius: 6px; padding: 8px 12px; margin-right: 12px; font: inherit; font-weight: 600; cursor: pointer; }
 html[data-theme="surya"] input[type="file"]:not(:disabled):hover::file-selector-button { background: #11513d !important; }
+.fi-shell-main { --ws-ink: var(--luxury-text); --ws-muted: var(--luxury-muted); --ws-accent: var(--luxury-teal); --ws-line: var(--border-soft); --ws-panel: var(--surface); --ws-sidebar: var(--surface-2); }
 .workspace-shell { --ws-ink: var(--luxury-text); --ws-muted: var(--luxury-muted); --ws-accent: var(--luxury-teal); --ws-line: var(--border-soft); --ws-panel: var(--surface); --ws-sidebar: var(--surface-2); display: flex; height: 100dvh; overflow: hidden; color: var(--ws-ink); font-family: var(--font-workspace), "Segoe UI", sans-serif; }
 .workspace-shell button, .workspace-shell a { -webkit-tap-highlight-color: transparent; }
 .workspace-sidebar { width: 244px; flex: 0 0 244px; display: flex; flex-direction: column; background: var(--ws-sidebar); border-right: 1px solid var(--ws-line); }

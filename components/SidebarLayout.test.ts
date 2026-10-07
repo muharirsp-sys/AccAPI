@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, activeNavigationItem } from "../config/workspace-navigation";
+import { WORKSPACE_GROUPS, HOME_ITEM, navigationForPermissions, activeNavigationItem, roleProfile, roleShortcuts } from "../config/workspace-navigation";
 
 test("all existing modules appear exactly once across six groups", () => {
     const items = WORKSPACE_GROUPS.flatMap(group => group.items);
@@ -51,4 +51,22 @@ test("deepest route wins and prefix collisions cannot activate an unrelated modu
     assert.equal(activeNavigationItem("/payments/cart/123", items)?.href, "/payments");
     assert.equal(activeNavigationItem("/payments-other", items), undefined);
     assert.equal(activeNavigationItem("/", items)?.href, "/");
+});
+test("bottom-nav shortcuts follow the role guessed from permissions and never leak a forbidden page", () => {
+    const all = WORKSPACE_GROUPS.flatMap(group => group.items);
+    const allowed = (hrefs: string[]) => all.filter(item => hrefs.includes(item.href));
+    const salesman = new Set(["websales.create", "form_kontrol.view"]);
+    assert.equal(roleProfile(salesman)?.id, "salesman");
+    assert.deepEqual(roleShortcuts(salesman, allowed(["/sales", "/form-kontrol", "/insentif-sales"])).map(item => item.href), ["/form-kontrol", "/sales", "/insentif-sales"]);
+    // Admin punya semua izin: profil pertama (admin) menang, bukan gabungan.
+    assert.equal(roleProfile(new Set(["users.manage", "finance.transfer", "order.create"]))?.id, "admin");
+    // Pintasan yang tidak diizinkan tidak muncul; sisanya diisi item lain yang boleh dibuka.
+    const gudang = roleShortcuts(new Set(["rekapan_nota.manage"]), allowed(["/rekapan-nota", "/faktur"]));
+    assert.deepEqual(gudang.map(item => item.href), ["/rekapan-nota", "/faktur"]);
+    assert.equal(roleProfile(new Set(["dashboard.view"])), undefined);
+    assert.deepEqual(roleShortcuts(new Set(), []), []);
+});
+test("bottom-nav labels are unique across the whole catalog", () => {
+    const labels = [HOME_ITEM, ...WORKSPACE_GROUPS.flatMap(group => group.items)].map(item => item.short ?? item.name.split(" ")[0]);
+    assert.deepEqual(labels.filter((label, index) => labels.indexOf(label) !== index), []);
 });

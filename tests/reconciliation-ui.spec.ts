@@ -340,23 +340,9 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
   await expect(page.getByText("110000077", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Jalankan rekonsiliasi" })).toBeDisabled();
-
-  const themes = [
-    ["Office Calm", "office-calm"],
-    ["Neon HUD", "neon"],
-    ["iOS Liquid Glass", "ios"],
-  ] as const;
-
-  const themeToggle = page.getByRole("button", { name: "Ganti tema" });
-  for (const [label, key] of themes) {
-    await expect(async () => {
-      await themeToggle.click();
-      expect(await themeToggle.getAttribute("aria-expanded")).toBe("true");
-    }).toPass({ timeout: 10_000 });
-    await page.getByRole("button", { name: new RegExp(label) }).click();
-    await expect(page.locator("html")).toHaveAttribute("data-theme", key);
-    await expect(types).toBeVisible();
-  }
+  // Tema Office Calm/Neon/iOS pensiun (Okt 2026): halaman lama hanya memakai remap Surya.
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "surya");
+  await expect(types).toBeVisible();
 });
 
 test("runs SHINZUI Return reconciliation with focused issues and export", async ({ page, baseURL }) => {
@@ -831,8 +817,6 @@ test("shows the progressive reconciliation workflow", async ({
   ).toBeVisible();
   await expect(page.getByText("Halaman 1 dari 0")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Tema" }).click();
-  await page.getByRole("button", { name: /Office Calm/ }).click();
   const tableSearch = page.getByLabel("Cari tabel");
   const searchWrapper = tableSearch.locator("xpath=..");
   const baselineOutline = await searchWrapper.evaluate(

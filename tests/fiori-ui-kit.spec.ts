@@ -29,9 +29,11 @@ async function openKit(page: Page, width: number) {
 
 /** Shell lama menggulir di <main>; tinggikan viewport supaya seluruh .fiori terlihat untuk tangkapan elemen. */
 async function shotKit(page: Page, name: string) {
-    const height = await page.locator(".fiori").evaluate((el) => Math.ceil(el.getBoundingClientRect().top + el.scrollHeight + 40));
+    const height = await page.locator("#workspace-content > .fiori").evaluate((el) => Math.ceil(el.getBoundingClientRect().top + el.scrollHeight + 40));
     await page.setViewportSize({ width: page.viewportSize()!.width, height });
-    await expect(page.locator(".fiori")).toHaveScreenshot(name, { animations: "disabled", caret: "hide", maxDiffPixelRatio: 0.002 });
+    // Indikator dev Next (status kompilasi) bisa menimpa sudut kiri bawah; server dev yang sibuk memperlambat font.
+    await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
+    await expect(page.locator("#workspace-content > .fiori")).toHaveScreenshot(name, { animations: "disabled", caret: "hide", maxDiffPixelRatio: 0.002, timeout: 30_000 });
 }
 
 async function noHorizontalOverflow(page: Page) {
@@ -135,7 +137,7 @@ test("dialog konfirmasi: fakta, alasan wajib, tutup dengan Escape", async ({ pag
 
 test("mode gelap dan density bertahan setelah muat ulang", async ({ page }) => {
     await openKit(page, 1440);
-    const fiori = page.locator(".fiori");
+    const fiori = page.locator("#workspace-content > .fiori");
     await page.getByRole("group", { name: "Mode" }).getByRole("button", { name: "Gelap" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-scheme", "dark");
     await expect(fiori).toHaveCSS("background-color", "rgb(14, 20, 28)");
