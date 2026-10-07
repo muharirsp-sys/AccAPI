@@ -288,6 +288,10 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-tile-v { margin-top:auto; display:flex; align-items:baseline; gap:6px; font:var(--fs-kpi); font-variant-numeric:tabular-nums; }
 .fi-tile-v small { font:600 .8125rem/1 var(--font-sans); color:var(--ink-subtle); }
 .fi-tile-v[data-tone] { color:var(--tf); }
+.fi-tile-v[data-tone="info"] { color:var(--brand); }
+.fi-tile-v[data-tone="neu"] { color:var(--ink); }
+.fi-tile--err { border:1px dashed color-mix(in srgb, var(--neg) 45%, transparent); }
+.fi-tile--err .fi-tile-v { font:650 1rem/1.5rem var(--font-sans); }
 .fi-tile-f { margin-top:auto; font:var(--fs-small); color:var(--ink-subtle); display:flex; align-items:center; gap:6px; border-top:1px solid var(--line); padding-top:8px; }
 .fi-tile-v + .fi-tile-f { margin-top:0; }
 .fi-tile-ico { width:36px; height:36px; border-radius:var(--r-md); background:var(--brand-tint); color:var(--brand); display:grid; place-items:center; }
@@ -321,6 +325,55 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-segs button[aria-pressed="true"] { background:var(--brand-tint-strong); color:var(--brand); }
 @media (pointer: coarse) { .fi-segs button { height:40px; } }
 .fi-scheme { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 12px; align-items:center; justify-items:start; }
+
+/* ===== Beranda per peran (Launchpad) ===== */
+.fi-home { padding:20px 24px 28px; display:grid; gap:22px; max-width:1180px; }
+.fi-home > * { min-width:0; }
+.fi-home-greet { display:flex; flex-wrap:wrap; align-items:flex-end; gap:6px 16px; }
+.fi-home-greet h1 { margin-right:auto; }
+.fi-home-greet > span { display:flex; align-items:center; gap:6px; }
+.fi-home-blk { display:grid; gap:10px; }
+.fi-home-head { display:flex; align-items:baseline; gap:8px; }
+.fi-home .fi-tiles { grid-template-columns:repeat(auto-fill, minmax(min(100%, 200px), 1fr)); }
+.fi-home-clear { display:flex; gap:14px; align-items:center; }
+.fi-home-clear > .fi-icon { width:28px; height:28px; color:var(--pos); }
+.fi-home-clear b { display:block; font:var(--fs-title-3); }
+.fi-home-clear span { font:var(--fs-small); color:var(--ink-muted); }
+.fi-shortcuts { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap:12px; }
+.fi-shortcut { display:flex; align-items:center; gap:12px; min-height:64px; padding:12px; border-radius:var(--r-lg); background:var(--surface); box-shadow:var(--shadow-1); color:var(--ink); text-decoration:none; transition:box-shadow var(--dur-fast); }
+.fi-shortcut:hover { box-shadow:var(--shadow-2); }
+.fi-shortcut b { display:block; font:600 .875rem/1.25rem var(--font-sans); }
+.fi-shortcut small { display:block; font:var(--fs-small); color:var(--ink-subtle); }
+.fi-card { background:var(--surface); border-radius:var(--r-lg); box-shadow:var(--shadow-1); display:flex; flex-direction:column; min-width:0; max-width:720px; }
+.fi-card > header { padding:14px 16px 10px; display:grid; gap:2px; border-bottom:1px solid var(--line); }
+.fi-card > header h3 { font:var(--fs-title-3); }
+.fi-card > header span { font:var(--fs-small); color:var(--ink-subtle); }
+.fi-card ul { list-style:none; padding:0; }
+.fi-card li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 10px; padding:10px 16px; border-bottom:1px solid var(--line); }
+.fi-card li b { font:600 .875rem/1.25rem var(--font-sans); overflow-wrap:anywhere; }
+.fi-card li span { font:var(--fs-small); color:var(--ink-subtle); }
+.fi-card li .fi-badge { grid-row:1 / 3; grid-column:2; align-self:center; }
+.fi-card-kv { padding:6px 16px; }
+.fi-card-kv div { display:flex; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); }
+.fi-card-kv div:last-child { border-bottom:0; }
+.fi-card-kv dd { font-weight:600; font-variant-numeric:tabular-nums; }
+.fi-card-note { padding:14px 16px; font:var(--fs-small); color:var(--ink-subtle); }
+.fi-card-note--err { color:var(--neg); }
+.fi-card > footer { margin-top:auto; padding:10px 16px; }
+.fi-card > footer a { font:600 .8125rem/1 var(--font-sans); text-decoration:none; }
+details.fi-apps { background:var(--surface); border-radius:var(--r-lg); box-shadow:var(--shadow-1); }
+details.fi-apps summary { cursor:pointer; padding:12px 16px; font:var(--fs-title-3); }
+details.fi-apps > div { padding:0 16px 14px; display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap:14px; }
+details.fi-apps b { display:block; font:var(--fs-caption); color:var(--ink-subtle); text-transform:uppercase; letter-spacing:.06em; }
+details.fi-apps a { display:block; font:500 .8125rem/1.75rem var(--font-sans); text-decoration:none; }
+@media (max-width:599px) {
+  .fi-home { padding:14px 14px 20px; gap:18px; }
+  .fi-home-greet h1 { font:var(--fs-title-2); }
+  .fi-home .fi-tiles, .fi-shortcuts { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+  .fi-home .fi-tile { min-height:120px; padding:12px; }
+  .fi-home .fi-tile-v { font-size:1.75rem; line-height:2rem; }
+  .fi-shortcut small { display:none; }
+}
 
 /* ===== Shell: shell bar, navigasi samping, navigasi bawah ponsel, menu ===== */
 /* ponytail: .fiori dipasang per bagian shell (bar, nav), bukan di seluruh shell — isi halaman yang belum

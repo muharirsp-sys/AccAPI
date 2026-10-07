@@ -11,8 +11,8 @@ Contoh hidup: `/dev/ui-kit` (hanya `npm run dev`; 404 di build produksi). Baseli
 | Slice | Isi | Status |
 |---|---|---|
 | S0 | Token, font, mode/density, komponen inti, halaman kit, dokumen ini | di `feat/fiori` (PR #116) |
-| S1a | Shell: shell bar (logo resmi, cari menu Ctrl K, menu profil berisi Mode/Density, Bantuan, Keluar), navigasi samping dari izin, drawer + navigasi bawah ponsel per peran; tema lama pensiun | cabang `feat/fiori-s1-shell` |
-| S1b | Beranda per peran (tile tugas dari endpoint yang ada) | belum |
+| S1a | Shell: shell bar (logo resmi, cari menu Ctrl K, menu profil berisi Mode/Density, Bantuan, Keluar), navigasi samping dari izin, drawer + navigasi bawah ponsel per peran; tema lama pensiun | PR #118 |
+| S1b | Beranda per peran: Perlu tindakan (tile dari endpoint yang ada, galat per sumber), Pintasan, Pantauan, Semua aplikasi | cabang `feat/fiori-s1-beranda` |
 | S2–S7 | Per layar (urutan di paket Tahap 4) | belum |
 
 Halaman yang belum dimigrasi tetap memakai remap tema Surya (`html[data-theme="surya"]` statis di root layout; kelas Tailwind lama
@@ -89,6 +89,13 @@ Bantuan = chat asisten, Keluar), navigasi samping berkelompok dari izin, drawer 
 profil peran (`ROLE_PROFILES` di `config/workspace-navigation.ts`, ditebak dari izin sampai grup utama BL-37 ada) + Menu.
 Belum: pencarian nomor dokumen lintas modul (BL-38) dan lonceng Kotak Tugas (BL-34) — menunggu logic di tracker AM.
 Favorit menu dan sidebar ciut (rail) dari shell lama tidak ada di desain yang disetujui dan dihapus.
+
+Beranda (`app/(dashboard)/Beranda.tsx` + `lib/beranda.ts`, S1b): tile per profil peran dari endpoint GET yang sudah ada,
+satu permintaan per sumber, galat per sumber (tile itu sendiri + strip, sisanya tetap tampil), nol = "semua beres".
+Tile yang butuh logic baru di tracker AM tidak tampil: posting/antrean tidak pasti (AM-014/015/047), webhook dan Kotak Tugas
+(BL-34), capaian/insentif (cakupan BL-26), rute dan kunjungan salesman (BL-28), Transfer menunggu (FastAPI hanya per tanggal),
+outlet tanpa area, sync Accurate. "Lanjutkan pekerjaan" (draf) belum: belum ada pencatatan draf. Pratinjau peran lain di
+development: `/?peran=fakturist|gudang|sm|claim|finance|admin|salesman`.
 
 Belum dibangun (dibangun di slice yang memakainya): `ValueHelp` (form pertama yang merujuk data master), menciutnya header
 Object Page.
