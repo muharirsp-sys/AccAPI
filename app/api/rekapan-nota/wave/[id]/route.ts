@@ -2,7 +2,7 @@
  * Tujuan: Detail satu wave + transisi status (release / confirm / cancel) dan pemilihan pick_group.
  * Caller: UI /rekapan-nota/wave/[id].
  * Dependensi: requirePermission, wave-state, exception, lib/db (pool pg).
- * Main Functions: GET (detail + isi + exception), PATCH (aksi transisi / set grup cetak).
+ * Main Functions: GET (detail + isi + exception + riwayat), PATCH (aksi transisi / set grup cetak).
  * Side Effects: UPDATE wave, INSERT wave_event, INSERT wave_exception (saat release).
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -31,14 +31,16 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const wave = await ambilWave(id);
     if (!wave) return NextResponse.json({ error: "Wave tidak ditemukan" }, { status: 404 });
 
-    const [nota, exception, grup, tersedia] = await Promise.all([
+    const [nota, exception, grup, tersedia, riwayat] = await Promise.all([
         pool.query(
             `SELECT wa.no_nota, wa.prioritas::text, wa.snap_area, wa.snap_grup_all, wa.snap_grup_gdi,
-                    wa.snap_pareto, wa.snap_total_krt::float8, wa.dilepas, wa.dilepas_alasan,
+                    wa.snap_pareto, wa.snap_total_krt::float8, wa.dilepas, wa.dilepas_alasan, wa.dilepas_at,
+                    min(coalesce(u.name, wa.dilepas_by)) AS dilepas_oleh,
                     min(p.customer) AS customer, min(p.region) AS region, min(p.salesman) AS salesman,
                     count(p.id)::int AS jumlah_baris, sum(p.qty_pcs)::float8 AS total_pcs
                FROM wave_assignment wa
                LEFT JOIN wave_line_pool p ON p.no_nota = wa.no_nota AND p.tanggal = wa.tanggal_wave
+               LEFT JOIN "user" u ON u.id = wa.dilepas_by
               WHERE wa.wave_id = $1
               GROUP BY wa.id
               ORDER BY wa.dilepas, wa.prioritas DESC, wa.no_nota`, [id]),
@@ -49,6 +51,11 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
             `SELECT g.id::int, g.kode, g.nama, g.dimensi::text
                FROM wave_pick_group wpg JOIN pick_group g ON g.id = wpg.pick_group_id
               WHERE wpg.wave_id = $1 ORDER BY g.urutan_cetak`, [id]),
+        // Riwayat untuk bagian "Riwayat" Object Page (baca saja; wave_event append-only).
+        pool.query(
+            `SELECT e.event, e.created_at, e.payload, coalesce(u.name, e.aktor_id) AS aktor
+               FROM wave_event e LEFT JOIN "user" u ON u.id = e.aktor_id
+              WHERE e.wave_id = $1 ORDER BY e.created_at DESC, e.id DESC LIMIT 100`, [id]),
         // Daftar grup yang bisa dipilih ikut di sini supaya UI tidak perlu route kedua.
         pool.query(
             `SELECT id::int, kode, nama, dimensi::text FROM pick_group
@@ -61,6 +68,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         exception: exception.rows,
         pickGroup: grup.rows,
         pickGroupTersedia: tersedia.rows,
+        riwayat: riwayat.rows,
     });
 }
 
