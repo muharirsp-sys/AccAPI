@@ -3,7 +3,7 @@
  * Caller: Halaman yang sudah dimigrasi ke `.fiori` (lihat docs/UI_DESIGN_SYSTEM.md); app/(dashboard)/dev/ui-kit.
  * Dependensi: React, next/link, lucide-react, kelas `fi-*` di app/fiori.css.
  * Main Functions: Button, StatusBadge, MessageStrip, Tile, ListItem, ObjectPageHeader, Flow, AnchorBar, FooterToolbar,
- *   KeyValues, EmptyState, ErrorState, Skeleton, ResponsiveTable, FlexibleColumnLayout.
+ *   KeyValues, EmptyState, ErrorState, Skeleton, ResponsiveTable, FlexibleColumnLayout, Section, VariantNote.
  * Side Effects: Tidak ada; aksi diteruskan ke callback pemanggil.
  */
 import { Fragment, type ButtonHTMLAttributes, type ReactNode } from "react";
@@ -210,15 +210,19 @@ type ResponsiveTableProps<T> = {
     empty: { title: string; message?: string; action?: ReactNode };
     sort?: { key: string; dir: "asc" | "desc" }; onSortChange?: (key: string) => void;
     selected?: ReadonlySet<string>; onSelectedChange?: (next: Set<string>) => void;
+    /** Baris yang boleh dipilih; lainnya kotaknya nonaktif dan tidak ikut "Pilih semua". Bawaan: semua. */
+    selectableRow?: (row: T) => boolean;
 };
 
 // ponytail: tabel desktop dan daftar ponsel dirender dua-duanya lalu dipilih lewat container query — DOM ganda.
 // Cukup untuk halaman berpaginasi (≤ ratusan baris); virtualisasi bila satu halaman memuat ribuan baris.
 export function ResponsiveTable<T>(props: ResponsiveTableProps<T>) {
-    const { title, count, actions, columns, rows, rowKey, mobileItem, status = "siap", error, onRetry, empty, sort, onSortChange, selected, onSelectedChange } = props;
+    const { title, count, actions, columns, rows, rowKey, mobileItem, status = "siap", error, onRetry, empty, sort, onSortChange, selected, onSelectedChange, selectableRow } = props;
     const selectable = Boolean(selected && onSelectedChange);
     const keys = rows.map(rowKey);
-    const nSelected = selectable ? keys.filter((k) => selected!.has(k)).length : 0;
+    const pickable = rows.map((row) => !selectableRow || selectableRow(row));
+    const pickableKeys = keys.filter((_, i) => pickable[i]);
+    const nSelected = selectable ? pickableKeys.filter((k) => selected!.has(k)).length : 0;
     const secondaryCols = columns.filter((c) => c.secondary);
     const toggle = (key: string) => {
         const next = new Set(selected);
@@ -239,12 +243,13 @@ export function ResponsiveTable<T>(props: ResponsiveTableProps<T>) {
                         <tr>
                             {selectable && (
                                 <th className="fi-sel">
-                                    <input type="checkbox" aria-label="Pilih semua baris" checked={nSelected === keys.length}
-                                        ref={(el) => { if (el) el.indeterminate = nSelected > 0 && nSelected < keys.length; }}
+                                    <input type="checkbox" aria-label="Pilih semua baris" disabled={pickableKeys.length === 0}
+                                        checked={pickableKeys.length > 0 && nSelected === pickableKeys.length}
+                                        ref={(el) => { if (el) el.indeterminate = nSelected > 0 && nSelected < pickableKeys.length; }}
                                         onChange={() => {
                                             // Hanya baris yang terlihat; pilihan di luar saringan tidak ikut berubah.
                                             const next = new Set(selected);
-                                            for (const k of keys) { if (nSelected === keys.length) next.delete(k); else next.add(k); }
+                                            for (const k of pickableKeys) { if (nSelected === pickableKeys.length) next.delete(k); else next.add(k); }
                                             onSelectedChange!(next);
                                         }} />
                                 </th>
@@ -269,7 +274,7 @@ export function ResponsiveTable<T>(props: ResponsiveTableProps<T>) {
                             const isSel = selectable && selected!.has(key);
                             return (
                                 <tr key={key} data-selected={isSel || undefined}>
-                                    {selectable && <td className="fi-sel"><input type="checkbox" aria-label={`Pilih ${key}`} checked={isSel} onChange={() => toggle(key)} /></td>}
+                                    {selectable && <td className="fi-sel"><input type="checkbox" aria-label={`Pilih ${key}`} checked={isSel} disabled={!pickable[i]} onChange={() => toggle(key)} /></td>}
                                     {columns.map((c, ci) => (
                                         <td key={c.key} className={`${c.align === "end" ? "fi-end" : ""} ${c.secondary ? "fi-secondary" : ""}`}>
                                             {c.cell(row)}
@@ -319,5 +324,31 @@ export function FlexibleColumnLayout({ list, detail, detailOpen, onBack, listLab
                 {detail}
             </section>
         </div>
+    );
+}
+
+type SectionProps = { id?: string; title: string; subtitle?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string };
+
+/** Bagian Object Page / worklist: kepala (judul + keterangan + aksi) lalu isi. `ResponsiveTable` boleh langsung jadi anak. */
+export function Section({ id, title, subtitle, actions, children, className = "" }: SectionProps) {
+    return (
+        <section id={id} className={`fi-sect fi-section ${className}`} aria-label={title}>
+            <header>
+                <h2>{title}</h2>
+                {subtitle != null && <span>{subtitle}</span>}
+                {actions && <div className="fi-sect-acts">{actions}</div>}
+            </header>
+            {children}
+        </section>
+    );
+}
+
+/** Catatan "varian berlabel": logic BL yang belum ada di main; layar menampilkan perilaku hari ini dan menyebut usulannya. */
+export function VariantNote({ bl, children }: { bl: string; children: ReactNode }) {
+    return (
+        <aside className="fi-varbox" aria-label={`Usulan ${bl}`}>
+            <span className="fi-tag" data-tone="info">Perilaku hari ini · usulan {bl} lewat tracker AM</span>
+            <p>{children}</p>
+        </aside>
     );
 }

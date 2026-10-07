@@ -3,7 +3,7 @@
  *   dan penjaga perubahan belum disimpan.
  * Caller: Halaman yang sudah dimigrasi ke `.fiori`; app/(dashboard)/dev/ui-kit.
  * Dependensi: React, components/ui/Dialog (native <dialog>), components/fiori/core, fiori/scheme (kunci localStorage), lucide-react.
- * Main Functions: ConfirmDialog, FormField, FilterBar, SchemeSwitcher, useUnsavedGuard.
+ * Main Functions: ConfirmDialog, FormField, FilterBar, SchemeSwitcher, useUnsavedGuard, useLoad.
  * Side Effects: SchemeSwitcher menulis html[data-scheme|data-density] + localStorage; useUnsavedGuard memasang beforeunload.
  */
 "use client";
@@ -30,6 +30,10 @@ type ConfirmDialogProps = {
     tone?: "primary" | "negative";
     /** Galat dari pemanggil; galat yang dilempar onConfirm juga tampil di dialog. Isian tidak dikosongkan. */
     error?: string;
+    /** Isian tambahan milik pemanggil (FormField), tampil sebelum `facts`; pemanggil memegang nilainya. */
+    children?: ReactNode;
+    /** Alasan tombol konfirmasi nonaktif (mis. "Pilih berkas dulu"); tampil sebagai title. */
+    confirmDisabled?: string;
     onConfirm: (reason: string) => Promise<void> | void;
 };
 
@@ -49,15 +53,16 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
 
 type BodyProps = ConfirmDialogProps & { titleId: string; busy: boolean; setBusy: (busy: boolean) => void };
 
-function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmLabel, tone = "primary", error, onConfirm, titleId, busy, setBusy }: BodyProps) {
+function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmLabel, tone = "primary", error, children, confirmDisabled, onConfirm, titleId, busy, setBusy }: BodyProps) {
     const [text, setText] = useState("");
     const [failure, setFailure] = useState<string>();
     const inFlight = useRef(false); // disabled baru berlaku sesudah render; ref menahan klik ganda.
     const reasonId = useId();
     const missingReason = Boolean(reason) && text.trim() === "";
+    const blocked = missingReason ? `Isi ${reason?.label.toLowerCase()} dulu` : confirmDisabled;
 
     const confirm = async () => {
-        if (inFlight.current || missingReason) return;
+        if (inFlight.current || blocked) return;
         inFlight.current = true;
         setBusy(true);
         setFailure(undefined);
@@ -82,6 +87,7 @@ function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmL
             </header>
             <div className="fi-dialog-body">
                 {description && <div className="fi-muted">{description}</div>}
+                {children}
                 {facts?.length ? <KeyValues items={facts} /> : null}
                 {reason && (
                     <div className="fi-field">
@@ -93,7 +99,7 @@ function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmL
             </div>
             <footer>
                 <Button onClick={onClose} disabled={busy}>Batal</Button>
-                <Button variant={tone} busy={busy} disabled={missingReason} disabledReason={missingReason ? `Isi ${reason?.label.toLowerCase()} dulu` : undefined} onClick={confirm}>
+                <Button variant={tone} busy={busy} disabled={Boolean(blocked)} disabledReason={blocked} onClick={confirm}>
                     {confirmLabel}
                 </Button>
             </footer>
@@ -231,4 +237,27 @@ export function useUnsavedGuard(dirty: boolean) {
         window.addEventListener("beforeunload", warn);
         return () => window.removeEventListener("beforeunload", warn);
     }, [dirty]);
+}
+
+export type Load<T> = { status: "memuat" | "siap" | "galat"; data?: T; error?: string };
+
+/**
+ * Memuat data lewat `loader` (stabil: useCallback) dan memuat ulang lewat fungsi kedua.
+ * Saat memuat ulang, data lama tetap tampil dengan status "memuat" (aturan enam keadaan); respons usang diabaikan.
+ * setState hanya dipanggil dari callback promise, bukan sinkron di effect (react-hooks/set-state-in-effect).
+ */
+export function useLoad<T>(loader: () => Promise<Load<T>>): [Load<T>, () => void] {
+    const [versi, setVersi] = useState(0);
+    const [hasil, setHasil] = useState<{ by: () => Promise<Load<T>>; versi: number; load: Load<T> } | null>(null);
+    useEffect(() => {
+        let alive = true;
+        void loader().then((load) => { if (alive) setHasil({ by: loader, versi, load }); });
+        return () => { alive = false; };
+    }, [loader, versi]);
+    // Loader baru (mis. tanggal berganti) = kueri lain: data lama tidak dipinjam, supaya aksi yang membaca data
+    // (urutan wave berikutnya, nihil per tanggal) tidak memakai tanggal sebelumnya. Muat ulang kunci sama = data lama + "memuat".
+    const kunciSama = hasil !== null && hasil.by === loader;
+    const segar = kunciSama && hasil.versi === versi;
+    const load: Load<T> = segar ? hasil.load : kunciSama ? { ...hasil.load, status: "memuat" } : { status: "memuat" };
+    return [load, () => setVersi((v) => v + 1)];
 }

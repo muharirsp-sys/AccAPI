@@ -326,6 +326,55 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 @media (pointer: coarse) { .fi-segs button { height:40px; } }
 .fi-scheme { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px 12px; align-items:center; justify-items:start; }
 
+/* ===== Halaman modul (S2+): kepala halaman, kartu ringkas, bagian, riwayat, catatan varian ===== */
+.fi-page { padding:20px 24px 28px; display:grid; gap:16px; align-content:start; }
+.fi-page > * { min-width:0; }
+.fi-page-head { display:grid; gap:8px; }
+.fi-page-head h1 { font:var(--fs-title-1); }
+.fi-page-head p { font:var(--fs-small); color:var(--ink-muted); max-width:80ch; }
+.fi-page-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.fi-page-bar .fi-input { width:auto; min-width:10rem; }
+.fi-page-bar > .fi-spacer { flex:1; }
+.fi-kcards { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 180px), 1fr)); gap:12px; }
+.fi-kc { display:grid; gap:2px; padding:12px 14px; border-radius:var(--r-lg); background:var(--surface); box-shadow:var(--shadow-1); color:var(--ink); text-decoration:none; text-align:left; font:inherit; border:0; cursor:pointer; min-width:0; }
+.fi-kc:hover { box-shadow:var(--shadow-2); }
+.fi-kc > span { font:var(--fs-small); color:var(--ink-subtle); }
+.fi-kc > b { font:var(--fs-kpi); font-variant-numeric:tabular-nums; color:var(--tf, var(--ink)); }
+.fi-kc > small { font:var(--fs-caption); color:var(--ink-subtle); overflow-wrap:anywhere; }
+.fi-sect { background:var(--surface); border-radius:var(--r-lg); box-shadow:var(--shadow-1); display:grid; min-width:0; }
+.fi-sect > header { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px; padding:12px 16px; border-bottom:1px solid var(--line); }
+.fi-sect > header h2 { font:var(--fs-title-3); }
+.fi-sect > header > span { font:var(--fs-small); color:var(--ink-subtle); }
+.fi-sect > header > .fi-sect-acts { margin-left:auto; display:flex; flex-wrap:wrap; gap:8px; }
+.fi-sect-in { padding:12px 16px; display:grid; gap:10px; min-width:0; }
+.fi-sect > .fi-tablebox { box-shadow:none; border-radius:0 0 var(--r-lg) var(--r-lg); }
+.fi-sect > .fi-tablebox > .fi-tbar { display:none; } /* judul sudah di kepala bagian; caption tabel tetap ada untuk pembaca layar */
+.fi-codes { display:block; font:var(--fs-caption); font-family:var(--font-mono); color:var(--ink-subtle); }
+.fi-sub { display:block; font:var(--fs-caption); color:var(--ink-subtle); }
+.fi-why { color:var(--warn); }
+.fi-hist { list-style:none; margin:0; padding:0; display:grid; }
+.fi-hist li { display:grid; grid-template-columns:7.5rem minmax(0,1fr); gap:2px 12px; padding:8px 16px; border-bottom:1px solid var(--line); font:var(--fs-small); }
+.fi-hist li:last-child { border-bottom:0; }
+.fi-hist time { color:var(--ink-subtle); font-variant-numeric:tabular-nums; }
+.fi-hist .fi-chg { grid-column:2; color:var(--ink-subtle); }
+.fi-varbox { border:1px dashed color-mix(in srgb, var(--info) 50%, transparent); border-radius:var(--r-lg); padding:10px 12px; display:grid; gap:4px; background:var(--info-bg); }
+.fi-varbox > .fi-tag { justify-self:start; }
+.fi-varbox p { font:var(--fs-small); color:var(--ink-muted); }
+.fi-chipgrid { display:grid; gap:8px; }
+.fi-chipgrid > div { display:grid; grid-template-columns:7rem minmax(0,1fr); gap:6px 10px; align-items:start; }
+.fi-chipgrid > div > span { font:var(--fs-small); color:var(--ink-subtle); padding-top:6px; }
+.fi-chipgrid .fi-chips { margin:0; }
+.fi-chips label.fi-chip { cursor:pointer; background:var(--surface-2); color:var(--ink-muted); border-color:var(--line); padding-inline:10px; }
+.fi-chips label.fi-chip input { margin:0; accent-color:var(--primary); }
+.fi-chips label.fi-chip:has(input:checked) { background:var(--brand-tint-strong); color:var(--brand); }
+.fi-chips label.fi-chip:has(input:disabled) { cursor:default; opacity:.7; }
+.fi-ftb .fi-sum { font:var(--fs-small); color:var(--ink-muted); }
+.fi-dropzone { display:grid; gap:2px; padding:10px 12px; border:1px dashed var(--line-strong); border-radius:var(--r-md); font:var(--fs-small); color:var(--ink-muted); }
+.fi-dropzone b { color:var(--ink); overflow-wrap:anywhere; }
+.fi-table tr[data-out="true"] td { color:var(--ink-disabled); }
+.fi-table tr[data-out="true"] .fi-mono { text-decoration:line-through; }
+@media (max-width:767px) { .fi-page { padding:16px 16px 24px; } .fi-hist li { grid-template-columns:minmax(0,1fr); } .fi-hist .fi-chg { grid-column:1; } .fi-chipgrid > div { grid-template-columns:minmax(0,1fr); } }
+
 /* ===== Beranda per peran (Launchpad) ===== */
 .fi-home { padding:20px 24px 28px; display:grid; gap:22px; max-width:1180px; }
 .fi-home > * { min-width:0; }

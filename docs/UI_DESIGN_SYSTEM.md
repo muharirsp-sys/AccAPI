@@ -13,7 +13,8 @@ Contoh hidup: `/dev/ui-kit` (hanya `npm run dev`; 404 di build produksi). Baseli
 | S0 | Token, font, mode/density, komponen inti, halaman kit, dokumen ini | di `feat/fiori` (PR #116) |
 | S1a | Shell: shell bar (logo resmi, cari menu Ctrl K, menu profil berisi Mode/Density, Bantuan, Keluar), navigasi samping dari izin, drawer + navigasi bawah ponsel per peran; tema lama pensiun | PR #118 |
 | S1b | Beranda per peran: Perlu tindakan (tile dari endpoint yang ada, galat per sumber), Pintasan, Pantauan, Semua aplikasi | cabang `feat/fiori-s1-beranda` |
-| S2–S7 | Per layar (urutan di paket Tahap 4) | belum |
+| S2 | Rekapan Nota: Wave harian (kartu ringkas pool/exception/outlet tanpa area, dialog Unggah + Wave baru), Object Page wave (alur status, exception baca-saja, grup cetak, Isi wave dengan Lepas beralasan, pool dengan cari/saring, Riwayat, footer Rilis/Konfirmasi/Batalkan), Nota kanvas (per salesman, dialog Tandai semua + Nihil), Mapping area (saring keyakinan, draf area final, dialog Terima usulan Tinggi). Komponen baru `Section`, `VariantNote`; `ConfirmDialog` menerima isian tambahan; `ResponsiveTable.selectableRow` | cabang `feat/fiori-s2-rekapan` |
+| S3–S7 | Per layar (urutan di paket Tahap 4) | belum |
 
 Halaman yang belum dimigrasi tetap memakai remap tema Surya (`html[data-theme="surya"]` statis di root layout; kelas Tailwind lama
 di `app/globals.css` dan `app/workspace.css`). Sejak S1 shell sudah Fiori; isi halaman lama di `<main>` tidak dibungkus `.fiori`. Jangan mencampur: halaman lama tidak memakai kelas `fi-*`; halaman Fiori tidak memakai kelas warna
