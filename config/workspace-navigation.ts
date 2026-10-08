@@ -43,6 +43,7 @@ export const WORKSPACE_GROUPS: WorkspaceGroup[] = [
         { name: "Form Kontrol", href: "/form-kontrol", icon: ClipboardList, short: "Kontrol" },
         { name: "Insentif Sales", href: "/insentif-sales", icon: Trophy },
         { name: "Laporan Harian", href: "/laporan-harian", icon: Send },
+        { name: "Penerima laporan", href: "/laporan-harian/mapping", icon: Users, short: "Penerima" },
     ] },
     { id: "settings", name: "Pengaturan", description: "Atur integrasi Accurate, master data, dan akses.", icon: Settings2, items: [
         { name: "AOL Form Engine", href: "/api-wrapper", icon: Settings2, short: "AOL" },
