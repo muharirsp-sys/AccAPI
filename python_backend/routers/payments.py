@@ -38,7 +38,6 @@ from shared import (
     looks_like_payments_backup,
     lpb_upload_template_rows,
     make_payment_record_id,
-    max_sppd_sequence_from_records,
     next_sppd_number,
     normalize_lpb_no,
     normalize_pengajuan_type,
@@ -47,6 +46,7 @@ from shared import (
     parse_number_id,
     parse_payments_backup_upload,
     pd,
+    raise_sppd_sequence_from_records,
     read_upload_file_limited,
     rebuild_payment_submissions,
     render_sppd_docx,
@@ -58,6 +58,7 @@ from shared import (
     uuid,
     validate_backup_restore_conflicts,
     validate_csrf_request,
+    wita_now,
     write_invoice_excel,
 )
 
@@ -228,9 +229,8 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
                 for key, rec in restore_rows:
                     db["lpb"][key] = rec
                 rebuild_payment_submissions(db)
-                max_seq = max_sppd_sequence_from_records([rec for _, rec in restore_rows])
-                if max_seq:
-                    db["sppd_seq"] = max(int(db.get("sppd_seq", 0) or 0), max_seq)
+                # D-05/C10: urutan SPPD tahun berjalan naik ke nomor tertinggi yang dipulihkan, tak pernah turun.
+                max_seq = raise_sppd_sequence_from_records(db, [rec for _, rec in restore_rows], wita_now())
                 await asyncio.to_thread(save_payments_db, db)
             append_audit_log(user, "payments_restore_backup", "lpb", {"added": len(restore_rows), "max_sppd_seq": max_seq})
             return JSONResponse({"ok": True, "added": len(restore_rows), "mode": "restore_backup", "message": f"Restore backup berhasil: {len(restore_rows)} record."})
@@ -794,8 +794,9 @@ async def payments_cart_submit(request: Request):
             return JSONResponse(status_code=409, content={"ok": False, "error": f"Sudah diajukan lewat pengajuan lain: {', '.join(taken)}. Buat draft baru."})
 
     submission_id = str(uuid.uuid4())[:8]
-    submit_dt = pd.Timestamp.now()
-    now = submit_dt.strftime("%Y-%m-%d %H:%M:%S")
+    # Tanggal terbit SPPD (nomor + dokumen) = WITA (D-05/C10); jejak waktu ledger tetap jam server seperti sebelumnya.
+    submit_dt = wita_now()
+    now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for rec in selected:
         pr = s(rec.get("principle", ""))
@@ -1005,8 +1006,9 @@ async def payments_submit(request: Request):
                 return JSONResponse(status_code=400, content={"ok": False, "error": f"Nilai Invoice kosong untuk LPB {rec.get('no_lpb','')}"})
 
         submission_id = str(uuid.uuid4())[:8]
-        submit_dt = pd.Timestamp.now()
-        now = submit_dt.strftime("%Y-%m-%d %H:%M:%S")
+        # Tanggal terbit SPPD (nomor + dokumen) = WITA (D-05/C10); jejak waktu ledger tetap jam server seperti sebelumnya.
+        submit_dt = wita_now()
+        now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
         groups: Dict[str, List[Dict[str, Any]]] = {}
         for rec in selected:
             key = s(rec.get("principle", ""))

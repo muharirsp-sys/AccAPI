@@ -1593,18 +1593,38 @@ def parse_payments_backup_upload(content: bytes) -> List[Tuple[str, Dict[str, An
         )
     return rows
 
-def max_sppd_sequence_from_records(records: List[Dict[str, Any]]) -> int:
+def max_sppd_sequence_from_records(records: List[Dict[str, Any]], year: Optional[int] = None) -> int:
+    """Nomor urut SPPD tertinggi di records. `year`: hanya nomor bertahun itu (tahun = 4 digit terakhir nomor);
+    nomor tanpa tahun ikut dihitung (fail-closed: lebih baik urutan naik daripada nomor ganda)."""
     max_seq = 0
     for rec in records:
         sppd_no = s(rec.get("sppd_no", ""))
         m = re.match(r"^\s*(\d+)\s*/", sppd_no)
         if not m:
             continue
+        if year is not None:
+            y = re.search(r"(\d{4})\s*$", sppd_no)
+            if y and int(y.group(1)) != int(year):
+                continue
         try:
             max_seq = max(max_seq, int(m.group(1)))
         except Exception:
             continue
     return max_seq
+
+
+def raise_sppd_sequence_from_records(db: Dict[str, Any], records: List[Dict[str, Any]], now: pd.Timestamp) -> int:
+    """Restore backup (D-05/C10): urutan SPPD tahun berjalan (WITA) dinaikkan ke nomor tertinggi yang dipulihkan
+    untuk tahun itu — TIDAK PERNAH diturunkan. Tanpa ini nomor yang dipulihkan bisa terbit ulang (nomor ganda)."""
+    settings = get_sppd_settings(db)
+    year = int(now.year)
+    current = sppd_last_sequence_for_year(settings, year)
+    restored = max_sppd_sequence_from_records(records, year)
+    if restored > current:
+        settings["last_sequence"] = restored
+        settings["sequence_year"] = year
+        db["sppd_seq"] = restored
+    return restored
 
 def rebuild_payment_submissions(db: Dict[str, Any]) -> None:
     submissions = dict(db.get("submissions", {}) or {})
@@ -1713,6 +1733,23 @@ def format_sppd_number_with_template(seq: int, dt: pd.Timestamp, template: str) 
     except Exception:
         return f"{num}/SPA/PDSB/{month}/{year}"
 
+def wita_now() -> pd.Timestamp:
+    """Waktu sekarang di WITA (naif). Server produksi berjalan UTC; tanggal terbit SPPD (nomor, bulan romawi,
+    tahun urutan) mengikuti WITA. ponytail: offset tetap UTC+8 — Indonesia tanpa DST."""
+    return (pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=8)).tz_localize(None)
+
+
+def sppd_last_sequence_for_year(settings: Dict[str, Any], year: int) -> int:
+    """Nomor urut terakhir yang berlaku untuk tahun terbit `year` (D-05/C10): tahun yang lebih baru dari tahun
+    urutan tersimpan mulai dari 0 (nomor pertama 001). `sequence_year` kosong (data sebelum aturan ini) = dianggap
+    tahun berjalan: urutan diteruskan, tidak pernah turun. ponytail: tahun terbit lebih tua dari tahun urutan
+    (jam server mundur melewati tahun) ikut meneruskan urutan — naik terus, tanpa urutan per tahun."""
+    stored_year = settings.get("sequence_year")
+    if stored_year and int(year) > int(stored_year):
+        return 0
+    return int(settings.get("last_sequence", 0))
+
+
 def default_sppd_settings(db: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     try:
         start_seq = int(os.getenv("SPPD_SEQ_START", "6"))
@@ -1726,6 +1763,8 @@ def default_sppd_settings(db: Optional[Dict[str, Any]] = None) -> Dict[str, Any]
             pass
     return {
         "last_sequence": max(0, legacy_last),
+        # Tahun terbit (WITA) pemilik last_sequence; diisi sistem saat nomor terbit / setelan / restore.
+        "sequence_year": None,
         "number_template": "{seq:03d}/SPA/PDSB/{roman_month}/{year}",
         "fixed_jaminan_date": "2026-02-19",
         "maturity_months": 6,
@@ -1740,6 +1779,11 @@ def normalize_sppd_settings(raw: Dict[str, Any], db: Optional[Dict[str, Any]] = 
         settings["last_sequence"] = max(0, int(settings.get("last_sequence", defaults["last_sequence"])))
     except Exception:
         settings["last_sequence"] = defaults["last_sequence"]
+    try:
+        year = settings.get("sequence_year")
+        settings["sequence_year"] = int(year) if year not in (None, "") and 2000 <= int(year) <= 9999 else None
+    except (TypeError, ValueError):
+        settings["sequence_year"] = None
     settings["number_template"] = s(settings.get("number_template", defaults["number_template"])) or defaults["number_template"]
     fixed_date = _normalize_yyyy_mm_dd(s(settings.get("fixed_jaminan_date", defaults["fixed_jaminan_date"])))
     settings["fixed_jaminan_date"] = fixed_date or defaults["fixed_jaminan_date"]
@@ -1759,9 +1803,11 @@ def get_sppd_settings(db: Dict[str, Any]) -> Dict[str, Any]:
     return settings
 
 def next_sppd_number(db: Dict[str, Any], dt: pd.Timestamp) -> Tuple[int, str, Dict[str, Any]]:
+    """Nomor SPPD berikutnya untuk tanggal terbit `dt` (WITA): tahun baru otomatis mulai 001 (D-05/C10)."""
     settings = get_sppd_settings(db)
-    next_seq = int(settings.get("last_sequence", 0)) + 1
+    next_seq = sppd_last_sequence_for_year(settings, int(dt.year)) + 1
     settings["last_sequence"] = next_seq
+    settings["sequence_year"] = max(int(dt.year), int(settings.get("sequence_year") or 0))
     db["sppd_seq"] = next_seq
     return next_seq, format_sppd_number_with_template(next_seq, dt, s(settings.get("number_template", ""))), settings
 

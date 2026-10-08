@@ -29,8 +29,10 @@ from shared import (
     resolve_payment_record_key,
     s,
     save_payments_db,
+    sppd_last_sequence_for_year,
     user_has_permission,
     validate_csrf_request,
+    wita_now,
 )
 
 router = APIRouter()
@@ -118,9 +120,9 @@ def payments_sppd_settings_get(request: Request):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
     db = load_payments_db()
     settings = get_sppd_settings(db)
-    preview_date = _normalize_yyyy_mm_dd(s(request.query_params.get("date", ""))) or pd.Timestamp.today().strftime("%Y-%m-%d")
+    preview_date = _normalize_yyyy_mm_dd(s(request.query_params.get("date", ""))) or wita_now().strftime("%Y-%m-%d")
     preview_dt = pd.to_datetime(preview_date)
-    next_seq = int(settings.get("last_sequence", 0)) + 1
+    next_seq = sppd_last_sequence_for_year(settings, int(preview_dt.year)) + 1
     return JSONResponse({
         "ok": True,
         "settings": settings,
@@ -149,9 +151,11 @@ async def payments_sppd_settings_save(request: Request):
         db = load_payments_db()
         current = get_sppd_settings(db)
         payload = payload if isinstance(payload, dict) else {}
+        # Tahun urutan dikelola sistem (nomor terbit / setelan / restore), bukan klien.
+        payload.pop("sequence_year", None)
         # AM-019 (H08): urutan SPPD hanya boleh diubah oleh halaman yang MELIHAT nilai sekarang.
         # Halaman basi (submit BANK_PANIN sudah menaikkan urutan) atau yang gagal memuat (default 0)
-        # dulu memundurkan urutan diam-diam -> nomor SPPD ganda. Mundur sengaja (reset) tetap boleh.
+        # dulu memundurkan urutan diam-diam -> nomor SPPD ganda.
         if "last_sequence" in payload:
             expected = payload.pop("expected_last_sequence", None)
             try:
@@ -163,6 +167,24 @@ async def payments_sppd_settings_save(request: Request):
                     "ok": False, "current_last_sequence": current.get("last_sequence"),
                     "error": f"Urutan SPPD sudah {current.get('last_sequence')} (halaman basi atau gagal dimuat). Muat ulang lalu ulangi.",
                 })
+            try:
+                requested = int(payload["last_sequence"])
+            except (TypeError, ValueError):
+                return JSONResponse(status_code=400, content={"ok": False, "error": "Nomor surat terakhir harus bilangan bulat."})
+            if requested == int(current.get("last_sequence", 0)):
+                payload.pop("last_sequence")  # halaman mengirim ulang nilai yang sama: bukan perubahan urutan
+            else:
+                # D-05/C10 (owner 8 Okt 2026): di dalam satu tahun terbit (WITA) nomor urut TIDAK BOLEH turun —
+                # nomor yang sudah terbit akan terbit lagi. Tahun baru mulai dari 0, jadi angka berapa pun = naik.
+                year = int(wita_now().year)
+                effective = sppd_last_sequence_for_year(current, year)
+                if requested < effective:
+                    return JSONResponse(status_code=409, content={
+                        "ok": False, "current_last_sequence": current.get("last_sequence"),
+                        "error": f"Nomor urut SPPD tidak boleh turun di dalam satu tahun: nomor terakhir {year} adalah {effective}.",
+                    })
+                payload["last_sequence"] = requested
+                payload["sequence_year"] = year
         previous_sequence = current.get("last_sequence")
         settings = normalize_sppd_settings({**current, **payload}, db)
         settings["updated_at"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -173,11 +195,12 @@ async def payments_sppd_settings_save(request: Request):
         append_audit_log(user, "payments_sppd_settings_save", "sppd_settings", {
             "previous_last_sequence": previous_sequence,
             "last_sequence": settings.get("last_sequence"),
+            "sequence_year": settings.get("sequence_year"),
             "fixed_jaminan_date": settings.get("fixed_jaminan_date"),
             "maturity_months": settings.get("maturity_months"),
         })
-        next_seq = int(settings.get("last_sequence", 0)) + 1
-        preview_dt = pd.Timestamp.today()
+        preview_dt = wita_now()
+        next_seq = sppd_last_sequence_for_year(settings, int(preview_dt.year)) + 1
         return JSONResponse({
             "ok": True,
             "settings": settings,
