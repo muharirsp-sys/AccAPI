@@ -100,7 +100,10 @@ export default function TabAo({ scope }: { scope: Scope }) {
                         noOrderNote: row.noOrderNote ?? null,
                     }),
                 });
-                if (!res.ok) throw new Error("Gagal menyimpan");
+                if (!res.ok) {
+                    const j = await res.json().catch(() => ({}));
+                    throw new Error(`${row.custCode}: ${j.error ?? "Gagal menyimpan"}`);
+                }
             }
             toast.success("Data AO berhasil disimpan");
         } catch (err: unknown) {
