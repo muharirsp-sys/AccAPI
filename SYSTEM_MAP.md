@@ -751,7 +751,7 @@ AccAPI/_github_clean/
 | File | Fungsi Utama | Peran |
 |---|---|---|
 | `app/(dashboard)/form-kontrol/page.tsx` | `FormKontrolPage`, `loadScope`, `selectTab` | Memuat `/api/form-kontrol/my-scope` secara fail-closed; loading memakai skeleton, error punya retry, lalu tab dibuka sesuai role dan tersinkron ke query URL |
-| `app/(dashboard)/form-kontrol/visit/[custCode]/page.tsx` | `VisitWizardPage`, `PhotoInput` | Flow check-in -> status order -> simpan merchandising -> check-out; langkah hanya maju sesudah persistence sukses |
+| `app/(dashboard)/form-kontrol/**` + `app/(dashboard)/sales/**` (Fiori S5) | `FormKontrol` (shell tab per peran), `TabAo` (Rute hari ini), `Kunjungan` + `FotoBukti` (wizard Check-in → Status → Merchandising → Check-out, Kembali di tiap langkah), `OrderSales`, `DashboardSpv`, tab tim; helper `shared.tsx` (`hariIniWita`, `ambilFk`/`tulisFk`, `useIzinFk`) dan `lapangan.ts` | Rute server tipis + FioriScope; tanggal "hari ini" dihitung WITA di klien dan dikirim ke server (BL-28 penetapan server belum); langkah wizard hanya maju sesudah persistence sukses; galat ≠ kosong; jawaban tidak pasti disebut |
 | `components/form-kontrol/camera-capture.tsx` | `CameraCapture` | Kamera/pratinjau foto dalam Dialog native; tetap terbuka dan dapat retry sampai callback upload+persistence resolve |
 | `components/ui/Dialog.tsx` | `Dialog` | Primitive modal native bersama: focus trap/restoration browser, Escape, label/deskripsi, dan backdrop opsional |
 | `components/DataTable.tsx` | `DataTable` | Tabel generik dengan caption, status live, loading skeleton, empty state eksplisit, sorting semantik, kontrol kolom/pagination aksesibel, sticky header, dan density baris konsisten |

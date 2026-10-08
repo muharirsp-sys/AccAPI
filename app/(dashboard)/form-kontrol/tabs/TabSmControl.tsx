@@ -1,168 +1,243 @@
+/*
+ * Tujuan: Tab Kontrol Wajib SM (Fiori S5, it05 #18): memuat SPV di bawah SM + briefing mereka (GET sm-briefings) DAN isian yang
+ *   sudah tersimpan hari ini (GET sm-control, sebelumnya tidak dipakai); galat keduanya tampil (tidak ditelan) dan mengunci Simpan.
+ *   Simpan lewat dialog; payload sama dengan hari ini (tanggal = hari ini WITA).
+ * Caller: form-kontrol/FormKontrol.tsx (tab "sm-control").
+ * Dependensi: ../shared (Scope, hariIniWita, jamWita, ambilFk, tulisFk, useIzinFk), components/fiori/{core,interactive},
+ *   lib/rekapan-nota/ui (tanggalPendek).
+ * Main Functions: TabSmControl (default), dariServer.
+ * Side Effects: GET /api/form-kontrol/sm-briefings, GET /api/form-kontrol/sm-control; POST /api/form-kontrol/sm-control (dialog).
+ */
 "use client";
 
-// Kontrol Wajib SM — coaching notes: label di atas input (bukan w-20 inline).
-// Deviasi: grid 2-kolom (SPV | catatan) + tombol hapus, input min-h-[44px].
-
-import { useState, useEffect } from "react";
-import { BarChart3, Loader2, Save, CheckCircle2, Plus, Trash2 } from "lucide-react";
-import { toast } from "sonner";
-import { type Scope, SectionTitle } from "../shared";
+import { useCallback, useState } from "react";
+import { Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { Button, EmptyState, ErrorState, MessageStrip, Section, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
+import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
+import { tanggalPendek } from "@/lib/rekapan-nota/ui";
+import { ambilFk, hariIniWita, jamWita, tulisFk, useIzinFk, type Scope } from "../shared";
 
 interface SpvBriefing { session: string; penyebab: string | null; solusi: string | null }
 interface SpvBriefingRow { spvName: string; briefings: SpvBriefing[] }
+interface SmTersimpan {
+    spvChecked?: unknown; jksChecked?: boolean; fotoChecked?: boolean;
+    deviations?: unknown; followUp?: string | null; createdAt?: string | null;
+}
+type Form = { spvList: { name: string; note: string }[]; jksChecked: boolean; fotoChecked: boolean; deviasi: { spv: string; catatan: string }[]; followUp: string };
+type Data = { briefings: SpvBriefingRow[]; tersimpan: SmTersimpan | null };
+
+/** Isian dari server: daftar SPV hari ini + catatan tersimpan (SPV tersimpan yang tidak lagi di bawah SM ini tetap dibawa). */
+function dariServer(d: Data): Form {
+    const t = d.tersimpan;
+    const lama = Array.isArray(t?.spvChecked) ? (t.spvChecked as Array<{ name?: unknown; note?: unknown }>) : [];
+    const catatan = new Map(lama.map((s) => [String(s.name ?? ""), String(s.note ?? "")]));
+    const nama = [...d.briefings.map((b) => b.spvName), ...[...catatan.keys()].filter((n) => n && !d.briefings.some((b) => b.spvName === n))];
+    const dev = Array.isArray(t?.deviations) ? (t.deviations as Array<{ spv?: unknown; catatan?: unknown }>) : [];
+    return {
+        spvList: nama.map((name) => ({ name, note: catatan.get(name) ?? "" })),
+        jksChecked: Boolean(t?.jksChecked),
+        fotoChecked: Boolean(t?.fotoChecked),
+        deviasi: dev.map((x) => ({ spv: String(x.spv ?? ""), catatan: String(x.catatan ?? "") })),
+        followUp: t?.followUp ?? "",
+    };
+}
+
+const GAGAL = "Kontrol SM belum berhasil dimuat.";
 
 export default function TabSmControl({ scope }: { scope: Scope }) {
-    const [spvList, setSpvList] = useState<{ name: string; note: string }[]>([]);
-    const [briefings, setBriefings] = useState<SpvBriefingRow[]>([]);
-    const [jksChecked, setJksChecked] = useState(false);
-    const [fotoChecked, setFotoChecked] = useState(false);
-    const [deviasi, setDeviasi] = useState<{ spv: string; catatan: string }[]>([]);
-    const [followUp, setFollowUp] = useState("");
-    const [saving, setSaving] = useState(false);
-    const [selectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+    const izin = useIzinFk("submit");
+    const [date] = useState(hariIniWita);
+    // Nama yang sama dipakai untuk membaca dan menulis (POST hari ini: smName ?? spvName ?? salesName).
+    const smName = scope.smName ?? scope.spvName ?? scope.salesName ?? "";
 
-    // Briefing SPV nyata di bawah SM ini (ganti hardcode SPV 1/2).
-    useEffect(() => {
-        fetch(`/api/form-kontrol/sm-briefings?date=${selectedDate}`)
-            .then(r => r.json())
-            .then(d => {
-                const rows: SpvBriefingRow[] = d.rows ?? [];
-                setBriefings(rows);
-                setSpvList(rows.map(r => ({ name: r.spvName, note: "" })));
-            })
-            .catch(() => {});
-    }, [selectedDate]);
+    const [load, muatUlang] = useLoad(useCallback(async (): Promise<Load<Data>> => {
+        if (!smName) return { status: "siap", data: { briefings: [], tersimpan: null } };
+        const q = new URLSearchParams({ date, smName });
+        const [b, t] = await Promise.all([
+            ambilFk(`/api/form-kontrol/sm-briefings?${q}`, (j) => (j.rows ?? []) as SpvBriefingRow[], "Daftar SPV dan briefing belum berhasil dimuat."),
+            ambilFk(`/api/form-kontrol/sm-control?${q}`, (j) => ((j.rows ?? []) as SmTersimpan[])[0] ?? null, "Isian Kontrol SM yang tersimpan belum berhasil dimuat."),
+        ]);
+        if (b.status !== "siap" || t.status !== "siap") return { status: "galat", error: [b.error, t.error].filter(Boolean).join(" ") };
+        return { status: "siap", data: { briefings: b.data!, tersimpan: t.data! } };
+    }, [smName, date]));
 
-    async function handleSave() {
-        const smName = scope.smName ?? scope.spvName ?? scope.salesName ?? "";
-        if (!smName) { toast.error("Nama SM tidak ditemukan"); return; }
-        setSaving(true);
-        try {
-            const coachingNote = spvList
-                .filter(s => s.note.trim())
-                .map(s => `${s.name}: ${s.note}`)
-                .join("\n");
-            const res = await fetch("/api/form-kontrol/sm-control", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    smName,
-                    date: selectedDate,
-                    spvChecked: spvList,
-                    jksChecked,
-                    fotoChecked,
-                    coachingNote,
-                    deviations: deviasi,
-                    followUp,
-                }),
-            });
-            if (!res.ok) throw new Error("Gagal simpan");
-            toast.success("Kontrol SM berhasil disimpan");
-        } catch (err: unknown) {
-            toast.error(err instanceof Error ? err.message : "Gagal simpan");
-        } finally { setSaving(false); }
+    // null = belum disunting → tampil isian dari server; sesudah simpan, isian yang baru disimpan tetap tampil
+    // (server membaca satu catatan tanpa urutan, jadi memuat ulang bisa memunculkan catatan lama).
+    const [ubah, setUbah] = useState<Form | null>(null);
+    const [dasar, setDasar] = useState<Form | null>(null);
+    const [disimpan, setDisimpan] = useState<string | null>(null);
+    const [dialog, setDialog] = useState(false);
+    const [sukses, setSukses] = useState("");
+
+    const server = load.data ? dariServer(load.data) : null;
+    const form = ubah ?? server;
+    const pembanding = dasar ?? server;
+    const dirty = Boolean(form && pembanding && JSON.stringify(form) !== JSON.stringify(pembanding));
+    useUnsavedGuard(dirty);
+    const set = (f: (v: Form) => Form) => { if (form) { setUbah(f(form)); setSukses(""); } };
+
+    const blokir = izin
+        ?? (!smName ? "Akun ini tidak tertaut ke nama SM; Kontrol SM diisi oleh akun SM." : undefined)
+        ?? (load.status !== "siap" ? "Isian tersimpan belum berhasil dimuat; simpan dikunci agar tidak menimpa catatan." : undefined);
+
+    if (!smName) {
+        return <EmptyState title="Kontrol SM diisi oleh akun SM" message="Akun ini tidak tertaut ke nama SM di Hierarki Sales, jadi tidak ada SPV yang bisa dikontrol." />;
     }
+    if (!form) {
+        return load.status === "galat"
+            ? <ErrorState title={GAGAL} message={`${load.error ?? ""} Isian tidak ditampilkan agar catatan tersimpan tidak tertimpa isian kosong.`} onRetry={muatUlang} />
+            : <Skeleton rows={6} label="Memuat Kontrol SM" />;
+    }
+    const tersimpanJam = disimpan ?? load.data?.tersimpan?.createdAt ?? null;
 
     return (
-        <div className="space-y-4">
-            <SectionTitle icon={BarChart3} no={7} title="Kontrol Wajib SM"
-                desc="Tugas SM bukan mengontrol salesman langsung, tetapi memastikan SPV benar-benar mengontrol salesmannya" />
+        <>
+            {load.status === "galat" && (
+                <MessageStrip tone="neg" title="Gagal memuat ulang.">
+                    {load.error} Yang tampil adalah hasil sebelumnya; simpan dikunci.{" "}
+                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={muatUlang}>Coba lagi</button>
+                </MessageStrip>
+            )}
+            {sukses && <MessageStrip tone="pos" title={sukses} onClose={() => setSukses("")} />}
+            <div className="fi-page-bar">
+                <h2 className="fi-title-2">Kontrol Wajib SM</h2>
+                {dirty && <span className="fi-draft"><Pencil className="fi-icon" aria-hidden />Draf belum disimpan</span>}
+                <span className="fi-spacer" />
+                <span className="fi-small fi-subtle">
+                    {smName} · {tanggalPendek(date)} · {tersimpanJam ? `tersimpan ${jamWita(tersimpanJam)} WITA` : "belum disimpan hari ini"}
+                </span>
+            </div>
+            <p className="fi-small fi-muted">Tugas SM bukan mengontrol salesman langsung, tetapi memastikan SPV benar-benar mengontrol salesmannya.</p>
 
-            <div className="bg-[#1a1c23]/60 border border-white/10 rounded-xl p-4 space-y-3">
-                <h3 className="text-sm font-semibold text-white">Kontrol Harian</h3>
-                <div className="flex flex-col gap-3">
-                    {[
-                        { label: "JKS sudah dicek hari ini", value: jksChecked, set: setJksChecked },
-                        { label: "Foto kunjungan sudah dimonitor", value: fotoChecked, set: setFotoChecked },
-                    ].map((item, i) => (
-                        <label key={i} className="flex items-center gap-3 cursor-pointer min-h-[40px]">
-                            <button type="button" onClick={() => item.set(!item.value)}
-                                className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 transition-colors ${item.value ? "bg-emerald-500 border-emerald-500" : "bg-black/30 border-white/20"}`}>
-                                {item.value && <CheckCircle2 size={12} className="text-white" />}
-                            </button>
-                            <span className="text-sm text-slate-200">{item.label}</span>
+            <Section title="Kontrol harian">
+                <div className="fi-sect-in">
+                    {([["jksChecked", "JKS sudah dicek hari ini"], ["fotoChecked", "Foto kunjungan sudah dimonitor"]] as const).map(([k, label]) => (
+                        <label key={k} className="fi-check" style={{ minHeight: 44 }}>
+                            <input type="checkbox" checked={form[k]} style={{ width: 20, height: 20 }} onChange={() => set((v) => ({ ...v, [k]: !v[k] }))} />
+                            {label}
                         </label>
                     ))}
                 </div>
-            </div>
+            </Section>
 
-            <div className="bg-[#1a1c23]/60 border border-white/10 rounded-xl p-4 space-y-3">
-                <h3 className="text-sm font-semibold text-white">Catatan Coaching per SPV</h3>
-                <div className="space-y-3">
-                    {spvList.length === 0 && (
-                        <p className="text-sm text-slate-500">Belum ada SPV terhubung ke SM ini (isi <span className="font-mono">smName</span> di sales profile SPV).</p>
+            <Section title="Catatan coaching per SPV" subtitle={`${form.spvList.length} SPV`}>
+                <div className="fi-sect-in">
+                    {form.spvList.length === 0 && (
+                        <p className="fi-small fi-subtle">Belum ada SPV terhubung ke SM ini. Isi SM pada SPV di Hierarki Sales.</p>
                     )}
-                    {spvList.map((spv, i) => {
-                        const br = briefings.find(b => b.spvName === spv.name);
-                        const pagi = br?.briefings.find(x => x.session === "pagi");
-                        const sore = br?.briefings.find(x => x.session === "sore");
+                    {form.spvList.map((spv, i) => {
+                        const br = load.data?.briefings.find((b) => b.spvName === spv.name);
+                        const pagi = br?.briefings.find((x) => x.session === "pagi");
+                        const sore = br?.briefings.find((x) => x.session === "sore");
+                        const penyebab = sore?.penyebab || pagi?.penyebab;
+                        const solusi = sore?.solusi || pagi?.solusi;
                         return (
-                            <div key={i} className="space-y-1">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <p className="text-xs text-slate-400 font-medium">{spv.name}</p>
-                                    <span className={`text-[10px] px-1.5 py-0 rounded border ${pagi ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" : "bg-slate-500/15 text-slate-400 border-slate-500/30"}`}>briefing pagi {pagi ? "✓" : "—"}</span>
-                                    <span className={`text-[10px] px-1.5 py-0 rounded border ${sore ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" : "bg-slate-500/15 text-slate-400 border-slate-500/30"}`}>sore {sore ? "✓" : "—"}</span>
+                            <div key={spv.name} className="grid gap-1.5">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <b className="fi-small">{spv.name}</b>
+                                    <StatusBadge tone={pagi ? "pos" : "neu"}>{pagi ? "Briefing pagi" : "Pagi belum"}</StatusBadge>
+                                    <StatusBadge tone={sore ? "pos" : "neu"}>{sore ? "Briefing sore" : "Sore belum"}</StatusBadge>
+                                    {!br && <StatusBadge tone="warn">Tidak lagi di bawah SM ini</StatusBadge>}
                                 </div>
-                                {(pagi?.penyebab || pagi?.solusi || sore?.penyebab || sore?.solusi) && (
-                                    <div className="bg-black/20 rounded-lg px-2.5 py-1.5 text-xs text-slate-400 space-y-0.5">
-                                        {(sore?.penyebab || pagi?.penyebab) && <p><span className="text-slate-500">Penyebab:</span> {sore?.penyebab || pagi?.penyebab}</p>}
-                                        {(sore?.solusi || pagi?.solusi) && <p><span className="text-slate-500">Solusi:</span> {sore?.solusi || pagi?.solusi}</p>}
-                                    </div>
+                                {(penyebab || solusi) && (
+                                    <p className="fi-small fi-muted">
+                                        {penyebab && <>Penyebab: {penyebab}. </>}
+                                        {solusi && <>Solusi: {solusi}.</>}
+                                    </p>
                                 )}
-                                <input value={spv.note}
-                                    onChange={e => setSpvList(prev => prev.map((s, j) => j === i ? { ...s, note: e.target.value } : s))}
-                                    placeholder="Catatan coaching (kosongkan jika tidak ada)..."
-                                    className="w-full bg-black/30 border border-white/10 rounded-lg text-sm text-white px-3 py-2.5 min-h-[44px] placeholder-slate-500" />
+                                <FormField label={`Catatan coaching ${spv.name}`}>{(a) => (
+                                    <input {...a} className="fi-input" style={{ minHeight: 44 }} value={spv.note} placeholder="Kosongkan bila tidak ada"
+                                        onChange={(e) => set((v) => ({ ...v, spvList: v.spvList.map((s, j) => (j === i ? { ...s, note: e.target.value } : s)) }))} />
+                                )}</FormField>
                             </div>
                         );
                     })}
                 </div>
-            </div>
+            </Section>
 
-            <div className="bg-[#1a1c23]/60 border border-white/10 rounded-xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-white">Penyimpangan & Keterlambatan</h3>
-                    <button onClick={() => setDeviasi(prev => [...prev, { spv: "", catatan: "" }])}
-                        className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 px-2 py-1">
-                        <Plus size={12} /> Tambah
-                    </button>
-                </div>
-                {deviasi.length === 0 ? (
-                    <p className="text-sm text-slate-500">Belum ada penyimpangan dicatat.</p>
-                ) : (
-                    <div className="space-y-2">
-                        {deviasi.map((d, i) => (
-                            <div key={i} className="grid grid-cols-[1fr_2fr_auto] gap-2 items-center">
-                                <input value={d.spv}
-                                    onChange={e => setDeviasi(prev => prev.map((x, j) => j === i ? { ...x, spv: e.target.value } : x))}
-                                    placeholder="SPV"
-                                    className="bg-black/30 border border-white/10 rounded-lg text-sm text-white px-3 py-2.5 min-h-[44px] placeholder-slate-500" />
-                                <input value={d.catatan}
-                                    onChange={e => setDeviasi(prev => prev.map((x, j) => j === i ? { ...x, catatan: e.target.value } : x))}
-                                    placeholder="Catatan penyimpangan / keterlambatan..."
-                                    className="bg-black/30 border border-white/10 rounded-lg text-sm text-white px-3 py-2.5 min-h-[44px] placeholder-slate-500" />
-                                <button onClick={() => setDeviasi(prev => prev.filter((_, j) => j !== i))}
-                                    className="p-2.5 text-rose-400 hover:text-rose-300 min-h-[44px] flex items-center">
-                                    <Trash2 size={16} />
-                                </button>
+            <Section title="Penyimpangan & keterlambatan" subtitle={`${form.deviasi.length} catatan`}
+                actions={<Button icon={<Plus className="fi-icon" aria-hidden />} style={{ minHeight: 44 }} onClick={() => set((v) => ({ ...v, deviasi: [...v.deviasi, { spv: "", catatan: "" }] }))}>Tambah</Button>}>
+                <div className="fi-sect-in">
+                    {form.deviasi.length === 0 && <p className="fi-small fi-subtle">Belum ada penyimpangan dicatat.</p>}
+                    {form.deviasi.map((d, i) => (
+                        <div key={i} className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
+                            <FormField label={`SPV (baris ${i + 1})`}>{(a) => (
+                                <input {...a} className="fi-input" style={{ minHeight: 44 }} value={d.spv}
+                                    onChange={(e) => set((v) => ({ ...v, deviasi: v.deviasi.map((x, j) => (j === i ? { ...x, spv: e.target.value } : x)) }))} />
+                            )}</FormField>
+                            <div className="col-span-2 row-start-2 sm:col-span-1 sm:row-start-auto">
+                                <FormField label={`Catatan (baris ${i + 1})`}>{(a) => (
+                                    <input {...a} className="fi-input" style={{ minHeight: 44 }} value={d.catatan} placeholder="Penyimpangan / keterlambatan"
+                                        onChange={(e) => set((v) => ({ ...v, deviasi: v.deviasi.map((x, j) => (j === i ? { ...x, catatan: e.target.value } : x)) }))} />
+                                )}</FormField>
                             </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-
-            <div className="bg-[#1a1c23]/60 border border-white/10 rounded-xl p-4 space-y-3">
-                <h3 className="text-sm font-semibold text-white">Follow-up SM</h3>
-                <textarea value={followUp} onChange={e => setFollowUp(e.target.value)} rows={3}
-                    placeholder="Tindak lanjut SM terhadap kondisi lapangan hari ini..."
-                    className="w-full bg-black/30 border border-white/10 rounded-lg text-sm text-white px-3 py-2 placeholder-slate-500 resize-none" />
-                <div className="flex justify-end">
-                    <button onClick={handleSave} disabled={saving}
-                        className="flex items-center gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-semibold">
-                        {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Simpan Kontrol SM
-                    </button>
+                            <Button variant="icon" aria-label={`Hapus penyimpangan baris ${i + 1}`} style={{ width: 44, height: 44 }}
+                                className="col-start-2 row-start-1 sm:col-start-auto sm:row-start-auto"
+                                onClick={() => set((v) => ({ ...v, deviasi: v.deviasi.filter((_, j) => j !== i) }))}>
+                                <Trash2 className="fi-icon" aria-hidden />
+                            </Button>
+                        </div>
+                    ))}
                 </div>
-            </div>
-        </div>
+            </Section>
+
+            <Section title="Follow-up SM">
+                <div className="fi-sect-in">
+                    <FormField label="Tindak lanjut SM hari ini">{(a) => (
+                        <textarea {...a} className="fi-input" rows={3} value={form.followUp} placeholder="Tindak lanjut SM terhadap kondisi lapangan hari ini"
+                            onChange={(e) => set((v) => ({ ...v, followUp: e.target.value }))} />
+                    )}</FormField>
+                    <div className="fi-btnrow">
+                        {blokir && <span className="fi-small fi-subtle">{blokir}</span>}
+                        <span style={{ flex: 1 }} />
+                        <Button variant="primary" style={{ minHeight: 44 }} icon={<Save className="fi-icon" aria-hidden />} disabled={Boolean(blokir)} disabledReason={blokir}
+                            onClick={() => { setSukses(""); setDialog(true); }}>
+                            Simpan Kontrol SM
+                        </Button>
+                    </div>
+                </div>
+            </Section>
+            <VariantNote bl="BL-32">
+                Kontrol SM dibaca dan ditulis per nama SM tanpa cek cakupan di server. Setiap simpan menambah catatan baru; bila disimpan lebih
+                dari sekali sehari, yang dimuat saat halaman dibuka bisa catatan pertama — lihat jam &quot;tersimpan&quot; di atas.
+            </VariantNote>
+            <ConfirmDialog
+                open={dialog}
+                onClose={() => setDialog(false)}
+                title="Simpan Kontrol SM hari ini?"
+                facts={[
+                    ["SM", smName],
+                    ["Tanggal", tanggalPendek(date)],
+                    ["JKS dicek", form.jksChecked ? "Ya" : "Belum"],
+                    ["Foto dimonitor", form.fotoChecked ? "Ya" : "Belum"],
+                    ["Catatan coaching", `${form.spvList.filter((s) => s.note.trim()).length} dari ${form.spvList.length} SPV`],
+                    ["Penyimpangan", `${form.deviasi.length} catatan`],
+                    ...(tersimpanJam ? [["Sudah tersimpan", `${jamWita(tersimpanJam)} WITA — menyimpan lagi menambah catatan baru`] as [string, string]] : []),
+                ]}
+                confirmLabel="Simpan"
+                confirmDisabled={blokir}
+                onConfirm={async () => {
+                    const isi = form;
+                    const coachingNote = isi.spvList.filter((s) => s.note.trim()).map((s) => `${s.name}: ${s.note}`).join("\n");
+                    await tulisFk("/api/form-kontrol/sm-control", {
+                        body: {
+                            smName, date,
+                            spvChecked: isi.spvList,
+                            jksChecked: isi.jksChecked,
+                            fotoChecked: isi.fotoChecked,
+                            coachingNote,
+                            deviations: isi.deviasi,
+                            followUp: isi.followUp,
+                        },
+                        gagal: "Kontrol SM belum tersimpan.",
+                    });
+                    setDialog(false);
+                    setUbah(isi);
+                    setDasar(isi);
+                    setDisimpan(new Date().toISOString());
+                    setSukses("Kontrol SM tersimpan.");
+                }}
+            />
+        </>
     );
 }
