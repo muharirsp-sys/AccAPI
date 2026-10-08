@@ -121,7 +121,7 @@ export function Flow({ steps, label = "Tahap dokumen" }: { steps: FlowStep[]; la
 
 type ObjectPageHeaderProps = {
     breadcrumbs?: Array<{ label: string; href?: string }>;
-    title: string; status?: ReactNode; draft?: boolean; actions?: ReactNode;
+    title: ReactNode; status?: ReactNode; draft?: boolean; actions?: ReactNode;
     attributes?: Array<{ label: string; value: ReactNode }>;
     flow?: ReactNode;
 };

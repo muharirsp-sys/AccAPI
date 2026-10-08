@@ -524,7 +524,9 @@ AccAPI/_github_clean/
 │   │   ├── error.tsx                   # Error boundary segmen dashboard (pesan rapi, tanpa stack)
 │   │   ├── page.tsx                    # Home/dashboard utama
 │   │   ├── off-program-control/
-│   │   │   └── page.tsx                # Cockpit OPC (SPV/SM/Claim/OM/Finance/Audit tabs)
+│   │   │   ├── page.tsx                # Server tipis: izin + FioriScope → OpcApp
+│   │   │   ├── OpcApp.tsx              # Klien: peran OPC, navigasi ?tab=, lonceng/pencarian → ?batch=, penjaga draf
+│   │   │   └── opc/                    # Bersama.tsx (hook data, Antrean, KerjaPeran FCL), ObjectPageBatch.tsx, peran/{Spv,Sm,Klaim,Om,Keuangan,Ringkasan,Audit}.tsx
 │   │   ├── claim-workflow/
 │   │   │   ├── page.tsx                # Daftar claim workflow
 │   │   │   ├── [id]/page.tsx           # Detail + aksi per workflow
@@ -608,7 +610,6 @@ AccAPI/_github_clean/
 │   ├── ServiceWorkerRegistration.tsx
 │   ├── fiori/                          # Design system Fiori: Scope (font + .fiori), core, interactive, scheme
 │   ├── off-program-control/
-│   │   ├── OffBreadcrumb.tsx
 │   │   ├── OffGlobalSearch.tsx
 │   │   └── OffNotificationBell.tsx
 │   └── ui/                             # Input, Select, DatePickerField (dialog kalender + keyboard), AsyncSearchSelect, Dialog native, AsyncState bersama
@@ -738,7 +739,12 @@ AccAPI/_github_clean/
 | `app/api/off-program-control/batches/[id]/claim-review/route.ts` | `POST` | Review & approve Claim |
 | `app/api/off-program-control/batches/[id]/finance-payment/route.ts` | `POST` | Input pembayaran Finance |
 | `app/api/off-program-control/batches/[id]/refund/route.ts` | `POST` | Submit refund kelebihan bayar |
-| `app/(dashboard)/off-program-control/page.tsx` | `OffProgramControlPage` + tab components | Cockpit OPC full; data runtime hanya dari API dan error tidak diganti fixture. Untuk stress test UI lokal, `?mock=N` mengaktifkan maksimum 2.000 batch sintetis in-memory hanya pada development; bulk SPV tetap mulai dari baris kosong. Tab dan detail batch tersinkron ke query URL, tab mendukung roving keyboard, overlay kritis memakai Dialog native bersama, hierarchy/density memakai semantic cockpit tokens, shell sesi memakai loading skeleton |
+| `app/(dashboard)/off-program-control/page.tsx` | `OffProgramControlPage` | Rute Fiori S4d: izin server (`resolveRequestPermissionsH`) + `FioriScope` → `OpcApp` |
+| `app/(dashboard)/off-program-control/OpcApp.tsx` | `OpcApp` | Peran OPC sama dengan kode lama (sesi + `useLocalAuthRole` → `resolveOffRole`, SM hanya tab Sales Manager); navigasi `?tab=` lama; lonceng + pencarian membuka `?batch=` di kolom kedua untuk peran apa pun; `?mock=N` fixture dev; dialog "Tinggalkan perubahan?" + `useUnsavedGuard` |
+| `app/(dashboard)/off-program-control/opc/Bersama.tsx` | `useDaftarBatch`, `useDetailBatch`, `KerjaPeran`, `Antrean`, `ambilOpc`, `tulisOpc` | Satu daftar 200 batch (polling 45 dtk + fokus tab, SLA `detectProblematicBatches`), detail batch (+ refund, audit per batch), worklist + saringan + FCL; header berisi KONTRAK untuk modul peran |
+| `app/(dashboard)/off-program-control/opc/ObjectPageBatch.tsx` | `ObjectPageBatch` | Object Page batch: header + Flow 7 tahap + lewat SLA, Item, Validasi klaim, Pembayaran dan refund, Riwayat (log + enam sumbu status), Alur dokumen; slot `bagian`/`gantiItem`/`strip`/`aksi`/`pesanFooter`/`draf` |
+| `app/(dashboard)/off-program-control/opc/peran/*.tsx` | `Spv`, `Sm`, `Klaim`, `Om`, `Keuangan`, `Ringkasan`, `Audit` | Satu modul per tab; header tiap modul mendaftar fitur lama yang dibawa (rentang baris kode lama) |
+| `lib/opc-ui.ts` | `tahapBatch`, `infoTahap`, `alurBatch`, `PREDIKAT`, `TAMPILAN`, `tabTerlihat`, `saringBatch`, `izinAksi` | Murni: enam sumbu status → 7 tahap (Draf → SM → Klaim → OM → Bayar → Final → Selesai + Dikembalikan/Dibatalkan), predikat antrean salinan kode lama, label Indonesia, format WITA (uji: `lib/opc-ui.test.ts`) |
 
 ### Form Kontrol
 
@@ -749,8 +755,8 @@ AccAPI/_github_clean/
 | `components/form-kontrol/camera-capture.tsx` | `CameraCapture` | Kamera/pratinjau foto dalam Dialog native; tetap terbuka dan dapat retry sampai callback upload+persistence resolve |
 | `components/ui/Dialog.tsx` | `Dialog` | Primitive modal native bersama: focus trap/restoration browser, Escape, label/deskripsi, dan backdrop opsional |
 | `components/DataTable.tsx` | `DataTable` | Tabel generik dengan caption, status live, loading skeleton, empty state eksplisit, sorting semantik, kontrol kolom/pagination aksesibel, sticky header, dan density baris konsisten |
-| `components/off-program-control/OffGlobalSearch.tsx` | `OffGlobalSearch` | Quick jump OFF via Ctrl/Cmd+K; combobox/listbox mendukung Arrow, Home/End, Enter, dan Escape tanpa mengambil alih Ctrl/Cmd+F browser; hasil membuka deep-link batch di overview |
-| `components/off-program-control/OffNotificationBell.tsx` | `OffNotificationBell` | Ringkasan masalah SLA dengan progressive disclosure dan aksi langsung membuka batch terkait tanpa pencarian ulang |
+| `components/off-program-control/OffGlobalSearch.tsx` | `OffGlobalSearch` | Quick jump OFF via Ctrl/Cmd+K; combobox/listbox mendukung Arrow, Home/End, Enter, dan Escape tanpa mengambil alih Ctrl/Cmd+F browser; hasil membuka batch di kolom kedua tab aktif |
+| `components/off-program-control/OffNotificationBell.tsx` | `OffNotificationBell` | Tombol berjumlah + popover masalah SLA per peran; "Buka pengajuan" membuka batch di kolom kedua; Sembunyikan berlaku sampai muat ulang |
 | `app/(dashboard)/insentif-sales/**` (Fiori S4c) | `InsentifSalesPage`, `InsentifRangka`, `usePeriode`, `useDashboard`, `aksesInsentif`, `halamanTerlihat` | Enam rute (Dashboard, `/saya`, `/pembayaran`, `/data-periode`, `/support`, `/pengaturan`); navigasi dari izin + identitas hierarki (server); periode/principal/cabang di query URL untuk semua halaman; `?view=` lama dialihkan; enam keadaan per layar, aksi tulis lewat ConfirmDialog |
 | `app/globals.css` | semantic cockpit classes | Sumber token lebar halaman, spacing, radius, page hierarchy, tab, toolbar, panel, tabel, dan action hierarchy untuk route operasional |
 | `components/ui/AsyncState.tsx` | `LoadingState`, `ErrorState`, `EmptyState` | Primitive feedback async bersama; skeleton mengikuti reduced-motion, error meneruskan retry, empty state dapat membawa recovery action |
