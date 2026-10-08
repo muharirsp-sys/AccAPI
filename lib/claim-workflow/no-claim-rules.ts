@@ -591,3 +591,103 @@ export function getAllNoClaimRuleOptions(): Array<{
     hasVariants: isNoClaimRuleWithVariants(config),
   }));
 }
+
+// ---------------------------------------------------------------------------
+// Templat dari DB (S4b, owner 8 Okt 2026): baris no_claim_template menimpa
+// bawaan di atas per (principleCode, variantKey). variantKey "" = tanpa varian.
+// ---------------------------------------------------------------------------
+
+export type NoClaimTemplateRow = {
+  principleCode: string;
+  variantKey: string;
+  label: string;
+  pattern: string;
+  padWidth: number | null;
+  sequenceType: string;
+};
+
+const NO_CLAIM_TOKEN = /\{(\w+)\}/g;
+const NO_CLAIM_TOKENS = new Set(["seq", "month", "year4", "year2"]);
+const NO_CLAIM_PATTERN_CHARS = /^[A-Za-z0-9/._ -]*$/;
+
+/**
+ * Validasi isian templat terhadap bawaan: principal bervarian (HEINZ) wajib memilih salah satu
+ * variannya; principal tanpa varian / principal baru wajib variantKey kosong. Field yang tidak
+ * dikirim (label, padWidth, sequenceType) diisi dari bawaan. Galat berbahasa Indonesia.
+ */
+export function validateNoClaimTemplate(
+  input: Record<string, unknown>,
+  base: NoClaimRuleConfig[] = noClaimRuleConfigs,
+): { ok: true; row: NoClaimTemplateRow } | { ok: false; error: string } {
+  const principleCode = String(input.principleCode ?? "").trim().toUpperCase();
+  const variantKey = String(input.variantKey ?? "").trim().toUpperCase();
+  const pattern = String(input.pattern ?? "").trim();
+  if (!/^[A-Z0-9_-]{1,20}$/.test(principleCode)) return { ok: false, error: "Kode principal tidak valid." };
+
+  const config = base.find((c) => c.principleCode === principleCode);
+  let baseRule: NoClaimRule | undefined;
+  if (config && isNoClaimRuleWithVariants(config)) {
+    baseRule = config.variants.find((v) => v.variantKey === variantKey);
+    if (!baseRule)
+      return { ok: false, error: `Principal ${principleCode} wajib memilih varian: ${config.variants.map((v) => v.variantKey).join(", ")}.` };
+  } else {
+    if (variantKey) return { ok: false, error: `Principal ${principleCode} tidak punya varian; kosongkan kode varian.` };
+    baseRule = config;
+  }
+
+  const label = input.label === undefined ? (baseRule?.label ?? principleCode) : String(input.label).trim() || principleCode;
+  const sequenceType = input.sequenceType === undefined ? (baseRule?.sequenceType ?? "number") : String(input.sequenceType);
+  const padWidth = input.padWidth === undefined ? (baseRule?.padWidth ?? null)
+    : input.padWidth === null || input.padWidth === "" ? null : Number(input.padWidth);
+
+  if (label.length > 60) return { ok: false, error: "Label maksimal 60 karakter." };
+  if (!pattern || pattern.length > 100) return { ok: false, error: "Pola No Claim wajib diisi (maksimal 100 karakter)." };
+  if (!pattern.includes("{seq}")) return { ok: false, error: "Pola No Claim wajib memuat {seq}." };
+  const unknown = [...pattern.matchAll(NO_CLAIM_TOKEN)].map((m) => m[1]).filter((t) => !NO_CLAIM_TOKENS.has(t));
+  if (unknown.length) return { ok: false, error: `Token tidak dikenal: {${unknown.join("}, {")}}. Pakai {seq}, {month}, {year4}, {year2}.` };
+  if (!NO_CLAIM_PATTERN_CHARS.test(pattern.replace(NO_CLAIM_TOKEN, "")))
+    return { ok: false, error: "Pola hanya boleh berisi huruf, angka, spasi, / . _ - dan token {seq} {month} {year4} {year2}." };
+  if (!["number", "text", "roman"].includes(sequenceType)) return { ok: false, error: "Jenis urutan harus number, text, atau roman." };
+  if (padWidth !== null && (!Number.isInteger(padWidth) || padWidth < 1 || padWidth > 6))
+    return { ok: false, error: "Lebar nomor urut harus 1–6 atau kosong." };
+  return { ok: true, row: { principleCode, variantKey, label, pattern, padWidth, sequenceType } };
+}
+
+function ruleFromRow(row: NoClaimTemplateRow, base?: NoClaimRule): NoClaimRule {
+  return {
+    principleCode: row.principleCode,
+    label: row.label,
+    noClaimKey: base?.noClaimKey ?? null,
+    pattern: row.pattern,
+    padWidth: row.padWidth,
+    sequenceType: row.sequenceType as NoClaimSequenceType,
+    yearFormat: row.pattern.includes("{year2}") ? "YY" : "YYYY",
+    manualSequence: true,
+    allowManualOverride: true,
+    note: base?.note,
+  };
+}
+
+/** Bawaan kode ditimpa baris DB; principal baru (tanpa varian) dari DB ikut ditambahkan. */
+export function mergeNoClaimTemplates(
+  rows: NoClaimTemplateRow[],
+  base: NoClaimRuleConfig[] = noClaimRuleConfigs,
+): NoClaimRuleConfig[] {
+  const byKey = new Map(rows.map((r) => [`${r.principleCode}|${r.variantKey}`, r]));
+  const merged: NoClaimRuleConfig[] = base.map((config) => {
+    if (!isNoClaimRuleWithVariants(config)) {
+      const row = byKey.get(`${config.principleCode}|`);
+      return row ? ruleFromRow(row, config) : config;
+    }
+    return {
+      ...config,
+      variants: config.variants.map((v) => {
+        const row = byKey.get(`${v.principleCode}|${v.variantKey}`);
+        return row ? { ...ruleFromRow(row, v), variantKey: v.variantKey } : v;
+      }),
+    };
+  });
+  const known = new Set(base.map((c) => c.principleCode));
+  for (const r of rows) if (!known.has(r.principleCode) && !r.variantKey) merged.push(ruleFromRow(r));
+  return merged;
+}
