@@ -246,18 +246,27 @@ export type Load<T> = { status: "memuat" | "siap" | "galat"; data?: T; error?: s
  * Saat memuat ulang, data lama tetap tampil dengan status "memuat" (aturan enam keadaan); respons usang diabaikan.
  * setState hanya dipanggil dari callback promise, bukan sinkron di effect (react-hooks/set-state-in-effect).
  */
-export function useLoad<T>(loader: () => Promise<Load<T>>): [Load<T>, () => void] {
+export function useLoad<T>(loader: () => Promise<Load<T>>, opsi: { pertahankan?: boolean } = {}): [Load<T>, () => void] {
+    const pertahankan = Boolean(opsi.pertahankan);
     const [versi, setVersi] = useState(0);
     const [hasil, setHasil] = useState<{ by: () => Promise<Load<T>>; versi: number; load: Load<T> } | null>(null);
     useEffect(() => {
         let alive = true;
-        void loader().then((load) => { if (alive) setHasil({ by: loader, versi, load }); });
+        void loader().then((load) => {
+            if (!alive) return;
+            // Galat memuat ulang tidak membuang hasil sebelumnya: layar menampilkan data lama + strip "hasil sebelumnya".
+            setHasil((prev) => {
+                const lama = prev && (prev.by === loader || pertahankan) ? prev.load.data : undefined;
+                return { by: loader, versi, load: load.status === "galat" && load.data === undefined && lama !== undefined ? { ...load, data: lama } : load };
+            });
+        });
         return () => { alive = false; };
-    }, [loader, versi]);
-    // Loader baru (mis. tanggal berganti) = kueri lain: data lama tidak dipinjam, supaya aksi yang membaca data
-    // (urutan wave berikutnya, nihil per tanggal) tidak memakai tanggal sebelumnya. Muat ulang kunci sama = data lama + "memuat".
+    }, [loader, versi, pertahankan]);
+    // Bawaan: loader baru (mis. tanggal berganti) = kueri lain, data lama TIDAK dipinjam, supaya aksi yang membaca data (urutan wave
+    // berikutnya, nihil per tanggal) tidak memakai tanggal sebelumnya. `pertahankan` (daftar bersaring, mis. cari/saringan): data lama
+    // tetap tampil redup sampai jawaban baru tiba, seperti List Report. Muat ulang kunci sama = selalu data lama + "memuat".
     const kunciSama = hasil !== null && hasil.by === loader;
     const segar = kunciSama && hasil.versi === versi;
-    const load: Load<T> = segar ? hasil.load : kunciSama ? { ...hasil.load, status: "memuat" } : { status: "memuat" };
+    const load: Load<T> = segar ? hasil.load : hasil !== null && (kunciSama || pertahankan) ? { ...hasil.load, status: "memuat" } : { status: "memuat" };
     return [load, () => setVersi((v) => v + 1)];
 }

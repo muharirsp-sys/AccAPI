@@ -1,542 +1,290 @@
 /*
- * Tujuan: Melihat dan menyusun DAFTAR OUTLET peserta program — "toko mana saja yang ikut".
- * Caller: halaman Aturan Promo (/aturan-promo).
- * Dependensi: /api/promo-outlet. Main Functions: DaftarOutlet.
- * Side Effects: HTTP; setiap simpan langsung menulis `promo_outlet`.
+ * Tujuan: Daftar outlet peserta program (Fiori S4a) — "toko mana saja yang ikut". Tab di Aturan Promo.
+ *   Tiga confirm browser diganti dialog: ganti tunjukan daftar (paksa), ubah periode semua anggota, keluarkan anggota.
+ * Caller: app/(dashboard)/aturan-promo/AturanPromo.tsx.
+ * Dependensi: GET|POST|PATCH|DELETE /api/promo-outlet; components/fiori/*; lib/promo-ui.
+ * Main Functions: DaftarOutlet, PilihDaftar.
+ * Side Effects: HTTP; setiap simpan menulis `promo_outlet` (izin summary.edit).
  *
- * Kenapa ada layar untuk ini: surat program menyebut peserta ("KHUSUS CHANNEL GT PESERTA
- * LOYALTY"), tetapi daftarnya selama ini hanya hidup di satu berkas Excel. Selama begitu,
- * tidak ada yang bisa menjawab "toko mana saja yang ikut?" tanpa meminta berkasnya, dan tidak
- * ada gerbang yang bisa menahan bonus yang jatuh ke toko yang bukan peserta.
- *
- * Kotak isiannya sengaja menerima KODE APA SAJA yang dipunya orangnya — kode internal Accurate
- * maupun kode pelanggan Kino — karena yang memegang daftar loyalty adalah tim sales, dan yang
- * ada di tangan mereka adalah kode Kino. Yang tidak terbaca dikembalikan dengan sebabnya.
+ * Nama daftar adalah satu-satunya tali antara aturan promo dan daftar peserta. Daftar yang tidak ditunjuk aturan mana pun tersimpan
+ * tetapi tidak memengaruhi gerbang apa pun — gagal yang sunyi — jadi talinya selalu diperlihatkan.
  */
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { CalendarRange, Download, FileUp, Plus, RefreshCw, Trash2, Users } from "lucide-react";
-import { toast } from "sonner";
+import { useCallback, useMemo, useState } from "react";
+import { CalendarRange, Download, FileUp, Plus, Trash2 } from "lucide-react";
+import { Button, EmptyState, ErrorState, ListItem, MessageStrip, ResponsiveTable, Section, Skeleton, StatusBadge, type Column } from "@/components/fiori/core";
+import { ConfirmDialog, FormField, useLoad } from "@/components/fiori/interactive";
+import { ambil } from "@/lib/rekapan-nota/ui";
+import { tgl } from "@/lib/promo-ui";
 
-type Member = {
-    id: number; listName: string; customerCode: string; customerName: string;
-    tier: string; sourceCode: string; periodStart: string | null; periodEnd: string | null;
-    active: boolean; note: string; importedBy: string;
-};
-type ListInfo = {
-    name: string; members: number; tiers: Record<string, number>;
-    /** Aturan yang MENUNJUK daftar ini. Kosong = daftarnya tidak dipakai siapa-siapa. */
-    linked: { suratProgram: string; mode: string; rules: number }[];
-};
-/** Promo yang periodenya mencakup hari ini — bahan pilihan nama daftar. */
+type Member = { id: number; listName: string; customerCode: string; customerName: string; tier: string; sourceCode: string;
+    periodStart: string | null; periodEnd: string | null; active: boolean; note: string; importedBy: string };
+type ListInfo = { name: string; members: number; tiers: Record<string, number>; linked: { suratProgram: string; mode: string; rules: number }[] };
 type Program = { suratProgram: string; promoLabel: string; periodStart: string | null; periodEnd: string | null; rules: number };
+type Payload = { lists: ListInfo[]; members: Member[]; programs?: Program[]; distCode?: string };
+type Tambah = { listName: string; codes: string; tier: string; periodStart: string; periodEnd: string; note: string };
+type Laporan = { tone: "pos" | "warn" | "neg"; judul: string; rincian: string[] };
 
-const inputCls = "w-full rounded border border-white/15 bg-white/5 px-2.5 py-2 text-sm outline-none"
-    + " transition focus:border-blue-400 focus:ring-1 focus:ring-blue-400/40";
+const modeLabel = (m: string) => (m === "EXCLUDE" ? "semua KECUALI peserta" : "hanya peserta");
 
-/**
- * Isian nama daftar yang MEMPERLIHATKAN talinya.
- *
- * Nama daftar adalah satu-satunya tali antara aturan promo dan daftar peserta, dan sampai
- * sekarang talinya cuma teks yang diketik dua kali di dua layar. Salah satu huruf tidak
- * menimbulkan galat apa pun: daftarnya tersimpan, aturannya tetap menunjuk nama lama, dan
- * tidak ada yang berlaku untuk siapa pun. Gagalnya sunyi, jadi talinya harus kelihatan.
- *
- * Bentuknya datalist, bukan select: promo yang sedang berjalan bisa DIPILIH (itu jalur yang
- * benar untuk surat), tetapi daftar yang tidak berasal dari surat mana pun — peserta loyalty
- * kuartalan — tetap bisa diketik. Select murni akan menutup jalur kedua itu.
- */
-function PilihDaftar({ id, value, onChange, lists, programs, onTunjuk, className = "" }: {
-    id: string; value: string; onChange: (value: string) => void;
-    lists: ListInfo[]; programs: Program[]; onTunjuk?: (surat: string) => void; className?: string;
+/** Isian nama daftar yang memperlihatkan talinya ke aturan (datalist: promo berjalan bisa dipilih, daftar mandiri tetap bisa diketik). */
+function PilihDaftar({ id, label, value, onChange, lists, programs, onTunjuk, help, kunci }: {
+    id: string; label: string; value: string; onChange: (v: string) => void; lists: ListInfo[]; programs: Program[];
+    onTunjuk?: (surat: string) => void; help?: string; kunci?: boolean;
 }) {
     const nama = value.trim().toUpperCase();
-    const cocok = lists.find((entry) => entry.name.toUpperCase() === nama);
-    const linked = cocok?.linked ?? [];
+    const linked = lists.find((e) => e.name.toUpperCase() === nama)?.linked ?? [];
     const [tujuan, setTujuan] = useState("");
-    // Kalau namanya sendiri sudah berupa nomor surat yang punya aturan, itulah tebakan awalnya.
     const pilihan = tujuan || (programs.some((p) => p.suratProgram.toUpperCase() === nama) ? nama : "");
     return (
-        <div className={className}>
-            <input list={id} value={value} onChange={(e) => onChange(e.target.value.toUpperCase())}
-                placeholder="LOYALTY atau nomor surat" className={inputCls} />
+        <div style={{ display: "grid", gap: 6 }}>
+            <FormField label={label} help={help}>{(a11y) => <input {...a11y} className="fi-input" list={id} disabled={kunci} placeholder="LOYALTY atau nomor surat" value={value} onChange={(e) => onChange(e.target.value.toUpperCase())} />}</FormField>
             <datalist id={id}>
-                {programs.map((p) => (
-                    <option key={`p-${p.suratProgram}`} value={p.suratProgram}>
-                        {`promo berjalan · ${p.rules} aturan${p.promoLabel ? ` · ${p.promoLabel}` : ""}`}
-                    </option>
-                ))}
-                {lists.filter((entry) => !programs.some((p) => p.suratProgram === entry.name))
-                    .map((entry) => <option key={`l-${entry.name}`} value={entry.name}>{`daftar yang sudah ada · ${entry.members} toko`}</option>)}
+                {programs.map((p) => <option key={`p-${p.suratProgram}`} value={p.suratProgram}>{`promo berjalan · ${p.rules} aturan${p.promoLabel ? ` · ${p.promoLabel}` : ""}`}</option>)}
+                {lists.filter((e) => !programs.some((p) => p.suratProgram === e.name)).map((e) => <option key={`l-${e.name}`} value={e.name}>{`daftar yang sudah ada · ${e.members} toko`}</option>)}
             </datalist>
             {nama && (linked.length > 0
-                ? <span className="mt-1 block text-xs leading-snug text-emerald-400">
-                    Tersambung ke {linked.map((l) => `${l.suratProgram} (${l.mode === "EXCLUDE" ? "semua KECUALI peserta" : "hanya peserta"}, ${l.rules} aturan)`).join("; ")}.
-                </span>
-                : <div className="mt-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs leading-snug text-amber-200">
-                    Belum ada aturan promo yang menunjuk nama ini. Selama begitu, daftarnya tidak
-                    memengaruhi gerbang mana pun.
-                    {onTunjuk && programs.length > 0 && (
-                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                            <select value={pilihan} onChange={(e) => setTujuan(e.target.value)}
-                                className="rounded border border-slate-700 bg-slate-900 px-1.5 py-1 text-xs text-slate-200">
-                                <option value="">pilih promo berjalan…</option>
-                                {programs.map((p) => (
-                                    <option key={p.suratProgram} value={p.suratProgram}>
-                                        {`${p.suratProgram}${p.promoLabel ? ` · ${p.promoLabel}` : ""} (${p.rules} aturan)`}
-                                    </option>
-                                ))}
+                ? <p className="fi-small" style={{ color: "var(--pos)" }}>Tersambung ke {linked.map((l) => `${l.suratProgram} (${modeLabel(l.mode)}, ${l.rules} aturan)`).join("; ")}.</p>
+                : <MessageStrip tone="warn" title="Belum ada aturan promo yang menunjuk nama ini.">Selama begitu, daftarnya tidak memengaruhi gerbang mana pun.
+                    {onTunjuk && !kunci && programs.length > 0 && (
+                        <span className="fi-page-bar" style={{ marginTop: 6 }}>
+                            <select className="fi-input" aria-label="Promo berjalan yang akan ditunjuk" value={pilihan} onChange={(e) => setTujuan(e.target.value)} style={{ width: "auto" }}>
+                                <option value="">Pilih promo berjalan…</option>
+                                {programs.map((p) => <option key={p.suratProgram} value={p.suratProgram}>{`${p.suratProgram}${p.promoLabel ? ` · ${p.promoLabel}` : ""} (${p.rules} aturan)`}</option>)}
                             </select>
-                            <button type="button" disabled={!pilihan} onClick={() => onTunjuk(pilihan)}
-                                className="rounded border border-amber-400/50 px-2 py-1 font-medium text-amber-100 hover:bg-amber-500/20 disabled:opacity-40">
-                                Tunjuk ke daftar ini
-                            </button>
-                        </div>
+                            <Button disabled={!pilihan} onClick={() => onTunjuk(pilihan)}>Tunjuk ke daftar ini</Button>
+                        </span>
                     )}
-                </div>)}
+                </MessageStrip>)}
         </div>
     );
 }
 
-function F({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-    return (
-        // Sama seperti di layar Aturan Promo: kotaknya menempel di atas sel, keterangannya
-        // didorong ke bawah, supaya kotak isian pada satu baris tetap sejajar meski panjang
-        // keterangannya berbeda-beda.
-        <label className="flex h-full flex-col text-sm">
-            <span className="mb-1.5 block font-medium text-slate-300">{label}</span>
-            {children}
-            {hint && <span className="mt-1.5 block text-[11px] leading-[1.45] text-slate-500">{hint}</span>}
-        </label>
-    );
-}
-
-export default function DaftarOutlet() {
-    const [lists, setLists] = useState<ListInfo[]>([]);
-    const [programs, setPrograms] = useState<Program[]>([]);
-    const [members, setMembers] = useState<Member[]>([]);
+export default function DaftarOutlet({ bolehUbah }: { bolehUbah: boolean }) {
     const [list, setList] = useState("");
     const [q, setQ] = useState("");
-    const [busy, setBusy] = useState(false);
-    const [tambah, setTambah] = useState<{ listName: string; codes: string; tier: string; periodStart: string; periodEnd: string; note: string } | null>(null);
-    const [ubah, setUbah] = useState<{ id: number; periodStart: string; periodEnd: string } | null>(null);
-    const [ubahSemua, setUbahSemua] = useState<{ list: string; periodStart: string; periodEnd: string; galat: string } | null>(null);
-    const menyimpanSemua = useRef(false);
-    // Kode distributor kita, datang dari server (diturunkan dari batch laporan principal
-    // terakhir). Lampiran surat memuat outlet SELURUH distributor nasional; kode inilah yang
-    // memisahkan milik kita dari milik orang lain.
-    const [distCode, setDistCode] = useState("");
+    const [distCodeKetik, setDistCode] = useState<string | null>(null);
     const [listName, setListName] = useState("LOYALTY");
+    const [tambah, setTambah] = useState<Tambah | null>(null);
+    const [ubah, setUbah] = useState<{ id: number; periodStart: string; periodEnd: string } | null>(null);
+    const [periodeSemua, setPeriodeSemua] = useState<{ periodStart: string; periodEnd: string } | null>(null);
+    const [keluarkan, setKeluarkan] = useState<Member | null>(null);
+    const [paksa, setPaksa] = useState<{ nama: string; surat: string; pesan: string } | null>(null);
+    const [laporan, setLaporan] = useState<Laporan | null>(null);
+    const [sibuk, setSibuk] = useState(false);
 
-    const load = useCallback(async () => {
-        setBusy(true);
+    const query = new URLSearchParams(Object.entries({ list, q: q.trim() }).filter(([, v]) => v)).toString();
+    const [data, muat] = useLoad(useCallback(() => ambil<Payload>(`/api/promo-outlet?${query}`, (j) => {
+        const d = j as Payload & { ok?: boolean; error?: string };
+        if (d.ok === false) throw new Error(d.error ?? "Gagal memuat daftar outlet");
+        return d;
+    }), [query]), { pertahankan: true });
+    const lists = useMemo(() => data.data?.lists ?? [], [data]);
+    const programs = useMemo(() => data.data?.programs ?? [], [data]);
+    const members = data.data?.members ?? [];
+    const distCode = distCodeKetik ?? data.data?.distCode ?? "";
+    const infoList = lists.find((e) => e.name === list);
+
+    /** Galat jaringan menjadi jawaban galat biasa, supaya selalu tampil sebagai pesan (bukan penolakan promise yang sunyi). */
+    async function kirim(init: RequestInit, url = "/api/promo-outlet"): Promise<{ ok: boolean; body: Record<string, unknown> & { ok?: boolean; error?: string } }> {
         try {
-            const params = new URLSearchParams();
-            if (list) params.set("list", list);
-            if (q) params.set("q", q);
-            const res = await fetch(`/api/promo-outlet?${params}`);
-            const body = await res.json();
-            if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal memuat daftar outlet");
-            setLists(body.lists); setMembers(body.members); setPrograms(body.programs ?? []);
-            if (body.distCode) setDistCode((lama) => lama || body.distCode);
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Gagal memuat daftar outlet");
-        } finally { setBusy(false); }
-    }, [list, q]);
+            const res = await fetch(url, init);
+            const body = (await res.json().catch(() => ({}))) as Record<string, unknown> & { ok?: boolean; error?: string };
+            return { ok: res.ok && body.ok === true, body: res.ok || body.error ? body : { ...body, error: `HTTP ${res.status}` } };
+        } catch (e) {
+            return { ok: false, body: { error: `Server tidak terhubung: ${e instanceof Error ? e.message : String(e)}` } };
+        }
+    }
 
-    useEffect(() => { void load(); }, [load]);
-
-    // Mengikat tali antara daftar ini dan aturan sebuah surat, tanpa pindah layar. Daftar yang
-    // tidak ditunjuk aturan mana pun tersimpan diam-diam tanpa memengaruhi apa pun; sebaliknya
-    // aturan yang menunjuk daftar kosong TIDAK berlaku untuk siapa pun (`outletAllowed`).
-    const tunjuk = useCallback(async (nama: string, surat: string, paksa = false) => {
+    /** Tunjuk aturan surat ke daftar; bila sudah tertunjuk daftar lain, server minta paksa → dialog. */
+    async function tunjuk(nama: string, surat: string, denganPaksa = false) {
         const daftar = nama.trim().toUpperCase();
         if (!daftar || !surat) return;
-        setBusy(true);
+        setSibuk(true);
         try {
-            const res = await fetch("/api/promo-outlet", {
-                method: "PATCH", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ aksi: "tunjuk", listName: daftar, suratProgram: surat, paksa }),
-            });
-            const body = await res.json();
-            if (!res.ok || !body.ok) {
-                // Mengganti daftar yang sudah tertunjuk berarti mengganti pesertanya; diminta dua kali.
-                if (body?.perluPaksa && window.confirm(`${body.error}\n\nGanti sekarang?`)) {
-                    setBusy(false);
-                    return tunjuk(daftar, surat, true);
-                }
-                throw new Error(body?.error ?? "Gagal menunjuk aturan ke daftar ini");
+            const r = await kirim({ method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ aksi: "tunjuk", listName: daftar, suratProgram: surat, paksa: denganPaksa }) });
+            if (!r.ok) {
+                if (r.body.perluPaksa && !denganPaksa) { setPaksa({ nama: daftar, surat, pesan: String(r.body.error ?? "") }); return; }
+                if (denganPaksa) throw new Error(String(r.body.error ?? "Gagal menunjuk aturan ke daftar ini"));
+                setLaporan({ tone: "neg", judul: String(r.body.error ?? "Gagal menunjuk aturan ke daftar ini"), rincian: [] });
+                return;
             }
-            toast.success(`${body.aturanDitunjuk} aturan surat ${surat} kini menunjuk daftar ${daftar}`
-                + (body.sebelumnya?.length ? ` (sebelumnya ${body.sebelumnya.join(", ")})` : ""));
-            await load();
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Gagal menunjuk aturan");
-        } finally { setBusy(false); }
-    }, [load]);
-
-    async function simpan() {
-        if (!tambah) return;
-        setBusy(true);
-        try {
-            const res = await fetch("/api/promo-outlet", {
-                method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(tambah),
-            });
-            const body = await res.json();
-            if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal menyimpan");
-            toast.success(`${body.ditambah} outlet masuk daftar ${body.listName} (dari ${body.diminta} kode`
-                + (body.kembar > 0 ? `, ${body.kembar} kembar digabung)` : ")"));
-            // Yang ditolak DIPERLIHATKAN satu per satu, bukan diringkas jadi satu angka: yang
-            // mengisi perlu tahu kode MANA yang harus diperbaiki, bukan bahwa ada yang gagal.
-            for (const alasan of (body.ditolak ?? []) as string[]) toast.warning(alasan, { duration: 12000 });
-            setTambah(null);
-            await load();
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Gagal menyimpan");
-        } finally { setBusy(false); }
+            const sebelumnya = (r.body.sebelumnya as string[] | undefined) ?? [];
+            setPaksa(null);
+            setLaporan({ tone: "pos", judul: `${r.body.aturanDitunjuk} aturan surat ${surat} kini menunjuk daftar ${daftar}${sebelumnya.length ? ` (sebelumnya ${sebelumnya.join(", ")})` : ""}.`, rincian: [] });
+            muat();
+        } finally {
+            setSibuk(false);
+        }
     }
 
-    /**
-     * Unggah surat PDF atau berkas terpisah. Satu tombol untuk keduanya: yang membedakan hanya
-     * jenis berkasnya, dan menanyakannya lebih dulu ke pengguna cuma menambah satu langkah
-     * yang jawabannya sudah ada di nama berkas.
-     */
+    async function simpanTambah() {
+        if (!tambah) return;
+        setSibuk(true);
+        try {
+            const r = await kirim({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(tambah) });
+            if (!r.ok) { setLaporan({ tone: "neg", judul: String(r.body.error ?? "Gagal menyimpan"), rincian: [] }); return; }
+            const ditolak = (r.body.ditolak as string[] | undefined) ?? [];
+            setLaporan({ tone: ditolak.length ? "warn" : "pos", judul: `${r.body.ditambah} outlet masuk daftar ${r.body.listName} (dari ${r.body.diminta} kode${Number(r.body.kembar) > 0 ? `, ${r.body.kembar} kembar digabung` : ""}).`, rincian: ditolak });
+            setTambah(null);
+            muat();
+        } finally {
+            setSibuk(false);
+        }
+    }
+
     async function unggah(file: File) {
-        setBusy(true);
+        setSibuk(true);
         try {
             const form = new FormData();
-            form.append("file", file);
-            form.append("distCode", distCode);
-            form.append("listName", listName);
-            const res = await fetch("/api/promo-outlet", { method: "POST", body: form });
-            const body = await res.json();
-            if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal membaca berkas");
-            const kembar = body.kembar > 0 ? `, ${body.kembar} kembar digabung` : "";
-            // Sumber bacaannya DISEBUT: yang lewat OCR itu berbayar per halaman, dan yang
-            // mengunggah berhak tahu kapan ia membayar dan kapan tidak.
-            const lewat = body.ocrPages > 0 ? ` (dibaca ${body.sumberTeks}, ${body.ocrPages} halaman)` : "";
-            toast.success(body.sumber === "surat"
-                ? `Surat ${body.listName}: ${body.ditambah} outlet peserta dimuat${kembar}, ${body.aturanDitunjuk} aturan surat ini ditunjuk ke daftarnya${lewat}`
-                : `${body.ditambah} outlet masuk daftar ${body.listName}${kembar}`);
-            for (const alasan of (body.ditolak ?? []) as string[]) toast.warning(alasan, { duration: 12000 });
-            for (const nota of (body.catatan ?? []) as string[]) toast.info(nota, { duration: 12000 });
-            await load();
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Gagal membaca berkas", { duration: 15000 });
-        } finally { setBusy(false); }
+            form.append("file", file); form.append("distCode", distCode); form.append("listName", listName);
+            const r = await kirim({ method: "POST", body: form });
+            if (!r.ok) { setLaporan({ tone: "neg", judul: String(r.body.error ?? "Gagal membaca berkas"), rincian: [] }); return; }
+            const b = r.body as Record<string, unknown>;
+            const kembar = Number(b.kembar) > 0 ? `, ${b.kembar} kembar digabung` : "";
+            const lewat = Number(b.ocrPages) > 0 ? ` (dibaca ${b.sumberTeks}, ${b.ocrPages} halaman)` : "";
+            const ditolak = (b.ditolak as string[] | undefined) ?? [];
+            setLaporan({
+                tone: ditolak.length ? "warn" : "pos",
+                judul: b.sumber === "surat" ? `Surat ${b.listName}: ${b.ditambah} outlet peserta dimuat${kembar}, ${b.aturanDitunjuk} aturan surat ini ditunjuk ke daftarnya${lewat}.` : `${b.ditambah} outlet masuk daftar ${b.listName}${kembar}.`,
+                rincian: [...ditolak, ...((b.catatan as string[] | undefined) ?? [])],
+            });
+            muat();
+        } finally {
+            setSibuk(false);
+        }
     }
 
-    /**
-     * Ubah periode SATU anggota lewat aksi `periode`, yang hanya menulis kolom periode. Kedua
-     * tanggal wajib: aturan pengguna 2 Okt 2026, keanggotaan tidak boleh berlaku lewat periodenya.
-     */
     async function simpanPeriode(member: Member) {
         if (!ubah) return;
-        if (!ubah.periodStart || !ubah.periodEnd || ubah.periodStart > ubah.periodEnd) {
-            toast.error("Isi tanggal mulai dan sampai; tanggal sampai tidak boleh sebelum tanggal mulai.");
-            return;
-        }
-        setBusy(true);
+        if (!ubah.periodStart || !ubah.periodEnd || ubah.periodStart > ubah.periodEnd) { setLaporan({ tone: "neg", judul: "Isi tanggal mulai dan sampai; tanggal sampai tidak boleh sebelum tanggal mulai.", rincian: [] }); return; }
+        setSibuk(true);
         try {
-            const res = await fetch("/api/promo-outlet", {
-                method: "PATCH", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ aksi: "periode", ids: [member.id], periodStart: ubah.periodStart, periodEnd: ubah.periodEnd }),
-            });
-            const body = await res.json();
-            if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal mengubah periode");
-            toast.success(`Periode ${member.customerCode} kini ${ubah.periodStart} s/d ${ubah.periodEnd}`);
-            setUbah(null);
-            await load();
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Gagal mengubah periode");
-        } finally { setBusy(false); }
+            const r = await kirim({ method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ aksi: "periode", ids: [member.id], periodStart: ubah.periodStart, periodEnd: ubah.periodEnd }) });
+            if (!r.ok) { setLaporan({ tone: "neg", judul: String(r.body.error ?? "Gagal mengubah periode"), rincian: [] }); return; }
+            setLaporan({ tone: "pos", judul: `Periode ${member.customerCode} kini ${tgl(ubah.periodStart)} s/d ${tgl(ubah.periodEnd)}.`, rincian: [] });
+            setUbah(null); muat();
+        } finally {
+            setSibuk(false);
+        }
     }
 
-    /**
-     * Ubah periode SELURUH anggota daftar yang sedang dipilih, dalam satu UPDATE di server.
-     * Untuk keanggotaan yang sama dibawa ke bulan berikutnya (LOYALTY Q3 dipakai Oktober):
-     * keterangan, catatan, dan kode Kino tidak tersentuh, beda dengan mengetik ulang daftarnya.
-     */
     async function simpanPeriodeSemua() {
-        if (!ubahSemua || menyimpanSemua.current) return;
-        const { list: daftar, periodStart: mulai, periodEnd: sampai } = ubahSemua;
-        if (!mulai || !sampai || mulai > sampai) {
-            setUbahSemua({ ...ubahSemua, galat: "Isi tanggal mulai dan sampai; tanggal sampai tidak boleh sebelum tanggal mulai." });
-            return;
-        }
-        const info = lists.find((entry) => entry.name === daftar);
-        const tgl = (iso: string) => iso.split("-").reverse().join("/");
-        const dipakai = info?.linked.length ? `\n\nDipakai aturan surat: ${info.linked.map((l) => l.suratProgram).join(", ")}.` : "";
-        if (!confirm(`Ubah periode ${info?.members ?? members.length} anggota daftar ${daftar} menjadi ${tgl(mulai)} s/d ${tgl(sampai)}?${dipakai}`)) return;
-        menyimpanSemua.current = true;
-        setBusy(true);
-        try {
-            const res = await fetch("/api/promo-outlet", {
-                method: "PATCH", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ aksi: "periode", listName: daftar, periodStart: mulai, periodEnd: sampai }),
-            });
-            const body = await res.json();
-            if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal mengubah periode");
-            toast.success(`${body.diubah} anggota ${daftar} kini ${tgl(mulai)} s/d ${tgl(sampai)}`);
-            setUbahSemua(null);
-            await load();
-        } catch (error) {
-            const pesan = error instanceof Error ? error.message : "Gagal mengubah periode";
-            setUbahSemua({ ...ubahSemua, galat: pesan });
-            toast.error(pesan);
-        } finally { menyimpanSemua.current = false; setBusy(false); }
+        if (!periodeSemua || !list) return;
+        const r = await kirim({ method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ aksi: "periode", listName: list, periodStart: periodeSemua.periodStart, periodEnd: periodeSemua.periodEnd }) });
+        if (!r.ok) throw new Error(String(r.body.error ?? "Gagal mengubah periode"));
+        setLaporan({ tone: "pos", judul: `${r.body.diubah} anggota ${list} kini ${tgl(periodeSemua.periodStart)} s/d ${tgl(periodeSemua.periodEnd)}.`, rincian: [] });
+        setPeriodeSemua(null); muat();
     }
 
-    async function hapus(ids: number[], sebutan: string) {
-        if (!confirm(`Keluarkan ${sebutan} dari daftar? Aturan yang menunjuk daftar ini akan berhenti berlaku untuknya.`)) return;
-        setBusy(true);
-        try {
-            const res = await fetch(`/api/promo-outlet?ids=${ids.join(",")}`, { method: "DELETE" });
-            const body = await res.json();
-            if (!res.ok || !body.ok) throw new Error(body.error ?? "Gagal menghapus");
-            toast.success(`${body.deleted} outlet dikeluarkan`);
-            await load();
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Gagal menghapus");
-        } finally { setBusy(false); }
+    async function hapus(member: Member) {
+        const r = await kirim({ method: "DELETE" }, `/api/promo-outlet?ids=${member.id}`);
+        if (!r.ok) throw new Error(String(r.body.error ?? "Gagal mengeluarkan"));
+        setLaporan({ tone: "pos", judul: `${r.body.deleted} outlet dikeluarkan dari ${member.listName}.`, rincian: [] });
+        setKeluarkan(null); muat();
     }
+
+    const kolom: Column<Member>[] = [
+        { key: "daftar", header: "Daftar", secondary: true, cell: (m) => <span className="fi-small">{m.listName}</span> },
+        { key: "outlet", header: "Outlet", cell: (m) => <>{m.customerName}<span className="fi-codes">{m.customerCode}</span>{!m.active && <> <StatusBadge tone="neu">Nonaktif</StatusBadge></>}</> },
+        { key: "ket", header: "Keterangan", secondary: true, cell: (m) => m.tier || "—" },
+        { key: "kode", header: "Kode principal", secondary: true, cell: (m) => m.sourceCode ? <span className="fi-mono fi-small">{m.sourceCode}</span> : <span className="fi-small fi-subtle">diketik langsung</span> },
+        { key: "ikut", header: "Ikut", cell: (m) => ubah?.id === m.id ? (
+            <span className="fi-page-bar">
+                <input className="fi-input" type="date" aria-label="Ikut mulai" value={ubah.periodStart} onChange={(e) => setUbah({ ...ubah, periodStart: e.target.value })} />
+                <input className="fi-input" type="date" aria-label="Ikut sampai" value={ubah.periodEnd} onChange={(e) => setUbah({ ...ubah, periodEnd: e.target.value })} />
+                <Button variant="primary" busy={sibuk} onClick={() => void simpanPeriode(m)}>Simpan</Button>
+                <Button variant="tertiary" onClick={() => setUbah(null)}>Batal</Button>
+            </span>
+        ) : <span className="fi-tnum fi-small">{tgl(m.periodStart) || "kapan pun"} – {tgl(m.periodEnd) || "dikeluarkan"}</span> },
+        { key: "aksi", header: bolehUbah ? "Tindakan" : "", cell: (m) => bolehUbah ? <span className="fi-btnrow">
+            <Button variant="icon" aria-label={`Ubah periode ${m.customerCode}`} onClick={() => setUbah({ id: m.id, periodStart: m.periodStart ?? "", periodEnd: m.periodEnd ?? "" })}><CalendarRange className="fi-icon" aria-hidden /></Button>
+            <Button variant="icon" aria-label={`Keluarkan ${m.customerCode}`} onClick={() => setKeluarkan(m)}><Trash2 className="fi-icon" aria-hidden /></Button>
+        </span> : null },
+    ];
 
     return (
-        <section className="space-y-3 rounded border border-white/10 p-3">
-            <header className="flex flex-wrap items-center gap-2">
-                <Users size={16} className="text-blue-300" />
-                <h2 className="text-sm font-semibold">Daftar outlet peserta</h2>
-                <button onClick={() => void load()} disabled={busy}
-                    className="ml-auto inline-flex items-center gap-2 rounded bg-white/10 px-2.5 py-1.5 text-xs disabled:opacity-40">
-                    <RefreshCw size={13} /> Muat ulang
-                </button>
-                <a href="/api/promo-outlet?template=1"
-                    className="inline-flex items-center gap-2 rounded bg-white/10 px-2.5 py-1.5 text-xs">
-                    <Download size={13} /> Template daftar outlet
-                </a>
-                <a href="/api/promo-recap?template=1"
-                    className="inline-flex items-center gap-2 rounded bg-white/10 px-2.5 py-1.5 text-xs"
-                    title="Dua sheet: Detail (aturan per barang) dan Discount Reguler (tarif/diskon MT per outlet)">
-                    <Download size={13} /> Template aturan &amp; tarif MT
-                </a>
-                <label className={`inline-flex cursor-pointer items-center gap-2 rounded bg-emerald-600 px-2.5 py-1.5 text-xs ${busy ? "opacity-40" : ""}`}>
-                    <FileUp size={13} /> Unggah surat / berkas
-                    <input type="file" accept=".pdf,.xlsx,.xls,.csv" disabled={busy} className="hidden"
-                        onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void unggah(file); }} />
-                </label>
-                <button onClick={() => setTambah({ listName: list || lists[0]?.name || "LOYALTY", codes: "", tier: "", periodStart: "", periodEnd: "", note: "" })}
-                    disabled={busy}
-                    className="inline-flex items-center gap-2 rounded bg-blue-600 px-2.5 py-1.5 text-xs disabled:opacity-40">
-                    <Plus size={13} /> Ketik manual
-                </button>
-            </header>
-
-            <p className="max-w-3xl text-xs leading-relaxed text-slate-400">
-                Sebagian program hanya untuk toko tertentu, dan suratnya sendiri yang bilang begitu:
-                bonus Resik V dan Ovale berlaku <strong>khusus peserta LOYALTY</strong>, sedangkan potongan MSG justru
-                berlaku untuk <strong>semua kecuali peserta LOYALTY</strong>. Daftar di bawah inilah yang dipakai gerbang
-                untuk memutuskannya. Satu daftar dipakai beberapa surat sekaligus — aturan cukup menunjuknya,
-                jadi mengubah daftar di sini langsung mengubah semua surat yang memakainya.
-            </p>
-
-            <details className="max-w-3xl rounded border border-emerald-500/30 bg-emerald-500/5 text-xs leading-relaxed text-emerald-100">
-            <summary className="cursor-pointer select-none px-3 py-2 font-medium">
-                Cara memuat: unggah suratnya, atau pakai template untuk daftar yang tidak tercetak di surat
-            </summary>
-            <p className="px-3 pb-3">
-                <strong>Kalau daftarnya tercetak di suratnya, unggah saja suratnya.</strong> Surat ber-“LIST OUTLET
-                TERLAMPIR” memuat tabel peserta di halaman lampirannya; sistem membacanya, mengambil baris milik
-                kode distributor kita saja, dan langsung menunjuk semua aturan surat itu ke daftarnya. Tidak ada
-                langkah menyalin, jadi tidak ada yang bisa meleset saat menyalin. Gunakan <strong>Template</strong> +
-                berkas terpisah hanya untuk daftar yang memang <em>tidak</em> tercetak di surat mana pun — peserta
-                loyalty kuartalan, misalnya.
-                <br /><br />
-                <strong>Surat hasil scan tetap terbaca.</strong> Kalau suratnya tidak punya lapisan teks, sistem
-                otomatis membacanya dengan <strong>Mistral OCR 4.1</strong> — mesin yang sama dengan Summary Promo di
-                produksi. OCR itu <em>berbayar per halaman</em>, jadi ia hanya dipakai kalau lapisan teksnya memang
-                tidak menjawab, dan hasilnya disimpan supaya surat yang sama tidak pernah ditagih dua kali.
-            </p>
-            </details>
-
-            <div className="grid max-w-3xl items-start gap-x-5 gap-y-4 sm:grid-cols-2">
-                <F label="Kode distributor kita" hint="Tujuh angka pada kolom KODE DIST di lampiran surat. Dipakai memisahkan outlet kita dari outlet distributor lain pada surat yang sama.">
-                    <input value={distCode} onChange={(e) => setDistCode(e.target.value)} placeholder="1201671" className={inputCls} />
-                </F>
-                <F label="Nama daftar (berkas terpisah)" hint="Hanya dipakai kalau yang diunggah BUKAN surat. Surat memakai nomornya sendiri sebagai nama daftar.">
-                    <PilihDaftar id="daftar-unggah" value={listName} onChange={setListName}
-                        lists={lists} programs={programs}
-                        onTunjuk={(surat) => void tunjuk(listName, surat)} />
-                </F>
-            </div>
-
-            <div className="flex flex-wrap items-end gap-2">
-                <F label="Daftar">
-                    <select value={list} onChange={(e) => setList(e.target.value)} className={inputCls}>
-                        <option value="">Semua daftar</option>
-                        {lists.map((entry) => <option key={entry.name} value={entry.name}>{entry.name} ({entry.members})</option>)}
-                    </select>
-                </F>
-                <F label="Cari">
-                    <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="kode atau nama toko" className={`${inputCls} min-w-56`} />
-                </F>
-            </div>
-
-            {/* Tiap daftar dengan TALINYA. Daftar yang tidak ditunjuk aturan mana pun ditandai
-                kuning: ia tersimpan rapi tetapi tidak memengaruhi gerbang apa pun, dan itu satu-
-                satunya bentuk salah sasaran yang tidak menimbulkan galat. Chip-nya sekaligus
-                saringan — daftar yang dilihat orang adalah daftar yang ingin ia buka. */}
-            <div className="flex flex-wrap gap-2">
-                {lists.map((entry) => {
-                    const dipakai = entry.linked.length > 0;
-                    const aktif = list === entry.name;
-                    return (
-                        <button key={entry.name} type="button"
-                            onClick={() => setList(aktif ? "" : entry.name)}
-                            title={dipakai
-                                ? entry.linked.map((l) => `${l.suratProgram}: ${l.mode === "EXCLUDE" ? "semua KECUALI peserta" : "hanya peserta"}, ${l.rules} aturan`).join("; ")
-                                : "Belum ada aturan promo yang menunjuk daftar ini"}
-                            className={`rounded border px-2.5 py-1.5 text-left text-xs transition ${aktif
-                                ? "border-blue-400 bg-blue-500/15"
-                                : dipakai ? "border-white/10 bg-white/5 hover:border-white/25"
-                                    : "border-amber-500/40 bg-amber-500/10 hover:border-amber-400"}`}>
-                            <span className="font-medium">{entry.name}</span>
-                            <span className="text-slate-400"> · {entry.members} toko</span>
-                            <span className={`mt-0.5 block ${dipakai ? "text-emerald-400" : "text-amber-200"}`}>
-                                {dipakai
-                                    ? entry.linked.map((l) => `${l.suratProgram} ${l.mode === "EXCLUDE" ? "(kecuali)" : "(hanya)"}`).join(" · ")
-                                    : "belum dipakai aturan mana pun"}
-                            </span>
-                        </button>
-                    );
-                })}
-            </div>
+        <div style={{ display: "grid", gap: 16 }}>
+            {laporan && (
+                <MessageStrip tone={laporan.tone} title={laporan.judul} onClose={() => setLaporan(null)}>
+                    {laporan.rincian.length ? <ul style={{ margin: "4px 0 0", paddingLeft: "1rem" }}>{laporan.rincian.slice(0, 20).map((x) => <li key={x}>{x}</li>)}</ul> : null}
+                </MessageStrip>
+            )}
+            <Section title="Daftar outlet peserta" subtitle="dipakai gerbang untuk “khusus peserta” dan “semua kecuali peserta”; satu daftar bisa dipakai beberapa surat"
+                actions={<>
+                    <a className="fi-btn fi-btn--tertiary" href="/api/promo-outlet?template=1"><Download className="fi-icon" aria-hidden />Template daftar</a>
+                    <a className="fi-btn fi-btn--tertiary" href="/api/promo-recap?template=1"><Download className="fi-icon" aria-hidden />Template aturan &amp; tarif MT</a>
+                    {bolehUbah && <label className={`fi-btn fi-btn--secondary${sibuk ? " fi-busy" : ""}`}><FileUp className="fi-icon" aria-hidden />Unggah surat / berkas<input type="file" accept=".pdf,.xlsx,.xls,.csv" disabled={sibuk} className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void unggah(f); }} /></label>}
+                    {bolehUbah && <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} onClick={() => setTambah({ listName: list || lists[0]?.name || "LOYALTY", codes: "", tier: "", periodStart: "", periodEnd: "", note: "" })}>Ketik manual</Button>}
+                </>}>
+                <div className="fi-sect-in">
+                    <p className="fi-small fi-muted">Daftar yang tercetak di surat: unggah suratnya — sistem mengambil baris milik kode distributor kita dan langsung menunjuk semua aturan surat itu ke daftarnya. Template + berkas terpisah hanya untuk daftar yang tidak tercetak di surat (mis. peserta loyalty kuartalan). Surat hasil scan dibaca OCR berbayar per halaman, hanya bila lapisan teksnya tidak menjawab.</p>
+                    {bolehUbah && (
+                        <div className="fi-formgrid">
+                            <FormField label="Kode distributor kita" help="Tujuh angka di kolom KODE DIST lampiran surat.">{(a11y) => <input {...a11y} className="fi-input" placeholder="1201671" value={distCode} onChange={(e) => setDistCode(e.target.value)} />}</FormField>
+                            <PilihDaftar id="daftar-unggah" label="Nama daftar (berkas terpisah)" help="Surat memakai nomornya sendiri sebagai nama daftar." value={listName} onChange={setListName} lists={lists} programs={programs} onTunjuk={(s) => void tunjuk(listName, s)} />
+                        </div>
+                    )}
+                </div>
+            </Section>
 
             {tambah && (
-                <div className="space-y-4 rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
-                    <div className="grid items-start gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
-                        <F label="Nama daftar / promo" hint="Pilih promo yang sedang berjalan, atau ketik nama daftar yang berdiri sendiri. Tanpa kuartal: periodenya diisi per toko di bawah, karena keanggotaan berganti tiap kuartal sedangkan suratnya cuma menyebut “LOYALTY”.">
-                            <PilihDaftar id="daftar-ketik" value={tambah.listName}
-                                onChange={(nilai) => setTambah({ ...tambah, listName: nilai })}
-                                lists={lists} programs={programs}
-                                onTunjuk={(surat) => void tunjuk(tambah.listName, surat)} />
-                        </F>
-                        <F label="Keterangan" hint="Catatan bebas, mis. PLATINUM. Tidak dipakai memutuskan apa pun — tidak ada surat yang membedakan tingkat.">
-                            <input value={tambah.tier} onChange={(e) => setTambah({ ...tambah, tier: e.target.value })} placeholder="mis. PLATINUM" className={inputCls} />
-                        </F>
-                        <F label="Ikut mulai" hint="Dikosongkan = berlaku sejak kapan pun.">
-                            <input type="date" value={tambah.periodStart} onChange={(e) => setTambah({ ...tambah, periodStart: e.target.value })} className={inputCls} />
-                        </F>
-                        <F label="Ikut sampai" hint="Dikosongkan = sampai dikeluarkan.">
-                            <input type="date" value={tambah.periodEnd} onChange={(e) => setTambah({ ...tambah, periodEnd: e.target.value })} className={inputCls} />
-                        </F>
+                <Section title="Ketik anggota manual" actions={<><Button variant="tertiary" onClick={() => setTambah(null)}>Batal</Button><Button variant="primary" busy={sibuk} disabled={!tambah.codes.trim() || !tambah.listName.trim()} disabledReason="Isi nama daftar dan kode outlet" onClick={() => void simpanTambah()}>Simpan</Button></>}>
+                    <div className="fi-sect-in">
+                        <div className="fi-formgrid">
+                            <PilihDaftar id="daftar-ketik" label="Nama daftar / promo" value={tambah.listName} onChange={(v) => setTambah({ ...tambah, listName: v })} lists={lists} programs={programs} onTunjuk={(s) => void tunjuk(tambah.listName, s)} />
+                            <FormField label="Keterangan" help="Bebas, mis. PLATINUM; tidak dipakai memutuskan.">{(a11y) => <input {...a11y} className="fi-input" value={tambah.tier} onChange={(e) => setTambah({ ...tambah, tier: e.target.value })} />}</FormField>
+                            <FormField label="Ikut mulai" help="Kosong = sejak kapan pun.">{(a11y) => <input {...a11y} className="fi-input" type="date" value={tambah.periodStart} onChange={(e) => setTambah({ ...tambah, periodStart: e.target.value })} />}</FormField>
+                            <FormField label="Ikut sampai" help="Kosong = sampai dikeluarkan.">{(a11y) => <input {...a11y} className="fi-input" type="date" value={tambah.periodEnd} onChange={(e) => setTambah({ ...tambah, periodEnd: e.target.value })} />}</FormField>
+                        </div>
+                        <FormField label="Kode outlet" required help="Kode internal Accurate (C-WIN013) atau kode pelanggan principal (22160031402), dipisah koma, spasi, atau baris baru. Yang tidak dikenali ditolak satu per satu.">{(a11y) => <textarea {...a11y} className="fi-input" rows={4} value={tambah.codes} onChange={(e) => setTambah({ ...tambah, codes: e.target.value })} />}</FormField>
+                        <FormField label="Catatan">{(a11y) => <input {...a11y} className="fi-input" value={tambah.note} onChange={(e) => setTambah({ ...tambah, note: e.target.value })} />}</FormField>
                     </div>
-                    <F label="Kode outlet"
-                        hint="Boleh kode internal Accurate (C-WIN013) ATAU kode pelanggan Kino (22160031402) — dipisah koma, spasi, atau baris baru. Kode Kino diterjemahkan lewat Mapping Principal. Yang tidak dikenali ditolak dan disebutkan satu per satu, tidak dimuat diam-diam.">
-                        <textarea value={tambah.codes} onChange={(e) => setTambah({ ...tambah, codes: e.target.value })}
-                            rows={4} placeholder="C-WIN013, C-KOS005&#10;22160031402" className={inputCls} />
-                    </F>
-                    <F label="Catatan" hint="Mis. “dari berkas Loyalty Makassar Q3, dikirim SPV 15 Sep”.">
-                        <input value={tambah.note} onChange={(e) => setTambah({ ...tambah, note: e.target.value })} className={inputCls} />
-                    </F>
-                    <div className="flex gap-2">
-                        <button onClick={() => void simpan()} disabled={busy}
-                            className="rounded bg-blue-600 px-3 py-2 text-sm disabled:opacity-40">Simpan</button>
-                        <button onClick={() => setTambah(null)} className="rounded bg-white/10 px-3 py-2 text-sm">Batal</button>
-                    </div>
-                </div>
+                </Section>
             )}
 
-            {/* Periode SELURUH anggota daftar terpilih — mis. LOYALTY Q3 yang sama dibawa ke Oktober.
-                Hanya muncul saat satu daftar dipilih, supaya cakupannya selalu satu daftar yang terlihat. */}
-            {list && (ubahSemua?.list === list ? (
-                <div className="flex flex-wrap items-end gap-2 rounded border border-blue-500/30 bg-blue-500/5 p-3">
-                    <div role="group" aria-label={`Periode baru semua anggota ${list}`} className="flex flex-wrap items-end gap-2">
-                        <F label="Ikut mulai">
-                            <input type="date" aria-label="Ikut mulai, semua anggota" value={ubahSemua.periodStart}
-                                onChange={(e) => setUbahSemua({ ...ubahSemua, periodStart: e.target.value, galat: "" })} className={inputCls} />
-                        </F>
-                        <F label="Ikut sampai">
-                            <input type="date" aria-label="Ikut sampai, semua anggota" value={ubahSemua.periodEnd}
-                                onChange={(e) => setUbahSemua({ ...ubahSemua, periodEnd: e.target.value, galat: "" })} className={inputCls} />
-                        </F>
-                    </div>
-                    <button onClick={() => void simpanPeriodeSemua()} disabled={busy}
-                        className="rounded bg-blue-600 px-3 py-2 text-sm disabled:opacity-40">
-                        {busy ? "Menyimpan…" : `Simpan untuk ${lists.find((entry) => entry.name === list)?.members ?? members.length} anggota`}
-                    </button>
-                    <button onClick={() => setUbahSemua(null)} className="rounded bg-white/10 px-3 py-2 text-sm">Batal</button>
-                    {ubahSemua.galat && <p role="alert" className="basis-full text-xs text-red-300">{ubahSemua.galat}</p>}
-                </div>
-            ) : (
-                <div>
-                    <button onClick={() => setUbahSemua({ list, periodStart: "", periodEnd: "", galat: "" })} disabled={busy}
-                        className="inline-flex items-center gap-2 rounded bg-white/10 px-2.5 py-1.5 text-xs disabled:opacity-40">
-                        <CalendarRange size={13} /> Ubah periode semua anggota {list} ({lists.find((entry) => entry.name === list)?.members ?? members.length})
-                    </button>
-                </div>
-            ))}
-
-            <div className="max-h-96 overflow-auto rounded border border-white/10">
-                <table className="w-full text-sm">
-                    <thead className="bg-white/5 text-slate-300">
-                        <tr>
-                            {["Daftar", "Outlet", "Keterangan", "Kode Kino", "Ikut", ""].map((h) => (
-                                <th key={h} className="whitespace-nowrap px-2 py-2 text-left font-medium">{h}</th>
-                            ))}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {members.map((member) => (
-                            <tr key={member.id} className={`border-t border-white/5 transition-colors hover:bg-white/[0.03] ${member.active ? "" : "opacity-50"}`}>
-                                <td className="whitespace-nowrap px-2 py-1.5 align-top text-xs text-slate-400">{member.listName}</td>
-                                <td className="px-2 py-1.5 align-top">
-                                    {member.customerCode}
-                                    <span className="block text-xs text-slate-500">{member.customerName}</span>
-                                </td>
-                                <td className="whitespace-nowrap px-2 py-1.5 align-top text-xs">{member.tier || <span className="text-slate-500">—</span>}</td>
-                                <td className="whitespace-nowrap px-2 py-1.5 align-top text-xs text-slate-400">
-                                    {member.sourceCode || <span className="text-slate-600">diketik langsung</span>}
-                                </td>
-                                <td className="whitespace-nowrap px-2 py-1.5 align-top text-xs text-slate-400">
-                                    {ubah?.id === member.id ? (
-                                        <div className="flex flex-col gap-1">
-                                            <input type="date" aria-label="Ikut mulai" value={ubah.periodStart}
-                                                onChange={(e) => setUbah({ ...ubah, periodStart: e.target.value })} className={inputCls} />
-                                            <input type="date" aria-label="Ikut sampai" value={ubah.periodEnd}
-                                                onChange={(e) => setUbah({ ...ubah, periodEnd: e.target.value })} className={inputCls} />
-                                            <div className="flex gap-1">
-                                                <button onClick={() => void simpanPeriode(member)} disabled={busy}
-                                                    className="rounded bg-blue-600 px-2 py-1 text-xs text-white disabled:opacity-40">Simpan</button>
-                                                <button onClick={() => setUbah(null)} className="rounded bg-white/10 px-2 py-1 text-xs">Batal</button>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <>{member.periodStart ?? "kapan pun"}<br />s/d {member.periodEnd ?? "dikeluarkan"}</>
-                                    )}
-                                </td>
-                                <td className="whitespace-nowrap px-2 py-1.5 text-right align-top">
-                                    <button onClick={() => setUbah({ id: member.id, periodStart: member.periodStart ?? "", periodEnd: member.periodEnd ?? "" })}
-                                        disabled={busy} className="rounded px-2 py-1 text-xs text-blue-300 hover:bg-white/10 disabled:opacity-40"
-                                        title="Ubah periode" aria-label={`Ubah periode ${member.customerCode}`}>
-                                        <CalendarRange size={13} />
-                                    </button>
-                                    <button onClick={() => void hapus([member.id], `${member.customerCode} ${member.customerName}`)}
-                                        className="rounded px-2 py-1 text-xs text-red-300 hover:bg-white/10" title="Keluarkan dari daftar">
-                                        <Trash2 size={13} />
-                                    </button>
-                                </td>
-                            </tr>
-                        ))}
-                        {members.length === 0 && (
-                            <tr><td colSpan={6} className="px-2 py-6 text-center text-slate-400">
-                                Belum ada outlet di daftar ini. Selama daftarnya kosong, aturan yang menunjuknya tidak
-                                berlaku untuk siapa pun — itu disengaja: lebih baik tertahan daripada lolos tanpa dasar.
-                            </td></tr>
-                        )}
-                    </tbody>
-                </table>
+            <div className="fi-page-bar">
+                <FormField label="Daftar">{(a11y) => <select {...a11y} className="fi-input" value={list} onChange={(e) => setList(e.target.value)}><option value="">Semua daftar</option>{lists.map((e) => <option key={e.name} value={e.name}>{e.name} ({e.members})</option>)}</select>}</FormField>
+                <FormField label="Cari">{(a11y) => <input {...a11y} className="fi-input" type="search" placeholder="Kode atau nama toko" value={q} onChange={(e) => setQ(e.target.value)} />}</FormField>
+                {bolehUbah && list && <Button icon={<CalendarRange className="fi-icon" aria-hidden />} onClick={() => setPeriodeSemua({ periodStart: "", periodEnd: "" })} style={{ alignSelf: "end" }}>Ubah periode semua anggota {list} ({infoList?.members ?? members.length})…</Button>}
             </div>
-        </section>
+            {lists.length > 0 && (
+                <ul className="fi-chips" aria-label="Daftar dan tali ke aturan">
+                    {lists.map((e) => (
+                        <li key={e.name}>
+                            <button type="button" className="fi-chip" aria-pressed={list === e.name} data-tone={e.linked.length ? undefined : "warn"} onClick={() => setList(list === e.name ? "" : e.name)}
+                                title={e.linked.length ? e.linked.map((l) => `${l.suratProgram}: ${modeLabel(l.mode)}, ${l.rules} aturan`).join("; ") : "Belum ada aturan promo yang menunjuk daftar ini"}>
+                                {e.name} · {e.members} toko · {e.linked.length ? e.linked.map((l) => `${l.suratProgram} ${l.mode === "EXCLUDE" ? "(kecuali)" : "(hanya)"}`).join(" · ") : "belum dipakai aturan"}
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            )}
+
+            {data.status === "memuat" && !data.data ? <div className="fi-panel"><Skeleton rows={5} label="Memuat daftar outlet" /></div>
+                : data.status === "galat" && !data.data ? <div className="fi-panel"><ErrorState message={data.error} onRetry={muat} /></div>
+                : (
+                    <ResponsiveTable<Member> title="Anggota daftar" count={members.length} columns={kolom} rows={members} rowKey={(m) => String(m.id)} status={data.status} error={data.error} onRetry={muat}
+                        empty={{ title: "Belum ada outlet di daftar ini", message: "Selama daftarnya kosong, aturan yang menunjuknya tidak berlaku untuk siapa pun — disengaja: lebih baik tertahan daripada lolos tanpa dasar." }}
+                        mobileItem={(m) => <ListItem doc={m.customerCode} title={m.customerName} meta={`${m.listName} · ${tgl(m.periodStart) || "kapan pun"} – ${tgl(m.periodEnd) || "dikeluarkan"}`} badge={bolehUbah ? <Button variant="tertiary" onClick={() => setKeluarkan(m)}>Keluarkan…</Button> : undefined} />} />
+                )}
+            {!data.data && data.status !== "memuat" && data.status !== "galat" && <EmptyState title="Belum ada daftar" />}
+
+            <ConfirmDialog open={paksa !== null} onClose={() => setPaksa(null)} tag="Ganti daftar" title={`Ganti daftar yang ditunjuk aturan ${paksa?.surat ?? ""}?`} confirmLabel="Ganti sekarang"
+                description={paksa?.pesan} onConfirm={() => tunjuk(paksa!.nama, paksa!.surat, true)}
+                facts={[["Daftar baru", paksa?.nama ?? ""], ["Akibat", "Peserta program ini berganti ke anggota daftar baru"]]} />
+            <ConfirmDialog open={periodeSemua !== null} onClose={() => setPeriodeSemua(null)} tag="Periode" title={`Ubah periode ${infoList?.members ?? members.length} anggota daftar ${list}?`} confirmLabel="Ubah periode"
+                confirmDisabled={!periodeSemua?.periodStart || !periodeSemua?.periodEnd ? "Isi kedua tanggal" : periodeSemua.periodStart > periodeSemua.periodEnd ? "Tanggal sampai sebelum tanggal mulai" : undefined}
+                onConfirm={simpanPeriodeSemua}
+                facts={[["Dipakai aturan surat", infoList?.linked.length ? infoList.linked.map((l) => l.suratProgram).join(", ") : "Tidak ada"], ["Tidak berubah", "Keterangan, catatan, dan kode principal anggota"]]}>
+                <div className="fi-formgrid">
+                    <FormField label="Ikut mulai" required>{(a11y) => <input {...a11y} className="fi-input" type="date" value={periodeSemua?.periodStart ?? ""} onChange={(e) => setPeriodeSemua((p) => ({ periodEnd: p?.periodEnd ?? "", periodStart: e.target.value }))} />}</FormField>
+                    <FormField label="Ikut sampai" required>{(a11y) => <input {...a11y} className="fi-input" type="date" value={periodeSemua?.periodEnd ?? ""} onChange={(e) => setPeriodeSemua((p) => ({ periodStart: p?.periodStart ?? "", periodEnd: e.target.value }))} />}</FormField>
+                </div>
+            </ConfirmDialog>
+            <ConfirmDialog open={keluarkan !== null} onClose={() => setKeluarkan(null)} tag="Keluarkan" tone="negative" title={`Keluarkan ${keluarkan?.customerCode ?? ""} dari daftar ${keluarkan?.listName ?? ""}?`} confirmLabel="Keluarkan"
+                onConfirm={() => hapus(keluarkan!)} facts={[["Outlet", keluarkan?.customerName ?? ""], ["Akibat", "Aturan yang menunjuk daftar ini berhenti berlaku untuk outlet ini"]]} />
+        </div>
     );
 }

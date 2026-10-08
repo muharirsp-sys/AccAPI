@@ -1,5 +1,5 @@
 /*
- * Tujuan: Regresi UI Normalisasi Diskon (wajib aturan promo dasar) dan saringan Periode Aturan Promo,
+ * Tujuan: Regresi UI Normalisasi Diskon (wajib aturan promo dasar, dialog Golongkan Fiori S4a) dan saringan Aturan Promo,
  *   termasuk keadaan memuat / kosong / galat dan penjaga kirim ganda.
  * Caller: `npx playwright test tests/normalisasi-aturan-promo.spec.ts` terhadap dev server dengan
  *   LOCAL_AUTH_BYPASS=true (lihat tests/local-off-auth-bypass.spec.ts).
@@ -38,32 +38,34 @@ async function bukaNormalisasi(page: Page, jawab: (route: Route) => Promise<void
     await page.goto("/normalisasi-diskon");
 }
 
-test("Normalisasi: memuat, lalu Disc Claim wajib memilih aturan yang berlaku; kirim ganda dicegah", async ({ page }) => {
+/** Pilih baris, buka dialog Golongkan, pilih beban. */
+async function golongkan(page: Page, baris: string[], beban: "principal" | "distributor") {
+    for (const nama of baris) await page.getByRole("checkbox", { name: nama }).check();
+    await page.getByRole("button", { name: "Golongkan…" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.getByLabel("Beban").selectOption(beban);
+    return dlg;
+}
+
+test("Normalisasi: memuat, lalu Klaim principal wajib memilih aturan yang berlaku; kirim ganda dicegah", async ({ page }) => {
     let lepas!: () => void;
     const tahan = new Promise<void>((resolve) => { lepas = resolve; });
     await bukaNormalisasi(page, async (route) => { await tahan; await json(route, rekap); });
     // Memuat terlihat sebagai memuat, BUKAN sebagai "tidak ada potongan".
-    await expect(page.getByRole("status").filter({ hasText: "Memuat potongan tak bertuan" })).toBeAttached();
-    await expect(page.getByText("Tidak ada potongan tak bertuan pada periode ini.")).toHaveCount(0);
+    await expect(page.locator("main").getByRole("status").filter({ hasText: "Memuat data" })).toBeAttached();
+    await expect(page.getByText("Tidak ada potongan tak bertuan pada periode ini")).toHaveCount(0);
     lepas();
 
-    const simpan = page.getByRole("button", { name: /^Simpan/ });
-    await expect(page.getByText("Centang potongan di tabel yang akan dinormalisasi.")).toBeVisible();
-    await expect(simpan).toBeDisabled();
-
-    await page.getByRole("checkbox", { name: "Pilih INV/2610/KN00001 posisi 4" }).check();
-    await expect(page.getByText("Pilih jenis normalisasi.")).toBeVisible();
-    await expect(simpan).toBeDisabled();
-
-    const jenis = page.getByLabel("Jenis normalisasi");
-    const dasar = page.getByLabel("Aturan promo dasar");
-    // Disc Distributor tanpa aturan distributor yang berlaku: tidak bisa disimpan, dan sebabnya disebut.
-    await jenis.selectOption("distributor");
+    await expect(page.getByRole("button", { name: "Golongkan…" })).toHaveCount(0); // belum ada yang dipilih
+    const dlg = await golongkan(page, ["Pilih INV/2610/KN00001 posisi 4"], "distributor");
+    const dasar = dlg.getByLabel(/Aturan promo dasar/);
+    const simpan = dlg.getByRole("button", { name: /^Golongkan sebagai/ });
+    // Beban distributor tanpa aturan distributor yang berlaku: tidak bisa disimpan, dan sebabnya disebut.
     await expect(dasar).toBeDisabled();
-    await expect(page.getByText("Tidak ada aturan promo yang berlaku untuk potongan ini.", { exact: false })).toBeVisible();
+    await expect(dlg.getByText("Tidak ada aturan promo yang berlaku untuk potongan ini.", { exact: false })).toBeVisible();
     await expect(simpan).toBeDisabled();
 
-    await jenis.selectOption("principal");
+    await dlg.getByLabel("Beban").selectOption("principal");
     await expect(dasar).toBeEnabled();
     // Nilai yang sama dengan potongannya (0,75%) didahulukan.
     await expect(dasar.locator("option").nth(1)).toContainText("nilai sama");
@@ -77,84 +79,82 @@ test("Normalisasi: memuat, lalu Disc Claim wajib memilih aturan yang berlaku; ki
         await new Promise((resolve) => setTimeout(resolve, 400));
         await json(route, { ok: true, disimpan: 1, bucket: "principal", aturan: "DISCOUNT REGULER" });
     });
-    page.on("dialog", (dialog) => void dialog.accept());
     await simpan.dblclick();
-    await expect(page.getByText("1 potongan dinormalisasi sebagai Disc Claim")).toBeVisible();
+    await expect(page.getByText("1 potongan digolongkan sebagai Klaim principal.")).toBeVisible();
     expect(kiriman).toHaveLength(1);
     expect(kiriman[0]).toMatchObject({ bucket: "principal", rows: [{ promoRuleId: 12, lineKey: "1", positions: "4", branchName: "KINO NON FOOD" }] });
 });
 
-test("Normalisasi: penolakan server ditampilkan dan pilihan tidak hilang", async ({ page }) => {
+test("Normalisasi: penolakan server ditampilkan di dialog dan pilihan tidak hilang", async ({ page }) => {
     await bukaNormalisasi(page);
-    await page.getByRole("checkbox", { name: "Pilih INV/2610/KN00001 posisi 4" }).check();
-    await page.getByLabel("Jenis normalisasi").selectOption("principal");
-    await page.getByLabel("Aturan promo dasar").selectOption("BP2610007911");
+    const dlg = await golongkan(page, ["Pilih INV/2610/KN00001 posisi 4"], "principal");
+    await dlg.getByLabel(/Aturan promo dasar/).selectOption("BP2610007911");
     await page.route((url) => url.pathname === "/api/promo-recap/normalisasi", (route) =>
         json(route, { ok: false, error: "Aturan BP2610007911 tidak berlaku untuk INV/2610/KN00001: tanggal faktur di luar periode" }, 422));
-    page.on("dialog", (dialog) => void dialog.accept());
-    await page.getByRole("button", { name: "Simpan sebagai Disc Claim" }).click();
-    await expect(page.getByRole("alert").filter({ hasText: "Tidak tersimpan: Aturan BP2610007911 tidak berlaku" })).toBeVisible();
+    await dlg.getByRole("button", { name: "Golongkan sebagai Klaim principal" }).click();
+    await expect(dlg.getByRole("alert").filter({ hasText: "Aturan BP2610007911 tidak berlaku" })).toBeVisible();
+    await expect(dlg.getByLabel(/Aturan promo dasar/)).toHaveValue("BP2610007911");
+    await dlg.getByRole("button", { name: "Batal" }).click();
     await expect(page.getByRole("checkbox", { name: "Pilih INV/2610/KN00001 posisi 4" })).toBeChecked();
-    await expect(page.getByRole("button", { name: "Simpan sebagai Disc Claim" })).toBeEnabled();
 });
 
 test("Normalisasi: galat memuat terlihat sebagai galat, bisa dicoba lagi", async ({ page }) => {
     let gagal = true;
     await bukaNormalisasi(page, (route) => (gagal ? json(route, { ok: false, error: "statement timeout" }, 500) : json(route, rekap)));
-    await expect(page.getByRole("alert").filter({ hasText: "Gagal memuat data: statement timeout" }).first()).toBeVisible();
-    await expect(page.getByText("Tidak ada potongan tak bertuan pada periode ini.")).toHaveCount(0);
+    await expect(page.locator("main").getByRole("alert").filter({ hasText: "statement timeout" }).first()).toBeVisible();
+    await expect(page.getByText("Tidak ada potongan tak bertuan pada periode ini")).toHaveCount(0);
     gagal = false;
     await page.getByRole("button", { name: "Coba lagi" }).first().click();
-    await expect(page.getByText("ALFAMART MAJU JAYA")).toBeVisible();
+    await expect(page.getByRole("table", { name: "Tak bertuan" }).getByText("ALFAMART MAJU JAYA")).toBeVisible();
 });
 
-test("Aturan Promo: Periode bergabung dengan saringan lain, bisa dihapus; memuat/kosong/galat berbeda", async ({ page }) => {
+test("Aturan Promo: saringan bergabung dan bisa dihapus; tanggal dd/mm/yyyy; kosong dan galat berbeda", async ({ page }) => {
     const diminta: URLSearchParams[] = [];
     let jawaban: "isi" | "kosong" | "galat" = "isi";
     await page.route((url) => url.pathname === "/api/promo-rule", async (route) => {
         diminta.push(new URL(route.request().url()).searchParams);
         if (jawaban === "galat") return json(route, { ok: false, error: "koneksi database putus" }, 500);
         const rules = jawaban === "kosong" ? [] : [{ ...aturan(11), principal: "KINO NON FOOD", active: true, triggerQty: "0",
-            triggerUnit: "PCS", benefitUnit: "%", channel: "", note: "", importedBy: "" }];
+            triggerUnit: "PCS", benefitUnit: "%", channel: "", note: "", importedBy: "", periodStart: "2026-10-01", periodEnd: "2099-10-31" }];
         return json(route, { ok: true, principals: ["KINO NON FOOD"], total: 1, rules, truncated: 0 });
     });
     await page.goto("/aturan-promo");
-    await expect(page.getByText("BP2610007911")).toBeVisible();
+    const daftar = page.getByRole("list", { name: "Daftar aturan" });
+    await expect(daftar.getByRole("button", { name: /#11/ })).toContainText("BP2610007911");
+    await daftar.getByRole("button", { name: /#11/ }).click();
     // Tanggal tampil dd/mm/yyyy.
-    await expect(page.getByText("01/10/2026")).toBeVisible();
+    await expect(page.getByRole("region", { name: "Detail aturan" })).toContainText("01/10/2026 – 31/10/2099");
 
-    await page.getByRole("combobox", { name: "Principal", exact: true }).selectOption("KINO NON FOOD");
-    await page.getByRole("combobox", { name: "Tanggungan" }).selectOption("PRINCIPAL");
-    await page.getByLabel("Periode dari").fill("2026-09-01");
-    await page.getByLabel("Periode sampai").fill("2026-09-30");
+    const saringan = page.locator(".fi-fbar"); // formulir detail juga punya isian Principal dan Beban
+    await saringan.getByRole("combobox", { name: "Principal", exact: true }).selectOption("KINO NON FOOD");
+    await saringan.getByRole("combobox", { name: "Beban" }).selectOption("PRINCIPAL");
+    await saringan.getByLabel("Berlaku dari").fill("2026-09-01");
+    await saringan.getByLabel("Berlaku sampai").fill("2026-09-30");
     await page.getByRole("searchbox", { name: "Cari" }).fill("B&B");
     await expect.poll(() => diminta.at(-1)?.toString()).toContain("q=B%26B");
-    const akhir = diminta.at(-1)!;
-    expect(Object.fromEntries(akhir)).toMatchObject({ principal: "KINO NON FOOD", beban: "PRINCIPAL", dari: "2026-09-01", sampai: "2026-09-30", q: "B&B" });
-    await expect(page.getByText("yang berlaku 01/09/2026 – 30/09/2026", { exact: false })).toBeVisible();
+    expect(Object.fromEntries(diminta.at(-1)!)).toMatchObject({ principal: "KINO NON FOOD", beban: "PRINCIPAL", dari: "2026-09-01", sampai: "2026-09-30", q: "B&B" });
+    await expect(page.getByRole("list", { name: "Saringan aktif" })).toContainText("Berlaku: 01/09/2026 – 30/09/2026");
 
     jawaban = "kosong";
-    await page.getByRole("button", { name: "Hapus saringan periode" }).click();
+    await page.getByRole("button", { name: "Hapus saringan Berlaku: 01/09/2026 – 30/09/2026" }).click();
     await expect.poll(() => diminta.at(-1)?.has("dari")).toBe(false);
     expect(diminta.at(-1)?.get("principal")).toBe("KINO NON FOOD");
-    await expect(page.getByText("Tidak ada aturan promo yang sesuai saringan.")).toBeVisible();
+    await expect(page.getByText("Tidak ada aturan untuk “B&B”")).toBeVisible();
 
     jawaban = "galat";
-    await page.getByRole("button", { name: "Muat ulang" }).click();
+    await page.getByRole("searchbox", { name: "Cari" }).fill("B&B ALL");
     await expect(page.getByRole("alert").filter({ hasText: "koneksi database putus" })).toBeVisible();
 });
 
-test("Normalisasi: keputusan yang tidak dipakai lagi bisa disaring dan dirujukkan ulang", async ({ page }) => {
+test("Normalisasi: keputusan yang tidak dipakai lagi ada di kelompok Perlu diputuskan ulang dan bisa dirujukkan ulang", async ({ page }) => {
     const bekas = baris({ invoiceNo: "INV/2609/KN00999", invoiceId: "9000999", lineKey: "9", bekasNormalisasi: "principal",
         reason: "0.75% (posisi 4) tidak sama — normalisasi Disc Claim oleh ari TIDAK dipakai: keputusan lama tanpa aturan promo dasar — putuskan ulang dengan aturan" });
     await bukaNormalisasi(page, (route) => json(route, { ...rekap, recap: { rows: [...rekap.recap.rows, bekas] } }));
-    const saring = page.getByRole("checkbox", { name: /Hanya yang pernah dinormalisasi tetapi tidak dipakai lagi \(1\)/ });
-    await saring.check();
-    await expect(page.getByText("TOKO BERKAH")).toHaveCount(0);
-    await page.getByRole("checkbox", { name: "Pilih INV/2609/KN00999 posisi 4" }).check();
-    await page.getByLabel("Jenis normalisasi").selectOption("principal");
-    await page.getByLabel("Aturan promo dasar").selectOption("BP2610007911");
-    await expect(page.getByRole("button", { name: "Simpan sebagai Disc Claim" })).toBeEnabled();
+    await page.getByRole("group", { name: "Kelompok potongan" }).getByRole("button", { name: "Perlu diputuskan ulang 1" }).click();
+    await expect(page.getByRole("table", { name: "Perlu diputuskan ulang" }).getByText("TOKO BERKAH")).toHaveCount(0);
+    const dlg = await golongkan(page, ["Pilih INV/2609/KN00999 posisi 4"], "principal");
+    await dlg.getByLabel(/Aturan promo dasar/).selectOption("BP2610007911");
+    await expect(dlg.getByRole("button", { name: "Golongkan sebagai Klaim principal" })).toBeEnabled();
 });
 
 test("Normalisasi: satu faktur, dua barang — satu surat, tiap barang memakai aturannya sendiri", async ({ page }) => {
@@ -168,10 +168,9 @@ test("Normalisasi: satu faktur, dua barang — satu surat, tiap barang memakai a
     const eskulin = (id: number, itemCode: string) => aturan(id, { suratProgram: "BP2610009097", promoGroup: "ESKULIN - COLOGNE", itemCode,
         benefitType: "BONUS_QTY", benefitValue: "1", outletList: "LOYALTY", outletListMode: "INCLUDE" });
     await bukaNormalisasi(page, (route) => json(route, { ...rekap, recap: { rows: dua }, aturan: [eskulin(490, "K1111005005010"), eskulin(499, "K1111009010010")] }));
-    await expect(page.getByText("Surat berlaku: 1 untuk Disc Claim · 0 untuk Disc Distributor")).toBeVisible();
-    await page.getByRole("checkbox", { name: "Pilih INV/2610/KN00011 posisi 1" }).check();
-    await page.getByLabel("Jenis normalisasi").selectOption("principal");
-    const dasar = page.getByLabel("Aturan promo dasar (surat)");
+    await expect(page.getByText("Surat berlaku: 1 klaim principal · 0 beban distributor")).toBeVisible();
+    const dlg = await golongkan(page, ["Pilih INV/2610/KN00011 posisi 1"], "principal");
+    const dasar = dlg.getByLabel(/Aturan promo dasar/);
     await expect(dasar.locator("option", { hasText: "BP2610009097" })).toContainText("BP2610009097 · ESKULIN - COLOGNE · bonus 1 · 2 aturan (per barang)");
     await dasar.selectOption("BP2610009097");
     const kiriman: Array<{ rows: Array<{ promoRuleId: number; itemCode: string }> }> = [];
@@ -179,9 +178,8 @@ test("Normalisasi: satu faktur, dua barang — satu surat, tiap barang memakai a
         kiriman.push(route.request().postDataJSON());
         await json(route, { ok: true, disimpan: 2, bucket: "principal", aturan: "BP2610009097" });
     });
-    page.on("dialog", (dialog) => void dialog.accept());
-    await page.getByRole("button", { name: "Simpan sebagai Disc Claim" }).click();
-    await expect(page.getByText("2 potongan dinormalisasi sebagai Disc Claim")).toBeVisible();
+    await dlg.getByRole("button", { name: "Golongkan sebagai Klaim principal" }).click();
+    await expect(page.getByText("2 potongan digolongkan sebagai Klaim principal.")).toBeVisible();
     expect(kiriman[0].rows.map((row) => [row.itemCode, row.promoRuleId])).toEqual([["K1111005005010", 490], ["K1111009010010", 499]]);
 });
 
@@ -191,25 +189,26 @@ test("Normalisasi: otomatis per baris hanya untuk yang punya tepat satu aturan b
     const dua = (id: number, surat: string) => aturan(id, { suratProgram: surat, benefitValue: "2.5" });
     await bukaNormalisasi(page, (route) => json(route, { ...rekap, recap: { rows: [...rekap.recap.rows, ambigu] },
         aturan: [...rekap.aturan, dua(21, "BP2609009001"), dua(22, "BP2609009002")] }));
-    await page.getByRole("checkbox", { name: "Pilih semua potongan tak bertuan" }).check();
-    await page.getByLabel("Jenis normalisasi").selectOption("principal");
+    await page.getByRole("table", { name: "Tak bertuan" }).getByRole("checkbox", { name: "Pilih semua baris" }).check();
+    await page.getByRole("button", { name: "Golongkan…" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.getByLabel("Beban").selectOption("principal");
     // Tiga faktur, surat berbeda: tidak ada satu surat untuk semuanya.
-    await expect(page.getByText('Tidak ada satu surat untuk semua potongan terpilih — pilih "Otomatis per baris"', { exact: false })).toBeVisible();
-    const dasar = page.getByLabel("Aturan promo dasar (surat)");
+    await expect(dlg.getByText("Tidak ada satu surat untuk semua potongan terpilih — pilih “Otomatis per baris”", { exact: false })).toBeVisible();
+    const dasar = dlg.getByLabel(/Aturan promo dasar/);
     await expect(dasar.locator("option", { hasText: "Otomatis per baris — 1 dari 3 potongan" })).toHaveCount(1);
     await dasar.selectOption("__otomatis__");
     // Pilihan otomatis tetap TERLIHAT terpilih, bukan kembali ke placeholder.
     await expect(dasar).toHaveValue("__otomatis__");
-    await expect(page.getByText("Otomatis per baris: 1 potongan memakai aturan yang nilainya sama persis (surat DISCOUNT REGULER); 2 dilewati", { exact: false })).toBeVisible();
+    await expect(dlg.getByText("Otomatis per baris: 1 potongan memakai aturan yang nilainya sama persis (surat DISCOUNT REGULER); 2 dilewati", { exact: false })).toBeVisible();
 
     const kiriman: Array<{ rows: Array<{ promoRuleId: number; invoiceNo: string }> }> = [];
     await page.route((url) => url.pathname === "/api/promo-recap/normalisasi", async (route) => {
         kiriman.push(route.request().postDataJSON());
         await json(route, { ok: true, disimpan: 1, bucket: "principal", aturan: "DISCOUNT REGULER" });
     });
-    page.on("dialog", (dialog) => void dialog.accept());
-    await page.getByRole("button", { name: "Simpan sebagai Disc Claim" }).click();
-    await expect(page.getByText("1 potongan dinormalisasi sebagai Disc Claim; 2 dilewati, tetap tak bertuan")).toBeVisible();
+    await dlg.getByRole("button", { name: "Golongkan sebagai Klaim principal" }).click();
+    await expect(page.getByText("1 potongan digolongkan sebagai Klaim principal; 2 dilewati, tetap tak bertuan.")).toBeVisible();
     // Hanya potongan yang tidak ambigu yang terkirim, dengan aturan bernilai sama (0,75% tarif posisi 4).
     expect(kiriman).toHaveLength(1);
     expect(kiriman[0].rows.map((row) => [row.invoiceNo, row.promoRuleId])).toEqual([["INV/2610/KN00001", 12]]);
