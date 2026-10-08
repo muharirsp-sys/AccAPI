@@ -6,7 +6,7 @@
  * Side Effects: Definisi schema untuk DB read/write PostgreSQL oleh caller.
  */
 import { sql } from "drizzle-orm";
-import { pgTable, text, integer, bigint, bigserial, smallint, numeric, date, doublePrecision, timestamp, boolean, jsonb, index, uniqueIndex, primaryKey, check, customType, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, bigint, bigserial, smallint, numeric, date, doublePrecision, timestamp, boolean, jsonb, index, uniqueIndex, unique, foreignKey, primaryKey, check, customType, pgEnum } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
     id: text("id").primaryKey(),
@@ -198,12 +198,61 @@ export const accurateWriteAttempt = pgTable("accurate_write_attempt", {
     accurateId: text("accurate_id").notNull().default(""),
     accurateNumber: text("accurate_number").notNull().default(""),
     resolution: jsonb("resolution"),
+    // ADR-004 rev 3.1 rilis A (C14, owner 8 Okt 2026): generasi per subjek. Rilis A selalu 0 (reopen_id kosong);
+    // generasi > 0 hanya lewat reopen (rilis B, D-15 — belum dibangun).
+    generation: integer("generation").notNull().default(0),
+    reopenId: text("reopen_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
-    uniqueIndex("uq_accurate_write_attempt_live").on(t.operation, t.subjectKey)
+    // Satu attempt hidup per operation × subjek × GENERASI (nama lama dipertahankan — ADR-004 Migrasi).
+    uniqueIndex("uq_accurate_write_attempt_live").on(t.operation, t.subjectKey, t.generation)
         .where(sql`${t.state} IN ('sending', 'posted', 'unknown')`),
+    // Kunci identitas untuk FK komposit dari accurate_write_attempt_reopen.
+    unique("uq_accurate_write_attempt_identity").on(t.id, t.operation, t.subjectKey, t.generation, t.targetDbId),
     check("accurate_write_attempt_state", sql`${t.state} IN ('sending', 'posted', 'rejected', 'unknown', 'not_sent', 'resolved_absent')`),
+    check("accurate_write_attempt_generation", sql`${t.generation} >= 0`),
+    check("accurate_write_attempt_reopen_gen", sql`(${t.generation} = 0) = (${t.reopenId} IS NULL)`),
+    // FK (reopen_id, operation, subject_key, generation, target_db_id) -> accurate_write_attempt_reopen (melingkar),
+    // fungsi/trigger immutability, dan REVOKE = DDL MANUAL ADR-004 (dijalankan manusia berwenang, O5) — sengaja
+    // tidak di sini maupun di migrate-pg. JANGAN drizzle-kit push schema.ts lama ke produksi.
+]);
+
+// ADR-004 rev 3.1: catatan "buka ulang" (repost D-15) yang immutable. Rilis A hanya membuat tabelnya (bentuk final,
+// C14); tidak ada route yang menulisnya sampai rilis B. Konstrain inline = yang juga dibuat scripts/migrate-pg.mjs.
+export const accurateWriteAttemptReopen = pgTable("accurate_write_attempt_reopen", {
+    id: text("id").primaryKey(),
+    operation: text("operation").notNull(),
+    subjectKey: text("subject_key").notNull(),
+    fromAttemptId: text("from_attempt_id").notNull(),
+    targetDbId: text("target_db_id").notNull(),
+    actor: text("actor").notNull(),
+    fromGeneration: integer("from_generation").notNull(),
+    toGeneration: integer("to_generation").notNull(),
+    oldAccurateId: text("old_accurate_id").notNull().default(""),
+    oldAccurateNumber: text("old_accurate_number").notNull().default(""),
+    reason: text("reason").notNull(),
+    checkedSource: text("checked_source").notNull(),
+    verification: jsonb("verification").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    unique("uq_accurate_write_attempt_reopen_generation").on(t.operation, t.subjectKey, t.toGeneration),
+    unique("uq_accurate_write_attempt_reopen_from").on(t.fromAttemptId),
+    unique("uq_accurate_write_attempt_reopen_identity").on(t.id, t.operation, t.subjectKey, t.toGeneration, t.targetDbId),
+    foreignKey({
+        name: "fk_accurate_write_attempt_reopen_from",
+        columns: [t.fromAttemptId, t.operation, t.subjectKey, t.fromGeneration, t.targetDbId],
+        foreignColumns: [accurateWriteAttempt.id, accurateWriteAttempt.operation, accurateWriteAttempt.subjectKey,
+            accurateWriteAttempt.generation, accurateWriteAttempt.targetDbId],
+    }),
+    check("accurate_write_attempt_reopen_from_generation", sql`${t.fromGeneration} >= 0`),
+    check("accurate_write_attempt_reopen_to_generation", sql`${t.toGeneration} = ${t.fromGeneration} + 1`),
+    check("accurate_write_attempt_reopen_old_ref", sql`${t.oldAccurateId} <> '' OR ${t.oldAccurateNumber} <> ''`),
+    check("accurate_write_attempt_reopen_reason", sql`length(btrim(${t.reason})) >= 15`),
+    check("accurate_write_attempt_reopen_checked_source", sql`btrim(${t.checkedSource}) <> ''`),
+    // coalesce: tanpa itu '{}' lolos (CHECK bernilai NULL).
+    check("accurate_write_attempt_reopen_verification",
+        sql`coalesce(${t.verification}->>'method', '') IN ('manual_attestation', 'provider_readback')`),
 ]);
 
 // Aturan promo terbit dalam bentuk yang bisa dibandingkan dengan faktur nyata (db/migrations/0011).

@@ -254,3 +254,96 @@ test("PG: ditolak = tidak pasti (C11) memblokir; tak terhubung boleh diulang; at
         await pool.end();
     }
 });
+
+// ---------------------------------------------------------------- C14: bentuk final ADR-004 rev 3.1 rilis A
+// Skema generasi + tabel reopen dibuat migrate-pg/drizzle; reopen/repost (rilis B, D-15) BELUM ada, jadi kode
+// selalu mengklaim generasi 0. Baris reopen di bawah disisipkan langsung untuk meniru data rilis B. Trigger &
+// FK melingkar attempt->reopen = DDL manual (tidak dijalankan) — uji ini tidak bergantung padanya.
+const OP = "purchase-payment/bulk-save";
+const pgCode = async (p: Promise<unknown>) => p.then(() => "ok", (e: { code?: string }) => e.code ?? String(e));
+const REOPEN_SQL = `INSERT INTO accurate_write_attempt_reopen (id, operation, subject_key, from_attempt_id, target_db_id, actor,
+        from_generation, to_generation, old_accurate_id, old_accurate_number, reason, checked_source, verification)
+    VALUES ($1, $2, $3, $4, $5, 'fin', $6, $7, '77', 'PP-001', $8, 'Accurate DB-1', $9)`;
+type ReopenOpt = Partial<{ id: string; db: string; from: number; to: number; reason: string; ver: string }>;
+const insertReopen = (pool: Pool, subjectKey: string, attemptId: string, o: ReopenOpt = {}) => pool.query(REOPEN_SQL, [
+    o.id ?? randomUUID(), OP, subjectKey, attemptId, o.db ?? "DB-1", o.from ?? 0, o.to ?? 1,
+    o.reason ?? "PP-001 dihapus di Accurate oleh Finance", o.ver ?? '{"method":"manual_attestation"}']);
+const postedAttempt = async (pool: Pool, subjectKey: string) => {
+    const id = randomUUID();
+    await pool.query(
+        `INSERT INTO accurate_write_attempt (id, operation, subject_key, target_db_id, payload_hash, actor, state, accurate_id, accurate_number)
+         VALUES ($1, $2, $3, 'DB-1', 'h', 'u', 'posted', '77', 'PP-001')`, [id, OP, subjectKey]);
+    return id;
+};
+
+test("PG: C14 — klaim generasi 0 tanpa reopen; constraint DB menjaga generasi, reopen & index hidup per generasi", { skip: pgSkip }, async () => {
+    const pool = new Pool({ connectionString: PG_URL, max: 3 });
+    const db = drizzle(pool);
+    try {
+        const subjectKey = `test|${randomUUID()}`;
+        const first = await runGuardedWrite({ db, operation: OP, subjectKey, clientRef: "", targetDbId: "DB-1", actor: "u", payload: [item()],
+            send: async () => ({ status: 200, text: ok() }) });
+        assert.equal(first.claimed, true);
+        const [row] = (await pool.query("SELECT id, generation, reopen_id FROM accurate_write_attempt WHERE subject_key = $1", [subjectKey])).rows;
+        assert.deepEqual({ generation: row.generation, reopen_id: row.reopen_id }, { generation: 0, reopen_id: null });
+
+        // Tabel reopen (rilis B nanti) — constraint inline yang dibuat otomatis.
+        const reopen = (o: ReopenOpt = {}) => insertReopen(pool, subjectKey, row.id, o);
+        assert.equal(await pgCode(reopen({ ver: "{}" })), "23514", "verification '{}' ditolak");
+        assert.equal(await pgCode(reopen({ reason: "pendek" })), "23514", "alasan < 15 karakter ditolak");
+        assert.equal(await pgCode(reopen({ to: 2 })), "23514", "to_generation harus from_generation + 1");
+        assert.equal(await pgCode(reopen({ db: "DB-2" })), "23503", "DB target reopen harus sama dengan attempt asal (FK identitas)");
+        assert.equal(await pgCode(reopen({ from: 1, to: 2 })), "23503", "generasi asal harus generasi attempt (FK identitas)");
+        const reopenId = randomUUID();
+        assert.equal(await pgCode(reopen({ id: reopenId })), "ok");
+        assert.equal(await pgCode(reopen()), "23505", "satu reopen per attempt asal / per generasi");
+
+        const ins = (gen: number, rid: string | null) => pool.query(
+            `INSERT INTO accurate_write_attempt (id, operation, subject_key, target_db_id, payload_hash, actor, state, generation, reopen_id)
+             VALUES ($1, $2, $3, 'DB-1', 'h', 'u', 'sending', $4, $5)`, [randomUUID(), OP, subjectKey, gen, rid]);
+        assert.equal(await pgCode(ins(1, null)), "23514", "generasi > 0 tanpa reopen_id ditolak CHECK");
+        assert.equal(await pgCode(ins(0, reopenId)), "23514", "generasi 0 dengan reopen_id ditolak CHECK");
+        assert.equal(await pgCode(ins(-1, null)), "23514", "generasi negatif ditolak");
+        assert.equal(await pgCode(ins(0, null)), "23505", "attempt hidup baru generasi 0 di samping posted generasi 0 = bentrok index");
+        // Index hidup PER GENERASI: generasi 1 boleh hidup berdampingan dengan generasi 0 posted (rilis B).
+        assert.equal(await pgCode(ins(1, reopenId)), "ok");
+        assert.equal(await pgCode(ins(1, reopenId)), "23505", "dua attempt hidup generasi 1 ditolak");
+    } finally {
+        await pool.end();
+    }
+});
+
+test("PG: C14 — subjek yang sudah dibuka ulang: kiriman biasa ditolak tanpa kirim; resolve hanya generasi terkini", { skip: pgSkip }, async () => {
+    const pool = new Pool({ connectionString: PG_URL, max: 3 });
+    const db = drizzle(pool);
+    const subjectKey = `test|${randomUUID()}`;
+    try {
+        const attemptId = await postedAttempt(pool, subjectKey);
+        await insertReopen(pool, subjectKey, attemptId);
+        const snap = async () => (await pool.query("SELECT row_to_json(a)::text AS j FROM accurate_write_attempt a WHERE id = $1", [attemptId])).rows[0].j;
+        const before = await snap();
+        let sends = 0;
+        const r = await runGuardedWrite({ db, operation: OP, subjectKey, clientRef: "k", targetDbId: "DB-1", actor: "u", payload: [item()],
+            send: async () => { sends += 1; return { status: 200, text: ok() }; } });
+        assert.equal(sends, 0, "subjek dibuka ulang dikirim lewat jalur biasa");
+        assert.equal(r.claimed, false);
+        assert.equal(r.claimed === false && r.reopened, true);
+        assert.equal(r.claimed === false && r.currentGeneration, 1);
+        assert.equal(r.claimed === false && r.live, null, "attempt posted generasi lama tidak dilaporkan sebagai hasil kiriman ini");
+        const resolved = await resolveAttempt({ db, operation: OP, subjectKey, decision: "absent", accurateNumber: "",
+            reason: "dicek manual: tidak ada di daftar PP", checkedSource: "Accurate DB-1", actor: "spv", resolverDbId: "DB-1" });
+        assert.equal(!resolved.ok && resolved.code, "no_open_attempt", "resolve menyentuh generasi lama");
+        assert.equal(await snap(), before, "baris generasi 0 posted berubah");
+        // Subjek TANPA reopen: 409 biasa membawa generasi 0 = generasi terkini (UI boleh merekonsiliasi posted).
+        const plain = `test|${randomUUID()}`;
+        await postedAttempt(pool, plain);
+        const again = await runGuardedWrite({ db, operation: OP, subjectKey: plain, clientRef: "k", targetDbId: "DB-1", actor: "u", payload: [item()],
+            send: async () => { sends += 1; return { status: 200, text: ok() }; } });
+        assert.equal(sends, 0);
+        assert.equal(again.claimed === false && again.reopened, false);
+        assert.equal(again.claimed === false && again.live?.state, "posted");
+        assert.equal(again.claimed === false && `${again.generation}/${again.currentGeneration}`, "0/0");
+    } finally {
+        await pool.end();
+    }
+});

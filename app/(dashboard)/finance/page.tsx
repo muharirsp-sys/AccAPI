@@ -446,10 +446,12 @@ export default function FinancePage() {
             });
             const out = await res.json().catch(() => null) as {
                 state?: string; accurateId?: string; accurateNumber?: string; message?: string; response?: unknown; error?: string;
+                generation?: number; currentGeneration?: number;
                 live?: { attemptId: string; state: string; accurateId: string; accurateNumber: string; targetDbId: string; sameRecord: boolean; sameTarget: boolean } | null;
             } | null;
             let posted: { id: string; number: string; note?: string } | null = null;
-            if (res.status === 409 && out?.live?.state === "posted" && out.live.sameRecord && out.live.sameTarget) {
+            if (res.status === 409 && out?.live?.state === "posted" && out.live.sameRecord && out.live.sameTarget
+                && out.generation === out.currentGeneration) {
                 // Attempt record INI di database INI sudah posted (mis. browser ditutup sebelum mencatat).
                 // Record/draft/database lain dengan faktur yang sama TIDAK ditandai posted (review M3).
                 posted = { id: out.live.accurateId, number: out.live.accurateNumber, note: `attempt server ${out.live.attemptId} sudah posted ${out.live.accurateNumber}` };

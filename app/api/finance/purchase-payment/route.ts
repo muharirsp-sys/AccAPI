@@ -4,7 +4,8 @@
  * Caller: app/(dashboard)/finance/page.tsx (approveTransfer).
  * Dependensi: lib/accurate-write-attempt, lib/accurate-forward, lib/accurate-session, lib/rbac/resolve.
  * Main Functions: POST {clientRef, payload:[PurchasePaymentItem]} -> {state, attemptId, accurateId,
- *   accurateNumber, message, response, persisted}; 409 {live} bila attempt hidup sudah ada.
+ *   accurateNumber, message, response, persisted}; 409 {live, generation, currentGeneration} bila attempt hidup
+ *   sudah ada; 409 {code: reopened_use_repost} bila subjek sudah dibuka ulang (ADR-004 rilis B, belum ada di sini).
  * Side Effects: INSERT/UPDATE accurate_write_attempt; POST purchase-payment/bulk-save.do ke Accurate.
  */
 import { NextResponse } from "next/server";
@@ -61,6 +62,13 @@ export async function POST(request: Request) {
     }
 
     if (!result.claimed) {
+        if (result.reopened) {
+            return NextResponse.json({
+                code: "reopened_use_repost",
+                error: "Pembayaran untuk faktur ini sudah dibuka ulang untuk posting ulang (repost). Posting biasa ditolak — posting ulang belum tersedia di versi ini.",
+                live: null, generation: result.generation, currentGeneration: result.currentGeneration,
+            }, { status: 409 });
+        }
         const live = result.live;
         // UI hanya boleh merekonsiliasi "posted" ke record yang SAMA pada database yang SAMA
         // (review sesi 2 M3); selain itu diperlakukan tidak pasti.
@@ -78,6 +86,9 @@ export async function POST(request: Request) {
                 sameRecord: live.clientRef === clientRef,
                 sameTarget: live.targetDbId === String(session.databaseId),
             },
+            // ADR-004: UI merekonsiliasi "posted" hanya bila generasi kiriman = generasi terkini.
+            generation: result.generation,
+            currentGeneration: result.currentGeneration,
         }, { status: 409 });
     }
 

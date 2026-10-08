@@ -226,6 +226,9 @@ const migrations = [
     // attempt tulis Accurate SEBELUM kirim: satu attempt hidup per operation × subject lewat
     // unique partial index, sehingga reload / dua tab / dua user tidak bisa mengirim dua kali.
     // Role aplikasi butuh SELECT/INSERT/UPDATE (default privileges runbook L1g — cek sebelum deploy).
+    // 2026-10-08 (C14, owner): langsung BENTUK FINAL ADR-004 rev 3.1 rilis A — produksi belum punya tabel ini,
+    // jadi ini pembuatan pertama (generasi + reopen_id + CHECK, UNIQUE identitas, index hidup per generasi).
+    // DB evaluasi berdefinisi lama (index 2 kolom) TIDAK diubah di sini: DDL manual ADR-004 dulu (tukar index).
     nama: "accurate_write_attempt",
     // Cek INDEX, bukan tabel: tabel tanpa unique partial index = klaim ganda diam-diam.
     sudahAda: `SELECT 1 FROM pg_indexes WHERE indexname = 'uq_accurate_write_attempt_live'`,
@@ -238,18 +241,63 @@ const migrations = [
           target_db_id    text NOT NULL,
           payload_hash    text NOT NULL,
           actor           text NOT NULL,
-          state           text NOT NULL CONSTRAINT accurate_write_attempt_state
-                          CHECK (state IN ('sending', 'posted', 'rejected', 'unknown', 'not_sent', 'resolved_absent')),
+          state           text NOT NULL,
           outcome         jsonb NOT NULL DEFAULT '{}'::jsonb,
           accurate_id     text NOT NULL DEFAULT '',
           accurate_number text NOT NULL DEFAULT '',
           resolution      jsonb,
+          generation      integer NOT NULL DEFAULT 0,
+          reopen_id       text,
           created_at      timestamptz NOT NULL DEFAULT now(),
-          updated_at      timestamptz NOT NULL DEFAULT now()
+          updated_at      timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT uq_accurate_write_attempt_identity UNIQUE (id, operation, subject_key, generation, target_db_id),
+          CONSTRAINT accurate_write_attempt_state
+              CHECK (state IN ('sending', 'posted', 'rejected', 'unknown', 'not_sent', 'resolved_absent')),
+          CONSTRAINT accurate_write_attempt_generation CHECK (generation >= 0),
+          CONSTRAINT accurate_write_attempt_reopen_gen CHECK ((generation = 0) = (reopen_id IS NULL))
       );
       CREATE UNIQUE INDEX IF NOT EXISTS uq_accurate_write_attempt_live
-          ON accurate_write_attempt (operation, subject_key)
+          ON accurate_write_attempt (operation, subject_key, generation)
           WHERE state IN ('sending', 'posted', 'unknown');
+    `,
+  },
+  {
+    // 2026-10-08 (C14, ADR-004 rev 3.1 rilis A): catatan reopen immutable untuk repost D-15. Tabel saja — tidak ada
+    // route yang menulisnya sampai rilis B. FK ke kunci identitas attempt INLINE (operasi yang diizinkan berkas ini).
+    // FK balik attempt->reopen (melingkar), trigger immutability & REVOKE = DDL manual ADR-004 (O5), BUKAN di sini.
+    nama: "accurate_write_attempt_reopen",
+    sudahAda: `SELECT 1 FROM information_schema.tables WHERE table_name = 'accurate_write_attempt_reopen'`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS accurate_write_attempt_reopen (
+          id                  text PRIMARY KEY,
+          operation           text NOT NULL,
+          subject_key         text NOT NULL,
+          from_attempt_id     text NOT NULL,
+          target_db_id        text NOT NULL,
+          actor               text NOT NULL,
+          from_generation     integer NOT NULL,
+          to_generation       integer NOT NULL,
+          old_accurate_id     text NOT NULL DEFAULT '',
+          old_accurate_number text NOT NULL DEFAULT '',
+          reason              text NOT NULL,
+          checked_source      text NOT NULL,
+          verification        jsonb NOT NULL,
+          created_at          timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT uq_accurate_write_attempt_reopen_generation UNIQUE (operation, subject_key, to_generation),
+          CONSTRAINT uq_accurate_write_attempt_reopen_from UNIQUE (from_attempt_id),
+          CONSTRAINT uq_accurate_write_attempt_reopen_identity UNIQUE (id, operation, subject_key, to_generation, target_db_id),
+          CONSTRAINT fk_accurate_write_attempt_reopen_from
+              FOREIGN KEY (from_attempt_id, operation, subject_key, from_generation, target_db_id)
+              REFERENCES accurate_write_attempt (id, operation, subject_key, generation, target_db_id),
+          CONSTRAINT accurate_write_attempt_reopen_from_generation CHECK (from_generation >= 0),
+          CONSTRAINT accurate_write_attempt_reopen_to_generation CHECK (to_generation = from_generation + 1),
+          CONSTRAINT accurate_write_attempt_reopen_old_ref CHECK (old_accurate_id <> '' OR old_accurate_number <> ''),
+          CONSTRAINT accurate_write_attempt_reopen_reason CHECK (length(btrim(reason)) >= 15),
+          CONSTRAINT accurate_write_attempt_reopen_checked_source CHECK (btrim(checked_source) <> ''),
+          -- coalesce: tanpa itu '{}' lolos (CHECK bernilai NULL).
+          CONSTRAINT accurate_write_attempt_reopen_verification
+              CHECK (coalesce(verification->>'method', '') IN ('manual_attestation', 'provider_readback'))
+      );
     `,
   },
   {

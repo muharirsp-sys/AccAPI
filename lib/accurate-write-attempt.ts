@@ -3,8 +3,8 @@
  *   diklaim atomik di Postgres SEBELUM request keluar, hasil dicatat per tahap, attempt yang
  *   tidak pasti tidak pernah dibuka ulang otomatis.
  * Caller: app/api/finance/purchase-payment/route.ts dan .../resolve/route.ts.
- * Dependensi: tabel accurate_write_attempt (db/schema.ts, scripts/migrate-pg.mjs),
- *   classifyBulkSaveResponse (lib/apiFetcher.ts).
+ * Dependensi: tabel accurate_write_attempt + accurate_write_attempt_reopen (db/schema.ts,
+ *   scripts/migrate-pg.mjs; bentuk final ADR-004 rev 3.1 rilis A), classifyBulkSaveResponse (lib/apiFetcher.ts).
  * Main Functions: purchasePaymentSubject, validatePurchasePaymentPayload, classifyProviderReply,
  *   runGuardedWrite, resolveAttempt.
  * Side Effects: INSERT/UPDATE accurate_write_attempt; `send` (jaringan) dipanggil TANPA
@@ -13,7 +13,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { accurateWriteAttempt } from "@/db/schema";
+import { accurateWriteAttempt, accurateWriteAttemptReopen } from "@/db/schema";
 import { classifyBulkSaveResponse } from "@/lib/apiFetcher";
 
 export const PURCHASE_PAYMENT_OPERATION = "purchase-payment/bulk-save";
@@ -148,38 +148,57 @@ type GuardedWriteInput = {
     send: () => Promise<{ status: number; text: string }>;
 };
 
+/** Tidak diklaim. `reopened` = subjek sudah dibuka ulang (repost, ADR-004 rilis B): kiriman biasa (generasi 0)
+ * ditolak tanpa `live`. Selain itu `live` = attempt hidup generasi terkini; UI hanya boleh merekonsiliasi
+ * `posted` bila `generation === currentGeneration`. */
 export type GuardedWriteResult =
-    | { claimed: false; live: Attempt | null }
+    | { claimed: false; live: Attempt | null; generation: number; currentGeneration: number; reopened: boolean }
     | { claimed: true; attemptId: string; outcome: Classified; response: unknown; persisted: boolean };
 
-async function findLive(db: NodePgDatabase, operation: string, subjectKey: string) {
+/** Generasi terkini subjek (ADR-004): `coalesce(max(to_generation), 0)` dari catatan reopen. Rilis A tidak punya
+ * jalur reopen (D-15 = rilis B), jadi nyatanya selalu 0 — dibaca agar data rilis B tidak disalahartikan. */
+async function currentGeneration(db: NodePgDatabase, operation: string, subjectKey: string): Promise<number> {
+    const [row] = await db.select({ g: sql<number>`coalesce(max(${accurateWriteAttemptReopen.toGeneration}), 0)::int` })
+        .from(accurateWriteAttemptReopen)
+        .where(and(eq(accurateWriteAttemptReopen.operation, operation), eq(accurateWriteAttemptReopen.subjectKey, subjectKey)));
+    return Number(row?.g ?? 0);
+}
+
+async function findLive(db: NodePgDatabase, operation: string, subjectKey: string, generation: number) {
     const [live] = await db.select().from(accurateWriteAttempt).where(and(
         eq(accurateWriteAttempt.operation, operation),
         eq(accurateWriteAttempt.subjectKey, subjectKey),
+        eq(accurateWriteAttempt.generation, generation),
         inArray(accurateWriteAttempt.state, LIVE_STATES),
     )).limit(1);
     return live ?? null;
 }
 
 /**
- * Klaim -> kirim -> catat. Klaim = satu INSERT yang ditolak unique partial index bila sudah ada
- * attempt hidup, jadi dua tab / dua user / reload hanya menghasilkan SATU pengiriman.
+ * Klaim -> kirim -> catat. Klaim = SATU `INSERT … SELECT` generasi 0 yang (a) tidak menyisipkan apa pun bila
+ * subjek sudah dibuka ulang (reopen, ADR-004) dan (b) ditolak unique partial index per generasi bila sudah ada
+ * attempt hidup — dua tab / dua user / reload hanya menghasilkan SATU pengiriman.
  * Gagal mencatat hasil setelah kirim membiarkan baris `sending` — tetap memblokir (C.16).
+ * ponytail: kiriman generasi > 0 (repost membawa reopenId, finance.repost_payment) = rilis B, belum dibangun.
  */
 export async function runGuardedWrite(input: GuardedWriteInput): Promise<GuardedWriteResult> {
     const { db, operation, subjectKey } = input;
     const attemptId = randomUUID();
-    const claimed = await db.insert(accurateWriteAttempt).values({
-        id: attemptId,
-        operation,
-        subjectKey,
-        clientRef: input.clientRef,
-        targetDbId: input.targetDbId,
-        payloadHash: payloadHash(input.payload),
-        actor: input.actor,
-        state: "sending",
-    }).onConflictDoNothing().returning({ id: accurateWriteAttempt.id });
-    if (!claimed.length) return { claimed: false, live: await findLive(db, operation, subjectKey) };
+    const claimed = await db.execute(sql`
+        INSERT INTO ${accurateWriteAttempt}
+            (id, operation, subject_key, client_ref, target_db_id, payload_hash, actor, state, generation)
+        SELECT ${attemptId}, ${operation}, ${subjectKey}, ${input.clientRef}, ${input.targetDbId},
+               ${payloadHash(input.payload)}, ${input.actor}, 'sending', 0
+        WHERE NOT EXISTS (
+            SELECT 1 FROM ${accurateWriteAttemptReopen} r WHERE r.operation = ${operation} AND r.subject_key = ${subjectKey})
+        ON CONFLICT DO NOTHING
+        RETURNING id`);
+    if (!claimed.rows.length) {
+        const g = await currentGeneration(db, operation, subjectKey);
+        return g > 0
+            ? { claimed: false, live: null, generation: 0, currentGeneration: g, reopened: true }
+            : { claimed: false, live: await findLive(db, operation, subjectKey, 0), generation: 0, currentGeneration: 0, reopened: false };
+    }
 
     let reply: ProviderReply;
     try {
@@ -241,7 +260,9 @@ export async function resolveAttempt(input: ResolveInput): Promise<ResolveResult
     if (!input.checkedSource.trim()) return { ok: false, code: "invalid", message: "sumber pemeriksaan wajib diisi" };
     if (decision === "posted" && !input.accurateNumber.trim()) return { ok: false, code: "invalid", message: "nomor purchase-payment wajib untuk keputusan posted" };
 
-    const live = await findLive(db, operation, subjectKey);
+    // D-14 per generasi (ADR-004): hanya attempt generasi terkini yang bisa diselesaikan; posted generasi lama tak tersentuh.
+    const generation = await currentGeneration(db, operation, subjectKey);
+    const live = await findLive(db, operation, subjectKey, generation);
     if (!live) return { ok: false, code: "no_open_attempt", message: "tidak ada attempt terbuka untuk subjek ini" };
     if (live.state === "posted") return { ok: false, code: "already_posted", message: `sudah posted ${live.accurateNumber}`, live };
     if (live.targetDbId !== input.resolverDbId) {
@@ -273,7 +294,7 @@ export async function resolveAttempt(input: ResolveInput): Promise<ResolveResult
         ...(needsStale ? [lt(accurateWriteAttempt.updatedAt, STALE_SQL)] : []),
     )).returning({ id: accurateWriteAttempt.id });
     if (rows.length) return { ok: true, attemptId: live.id, state: next };
-    const again = await findLive(db, operation, subjectKey);
+    const again = await findLive(db, operation, subjectKey, generation);
     return again?.id === live.id && again.state === live.state
         ? { ok: false, code: "in_flight", message: "attempt baru saja dikirim — Accurate mungkin masih memproses; tunggu 2 menit lalu periksa lagi", live }
         : { ok: false, code: "changed", message: "attempt berubah saat diselesaikan — muat ulang" };
