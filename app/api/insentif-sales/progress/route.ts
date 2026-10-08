@@ -30,6 +30,7 @@ import { kontrolAuditLog, salesDailyProgress } from "@/db/schema";
 import { computeMtdProgress } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
+import { bacaAlasan } from "@/lib/insentif-payment-date";
 
 // Upload closing ~2.000 baris + ratusan DELETE dalam satu transaksi. Konvensi repo:
 // route unggah berat menaikkan batas ini (laporan-harian/upload & sales-history/import = 300).
@@ -267,14 +268,9 @@ export async function DELETE(req: NextRequest) {
         );
     }
 
-    let alasan = "";
-    try {
-        const body = await req.json();
-        alasan = typeof body?.alasan === "string" ? body.alasan.trim() : "";
-    } catch {
-        // Body kosong/bukan JSON = alasan tidak dikirim; ditolak di bawah.
-    }
-    if (alasan.length < 5) {
+    // Body kosong/bukan JSON = alasan tidak dikirim; ditolak di bawah.
+    const alasan = bacaAlasan(await req.json().catch(() => null));
+    if (alasan === null) {
         return NextResponse.json(
             { error: "Alasan hapus realisasi wajib diisi (minimal 5 karakter)." },
             { status: 400 },
@@ -310,7 +306,7 @@ export async function DELETE(req: NextRequest) {
             action: "delete_period",
             actorId: gate.session.user.id,
             actorName: gate.session.user.name ?? gate.session.user.email ?? null,
-            payload: { alasan: alasan.slice(0, 500), month, year, deleted: n, dibatasiCakupan: scope !== null },
+            payload: { alasan, month, year, deleted: n, dibatasiCakupan: scope !== null },
             createdAt: new Date(),
         });
         return n;

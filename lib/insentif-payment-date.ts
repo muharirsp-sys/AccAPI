@@ -1,8 +1,9 @@
 /*
  * Tujuan: Validasi tanggal bayar insentif pilihan pengguna (owner 8 Okt 2026, S4c-2).
- * Caller: app/api/insentif-sales/payments (POST) dan payments/[id] (PATCH).
+ * Caller: app/api/insentif-sales/payments (POST), payments/[id] (PATCH), progress (DELETE).
  * Dependensi: tidak ada.
- * Main Functions: parsePaymentDate — "YYYY-MM-DD" (tanggal WITA) → Date, atau pesan galat.
+ * Main Functions: parsePaymentDate/resolvePaidAt (tanggal bayar WITA), perubahanLunas (audit timpa lunas),
+ *   bacaAlasan (alasan wajib hapus realisasi).
  * Side Effects: tidak ada.
  */
 
@@ -35,4 +36,38 @@ export function parsePaymentDate(
         return { error: `Tanggal bayar ${input} lebih awal dari awal periode insentif (${awalPeriode}).` };
     }
     return { date: input === hariIni ? now : new Date(`${input}T12:00:00+08:00`) };
+}
+
+/**
+ * Tanggal bayar yang dipakai sebuah permintaan: hanya status "lunas" yang menyentuh tanggal
+ * (null = jangan isi); status lain mengabaikan `paymentDate` sama sekali, POST dan PATCH sama.
+ */
+export function resolvePaidAt(
+    status: unknown,
+    input: unknown,
+    period: { periodMonth: number; periodYear: number },
+    now: Date,
+): { date: Date | null } | { error: string } {
+    return status === "lunas" ? parsePaymentDate(input, period, now) : { date: null };
+}
+
+type JejakLunas = { paymentStatus: string | null; paymentDate: Date | null; paidBy: string | null };
+
+/**
+ * Baris yang SUDAH lunas lalu ditandai lunas lagi menimpa tanggal/pencatat. Kembalikan
+ * payload audit (lama → baru) bila ada yang berubah, null bila tidak perlu dicatat.
+ */
+export function perubahanLunas(lama: JejakLunas | undefined, baru: { paymentDate: Date; paidBy: string }) {
+    if (lama?.paymentStatus !== "lunas") return null;
+    const tglLama = lama.paymentDate?.toISOString() ?? null;
+    const tglBaru = baru.paymentDate.toISOString();
+    if (tglLama === tglBaru && lama.paidBy === baru.paidBy) return null;
+    return { paymentDate: { lama: tglLama, baru: tglBaru }, paidBy: { lama: lama.paidBy, baru: baru.paidBy } };
+}
+
+/** `alasan` wajib (dipangkas, min. 5 karakter, disimpan maks. 500). Bukan string = tidak ada. */
+export function bacaAlasan(body: unknown): string | null {
+    const a = (body as { alasan?: unknown } | null)?.alasan;
+    const t = typeof a === "string" ? a.trim() : "";
+    return t.length >= 5 ? t.slice(0, 500) : null;
 }

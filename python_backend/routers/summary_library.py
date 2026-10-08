@@ -294,7 +294,8 @@ async def withdraw(request: Request, draft_id: str):
     body = await read_body(request)
     # Mencabut aturan terbit mengubah potongan faktur berikutnya; alasannya wajib tercatat bersama
     # pelaku dan waktunya, di content seperti `reviewed_by` saat terbit (owner 8 Okt 2026, S4a).
-    alasan = str(body.get("alasan") or "").strip()
+    alasan = body.get("alasan")
+    alasan = alasan.strip() if isinstance(alasan, str) else ""
     if len(alasan) < 5:
         raise HTTPException(400, "Alasan cabut publikasi wajib diisi (minimal 5 karakter)")
     draft = get_draft(draft_id, user)

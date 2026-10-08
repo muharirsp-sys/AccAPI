@@ -417,7 +417,8 @@ def check_flow():
     feed = client.get("/summary/library/published", headers=owner).json()
     assert any(item["id"] == draft_id and item["rules"] for item in feed["programs"]), feed
     # Cabut publikasi tanpa alasan (atau alasan cuma spasi) ditolak dan aturan tetap terbit.
-    for kosong in ({"revision": revision}, {"revision": revision, "alasan": "   ab  "}):
+    for kosong in ({"revision": revision}, {"revision": revision, "alasan": "   ab  "},
+                   {"revision": revision, "alasan": ["abcde"]}, {"revision": revision, "alasan": 12345}):
         ditolak = client.post(f"/summary/library/{draft_id}/withdraw", headers=owner, json=kosong)
         assert ditolak.status_code == 400 and "Alasan" in ditolak.json()["detail"], ditolak.text
     pulled = client.post(f"/summary/library/{draft_id}/withdraw", headers=owner,
