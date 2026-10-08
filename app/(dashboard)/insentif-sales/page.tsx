@@ -2191,16 +2191,25 @@ function AdminView({ rows, onSaved }: { rows: Salesman[]; onSaved?: () => void }
         // confirm() native: memblokir, bisa dipakai keyboard, dan tidak perlu komponen modal
         // sendiri untuk satu tombol. Periodenya dieja supaya tidak ada yang menghapus
         // bulan yang salah karena pemilih periode masih menunjuk bulan lain.
-        if (!window.confirm(
+        // prompt() alih-alih confirm(): server mewajibkan alasan (min. 5 karakter) sejak 8 Okt 2026.
+        const alasan = window.prompt(
             `Hapus SELURUH realisasi closing ${label}?
 
 `
             + `Target dan catatan pembayaran tidak ikut terhapus. Setelah ini closing `
-            + `${label} harus diunggah ulang, kalau tidak pencapaiannya kosong.`,
-        )) return;
+            + `${label} harus diunggah ulang, kalau tidak pencapaiannya kosong.
+
+`
+            + `Tulis alasan penghapusan (wajib, minimal 5 karakter):`,
+        );
+        if (alasan === null) return;
         setMenghapus(true);
         try {
-            const res = await fetch(`/api/insentif-sales/progress?month=${bulan}&year=${tahun}`, { method: "DELETE" });
+            const res = await fetch(`/api/insentif-sales/progress?month=${bulan}&year=${tahun}`, {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ alasan }),
+            });
             const data = await readApi(res);
             if (!res.ok) throw new Error(String(data.error ?? "Gagal menghapus periode."));
             const n = Number(data.deleted ?? 0);
