@@ -40,8 +40,10 @@ test("Claim Workflow outstanding counter follows the API summary contract", asyn
 
   await page.goto("/claim-workflow");
 
-  await expect(page.getByText("2 klaim", { exact: true })).toBeVisible();
-  await expect(page.locator("p", { hasText: /^Outstanding$/ }).locator("xpath=preceding-sibling::p[1]")).toHaveText("2");
+  // Fiori S4b: penghitung outstanding = kartu "Belum lunas" (summary.submissionCount, bukan jumlah workflow); kartu menyaring tabel.
+  const kartu = page.locator("main").getByRole("button", { name: /Belum lunas/ });
+  await expect(kartu.locator("b")).toHaveText("2");
+  await kartu.click();
   await expect(page.getByRole("link", { name: "CW-001" }).first()).toHaveAttribute("href", "/claim-workflow/wf-1");
 });
 

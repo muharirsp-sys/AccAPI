@@ -391,6 +391,34 @@ button.fi-chip { cursor:pointer; font:600 .75rem/1.2 var(--font-sans); height:au
 .fi-table tr[data-out="true"] td { color:var(--ink-disabled); }
 .fi-table tr[data-out="true"] .fi-mono { text-decoration:line-through; }
 @media (max-width:767px) { .fi-page { padding:16px 16px 24px; } .fi-hist li { grid-template-columns:minmax(0,1fr); } .fi-hist .fi-chg { grid-column:1; } .fi-chipgrid > div { grid-template-columns:minmax(0,1fr); } }
+/* Claim Workflow (S4b): kartu ringkas sebagai saringan, berkas No Claim, dokumen, daftar periksa, alur dokumen, isian di sel tabel */
+.fi-kc[aria-pressed="true"] { background:var(--brand-tint); box-shadow:inset 0 0 0 2px var(--brand); }
+.fi-kc:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+.fi-berkas { list-style:none; margin:0; padding:0; }
+.fi-berkas > li { display:grid; gap:8px; padding:12px 16px; border-bottom:1px solid var(--line); min-width:0; }
+.fi-berkas > li:last-child { border-bottom:0; }
+.fi-berkas-head { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; }
+.fi-berkas-head b { font:600 .875rem/1.25rem var(--font-sans); overflow-wrap:anywhere; }
+.fi-berkas-head > span { font:var(--fs-small); color:var(--ink-subtle); }
+.fi-noclaim { display:grid; grid-template-columns:minmax(0,1fr) 5.5rem 4.5rem auto auto; gap:8px; align-items:end; }
+.fi-noclaim > * { min-width:0; }
+.fi-docs { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap:10px; }
+.fi-doc { border:1px solid var(--line); border-radius:var(--r-md); padding:10px 12px; display:grid; gap:4px; font:var(--fs-small); min-width:0; overflow-wrap:anywhere; }
+.fi-doc b { font:600 .875rem/1.25rem var(--font-sans); }
+.fi-chkl { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap:6px 16px; }
+.fi-chkl li { display:flex; gap:8px; align-items:flex-start; font:var(--fs-small); }
+.fi-chkl li .fi-icon { width:16px; height:16px; margin-top:1px; }
+.fi-chkl li[data-ok="true"] .fi-icon { color:var(--pos); }
+.fi-chkl li[data-ok="false"] .fi-icon { color:var(--warn); }
+.fi-dflow { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:12px 16px; }
+.fi-dflow > .fi-icon { color:var(--ink-subtle); }
+.fi-dnode { display:grid; gap:2px; padding:8px 12px; border:1px solid var(--line-strong); border-radius:var(--r-md); text-decoration:none; color:var(--ink); min-width:0; max-width:100%; overflow-wrap:anywhere; font:var(--fs-small); }
+.fi-dnode b { font:600 .8125rem/1.25rem var(--font-sans); }
+.fi-dnode span { color:var(--ink-subtle); }
+.fi-dnode[data-off="true"] { border-style:dashed; color:var(--ink-subtle); }
+.fi-input.fi-cellin { width:7.5rem; text-align:right; }
+.fi-input.fi-cellin--s { width:4.75rem; }
+@media (max-width:599px) { .fi-noclaim { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } .fi-noclaim > :first-child { grid-column:1 / -1; } }
 
 /* ===== Beranda per peran (Launchpad) ===== */
 .fi-home { padding:20px 24px 28px; display:grid; gap:22px; max-width:1180px; }
