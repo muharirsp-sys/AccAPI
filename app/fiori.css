@@ -375,6 +375,18 @@ dialog.fi-dialog.fi-sheet[open] { animation:fi-sheet-in var(--dur-slow) var(--ea
 .fi-dropzone .fi-input { margin-top:4px; }
 .fi-input[type="file"] { width:100%; min-width:0; max-width:100%; }
 .fi-dropzone, .fi-kc { min-width:0; overflow-wrap:anywhere; }
+.fi-wl-row { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:0 4px; padding-left:12px; border-bottom:1px solid var(--line); }
+.fi-wl-row:not(:has(> input)) { grid-template-columns:minmax(0,1fr); padding-left:0; }
+.fi-wl-row > .fi-li { border-bottom:0; }
+.fi-fcl-list .fi-list { max-height:70vh; overflow:auto; }
+.fi-msel { position:relative; min-width:8rem; }
+.fi-msel > summary { list-style:none; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:12rem; display:flex; align-items:center; }
+.fi-msel > summary::-webkit-details-marker { display:none; }
+/* Sebaris di dalam sel (bukan melayang): wadah tabel overflow:auto memotong popover absolut. */
+.fi-msel-pop { margin-top:4px; min-width:12rem; max-height:16rem; overflow:auto; background:var(--surface-2); border-radius:var(--r-md); padding:8px; display:grid; gap:4px; }
+.fi-chip[aria-pressed="true"] { background:var(--brand-tint-strong); }
+.fi-chip[data-tone="warn"] { background:var(--warn-bg); color:var(--warn); border-color:color-mix(in srgb, var(--warn) 35%, transparent); }
+button.fi-chip { cursor:pointer; font:600 .75rem/1.2 var(--font-sans); height:auto; min-height:28px; padding:4px 10px; text-align:left; }
 .fi-dropzone .fi-label { margin:0; }
 .fi-table tr[data-out="true"] td { color:var(--ink-disabled); }
 .fi-table tr[data-out="true"] .fi-mono { text-decoration:line-through; }

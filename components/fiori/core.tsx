@@ -212,12 +212,14 @@ type ResponsiveTableProps<T> = {
     selected?: ReadonlySet<string>; onSelectedChange?: (next: Set<string>) => void;
     /** Baris yang boleh dipilih; lainnya kotaknya nonaktif dan tidak ikut "Pilih semua". Bawaan: semua. */
     selectableRow?: (row: T) => boolean;
+    /** Nama aksesibel kotak pilih per baris (bawaan: "Pilih <rowKey>"). */
+    rowLabel?: (row: T) => string;
 };
 
 // ponytail: tabel desktop dan daftar ponsel dirender dua-duanya lalu dipilih lewat container query — DOM ganda.
 // Cukup untuk halaman berpaginasi (≤ ratusan baris); virtualisasi bila satu halaman memuat ribuan baris.
 export function ResponsiveTable<T>(props: ResponsiveTableProps<T>) {
-    const { title, count, actions, columns, rows, rowKey, mobileItem, status = "siap", error, onRetry, empty, sort, onSortChange, selected, onSelectedChange, selectableRow } = props;
+    const { title, count, actions, columns, rows, rowKey, mobileItem, status = "siap", error, onRetry, empty, sort, onSortChange, selected, onSelectedChange, selectableRow, rowLabel } = props;
     const selectable = Boolean(selected && onSelectedChange);
     const keys = rows.map(rowKey);
     const pickable = rows.map((row) => !selectableRow || selectableRow(row));
@@ -274,7 +276,7 @@ export function ResponsiveTable<T>(props: ResponsiveTableProps<T>) {
                             const isSel = selectable && selected!.has(key);
                             return (
                                 <tr key={key} data-selected={isSel || undefined}>
-                                    {selectable && <td className="fi-sel"><input type="checkbox" aria-label={`Pilih ${key}`} checked={isSel} disabled={!pickable[i]} onChange={() => toggle(key)} /></td>}
+                                    {selectable && <td className="fi-sel"><input type="checkbox" aria-label={rowLabel ? rowLabel(row) : `Pilih ${key}`} checked={isSel} disabled={!pickable[i]} onChange={() => toggle(key)} /></td>}
                                     {columns.map((c, ci) => (
                                         <td key={c.key} className={`${c.align === "end" ? "fi-end" : ""} ${c.secondary ? "fi-secondary" : ""}`}>
                                             {c.cell(row)}
