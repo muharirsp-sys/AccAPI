@@ -20,6 +20,7 @@ import {
   paymentsHaveProofs,
   publicBatch,
   requireOffSession,
+  resolveAlasanSendiri,
   writeOffAudit,
 } from "@/lib/off-program-control";
 import { requirePermissionH } from "@/lib/rbac/resolve";
@@ -126,6 +127,9 @@ export async function POST(request: Request, context: Context) {
         { ok: false, error: "Action Final Claim tidak valid." },
         { status: 400 },
       );
+    const sendiri = resolveAlasanSendiri(data.batch.createdBy, actor.id, body.alasanSendiri);
+    if (!sendiri.ok)
+      return NextResponse.json({ ok: false, error: sendiri.error }, { status: 400 });
     if (data.payments.length === 0)
       return NextResponse.json(
         {
@@ -286,6 +290,7 @@ export async function POST(request: Request, context: Context) {
         overpaidAmount,
         paymentCount: data.payments.length,
         claimRefs: sanitizedClaimRefs,
+        alasanSendiri: sendiri.alasanSendiri,
       },
     });
     const updated = await getBatchWithItems(id);

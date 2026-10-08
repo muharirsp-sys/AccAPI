@@ -145,3 +145,19 @@ export function publicPayment(payment: OffPaymentRow) {
         proofUrl: payment.paymentProofPath ? `/api/off-program-control/payments/${payment.id}/proof` : null,
     };
 }
+
+/**
+ * BL-10 (owner 8 Okt): pelaku yang menyetujui batch buatannya sendiri (validasi klaim / verifikasi final)
+ * wajib memberi alasan ≥ 5 karakter. Bukan pembuat → alasan diabaikan (null).
+ */
+export function resolveAlasanSendiri(
+    createdBy: string | null | undefined,
+    actorId: string,
+    raw: unknown,
+): { ok: true; alasanSendiri: string | null } | { ok: false; error: string } {
+    if (!createdBy || createdBy !== actorId) return { ok: true, alasanSendiri: null };
+    const alasan = typeof raw === "string" ? raw.trim() : "";
+    if (alasan.length < 5)
+        return { ok: false, error: "Anda pembuat pengajuan ini. Alasan menyetujui sendiri wajib diisi (minimal 5 karakter)." };
+    return { ok: true, alasanSendiri: alasan };
+}

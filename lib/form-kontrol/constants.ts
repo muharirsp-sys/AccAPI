@@ -13,7 +13,19 @@ export const NO_ORDER_REASONS = [
     { id: "R12", reasonCode: "R12", label: "SKU terbatas",                    category: "produk",  sortOrder: 12, isActive: true },
     { id: "R13", reasonCode: "R13", label: "Prioritas toko rendah",           category: "proses",  sortOrder: 13, isActive: true },
     { id: "R14", reasonCode: "R14", label: "Lainnya",                         category: "lainnya", sortOrder: 14, isActive: true },
+    // S5-2 (owner 8 Okt): toko tutup → foto bukti (check-out) wajib, tanpa merchandising & tanpa order.
+    { id: "R15", reasonCode: "R15", label: "Toko tutup",                      category: "kunjungan", sortOrder: 15, isActive: true },
 ] as const;
+
+export const TOKO_TUTUP_CODE = "R15";
+
+/** #21: status not_order wajib membawa kode alasan aktif. Galat (Indonesia) atau null bila sah. */
+export function validateNoOrderReason(status: string, code: unknown, activeCodes: readonly string[]): string | null {
+    if (status !== "not_order") return null;
+    if (typeof code !== "string" || !code.trim()) return "Alasan tidak order wajib dipilih.";
+    if (!activeCodes.includes(code.trim())) return `Kode alasan tidak order "${code}" tidak dikenal.`;
+    return null;
+}
 
 export const PRINCIPLES = ["GODREJ", "MONTISS", "MUSTIKA RATU", "SOFTEX"] as const;
 export const HARI_KUNJUNGAN = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"] as const;

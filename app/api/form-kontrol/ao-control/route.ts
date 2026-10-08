@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
-import { getTodayRoute, upsertAoControl, getAoForDate, writeKontrolAudit, resolveScope, canAccessSales } from "@/lib/form-kontrol";
+import { getTodayRoute, upsertAoControl, getAoForDate, writeKontrolAudit, resolveScope, canAccessSales, getReasons, validateNoOrderReason } from "@/lib/form-kontrol";
 import type { AoStatus } from "@/lib/form-kontrol";
 
 export async function GET(req: Request) {
@@ -66,6 +66,8 @@ export async function POST(req: Request) {
         if (!canAccessSales(scope, salesCode)) {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
+        const reasonError = validateNoOrderReason(status, noOrderReasonCode, (await getReasons()).map((r) => r.reasonCode));
+        if (reasonError) return NextResponse.json({ error: reasonError }, { status: 400 });
         const id = await upsertAoControl({
             salesCode, custCode, principle, date,
             status: status as AoStatus,

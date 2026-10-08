@@ -15,6 +15,7 @@ import {
   isOffPeriodClosedForBatch,
   publicBatch,
   requireOffSession,
+  resolveAlasanSendiri,
   writeOffAudit,
 } from "@/lib/off-program-control";
 import { requirePermissionH } from "@/lib/rbac/resolve";
@@ -131,6 +132,9 @@ export async function POST(request: Request, context: Context) {
         { ok: false, error: "Status Kelengkapan harus Lengkap untuk approve." },
         { status: 400 },
       );
+    const sendiri = resolveAlasanSendiri(data.batch.createdBy, actor.id, body.alasanSendiri);
+    if (!sendiri.ok)
+      return NextResponse.json({ ok: false, error: sendiri.error }, { status: 400 });
 
     await db
       .update(offBatch)
@@ -155,7 +159,7 @@ export async function POST(request: Request, context: Context) {
       fromStatus: data.batch.claimStatus,
       toStatus: "Approved",
       note,
-      metadata: { claimSubmittedDate, claimDeadline, completenessStatus },
+      metadata: { claimSubmittedDate, claimDeadline, completenessStatus, alasanSendiri: sendiri.alasanSendiri },
     });
     const updated = await getBatchWithItems(id);
     return NextResponse.json({
