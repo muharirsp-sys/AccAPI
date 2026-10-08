@@ -242,6 +242,7 @@ const lalu = baris("MKS-07", "Andi Pratama", "KINO", "GT", "ANI", "HENDRIK", { p
 
 test("Insentif saya (ponsel): identitas sales → capaian berjalan, syarat dari konstanta, September lunas dengan bruto/PPh/netto", async ({ page }) => {
     await mock(page, { dash: (u) => json(dashboard(u.searchParams.get("month") === "10" ? [kini] : [lalu], { cakupan: SALES })) });
+    await page.clock.setFixedTime(new Date("2026-10-15T03:00:00Z")); // Oktober 2026 = periode berjalan
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/insentif-sales/saya?month=10&year=2026", NAV);
     const main = page.locator("main");
@@ -249,6 +250,8 @@ test("Insentif saya (ponsel): identitas sales → capaian berjalan, syarat dari 
     const capaian = main.getByRole("region", { name: "Capaian Oktober 2026" });
     await expect(capaian).toContainText("Value · bobot 30,0%", NAV);
     await expect(capaian).toContainText("52 dari 240 outlet");
+    // Owner 8 Okt: insentif periode berjalan dihitung (sementara), bukan ditunda ke akhir bulan; di bawah ambang = Rp 0 dari server.
+    await expect(main.locator(".fi-kc").filter({ hasText: "Insentif sementara" })).toContainText("Rp 0");
     await expect(main.getByRole("region", { name: "Cara insentif Anda dihitung" })).toContainText("minimal 90,0%");
     const sept = main.getByRole("region", { name: "Insentif September 2026" });
     await expect(sept).toContainText("Rp 1.000.000");

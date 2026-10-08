@@ -187,9 +187,10 @@ function Ringkasan({ rows, tg, label, spv, sm, month, year, saringanAktif }: {
             </div>
             <CatatanTimeGone tg={tg} label={label} />
             {berjalan && (
-                <MessageStrip tone="info" title="Periode berjalan.">
-                    Insentif baru bisa dinilai di akhir bulan: sales minimal {formatPctText(k.gt.ambangBayar * 100)} per komponen, SPV{" "}
-                    {formatPctText(k.spv.ambang * 100)} per principal, SM {formatPctText(k.sm.ambang1 * 100)} total.
+                <MessageStrip tone="info" title="Periode berjalan — nilai sementara.">
+                    Insentif sudah dihitung bagi yang mencapai ambang (sales minimal {formatPctText(k.gt.ambangBayar * 100)} per komponen, SPV{" "}
+                    {formatPctText(k.spv.ambang * 100)} per principal, SM {formatPctText(k.sm.ambang1 * 100)} total); nilainya bisa berubah setiap hari
+                    sampai akhir bulan.
                 </MessageStrip>
             )}
         </>

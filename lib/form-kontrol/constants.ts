@@ -36,3 +36,12 @@ export const MERCHANDISING_ITEMS = [
     { key: "posisiMudah", label: "Posisi mudah ditemukan konsumen" },
     { key: "semuaSku",    label: "Seluruh SKU terpajang" },
 ] as const;
+
+/** Prioritas = status "priority" (tidak ada kolom terpisah), jadi bintang hanya untuk toko yang belum punya hasil kunjungan. */
+export const adaHasilKunjungan = (status: string) => status === "ordered" || status === "active" || status === "not_order";
+
+/** Toggle bintang: prioritas ↔ tidak dikunjungi. Batal bintang BUKAN "tidak order" (owner 8 Okt 2026). Hasil kunjungan tidak disentuh. */
+export function statusBintang<S extends string>(status: S): S | "priority" | "not_visited" {
+    if (adaHasilKunjungan(status)) return status;
+    return status === "priority" ? "not_visited" : "priority";
+}

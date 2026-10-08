@@ -258,3 +258,17 @@ export function getOffRoleBadgeLabel(
 
   return resolutionOrRole.role;
 }
+
+const AKSI_DASAR_OPC = new Set(["view", "create", "update", "approve", "export"]);
+
+/**
+ * Alasan Tutup periode nonaktif dari izin grup akses (owner 8 Okt 2026: bukan untuk OM); undefined = boleh. Server menuntut
+ * `off_program_control.period_close` (periods/route.ts). Pola D-17 (lihat form-kontrol alasanIzinFk): daftar izin tanpa satu pun
+ * aksi granular OPC (preset peran lama / LOCAL_AUTH_BYPASS) tidak bisa dipercaya → tidak dikunci, server yang memutuskan.
+ * ponytail: tebakan ini hilang begitu preset lama diaudit (D-17).
+ */
+export function alasanTutupPeriode(perms: ReadonlySet<string>): string | undefined {
+  const granular = [...perms].some((k) => k.startsWith("off_program_control.") && !AKSI_DASAR_OPC.has(k.slice("off_program_control.".length)));
+  if (!granular || perms.has("off_program_control.period_close")) return undefined;
+  return "Akun Anda tidak punya izin Tutup periode di grup akses.";
+}

@@ -16,7 +16,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Lightbulb, Plus, Send, Trash2 } from "lucide-react";
 import { Button, EmptyState, ErrorState, FooterToolbar, KeyValues, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
@@ -96,9 +96,49 @@ async function hitungPratinjau(channel: string, orderDate: string, customerNo: s
 }
 
 const emptyLine = (): Line => ({ code: "", unit: "", quantity: "1" });
+
+/**
+ * Draf order di ponsel ini (owner 8 Okt 2026): satu draf per akun per perangkat (`DRAF_ORDER.<id akun>`), ditulis selama ada isian,
+ * dihapus setelah order terkirim. Dipulihkan HANYA lewat tombol; tanggal tidak ikut (kembali hari ini). Order Web Sales tidak idempoten:
+ * sebelum POST draf ditandai TERPUTUS, sehingga draf dari kiriman yang tak sempat dijawab (halaman tertutup/berpindah) tetap menahan Kirim
+ * setelah dipulihkan; tanda itu baru dilepas oleh jawaban pasti (sukses = draf dihapus, ditolak = tanda sebelumnya kembali).
+ * ponytail: dua tab berisi draf yang sama — tab yang belum mengirim bisa menulis ulang draf yang sudah terkirim tanpa tanda; tambahkan
+ * listener `storage` bila itu terjadi di lapangan.
+ */
+const DRAF_ORDER = "accapi.order-sales.draf.v1";
+const TERPUTUS = "Kiriman order ini terputus sebelum ada jawaban server. Order mungkin sudah masuk — periksa Order saya sebelum mengirim ulang.";
+type DrafOrder = { customerNo: string; outlet: string; note: string; lines: Line[]; tidakPasti: string; disimpan: string };
+function bacaDrafOrder(raw: string | null): DrafOrder | null {
+    try {
+        const d = raw ? JSON.parse(raw) : null;
+        if (!d || !Array.isArray(d.lines)) return null;
+        const teks = (v: unknown) => (typeof v === "string" ? v : "");
+        const lines: Line[] = d.lines.map((l: unknown) => {
+            const o = (l ?? {}) as Record<string, unknown>;
+            return { code: teks(o.code), unit: teks(o.unit), quantity: teks(o.quantity) };
+        }).filter((l: Line) => l.code.trim());
+        if (lines.length === 0 && !teks(d.note).trim()) return null;
+        return { customerNo: teks(d.customerNo), outlet: teks(d.outlet), note: teks(d.note), lines: lines.length ? lines : [emptyLine()], tidakPasti: teks(d.tidakPasti), disimpan: teks(d.disimpan) };
+    } catch { return null; }
+}
+const bacaPonsel = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
+const hapusPonsel = (k: string) => { try { localStorage.removeItem(k); } catch { /* tidak bisa dihapus = tidak bisa dibaca juga */ } };
+/** Gagal tulis (penuh/diblokir) = draf lama dibuang, supaya yang basi tidak ditawarkan lagi. */
+const tulisPonsel = (k: string, isi: Omit<DrafOrder, "disimpan">) => {
+    try { localStorage.setItem(k, JSON.stringify({ ...isi, disimpan: new Date().toISOString() })); } catch { hapusPonsel(k); }
+};
+let ponselBisaSimpan: boolean | undefined;
+/** Penyimpanan peramban bisa ditulis? (mode privat/diblokir = tidak). Tidak berubah selama halaman terbuka. */
+const bisaSimpanPonsel = () => {
+    if (ponselBisaSimpan === undefined) {
+        try { localStorage.setItem(`${DRAF_ORDER}.uji`, "1"); localStorage.removeItem(`${DRAF_ORDER}.uji`); ponselBisaSimpan = true; } catch { ponselBisaSimpan = false; }
+    }
+    return ponselBisaSimpan;
+};
 const nomorPermintaan = (id: string) => `#${id.slice(0, 8)}`;
 
-export default function OrderSales() {
+export default function OrderSales({ akunId }: { akunId: string }) {
+    const kunciDraf = `${DRAF_ORDER}.${akunId}`;
     // Hari ini dari jam peramban dalam WITA; snapshot server "" supaya hidrasi tidak bentrok dengan jam server.
     const hariIni = useSyncExternalStore(tanpaLangganan, hariIniKlien, () => "");
     const ruteRaw = useSyncExternalStore(tanpaLangganan, () => { try { return sessionStorage.getItem(RUTE_TERSIMPAN); } catch { return null; } }, () => null);
@@ -116,12 +156,24 @@ export default function OrderSales() {
     const [master, setMaster] = useState<Record<string, ItemMaster>>({});
     const [hasil, setHasil] = useState<{ key: string; p: Pratinjau } | null>(null);
     // "ulang" = kirim lagi sesudah jawaban tidak pasti, dengan peringatan order ganda (pilihan eksplisit salesman).
-    const [dialog, setDialog] = useState<null | "biasa" | "ulang">(null);
+    const [dialog, setDialog] = useState<null | "biasa" | "ulang" | "buang">(null);
     const [sukses, setSukses] = useState("");
     // Order Web Sales TIDAK idempoten: selama hasil kirim terakhir tidak pasti, Kirim ditahan sampai salesman mengubah isian atau
     // memilih "Kirim lagi" secara eksplisit (temuan peninjau P1: 502 sesudah tersimpan + kirim ulang = 2 order).
     const [tidakPasti, setTidakPasti] = useState("");
-    const ubahIsian = () => { setSukses(""); setTidakPasti(""); };
+    // Draf ponsel akun ini ditawarkan sampai salesman memilih Pulihkan/Buang atau mulai mengisi.
+    const drafRaw = useSyncExternalStore(tanpaLangganan, () => bacaPonsel(kunciDraf), () => null);
+    const simpanPonsel = useSyncExternalStore(tanpaLangganan, bisaSimpanPonsel, () => false);
+    const [diputuskan, setDiputuskan] = useState(false);
+    // Mulai mengisi menutup tawaran draf; draf lama tetap di ponsel sampai isian baru menjadi draf (menggantikannya).
+    const ubahIsian = () => { setSukses(""); setTidakPasti(""); setDiputuskan(true); };
+    function pulihkan() {
+        const d = bacaDrafOrder(bacaPonsel(kunciDraf)); // dibaca saat diklik: tab lain bisa sudah mengirim/mengubahnya
+        setDiputuskan(true);
+        if (!d) return;
+        setCustomerNo(d.customerNo); setOutlet(d.outlet); setNote(d.note); setLines(d.lines); setTidakPasti(d.tidakPasti); setSukses("");
+    }
+    function buangDraf() { hapusPonsel(kunciDraf); setDialog(null); setDiputuskan(true); }
 
     const muatOrder = useCallback(async (): Promise<Load<RequestRow[]>> => {
         const j = await send("GET", "/websales/orders");
@@ -238,8 +290,23 @@ export default function OrderSales() {
     // Draf = barang/catatan yang belum dikirim (pelanggan saja tidak dijaga: tetap terisi setelah kirim seperti halaman lama).
     const draf = Boolean(note.trim() || filled.length > 0);
     useUnsavedGuard(draf);
+    const tawaran = useMemo(() => (diputuskan ? null : bacaDrafOrder(drafRaw)), [diputuskan, drafRaw]);
+    // Dihapus hanya bila draf SESI INI dikosongkan sendiri: ketukan pertama di kolom mana pun tidak menghapus draf lama yang belum diputuskan.
+    const adaDrafSesi = useRef(false);
+    const mengirim = useRef(false); // selama POST berjalan draf (bertanda TERPUTUS) tidak ditimpa pembaruan layar lain
+    useEffect(() => {
+        if (mengirim.current) return;
+        if (draf) { tulisPonsel(kunciDraf, { customerNo, outlet, note, lines, tidakPasti }); adaDrafSesi.current = true; }
+        else if (adaDrafSesi.current) { hapusPonsel(kunciDraf); adaDrafSesi.current = false; }
+    }, [kunciDraf, draf, customerNo, outlet, note, lines, tidakPasti]);
 
     async function kirim() {
+        const isi = { customerNo, outlet, note, lines };
+        tulisPonsel(kunciDraf, { ...isi, tidakPasti: TERPUTUS }); // lihat DRAF_ORDER: dilepas hanya oleh jawaban pasti
+        mengirim.current = true;
+        try { await kirimSekali(isi); } finally { mengirim.current = false; }
+    }
+    async function kirimSekali(isi: { customerNo: string; outlet: string; note: string; lines: Line[] }) {
         const j = await send("POST", "/websales/orders", {
             outlet, channel, order_date: orderDate, note, customer_no: customerNo.trim(),
             lines: lengkap.map((line) => ({ code: line.code.trim(), unit: line.unit, quantity: line.quantity })),
@@ -253,9 +320,12 @@ export default function OrderSales() {
         }
         if (j.status < 200 || j.status >= 300 || !j.data.ok) {
             const detail = j.data.detail ?? j.data.error;
+            tulisPonsel(kunciDraf, { ...isi, tidakPasti }); // ditolak pasti = tidak ada order baru; tanda sebelumnya kembali
             throw new Error(typeof detail === "string" && detail ? detail : "Order ditolak server.");
         }
         const req = (j.data.request ?? {}) as { id?: string };
+        hapusPonsel(kunciDraf); // langsung, bukan lewat efek: tetap terhapus walau halaman sudah ditinggalkan
+        adaDrafSesi.current = false;
         setDialog(null);
         setTidakPasti("");
         setSukses(req.id ? nomorPermintaan(String(req.id)) : "terkirim");
@@ -286,7 +356,19 @@ export default function OrderSales() {
                         <Button variant="tertiary" disabled={Boolean(terkunciIsian)} disabledReason={terkunciIsian} onClick={() => setDialog("ulang")}>Kirim lagi…</Button>
                     </MessageStrip>
                 )}
-                {draf && !sukses && <p className="fi-draft" role="status">Isian belum dikirim — belum tersimpan di server maupun di ponsel; jangan tutup halaman ini.</p>}
+                {tawaran && (
+                    <MessageStrip tone="info" title="Ada draf order di ponsel ini.">
+                        {[tawaran.customerNo.trim() || "Tanpa kode pelanggan", tawaran.outlet.trim(), `${tawaran.lines.filter((l) => l.code.trim()).length} barang`].filter(Boolean).join(" · ")}
+                        {tawaran.disimpan && ` · disimpan ${jamWita(tawaran.disimpan)}`}.
+                        {tawaran.tidakPasti && " Kiriman terakhirnya belum pasti — periksa Order saya sebelum mengirim lagi."}
+                        {" "}Tanggal order kembali ke hari ini; mulai mengisi akan menggantinya.{" "}
+                        <Button variant="tertiary" onClick={pulihkan}>Pulihkan draf</Button>{" "}
+                        <Button variant="tertiary" onClick={() => setDialog("buang")}>Buang…</Button>
+                    </MessageStrip>
+                )}
+                {draf && !sukses && <p className="fi-draft" role="status">{simpanPonsel
+                    ? "Isian belum dikirim — tersimpan sebagai draf di ponsel ini, belum di server."
+                    : "Isian belum dikirim — belum tersimpan di server maupun di ponsel; jangan tutup halaman ini."}</p>}
 
                 <Section title="Pelanggan">
                     <div className="fi-sect-in">
@@ -451,7 +533,11 @@ export default function OrderSales() {
             <FooterToolbar message={terkunci ?? `${lengkap.length} barang${netto ? ` · netto estimasi ${netto}` : ""}${nTanpaHarga ? ` · ${nTanpaHarga} belum berharga` : ""}`}>
                 <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} disabled={Boolean(terkunci)} disabledReason={terkunci} onClick={() => setDialog("biasa")}>Kirim order…</Button>
             </FooterToolbar>
-            <ConfirmDialog open={dialog !== null} onClose={() => setDialog(null)}
+            <ConfirmDialog open={dialog === "buang"} onClose={() => setDialog(null)} tone="negative" title="Buang draf order di ponsel ini?"
+                description="Draf yang belum dikirim dihapus dari ponsel ini dan tidak bisa dikembalikan. Order yang sudah terkirim tidak terpengaruh."
+                facts={tawaran ? [["Pelanggan", tawaran.customerNo.trim() || "–"], ["Barang", `${tawaran.lines.filter((l) => l.code.trim()).length} baris`]] : []}
+                confirmLabel="Buang draf" onConfirm={buangDraf} />
+            <ConfirmDialog open={dialog === "biasa" || dialog === "ulang"} onClose={() => setDialog(null)}
                 title={dialog === "ulang" ? `Kirim lagi order untuk ${outlet || customerNo}?` : `Kirim order untuk ${outlet || customerNo}?`}
                 tone={dialog === "ulang" ? "negative" : "primary"}
                 description={dialog === "ulang"

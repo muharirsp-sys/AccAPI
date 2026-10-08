@@ -314,15 +314,25 @@ function DetailKlaim(props: DetailProps) {
                     <textarea {...a} className="fi-input" rows={3} value={alasan} onChange={(e) => setAlasan(e.target.value)} />
                 )}</FormField>
             </ConfirmDialog>
-            <ConfirmDialog open={dialog === "selesai"} onClose={tutup} tag="Verifikasi final" title={`Selesaikan verifikasi final ${no}?`} confirmLabel="Selesaikan"
-                description="No Claim dan checklist final per item disimpan bersama hasil verifikasi."
+            {/* Owner 8 Okt: verifikasi final batch buatan sendiri juga memakai konfirmasi "sendiri" (BL-10), sama seperti Setujui klaim. */}
+            <ConfirmDialog open={dialog === "selesai"} onClose={tutup} tag={sendiri ? "Setuju sendiri" : "Verifikasi final"}
+                title={sendiri ? `Selesaikan verifikasi final ${no} yang Anda buat sendiri?` : `Selesaikan verifikasi final ${no}?`} confirmLabel="Selesaikan"
+                description={sendiri ? "Pembuat batch dan pemeriksa final orang yang sama. No Claim dan checklist final per item disimpan bersama hasil verifikasi."
+                    : "No Claim dan checklist final per item disimpan bersama hasil verifikasi."}
                 facts={[
+                    ...(sendiri ? [["Dibuat oleh", `Anda${ctx.pengguna.nama ? ` (${ctx.pengguna.nama})` : ""}`] as [string, ReactNode]] : []),
                     ["Dibayar Keuangan", <span key="d" className="fi-tnum">{rupiah(uang.dibayar)}</span>],
                     ["Nilai fix", nilaiF?.nilaiFix.trim() ? <span key="f" className="fi-tnum">{rupiah(Number(nilaiF.nilaiFix.replace(/[^\d.]/g, "")) || uang.dibayar)}</span> : "Sama dengan dibayar"],
                     ["No Claim", `${data.items.filter((i) => i.noSurat).length} No Surat terisi`],
                     ["Akibat", lebih > 0 ? `Selisih ${rupiah(lebih)} masuk Data Selisih; batch menunggu pengembalian selisih.` : "Batch selesai."],
                 ]}
-                confirmDisabled={kunci} onConfirm={selesaikan} />
+                confirmDisabled={kunci} onConfirm={selesaikan}>
+                {sendiri && <>
+                    <MessageStrip tone="info" title="Mode lunak:">Anda boleh menyelesaikan verifikasi final batch buatan sendiri; hasilnya tercatat di Riwayat atas nama Anda.</MessageStrip>
+                    <VariantNote bl="BL-10">Endpoint verifikasi final belum menyimpan alasan setuju sendiri, jadi dialog ini hanya konfirmasi. Owner 8 Okt: alasan
+                        wajib dan tersimpan — menunggu perubahan API lewat AM.</VariantNote>
+                </>}
+            </ConfirmDialog>
             <ConfirmDialog open={dialog === "ingatkan"} onClose={tutup} tag="Pengingat" title={`Kirim pengingat kelengkapan ${no}?`} confirmLabel="Kirim pengingat"
                 description="Pengingat tampil di web untuk Sales Manager dan Supervisor; batch tetap menunggu verifikasi final Klaim. No Claim dan checklist yang sudah diisi belum ikut tersimpan."
                 facts={[["Catatan", nilaiF?.catatan || "–"], ["Status setelahnya", "Berkas belum lengkap"]]}
