@@ -203,6 +203,10 @@ select.fi-input { appearance:none; background-image:linear-gradient(45deg, trans
 .fi-anchors { position:sticky; top:0; z-index:var(--z-sticky); display:flex; gap:4px; overflow-x:auto; scrollbar-width:none; background:var(--surface); border-bottom:1px solid var(--line); padding:0 16px; }
 .fi-anchors a { padding:10px; font:600 .8125rem/1 var(--font-sans); color:var(--ink-muted); text-decoration:none; border-bottom:2px solid transparent; white-space:nowrap; }
 .fi-anchors a:hover { color:var(--brand); border-color:var(--brand); }
+/* Navigasi antarhalaman satu modul (Insentif Sales): tampilan sama dengan anchor bar, tidak lengket. */
+.fi-subnav { display:flex; gap:4px; overflow-x:auto; scrollbar-width:none; border-bottom:1px solid var(--line); }
+.fi-subnav a { padding:10px; font:600 .8125rem/1 var(--font-sans); color:var(--ink-muted); text-decoration:none; border-bottom:2px solid transparent; white-space:nowrap; }
+.fi-subnav a:hover, .fi-subnav a[aria-current="page"] { color:var(--brand); border-color:var(--brand); }
 .fi-section { scroll-margin-top:56px; }
 @media (max-width:599px) { .fi-oph { padding:12px 14px; } .fi-oph-title h1 { font:var(--fs-title-2); } }
 
