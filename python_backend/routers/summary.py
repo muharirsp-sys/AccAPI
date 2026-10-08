@@ -1186,7 +1186,11 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
         # tabel sebagai flowable, bukan digambar canvas. Tanpa memperhitungkannya, potongan
         # pertama diukur terhadap halaman penuh, tidak muat bersama judulnya, lalu terdorong
         # utuh ke halaman berikutnya — meninggalkan halaman pertama kosong.
-        tinggi_judul = sum(e.wrap(usable, tinggi_halaman)[1] for e in elements)
+        # Spasi sebelum/sesudah paragraf judul ikut dihitung: `wrap` hanya melaporkan tinggi
+        # teksnya. Tanpa itu halaman pertama dikira beberapa titik lebih lega, dan begitu
+        # potongannya diisi sampai penuh, baris terakhirnya jatuh sendirian ke halaman baru.
+        tinggi_judul = sum(e.wrap(usable, tinggi_halaman)[1] + e.getSpaceBefore() + e.getSpaceAfter()
+                           for e in elements)
 
         sisa = list(baris_teks)
         halaman_pertama = True
@@ -1203,6 +1207,14 @@ def summary_manual_generate(request: Request, token: str = Form(...), rows_json:
             # yang sama kini harus muat di ruang yang lebih pendek, jadi barisnya meninggi.
             # Tanpa pemeriksaan ini potongannya meluber dan ReportLab memecahnya lagi, persis
             # kembali ke cacat yang sedang diperbaiki: halaman berikutnya tanpa identitas.
+            # Tebakan `split` juga bisa terlalu PENDEK: ReportLab menolak memotong di tengah sel
+            # gabungan, jadi blok sepuluh strata MSG (Surat Program sampai Syarat Claim satu
+            # span) terdorong utuh ke halaman berikutnya dan halaman ini setengah kosong (Form
+            # Kino Oktober, 8 Okt 2026). Potongan kita sendiri boleh memotong blok itu —
+            # penggabungan dihitung ulang per halaman, jadi identitas surat tercetak lagi di
+            # baris teratas halaman berikutnya. Maka baris ditambah selama potongannya muat.
+            while muat < len(sisa) and bangun_tabel(sisa[:muat + 1]).wrap(usable, tersedia)[1] <= tersedia:
+                muat += 1
             while muat > 1:
                 if bangun_tabel(sisa[:muat]).wrap(usable, tersedia)[1] <= tersedia:
                     break
