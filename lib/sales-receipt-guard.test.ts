@@ -115,27 +115,27 @@ test("PG: skenario B — klien melapor FAILED setelah terkirim sukses tidak memb
     assert.ok(isDenied(await authorize(db, L1, [r])));
 }));
 
-test("PG: ditolak Accurate -> FAILED oleh server; kirim individual & koreksi self-heal tetap lolos sekali", { skip: pgSkip }, () => withDb(async (db, tag) => {
+test("PG: C11 — penolakan Accurate belum terbukti -> UNKNOWN; kirim individual & koreksi self-heal butuh override Finance", { skip: pgSkip }, () => withDb(async (db, tag) => {
     const r1 = rowOf(tag, "INV-1", 1000);
     const r2 = rowOf(tag, "INV-2", 500);
-    const L1 = await lockRows(db, [r1, r2]);
+    const r3 = rowOf(tag, "INV-3", 700);
+    const L1 = await lockRows(db, [r1, r2, r3]);
     const d = await authorize(db, L1, [r1, r2]);
     assert.ok(!isDenied(d));
-    // Galat menyeluruh (bukan per baris): tidak ada yang tersimpan -> keduanya FAILED.
+    // Amplop s:false tanpa hasil per baris: tidak terbukti tak ada yang tersimpan -> keduanya UNKNOWN.
     await g.recordSalesReceiptOutcome!(db, d, l.classifySalesReceiptReply!(2, { s: false, d: ["Data tidak valid"] }));
-    assert.equal(await statusOf(db, keyOf(r1)), "FAILED");
-    // Mode individual atas baris yang DITOLAK server: lolos; diterima -> SUCCESS.
-    const d1 = await authorize(db, L1, [r1]);
-    assert.ok(!isDenied(d1), "baris FAILED (ditolak Accurate) milik lock boleh dikirim ulang");
-    await g.recordSalesReceiptOutcome!(db, d1, l.classifySalesReceiptReply!(1, [{ s: true }]));
-    assert.equal(await statusOf(db, keyOf(r1)), "SUCCESS");
-    // Self-heal r2: nominal dikoreksi (fingerprint baru, identitas sama) -> lolos, hasilnya dicatat ke key r2.
-    const healed = rowOf(tag, "INV-2", 450);
-    const d2 = await authorize(db, L1, [healed]);
-    assert.ok(!isDenied(d2), "koreksi self-heal beridentitas terkunci lolos");
-    await g.recordSalesReceiptOutcome!(db, d2, l.classifySalesReceiptReply!(1, { s: true, d: [{ s: true }] }));
-    assert.equal(await statusOf(db, keyOf(r2)), "SUCCESS");
-    assert.ok(isDenied(await authorize(db, L1, [healed])), "koreksi yang sudah sukses tidak bisa dikirim lagi");
+    assert.equal(await statusOf(db, keyOf(r1)), "UNKNOWN");
+    assert.equal(await statusOf(db, keyOf(r2)), "UNKNOWN");
+    // Mode individual (halaman lama mengurai per baris setelah galat menyeluruh) TIDAK lolos tanpa override.
+    assert.ok(isDenied(await authorize(db, L1, [r1])), "baris UNKNOWN tidak boleh dikirim ulang otomatis");
+    // Koreksi self-heal (nominal beda, identitas sama) juga tidak lolos.
+    assert.ok(isDenied(await authorize(db, L1, [rowOf(tag, "INV-2", 450)])), "self-heal atas baris UNKNOWN butuh override");
+    // Penolakan PER BARIS (mis. "melebihi nilai piutang") juga belum terbukti -> UNKNOWN, self-heal ikut tertahan.
+    const d3 = await authorize(db, L1, [r3]);
+    assert.ok(!isDenied(d3));
+    await g.recordSalesReceiptOutcome!(db, d3, l.classifySalesReceiptReply!(1, { s: true, d: [{ s: false, d: ["melebihi nilai piutang"] }] }));
+    assert.equal(await statusOf(db, keyOf(r3)), "UNKNOWN");
+    assert.ok(isDenied(await authorize(db, L1, [rowOf(tag, "INV-3", 650)])), "self-heal setelah penolakan per baris butuh override");
 }));
 
 test("PG: proses mati setelah dispatch -> baris tetap memblokir; klien tak bisa FAILED", { skip: pgSkip }, () => withDb(async (db, tag) => {
@@ -204,7 +204,7 @@ test("PG: override resend_success Finance sekali pakai; baris SUCCESS tidak ditu
     }
 }));
 
-test("PG: kirim + catat (glue proxy) — 5xx beramplop / non-JSON / timeout = UNKNOWN; 4xx beramplop = FAILED; per baris", { skip: pgSkip }, () => withDb(async (db, tag) => {
+test("PG: kirim + catat (glue proxy) — 5xx/4xx beramplop / non-JSON / timeout = UNKNOWN (C11); per baris", { skip: pgSkip }, () => withDb(async (db, tag) => {
     const send = g.sendSalesReceipt!;
     const run = async (inv: string, forward: () => Promise<Reply>) => {
         const r = rowOf(tag, inv, 100);
@@ -217,7 +217,7 @@ test("PG: kirim + catat (glue proxy) — 5xx beramplop / non-JSON / timeout = UN
     const env = (status: number, body: unknown) => async () => ({ status, text: JSON.stringify(body) });
     assert.equal((await run("G-500", env(500, { s: false, d: ["gateway"] }))).status, "UNKNOWN", "5xx beramplop = tidak pasti");
     assert.equal((await run("G-302", env(302, { s: false, d: ["x"] }))).status, "UNKNOWN");
-    assert.equal((await run("G-422", env(422, { s: false, d: ["Data tidak valid"] }))).status, "FAILED", "4xx beramplop = Accurate menjawab menolak");
+    assert.equal((await run("G-422", env(422, { s: false, d: ["Data tidak valid"] }))).status, "UNKNOWN", "4xx beramplop: penolakan belum terbukti (C11)");
     const nonJson = await run("G-HTML", async () => ({ status: 200, text: "<html>" }));
     assert.equal(nonJson.status, "UNKNOWN");
     assert.equal((nonJson.out as { json?: boolean }).json, false, "proxy menjawab 502 untuk non-JSON");

@@ -7,7 +7,7 @@
  * Caller: app/api/proxy/route.ts.
  * Dependensi: idempotency_log (lockId/lockedBy, AM-050), idempotency_override (AM-052), lib/idempotency-lock.
  * Side Effects: satu transaksi — UPDATE idempotency_override.consumed_at (sekali pakai) + idempotency_log
- *   status SENDING; sesudah kirim UPDATE status SUCCESS/FAILED/UNKNOWN.
+ *   status SENDING; sesudah kirim UPDATE status SUCCESS/UNKNOWN (C11: server tidak menyimpulkan FAILED).
  */
 import { and, asc, eq, inArray, isNull, sql, TransactionRollbackError } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -19,7 +19,8 @@ const CANONICAL_PATHS: Record<string, "bulk" | "single"> = {
     "/api/sales-receipt/bulk-save.do": "bulk",
     "/api/sales-receipt/save.do": "single",
 };
-const OWNED_STATUSES = ["PROCESSING", "FAILED"]; // belum terkirim, atau ditolak Accurate (dicatat server)
+// Belum terkirim. FAILED hanya dilaporkan klien untuk baris PROCESSING (tidak pernah diteruskan proxy) — C11.
+const OWNED_STATUSES = ["PROCESSING", "FAILED"];
 
 const isObj = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 const hasFlatKey = (v: unknown): boolean => Array.isArray(v)

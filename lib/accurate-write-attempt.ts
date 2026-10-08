@@ -104,8 +104,11 @@ const NEVER_CONNECTED = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
 
 /**
  * Klasifikasi jawaban host Accurate untuk request INI (C.16). Angka status saja bukan bukti
- * "belum diproses": 401/403/429/3xx/5xx tanpa amplop penolakan Accurate = unknown. Hanya
- * amplop `{s:false, d}` (HTTP < 500) atau penolakan per item yang `rejected`.
+ * "belum diproses": 401/403/429/3xx/5xx = unknown.
+ * C11 (owner 8 Okt 2026, tanpa sandbox): penolakan Accurate (amplop `{s:false, d}` atau semua item
+ * `s:false`) BELUM TERBUKTI berarti tidak tersimpan -> unknown (Finance menyelesaikan lewat resolve),
+ * bukan `rejected` yang membuka kirim ulang. Hanya `not_sent` (koneksi tak pernah terbentuk) yang
+ * boleh diulang tanpa penyelesaian.
  */
 export function classifyProviderReply(reply: ProviderReply): Classified {
     const result = (state: Classified["state"], message: string, id = "", number = ""): Classified =>
@@ -125,12 +128,13 @@ export function classifyProviderReply(reply: ProviderReply): Classified {
         return result("unknown", `respons non-JSON (HTTP ${status})`);
     }
     const top = data as { s?: unknown; d?: unknown } | null;
-    if (status >= 200 && status < 500 && !Array.isArray(data) && top?.s === false && top.d !== undefined) {
-        return result("rejected", JSON.stringify(top.d));
+    if (!Array.isArray(data) && top?.s === false && top.d !== undefined) {
+        return result("unknown", `Accurate menolak (HTTP ${status}), belum terbukti tidak tersimpan: ${JSON.stringify(top.d)}`);
     }
     if (status < 200 || status >= 300) return result("unknown", `HTTP ${status} tanpa amplop penolakan: ${text.slice(0, 200)}`);
     const o = classifyBulkSaveResponse(data);
-    return o.kind === "posted" ? result("posted", "", o.id, o.number) : result(o.kind, o.message);
+    if (o.kind === "posted") return result("posted", "", o.id, o.number);
+    return result("unknown", o.kind === "rejected" ? `Accurate menolak, belum terbukti tidak tersimpan: ${o.message}` : o.message);
 }
 
 type GuardedWriteInput = {

@@ -24,13 +24,17 @@ const item = (over: Partial<PurchasePaymentItem> = {}): PurchasePaymentItem => (
 });
 const ok = (id = "77", number = "PP-001") => JSON.stringify({ s: true, d: [{ s: true, d: ["ok"], r: { id, number } }] });
 
-test("klasifikasi jawaban provider: hanya amplop penolakan yang rejected (C.16)", () => {
+// C11 (owner 8 Okt 2026, tanpa sandbox): penolakan Accurate belum terbukti "tidak tersimpan" -> unknown (bukan
+// rejected yang membuka kirim ulang). Hanya not_sent (koneksi tak pernah terbentuk) yang boleh diulang tanpa Finance.
+test("klasifikasi jawaban provider: penolakan belum terbukti = unknown; tidak ada yang rejected (C.16 + C11)", () => {
     const c = (status: number, text: string) => classifyProviderReply({ status, text }).state;
     assert.equal(c(200, ok()), "posted");
     assert.equal(classifyProviderReply({ status: 200, text: ok("9", "PP-9") }).number, "PP-9");
-    assert.equal(c(200, JSON.stringify({ s: false, d: ["Vendor tidak ditemukan"] })), "rejected");
-    assert.equal(c(200, JSON.stringify({ s: true, d: [{ s: false, d: ["x"] }] })), "rejected");
-    assert.equal(c(401, JSON.stringify({ s: false, d: ["token expired"] })), "rejected", "amplop Accurate = Accurate menjawab");
+    assert.equal(c(200, JSON.stringify({ s: false, d: ["Vendor tidak ditemukan"] })), "unknown");
+    assert.match(classifyProviderReply({ status: 200, text: JSON.stringify({ s: false, d: ["Vendor tidak ditemukan"] }) }).message, /Vendor tidak ditemukan/);
+    assert.equal(c(200, JSON.stringify({ s: true, d: [{ s: false, d: ["x"] }] })), "unknown");
+    assert.equal(c(200, JSON.stringify([{ s: false, d: ["x"] }])), "unknown");
+    assert.equal(c(401, JSON.stringify({ s: false, d: ["token expired"] })), "unknown", "amplop 401 belum terbukti tak diproses");
     assert.equal(c(401, JSON.stringify({ error: "invalid_token" })), "unknown", "401 tanpa amplop bukan bukti belum diproses");
     assert.equal(c(429, "Too Many Requests"), "unknown");
     assert.equal(c(403, "<html>forbidden</html>"), "unknown");
@@ -203,7 +207,7 @@ test("PG: hasil gagal tersimpan setelah kirim -> baris tetap sending & memblokir
     }
 });
 
-test("PG: ditolak / tak terhubung boleh diulang; atestasi 'tidak ada' membuka ulang tanpa menghapus jejak", { skip: pgSkip }, async () => {
+test("PG: ditolak = tidak pasti (C11) memblokir; tak terhubung boleh diulang; atestasi 'tidak ada' membuka ulang tanpa menghapus jejak", { skip: pgSkip }, async () => {
     const pool = new Pool({ connectionString: PG_URL, max: 3 });
     const db = drizzle(pool);
     const run = (subjectKey: string, send: () => Promise<{ status: number; text: string }>) => runGuardedWrite({
@@ -214,8 +218,9 @@ test("PG: ditolak / tak terhubung boleh diulang; atestasi 'tidak ada' membuka ul
     try {
         const rejKey = `test|${randomUUID()}`;
         const rej = await run(rejKey, async () => ({ status: 200, text: JSON.stringify({ s: false, d: ["Bank tidak valid"] }) }));
-        assert.equal(rej.claimed && rej.outcome.state, "rejected");
-        assert.equal((await run(rejKey, async () => ({ status: 200, text: ok() }))).claimed, true, "penolakan valid harus bisa diperbaiki & diulang");
+        assert.equal(rej.claimed && rej.outcome.state, "unknown");
+        const rejAgain = await run(rejKey, async () => { throw new Error("TIDAK BOLEH DIKIRIM ULANG"); });
+        assert.equal(rejAgain.claimed === false && rejAgain.live?.state, "unknown", "penolakan belum terbukti tidak membuka kirim ulang");
 
         const refusedKey = `test|${randomUUID()}`;
         const refused = await run(refusedKey, () => closed.send());

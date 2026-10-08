@@ -96,12 +96,15 @@ const L = lockModule as unknown as {
     classifySalesReceiptReply?: (n: number, json: unknown) => string[];
     completeFromStatuses?: (s: string) => string[];
 };
-test("jawaban sales-receipt -> hasil per baris (SUCCESS/FAILED/UNKNOWN), ragu = UNKNOWN", () => {
+// C11 (owner 8 Okt 2026, tanpa sandbox): penolakan Accurate yang BELUM TERBUKTI tidak tersimpan = UNKNOWN, bukan
+// FAILED — FAILED membuka kirim ulang otomatis. Server tidak pernah menyimpulkan FAILED dari jawaban Accurate.
+test("jawaban sales-receipt -> hasil per baris (SUCCESS/UNKNOWN); penolakan belum terbukti = UNKNOWN (C11)", () => {
     const c = L.classifySalesReceiptReply!;
-    assert.deepEqual(c(2, [{ s: true }, { s: false, d: ["x"] }]), ["SUCCESS", "FAILED"], "array per baris");
-    assert.deepEqual(c(2, { s: false, d: [{ s: true }, { s: false }] }), ["SUCCESS", "FAILED"], "amplop dengan d per baris");
-    assert.deepEqual(c(2, { s: true, d: [{ s: true }, { s: false }] }), ["SUCCESS", "FAILED"], "amplop s:true bisa membawa baris gagal (H09)");
-    assert.deepEqual(c(3, { s: false, d: ["Data tidak valid"] }), ["FAILED", "FAILED", "FAILED"], "galat menyeluruh: tak ada yang tersimpan");
+    assert.deepEqual(c(2, [{ s: true }, { s: false, d: ["x"] }]), ["SUCCESS", "UNKNOWN"], "array per baris");
+    assert.deepEqual(c(2, { s: false, d: [{ s: true }, { s: false }] }), ["SUCCESS", "UNKNOWN"], "amplop dengan d per baris");
+    assert.deepEqual(c(2, { s: true, d: [{ s: true }, { s: false }] }), ["SUCCESS", "UNKNOWN"], "amplop s:true bisa membawa baris gagal (H09)");
+    assert.deepEqual(c(3, { s: false, d: ["Data tidak valid"] }), ["UNKNOWN", "UNKNOWN", "UNKNOWN"],
+        "amplop s:false TANPA hasil per baris: tidak terbukti tak ada yang tersimpan");
     assert.deepEqual(c(1, { s: true, d: ["ok"] }), ["SUCCESS"], "save.do satu objek");
     assert.deepEqual(c(2, { s: false, d: [{ s: true }] }), ["UNKNOWN", "UNKNOWN"], "per baris tapi jumlah beda -> ragu");
     assert.deepEqual(c(2, [{ s: true }]), ["UNKNOWN", "UNKNOWN"], "array jumlah beda -> ragu");
@@ -124,10 +127,15 @@ test("SENDING (sudah dikirim, hasil belum dicatat) diblokir: segar = STILL_PROCE
     assert.equal(decideLock([{ key: "S" }], new Map([["S", row]]), later, new Set(), new Set()).blocked[0]?.reason, "UNKNOWN_OUTCOME");
 });
 
-test("re-review 597a4b82: status HTTP ikut menentukan — 3xx/5xx beramplop = UNKNOWN, 4xx beramplop = FAILED", () => {
+test("re-review 597a4b82 + C11: 3xx/4xx/5xx beramplop = UNKNOWN; tidak ada jawaban yang menghasilkan FAILED", () => {
     const c = lockModule.classifySalesReceiptReply;
     assert.deepEqual(c(2, { s: false, d: ["x"] }, 500), ["UNKNOWN", "UNKNOWN"]);
     assert.deepEqual(c(1, { s: false, d: ["x"] }, 302), ["UNKNOWN"]);
-    assert.deepEqual(c(1, { s: false, d: ["x"] }, 422), ["FAILED"]);
+    assert.deepEqual(c(1, { s: false, d: ["x"] }, 422), ["UNKNOWN"], "4xx beramplop belum terbukti tak tersimpan");
+    assert.deepEqual(c(1, { s: false, d: ["token expired"] }, 401), ["UNKNOWN"]);
+    const samples: unknown[] = [[{ s: false }], { s: false, d: ["x"] }, { s: false, d: [{ s: false }] }, { s: true, d: [{ s: false }] }, [{ s: true }]];
+    for (const status of [200, 400, 401, 422, 500]) for (const json of samples) {
+        assert.ok(!c(1, json, status).includes("FAILED"), `FAILED dari jawaban Accurate: ${status} ${JSON.stringify(json)}`);
+    }
     assert.deepEqual(c(1, [{ s: true }], 503), ["UNKNOWN"], "5xx walau per baris sukses = tidak pasti");
 });

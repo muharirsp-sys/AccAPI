@@ -99,24 +99,25 @@ export type RowOutcome = "SUCCESS" | "FAILED" | "UNKNOWN";
 
 /**
  * Hasil per baris payload dari jawaban Accurate yang DILIHAT proxy (bukan laporan klien). `json` undefined =
- * timeout / bukan JSON. Ragu = UNKNOWN (memblokir sampai Finance). Galat menyeluruh beramplop (`{s:false,
- * d:["pesan"]}`, bukan per baris) = tidak ada baris tersimpan -> FAILED; 5xx/3xx = UNKNOWN walau beramplop
- * (seperti classifyProviderReply AM-014).
- * ponytail: "amplop s:false tanpa hasil per baris = tidak tersimpan" ASSUMED dari perilaku klien lama
- * (mode individu); bukti provider = D-16.
+ * timeout / bukan JSON. Hanya `s:true` (per baris, atau amplop tanpa hasil per baris) = SUCCESS; selain itu
+ * UNKNOWN (memblokir sampai Finance). 3xx/4xx/5xx = UNKNOWN walau beramplop.
+ * C11 (owner 8 Okt 2026, tanpa sandbox): jawaban Accurate yang BELUM TERBUKTI tidak boleh membuka kirim ulang.
+ * "Ditolak = tidak tersimpan" (amplop `s:false` tanpa hasil per baris, item `s:false`, 4xx beramplop) dan
+ * urutan hasil per baris = urutan payload tidak pernah dibuktikan terhadap Accurate -> UNKNOWN, bukan FAILED.
+ * Server tidak pernah menyimpulkan FAILED; FAILED hanya dari klien untuk baris yang belum dikirim (PROCESSING).
  */
 export function classifySalesReceiptReply(n: number, json: unknown, httpStatus = 200): RowOutcome[] {
     const all = (o: RowOutcome): RowOutcome[] => Array.from({ length: n }, () => o);
-    if (httpStatus >= 300 && !(httpStatus >= 400 && httpStatus < 500)) return all("UNKNOWN");
+    if (httpStatus < 200 || httpStatus >= 300) return all("UNKNOWN");
     const isItem = (x: unknown) => Boolean(x) && typeof x === "object" && typeof (x as { s?: unknown }).s === "boolean";
     const perRow = (list: unknown[]): RowOutcome[] => list.length === n
-        ? list.map((x) => (isItem(x) ? ((x as { s: boolean }).s ? "SUCCESS" : "FAILED") : "UNKNOWN"))
+        ? list.map((x) => (isItem(x) && (x as { s: boolean }).s ? "SUCCESS" : "UNKNOWN"))
         : all("UNKNOWN");
     if (Array.isArray(json)) return perRow(json);
     if (!json || typeof json !== "object") return all("UNKNOWN");
     const env = json as { s?: unknown; d?: unknown };
     if (Array.isArray(env.d) && env.d.some(isItem)) return perRow(env.d);
-    return typeof env.s === "boolean" ? all(env.s ? "SUCCESS" : "FAILED") : all("UNKNOWN");
+    return all(env.s === true ? "SUCCESS" : "UNKNOWN");
 }
 
 type Identified = { key: string; customerNo?: unknown; transDate?: unknown; invoiceNo?: unknown };
