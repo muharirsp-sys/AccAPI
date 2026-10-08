@@ -159,7 +159,7 @@ export async function POST(request: Request, context: Context) {
       fromStatus: data.batch.claimStatus,
       toStatus: "Approved",
       note,
-      metadata: { claimSubmittedDate, claimDeadline, completenessStatus, alasanSendiri: sendiri.alasanSendiri },
+      metadata: { claimSubmittedDate, claimDeadline, completenessStatus, alasanSendiri: sendiri.alasanSendiri, sendiriTanpaAlasan: sendiri.sendiriTanpaAlasan ?? false },
     });
     const updated = await getBatchWithItems(id);
     return NextResponse.json({

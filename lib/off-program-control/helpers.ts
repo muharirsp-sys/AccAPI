@@ -149,13 +149,17 @@ export function publicPayment(payment: OffPaymentRow) {
 /**
  * BL-10 (owner 8 Okt): pelaku yang menyetujui batch buatannya sendiri (validasi klaim / verifikasi final)
  * wajib memberi alasan ≥ 5 karakter. Bukan pembuat → alasan diabaikan (null).
+ * Masa transisi: layar OPC lama tidak mengirim field ini → lolos, ditandai `sendiriTanpaAlasan` di audit.
+ * Field DIKIRIM tapi pendek → tetap ditolak.
  */
 export function resolveAlasanSendiri(
     createdBy: string | null | undefined,
     actorId: string,
     raw: unknown,
-): { ok: true; alasanSendiri: string | null } | { ok: false; error: string } {
+): { ok: true; alasanSendiri: string | null; sendiriTanpaAlasan?: true } | { ok: false; error: string } {
     if (!createdBy || createdBy !== actorId) return { ok: true, alasanSendiri: null };
+    // ponytail: transisi sampai layar OPC lama diganti Fiori; hapus cabang ini setelah itu.
+    if (raw === undefined) return { ok: true, alasanSendiri: null, sendiriTanpaAlasan: true };
     const alasan = typeof raw === "string" ? raw.trim() : "";
     if (alasan.length < 5)
         return { ok: false, error: "Anda pembuat pengajuan ini. Alasan menyetujui sendiri wajib diisi (minimal 5 karakter)." };

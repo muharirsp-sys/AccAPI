@@ -19,11 +19,18 @@ export const NO_ORDER_REASONS = [
 
 export const TOKO_TUTUP_CODE = "R15";
 
-/** #21: status not_order wajib membawa kode alasan aktif. Galat (Indonesia) atau null bila sah. */
-export function validateNoOrderReason(status: string, code: unknown, activeCodes: readonly string[]): string | null {
+/**
+ * #21: status not_order wajib membawa kode alasan aktif (code sudah dipangkas; kosong = null).
+ * Kirim ulang baris yang di DB sudah not_order dengan kode sama (Submit AO lama mengirim semua baris) tetap lolos.
+ */
+export function validateNoOrderReason(
+    status: string, code: string | null, activeCodes: readonly string[],
+    existing?: { status: string; noOrderReasonCode: string | null } | null,
+): string | null {
     if (status !== "not_order") return null;
-    if (typeof code !== "string" || !code.trim()) return "Alasan tidak order wajib dipilih.";
-    if (!activeCodes.includes(code.trim())) return `Kode alasan tidak order "${code}" tidak dikenal.`;
+    if (existing?.status === "not_order" && (existing.noOrderReasonCode ?? null) === code) return null;
+    if (!code) return "Alasan tidak order wajib dipilih.";
+    if (!activeCodes.includes(code)) return `Kode alasan tidak order "${code}" tidak aktif atau tidak dikenal.`;
     return null;
 }
 

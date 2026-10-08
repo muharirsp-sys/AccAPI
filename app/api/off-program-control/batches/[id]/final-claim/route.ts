@@ -291,6 +291,7 @@ export async function POST(request: Request, context: Context) {
         paymentCount: data.payments.length,
         claimRefs: sanitizedClaimRefs,
         alasanSendiri: sendiri.alasanSendiri,
+        sendiriTanpaAlasan: sendiri.sendiriTanpaAlasan ?? false,
       },
     });
     const updated = await getBatchWithItems(id);

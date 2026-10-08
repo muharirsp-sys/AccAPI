@@ -66,12 +66,14 @@ export async function POST(req: Request) {
         if (!canAccessSales(scope, salesCode)) {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
-        const reasonError = validateNoOrderReason(status, noOrderReasonCode, (await getReasons()).map((r) => r.reasonCode));
+        const reasonCode = typeof noOrderReasonCode === "string" && noOrderReasonCode.trim() ? noOrderReasonCode.trim() : null;
+        const existing = (await getAoForDate(salesCode, principle, date)).find((r) => r.custCode === custCode);
+        const reasonError = validateNoOrderReason(status, reasonCode, (await getReasons()).map((r) => r.reasonCode), existing);
         if (reasonError) return NextResponse.json({ error: reasonError }, { status: 400 });
         const id = await upsertAoControl({
             salesCode, custCode, principle, date,
             status: status as AoStatus,
-            isVisited, noOrderReasonCode, noOrderNote,
+            isVisited, noOrderReasonCode: reasonCode, noOrderNote,
             createdBy: session.user.id,
         });
         await writeKontrolAudit("ao", id, "upsert", session.user.id, session.user.name, body);

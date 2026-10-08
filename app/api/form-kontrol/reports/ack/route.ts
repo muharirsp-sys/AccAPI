@@ -7,7 +7,7 @@
  */
 import { NextResponse } from "next/server";
 import { requirePermissionH } from "@/lib/rbac/resolve";
-import { acknowledgeReport, resolveScope, writeKontrolAudit } from "@/lib/form-kontrol";
+import { acknowledgeReport, resolveScope } from "@/lib/form-kontrol";
 
 export async function POST(req: Request) {
     const gate = await requirePermissionH("form_kontrol.submit");
@@ -29,10 +29,9 @@ export async function POST(req: Request) {
             supervisorName: scope.salesName ?? session.user.name ?? null,
             isAdmin: scope.allowedSalesCodes === null,
             ack,
+            actorId: session.user.id, actorName: session.user.name ?? null,
         });
         if (!ok) return NextResponse.json({ error: "Tidak berhak atau laporan belum disubmit" }, { status: 403 });
-        await writeKontrolAudit("report", ok.id, ack === false ? "ack_cancel" : "ack", session.user.id, session.user.name ?? null,
-            { salesCode, date, prevAckBy: ok.prevAckBy, prevAckAt: ok.prevAckAt });
         return NextResponse.json({ success: true });
     } catch {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });

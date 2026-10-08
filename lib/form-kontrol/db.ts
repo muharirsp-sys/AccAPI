@@ -385,27 +385,38 @@ export async function getReport(salesCode: string, dateStr: string) {
 
 // SPV acknowledge laporan harian salesman. Non-admin: hanya boleh ack anak buahnya
 // (salesProfile.spvName/smName == nama supervisor). Return null jika tak berhak / report belum ada.
-// ack=false (S5-4a) = batalkan tanda dibaca; cakupan sama. Jejak siapa/kapan dicatat pemanggil
-// di kontrol_audit_log (kolom spvAckBy/At ikut dikosongkan) — dikembalikan nilai sebelumnya.
+// ack=false (S5-4a) = batalkan tanda dibaca; cakupan sama. Jejak siapa/kapan (beserta nilai sebelumnya)
+// ditulis ke kontrol_audit_log dalam transaksi yang sama (kolom spvAckBy/At ikut dikosongkan saat batal).
 export async function acknowledgeReport(data: {
     salesCode: string; date: string; ackBy: string;
     supervisorName?: string | null; isAdmin: boolean; ack?: boolean;
-}): Promise<{ id: string; prevAckBy: string | null; prevAckAt: Date | null } | null> {
+    actorId: string; actorName: string | null;
+}): Promise<boolean> {
     if (!data.isAdmin) {
         const prof = await db.select({ spvName: salesProfile.spvName, smName: salesProfile.smName })
             .from(salesProfile).where(eq(salesProfile.salesCode, data.salesCode)).limit(1);
         const p = prof[0];
-        if (!p || (p.spvName !== data.supervisorName && p.smName !== data.supervisorName)) return null;
+        if (!p || (p.spvName !== data.supervisorName && p.smName !== data.supervisorName)) return false;
     }
     const existing = await db.select({ id: salesmanDailyReport.id, spvAckBy: salesmanDailyReport.spvAckBy, spvAckAt: salesmanDailyReport.spvAckAt })
         .from(salesmanDailyReport)
         .where(and(eq(salesmanDailyReport.salesCode, data.salesCode), eq(salesmanDailyReport.date, data.date))).limit(1);
-    if (existing.length === 0) return null; // laporan belum disubmit
+    if (existing.length === 0) return false; // laporan belum disubmit
     const ack = data.ack !== false;
-    await db.update(salesmanDailyReport)
-        .set(ack ? { spvAck: true, spvAckBy: data.ackBy, spvAckAt: new Date() } : { spvAck: false, spvAckBy: null, spvAckAt: null })
-        .where(eq(salesmanDailyReport.id, existing[0].id));
-    return { id: existing[0].id, prevAckBy: existing[0].spvAckBy, prevAckAt: existing[0].spvAckAt };
+    const prev = existing[0];
+    const now = new Date();
+    await db.transaction(async (tx) => {
+        await tx.update(salesmanDailyReport)
+            .set(ack ? { spvAck: true, spvAckBy: data.ackBy, spvAckAt: now } : { spvAck: false, spvAckBy: null, spvAckAt: null })
+            .where(eq(salesmanDailyReport.id, prev.id));
+        await tx.insert(kontrolAuditLog).values({
+            id: randomUUID(), entity: "report", entityId: prev.id, action: ack ? "ack" : "ack_cancel",
+            actorId: data.actorId, actorName: data.actorName,
+            payload: { salesCode: data.salesCode, date: data.date, prevAckBy: prev.spvAckBy, prevAckAt: prev.spvAckAt },
+            createdAt: now,
+        });
+    });
+    return true;
 }
 
 // ── Briefing ─────────────────────────────────────────────────────────────────
