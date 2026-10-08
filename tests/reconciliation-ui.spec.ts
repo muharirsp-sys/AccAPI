@@ -184,10 +184,10 @@ test("runs GODREJ, RECKITT, and CUSSONS Pembelian reconciliation, resets princip
   await page.getByLabel("Rincian Faktur Penjualan (Accurate)").setInputFiles(xlsx("accurate-old.xlsx"));
   await page.getByLabel("Sales Detail KINO").setInputFiles(xlsx("kino-old.xlsx"));
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
-  await expect(page.locator('p[role="alert"]')).toHaveText("Kesalahan Faktur lama.");
+  await expect(page.locator('main [role="alert"]')).toHaveText("Kesalahan Faktur lama.");
 
   await types.getByRole("button", { name: "Pembelian" }).click();
-  await expect(page.locator('p[role="alert"]')).toHaveCount(0);
+  await expect(page.locator('main [role="alert"]')).toHaveCount(0);
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByLabel("Prinsipal")).toHaveValue("GODREJ");
@@ -353,9 +353,9 @@ test("runs SHINZUI Return reconciliation with focused issues and export", async 
   await page.getByLabel("Rincian Faktur Penjualan (Accurate)").setInputFiles(xlsx("accurate-old.xlsx"));
   await page.getByLabel("Sales Detail KINO").setInputFiles(xlsx("kino-old.xlsx"));
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
-  await expect(page.locator('p[role="alert"]')).toHaveText("Kesalahan Faktur lama.");
+  await expect(page.locator('main [role="alert"]')).toHaveText("Kesalahan Faktur lama.");
   await page.getByRole("button", { name: "Return" }).click();
-  await expect(page.locator('p[role="alert"]')).toHaveCount(0);
+  await expect(page.locator('main [role="alert"]')).toHaveCount(0);
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
   await expect(page.getByLabel("Ringkasan hasil")).toHaveCount(0);
   await expect(page.getByLabel("Prinsipal")).toHaveValue("SHINZUI");
@@ -524,11 +524,11 @@ test("runs KINO, GODREJ, and CUSSONS Return reconciliation and resets when switc
   await page.getByLabel("Retur Penjualan (Accurate)").setInputFiles(xlsx("accurate-kino-error.xlsx"));
   await page.getByLabel("Sales Detail KINO").setInputFiles(xlsx("kino-error.xlsx"));
   await page.getByRole("button", { name: "Jalankan rekonsiliasi" }).click();
-  await expect(page.locator('p[role="alert"]')).toHaveText("Kesalahan Return KINO lama.");
+  await expect(page.locator('main [role="alert"]')).toHaveText("Kesalahan Return KINO lama.");
   await page.getByLabel("Prinsipal").selectOption("SHINZUI");
   await expect(page.getByLabel("PenjualanInvoice SHINZUI")).toBeVisible();
   await expect(page.getByText("Belum ada file dipilih")).toHaveCount(2);
-  await expect(page.locator('p[role="alert"]')).toHaveCount(0);
+  await expect(page.locator('main [role="alert"]')).toHaveCount(0);
 
   await page.getByLabel("Prinsipal").selectOption("GODREJ");
   await expect(
