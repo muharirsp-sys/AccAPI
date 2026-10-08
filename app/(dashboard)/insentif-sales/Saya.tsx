@@ -36,6 +36,8 @@ export default function Saya({ permKeys }: { permKeys: string[] }) {
     const perms = useMemo(() => new Set(permKeys), [permKeys]);
     const terlihat = halamanTerlihat(perms);
     const tg = getPeriodWorkdayProgress(year, month);
+    const now = new Date();
+    const berjalan = year * 12 + month >= now.getFullYear() * 12 + now.getMonth() + 1;
     const d = kini.data;
     const identitas = d?.cakupan.identitas ?? null;
     const sales = identitas?.role === "sales";
@@ -68,6 +70,9 @@ export default function Saya({ permKeys }: { permKeys: string[] }) {
             <>
                 <div className="fi-kcards">
                     <div className="fi-kc"><span>Time Gone</span><b>{tg.pct}%</b><small>{tg.passed} dari {tg.total} hari kerja</small></div>
+                    {/* Owner 8 Okt: yang sudah mencapai ambang langsung terhitung walau nilainya masih bisa berubah. */}
+                    <div className="fi-kc"><span>{berjalan ? "Insentif sementara" : "Insentif"}</span><b>{formatRp(rows.reduce((a, r) => a + r.incentive.total, 0))}</b>
+                        <small>{berjalan ? "bila ditutup hari ini · bisa berubah setiap hari sampai akhir bulan" : "bruto, sebelum PPh"}</small></div>
                 </div>
                 <CatatanTimeGone tg={tg} label={label} />
                 <Section title={`Capaian ${label}`} subtitle="dihitung untuk insentif">
@@ -141,7 +146,7 @@ function CaraDihitung({ rows }: { rows: ApiRow[] }) {
         ...(gt ? [
             `Jatah ${formatRp(k.gt.pool1)} untuk satu principal; sales mix ${formatRp(k.gt.mix2)}–${formatRp(k.gt.mix5)} menurut jumlah principal. `
             + `Aktif Outlet ${p(k.gt.bobotAo)} + Value ${p(k.gt.bobotValue)}.`,
-            `Masing-masing minimal ${p(k.gt.ambangBayar)} di akhir bulan: ${p(k.gt.ambangBayar)}–100% dibayar sesuai capaian; di atas 100% dibayar penuh.`,
+            `Masing-masing minimal ${p(k.gt.ambangBayar)}: ${p(k.gt.ambangBayar)}–100% dibayar sesuai capaian; di atas 100% dibayar penuh.`,
         ] : []),
         ...(mt ? [
             `MT: Value ${formatRp(k.mt.bobotValue)}, Effective Call ${formatRp(k.mt.bobotEc)}, Aktif Outlet ${formatRp(k.mt.bobotAo)}, Item Aktif ${formatRp(k.mt.bobotIa)}.`,

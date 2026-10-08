@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { Button, KeyValues, ListItem, MessageStrip, ResponsiveTable, Section, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { OPSI_TAHAP, PREDIKAT, opsiPrincipal, tahapBatch, type BatchOpc } from "@/lib/opc-ui";
+import { alasanTutupPeriode } from "@/lib/off-program-control/access";
 import { rupiah } from "@/lib/promo-ui";
 import { tulisOpc, type PeranProps } from "../Bersama";
 
@@ -113,7 +114,9 @@ export function BagianPeriode({ ctx, daftar, periode }: PeranProps & { periode: 
     const [pesan, setPesan] = useState<{ judul: string; isi: string } | null>(null);
 
     const kini = ringkasPeriode(batches, pilihan.principal, pilihan.bulan ?? "", pilihan.tahun ?? "");
-    const { opsi, principal, bulan, tahun, namaPrincipal, labelPeriode, target, banding, refundTertunda, alasanTutup } = kini;
+    const { opsi, principal, bulan, tahun, namaPrincipal, labelPeriode, target, banding, refundTertunda } = kini;
+    // Izin grup lebih dulu (owner 8 Okt: bukan untuk OM), lalu syarat data kode lama.
+    const alasanTutup = alasanTutupPeriode(ctx.perms) ?? kini.alasanTutup;
     const status = sesi[kini.kunci];
     const ditutup = status?.status === "Ditutup" || status?.status === "Dikunci";
     // Buka kunci hanya admin (canUnlock kode lama 1953) dan hanya setelah periode ditutup di sesi ini (isPeriodClosed 1962).

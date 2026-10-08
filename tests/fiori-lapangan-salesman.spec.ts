@@ -632,6 +632,109 @@ test("Order Sales (P1): jawaban tidak pasti menahan Kirim → tepat 1 POST; Kiri
     await expect(kirim).toBeEnabled();
 });
 
+test("Order Sales (owner 8 Okt): draf di ponsel — muat ulang menawarkan Pulihkan/Buang, kiriman belum pasti tetap menahan Kirim, terkirim = draf hilang", async ({ page }) => {
+    const opsi = { postTidakPasti: true };
+    const m = await mockOrder(page, opsi);
+    // Muat ulang memicu peringatan "perubahan belum disimpan" (beforeunload) — diterima; dialog peramban lain tetap galat.
+    page.removeAllListeners("dialog");
+    page.on("dialog", (d) => { if (d.type() !== "beforeunload") throw new Error(`window.${d.type()} masih dipakai: ${d.message()}`); return d.accept(); });
+    const drafPonsel = () => page.evaluate(() => Object.keys(localStorage).find((k) => k.startsWith("accapi.order-sales.draf.v1")) ?? null);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/sales", NAV);
+    const main = page.locator("main");
+    const tawaran = main.getByRole("status").filter({ hasText: "Ada draf order di ponsel ini." });
+    await main.getByLabel("Kode pelanggan Accurate").fill("C-01");
+    await expect(main.getByLabel("Channel")).toHaveValue("GT", NAV);
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await b1.getByLabel("Kode barang").fill("A-1");
+    await b1.locator("select").selectOption("KRT");
+    await b1.getByLabel("Jumlah").fill("2");
+    await expect(main.getByText("tersimpan sebagai draf di ponsel ini, belum di server")).toBeVisible();
+
+    // Muat ulang: tidak dipulihkan diam-diam; Pulihkan mengembalikan isian (tanggal tetap hari ini).
+    await page.reload(NAV);
+    await expect(tawaran).toContainText("C-01 · TOKO A · 1 barang", NAV);
+    await expect(main.getByLabel("Kode pelanggan Accurate")).toHaveValue("");
+    await tawaran.getByRole("button", { name: "Pulihkan draf" }).click();
+    await expect(tawaran).toBeHidden();
+    await expect(main.getByLabel("Kode pelanggan Accurate")).toHaveValue("C-01");
+    await expect(b1.getByLabel("Kode barang")).toHaveValue("A-1");
+    await expect(b1.getByLabel("Jumlah")).toHaveValue("2");
+    await expect(main.getByLabel("Channel")).toHaveValue("GT");
+
+    // Kiriman tidak pasti → draf menyimpan tandanya; setelah dipulihkan Kirim tetap tertahan (tidak ada POST kedua).
+    const kirim = main.getByRole("button", { name: "Kirim order…" });
+    await kirim.click();
+    await page.getByRole("dialog").getByRole("button", { name: "Kirim order" }).click();
+    await expect(main.getByRole("status").filter({ hasText: "Hasil kirim belum pasti." })).toBeVisible();
+    await page.reload(NAV);
+    await expect(tawaran).toContainText("Kiriman terakhirnya belum pasti", NAV);
+    await tawaran.getByRole("button", { name: "Pulihkan draf" }).click();
+    await expect(kirim).toBeDisabled();
+    await expect(kirim).toHaveAttribute("title", "Periksa Order saya dulu — order terakhir mungkin sudah masuk");
+    expect(m.kirim).toHaveLength(1);
+
+    // Terkirim → draf dihapus dari ponsel; muat ulang tidak menawarkan apa pun.
+    opsi.postTidakPasti = false;
+    await b1.getByLabel("Jumlah").fill("3");
+    await kirim.click();
+    await page.getByRole("dialog").getByRole("button", { name: "Kirim order" }).click();
+    await expect(main.getByRole("status").filter({ hasText: "Order terkirim" })).toBeVisible();
+    expect(m.kirim).toHaveLength(2);
+    expect(await drafPonsel()).toBeNull();
+    await page.reload(NAV);
+    await expect(main.getByRole("heading", { name: "Order Sales" })).toBeVisible(NAV);
+    await expect(tawaran).toHaveCount(0);
+
+    // Buang lewat dialog.
+    await b1.getByLabel("Kode barang").fill("A-1");
+    await page.reload(NAV);
+    await tawaran.getByRole("button", { name: "Buang…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Buang draf" }).click();
+    await expect(tawaran).toBeHidden();
+    expect(await drafPonsel()).toBeNull();
+});
+
+test("Order Sales (peninjau): kirim terputus tanpa jawaban → draf menahan Kirim; ketukan pertama tidak menghapus draf; draf akun lain tidak ditawarkan", async ({ page }) => {
+    await mockOrder(page, {});
+    let post = 0;
+    await page.route((u) => u.host === "localhost:8000" && u.pathname === "/websales/orders", (r) => {
+        if (r.request().method() !== "POST") return r.fallback();
+        post++;
+        return new Promise<void>(() => {}); // server menyimpan, jawabannya tidak pernah sampai
+    });
+    page.removeAllListeners("dialog");
+    page.on("dialog", (d) => { if (d.type() !== "beforeunload") throw new Error(`window.${d.type()} masih dipakai: ${d.message()}`); return d.accept(); });
+    await page.addInitScript(() => localStorage.setItem("accapi.order-sales.draf.v1.akun-lain",
+        JSON.stringify({ customerNo: "C-09", outlet: "TOKO LAIN", note: "", lines: [{ code: "A-1", unit: "KRT", quantity: "1" }], tidakPasti: "", disimpan: "" })));
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/sales", NAV);
+    const main = page.locator("main");
+    const tawaran = main.getByRole("status").filter({ hasText: "Ada draf order di ponsel ini." });
+    await expect(main.getByRole("heading", { name: "Order Sales" })).toBeVisible(NAV);
+    await expect(tawaran).toHaveCount(0); // draf akun lain di ponsel yang sama tidak ditawarkan
+
+    await main.getByLabel("Kode pelanggan Accurate").fill("C-01");
+    await expect(main.getByLabel("Channel")).toHaveValue("GT", NAV);
+    const b1 = main.getByRole("listitem", { name: "Barang 1" });
+    await b1.getByLabel("Kode barang").fill("A-1");
+    await b1.locator("select").selectOption("KRT");
+    await main.getByRole("button", { name: "Kirim order…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Kirim order" }).click();
+    await expect.poll(() => post).toBe(1);
+    await page.reload(NAV); // halaman ditinggalkan sebelum jawaban datang
+    await expect(tawaran).toContainText("Kiriman terakhirnya belum pasti", NAV);
+
+    // Mengetik kode pelanggan (belum ada barang) menutup tawaran tetapi tidak menghapus draf yang belum diputuskan.
+    await main.getByLabel("Kode pelanggan Accurate").fill("C-02");
+    await expect(tawaran).toBeHidden();
+    await page.reload(NAV);
+    await tawaran.getByRole("button", { name: "Pulihkan draf" }).click();
+    await expect(main.getByLabel("Kode pelanggan Accurate")).toHaveValue("C-01");
+    await expect(main.getByRole("button", { name: "Kirim order…" })).toBeDisabled();
+    expect(post).toBe(1);
+});
+
 test.describe("ponsel 390 px (layar sentuh)", () => {
     test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 

@@ -22,6 +22,7 @@ import { Button, EmptyState, ErrorState, ListItem, MessageStrip, Section, Skelet
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import { type Scope, type AoRow, PRINCIPLES, compareRoute, hariIniWita, jamWita, useIzinFk, visitDurationMin } from "../shared";
+import { adaHasilKunjungan, statusBintang } from "@/lib/form-kontrol/constants";
 import { bacaFk, keBarisRute, kirimFk, simpanRute, useHariBeku } from "../lapangan";
 
 type Saring = "semua" | "belum" | "tidak" | "perhatian";
@@ -49,11 +50,11 @@ function metaToko(r: AoRow): string {
     return bagian.join(" · ");
 }
 
-/** Toggle bintang = rumus kode lama; membatalkan bintang yang dipasang sesi ini mengembalikan baris semula. */
-const bintang = (r: AoRow): AoRow => ({
-    ...r, isPriority: !r.isPriority,
-    status: (!r.isPriority ? "priority" : r.status === "priority" ? "not_order" : r.status) as AoRow["status"],
-});
+/** Toggle bintang (lib/form-kontrol statusBintang); membatalkan bintang yang dipasang sesi ini mengembalikan baris semula. */
+const bintang = (r: AoRow): AoRow => {
+    const status = statusBintang(r.status);
+    return { ...r, status, isPriority: status === "priority" };
+};
 
 /**
  * Baris yang dikirim = bacaan TERBARU server; tanda bintang sesi ini ditimpakan hanya bila status toko itu tidak berubah sejak layar
@@ -221,10 +222,11 @@ export default function TabAo({ scope }: { scope: Scope }) {
                             {shown.map((r) => {
                                 const b = badgeToko(r);
                                 const q = new URLSearchParams({ salesCode: r.salesCode, principle, date: tanggal });
+                                const alasanBintang = bukanPemilik ?? (adaHasilKunjungan(r.status) ? "Toko ini sudah punya hasil kunjungan" : undefined);
                                 return (
                                     <li key={r.id ?? r.custCode} className="fi-wl-row" style={{ gridTemplateColumns: "auto minmax(0,1fr)", paddingLeft: 4 }}>
                                         <Button variant="icon" aria-pressed={r.isPriority} aria-label={`Prioritas ${r.custName}`} title="Tandai prioritas"
-                                            disabled={Boolean(bukanPemilik)} disabledReason={bukanPemilik} onClick={() => tandai(r)}>
+                                            disabled={Boolean(alasanBintang)} disabledReason={alasanBintang} onClick={() => tandai(r)}>
                                             <Star className="fi-icon" aria-hidden style={r.isPriority ? { fill: "var(--warn-solid)", color: "var(--warn-solid)" } : undefined} />
                                         </Button>
                                         <ListItem href={`/form-kontrol/visit/${encodeURIComponent(r.custCode)}?${q}`} doc={r.custCode} title={r.custName}

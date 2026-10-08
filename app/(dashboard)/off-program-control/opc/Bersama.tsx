@@ -11,7 +11,7 @@
  * ═══ KONTRAK UNTUK AGEN PERAN (berkas ini, ObjectPageBatch.tsx, OpcApp.tsx, lib/opc-ui.ts = BERSAMA; JANGAN diubah) ═══
  *
  * 1. Modul peran = `opc/peran/<Nama>.tsx`, `export default function X(props: PeranProps)`. PeranProps = { ctx, daftar }:
- *    - ctx: OpcKonteks — peran (OffRole kode lama), perms (izin grup akses dari server; info D-17, BUKAN penentu tombol),
+ *    - ctx: OpcKonteks — peran (OffRole kode lama), perms (izin grup akses dari server; info D-17, BUKAN penentu tombol — kecuali Tutup periode, lihat alasanTutupPeriode),
  *      pengguna {id,nama}, tab, sub (claimView/view ter-normalisasi), batchId (`?batch=`), devBatchCount (`?mock=`),
  *      izin(aksi) → alasan nonaktif | undefined (= canPerformOffAction kode lama, matriks D-01 belum berubah), bukaBatch(id|null),
  *      pilihSub(kunci|null), ubahUrl({kunci: nilai|null}), setDraf(boolean).
