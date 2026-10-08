@@ -1,175 +1,232 @@
+/*
+ * Tujuan: "Toko tidak order" (Fiori S5, it05, ponsel dulu): toko berstatus tidak order pada tanggal rute, alasan R01–R14 + catatan
+ *   per toko, disimpan per baris; galat muat ≠ kosong.
+ * Caller: form-kontrol/page.tsx (shell tab, default export `({ scope })`).
+ * Dependensi: GET /api/form-kontrol/ao-control + /reasons, POST /api/form-kontrol/ao-control; ../shared (Scope, AoRow, Reason,
+ *   PRINCIPLES, hariIniWita); ../lapangan (bacaFk, kirimFk, keBarisRute); components/fiori/*; lib/rekapan-nota/ui (tanggalPanjang).
+ * Main Functions: TabNoOrder.
+ * Side Effects: HTTP GET; POST ao-control (status not_order + alasan) per toko — payload sama dengan kode lama.
+ */
 "use client";
 
-// Kontrol Toko Tidak Order — kartu mobile-first konsisten dengan TabAo.
-// Setiap toko = kartu dengan border-l-rose-500, form alasan di-stack vertikal,
-// tap target min-h-[44px] pada select/input/button.
+import { useCallback, useId, useMemo, useState, type ReactNode } from "react";
+import { CalendarDays, RefreshCw, Save } from "lucide-react";
+import { Button, EmptyState, ErrorState, MessageStrip, Section, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
+import { FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
+import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
+import { type Scope, type AoRow, type Reason, PRINCIPLES, useIzinFk } from "../shared";
+import { bacaFk, keBarisRute, kirimFk, useHariBeku } from "../lapangan";
 
-import { useCallback, useEffect, useState } from "react";
-import { XCircle, Filter, AlertTriangle, Loader2, RefreshCw, Save, CheckCircle2 } from "lucide-react";
-import { toast } from "sonner";
-import { type Scope, type AoRow, type Reason, PRINCIPLES, SectionTitle } from "../shared";
+type Alasan = { reasonCode: string; note: string };
+type Data = { rows: AoRow[]; reasons: Reason[] };
+type Isian = { dari?: Data; ubah: Record<string, Alasan>; simpan: Record<string, Alasan> };
+
+/** Isian milik data yang sedang tampil; data baru (muat ulang) = isian kosong. */
+const dasar = (i: Isian, data: Data | undefined): Isian => (data && i.dari === data ? i : { dari: data, ubah: {}, simpan: {} });
+const tersimpanDi = (i: Isian, r: AoRow): Alasan => i.simpan[r.custCode] ?? { reasonCode: r.noOrderReasonCode ?? "", note: r.noOrderNote ?? "" };
 
 export default function TabNoOrder({ scope }: { scope: Scope }) {
-    const [rows, setRows] = useState<AoRow[]>([]);
-    const [reasons, setReasons] = useState<Reason[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [edits, setEdits] = useState<Record<string, { reasonCode: string; note: string }>>({});
-    const [saving, setSaving] = useState<string | null>(null);
-    const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
-    const [selectedPrinciple, setSelectedPrinciple] = useState(PRINCIPLES[0]);
-    const [selectedSalesCode, setSelectedSalesCode] = useState(scope.salesCode ?? "");
+    const judulId = useId();
+    const salesman = Boolean(scope.salesCode);
+    const tim = scope.allowedSalesCodes;
+    // Salesman: hari ini WITA dibekukan saat layar dibuka (lewat 00.00 isian tidak hilang; strip menawarkan hari baru).
+    const beku = useHariBeku();
+    const [tanggalPilih, setTanggalPilih] = useState(beku.hari);
+    const tanggal = salesman ? beku.hari : tanggalPilih;
+    const [principle, setPrinciple] = useState(scope.principle ?? PRINCIPLES[0]);
+    const [salesCode, setSalesCode] = useState(scope.salesCode ?? "");
+    const tanpaIzin = useIzinFk("submit");
 
-    const load = useCallback(async () => {
-        setLoading(true);
+    const loader = useCallback(async (): Promise<Load<Data>> => {
+        if (!salesCode) return { status: "siap", data: { rows: [], reasons: [] } };
+        const p = new URLSearchParams({ date: tanggal, principle });
+        p.set("salesCode", salesCode);
+        const [ao, alasan] = await Promise.all([
+            bacaFk(`/api/form-kontrol/ao-control?${p}`, (d) => keBarisRute(d.rows, principle).filter((r) => r.status === "not_order")),
+            bacaFk("/api/form-kontrol/reasons", (d) => (Array.isArray(d.rows) ? d.rows : []) as Reason[]),
+        ]);
+        if (ao.status !== "siap") return { status: "galat", error: `Toko tidak order gagal dimuat. ${ao.error ?? ""}`.trim() };
+        if (alasan.status !== "siap") return { status: "galat", error: `Daftar alasan gagal dimuat. ${alasan.error ?? ""}`.trim() };
+        return { status: "siap", data: { rows: ao.data!, reasons: alasan.data! } };
+    }, [tanggal, principle, salesCode]);
+    const [load, muatUlang] = useLoad(loader);
+    const data = load.data;
+
+    // Isian per toko + alasan yang sudah tersimpan sesi ini; keduanya kembali ke data server saat data dimuat ulang.
+    // Semua pembaruan lewat setter fungsional dari state TERBARU (bukan `sesi` hasil render): simpan toko A yang selesai sesudah await
+    // tidak boleh membuang ketikan toko B yang diisi selama menunggu (temuan peninjau P2).
+    const [isian, setIsian] = useState<Isian>({ ubah: {}, simpan: {} });
+    const sesi = useMemo(() => dasar(isian, data), [data, isian]);
+    const [menyimpan, setMenyimpan] = useState<string | null>(null);
+    const [galat, setGalat] = useState<Record<string, string>>({});
+
+    const tersimpan = (r: AoRow): Alasan => tersimpanDi(sesi, r);
+    const nilai = (r: AoRow): Alasan => sesi.ubah[r.custCode] ?? tersimpan(r);
+    const berubah = (r: AoRow) => { const a = nilai(r), b = tersimpan(r); return a.reasonCode !== b.reasonCode || a.note !== b.note; };
+    const rows = data?.rows ?? [];
+    const nDraf = rows.filter(berubah).length;
+    const tanpaAlasan = rows.filter((r) => !tersimpan(r).reasonCode).length;
+    useUnsavedGuard(nDraf > 0);
+
+    const ketik = (cust: string, patch: Partial<Alasan>, r: AoRow) => {
+        setGalat((g) => ({ ...g, [cust]: "" }));
+        setIsian((prev) => {
+            const b = dasar(prev, data);
+            return { ...b, ubah: { ...b.ubah, [cust]: { ...(b.ubah[cust] ?? tersimpanDi(b, r)), ...patch } } };
+        });
+    };
+
+    async function simpan(r: AoRow) {
+        const a = nilai(r);
+        if (!a.reasonCode || menyimpan) return;
+        setMenyimpan(r.custCode);
+        setGalat((g) => ({ ...g, [r.custCode]: "" }));
         try {
-            const p = new URLSearchParams({ date: selectedDate, principle: selectedPrinciple });
-            if (selectedSalesCode) p.set("salesCode", selectedSalesCode);
-            const [aoRes, reasonRes] = await Promise.all([
-                fetch(`/api/form-kontrol/ao-control?${p}`),
-                fetch("/api/form-kontrol/reasons"),
-            ]);
-            const [aoData, reasonData] = await Promise.all([aoRes.json(), reasonRes.json()]);
-            const allRows: AoRow[] = (aoData.rows ?? []).map((r: Record<string, unknown>) => ({
-                id: r.id as string,
-                salesCode: r.salesCode as string,
-                custCode: r.custCode as string,
-                custName: r.custName as string,
-                principle: (r.principle as string) ?? selectedPrinciple,
-                status: ((r.aoStatus ?? "not_visited") as AoRow["status"]),
-                orderValueDpp: 0,
-                isPriority: r.aoStatus === "priority",
-                noOrderReasonCode: r.noOrderReasonCode as string | undefined,
-                noOrderNote: r.noOrderNote as string | undefined,
-                monthlyOrderCount: 0,
-                needsAttention: false,
-            }));
-            const noOrderRows = allRows.filter(r => r.status === "not_order");
-            setRows(noOrderRows);
-            setReasons(reasonData.rows ?? []);
-            const init: Record<string, { reasonCode: string; note: string }> = {};
-            noOrderRows.forEach(r => { init[r.custCode] = { reasonCode: r.noOrderReasonCode ?? "", note: r.noOrderNote ?? "" }; });
-            setEdits(init);
-        } catch { toast.error("Gagal memuat data toko tidak order"); }
-        finally { setLoading(false); }
-    }, [selectedDate, selectedPrinciple, selectedSalesCode]);
-
-    useEffect(() => { load(); }, [load]);
-
-    async function handleSave(custCode: string) {
-        const edit = edits[custCode];
-        if (!edit?.reasonCode) { toast.error("Pilih alasan terlebih dahulu"); return; }
-        const row = rows.find(r => r.custCode === custCode);
-        if (!row) return;
-        setSaving(custCode);
-        try {
-            const res = await fetch("/api/form-kontrol/ao-control", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    salesCode: row.salesCode,
-                    custCode,
-                    principle: selectedPrinciple,
-                    date: selectedDate,
-                    status: "not_order",
-                    noOrderReasonCode: edit.reasonCode,
-                    noOrderNote: edit.note,
-                }),
+            await kirimFk("/api/form-kontrol/ao-control", {
+                salesCode: r.salesCode,
+                custCode: r.custCode,
+                principle,
+                date: tanggal,
+                status: "not_order",
+                noOrderReasonCode: a.reasonCode,
+                noOrderNote: a.note,
+            }, { ulangAman: true });
+            setIsian((prev) => {
+                const b = dasar(prev, data);
+                const ubah = { ...b.ubah };
+                // Isian toko ini yang diubah lagi selama menunggu tetap jadi draf; yang sama dengan kiriman dibersihkan.
+                const kini = ubah[r.custCode];
+                if (kini && kini.reasonCode === a.reasonCode && kini.note === a.note) delete ubah[r.custCode];
+                return { ...b, ubah, simpan: { ...b.simpan, [r.custCode]: a } };
             });
-            if (!res.ok) throw new Error("Gagal menyimpan");
-            toast.success("Alasan berhasil disimpan");
-        } catch (err: unknown) {
-            toast.error(err instanceof Error ? err.message : "Gagal menyimpan");
-        } finally { setSaving(null); }
+        } catch (e) {
+            setGalat((g) => ({ ...g, [r.custCode]: `Alasan belum tersimpan. ${e instanceof Error ? e.message : ""}`.trim() }));
+        } finally {
+            setMenyimpan(null);
+        }
     }
 
-    const missingReason = rows.filter(r => !edits[r.custCode]?.reasonCode).length;
+    let isi: ReactNode;
+    if (!salesCode) {
+        isi = tim === null ? <EmptyState title="Isi kode salesman" message="Toko tidak order tampil per salesman." />
+            : tim.length === 0 ? <EmptyState title="Belum ada salesman di tim Anda" message="Salesman muncul setelah Admin Sales mengisi SPV/SM mereka di Hierarki Sales." />
+                : <EmptyState title="Pilih salesman tim Anda" message="Toko tidak order tampil per salesman." />;
+    } else if (load.status === "galat" && rows.length === 0) {
+        isi = <ErrorState title="Data gagal dimuat" message={`${load.error} Ini bukan daftar kosong.`} onRetry={muatUlang} />;
+    } else if (!data) {
+        isi = <Skeleton rows={4} label="Memuat toko tidak order" />;
+    } else if (rows.length === 0) {
+        isi = <EmptyState title="Tidak ada toko berstatus tidak order" message={`Belum ada toko ${principle} yang dicatat tidak order untuk ${tanggalPanjang(tanggal)}.`} />;
+    } else {
+        isi = (
+            <div className={load.status === "memuat" ? "fi-busy grid gap-4" : "grid gap-4"} aria-busy={load.status === "memuat" || undefined}>
+                {load.status === "galat" && (
+                    <MessageStrip tone="neg" title="Gagal memuat ulang.">
+                        {load.error} Yang tampil adalah hasil sebelumnya.{" "}
+                        <button type="button" className="fi-btn fi-btn--tertiary" onClick={muatUlang}>Coba lagi</button>
+                    </MessageStrip>
+                )}
+                {tanpaAlasan > 0 && <MessageStrip tone="warn" title={`${tanpaAlasan} toko belum punya alasan tersimpan.`}>Setiap toko tidak order wajib beralasan.</MessageStrip>}
+                <Section title="Toko tidak order" subtitle={`${rows.length} toko`}>
+                    <ul aria-label="Toko tidak order" style={{ listStyle: "none", padding: 0 }}>
+                        {rows.map((r) => {
+                            const a = nilai(r);
+                            const draf = berubah(r);
+                            const ada = Boolean(tersimpan(r).reasonCode);
+                            return (
+                                <li key={r.custCode} className="fi-sect-in" style={{ borderBottom: "1px solid var(--line)" }} aria-label={r.custName}>
+                                    <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <div className="min-w-0">
+                                            <b className="fi-title-3" style={{ overflowWrap: "anywhere" }}>{r.custName}</b>
+                                            <span className="fi-sub fi-mono">{r.custCode}</span>
+                                        </div>
+                                        {draf ? <StatusBadge tone="warn">Belum disimpan</StatusBadge>
+                                            : ada ? <StatusBadge tone="pos">Alasan tersimpan</StatusBadge>
+                                                : <StatusBadge tone="neg">Belum ada alasan</StatusBadge>}
+                                    </div>
+                                    <FormField label="Alasan tidak order" required error={!a.reasonCode ? "Pilih alasan" : undefined}>
+                                        {(f) => (
+                                            <select {...f} className="fi-input" value={a.reasonCode} onChange={(e) => ketik(r.custCode, { reasonCode: e.target.value }, r)}>
+                                                <option value="">Pilih alasan</option>
+                                                {data.reasons.map((x) => <option key={x.reasonCode} value={x.reasonCode}>{x.reasonCode} · {x.label}</option>)}
+                                            </select>
+                                        )}
+                                    </FormField>
+                                    <FormField label="Catatan">
+                                        {(f) => <input {...f} className="fi-input" value={a.note} placeholder="opsional" onChange={(e) => ketik(r.custCode, { note: e.target.value }, r)} />}
+                                    </FormField>
+                                    {galat[r.custCode] && <p className="fi-msg" role="alert">{galat[r.custCode]}</p>}
+                                    <div className="fi-btnrow">
+                                        <Button variant={draf ? "primary" : "secondary"} icon={<Save className="fi-icon" aria-hidden />} busy={menyimpan === r.custCode}
+                                            disabled={Boolean(tanpaIzin) || !a.reasonCode || (menyimpan !== null && menyimpan !== r.custCode)}
+                                            disabledReason={tanpaIzin ?? (!a.reasonCode ? "Pilih alasan dulu" : "Menunggu simpanan lain selesai")}
+                                            onClick={() => void simpan(r)}>Simpan alasan</Button>
+                                    </div>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                </Section>
+            </div>
+        );
+    }
 
     return (
-        <div className="space-y-4">
-            <SectionTitle icon={XCircle} no={3} title="Kontrol Toko Tidak Order"
-                desc="Tidak boleh ada toko tanpa alasan — setiap toko wajib terdokumentasi" />
-
-            <div className="flex flex-wrap items-center gap-2 bg-[#1a1c23]/60 border border-white/10 rounded-xl px-4 py-3">
-                <Filter size={14} className="text-slate-400" />
-                <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
-                    className="bg-black/40 border border-white/10 rounded-lg text-xs text-white px-2 py-1.5" />
-                <select value={selectedPrinciple} onChange={e => setSelectedPrinciple(e.target.value)}
-                    className="bg-black/40 border border-white/10 rounded-lg text-xs text-white px-2 py-1.5">
-                    {PRINCIPLES.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
-                {scope.allowedSalesCodes === null && (
-                    <input value={selectedSalesCode} onChange={e => setSelectedSalesCode(e.target.value)}
-                        placeholder="Kode Sales..." className="bg-black/40 border border-white/10 rounded-lg text-xs text-white px-2 py-1.5 w-32" />
-                )}
-                <button onClick={load} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-2 py-1.5 ml-auto">
-                    <RefreshCw size={13} /> Refresh
-                </button>
+        <section aria-labelledby={judulId} className="grid gap-4">
+            <div className="grid gap-1">
+                <h2 id={judulId} className="fi-title-2">Toko tidak order</h2>
+                <p className="fi-small fi-muted flex flex-wrap items-center gap-x-2">
+                    <CalendarDays className="fi-icon" aria-hidden /><span>{tanggalPanjang(tanggal)} · WITA</span>
+                    {salesCode && <span>· <span className="fi-mono">{salesCode}</span> · {principle}</span>}
+                </p>
+                <p className="fi-small fi-muted">Tidak boleh ada toko tanpa alasan — setiap toko tidak order wajib terdokumentasi.</p>
             </div>
-
-            {!loading && missingReason > 0 && (
-                <div className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/30 rounded-lg px-4 py-2.5 text-rose-400 text-sm">
-                    <AlertTriangle size={15} />
-                    {missingReason} toko belum memiliki alasan
-                </div>
+            <div className="fi-formgrid">
+                <FormField label="Principal">
+                    {(a) => (
+                        <select {...a} className="fi-input" value={principle} onChange={(e) => setPrinciple(e.target.value)}>
+                            {PRINCIPLES.map((p) => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                    )}
+                </FormField>
+                {!salesman && tim === null && (
+                    <FormField label="Kode salesman">
+                        {(a) => <input {...a} className="fi-input fi-mono" value={salesCode} placeholder="mis. S01" onChange={(e) => setSalesCode(e.target.value)} />}
+                    </FormField>
+                )}
+                {!salesman && tim !== null && tim.length > 0 && (
+                    <FormField label="Salesman tim">
+                        {(a) => (
+                            <select {...a} className="fi-input" value={salesCode} onChange={(e) => setSalesCode(e.target.value)}>
+                                <option value="">Pilih salesman</option>
+                                {tim.map((c) => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                        )}
+                    </FormField>
+                )}
+                {!salesman && (
+                    <FormField label="Tanggal">
+                        {(a) => <input {...a} type="date" className="fi-input" value={tanggalPilih} onChange={(e) => { if (e.target.value) setTanggalPilih(e.target.value); }} />}
+                    </FormField>
+                )}
+                {salesCode && (
+                    <div className="flex items-end">
+                        <Button icon={<RefreshCw className="fi-icon" aria-hidden />} onClick={muatUlang} busy={load.status === "memuat" && Boolean(data)}>Muat ulang</Button>
+                    </div>
+                )}
+            </div>
+            {salesman && beku.berganti && (
+                <MessageStrip tone="warn" title="Tanggal sudah berganti.">
+                    Toko dan isian yang tampil masih untuk {tanggalPanjang(tanggal)}; tidak ada yang dibuang.{" "}
+                    <button type="button" className="fi-btn fi-btn--tertiary" onClick={beku.pakaiHariBaru}>Muat {tanggalPanjang(beku.hariBaru)}</button>
+                </MessageStrip>
             )}
-
-            {loading ? (
-                <div className="flex items-center justify-center py-12 text-slate-400 gap-2">
-                    <Loader2 size={18} className="animate-spin" /> Memuat...
-                </div>
-            ) : rows.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-slate-500 gap-2 bg-[#1a1c23]/60 border border-white/10 rounded-xl">
-                    <CheckCircle2 size={32} className="opacity-30 text-emerald-500" />
-                    <p className="text-sm">Semua toko sudah order hari ini!</p>
-                </div>
-            ) : (
-                <div className="space-y-2">
-                    {rows.map(r => {
-                        const saved = !!edits[r.custCode]?.reasonCode;
-                        return (
-                            <div key={r.custCode}
-                                className="rounded-xl border border-white/10 border-l-4 border-l-rose-500 bg-[#1a1c23]/60 px-4 py-3 space-y-3">
-                                {/* Toko header */}
-                                <div className="flex items-start gap-2">
-                                    <XCircle size={15} className="text-rose-400 shrink-0 mt-0.5" />
-                                    <div className="flex-1 min-w-0">
-                                        <p className="text-base font-semibold text-white truncate">{r.custName}</p>
-                                        <p className="text-xs font-mono text-slate-500">{r.custCode} · {r.principle}</p>
-                                    </div>
-                                    {saved && (
-                                        <span className="shrink-0 text-xs bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-md">
-                                            Tersimpan
-                                        </span>
-                                    )}
-                                </div>
-                                {/* Form stacked */}
-                                <select
-                                    value={edits[r.custCode]?.reasonCode ?? ""}
-                                    onChange={e => setEdits(prev => ({ ...prev, [r.custCode]: { ...prev[r.custCode], reasonCode: e.target.value } }))}
-                                    className={`w-full bg-black/40 border rounded-lg text-sm text-white px-3 py-2.5 min-h-[44px] ${!edits[r.custCode]?.reasonCode ? "border-rose-500/50" : "border-white/10"}`}
-                                >
-                                    <option value="">— Pilih Alasan (Wajib) —</option>
-                                    {reasons.map(reason => (
-                                        <option key={reason.reasonCode} value={reason.reasonCode}>[{reason.category}] {reason.label}</option>
-                                    ))}
-                                </select>
-                                <input
-                                    value={edits[r.custCode]?.note ?? ""}
-                                    onChange={e => setEdits(prev => ({ ...prev, [r.custCode]: { ...prev[r.custCode], note: e.target.value } }))}
-                                    placeholder="Catatan tambahan..."
-                                    className="w-full bg-black/40 border border-white/10 rounded-lg text-sm text-white px-3 py-2.5 min-h-[44px] placeholder-slate-500"
-                                />
-                                <div className="flex justify-end">
-                                    <button onClick={() => handleSave(r.custCode)} disabled={saving === r.custCode}
-                                        className="flex items-center gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg font-semibold min-h-[44px]">
-                                        {saving === r.custCode ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Simpan
-                                    </button>
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-            )}
-        </div>
+            {nDraf > 0 && <p className="fi-draft" role="status">{nDraf} alasan belum disimpan.</p>}
+            {isi}
+            <VariantNote bl="Toko tutup">
+                “Toko tutup” belum menjadi kode alasan sendiri (jawaban owner 7 Okt); sementara pilih R14 Lainnya dan tulis “toko tutup” di catatan.
+                Usulan: kode alasan baru di daftar alasan dan laporan.
+            </VariantNote>
+        </section>
     );
 }
