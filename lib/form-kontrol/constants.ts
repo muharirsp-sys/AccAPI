@@ -13,7 +13,26 @@ export const NO_ORDER_REASONS = [
     { id: "R12", reasonCode: "R12", label: "SKU terbatas",                    category: "produk",  sortOrder: 12, isActive: true },
     { id: "R13", reasonCode: "R13", label: "Prioritas toko rendah",           category: "proses",  sortOrder: 13, isActive: true },
     { id: "R14", reasonCode: "R14", label: "Lainnya",                         category: "lainnya", sortOrder: 14, isActive: true },
+    // S5-2 (owner 8 Okt): toko tutup → foto bukti (check-out) wajib, tanpa merchandising & tanpa order.
+    { id: "R15", reasonCode: "R15", label: "Toko tutup",                      category: "kunjungan", sortOrder: 15, isActive: true },
 ] as const;
+
+export const TOKO_TUTUP_CODE = "R15";
+
+/**
+ * #21: status not_order wajib membawa kode alasan aktif (code sudah dipangkas; kosong = null).
+ * Kirim ulang baris yang di DB sudah not_order dengan kode sama (Submit AO lama mengirim semua baris) tetap lolos.
+ */
+export function validateNoOrderReason(
+    status: string, code: string | null, activeCodes: readonly string[],
+    existing?: { status: string; noOrderReasonCode: string | null } | null,
+): string | null {
+    if (status !== "not_order") return null;
+    if (existing?.status === "not_order" && (existing.noOrderReasonCode ?? null) === code) return null;
+    if (!code) return "Alasan tidak order wajib dipilih.";
+    if (!activeCodes.includes(code)) return `Kode alasan tidak order "${code}" tidak aktif atau tidak dikenal.`;
+    return null;
+}
 
 export const PRINCIPLES = ["GODREJ", "MONTISS", "MUSTIKA RATU", "SOFTEX"] as const;
 export const HARI_KUNJUNGAN = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"] as const;

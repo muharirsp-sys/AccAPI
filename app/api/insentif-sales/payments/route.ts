@@ -13,11 +13,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { incentivePayments, salesTargets } from "@/db/schema";
+import { incentivePayments, kontrolAuditLog, salesTargets } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser, getUserHierarchyIdentity, payeeInScope } from "@/lib/insentif-hierarchy-scope";
 import { parsePayee } from "@/lib/insentif-payee";
 import { isOfficeRow } from "@/lib/insentif-sm-calc";
+import { perubahanLunas, resolvePaidAt } from "@/lib/insentif-payment-date";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
@@ -64,6 +65,8 @@ interface PaymentInput {
     totalIncentive: number;
     paymentStatus?: "belum" | "lunas" | "tunggakan";
     paymentProofUrl?: string;
+    /** "YYYY-MM-DD" tanggal WITA, opsional; hanya dipakai saat paymentStatus "lunas". */
+    paymentDate?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -79,6 +82,11 @@ export async function POST(req: NextRequest) {
 
     if (!body.salesCode || !body.periodMonth || !body.periodYear) {
         return NextResponse.json({ error: "salesCode, periodMonth, periodYear required" }, { status: 400 });
+    }
+    // Periode ikut menentukan batas awal tanggal bayar; bulan -1 atau 13 tidak boleh lolos.
+    if (!Number.isInteger(body.periodMonth) || body.periodMonth < 1 || body.periodMonth > 12
+        || !Number.isInteger(body.periodYear) || body.periodYear < 2020 || body.periodYear > 2100) {
+        return NextResponse.json({ error: "Periode tidak valid (periodMonth 1-12, periodYear 2020-2100)." }, { status: 400 });
     }
     // Nominal adalah uang yang akan dibayarkan — tolak NaN/Infinity/negatif di trust boundary.
     if (!Number.isFinite(Number(body.totalIncentive)) || Number(body.totalIncentive) < 0) {
@@ -145,53 +153,83 @@ export async function POST(req: NextRequest) {
     const actor = gate.session.user.id;
     const actorName = gate.session.user.name ?? null;
     const markingLunas = body.paymentStatus === "lunas";
+    // Tanggal bayar boleh dipilih (owner 8 Okt 2026, S4c-2); tanpa field = hari ini seperti dulu.
+    // Hanya dibaca saat menandai lunas — sama dengan PATCH.
+    const tanggal = resolvePaidAt(body.paymentStatus, body.paymentDate, body, now);
+    if ("error" in tanggal) return NextResponse.json({ error: tanggal.error }, { status: 400 });
+    const paidAt = tanggal.date;
+    const kunci = and(
+        eq(incentivePayments.salesCode, body.salesCode),
+        eq(incentivePayments.principle, body.principle),
+        eq(incentivePayments.periodMonth, body.periodMonth),
+        eq(incentivePayments.periodYear, body.periodYear),
+    );
 
     // Kunci = salesCode + principle + period (mix → 1 payment per principle), ditegakkan oleh
     // uq_incentive_payments_key di DB sejak 2026-08-24. Ini penting justru karena UI menembak
     // satu POST PER BARIS secara paralel (Promise.allSettled di handleMarkLunas): dengan pola
     // SELECT-cek-lalu-INSERT yang lama, dua request untuk key yang sama bisa lolos berbarengan
     // dan menghasilkan DUA baris pembayaran untuk satu orang (audit temuan C2 + H3).
-    const [row] = await db
-        .insert(incentivePayments)
-        .values({
-            id: randomUUID(),
-            salesCode: body.salesCode,
-            salesName: body.salesName,
-            principle: body.principle,
-            branch: body.branch,
-            periodMonth: body.periodMonth,
-            periodYear: body.periodYear,
-            totalIncentive,
-            paymentStatus: body.paymentStatus ?? "belum",
-            paymentProofUrl: body.paymentProofUrl ?? null,
-            paymentDate: markingLunas ? now : null,
-            paidBy: markingLunas ? actor : null,
-            paidByName: markingLunas ? actorName : null,
-            updatedBy: actor,
-            createdAt: now,
-            updatedAt: now,
-        })
-        .onConflictDoUpdate({
-            target: [incentivePayments.salesCode, incentivePayments.principle, incentivePayments.periodMonth, incentivePayments.periodYear],
-            set: {
+    // Transaksi: baris yang SUDAH lunas lalu dilunasi lagi menimpa tanggal/pencatat — nilai lamanya
+    // dicatat di kontrol_audit_log bersama penimpaannya (tinjauan PR #134).
+    const row = await db.transaction(async (tx) => {
+        const [lama] = markingLunas
+            ? await tx.select({
+                paymentStatus: incentivePayments.paymentStatus,
+                paymentDate: incentivePayments.paymentDate,
+                paidBy: incentivePayments.paidBy,
+            }).from(incentivePayments).where(kunci).for("update")
+            : [];
+        const [hasil] = await tx
+            .insert(incentivePayments)
+            .values({
+                id: randomUUID(),
+                salesCode: body.salesCode,
                 salesName: body.salesName,
+                principle: body.principle,
+                branch: body.branch,
+                periodMonth: body.periodMonth,
+                periodYear: body.periodYear,
                 totalIncentive,
-                // HANYA ditimpa kalau memang dikirim. Sebelumnya `?? "belum"` dan `?? null` ada di
-                // dalam blok UPDATE, jadi satu POST tanpa field itu (skrip rekap, retry, pemakaian
-                // ulang endpoint upsert) MERESET baris yang sudah lunas jadi "belum" dan menghapus
-                // bukti bayarnya — uang yang sudah ditransfer muncul kembali sebagai utang
-                // (audit 2026-08-28, M5).
-                ...(body.paymentStatus !== undefined ? { paymentStatus: body.paymentStatus } : {}),
-                ...(body.paymentProofUrl !== undefined ? { paymentProofUrl: body.paymentProofUrl } : {}),
-                // Diisi hanya saat menandai lunas — dulu cabang UPDATE tidak mengisinya sama
-                // sekali (berbeda dari PATCH), jadi pembayaran bisa jadi "lunas" tanpa jejak.
-                ...(markingLunas ? { paymentDate: now, paidBy: actor, paidByName: actorName } : {}),
+                paymentStatus: body.paymentStatus ?? "belum",
+                paymentProofUrl: body.paymentProofUrl ?? null,
+                paymentDate: markingLunas ? paidAt : null,
+                paidBy: markingLunas ? actor : null,
+                paidByName: markingLunas ? actorName : null,
                 updatedBy: actor,
+                createdAt: now,
                 updatedAt: now,
-                // createdAt sengaja TIDAK di-set.
-            },
-        })
-        .returning({ id: incentivePayments.id, createdAt: incentivePayments.createdAt });
+            })
+            .onConflictDoUpdate({
+                target: [incentivePayments.salesCode, incentivePayments.principle, incentivePayments.periodMonth, incentivePayments.periodYear],
+                set: {
+                    salesName: body.salesName,
+                    totalIncentive,
+                    // HANYA ditimpa kalau memang dikirim. Sebelumnya `?? "belum"` dan `?? null` ada di
+                    // dalam blok UPDATE, jadi satu POST tanpa field itu (skrip rekap, retry, pemakaian
+                    // ulang endpoint upsert) MERESET baris yang sudah lunas jadi "belum" dan menghapus
+                    // bukti bayarnya — uang yang sudah ditransfer muncul kembali sebagai utang
+                    // (audit 2026-08-28, M5).
+                    ...(body.paymentStatus !== undefined ? { paymentStatus: body.paymentStatus } : {}),
+                    ...(body.paymentProofUrl !== undefined ? { paymentProofUrl: body.paymentProofUrl } : {}),
+                    // Diisi hanya saat menandai lunas — dulu cabang UPDATE tidak mengisinya sama
+                    // sekali (berbeda dari PATCH), jadi pembayaran bisa jadi "lunas" tanpa jejak.
+                    ...(markingLunas ? { paymentDate: paidAt, paidBy: actor, paidByName: actorName } : {}),
+                    updatedBy: actor,
+                    updatedAt: now,
+                    // createdAt sengaja TIDAK di-set.
+                },
+            })
+            .returning({ id: incentivePayments.id, createdAt: incentivePayments.createdAt });
+        const ubah = markingLunas && paidAt ? perubahanLunas(lama, { paymentDate: paidAt, paidBy: actor }) : null;
+        if (ubah) {
+            await tx.insert(kontrolAuditLog).values({
+                id: randomUUID(), entity: "insentif_sales.payment", entityId: hasil.id, action: "relunas",
+                actorId: actor, actorName, payload: ubah, createdAt: now,
+            });
+        }
+        return hasil;
+    });
 
     const action = row.createdAt.getTime() === now.getTime() ? "created" : "updated";
     return NextResponse.json({ id: row.id, action }, { status: action === "created" ? 201 : 200 });

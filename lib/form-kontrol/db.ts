@@ -231,11 +231,13 @@ export async function getAoForDate(salesCode: string, principle: string, dateStr
 
 // ── Reasons ──────────────────────────────────────────────────────────────────
 
+// ponytail: kode di NO_ORDER_REASONS yang belum ada barisnya di DB (mis. R15 Toko tutup) ikut
+// tampil tanpa migrasi data; baris DB (termasuk yang dinonaktifkan) tetap menang.
 export async function getReasons() {
-    const rows = await db.select().from(noOrderReason)
-        .where(eq(noOrderReason.isActive, true))
-        .orderBy(asc(noOrderReason.sortOrder));
-    return rows.length > 0 ? rows : [...NO_ORDER_REASONS];
+    const rows = await db.select().from(noOrderReason).orderBy(asc(noOrderReason.sortOrder));
+    const inDb = new Set(rows.map((r) => r.reasonCode));
+    return [...rows.filter((r) => r.isActive), ...NO_ORDER_REASONS.filter((r) => !inDb.has(r.reasonCode))]
+        .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
 // ── Merchandising ─────────────────────────────────────────────────────────────
@@ -382,10 +384,13 @@ export async function getReport(salesCode: string, dateStr: string) {
 }
 
 // SPV acknowledge laporan harian salesman. Non-admin: hanya boleh ack anak buahnya
-// (salesProfile.spvName/smName == nama supervisor). Return false jika tak berhak / report belum ada.
+// (salesProfile.spvName/smName == nama supervisor). Return null jika tak berhak / report belum ada.
+// ack=false (S5-4a) = batalkan tanda dibaca; cakupan sama. Jejak siapa/kapan (beserta nilai sebelumnya)
+// ditulis ke kontrol_audit_log dalam transaksi yang sama (kolom spvAckBy/At ikut dikosongkan saat batal).
 export async function acknowledgeReport(data: {
     salesCode: string; date: string; ackBy: string;
-    supervisorName?: string | null; isAdmin: boolean;
+    supervisorName?: string | null; isAdmin: boolean; ack?: boolean;
+    actorId: string; actorName: string | null;
 }): Promise<boolean> {
     if (!data.isAdmin) {
         const prof = await db.select({ spvName: salesProfile.spvName, smName: salesProfile.smName })
@@ -393,12 +398,24 @@ export async function acknowledgeReport(data: {
         const p = prof[0];
         if (!p || (p.spvName !== data.supervisorName && p.smName !== data.supervisorName)) return false;
     }
-    const existing = await db.select({ id: salesmanDailyReport.id }).from(salesmanDailyReport)
+    const existing = await db.select({ id: salesmanDailyReport.id, spvAckBy: salesmanDailyReport.spvAckBy, spvAckAt: salesmanDailyReport.spvAckAt })
+        .from(salesmanDailyReport)
         .where(and(eq(salesmanDailyReport.salesCode, data.salesCode), eq(salesmanDailyReport.date, data.date))).limit(1);
     if (existing.length === 0) return false; // laporan belum disubmit
-    await db.update(salesmanDailyReport)
-        .set({ spvAck: true, spvAckBy: data.ackBy, spvAckAt: new Date() })
-        .where(eq(salesmanDailyReport.id, existing[0].id));
+    const ack = data.ack !== false;
+    const prev = existing[0];
+    const now = new Date();
+    await db.transaction(async (tx) => {
+        await tx.update(salesmanDailyReport)
+            .set(ack ? { spvAck: true, spvAckBy: data.ackBy, spvAckAt: now } : { spvAck: false, spvAckBy: null, spvAckAt: null })
+            .where(eq(salesmanDailyReport.id, prev.id));
+        await tx.insert(kontrolAuditLog).values({
+            id: randomUUID(), entity: "report", entityId: prev.id, action: ack ? "ack" : "ack_cancel",
+            actorId: data.actorId, actorName: data.actorName,
+            payload: { salesCode: data.salesCode, date: data.date, prevAckBy: prev.spvAckBy, prevAckAt: prev.spvAckAt },
+            createdAt: now,
+        });
+    });
     return true;
 }
 

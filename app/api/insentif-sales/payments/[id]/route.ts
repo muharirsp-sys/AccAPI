@@ -7,11 +7,13 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { incentivePayments } from "@/db/schema";
+import { incentivePayments, kontrolAuditLog } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser, getUserHierarchyIdentity, payeeInScope } from "@/lib/insentif-hierarchy-scope";
+import { perubahanLunas, resolvePaidAt } from "@/lib/insentif-payment-date";
 
 export async function PATCH(
     req: NextRequest,
@@ -49,7 +51,7 @@ export async function PATCH(
     let body: {
         paymentStatus?: "belum" | "lunas" | "tunggakan";
         paymentProofUrl?: string;
-        paymentDate?: string; // ISO string
+        paymentDate?: string; // "YYYY-MM-DD" tanggal WITA (lib/insentif-payment-date)
     };
     try {
         body = await req.json();
@@ -71,16 +73,37 @@ export async function PATCH(
 
     if (body.paymentStatus) updateSet.paymentStatus = body.paymentStatus;
     if (body.paymentProofUrl) updateSet.paymentProofUrl = body.paymentProofUrl;
-    if (body.paymentStatus === "lunas") {
-        updateSet.paymentDate = body.paymentDate ? new Date(body.paymentDate) : now;
+    // Dulu `new Date(body.paymentDate)` tanpa validasi: tanggal masa depan atau "Invalid Date"
+    // ikut tersimpan. Aturannya kini sama dengan POST (owner 8 Okt 2026, S4c-2).
+    const tanggal = resolvePaidAt(body.paymentStatus, body.paymentDate, existing, now);
+    if ("error" in tanggal) return NextResponse.json({ error: tanggal.error }, { status: 400 });
+    const paidAt = tanggal.date;
+    const actorName = gate.session.user.name ?? gate.session.user.email ?? "Unknown";
+    if (paidAt) {
+        updateSet.paymentDate = paidAt;
         updateSet.paidBy = gate.session.user.id;
-        updateSet.paidByName = gate.session.user.name ?? gate.session.user.email ?? "Unknown";
+        updateSet.paidByName = actorName;
     }
 
-    await db
-        .update(incentivePayments)
-        .set(updateSet)
-        .where(eq(incentivePayments.id, id));
+    // Melunasi ulang baris yang sudah lunas menimpa tanggal/pencatat: nilai lama dicatat dalam
+    // transaksi yang sama (tinjauan PR #134).
+    await db.transaction(async (tx) => {
+        const [lama] = paidAt
+            ? await tx.select({
+                paymentStatus: incentivePayments.paymentStatus,
+                paymentDate: incentivePayments.paymentDate,
+                paidBy: incentivePayments.paidBy,
+            }).from(incentivePayments).where(eq(incentivePayments.id, id)).for("update")
+            : [];
+        await tx.update(incentivePayments).set(updateSet).where(eq(incentivePayments.id, id));
+        const ubah = paidAt ? perubahanLunas(lama, { paymentDate: paidAt, paidBy: gate.session.user.id }) : null;
+        if (ubah) {
+            await tx.insert(kontrolAuditLog).values({
+                id: randomUUID(), entity: "insentif_sales.payment", entityId: id, action: "relunas",
+                actorId: gate.session.user.id, actorName, payload: ubah, createdAt: now,
+            });
+        }
+    });
 
     return NextResponse.json({ id, updated: true });
 }
