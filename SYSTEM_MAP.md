@@ -234,17 +234,21 @@ UI: API Wrapper page (/api-wrapper)
 Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
   UI Finance (/finance) approveTransfer
   -> POST /api/finance/purchase-payment (finance.update)
-     -> lib/accurate-write-attempt.ts runGuardedWrite: INSERT accurate_write_attempt state=sending
-        (unique partial index per himpunan faktur; attempt hidup -> 409 {live}) SEBELUM kirim
+     -> lib/accurate-write-attempt.ts runGuardedWrite: INSERT ... SELECT accurate_write_attempt state=sending
+        generasi 0 (ADR-004 rilis A; subjek ber-reopen -> 409 reopened_use_repost) — unique partial index per
+        himpunan faktur × generasi; attempt hidup -> 409 {live, generation, currentGeneration} SEBELUM kirim
      -> forwardAccurate purchase-payment/bulk-save.do (tanpa transaksi DB terbuka)
-     -> classifyProviderReply -> posted / rejected / unknown / not_sent (dicatat per tahap)
+     -> classifyProviderReply -> posted / unknown / not_sent (C11: penolakan Accurate belum terbukti = unknown)
   -> UI melaporkan status ke FastAPI POST /payments/finance/update (payments.json) seperti semula
   Penyelesaian TIDAK PASTI: POST /api/finance/purchase-payment/resolve (atestasi manual + sumber cek)
 
-Idempotency guard (bulk sales receipt):
-  -> POST /api/idempotency/lock — cek & kunci fingerprint di SQLite idempotency_log
-  -> [bulk POST ke Accurate]
-  -> POST /api/idempotency/complete — tandai selesai
+Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConfig.path, bukan URL halaman):
+  -> POST /api/idempotency/lock — preview + kunci fingerprint (lib/sales-receipt-fingerprint.ts) di idempotency_log
+     (pemilik lockId/lockedBy; override hanya finance.override_duplicate + alasan -> idempotency_override)
+  -> POST /api/proxy sales-receipt/bulk-save.do WAJIB idempotencyLockId (lib/sales-receipt-guard.ts):
+     baris milik lock ditandai SENDING -> kirim -> hasil per baris dicatat SERVER (classifySalesReceiptReply:
+     s:true = SUCCESS, selain itu UNKNOWN — C11; server tidak pernah menyimpulkan FAILED)
+  -> POST /api/idempotency/complete — klien hanya menaikkan; FAILED hanya untuk baris PROCESSING (belum dikirim)
 
 Data Sync (item/customer):
   -> lib/sync.ts [syncModule(moduleName, endpoint, creds)]
@@ -263,6 +267,8 @@ Browser -> NEXT_PUBLIC_FASTAPI_BASE_URL (port 8000)
      -> /validator/upload — upload data penjualan/channel
      -> /validator/run — validator_engine.py [compare expected vs actual]
      -> /sppd/generate — render_sppd_docx() — buat DOCX SPPD
+     -> nomor SPPD (shared.next_sppd_number): {seq:03d}/SPA/PDSB/{romawi}/{tahun}, tanggal terbit WITA; tahun baru
+        mulai 001; di dalam satu tahun tidak pernah turun (setelan 409, restore backup hanya menaikkan) — D-05/C10
      -> auth.py — rate limiter login + security headers; izin = effectivePermissions dari Next /api/auth/verify (shared.user_has_permission)
 ```
 
@@ -917,7 +923,8 @@ claim_workflow (offBatchId -> off_batch.id) [1:1 unique]
 sync_state [checkpoint per modul]
 item [cache Accurate items]
 customer [cache Accurate customers]
-idempotency_log [fingerprint bulk upload]
+idempotency_log [fingerprint bulk upload; lockId/lockedBy] ── idempotency_override [jejak override Finance]
+accurate_write_attempt [klaim tulis Accurate per subjek × generasi] ── accurate_write_attempt_reopen [repost D-15, rilis B]
 
 # Dynamic RBAC (additive — Fase 2/4; user.role & user.permissions TIDAK dihapus)
 access_group ──── group_permission (group_id)   [permission_key = "module.action"]
