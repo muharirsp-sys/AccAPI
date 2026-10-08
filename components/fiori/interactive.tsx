@@ -27,6 +27,8 @@ type ConfirmDialogProps = {
     reason?: { label: string; placeholder?: string };
     /** Label aksi, bukan "OK"/"Ya". */
     confirmLabel: string;
+    /** Label tombol tutup; bawaan "Batal". Pakai "Kembali" bila aksinya sendiri bernama Batalkan. */
+    cancelLabel?: string;
     tone?: "primary" | "negative";
     /** Galat dari pemanggil; galat yang dilempar onConfirm juga tampil di dialog. Isian tidak dikosongkan. */
     error?: string;
@@ -53,7 +55,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
 
 type BodyProps = ConfirmDialogProps & { titleId: string; busy: boolean; setBusy: (busy: boolean) => void };
 
-function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmLabel, tone = "primary", error, children, confirmDisabled, onConfirm, titleId, busy, setBusy }: BodyProps) {
+function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmLabel, cancelLabel = "Batal", tone = "primary", error, children, confirmDisabled, onConfirm, titleId, busy, setBusy }: BodyProps) {
     const [text, setText] = useState("");
     const [failure, setFailure] = useState<string>();
     const inFlight = useRef(false); // disabled baru berlaku sesudah render; ref menahan klik ganda.
@@ -98,7 +100,7 @@ function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmL
                 {(error || failure) && <p className="fi-msg" role="alert">{error || failure}</p>}
             </div>
             <footer>
-                <Button onClick={onClose} disabled={busy}>Batal</Button>
+                <Button onClick={onClose} disabled={busy}>{cancelLabel}</Button>
                 <Button variant={tone} busy={busy} disabled={Boolean(blocked)} disabledReason={blocked} onClick={confirm}>
                     {confirmLabel}
                 </Button>

@@ -1,116 +1,96 @@
-// Tujuan: Notification panel inline untuk OFF Program Control — menampilkan alert pengajuan bermasalah berdasarkan SLA.
-// Caller: app/(dashboard)/off-program-control/page.tsx.
-// Dependensi: lucide-react, helper problematic.
-// Main Functions: OffNotificationBell, aksi langsung membuka batch bermasalah.
-// Side Effects: Mutasi state dismiss/expand lokal dan callback onSelectBatch ke parent.
+/*
+ * Tujuan: Lonceng "Pengajuan bermasalah" OFF Program Control (Fiori S4d): tombol berjumlah + popover daftar masalah SLA;
+ *   "Buka pengajuan" membuka batch di kolom kedua untuk peran apa pun (perubahan #2 it03). Daftar gagal dimuat tampil sebagai galat,
+ *   bukan "tidak ada masalah".
+ * Caller: app/(dashboard)/off-program-control/OpcApp.tsx.
+ * Dependensi: components/fiori/core, lucide-react, lib/off-program-control/problematic (tipe), lib/opc-ui (label/tone severity).
+ * Main Functions: OffNotificationBell.
+ * Side Effects: State "sembunyikan" lokal (hilang saat halaman dimuat ulang — BL-34); posisi popover ditulis ke style elemennya;
+ *   callback onSelectBatch ke parent.
+ */
 "use client";
 
-import { useState } from "react";
-import { Bell, X, AlertTriangle, Clock, AlertOctagon, ChevronDown } from "lucide-react";
-import type { ProblematicBatch, ProblemSeverity } from "@/lib/off-program-control/problematic";
+import { useId, useRef, useState } from "react";
+import { Bell } from "lucide-react";
+import { Button, StatusBadge } from "@/components/fiori/core";
+import type { ProblematicBatch } from "@/lib/off-program-control/problematic";
+import { labelMasalah, toneMasalah } from "@/lib/opc-ui";
 
-const severityConfig: Record<ProblemSeverity, { icon: typeof Clock; color: string; bg: string }> = {
-    warning: { icon: Clock, color: "text-amber-600", bg: "bg-amber-500/10 border-amber-500/20" },
-    danger: { icon: AlertTriangle, color: "text-rose-600", bg: "bg-rose-500/10 border-rose-500/20" },
-    critical: { icon: AlertOctagon, color: "text-red-700", bg: "bg-red-500/15 border-red-500/30" },
-};
+/** Keadaan daftar sumber (useDaftarBatch). */
+export type MuatDaftar = { status: "memuat" | "siap" | "galat"; error?: string; adaData: boolean };
 
 interface OffNotificationBellProps {
     problems: ProblematicBatch[];
     onSelectBatch?: (batchId: string) => void;
+    muat?: MuatDaftar;
 }
 
-export default function OffNotificationBell({ problems, onSelectBatch }: OffNotificationBellProps) {
-    const [expanded, setExpanded] = useState(false);
+const LEBAR = 400;
+
+export default function OffNotificationBell({ problems, onSelectBatch, muat }: OffNotificationBellProps) {
+    const id = useId();
+    const ref = useRef<HTMLDivElement>(null);
     const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-
     const visible = problems.filter((p) => !dismissed.has(p.batchId + p.code));
-    if (visible.length === 0) return null;
+    const dismiss = (problem: ProblematicBatch) => setDismissed((prev) => new Set([...prev, problem.batchId + problem.code]));
+    const gagalTotal = muat?.status === "galat" && !muat.adaData;
+    const memuatAwal = muat?.status === "memuat" && !muat.adaData;
 
-    const dismiss = (problem: ProblematicBatch) => {
-        setDismissed((prev) => new Set([...prev, problem.batchId + problem.code]));
+    // Popover (top layer) diletakkan tepat di bawah tombolnya, tidak menutupinya: klik kedua pada tombol menutup popover
+    // (popoverTarget, bukan light dismiss). Ditulis langsung ke style sebelum popover tampil (onClick jalan sebelum toggle bawaan).
+    const letakkan = (tombol: HTMLElement) => {
+        const el = ref.current;
+        if (!el) return;
+        const r = tombol.getBoundingClientRect();
+        const lebar = Math.min(LEBAR, window.innerWidth - 16);
+        el.style.inset = "auto";
+        el.style.top = `${Math.round(r.bottom + 6)}px`;
+        el.style.left = `${Math.round(Math.min(Math.max(8, r.right - lebar), window.innerWidth - lebar - 8))}px`;
+        el.style.width = `${lebar}px`;
+        el.style.maxHeight = `min(480px, calc(100dvh - ${Math.round(r.bottom + 18)}px))`;
     };
 
-    const preview = expanded ? visible : visible.slice(0, 3);
-    const criticalCount = visible.filter((p) => p.severity === "critical").length;
-    const dangerCount = visible.filter((p) => p.severity === "danger").length;
-
     return (
-        <div className="mb-6 space-y-3">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm font-bold text-[var(--luxury-text)]">
-                    <Bell size={16} className="text-[var(--luxury-gold)]" />
-                    <span>Pengajuan Bermasalah ({visible.length})</span>
-                    {criticalCount > 0 && (
-                        <span className="rounded-full bg-red-500/20 border border-red-500/30 px-2 py-0.5 text-[10px] font-bold text-red-700">
-                            {criticalCount} kritis
-                        </span>
-                    )}
-                    {dangerCount > 0 && (
-                        <span className="rounded-full bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 text-[10px] font-bold text-rose-600">
-                            {dangerCount} serius
-                        </span>
-                    )}
-                </div>
-                {visible.length > 3 && (
-                    <button
-                        type="button"
-                        onClick={() => setExpanded(!expanded)}
-                        className="flex items-center gap-1 text-xs font-semibold text-[var(--luxury-gold)] hover:text-[var(--luxury-bronze)] transition-colors"
-                    >
-                        {expanded ? "Sembunyikan" : `Lihat semua (${visible.length})`}
-                        <ChevronDown size={12} className={`transition-transform ${expanded ? "rotate-180" : ""}`} />
-                    </button>
+        <>
+            <Button icon={<Bell className="fi-icon" aria-hidden />} count={gagalTotal ? undefined : visible.length || undefined} aria-haspopup="dialog"
+                popoverTarget={id} onClick={(e) => letakkan(e.currentTarget)}>
+                Pengajuan bermasalah
+            </Button>
+            <div id={id} ref={ref} popover="auto" role="dialog" aria-label="Pengajuan bermasalah" className="fi-menu">
+                <h2>Pengajuan bermasalah{gagalTotal || memuatAwal ? "" : ` (${visible.length})`}</h2>
+                {gagalTotal ? (
+                    <p className="fi-menu-row fi-small" role="alert">
+                        Daftar pengajuan gagal dimuat, jadi peringatan SLA belum bisa dihitung. Ini bukan berarti tidak ada masalah. {muat?.error}
+                    </p>
+                ) : memuatAwal ? (
+                    <p className="fi-menu-row fi-small" role="status">Memuat daftar pengajuan…</p>
+                ) : visible.length === 0 ? (
+                    <p className="fi-menu-row fi-small" role="status">Tidak ada pengajuan yang lewat SLA untuk peran Anda.</p>
+                ) : (
+                    <ul>
+                        {visible.map((problem) => (
+                            <li key={problem.batchId + problem.code} className="fi-menu-row" style={{ borderBottom: "1px solid var(--line)" }}>
+                                <span style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                    <StatusBadge tone={toneMasalah(problem.severity)}>{labelMasalah(problem.severity)}</StatusBadge>
+                                    <b className="fi-mono">{problem.noPengajuan}</b>
+                                </span>
+                                <b>{problem.title}</b>
+                                <span className="fi-small fi-subtle">{problem.message} · {problem.principleName}</span>
+                                <span className="fi-btnrow">
+                                    {onSelectBatch && (
+                                        <Button variant="primary" onClick={() => { ref.current?.hidePopover(); onSelectBatch(problem.batchId); }}>Buka pengajuan</Button>
+                                    )}
+                                    <Button variant="tertiary" aria-label={`Sembunyikan peringatan ${problem.noPengajuan}`} onClick={() => dismiss(problem)}>Sembunyikan</Button>
+                                </span>
+                            </li>
+                        ))}
+                    </ul>
                 )}
+                {muat?.status === "galat" && muat.adaData && (
+                    <p className="fi-menu-row fi-small" role="alert">Daftar terakhir gagal diperbarui; peringatan di atas dari data sebelumnya. {muat.error}</p>
+                )}
+                <p className="fi-menu-note">Dihitung di browser dari 200 batch terbaru dengan hari kerja. “Sembunyikan” berlaku sampai halaman dimuat ulang.</p>
             </div>
-
-            {/* Notification items */}
-            {preview.map((problem) => {
-                const config = severityConfig[problem.severity];
-                const Icon = config.icon;
-                return (
-                    <div
-                        key={problem.batchId + problem.code}
-                        className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${config.bg} transition-all`}
-                    >
-                        <Icon size={16} className={`mt-0.5 shrink-0 ${config.color}`} />
-                        <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                                <p className="text-sm font-semibold text-[var(--luxury-text)]">{problem.title}</p>
-                                <span className="rounded-md bg-black/5 border border-[var(--border-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--luxury-muted)]">
-                                    {problem.noPengajuan}
-                                </span>
-                            </div>
-                            <p className="text-xs text-[var(--luxury-muted)] mt-0.5">{problem.message}</p>
-                            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                                <span className="text-[10px] text-[var(--luxury-subtle)]">
-                                    {problem.principleName}
-                                </span>
-                            </div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-1">
-                            {onSelectBatch && (
-                                <button
-                                    type="button"
-                                    onClick={() => onSelectBatch(problem.batchId)}
-                                    className="ui-button-secondary"
-                                >
-                                    Buka pengajuan
-                                </button>
-                            )}
-                            <button
-                                type="button"
-                                onClick={() => dismiss(problem)}
-                                className="rounded-lg p-1 text-[var(--luxury-subtle)] hover:text-[var(--luxury-text)] hover:bg-black/10 transition-colors"
-                                aria-label={`Hapus notifikasi ${problem.noPengajuan}`}
-                            >
-                                <X size={14} />
-                            </button>
-                        </div>
-                    </div>
-                );
-            })}
-        </div>
+        </>
     );
 }
