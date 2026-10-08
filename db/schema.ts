@@ -1874,3 +1874,15 @@ export const noClaimTemplate = pgTable("no_claim_template", {
 }, (t) => ({
     pk: primaryKey({ columns: [t.principleCode, t.variantKey] }),
 }));
+
+// Jejak ubah/kembalikan templat No Claim: nilai lama → baru + pelaku (format nomor dokumen klaim).
+export const noClaimTemplateLog = pgTable("no_claim_template_log", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    principleCode: text("principle_code").notNull(),
+    variantKey: text("variant_key").notNull().default(""),
+    action: text("action").notNull(), // 'set' | 'reset'
+    before: jsonb("before"),
+    after: jsonb("after"),
+    actor: text("actor"),
+    createdAt: timestamp("created_at").notNull(),
+});

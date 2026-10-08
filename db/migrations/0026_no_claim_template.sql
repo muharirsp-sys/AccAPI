@@ -24,3 +24,15 @@ CREATE TABLE IF NOT EXISTS no_claim_template (
     updated_at     timestamp NOT NULL,
     PRIMARY KEY (principle_code, variant_key)
 );
+
+-- Jejak perubahan templat: nilai lama -> baru + pelaku.
+CREATE TABLE IF NOT EXISTS no_claim_template_log (
+    id             bigserial PRIMARY KEY,
+    principle_code text NOT NULL,
+    variant_key    text NOT NULL DEFAULT '',
+    action         text NOT NULL CHECK (action IN ('set', 'reset')),
+    before         jsonb,
+    after          jsonb,
+    actor          text,
+    created_at     timestamp NOT NULL
+);

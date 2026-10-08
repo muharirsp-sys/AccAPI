@@ -25,9 +25,25 @@ test("templat DB menimpa bawaan; tanpa baris = bawaan kode", () => {
   assert.equal(merged.length, noClaimRuleConfigs.length + 1);
 });
 
-test("validasi templat", () => {
-  assert.equal(validateNoClaimTemplate({ principleCode: "urc", pattern: "{seq}/A/{month}/{year2}" }).ok, true);
+test("validasi templat: varian sesuai bawaan, field kosong dari bawaan, karakter pola", () => {
+  const ok = (i: Record<string, unknown>) => {
+    const v = validateNoClaimTemplate(i);
+    assert.ok(v.ok, JSON.stringify(v));
+    return v.row;
+  };
+  // field yang tidak dikirim = bawaan
+  assert.equal(ok({ principleCode: "urc", pattern: "{seq}/A/{month}/{year2}" }).padWidth, 2);
+  assert.equal(ok({ principleCode: "ENI", pattern: "DC/{seq}/{month}/{year4}" }).sequenceType, "text");
+  assert.equal(ok({ principleCode: "HEINZ", variantKey: "bs", pattern: "{seq}/BS/{year4}" }).label, "Heinz (BS)");
+  assert.equal(ok({ principleCode: "URC", pattern: "{seq}", padWidth: null }).padWidth, null);
+  // varian
+  assert.equal(validateNoClaimTemplate({ principleCode: "HEINZ", pattern: "{seq}" }).ok, false);
+  assert.equal(validateNoClaimTemplate({ principleCode: "URC", variantKey: "X", pattern: "{seq}" }).ok, false);
+  assert.equal(validateNoClaimTemplate({ principleCode: "BARU", variantKey: "X", pattern: "{seq}" }).ok, false);
+  // pola
   assert.equal(validateNoClaimTemplate({ principleCode: "URC", pattern: "A/{month}" }).ok, false);
   assert.equal(validateNoClaimTemplate({ principleCode: "URC", pattern: "{seq}/{bulan}" }).ok, false);
+  assert.equal(validateNoClaimTemplate({ principleCode: "URC", pattern: "{seq}/{ {month}" }).ok, false);
+  assert.equal(validateNoClaimTemplate({ principleCode: "URC", pattern: "{seq}<b>" }).ok, false);
   assert.equal(validateNoClaimTemplate({ principleCode: "URC", pattern: "{seq}", padWidth: 9 }).ok, false);
 });

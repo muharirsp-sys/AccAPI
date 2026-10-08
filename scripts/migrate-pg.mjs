@@ -240,6 +240,23 @@ const migrations = [
       );
     `,
   },
+  {
+    // 2026-10-08. Jejak ubah/kembalikan templat No Claim (nilai lama -> baru + pelaku).
+    nama: "no_claim_template_log",
+    sudahAda: `SELECT 1 FROM information_schema.tables WHERE table_name = 'no_claim_template_log'`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS no_claim_template_log (
+          id             bigserial PRIMARY KEY,
+          principle_code text NOT NULL,
+          variant_key    text NOT NULL DEFAULT '',
+          action         text NOT NULL CHECK (action IN ('set', 'reset')),
+          before         jsonb,
+          after          jsonb,
+          actor          text,
+          created_at     timestamp NOT NULL
+      );
+    `,
+  },
 ];
 
 const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 15_000 });
