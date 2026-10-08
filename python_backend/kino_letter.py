@@ -472,8 +472,16 @@ def parse_text(text, page_count=1):
     def add(**row):
         rows.append({**common, **row, "no": str(len(rows) + 1)})
 
-    for minimum, maksimum, up, potongan in JUTA.findall(detail):
-        rentang = f" s/d Rp {juta(maksimum)}" if maksimum else (" UP" if up else "")
+    strata = JUTA.findall(detail)
+    for urutan, (minimum, maksimum, up, potongan) in enumerate(strata):
+        # Batas atas = minimum strata BERIKUTNYA dikurangi satu rupiah (keputusan pengguna 8 Okt
+        # 2026): surat menulis "1JT - 1.99 JT", tetapi 1.990.000 meninggalkan celah sampai
+        # 2.000.000 — belanja Rp 1.992.000 terlihat tak tercakup padahal dapat strata 1. "Di
+        # bawah Rp 2.000.000" juga tidak dipakai: angka 2.000.000 lalu muncul di dua strata.
+        # Strata terakhir memakai "UP" atau batas tertulis bila tidak ada strata sesudahnya.
+        berikut = int(juta(strata[urutan + 1][0])) - 1 if urutan + 1 < len(strata) else None
+        rentang = (f" s/d Rp {berikut}" if berikut is not None
+                   else " UP" if up else f" s/d Rp {juta(maksimum)}" if maksimum else "")
         add(kelompok=kelompok_brand, variant="", ketentuan=f"Minimal belanja Rp {juta(minimum)}{rentang}",
             benefit_type="DISC_RP", benefit=rupiah(potongan),
             source_quote=f"{minimum}JT{' - ' + maksimum + 'JT' if maksimum else ''}{' UP' if up else ''} potongan on faktur {potongan}")

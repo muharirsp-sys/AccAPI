@@ -110,9 +110,11 @@ def main():
     assert len(msg["rows"]) == 4, msg["rows"]
     # Rentang tiap strata dicetak seperti bunyi surat (7 Okt 2026); minimumnya tetap angka pertama,
     # jadi "9JT � 9.99 JT" adalah batas BAWAH 9 juta — membaca 9.99 menaikkan syarat.
-    assert [r["ketentuan"] for r in msg["rows"]][:2] == ["Minimal belanja Rp 1000000 s/d Rp 1990000",
-                                                         "Minimal belanja Rp 2000000 s/d Rp 2990000"]
-    assert msg["rows"][2] == {**msg["rows"][2], "ketentuan": "Minimal belanja Rp 9000000 s/d Rp 9990000", "benefit": "180000"}
+    # Batas atas = minimum strata berikutnya - 1 (8 Okt 2026), bukan "1.99 JT" tertulis: tanpa
+    # celah dan tanpa angka yang muncul di dua strata. Contoh surat ini melompat 2JT -> 9JT.
+    assert [r["ketentuan"] for r in msg["rows"]][:2] == ["Minimal belanja Rp 1000000 s/d Rp 1999999",
+                                                         "Minimal belanja Rp 2000000 s/d Rp 8999999"]
+    assert msg["rows"][2] == {**msg["rows"][2], "ketentuan": "Minimal belanja Rp 9000000 s/d Rp 9999999", "benefit": "180000"}
     assert msg["rows"][3]["ketentuan"] == "Minimal belanja Rp 10000000 UP"
     assert msg["rows"][3]["source_quote"] == "10JT UP potongan on faktur 200.000", msg["rows"][3]["source_quote"]
     assert msg["rows"][0]["periode_start"] == "2026-09-01" and msg["rows"][0]["periode_end"] == "2026-09-30"
