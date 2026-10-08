@@ -26,7 +26,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { and, count, eq, inArray, or } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { salesDailyProgress } from "@/db/schema";
+import { kontrolAuditLog, salesDailyProgress } from "@/db/schema";
 import { computeMtdProgress } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
@@ -244,6 +244,11 @@ export async function POST(req: NextRequest) {
  *
  * Pembayaran (incentive_payments) juga tidak disentuh — baris lunas adalah catatan uang yang
  * benar-benar dibayar, bukan turunan realisasi.
+ *
+ * Body JSON `{ alasan }` WAJIB (dipangkas, min. 5 karakter; owner 8 Okt 2026, S4c-3 / BL-33).
+ * Alasan + pelaku + jumlah baris dicatat di kontrol_audit_log (entity "insentif_sales.progress",
+ * entityId "YYYY-MM") dalam transaksi yang sama dengan DELETE — tabel audit generik yang sudah
+ * ada, jadi tanpa migrasi. Pindahkan ke change_log bersama bila BL-33 membangunnya.
  */
 export async function DELETE(req: NextRequest) {
     // Izin yang sama dengan unggah: siapa pun yang bisa mengunggah sudah bisa menimpa data
@@ -258,6 +263,20 @@ export async function DELETE(req: NextRequest) {
         || !Number.isInteger(year) || year < 2020 || year > 2100) {
         return NextResponse.json(
             { error: "Periode tidak valid. Kirim ?month=1-12&year=2020-2100." },
+            { status: 400 },
+        );
+    }
+
+    let alasan = "";
+    try {
+        const body = await req.json();
+        alasan = typeof body?.alasan === "string" ? body.alasan.trim() : "";
+    } catch {
+        // Body kosong/bukan JSON = alasan tidak dikirim; ditolak di bawah.
+    }
+    if (alasan.length < 5) {
+        return NextResponse.json(
+            { error: "Alasan hapus realisasi wajib diisi (minimal 5 karakter)." },
             { status: 400 },
         );
     }
@@ -280,11 +299,25 @@ export async function DELETE(req: NextRequest) {
         return NextResponse.json({ deleted: 0, month, year });
     }
 
-    const [sebelum] = await db.select({ n: count() }).from(salesDailyProgress).where(filter);
-    const hasil = await db.delete(salesDailyProgress).where(filter);
+    const deleted = await db.transaction(async (tx) => {
+        const [sebelum] = await tx.select({ n: count() }).from(salesDailyProgress).where(filter);
+        const hasil = await tx.delete(salesDailyProgress).where(filter);
+        const n = hasil.rowCount ?? sebelum?.n ?? 0;
+        await tx.insert(kontrolAuditLog).values({
+            id: randomUUID(),
+            entity: "insentif_sales.progress",
+            entityId: `${year}-${String(month).padStart(2, "0")}`,
+            action: "delete_period",
+            actorId: gate.session.user.id,
+            actorName: gate.session.user.name ?? gate.session.user.email ?? null,
+            payload: { alasan: alasan.slice(0, 500), month, year, deleted: n, dibatasiCakupan: scope !== null },
+            createdAt: new Date(),
+        });
+        return n;
+    });
 
     return NextResponse.json({
-        deleted: hasil.rowCount ?? sebelum?.n ?? 0,
+        deleted,
         month,
         year,
         dibatasiCakupan: scope !== null,

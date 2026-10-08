@@ -18,6 +18,7 @@ import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser, getUserHierarchyIdentity, payeeInScope } from "@/lib/insentif-hierarchy-scope";
 import { parsePayee } from "@/lib/insentif-payee";
 import { isOfficeRow } from "@/lib/insentif-sm-calc";
+import { parsePaymentDate } from "@/lib/insentif-payment-date";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
@@ -64,6 +65,8 @@ interface PaymentInput {
     totalIncentive: number;
     paymentStatus?: "belum" | "lunas" | "tunggakan";
     paymentProofUrl?: string;
+    /** "YYYY-MM-DD" tanggal WITA, opsional; hanya dipakai saat paymentStatus "lunas". */
+    paymentDate?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -145,6 +148,10 @@ export async function POST(req: NextRequest) {
     const actor = gate.session.user.id;
     const actorName = gate.session.user.name ?? null;
     const markingLunas = body.paymentStatus === "lunas";
+    // Tanggal bayar boleh dipilih (owner 8 Okt 2026, S4c-2); tanpa field = hari ini seperti dulu.
+    const tanggal = parsePaymentDate(body.paymentDate, body, now);
+    if ("error" in tanggal) return NextResponse.json({ error: tanggal.error }, { status: 400 });
+    const paidAt = tanggal.date;
 
     // Kunci = salesCode + principle + period (mix → 1 payment per principle), ditegakkan oleh
     // uq_incentive_payments_key di DB sejak 2026-08-24. Ini penting justru karena UI menembak
@@ -164,7 +171,7 @@ export async function POST(req: NextRequest) {
             totalIncentive,
             paymentStatus: body.paymentStatus ?? "belum",
             paymentProofUrl: body.paymentProofUrl ?? null,
-            paymentDate: markingLunas ? now : null,
+            paymentDate: markingLunas ? paidAt : null,
             paidBy: markingLunas ? actor : null,
             paidByName: markingLunas ? actorName : null,
             updatedBy: actor,
@@ -185,7 +192,7 @@ export async function POST(req: NextRequest) {
                 ...(body.paymentProofUrl !== undefined ? { paymentProofUrl: body.paymentProofUrl } : {}),
                 // Diisi hanya saat menandai lunas — dulu cabang UPDATE tidak mengisinya sama
                 // sekali (berbeda dari PATCH), jadi pembayaran bisa jadi "lunas" tanpa jejak.
-                ...(markingLunas ? { paymentDate: now, paidBy: actor, paidByName: actorName } : {}),
+                ...(markingLunas ? { paymentDate: paidAt, paidBy: actor, paidByName: actorName } : {}),
                 updatedBy: actor,
                 updatedAt: now,
                 // createdAt sengaja TIDAK di-set.

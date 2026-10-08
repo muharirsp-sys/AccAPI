@@ -12,6 +12,7 @@ import { db } from "@/lib/db";
 import { incentivePayments } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser, getUserHierarchyIdentity, payeeInScope } from "@/lib/insentif-hierarchy-scope";
+import { parsePaymentDate } from "@/lib/insentif-payment-date";
 
 export async function PATCH(
     req: NextRequest,
@@ -49,7 +50,7 @@ export async function PATCH(
     let body: {
         paymentStatus?: "belum" | "lunas" | "tunggakan";
         paymentProofUrl?: string;
-        paymentDate?: string; // ISO string
+        paymentDate?: string; // "YYYY-MM-DD" tanggal WITA (lib/insentif-payment-date)
     };
     try {
         body = await req.json();
@@ -72,7 +73,11 @@ export async function PATCH(
     if (body.paymentStatus) updateSet.paymentStatus = body.paymentStatus;
     if (body.paymentProofUrl) updateSet.paymentProofUrl = body.paymentProofUrl;
     if (body.paymentStatus === "lunas") {
-        updateSet.paymentDate = body.paymentDate ? new Date(body.paymentDate) : now;
+        // Dulu `new Date(body.paymentDate)` tanpa validasi: tanggal masa depan atau "Invalid Date"
+        // ikut tersimpan. Aturannya kini sama dengan POST (owner 8 Okt 2026, S4c-2).
+        const tanggal = parsePaymentDate(body.paymentDate, existing, now);
+        if ("error" in tanggal) return NextResponse.json({ error: tanggal.error }, { status: 400 });
+        updateSet.paymentDate = tanggal.date;
         updateSet.paidBy = gate.session.user.id;
         updateSet.paidByName = gate.session.user.name ?? gate.session.user.email ?? "Unknown";
     }
