@@ -416,8 +416,18 @@ def check_flow():
     assert simulated.json()["result"]["discount"] == "5000.00", simulated.text
     feed = client.get("/summary/library/published", headers=owner).json()
     assert any(item["id"] == draft_id and item["rules"] for item in feed["programs"]), feed
-    pulled = client.post(f"/summary/library/{draft_id}/withdraw", headers=owner, json={"revision": revision})
+    # Cabut publikasi tanpa alasan (atau alasan cuma spasi) ditolak dan aturan tetap terbit.
+    for kosong in ({"revision": revision}, {"revision": revision, "alasan": "   ab  "},
+                   {"revision": revision, "alasan": ["abcde"]}, {"revision": revision, "alasan": 12345}):
+        ditolak = client.post(f"/summary/library/{draft_id}/withdraw", headers=owner, json=kosong)
+        assert ditolak.status_code == 400 and "Alasan" in ditolak.json()["detail"], ditolak.text
+    pulled = client.post(f"/summary/library/{draft_id}/withdraw", headers=owner,
+                         json={"revision": revision, "alasan": "  Surat diralat principal  "})
     assert pulled.status_code == 200 and len(pulled.json()["programs"]) == 1, pulled.text
+    dicabut = pulled.json()["draft"]
+    assert dicabut["status"] == "withdrawn", dicabut
+    assert dicabut["content"]["withdrawn_reason"] == "Surat diralat principal", dicabut["content"]
+    assert dicabut["content"]["withdrawn_by"] == "ari@example.com" and dicabut["content"]["withdrawn_at"].endswith("Z")
     feed = client.get("/summary/library/published", headers=owner).json()
     assert all(item["rules"] == [] for item in feed["programs"] if item["id"] == draft_id), feed
     print("summary flow check: OK")
