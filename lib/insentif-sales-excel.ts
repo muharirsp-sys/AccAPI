@@ -6,9 +6,10 @@ export function generateTargetTemplate() {
     const wb = XLSX.utils.book_new();
     const templateData = [
         ["Kode Salesman", "Nama Salesman", "Principal", "Cabang", "Channel", "SPV", "SM", "Target Value (Rp)", "Target EC", "Target AO", "Target IA", "SPLM Value", "Tipe Sales", "Status Insentif"],
-        ["SLS-001", "Andi Pratama", "NESTLE", "BANDUNG", "GT", "Budi Santoso", "Hendra Wijaya", 250000000, 320, 180, 540, 142300000, "Exclusive", "Distributor+Principle"],
-        ["SLS-002", "Siti Rahmawati", "NESTLE", "BANDUNG", "GT", "Budi Santoso", "Hendra Wijaya", 210000000, 280, 160, 480, 188400000, "Mix", "Distributor"],
-        ["SLS-003", "Rudi Hartono", "UNILEVER", "CIMAHI", "GT", "Dewi Lestari", "Hendra Wijaya", 300000000, 360, 200, 600, 151900000, "Mix", "Principle"],
+        // Contoh generik (bukan principal/cabang/orang sungguhan): ganti atau hapus sebelum diunggah.
+        ["SLS-001", "SALES A", "PRINCIPLE A", "CABANG A", "GT", "SPV A", "SM A", 250000000, 320, 180, 540, 142300000, "Exclusive", "Distributor+Principle"],
+        ["SLS-002", "SALES B", "PRINCIPLE A", "CABANG A", "GT", "SPV A", "SM A", 210000000, 280, 160, 480, 188400000, "Mix", "Distributor"],
+        ["SLS-003", "SALES C", "PRINCIPLE B", "CABANG B", "GT", "SPV B", "SM A", 300000000, 360, 200, 600, 151900000, "Mix", "Principle"],
     ];
     const ws = XLSX.utils.aoa_to_sheet(templateData);
     ws["!cols"] = [
@@ -143,10 +144,9 @@ export function parseTargetExcel(arrayBuffer: ArrayBuffer): Array<Record<string,
         return {
             salesCode: str("Kode Salesman"),
             salesName: str("Nama Salesman"),
-            // TANPA default. "NESTLE"/"BANDUNG" adalah data DEMO (lihat PRINCIPLES/BRANCHES di
-            // app/(dashboard)/insentif-sales/data.ts, ditandai "Master data dummy"). Sebagai
-            // default, keduanya membuat baris pemisah/subtotal di Excel berubah jadi target
-            // NESTLE hantu — menambah `n` pada grup mix salesman itu (konstanta 1,2jt → 1,4jt)
+            // TANPA default. Default principal/cabang demo (dulu "NESTLE"/"BANDUNG") membuat baris
+            // pemisah/subtotal di Excel berubah jadi target
+            // principal hantu — menambah `n` pada grup mix salesman itu (konstanta 1,2jt → 1,4jt)
             // dan memunculkan baris penerima yang bisa ditandai Lunas. Kosong ditolak validator.
             principle: str("Principal"),
             branch: str("Cabang"),

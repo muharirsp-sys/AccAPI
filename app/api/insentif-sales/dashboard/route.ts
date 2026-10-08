@@ -286,7 +286,7 @@ export async function GET(req: NextRequest) {
     // Opsi filter dibangun dari groupTargets (SEBELUM filter tampilan), bukan dari `rows`.
     // Kalau dibangun dari hasil yang sudah difilter, memilih satu principle akan menyusutkan
     // daftarnya jadi satu dan tidak ada jalan kembali selain reset. Sumbernya juga bukan
-    // konstanta PRINCIPLES/BRANCHES di klien — isinya data demo, bukan principal produksi.
+    // daftar tertulis di klien (dulu PRINCIPLES/BRANCHES demo, dihapus di S4c).
     const daftarUnik = <T,>(nilai: (T | null | undefined)[]) =>
         [...new Set(nilai)].filter((v): v is T => Boolean(v)).sort();
     const opsiFilter = {
