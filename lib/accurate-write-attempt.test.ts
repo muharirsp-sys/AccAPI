@@ -144,6 +144,8 @@ test("PG: barrier nyata — klaim sesi A belum commit, sesi B menunggu lalu dito
         await holder.query("COMMIT");
         const b = await pending;
         assert.equal(b.claimed, false);
+        // Tinjauan N1: attempt 'sending' segar (jam DB) = sedang diposting, bukan basi.
+        assert.equal(b.claimed === false && b.live?.stale, false, "sending segar dilaporkan basi");
         assert.equal(sends, 0);
     } finally {
         holder.release();
@@ -174,6 +176,9 @@ test("PG: respons hilang / timeout / proses mati / lease basi -> tetap blokir, t
              VALUES ($1, 'purchase-payment/bulk-save', $2, 'DB-1', 'h', 'u', 'sending', now() - interval '1 hour')`, [randomUUID(), deadKey]);
         const afterCrash = await run(deadKey, async () => { throw new Error("TIDAK BOLEH DIKIRIM"); });
         assert.equal(afterCrash.claimed, false, "sending basi diambil alih diam-diam");
+        // Tinjauan N1: 'sending' 1 jam lalu = basi menurut jam DB (ambang 2 menit, sama dengan resolve) -> UI tidak
+        // menganggapnya "sedang diposting" selamanya; jalan keluarnya penyelesaian Finance.
+        assert.equal(afterCrash.claimed === false && afterCrash.live?.stale, true, "sending basi tidak ditandai stale");
     } finally {
         await lost.close();
         await hang.close();

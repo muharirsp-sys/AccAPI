@@ -453,7 +453,7 @@ export default function FinancePage() {
             const out = await res.json().catch(() => null) as {
                 state?: string; accurateId?: string; accurateNumber?: string; message?: string; response?: unknown; error?: string;
                 generation?: number; currentGeneration?: number; claimed?: boolean; code?: string;
-                live?: { attemptId: string; state: string; accurateId: string; accurateNumber: string; targetDbId: string; sameRecord: boolean; sameTarget: boolean } | null;
+                live?: { attemptId: string; state: string; accurateId: string; accurateNumber: string; targetDbId: string; sameRecord: boolean; sameTarget: boolean; stale?: boolean } | null;
             } | null;
             let posted: { id: string; number: string; note?: string } | null = null;
             const conflict = res.status === 409 ? purchasePaymentConflict(out) : null;

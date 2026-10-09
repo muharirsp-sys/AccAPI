@@ -16,8 +16,11 @@ test("C11 tampilan: 'Accurate menolak' dibedakan dari tanpa jawaban & status lam
 });
 
 test("tab yang kalah klaim: attempt 'sending' record sama = sedang diposting sesi lain (tanpa tulis ledger)", () => {
-    const live = (state: string, sameRecord = true, sameTarget = true) => ({ state, sameRecord, sameTarget });
+    const live = (state: string, sameRecord = true, sameTarget = true, stale = false) => ({ state, sameRecord, sameTarget, stale });
     assert.equal(purchasePaymentConflict({ live: live("sending") }), "in_flight");
+    // Tinjauan N1: proses mati setelah klaim -> 'sending' tertinggal. Basi (jam DB, > 2 menit) = TIDAK PASTI: ledger
+    // ditulis unknown dan tombol "Sudah dicek di Accurate" tampil; hanya 'sending' segar yang "sedang diposting".
+    assert.equal(purchasePaymentConflict({ live: live("sending", true, true, true) }), "unknown", "sending basi dianggap sedang diposting");
     assert.equal(purchasePaymentConflict({ live: live("posted"), generation: 0, currentGeneration: 0 }), "posted");
     assert.equal(purchasePaymentConflict({ live: live("posted"), generation: 0, currentGeneration: 1 }), "unknown", "generasi beda");
     assert.equal(purchasePaymentConflict({ live: live("posted", true, false), generation: 0, currentGeneration: 0 }), "unknown", "database lain");

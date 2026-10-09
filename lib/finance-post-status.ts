@@ -35,19 +35,20 @@ export function postStatusNote(status: string, error: string, rawStatus = status
 
 type Conflict = {
     code?: string;
-    live?: { state?: string; sameRecord?: boolean; sameTarget?: boolean } | null;
+    live?: { state?: string; sameRecord?: boolean; sameTarget?: boolean; stale?: boolean } | null;
     generation?: number;
     currentGeneration?: number;
 } | null | undefined;
 
 /**
  * 409 dari command purchase-payment. `posted` = attempt record INI di database INI generasi terkini sudah posted
- * (rekonsiliasi); `in_flight` = record ini sedang diposting sesi/tab lain — JANGAN menulis apa pun ke ledger (hasilnya
- * dicatat sesi itu); selain itu tidak pasti.
+ * (rekonsiliasi); `in_flight` = record ini sedang diposting sesi/tab lain (attempt 'sending' SEGAR) — JANGAN menulis
+ * apa pun ke ledger (hasilnya dicatat sesi itu); selain itu tidak pasti — termasuk 'sending' BASI (proses mati setelah
+ * klaim, tinjauan N1): ledger ditulis unknown agar Finance bisa menyelesaikannya.
  */
 export function purchasePaymentConflict(out: Conflict): "posted" | "in_flight" | "unknown" {
     const live = out?.live;
-    if (live?.state === "sending" && live.sameRecord) return "in_flight";
+    if (live?.state === "sending" && live.sameRecord && !live.stale) return "in_flight";
     if (live?.state === "posted" && live.sameRecord && live.sameTarget && out?.generation === out?.currentGeneration) return "posted";
     return "unknown";
 }

@@ -11,7 +11,7 @@
  *   transaksi DB terbuka — klaim sudah commit sendiri sebelum kirim.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, lt, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { accurateWriteAttempt, accurateWriteAttemptReopen } from "@/db/schema";
 import { classifyBulkSaveResponse } from "@/lib/apiFetcher";
@@ -151,8 +151,10 @@ type GuardedWriteInput = {
 /** Tidak diklaim. `reopened` = subjek sudah dibuka ulang (repost, ADR-004 rilis B): kiriman biasa (generasi 0)
  * ditolak tanpa `live`. Selain itu `live` = attempt hidup generasi terkini; UI hanya boleh merekonsiliasi
  * `posted` bila `generation === currentGeneration`. */
+/** Attempt hidup + `stale`: belum berubah >= 2 menit menurut jam DB (ambang yang sama dengan resolve "tidak ada"). */
+export type LiveAttempt = Attempt & { stale: boolean };
 export type GuardedWriteResult =
-    | { claimed: false; live: Attempt | null; generation: number; currentGeneration: number; reopened: boolean }
+    | { claimed: false; live: LiveAttempt | null; generation: number; currentGeneration: number; reopened: boolean }
     | { claimed: true; attemptId: string; outcome: Classified; response: unknown; persisted: boolean };
 
 /** Generasi terkini subjek (ADR-004): `coalesce(max(to_generation), 0)` dari catatan reopen. Rilis A tidak punya
@@ -164,8 +166,12 @@ async function currentGeneration(db: NodePgDatabase, operation: string, subjectK
     return Number(row?.g ?? 0);
 }
 
-async function findLive(db: NodePgDatabase, operation: string, subjectKey: string, generation: number) {
-    const [live] = await db.select().from(accurateWriteAttempt).where(and(
+async function findLive(db: NodePgDatabase, operation: string, subjectKey: string, generation: number): Promise<LiveAttempt | null> {
+    const [live] = await db.select({
+        ...getTableColumns(accurateWriteAttempt),
+        // Tinjauan N1: 'sending' yang tertinggal (proses mati setelah klaim) harus terlihat basi oleh UI.
+        stale: sql<boolean>`${accurateWriteAttempt.updatedAt} < ${STALE_SQL}`,
+    }).from(accurateWriteAttempt).where(and(
         eq(accurateWriteAttempt.operation, operation),
         eq(accurateWriteAttempt.subjectKey, subjectKey),
         eq(accurateWriteAttempt.generation, generation),

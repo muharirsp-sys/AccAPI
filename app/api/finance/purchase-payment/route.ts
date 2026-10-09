@@ -94,6 +94,8 @@ export async function POST(request: Request) {
                 // reload — kasus "browser ditutup setelah kirim" tidak akan pernah cocok (re-review N1).
                 sameRecord: live.clientRef === clientRef,
                 sameTarget: live.targetDbId === String(session.databaseId),
+                // Tinjauan N1: basi menurut jam DB (>= 2 menit) — 'sending' basi = tidak pasti, bukan "sedang diposting".
+                stale: live.stale,
             },
             // ADR-004: UI merekonsiliasi "posted" hanya bila generasi kiriman = generasi terkini.
             generation: result.generation,
