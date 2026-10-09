@@ -6,6 +6,15 @@
 -- (migrate-pg membuat invoice_outbox_event). JANGAN dijalankan oleh loop/agen ke produksi.
 -- WAJIB dijalankan SEBELUM `ACCURATE_INVOICE_SEND=on` dan SEBELUM tombol Kirim dipakai setelah deploy: E5 (d) mengembalikan
 -- antrean hasil "antre ulang" versi lama (tanpa pencarian) ke Ditolak — tanpa itu Kirim/cron mengirimnya tanpa pencarian.
+-- E5 = pembersihan data LAMA, dijalankan SEKALI saat deploy S6-0d. Predikat E5 (a) `rejected` lebih lebar daripada keluaran
+-- klasifikasi baru (mis. penolakan beramplop ["…"] dari 5xx lama tidak terbedakan, dan last_error bukan-amplop apa pun
+-- dikunci): menjalankannya lagi kemudian hanya menambah baris tidak pasti yang harus diselesaikan manusia (aman, tapi bukan
+-- tanpa biaya). Bagian trigger/REVOKE/GRANT boleh diulang kapan saja.
+--
+-- PRASYARAT: tabel invoice_outbox_event dibuat migrate-pg saat container start. Role aplikasi (accapi_app) BUKAN owner dan
+-- tidak boleh DDL (runbook L1g) -> SEBELUM deploy pastikan `DATABASE_MIGRATION_URL` (role ber-hak DDL) terpasang di Coolify,
+-- ATAU jalankan dulu SQL entri `invoice_outbox_event` dari scripts/migrate-pg.mjs sebagai role owner. Tanpa salah satunya
+-- migrate-pg gagal dan container tidak hidup (sengaja: kode butuh tabelnya).
 --
 --   docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 < docs/handover/DDL_OUTBOX_EVENT.sql
 --
