@@ -233,7 +233,10 @@ def check_match_groups():
         ("K1041001025010", "KNF B&B HAIR BODY WASH RIKO 250ML X 24 BTL", "B&B - HAIR BODY WASH", "RIKO", "250ML"),
         ("K1045001006010", "KNF B&B POWDER BLOSSOM 60GR X 36 BTL", "B&B - POWDER", "BLOSSOM", "60GR"),
         ("K1521001004010", "KNF THEORY EXT DP ROYAL OUD 40ML X 36 BTL", "THEORY - EXT DP", "ROYAL OUD", "40ML"),
-        ("K1521002004010", "KNF THEORY EXT DP MIDNIGHT WAVE 40ML X 36 BTL", "THEORY - EXT DP", "MIDNIGHT WAVE", "40ML"))]
+        ("K1521002004010", "KNF THEORY EXT DP MIDNIGHT WAVE 40ML X 36 BTL", "THEORY - EXT DP", "MIDNIGHT WAVE", "40ML"),
+        ("K1450009002510", "KNF SASHA HAIR COLORANT NATURAL BLACK 25GR X 72 BOX", "SASHA HAIR COLORANT", "NATURAL BLACK", "25GR"),
+        ("K1450016002510", "KNF SASHA HAIR COLORANT BURGUNDY 25GR X 72 BOX", "SASHA HAIR COLORANT", "BURGUNDY", "25GR"),
+        ("K1531001003011", "KNF SASHA SHAMPOO COLOR NATURAL BLACK 30ML X 72 SCH", "SASHA SHAMPOO - COLOR", "NATURAL BLACK", "30ML"))]
 
     def pilih(frasa):
         row = dict(no="1", kelompok=frasa, variant=frasa, kode_barangs="", keterangan="", benefit_type="DISC_PCT")
@@ -256,6 +259,11 @@ def check_match_groups():
     # Padanan tersimpan 1 Okt 2026: seluruh ESKULIN - COLOGNE termasuk nama lama; Hijab C.GEL tidak.
     assert pilih("ESKULIN COLOGNE GEL REJUVENATION MIX VARIANT") == [
         ("ESKULIN - COLOGNE", "ALL VARIANT", "", "K1111002005010,K1111009005010,K1111009010010")]
+    # Padanan 9 Okt 2026: surat MTI menyebut SELURUH cat rambut SASHA dan SELURUH shampo pewarna.
+    # Dua merek master -> dua baris berketentuan sama (resolver Simpan memisah per merek).
+    assert pilih("SASHA HAIR HAIR SHAMPOO COLORANT") == [
+        ("SASHA HAIR COLORANT", "ALL VARIANT", "", "K1450009002510,K1450016002510"),
+        ("SASHA SHAMPOO - COLOR", "ALL VARIANT", "", "K1531001003011")], pilih("SASHA HAIR HAIR SHAMPOO COLORANT")
     # Tidak ditemukan -> baris dibiarkan (ditahan untuk operator), tidak ditebak.
     assert pilih("RESIK V CAIR") == [("RESIK V CAIR", "RESIK V CAIR", "", "")]
     # Produk berukuran lewat singkatan master: "EXT" = EXTRAIT, "DP" = DE PARFUM; ukuran wajib sama.
