@@ -24,7 +24,9 @@ DAY_MONTH_YEAR = re.compile(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})")
 
 # Bullet dan tanda hubung surat ini keluar sebagai U+FFFD karena memakai font simbol.
 BULLET = "�"
-JUTA = re.compile(r"([\d.,]+)\s*JT\b\s*(?:[" + BULLET + r"\-–]|s/?d)?\s*(?:[\d.,]+\s*JT\b)?\s*(?:UP)?\s*"
+# Batas atas tiap strata ("1JT - 1.99 JT") dan "UP" ikut ditangkap: keputusan pengguna 7 Okt
+# 2026, rentangnya dicetak di Summary seperti bunyi surat, bukan hanya minimumnya.
+JUTA = re.compile(r"([\d.,]+)\s*JT\b\s*(?:[" + BULLET + r"\-–]|s/?d)?\s*(?:([\d.,]+)\s*JT\b)?\s*(UP)?\s*"
                   r"POTONGAN\s+ON\s+FAKTUR\s+([\d.,]+)", re.I)
 BONUS = re.compile(r"SETIAP\s+PEMBELIAN\s+(\d+)\s+([A-Z]{2,4})\s+(.+?)\s+AKAN\s+MENDAPATKAN\s+BONUS\s+(\d+)\s+([A-Z]{2,4})", re.I)
 PERSEN = re.compile(r"DISC\.?\s*ON\s*FAKTUR\s*:?\s*([\d.,]+)\s*%", re.I)
@@ -227,9 +229,10 @@ ALIAS_KELOMPOK = {
     # Seluruh kelompok, termasuk nama lama yang masih tersisa di master.
     "ESKULIN COLOGNE GEL REJUVENATION": ("ESKULIN - COLOGNE",),
     "ESKULIN COLOGNE GEL REJUV": ("ESKULIN - COLOGNE",),
-    # 1 Okt 2026: shampo pewarna (surat NKA Sep menyebut barang ini "SASHA HAIR SHAMPOO"),
-    # bukan krim cat rambut SASHA HAIR COLORANT.
-    "SASHA HAIR HAIR SHAMPOO COLORANT": ("SASHA SHAMPOO - COLOR",),
+    # 9 Okt 2026 (keputusan pengguna, mengganti dugaan 1 Okt yang hanya shampo pewarna): SELURUH
+    # cat rambut SASHA HAIR COLORANT dan SELURUH SASHA SHAMPOO - COLOR. Terbukti dari IDS Kino yang
+    # memberi 3% surat MTI 8789 ke SASHA HC N.BLACK 25GR BOX (Wang Mart, SO 1671-SOP-260014460).
+    "SASHA HAIR HAIR SHAMPOO COLORANT": ("SASHA SHAMPOO - COLOR", "SASHA HAIR COLORANT"),
 }
 # Ketentuan program yang TIDAK tercetak di suratnya (surat hanya judul + periode), diputuskan
 # pengguna. Kunci = Kode Aju. Outletnya lewat daftar bernama nomor surat itu sendiri.
@@ -243,6 +246,7 @@ KETENTUAN_SURAT = {
 KEMASAN_SURAT = {"BLISTER": "BLR", "BLR": "BLR", "JAR": "JAR", "SACHET": "SCH", "SCH": "SCH",
                  "POUCH": "PCH", "PCH": "PCH", "BOTOL": "BTL", "BTL": "BTL", "PACKAGE": "PACK", "PACK": "PACK"}
 SEBUTAN_SEMUA = re.compile(r"\b(?:MIX|ALL)\s+VARIANTS?\b|\bSEMUA\s+VARIAN\b", re.I)
+from summary_rules import LINTAS_GRAMASI  # noqa: E402  (satu definisi untuk semua principal)
 
 
 def _token_master(nama):
@@ -300,11 +304,13 @@ def match_groups(rows, items, warnings):
     """Frasa kelompok surat -> kelompok/varian/kemasan/kode master, untuk baris yang belum berkode.
 
     Barang = yang SETIAP kata frasanya dijelaskan nama master (`_tercakup`), dipersempit kata
-    kemasan surat; atau seluruh kelompok padanan di `ALIAS_KELOMPOK`. Satu baris per kelompok
-    master (keputusan 18 Sep: satu kelompok = satu baris). Tiap baris HANYA diterima bila
-    resolver yang dipakai saat Simpan dan saat Form dibuat (`_apply_native_kelompok`) menurunkan
-    kode yang sama persis dari kolom-kolomnya — kalau tidak, layar dan Form akan berbeda dari
-    aturan promo. Tidak cocok, atau tidak bisa dinyatakan begitu = baris DITAHAN apa adanya.
+    kemasan surat; atau seluruh kelompok padanan di `ALIAS_KELOMPOK`. Satu baris per FRASA
+    surat (keputusan 7 Okt 2026: yang membedakan baris adalah ketentuan dan benefit; beberapa
+    kelompok master yang tercakup satu frasa digabung " & "), dipecah hanya per merek. Tiap
+    baris HANYA diterima bila resolver yang dipakai saat Simpan dan saat Form dibuat
+    (`_apply_native_kelompok`) mengembalikan baris itu utuh dengan kode yang sama persis —
+    kalau tidak, layar dan Form akan berbeda dari aturan promo. Tidak cocok, atau tidak bisa
+    dinyatakan begitu = baris DITAHAN apa adanya.
     Frasa berukuran ("... 45ML") milik `match_products`, tidak disentuh di sini.
     """
     from shared import _BANDED, _EXCLUDED_KELOMPOKS, _apply_native_kelompok, kemasan_of
@@ -336,17 +342,25 @@ def match_groups(rows, items, warnings):
             warnings.append(f"'{asli}': cocok dengan lebih dari satu kemasan; pilih kelompok manual.")
             hasil.append(row)
             continue
-        per_kelompok = {}
+        # SATU FRASA SURAT = SATU BARIS (keputusan pengguna 7 Okt 2026). "ELLIPS HAIR VITAMIN
+        # BLISTER" mencakup kelompok master ELLIPS dan ELLIPS - H.VIT BALI; dulu jadi dua baris
+        # berketentuan dan berbenefit sama persis — "varian dobel" di lembar yang ditandatangani.
+        # Kelompok-kelompoknya digabung " & " pada satu baris dan kodenya disatukan. Yang masih
+        # memisahkan baris hanya MEREK (awalan kelompok master sebelum " - "), persis batas
+        # pemecahan `_apply_native_kelompok`, supaya baris yang disimpan dan yang dicetak sebangun.
+        per_merek = {}
         for it in cocok:
-            per_kelompok.setdefault(str(it.get("kelompok")), {})[str(it.get("kode_barang")).strip()] = it
+            kelompok = str(it.get("kelompok"))
+            per_merek.setdefault(kelompok.split(" - ")[0], {}).setdefault(kelompok, {})[str(it.get("kode_barang")).strip()] = it
         baris = []
-        for kelompok, barang in per_kelompok.items():
+        for per_kelompok in per_merek.values():
+            barang = {kode: it for grup in per_kelompok.values() for kode, it in grup.items()}
             varian = sorted({flatten(it.get("variant")).upper() for it in barang.values()})
             for pilihan in ["ALL VARIANT"] + ([",".join(varian)] if all(varian) else []):
-                calon = {**row, "kelompok": kelompok, "variant": pilihan, "gramasi": "ALL GRAMASI",
+                calon = {**row, "kelompok": " & ".join(per_kelompok), "variant": pilihan, "gramasi": "ALL GRAMASI",
                          "kemasan": kemasan, "kode_barangs": ",".join(barang)}
-                if (_kode_dari(_apply_native_kelompok([{**calon, "kode_barangs": ""}], items)) == set(barang)
-                        and _kode_dari(_apply_native_kelompok([dict(calon)], items)) == set(barang)):
+                ulang = _apply_native_kelompok([dict(calon)], items)
+                if len(ulang) == 1 and _kode_dari(ulang) == set(barang):
                     catatan = flatten(row.get("keterangan", ""))
                     baris.append({**calon, "keterangan": (catatan + "; " if catatan else "") + f"surat menyebut: {asli}"})
                     break
@@ -459,9 +473,19 @@ def parse_text(text, page_count=1):
     def add(**row):
         rows.append({**common, **row, "no": str(len(rows) + 1)})
 
-    for minimum, potongan in JUTA.findall(detail):
-        add(kelompok=kelompok_brand, variant="", ketentuan=f"Minimal belanja Rp {juta(minimum)}",
-            benefit_type="DISC_RP", benefit=rupiah(potongan), source_quote=f"{minimum}JT potongan on faktur {potongan}")
+    strata = JUTA.findall(detail)
+    for urutan, (minimum, maksimum, up, potongan) in enumerate(strata):
+        # Batas atas = minimum strata BERIKUTNYA dikurangi satu rupiah (keputusan pengguna 8 Okt
+        # 2026): surat menulis "1JT - 1.99 JT", tetapi 1.990.000 meninggalkan celah sampai
+        # 2.000.000 — belanja Rp 1.992.000 terlihat tak tercakup padahal dapat strata 1. "Di
+        # bawah Rp 2.000.000" juga tidak dipakai: angka 2.000.000 lalu muncul di dua strata.
+        # Strata terakhir memakai "UP" atau batas tertulis bila tidak ada strata sesudahnya.
+        berikut = int(juta(strata[urutan + 1][0])) - 1 if urutan + 1 < len(strata) else None
+        rentang = (f" s/d Rp {berikut}" if berikut is not None
+                   else " UP" if up else f" s/d Rp {juta(maksimum)}" if maksimum else "")
+        add(kelompok=kelompok_brand, variant="", ketentuan=f"Minimal belanja Rp {juta(minimum)}{rentang}",
+            benefit_type="DISC_RP", benefit=rupiah(potongan),
+            source_quote=f"{minimum}JT{' - ' + maksimum + 'JT' if maksimum else ''}{' UP' if up else ''} potongan on faktur {potongan}")
     # Bonus dibaca PER BUTIR: satu surat bisa memuat empat sub-program, dan "berlaku
     # kelipatan" milik butirnya sendiri, bukan milik seluruh surat.
     for butir in bullets(detail):
@@ -470,8 +494,12 @@ def parse_text(text, page_count=1):
             continue
         beli, unit, produk, bonus, unit_bonus = found.groups()
         kelipatan = "berlaku kelipatan" if "KELIPATAN" in butir.upper() else ""
+        # "MIX VARIANT" = campur varian DALAM GRAMASI YANG SAMA (keputusan pengguna 7 Okt 2026;
+        # surat 9096 memberi bonus "produk dengan harga yang sama"). Lintas gramasi hanya bila
+        # butirnya menyebutnya. Ketentuan menegaskannya supaya pembaca dan mesin aturan sepakat.
+        gramasi = ", GRAMASI SAMA" if SEBUTAN_SEMUA.search(produk) and not LINTAS_GRAMASI.search(butir) else ""
         add(kelompok=flatten(produk), variant=flatten(produk),
-            ketentuan=f"Setiap pembelian {beli} {unit.upper()} {flatten(produk)} {kelipatan}".strip(),
+            ketentuan=f"Setiap pembelian {beli} {unit.upper()} {flatten(produk)}{gramasi} {kelipatan}".strip(),
             benefit_type="BONUS_QTY", benefit=f"{bonus} {unit_bonus.upper()}",
             source_quote=f"Setiap pembelian {beli} {unit} {produk} mendapatkan bonus {bonus} {unit_bonus}")
     # Potongan ON PO per produk: nama produk adalah teks sejak butir sebelumnya.

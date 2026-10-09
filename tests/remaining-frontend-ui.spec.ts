@@ -185,6 +185,29 @@ test("Claim Workflow replaces empty API responses with user-facing errors", asyn
   await expect(page.getByText(/Unexpected end of JSON input/)).toHaveCount(0);
 });
 
+test("Claim Workflow outstanding counter follows the API summary contract", async ({ page }) => {
+  const submission = { workflowId: "wf-1", claimWorkflowNo: "CW-001", principleName: "PT Uji", status: "submitted", totalClaim: 100, totalPaid: 0, remainingAmount: 100 };
+  await page.route("**/api/claim-workflow", (route) =>
+    route.fulfill({ json: { ok: true, workflows: [] } }),
+  );
+  await page.route("**/api/claim-workflow/outstanding", (route) =>
+    route.fulfill({ json: {
+      ok: true,
+      outstanding: [
+        { ...submission, submissionId: "sub-1", noClaim: "NC-1" },
+        { ...submission, submissionId: "sub-2", noClaim: "NC-2" },
+      ],
+      summary: { submissionCount: 2, totalClaim: 200, totalPaid: 0, totalOutstanding: 200 },
+    } }),
+  );
+
+  await page.goto("/claim-workflow");
+
+  await expect(page.getByText("2 klaim", { exact: true })).toBeVisible();
+  await expect(page.locator("p", { hasText: /^Outstanding$/ }).locator("xpath=preceding-sibling::p[1]")).toHaveText("2");
+  await expect(page.getByRole("link", { name: "CW-001" }).first()).toHaveAttribute("href", "/claim-workflow/wf-1");
+});
+
 test("Office Calm remaining labels and controls meet AA contrast", async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem("off-theme", "office-calm"));
 

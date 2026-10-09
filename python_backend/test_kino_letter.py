@@ -108,10 +108,15 @@ def main():
     msg = parse_text(MSG)
     assert msg["on_faktur"] and msg["mechanism"] == "CB ON FAKTUR VALUE", msg["mechanism"]
     assert len(msg["rows"]) == 4, msg["rows"]
-    assert [r["ketentuan"] for r in msg["rows"]][:2] == ["Minimal belanja Rp 1000000", "Minimal belanja Rp 2000000"]
-    # Rentang "9JT � 9.99 JT" harus terbaca sebagai batas BAWAH; membaca 9.99 menaikkan syarat.
-    assert msg["rows"][2] == {**msg["rows"][2], "ketentuan": "Minimal belanja Rp 9000000", "benefit": "180000"}
-    assert msg["rows"][3]["ketentuan"] == "Minimal belanja Rp 10000000"
+    # Rentang tiap strata dicetak seperti bunyi surat (7 Okt 2026); minimumnya tetap angka pertama,
+    # jadi "9JT � 9.99 JT" adalah batas BAWAH 9 juta — membaca 9.99 menaikkan syarat.
+    # Batas atas = minimum strata berikutnya - 1 (8 Okt 2026), bukan "1.99 JT" tertulis: tanpa
+    # celah dan tanpa angka yang muncul di dua strata. Contoh surat ini melompat 2JT -> 9JT.
+    assert [r["ketentuan"] for r in msg["rows"]][:2] == ["Minimal belanja Rp 1000000 s/d Rp 1999999",
+                                                         "Minimal belanja Rp 2000000 s/d Rp 8999999"]
+    assert msg["rows"][2] == {**msg["rows"][2], "ketentuan": "Minimal belanja Rp 9000000 s/d Rp 9999999", "benefit": "180000"}
+    assert msg["rows"][3]["ketentuan"] == "Minimal belanja Rp 10000000 UP"
+    assert msg["rows"][3]["source_quote"] == "10JT UP potongan on faktur 200.000", msg["rows"][3]["source_quote"]
     assert msg["rows"][0]["periode_start"] == "2026-09-01" and msg["rows"][0]["periode_end"] == "2026-09-30"
     assert (msg["rows"][0]["outlet_mode"], msg["rows"][0]["outlet_classes"]) == ("except", "LOYALTY,CONTRACTUAL")
 
@@ -127,6 +132,11 @@ def main():
     assert "berlaku kelipatan" in resik["rows"][0]["ketentuan"]
     assert "kelipatan" not in resik["rows"][1]["ketentuan"], resik["rows"][1]["ketentuan"]
     assert "MIX VARIANT" in resik["rows"][0]["ketentuan"] and "MIX" not in resik["rows"][1]["ketentuan"]
+    # "MIX VARIANT" = campur varian dalam gramasi yang sama (7 Okt 2026); surat yang diam soal
+    # gramasi ditegaskan di ketentuan, surat yang mengizinkan lintas gramasi tidak.
+    assert resik["rows"][0]["ketentuan"] == "Setiap pembelian 30 PCS RESIK V KHASIAT MANJAKANI MIX VARIANT, GRAMASI SAMA berlaku kelipatan", resik["rows"][0]["ketentuan"]
+    lintas = parse_text(RESIK.replace("MIX VARIANT AKAN", "MIX VARIANT BEDA GRAMASI AKAN", 1))
+    assert "GRAMASI SAMA" not in lintas["rows"][0]["ketentuan"] and "BEDA GRAMASI" in lintas["rows"][0]["ketentuan"]
 
     # Surat yang diunggah ke program BERARTI on faktur (aturan pengguna 18 Sep 2026: "ON PO =
     # ON Faktur"). Mekanisme yang tercetak tetap dicatat apa adanya untuk jejak audit.
@@ -223,25 +233,37 @@ def check_match_groups():
         ("K1041001025010", "KNF B&B HAIR BODY WASH RIKO 250ML X 24 BTL", "B&B - HAIR BODY WASH", "RIKO", "250ML"),
         ("K1045001006010", "KNF B&B POWDER BLOSSOM 60GR X 36 BTL", "B&B - POWDER", "BLOSSOM", "60GR"),
         ("K1521001004010", "KNF THEORY EXT DP ROYAL OUD 40ML X 36 BTL", "THEORY - EXT DP", "ROYAL OUD", "40ML"),
-        ("K1521002004010", "KNF THEORY EXT DP MIDNIGHT WAVE 40ML X 36 BTL", "THEORY - EXT DP", "MIDNIGHT WAVE", "40ML"))]
+        ("K1521002004010", "KNF THEORY EXT DP MIDNIGHT WAVE 40ML X 36 BTL", "THEORY - EXT DP", "MIDNIGHT WAVE", "40ML"),
+        ("K1450009002510", "KNF SASHA HAIR COLORANT NATURAL BLACK 25GR X 72 BOX", "SASHA HAIR COLORANT", "NATURAL BLACK", "25GR"),
+        ("K1450016002510", "KNF SASHA HAIR COLORANT BURGUNDY 25GR X 72 BOX", "SASHA HAIR COLORANT", "BURGUNDY", "25GR"),
+        ("K1531001003011", "KNF SASHA SHAMPOO COLOR NATURAL BLACK 30ML X 72 SCH", "SASHA SHAMPOO - COLOR", "NATURAL BLACK", "30ML"))]
 
     def pilih(frasa):
         row = dict(no="1", kelompok=frasa, variant=frasa, kode_barangs="", keterangan="", benefit_type="DISC_PCT")
         return [(r["kelompok"], r["variant"], r.get("kemasan", ""), r["kode_barangs"]) for r in match_groups([row], master, [])]
 
-    # Kata kemasan surat mempersempit; H.VIT dan HVIT = HAIR VITAMIN; satu baris per kelompok master.
+    # Kata kemasan surat mempersempit; H.VIT dan HVIT = HAIR VITAMIN. Satu FRASA surat = satu
+    # baris (7 Okt 2026): kelompok master yang tercakup digabung " & ", bukan jadi baris kembar.
     assert pilih("ELLIPS HAIR VITAMIN BLISTER") == [
-        ("ELLIPS", "ALL VARIANT", "BLR", "K1100001000110,K1100007000110"),
-        ("ELLIPS - H.VIT BALI", "ALL VARIANT", "BLR", "K1101011000110")], pilih("ELLIPS HAIR VITAMIN BLISTER")
+        ("ELLIPS & ELLIPS - H.VIT BALI", "ALL VARIANT", "BLR", "K1100001000110,K1100007000110,K1101011000110")], pilih("ELLIPS HAIR VITAMIN BLISTER")
     assert pilih("ELLIPS HAIR VITAMIN JAR") == [
-        ("ELLIPS", "ALL VARIANT", "JAR", "K1100001000140,K1100007000140"),
-        ("ELLIPS - HVIT KERATIN 15C HAIR", "ALL VARIANT", "JAR", "K1102106000120")], pilih("ELLIPS HAIR VITAMIN JAR")
+        ("ELLIPS & ELLIPS - HVIT KERATIN 15C HAIR", "ALL VARIANT", "JAR", "K1100001000140,K1100007000140,K1102106000120")], pilih("ELLIPS HAIR VITAMIN JAR")
     # Inisial master "BN" = BOTTLE NIPPLE; kata ganda surat ("BABY BABY") tidak mengganggu.
     assert pilih("SLEEK BABY BABY BOTTLE NIPPLE") == [("SLEEK BABY - BN CLEANSER", "ALL VARIANT", "", "K1502000007020")]
-    assert [g for g, *_ in pilih("B&B ALL VARIANT")] == ["B&B - HAIR BODY WASH", "B&B - POWDER"]
+    assert [g for g, *_ in pilih("B&B ALL VARIANT")] == ["B&B - HAIR BODY WASH & B&B - POWDER"]
+    # Perapi baris (jalur parse Kino) tidak mengosongkan kelompok gabungan yang tiap bagiannya master.
+    from baca_surat_rapi import rapikan_baris
+    rapi = rapikan_baris([dict(kelompok="ELLIPS & ELLIPS - H.VIT BALI", variant="ALL VARIANT", gramasi="ALL GRAMASI"),
+                          dict(kelompok="ELLIPS & RESIK V CAIR", variant="ALL VARIANT", gramasi="ALL GRAMASI")], master)
+    assert [r["kelompok"] for r in rapi] == ["ELLIPS & ELLIPS - H.VIT BALI", ""], rapi
     # Padanan tersimpan 1 Okt 2026: seluruh ESKULIN - COLOGNE termasuk nama lama; Hijab C.GEL tidak.
     assert pilih("ESKULIN COLOGNE GEL REJUVENATION MIX VARIANT") == [
         ("ESKULIN - COLOGNE", "ALL VARIANT", "", "K1111002005010,K1111009005010,K1111009010010")]
+    # Padanan 9 Okt 2026: surat MTI menyebut SELURUH cat rambut SASHA dan SELURUH shampo pewarna.
+    # Dua merek master -> dua baris berketentuan sama (resolver Simpan memisah per merek).
+    assert pilih("SASHA HAIR HAIR SHAMPOO COLORANT") == [
+        ("SASHA HAIR COLORANT", "ALL VARIANT", "", "K1450009002510,K1450016002510"),
+        ("SASHA SHAMPOO - COLOR", "ALL VARIANT", "", "K1531001003011")], pilih("SASHA HAIR HAIR SHAMPOO COLORANT")
     # Tidak ditemukan -> baris dibiarkan (ditahan untuk operator), tidak ditebak.
     assert pilih("RESIK V CAIR") == [("RESIK V CAIR", "RESIK V CAIR", "", "")]
     # Produk berukuran lewat singkatan master: "EXT" = EXTRAIT, "DP" = DE PARFUM; ukuran wajib sama.
@@ -323,6 +345,19 @@ def check_end_to_end(msg, resik):
     hasil = calculate(bonus, [dict(code="K1", unit="PCS", quantity="60", price="10000")],
                       "2026-09-03", "GT", outlet_classes=("LOYALTY",), known_classes=("LOYALTY",))
     assert hasil["bonuses"][0]["quantity"] == "2" and hasil["bonuses"][0]["code"] == "", hasil["bonuses"]
+    # MIX VARIANT = gramasi sama (7 Okt 2026): dengan master, programnya dipecah per gramasi;
+    # 20 pcs 50ML + 10 pcs 200ML bukan 30 pcs, dan 30 pcs 50ML saja yang berbonus.
+    master = [dict(kode_barang="K1", gramasi="50ML"), dict(kode_barang="K2", gramasi="200ML")]
+    per_gramasi = validate_programs(compile_programs([{**resik["rows"][0], "kode_barangs": ",".join(codes)}], None, master)[0], set(codes), 1)
+    assert [(p.kelompok, p.codes) for p in per_gramasi] == [
+        ("RESIK V KHASIAT MANJAKANI MIX VARIANT 50ML", ["K1"]), ("RESIK V KHASIAT MANJAKANI MIX VARIANT 200ML", ["K2"])], per_gramasi
+    campur = calculate(per_gramasi, [dict(code="K1", unit="PCS", quantity="20", price="10000"),
+                                     dict(code="K2", unit="PCS", quantity="10", price="10000")],
+                       "2026-09-03", "GT", outlet_classes=("LOYALTY",), known_classes=("LOYALTY",))
+    assert campur["bonuses"] == [], campur["bonuses"]
+    sama = calculate(per_gramasi, [dict(code="K1", unit="PCS", quantity="30", price="10000")],
+                     "2026-09-03", "GT", outlet_classes=("LOYALTY",), known_classes=("LOYALTY",))
+    assert [(b["quantity"], b["eligible_codes"]) for b in sama["bonuses"]] == [("1", ["K1"])], sama["bonuses"]
 
 
 if __name__ == "__main__":

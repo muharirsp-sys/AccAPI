@@ -456,9 +456,15 @@ export async function POST(request: NextRequest) {
                 bonusOverQuota: overQuota.get(`${line.soNo}#${line.rowNumber}`),
                 outletChannel: customerNo ? channelOf.get(customerNo) ?? "" : "",
                 reportChannel: line.customerType ?? "",
+                // Aturan TINGKAT NOTA ikut dijelaskan. MSG Oktober mengecualikan LOYALTY; tanpa
+                // ini SO outlet LOYALTY yang diberi MSG oleh IDS Kino tertahan dengan bunyi
+                // "tidak punya aturan promo terbit" padahal aturannya ada dan outletnya yang
+                // dikecualikan (MYS001, 7 Okt 2026). Sebabnya hanya dicetak bila ada potongan
+                // tak bertuan, jadi SO yang MSG-nya sudah cocok tidak kebanjiran catatan.
                 terhalang: sebabTerhalang([
                     ...(itemCode ? (rulesByItem.get(itemCode) ?? []) : []),
                     ...tariffOf(base, customerNo),
+                    ...fakturRules,
                 ], dateOf(line), customerNo, String(line.soNo)),
             });
             // Temuan tingkat SO menahan SETIAP barisnya: nominalnya milik seluruh SO, jadi

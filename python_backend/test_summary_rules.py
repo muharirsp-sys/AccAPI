@@ -291,6 +291,17 @@ def check_compiler():
     assert programs[0].mix is True and programs[0].stacking is False, programs[0]
     programs, _ = compiled([row(keterangan="Dapat digabung dengan promo lain")])
     assert programs[0].stacking is True, programs[0]
+    # 7 Okt 2026, semua principal: ketentuan mix yang diam soal gramasi DITOLAK, bukan ditebak.
+    programs, issues = compile_programs([row(ketentuan="Beli 10 mix variant", kode_barangs="A,B")])
+    assert programs == [] and "gramasi" in issues[0], issues
+    # Dengan master, mix gramasi-sama dipecah satu program per gramasi; lintas gramasi tidak.
+    master = [dict(kode_barang="A", gramasi="50ML"), dict(kode_barang="B", gramasi="50ML"), dict(kode_barang="C", gramasi="200ML")]
+    programs, issues = compile_programs([row(ketentuan="Beli 10 mix variant gramasi sama", kode_barangs="A,B,C", kelompok="K")], None, master)
+    assert issues == [] and [(p["kelompok"], p["codes"], p["priority"]) for p in programs] == [
+        ("K 50ML", ["A", "B"], 1), ("K 200ML", ["C"], 2)], programs
+    assert validate_programs(programs, MASTER, 1)[0].mix is True
+    programs, issues = compile_programs([row(ketentuan="Beli 10 mix variant beda gramasi", kode_barangs="A,B,C", kelompok="K")], None, master)
+    assert issues == [] and [(p["kelompok"], p["codes"]) for p in programs] == [("K", ["A", "B", "C"])], programs
     # "PO pertama" (listing BP2609008707) dari keterangan yang terlihat peninjau -> first_po. Baris
     # dengan dan tanpa syarat itu bukan satu program, meski barang dan manfaatnya sama.
     programs, _ = compiled([row(keterangan="Hanya PO pertama (listing) per outlet")])
@@ -405,8 +416,18 @@ def check_flow():
     assert simulated.json()["result"]["discount"] == "5000.00", simulated.text
     feed = client.get("/summary/library/published", headers=owner).json()
     assert any(item["id"] == draft_id and item["rules"] for item in feed["programs"]), feed
-    pulled = client.post(f"/summary/library/{draft_id}/withdraw", headers=owner, json={"revision": revision})
+    # Cabut publikasi tanpa alasan (atau alasan cuma spasi) ditolak dan aturan tetap terbit.
+    for kosong in ({"revision": revision}, {"revision": revision, "alasan": "   ab  "},
+                   {"revision": revision, "alasan": ["abcde"]}, {"revision": revision, "alasan": 12345}):
+        ditolak = client.post(f"/summary/library/{draft_id}/withdraw", headers=owner, json=kosong)
+        assert ditolak.status_code == 400 and "Alasan" in ditolak.json()["detail"], ditolak.text
+    pulled = client.post(f"/summary/library/{draft_id}/withdraw", headers=owner,
+                         json={"revision": revision, "alasan": "  Surat diralat principal  "})
     assert pulled.status_code == 200 and len(pulled.json()["programs"]) == 1, pulled.text
+    dicabut = pulled.json()["draft"]
+    assert dicabut["status"] == "withdrawn", dicabut
+    assert dicabut["content"]["withdrawn_reason"] == "Surat diralat principal", dicabut["content"]
+    assert dicabut["content"]["withdrawn_by"] == "ari@example.com" and dicabut["content"]["withdrawn_at"].endswith("Z")
     feed = client.get("/summary/library/published", headers=owner).json()
     assert all(item["rules"] == [] for item in feed["programs"] if item["id"] == draft_id), feed
     print("summary flow check: OK")

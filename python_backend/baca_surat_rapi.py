@@ -20,6 +20,8 @@ peninjau memilih dari daftar master yang bersih, tanpa kehilangan kata-kata sura
 kelompok berarti memilih barang mana yang dapat promo, dan itu bukan tebakan yang boleh
 dilakukan mesin diam-diam.
 """
+import re
+
 
 
 def _norm(teks):
@@ -52,8 +54,13 @@ def rapikan_baris(rows, master_items, principle_name=""):
 
         # 3. Kelompok yang bukan kelompok master dikosongkan, katanya disimpan.
         kel = str(r.get("kelompok") or "").strip()
+        # Satu frasa surat boleh mencakup beberapa kelompok master yang digabung " & "
+        # (`match_groups`, 7 Okt 2026: "ELLIPS & ELLIPS - H.VIT BALI"). Sah bila TIAP bagiannya
+        # nama master. Dulu nilai gabungan dianggap asing dan dikosongkan, grid lalu menampilkan
+        # "- Kelompok -" padahal kodenya sudah terpilih (terlihat di produksi 7 Okt 2026).
+        bagian = [b for b in re.split(r"\s+&\s+", kel) if b.strip()]
         # "__ALL_MASTER__" = seluruh katalog, sentinel yang sama dengan pilihan di layar.
-        if kel and _norm(kel) not in kelompok_master and kel != "__ALL_MASTER__":
+        if kel and kel != "__ALL_MASTER__" and any(_norm(b) not in kelompok_master for b in bagian):
             # HANYA cocok persis. Pencocokan "mengandung" sempat dipakai di sini dan langsung
             # terbukti berbahaya pada surat pertama yang diujikan: dari frasa
             # "OVALE 2IN1 CLEANSER MIX VARIANT" ia memilih kelompok master "OVALE" — satu-satunya

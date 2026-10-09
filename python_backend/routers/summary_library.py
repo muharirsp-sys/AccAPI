@@ -5,6 +5,7 @@ Main Functions: list/get/save/publish/withdraw/source/simulate; versi terbit ter
 Side Effects: SQLite read/write dan respons PDF privat; tidak menulis faktur.
 """
 import json
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import ValidationError
 from shared import get_current_user, user_has_permission, validate_csrf_request
@@ -92,7 +93,7 @@ def programs_for(draft):
     pages = content["extraction"]["page_count"]
     if draft["status"] != "draft" and content.get("programs"):
         return validate_programs(content["programs"], codes, pages)
-    programs, issues = compile_programs(content.get("rows", []), content.get("period"))
+    programs, issues = compile_programs(content.get("rows", []), content.get("period"), content["master"].get("items", []))
     if issues:
         raise ValueError("Perbaiki baris draft sebelum aturan dapat disusun: " + "; ".join(issues[:8]))
     return validate_programs(programs, codes, pages)
@@ -107,7 +108,8 @@ def preview(draft):
     """Pratinjau aturan untuk ditinjau manusia; kegagalan dilaporkan, bukan disembunyikan."""
     if draft['status']!='draft' and draft['content'].get('programs'):
         return [p.model_dump(mode='json') for p in programs_for(draft)],[]
-    issues = compile_programs(draft["content"].get("rows", []), draft["content"].get("period"))[1]
+    issues = compile_programs(draft["content"].get("rows", []), draft["content"].get("period"),
+                              (draft["content"].get("master") or {}).get("items", []))[1]
     try:
         return [program.model_dump(mode="json") for program in programs_for(draft)], issues
     except (ValueError, KeyError, ValidationError) as error:
@@ -290,8 +292,22 @@ async def publish(request: Request, draft_id: str):
 async def withdraw(request: Request, draft_id: str):
     user = require_user(request, True)
     body = await read_body(request)
+    # Mencabut aturan terbit mengubah potongan faktur berikutnya; alasannya wajib tercatat bersama
+    # pelaku dan waktunya, di content seperti `reviewed_by` saat terbit (owner 8 Okt 2026, S4a).
+    alasan = body.get("alasan")
+    alasan = alasan.strip() if isinstance(alasan, str) else ""
+    if len(alasan) < 5:
+        raise HTTPException(400, "Alasan cabut publikasi wajib diisi (minimal 5 karakter)")
+    draft = get_draft(draft_id, user)
+    if not draft:
+        raise HTTPException(409, "Versi berubah atau tidak tersedia")
+    content = draft["content"]
+    content["withdrawn_reason"] = alasan[:500]
+    content["withdrawn_by"] = identity(user)
+    content["withdrawn_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     with connect() as db:
-        changed = db.execute("UPDATE summary_draft SET status='withdrawn',revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND owner=? AND status='published' AND revision=?", (draft_id, identity(user), body.get("revision"))).rowcount
+        changed = db.execute("UPDATE summary_draft SET content=?,status='withdrawn',revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND owner=? AND status='published' AND revision=?",
+            (json.dumps(content), draft_id, identity(user), body.get("revision"))).rowcount
         if not changed:
             raise HTTPException(409, "Versi berubah atau tidak tersedia")
     return with_rules(get_draft(draft_id, user))

@@ -221,6 +221,42 @@ const migrations = [
                WHERE table_name = 'discount_normalization' AND column_name = 'promo_rule_key'`,
     sql: "ALTER TABLE discount_normalization ADD COLUMN IF NOT EXISTS promo_rule_key text",
   },
+  {
+    // 2026-10-08. Templat No Claim per principal yang diubah dari bawaan kode (S4b).
+    // Lihat db/migrations/0026_no_claim_template.sql.
+    nama: "no_claim_template",
+    sudahAda: `SELECT 1 FROM information_schema.tables WHERE table_name = 'no_claim_template'`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS no_claim_template (
+          principle_code text NOT NULL,
+          variant_key    text NOT NULL DEFAULT '',
+          label          text NOT NULL,
+          pattern        text NOT NULL,
+          pad_width      integer,
+          sequence_type  text NOT NULL DEFAULT 'number' CHECK (sequence_type IN ('number', 'text', 'roman')),
+          updated_by     text,
+          updated_at     timestamp NOT NULL,
+          PRIMARY KEY (principle_code, variant_key)
+      );
+    `,
+  },
+  {
+    // 2026-10-08. Jejak ubah/kembalikan templat No Claim (nilai lama -> baru + pelaku).
+    nama: "no_claim_template_log",
+    sudahAda: `SELECT 1 FROM information_schema.tables WHERE table_name = 'no_claim_template_log'`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS no_claim_template_log (
+          id             bigserial PRIMARY KEY,
+          principle_code text NOT NULL,
+          variant_key    text NOT NULL DEFAULT '',
+          action         text NOT NULL CHECK (action IN ('set', 'reset')),
+          before         jsonb,
+          after          jsonb,
+          actor          text,
+          created_at     timestamp NOT NULL
+      );
+    `,
+  },
 ];
 
 const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 15_000 });

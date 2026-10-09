@@ -45,7 +45,8 @@ type ClaimWorkflowListRow = {
 };
 
 type OutstandingRow = {
-  id: string;
+  workflowId: string;
+  submissionId: string;
   claimWorkflowNo: string;
   noClaim?: string | null;
   principleName: string;
@@ -60,7 +61,7 @@ type OutstandingRow = {
 };
 
 type OutstandingSummary = {
-  workflowCount: number;
+  submissionCount: number;
   totalClaim: number;
   totalPaid: number;
   totalOutstanding: number;
@@ -298,7 +299,7 @@ export default function ClaimWorkflowPage() {
       },
       {
         label: "Outstanding",
-        value: outstandingSummary?.workflowCount ?? 0,
+        value: outstandingSummary?.submissionCount ?? 0,
         icon: CircleDollarSign,
         tone: "text-[#8a4703]",
       },
@@ -371,7 +372,7 @@ export default function ClaimWorkflowPage() {
           {outstandingSummary && (
             <div className="flex flex-wrap items-center gap-3 text-xs">
               <span className="rounded-full border border-[#e7c98f] bg-[#fff7e6] px-3 py-1 text-[#7a5a2a]">
-                <strong className="text-[#1f1408]">{outstandingSummary.workflowCount}</strong> workflow
+                <strong className="text-[#1f1408]">{outstandingSummary.submissionCount}</strong> klaim
               </span>
               <span className="rounded-full border border-[#d7b56d] bg-[#f7ead1] px-3 py-1 text-[#8a4703]">
                 Outstanding: <strong>{rupiah(outstandingSummary.totalOutstanding)}</strong>
@@ -407,9 +408,9 @@ export default function ClaimWorkflowPage() {
               </thead>
               <tbody className="divide-y divide-[#e7c98f]/60">
                 {outstanding.map((row) => (
-                  <tr key={row.id} className="text-[#3a240c] hover:bg-[#fff7e6]">
+                  <tr key={row.submissionId} className="text-[#3a240c] hover:bg-[#fff7e6]">
                     <td className="whitespace-nowrap px-5 py-3 font-semibold">
-                      <Link href={`/claim-workflow/${row.id}`} className="font-mono text-[#8a4703] hover:text-[#a87518] hover:underline">
+                      <Link href={`/claim-workflow/${row.workflowId}`} className="font-mono text-[#8a4703] hover:text-[#a87518] hover:underline">
                         {row.claimWorkflowNo}
                       </Link>
                     </td>
