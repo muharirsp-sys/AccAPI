@@ -14,7 +14,7 @@ import { requirePermission } from "@/lib/rbac/resolve";
 import {
     getGtAoTargetMode, setGtAoTargetMode, type GtAoTargetMode,
     getBranchNilaiJual, getSmBerhak, setDaftar,
-    getKonstanta, readKonstanta, setKonstanta,
+    readKonstanta, setKonstanta,
     BRANCH_NILAI_JUAL_KEY, SM_BERHAK_KEY,
 } from "@/lib/insentif-settings";
 import { validateKonstanta, DEFAULT_KONSTANTA } from "@/lib/insentif-konstanta";
@@ -73,8 +73,9 @@ export async function PATCH(req: NextRequest) {
         await setKonstanta(body.konstanta, gate.session.user.id);
     }
 
+    // Review #3: jawaban PATCH menjadi dasar draf editor berikutnya -> baca strict, bukan fallback.
     const [gtAoMode, branchNilaiJual, smBerhak, konstanta] = await Promise.all([
-        getGtAoTargetMode(), getBranchNilaiJual(), getSmBerhak(), getKonstanta(),
+        getGtAoTargetMode(), getBranchNilaiJual(), getSmBerhak(), readKonstanta(),
     ]);
-    return NextResponse.json({ gtAoMode, branchNilaiJual, smBerhak, konstanta, konstantaBawaan: DEFAULT_KONSTANTA });
+    return NextResponse.json({ gtAoMode, branchNilaiJual, smBerhak, konstanta, konstantaSumber: "tersimpan", konstantaBawaan: DEFAULT_KONSTANTA });
 }
