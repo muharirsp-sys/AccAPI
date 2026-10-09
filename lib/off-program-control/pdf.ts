@@ -956,7 +956,7 @@ export async function generateOffBatchReceiptPdf(
 }
 
 export async function generateOffPaymentProofPdf(input: PaymentProofInput) {
-  const filePath = await uniquePaymentProofPdfPath(
+  let filePath = await uniquePaymentProofPdfPath(
     input.batch.noPengajuan,
     input.batch.id,
     input.paymentNo,
@@ -964,7 +964,15 @@ export async function generateOffPaymentProofPdf(input: PaymentProofInput) {
   const pdf = await buildPaymentProofPdf(input);
   if (pdf.byteLength === 0)
     throw new Error("Cannot generate payment proof PDF: output is empty");
-  await writeFile(filePath, pdf);
+  // AM-023: dua pembayaran bersamaan menghitung path yang sama (cek-lalu-tulis tidak atomik) — tulis
+  // EKSKLUSIF agar bukti pembayaran lain tidak pernah ditimpa; bila sudah ada, beri akhiran unik.
+  try {
+    await writeFile(filePath, pdf, { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    filePath = filePath.replace(/\.pdf$/i, `-${input.paymentId.slice(0, 8)}.pdf`);
+    await writeFile(filePath, pdf, { flag: "wx" });
+  }
   const stats = await stat(filePath);
   if (stats.size <= 0)
     throw new Error("Cannot generate payment proof PDF: saved file is empty");

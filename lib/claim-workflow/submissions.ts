@@ -67,7 +67,7 @@ type DbExecutor = Pick<typeof db, "select" | "update" | "insert">;
  * dulu, baru submission/payment — juga mencegah deadlock antar-route.
  */
 export async function lockClaimWorkflow(executor: Pick<typeof db, "select">, workflowId: string) {
-    await executor.select({ id: claimWorkflow.id }).from(claimWorkflow).where(eq(claimWorkflow.id, workflowId)).for("update");
+    await executor.select({ id: claimWorkflow.id }).from(claimWorkflow).where(eq(claimWorkflow.id, workflowId)).for("no key update");
 }
 
 // =============================================================================

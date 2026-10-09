@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { unlink } from "node:fs/promises";
 import { db } from "@/lib/db";
 import { offBatch, offBatchItem, offPayment } from "@/db/schema";
 import { canProcessFinancePayment, computeOffFinancePaymentSummary, computeOffPaymentSummary, generateOffPaymentProofPdf, getBatchWithItems, isOffPeriodClosedForBatch, normalizeOffPaymentMethod, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
@@ -118,19 +119,28 @@ export async function POST(request: Request, context: Context) {
             // atas item yang sama sama-sama lolos "alreadyPaid". Kunci batch, lalu cek ulang snapshot
             // yang dipakai (item terpilih belum dibayar, nomor pembayaran & total bayar sama).
             // Berubah = 409, tanpa menulis apa pun; bukti PDF di atas memuat angka snapshot itu.
-            await tx.select({ id: offBatch.id }).from(offBatch).where(eq(offBatch.id, id)).for("update");
+            const [freshBatch] = await tx.select().from(offBatch).where(eq(offBatch.id, id)).for("no key update");
+            // Review AM-022/023 M2: status/approval bisa berubah (return/reject) antara cek di atas dan
+            // transaksi ini — cek ulang di bawah lock, bukan dari data.batch yang basi.
+            if (!freshBatch || !canProcessFinancePayment(freshBatch) || freshBatch.financeStatus !== data.batch.financeStatus
+                || (actor.role !== "admin" && await isOffPeriodClosedForBatch(freshBatch))) {
+                throw new Error(OFF_PAYMENT_CONFLICT);
+            }
             const freshItems = await tx.select({
                 id: offBatchItem.id,
                 status: offBatchItem.financePaymentStatus,
                 paymentRef: offBatchItem.financePaymentId,
                 paidAmount: offBatchItem.financePaidAmount,
                 nominal: offBatchItem.nominal,
-            }).from(offBatchItem).where(eq(offBatchItem.batchId, id));
+            }).from(offBatchItem).where(eq(offBatchItem.batchId, id)).orderBy(asc(offBatchItem.itemNo));
             const freshPayments = await tx.select({ paymentNo: offPayment.paymentNo }).from(offPayment).where(eq(offPayment.batchId, id));
             const freshPaidBefore = freshItems.reduce((total, item) => total + (item.status === "paid" ? Number(item.paidAmount || item.nominal || 0) : 0), 0);
             const freshNo = freshPayments.reduce((maxNo, p) => Math.max(maxNo, Number(p.paymentNo || 0)), 0) + 1;
             const selectedTaken = freshItems.some((item) => itemIds.includes(item.id) && (item.status === "paid" || item.paymentRef));
-            if (selectedTaken || freshPaidBefore !== itemPaidBefore || freshNo !== paymentNo) {
+            // Review M3: bandingkan sen, bukan float (urutan penjumlahan bisa beda 1 ULP).
+            const cents = (n: number) => Math.round(n * 100);
+            const selectedGone = itemIds.some((itemId) => !freshItems.some((item) => item.id === itemId));
+            if (selectedTaken || selectedGone || cents(freshPaidBefore) !== cents(itemPaidBefore) || freshNo !== paymentNo) {
                 throw new Error(OFF_PAYMENT_CONFLICT);
             }
             const [createdPayment] = await tx.insert(offPayment).values({
@@ -171,6 +181,11 @@ export async function POST(request: Request, context: Context) {
             updatedAt: now,
             }).where(eq(offBatch.id, id));
             return [createdPayment];
+        }).catch(async (error: unknown) => {
+            if (error instanceof Error && error.message === OFF_PAYMENT_CONFLICT) {
+                await unlink(generatedProof.filePath).catch(() => undefined); // bukti tanpa pembayaran
+            }
+            throw error;
         });
         await writeOffAudit({
             batchId: id,
