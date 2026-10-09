@@ -166,13 +166,7 @@ export const KONSTANTA_KEY = "insentif_konstanta";
  */
 export async function getKonstanta(): Promise<Konstanta> {
     try {
-        const [row] = await db
-            .select({ value: appSetting.value })
-            .from(appSetting)
-            .where(eq(appSetting.key, KONSTANTA_KEY))
-            .limit(1);
-        if (row?.value == null) return DEFAULT_KONSTANTA;
-        return parseKonstanta(JSON.parse(row.value));
+        return await readKonstanta();
     } catch (e) {
         console.warn(`[insentif-settings] gagal baca ${KONSTANTA_KEY}, pakai bawaan:`,
             e instanceof Error ? e.message : e);
@@ -181,12 +175,27 @@ export async function getKonstanta(): Promise<Konstanta> {
 }
 
 /**
+ * Baca STRICT untuk jalur tulis (AM-020): gagal baca / JSON rusak MELEMPAR. Belum pernah
+ * disimpan = bawaan (itu memang nilai yang berlaku, bukan fallback).
+ */
+export async function readKonstanta(): Promise<Konstanta> {
+    const [row] = await db
+        .select({ value: appSetting.value })
+        .from(appSetting)
+        .where(eq(appSetting.key, KONSTANTA_KEY))
+        .limit(1);
+    if (row?.value == null) return DEFAULT_KONSTANTA;
+    return parseKonstanta(JSON.parse(row.value));
+}
+
+/**
  * Simpan konstanta. `patch` digabung di atas yang TERSIMPAN (bukan di atas bawaan), supaya
  * editor boleh mengirim satu field saja tanpa mengembalikan angka lain ke bawaan.
  * Yang disimpan selalu hasil parseKonstanta: kunci asing dan nilai di luar batas tidak masuk DB.
+ * Dasar gabungan dibaca strict: bila tersimpan tak terbaca, JANGAN menulis bawaan + patch.
  */
 export async function setKonstanta(patch: unknown, actor: string | null): Promise<Konstanta> {
-    const sekarang = await getKonstanta();
+    const sekarang = await readKonstanta();
     const gabung = {
         gt: { ...sekarang.gt, ...(objek(patch, "gt")) },
         mt: { ...sekarang.mt, ...(objek(patch, "mt")) },

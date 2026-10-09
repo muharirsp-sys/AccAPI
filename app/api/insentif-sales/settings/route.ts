@@ -14,7 +14,7 @@ import { requirePermission } from "@/lib/rbac/resolve";
 import {
     getGtAoTargetMode, setGtAoTargetMode, type GtAoTargetMode,
     getBranchNilaiJual, getSmBerhak, setDaftar,
-    getKonstanta, setKonstanta,
+    getKonstanta, readKonstanta, setKonstanta,
     BRANCH_NILAI_JUAL_KEY, SM_BERHAK_KEY,
 } from "@/lib/insentif-settings";
 import { validateKonstanta, DEFAULT_KONSTANTA } from "@/lib/insentif-konstanta";
@@ -22,10 +22,13 @@ import { validateKonstanta, DEFAULT_KONSTANTA } from "@/lib/insentif-konstanta";
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
     if (gate.response) return gate.response;
-    const [gtAoMode, branchNilaiJual, smBerhak, konstanta] = await Promise.all([
-        getGtAoTargetMode(), getBranchNilaiJual(), getSmBerhak(), getKonstanta(),
+    // AM-020: tampilan boleh degraded (bawaan) bila setelan tak terbaca, tetapi DILABELI —
+    // editor menolak menyimpan draf yang dasarnya fallback.
+    const [gtAoMode, branchNilaiJual, smBerhak, [konstanta, konstantaSumber]] = await Promise.all([
+        getGtAoTargetMode(), getBranchNilaiJual(), getSmBerhak(),
+        readKonstanta().then((k) => [k, "tersimpan"] as const, () => [DEFAULT_KONSTANTA, "gagal_baca"] as const),
     ]);
-    return NextResponse.json({ gtAoMode, branchNilaiJual, smBerhak, konstanta, konstantaBawaan: DEFAULT_KONSTANTA });
+    return NextResponse.json({ gtAoMode, branchNilaiJual, smBerhak, konstanta, konstantaSumber, konstantaBawaan: DEFAULT_KONSTANTA });
 }
 
 export async function PATCH(req: NextRequest) {
