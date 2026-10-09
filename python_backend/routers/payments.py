@@ -44,6 +44,7 @@ from shared import (
     os,
     parse_lpb_upload,
     parse_number_id,
+    parse_number_strict,
     parse_payments_backup_upload,
     pd,
     raise_sppd_sequence_from_records,
@@ -307,7 +308,10 @@ async def payments_manual_add(request: Request):
     no_lpb = s(payload.get("no_lpb", ""))
     principle = s(payload.get("principle", ""))
     invoice_no = s(payload.get("invoice_no", ""))
-    nilai_invoice = parse_number_id(payload.get("nilai_invoice", 0))
+    try:
+        nilai_invoice = parse_number_strict(payload.get("nilai_invoice", 0), "Nilai Invoice")
+    except ValueError as ne:  # AM-044: "abc" dulu tersimpan 0
+        return JSONResponse(status_code=400, content={"ok": False, "error": str(ne)})
     jenis_dokumen = s(payload.get("jenis_dokumen", ""))
     nomor_dokumen = s(payload.get("nomor_dokumen", ""))
 
@@ -440,7 +444,10 @@ async def payments_update(request: Request):
                 rec["actual_date"] = s(item.get("actual_date", ""))
                 changed = True
             if "nilai_invoice" in item:
-                rec["nilai_invoice"] = parse_number_id(item.get("nilai_invoice", 0))
+                try:
+                    rec["nilai_invoice"] = parse_number_strict(item.get("nilai_invoice", 0), f"Nilai Invoice {key}")
+                except ValueError as ne:  # AM-044; db salinan per request (AM-012) -> tidak ada yang tersimpan
+                    return JSONResponse(status_code=400, content={"ok": False, "error": str(ne)})
                 changed = True
             if "invoice_no" in item:
                 rec["invoice_no"] = s(item.get("invoice_no", ""))
@@ -753,7 +760,10 @@ async def payments_cart_submit(request: Request):
         pr = s(it.get("principle", ""))
         jenis = s(it.get("jenis_pembayaran", "")).upper()
         ket = s(it.get("keterangan", ""))
-        potongan = parse_number_id(it.get("potongan", 0))
+        try:
+            potongan = parse_number_strict(it.get("potongan", 0), f"Potongan {pr or group_key}")
+        except ValueError as ne:  # AM-044: "abc" dulu menjadi potongan 0
+            return JSONResponse(status_code=400, content={"ok": False, "error": str(ne)})
         if not group_key and pr:
             tipe = normalize_pengajuan_type(it.get("tipe_pengajuan", "LPB"))
             group_key = f"{pr}||{tipe}"

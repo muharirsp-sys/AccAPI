@@ -264,18 +264,14 @@ def to_float_series(df: pd.DataFrame, cols: List[str]):
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
     return df
 
-def parse_number_id(x) -> float:
-    if x is None or (isinstance(x, float) and pd.isna(x)):
-        return 0.0
-    if isinstance(x, (int, float)) and not pd.isna(x):
-        return float(x)
-
-    t = str(x).strip()
-    if t == "":
-        return 0.0
-
+def _parse_number_core(t: str) -> Optional[float]:
+    """Inti parse_number_id atas teks non-kosong: float, atau None bila tak terbaca."""
     t = re.sub(r"[^0-9\.\,\-]", "", t)
     t = re.sub(r"[,.]-+$", "", t)  # "1.250.000,-" = rupiah tanpa sen
+    # Tanda dipisah DULU: "-1.000" dulu terbaca -1.0 (grup "-1" gagal isdigit -> float("-1.000")).
+    if t.startswith("-"):
+        v = _parse_number_core(t[1:])
+        return None if v is None else -v
 
     # Both '.' and ',' => separator TERAKHIR adalah desimal (AM-018): "1.234,56" (ID) dan
     # "250,000.00" (EN). Dulu selalu dianggap ID, sehingga "250,000.00" terbaca 250.
@@ -285,7 +281,7 @@ def parse_number_id(x) -> float:
         try:
             return float(t2)
         except:
-            return 0.0
+            return None
 
     # Only comma
     if "," in t and "." not in t:
@@ -297,7 +293,7 @@ def parse_number_id(x) -> float:
         try:
             return float(t2)
         except:
-            return 0.0
+            return None
 
     # Only dot
     if "." in t and "," not in t:
@@ -308,16 +304,58 @@ def parse_number_id(x) -> float:
                 try:
                     return float(t2)
                 except:
-                    return 0.0
+                    return None
         try:
             return float(t)
         except:
-            return 0.0
+            return None
 
     try:
         return float(t)
     except:
+        return None
+
+
+def parse_number_id(x) -> float:
+    """Longgar (read model / nilai tersimpan): kosong, None, NaN dan tak terbaca = 0.0.
+    Untuk input UANG dari pengguna/berkas pakai parse_number_strict (AM-044)."""
+    if x is None or (isinstance(x, float) and pd.isna(x)):
         return 0.0
+    if isinstance(x, (int, float)) and not pd.isna(x):
+        return float(x)
+
+    t = str(x).strip()
+    if t == "":
+        return 0.0
+    v = _parse_number_core(t)
+    return 0.0 if v is None else v
+
+
+# Kontrak sumber (D.22): rupiah Indonesia. Hanya minus, prefix Rp/IDR, digit, pemisah . , spasi dan
+# sufiks ",-". Huruf lain, tanda kurung (negatif akuntansi yang dulu terbaca POSITIF) = invalid.
+_STRICT_NUMBER = re.compile(r"^-?\s*(?:rp\.?|idr)?\s*-?\s*\d[\d.,\s]*(?:,-)?$", re.I)
+
+
+def parse_number_strict(x, field: str = "angka") -> float:
+    """AM-044 (H07): parse_number_id untuk jalur UANG — nonempty invalid -> ValueError, bukan 0.
+    Kosong / None / NaN sel kosong / "-" tunggal = 0.0 (kebijakan blank lama field ini).
+    Satu pemisah + tepat 3 digit = ribuan ("1.234" = "1,234" = 1234), sesuai konvensi rupiah."""
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return 0.0
+    if isinstance(x, bool):
+        raise ValueError(f"{field} bukan angka: {x!r}")
+    if isinstance(x, (int, float)):
+        if not math.isfinite(x):
+            raise ValueError(f"{field} tidak valid: {x!r}")
+        return float(x)
+    t = str(x).strip()
+    if t in ("", "-"):
+        return 0.0
+    one_sign = re.sub(r",-$", "", t).count("-") <= 1  # "-Rp-5" dua tanda = positif diam-diam
+    v = _parse_number_core(t) if one_sign and _STRICT_NUMBER.match(t) else None
+    if v is None or not math.isfinite(v):
+        raise ValueError(f"{field} tidak valid: {t!r}")
+    return v
 
 def packaging_to_int(packaging: str) -> int:
     packaging = s(packaging).upper()
@@ -1425,6 +1463,15 @@ def parse_lpb_upload(content: bytes) -> List[Dict[str, Any]]:
 
     out = []
     date_errors: List[str] = []
+    number_errors: List[str] = []
+
+    def strict_money(value, label: str, excel_row: int) -> float:
+        # AM-044: sel uang nonempty yang tidak terbaca = galat baris, bukan 0 diam-diam.
+        try:
+            return parse_number_strict(value, label)
+        except ValueError as ne:
+            number_errors.append(f"baris {excel_row}: {ne}")
+            return 0.0
 
     def parse_lpb_upload_date(row, excel_row: int, *names: str) -> str:
         col = _col_lookup(cols, *names)
@@ -1441,8 +1488,8 @@ def parse_lpb_upload(content: bytes) -> List[Dict[str, Any]]:
         no_lpb = s(r[cols["NO. LPB"]])
         if not no_lpb:
             continue
-        nilai_win = parse_number_id(r[cols["NILAI WIN"]])
-        nilai_invoice = parse_number_id(_row_value(r, cols, "Nilai Invoice", "NILAI INVOICE", default=0))
+        nilai_win = strict_money(r[cols["NILAI WIN"]], "NILAI WIN", excel_row)
+        nilai_invoice = strict_money(_row_value(r, cols, "Nilai Invoice", "NILAI INVOICE", default=0), "Nilai Invoice", excel_row)
         tgl_setor = parse_lpb_upload_date(r, excel_row, "TGL. SETOR")
         tgl_win = parse_lpb_upload_date(r, excel_row, "TGL. WIN")
         tgl_jtempo_win = parse_lpb_upload_date(r, excel_row, "TGL. J. TEMPO WIN")
@@ -1470,6 +1517,12 @@ def parse_lpb_upload(content: bytes) -> List[Dict[str, Any]]:
             "nomor_dokumen": s(_row_value(r, cols, "Nomor Dokumen", "NOMOR DOKUMEN")),
             "keterangan": s(_row_value(r, cols, "Keterangan", "KETERANGAN")),
         })
+    if number_errors:
+        extra = len(number_errors) - 5
+        raise ValueError(
+            "Angka tidak valid: " + "; ".join(number_errors[:5]) + (f"; dan {extra} lainnya" if extra > 0 else "")
+            + ". Upload dibatalkan."
+        )
     if date_errors:
         shown = "; ".join(date_errors[:5])
         extra = len(date_errors) - 5
@@ -1522,6 +1575,15 @@ def parse_payments_backup_upload(content: bytes) -> List[Tuple[str, Dict[str, An
 
     rows: List[Tuple[str, Dict[str, Any]]] = []
     date_errors: List[str] = []
+    number_errors: List[str] = []
+
+    def strict_money(value, label: str, excel_row: int) -> float:
+        # AM-044: restore tidak boleh mengubah sel uang rusak menjadi 0 lalu menimpa ledger.
+        try:
+            return parse_number_strict(value, label)
+        except ValueError as ne:
+            number_errors.append(f"baris {excel_row}: {ne}")
+            return 0.0
 
     def parse_backup_date(r, excel_row: int, *names: str) -> str:
         col = _col_lookup(cols, *names)
@@ -1547,11 +1609,11 @@ def parse_payments_backup_upload(content: bytes) -> List[Tuple[str, Dict[str, An
         key = raw_key
         if not key:
             continue
-        nilai_win = parse_number_id(_row_value(r, cols, "Nilai Sistem", "Nilai WIN", default=0))
-        nilai_invoice = parse_number_id(_row_value(r, cols, "Nilai Invoice", default=0))
-        potongan = parse_number_id(_row_value(r, cols, "Potongan", default=0))
-        nilai_pembayaran = parse_number_id(_row_value(r, cols, "Nilai Pembayaran", default=0))
-        gap_nilai = parse_number_id(_row_value(r, cols, "Gap Nilai", default=nilai_win - nilai_invoice))
+        nilai_win = strict_money(_row_value(r, cols, "Nilai Sistem", "Nilai WIN", default=0), "Nilai Sistem", excel_row)
+        nilai_invoice = strict_money(_row_value(r, cols, "Nilai Invoice", default=0), "Nilai Invoice", excel_row)
+        potongan = strict_money(_row_value(r, cols, "Potongan", default=0), "Potongan", excel_row)
+        nilai_pembayaran = strict_money(_row_value(r, cols, "Nilai Pembayaran", default=0), "Nilai Pembayaran", excel_row)
+        gap_nilai = strict_money(_row_value(r, cols, "Gap Nilai", default=nilai_win - nilai_invoice), "Gap Nilai", excel_row)
         rec = {
             "record_id": key,
             "tipe_pengajuan": tipe,
@@ -1593,6 +1655,12 @@ def parse_payments_backup_upload(content: bytes) -> List[Tuple[str, Dict[str, An
         suffix = f"; dan {extra} lainnya" if extra > 0 else ""
         raise ValueError(
             f"Tanggal tidak valid (harus DD/MM/YYYY): {shown}{suffix}. Restore backup dibatalkan."
+        )
+    if number_errors:
+        extra = len(number_errors) - 5
+        raise ValueError(
+            "Angka tidak valid: " + "; ".join(number_errors[:5]) + (f"; dan {extra} lainnya" if extra > 0 else "")
+            + ". Restore backup dibatalkan."
         )
     return rows
 
