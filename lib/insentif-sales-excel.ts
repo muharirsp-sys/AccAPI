@@ -61,7 +61,7 @@ function rowReader(row: Record<string, unknown>) {
         // (AM-017): pemanggil wajib menolaknya — 0 palsu pada support/target = bayar lebih.
         num: (name: string) => {
             const v = raw(name);
-            if (v === undefined || v === null || v === "") return 0;
+            if (v === undefined || v === null || (typeof v === "string" && v.trim() === "")) return 0;
             if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
             return parseLocaleNumber(String(v));
         },

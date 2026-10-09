@@ -69,11 +69,13 @@ test("sel terisi tapi bukan angka TIDAK menjadi 0 (AM-017)", () => {
         ["M-B", "-", "KINO", "Rp 500.000,-"],
         ["M-C", "-", "KINO", ""],   // kosong = 0 (kebijakan blank yang sudah ada)
         ["M-D", "-", "KINO", "0"],  // nol sah
+        ["M-E", "-", "KINO", "   "], // spasi saja = kosong, bukan invalid (review AM-017)
     ]), "sales");
     assert.ok(Number.isNaN(rows[0].supportAmount), `NOT-A-NUMBER -> ${rows[0].supportAmount}`);
     assert.ok(Number.isNaN(rows[1].supportAmount), `Rp 500.000,- -> ${rows[1].supportAmount}`);
     assert.equal(rows[2].supportAmount, 0);
     assert.equal(rows[3].supportAmount, 0);
+    assert.equal(rows[4].supportAmount, 0, `spasi -> ${rows[4].supportAmount}`);
 
     const [target] = parseTargetExcel(sheetBuffer([
         ["Kode Salesman", "Nama Salesman", "Principal", "Cabang", "Target Value (Rp)", "Target EC"],
