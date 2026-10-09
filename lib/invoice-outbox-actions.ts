@@ -62,7 +62,7 @@ export async function pencariPenekan(database: NodePgDatabase, userId: string): 
 }
 
 const ringkasCari = (hasil: HasilCari) => hasil.hasil === "ketemu"
-    ? { hasil: hasil.hasil, sumber: hasil.sumber, id: hasil.id, number: hasil.number, semua: hasil.semua }
+    ? { hasil: hasil.hasil, sumber: hasil.sumber, cocok: hasil.cocok, id: hasil.id, number: hasil.number, semua: hasil.semua }
     : hasil.hasil === "tidak_ketemu_dicek"
         ? { hasil: hasil.hasil, sumber: hasil.sumber, diperiksa: hasil.diperiksa, baris_list_do: hasil.barisListDo }
         : { hasil: hasil.hasil, alasan: hasil.alasan };

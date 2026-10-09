@@ -4,19 +4,20 @@
  * Caller: lib/invoice-outbox-actions (antre ulang, selesaikan), app/api/principal-order/queue
  *         (SO yang pernah dibuang), app/api/invoice-outbox/resolve.
  * Dependensi: db sales_invoice (cache) + customer (id pelanggan Accurate); fetch GET list.do/detail.do.
- * Main Functions: milikKunci, jendelaCari, kueriListDo, cariFaktur.
+ * Main Functions: cocokFaktur, milikKunci, jendelaCari, kueriListDo, cariFaktur.
  * Side Effects: BACA SAJA — SELECT cache lokal dan GET sales-invoice/list.do + detail.do. Tidak
  *   menulis apa pun, termasuk cache.
  *
- * Bukti produksi yang menentukan bentuk berkas ini (S6-0d §G, 9 Okt 2026):
+ * Bukti produksi yang menentukan bentuk berkas ini (S6-0d §G 9 Okt + §I 10 Okt 2026, baca-saja):
  * - `filter.charField1` di list.do DIABAIKAN DIAM-DIAM (rowCount sama dengan tanpa filter) — TIDAK dipakai.
- * - `filter.customerNo=<nomor cache>` ditolak "Pelanggan tidak tepat". Satu-satunya pemakaian di kode
- *   (konsol AOL, subapp sales receipt) menelan galatnya, jadi tidak ada format yang TERBUKTI. Dipakai
- *   bentuk spesifikasi OpenAPI lokal `filter.customerId` (EQUAL, id numerik dari master `customer`);
- *   BELUM TERBUKTI menyempitkan — karena itu hasil list.do DISARING ULANG di sini per pelanggan dan
- *   lastUpdate, dan jumlah baris di atas batas = gagal_cek, bukan "tidak ketemu".
- * - detail.do TERBUKTI membawa charField1 (KN00403); list.do belum terbukti mengisinya -> tiap calon
- *   dibuka lewat detail.do dan dicocokkan EQUAL.
+ * - `filter.customerNo=<nomor cache>` ditolak "Pelanggan tidak tepat" — TIDAK dipakai.
+ * - `filter.customerId.op=EQUAL&filter.customerId.val=<id master customer>` TERBUKTI menyempitkan
+ *   (C-STE005-KN = 36180 -> rowCount 7, semuanya pelanggan itu); `filter.lastUpdate.op=GREATER_EQUAL_THAN`
+ *   dengan "dd/MM/yyyy HH:mm:ss" TERBUKTI menyempitkan. Penyaringan ulang per pelanggan + lastUpdate dan
+ *   batas rowCount di sini tetap dipasang sebagai pagar (filter yang kelak diabaikan = gagal_cek).
+ * - list.do dengan `fields=…charField1…` MENGEMBALIKAN charField1 TERISI (KN00403 ->
+ *   `KINO-NON-FOOD:1671-SOP-260013022`) -> baris yang charField1-nya terisi diputuskan LANGSUNG (EQUAL);
+ *   detail.do (TERBUKTI membawa charField1 + baris) hanya cadangan untuk yang absen/kosong.
  *
  * "tidak_ketemu_dicek" BUKAN bukti tidak ada: hanya berarti list.do + detail.do berjalan penuh dalam
  * batasnya dan tidak satu pun calon membawa kunci ini. Ia membuka aksi manusia beralasan, tidak pernah
@@ -28,8 +29,10 @@ import { customer, salesInvoiceCache } from "@/db/schema";
 import { parseAccurateDateTime } from "@/lib/accurate-invoice";
 
 export type FakturKetemu = { id: string; number: string };
+/** Cara faktur dikenali: charField1 kepala (utama), charField1 baris (cadangan bila kepala kosong). */
+export type CaraCocok = "charField1" | "baris";
 export type HasilCari =
-    | { hasil: "ketemu"; id: string; number: string; sumber: "cache" | "accurate"; semua: FakturKetemu[] }
+    | { hasil: "ketemu"; id: string; number: string; sumber: "cache" | "accurate"; cocok: CaraCocok; semua: FakturKetemu[] }
     | { hasil: "tidak_ketemu_dicek"; sumber: "accurate"; diperiksa: number; barisListDo: number }
     | { hasil: "gagal_cek"; alasan: string };
 
@@ -51,19 +54,21 @@ function bacaJson(raw: unknown): Record<string, unknown> {
 }
 
 /**
- * Faktur ini milik kunci antrean? `charField1` kepala SAMA PERSIS (EQUAL, bukan awalan:
+ * Faktur ini milik kunci antrean, dan lewat apa? `charField1` kepala SAMA PERSIS (EQUAL, bukan awalan:
  * "KINO:SO-1" bukan "KINO:SO-12"); baris `detailItem[].charField1` hanya cadangan bila kepala
  * kosong — kepala yang berisi kunci LAIN tidak dikalahkan barisnya.
  */
-export function milikKunci(raw: unknown, key: string): boolean {
+export function cocokFaktur(raw: unknown, key: string): CaraCocok | null {
     const want = key.trim();
-    if (!want) return false;
+    if (!want) return null;
     const row = bacaJson(raw);
     const head = String(row.charField1 ?? "").trim();
-    if (head) return head === want;
+    if (head) return head === want ? "charField1" : null;
     const lines = Array.isArray(row.detailItem) ? row.detailItem : [];
-    return lines.some((line) => String(obj(line).charField1 ?? "").trim() === want);
+    return lines.some((line) => String(obj(line).charField1 ?? "").trim() === want) ? "baris" : null;
 }
+
+export const milikKunci = (raw: unknown, key: string): boolean => cocokFaktur(raw, key) !== null;
 
 /** "dd/MM/yyyy HH:mm:ss" pada UTC+7 — zona lastUpdate Accurate (lib/accurate-invoice.ts). */
 function keWaktuAccurate(at: Date): string {
@@ -147,10 +152,13 @@ export async function cariFaktur(input: {
     if (calon.length && calon.length <= batas.calonCache) {
         const isi = await db.select({ id: salesInvoiceCache.id, number: salesInvoiceCache.number, raw: salesInvoiceCache.rawData })
             .from(salesInvoiceCache).where(inArray(salesInvoiceCache.id, calon.map((row) => row.id)));
-        const cocok = isi.filter((row) => milikKunci(row.raw, key))
-            .map((row) => ({ id: String(row.id), number: String(row.number ?? "") }))
+        const cocok = isi.map((row) => ({ id: String(row.id), number: String(row.number ?? ""), cara: cocokFaktur(row.raw, key) }))
+            .filter((row): row is FakturKetemu & { cara: CaraCocok } => row.cara !== null)
             .sort((a, b) => Number(a.id) - Number(b.id));
-        if (cocok.length) return { hasil: "ketemu", ...cocok[0], sumber: "cache", semua: cocok };
+        if (cocok.length) {
+            return { hasil: "ketemu", id: cocok[0].id, number: cocok[0].number, sumber: "cache", cocok: cocok[0].cara,
+                semua: cocok.map(({ id, number }) => ({ id, number })) };
+        }
     }
 
     // (b) Accurate: list.do per pelanggan sejak waktu antre, lalu detail.do per calon.
@@ -190,22 +198,33 @@ export async function cariFaktur(input: {
         const diubah = parseAccurateDateTime(row.lastUpdate);
         return !diubah || diubah.getTime() >= jendela.accurateSejak.getTime();
     });
-    if (calonAccurate.length > batas.calonDetail) {
-        return { hasil: "gagal_cek", alasan: `${calonAccurate.length} faktur calon (batas ${batas.calonDetail}) — periksa manual di Accurate` };
-    }
 
-    const ketemu: FakturKetemu[] = [];
+    // Hibrida (§I): charField1 TERISI di baris list.do = diputuskan langsung; absen/kosong = detail.do.
+    const ketemu: (FakturKetemu & { cara: CaraCocok })[] = [];
+    const perluDetail: Record<string, unknown>[] = [];
     for (const row of calonAccurate) {
         const id = String(row.id ?? "").trim();
         if (!/^\d+$/.test(id)) return { hasil: "gagal_cek", alasan: "list.do memberi faktur tanpa id" };
+        const kepala = String(row.charField1 ?? "").trim();
+        if (!kepala) perluDetail.push(row);
+        else if (kepala === key.trim()) ketemu.push({ id, number: String(row.number ?? ""), cara: "charField1" });
+    }
+    // Batas hanya untuk yang butuh detail.do (satu panggilan per faktur).
+    if (!ketemu.length && perluDetail.length > batas.calonDetail) {
+        return { hasil: "gagal_cek", alasan: `${perluDetail.length} faktur calon tanpa charField1 di list.do (batas ${batas.calonDetail}) — periksa manual di Accurate` };
+    }
+    for (const row of ketemu.length ? [] : perluDetail) {
+        const id = String(row.id);
         const jawab = await bacaAccurate(input.session, "/sales-invoice/detail.do", { id }, deadline, batas.perPanggilanMs);
         if (!jawab.ok) return { hasil: "gagal_cek", alasan: jawab.alasan };
         const detail = obj(jawab.body.d);
-        if (milikKunci(detail, key)) ketemu.push({ id, number: String(detail.number ?? row.number ?? "") });
+        const cara = cocokFaktur(detail, key);
+        if (cara) ketemu.push({ id, number: String(detail.number ?? row.number ?? ""), cara });
     }
     if (ketemu.length) {
         ketemu.sort((a, b) => Number(a.id) - Number(b.id));
-        return { hasil: "ketemu", ...ketemu[0], sumber: "accurate", semua: ketemu };
+        return { hasil: "ketemu", id: ketemu[0].id, number: ketemu[0].number, sumber: "accurate", cocok: ketemu[0].cara,
+            semua: ketemu.map(({ id, number }) => ({ id, number })) };
     }
     return { hasil: "tidak_ketemu_dicek", sumber: "accurate", diperiksa: calonAccurate.length, barisListDo: total };
 }

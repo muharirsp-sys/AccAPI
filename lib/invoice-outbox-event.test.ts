@@ -337,7 +337,7 @@ test("PG: cariFaktur cache — per customer_no + jendela waktu, raw_data string,
         assert.equal(kosong.hasil, "gagal_cek", "cache tidak ketemu + tanpa sesi = gagal_cek, BUKAN tidak_ketemu");
         await tambah(base + 4, { charField1: "", detailItem: [{ charField1: key }] }, null, 1); // created_at NULL (list.do) -> last_update_at
         const ketemu = await cariFaktur({ db, key, customerNo: pelanggan, queuedAt: antre, session: null });
-        assert.deepEqual(ketemu, { hasil: "ketemu", id: String(base + 4), number: `INV/UJI/${base + 4}`, sumber: "cache",
+        assert.deepEqual(ketemu, { hasil: "ketemu", id: String(base + 4), number: `INV/UJI/${base + 4}`, sumber: "cache", cocok: "baris",
             semua: [{ id: String(base + 4), number: `INV/UJI/${base + 4}` }] });
     } finally {
         await pool.query(`DELETE FROM sales_invoice WHERE id BETWEEN $1 AND $2`, [base, base + 9]);

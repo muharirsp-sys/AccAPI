@@ -66,7 +66,7 @@ test("cache: ketemu lewat kepala atau baris — TANPA panggilan Accurate", async
     for (const raw of [{ charField1: KEY }, JSON.stringify({ charField1: "", detailItem: [{ charField1: KEY }] })]) {
         const db = dbTiruan([[{ id: 9 }, { id: 7 }], [{ id: 9, number: "INV/9", raw: { charField1: "LAIN" } }, { id: 7, number: "INV/7", raw }]]);
         const hasil = await cariFaktur({ db, key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session: SESI });
-        assert.deepEqual(hasil, { hasil: "ketemu", id: "7", number: "INV/7", sumber: "cache", semua: [{ id: "7", number: "INV/7" }] });
+        assert.deepEqual({ ...hasil, cocok: undefined }, { hasil: "ketemu", id: "7", number: "INV/7", sumber: "cache", cocok: undefined, semua: [{ id: "7", number: "INV/7" }] });
     }
     assert.equal(fetchMock.mock.callCount(), 0);
 });
@@ -83,7 +83,7 @@ test("cache tidak ketemu -> list.do per pelanggan -> detail.do per calon -> kete
         12: detailOk({ id: 12, number: "INV/12", charField1: KEY }),
     });
     const hasil = await cariFaktur({ db, key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session: SESI });
-    assert.deepEqual(hasil, { hasil: "ketemu", id: "12", number: "INV/12", sumber: "accurate", semua: [{ id: "12", number: "INV/12" }] });
+    assert.deepEqual(hasil, { hasil: "ketemu", id: "12", number: "INV/12", sumber: "accurate", cocok: "charField1", semua: [{ id: "12", number: "INV/12" }] });
     const urls = fetchMock.mock.calls.map((c) => new URL(String(c.arguments[0])));
     assert.equal(urls.length, 3, "1 list.do + 2 detail.do (13 dan 14 disaring)");
     assert.equal(urls[0].searchParams.get("filter.customerId.val"), "50123");
@@ -125,7 +125,7 @@ test("gagal_cek: tanpa sesi, pelanggan tak ada, list.do s:false, rowCount raksas
     await t.test("calon melebihi batas", async (st) => {
         const rows = Array.from({ length: BATAS_CARI.calonDetail + 1 }, (_, i) => ({ id: 100 + i, customer: { id: 50123 } }));
         accurateTiruan(st, [listOk(rows)], {});
-        await cek(dbTiruan([[], PELANGGAN]), SESI, /faktur calon \(batas 25\)/);
+        await cek(dbTiruan([[], PELANGGAN]), SESI, /faktur calon tanpa charField1 di list\.do \(batas 25\)/);
     });
     await t.test("detail.do 500", async (st) => {
         accurateTiruan(st, [listOk([{ id: 31, customer: { id: 50123 } }])], { 31: { status: 500, body: { message: "err" } } });
@@ -156,4 +156,34 @@ test("A-RENDAH: list.do tanpa sp.pageCount dan baris < rowCount -> gagal_cek (bu
     const hasil = await cariFaktur({ db, key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session: SESI });
     assert.equal(hasil.hasil, "gagal_cek");
     assert.match(hasil.hasil === "gagal_cek" ? hasil.alasan : "", /1 dari 3 faktur/);
+});
+
+// §I (bukti produksi 10 Okt): list.do mengembalikan charField1 TERISI -> diputuskan langsung dari baris list.do;
+// detail.do hanya cadangan untuk baris yang charField1-nya absen/kosong, dan batas 25 hanya untuk mereka.
+test("hibrida: charField1 di baris list.do diputuskan langsung (EQUAL, trim) — tanpa detail.do", async (t) => {
+    const db = dbTiruan([[], PELANGGAN]);
+    const lain = Array.from({ length: BATAS_CARI.calonDetail + 5 }, (_, i) => ({ id: 200 + i, customer: { id: 50123 }, charField1: `KINO:LAIN-${i}` }));
+    const f = accurateTiruan(t, [listOk([...lain, { id: 61, number: "INV/61", customer: { id: 50123 }, charField1: `  ${KEY} ` }])], {});
+    const hasil = await cariFaktur({ db, key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session: SESI });
+    assert.equal(hasil.hasil, "ketemu");
+    assert.equal(hasil.hasil === "ketemu" && hasil.id, "61");
+    assert.equal(hasil.hasil === "ketemu" && hasil.cocok, "charField1");
+    assert.equal(f.mock.callCount(), 1, "hanya list.do; 30 baris berkunci lain tidak membuka detail.do dan tidak kena batas 25");
+    assert.match(new URL(String(f.mock.calls[0].arguments[0])).searchParams.get("fields") ?? "", /charField1/);
+});
+
+test("hibrida: charField1 absen/kosong di list.do -> detail.do cadangan; berkunci lain -> dilewati", async (t) => {
+    const db = dbTiruan([[], PELANGGAN]);
+    const f = accurateTiruan(t, [listOk([
+        { id: 71, customer: { id: 50123 }, charField1: "KINO:LAIN" },
+        { id: 72, customer: { id: 50123 }, charField1: "" },
+        { id: 73, customer: { id: 50123 } },
+    ])], {
+        72: detailOk({ id: 72, number: "INV/72", charField1: "", detailItem: [{ charField1: "X" }] }),
+        73: detailOk({ id: 73, number: "INV/73", charField1: KEY }),
+    });
+    const hasil = await cariFaktur({ db, key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session: SESI });
+    assert.equal(hasil.hasil === "ketemu" && hasil.id, "73");
+    const ids = f.mock.calls.slice(1).map((c) => new URL(String(c.arguments[0])).searchParams.get("id"));
+    assert.deepEqual(ids, ["72", "73"], "71 diputuskan dari list.do");
 });
