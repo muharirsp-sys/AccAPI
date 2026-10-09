@@ -126,6 +126,26 @@ test("klasifikasi respons save.do: hanya penolakan beramplop yang boleh dikirim 
     ] as const) {
         assert.equal(classifySaveResponse(status, text).kind, "no_answer", `${status} ${text}`);
     }
+    // Putaran 2 (A-RENDAH): Ditolak HANYA amplop {s:false, d:[pesan…]} — d array TAK KOSONG berisi teks (selaras E5
+    // `^\["`); posted HANYA bila r.id bilangan bulat positif. Bentuk lain = tidak pasti.
+    for (const text of [
+        JSON.stringify({ s: false }),
+        JSON.stringify({ s: false, d: "Customer tidak ditemukan" }),
+        JSON.stringify({ s: false, d: [] }),
+        JSON.stringify({ s: false, d: [{ message: "x" }] }),
+        JSON.stringify({ s: false, d: ["pesan", 5] }),
+        JSON.stringify({ s: false, d: ["  "] }),
+        JSON.stringify({ s: true, r: { id: 0, number: "INV/0" } }),
+        JSON.stringify({ s: true, r: { id: "abc", number: "INV/X" } }),
+        JSON.stringify({ s: true, r: { id: "0123", number: "INV/Y" } }),
+        JSON.stringify({ s: true, r: { id: -5, number: "INV/Z" } }),
+    ]) {
+        assert.equal(classifySaveResponse(200, text).kind, "no_answer", text);
+    }
+    assert.deepEqual(classifySaveResponse(200, JSON.stringify({ s: true, d: ["Berhasil"], r: { id: "331710", number: "INV/1" } })),
+        { kind: "posted", id: "331710", number: "INV/1" });
+    assert.deepEqual(classifySaveResponse(422, JSON.stringify({ s: false, d: ["Stok gudang tidak cukup", "Baris 2"] })),
+        { kind: "rejected", message: '["Stok gudang tidak cukup","Baris 2"]' });
     // 1835b724 (review #3) menjadikan 401/403/429 "rejected belum diproses"; D-07 + S6-0d E7 MEMBALIKNYA:
     // angka status saja bukan bukti tidak tersimpan (gateway/proxy bisa menjawab begitu sesudah
     // Accurate menyimpan). Termasuk yang berbadan amplop {s:false} — tetap tidak pasti, bukan Ditolak.

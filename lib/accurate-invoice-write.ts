@@ -291,7 +291,8 @@ export function readInvoiceIdentity(response: unknown): { ok: boolean; id: strin
 /**
  * Klasifikasi jawaban save.do (AM-015/016). Hanya dua jawaban yang PASTI:
  * - amplop sukses `{s:true, r:{id}}` -> posted;
- * - amplop penolakan `{s:false, d}` pada status non-5xx -> rejected (aman diperbaiki & dikirim ulang).
+ * - amplop penolakan `{s:false, d:["pesan", …]}` (d daftar teks tak kosong) pada status non-5xx dan bukan
+ *   401/403/429 -> rejected (antre ulang tetap didahului pencarian faktur, E2).
  * Selain itu (non-JSON, null, array, JSON gateway tanpa amplop, 5xx, sukses tanpa id) Accurate
  * MUNGKIN sudah menyimpan fakturnya -> no_answer (unknown), tidak pernah "rejected".
  */
@@ -314,13 +315,19 @@ export function classifySaveResponse(status: number, text: string): SendOutcome 
     }
     const identity = readInvoiceIdentity(body);
     if (identity.ok) {
-        return identity.id
+        // Identitas = record id Accurate, bilangan bulat positif. Selain itu tidak bisa diverifikasi.
+        return /^[1-9]\d*$/.test(identity.id)
             ? { kind: "posted", id: identity.id, number: identity.number }
-            : { kind: "no_answer", message: `sukses tanpa id record (${status}) — cek di Accurate` };
+            : { kind: "no_answer", message: `sukses tanpa id record yang sah (${status}: "${identity.id}") — cek di Accurate` };
     }
-    return status >= 500
-        ? { kind: "no_answer", message: `HTTP ${status}: ${identity.message}` }
-        : { kind: "rejected", message: identity.message };
+    // Ditolak HANYA amplop penolakan yang dikenal: d = daftar pesan teks tak kosong (selaras DDL E5 `^\["`).
+    // {s:false} tanpa d, d teks/kosong/berisi objek = bentuk asing -> tidak pasti, bukan aman dikirim ulang.
+    const d = (body as { d?: unknown }).d;
+    const pesanSah = Array.isArray(d) && d.length > 0 && d.every((x) => typeof x === "string" && x.trim() !== "");
+    if (status >= 500) return { kind: "no_answer", message: `HTTP ${status}: ${identity.message}` };
+    return pesanSah
+        ? { kind: "rejected", message: identity.message }
+        : { kind: "no_answer", message: `penolakan tanpa daftar pesan Accurate (${status}): ${identity.message}` };
 }
 
 export type OutboxState = "queued" | "sending" | "posted" | "unknown" | "rejected";
