@@ -174,35 +174,28 @@ async function bacaProgres(file: File, month: number, year: number, branchNilaiJ
     // ponytail: dimuat saat dipakai. Import statis menyeret ~900 KB xlsx ke bundle route
     // ini untuk semua user, padahal cuma handler upload yang membutuhkannya.
     const XLSX = await import("xlsx");
+    const { angkaSel, tandaiGalat, GALAT_EXCEL } = await import("@/lib/insentif-sales-excel");
     const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
+    // Sel galat rumus (#DIV/0!, #N/A) ditandai dulu: tanpa ini sheet_to_json menjadikannya kosong = 0.
+    const sheet = tandaiGalat(wb.Sheets[wb.SheetNames[0]]);
     const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
     // Nama kolom file closing tidak seragam antar export — terima alias, case-insensitive.
     const norm = (k: string) => k.trim().toUpperCase();
 
     const parsed = rawRows.map((rowObj) => {
         const byKey = new Map(Object.entries(rowObj).map(([k, v]) => [norm(k), v]));
-        const get = (...names: string[]) => {
+        const mentah = (...names: string[]) => {
             for (const nm of names) {
                 const v = byKey.get(norm(nm));
-                if (v !== undefined && v !== "") return String(v).trim();
+                if (v !== undefined && v !== "") return v;
             }
             return "";
         };
-        // Buang pemisah ribuan tapi PERTAHANKAN tanda minus & desimal —
-        // baris retur bernilai negatif, kalau tandanya hilang retur malah menambah realisasi.
-        // Dua format ribuan beredar di file closing: Inggris (1,234,567.89) dan
-        // Indonesia (1.234.567,89). Deteksi dari polanya — kalau dipaksa satu format,
-        // "-533.000.000" terbaca -533 dan realisasi satu principal menguap.
-        // Kosong dan "-" (tanda nol akuntansi, owner 9 Okt) = 0. Terisi tapi bukan angka ("N/A", teks) = NaN, BUKAN 0: realisasi
-        // adalah dasar nominal insentif, jadi baris itu menahan seluruh impor di bawah (sama dengan target, AM-017 / it07 #16).
-        const num = (val: string) => {
-            if (!val || val === "-") return 0;
-            const cleaned = val.replace(/[^\d.,-]/g, "");
-            // Format Indonesia: titik sebagai pemisah ribuan (selalu 3 digit), koma desimal.
-            const idFormat = /^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(cleaned);
-            return parseFloat(idFormat ? cleaned.replace(/\./g, "").replace(",", ".") : cleaned.replace(/,/g, ""));
-        };
+        const get = (...names: string[]) => { const v = mentah(...names); return v === GALAT_EXCEL ? "" : String(v).trim(); };
+        // Satu aturan dengan target/support/Python (angkaSel): 1,234,567.89 dan 1.234.567,89 terbaca, minus retur dipertahankan;
+        // kosong dan "-" = 0; terisi tapi bukan angka ("N/A", "(533.000.000)", galat rumus) = NaN, BUKAN 0 — realisasi adalah dasar
+        // nominal insentif, jadi baris itu menahan seluruh impor di bawah (AM-017 / it07 #16).
+        const num = (...names: string[]) => angkaSel(mentah(...names));
         return {
             salesCode: get("KODE_SALESMAN"),
             salesName: get("SALESMAN"),
@@ -211,11 +204,11 @@ async function bacaProgres(file: File, month: number, year: number, branchNilaiJ
             tanggal: get("TANGGAL"),
             invoiceNumber: get("NO_INVOICE", "NO_NOTA") || undefined,
             spvName: get("GOLONGAN") || undefined,
-            dpp: num(get("DPP")),
-            nilaiJual: num(get("NILAI_JUAL")),
-            ec: num(get("EC")),
-            ao: num(get("AO")),
-            ia: num(get("IA", "ITEM AKTIF")),
+            dpp: num("DPP"),
+            nilaiJual: num("NILAI_JUAL"),
+            ec: num("EC"),
+            ao: num("AO"),
+            ia: num("IA", "ITEM AKTIF"),
         };
     });
 

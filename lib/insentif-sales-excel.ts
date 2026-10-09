@@ -21,26 +21,71 @@ export function generateTargetTemplate() {
     return XLSX.write(wb, { bookType: "xlsx", type: "array" }) as Uint8Array;
 }
 
-/**
- * Angka dari sel TEKS. Cell numerik tidak lewat sini; yang lewat adalah kolom yang di Excel
- * disimpan sebagai teks — dan di file Indonesia itu berarti "1.250.000". Versi lama membuang
- * semua kecuali [\d.-] lalu Number("1.250.000") = NaN = 0. Untuk support principle, 0 palsu
- * berarti pool insentif tidak terpotong dan orang dibayar lebih.
- *
- * Pemisah paling KANAN yang menentukan: diikuti tepat 3 digit dan (ada pemisah lain atau
- * pemisahnya titik) -> itu pemisah ribuan; selain itu -> desimal. "204,8" -> 204,8;
- * "1.250.000" -> 1250000; "1.250" -> 1250 (konvensi Indonesia).
+/*
+ * SATU aturan angka sel untuk target, support, dan progres (S6-0c, owner 9 Okt) — cermin parse_number_strict Python
+ * (python_backend/shared.py, AM-044/D.22). Angka uang yang salah baca = nominal insentif salah, jadi teks yang tidak
+ * persis berbentuk angka rupiah DITOLAK (NaN), bukan ditebak:
+ *   - kosong / spasi / "-" (tanda nol akuntansi) = 0; sel numerik Excel dipakai apa adanya (nol berformat akuntansi = 0);
+ *   - amplop: minus ASCII, prefix Rp/Rp./IDR, digit ASCII, pemisah . , spasi, sufiks ",-" — "(500)", "−5" (minus Unicode),
+ *     "5 juta", "12abc", "1e5" ditolak (dulu masing-masing jadi 500, 5, 5, 12, 15);
+ *   - pemisah ribuan hanya bila kepala kelompoknya 1-3 digit tanpa nol depan ("1.250.000", "1,250"); pemisah tunggal lain =
+ *     desimal ("204,8", "0,125", "533000000,50", "250000000.000"); dua jenis pemisah = yang terakhir desimal;
+ *   - sel galat Excel (#DIV/0!, #N/A) di kolom angka = NaN (lihat tandaiGalat), bukan 0.
  */
+/** Batas panjang teks angka, sama dengan _STRICT_MAX_LEN Python: pagar backtracking regex dan teks catatan. */
+const ANGKA_MAKS = 40;
+const AMPLOP = /^-?\s*(?:rp\.?|idr)?\s*-?\s*[0-9][0-9.,\s]*(?:,-)?$/i;
+const RIBUAN: Record<"." | ",", RegExp> = { ".": /^[1-9]\d{0,2}(?:\.\d{3})+$/, ",": /^[1-9]\d{0,2}(?:,\d{3})+$/ };
+/** Penanda sel galat Excel. SheetJS menjadikan sel galat `undefined` (= kosong = 0); tandaiGalat menggantinya dengan teks ini. */
+export const GALAT_EXCEL = "#GALAT_EXCEL";
+
+/** Badan angka tanpa tanda/prefix (hanya digit . ,) → nilai, atau NaN bila pengelompokannya tidak sah. */
+function intiAngka(b: string): number {
+    if (/^\d+$/.test(b)) return Number(b);
+    const titik = b.includes("."), koma = b.includes(",");
+    if (titik && koma) {
+        const des = b.lastIndexOf(",") > b.lastIndexOf(".") ? "," : ".";
+        const grup = des === "," ? "." : ",";
+        const i = b.lastIndexOf(des);
+        const bulat = b.slice(0, i), pecahan = b.slice(i + 1);
+        if (!/^\d+$/.test(pecahan) || !(/^\d+$/.test(bulat) || RIBUAN[grup].test(bulat))) return NaN;
+        return Number(`${bulat.split(grup).join("")}.${pecahan}`);
+    }
+    const sep = titik ? "." : ",";
+    if (RIBUAN[sep].test(b)) return Number(b.split(sep).join(""));
+    const bagian = b.split(sep);
+    return bagian.length === 2 && /^\d+$/.test(bagian[0]) && /^\d+$/.test(bagian[1]) ? Number(`${bagian[0]}.${bagian[1]}`) : NaN;
+}
+
+/** Angka dari teks sel menurut aturan di atas; NaN = bukan angka (pemanggil wajib menolak, bukan menjadikannya 0). */
 export function parseLocaleNumber(text: string): number {
-    const cleaned = text.replace(/[^\d.,-]/g, "");
-    if (!cleaned) return NaN;
-    const last = Math.max(cleaned.lastIndexOf("."), cleaned.lastIndexOf(","));
-    if (last === -1) return Number(cleaned);
-    const sepCount = (cleaned.match(/[.,]/g) ?? []).length;
-    const digitsAfter = cleaned.length - last - 1;
-    const isThousands = digitsAfter === 3 && (sepCount > 1 || cleaned[last] === ".");
-    if (isThousands) return Number(cleaned.replace(/[.,]/g, ""));
-    return Number(cleaned.slice(0, last).replace(/[.,]/g, "") + "." + cleaned.slice(last + 1));
+    const t = text.trim();
+    if (t === "" || t === "-") return 0;
+    if (t.length > ANGKA_MAKS || !AMPLOP.test(t) || (t.replace(/,-$/, "").match(/-/g) ?? []).length > 1) return NaN;
+    let b = t.replace(/(rp|idr)\.?/gi, "").replace(/[^0-9.,-]/g, "").replace(/[,.]-+$/, "");
+    const negatif = b.startsWith("-");
+    if (negatif) b = b.slice(1);
+    if (b.includes("-")) return NaN;
+    const v = intiAngka(b);
+    return negatif ? -v : v;
+}
+
+/** Nilai mentah sel (sheet_to_json raw) → angka: number apa adanya, teks lewat parseLocaleNumber, selain itu (bool, Date, galat) NaN. */
+export function angkaSel(v: unknown): number {
+    if (v === undefined || v === null) return 0;
+    if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
+    return typeof v === "string" ? parseLocaleNumber(v) : NaN;
+}
+
+/**
+ * Ganti sel galat Excel (t === "e": #DIV/0!, #N/A, #REF!) dengan GALAT_EXCEL sebelum sheet_to_json — tanpa ini galat rumus
+ * di kolom angka terbaca kosong = 0. Kolom teks membaca penanda ini sebagai kosong (perilaku lama).
+ */
+export function tandaiGalat(sheet: XLSX.WorkSheet): XLSX.WorkSheet {
+    for (const [alamat, sel] of Object.entries(sheet)) {
+        if (!alamat.startsWith("!") && (sel as XLSX.CellObject).t === "e") sheet[alamat] = { t: "s", v: GALAT_EXCEL };
+    }
+    return sheet;
 }
 
 /**
@@ -55,16 +100,11 @@ function rowReader(row: Record<string, unknown>) {
     return {
         str: (name: string, fallback = "") => {
             const v = raw(name);
-            return v === undefined || v === null || v === "" ? fallback : String(v).trim();
+            return v === undefined || v === null || v === "" || v === GALAT_EXCEL ? fallback : String(v).trim();
         },
-        // Kosong dan "-" (tanda nol akuntansi, owner 9 Okt — sama dengan parse_number_strict Python) = 0.
-        // Terisi tapi bukan angka = NaN, BUKAN 0 (AM-017): pemanggil wajib menolaknya — 0 palsu pada support/target = bayar lebih.
-        num: (name: string) => {
-            const v = raw(name);
-            if (v === undefined || v === null || (typeof v === "string" && (v.trim() === "" || v.trim() === "-"))) return 0;
-            if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
-            return parseLocaleNumber(String(v));
-        },
+        // Kosong dan "-" = 0; terisi tapi bukan angka (termasuk sel galat) = NaN, BUKAN 0 (AM-017): pemanggil wajib menolaknya —
+        // 0 palsu pada support/target = bayar lebih. Aturannya = angkaSel (sama dengan progres dan Python).
+        num: (name: string) => angkaSel(raw(name)),
     };
 }
 
@@ -114,7 +154,7 @@ export interface ParsedSupportRow {
  */
 export function parseSupportExcel(arrayBuffer: ArrayBuffer, kind: SupportKind): ParsedSupportRow[] {
     const workbook = XLSX.read(arrayBuffer, { type: "array" });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const sheet = tandaiGalat(workbook.Sheets[workbook.SheetNames[0]]);
     const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
     const keyHeader = SUPPORT_KEY_HEADER[kind];
     const out: ParsedSupportRow[] = [];
@@ -131,7 +171,7 @@ export function parseSupportExcel(arrayBuffer: ArrayBuffer, kind: SupportKind): 
 /** Parse Excel file untuk target input. */
 export function parseTargetExcel(arrayBuffer: ArrayBuffer): Array<Record<string, unknown>> {
     const workbook = XLSX.read(arrayBuffer, { type: "array" });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const sheet = tandaiGalat(workbook.Sheets[workbook.SheetNames[0]]);
     const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
 
     // Header dicocokkan case/whitespace-insensitive, BUKAN string persis. Excel bisa menyimpan

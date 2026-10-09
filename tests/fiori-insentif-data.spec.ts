@@ -273,12 +273,14 @@ test("Data periode (d): angka progres terisi tapi tidak valid → seluruh impor 
     await main.getByRole("button", { name: "Progres harian" }).click({ timeout: 60_000 });
     await main.locator('input[type="file"]').setInputFiles(xlsx("Laporan_Sep.xlsx", [
         ["KODE_SALESMAN", "SALESMAN", "PRINCIPAL", "JENISPRODUK", "TANGGAL", "DPP", "NILAI_JUAL", "EC", "AO", "IA"],
-        ["S-A", "SALES A", "PRINCIPLE A", "CABANG A", 46270, 500000, 550000, "", 1, 1],
+        ["S-A", "SALES A", "PRINCIPLE A", "CABANG A", 46270, "Rp 1.250.000,-", 550000, "", 1, 1], // sah: rupiah tanpa sen
         ["S-A", "SALES A", "PRINCIPLE A", "CABANG A", 46271, "-", 0, 0, 0, 0], // "-" = 0 (tanda nol akuntansi)
         ["S-B", "SALES B", "PRINCIPLE A", "CABANG A", 46271, 300000, 300000, "N/A", 1, 1],
+        // Dulu terbaca +533 jt (kurung = negatif akuntansi dibuang) — kini ditolak seperti Python.
+        ["S-C", "SALES C", "PRINCIPLE A", "CABANG A", 46271, "(533.000.000)", 0, 0, 0, 0],
     ]));
     await main.getByRole("button", { name: "Lanjut" }).click();
-    await expect(main.getByRole("alert").filter({ hasText: "Berkas tidak bisa diterapkan." })).toContainText("1 baris berisi angka tidak valid (mis. S-B)");
+    await expect(main.getByRole("alert").filter({ hasText: "Berkas tidak bisa diterapkan." })).toContainText("2 baris berisi angka tidak valid (mis. S-B, S-C)");
     await expect(main.getByRole("button", { name: "Terapkan progres…" })).toBeDisabled();
     expect(tulis).toHaveLength(0);
 });
