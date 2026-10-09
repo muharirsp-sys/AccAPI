@@ -64,10 +64,12 @@ export async function POST(req: NextRequest) {
     const rows = body.filter((s) => s.salesCode && s.principle && s.periodMonth && s.periodYear);
     const prepared: Array<{ s: SupportInput; amount: number }> = [];
     for (const s of rows) {
-        const amount = Number(s.supportAmount);
+        const amount = s.supportAmount;
         // Number(x) || 0 lama meloloskan Infinity (Infinity > 0), lalu "konstanta − Infinity"
         // ter-floor jadi 0 → insentif sales itu hilang tanpa error ke Finance.
-        if (!Number.isFinite(amount) || amount < 0) {
+        // AM-043 (D.21): WAJIB number — Number(null) dan Number("") = 0 dulu tersimpan sebagai
+        // support 0, padahal null adalah NaN sel Excel invalid setelah JSON.stringify.
+        if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) {
             return NextResponse.json(
                 { error: `Support tidak valid: ${s.salesCode}/${s.principle} (${String(s.supportAmount)})` },
                 { status: 400 },
