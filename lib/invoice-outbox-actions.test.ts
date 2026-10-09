@@ -149,7 +149,7 @@ test("Selesaikan terposting: WAJIB `ketemu` dari pencarian langsung -> posted + 
 });
 
 test("Selesaikan tidak terposting: WAJIB `tidak_ketemu_dicek` -> rejected (amplop [..]) agar bisa diantre ulang lewat jalur E2", async () => {
-    const { db, tulis } = dbTiruan([BARIS_TIDAK_PASTI, [{ first: null }]]);
+    const { db, tulis } = dbTiruan([BARIS_TIDAK_PASTI, [{ menit: 42 }], [{ first: null }]]);
     const hasil = await selesaikanTidakPasti(db, { orderId: "KINO:SO-1", keputusan: "tidak_terposting", alasan: ALASAN, actor: "admin@contoh", cari: pencari(TIDAK).cari, targetDb: "DB-1" });
     assert.equal(hasil.status, 200);
     const ubah = tulis.find((w) => w.op === "update")?.nilai as { state: string; lastError: string };
@@ -164,7 +164,9 @@ test("Selesaikan: hasil pencarian bertentangan / gagal -> 409, tidak ada yang di
         ["terposting", GAGAL, /tidak bisa memastikan/],
         ["tidak_terposting", GAGAL, /tidak bisa memastikan/],
     ] as const) {
-        const { db, tulis } = dbTiruan([BARIS_TIDAK_PASTI, [{ first: null }]]);
+        const { db, tulis } = dbTiruan(keputusan === "tidak_terposting"
+            ? [BARIS_TIDAK_PASTI, [{ menit: null }], [{ first: null }]]
+            : [BARIS_TIDAK_PASTI, [{ first: null }]]);
         const hasil = await selesaikanTidakPasti(db, { orderId: "KINO:SO-1", keputusan, alasan: ALASAN, actor: "p", cari: pencari(hasilCari).cari, targetDb: "DB-1" });
         assert.equal(hasil.status, 409, `${keputusan} + ${hasilCari.hasil}`);
         assert.match(String(hasil.body.error), pola);
@@ -181,4 +183,20 @@ test("Selesaikan: hanya baris TIDAK PASTI (rejected/posted/queued ditolak)", asy
         assert.equal(calls.length, 0);
         assert.equal(tulis.length, 0);
     }
+});
+
+test("A-SEDANG: Tetapkan tidak terposting ditolak < 15 menit sejak kirim terakhir (jam DB) — save.do yang timeout bisa commit belakangan", async () => {
+    for (const [menit, sisa] of [[0.5, 15], [14.01, 1]] as const) {
+        const { db, tulis } = dbTiruan([BARIS_TIDAK_PASTI, [{ menit }]]);
+        const { cari, calls } = pencari(TIDAK);
+        const hasil = await selesaikanTidakPasti(db, { orderId: "KINO:SO-1", keputusan: "tidak_terposting", alasan: ALASAN, actor: "p", cari, targetDb: "DB-1" });
+        assert.equal(hasil.status, 409, `${menit} menit`);
+        assert.match(String(hasil.body.error), new RegExp(`tunggu ${sisa} menit lagi`));
+        assert.equal(hasil.body.sisaMenit, sisa);
+        assert.equal(calls.length, 0, "tidak perlu mencari selama masa tunggu");
+        assert.equal(tulis.length, 0);
+    }
+    // Terposting tidak menunggu: faktur yang DITEMUKAN menutup kirim ulang, tidak membukanya.
+    const { db } = dbTiruan([BARIS_TIDAK_PASTI, [{ first: null }]]);
+    assert.equal((await selesaikanTidakPasti(db, { orderId: "KINO:SO-1", keputusan: "terposting", alasan: ALASAN, actor: "p", cari: pencari(KETEMU).cari, targetDb: "DB-1" })).status, 200);
 });

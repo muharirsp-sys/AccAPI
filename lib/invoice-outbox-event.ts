@@ -4,7 +4,7 @@
  * Caller: lib/invoice-sender (kirim/hasil/sapu), app/api/invoice-outbox (buang, antre ulang,
  *         selesaikan), app/api/principal-order/queue + app/api/orders/[id]/invoice (antre).
  * Dependensi: tabel invoice_outbox_event (db/schema.ts, scripts/migrate-pg.mjs).
- * Main Functions: potongJawaban, kodeGalat, catatEvent, waktuAntrePertama, pernahDibuang.
+ * Main Functions: potongJawaban, kodeGalat, catatEvent, waktuAntrePertama, pernahDibuang, menitSejakKirimTerakhir.
  * Side Effects: catatEvent = INSERT invoice_outbox_event. Tidak ada UPDATE/DELETE di sini — dan
  *   DDL manual (docs/handover/DDL_OUTBOX_EVENT.sql) menolaknya di tingkat DB.
  */
@@ -76,4 +76,16 @@ export async function pernahDibuang(database: OutboxDb, orderIds: string[]): Pro
     const rows = await database.selectDistinct({ orderId: invoiceOutboxEvent.orderId }).from(invoiceOutboxEvent)
         .where(and(eq(invoiceOutboxEvent.jenis, "buang"), inArray(invoiceOutboxEvent.orderId, orderIds)));
     return new Set(rows.map((row) => row.orderId));
+}
+
+/**
+ * Menit sejak event `kirim` TERAKHIR order ini menurut jam DB (`now()`, sama dengan penyapu), atau
+ * null bila belum pernah dikirim. Dasar masa tunggu "Tetapkan tidak terposting": save.do yang
+ * timeout bisa tetap tersimpan belakangan di Accurate.
+ */
+export async function menitSejakKirimTerakhir(database: OutboxDb, orderId: string): Promise<number | null> {
+    const [row] = await database.select({
+        menit: sql<number | null>`extract(epoch from (now() - max(${invoiceOutboxEvent.createdAt}))) / 60`,
+    }).from(invoiceOutboxEvent).where(and(eq(invoiceOutboxEvent.orderId, orderId), eq(invoiceOutboxEvent.jenis, "kirim")));
+    return row?.menit === null || row?.menit === undefined ? null : Number(row.menit);
 }

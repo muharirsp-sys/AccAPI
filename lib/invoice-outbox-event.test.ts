@@ -363,16 +363,18 @@ test("PG AM-047: Selesaikan tidak pasti — terposting (cache ketemu) & tidak te
     const customerNo = `C-UJI-${customerId}`;
     const ada = `UJI-S6D:${randomUUID()}`;
     const tiada = `UJI-S6D:${randomUUID()}`;
+    const baru = `UJI-S6D:${randomUUID()}`;
     const invoiceId = customerId; // id faktur cache unik
     const sim = await simulatorAccurate(20, []);
     const alasan = "Diperiksa lewat pencarian charField1 di Accurate";
     try {
         await pool.query((await entriMigrasi("invoice_outbox_event")).sql);
         await pool.query(`INSERT INTO customer (id, "customerNo", name) VALUES ($1, $2, 'UJI S6-0d')`, [customerId, customerNo]);
-        for (const id of [ada, tiada]) {
+        for (const id of [ada, tiada, baru]) {
             await pool.query(`INSERT INTO invoice_outbox (order_id, customer_no, order_date, state, payload, queued_by, last_error)
                               VALUES ($1, $2, '2026-10-08', 'unknown', $3::jsonb, 'uji@contoh', 'timeout')`, [id, customerNo, JSON.stringify(payload(id))]);
         }
+        const baris = async (id: string) => (await pool.query(`SELECT state, accurate_id, last_error FROM invoice_outbox WHERE order_id = $1`, [id])).rows[0];
         await pool.query(`INSERT INTO sales_invoice (id, number, customer_no, raw_data, created_at, last_update_at)
                           VALUES ($1, 'INV/UJI/AM047', $2, $3::jsonb, now(), now())`, [invoiceId, customerNo, JSON.stringify({ charField1: ada })]);
         const db = drizzle(pool);
@@ -384,9 +386,15 @@ test("PG AM-047: Selesaikan tidak pasti — terposting (cache ketemu) & tidak te
 
         const r1 = await selesaikanTidakPasti(db, { orderId: ada, keputusan: "terposting", alasan, actor: "admin@contoh", cari, targetDb: "DB-UJI" });
         assert.equal(r1.status, 200);
+        // A-SEDANG: kirim terakhir 3 menit lalu (jam DB) -> masa tunggu, sisa 12 menit; 16 menit lalu -> boleh.
+        await pool.query(`INSERT INTO invoice_outbox_event (order_id, jenis, actor, created_at) VALUES ($1, 'kirim', 'uji', now() - interval '3 minutes')`, [baru]);
+        const tunggu = await selesaikanTidakPasti(db, { orderId: baru, keputusan: "tidak_terposting", alasan, actor: "admin@contoh", cari, targetDb: "DB-UJI" });
+        assert.equal(tunggu.status, 409);
+        assert.equal(tunggu.body.sisaMenit, 12);
+        assert.equal((await baris(baru)).state, "unknown");
+        await pool.query(`INSERT INTO invoice_outbox_event (order_id, jenis, actor, created_at) VALUES ($1, 'kirim', 'uji', now() - interval '16 minutes')`, [tiada]);
         const r2 = await selesaikanTidakPasti(db, { orderId: tiada, keputusan: "tidak_terposting", alasan, actor: "admin@contoh", cari, targetDb: "DB-UJI" });
         assert.equal(r2.status, 200);
-        const baris = async (id: string) => (await pool.query(`SELECT state, accurate_id, last_error FROM invoice_outbox WHERE order_id = $1`, [id])).rows[0];
         assert.deepEqual([(await baris(ada)).state, (await baris(ada)).accurate_id], ["posted", String(invoiceId)]);
         assert.equal((await baris(tiada)).state, "rejected");
         const evAda = await events(pool, ada);
@@ -399,10 +407,10 @@ test("PG AM-047: Selesaikan tidak pasti — terposting (cache ketemu) & tidak te
         const ulang = await aksiAntrean(db, { orderId: tiada, action: "resend", actor: "petugas@contoh", reason: "", cari, targetDb: "DB-UJI" });
         assert.equal(ulang.status, 200);
         assert.equal(ulang.body.state, "queued");
-        assert.deepEqual((await events(pool, tiada)).map((e) => e.jenis), ["selesaikan", "antre_ulang"]);
+        assert.deepEqual((await events(pool, tiada)).map((e) => e.jenis), ["kirim", "selesaikan", "antre_ulang"]);
     } finally {
         await sim.close();
-        await pool.query(`DELETE FROM invoice_outbox WHERE order_id = ANY($1)`, [[ada, tiada]]);
+        await pool.query(`DELETE FROM invoice_outbox WHERE order_id = ANY($1)`, [[ada, tiada, baru]]);
         await pool.query(`DELETE FROM sales_invoice WHERE id = $1`, [invoiceId]);
         await pool.query(`DELETE FROM customer WHERE id = $1`, [customerId]);
         await pool.end();

@@ -19,10 +19,10 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { invoiceOutbox } from "@/db/schema";
 import { discardable, resendable, type OutboxState } from "@/lib/accurate-invoice-write";
-import { catatEvent, pernahDibuang, waktuAntrePertama } from "@/lib/invoice-outbox-event";
+import { catatEvent, menitSejakKirimTerakhir, pernahDibuang, waktuAntrePertama } from "@/lib/invoice-outbox-event";
 import { cariFaktur, type HasilCari, type SesiCari } from "@/lib/invoice-search";
 import { getAccurateSession } from "@/lib/accurate-session";
-import { sapuSending } from "@/lib/invoice-sender";
+import { SAPU_SETELAH_MENIT, sapuSending } from "@/lib/invoice-sender";
 import { isAllowedAccurateHost } from "@/lib/api-security";
 
 export type AksiJawaban = { status: number; body: Record<string, unknown> };
@@ -264,7 +264,8 @@ export function cekInputSelesaikan(input: { orderId: string; keputusan: string; 
  * AM-047 / BL-16 — "Selesaikan tidak pasti" (izin `order.resolve_unknown`, dicek route). Dua keputusan,
  * keduanya WAJIB alasan dan WAJIB hasil pencarian LANGSUNG (bukan ingatan petugas):
  *   terposting       -> butuh `ketemu`: baris jadi `posted` dengan id + nomor Accurate (verifikasi balik bisa jalan);
- *   tidak_terposting -> butuh `tidak_ketemu_dicek`: baris jadi `rejected` sehingga bisa diantre ulang — lewat
+ *   tidak_terposting -> butuh `tidak_ketemu_dicek` DAN kirim terakhir ≥ 15 menit lalu (jam DB; save.do yang
+ *                       timeout bisa tersimpan belakangan): baris jadi `rejected` sehingga bisa diantre ulang — lewat
  *                       jalur E2 yang MENCARI LAGI sebelum mengantrekan.
  * Hasil pencarian yang bertentangan dengan keputusan, atau pencarian gagal = 409, tidak ada yang berubah.
  * `sending` > 15 menit disapu dulu jadi `unknown`, jadi baris macet ikut bisa diselesaikan.
@@ -288,6 +289,16 @@ export async function selesaikanTidakPasti(
         return { status: 409, body: { ok: false, error: `Hanya baris TIDAK PASTI yang diselesaikan di sini (status sekarang ${row.state}).` } };
     }
 
+    if (input.keputusan === "tidak_terposting") {
+        // Masa tunggu = ambang penyapu: kiriman yang belum 15 menit MUNGKIN masih diproses Accurate.
+        const menit = await menitSejakKirimTerakhir(database, orderId);
+        if (menit !== null && menit < SAPU_SETELAH_MENIT) {
+            const sisaMenit = Math.max(1, Math.ceil(SAPU_SETELAH_MENIT - menit));
+            return { status: 409, body: { ok: false, sisaMenit,
+                error: `Kiriman terakhir baru ${Math.floor(menit)} menit lalu — Accurate mungkin masih menyimpannya; `
+                    + `tunggu ${sisaMenit} menit lagi sebelum menetapkan tidak terposting.` } };
+        }
+    }
     const queuedAt = await waktuAntrePertama(database, orderId, row.createdAt) ?? row.createdAt;
     const hasil = await input.cari({ orderId, customerNo: row.customerNo, queuedAt });
     const pencarian = ringkasCari(hasil);
