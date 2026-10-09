@@ -34,7 +34,7 @@ const USERS = [
     { id: "u3", name: "Andi Pratama", email: "andi@sp.test", hierarchyRole: "sales", hierarchyName: "MKS-07" },
 ];
 
-type Opsi = { targets?: unknown[]; settingsGagal?: boolean; tolakTarget?: string };
+type Opsi = { targets?: unknown[]; settingsGagal?: boolean; tolakTarget?: string; tolakHapus?: string };
 
 /** Semua /api/insentif-sales/* dimock; permintaan tulis dicatat untuk diperiksa. */
 async function mockApi(page: Page, opsi: Opsi = {}) {
@@ -52,7 +52,11 @@ async function mockApi(page: Page, opsi: Opsi = {}) {
         if (p === "targets" && req.method() === "DELETE") return route.fulfill(json({ deleted: 1 }));
         if (p === "targets/template") return route.fulfill(json({ error: "Forbidden" }, 403));
         if (p === "progress" && req.method() === "POST") return route.fulfill(json({ inserted: 3, replaced: 2, skipped: 0 }));
-        if (p === "progress" && req.method() === "DELETE") return route.fulfill(json({ deleted: 12, month: 9, year: 2026 }));
+        if (p === "progress" && req.method() === "DELETE") {
+            const tolak = opsi.tolakHapus;
+            opsi.tolakHapus = undefined; // sekali saja: percobaan berikutnya lolos
+            return tolak ? route.fulfill(json({ error: tolak }, 400)) : route.fulfill(json({ deleted: 12, month: 9, year: 2026 }));
+        }
         if (p === "code-merge" && req.method() === "POST") return route.fulfill(json({ saved: 1 }));
         if (p === "spv-mismatch" && req.method() === "POST") return route.fulfill(json({ synced: 1, spvName: "MARTEN" }));
         if (p === "settings" && req.method() === "GET") return opsi.settingsGagal ? route.fulfill(json({ error: "Koneksi database terputus" }, 500)) : route.fulfill(json(SETTINGS));
@@ -234,10 +238,43 @@ test("Data periode: gabung kode, pakai SPV, hapus target, hapus realisasi — se
     expect([terakhir().method(), del.pathname, Object.fromEntries(del.searchParams)]).toEqual(["DELETE", "/api/insentif-sales/targets", { salesCode: "MKS-07", principle: "KINO NON FOOD", month: "9", year: "2026" }]);
 
     await main.getByRole("button", { name: "Hapus realisasi September 2026…" }).click();
-    await page.getByRole("dialog", { name: "Hapus realisasi September 2026?" }).getByRole("button", { name: "Hapus realisasi" }).click();
+    const hapus = page.getByRole("dialog", { name: "Hapus realisasi September 2026?" });
+    await hapus.getByLabel("Alasan hapus realisasi").fill("Closing diunggah ulang");
+    await hapus.getByRole("button", { name: "Hapus realisasi" }).click();
     await expect(main.getByText("12 baris realisasi September 2026 dihapus.")).toBeVisible();
     expect([terakhir().method(), new URL(terakhir().url()).pathname + new URL(terakhir().url()).search]).toEqual(["DELETE", "/api/insentif-sales/progress?month=9&year=2026"]);
+    expect(terakhir().postDataJSON()).toEqual({ alasan: "Closing diunggah ulang" });
     expect(tulis).toHaveLength(4);
+});
+
+test("Hapus realisasi (owner 8 Okt): alasan wajib ≥ 5 karakter, DELETE membawa alasan; galat server tampil di dialog tanpa menghapus alasan", async ({ page }) => {
+    const opsi: Opsi = { targets: [TARGET("S-A", "SALES A", "PRINCIPLE A", 100_000_000)], tolakHapus: "Alasan hapus realisasi wajib diisi (minimal 5 karakter)." };
+    const tulis = await mockApi(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/data-periode?month=9&year=2026", NAV);
+    const main = page.locator("main");
+    await main.getByRole("button", { name: "Hapus realisasi September 2026…" }).click(NAV);
+    const dlg = page.getByRole("dialog", { name: "Hapus realisasi September 2026?" });
+    const tombol = dlg.getByRole("button", { name: "Hapus realisasi" });
+    const alasan = dlg.getByLabel("Alasan hapus realisasi");
+    await expect(dlg).toContainText("Alasan, nama Anda, dan jumlah baris tercatat");
+    await expect(tombol).toBeDisabled();
+    await alasan.fill("  abc  "); // 3 karakter setelah dipangkas = ditolak server → tombol tetap nonaktif
+    await expect(tombol).toBeDisabled();
+    await expect(tombol).toHaveAttribute("title", "Alasan hapus realisasi minimal 5 karakter");
+    await alasan.fill("  Closing diunggah dengan aturan lama  ");
+    await tombol.click();
+    await expect(dlg.getByRole("alert")).toContainText("Alasan hapus realisasi wajib diisi (minimal 5 karakter).");
+    await expect(alasan).toHaveValue("  Closing diunggah dengan aturan lama  ");
+    await page.screenshot({ path: "test-results/data/hapus-realisasi-alasan.png" });
+    await tombol.click();
+    await expect(dlg).toBeHidden();
+    await expect(main.getByText("12 baris realisasi September 2026 dihapus.")).toBeVisible();
+    const del = tulis.filter((r) => r.method() === "DELETE");
+    expect(del.map((r) => [new URL(r.url()).pathname + new URL(r.url()).search, r.postDataJSON()])).toEqual([
+        ["/api/insentif-sales/progress?month=9&year=2026", { alasan: "Closing diunggah dengan aturan lama" }],
+        ["/api/insentif-sales/progress?month=9&year=2026", { alasan: "Closing diunggah dengan aturan lama" }],
+    ]);
 });
 
 test("Data periode di ponsel 390 px: tanpa gulir menyamping", async ({ page }) => {

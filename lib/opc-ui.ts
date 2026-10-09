@@ -6,7 +6,7 @@
  * Caller: app/(dashboard)/off-program-control/{OpcApp.tsx, opc/Bersama.tsx, opc/ObjectPageBatch.tsx, opc/peran/*}, lib/opc-ui.test.ts.
  * Dependensi: lib/off-program-control/{access,search} (murni), tipe FlowStep/Tone dari components/fiori/core.
  * Main Functions: tahapBatch, infoTahap, alurBatch, PREDIKAT, TAMPILAN, tabTerlihat, tabEfektif, subTampilan, saringBatch,
- *   opsiPrincipal, labelStatus, labelAksiAudit, labelPeranAktor, izinAksi, pdfBoleh, tanggalOpc, waktuWita, periodeBatch, totalBatch.
+ *   opsiPrincipal, labelStatus, labelAksiAudit, catatanSendiri, labelPeranAktor, izinAksi, pdfBoleh, tanggalOpc, waktuWita, periodeBatch, totalBatch.
  * Side Effects: Tidak ada.
  */
 import type { FlowStep, Tone } from "@/components/fiori/core";
@@ -66,6 +66,8 @@ export type AuditOpc = {
     id: string; batchId: string; itemId?: string | null; actorName?: string | null; actorRole?: string | null; action: string;
     fromStatus?: string | null; toStatus?: string | null; note?: string | null; correctionReason?: string | null;
     parentAuditLogId?: string | null; createdAt?: string | number | null; noPengajuan?: string | null; principleName?: string | null;
+    /** off_audit_log.metadata (jsonb). BL-10 (#132): alasan setuju sendiri pada claim_approve / complete / final_claim_overpaid. */
+    metadata?: { alasanSendiri?: string | null; sendiriTanpaAlasan?: boolean } | null;
 };
 
 // ── Label status (salinan statusLabelMap old-opc.tsx 452–492 + status refund) ───────────────────────────
@@ -389,6 +391,9 @@ const AKSI_AUDIT: Record<string, string> = {
     period_unlocked: "Kunci periode dibuka",
 };
 export const labelAksiAudit = (action: string) => AKSI_AUDIT[action] ?? action.replace(/_/g, " ");
+/** BL-10 (#132): catatan setuju sendiri dari metadata audit; "" bila bukan setuju sendiri. Layar lama (masa transisi) tidak mengirim alasan. */
+export const catatanSendiri = (a: AuditOpc) => (a.metadata?.alasanSendiri ? `Alasan setuju sendiri: ${a.metadata.alasanSendiri}`
+    : a.metadata?.sendiriTanpaAlasan ? "Disetujui sendiri tanpa alasan (layar lama)" : "");
 
 const PERAN_AKTOR: Record<string, string> = {
     supervisor: "SPV", sales_manager: "SM", claim: "Klaim", operational_manager: "OM", finance: "Keuangan", admin: "Admin", manager: "Admin",

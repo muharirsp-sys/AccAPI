@@ -1,6 +1,7 @@
 /*
  * Tujuan: Wizard Kunjungan toko (Fiori S5, it05): Check-in → Status → Merchandising → Check-out, Kembali di setiap langkah, status
- *   tersimpan tampil lagi, galat di langkahnya (langkah tidak maju), foto tetap di layar bila tanpa sinyal.
+ *   tersimpan tampil lagi, galat di langkahnya (langkah tidak maju), foto tetap di layar bila tanpa sinyal. Toko tutup (R15, owner 8 Okt,
+ *   kontrak #132): Tidak order + alasan R15 → merchandising DILEWATI → foto bukti toko tutup (= foto check-out, wajib) → selesai tanpa order.
  * Caller: ./page.tsx (rute /form-kontrol/visit/[custCode]?salesCode&principle&date).
  * Dependensi: GET /api/form-kontrol/visit + /reasons; POST /api/form-kontrol/checkin, /ao-control, /merchandising, /checkout;
  *   ./FotoBukti; ../../lapangan (ambilJson, kirimFk, sebabGagal, PESAN_SINYAL), ../../shared (alasanIzinFk, jamWita); components/fiori/*; lib/rekapan-nota/ui.
@@ -20,6 +21,7 @@ import {
 } from "@/components/fiori/core";
 import { FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
+import { TOKO_TUTUP_CODE } from "@/lib/form-kontrol/constants";
 import type { GeoCoords } from "@/lib/form-kontrol/location";
 import { PESAN_SINYAL, ambilJson, kirimFk, sebabGagal } from "../../lapangan";
 import { alasanIzinFk, jamWita } from "../../shared";
@@ -134,13 +136,16 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
     const checkinDone = Boolean(checkinPhoto || ao?.checkinPhotoUrl);
     const checkoutDone = Boolean(checkoutPhoto || ao?.checkoutPhotoUrl);
     const statusDone = checkoutDone || statusConfirmed;
-    const maks = checkoutDone ? 4 : checkinDone && statusDone && allMerchDone && merchPersisted ? 3 : checkinDone && statusDone ? 2 : checkinDone ? 1 : 0;
+    // Toko tutup TERSIMPAN (status di server, bukan pilihan yang belum disimpan): server tidak mewajibkan merchandising (#132), jadi langkah
+    // itu dilewati dan foto check-out menjadi foto bukti toko tutup yang wajib.
+    const tutup = ao?.status === "not_order" && ao.noOrderReasonCode === TOKO_TUTUP_CODE;
+    const maks = checkoutDone ? 4 : checkinDone && statusDone && (tutup || (allMerchDone && merchPersisted)) ? 3 : checkinDone && statusDone ? 2 : checkinDone ? 1 : 0;
     // `lihat` = langkah yang dibuka lewat Kembali; tidak pernah melewati langkah terjauh yang sudah tersimpan.
     const step = maks === 4 ? 4 : Math.min(lihat ?? maks, maks);
     const tersimpanStatus = { status: (ao?.status && ao.status !== "not_visited") ? awalDari(ao.status) : null, code: ao?.noOrderReasonCode ?? "", note: ao?.noOrderNote ?? "" };
     const drafStatus = orderStatus !== tersimpanStatus.status
         || (orderStatus === "not_order" && (reasonCode !== tersimpanStatus.code || reasonNote !== tersimpanStatus.note));
-    const draf = !checkoutDone && ((drafStatus && orderStatus !== null) || (!merchPersisted && nMerch > 0));
+    const draf = !checkoutDone && ((drafStatus && orderStatus !== null) || (!tutup && !merchPersisted && nMerch > 0));
     useUnsavedGuard(draf);
 
     const tanpaIzin = alasanIzinFk(new Set(izinFk), "submit");
@@ -173,7 +178,8 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                 noOrderNote: orderStatus === "not_order" ? reasonNote : null,
             }));
             setStatusConfirmed(true);
-            pindah(lihat === null ? null : 2);
+            // Toko tutup langsung ke foto bukti (langkah terjauh); selain itu ke Merchandising seperti biasa.
+            pindah(lihat === null || (orderStatus === "not_order" && reasonCode === TOKO_TUTUP_CODE) ? null : 2);
         } catch (e) {
             setGalat(`Status belum tersimpan. ${e instanceof Error ? e.message : ""}`.trim());
         } finally { setSaving(false); }
@@ -206,7 +212,10 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
         setCheckoutAt(new Date().toISOString());
     }
 
-    const flow: FlowStep[] = LANGKAH.map((label, i) => ({ label, state: i < maks && i !== step ? "done" : i === step ? "current" : "todo" }));
+    const flow: FlowStep[] = LANGKAH.map((label, i) => ({
+        label: tutup && i === 2 ? "Merchandising dilewati" : tutup && i === 3 ? "Foto bukti & check-out" : label,
+        state: i < maks && i !== step ? "done" : i === step ? "current" : "todo",
+    }));
     const statusTeks = (s: string | null | undefined) => s === "ordered" || s === "active" ? "ORDER" : s ? "TIDAK ORDER" : "—";
     const alasanLabel = (code: string) => { const r = data.reasons.find((x) => x.reasonCode === code); return r ? `${r.reasonCode} · ${r.label}` : code; };
     const kartuCheckin = (
@@ -216,7 +225,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
         ]} />
     );
     const tombolKembali = (s: number) => (
-        <Button variant="tertiary" icon={<ArrowLeft className="fi-icon" aria-hidden />} disabled={saving} onClick={() => (s === 0 ? kembali() : pindah(s - 1))}>
+        <Button variant="tertiary" icon={<ArrowLeft className="fi-icon" aria-hidden />} disabled={saving} onClick={() => (s === 0 ? kembali() : pindah(s === 3 && tutup ? 1 : s - 1))}>
             {s === 0 ? "Rute hari ini" : "Kembali"}
         </Button>
     );
@@ -277,7 +286,11 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                             <FormField label="Catatan">
                                 {(a) => <input {...a} className="fi-input" value={reasonNote} placeholder="Catatan tambahan" onChange={(e) => setReasonNote(e.target.value)} />}
                             </FormField>
-                            <VariantNote bl="Toko tutup">“Toko tutup” belum menjadi kode alasan sendiri; pilih R14 Lainnya dan tulis “toko tutup” di catatan. Merchandising tetap wajib 6/6 sebelum check-out.</VariantNote>
+                            {reasonCode === TOKO_TUTUP_CODE && (
+                                <MessageStrip tone="info" title="Toko tutup:">
+                                    merchandising dilewati. Langkah berikutnya foto bukti toko tutup (wajib) sebagai check-out; kunjungan selesai tanpa order.
+                                </MessageStrip>
+                            )}
                         </>
                     )}
                 </div>
@@ -289,7 +302,7 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
         kaki = <FooterToolbar message={tanpaUbah ? "Status sudah tersimpan." : kurang}>
             {tombolKembali(1)}
             {tanpaUbah
-                ? <Button variant="primary" onClick={() => pindah(2)}>Lanjut</Button>
+                ? <Button variant="primary" onClick={() => pindah(tutup ? 3 : 2)}>Lanjut</Button>
                 : <Button variant="primary" busy={saving} disabled={Boolean(kurang)} disabledReason={kurang} onClick={() => void doSaveStatus()}>Simpan &amp; lanjut</Button>}
         </FooterToolbar>;
     } else if (step === 2) {
@@ -342,19 +355,23 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                     <KeyValues items={[
                         ["Check-in", checkinAt ? `${jamWita(checkinAt)} WITA` : "Tercatat"],
                         ["Status", ao?.status === "not_order" && ao.noOrderReasonCode ? `TIDAK ORDER · ${alasanLabel(ao.noOrderReasonCode)}` : statusTeks(ao?.status)],
-                        ["Merchandising", `${nMerch} dari ${MERCH_STEPS.length} · ${Object.keys(stepPhotos).length} foto`],
+                        ["Merchandising", tutup ? "Dilewati (toko tutup)" : `${nMerch} dari ${MERCH_STEPS.length} · ${Object.keys(stepPhotos).length} foto`],
                     ]} />
                 </div>
                 <div className="fi-panel">
-                    <h2 className="fi-title-3">Foto check-out</h2>
-                    <p className="fi-small fi-muted">Foto bukti selesai kunjungan.</p>
-                    <FotoBukti label="Ambil foto check-out" judulGagal="Foto check-out belum terkirim." akibat="Langkah ini belum maju; check-out belum dipastikan tercatat."
+                    <h2 className="fi-title-3">{tutup ? "Foto bukti toko tutup" : "Foto check-out"}</h2>
+                    <p className="fi-small fi-muted">
+                        {tutup ? "Wajib: foto tampak depan toko yang tutup. Foto ini dicatat sebagai check-out; kunjungan selesai tanpa order dan tanpa merchandising."
+                            : "Foto bukti selesai kunjungan."}
+                    </p>
+                    <FotoBukti label={tutup ? "Ambil foto bukti toko tutup" : "Ambil foto check-out"} judulGagal={tutup ? "Foto bukti toko tutup belum terkirim." : "Foto check-out belum terkirim."}
+                        akibat="Langkah ini belum maju; check-out belum dipastikan tercatat."
                         salesName={store.salesName} custName={store.custName} disabledReason={terkunci} onPersist={(url) => doCheckout(url)} />
                 </div>
                 <VariantNote bl="BL-28">Server belum menolak check-out tanpa check-in; layar ini yang menjaganya. Cap foto dibakar server dalam WIB (Asia/Jakarta). Usulan: tanggal dan cap WITA dari server, check-in ulang tersimpan sebagai riwayat.</VariantNote>
             </div>
         );
-        kaki = <FooterToolbar message="Kunjungan selesai setelah foto check-out tersimpan.">{tombolKembali(3)}</FooterToolbar>;
+        kaki = <FooterToolbar message={tutup ? "Kunjungan selesai setelah foto bukti toko tutup tersimpan." : "Kunjungan selesai setelah foto check-out tersimpan."}>{tombolKembali(3)}</FooterToolbar>;
     } else {
         const durasi = checkinAt && checkoutAt ? Math.max(0, Math.round((new Date(checkoutAt).getTime() - new Date(checkinAt).getTime()) / 60000)) : null;
         isi = (
@@ -363,8 +380,8 @@ function Wizard({ salesCode, custCode, principle, date, izinFk, data, store, kem
                 <div className="fi-panel">
                     <KeyValues items={[
                         ["Waktu", checkinAt && checkoutAt ? `${jamWita(checkinAt)}–${jamWita(checkoutAt)} WITA (${durasi} menit)` : "Tercatat"],
-                        ["Status", statusTeks(ao?.status)],
-                        ["Merchandising", `${nMerch} dari ${MERCH_STEPS.length}`],
+                        ["Status", tutup ? `TIDAK ORDER · ${alasanLabel(TOKO_TUTUP_CODE)}` : statusTeks(ao?.status)],
+                        ["Merchandising", tutup ? "Dilewati (toko tutup) · foto bukti tersimpan" : `${nMerch} dari ${MERCH_STEPS.length}`],
                     ]} />
                 </div>
                 <VariantNote bl="BL-43">Order dari kunjungan belum tertaut ke kunjungannya. Usulan: tombol “Buat order untuk toko ini” membuka Order Sales dengan toko ini terisi dan order tersimpan bersama kunjungan.</VariantNote>

@@ -1,6 +1,7 @@
 /*
  * Tujuan: Fiori S5 Lapangan (it05) — layar tim: shell Form Kontrol per peran (salesman/SPV/admin dari my-scope tiruan; galat akses ≠
- *   kosong), Dashboard SPV (Default, Kosong, Galat, admin memilih SPV → query spvName, Tandai sudah dibaca lewat dialog → payload),
+ *   kosong), Dashboard SPV (Default, Kosong, Galat, admin memilih SPV → query spvName, Tandai sudah dibaca lewat dialog → payload,
+ *   Batalkan tanda dibaca lewat dialog → `ack: false` + galat server di dialog),
  *   Kontrol JKS (impor lewat dialog: FormData `file` + pratinjau, imported DAN skipped tampil; templat terunduh), Kontrol SM (isian
  *   tersimpan dimuat, galat tidak ditelan, simpan lewat dialog), Briefing + Hierarki (tulis lewat dialog, payload), ponsel 390 px.
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin):
@@ -47,6 +48,8 @@ type Opsi = {
     briefingGagal?: boolean; briefingPostStatus?: number;
     profilesGagal?: boolean;
     smControl?: unknown[]; smControlGagal?: boolean;
+    /** Jumlah POST reports/ack berikutnya yang ditolak 403 (cakupan). */
+    ackDitolak?: number;
 };
 
 /** Semua /api/form-kontrol/* dimock; opsi bisa diubah di tengah tes (objek yang sama dibaca tiap permintaan). */
@@ -64,7 +67,10 @@ async function mockApi(page: Page, opsi: Opsi) {
             return opsi.dashboardGagal ? route.fulfill(json({ error: "Internal server error" }, 500))
                 : route.fulfill(json({ rows: opsi.dashboard ?? SALESMAN, date: url.searchParams.get("date"), spvName: url.searchParams.get("spvName") ?? "SPV A" }));
         }
-        if (p === "reports/ack") return route.fulfill(json({ success: true }));
+        if (p === "reports/ack") {
+            if (opsi.ackDitolak) { opsi.ackDitolak--; return route.fulfill(json({ error: "Tidak berhak atau laporan belum disubmit" }, 403)); }
+            return route.fulfill(json({ success: true }));
+        }
         if (p === "sales-profiles" && req.method() === "GET") return opsi.profilesGagal ? route.fulfill(json({ error: "Forbidden" }, 403)) : route.fulfill(json({ rows: PROFILES }));
         if (p === "sales-profiles" && req.method() === "PUT") return route.fulfill(json({ success: true }));
         if (p === "jks" && req.method() === "GET") return route.fulfill(json({ rows: JKS, total: JKS.length, page: 1, limit: 50 }));
@@ -170,6 +176,8 @@ test("Dashboard SPV: Default per salesman, Tandai sudah dibaca lewat dialog (pay
     await tombol.click();
     const dialog = page.getByRole("dialog", { name: "Tandai laporan SALES A sudah dibaca?" });
     await expect(dialog).toContainText("TOKO A stok lama, kunjungi ulang Kamis.");
+    await expect(dialog).toContainText("bisa dibatalkan dari kartu salesman");
+    await expect(dialog).not.toContainText("tidak bisa dibatalkan");
     expect(tulis).toHaveLength(0); // belum menulis sebelum dikonfirmasi
     await dialog.getByRole("button", { name: "Tandai sudah dibaca" }).click();
     await expect(dialog).toBeHidden();
@@ -178,6 +186,38 @@ test("Dashboard SPV: Default per salesman, Tandai sudah dibaca lewat dialog (pay
     expect(ack.postDataJSON()).toEqual({ salesCode: "S-01", date: HARI_INI });
     await expect(main.getByRole("status").filter({ hasText: "Laporan SALES A ditandai sudah dibaca." })).toBeVisible();
     await page.screenshot({ path: "test-results/tim/spv-default.png", fullPage: true });
+});
+
+test("Dashboard SPV: Batalkan tanda dibaca (kontrak #132) lewat dialog → ack:false; galat server di dialog; kartu kembali Menunggu dibaca", async ({ page }) => {
+    const dibaca = { ...SALESMAN[0], spvAck: true, spvAckAt: kini };
+    const opsi: Opsi = { scope: SCOPE.spv, dashboard: [dibaca, SALESMAN[1]], ackDitolak: 1 };
+    const { tulis } = await mockApi(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/form-kontrol/spv-dashboard", NAV);
+    const main = page.locator("main");
+    const kartu = main.getByRole("article", { name: "SALES A" });
+    await expect(kartu.getByText(/^Dibaca /)).toBeVisible(NAV);
+    await expect(kartu.getByRole("button", { name: "Tandai sudah dibaca" })).toHaveCount(0);
+    await expect(main.getByRole("article", { name: "SALES B" }).getByRole("button", { name: /Batalkan tanda dibaca/ })).toHaveCount(0);
+    const tombol = kartu.getByRole("button", { name: "Batalkan tanda dibaca…" });
+    expect((await tombol.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await tombol.click();
+    const dialog = page.getByRole("dialog", { name: "Batalkan tanda dibaca laporan SALES A?" });
+    await expect(dialog).toContainText("Laporan kembali berstatus Menunggu dibaca");
+    await expect(dialog).toContainText("Ditandai dibaca");
+    expect(tulis).toHaveLength(0);
+    await dialog.getByRole("button", { name: "Batalkan tanda dibaca" }).click();
+    await expect(dialog.getByRole("alert")).toContainText("Tanda dibaca belum dibatalkan.");
+    await expect(dialog.getByRole("alert")).toContainText("Anda tidak berhak atas laporan ini"); // 403 server diterjemahkan pesanServer
+    await page.screenshot({ path: "test-results/tim/spv-batal-dibaca.png" });
+    opsi.dashboard = SALESMAN; // server: spvAck=false sesudah batal
+    await dialog.getByRole("button", { name: "Batalkan tanda dibaca" }).click();
+    await expect(dialog).toBeHidden();
+    const ack = tulis.filter((r) => r.url().includes("/reports/ack")).map((r) => [r.method(), r.postDataJSON()]);
+    expect(ack).toEqual([["POST", { salesCode: "S-01", date: HARI_INI, ack: false }], ["POST", { salesCode: "S-01", date: HARI_INI, ack: false }]]);
+    await expect(main.getByRole("status").filter({ hasText: "Tanda dibaca laporan SALES A dibatalkan." })).toBeVisible();
+    await expect(kartu.getByText("Menunggu dibaca")).toBeVisible(NAV);
+    await expect(kartu.getByRole("button", { name: "Tandai sudah dibaca" })).toBeVisible();
 });
 
 test("Dashboard SPV: Kosong dan Galat berbeda; galat tidak menampilkan angka nol", async ({ page }) => {

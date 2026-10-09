@@ -1,6 +1,7 @@
 /*
  * Tujuan: Summary promo bulanan (Fiori S4a) sebagai Object Page satu siklus surat: Dibaca → Ditinjau → Terbit (order) → Disetujui → Dimuat (gerbang).
- *   Principal + master barang, syarat klaim, baca surat (PDF), baris Summary, aturan tersusun, simulasi, Terbitkan/Cabut publikasi (dialog),
+ *   Principal + master barang, syarat klaim, baca surat (PDF), baris Summary, aturan tersusun, simulasi, Terbitkan/Cabut publikasi (dialog;
+ *   cabut = alasan wajib ≥ 5 karakter),
  *   Laporkan salah baca dan hapus baris (dialog), langkah gerbang faktur (LangkahGerbang), Summary final + email.
  * Caller: app/(dashboard)/summary/page.tsx.
  * Dependensi: FastAPI /summary/* dan /api/principles (lib/apiBase, CSRF), /api/promo-rule/from-summary; components/fiori/*; LangkahGerbang.
@@ -292,9 +293,10 @@ export default function Summary({ permKeys }: { permKeys: string[] }) {
         setPesan({ tone: "pos", teks: `Versi ${r.body.draft?.revision ?? ""} terbit ${jamWita(new Date())} dan langsung dipakai mesin order.`, rincian: "Gerbang faktur dan Rekap masih memakai aturan lama sampai versi ini disetujui dan dimuat (langkah berikutnya di bawah)." });
     }
 
-    async function cabut() {
+    /** Owner 8 Okt (S4a): `alasan` wajib (≥ 5 karakter); FastAPI menyimpannya di draf bersama pelaku dan waktunya. */
+    async function cabut(alasan: string) {
         if (!draft) return;
-        const r = await send("POST", `/summary/library/${draft.id}/withdraw`, { revision: draft.revision });
+        const r = await send("POST", `/summary/library/${draft.id}/withdraw`, { revision: draft.revision, alasan });
         if (!r.ok) throw new Error(r.error);
         terapkanDraf(r.body); setDialog(null); muatPublikasi(); muatDraftList();
         setPesan({ tone: "info", teks: "Publikasi dicabut: mesin order berhenti memakai versi ini.", rincian: "Aturan yang sudah dimuat ke gerbang faktur tidak ikut terhapus; hapus atau nonaktifkan di Aturan Promo bila perlu." });
@@ -601,7 +603,8 @@ export default function Summary({ permKeys }: { permKeys: string[] }) {
             )}
             {draft && (
                 <ConfirmDialog open={dialog === "cabut"} onClose={() => setDialog(null)} tag="Cabut" tone="negative" title={`Cabut publikasi versi ${draft.revision}?`} confirmLabel="Cabut publikasi" onConfirm={cabut}
-                    facts={[["Mesin order", "Berhenti memakai versi ini"], ["Gerbang faktur", terbitEntry?.sudahDimuat ? "Aturan yang sudah dimuat TIDAK ikut terhapus; hapus atau nonaktifkan di Aturan Promo" : "Belum dimuat; tidak terpengaruh"], ["Status", "Dicabut; tidak bisa diterbitkan ulang dari versi ini"]]} />
+                    reason={{ label: "Alasan cabut publikasi", placeholder: "Mis. principal merevisi surat; periode program berubah", min: 5 }}
+                    facts={[["Mesin order", "Berhenti memakai versi ini"], ["Gerbang faktur", terbitEntry?.sudahDimuat ? "Aturan yang sudah dimuat TIDAK ikut terhapus; hapus atau nonaktifkan di Aturan Promo" : "Belum dimuat; tidak terpengaruh"], ["Status", "Dicabut; tidak bisa diterbitkan ulang dari versi ini"], ["Jejak", "Alasan, nama Anda, dan waktunya tersimpan di draf"]]} />
             )}
             <ConfirmDialog open={dialog === "koreksi"} onClose={() => { setDialog(null); setBarisDialog(null); }} tag="Koreksi baca" title="Laporkan salah baca surat" confirmLabel="Kirim koreksi" onConfirm={kirimKoreksi}
                 facts={[["Baris", barisDialog ? `${barisDialog.surat_program || "–"} · ${barisDialog.kelompok || "–"} · ${barisDialog.benefit || "–"}` : ""], ["Dipakai", "Petunjuk pembacaan surat berikutnya dan penimpa pasti di Summary final (kode barang sama)"]]}>

@@ -1,6 +1,7 @@
 /*
  * Tujuan: Fiori S4c Insentif Sales — Pembayaran (ubin 12 bulan = periode URL, total, pilih semua yang belum dibayar di saringan aktif,
- *   Tandai lunas lewat dialog dengan payload POST/PATCH diperiksa, gagal sebagian di dialog, penerima terpilih di luar saringan disebut,
+ *   Tandai lunas lewat dialog dengan payload POST/PATCH diperiksa [tanggal bayar pilihan, batas awal periode..hari ini WITA, galat server di
+ *   dialog], gagal sebagian di dialog, penerima terpilih di luar saringan disebut,
  *   galat ≠ kosong, ponsel 390 px) dan Support principal (draf per baris → simpan lewat dialog dengan payload diperiksa, galat 400 tanpa
  *   perubahan, hitung untuk SPV dan penyebut AO lewat dialog, normalisasi kunci SPV sama dengan server, kosong/galat, ponsel 390 px).
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin):
@@ -14,6 +15,8 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 const path = (p: string) => (url: URL) => url.pathname === p;
 const NAV = { timeout: 60_000 } as const;
+const HARI_INI = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date());
+const tampil = (ymd: string) => ymd.split("-").reverse().join("/");
 type Over = Record<string, unknown>;
 type Kirim = { method: string; url: string; body: unknown };
 
@@ -140,7 +143,8 @@ test("Pembayaran: ubin 12 bulan + total, pilih semua yang belum dibayar, Tandai 
     await expect(dlg).toContainText("Rp 8.600.000");
     await expect(dlg).toContainText("Rp 8.385.000");
     await expect(dlg).toContainText("Sinta Dewi tercatat Rp 900.000, hitung ulang Rp 941.000");
-    await expect(dlg).toContainText("dicatat server saat disimpan");
+    await expect(dlg.getByLabel("Tanggal bayar")).toHaveValue(HARI_INI); // bawaan hari ini WITA (owner 8 Okt)
+    await expect(dlg).toContainText(`${tampil(HARI_INI)} (WITA) · dicatat bersama nama Anda`);
     await expect(dlg.getByText("usulan BL-27")).toBeVisible();
     await expect(dlg.getByText("usulan BL-47")).toBeVisible();
     await page.screenshot({ path: "test-results/fiori-insentif-bayar-dialog.png" });
@@ -151,12 +155,12 @@ test("Pembayaran: ubin 12 bulan + total, pilih semua yang belum dibayar, Tandai 
     expect(kirim).toHaveLength(5);
     const posts = kirim.filter((k) => k.method === "POST").map((k) => k.body);
     expect(posts).toEqual(expect.arrayContaining([
-        { salesCode: "MKS-07", salesName: "Andi Pratama", principle: "KINO", branch: "MAKASSAR", periodMonth: 9, periodYear: 2026, totalIncentive: 1_000_000, paymentStatus: "lunas" },
-        { salesCode: "SPV:ANI", salesName: "ANI", principle: "-", branch: "-", periodMonth: 9, periodYear: 2026, totalIncentive: 4_000_000, paymentStatus: "lunas" },
-        { salesCode: "SM:HENDRIK", salesName: "HENDRIK", principle: "-", branch: "-", periodMonth: 9, periodYear: 2026, totalIncentive: 1_500_000, paymentStatus: "lunas" },
+        { salesCode: "MKS-07", salesName: "Andi Pratama", principle: "KINO", branch: "MAKASSAR", periodMonth: 9, periodYear: 2026, totalIncentive: 1_000_000, paymentStatus: "lunas", paymentDate: HARI_INI },
+        { salesCode: "SPV:ANI", salesName: "ANI", principle: "-", branch: "-", periodMonth: 9, periodYear: 2026, totalIncentive: 4_000_000, paymentStatus: "lunas", paymentDate: HARI_INI },
+        { salesCode: "SM:HENDRIK", salesName: "HENDRIK", principle: "-", branch: "-", periodMonth: 9, periodYear: 2026, totalIncentive: 1_500_000, paymentStatus: "lunas", paymentDate: HARI_INI },
     ]));
     expect(posts).toHaveLength(4);
-    expect(kirim.find((k) => k.method === "PATCH")).toEqual({ method: "PATCH", url: "/api/insentif-sales/payments/pay-sinta", body: { paymentStatus: "lunas" } });
+    expect(kirim.find((k) => k.method === "PATCH")).toEqual({ method: "PATCH", url: "/api/insentif-sales/payments/pay-sinta", body: { paymentStatus: "lunas", paymentDate: HARI_INI } });
 
     await expect(main.getByRole("status").filter({ hasText: "5 pembayaran September 2026 ditandai lunas" })).toBeVisible();
     await expect(tabel.locator("tbody tr").filter({ hasText: "Andi Pratama" })).toContainText("08/10/2026 · LOCAL Admin");
@@ -166,6 +170,58 @@ test("Pembayaran: ubin 12 bulan + total, pilih semua yang belum dibayar, Tandai 
 
     await ubin.getByRole("button", { name: /Agustus/ }).click();
     await expect(page).toHaveURL(/month=8/, NAV);
+});
+
+const CABANG_A = { branch: "CABANG A", smName: "SM A" };
+test("Tanggal bayar (owner 8 Okt): bawaan hari ini WITA, batas awal periode..hari ini, tanggal mundur dikirim di POST dan PATCH; galat server di dialog", async ({ page }) => {
+    let tolakSekali = true;
+    const kirim = await mockBayar(page, {
+        rows: [baris("S-A1", "SALES A", "PRINCIPLE A", "GT", "SPV A", CABANG_A), baris("S-B1", "SALES B", "PRINCIPLE B", "GT", "SPV A", CABANG_A)],
+        payments: () => json({ rows: [bayar("pay-b1", "S-B1", "SALES B", "PRINCIPLE B", 9, 1_000_000, "belum", { branch: "CABANG A" })] }),
+        gagalPost: () => {
+            if (!tolakSekali) return null;
+            tolakSekali = false;
+            return json({ error: "Tanggal bayar 2026-09-30 lebih awal dari awal periode insentif (2026-10-01)." }, 400);
+        },
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/pembayaran?month=9&year=2026", NAV);
+    const main = page.locator("main");
+    await main.getByRole("checkbox", { name: "Pilih semua baris" }).check(NAV);
+    await main.locator(".fi-ftb").getByRole("button", { name: "Tandai 2 lunas…" }).click();
+    const dlg = page.getByRole("dialog");
+    const tanggal = dlg.getByLabel("Tanggal bayar");
+    const tombol = dlg.getByRole("button", { name: "Tandai lunas" });
+    await expect(tanggal).toHaveValue(HARI_INI);
+    await expect(tanggal).toHaveAttribute("min", "2026-09-01");
+    await expect(tanggal).toHaveAttribute("max", HARI_INI);
+    await expect(tombol).toBeEnabled();
+    const batas = `Tanggal bayar harus 01/09/2026 s.d. ${tampil(HARI_INI)} (WITA)`;
+    const besok = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date(Date.now() + 864e5));
+    for (const salah of ["2026-08-31", besok]) {
+        await tanggal.fill(salah);
+        await expect(tombol).toBeDisabled();
+        await expect(tombol).toHaveAttribute("title", batas);
+        await expect(dlg.getByText(batas)).toBeVisible();
+    }
+    await tanggal.fill("2026-09-30");
+    await expect(tombol).toBeEnabled();
+    await expect(dlg).toContainText("30/09/2026 (WITA) · dicatat bersama nama Anda");
+    expect(kirim).toHaveLength(0);
+    await page.screenshot({ path: "test-results/fiori-insentif-bayar-tanggal.png" });
+
+    // Galat validasi server (mis. periode/jam server berbeda) tampil di dialog; tanggal pilihan tidak hilang.
+    await tombol.click();
+    await expect(dlg.getByRole("alert")).toContainText("SALES A: Tanggal bayar 2026-09-30 lebih awal dari awal periode insentif (2026-10-01).");
+    await expect(dlg.getByRole("heading", { name: "Tandai 1 penerima September 2026 lunas?" })).toBeVisible();
+    await expect(tanggal).toHaveValue("2026-09-30");
+    await tombol.click();
+    await expect(dlg).toBeHidden();
+    await expect(main.getByRole("status").filter({ hasText: "1 pembayaran September 2026 ditandai lunas" })).toContainText("tanggal bayar 30/09/2026");
+
+    const post = { salesCode: "S-A1", salesName: "SALES A", principle: "PRINCIPLE A", branch: "CABANG A", periodMonth: 9, periodYear: 2026, totalIncentive: 1_000_000, paymentStatus: "lunas", paymentDate: "2026-09-30" };
+    expect(kirim.filter((k) => k.method === "POST")).toEqual([{ method: "POST", url: "/api/insentif-sales/payments", body: post }, { method: "POST", url: "/api/insentif-sales/payments", body: post }]);
+    expect(kirim.filter((k) => k.method === "PATCH")).toEqual([{ method: "PATCH", url: "/api/insentif-sales/payments/pay-b1", body: { paymentStatus: "lunas", paymentDate: "2026-09-30" } }]);
 });
 
 test("Pembayaran: pilih semua hanya di saringan aktif; terpilih di luar saringan disebut namanya + Tampilkan; gagal sebagian tampil di dialog", async ({ page }) => {

@@ -207,6 +207,51 @@ test("Summary: buka draf, siklus, Terbitkan butuh centang; gerbang faktur menung
     await expect(gerbang.getByText("usulan BL-53")).toBeVisible();
 });
 
+test("Summary: Cabut publikasi (owner 8 Okt) — alasan wajib ≥ 5 karakter, payload { revision, alasan }; galat server tampil di dialog", async ({ page }) => {
+    const withdraw: unknown[] = [];
+    let tolak = true;
+    const draft = { id: "draf-a-01", revision: 4, status: "published", title: "Summary PRINCIPLE A Oktober", content: { rows: [{ id: "r1", no: "1", principle: "PRINCIPLE A", surat_program: "SURAT-A/10", nama_program: "Program A", kelompok: "KELOMPOK A", variant: "", gramasi: "", kemasan: "", ketentuan: "12", benefit_type: "DISC_PCT", benefit: "3", periode_start: "2026-10-01", periode_end: "2026-10-31" }], extraction: { warnings: [] }, period: ["2026-10-01", "2026-10-31"] } };
+    const rules = [{ id: "p1", name: "KELOMPOK A", channel: "GT", start: "2026-10-01", end: "2026-10-31", unit: "PCS", codes: ["A-001"], mix: false, stacking: false, threshold: "qty", tiers: [{ minimum: "12", percentages: ["3"], rupiah: "0" }] }];
+    await page.route((u) => u.host === "localhost:8000", (r) => {
+        const p = new URL(r.request().url()).pathname;
+        if (p === "/api/principles") return fastapi(r, { ok: true, principles: { a1: { name: "PRINCIPLE A", filename: "a.xlsx" } } });
+        if (p === "/api/me") return fastapi(r, { csrf_token: "t" });
+        if (p === "/summary/library") return fastapi(r, { ok: true, drafts: [{ id: draft.id, title: draft.title, status: "published", revision: 4, updated_at: "2026-10-05T08:02:00Z" }] });
+        if (p === `/summary/library/${draft.id}`) return fastapi(r, { ok: true, draft, programs: rules, issues: [] });
+        if (p === `/summary/library/${draft.id}/withdraw` && r.request().method() === "POST") {
+            withdraw.push(r.request().postDataJSON());
+            if (tolak) { tolak = false; return fastapi(r, { detail: "Alasan cabut publikasi wajib diisi (minimal 5 karakter)" }, 400); }
+            return fastapi(r, { ok: true, draft: { ...draft, status: "withdrawn", revision: 5 }, programs: rules, issues: [] });
+        }
+        return fastapi(r, { ok: true });
+    });
+    await page.route(path("/api/promo-rule/from-summary"), (r) => r.fulfill(json({ ok: true, published: [] })));
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/summary", NAV);
+    const main = page.locator("main");
+    await main.getByLabel("Buka draf tersimpan").selectOption(draft.id, NAV);
+    await main.locator(".fi-ftb").getByRole("button", { name: "Cabut publikasi…" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByRole("heading", { name: "Cabut publikasi versi 4?" })).toBeVisible();
+    await expect(dlg).toContainText("Alasan, nama Anda, dan waktunya tersimpan di draf");
+    await expect(dlg.getByText(/tidak menyimpan alasan/)).toHaveCount(0);
+    const tombol = dlg.getByRole("button", { name: "Cabut publikasi" });
+    const alasan = dlg.getByLabel("Alasan cabut publikasi");
+    await expect(tombol).toBeDisabled();
+    await alasan.fill("ab  ");
+    await expect(tombol).toHaveAttribute("title", "Alasan cabut publikasi minimal 5 karakter");
+    expect(withdraw).toHaveLength(0);
+    await alasan.fill("Principal merevisi surat program");
+    await tombol.click();
+    await expect(dlg.getByRole("alert")).toContainText("Alasan cabut publikasi wajib diisi (minimal 5 karakter)");
+    await expect(alasan).toHaveValue("Principal merevisi surat program");
+    await page.screenshot({ path: "test-results/fiori-summary-cabut.png" });
+    await tombol.click();
+    await expect(dlg).toBeHidden();
+    expect(withdraw).toEqual([{ revision: 4, alasan: "Principal merevisi surat program" }, { revision: 4, alasan: "Principal merevisi surat program" }]);
+    await expect(main.getByRole("status").filter({ hasText: "Publikasi dicabut" })).toBeVisible();
+});
+
 test("Gerbang faktur: bukti + pernyataan lengkap → Muat lewat dialog; pesan hasil dan daftar ditolak tetap tampil, status jadi dimuat", async ({ page }) => {
     let dimuat = false; const muat: unknown[] = [];
     const entri = { draft_id: "lain1", title: "Godrej Okt", published_at: "2026-10-02", surat_program: "GDI/10", principal: "GODREJ", nama_program: "Hit", kelompok: "", period: { start: "2026-10-01", end: "2026-10-31" }, programs: 3, codes: ["A"] };

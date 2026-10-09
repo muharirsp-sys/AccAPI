@@ -3,7 +3,7 @@
  *   tautan kunjungan bertanggal WITA, Kirim status lewat dialog → payload per toko; Kosong; Galat ≠ kosong, tanpa sinyal disebut sinyal),
  *   tanggal WITA sebelum 08.00 dengan jam tiruan (Rute, Laporan harian, Order Sales), Kunjungan (status tersimpan tampil lagi, Kembali di
  *   setiap langkah, checkbox asli 24 px dalam baris 56 px, galat merch tampil di langkahnya dan tidak maju, tanpa sinyal: foto tetap +
- *   Coba lagi), Order Sales (pemilih toko rute, harga per baris, 409 missing/wrong_unit di barisnya, nomor permintaan, galat Order saya ≠
+ *   Coba lagi; Toko tutup R15: merchandising dilewati, foto bukti = check-out, galat server di langkahnya), Order Sales (pemilih toko rute, harga per baris, 409 missing/wrong_unit di barisnya, nomor permintaan, galat Order saya ≠
  *   kosong), ponsel 390 px layar sentuh (tanpa gulir menyamping, kontrol ≥ 44 px). Temuan peninjau: P6 Kirim status membaca ulang rute
  *   + hanya salesman pemilik, P1 jawaban tidak pasti menahan Kirim order, P2 ketikan toko lain tidak hilang, P3 Lanjut tanpa tulis ulang,
  *   P4 lewat 00.00 isian tidak hilang, laporan Kemarin. Tanpa dialog native.
@@ -41,6 +41,7 @@ const REASONS = [
     { id: "R01", reasonCode: "R01", label: "Stok masih cukup", category: "stok" },
     { id: "R03", reasonCode: "R03", label: "Produk belum terpajang", category: "produk" },
     { id: "R14", reasonCode: "R14", label: "Lainnya", category: "lainnya" },
+    { id: "R15", reasonCode: "R15", label: "Toko tutup", category: "kunjungan" },
 ];
 const STORE = { id: "j3", salesCode: "S-01", salesName: "SALES A", custCode: "C-03", custName: "TOKO C", market: "GT", alamat: "JL. CONTOH 1", kota: "KOTA A", principle: "GODREJ", visitFrequency: 4 };
 const AO_CHECKIN = { id: "a-C-03", status: "not_order", noOrderReasonCode: "R03", noOrderNote: "stok lama", checkinAt: jam("08:31"), checkinPhotoUrl: "/api/uploads/form-kontrol/in.jpg", checkoutAt: null, checkoutPhotoUrl: null };
@@ -48,7 +49,7 @@ const AO_CHECKIN = { id: "a-C-03", status: "not_order", noOrderReasonCode: "R03"
 type Opsi = {
     scope?: unknown; rute?: unknown[]; ruteGagal?: "500" | "putus";
     visit?: { store: unknown; ao: unknown; merch: unknown } | "404";
-    merchGagal?: number; uploadPutus?: boolean; tundaPostMs?: number;
+    merchGagal?: number; checkoutGagal?: number; uploadPutus?: boolean; tundaPostMs?: number;
     /** Tanggal laporan yang sudah terkirim (server). */
     laporanTerkirim?: string[];
 };
@@ -82,6 +83,7 @@ async function mockFk(page: Page, opsi: Opsi) {
             return route.fulfill(json(opsi.visit ?? { store: STORE, ao: AO_CHECKIN, merch: null }));
         }
         if (p === "merchandising" && opsi.merchGagal) { opsi.merchGagal--; return route.fulfill(json({ error: "Internal server error" }, 500)); }
+        if (p === "checkout" && opsi.checkoutGagal) { opsi.checkoutGagal--; return route.fulfill(json({ error: "Internal server error" }, 500)); }
         if (req.method() === "POST" && opsi.tundaPostMs) await new Promise((r) => setTimeout(r, opsi.tundaPostMs));
         if (p === "reports" && req.method() === "GET") {
             const terkirim = (opsi.laporanTerkirim ?? []).includes(url.searchParams.get("date") ?? "");
@@ -365,6 +367,54 @@ test("Kunjungan: status tersimpan tampil lagi, Kembali di setiap langkah, galat 
     expect(postKe(m.tulis, "/checkout")).toHaveLength(0);
 });
 
+test("Kunjungan Toko tutup (R15, owner 8 Okt): merchandising dilewati, foto bukti wajib = check-out, tanpa order; galat server di langkahnya", async ({ page }) => {
+    const opsi: Opsi = { checkoutGagal: 1 };
+    const m = await mockFk(page, opsi);
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await page.goto(`/form-kontrol/visit/C-03?salesCode=S-01&principle=GODREJ&date=${HARI_INI}`, NAV);
+    const main = page.locator("main");
+    const langkah = main.getByRole("list", { name: "Langkah kunjungan" }).locator('[aria-current="step"]');
+    await expect(langkah).toContainText("Status", NAV);
+    await expect(main.getByLabel("Alasan tidak order").locator("option", { hasText: "R15 · Toko tutup" })).toHaveCount(1); // daftar dari server
+    await expect(main.getByText(/belum menjadi kode alasan sendiri/)).toHaveCount(0);
+    await main.getByLabel("Alasan tidak order").selectOption("");
+    await expect(main.getByRole("button", { name: "Simpan & lanjut" })).toBeDisabled(); // tanpa alasan = tidak bisa maju
+    await main.getByLabel("Alasan tidak order").selectOption("R15");
+    await main.getByLabel("Catatan").fill("Pintu tertutup sejak pagi");
+    await expect(main.getByRole("status").filter({ hasText: "Toko tutup:" })).toContainText("merchandising dilewati");
+    await main.getByRole("button", { name: "Simpan & lanjut" }).click();
+
+    // Langsung ke foto bukti: langkah Merchandising dilewati, tanpa POST merchandising.
+    await expect(langkah).toContainText("Foto bukti & check-out");
+    await expect(main.getByRole("list", { name: "Langkah kunjungan" })).toContainText("Merchandising dilewati");
+    await expect(main.getByRole("heading", { name: "Foto bukti toko tutup" })).toBeVisible();
+    await expect(main.getByText("Dilewati (toko tutup)")).toBeVisible();
+    await expect(main.getByText("TIDAK ORDER · R15 · Toko tutup")).toBeVisible();
+    expect(postKe(m.tulis, "/ao-control")).toEqual([{ salesCode: "S-01", custCode: "C-03", principle: "GODREJ", date: HARI_INI, status: "not_order", noOrderReasonCode: "R15", noOrderNote: "Pintu tertutup sejak pagi" }]);
+    // Kembali dari foto bukti → Status (bukan Merchandising).
+    await main.getByRole("button", { name: "Kembali", exact: true }).click();
+    await expect(langkah).toContainText("Status");
+    await main.getByRole("button", { name: "Lanjut", exact: true }).click();
+    await expect(langkah).toContainText("Foto bukti & check-out");
+    expect(postKe(m.tulis, "/checkout")).toHaveLength(0); // belum selesai tanpa foto
+
+    await main.getByRole("button", { name: "Ambil foto bukti toko tutup" }).click();
+    const kamera = page.getByRole("dialog", { name: "Foto Bukti Kunjungan" });
+    await kamera.locator('input[type="file"]').setInputFiles({ name: "tutup.png", mimeType: "image/png", buffer: PNG });
+    await kamera.getByRole("button", { name: /Gunakan/ }).click();
+    const strip = main.getByRole("alert").filter({ hasText: "Foto bukti toko tutup belum terkirim." });
+    await expect(strip).toContainText("Server gagal memproses permintaan.");
+    await expect(langkah).toContainText("Foto bukti & check-out");
+    await page.screenshot({ path: "test-results/salesman/kunjungan-toko-tutup.png", fullPage: true });
+    await main.getByRole("button", { name: "Coba lagi" }).click();
+    await expect(main.getByRole("status").filter({ hasText: "Kunjungan selesai." })).toBeVisible();
+    await expect(main.getByText("Dilewati (toko tutup) · foto bukti tersimpan")).toBeVisible();
+    const checkout = { salesCode: "S-01", custCode: "C-03", principle: "GODREJ", date: HARI_INI, photoUrl: "/api/uploads/form-kontrol/baru.jpg" };
+    expect(postKe(m.tulis, "/checkout")).toEqual([checkout, checkout]);
+    expect(m.unggah()).toBe(1); // Coba lagi memakai url unggahan yang sama
+    expect(postKe(m.tulis, "/merchandising")).toHaveLength(0);
+});
+
 test("Kunjungan: toko di luar JKS = kosong; galat muat ≠ kosong", async ({ page }) => {
     const opsi: Opsi = { visit: "404" };
     await mockFk(page, opsi);
@@ -438,13 +488,16 @@ test("Toko tidak order + Laporan harian: galat ≠ kosong/nol; simpan alasan per
     const toko = no.getByRole("listitem", { name: "TOKO C" });
     await expect(toko).toContainText("Alasan tersimpan");
     await expect(toko.getByLabel("Alasan tidak order")).toHaveValue("R01");
+    // Owner 9 Okt: Toko tutup (R15) hanya lewat Kunjungan dengan foto bukti.
+    await expect(toko.getByLabel("Alasan tidak order").locator('option[value="R15"]')).toBeDisabled();
     await toko.getByLabel("Alasan tidak order").selectOption("R14");
     await toko.getByLabel("Catatan").fill("toko tutup");
     await expect(toko).toContainText("Belum disimpan");
     await toko.getByRole("button", { name: "Simpan alasan" }).click();
     await expect(toko).toContainText("Alasan tersimpan");
     expect(postKe(m.tulis, "/ao-control")).toEqual([{ salesCode: "S-01", custCode: "C-03", principle: "GODREJ", date: HARI_INI, status: "not_order", noOrderReasonCode: "R14", noOrderNote: "toko tutup" }]);
-    await expect(no.getByText("usulan Toko tutup", { exact: false })).toBeVisible();
+    await expect(no.getByText("Toko tutup (R15): selesaikan lewat Kunjungan", { exact: false })).toBeVisible();
+    await expect(no.getByText("usulan Toko tutup", { exact: false })).toHaveCount(0);
     await page.screenshot({ path: "test-results/salesman/toko-tidak-order.png", fullPage: true });
 
     await page.route("**/api/form-kontrol/reports**", (r) => r.fulfill(json({ error: "Internal server error" }, 500)));
