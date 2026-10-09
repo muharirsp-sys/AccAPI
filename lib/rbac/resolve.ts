@@ -18,9 +18,14 @@ import { auth } from "@/lib/auth";
 import { user, userGroup, groupPermission } from "@/db/schema";
 import { permissionMapForUser, rolePermissionPresets } from "@/lib/rbac";
 import { isLocalAuthBypassEnabled } from "@/lib/local-dev-auth";
+import { allPermissionKeys } from "@/lib/rbac/registry";
 
+/** HANYA untuk bypass auth lokal (dev, host localhost). Preset legacy tidak memuat key granular
+ * registry (mis. off_program_control.finance_payment), sehingga route granular 403 di dev dan
+ * tidak bisa diuji lokal — digabung dengan registry (AM-040 E.25). */
 function adminPermissionKeys() {
-    return new Set(Object.entries(rolePermissionPresets.admin).flatMap(([moduleName, actions]) => (actions || []).map((action) => `${moduleName}.${action}`)));
+    const legacy = Object.entries(rolePermissionPresets.admin).flatMap(([moduleName, actions]) => (actions || []).map((action) => `${moduleName}.${action}`));
+    return new Set([...legacy, ...allPermissionKeys()]);
 }
 
 /** Permission key efektif user (Set "module.action"). Group jika ada; legacy hanya jika belum punya group. */
