@@ -3,6 +3,8 @@ Caller: `python test_parse_number_id.py` via run_checks.py. Dependensi: shared.p
 Main Functions: main; tabel contoh format Indonesia, Inggris, sufiks ",-", dan nilai numerik asli.
 Side Effects: tidak ada.
 """
+import time
+
 import shared
 
 CASES = [
@@ -63,6 +65,19 @@ def main():
     # Review c4c11927 (LOW): sel SPPD berisi spasi / "-" = kosong (tidak diubah), dulu menimpa jadi 0.
     for blank in ("   ", "-", " - "):
         assert shared.normalize_sppd_excel_value("nilai_pembayaran", blank) is None, blank
+    # ReDoS (peninjau A, S6-0c): `\s*` berdempetan di _STRICT_NUMBER = backtracking kubik — "-" + 800 spasi + "x"
+    # dulu 1,3 detik per sel. Teks yang lebih panjang dari nominal mana pun ditolak SEBELUM regex.
+    t0 = time.perf_counter()
+    for x in ("-" + " " * 800 + "x", "Rp" + " " * 5000 + "-x", "1" * 41):
+        try:
+            got = shared.parse_number_strict(x, "Potongan")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"parse_number_strict({x[:20]!r}…) = {got!r}, harus ValueError")
+    lama = time.perf_counter() - t0
+    assert lama < 0.05, f"parse_number_strict teks panjang {lama:.3f} s (ReDoS)"
+    assert shared.parse_number_strict("  Rp 1.250.000.000.000,-  ") == 1250000000000.0
     # Longgar tetap longgar untuk read model (perilaku lama dipertahankan).
     assert shared.parse_number_id("abc") == 0.0
     print("OK test_parse_number_id")

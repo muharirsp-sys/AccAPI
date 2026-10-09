@@ -337,6 +337,7 @@ def parse_number_id(x) -> float:
 # Kontrak sumber (D.22): rupiah Indonesia. Hanya minus, prefix Rp/IDR, digit, pemisah . , spasi dan
 # sufiks ",-". Huruf lain, tanda kurung (negatif akuntansi yang dulu terbaca POSITIF) = invalid.
 # [0-9], bukan \d: \d Unicode menerima digit lebar-penuh ("1２3") yang lalu dibuang inti -> 13.
+_STRICT_MAX_LEN = 40
 _STRICT_NUMBER = re.compile(r"^-?\s*(?:rp\.?|idr)?\s*-?\s*[0-9][0-9.,\s]*(?:,-)?$", re.I)
 
 
@@ -355,6 +356,10 @@ def parse_number_strict(x, field: str = "angka") -> float:
     t = str(x).strip()
     if t in ("", "-"):
         return 0.0
+    # ReDoS (peninjau A, S6-0c): `\s*` berdempetan di _STRICT_NUMBER backtracking kubik ("-" + 800 spasi + "x" = 1,3 s).
+    # Nominal rupiah terpanjang yang masuk akal ("Rp 1.250.000.000.000,-") < 25 karakter: yang lebih panjang bukan angka.
+    if len(t) > _STRICT_MAX_LEN:
+        raise ValueError(f"{field} tidak valid: terlalu panjang ({len(t)} karakter)")
     one_sign = re.sub(r",-$", "", t).count("-") <= 1  # "-Rp-5" dua tanda = positif diam-diam
     v = _parse_number_core(t) if one_sign and _STRICT_NUMBER.match(t) else None
     if v is None or not math.isfinite(v):
