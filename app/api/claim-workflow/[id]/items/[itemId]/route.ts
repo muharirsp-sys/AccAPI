@@ -11,6 +11,7 @@ import {
     recalcWorkflowAggregateFromSubmissions,
     requireClaimSession,
     writeClaimAudit,
+    lockClaimWorkflow,
 } from "@/lib/claim-workflow";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 
@@ -18,6 +19,14 @@ type Context = { params: Promise<{ id: string; itemId: string }> };
 
 // Optimistic locking: dilempar saat versi item (updatedAt) sudah berubah → ditangkap jadi 409.
 class OptimisticLockError extends Error {}
+// Status workflow berubah (mis. diajukan) antara pre-check dan lock → 409, tanpa menulis.
+class WorkflowStatusError extends Error {}
+
+const ITEM_TAX_STATUS_ERROR = "Item pajak hanya dapat diubah saat workflow Draft atau Need Revision.";
+
+function isItemTaxEditable(status: string) {
+    return status === claimWorkflowStatuses.draft || status === claimWorkflowStatuses.needRevision;
+}
 
 function numericField(
     body: Record<string, unknown>,
@@ -46,14 +55,8 @@ export async function PATCH(request: Request, context: Context) {
         if (!workflow) {
             return NextResponse.json({ ok: false, error: "Claim Workflow not found" }, { status: 404 });
         }
-        if (
-            workflow.status !== claimWorkflowStatuses.draft &&
-            workflow.status !== claimWorkflowStatuses.needRevision
-        ) {
-            return NextResponse.json({
-                ok: false,
-                error: "Item pajak hanya dapat diubah saat workflow Draft atau Need Revision.",
-            }, { status: 409 });
+        if (!isItemTaxEditable(workflow.status)) {
+            return NextResponse.json({ ok: false, error: ITEM_TAX_STATUS_ERROR }, { status: 409 });
         }
 
         const [item] = await db
@@ -119,8 +122,16 @@ export async function PATCH(request: Request, context: Context) {
         };
         let remainingAmount = Number(workflow.remainingAmount || 0);
         let resolvedSubmissionId: string | null = item.claimSubmissionId ?? null;
+        let current = workflow;
 
         await db.transaction(async (tx) => {
+            // S6-0b: W dulu (WI/S sesudahnya) — urutan sama dengan route pembayaran/dokumen/submission;
+            // status & totalPaid dibaca ulang di bawah lock, bukan dari pre-check di luar transaksi.
+            await lockClaimWorkflow(tx, id);
+            const [fresh] = await tx.select().from(claimWorkflow).where(eq(claimWorkflow.id, id));
+            if (!fresh || !isItemTaxEditable(fresh.status)) throw new WorkflowStatusError();
+            current = fresh;
+
             // UPDATE bersyarat pada updatedAt: bila ada penulis lain menyelip di antara
             // pre-check dan transaksi ini, rowsAffected=0 → batalkan (rollback) jadi 409.
             const updated = await tx
@@ -139,7 +150,7 @@ export async function PATCH(request: Request, context: Context) {
             // default submission. Helper getOrCreateDefaultSubmission
             // idempotent: kalau sudah ada submission, tidak buat baru.
             if (!resolvedSubmissionId) {
-                const defaultSubmission = await getOrCreateDefaultSubmission(tx, workflow, now);
+                const defaultSubmission = await getOrCreateDefaultSubmission(tx, current, now);
                 resolvedSubmissionId = defaultSubmission.id;
                 await tx
                     .update(claimWorkflowItem)
@@ -163,7 +174,7 @@ export async function PATCH(request: Request, context: Context) {
                 }),
                 { totalDpp: 0, totalPpn: 0, totalPph: 0, totalClaim: 0 },
             );
-            remainingAmount = calculateRemainingAmount(totals.totalClaim, Number(workflow.totalPaid || 0));
+            remainingAmount = calculateRemainingAmount(totals.totalClaim, Number(current.totalPaid || 0));
 
             await tx
                 .update(claimWorkflow)
@@ -183,8 +194,8 @@ export async function PATCH(request: Request, context: Context) {
                 auditScope: resolvedSubmissionId ? "submission" : "workflow",
                 actor,
                 action: "update_item_tax",
-                fromStatus: workflow.status,
-                toStatus: workflow.status,
+                fromStatus: current.status,
+                toStatus: current.status,
                 note,
                 metadata: {
                     itemId,
@@ -203,11 +214,14 @@ export async function PATCH(request: Request, context: Context) {
             item: { ...item, ...amount, note, updatedAt: now, claimSubmissionId: resolvedSubmissionId },
             totals: {
                 ...totals,
-                totalPaid: workflow.totalPaid,
+                totalPaid: current.totalPaid,
                 remainingAmount,
             },
         });
     } catch (error) {
+        if (error instanceof WorkflowStatusError) {
+            return NextResponse.json({ ok: false, error: ITEM_TAX_STATUS_ERROR }, { status: 409 });
+        }
         if (error instanceof OptimisticLockError) {
             return NextResponse.json({
                 ok: false,
