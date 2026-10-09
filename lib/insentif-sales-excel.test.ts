@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as XLSX from "xlsx";
-import { generateSupportTemplate, parseLocaleNumber, parseSupportExcel } from "./insentif-sales-excel.ts";
+import { generateSupportTemplate, parseLocaleNumber, parseSupportExcel, parseTargetExcel } from "./insentif-sales-excel.ts";
 
 // XLSX.write({type:"array"}) mengembalikan ArrayBuffer, meski tipenya di repo ini di-cast
 // sebagai Uint8Array. Terima dua-duanya supaya test menguji parser, bukan cast itu.
@@ -52,4 +52,33 @@ test("angka teks berformat Indonesia", () => {
     assert.equal(parseLocaleNumber("500000"), 500000);
     assert.equal(parseLocaleNumber("-250,5"), -250.5);
     assert.ok(Number.isNaN(parseLocaleNumber("abc")));
+});
+
+function sheetBuffer(rows: unknown[][]): ArrayBuffer {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "S");
+    return toArrayBuffer(XLSX.write(wb, { bookType: "xlsx", type: "array" }) as Uint8Array);
+}
+
+test("sel terisi tapi bukan angka TIDAK menjadi 0 (AM-017)", () => {
+    // 0 palsu pada support = pool insentif tidak terpotong = orang dibayar lebih. Guard pemanggil
+    // (Number.isFinite di halaman) hanya bekerja bila parser meneruskan NaN.
+    const rows = parseSupportExcel(sheetBuffer([
+        ["Kode Salesman", "Nama", "Principal", "Support (Rp)"],
+        ["M-A", "-", "KINO", "NOT-A-NUMBER"],
+        ["M-B", "-", "KINO", "Rp 500.000,-"],
+        ["M-C", "-", "KINO", ""],   // kosong = 0 (kebijakan blank yang sudah ada)
+        ["M-D", "-", "KINO", "0"],  // nol sah
+    ]), "sales");
+    assert.ok(Number.isNaN(rows[0].supportAmount), `NOT-A-NUMBER -> ${rows[0].supportAmount}`);
+    assert.ok(Number.isNaN(rows[1].supportAmount), `Rp 500.000,- -> ${rows[1].supportAmount}`);
+    assert.equal(rows[2].supportAmount, 0);
+    assert.equal(rows[3].supportAmount, 0);
+
+    const [target] = parseTargetExcel(sheetBuffer([
+        ["Kode Salesman", "Nama Salesman", "Principal", "Cabang", "Target Value (Rp)", "Target EC"],
+        ["M-A", "A", "KINO", "BDG", "satu juta", 12],
+    ]));
+    assert.ok(Number.isNaN(target.targetValue as number), `target invalid -> ${target.targetValue}`);
+    assert.equal(target.targetEc, 12);
 });

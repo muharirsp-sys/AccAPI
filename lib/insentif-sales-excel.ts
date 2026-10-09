@@ -57,12 +57,13 @@ function rowReader(row: Record<string, unknown>) {
             const v = raw(name);
             return v === undefined || v === null || v === "" ? fallback : String(v).trim();
         },
+        // Kosong = 0 (kebijakan blank kolom angka). Terisi tapi bukan angka = NaN, BUKAN 0
+        // (AM-017): pemanggil wajib menolaknya — 0 palsu pada support/target = bayar lebih.
         num: (name: string) => {
             const v = raw(name);
             if (v === undefined || v === null || v === "") return 0;
-            if (typeof v === "number") return Number.isFinite(v) ? v : 0;
-            const n = parseLocaleNumber(String(v));
-            return Number.isFinite(n) ? n : 0;
+            if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
+            return parseLocaleNumber(String(v));
         },
     };
 }
