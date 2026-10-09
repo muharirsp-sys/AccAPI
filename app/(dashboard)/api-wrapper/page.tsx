@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { accurateRoutes } from "@/config/accurateRoutes";
 import { accurateFetch, classifyWriteError } from "@/lib/apiFetcher";
 import { buildSalesReceiptIdempotencyPayload } from "@/lib/sales-receipt-fingerprint";
+import { isLockRequired, overrideKeysNeeded, salesReceiptRowReports } from "@/lib/sales-receipt-upload";
 import DatePickerField from "@/components/ui/DatePickerField";
 import Dialog from "@/components/ui/Dialog";
 import { workbookRouteParsers } from "./parsers";
@@ -2148,10 +2149,49 @@ export default function Home() {
 
       toast.loading(`[Tahap ${i+1}/${totalChunks}] Memproses baris ${start+1}-${end}...`, { id: 'exec' });
 
+      // Tinjauan S6-0a + C11: hasil sales-receipt dicatat SERVER (proxy, classifySalesReceiptReply); di sini hanya
+      // laporan. Penolakan Accurate = TIDAK PASTI (bukan "berhasil terposting", bukan gagal yang dikirim ulang).
+      // Mode individual & self-heal <= Rp 100 TIDAK dipakai untuk sales-receipt (proxy menolaknya tanpa override
+      // Finance; kirim koreksi otomatis = risiko pelunasan ganda).
+      const reportSalesReceiptChunk = async (data: unknown, noAnswer: string) => {
+        let unresolved = 0;
+        const reports = salesReceiptRowReports(chunkPayload.length, data, noAnswer);
+        for (let idx = 0; idx < chunkPayload.length; idx++) {
+          const row = chunkPayload[idx];
+          const mainId = row.invoiceNo || row.customerNo || `Baris Eksekusi ${start + idx + 1}`;
+          if (reports[idx].ok) {
+            combinedResults.push(reports[idx].item ?? { s: true });
+            markIdempotency(row, true);
+            continue;
+          }
+          const matchedReceiptNumbers = await getConfirmedReceiptNumbers(row);
+          if (matchedReceiptNumbers.length > 0) {
+            markIdempotency(row, true);
+            combinedResults.push({ s: true, _confirmedFromHistory: true, _matchedReceiptNumbers: matchedReceiptNumbers, _originalError: reports[idx].message });
+            errorLogForExcel.push({
+              "Paket/Batch": `Tahap ${i+1}`, "Baris Ke": start + idx + 1, "Ref / Invoice No": mainId,
+              "Status": "BERHASIL (TERKONFIRMASI HISTORI ACCURATE)",
+              "Pesan Error Accurate": `${reports[idx].message} | Receipt ditemukan: ${matchedReceiptNumbers.join(", ")}`
+            });
+            continue;
+          }
+          unresolved++;
+          markIdempotency(row, "UNKNOWN");
+          errorLogForExcel.push({
+            "Paket/Batch": `Tahap ${i+1}`, "Baris Ke": start + idx + 1, "Ref / Invoice No": mainId,
+            "Status": "TIDAK PASTI (butuh pemeriksaan/override Finance)",
+            "Pesan Error Accurate": reports[idx].message
+          });
+        }
+        if (unresolved > 0) errorCount++;
+      };
+
       try {
         const data = await accurateFetch(routeConfig.path, routeConfig.method, chunkPayload, { idempotencyLockId });
 
-        if (Array.isArray(data)) {
+        if (isSalesReceipt) {
+          await reportSalesReceiptChunk(data, "");
+        } else if (Array.isArray(data)) {
           combinedResults = combinedResults.concat(data);
           data.forEach((r, idx) => {
             markIdempotency(chunkPayload[idx], !!r.s);
@@ -2172,7 +2212,22 @@ export default function Home() {
         console.error(`Chunk ${i+1} Failed:`, chunkErr);
         let chunkHadUnresolvedFailure = false;
 
-        if (chunkErr.rawDetails && Array.isArray(chunkErr.rawDetails)) {
+        if (isSalesReceipt && isLockRequired(chunkErr)) {
+          // Proxy menolak SEBELUM kirim (baris di luar lock / butuh override): pasti tidak terkirim -> FAILED
+          // (server hanya menerimanya untuk baris PROCESSING milik lock ini).
+          chunkPayload.forEach((row, idx) => {
+            markIdempotency(row, false);
+            errorLogForExcel.push({
+              "Paket/Batch": `Tahap ${i+1}`, "Baris Ke": start + idx + 1,
+              "Ref / Invoice No": row.invoiceNo || row.customerNo || `Baris Eksekusi ${start + idx + 1}`,
+              "Status": "DITOLAK PENJAGA DUPLIKAT (tidak dikirim)",
+              "Pesan Error Accurate": `${chunkErr.message} — tidak ada yang dikirim ke Accurate; kirim ulang butuh override Finance (finance.override_duplicate) lewat dialog review.`
+            });
+          });
+          errorCount++;
+        } else if (isSalesReceipt) {
+          await reportSalesReceiptChunk(chunkErr?.rawErrorObject, chunkErr?.message || "galat jaringan");
+        } else if (chunkErr.rawDetails && Array.isArray(chunkErr.rawDetails)) {
           const isSingleOverallError = chunkErr.rawDetails.length === 1 && chunkPayload.length > 1;
 
           const extractReasonStr = (resultObj: any, fallbackStr: string) => {
@@ -2439,12 +2494,14 @@ export default function Home() {
       return;
     }
 
-    const allowDuplicateKeys = Array.from(new Set(selectedReviewRows
-      .filter((item) => item.reasons.includes("DUPLICATE_IN_UPLOAD"))
-      .map((item) => item.key)));
-    const allowLockedKeys = Array.from(new Set(selectedReviewRows
-      .filter((item) => item.reasons.includes("ALREADY_SUCCESS") || item.reasons.includes("STILL_PROCESSING") || item.reasons.includes("UNKNOWN_OUTCOME"))
-      .map((item) => item.key)));
+    // Tinjauan S6-0a: hanya override yang BENAR-BENAR dipakai server — baris pertama duplikat-dalam-unggahan
+    // (pilihan bawaan) tidak butuh alasan; baris riwayat Accurate saja tidak memakai override lock.
+    const { allowDuplicateKeys, allowLockedKeys } = overrideKeysNeeded(
+      [...duplicateReview.passthroughRows, ...selectedReviewRows].map((item) => buildSalesReceiptIdempotencyPayload(item.row).key),
+      selectedReviewRows.filter((item) => item.reasons.includes("DUPLICATE_IN_UPLOAD")).map((item) => item.key),
+      selectedReviewRows
+        .filter((item) => item.reasons.includes("ALREADY_SUCCESS") || item.reasons.includes("STILL_PROCESSING") || item.reasons.includes("UNKNOWN_OUTCOME"))
+        .map((item) => item.key));
 
     // D-18 (owner): override = membuka kiriman ulang ke Accurate — hanya Finance (server menolak 403 tanpa
     // finance.override_duplicate) dan alasan wajib tercatat di jejak override.
