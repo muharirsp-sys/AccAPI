@@ -40,7 +40,10 @@ function tiruan(t: TestContext, rows: ReturnType<typeof antre>[], simpan: Jawab 
         const rendered = dialect.sqlToQuery(query);
         sqls.push(rendered);
         const claim = rendered.sql.includes("'kirim'");
-        return { rows: claim ? [{ order_id: rendered.params.find((p) => rows.some((r) => r.orderId === p)) }] : [] };
+        const orderId = rendered.params.find((p) => rows.some((r) => r.orderId === p));
+        // Payload dari KLAIM (RETURNING) — ditandai supaya uji bisa membedakannya dari payload rencana.
+        const payload = { ...rows.find((r) => r.orderId === orderId)?.payload, description: `dari-klaim ${orderId}` };
+        return { rows: claim ? [{ order_id: orderId, payload }] : [] };
     }) as unknown as typeof db.execute);
     const kirim = t.mock.method(globalThis, "fetch", async (url: string | URL) => {
         if (!String(url).includes("/sales-invoice/save.do")) {
@@ -94,6 +97,18 @@ test("S6-0d BL-17/R6: klaim mencatat pengirim, hasil mencatat status HTTP + poto
     assert.ok(params.includes(gateway.slice(0, 500)), "potongan jawaban ≤ 500 tidak tercatat");
     assert.ok(!params.includes(gateway), "jawaban penuh > 500 tidak boleh disimpan");
     assert.ok(params.includes("unknown") && params.includes("petugas@contoh"));
+});
+
+test("A-RENDAH: yang dikirim = payload HASIL KLAIM (RETURNING), dan klaim mensyaratkan payload yang diperiksa", async (t) => {
+    const { klaim, kirim } = tiruan(t, [antre("", 0)], { status: 200, body: JSON.stringify({ s: true, r: { id: 5, number: "INV/5" } }) });
+    await sendQueuedInvoices(SESI, { targetDb: "1", limit: 20, actor: "p" }, { refresh: async () => undefined });
+    const { sql: claimSql, params } = klaim()[0];
+    assert.match(claimSql, /WHERE order_id = \$\d+ AND state = 'queued' AND payload = \$\d+::jsonb/);
+    assert.match(claimSql, /SELECT order_id, payload FROM c/);
+    assert.ok(params.includes(JSON.stringify(antre("", 0).payload)), "klaim harus mencocokkan payload yang diperiksa rencanaKirim");
+    const save = kirim.mock.calls.find((c) => String(c.arguments[0]).includes("/save.do"));
+    const body = JSON.parse(String((save?.arguments[1] as RequestInit).body));
+    assert.equal(body.description, "dari-klaim KINO:SO-A");
 });
 
 test("S6-0d: koneksi putus tercatat dengan kode galatnya, status tidak pasti", async (t) => {

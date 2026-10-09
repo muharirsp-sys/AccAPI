@@ -241,18 +241,24 @@ export async function sendQueuedInvoices(
         // pilihan disimpan DI KLAIM YANG SAMA, jadi yang tercatat = yang benar-benar dikirim.
         // Event `kirim` (pengirim + percobaan ke-n) ikut dalam SATU pernyataan: klaim tanpa jejak
         // tidak mungkin terjadi. Jam = jam DB (`now()`), sama dengan jam penyapu.
+        // Klaim mensyaratkan payload yang SAMA dengan yang diperiksa rencanaKirim (baris yang dibuang
+        // lalu diantre ulang dengan payload lain di sela-selanya tidak ikut), dan yang dikirim adalah
+        // payload HASIL KLAIM (RETURNING) — yang tercatat di baris = yang terkirim.
         const claimed = await db.execute(sql`
             WITH c AS (
                 UPDATE invoice_outbox SET state = 'sending', attempts = attempts + 1, updated_at = now(),
                     payload = CASE WHEN ${options.invoiceDate ? 1 : 0} = 1 THEN ${JSON.stringify(payload)}::jsonb ELSE payload END
-                WHERE order_id = ${row.orderId} AND state = 'queued'
-                RETURNING order_id, attempts)
-            INSERT INTO invoice_outbox_event (order_id, jenis, state_from, state_to, actor, detail)
-            SELECT order_id, 'kirim', 'queued', 'sending', ${options.actor},
-                   jsonb_build_object('attempt', attempts, 'target_db', ${options.targetDb}::text, 'trans_date', ${payload.transDate}::text)
-            FROM c
-            RETURNING order_id`);
-        if (claimed.rows.length === 0) continue; // diklaim proses lain
+                WHERE order_id = ${row.orderId} AND state = 'queued' AND payload = ${JSON.stringify(row.payload)}::jsonb
+                RETURNING order_id, attempts, payload),
+            e AS (
+                INSERT INTO invoice_outbox_event (order_id, jenis, state_from, state_to, actor, detail)
+                SELECT order_id, 'kirim', 'queued', 'sending', ${options.actor},
+                       jsonb_build_object('attempt', attempts, 'target_db', ${options.targetDb}::text, 'trans_date', payload->>'transDate')
+                FROM c)
+            SELECT order_id, payload FROM c`);
+        if (claimed.rows.length === 0) continue; // diklaim proses lain, atau barisnya berubah sejak diperiksa
+        const diklaim = (claimed.rows[0] as { payload: unknown }).payload;
+        const kirimPayload = (typeof diklaim === "string" ? JSON.parse(diklaim) : diklaim) as InvoicePayload;
 
         let outcome: SendOutcome;
         let httpStatus: number | null = null;
@@ -267,7 +273,7 @@ export async function sendQueuedInvoices(
                     Authorization: `Bearer ${session.accessToken}`,
                     "X-Session-ID": session.sessionId,
                 },
-                body: JSON.stringify(payload),
+                body: JSON.stringify(kirimPayload),
                 signal: AbortSignal.timeout(60_000),
             });
             httpStatus = response.status;
