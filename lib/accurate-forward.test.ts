@@ -93,6 +93,19 @@ test("S6-0d E4: tulis sales-invoice (save/bulk-save) dikenali walau path disamar
     }
 });
 
+// S6-0d putaran 2: FAQ chatbot tidak boleh menyuruh memakai rute yang ditolak proxy di konsol AOL.
+test("FAQ: tidak ada jawaban yang menyuruh memakai rute tulis yang ditolak proxy (sales-invoice, purchase-payment)", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const faq = JSON.parse(await readFile(new URL("./chatbot/faq.json", import.meta.url), "utf8")) as unknown;
+    const teks = JSON.stringify(faq);
+    const rute = [...teks.matchAll(/([a-z-]+\/(?:bulk-)?save(?:\.do)?)/gi)].map((m) => m[1]);
+    for (const r of rute) {
+        const path = `/api/${r.endsWith(".do") ? r : `${r}.do`}`;
+        assert.equal(isSalesInvoiceWrite(path) || isGuardedAccurateWrite(path), false, `FAQ menyebut rute yang ditolak proxy: ${r}`);
+    }
+    assert.match(teks, /Antrean Faktur/, "FAQ AOL wajib menunjuk Antrean Faktur untuk faktur penjualan");
+});
+
 // Tinjauan S6-0a LOW: timeout tulis Accurate = status TIDAK PASTI — pesan 504 proxy tidak boleh menyuruh mengulang.
 test("pesan 504 proxy: tulis tidak menyuruh coba lagi, baca boleh", () => {
     const msg = (forward as unknown as { accurateTimeoutMessage?: (m: string) => string }).accurateTimeoutMessage;
