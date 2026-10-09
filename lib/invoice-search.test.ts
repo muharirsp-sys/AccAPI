@@ -2,7 +2,7 @@
  * db = urutan jawaban select tiruan, Accurate = fetch tiruan per URL (bukan provider asli). */
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { BATAS_CARI, cariFaktur, jendelaCari, kueriListDo, milikKunci } from "./invoice-search.ts";
+import { BATAS_CARI, cariFaktur, cocokFaktur, jendelaCari, kueriListDo, milikKunci } from "./invoice-search.ts";
 
 const KEY = "KINO:1671-SOP-260014013";
 const SESI = { sessionHost: "https://accurate.tiruan", sessionId: "sesi", accessToken: "token" };
@@ -122,7 +122,7 @@ test("tidak ketemu setelah semua calon diperiksa -> tidak_ketemu_dicek (bukan bu
         21: detailOk({ id: 21, number: "INV/21", charField1: `${KEY}9` }),
     });
     assert.deepEqual(await cariFaktur({ db, key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session: SESI }),
-        { hasil: "tidak_ketemu_dicek", sumber: "accurate", diperiksa: 1, barisListDo: 1 });
+        { hasil: "tidak_ketemu_dicek", sumber: "accurate", diperiksa: 1, barisListDo: 1, calonTanpaKunci: [] });
 });
 
 test("gagal_cek: tanpa sesi, pelanggan tak ada, list.do s:false, rowCount raksasa, calon terlalu banyak, detail.do galat", async (t) => {
@@ -211,4 +211,36 @@ test("hibrida: charField1 absen/kosong di list.do -> detail.do cadangan; berkunc
     assert.equal(hasil.hasil === "ketemu" && hasil.id, "73");
     const ids = f.mock.calls.slice(1).map((c) => new URL(String(c.arguments[0])).searchParams.get("id"));
     assert.deepEqual(ids, ["72", "73"], "71 diputuskan dari list.do");
+});
+
+// A-RENDAH butir 9: faktur yang disimpan ulang dari layar Accurate bisa kehilangan charField1. Pola description yang
+// KITA tulis (`Order <kunci> | outlet | channel`, buildInvoicePayload) jadi pengenal cadangan — hanya bila kepala kosong.
+test("cocokFaktur: description `Order <kunci> |` hanya cadangan saat charField1 kepala kosong", () => {
+    assert.equal(cocokFaktur({ charField1: "", description: `Order ${KEY} | TK SUBHAN | GT` }, KEY), "description");
+    assert.equal(cocokFaktur({ description: `Order ${KEY}` }, KEY), "description");
+    assert.equal(cocokFaktur({ charField1: "", description: `Order ${KEY}2 | TK SUBHAN` }, KEY), null, "awalan bukan kunci yang sama");
+    assert.equal(cocokFaktur({ charField1: "", description: `Disalin dari Order ${KEY}` }, KEY), null, "tanpa pemisah ` |` = bukan pola kita");
+    assert.equal(cocokFaktur({ charField1: "KINO:LAIN", description: `Order ${KEY} | X` }, KEY), null, "kepala berkunci lain menang");
+    assert.equal(cocokFaktur({ charField1: KEY, description: "" }, KEY), "charField1");
+});
+
+test("detail.do: charField1 hilang tetapi description pola kita -> ketemu {cocok: description}; yang tidak cocok dikembalikan sebagai calon tanpa kunci", async (t) => {
+    await t.test("ketemu lewat description", async (st) => {
+        const db = dbTiruan([[], PELANGGAN]);
+        accurateTiruan(st, [listOk([{ id: 81, customer: { id: 50123 }, charField1: "" }])], {
+            81: detailOk({ id: 81, number: "INV/81", charField1: "", description: `Order ${KEY} | TK A | GT` }),
+        });
+        const hasil = await cariFaktur({ db, key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session: SESI });
+        assert.equal(hasil.hasil === "ketemu" && hasil.cocok, "description");
+        assert.equal(hasil.hasil === "ketemu" && hasil.id, "81");
+    });
+    await t.test("tidak ketemu: calon berkepala kosong ditampilkan, tidak diputuskan", async (st) => {
+        const db = dbTiruan([[], PELANGGAN]);
+        accurateTiruan(st, [listOk([{ id: 91, customer: { id: 50123 } }, { id: 92, customer: { id: 50123 }, charField1: "KINO:LAIN" }])], {
+            91: detailOk({ id: 91, number: "INV/91", charField1: "", description: "manual", totalAmount: 125000.5, transDate: "08/10/2026" }),
+        });
+        const hasil = await cariFaktur({ db, key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session: SESI });
+        assert.deepEqual(hasil, { hasil: "tidak_ketemu_dicek", sumber: "accurate", diperiksa: 2, barisListDo: 2,
+            calonTanpaKunci: [{ id: "91", number: "INV/91", totalAmount: 125000.5, transDate: "08/10/2026" }] });
+    });
 });

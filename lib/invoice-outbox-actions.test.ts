@@ -41,7 +41,7 @@ const pencari = (hasil: HasilCari) => {
     return { cari, calls };
 };
 const KETEMU: HasilCari = { hasil: "ketemu", id: "331710", number: "INV/2610/KN00001", sumber: "accurate", cocok: "charField1", semua: [{ id: "331710", number: "INV/2610/KN00001" }] };
-const TIDAK: HasilCari = { hasil: "tidak_ketemu_dicek", sumber: "accurate", diperiksa: 2, barisListDo: 2 };
+const TIDAK: HasilCari = { hasil: "tidak_ketemu_dicek", sumber: "accurate", diperiksa: 2, barisListDo: 2, calonTanpaKunci: [] };
 const GAGAL: HasilCari = { hasil: "gagal_cek", alasan: "list.do HTTP 401" };
 const BARIS_DITOLAK = [{ state: "rejected", customerNo: "C-1-KN", createdAt: DIBUAT }];
 

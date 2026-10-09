@@ -32,11 +32,16 @@ import { customer, salesInvoiceCache } from "@/db/schema";
 import { parseAccurateDateTime } from "@/lib/accurate-invoice";
 
 export type FakturKetemu = { id: string; number: string };
-/** Cara faktur dikenali: charField1 kepala (utama), charField1 baris (cadangan bila kepala kosong). */
-export type CaraCocok = "charField1" | "baris";
+/**
+ * Cara faktur dikenali: charField1 kepala (utama); bila kepala KOSONG: charField1 baris, lalu pola description
+ * yang kita tulis (`Order <kunci> | …`) — faktur yang disimpan ulang dari layar Accurate bisa kehilangan charField1.
+ */
+export type CaraCocok = "charField1" | "baris" | "description";
+/** Faktur berkepala charField1 kosong yang TIDAK cocok — ditampilkan S6c untuk diperiksa manusia, tidak diputuskan. */
+export type CalonTanpaKunci = { id: string; number: string; totalAmount: number | null; transDate: string };
 export type HasilCari =
     | { hasil: "ketemu"; id: string; number: string; sumber: "cache" | "accurate"; cocok: CaraCocok; semua: FakturKetemu[] }
-    | { hasil: "tidak_ketemu_dicek"; sumber: "accurate"; diperiksa: number; barisListDo: number }
+    | { hasil: "tidak_ketemu_dicek"; sumber: "accurate"; diperiksa: number; barisListDo: number; calonTanpaKunci: CalonTanpaKunci[] }
     | { hasil: "gagal_cek"; alasan: string };
 
 export type SesiCari = { sessionHost: string; sessionId: string; accessToken: string };
@@ -68,7 +73,11 @@ export function cocokFaktur(raw: unknown, key: string): CaraCocok | null {
     const head = String(row.charField1 ?? "").trim();
     if (head) return head === want ? "charField1" : null;
     const lines = Array.isArray(row.detailItem) ? row.detailItem : [];
-    return lines.some((line) => String(obj(line).charField1 ?? "").trim() === want) ? "baris" : null;
+    if (lines.some((line) => String(obj(line).charField1 ?? "").trim() === want)) return "baris";
+    // Pola buildInvoicePayload: [`Order ${id}`, outlet, channel, note].join(" | "). Pemisah ` |` wajib
+    // (atau description hanya `Order <kunci>`), supaya "Order KINO:SO-1" tidak mengenai "Order KINO:SO-12 |".
+    const description = String(row.description ?? "").trim();
+    return description === `Order ${want}` || description.includes(`Order ${want} |`) ? "description" : null;
 }
 
 export const milikKunci = (raw: unknown, key: string): boolean => cocokFaktur(raw, key) !== null;
@@ -216,6 +225,7 @@ export async function cariFaktur(input: {
     // Hibrida (§I): charField1 TERISI di baris list.do = diputuskan langsung; absen/kosong = detail.do.
     const ketemu: (FakturKetemu & { cara: CaraCocok })[] = [];
     const perluDetail: Record<string, unknown>[] = [];
+    const calonTanpaKunci: CalonTanpaKunci[] = [];
     for (const row of calonAccurate) {
         const id = String(row.id ?? "").trim();
         if (!/^\d+$/.test(id)) return { hasil: "gagal_cek", alasan: "list.do memberi faktur tanpa id" };
@@ -234,11 +244,17 @@ export async function cariFaktur(input: {
         const detail = obj(jawab.body.d);
         const cara = cocokFaktur(detail, key);
         if (cara) ketemu.push({ id, number: String(detail.number ?? row.number ?? ""), cara });
+        else if (!String(detail.charField1 ?? "").trim()) {
+            const total = Number(detail.totalAmount);
+            calonTanpaKunci.push({ id, number: String(detail.number ?? row.number ?? ""),
+                totalAmount: Number.isFinite(total) && detail.totalAmount !== null && detail.totalAmount !== "" ? total : null,
+                transDate: String(detail.transDate ?? "") });
+        }
     }
     if (ketemu.length) {
         ketemu.sort((a, b) => Number(a.id) - Number(b.id));
         return { hasil: "ketemu", id: ketemu[0].id, number: ketemu[0].number, sumber: "accurate", cocok: ketemu[0].cara,
             semua: ketemu.map(({ id, number }) => ({ id, number })) };
     }
-    return { hasil: "tidak_ketemu_dicek", sumber: "accurate", diperiksa: calonAccurate.length, barisListDo: total };
+    return { hasil: "tidak_ketemu_dicek", sumber: "accurate", diperiksa: calonAccurate.length, barisListDo: total, calonTanpaKunci };
 }
