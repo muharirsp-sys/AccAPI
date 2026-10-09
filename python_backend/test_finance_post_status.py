@@ -108,7 +108,10 @@ def main():
     ambigu = ["Accurate tidak merespons dalam 30 detik (timeout). Coba lagi.",
               "Accurate mengembalikan respons non-JSON (Gagal)\n\n[INFO TAMBAHAN]: <html>502 Bad Gateway</html>",
               "Failed to fetch", "Unexpected token '<', \"<html>\" is not valid JSON", "fetch failed",
-              "Terjadi kesalahan jaringan.", "socket hang up", "HTTP 504", "Gagal posting purchase-payment Accurate.", ""]
+              "Terjadi kesalahan jaringan.", "socket hang up", "HTTP 504", "Gagal posting purchase-payment Accurate.", "",
+              # N2: galat parse peramban lain (Safari, Chrome, Firefox/V8) dan stream Node yang putus.
+              "JSON Parse error: Unrecognized token '<'", "Unexpected non-whitespace character after JSON at position 4",
+              "Expected property name or '}' in JSON at position 1", "Premature close"]
     for msg in ambigu:
         assert shared.effective_post_status({"accurate_post_status": "failed", "accurate_post_error": msg}) == "unknown", msg
     for msg in ['[\n  "Vendor tidak ditemukan"\n]', "Bank tidak valid", "dicek manual: tidak ada di Accurate"]:

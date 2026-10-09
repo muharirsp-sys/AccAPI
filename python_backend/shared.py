@@ -1736,13 +1736,14 @@ def format_sppd_number_with_template(seq: int, dt: pd.Timestamp, template: str) 
 # Tinjauan S6-0a: galat posting purchase-payment yang TIDAK membuktikan Accurate menolak. Record lama berstatus
 # "failed" (dicatat halaman Finance sebelum attempt server ada) dengan galat seperti ini mungkin SUDAH tersimpan di
 # Accurate, sedangkan tabel attempt server kosong setelah deploy -> diperlakukan unknown (wajib resolve). Pola =
-# pesan proxy/halaman lama: timeout 30 dtk (504), non-JSON (502), gerbang HTML, jaringan/fetch, soket putus,
-# galat proxy umum, fallback halaman. Galat kosong ikut (tidak bisa dibuktikan).
+# pesan proxy/halaman lama: timeout 30 dtk (504), non-JSON (502), galat parse JSON peramban mana pun ("JSON",
+# "Unexpected" — Chrome/Safari/Firefox berbeda kalimat), gerbang HTML, jaringan/fetch, soket/stream putus, galat
+# proxy umum, fallback halaman. Galat kosong ikut (tidak bisa dibuktikan).
 AMBIGUOUS_POST_ERROR = re.compile(
-    r"time-?out|timed out|tidak merespons|non-JSON|not valid JSON|Unexpected (token|end)|JSON\.parse|<html"
+    r"time-?out|timed out|tidak merespons|JSON|Unexpected|<html"
     r"|Bad Gateway|Gateway Time|Service Unavailable|\bHTTP 50\d\b|failed to fetch|fetch failed|NetworkError"
     r"|Load failed|kesalahan jaringan|network|ECONNRESET|ETIMEDOUT|socket hang up|other side closed|terminated"
-    r"|aborted|Proxy request failed|^Gagal posting purchase-payment Accurate\.?$",
+    r"|aborted|Premature close|Proxy request failed|^Gagal posting purchase-payment Accurate\.?$",
     re.I,
 )
 
