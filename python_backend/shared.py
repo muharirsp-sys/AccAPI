@@ -275,10 +275,13 @@ def parse_number_id(x) -> float:
         return 0.0
 
     t = re.sub(r"[^0-9\.\,\-]", "", t)
+    t = re.sub(r"[,.]-+$", "", t)  # "1.250.000,-" = rupiah tanpa sen
 
-    # Both '.' and ',' => EU style "1.234,56"
+    # Both '.' and ',' => separator TERAKHIR adalah desimal (AM-018): "1.234,56" (ID) dan
+    # "250,000.00" (EN). Dulu selalu dianggap ID, sehingga "250,000.00" terbaca 250.
     if "." in t and "," in t:
-        t2 = t.replace(".", "").replace(",", ".")
+        dec, grp = (",", ".") if t.rfind(",") > t.rfind(".") else (".", ",")
+        t2 = t.replace(grp, "").replace(dec, ".")
         try:
             return float(t2)
         except:
