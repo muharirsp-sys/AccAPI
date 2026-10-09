@@ -59,6 +59,17 @@ import type { ClaimSubmissionRow, ClaimWorkflowRow } from "./types";
  */
 type DbExecutor = Pick<typeof db, "select" | "update" | "insert">;
 
+/**
+ * AM-022 (H12): SETIAP transaksi yang memutasi ledger pembayaran claim (payment, void, close)
+ * mengunci baris claim_workflow lebih dulu. Tanpa ini dua pembayaran 80 atas outstanding 100
+ * sama-sama membaca sisa 100 (READ COMMITTED) lalu dua-duanya tersimpan = applied 160
+ * (direproduksi di Postgres AM-040, scripts/am040-concurrency.mjs). Satu urutan lock — workflow
+ * dulu, baru submission/payment — juga mencegah deadlock antar-route.
+ */
+export async function lockClaimWorkflow(executor: Pick<typeof db, "select">, workflowId: string) {
+    await executor.select({ id: claimWorkflow.id }).from(claimWorkflow).where(eq(claimWorkflow.id, workflowId)).for("update");
+}
+
 // =============================================================================
 // Pure helpers (R7a, dipertahankan)
 // =============================================================================

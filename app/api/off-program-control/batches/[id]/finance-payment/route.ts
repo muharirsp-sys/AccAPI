@@ -6,6 +6,8 @@ import { offBatch, offBatchItem, offPayment } from "@/db/schema";
 import { canProcessFinancePayment, computeOffFinancePaymentSummary, computeOffPaymentSummary, generateOffPaymentProofPdf, getBatchWithItems, isOffPeriodClosedForBatch, normalizeOffPaymentMethod, publicBatch, publicPayment, requireOffSession, writeOffAudit } from "@/lib/off-program-control";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 
+const OFF_PAYMENT_CONFLICT = "AM023_OFF_PAYMENT_CONFLICT";
+
 type Context = { params: Promise<{ id: string }> };
 
 function proofMimeOk(type: string) {
@@ -112,6 +114,25 @@ export async function POST(request: Request, context: Context) {
             uploadedProofName,
         });
         const [payment] = await db.transaction(async (tx) => {
+            // AM-023 (H12): baca & cek di atas terjadi DI LUAR transaksi — dua pembayaran bersamaan
+            // atas item yang sama sama-sama lolos "alreadyPaid". Kunci batch, lalu cek ulang snapshot
+            // yang dipakai (item terpilih belum dibayar, nomor pembayaran & total bayar sama).
+            // Berubah = 409, tanpa menulis apa pun; bukti PDF di atas memuat angka snapshot itu.
+            await tx.select({ id: offBatch.id }).from(offBatch).where(eq(offBatch.id, id)).for("update");
+            const freshItems = await tx.select({
+                id: offBatchItem.id,
+                status: offBatchItem.financePaymentStatus,
+                paymentRef: offBatchItem.financePaymentId,
+                paidAmount: offBatchItem.financePaidAmount,
+                nominal: offBatchItem.nominal,
+            }).from(offBatchItem).where(eq(offBatchItem.batchId, id));
+            const freshPayments = await tx.select({ paymentNo: offPayment.paymentNo }).from(offPayment).where(eq(offPayment.batchId, id));
+            const freshPaidBefore = freshItems.reduce((total, item) => total + (item.status === "paid" ? Number(item.paidAmount || item.nominal || 0) : 0), 0);
+            const freshNo = freshPayments.reduce((maxNo, p) => Math.max(maxNo, Number(p.paymentNo || 0)), 0) + 1;
+            const selectedTaken = freshItems.some((item) => itemIds.includes(item.id) && (item.status === "paid" || item.paymentRef));
+            if (selectedTaken || freshPaidBefore !== itemPaidBefore || freshNo !== paymentNo) {
+                throw new Error(OFF_PAYMENT_CONFLICT);
+            }
             const [createdPayment] = await tx.insert(offPayment).values({
             id: paymentId,
             batchId: id,
@@ -173,6 +194,9 @@ export async function POST(request: Request, context: Context) {
         });
     } catch (error) {
         const message = error instanceof Error ? error.message : "";
+        if (message === OFF_PAYMENT_CONFLICT) {
+            return NextResponse.json({ ok: false, error: "Pembayaran lain untuk pengajuan ini baru saja tercatat. Muat ulang lalu pilih item lagi." }, { status: 409 });
+        }
         if (message === "Jenis pembayaran hanya boleh Tunai atau Transfer.") {
             return NextResponse.json({ ok: false, error: message }, { status: 400 });
         }
