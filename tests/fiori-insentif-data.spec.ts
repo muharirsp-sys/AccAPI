@@ -27,23 +27,49 @@ const KONSTANTA = {
     sm: { ambang1: 0.9, nominal1: 1_500_000, ambang2: 1.0, nominal2: 2_500_000, ambang3: 1.1, nominal3: 3_500_000 },
     pph: { rate: 0.025 },
 };
-const SETTINGS = { gtAoMode: "fixed240", branchNilaiJual: ["VINDA", "ABC"], smBerhak: ["HENDRIK"], konstanta: KONSTANTA, konstantaBawaan: KONSTANTA };
+/** AM-045: versi konstanta = updatedAt ISO baris tersimpan (02/09 14.05 WITA); jawaban PATCH membawa versi baru (09/10 10.30 WITA). */
+const VERSI = "2026-09-02T06:05:00.000Z";
+const VERSI_BARU = "2026-10-09T02:30:00.000Z";
+const SETTINGS = { gtAoMode: "fixed240", branchNilaiJual: ["VINDA", "ABC"], smBerhak: ["HENDRIK"], konstanta: KONSTANTA, konstantaSumber: "tersimpan", konstantaVersi: VERSI, konstantaBawaan: KONSTANTA };
 const USERS = [
     { id: "u1", name: "Bayu Saputra", email: "bayu@sp.test", hierarchyRole: null, hierarchyName: null },
     { id: "u2", name: "Lukman Hakim", email: "lukman@sp.test", hierarchyRole: null, hierarchyName: null },
     { id: "u3", name: "Andi Pratama", email: "andi@sp.test", hierarchyRole: "sales", hierarchyName: "MKS-07" },
 ];
 
-type Opsi = { targets?: unknown[]; settingsGagal?: boolean; tolakTarget?: string; tolakHapus?: string };
+type Opsi = {
+    targets?: unknown[]; settingsGagal?: boolean; tolakTarget?: string; tolakHapus?: string;
+    /** GET settings 200 dengan konstantaSumber "gagal_baca" + konstanta BAWAAN (route AM-020). */
+    konstantaGagalBaca?: boolean;
+    /** Jawaban PATCH konstanta berikutnya (sekali): 409 KONSTANTA_BERUBAH atau koneksi putus. GET sesudahnya = angka admin lain. */
+    patchKonstanta?: "konflik" | "putus";
+    /** Jumlah GET settings (dibaca test untuk memastikan muat ulang). */
+    getSettings?: number;
+};
+/** Angka admin lain yang tersimpan setelah konflik. */
+const KONSTANTA_LAIN = { ...KONSTANTA, gt: { ...KONSTANTA.gt, pool1: 1_250_000 } };
 
 /** Semua /api/insentif-sales/* dimock; permintaan tulis dicatat untuk diperiksa. */
 async function mockApi(page: Page, opsi: Opsi = {}) {
     const tulis: Request[] = [];
+    let diubahAdminLain = false;
     await page.route("**/api/insentif-sales/**", async (route) => {
         const req = route.request();
         const url = new URL(req.url());
         const p = url.pathname.replace("/api/insentif-sales/", "");
         if (req.method() !== "GET") tulis.push(req);
+        if (p === "settings" && req.method() === "GET") {
+            opsi.getSettings = (opsi.getSettings ?? 0) + 1;
+            if (opsi.konstantaGagalBaca) return route.fulfill(json({ ...SETTINGS, konstanta: KONSTANTA, konstantaSumber: "gagal_baca", konstantaVersi: null }));
+            if (diubahAdminLain) return route.fulfill(json({ ...SETTINGS, konstanta: KONSTANTA_LAIN, konstantaVersi: VERSI_BARU }));
+        }
+        if (p === "settings" && req.method() === "PATCH" && opsi.patchKonstanta) {
+            const jenis = opsi.patchKonstanta;
+            opsi.patchKonstanta = undefined;
+            diubahAdminLain = true;
+            if (jenis === "putus") return route.abort("failed");
+            return route.fulfill(json({ error: "Konstanta sudah diubah admin lain sejak editor dimuat. Muat ulang, lalu ulangi perubahan.", code: "KONSTANTA_BERUBAH" }, 409));
+        }
         if (p === "targets" && req.method() === "GET") return route.fulfill(json({ rows: opsi.targets ?? [] }));
         if (p === "targets" && req.method() === "POST") {
             return opsi.tolakTarget ? route.fulfill(json({ error: opsi.tolakTarget }, 400)) : route.fulfill(json({ upserted: 2 }));
@@ -62,7 +88,7 @@ async function mockApi(page: Page, opsi: Opsi = {}) {
         if (p === "settings" && req.method() === "GET") return opsi.settingsGagal ? route.fulfill(json({ error: "Koneksi database terputus" }, 500)) : route.fulfill(json(SETTINGS));
         if (p === "settings" && req.method() === "PATCH") {
             const body = req.postDataJSON() as { konstanta?: unknown };
-            return route.fulfill(json({ ...SETTINGS, konstanta: body.konstanta ?? KONSTANTA }));
+            return route.fulfill(json({ ...SETTINGS, konstanta: body.konstanta ?? KONSTANTA, konstantaVersi: body.konstanta ? VERSI_BARU : VERSI }));
         }
         if (p === "code-merge") return route.fulfill(json({ groups: [{ prefix: "MKS-0", members: [{ salesCode: "MKS-07", salesName: "Andi Pratama" }, { salesCode: "ANDI P", salesName: "FS1_ANDI PRATAMA SAPUTRA MAKASSAR TIMUR GT" }] }] }));
         if (p === "spv-mismatch") return route.fulfill(json({ rows: [{ salesCode: "MKS-04", salesName: "Sinta Dewi", principle: "KINO NON FOOD", spvTarget: "ANI", spvClosing: ["MARTEN"] }] }));
@@ -208,6 +234,44 @@ test("Data periode: Galat — server menolak target, tidak ada yang ditulis dan 
     await page.screenshot({ path: "test-results/data/data-galat.png", fullPage: true });
 });
 
+test("Data periode (d): satu sel angka target tidak valid → seluruh impor batal di pratinjau, tidak ada POST targets", async ({ page }) => {
+    const tulis = await mockApi(page, { targets: [] });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/data-periode?month=10&year=2026", NAV);
+    const main = page.locator("main");
+    await main.getByRole("button", { name: "Target bulanan" }).click({ timeout: 60_000 });
+    await expect(main.getByText(/teks yang bukan angka.*membatalkan seluruh impor/)).toBeVisible();
+    // AM-017: sel terisi tapi bukan angka ("-" sebagai nol, "Rp 500.000,-") dulu terbaca 0 → target 0 → nominal salah.
+    await main.locator('input[type="file"]').setInputFiles(xlsx("Target_Okt.xlsx", [
+        ["Kode Salesman", "Nama Salesman", "Principal", "Cabang", "Channel", "SPV", "SM", "Target Value (Rp)", "Target EC", "Target AO", "Target IA", "SPLM Value", "Tipe Sales", "Status Insentif"],
+        ["S-A", "SALES A", "PRINCIPLE A", "CABANG A", "GT", "SPV A", "SM A", 412000000, 300, 240, 500, "", "Exclusive", "Distributor"],
+        ["S-B", "SALES B", "PRINCIPLE B", "CABANG A", "GT", "SPV A", "SM A", 250000000, "-", 240, 400, "", "Exclusive", "Distributor"],
+    ]));
+    await main.getByRole("button", { name: "Lanjut" }).click();
+    await expect(main.getByRole("alert").filter({ hasText: "Berkas tidak bisa diterapkan." })).toContainText("1 baris berisi angka target tidak valid (mis. S-B)");
+    await expect(main.getByRole("button", { name: "Terapkan target…" })).toBeDisabled();
+    await page.screenshot({ path: "test-results/data/data-target-invalid.png", fullPage: true });
+    expect(tulis).toHaveLength(0);
+});
+
+test("Data periode (d): angka progres terisi tapi tidak valid → seluruh impor batal; kosong tetap 0", async ({ page }) => {
+    const tulis = await mockApi(page, { targets: [TARGET("S-A", "SALES A", "PRINCIPLE A", 100_000_000)] });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/data-periode?month=9&year=2026", NAV);
+    const main = page.locator("main");
+    await main.getByRole("button", { name: "Progres harian" }).click({ timeout: 60_000 });
+    await main.locator('input[type="file"]').setInputFiles(xlsx("Laporan_Sep.xlsx", [
+        ["KODE_SALESMAN", "SALESMAN", "PRINCIPAL", "JENISPRODUK", "TANGGAL", "DPP", "NILAI_JUAL", "EC", "AO", "IA"],
+        ["S-A", "SALES A", "PRINCIPLE A", "CABANG A", 46270, 500000, 550000, "", 1, 1],
+        ["S-A", "SALES A", "PRINCIPLE A", "CABANG A", 46271, "-", 0, 0, 0, 0],
+        ["S-B", "SALES B", "PRINCIPLE A", "CABANG A", 46271, 300000, 300000, "N/A", 1, 1],
+    ]));
+    await main.getByRole("button", { name: "Lanjut" }).click();
+    await expect(main.getByRole("alert").filter({ hasText: "Berkas tidak bisa diterapkan." })).toContainText("2 baris berisi angka tidak valid (mis. S-A, S-B)");
+    await expect(main.getByRole("button", { name: "Terapkan progres…" })).toBeDisabled();
+    expect(tulis).toHaveLength(0);
+});
+
 test("Data periode: gabung kode, pakai SPV, hapus target, hapus realisasi — semua lewat dialog, payload/query diperiksa", async ({ page }) => {
     const tulis = await mockApi(page, { targets: [TARGET("MKS-07", "Andi Pratama", "KINO NON FOOD", 412_000_000)] });
     await page.setViewportSize({ width: 1366, height: 900 });
@@ -312,7 +376,9 @@ test("Pengaturan: Default — anchor bar, konstanta, hierarki, akun belum ditaut
     await expect(main.getByRole("table", { name: "Akun tertaut" })).toContainText("MKS-07");
     await expect(main.getByRole("button", { name: "Simpan", exact: true })).toBeDisabled();
     await expect(main.locator(".fi-ftb")).toContainText("Belum ada perubahan konstanta");
-    await expect(main.getByRole("complementary", { name: "Usulan AM-045" })).toBeVisible();
+    // AM-045 sudah ada: versi = waktu simpan terakhir (WITA), bukan catatan usulan lagi. BL-33 (riwayat) tetap usulan.
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 2 Sep 14.05 WITA");
+    await expect(main.getByRole("complementary", { name: "Usulan AM-045" })).toHaveCount(0);
     await expect(main.getByRole("complementary", { name: "Usulan BL-33" })).toBeVisible();
     await page.screenshot({ path: "test-results/data/atur-default.png", fullPage: true });
 });
@@ -332,6 +398,74 @@ test("Pengaturan: GET settings gagal → editor konstanta dikunci, hierarki teta
     expect(tulis).toHaveLength(0);
 });
 
+test("Pengaturan (a): GET 200 dengan konstanta gagal_baca → editor dikunci, angka bawaan tidak tampil sebagai tersimpan, tidak ada PATCH", async ({ page }) => {
+    const tulis = await mockApi(page, { konstantaGagalBaca: true });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/pengaturan", NAV);
+    const main = page.locator("main");
+    await expect(main.getByRole("alert").filter({ hasText: "Konstanta tersimpan gagal dibaca — editor dikunci" }).first()).toBeVisible(NAV);
+    await expect(main.getByRole("spinbutton", { name: "Pool 1 principle" })).toHaveCount(0);
+    await expect(main.locator("#konstanta").getByRole("button", { name: "Coba lagi" })).toBeVisible();
+    await expect(main.getByRole("button", { name: "Isi dengan bawaan" })).toBeDisabled();
+    await expect(main.getByRole("button", { name: "Isi dengan bawaan" })).toHaveAttribute("title", /gagal dibaca/);
+    await expect(main.getByRole("button", { name: "Simpan", exact: true })).toBeDisabled();
+    await expect(main.locator(".fi-ftb")).toContainText("Editor konstanta terkunci");
+    await expect(main.locator(".fi-attrs")).toContainText("gagal dibaca");
+    // Penyebut AO tidak memakai angka bawaan sebagai label; bagian lain tetap bisa dipakai.
+    await expect(main.getByRole("group", { name: "Penyebut AO GT/TT" }).getByRole("button", { name: "240 (tetap)" })).toHaveCount(0);
+    await expect(main.getByRole("textbox", { name: "Cabang beracuan NILAI_JUAL" })).toBeEnabled();
+    await expect(main.getByRole("table", { name: "Hierarki SPV → SM" })).toContainText("MARTEN");
+    await page.screenshot({ path: "test-results/data/atur-gagal-baca.png", fullPage: true });
+    expect(tulis).toHaveLength(0);
+});
+
+test("Pengaturan (b): PATCH 409 → dialog konflik, draf basi tidak terkirim lagi, muat ulang menampilkan angka admin lain", async ({ page }) => {
+    const opsi: Opsi = { patchKonstanta: "konflik" };
+    const tulis = await mockApi(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/pengaturan", NAV);
+    const main = page.locator("main");
+    await main.getByRole("spinbutton", { name: "Pool 1 principle" }).fill("1100000", NAV);
+    await main.getByRole("button", { name: "Simpan 1 perubahan…" }).click();
+    await page.getByRole("dialog", { name: "Simpan 1 perubahan konstanta?" }).getByRole("button", { name: "Simpan", exact: true }).click();
+
+    const konflik = page.getByRole("dialog", { name: "Konstanta sudah diubah admin lain" });
+    await expect(konflik).toContainText("sejak editor dimuat");
+    await expect(konflik).toContainText("1 angka, belum disimpan");
+    await page.screenshot({ path: "test-results/data/atur-konflik.png" });
+    await konflik.locator("footer").getByRole("button", { name: "Tutup" }).click();
+    // Draf basi masih terlihat tetapi Simpan terkunci sampai dimuat ulang.
+    await expect(main.getByRole("button", { name: "Simpan 1 perubahan…" })).toBeDisabled();
+    await expect(main.locator(".fi-ftb")).toContainText("Konstanta sudah diubah admin lain");
+    const getSebelum = opsi.getSettings ?? 0;
+    await main.getByRole("status").filter({ hasText: "Konstanta sudah diubah admin lain" }).getByRole("button", { name: "Muat ulang" }).click();
+    await expect(main.getByRole("spinbutton", { name: "Pool 1 principle" })).toHaveValue("1250000");
+    expect(opsi.getSettings).toBeGreaterThan(getSebelum);
+    await expect(page.locator(".fi-draft")).toHaveCount(0);
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.30 WITA");
+    expect(tulis.filter((r) => r.method() === "PATCH")).toHaveLength(1);
+});
+
+test("Pengaturan: PATCH konstanta tanpa jawaban → hasilnya belum pasti, setelan dimuat ulang, tidak dikirim ulang otomatis", async ({ page }) => {
+    const opsi: Opsi = { patchKonstanta: "putus" };
+    const tulis = await mockApi(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/pengaturan", NAV);
+    const main = page.locator("main");
+    await main.getByRole("spinbutton", { name: "Pool 1 principle" }).fill("1100000", NAV);
+    await main.getByRole("button", { name: "Simpan 1 perubahan…" }).click();
+    const simpan = page.getByRole("dialog", { name: "Simpan 1 perubahan konstanta?" });
+    await simpan.getByRole("button", { name: "Simpan", exact: true }).click();
+    await expect(simpan.getByRole("alert")).toContainText("Hasilnya belum pasti");
+    await expect(simpan.getByRole("alert")).not.toContainText("Failed to fetch");
+    await expect.poll(() => opsi.getSettings ?? 0).toBeGreaterThan(1);
+    await simpan.getByRole("button", { name: "Batal" }).click();
+    // Setelah dimuat ulang: angka tersimpan terbaru menjadi dasar; draf tetap terlihat untuk diperiksa.
+    await expect(main.getByRole("spinbutton", { name: "Pool 1 principle" })).toHaveValue("1100000");
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.30 WITA");
+    expect(tulis.filter((r) => r.method() === "PATCH")).toHaveLength(1);
+});
+
 test("Pengaturan: simpan konstanta lewat dialog (payload diperiksa) dan tautkan akun lewat dialog", async ({ page }) => {
     const tulis = await mockApi(page);
     await page.setViewportSize({ width: 1366, height: 900 });
@@ -348,7 +482,16 @@ test("Pengaturan: simpan konstanta lewat dialog (payload diperiksa) dan tautkan 
     await expect(main.getByText(/Konstanta tersimpan \(1 angka berubah\)/)).toBeVisible();
     await expect(page.locator(".fi-draft")).toHaveCount(0);
     const patch = tulis.find((r) => r.method() === "PATCH");
-    expect(patch!.postDataJSON()).toEqual({ konstanta: { ...KONSTANTA, gt: { ...KONSTANTA.gt, pool1: 1_100_000 } } });
+    // (c) AM-045: PATCH konstanta membawa versi yang dimuat GET; route menolak 400 tanpa versi.
+    expect(patch!.postDataJSON()).toEqual({ konstanta: { ...KONSTANTA, gt: { ...KONSTANTA.gt, pool1: 1_100_000 } }, konstantaVersi: VERSI });
+    // Versi berikutnya diambil dari jawaban PATCH, bukan versi lama (kalau tidak, simpan kedua selalu 409).
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.30 WITA");
+    await main.getByRole("spinbutton", { name: "Pool 1 principle" }).fill("1200000");
+    await main.getByRole("button", { name: "Simpan 1 perubahan…" }).click();
+    await page.getByRole("dialog", { name: "Simpan 1 perubahan konstanta?" }).getByRole("button", { name: "Simpan", exact: true }).click();
+    await expect(page.locator(".fi-draft")).toHaveCount(0);
+    const patch2 = tulis.filter((r) => r.method() === "PATCH")[1];
+    expect(patch2.postDataJSON()).toMatchObject({ konstantaVersi: VERSI_BARU });
 
     await main.getByRole("table", { name: "Akun belum ditautkan" }).getByRole("row", { name: /Bayu Saputra/ }).getByRole("button", { name: "Tautkan…" }).click();
     const tautkan = page.getByRole("dialog", { name: "Tautkan akun Bayu Saputra?" });

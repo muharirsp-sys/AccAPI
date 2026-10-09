@@ -434,6 +434,38 @@ test("Support: galat 400 server tampil di dialog dan halaman, tidak ada yang ber
     expect(kirim.map((k) => k.url)).toEqual(["/api/insentif-sales/support", "/api/insentif-sales/support"]);
 });
 
+test("Support: isian bukan angka tidak diam-diam jadi Rp 0 — Simpan dikunci, tidak ada yang dikirim; kosong tetap 0", async ({ page }) => {
+    const kirim = await mockSup(page);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/support?month=9&year=2026", NAV);
+    const main = page.locator("main");
+    // MKS-21 tersimpan Rp 300.000. "1e"/"e" = isian number tak terbaca: peramban melaporkan value "" (badInput), dulu terkirim sebagai 0.
+    const isi = main.getByRole("spinbutton", { name: "Support MKS-21 GODREJ" });
+    const baris21 = main.getByRole("table", { name: "Support sales" }).locator("tbody tr").filter({ hasText: "MKS-21" });
+    const simpan = main.locator(".fi-ftb").getByRole("button", { name: "Simpan & hitung ulang…" });
+    await isi.fill("", NAV);
+    await isi.pressSequentially("1e");
+    await expect(simpan).toBeDisabled();
+    await expect(simpan).toHaveAttribute("title", /bukan angka/);
+    await expect(baris21).toContainText("bukan angka");
+    await isi.press("Backspace"); // "1" sah lagi
+    await expect(baris21).not.toContainText("bukan angka");
+    // "" → "e": value DOM tetap "" sehingga React menahan onChange — tanpa onInput ini terkirim sebagai 0.
+    await isi.fill("");
+    await isi.pressSequentially("e");
+    await expect(simpan).toBeDisabled();
+    await expect(baris21).toContainText("bukan angka");
+    expect(kirim).toHaveLength(0);
+    // Dikosongkan = 0 (kebijakan kolom kosong) tetap boleh disimpan.
+    await isi.press("Backspace");
+    await expect(baris21).not.toContainText("bukan angka");
+    await expect(simpan).toBeEnabled();
+    await simpan.click();
+    await page.getByRole("dialog").getByRole("button", { name: "Simpan & hitung ulang" }).click();
+    await expect(page.getByRole("dialog")).toBeHidden();
+    expect((kirim[0].body as Array<{ salesCode: string; supportAmount: unknown }>).find((r) => r.salesCode === "MKS-21")?.supportAmount).toBe(0);
+});
+
 test("Support: hitung untuk SPV dan penyebut AO lewat dialog yang menyebut akibatnya; kunci SPV dinormalisasi seperti server", async ({ page }) => {
     const kirim = await mockSup(page);
     await page.setViewportSize({ width: 1366, height: 900 });

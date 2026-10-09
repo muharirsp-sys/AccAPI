@@ -4,6 +4,7 @@
  *   bagian kualitas data (DataPeriodeKualitas.tsx). Periode = saringan URL (usePeriode), bukan pemilih sendiri (it07 #3).
  *   Berkas dibaca di peramban dan DIPRATINJAU dulu; tidak ada yang ditulis sebelum dialog Terapkan (it07 #16). Input manual
  *   target/progres tidak ada di jalur ini (it07 #17): koreksi = perbaiki berkas lalu unggah ulang periode.
+ *   Angka ketat (AM-017): sel kosong = 0, sel terisi tapi bukan angka (target maupun progres) membatalkan seluruh impor di pratinjau.
  * Caller: app/(dashboard)/insentif-sales/data-periode/page.tsx.
  * Dependensi: ./Rangka (InsentifRangka, usePeriode), ./DataPeriodeKualitas, components/fiori/{core,interactive},
  *   lib/insentif-sales-excel (parseTargetExcel) dan xlsx — dimuat saat dipakai, lib/excel-date, lib/insentif-value-source,
@@ -74,6 +75,11 @@ const LABEL_TIPE: Record<string, string> = { exclusive: "Exclusive", mix: "Mix" 
 const PUTUS_HAPUS = "Server tidak menjawab dengan jelas; periksa Realisasi di Data tersimpan sebelum mengulang.";
 const kunciTarget = (r: { salesCode: string; principle: string }) => `${r.salesCode}|${r.principle}`;
 const n = (v: number) => v.toLocaleString("id-ID");
+/** Contoh kode sales untuk pesan masalah: tiga kode berbeda pertama. */
+const contohKode = (kode: string[]) => {
+    const unik = [...new Set(kode)];
+    return `${unik.slice(0, 3).join(", ")}${unik.length > 3 ? ", …" : ""}`;
+};
 
 /** Panduan kolom = kolom yang benar-benar dibaca parseTargetExcel (lib/insentif-sales-excel) + normalisasi server. */
 const KOLOM_TARGET: Array<[string, string]> = [
@@ -124,11 +130,13 @@ async function bacaTarget(file: File): Promise<{ rows: TargetRow[]; masalah: str
         channel: String(r.channel || "TT"),
         spvName: String(r.spvName || ""),
         smName: String(r.smName || ""),
-        targetValue: Number(r.targetValue || 0),
-        targetEc: Number(r.targetEc || 0),
-        targetAo: Number(r.targetAo || 0),
-        targetIa: Number(r.targetIa || 0),
-        splmValue: Number(r.splmValue || 0),
+        // `?? 0`, bukan `|| 0`: NaN (sel terisi tapi bukan angka, mis. "-") harus sampai ke pemeriksaan di bawah,
+        // bukan diam-diam jadi target 0 (AM-017). Sel kosong sudah 0 dari parser (kebijakan kolom kosong).
+        targetValue: Number(r.targetValue ?? 0),
+        targetEc: Number(r.targetEc ?? 0),
+        targetAo: Number(r.targetAo ?? 0),
+        targetIa: Number(r.targetIa ?? 0),
+        splmValue: Number(r.splmValue ?? 0),
         // Dulu dua kolom ini di-parse lalu dibuang di sini, jadi ENERGIZER tidak pernah
         // bisa di-set "principle" lewat upload — server selalu jatuh ke default.
         tipeSales: String(r.tipeSales || "exclusive"),
@@ -137,6 +145,9 @@ async function bacaTarget(file: File): Promise<{ rows: TargetRow[]; masalah: str
     if (rows.length === 0) return { rows, masalah: "Berkas tidak berisi baris target." };
     const invalid = rows.filter((r) => !r.salesCode.trim() || !r.salesName.trim());
     if (invalid.length) return { rows, masalah: `${invalid.length} baris tidak punya kode/nama salesman.` };
+    // Satu angka tidak valid membatalkan SELURUH impor (it07 #16, AM-017/D-19): sebagian target tersimpan = nominal salah.
+    const angkaSalah = rows.filter((r) => [r.targetValue, r.targetEc, r.targetAo, r.targetIa, r.splmValue].some((x) => !Number.isFinite(x) || x < 0));
+    if (angkaSalah.length) return { rows, masalah: `${angkaSalah.length} baris berisi angka target tidak valid (mis. ${contohKode(angkaSalah.map((r) => r.salesCode))}). Tidak ada yang diterapkan.` };
     // Principal ikut kunci upsert (salesCode+principle+periode) dan Cabang menentukan
     // acuan Value (DPP vs NILAI_JUAL, lib/insentif-value-source). Keduanya tidak boleh
     // ditebak — baris tanpa Principal biasanya baris pemisah/subtotal di Excel.
@@ -182,14 +193,14 @@ async function bacaProgres(file: File, month: number, year: number, branchNilaiJ
         // Dua format ribuan beredar di file closing: Inggris (1,234,567.89) dan
         // Indonesia (1.234.567,89). Deteksi dari polanya — kalau dipaksa satu format,
         // "-533.000.000" terbaca -533 dan realisasi satu principal menguap.
+        // Kosong = 0 (kebijakan kolom kosong). Terisi tapi bukan angka ("-", "N/A") = NaN, BUKAN 0: realisasi adalah dasar
+        // nominal insentif, jadi baris itu menahan seluruh impor di bawah (sama dengan target, AM-017 / it07 #16).
         const num = (val: string) => {
+            if (!val) return 0;
             const cleaned = val.replace(/[^\d.,-]/g, "");
-            if (!cleaned) return 0;
             // Format Indonesia: titik sebagai pemisah ribuan (selalu 3 digit), koma desimal.
             const idFormat = /^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(cleaned);
-            const normalized = idFormat ? cleaned.replace(/\./g, "").replace(",", ".") : cleaned.replace(/,/g, "");
-            const x = parseFloat(normalized);
-            return Number.isFinite(x) ? x : 0;
+            return parseFloat(idFormat ? cleaned.replace(/\./g, "").replace(",", ".") : cleaned.replace(/,/g, ""));
         };
         return {
             salesCode: get("KODE_SALESMAN"),
@@ -240,11 +251,19 @@ async function bacaProgres(file: File, month: number, year: number, branchNilaiJ
     const bucket = new Map<string, ProgresRow>();
     let dibuang = 0;
     let nilaiDibuang = 0;
+    const angkaSalah: string[] = [];
     for (const r of parsed) {
         const branch = branchOf(r.principle, r.branch);
         if (!r.salesCode || !r.principle || !branch) {
             dibuang++;
-            nilaiDibuang += r.dpp;
+            // ponytail: baris yang dilewati tidak ditulis, jadi angkanya yang tidak valid hanya dikeluarkan dari total tampilan.
+            if (Number.isFinite(r.dpp)) nilaiDibuang += r.dpp;
+            continue;
+        }
+        // Cabang mana yang memakai NILAI_JUAL diatur di Pengaturan, bukan di kode. Hanya angka yang DITULIS yang diperiksa.
+        const value = realisasiValue(branch, r.dpp, r.nilaiJual, branchNilaiJual);
+        if (![value, r.ec, r.ao, r.ia].every(Number.isFinite)) {
+            angkaSalah.push(r.salesCode);
             continue;
         }
         const date = isoDate(r.tanggal);
@@ -262,8 +281,7 @@ async function bacaProgres(file: File, month: number, year: number, branchNilaiJ
             invoiceNumber: r.invoiceNumber,
             achievedValueDpp: 0, achievedEc: 0, achievedAo: 0, achievedIa: 0,
         };
-        // Cabang mana yang memakai NILAI_JUAL diatur di Pengaturan, bukan di kode.
-        cur.achievedValueDpp += realisasiValue(branch, r.dpp, r.nilaiJual, branchNilaiJual);
+        cur.achievedValueDpp += value;
         cur.achievedEc += r.ec;
         cur.achievedAo += r.ao;
         cur.achievedIa += r.ia;
@@ -273,7 +291,9 @@ async function bacaProgres(file: File, month: number, year: number, branchNilaiJ
         bucket.set(k, cur);
     }
     const payload = [...bucket.values()];
-    const masalah = payload.length === 0 ? "Tidak ada baris valid. Pastikan kolom KODE_SALESMAN dan PRINCIPAL terisi." : null;
+    const masalah = angkaSalah.length
+        ? `${angkaSalah.length} baris berisi angka tidak valid (mis. ${contohKode(angkaSalah)}). Sel kosong dibaca 0; teks seperti "-" tidak. Tidak ada yang diterapkan.`
+        : payload.length === 0 ? "Tidak ada baris valid. Pastikan kolom KODE_SALESMAN dan PRINCIPAL terisi." : null;
     return { payload, barisBerkas: parsed.length, dibuang, nilaiDibuang, ambigu: [...ambigu], masalah };
 }
 
@@ -604,8 +624,8 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
                         <KeyValues items={jenis === "target" ? KOLOM_TARGET : KOLOM_PROGRES} />
                         <p className="fi-small fi-subtle">
                             {jenis === "target"
-                                ? "Baris pertama = judul kolom; huruf besar/kecil dan spasi di judul diabaikan. Angka boleh 1.250.000; teks yang bukan angka dibaca 0, jadi periksa pratinjau. Satu baris yang ditolak server (channel, tipe, atau status tak dikenal; angka negatif; salesman × principal ganda; tipe berbeda dalam satu kode) membatalkan seluruh impor."
-                                : `Judul kolom tidak peka huruf besar/kecil. Angka 1,234,567.89 maupun 1.234.567,89 terbaca. Tanggal harus di ${label} (tanggal 1 bulan berikutnya juga diterima); satu baris yang ditolak server membatalkan seluruh impor.`}
+                                ? "Baris pertama = judul kolom; huruf besar/kecil dan spasi di judul diabaikan. Angka boleh 1.250.000; sel kosong dibaca 0, tetapi teks yang bukan angka (termasuk \"-\") membatalkan seluruh impor. Satu baris yang ditolak server (channel, tipe, atau status tak dikenal; angka negatif; salesman × principal ganda; tipe berbeda dalam satu kode) membatalkan seluruh impor."
+                                : `Judul kolom tidak peka huruf besar/kecil. Angka 1,234,567.89 maupun 1.234.567,89 terbaca; sel kosong dibaca 0, teks yang bukan angka (termasuk "-") membatalkan seluruh impor. Tanggal harus di ${label} (tanggal 1 bulan berikutnya juga diterima); satu baris yang ditolak server membatalkan seluruh impor.`}
                         </p>
                         {jenis === "target" && (
                             <>
