@@ -1741,8 +1741,9 @@ def wita_now() -> pd.Timestamp:
 
 def sppd_last_sequence_for_year(settings: Dict[str, Any], year: int) -> int:
     """Nomor urut terakhir yang berlaku untuk tahun terbit `year` (D-05/C10): tahun yang lebih baru dari tahun
-    urutan tersimpan mulai dari 0 (nomor pertama 001). `sequence_year` kosong (data sebelum aturan ini) = dianggap
-    tahun berjalan: urutan diteruskan, tidak pernah turun. ponytail: tahun terbit lebih tua dari tahun urutan
+    urutan tersimpan mulai dari 0 (nomor pertama 001). `sequence_year` kosong (data sebelum aturan ini) diisi
+    get_sppd_settings dari nomor SPPD yang sudah terbit; tanpa nomor terbit sama sekali = dianggap tahun berjalan
+    (urutan diteruskan, tidak pernah turun). ponytail: tahun terbit lebih tua dari tahun urutan
     (jam server mundur melewati tahun) ikut meneruskan urutan — naik terus, tanpa urutan per tahun."""
     stored_year = settings.get("sequence_year")
     if stored_year and int(year) > int(stored_year):
@@ -1797,8 +1798,24 @@ def normalize_sppd_settings(raw: Dict[str, Any], db: Optional[Dict[str, Any]] = 
         settings["items_per_page"] = defaults["items_per_page"]
     return settings
 
+def infer_sppd_sequence_year(db: Dict[str, Any]) -> Optional[int]:
+    """Tahun terbit terbaru dari nomor SPPD yang sudah terbit (lpb + submissions; tahun = 4 digit terakhir nomor).
+    Untuk data sebelum sequence_year ada (review S6-0a): tanpa ini, nomor pertama yang terbit setelah 1 Januari
+    meneruskan urutan tahun lalu (046) alih-alih 001."""
+    years = []
+    for section in ("lpb", "submissions"):
+        records = db.get(section) if isinstance(db.get(section), dict) else {}
+        for rec in records.values():
+            m = re.search(r"^\s*\d+\s*/.*?(\d{4})\s*$", s(rec.get("sppd_no", ""))) if isinstance(rec, dict) else None
+            if m:
+                years.append(int(m.group(1)))
+    return max(years) if years else None
+
+
 def get_sppd_settings(db: Dict[str, Any]) -> Dict[str, Any]:
     settings = normalize_sppd_settings(db.get("sppd_settings", {}), db)
+    if settings.get("sequence_year") is None:
+        settings["sequence_year"] = infer_sppd_sequence_year(db)
     db["sppd_settings"] = settings
     return settings
 

@@ -88,9 +88,11 @@ def settings_route_new_year():
         g = client.get("/payments/sppd/settings?date=2027-01-03")
         assert g.status_code == 200 and g.json()["next_sequence"] == 1, g.text[:200]
         assert g.json()["preview_number"] == "001/SPA/PDSB/I/2027", g.text[:200]
+        # Pratinjau halaman (last_sequence + 1 = 046) salah di Januari -> server mengirim urutan efektif tahun itu.
+        assert g.json()["effective_last_sequence"] == 0, g.text[:200]
         # Di tahun baru urutan efektif 0: mengisi 3 (mis. tiga SPPD manual) = naik, bukan turun.
         r = client.post("/payments/sppd/settings", json={"last_sequence": 3, "expected_last_sequence": 45})
-        assert r.status_code == 200, r.text[:200]
+        assert r.status_code == 200 and r.json()["effective_last_sequence"] == 3, r.text[:200]
         st = shared.load_payments_db()["sppd_settings"]
         assert st["last_sequence"] == 3 and st["sequence_year"] == 2027, st
         r = client.post("/payments/sppd/settings", json={"last_sequence": 2, "expected_last_sequence": 3})
@@ -108,10 +110,25 @@ def yearly_numbering():
     n, no, _ = shared.next_sppd_number(db, pd.Timestamp("2027-02-10 10:00"))
     assert (n, no) == (2, "002/SPA/PDSB/II/2027"), (n, no)
     assert db["sppd_settings"]["sequence_year"] == 2027
-    # Data lama tanpa tahun: diteruskan (tidak turun, tidak mulai ulang diam-diam).
+    # Data lama tanpa tahun DAN tanpa nomor terbit: diteruskan (tidak turun, tidak mulai ulang diam-diam).
     legacy = {"sppd_settings": {"last_sequence": 30}}
     n, no, _ = shared.next_sppd_number(legacy, pd.Timestamp("2026-10-09 08:00"))
     assert (n, no) == (31, "031/SPA/PDSB/X/2026") and legacy["sppd_settings"]["sequence_year"] == 2026, (n, no)
+    # Review S6-0a: data lama tanpa sequence_year yang nomor pertamanya terbit SETELAH 1 Jan 2027 -> tahun urutan
+    # diturunkan dari nomor tertinggi yang sudah terbit (lpb + submissions): mulai 001, bukan 046.
+    def legacy_db():
+        return {"sppd_settings": {"last_sequence": 45},
+                "lpb": {"a": {"sppd_no": "045/SPA/PDSB/XII/2026"}, "b": {"sppd_no": ""}},
+                "submissions": {"s": {"sppd_no": "044/SPA/PDSB/XII/2026"}, "t": {"sppd_no": "009/SPA/PDSB/III/2025"}}}
+    db2 = legacy_db()
+    n, no, _ = shared.next_sppd_number(db2, pd.Timestamp("2027-01-04 09:00"))
+    assert (n, no) == (1, "001/SPA/PDSB/I/2027"), f"data lama di tahun baru tidak mulai 001: {(n, no)}"
+    db3 = legacy_db()
+    n, no, _ = shared.next_sppd_number(db3, pd.Timestamp("2026-12-20 09:00"))
+    assert (n, no) == (46, "046/SPA/PDSB/XII/2026"), (n, no)
+    db4 = legacy_db()
+    db4["submissions"]["u"] = {"sppd_no": "001/SPA/PDSB/I/2027"}  # tahun terbit terbaru menang
+    assert shared.get_sppd_settings(db4)["sequence_year"] == 2027
 
     # Tanggal terbit = WITA (UTC+8), bukan jam server (produksi berjalan UTC): 00:30 WITA 1 Jan = 16:30 UTC 31 Des.
     utc = pd.Timestamp.now(tz="UTC").tz_localize(None)

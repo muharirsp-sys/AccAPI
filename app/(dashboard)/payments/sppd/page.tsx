@@ -29,6 +29,7 @@ interface SettingsResponse {
     error?: string;
     settings?: SppdSettings;
     next_sequence?: number;
+    effective_last_sequence?: number;
     preview_number?: string;
     preview_date?: string;
     template_path?: string;
@@ -467,7 +468,11 @@ export default function PaymentsSppdSettingsPage() {
     // Save dikunci, karena nilai di form hanya default dan akan memundurkan urutan SPPD.
     const [loadedSequence, setLoadedSequence] = useState<number | null>(null);
 
-    const nextSequence = Number(settings.last_sequence || 0) + 1;
+    // Urutan terakhir yang BERLAKU tahun ini dari server (0 di tahun baru, D-05/C10). Selama nilai form belum diubah,
+    // pratinjau memakainya — last_sequence + 1 salah di Januari (046 padahal 001).
+    const [effectiveSequence, setEffectiveSequence] = useState<number | null>(null);
+    const editedSequence = loadedSequence === null || Number(settings.last_sequence || 0) !== loadedSequence;
+    const nextSequence = (editedSequence || effectiveSequence === null ? Number(settings.last_sequence || 0) : effectiveSequence) + 1;
     const localPreview = useMemo(
         () => formatPreview(settings.number_template, nextSequence, previewDate),
         [settings.number_template, nextSequence, previewDate]
@@ -483,6 +488,7 @@ export default function PaymentsSppdSettingsPage() {
                 setSettings(data.settings);
                 setLoadedSequence(Number(data.settings.last_sequence || 0));
             }
+            setEffectiveSequence(typeof data.effective_last_sequence === "number" ? data.effective_last_sequence : null);
             setPreviewDate(data.preview_date || "");
             setServerPreview(data.preview_number || "");
             setTemplatePath(data.template_path || "");
@@ -518,6 +524,7 @@ export default function PaymentsSppdSettingsPage() {
                 setSettings(data.settings);
                 setLoadedSequence(Number(data.settings.last_sequence || 0));
             }
+            setEffectiveSequence(typeof data.effective_last_sequence === "number" ? data.effective_last_sequence : null);
             setServerPreview(data.preview_number || "");
             toast.success("Format SPPD tersimpan.");
         } catch (err: unknown) {

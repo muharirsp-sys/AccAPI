@@ -127,6 +127,8 @@ def payments_sppd_settings_get(request: Request):
         "ok": True,
         "settings": settings,
         "next_sequence": next_seq,
+        # Urutan terakhir yang BERLAKU untuk tahun pratinjau (0 di tahun baru) — dipakai pratinjau halaman.
+        "effective_last_sequence": next_seq - 1,
         "preview_number": format_sppd_number_with_template(next_seq, preview_dt, s(settings.get("number_template", ""))),
         "preview_date": preview_date,
         "template_path": SPPD_TEMPLATE_PATH,
@@ -205,6 +207,7 @@ async def payments_sppd_settings_save(request: Request):
             "ok": True,
             "settings": settings,
             "next_sequence": next_seq,
+            "effective_last_sequence": next_seq - 1,
             "preview_number": format_sppd_number_with_template(next_seq, preview_dt, s(settings.get("number_template", ""))),
         })
 
