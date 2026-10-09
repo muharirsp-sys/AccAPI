@@ -76,12 +76,30 @@ test("AM-024: baris proxy tercakup lock bila identitas dasar sama (nominal korek
         { customerNo: "C2", transDate: "01/09/2026", invoiceNo: "INV-2", amount: 5 },       // tidak terkunci
     ];
     const known = new Set(["K:C1:100000"]);
-    assert.deepEqual(rowsNeedingOverride(rows, locked, known, fp, id), ["K:C2:5"]);
+    // Review fan-out (S6-0a): baris persis + koreksinya dalam SATU payload = dua kiriman atas satu baris lock.
+    assert.deepEqual(rowsNeedingOverride(rows, locked, known, fp, id), ["K:C1:99900", "K:C2:5"]);
+    assert.deepEqual(rowsNeedingOverride([rows[1]], locked, known, fp, id), [], "koreksi sendirian tetap tercakup lock");
     assert.deepEqual(rowsNeedingOverride(rows, [], known, fp, id), ["K:C1:100000", "K:C1:99900", "K:C2:5"], "tanpa lock: semua butuh override");
     // Serangan: key palsu beridentitas sama dikunci, lalu kirim ulang baris yang fingerprint-nya SUDAH tercatat
     // (SUCCESS) -> identitas tidak boleh menutupinya.
     const fake = [{ key: "PALSU", customerNo: "C1", transDate: "01/09/2026", invoiceNo: "INV-1" }];
     assert.deepEqual(rowsNeedingOverride([rows[0]], fake, known, fp, id), ["K:C1:100000"]);
+});
+
+test("review fan-out: satu baris lock hanya mengesahkan SATU baris payload; persis diutamakan", () => {
+    const plan = lockModule.planSalesReceiptRows;
+    const fp = (r: Record<string, unknown>) => ({ key: `K:${r.amount}`, customerNo: "C", transDate: "D", invoiceNo: "I" });
+    const id = () => "C|D|I";
+    const locked = [{ key: "K:100", customerNo: "C", transDate: "D", invoiceNo: "I" }];
+    // Klien dimodifikasi: N baris beridentitas sama, satu baris lock -> hanya satu yang tercakup.
+    const n = plan([{ amount: 99 }, { amount: 98 }, { amount: 97 }], locked, new Set(["K:100"]), fp, id);
+    assert.deepEqual(n.anchors, [["K:100"], [], []]);
+    assert.deepEqual(n.need, ["K:98", "K:97"]);
+    // Dua baris lock beridentitas sama: baris persis memakai key-nya sendiri walau datang belakangan.
+    const two = [...locked, { key: "K:50", customerNo: "C", transDate: "D", invoiceNo: "I" }];
+    const p = plan([{ amount: 99 }, { amount: 100 }], two, new Set(["K:100", "K:50"]), fp, id);
+    assert.deepEqual(p.anchors, [["K:50"], ["K:100"]]);
+    assert.deepEqual(p.need, []);
 });
 
 test("AM-024: salinan kembar dalam satu payload proxy butuh override per salinan", () => {

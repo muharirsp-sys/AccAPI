@@ -126,9 +126,11 @@ type Identified = { key: string; customerNo?: unknown; transDate?: unknown; invo
  * AM-024 (D-18): rencana guard /api/proxy untuk tulis sales-receipt. `owned` = baris lock ini yang BELUM
  * terkirim atau DITOLAK Accurate (PROCESSING/FAILED). Baris payload lolos bila fingerprint-nya milik lock, atau
  * identitas dasarnya (pelanggan + tanggal + himpunan faktur) sama dengan baris milik lock — nominal sengaja tidak
- * ikut agar kiriman koreksi self-heal lolos (semantik nominal/tanggal = D-22, owner). Sisanya (`need`) harus
- * menghabiskan satu override tercatat per baris. `anchors[i]` = key idempotency_log yang hasilnya ditentukan
- * baris i (ditandai SENDING sebelum kirim, lalu hasil Accurate dicatat server) — kosong untuk baris override.
+ * ikut agar kiriman koreksi self-heal lolos (semantik nominal/tanggal = D-22, owner). Setiap baris lock hanya
+ * mengesahkan SATU baris payload (review S6-0a: klien yang dimodifikasi tidak boleh mengirim N baris beridentitas
+ * sama atas satu baris lock); baris persis diutamakan atas koreksi. Sisanya (`need`) harus menghabiskan satu
+ * override tercatat per baris. `anchors[i]` = key idempotency_log yang hasilnya ditentukan baris i (ditandai
+ * SENDING sebelum kirim, lalu hasil Accurate dicatat server) — kosong untuk baris override.
  */
 export function planSalesReceiptRows(
     rows: Record<string, unknown>[],
@@ -140,16 +142,28 @@ export function planSalesReceiptRows(
     const ownedKeys = new Set(owned.map((r) => r.key));
     const byIdentity = new Map<string, string[]>();
     for (const r of owned) byIdentity.set(identity(r), [...(byIdentity.get(identity(r)) ?? []), r.key]);
+    const fps = rows.map(fingerprint);
+    // Baris lock yang sudah dipakai satu baris payload. Lintasan 1: baris persis (kemunculan pertama) memakai key-nya.
+    const used = new Set<string>();
+    const exact = new Set<number>();
+    fps.forEach((fp, i) => {
+        if (ownedKeys.has(fp.key) && !used.has(fp.key)) { used.add(fp.key); exact.add(i); }
+    });
     const seen = new Set<string>();
     const need: string[] = [];
-    const anchors = rows.map(fingerprint).map((fp) => {
+    const anchors = fps.map((fp, i) => {
         // Salinan kedua dst. dari fingerprint yang sama dalam SATU payload = kirim ganda -> butuh override
         // allow_duplicate per salinan (review e641e571: lock [r] lalu proxy [r, r, r]).
         const copy = seen.has(fp.key);
         seen.add(fp.key);
+        let anchor: string[] = [];
+        if (exact.has(i)) anchor = [fp.key];
         // Fingerprint yang SUDAH tercatat (SUCCESS/UNKNOWN/SENDING/milik lock lain) tidak boleh "ditutupi"
         // identitas yang sama: identitas di idempotency_log berasal dari entri klien (key palsu beridentitas sama).
-        const anchor = ownedKeys.has(fp.key) ? [fp.key] : knownKeys.has(fp.key) ? [] : byIdentity.get(identity(fp)) ?? [];
+        else if (!knownKeys.has(fp.key)) {
+            const free = (byIdentity.get(identity(fp)) ?? []).find((k) => !used.has(k));
+            if (free) { used.add(free); anchor = [free]; }
+        }
         if (copy || anchor.length === 0) need.push(fp.key);
         return anchor;
     });
