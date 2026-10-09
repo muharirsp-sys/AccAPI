@@ -3,7 +3,10 @@
    tak bertuan (posisi 6+) dan klaim principal tanpa aturan terbit. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { percentChain } from "./principal-invoice.ts";
 import { alasanTakBerlaku, bersinggungan, fakturRuleFor, invoiceLines, isoDate, kunciAturan, kunciNormalisasi, kunciPertama, parseTariff, pemberianPertama, recap, ruleFor, temuanPoPertama, type PromoRule, type Putusan } from "./promo-recap.ts";
+
+const cents = (value: number) => Math.round(value * 100) / 100;
 
 const aturan = (over: Partial<PromoRule> = {}): PromoRule => ({
     principal: "KINO NON FOOD", suratProgram: "BP2609007909", promoLabel: "MTI - HPC CONSUMER PROMO ON PO",
@@ -168,6 +171,60 @@ test("potongan tingkat faktur (MSG) dicocokkan per FAKTUR, dengan PPN dikembalik
     assert.equal(fakturRuleFor([tier, tier10], "PRINCIPAL", "2026-09-24", 9_514_143.1, 180_218, 17)?.tierNo, 10);
     // Lantainya bukan pintu belakang: A3 KOSMETIK kurang Rp 2.937 dari tier tetap ditolak.
     assert.equal(fakturRuleFor([tier, tier10], "PRINCIPAL", "2026-09-08", 9_222_445.5, 177_534, 52), null);
+});
+
+test("D5 rupiah yang DILIPAT jadi persen posisi 5 (baris campuran, INV/2609/KN01376) tetap klaim tingkat faktur", () => {
+    // Sejak PR #114 baris persen + rupiah dikirim sebagai rantai persen saja: rupiah MSG jadi persen
+    // setara di posisi 5, itemCashDiscount 0. Rantainya dibuat oleh pelipat yang sama dengan faktur.
+    const lipat = (gross: number, rupiah: number) =>
+        percentChain([{ position: 1, percent: 2 }, { position: 5, percent: 0, amount: rupiah }], gross).join("+");
+    const baris = (id: number, quantity: number, unitPrice: number, rupiah: number) => ({ id, itemNo: `ITM-${id}`, item: { name: `BARANG ${id}` },
+        quantity, unitPrice, itemDiscPercent: lipat(cents(quantity * unitPrice), rupiah), itemCashDiscount: 0 });
+    // MSG Rp 20.000 (termasuk PPN) = DPP 18.018,02, dibagi ke tiga baris; baris pertama = baris KN01376.
+    const campuran = {
+        number: "INV/2609/KN01376", id: 2, transDate: "30/09/2026", branchName: "KINO NON FOOD",
+        customer: { customerNo: "C-SUB001-KN", name: "TK SUBHAN" },
+        detailItem: [baris(21, 24, 14414.4144, 4933.33), baris(22, 1, 500_000, 6542.35), baris(23, 1, 400_000, 6542.34)],
+    };
+    assert.equal(campuran.detailItem[0].itemDiscPercent, "2+0+0+0+1.4551");
+    const tier = aturan({
+        suratProgram: "BP2609006016", promoGroup: "ALL BRAND HPC", itemCode: "",
+        benefitType: "DISC_RP", benefitValue: "20000", triggerQty: 1_000_000, triggerUnit: "RP",
+    });
+    const tarif = aturan({ suratProgram: "DISCOUNT REGULER", promoGroup: "TK SUBHAN", itemCode: "", customerCode: "C-SUB001",
+        benefitValue: "2", benefitBeban: "DISTRIBUTOR" });
+
+    const hasil = recap(invoiceLines(campuran), [tier, tarif]);
+    assert.equal(hasil.unowned, 0);
+    assert.ok(!hasil.rows.some((row) => row.positions === "5"));
+    const nota = hasil.rows.find((row) => row.positions === "faktur")!;
+    assert.equal(nota.bucket, "principal");
+    assert.equal(nota.suratProgram, "BP2609006016");
+    // Rupiah = netto sebelum D5 x persen, persis yang dipotong Accurate: Rp 0,12 di atas 18.018,02 (< Rp 1 per baris).
+    assert.equal(nota.amount, 18018.14);
+    assert.equal(hasil.principal, 18018.14);
+    assert.equal(hasil.programs[0].suratProgram, "BP2609006016");
+
+    // Tier yang tidak cocok: tidak ada yang dipindahkan, posisi 5 tetap tak bertuan per baris seperti dulu.
+    const meleset = recap(invoiceLines(campuran), [{ ...tier, benefitValue: "45000" }, tarif]);
+    assert.equal(meleset.principal, 0);
+    assert.equal(meleset.unowned, 18018.14);
+    assert.equal(meleset.rows.filter((row) => row.positions === "5" && row.bucket === "unowned").length, 3);
+    assert.ok(!meleset.rows.some((row) => row.positions === "faktur"));
+
+    // Rupiah murni yang sudah cocok tier (RISKA KN00451) tidak boleh ikut gagal karena posisi 5 lain
+    // di faktur yang sama: gabungannya meleset, maka rupiah murninya dinilai sendiri seperti dulu.
+    const riska = { ...campuran, detailItem: [...campuran.detailItem,
+        { id: 24, itemNo: "ITM-24", item: { name: "BARANG 24" }, quantity: 1, unitPrice: 1_198_378, itemDiscPercent: "", itemCashDiscount: 18018.02 }] };
+    const sendiri = recap(invoiceLines(riska), [tier, tarif]);
+    assert.equal(sendiri.principal, 18018.02);
+    assert.equal(sendiri.unowned, 18018.14);
+
+    // Toleransi pelipatan (Rp 1 per baris terlipat) DITAMBAHKAN pada Rp 1 per baris faktur: 60 baris
+    // terlipat, selisih Rp 110 dengan PPN — di atas lantai Rp 100, masih di bawah 60 + 60.
+    const panjang = { ...campuran, detailItem: Array.from({ length: 60 }, (_, index) => baris(100 + index, 1, 100_000, 300)) };
+    assert.equal(recap(invoiceLines(panjang), [{ ...tier, benefitValue: "20089" }, tarif]).unowned, 0);
+    assert.equal(recap(invoiceLines(panjang), [{ ...tier, benefitValue: "20100" }, tarif]).principal, 0);
 });
 
 test("PER POSISI: yang cocok aturan diakui, hanya sisanya tak bertuan", () => {
