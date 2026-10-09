@@ -45,8 +45,11 @@ type Opsi = {
     targets?: unknown[]; settingsGagal?: boolean; tolakTarget?: string; tolakHapus?: string;
     /** GET settings 200 dengan konstantaSumber "gagal_baca" + konstanta BAWAAN (route AM-020). */
     konstantaGagalBaca?: boolean;
-    /** PATCH konstanta berikutnya (sekali) putus tanpa jawaban; admin lain menyimpan di antaranya. */
-    patchKonstanta?: "putus";
+    /**
+     * PATCH konstanta berikutnya (sekali) putus tanpa jawaban. "putus": admin lain menyimpan di antaranya (permintaan ini hilang).
+     * "tertulisPutus": permintaan ini SUDAH tertulis (CAS lolos), hanya jawabannya yang hilang.
+     */
+    patchKonstanta?: "putus" | "tertulisPutus";
     /** Admin lain menyimpan konstanta tepat sebelum PATCH berikutnya (apa pun isinya) tiba — sekali. */
     adminLainSebelumPatch?: boolean;
     /** Jumlah GET settings (dibaca test untuk memastikan muat ulang). */
@@ -79,6 +82,12 @@ async function mockApi(page: Page, opsi: Opsi = {}) {
             const body = req.postDataJSON() as { konstanta?: typeof KONSTANTA; konstantaVersi?: string | null; gtAoMode?: string };
             if (opsi.adminLainSebelumPatch) { opsi.adminLainSebelumPatch = false; adminLain(); }
             if (body.konstanta && opsi.patchKonstanta === "putus") { opsi.patchKonstanta = undefined; adminLain(); return route.abort("failed"); }
+            if (body.konstanta && opsi.patchKonstanta === "tertulisPutus" && body.konstantaVersi === server.versi) {
+                opsi.patchKonstanta = undefined;
+                server.konstanta = body.konstanta;
+                server.versi = new Date(Date.parse(VERSI_BARU) + 60_000 * simpanKe++).toISOString();
+                return route.abort("failed");
+            }
             if (body.konstanta && body.konstantaVersi !== server.versi) {
                 return route.fulfill(json({ error: "Konstanta sudah diubah admin lain sejak editor dimuat. Muat ulang, lalu ulangi perubahan.", code: "KONSTANTA_BERUBAH" }, 409));
             }
@@ -506,6 +515,34 @@ test("Pengaturan (skenario 2): PATCH konstanta tanpa jawaban → hasilnya belum 
     expect(patch).toHaveLength(2);
     expect((patch[1].postDataJSON() as { konstantaVersi: unknown }).konstantaVersi).toBe(VERSI);
     expect(opsi.server!.konstanta.gt.mix2).toBe(1_100_000);
+});
+
+test("Pengaturan: PATCH konstanta tertulis tetapi jawabannya hilang → muat ulang; edit berikutnya memakai versi terbaru, bukan 409 palsu", async ({ page }) => {
+    const opsi: Opsi = { patchKonstanta: "tertulisPutus" };
+    const tulis = await mockApi(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/pengaturan", NAV);
+    const main = page.locator("main");
+    const pool = main.getByRole("spinbutton", { name: "Pool 1 principle" });
+    await pool.fill("1100000", NAV);
+    await main.getByRole("button", { name: "Simpan 1 perubahan…" }).click();
+    // Judul dialog ikut berubah saat setelan dimuat ulang (selisih jadi 0), jadi dicari dengan pola.
+    const simpan = page.getByRole("dialog", { name: /^Simpan \d+ perubahan konstanta\?$/ });
+    await simpan.getByRole("button", { name: "Simpan", exact: true }).click();
+    await expect(simpan.getByRole("alert")).toContainText("Hasilnya belum pasti");
+    await simpan.getByRole("button", { name: "Batal" }).click();
+    // Setelah dimuat ulang angka tersimpan = draf (permintaan tadi ternyata tertulis): tidak ada perubahan tersisa.
+    await expect(main.locator(".fi-attrs")).toContainText("tersimpan 9 Okt 10.30 WITA");
+    await expect(main.locator(".fi-ftb")).toContainText("Belum ada perubahan konstanta");
+    await pool.fill("1200000");
+    await main.getByRole("button", { name: "Simpan 1 perubahan…" }).click();
+    await page.getByRole("dialog", { name: "Simpan 1 perubahan konstanta?" }).getByRole("button", { name: "Simpan", exact: true }).click();
+    await expect(main.getByText(/Konstanta tersimpan \(1 angka berubah\)/)).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Konstanta sudah diubah admin lain" })).toHaveCount(0);
+    const patch = tulis.filter((r) => r.method() === "PATCH");
+    expect(patch).toHaveLength(2);
+    expect((patch[1].postDataJSON() as { konstantaVersi: unknown }).konstantaVersi).toBe(VERSI_BARU);
+    expect(opsi.server!.konstanta.gt.pool1).toBe(1_200_000);
 });
 
 test("Pengaturan: simpan konstanta lewat dialog (payload diperiksa) dan tautkan akun lewat dialog", async ({ page }) => {

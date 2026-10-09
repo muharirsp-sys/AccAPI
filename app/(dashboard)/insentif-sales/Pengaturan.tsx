@@ -94,12 +94,15 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
      * Draf + versi DASAR-nya (AM-045): versi setelan saat draf mulai dibuat (null → isi). Versi dasar inilah yang dikirim saat simpan.
      * Versi terbaru (dari jawaban PATCH penyebut AO/daftar, atau muat ulang setelah "belum pasti") tidak boleh menggantikannya:
      * draf berbasis angka lama + versi baru = CAS lolos dan perubahan admin lain kembali diam-diam.
+     * Kecuali draf sudah SAMA dengan tersimpan (`berubah` kosong): tidak ada yang bisa ditimpa, jadi edit berikutnya berdasar
+     * versi saat ini — mis. PATCH yang ternyata tertulis tetapi jawabannya hilang; dengan versi lama edit berikutnya 409 palsu.
      */
     const [drafDasar, setDrafDasar] = useState<{ nilai: Konstanta; versi: string | null } | null>(null);
     const draf = drafDasar?.nilai ?? null;
-    const setDraf = (k: Konstanta | null) => setDrafDasar((d) => (k === null ? null : { nilai: k, versi: d ? d.versi : setelan?.konstantaVersi ?? null }));
     const nilaiK = draf ?? tersimpan;
     const berubah = useMemo(() => (draf && tersimpan ? KONSTANTA_FIELDS.filter((f) => getField(draf, f.path) !== getField(tersimpan, f.path)) : []), [draf, tersimpan]);
+    const setDraf = (k: Konstanta | null) => setDrafDasar((d) => (k === null ? null
+        : { nilai: k, versi: d && berubah.length > 0 ? d.versi : setelan?.konstantaVersi ?? null }));
 
     const [teks, setTeks] = useState<Record<FieldDaftar, string | null>>({ branchNilaiJual: null, smBerhak: null });
     const daftarNilai = (f: FieldDaftar) => { const t = teks[f]; return t === null ? (setelan?.[f] ?? []) : normDaftar(t); };
