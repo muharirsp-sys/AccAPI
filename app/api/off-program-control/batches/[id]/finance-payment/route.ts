@@ -114,6 +114,7 @@ export async function POST(request: Request, context: Context) {
             isFullyPaid,
             uploadedProofName,
         });
+        let auditGagal = false;
         const [payment] = await db.transaction(async (tx) => {
             // AM-023 (H12): baca & cek di atas terjadi DI LUAR transaksi — dua pembayaran bersamaan
             // atas item yang sama sama-sama lolos "alreadyPaid". Kunci batch, lalu cek ulang snapshot
@@ -180,21 +181,25 @@ export async function POST(request: Request, context: Context) {
             ...(isFullyPaid ? { paidAt: now } : {}),
             updatedAt: now,
             }).where(eq(offBatch.id, id));
+            // S6-0b: audit ikut transaksi — galat audit = seluruh pembayaran di-rollback (dulu pembayaran
+            // tersimpan tanpa jejak audit). Penanda: galat di dalam callback = rollback pasti, bukti PDF boleh dibuang.
+            await writeOffAudit({
+                batchId: id,
+                actor,
+                action: "finance_payment_added",
+                fromStatus: data.batch.financeStatus,
+                toStatus: isFullyPaid ? "Paid" : "Partial Paid",
+                note,
+                metadata: { paymentNo, itemIds, selectedItemCount: itemIds.length, selectedTotal: paidAmount, paymentMethod, proofName: generatedProof.fileName, uploadedProofName, hasUploadedProof: hasProof, totalPaidAfter, remainingAmount },
+            }, tx).catch((error: unknown) => { auditGagal = true; throw error; });
             return [createdPayment];
         }).catch(async (error: unknown) => {
-            if (error instanceof Error && error.message === OFF_PAYMENT_CONFLICT) {
+            // Konflik & galat audit terjadi DI DALAM transaksi (rollback pasti) -> bukti tanpa pembayaran dibuang.
+            // Galat lain (mis. saat COMMIT) bisa ambigu: bukti dibiarkan agar pembayaran tersimpan tak kehilangan berkas.
+            if (auditGagal || (error instanceof Error && error.message === OFF_PAYMENT_CONFLICT)) {
                 await unlink(generatedProof.filePath).catch(() => undefined); // bukti tanpa pembayaran
             }
             throw error;
-        });
-        await writeOffAudit({
-            batchId: id,
-            actor,
-            action: "finance_payment_added",
-            fromStatus: data.batch.financeStatus,
-            toStatus: isFullyPaid ? "Paid" : "Partial Paid",
-            note,
-            metadata: { paymentNo, itemIds, selectedItemCount: itemIds.length, selectedTotal: paidAmount, paymentMethod, proofName: generatedProof.fileName, uploadedProofName, hasUploadedProof: hasProof, totalPaidAfter, remainingAmount },
         });
         const updated = await getBatchWithItems(id);
         return NextResponse.json({
