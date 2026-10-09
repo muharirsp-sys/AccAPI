@@ -3,8 +3,9 @@
  *   GT/TT, cabang beracuan NILAI_JUAL, SM dalam skema, hierarki (PengaturanHierarki.tsx), akun belum ditautkan, riwayat.
  *   Konstanta gagal dibaca = editor DIKUNCI (AM-020): GET gagal, atau GET 200 dengan `konstantaSumber: "gagal_baca"` (angkanya
  *   bawaan, bukan tersimpan) — angka bawaan tidak pernah tampil sebagai tersimpan dan tidak ikut tersimpan.
- *   Versi (AM-045): `konstantaVersi` (updatedAt ISO, null = belum pernah disimpan) dari GET/PATCH dikirim balik saat PATCH konstanta;
- *   409 KONSTANTA_BERUBAH → dialog konflik, draf basi tidak dikirim lagi, muat ulang. Riwayat nilai lama → baru (BL-33) → VariantNote.
+ *   Versi (AM-045): draf konstanta menyimpan versi DASAR-nya (versi setelan saat draf mulai dibuat) dan versi itulah yang dikirim
+ *   saat PATCH konstanta — jawaban PATCH lain atau muat ulang tidak menyegarkannya; 409 KONSTANTA_BERUBAH → dialog konflik, draf
+ *   basi tidak dikirim lagi, muat ulang. Riwayat nilai lama → baru (BL-33) → VariantNote.
  *   Jawaban PATCH tidak pasti (putus, ≥ 502, bukan JSON) → "hasilnya belum pasti" + muat ulang; tulis terkunci selama memuat ulang.
  * Caller: app/(dashboard)/insentif-sales/pengaturan/page.tsx.
  * Dependensi: ./Rangka (InsentifRangka), ./PengaturanHierarki, ./data (formatRp), components/fiori/{core,interactive},
@@ -89,7 +90,14 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
     // AM-020: angka dari "gagal_baca" adalah bawaan — bukan dasar draf, bukan "tersimpan".
     const tersimpan = useMemo(() => (setelan && setelan.konstantaSumber !== "gagal_baca" ? parseKonstanta(setelan.konstanta) : null), [setelan]);
     const bawaan = useMemo(() => (setelan?.konstantaBawaan ? parseKonstanta(setelan.konstantaBawaan) : DEFAULT_KONSTANTA), [setelan]);
-    const [draf, setDraf] = useState<Konstanta | null>(null);
+    /**
+     * Draf + versi DASAR-nya (AM-045): versi setelan saat draf mulai dibuat (null → isi). Versi dasar inilah yang dikirim saat simpan.
+     * Versi terbaru (dari jawaban PATCH penyebut AO/daftar, atau muat ulang setelah "belum pasti") tidak boleh menggantikannya:
+     * draf berbasis angka lama + versi baru = CAS lolos dan perubahan admin lain kembali diam-diam.
+     */
+    const [drafDasar, setDrafDasar] = useState<{ nilai: Konstanta; versi: string | null } | null>(null);
+    const draf = drafDasar?.nilai ?? null;
+    const setDraf = (k: Konstanta | null) => setDrafDasar((d) => (k === null ? null : { nilai: k, versi: d ? d.versi : setelan?.konstantaVersi ?? null }));
     const nilaiK = draf ?? tersimpan;
     const berubah = useMemo(() => (draf && tersimpan ? KONSTANTA_FIELDS.filter((f) => getField(draf, f.path) !== getField(tersimpan, f.path)) : []), [draf, tersimpan]);
 
@@ -120,11 +128,11 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
     }
 
     async function simpanKonst() {
-        if (!draf || !berubah.length) return;
+        if (!drafDasar || !berubah.length) return;
         const jumlah = berubah.length;
         try {
             // AM-045: versi yang dimuat; server menolak (409) bila admin lain menyimpan duluan, dan 400 bila versi tidak dikirim.
-            await patch({ konstanta: draf, konstantaVersi: setelan?.konstantaVersi ?? null });
+            await patch({ konstanta: drafDasar.nilai, konstantaVersi: drafDasar.versi });
         } catch (e) {
             if (!(e instanceof KonstantaBerubah)) throw e;
             // Draf berbasis angka lama: mengirimnya lagi = mengembalikan perubahan admin lain. Tidak dikirim; muat ulang dulu.
@@ -162,7 +170,8 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
         : gagalBacaKonst ? "Editor konstanta terkunci: konstanta tersimpan gagal dibaca"
             : alasanKunci ?? (konflik ? "Konstanta sudah diubah admin lain — muat ulang dulu" : undefined);
     const alasanSimpan = alasanKonst ?? tanpaIzin ?? (berubah.length ? undefined : "Belum ada perubahan konstanta");
-    const versiTeks = gagalBacaKonst ? "gagal dibaca" : setelan?.konstantaVersi ? `tersimpan ${jamWita(setelan.konstantaVersi)} WITA` : "belum pernah disimpan";
+    const teksVersi = (v: string | null | undefined) => (v ? `tersimpan ${jamWita(v)} WITA` : "belum pernah disimpan");
+    const versiTeks = gagalBacaKonst ? "gagal dibaca" : teksVersi(setelan?.konstantaVersi);
     const dlgDaftar = dialog?.kind === "daftar" ? DAFTAR.find((x) => x.field === dialog.field) : undefined;
     const tambah = dlgDaftar && setelan ? daftarNilai(dlgDaftar.field).filter((v) => !setelan[dlgDaftar.field].includes(v)) : [];
     const hilang = dlgDaftar && setelan ? setelan[dlgDaftar.field].filter((v) => !daftarNilai(dlgDaftar.field).includes(v)) : [];
@@ -318,7 +327,7 @@ export default function Pengaturan({ permKeys }: { permKeys: string[] }) {
                 title={`Simpan ${berubah.length} perubahan konstanta?`} confirmLabel="Simpan" confirmDisabled={alasanSimpan} onConfirm={simpanKonst}
                 facts={[
                     ...berubah.map((f): [string, string] => [`${f.grup} · ${f.label}`, `${tampil(getField(tersimpan ?? DEFAULT_KONSTANTA, f.path), f.kind)} → ${tampil(getField(draf ?? DEFAULT_KONSTANTA, f.path), f.kind)}`]),
-                    ["Versi dasar", `${versiTeks} — ditolak bila admin lain menyimpan lebih dulu`],
+                    ["Versi dasar", `${drafDasar ? teksVersi(drafDasar.versi) : versiTeks} — ditolak bila admin lain menyimpan sesudahnya`],
                     ["Berlaku untuk", "Setiap perhitungan sesudah disimpan — semua sales, SPV, dan SM, termasuk periode lampau yang belum dibayar"],
                     ["Tidak berubah", "Pembayaran yang sudah tercatat tetap memakai bruto tersimpan"],
                 ]} />
