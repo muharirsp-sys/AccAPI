@@ -128,6 +128,9 @@ PERMISSION_MODULES = [
     "sppd",
     "finance",
     "principles",
+    # Ada di registry Next (lib/rbac/registry.ts) dan dicek routers/master_barang.py. Tanpa
+    # entri ini izin group-nya dibuang diam-diam oleh normalize_permissions -> hanya admin lolos.
+    "master_barang",
     "summary",
     "validator",
     "users",
@@ -151,6 +154,9 @@ PERMISSION_ACTIONS = [
     "upload_proof",
     "post_accurate",
     "retry_post",
+    "resolve_unknown",
+    "override_duplicate",
+    "repost_payment",
     "run",
     "email",
     "sync",
@@ -921,6 +927,7 @@ _AUTH_VERIFY_CACHE: Dict[str, Tuple[float, Optional[str]]] = {}
 # D4: permissions per email hasil verify — pengganti baca kolom user.permissions dari sqlite.
 _AUTH_VERIFY_PERMS: Dict[str, Tuple[float, Any]] = {}
 _AUTH_VERIFY_TTL = 60.0
+_AUTH_VERIFY_PERMS_GRACE = 30.0  # izin > sesi: cek izin dalam request yang sesinya baru divalidasi tidak pernah kosong
 
 def _verify_session_via_next(ba_token: str, raw_cookie: str) -> Optional[str]:
     import time
@@ -928,25 +935,60 @@ def _verify_session_via_next(ba_token: str, raw_cookie: str) -> Optional[str]:
     if cached and cached[0] > time.time():
         return cached[1]
     result: Optional[str] = None
+    expires = time.time() + _AUTH_VERIFY_TTL
     try:
         import requests
         r = requests.get(AUTH_VERIFY_URL, headers={"cookie": raw_cookie}, timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            if data.get("ok"):
-                role = s(data.get("role")).lower() or "viewer"
-                if role not in {"admin", "manager", "finance", "staff", "viewer"}:
-                    role = "viewer"
-                identity = s(data.get("email")).lower() or s(data.get("name"))
-                result = f"betterauth|{role}|{identity}"
-                if s(data.get("email")):
-                    _AUTH_VERIFY_PERMS[s(data.get("email")).lower()] = (
-                        time.time() + _AUTH_VERIFY_TTL, data.get("permissions"))
+        if r.status_code not in (200, 401, 403):
+            # 5xx/lainnya = verify sesaat gagal (mis. DB Next), BUKAN sesi invalid: jangan
+            # di-cache, supaya satu gangguan tidak mengunci user selama TTL.
+            print(f"[AUTH VERIFY] {AUTH_VERIFY_URL} HTTP {r.status_code}")
+            return None
+        data = r.json() if r.status_code == 200 else {}
+        if data.get("ok"):
+            role = s(data.get("role")).lower() or "viewer"
+            if role not in {"admin", "manager", "finance", "staff", "viewer"}:
+                role = "viewer"
+            identity = s(data.get("email")).lower() or s(data.get("name"))
+            result = f"betterauth|{role}|{identity}"
+            if s(data.get("email")):
+                # AM-010: izin EFEKTIF dari resolver Next (group otoritatif) bila tersedia.
+                # ponytail: jalur `permissions` legacy hanya untuk Next lama saat deploy
+                # tidak serempak; hapus setelah semua image Next mengirim effectivePermissions.
+                if "effectivePermissions" in data:
+                    effective = data["effectivePermissions"]
+                    profile = {"__custom": True, "__effective": True,
+                               "permissions": effective if isinstance(effective, list) else []}
+                else:
+                    profile = data.get("permissions")
+                # Izin hidup sedikit lebih lama dari sesinya: selama sesi ter-cache valid, izinnya
+                # pasti ada. Profil hilang/kedaluwarsa ditolak (fail-closed) di _effective_permissions.
+                _AUTH_VERIFY_PERMS[s(data.get("email")).lower()] = (expires + _AUTH_VERIFY_PERMS_GRACE, profile)
     except Exception as e:
         print(f"[AUTH VERIFY] gagal panggil {AUTH_VERIFY_URL}: {e}")
         return None  # jangan cache kegagalan network — fallback sqlite di caller
-    _AUTH_VERIFY_CACHE[ba_token] = (time.time() + _AUTH_VERIFY_TTL, result)
+    _AUTH_VERIFY_CACHE[ba_token] = (expires, result)
     return result
+
+
+def _effective_permissions(username: str) -> Optional[Dict[str, Set[str]]]:
+    """Izin efektif Next untuk identitas ini.
+
+    None = jalur legacy sah (tanpa AUTH_VERIFY_URL, atau Next lama tanpa effectivePermissions).
+    {}   = verify aktif tetapi tidak ada profil hidup -> tolak semua (fail-closed; dulu jatuh ke
+           preset role, termasuk jalan pintas admin).
+    """
+    if not AUTH_VERIFY_URL or not s(username).startswith("betterauth|"):
+        return None
+    import time
+    email = s(username.split("|", 2)[2] if username.count("|") >= 2 else "").lower()
+    cached = _AUTH_VERIFY_PERMS.get(email)
+    if not cached or cached[0] <= time.time():
+        return {}
+    profile = cached[1]
+    if not (isinstance(profile, dict) and profile.get("__effective") is True):
+        return None
+    return normalize_permissions(profile.get("permissions", []))
 
 def get_current_user(request: Request) -> Optional[str]:
     # ponytail: auth Python paralel dihapus (#7) — satu-satunya sumber identitas
@@ -1057,6 +1099,12 @@ def get_user_permissions_info(username: str) -> Tuple[Dict[str, Set[str]], bool]
 def user_has_permission(username: Optional[str], module: str, action: str) -> bool:
     if not username:
         return False
+    # AM-010: izin efektif Next = satu sumber kebijakan. Role legacy (termasuk jalan pintas
+    # admin dan preset viewer untuk role tak dikenal) tidak boleh memberi kembali akses yang
+    # sudah dibatasi Access Group.
+    effective = _effective_permissions(username)
+    if effective is not None:
+        return s(action).lower() in effective.get(s(module).lower(), set())
     if is_admin_user(username):
         return True
     module = s(module).lower()
@@ -1079,7 +1127,7 @@ def user_has_permission(username: Optional[str], module: str, action: str) -> bo
             "dashboard": {"view"},
             "payments": {"view", "export"},
             "sppd": {"view", "download"},
-            "finance": {"view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update", "edit"},
+            "finance": {"view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update", "edit", "resolve_unknown", "override_duplicate", "repost_payment"},
             "principles": {"view"},
         },
         "staff": {
@@ -1160,40 +1208,39 @@ def append_error_log(where: str, err: Exception, context: Optional[Dict[str, Any
 # ---------------------------
 # Payments (LPB) helpers
 # ---------------------------
-_PAYMENTS_DB_CACHE: Optional[Dict[str, Any]] = None
-_PAYMENTS_DB_MTIME: float = 0.0
-_PAYMENTS_DB_EMPTY: Dict[str, Any] = {"lpb": {}, "submissions": {}, "drafts": {}, "finance_mappings": {}, "proofs": {}, "sppd_settings": {}}
+_PAYMENTS_DB_SECTIONS = ("lpb", "submissions", "drafts", "finance_mappings", "proofs", "sppd_settings")
+
+
+class PaymentsStoreError(RuntimeError):
+    """payments.json ada tetapi tidak bisa dibaca sebagai ledger — BUKAN ledger kosong."""
 # ponytail: satu lock global cukup karena payments.json adalah satu file tunggal.
 # Ceiling: serializes semua write — tidak ada parallelism untuk mutation routes.
 # Upgrade path: per-resource lock jika ada multiple JSON stores.
 _PAYMENTS_DB_LOCK: asyncio.Lock = asyncio.Lock()
 
 def load_payments_db() -> Dict[str, Any]:
-    global _PAYMENTS_DB_CACHE, _PAYMENTS_DB_MTIME
+    """Ledger payments sebagai objek BARU per panggilan.
+
+    AM-012: dulu objek cache modul dibagikan by reference, jadi mutasi request yang lalu
+    `return 400` tanpa save tetap tersaji dan ikut tersimpan oleh save berikutnya; dan
+    read/parse error dijawab ledger kosong yang boleh ditulis balik (seluruh LPB hilang).
+    ponytail: baca+parse file tiap panggilan (tanpa cache). Ceiling: O(ukuran file) per
+    request; kembalikan cache teks ber-mtime bila payments.json membesar dan terukur lambat.
+    """
     if not PAYMENTS_DB_PATH or not os.path.exists(PAYMENTS_DB_PATH):
-        return dict(_PAYMENTS_DB_EMPTY)
+        return {k: {} for k in _PAYMENTS_DB_SECTIONS}  # belum diinisialisasi = kosong sah
     try:
-        mtime = os.path.getmtime(PAYMENTS_DB_PATH)
-        if _PAYMENTS_DB_CACHE is not None and mtime == _PAYMENTS_DB_MTIME:
-            return _PAYMENTS_DB_CACHE
         with open(PAYMENTS_DB_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:
-        return dict(_PAYMENTS_DB_EMPTY)
+    except Exception as e:
+        raise PaymentsStoreError(f"payments.json tidak bisa dibaca: {e}") from e
     if not isinstance(data, dict):
-        return dict(_PAYMENTS_DB_EMPTY)
-    data.setdefault("lpb", {})
-    data.setdefault("submissions", {})
-    data.setdefault("drafts", {})
-    data.setdefault("finance_mappings", {})
-    data.setdefault("proofs", {})
-    data.setdefault("sppd_settings", {})
-    _PAYMENTS_DB_CACHE = data
-    _PAYMENTS_DB_MTIME = mtime
+        raise PaymentsStoreError(f"payments.json bukan objek JSON ({type(data).__name__})")
+    for k in _PAYMENTS_DB_SECTIONS:
+        data.setdefault(k, {})
     return data
 
 def save_payments_db(data: Dict[str, Any]) -> None:
-    global _PAYMENTS_DB_CACHE, _PAYMENTS_DB_MTIME
     if not PAYMENTS_DB_PATH:
         return
     os.makedirs(os.path.dirname(PAYMENTS_DB_PATH), exist_ok=True)
@@ -1201,8 +1248,6 @@ def save_payments_db(data: Dict[str, Any]) -> None:
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=True, indent=2)
     os.replace(tmp_path, PAYMENTS_DB_PATH)
-    _PAYMENTS_DB_CACHE = data
-    _PAYMENTS_DB_MTIME = os.path.getmtime(PAYMENTS_DB_PATH)
 
 async def load_and_lock_payments_db():
     """Acquire _PAYMENTS_DB_LOCK lalu load payments.json.
@@ -1548,18 +1593,46 @@ def parse_payments_backup_upload(content: bytes) -> List[Tuple[str, Dict[str, An
         )
     return rows
 
-def max_sppd_sequence_from_records(records: List[Dict[str, Any]]) -> int:
+def sppd_no_year(sppd_no: str) -> Optional[int]:
+    """Tahun nomor SPPD = 4 digit terakhir, hanya bila 2000–9999 (klem sama dengan normalize_sppd_settings).
+    Nomor tak standar ("045/SPA/0123") = tanpa tahun, bukan tahun 123."""
+    m = re.search(r"(\d{4})\s*$", s(sppd_no))
+    year = int(m.group(1)) if m else None
+    return year if year is not None and 2000 <= year <= 9999 else None
+
+
+def max_sppd_sequence_from_records(records: List[Dict[str, Any]], year: Optional[int] = None) -> int:
+    """Nomor urut SPPD tertinggi di records. `year`: hanya nomor bertahun itu (tahun = 4 digit terakhir nomor);
+    nomor tanpa tahun ikut dihitung (fail-closed: lebih baik urutan naik daripada nomor ganda)."""
     max_seq = 0
     for rec in records:
         sppd_no = s(rec.get("sppd_no", ""))
         m = re.match(r"^\s*(\d+)\s*/", sppd_no)
         if not m:
             continue
+        if year is not None:
+            y = sppd_no_year(sppd_no)
+            if y is not None and y != int(year):
+                continue
         try:
             max_seq = max(max_seq, int(m.group(1)))
         except Exception:
             continue
     return max_seq
+
+
+def raise_sppd_sequence_from_records(db: Dict[str, Any], records: List[Dict[str, Any]], now: pd.Timestamp) -> int:
+    """Restore backup (D-05/C10): urutan SPPD tahun berjalan (WITA) dinaikkan ke nomor tertinggi yang dipulihkan
+    untuk tahun itu — TIDAK PERNAH diturunkan. Tanpa ini nomor yang dipulihkan bisa terbit ulang (nomor ganda)."""
+    settings = get_sppd_settings(db)
+    year = int(now.year)
+    current = sppd_last_sequence_for_year(settings, year)
+    restored = max_sppd_sequence_from_records(records, year)
+    if restored > current:
+        settings["last_sequence"] = restored
+        settings["sequence_year"] = year
+        db["sppd_seq"] = restored
+    return restored
 
 def rebuild_payment_submissions(db: Dict[str, Any]) -> None:
     submissions = dict(db.get("submissions", {}) or {})
@@ -1668,6 +1741,48 @@ def format_sppd_number_with_template(seq: int, dt: pd.Timestamp, template: str) 
     except Exception:
         return f"{num}/SPA/PDSB/{month}/{year}"
 
+# Tinjauan S6-0a: galat posting purchase-payment yang TIDAK membuktikan Accurate menolak. Record lama berstatus
+# "failed" (dicatat halaman Finance sebelum attempt server ada) dengan galat seperti ini mungkin SUDAH tersimpan di
+# Accurate, sedangkan tabel attempt server kosong setelah deploy -> diperlakukan unknown (wajib resolve). Pola =
+# pesan proxy/halaman lama: timeout 30 dtk (504), non-JSON (502), galat parse JSON peramban mana pun ("JSON",
+# "Unexpected" — Chrome/Safari/Firefox berbeda kalimat), gerbang HTML, jaringan/fetch, soket/stream putus, galat
+# proxy umum, fallback halaman. Galat kosong ikut (tidak bisa dibuktikan).
+AMBIGUOUS_POST_ERROR = re.compile(
+    r"time-?out|timed out|tidak merespons|JSON|Unexpected|<html"
+    r"|Bad Gateway|Gateway Time|Service Unavailable|\bHTTP 50\d\b|failed to fetch|fetch failed|NetworkError"
+    r"|Load failed|kesalahan jaringan|network|ECONNRESET|ETIMEDOUT|socket hang up|other side closed|terminated"
+    r"|aborted|Premature close|Proxy request failed|^Gagal posting purchase-payment Accurate\.?$",
+    re.I,
+)
+
+
+def effective_post_status(rec: Dict[str, Any]) -> str:
+    """accurate_post_status yang BERLAKU: "failed" dengan galat ambigu = "unknown" (lihat AMBIGUOUS_POST_ERROR)."""
+    status = s(rec.get("accurate_post_status", ""))
+    error = s(rec.get("accurate_post_error", "")).strip()
+    if status == "failed" and (not error or AMBIGUOUS_POST_ERROR.search(error)):
+        return "unknown"
+    return status
+
+
+def wita_now() -> pd.Timestamp:
+    """Waktu sekarang di WITA (naif). Server produksi berjalan UTC; tanggal terbit SPPD (nomor, bulan romawi,
+    tahun urutan) mengikuti WITA. ponytail: offset tetap UTC+8 — Indonesia tanpa DST."""
+    return (pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=8)).tz_localize(None)
+
+
+def sppd_last_sequence_for_year(settings: Dict[str, Any], year: int) -> int:
+    """Nomor urut terakhir yang berlaku untuk tahun terbit `year` (D-05/C10): tahun yang lebih baru dari tahun
+    urutan tersimpan mulai dari 0 (nomor pertama 001). `sequence_year` kosong (data sebelum aturan ini) diisi
+    get_sppd_settings dari nomor SPPD yang sudah terbit; tanpa nomor terbit sama sekali = dianggap tahun berjalan
+    (urutan diteruskan, tidak pernah turun). ponytail: tahun terbit lebih tua dari tahun urutan
+    (jam server mundur melewati tahun) ikut meneruskan urutan — naik terus, tanpa urutan per tahun."""
+    stored_year = settings.get("sequence_year")
+    if stored_year and int(year) > int(stored_year):
+        return 0
+    return int(settings.get("last_sequence", 0))
+
+
 def default_sppd_settings(db: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     try:
         start_seq = int(os.getenv("SPPD_SEQ_START", "6"))
@@ -1681,6 +1796,8 @@ def default_sppd_settings(db: Optional[Dict[str, Any]] = None) -> Dict[str, Any]
             pass
     return {
         "last_sequence": max(0, legacy_last),
+        # Tahun terbit (WITA) pemilik last_sequence; diisi sistem saat nomor terbit / setelan / restore.
+        "sequence_year": None,
         "number_template": "{seq:03d}/SPA/PDSB/{roman_month}/{year}",
         "fixed_jaminan_date": "2026-02-19",
         "maturity_months": 6,
@@ -1695,6 +1812,11 @@ def normalize_sppd_settings(raw: Dict[str, Any], db: Optional[Dict[str, Any]] = 
         settings["last_sequence"] = max(0, int(settings.get("last_sequence", defaults["last_sequence"])))
     except Exception:
         settings["last_sequence"] = defaults["last_sequence"]
+    try:
+        year = settings.get("sequence_year")
+        settings["sequence_year"] = int(year) if year not in (None, "") and 2000 <= int(year) <= 9999 else None
+    except (TypeError, ValueError):
+        settings["sequence_year"] = None
     settings["number_template"] = s(settings.get("number_template", defaults["number_template"])) or defaults["number_template"]
     fixed_date = _normalize_yyyy_mm_dd(s(settings.get("fixed_jaminan_date", defaults["fixed_jaminan_date"])))
     settings["fixed_jaminan_date"] = fixed_date or defaults["fixed_jaminan_date"]
@@ -1708,15 +1830,34 @@ def normalize_sppd_settings(raw: Dict[str, Any], db: Optional[Dict[str, Any]] = 
         settings["items_per_page"] = defaults["items_per_page"]
     return settings
 
+def infer_sppd_sequence_year(db: Dict[str, Any]) -> Optional[int]:
+    """Tahun terbit terbaru dari nomor SPPD yang sudah terbit (lpb + submissions; tahun = 4 digit terakhir nomor).
+    Untuk data sebelum sequence_year ada (review S6-0a): tanpa ini, nomor pertama yang terbit setelah 1 Januari
+    meneruskan urutan tahun lalu (046) alih-alih 001."""
+    years = []
+    for section in ("lpb", "submissions"):
+        records = db.get(section) if isinstance(db.get(section), dict) else {}
+        for rec in records.values():
+            sppd_no = s(rec.get("sppd_no", "")) if isinstance(rec, dict) else ""
+            year = sppd_no_year(sppd_no) if re.match(r"^\s*\d+\s*/", sppd_no) else None
+            if year is not None:
+                years.append(year)
+    return max(years) if years else None
+
+
 def get_sppd_settings(db: Dict[str, Any]) -> Dict[str, Any]:
     settings = normalize_sppd_settings(db.get("sppd_settings", {}), db)
+    if settings.get("sequence_year") is None:
+        settings["sequence_year"] = infer_sppd_sequence_year(db)
     db["sppd_settings"] = settings
     return settings
 
 def next_sppd_number(db: Dict[str, Any], dt: pd.Timestamp) -> Tuple[int, str, Dict[str, Any]]:
+    """Nomor SPPD berikutnya untuk tanggal terbit `dt` (WITA): tahun baru otomatis mulai 001 (D-05/C10)."""
     settings = get_sppd_settings(db)
-    next_seq = int(settings.get("last_sequence", 0)) + 1
+    next_seq = sppd_last_sequence_for_year(settings, int(dt.year)) + 1
     settings["last_sequence"] = next_seq
+    settings["sequence_year"] = max(int(dt.year), int(settings.get("sequence_year") or 0))
     db["sppd_seq"] = next_seq
     return next_seq, format_sppd_number_with_template(next_seq, dt, s(settings.get("number_template", ""))), settings
 

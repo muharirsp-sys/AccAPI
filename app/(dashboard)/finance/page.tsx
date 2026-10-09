@@ -3,18 +3,19 @@
 /*
  * Tujuan: Halaman Finance untuk review, mapping Accurate, upload bukti transfer, format nilai decimal, dan posting purchase-payment.
  * Caller: Next.js App Router route `/finance`.
- * Dependensi: FastAPI payments finance endpoints, accurateFetch Accurate proxy, DatePickerField, lucide-react, sonner.
+ * Dependensi: FastAPI payments finance endpoints, command /api/finance/purchase-payment (klaim attempt server), DatePickerField, lucide-react, sonner.
  * Main Functions: FinancePage, fetchData, formatMoneyDisplay, handleSaveMapping, handleMarkStatus, handleApproveTransfer.
  * Side Effects: HTTP call ke FastAPI, upload bukti transfer, post Accurate purchase-payment/bulk-save.do, update payments.json.
  */
 
-import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, DollarSign, Download, FileUp, RefreshCcw, Save, Search, Send, XCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertCircle, AlertTriangle, CheckCircle2, DollarSign, Download, FileUp, RefreshCcw, Save, Search, Send, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import { accurateFetch } from "@/lib/apiFetcher";
 import DatePickerField from "@/components/ui/DatePickerField";
 import { fuzzyMatch } from "@/lib/fuzzySearch";
 import { resolveApiBase } from "@/lib/apiBase";
+import { certainlyNotSent, postStatusNote, purchasePaymentConflict } from "@/lib/finance-post-status";
+import { usePermKeys } from "@/components/SidebarLayout";
 
 interface FinanceMapping {
     principle?: string;
@@ -61,6 +62,8 @@ interface FinanceRecord {
     transfer_proof?: ProofMeta;
     accurate_post_status?: string;
     accurate_post_error?: string;
+    // Status tersimpan apa adanya; accurate_post_status = status yang BERLAKU ("failed" lama bergalat ambigu = unknown).
+    accurate_post_status_raw?: string;
     accurate_purchase_payment_number?: string;
     mapping?: FinanceMapping;
 }
@@ -179,37 +182,13 @@ function toAccurateDate(ymd: string) {
     return `${day}/${month}/${year}`;
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-    return value && typeof value === "object" ? value as Record<string, unknown> : {};
-}
-
 function getErrorMessage(err: unknown, fallback: string) {
     return err instanceof Error ? err.message : fallback;
 }
 
-function extractAccurateIdentity(data: unknown) {
-    const first = Array.isArray(data) ? data[0] : data;
-    const firstRecord = asRecord(first);
-    const body = asRecord(firstRecord.d || firstRecord.data || firstRecord);
-    const nestedR = asRecord(body.r);
-    const nestedD = asRecord(body.d);
-    return {
-        number: String(body.number || nestedR.number || nestedD.number || ""),
-        id: String(body.id || nestedR.id || nestedD.id || ""),
-    };
-}
-
-function assertBulkSuccess(data: unknown) {
-    if (Array.isArray(data)) {
-        const failed = data.filter((item) => !asRecord(item).s);
-        if (failed.length > 0) {
-            const first = asRecord(failed[0]);
-            throw new Error(JSON.stringify(first.d || first, null, 2));
-        }
-    }
-}
-
 export default function FinancePage() {
+    // D-14: hanya Finance (finance.resolve_unknown) yang menyelesaikan status tidak pasti — tombol mengikuti, server menegakkan.
+    const canResolve = usePermKeys().has("finance.resolve_unknown");
     const [loading, setLoading] = useState(true);
     const [records, setRecords] = useState<FinanceRecord[]>([]);
     const [totalAll, setTotalAll] = useState("");
@@ -220,6 +199,7 @@ export default function FinancePage() {
     const [transferDates, setTransferDates] = useState<Record<string, string>>({});
     const [proofFiles, setProofFiles] = useState<Record<string, File | null>>({});
     const [busyKey, setBusyKey] = useState("");
+    const postingRef = useRef(new Set<string>());
 
     useEffect(() => {
         const today = new Date().toISOString().split("T")[0];
@@ -391,6 +371,18 @@ export default function FinancePage() {
 
     const handleApproveTransfer = async (record: FinanceRecord) => {
         const key = recordKey(record);
+        // Review #3: dua klik cepat sama-sama lolos sebelum state busy ter-render -> dua
+        // purchase-payment. Ref sinkron menahan klik kedua sejak awal.
+        if (postingRef.current.has(key)) return;
+        postingRef.current.add(key);
+        try {
+            await approveTransfer(record, key);
+        } finally {
+            postingRef.current.delete(key);
+        }
+    };
+
+    const approveTransfer = async (record: FinanceRecord, key: string) => {
         const transferDate = transferDates[key] || "";
         const mapping = mappingDrafts[key] || record.mapping || {};
         if (record.accurate_post_status === "posted") {
@@ -415,44 +407,171 @@ export default function FinancePage() {
         setBusyKey(key);
         let proof: ProofMeta | undefined;
         let payload: PurchasePaymentPayload[] = [];
+        let sent = false;
+        let accurateRes: unknown;
+        // Command server menolak SEBELUM klaim (4xx) = pasti belum terkirim ke Accurate.
+        let notSent = false;
+        // AM-014: "failed" hanya bila Accurate MENJAWAB menolak (atau gagal sebelum terkirim).
+        // Timeout/non-JSON/gateway/sukses tanpa id = "unknown": tombol posting dikunci sampai
+        // seseorang memeriksa purchase-payment di Accurate — mengulang buta = bayar dua kali.
+        const recordNotPosted = async (postStatus: "failed" | "unknown", message: string, response?: unknown) => {
+            // Kunci LOKAL dulu: bila pencatatan ke server gagal, tombol tetap terkunci (review #3).
+            if (postStatus === "unknown") {
+                setRecords((prev) => prev.map((r) => recordKey(r) === key ? { ...r, accurate_post_status: "unknown", accurate_post_error: message } : r));
+            }
+            if (!proof?.proof_id) return;
+            try {
+                await updateFinanceStatus(record, {
+                    status_pembayaran: "Sudah Transfer",
+                    transfer_date: transferDate,
+                    proof_id: proof.proof_id,
+                    accurate_post_status: postStatus,
+                    accurate_post_error: message.slice(0, 1000),
+                    ...(response === undefined ? {} : { accurate_post_response: response }),
+                    accurate_payload_digest: `${proof.sha256 || ""}:${JSON.stringify(payload).length}`,
+                });
+                await fetchData(dateFilter);
+            } catch {
+                // keep the original Accurate error visible
+            }
+        };
+        // C11: "Accurate menolak: …" dibedakan dari tanpa jawaban — keduanya TIDAK PASTI.
+        const unknownMessage = (message: string) => postStatusNote("unknown", message);
         try {
             const saved = await handleSaveMapping(record);
             if (!saved) return;
             proof = await uploadProof(key, record.transfer_proof);
             payload = buildPurchasePaymentPayload(record, mapping, proof, transferDate);
-            const accurateRes = await accurateFetch("/api/purchase-payment/bulk-save.do", "POST", payload);
-            assertBulkSuccess(accurateRes);
-            const identity = extractAccurateIdentity(accurateRes);
+            sent = true;
+            // AM-014 / C.12: server mengklaim attempt SEBELUM kirim, jadi reload / tab lain / user
+            // lain untuk himpunan faktur yang sama mendapat 409, bukan purchase-payment kedua.
+            const res = await fetch("/api/finance/purchase-payment", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ clientRef: key, payload }),
+            });
+            const out = await res.json().catch(() => null) as {
+                state?: string; accurateId?: string; accurateNumber?: string; message?: string; response?: unknown; error?: string;
+                generation?: number; currentGeneration?: number; claimed?: boolean; code?: string;
+                live?: { attemptId: string; state: string; accurateId: string; accurateNumber: string; targetDbId: string; sameRecord: boolean; sameTarget: boolean; stale?: boolean } | null;
+            } | null;
+            let posted: { id: string; number: string; note?: string } | null = null;
+            const conflict = res.status === 409 ? purchasePaymentConflict(out) : null;
+            if (conflict === "in_flight") {
+                // Tinjauan S6-0a: record INI sedang diposting sesi/tab lain — hasilnya dicatat sesi itu. Menulis
+                // "unknown" di sini bisa mendahului "posted"-nya lalu membuatnya tertolak (post_status_conflict).
+                toast.info("Record ini sedang diposting dari sesi lain — memuat ulang status.", { duration: 10000 });
+                await fetchData(dateFilter);
+                return;
+            }
+            if (conflict === "posted" && out?.live) {
+                // Attempt record INI di database INI sudah posted (mis. browser ditutup sebelum mencatat).
+                // Record/draft/database lain dengan faktur yang sama TIDAK ditandai posted (review M3).
+                posted = { id: out.live.accurateId, number: out.live.accurateNumber, note: `attempt server ${out.live.attemptId} sudah posted ${out.live.accurateNumber}` };
+            } else if (res.status === 409) {
+                const why = out?.live?.state === "posted"
+                    ? `${out.error} Dari record/database lain (${out.live.targetDbId}) — periksa sebelum menandai apa pun.`
+                    : out?.error || "attempt sebelumnya belum pasti";
+                await recordNotPosted("unknown", why, out?.live);
+                toast.error(unknownMessage(why), { duration: 15000 });
+                return;
+            } else if (!res.ok || !out?.state) {
+                // claimed:false (validasi/izin/sesi/DB sebelum klaim) = pasti belum terkirim -> tidak dikunci.
+                notSent = certainlyNotSent(res.status, out);
+                throw new Error(out?.error || `Command posting gagal (HTTP ${res.status})`);
+            } else {
+                accurateRes = out.response;
+                if (out.state !== "posted") {
+                    const failed = out.state === "rejected" || out.state === "not_sent";
+                    await recordNotPosted(failed ? "failed" : "unknown", out.message || out.state, out.response);
+                    toast.error(failed ? (out.message || out.state) : unknownMessage(out.message || out.state), { duration: 15000 });
+                    return;
+                }
+                posted = { id: out.accurateId || "", number: out.accurateNumber || "" };
+            }
             await updateFinanceStatus(record, {
                 status_pembayaran: "Sudah Transfer",
                 transfer_date: transferDate,
                 proof_id: proof.proof_id,
                 accurate_post_status: "posted",
-                accurate_purchase_payment_number: identity.number,
-                accurate_purchase_payment_id: identity.id,
-                accurate_post_response: accurateRes,
+                accurate_purchase_payment_number: posted.number,
+                accurate_purchase_payment_id: posted.id,
+                accurate_post_response: accurateRes ?? out?.live,
                 accurate_payload_digest: `${proof.sha256 || ""}:${JSON.stringify(payload).length}`,
+                ...(posted.note ? { resolution_note: posted.note } : {}),
             });
-            toast.success("Sudah transfer dan posted ke Accurate.");
+            toast.success(`Sudah transfer dan posted ke Accurate (${posted.number}).`);
             await fetchData(dateFilter);
         } catch (err: unknown) {
             const message = getErrorMessage(err, "Gagal posting purchase-payment Accurate.");
-            if (proof?.proof_id) {
-                try {
-                    await updateFinanceStatus(record, {
-                        status_pembayaran: "Sudah Transfer",
-                        transfer_date: transferDate,
-                        proof_id: proof.proof_id,
-                        accurate_post_status: "failed",
-                        accurate_post_error: message.slice(0, 1000),
-                        accurate_payload_digest: `${proof.sha256 || ""}:${JSON.stringify(payload).length}`,
-                    });
-                    await fetchData(dateFilter);
-                } catch {
-                    // keep the original Accurate error visible
-                }
-            }
-            toast.error(message);
+            // Belum sampai command, atau command menolak sebelum klaim = pasti tidak terkirim.
+            // Selain itu (jaringan putus ke command, 5xx, pencatatan "posted" ke FastAPI gagal)
+            // server MUNGKIN sudah mengirim: tidak pasti, attempt server tetap memblokir.
+            const outcome = !sent || notSent ? ({ kind: "rejected", message } as const) : ({ kind: "unknown", message } as const);
+            await recordNotPosted(outcome.kind === "rejected" ? "failed" : "unknown", message, accurateRes);
+            toast.error(outcome.kind === "rejected" ? message : unknownMessage(message), { duration: 15000 });
+        } finally {
+            setBusyKey("");
+        }
+    };
+
+    // Penyelesaian status TIDAK PASTI oleh manusia: dicatat server sebagai atestasi manual
+    // (accurate_post_resolution.source = "manual_attestation"), bukan verifikasi provider.
+    const handleResolveUnknown = async (record: FinanceRecord) => {
+        const found = window.prompt(
+            "Status posting TIDAK PASTI. Cek purchase-payment di Accurate.\n" +
+            "Ketik NOMOR purchase-payment bila SUDAH ADA, atau ketik TIDAK ADA bila benar-benar tidak ada (posting ulang dibuka).",
+        );
+        if (found === null) return;
+        const typed = found.trim();
+        // Review #3: pilihan berbahaya (buka posting ulang) harus diketik, bukan default Enter kosong.
+        if (!typed) {
+            toast.error("Tidak ada yang diubah. Ketik nomor purchase-payment, atau TIDAK ADA.");
+            return;
+        }
+        const number = typed.toUpperCase() === "TIDAK ADA" ? "" : typed;
+        // C.15: sumber pemeriksaan wajib — "TIDAK ADA" tanpa jejak di mana dicek bukan bukti.
+        const checked = window.prompt("Di mana Anda memeriksa? (mis. Accurate > Pembayaran Pembelian, database X, rentang tanggal Y)");
+        if (!checked?.trim()) {
+            toast.error("Sumber pemeriksaan wajib diisi. Tidak ada yang diubah.");
+            return;
+        }
+        // D-14: alasan WAJIB diketik manusia (dulu diisi otomatis "dicek manual di Accurate: …").
+        const reason = window.prompt("Alasan penyelesaian (min. 15 karakter): apa yang Anda lihat di Accurate dan mengapa?");
+        if (!reason || reason.trim().length < 15) {
+            toast.error("Alasan minimal 15 karakter. Tidak ada yang diubah.");
+            return;
+        }
+        const key = recordKey(record);
+        setBusyKey(key);
+        try {
+            const r = await fetch("/api/finance/purchase-payment/resolve", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    invoiceNos: (record.detail_invoices || []).map((it) => it.invoiceNo),
+                    decision: number ? "posted" : "absent",
+                    accurateNumber: number,
+                    reason: reason.trim(),
+                    checkedSource: checked.trim(),
+                }),
+            });
+            const rOut = await r.json().catch(() => ({})) as { code?: string; error?: string };
+            // 404 = unknown lama tanpa attempt server (sebelum command ada): lanjut ke catatan FastAPI.
+            const serverOk = r.ok || r.status === 404 || (rOut.code === "already_posted" && Boolean(number));
+            if (!serverOk) throw new Error(rOut.error || `Penyelesaian attempt server gagal (HTTP ${r.status})`);
+            await updateFinanceStatus(record, {
+                status_pembayaran: "Sudah Transfer",
+                transfer_date: record.transfer_date || "",
+                proof_id: record.transfer_proof?.proof_id || "",
+                accurate_post_status: number ? "posted" : "failed",
+                ...(number ? { accurate_purchase_payment_number: number } : { accurate_post_error: "dicek manual: tidak ada di Accurate" }),
+                resolution_note: number ? `dicek manual di Accurate: ${number} ada` : "dicek manual di Accurate: tidak ditemukan",
+            });
+            toast.success(number ? `Ditandai posted (manual): ${number}` : "Ditandai tidak ada di Accurate — boleh posting ulang.");
+            await fetchData(dateFilter);
+        } catch (err: unknown) {
+            toast.error(getErrorMessage(err, "Gagal menyimpan penyelesaian."));
         } finally {
             setBusyKey("");
         }
@@ -526,6 +645,7 @@ export default function FinancePage() {
                                     const isBusy = busyKey === key;
                                     const posted = record.accurate_post_status === "posted";
                                     const failedPost = record.accurate_post_status === "failed";
+                                    const unknownPost = record.accurate_post_status === "unknown";
                                     return (
                                         <tr key={key} className="hover:bg-white/[0.02] align-top">
                                             <td className="px-4 py-3 font-mono font-bold text-slate-300 whitespace-nowrap">
@@ -572,13 +692,20 @@ export default function FinancePage() {
                                                     {record.status_pembayaran || "Belum Transfer"}
                                                 </span>
                                                 {posted && <div className="mt-2 text-[11px] text-emerald-400">Posted Accurate {record.accurate_purchase_payment_number || ""}</div>}
-                                                {failedPost && <div className="mt-2 max-w-[220px] text-[11px] text-red-300 truncate" title={record.accurate_post_error}>Post gagal: {record.accurate_post_error}</div>}
+                                                {failedPost && <div className="mt-2 max-w-[220px] text-[11px] text-red-300 truncate" title={record.accurate_post_error}>{postStatusNote("failed", record.accurate_post_error || "")}</div>}
+                                                {unknownPost && <div className="mt-2 max-w-[260px] text-[11px] text-amber-300 whitespace-pre-wrap break-words">{postStatusNote("unknown", record.accurate_post_error || "", record.accurate_post_status_raw || "unknown")}</div>}
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div className="flex flex-col gap-2 w-[190px]">
-                                                    <button disabled={isBusy || posted} onClick={() => handleApproveTransfer(record)} className="inline-flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold px-3 py-2 rounded hover:bg-emerald-500 disabled:opacity-50">
+                                                    <button disabled={isBusy || posted || unknownPost} onClick={() => handleApproveTransfer(record)} className="inline-flex items-center justify-center gap-2 bg-emerald-600 text-white font-bold px-3 py-2 rounded hover:bg-emerald-500 disabled:opacity-50">
                                                         <Send size={14} /> Sudah Transfer
                                                     </button>
+                                                    {unknownPost && (
+                                                        <button disabled={isBusy || !canResolve} onClick={() => handleResolveUnknown(record)} title={canResolve ? undefined : "Hanya Finance (finance.resolve_unknown) yang boleh menyelesaikan status tidak pasti."} className="inline-flex items-center justify-center gap-1 bg-amber-500/10 border border-amber-500/30 text-amber-300 px-2 py-1.5 rounded hover:bg-amber-500/20 disabled:opacity-50">
+                                                            <AlertTriangle size={13} /> Sudah dicek di Accurate
+                                                        </button>
+                                                    )}
+                                                    {unknownPost && !canResolve && <div className="text-[10px] text-slate-500">Penyelesaian hanya oleh Finance (finance.resolve_unknown).</div>}
                                                     <div className="grid grid-cols-2 gap-2">
                                                         <button disabled={isBusy} onClick={() => handleMarkStatus(record, "Belum Transfer")} className="inline-flex items-center justify-center gap-1 bg-white/5 border border-white/10 text-slate-300 px-2 py-1.5 rounded hover:bg-white/10 disabled:opacity-50">
                                                             <XCircle size={13} /> Belum

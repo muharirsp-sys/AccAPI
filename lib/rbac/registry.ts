@@ -1,7 +1,7 @@
 /*
  * Tujuan: SUMBER TUNGGAL daftar permission key valid untuk Dynamic RBAC (Fase 2/4 — Opsi A).
  * Caller: lib/rbac/resolve.ts (guard route), UI admin RBAC (P6), registry.test.ts (guard test).
- * Main Functions: PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey.
+ * Main Functions: PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey, CAPABILITY_KEYS, moduleAllOn, toggleModuleKeys.
  * Side Effects: Tidak ada; pure registry permission in-memory.
  * Dependensi: TIDAK ADA (pure data) — sengaja bebas import agar bisa di-test di mana saja.
  * Catatan: permission baru = tambah action di sini → otomatis terbaca RBAC. Default-deny:
@@ -23,7 +23,14 @@ export const PERMISSION_REGISTRY = {
     websales: ["view", "create"],
     payments: ["view", "create", "edit", "update", "delete", "upload", "export", "submit"],
     sppd: ["view", "edit_settings", "upload_excel", "generate", "download"],
-    finance: ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"],
+    // Aksi yang MEMBUKA kiriman ulang ke Accurate (owner D-14/D-15/D-18, 2026-09-30) = kewenangan Finance,
+    //   satu kunci per kapabilitas (tidak saling menggantikan, ditegakkan backend):
+    //   resolve_unknown    = selesaikan attempt purchase-payment sending/unknown (D-14);
+    //   override_duplicate = override blok duplikat sales-receipt (D-18);
+    //   repost_payment     = reopen/repost purchase-payment posted yang dihapus/void di Accurate (D-15,
+    //                        belum ada route — menunggu ADR-004).
+    //   retry_post = kunci lama; TIDAK memberi satu pun kapabilitas di atas (tidak ditegakkan, lihat D-01).
+    finance: ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update", "resolve_unknown", "override_duplicate", "repost_payment"],
     principles: ["view", "upload", "delete"],
     master_barang: ["view", "create", "upload", "edit", "generate", "export", "manage"],
     summary: ["view", "upload", "generate", "email", "export", "edit", "update"],
@@ -75,4 +82,25 @@ export function allPermissionKeys(): Set<string> {
 
 export function isValidPermissionKey(key: string): boolean {
     return allPermissionKeys().has(key);
+}
+
+/** Kunci kapabilitas yang membuka kiriman ulang ke Accurate (D-14/D-15/D-18). UI grup tidak menyalakannya
+ * lewat centang modul — harus dicentang satu per satu (AM-057). UI bukan otoritas; backend tetap menegakkan. */
+export const CAPABILITY_KEYS: ReadonlySet<string> = new Set(["finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment"]);
+
+const moduleKeys = (mod: PermissionModule) => PERMISSION_REGISTRY[mod].map((a) => `${mod}.${a}`);
+
+/** Status centang modul di UI grup: semua kunci NON-kapabilitas modul aktif. */
+export function moduleAllOn(current: ReadonlySet<string>, mod: PermissionModule): boolean {
+    return moduleKeys(mod).filter((k) => !CAPABILITY_KEYS.has(k)).every((k) => current.has(k));
+}
+
+/** Centang modul di UI grup: sudah `moduleAllOn` -> cabut SEMUA kunci modul (termasuk kapabilitas); selain itu
+ * nyalakan kunci non-kapabilitas saja. */
+export function toggleModuleKeys(current: ReadonlySet<string>, mod: PermissionModule): Set<string> {
+    const keys = moduleKeys(mod);
+    const next = new Set(current);
+    if (moduleAllOn(current, mod)) keys.forEach((k) => next.delete(k));
+    else keys.filter((k) => !CAPABILITY_KEYS.has(k)).forEach((k) => next.add(k));
+    return next;
 }

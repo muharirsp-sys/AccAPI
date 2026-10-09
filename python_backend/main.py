@@ -32,6 +32,7 @@
 import datetime
 
 from shared import (
+    _PAYMENTS_DB_LOCK,
     AUTH_COOKIE,
     AUTH_COOKIE_SECURE,
     Any,
@@ -150,6 +151,8 @@ def get_bank_data(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "sppd", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.view"})
     bank_map = load_bank_map()
     items = []
     for key, info in bank_map.items():
@@ -172,6 +175,8 @@ def get_bank_data_match_report(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "sppd", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.view"})
     bank_map = load_bank_map()
     # Kumpulkan semua principle names dari payments DB
     db = load_payments_db()
@@ -198,8 +203,8 @@ async def upload_bank_data(request: Request, file: UploadFile = File(None)):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    if not user_has_permission(user, "payments", "view"):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.view"})
+    if not user_has_permission(user, "sppd", "edit_settings"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.edit_settings"})
     if file is None:
         return JSONResponse(status_code=400, content={"ok": False, "error": "File Excel belum diupload."})
     try:
@@ -270,6 +275,8 @@ def lookup_bank_data(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "sppd", "view"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.view"})
     principle_name = s(request.query_params.get("principle", ""))
     if not principle_name:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Parameter 'principle' wajib diisi."})
@@ -300,8 +307,8 @@ async def replace_principle_name(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    if not user_has_permission(user, "payments", "view"):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.view"})
+    if not user_has_permission(user, "payments", "edit"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.edit"})
     try:
         payload = await request.json()
     except Exception:
@@ -315,31 +322,33 @@ async def replace_principle_name(request: Request):
     if old_name == new_name:
         return JSONResponse(status_code=400, content={"ok": False, "error": "old_name dan new_name tidak boleh sama."})
 
-    db = load_payments_db()
-    replaced_count = 0
-    replaced_keys: List[str] = []
-    for rec_key, rec in db.get("lpb", {}).items():
-        current = s(rec.get("principle", ""))
-        # Case-insensitive comparison for matching
-        if current.upper() == old_name.upper():
-            rec["principle"] = new_name
-            replaced_count += 1
-            replaced_keys.append(rec_key)
-    if replaced_count > 0:
-        save_payments_db(db)
-        append_audit_log(user, "replace_principle_name", "lpb", {
+    # AM-012: satu lock untuk semua penulis ledger (salinan per request -> tanpa lock = lost update).
+    async with _PAYMENTS_DB_LOCK:
+        db = load_payments_db()
+        replaced_count = 0
+        replaced_keys: List[str] = []
+        for rec_key, rec in db.get("lpb", {}).items():
+            current = s(rec.get("principle", ""))
+            # Case-insensitive comparison for matching
+            if current.upper() == old_name.upper():
+                rec["principle"] = new_name
+                replaced_count += 1
+                replaced_keys.append(rec_key)
+        if replaced_count > 0:
+            save_payments_db(db)
+            append_audit_log(user, "replace_principle_name", "lpb", {
+                "old_name": old_name,
+                "new_name": new_name,
+                "count": replaced_count,
+                "samples": replaced_keys[:20],
+            })
+        return {
+            "ok": True,
+            "replaced": replaced_count,
             "old_name": old_name,
             "new_name": new_name,
-            "count": replaced_count,
-            "samples": replaced_keys[:20],
-        })
-    return {
-        "ok": True,
-        "replaced": replaced_count,
-        "old_name": old_name,
-        "new_name": new_name,
-        "message": f"Berhasil mengganti {replaced_count} record dari '{old_name}' menjadi '{new_name}'." if replaced_count > 0 else f"Tidak ada record dengan principle '{old_name}'.",
-    }
+            "message": f"Berhasil mengganti {replaced_count} record dari '{old_name}' menjadi '{new_name}'." if replaced_count > 0 else f"Tidak ada record dengan principle '{old_name}'.",
+        }
 
 
 @app.post("/api/bank-data/auto-fix-names")
@@ -352,70 +361,74 @@ async def auto_fix_principle_names(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    if not user_has_permission(user, "payments", "view"):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.view"})
     try:
         payload = await request.json()
     except Exception:
         payload = {}
     confirm = bool(payload.get("confirm", False))
+    # Preview (dry-run) cukup izin lihat; eksekusi mengubah payments.json massal -> izin edit.
+    need = "edit" if confirm else "view"
+    if not user_has_permission(user, "payments", need):
+        return JSONResponse(status_code=403, content={"ok": False, "error": f"Forbidden: butuh permission payments.{need}"})
 
     bank_map, norm_keys = load_bank_map_with_normalized_keys()
-    db = load_payments_db()
+    # AM-012: satu lock untuk semua penulis ledger (salinan per request -> tanpa lock = lost update).
+    async with _PAYMENTS_DB_LOCK:
+        db = load_payments_db()
 
-    # Collect unique principle names from payments
-    name_counts: Dict[str, int] = {}
-    for rec_key, rec in db.get("lpb", {}).items():
-        p = s(rec.get("principle", ""))
-        if p:
-            name_counts[p] = name_counts.get(p, 0) + 1
+        # Collect unique principle names from payments
+        name_counts: Dict[str, int] = {}
+        for rec_key, rec in db.get("lpb", {}).items():
+            p = s(rec.get("principle", ""))
+            if p:
+                name_counts[p] = name_counts.get(p, 0) + 1
 
-    changes: List[Dict[str, Any]] = []
-    skipped: List[Dict[str, str]] = []
-    already_correct: List[str] = []
+        changes: List[Dict[str, Any]] = []
+        skipped: List[Dict[str, str]] = []
+        already_correct: List[str] = []
 
-    for web_name, count in name_counts.items():
-        info, status = find_best_match(web_name, bank_map, norm_keys)
-        if status == "matched" and info:
-            excel_name = info["principle"]
-            if web_name != excel_name:
-                changes.append({"old": web_name, "new": excel_name, "count": count})
+        for web_name, count in name_counts.items():
+            info, status = find_best_match(web_name, bank_map, norm_keys)
+            if status == "matched" and info:
+                excel_name = info["principle"]
+                if web_name != excel_name:
+                    changes.append({"old": web_name, "new": excel_name, "count": count})
+                else:
+                    already_correct.append(web_name)
+            elif status == "ambiguous":
+                skipped.append({"name": web_name, "reason": "ambiguous", "count": str(count)})
             else:
-                already_correct.append(web_name)
-        elif status == "ambiguous":
-            skipped.append({"name": web_name, "reason": "ambiguous", "count": str(count)})
-        else:
-            skipped.append({"name": web_name, "reason": "unmatched", "count": str(count)})
+                skipped.append({"name": web_name, "reason": "unmatched", "count": str(count)})
 
-    total_records_affected = sum(c["count"] for c in changes)
+        total_records_affected = sum(c["count"] for c in changes)
 
-    if confirm and changes:
-        # Execute the renames
-        for change in changes:
-            old = change["old"]
-            new = change["new"]
-            for rec_key, rec in db.get("lpb", {}).items():
-                if s(rec.get("principle", "")) == old:
-                    rec["principle"] = new
-        save_payments_db(db)
-        append_audit_log(user, "auto_fix_principle_names", "lpb", {
+        if confirm and changes:
+            # Execute the renames
+            for change in changes:
+                old = change["old"]
+                new = change["new"]
+                for rec_key, rec in db.get("lpb", {}).items():
+                    if s(rec.get("principle", "")) == old:
+                        rec["principle"] = new
+            save_payments_db(db)
+            append_audit_log(user, "auto_fix_principle_names", "lpb", {
+                "changes": changes,
+                "total_records": total_records_affected,
+            })
+
+        return {
+            "ok": True,
+            "executed": confirm and bool(changes),
             "changes": changes,
-            "total_records": total_records_affected,
-        })
-
-    return {
-        "ok": True,
-        "executed": confirm and bool(changes),
-        "changes": changes,
-        "skipped": skipped,
-        "already_correct": already_correct,
-        "total_records_affected": total_records_affected,
-        "message": (
-            f"Berhasil mengupdate {total_records_affected} record ({len(changes)} nama principle)."
-            if confirm and changes
-            else f"Preview: {len(changes)} nama akan diubah ({total_records_affected} record). Kirim confirm=true untuk eksekusi."
-        ),
-    }
+            "skipped": skipped,
+            "already_correct": already_correct,
+            "total_records_affected": total_records_affected,
+            "message": (
+                f"Berhasil mengupdate {total_records_affected} record ({len(changes)} nama principle)."
+                if confirm and changes
+                else f"Preview: {len(changes)} nama akan diubah ({total_records_affected} record). Kirim confirm=true untuk eksekusi."
+            ),
+        }
 
 
 @app.get("/health")
@@ -426,6 +439,8 @@ def health():
 async def add_principle(request: Request, name: str = Form(...), file: UploadFile = File(...)):
     user = get_current_user(request)
     if not user: return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "principles", "upload"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission principles.upload"})
     pid = str(uuid.uuid4())
     safe_name = "".join(c for c in file.filename if c.isalnum() or c in " ._-")
     filename = f"{pid}_{safe_name}"
@@ -456,6 +471,8 @@ async def add_principle(request: Request, name: str = Form(...), file: UploadFil
 def delete_principle(request: Request, pid: str):
     user = get_current_user(request)
     if not user: return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if not user_has_permission(user, "principles", "delete"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission principles.delete"})
     ps = _load_principles()
     if pid in ps:
         filepath = os.path.join(MASTERS_DIR, ps[pid]["filename"])

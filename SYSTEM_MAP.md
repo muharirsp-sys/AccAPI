@@ -38,7 +38,7 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 - **Route Group** `(auth)` untuk halaman login/register, `(dashboard)` untuk seluruh halaman aplikasi yang dilindungi guard layout.
 - Layer `lib/*` memisahkan business logic dari route handler.
 - `lib/db.ts`, `lib/auth.ts`, `db/schema.ts`, dan `drizzle.config.ts` memakai PostgreSQL. `sqlite.db` adalah sumber/rollback migrasi lama, bukan runtime route Next.js.
-- RBAC tiga lapis: **Dynamic Permission-Group** (access_group + group_permission + user_group, default-deny) ∪ legacy **role global** (Better Auth) ∪ legacy **custom permissions** (user.permissions). Union resolver di `lib/rbac/resolve.ts`; sistem lama tetap berjalan selama transisi.
+- RBAC: **Dynamic Permission-Group** (access_group + group_permission + user_group, default-deny) OTORITATIF begitu user punya ≥1 group; legacy **role global** / **custom permissions** (user.permissions) hanya fallback untuk user yang belum pernah ber-group. Resolver tunggal `getUserPermissions()` di `lib/rbac/resolve.ts`. FastAPI tidak menghitung izin sendiri: `/api/auth/verify` mengirim `effectivePermissions` dari resolver yang sama dan `python_backend/shared.py` `user_has_permission` memakainya (ADR-001, `docs/modernization/ARCHITECTURE_ADR.md`).
 - Permission key format: `"module.action"` (mis. `"off_program_control.sm_approve"`). Sumber tunggal: `lib/rbac/registry.ts` (92 key). Endpoint wajib pakai `requirePermission`/`requirePermissionH` — key tidak terdaftar → 403.
 - Email-domain role inference dihapus. OFF-specific role (`resolveOffRoleFromUser`) tetap ada untuk audit/state-machine, TIDAK untuk authz.
 
@@ -227,13 +227,31 @@ Record pembayaran dari principal:
 ```
 UI: API Wrapper page (/api-wrapper)
   -> POST /api/proxy
-     -> route.ts [POST] — forward ke Accurate API (sessionHost + Bearer apiKey)
+     -> route.ts [POST] — forward ke Accurate API (sessionHost + Bearer apiKey) lewat lib/accurate-forward.ts
+        (menolak 403 tulis purchase-payment/(bulk-)save.do — hanya lewat command Finance di bawah)
      <- JSON response
 
-Idempotency guard (bulk sales receipt):
-  -> POST /api/idempotency/lock — cek & kunci fingerprint di SQLite idempotency_log
-  -> [bulk POST ke Accurate]
-  -> POST /api/idempotency/complete — tandai selesai
+Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
+  UI Finance (/finance) approveTransfer
+  -> POST /api/finance/purchase-payment (finance.update)
+     -> lib/accurate-write-attempt.ts runGuardedWrite: INSERT ... SELECT accurate_write_attempt state=sending
+        generasi 0 (ADR-004 rilis A; subjek ber-reopen -> 409 reopened_use_repost) — unique partial index per
+        himpunan faktur × generasi; attempt hidup -> 409 {live, generation, currentGeneration} SEBELUM kirim
+     -> forwardAccurate purchase-payment/bulk-save.do (tanpa transaksi DB terbuka)
+     -> classifyProviderReply -> posted / unknown / not_sent (C11: penolakan Accurate belum terbukti = unknown)
+  -> UI melaporkan status ke FastAPI POST /payments/finance/update (payments.json) seperti semula
+  Penyelesaian TIDAK PASTI: POST /api/finance/purchase-payment/resolve (atestasi manual + sumber cek;
+    hanya finance.resolve_unknown). Gagal sebelum klaim = {claimed:false} (pasti tidak terkirim).
+  payments.json: "failed" lama bergalat ambigu (timeout/502/504/non-JSON/jaringan) = unknown
+    (shared.effective_post_status) -> terkunci sampai diselesaikan Finance.
+
+Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConfig.path, bukan URL halaman):
+  -> POST /api/idempotency/lock — preview + kunci fingerprint (lib/sales-receipt-fingerprint.ts) di idempotency_log
+     (pemilik lockId/lockedBy; override hanya finance.override_duplicate + alasan -> idempotency_override)
+  -> POST /api/proxy sales-receipt/bulk-save.do WAJIB idempotencyLockId (lib/sales-receipt-guard.ts):
+     baris milik lock ditandai SENDING -> kirim -> hasil per baris dicatat SERVER (classifySalesReceiptReply:
+     s:true = SUCCESS, selain itu UNKNOWN — C11; server tidak pernah menyimpulkan FAILED)
+  -> POST /api/idempotency/complete — klien hanya menaikkan; FAILED hanya untuk baris PROCESSING (belum dikirim)
 
 Data Sync (item/customer):
   -> lib/sync.ts [syncModule(moduleName, endpoint, creds)]
@@ -252,7 +270,9 @@ Browser -> NEXT_PUBLIC_FASTAPI_BASE_URL (port 8000)
      -> /validator/upload — upload data penjualan/channel
      -> /validator/run — validator_engine.py [compare expected vs actual]
      -> /sppd/generate — render_sppd_docx() — buat DOCX SPPD
-     -> auth.py — RBAC + rate limiter login internal FastAPI
+     -> nomor SPPD (shared.next_sppd_number): {seq:03d}/SPA/PDSB/{romawi}/{tahun}, tanggal terbit WITA; tahun baru
+        mulai 001; di dalam satu tahun tidak pernah turun (setelan 409, restore backup hanya menaikkan) — D-05/C10
+     -> auth.py — rate limiter login + security headers; izin = effectivePermissions dari Next /api/auth/verify (shared.user_has_permission)
 ```
 
 ### 6A. Repository Guardian & Risk Issue Sync
@@ -793,7 +813,9 @@ AccAPI/_github_clean/
 | File | Fungsi Utama | Peran |
 |---|---|---|
 | `lib/sync.ts` | `AccuratePaginator`, `syncModule` | Sync paginated data Accurate ke SQLite lokal (item/customer) dengan checkpoint |
-| `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening) |
+| `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment |
+| `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance: klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
+| `app/api/finance/purchase-payment/resolve/route.ts` | `POST` | Atestasi manual attempt purchase-payment tidak pasti (alasan + sumber pemeriksaan) |
 | `app/api/auth/callback/route.ts` | `GET` | OAuth2 callback dari Accurate (tukar code ke token) |
 | `app/api/faktur/route.ts` | `GET` | Daftar faktur dari cache `sales_invoice` (cari nomor/pelanggan, default hanya nomor mengandung INV, `?all=1` untuk semua) |
 | `app/api/faktur/[id]/route.ts` | `GET` | Detail 1 faktur + baris item (qty/harga) live dari `sales-invoice/detail.do`; `?raw=1` menampilkan respons Accurate mentah |
@@ -904,7 +926,9 @@ claim_workflow (offBatchId -> off_batch.id) [1:1 unique]
 sync_state [checkpoint per modul]
 item [cache Accurate items]
 customer [cache Accurate customers]
-idempotency_log [fingerprint bulk upload]
+idempotency_log [fingerprint bulk upload; lockId/lockedBy] ── idempotency_override [jejak override Finance]
+accurate_write_attempt [klaim tulis Accurate per subjek × generasi] ── accurate_write_attempt_reopen [repost D-15, rilis B]
+  (FK melingkar + trigger immutability + REVOKE = DDL manual docs/handover/DDL_ADR004.sql, dijalankan saat deploy)
 
 # Dynamic RBAC (additive — Fase 2/4; user.role & user.permissions TIDAK dihapus)
 access_group ──── group_permission (group_id)   [permission_key = "module.action"]
@@ -963,7 +987,7 @@ Status Lifecycle wave:
 | `db/migrations/` | Output drizzle-kit (SQL migration files) |
 | `scripts/seed-opc-dummy.mjs` | 1.275 batch dummy OPC (51 batch x 25 principal, semua 12 problem code) |
 | `scripts/migrate-rbac-groups.mjs` | Buat tabel Dynamic RBAC (access_group, group_permission, user_group, permission_audit_log) — additive & idempotent |
-| `scripts/seed-rbac-presets.ts` | Sinkron preset Dynamic RBAC termasuk `manage_hierarchy` dan Laporan Harian + backfill user_group (`node --experimental-strip-types`) — PostgreSQL, idempotent |
+| `scripts/seed-rbac-presets.ts` | Sinkron preset Dynamic RBAC termasuk `manage_hierarchy` dan Laporan Harian + backfill user_group (`node --experimental-strip-types`) — PostgreSQL; MENGGANTI izin grup preset (izin manual via UI hilang), wajib `RBAC_PRESET_SYNC=reset-preset-groups` |
 | `db/migrations/0002_rekapan_nota.sql` | DDL modul Rekapan Nota (10 tabel + 6 enum + kolom item/customer) + seed 17 pick_group & 3 app_setting; idempoten |
 | `scripts/apply-rekapan-migration.mjs` | Terapkan 0002 ke PostgreSQL LOKAL dalam satu transaksi (guard hostname; produksi manual dengan role ber-DDL) |
 | `scripts/bandingkan-rekapan-excel.ts` | Kriteria lulus Fase 3: adu hasil AccAPI vs `Paste Data Sore` PER SKU PER GRUP (bukan grand total). Selisih wajib punya sebab yang dibuktikan ke DB; kalau tidak, exit 1. `npx tsx scripts/bandingkan-rekapan-excel.ts --wave <id>` |

@@ -11,7 +11,9 @@ import { useState, useEffect } from "react";
 import { Key, Upload, FileJson, Play, ServerCrash, ExternalLink, Settings2, Database, FileSpreadsheet, CheckCircle2, Loader2, LogOut, CalendarIcon } from "lucide-react";
 import { toast } from "sonner";
 import { accurateRoutes } from "@/config/accurateRoutes";
-import { accurateFetch } from "@/lib/apiFetcher";
+import { accurateFetch, classifyWriteError } from "@/lib/apiFetcher";
+import { buildSalesReceiptIdempotencyPayload } from "@/lib/sales-receipt-fingerprint";
+import { isLockRequired, overrideKeysNeeded, salesReceiptRowReports } from "@/lib/sales-receipt-upload";
 import DatePickerField from "@/components/ui/DatePickerField";
 import Dialog from "@/components/ui/Dialog";
 import { workbookRouteParsers } from "./parsers";
@@ -25,7 +27,7 @@ type LogState = {
   data?: any;
 };
 
-type DuplicateConflictReason = "DUPLICATE_IN_UPLOAD" | "ALREADY_SUCCESS" | "STILL_PROCESSING" | "ACCURATE_HISTORY";
+type DuplicateConflictReason = "DUPLICATE_IN_UPLOAD" | "ALREADY_SUCCESS" | "STILL_PROCESSING" | "UNKNOWN_OUTCOME" | "ACCURATE_HISTORY";
 
 type DuplicateReviewEntry = {
   reviewId: string;
@@ -1893,6 +1895,8 @@ export default function Home() {
     if (reason === "DUPLICATE_IN_UPLOAD") return "Duplikat dalam upload ini";
     if (reason === "ALREADY_SUCCESS") return "Sudah pernah sukses diupload";
     if (reason === "ACCURATE_HISTORY") return "Mirip histori Accurate";
+    // AM-025: kiriman sebelumnya macet >15 menit atau tak diketahui hasilnya — mungkin SUDAH masuk Accurate.
+    if (reason === "UNKNOWN_OUTCOME") return "Hasil kiriman sebelumnya tidak diketahui — cek Accurate dulu";
     return "Masih diproses dalam 15 menit terakhir";
   };
 
@@ -2051,9 +2055,15 @@ export default function Home() {
   const executeBulkPayload = async (
     rows: any[],
     routeConfig: typeof accurateRoutes[RouteKey],
-    duplicateOptions?: { allowDuplicateKeys?: string[]; allowLockedKeys?: string[] }
+    duplicateOptions?: { allowDuplicateKeys?: string[]; allowLockedKeys?: string[]; overrideReason?: string }
   ) => {
-    if (document.location.pathname.includes('/sales-receipt')) {
+    // AM-041: dulu `document.location.pathname` — URL HALAMAN, yang selalu "/api-wrapper",
+    // sehingga lock idempotency, penandaan hasil, dan preview duplikat sales-receipt tidak
+    // pernah berjalan. Yang menentukan adalah endpoint yang dieksekusi.
+    const isSalesReceipt = routeConfig.path.includes('/sales-receipt/');
+    // AM-050/AM-024: lock milik request ini — wajib untuk kirim lewat proxy dan untuk /complete.
+    let idempotencyLockId: string | null = null;
+    if (isSalesReceipt) {
       toast.loading("Mengunci batch idempotency...", { id: 'exec' });
       const keysPayload = rows.map((row: any) => buildSalesReceiptIdempotencyPayload(row));
       const lockRes = await fetch('/api/idempotency/lock', {
@@ -2062,7 +2072,8 @@ export default function Home() {
         body: JSON.stringify({
           keys: keysPayload,
           allowDuplicateKeys: duplicateOptions?.allowDuplicateKeys || [],
-          allowLockedKeys: duplicateOptions?.allowLockedKeys || []
+          allowLockedKeys: duplicateOptions?.allowLockedKeys || [],
+          overrideReason: duplicateOptions?.overrideReason || ""
         })
       });
       const lockData = await lockRes.json();
@@ -2070,6 +2081,8 @@ export default function Home() {
       if (Array.isArray(lockData.blockedKeys) && lockData.blockedKeys.length > 0) {
         throw new Error("Beberapa baris berubah status duplikat saat review. Buka ulang review lalu pilih kembali.");
       }
+      if (!lockData.lockId) throw new Error("Lock idempotency tidak diterbitkan server — tidak ada yang dikirim.");
+      idempotencyLockId = lockData.lockId;
     }
 
     if (rows.length === 0) {
@@ -2090,18 +2103,20 @@ export default function Home() {
     let combinedResults: any[] = [];
     let errorLogForExcel: any[] = [];
     let errorCount = 0;
-    const overrideLockedKeySet = new Set(duplicateOptions?.allowLockedKeys || []);
     const confirmedReceiptNumbersByKey = new Map<string, string[]>();
 
-    const markIdempotency = async (row: any, isSuccess: boolean) => {
-      if (!document.location.pathname.includes('/sales-receipt')) return;
+    // outcome "UNKNOWN": galat tanpa jawaban Accurate (timeout/jaringan) — kiriman MUNGKIN sudah tersimpan,
+    // jadi upload berikutnya diblokir sampai manusia mengecek (dulu FAILED -> dicoba ulang otomatis).
+    const markIdempotency = async (row: any, outcome: boolean | "UNKNOWN") => {
+      if (!isSalesReceipt) return;
       try {
         const rowKey = buildSalesReceiptIdempotencyPayload(row).key;
-        if (overrideLockedKeySet.has(rowKey)) return;
+        // AM-025: key yang di-override kini dikunci ulang oleh lock, jadi hasilnya WAJIB dicatat;
+        // SUCCESS yang dikirim ulang tidak tersentuh (complete hanya menaikkan, tak pernah menurunkan).
         fetch('/api/idempotency/complete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keys: [rowKey], status: isSuccess ? 'SUCCESS' : 'FAILED' })
+          body: JSON.stringify({ keys: [rowKey], lockId: idempotencyLockId, status: outcome === "UNKNOWN" ? 'UNKNOWN' : outcome ? 'SUCCESS' : 'FAILED' })
         });
       } catch (e) {}
     };
@@ -2134,10 +2149,49 @@ export default function Home() {
 
       toast.loading(`[Tahap ${i+1}/${totalChunks}] Memproses baris ${start+1}-${end}...`, { id: 'exec' });
 
-      try {
-        const data = await accurateFetch(routeConfig.path, routeConfig.method, chunkPayload);
+      // Tinjauan S6-0a + C11: hasil sales-receipt dicatat SERVER (proxy, classifySalesReceiptReply); di sini hanya
+      // laporan. Penolakan Accurate = TIDAK PASTI (bukan "berhasil terposting", bukan gagal yang dikirim ulang).
+      // Mode individual & self-heal <= Rp 100 TIDAK dipakai untuk sales-receipt (proxy menolaknya tanpa override
+      // Finance; kirim koreksi otomatis = risiko pelunasan ganda).
+      const reportSalesReceiptChunk = async (data: unknown, noAnswer: string) => {
+        let unresolved = 0;
+        const reports = salesReceiptRowReports(chunkPayload.length, data, noAnswer);
+        for (let idx = 0; idx < chunkPayload.length; idx++) {
+          const row = chunkPayload[idx];
+          const mainId = row.invoiceNo || row.customerNo || `Baris Eksekusi ${start + idx + 1}`;
+          if (reports[idx].ok) {
+            combinedResults.push(reports[idx].item ?? { s: true });
+            markIdempotency(row, true);
+            continue;
+          }
+          const matchedReceiptNumbers = await getConfirmedReceiptNumbers(row);
+          if (matchedReceiptNumbers.length > 0) {
+            markIdempotency(row, true);
+            combinedResults.push({ s: true, _confirmedFromHistory: true, _matchedReceiptNumbers: matchedReceiptNumbers, _originalError: reports[idx].message });
+            errorLogForExcel.push({
+              "Paket/Batch": `Tahap ${i+1}`, "Baris Ke": start + idx + 1, "Ref / Invoice No": mainId,
+              "Status": "BERHASIL (TERKONFIRMASI HISTORI ACCURATE)",
+              "Pesan Error Accurate": `${reports[idx].message} | Receipt ditemukan: ${matchedReceiptNumbers.join(", ")}`
+            });
+            continue;
+          }
+          unresolved++;
+          markIdempotency(row, "UNKNOWN");
+          errorLogForExcel.push({
+            "Paket/Batch": `Tahap ${i+1}`, "Baris Ke": start + idx + 1, "Ref / Invoice No": mainId,
+            "Status": "TIDAK PASTI (butuh pemeriksaan/override Finance)",
+            "Pesan Error Accurate": reports[idx].message
+          });
+        }
+        if (unresolved > 0) errorCount++;
+      };
 
-        if (Array.isArray(data)) {
+      try {
+        const data = await accurateFetch(routeConfig.path, routeConfig.method, chunkPayload, { idempotencyLockId });
+
+        if (isSalesReceipt) {
+          await reportSalesReceiptChunk(data, "");
+        } else if (Array.isArray(data)) {
           combinedResults = combinedResults.concat(data);
           data.forEach((r, idx) => {
             markIdempotency(chunkPayload[idx], !!r.s);
@@ -2158,7 +2212,22 @@ export default function Home() {
         console.error(`Chunk ${i+1} Failed:`, chunkErr);
         let chunkHadUnresolvedFailure = false;
 
-        if (chunkErr.rawDetails && Array.isArray(chunkErr.rawDetails)) {
+        if (isSalesReceipt && isLockRequired(chunkErr)) {
+          // Proxy menolak SEBELUM kirim (baris di luar lock / butuh override): pasti tidak terkirim -> FAILED
+          // (server hanya menerimanya untuk baris PROCESSING milik lock ini).
+          chunkPayload.forEach((row, idx) => {
+            markIdempotency(row, false);
+            errorLogForExcel.push({
+              "Paket/Batch": `Tahap ${i+1}`, "Baris Ke": start + idx + 1,
+              "Ref / Invoice No": row.invoiceNo || row.customerNo || `Baris Eksekusi ${start + idx + 1}`,
+              "Status": "DITOLAK PENJAGA DUPLIKAT (tidak dikirim)",
+              "Pesan Error Accurate": `${chunkErr.message} — tidak ada yang dikirim ke Accurate; kirim ulang butuh override Finance (finance.override_duplicate) lewat dialog review.`
+            });
+          });
+          errorCount++;
+        } else if (isSalesReceipt) {
+          await reportSalesReceiptChunk(chunkErr?.rawErrorObject, chunkErr?.message || "galat jaringan");
+        } else if (chunkErr.rawDetails && Array.isArray(chunkErr.rawDetails)) {
           const isSingleOverallError = chunkErr.rawDetails.length === 1 && chunkPayload.length > 1;
 
           const extractReasonStr = (resultObj: any, fallbackStr: string) => {
@@ -2185,11 +2254,14 @@ export default function Home() {
             for (let idx = 0; idx < chunkPayload.length; idx++) {
               const row = chunkPayload[idx];
               try {
-                const indData = await accurateFetch(routeConfig.path, routeConfig.method, [row]);
-                const isSuccess = Array.isArray(indData) ? indData[0]?.s : indData.s;
+                const indData = await accurateFetch(routeConfig.path, routeConfig.method, [row], { idempotencyLockId });
+                // Hasil PER ITEM: amplop bulk-save bisa s:true dengan item d[0].s:false (H09).
+                const indItem = Array.isArray(indData) ? indData[0] : Array.isArray(indData?.d) ? indData.d[0] : indData;
+                const isSuccess = !!indItem?.s;
 
                 if (isSuccess) {
-                  combinedResults.push(Array.isArray(indData) ? indData[0] : indData);
+                  combinedResults.push(indItem);
+                  markIdempotency(row, true); // AM-041 review: tanpa ini baris sukses tertahan PROCESSING
                 } else {
                   const indReasonStr = extractReasonStr(Array.isArray(indData) ? indData[0] : indData, "Error validasi individual");
                   const match = indReasonStr.match(/"([^"]+)"/);
@@ -2198,7 +2270,7 @@ export default function Home() {
               } catch (indErr: any) {
                 const indReasonStr = indErr.rawDetails && indErr.rawDetails.length > 0 ? extractReasonStr(indErr.rawDetails[0], indErr.message) : indErr.message;
                 const match = indReasonStr.match(/"([^"]+)"/);
-                await processAutoHeal(row, match ? match[1] : null, indReasonStr, i, start, idx, false);
+                await processAutoHeal(row, match ? match[1] : null, indReasonStr, i, start, idx, false, classifyWriteError(indErr).kind === "unknown");
               }
             }
           } else {
@@ -2216,9 +2288,12 @@ export default function Home() {
             }
           }
 
-          async function processAutoHeal(row: any, failedInvoiceNo: string | null, reasonStr: string, chunkIdx: number, startIdx: number, rowIdx: number, isOverall: boolean) {
+          // noAnswer: kiriman baris ini gagal TANPA jawaban Accurate (timeout/jaringan) — hasil tak diketahui.
+          async function processAutoHeal(row: any, failedInvoiceNo: string | null, reasonStr: string, chunkIdx: number, startIdx: number, rowIdx: number, isOverall: boolean, noAnswer = false) {
             const mainId = row.invoiceNo || row.customerNo || row.bankNo || row.description || `Baris Eksekusi ${startIdx + rowIdx + 1}`;
             let isHealed = false;
+            let unknownOutcome = noAnswer;
+            let repostAttempted = false;
 
             if (failedInvoiceNo && reasonStr.includes("melebihi nilai piutang")) {
               toast.loading(`Mencoba Auto-Correction untuk ${failedInvoiceNo}...`, { id: `heal-${failedInvoiceNo}` });
@@ -2255,12 +2330,16 @@ export default function Home() {
                       healedRow.chequeAmount = normalizePayloadMoney(actualPrimeOwing);
                     }
 
-                    const retryData = await accurateFetch(routeConfig.path, routeConfig.method, [healedRow]);
-                    const isRetrySuccess = Array.isArray(retryData) ? retryData[0]?.s : retryData.s;
+                    repostAttempted = true;
+                    const retryData = await accurateFetch(routeConfig.path, routeConfig.method, [healedRow], { idempotencyLockId });
+                    // Hasil PER ITEM seperti mode individu (H09): amplop s:true bisa membawa d[0].s:false —
+                    // dulu dibaca sukses -> baris ditandai SUCCESS padahal koreksi ditolak (review AM-025 M1).
+                    const retryItem = Array.isArray(retryData) ? retryData[0] : Array.isArray(retryData?.d) ? retryData.d[0] : retryData;
+                    const isRetrySuccess = !!retryItem?.s;
 
                     if (isRetrySuccess) {
                       isHealed = true;
-                      combinedResults.push(Array.isArray(retryData) ? retryData[0] : retryData);
+                      combinedResults.push(retryItem);
                       markIdempotency(row, true);
                       toast.success(`Self-Healing Berhasil! ${failedInvoiceNo} dikoreksi ke ${actualPrimeOwing}`, { id: `heal-${failedInvoiceNo}` });
 
@@ -2279,6 +2358,8 @@ export default function Home() {
                   }
                 }
               } catch (healErr) {
+                // Kiriman koreksi yang gagal tanpa jawaban bisa SUDAH tersimpan (review AM-025 F4).
+                if (repostAttempted && classifyWriteError(healErr).kind === "unknown") unknownOutcome = true;
                 console.error("Self-healing error:", healErr);
                 toast.error(`Gagal mengecek referensi invoice ${failedInvoiceNo}`, { id: `heal-${failedInvoiceNo}` });
               }
@@ -2304,13 +2385,13 @@ export default function Home() {
                 return;
               }
 
-              markIdempotency(row, false);
+              markIdempotency(row, unknownOutcome ? "UNKNOWN" : false);
               chunkHadUnresolvedFailure = true;
               errorLogForExcel.push({
                 "Paket/Batch": `Tahap ${chunkIdx+1}`,
                 "Baris Ke": startIdx + rowIdx + 1 + (isOverall ? " (Penyebab Blok)" : ""),
                 "Ref / Invoice No": mainId,
-                "Status": "Gagal",
+                "Status": unknownOutcome ? "TIDAK DIKETAHUI (cek Accurate sebelum kirim ulang)" : "Gagal",
                 "Pesan Error Accurate": reasonStr
               });
             }
@@ -2340,13 +2421,17 @@ export default function Home() {
               return;
             }
 
-            markIdempotency(row, false);
+            // AM-025 review F4: tanpa jawaban Accurate dan tidak ada di histori (yang dibatasi & bisa ikut
+            // gagal) bukan bukti gagal — tandai UNKNOWN agar upload ulang menunggu pengecekan manusia.
+            // Penolakan beramplop (s:false + d) = pasti tidak tersimpan -> FAILED (review re-review LOW).
+            const tanpaJawaban = classifyWriteError(chunkErr).kind === "unknown";
+            markIdempotency(row, tanpaJawaban ? "UNKNOWN" : false);
             chunkHadUnresolvedFailure = true;
             errorLogForExcel.push({
               "Paket/Batch": `Tahap ${i+1}`,
               "Baris Ke": start + idx + 1,
               "Ref / Invoice No": mainId,
-              "Status": "Gagal",
+              "Status": tanpaJawaban ? "TIDAK DIKETAHUI (cek Accurate sebelum kirim ulang)" : "Gagal",
               "Pesan Error Accurate": chunkErr.message || "Unknown error parsing chunk return"
             });
           });
@@ -2409,19 +2494,33 @@ export default function Home() {
       return;
     }
 
-    const allowDuplicateKeys = Array.from(new Set(selectedReviewRows
-      .filter((item) => item.reasons.includes("DUPLICATE_IN_UPLOAD"))
-      .map((item) => item.key)));
-    const allowLockedKeys = Array.from(new Set(selectedReviewRows
-      .filter((item) => item.reasons.includes("ALREADY_SUCCESS") || item.reasons.includes("STILL_PROCESSING"))
-      .map((item) => item.key)));
+    // Tinjauan S6-0a: hanya override yang BENAR-BENAR dipakai server — baris pertama duplikat-dalam-unggahan
+    // (pilihan bawaan) tidak butuh alasan; baris riwayat Accurate saja tidak memakai override lock.
+    const { allowDuplicateKeys, allowLockedKeys } = overrideKeysNeeded(
+      [...duplicateReview.passthroughRows, ...selectedReviewRows].map((item) => buildSalesReceiptIdempotencyPayload(item.row).key),
+      selectedReviewRows.filter((item) => item.reasons.includes("DUPLICATE_IN_UPLOAD")).map((item) => item.key),
+      selectedReviewRows
+        .filter((item) => item.reasons.includes("ALREADY_SUCCESS") || item.reasons.includes("STILL_PROCESSING") || item.reasons.includes("UNKNOWN_OUTCOME"))
+        .map((item) => item.key));
+
+    // D-18 (owner): override = membuka kiriman ulang ke Accurate — hanya Finance (server menolak 403 tanpa
+    // finance.override_duplicate) dan alasan wajib tercatat di jejak override.
+    let overrideReason = "";
+    if (allowDuplicateKeys.length > 0 || allowLockedKeys.length > 0) {
+      const typed = window.prompt(`Alasan meng-override ${allowDuplicateKeys.length + allowLockedKeys.length} blok duplikat (min. 15 karakter). Hanya kewenangan Finance.`);
+      if (!typed || typed.trim().length < 15) {
+        toast.error("Alasan override minimal 15 karakter. Tidak ada yang dikirim.");
+        return;
+      }
+      overrideReason = typed.trim();
+    }
 
     const routeConfig = accurateRoutes[duplicateReview.routeKey];
     setDuplicateReview(null);
     setIsLoading(true);
 
     try {
-      await executeBulkPayload(finalRows, routeConfig, { allowDuplicateKeys, allowLockedKeys });
+      await executeBulkPayload(finalRows, routeConfig, { allowDuplicateKeys, allowLockedKeys, overrideReason });
     } catch (err: unknown) {
       if (err instanceof Error) {
         setResponseLog({ status: "error", message: err.message });
@@ -2457,7 +2556,7 @@ export default function Home() {
     try {
       // Chunking Engine for Bulk Save (Handles both Max 100 Limit bypass AND Auto-Healing logic for any size)
       if (isBulk && Array.isArray(payloadObj)) {
-          if (document.location.pathname.includes('/sales-receipt')) {
+          if (routeConfig.path.includes('/sales-receipt/')) { // AM-041, lihat executeBulkPayload
               toast.loading("Menganalisis potensi pembayaran ganda...", { id: 'exec' });
               const reviewState = await previewSalesReceiptDuplicates(payloadObj, selectedRoute);
               if (reviewState) {
@@ -2955,47 +3054,3 @@ export default function Home() {
     </div>
   );
 }
-  const buildSalesReceiptIdempotencyPayload = (row: any) => {
-    const normalizeMoney = (value: any) => Number((Number(value) || 0).toFixed(2));
-    const detailSignature = (row.detailInvoice || [])
-      .map((detail: any) => {
-        const discountSignature = (detail.detailDiscount || [])
-          .map((discount: any) => [
-            String(discount.accountNo || "").trim(),
-            String(discount.discountNotes || "").trim(),
-            normalizeMoney(discount.amount)
-          ].join(":"))
-          .sort()
-          .join("&");
-        return [
-          String(detail.invoiceNo || "").trim(),
-          normalizeMoney(detail.paymentAmount),
-          discountSignature
-        ].join("|");
-      })
-      .sort()
-      .join(";");
-
-    const invoices = (row.detailInvoice || [])
-      .map((detail: any) => String(detail.invoiceNo || "").trim())
-      .filter(Boolean)
-      .sort()
-      .join(",");
-
-    const appliedAmount = Number(
-      (row.detailInvoice || []).reduce((sum: number, detail: any) => {
-        const discountTotal = (detail.detailDiscount || []).reduce((discountSum: number, discount: any) => discountSum + normalizeMoney(discount.amount), 0);
-        return sum + normalizeMoney(detail.paymentAmount) + discountTotal;
-      }, 0).toFixed(2)
-    );
-
-    return {
-      key: `PAY_${String(row.customerNo || "").trim()}_${String(row.transDate || "").trim()}_${detailSignature}`,
-      invoiceNo: invoices,
-      customerNo: row.customerNo,
-      amount: appliedAmount,
-      transDate: String(row.transDate || "").trim(),
-      paymentMethod: row.paymentMethod,
-      source: 'Excel Upload'
-    };
-  };

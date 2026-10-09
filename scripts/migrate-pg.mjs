@@ -257,6 +257,119 @@ const migrations = [
       );
     `,
   },
+  {
+    // 2026-09-29 (AM-014 / C.12, DRAFT — zona Accurate write, butuh review manusia). Klaim
+    // attempt tulis Accurate SEBELUM kirim: satu attempt hidup per operation × subject lewat
+    // unique partial index, sehingga reload / dua tab / dua user tidak bisa mengirim dua kali.
+    // Role aplikasi butuh SELECT/INSERT/UPDATE (default privileges runbook L1g — cek sebelum deploy).
+    // 2026-10-08 (C14, owner): langsung BENTUK FINAL ADR-004 rev 3.1 rilis A — produksi belum punya tabel ini,
+    // jadi ini pembuatan pertama (generasi + reopen_id + CHECK, UNIQUE identitas, index hidup per generasi).
+    // DB evaluasi berdefinisi lama (index 2 kolom) TIDAK diubah di sini: docs/handover/DDL_ADR004.sql dulu (tukar index).
+    nama: "accurate_write_attempt",
+    // Cek INDEX, bukan tabel: tabel tanpa unique partial index = klaim ganda diam-diam.
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE indexname = 'uq_accurate_write_attempt_live'`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS accurate_write_attempt (
+          id              text PRIMARY KEY,
+          operation       text NOT NULL,
+          subject_key     text NOT NULL,
+          client_ref      text NOT NULL DEFAULT '',
+          target_db_id    text NOT NULL,
+          payload_hash    text NOT NULL,
+          actor           text NOT NULL,
+          state           text NOT NULL,
+          outcome         jsonb NOT NULL DEFAULT '{}'::jsonb,
+          accurate_id     text NOT NULL DEFAULT '',
+          accurate_number text NOT NULL DEFAULT '',
+          resolution      jsonb,
+          generation      integer NOT NULL DEFAULT 0,
+          reopen_id       text,
+          created_at      timestamptz NOT NULL DEFAULT now(),
+          updated_at      timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT uq_accurate_write_attempt_identity UNIQUE (id, operation, subject_key, generation, target_db_id),
+          CONSTRAINT accurate_write_attempt_state
+              CHECK (state IN ('sending', 'posted', 'rejected', 'unknown', 'not_sent', 'resolved_absent')),
+          CONSTRAINT accurate_write_attempt_generation CHECK (generation >= 0),
+          CONSTRAINT accurate_write_attempt_reopen_gen CHECK ((generation = 0) = (reopen_id IS NULL))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_accurate_write_attempt_live
+          ON accurate_write_attempt (operation, subject_key, generation)
+          WHERE state IN ('sending', 'posted', 'unknown');
+    `,
+  },
+  {
+    // 2026-10-08 (C14, ADR-004 rev 3.1 rilis A): catatan reopen immutable untuk repost D-15. Tabel saja — tidak ada
+    // route yang menulisnya sampai rilis B. FK ke kunci identitas attempt INLINE (operasi yang diizinkan berkas ini).
+    // FK balik attempt->reopen (melingkar), trigger immutability & REVOKE = docs/handover/DDL_ADR004.sql (IT Support saat deploy, O5), BUKAN di sini.
+    nama: "accurate_write_attempt_reopen",
+    sudahAda: `SELECT 1 FROM information_schema.tables WHERE table_name = 'accurate_write_attempt_reopen'`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS accurate_write_attempt_reopen (
+          id                  text PRIMARY KEY,
+          operation           text NOT NULL,
+          subject_key         text NOT NULL,
+          from_attempt_id     text NOT NULL,
+          target_db_id        text NOT NULL,
+          actor               text NOT NULL,
+          from_generation     integer NOT NULL,
+          to_generation       integer NOT NULL,
+          old_accurate_id     text NOT NULL DEFAULT '',
+          old_accurate_number text NOT NULL DEFAULT '',
+          reason              text NOT NULL,
+          checked_source      text NOT NULL,
+          verification        jsonb NOT NULL,
+          created_at          timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT uq_accurate_write_attempt_reopen_generation UNIQUE (operation, subject_key, to_generation),
+          CONSTRAINT uq_accurate_write_attempt_reopen_from UNIQUE (from_attempt_id),
+          CONSTRAINT uq_accurate_write_attempt_reopen_identity UNIQUE (id, operation, subject_key, to_generation, target_db_id),
+          CONSTRAINT fk_accurate_write_attempt_reopen_from
+              FOREIGN KEY (from_attempt_id, operation, subject_key, from_generation, target_db_id)
+              REFERENCES accurate_write_attempt (id, operation, subject_key, generation, target_db_id),
+          CONSTRAINT accurate_write_attempt_reopen_from_generation CHECK (from_generation >= 0),
+          CONSTRAINT accurate_write_attempt_reopen_to_generation CHECK (to_generation = from_generation + 1),
+          CONSTRAINT accurate_write_attempt_reopen_old_ref CHECK (old_accurate_id <> '' OR old_accurate_number <> ''),
+          CONSTRAINT accurate_write_attempt_reopen_reason CHECK (length(btrim(reason)) >= 15),
+          CONSTRAINT accurate_write_attempt_reopen_checked_source CHECK (btrim(checked_source) <> ''),
+          -- coalesce: tanpa itu '{}' lolos (CHECK bernilai NULL).
+          CONSTRAINT accurate_write_attempt_reopen_verification
+              CHECK (coalesce(verification->>'method', '') IN ('manual_attestation', 'provider_readback'))
+      );
+    `,
+  },
+  {
+    // 2026-09-30 (AM-050 + AM-052, keputusan owner D-18; DRAFT — zona idempotency, butuh review manusia).
+    // EXPAND saja: kolom nullable pemilik lock + tabel jejak override. Tanpa backfill, tanpa drop.
+    // idempotency_log dibuat drizzle-kit push (tidak ada migrasi repo) — ALTER memakai IF NOT EXISTS.
+    // Role aplikasi butuh SELECT/INSERT/UPDATE pada idempotency_override (runbook L1g).
+    nama: "idempotency_lock_owner_override",
+    sudahAda: `SELECT 1 FROM information_schema.columns c
+               JOIN information_schema.tables t ON t.table_name = 'idempotency_override' AND t.table_schema = 'public'
+               WHERE c.table_name = 'idempotency_log' AND c.column_name = 'lockedBy'`,
+    sql: `
+      ALTER TABLE idempotency_log ADD COLUMN IF NOT EXISTS "lockId" text;
+      ALTER TABLE idempotency_log ADD COLUMN IF NOT EXISTS "lockedBy" text;
+      CREATE TABLE IF NOT EXISTS idempotency_override (
+          id              text PRIMARY KEY,
+          lock_id         text NOT NULL,
+          key             text NOT NULL,
+          actor           text NOT NULL,
+          reason          text NOT NULL,
+          block_reason    text NOT NULL,
+          previous_status text,
+          action          text NOT NULL CONSTRAINT idempotency_override_action
+                          CHECK (action IN ('takeover', 'resend_success', 'allow_duplicate')),
+          consumed_at     timestamptz,
+          created_at      timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_idempotency_override_lock_key ON idempotency_override (lock_id, key);
+    `,
+  },
+  {
+    // 2026-09-30 (review e641e571 LOW): guard /api/proxy mencari idempotency_log per lockId.
+    nama: "idempotency_log_lock_index",
+    sudahAda: `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_idempotency_log_lock'`,
+    sql: `CREATE INDEX IF NOT EXISTS idx_idempotency_log_lock ON idempotency_log ("lockId");`,
+  },
 ];
 
 const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 15_000 });

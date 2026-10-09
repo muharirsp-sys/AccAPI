@@ -38,7 +38,6 @@ from shared import (
     looks_like_payments_backup,
     lpb_upload_template_rows,
     make_payment_record_id,
-    max_sppd_sequence_from_records,
     next_sppd_number,
     normalize_lpb_no,
     normalize_pengajuan_type,
@@ -47,6 +46,7 @@ from shared import (
     parse_number_id,
     parse_payments_backup_upload,
     pd,
+    raise_sppd_sequence_from_records,
     read_upload_file_limited,
     rebuild_payment_submissions,
     render_sppd_docx,
@@ -58,10 +58,16 @@ from shared import (
     uuid,
     validate_backup_restore_conflicts,
     validate_csrf_request,
+    wita_now,
     write_invoice_excel,
 )
 
 router = APIRouter()
+
+
+def _already_submitted(rec: Dict[str, Any]) -> bool:
+    """Record sudah punya pengajuan aktif (bukan 'Ajukan Ulang') — satu aturan untuk create & submit."""
+    return bool(s(rec.get("submission_id", ""))) and s(rec.get("status_pembayaran", "")).lower() != "ajukan ulang"
 
 @router.get("/payments/data")
 def payments_data(request: Request):
@@ -223,9 +229,8 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
                 for key, rec in restore_rows:
                     db["lpb"][key] = rec
                 rebuild_payment_submissions(db)
-                max_seq = max_sppd_sequence_from_records([rec for _, rec in restore_rows])
-                if max_seq:
-                    db["sppd_seq"] = max(int(db.get("sppd_seq", 0) or 0), max_seq)
+                # D-05/C10: urutan SPPD tahun berjalan naik ke nomor tertinggi yang dipulihkan, tak pernah turun.
+                max_seq = raise_sppd_sequence_from_records(db, [rec for _, rec in restore_rows], wita_now())
                 await asyncio.to_thread(save_payments_db, db)
             append_audit_log(user, "payments_restore_backup", "lpb", {"added": len(restore_rows), "max_sppd_seq": max_seq})
             return JSONResponse({"ok": True, "added": len(restore_rows), "mode": "restore_backup", "message": f"Restore backup berhasil: {len(restore_rows)} record."})
@@ -496,8 +501,9 @@ async def payments_clear(request: Request):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
-    if not is_admin_user(user):
-        return JSONResponse(status_code=403, content={"ok": False, "error": "Hanya admin yang bisa clear seluruh data payments."})
+    # Review F2: key eksplisit dari izin efektif, bukan role admin (yang mengabaikan group).
+    if not user_has_permission(user, "payments", "delete"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.delete untuk clear seluruh data payments."})
     csrf_token = request.headers.get("X-CSRF-Token", "")
     if not validate_csrf_request(request, csrf_token):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
@@ -600,7 +606,7 @@ async def payments_cart_create(request: Request):
             return JSONResponse(status_code=400, content={"ok": False, "error": f"Nilai Invoice kosong untuk principle {principle}."})
         if tipe == "LPB" and has_submitted_duplicate_payment(db, s(rec.get("record_id", "")), rec):
             return JSONResponse(status_code=400, content={"ok": False, "error": f"LPB untuk principle {principle} terindikasi sudah pernah diajukan (kemungkinan case CBD). Cek data finance terlebih dulu."})
-        if s(rec.get("submission_id", "")) and s(rec.get("status_pembayaran", "")).lower() != "ajukan ulang":
+        if _already_submitted(rec):
             return JSONResponse(status_code=400, content={"ok": False, "error": f"Record {no_lpb or rec.get('record_id','')} sudah pernah diajukan ke finance."})
 
     order_keys: List[str] = []
@@ -782,10 +788,15 @@ async def payments_cart_submit(request: Request):
                 selected.append({**rec, "record_id": key})
         if not selected:
             return JSONResponse(status_code=400, content={"ok": False, "error": "Data pengajuan tidak ditemukan."})
+        # AM-013: draft tidak me-reserve record; draft lain bisa sudah mengajukan record yang sama.
+        taken = [s(r.get("no_lpb", "")) or r["record_id"] for r in selected if _already_submitted(r)]
+        if taken:
+            return JSONResponse(status_code=409, content={"ok": False, "error": f"Sudah diajukan lewat pengajuan lain: {', '.join(taken)}. Buat draft baru."})
 
     submission_id = str(uuid.uuid4())[:8]
-    submit_dt = pd.Timestamp.now()
-    now = submit_dt.strftime("%Y-%m-%d %H:%M:%S")
+    # Tanggal terbit SPPD (nomor + dokumen) = WITA (D-05/C10); jejak waktu ledger tetap jam server seperti sebelumnya.
+    submit_dt = wita_now()
+    now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for rec in selected:
         pr = s(rec.get("principle", ""))
@@ -862,12 +873,7 @@ async def payments_cart_submit(request: Request):
                     "amount": amount,
                 }
             )
-        _, sppd_no, sppd_settings = next_sppd_number(db, submit_dt)
-        sppd_name = f"sppd_{submission_id}.docx"
-        sppd_path = os.path.join(PAYMENTS_FILES_DIR, sppd_name)
-        render_sppd_docx(SPPD_TEMPLATE_PATH, sppd_path, submit_dt, sppd_no, transfer_items, sppd_settings)
-        files.append({"label": "SPPD Bank Panin", "url": f"/payments/files/{sppd_name}"})
-        sppd_file = sppd_name
+        # Nomor SPPD & dokumennya dibuat di dalam write lock di bawah (AM-012).
 
     payment_alloc_by_lpb: Dict[str, float] = {}
     potongan_alloc_by_lpb: Dict[str, float] = {}
@@ -893,6 +899,19 @@ async def payments_cart_submit(request: Request):
     # Tulis semua perubahan ke DB di dalam lock
     async with _PAYMENTS_DB_LOCK:
         db = await asyncio.to_thread(load_payments_db)
+        # Lock dilepas di antara dua bagian: cek ulang sebelum mengubah apa pun (AM-013).
+        taken = [k for k in (s(r.get("record_id", "")) for r in selected) if _already_submitted(db.get("lpb", {}).get(k, {}))]
+        if taken:
+            return JSONResponse(status_code=409, content={"ok": False, "error": f"Sudah diajukan lewat pengajuan lain: {', '.join(taken)}. Buat draft baru."})
+        if method == "BANK_PANIN":
+            # AM-012: nomor diambil dari ledger yang AKAN disimpan, di dalam lock yang sama.
+            # Dulu diambil dari objek bagian lock pertama dan hanya bertahan karena load
+            # berbagi objek cache; render gagal kini tidak menghabiskan nomor.
+            _, sppd_no, sppd_settings = next_sppd_number(db, submit_dt)
+            sppd_file = f"sppd_{submission_id}.docx"
+            await asyncio.to_thread(render_sppd_docx, SPPD_TEMPLATE_PATH, os.path.join(PAYMENTS_FILES_DIR, sppd_file),
+                                    submit_dt, sppd_no, transfer_items, sppd_settings)
+            files.append({"label": "SPPD Bank Panin", "url": f"/payments/files/{sppd_file}"})
         for rec in selected:
             key = s(rec.get("record_id", ""))
             if key in db.get("lpb", {}):
@@ -987,8 +1006,9 @@ async def payments_submit(request: Request):
                 return JSONResponse(status_code=400, content={"ok": False, "error": f"Nilai Invoice kosong untuk LPB {rec.get('no_lpb','')}"})
 
         submission_id = str(uuid.uuid4())[:8]
-        submit_dt = pd.Timestamp.now()
-        now = submit_dt.strftime("%Y-%m-%d %H:%M:%S")
+        # Tanggal terbit SPPD (nomor + dokumen) = WITA (D-05/C10); jejak waktu ledger tetap jam server seperti sebelumnya.
+        submit_dt = wita_now()
+        now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
         groups: Dict[str, List[Dict[str, Any]]] = {}
         for rec in selected:
             key = s(rec.get("principle", ""))

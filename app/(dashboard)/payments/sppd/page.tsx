@@ -29,6 +29,7 @@ interface SettingsResponse {
     error?: string;
     settings?: SppdSettings;
     next_sequence?: number;
+    effective_last_sequence?: number;
     preview_number?: string;
     preview_date?: string;
     template_path?: string;
@@ -463,8 +464,15 @@ export default function PaymentsSppdSettingsPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [uploading, setUploading] = useState(false);
+    // AM-019: urutan yang TERAKHIR DILIHAT dari server (versi). null = belum/gagal dimuat —
+    // Save dikunci, karena nilai di form hanya default dan akan memundurkan urutan SPPD.
+    const [loadedSequence, setLoadedSequence] = useState<number | null>(null);
 
-    const nextSequence = Number(settings.last_sequence || 0) + 1;
+    // Urutan terakhir yang BERLAKU tahun ini dari server (0 di tahun baru, D-05/C10). Selama nilai form belum diubah,
+    // pratinjau memakainya — last_sequence + 1 salah di Januari (046 padahal 001).
+    const [effectiveSequence, setEffectiveSequence] = useState<number | null>(null);
+    const editedSequence = loadedSequence === null || Number(settings.last_sequence || 0) !== loadedSequence;
+    const nextSequence = (editedSequence || effectiveSequence === null ? Number(settings.last_sequence || 0) : effectiveSequence) + 1;
     const localPreview = useMemo(
         () => formatPreview(settings.number_template, nextSequence, previewDate),
         [settings.number_template, nextSequence, previewDate]
@@ -476,7 +484,11 @@ export default function PaymentsSppdSettingsPage() {
             const me = await getJson<SettingsResponse>("/api/me");
             if (me.csrf_token) setCsrfToken(me.csrf_token);
             const data = await getJson<SettingsResponse>("/payments/sppd/settings");
-            if (data.settings) setSettings(data.settings);
+            if (data.settings) {
+                setSettings(data.settings);
+                setLoadedSequence(Number(data.settings.last_sequence || 0));
+            }
+            setEffectiveSequence(typeof data.effective_last_sequence === "number" ? data.effective_last_sequence : null);
             setPreviewDate(data.preview_date || "");
             setServerPreview(data.preview_number || "");
             setTemplatePath(data.template_path || "");
@@ -499,11 +511,20 @@ export default function PaymentsSppdSettingsPage() {
     };
 
     const handleSave = async () => {
+        if (loadedSequence === null) {
+            toast.error("Setting SPPD belum berhasil dimuat — muat ulang dulu agar urutan nomor tidak mundur.");
+            return;
+        }
         setSaving(true);
         try {
             const token = csrfToken || (await getJson<SettingsResponse>("/api/me")).csrf_token || "";
-            const data = await postJson<SettingsResponse>("/payments/sppd/settings", settings as unknown as Record<string, unknown>, token);
-            if (data.settings) setSettings(data.settings);
+            const data = await postJson<SettingsResponse>("/payments/sppd/settings",
+                { ...settings, expected_last_sequence: loadedSequence } as unknown as Record<string, unknown>, token);
+            if (data.settings) {
+                setSettings(data.settings);
+                setLoadedSequence(Number(data.settings.last_sequence || 0));
+            }
+            setEffectiveSequence(typeof data.effective_last_sequence === "number" ? data.effective_last_sequence : null);
             setServerPreview(data.preview_number || "");
             toast.success("Format SPPD tersimpan.");
         } catch (err: unknown) {
@@ -552,7 +573,7 @@ export default function PaymentsSppdSettingsPage() {
                     <button onClick={fetchSettings} disabled={loading || saving} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 disabled:opacity-50">
                         <RefreshCcw size={16} /> Refresh
                     </button>
-                    <button onClick={handleSave} disabled={loading || saving} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-500 disabled:opacity-50">
+                    <button onClick={handleSave} disabled={loading || saving || loadedSequence === null} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-500 disabled:opacity-50">
                         <Save size={16} /> Simpan
                     </button>
                 </div>

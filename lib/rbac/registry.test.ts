@@ -9,8 +9,8 @@ import assert from "node:assert";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { canAccessPathWithKeys, getPagePermission } from "../rbac.ts";
-import { PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey } from "./registry.ts";
+import { canAccessPathWithKeys, getPagePermission, rolePermissionPresets } from "../rbac.ts";
+import { CAPABILITY_KEYS, PERMISSION_REGISTRY, allPermissionKeys, isValidPermissionKey, moduleAllOn, toggleModuleKeys } from "./registry.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const API_DIR = path.resolve(__dirname, "../../app/api");
@@ -24,6 +24,28 @@ const keys = allPermissionKeys();
 assert.ok(keys.size > 0, "registry kosong");
 assert.ok(isValidPermissionKey("off_program_control.sm_approve"), "key OPC valid harus dikenali");
 assert.ok(!isValidPermissionKey("off_program_control.nope"), "key tak terdaftar harus ditolak");
+// Sesi 5: tiga kapabilitas Finance yang membuka kiriman ulang ke Accurate = tiga kunci terpisah, preset
+// role finance memuat ketiganya, manager tidak (owner D-14/D-15/D-18).
+for (const action of ["resolve_unknown", "override_duplicate", "repost_payment"] as const) {
+    assert.ok(isValidPermissionKey(`finance.${action}`), `finance.${action} wajib terdaftar`);
+    assert.ok(rolePermissionPresets.finance.finance?.includes(action), `preset finance tanpa ${action}`);
+    assert.ok(!rolePermissionPresets.manager.finance?.includes(action), `preset manager memuat ${action}`);
+}
+// AM-057: centang modul di UI grup TIDAK menyalakan kunci kapabilitas Finance (harus satu per satu);
+// mematikan modul mencabut semuanya, termasuk kapabilitas.
+// Kunci ditulis literal (re-review b955f836 #1): iterasi CAPABILITY_KEYS sendiri lulus walau satu kunci dibuang.
+assert.equal(CAPABILITY_KEYS.size, 3);
+const moduleOn = toggleModuleKeys(new Set(), "finance");
+assert.ok(moduleOn.has("finance.view") && moduleOn.has("finance.post_accurate"), "centang modul menyalakan kunci biasa");
+for (const k of ["finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment"]) {
+    assert.ok(isValidPermissionKey(k) && CAPABILITY_KEYS.has(k), `${k} wajib kunci kapabilitas terdaftar`);
+    assert.ok(!moduleOn.has(k), `centang modul menyalakan ${k}`);
+}
+// Status centang modul (UI) = helper yang sama dengan toggle: aktif walau kapabilitas mati.
+assert.ok(moduleAllOn(moduleOn, "finance") && !moduleAllOn(new Set(["finance.view"]), "finance"));
+const partial = toggleModuleKeys(new Set(["finance.view", "finance.override_duplicate"]), "finance");
+assert.ok(partial.has("finance.export") && partial.has("finance.override_duplicate") && !partial.has("finance.resolve_unknown"));
+assert.deepEqual([...toggleModuleKeys(new Set([...moduleOn, "finance.resolve_unknown", "dashboard.view"]), "finance")], ["dashboard.view"]);
 assert.ok(isValidPermissionKey("reconciliation.view"));
 assert.ok(isValidPermissionKey("reconciliation.run"));
 assert.ok(isValidPermissionKey("reconciliation.manage"));
@@ -50,7 +72,8 @@ function walk(dir: string): string[] {
 // bentuk `perms.has("key")` — route dengan dua izin alternatif memakai bentuk itu, dan
 // key-nya sama-sama harus terdaftar. Tanpa ini `order.*` lolos tak terdaftar cukup lama:
 // Access Group tidak bisa memberikannya sehingga modulnya hanya jalan untuk admin.
-const RE = /(?:requirePermission(?:H)?\s*\(\s*(?:[^,()]+,\s*)?|perms\??\.has\s*\(\s*)["'`]([^"'`]+)["'`]/g;
+// `perms[!?]*` juga menangkap `access.perms!.has(...)` (re-review 748b73aa LOW: route lock idempotency lolos scan).
+const RE = /(?:requirePermission(?:H)?\s*\(\s*(?:[^,()]+,\s*)?|perms[!?]*\.has\s*\(\s*)["'`]([^"'`]+)["'`]/g;
 let scanned = 0;
 const bad: string[] = [];
 for (const file of walk(API_DIR)) {

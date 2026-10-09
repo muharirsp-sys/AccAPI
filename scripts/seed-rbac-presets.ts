@@ -8,7 +8,10 @@
  * Side Effects: DB write pada access_group, group_permission, dan user_group.
  * Jalankan: node --experimental-strip-types scripts/seed-rbac-presets.ts
  *
- * ADDITIVE & IDEMPOTENT — legacy user.role/user.permissions TIDAK disentuh.
+ * BUKAN additive: izin SETIAP grup preset DIHAPUS lalu diisi ulang dari definisi di bawah (izin yang diatur
+ * manual lewat UI hilang), dan user ber-role legacy ditambahkan ke grup presetnya. Legacy user.role/
+ * user.permissions TIDAK disentuh. Wajib RBAC_PRESET_SYNC=reset-preset-groups (re-review 748b73aa LOW) —
+ * JANGAN dipakai untuk menambah kunci baru di produksi (D-17: lewat UI grup / INSERT terarah).
  * Preset diturunkan dari rolePermissionPresets (lib/rbac.ts) + allowedActions OPC
  * (lib/off-program-control/access.ts), dinyatakan sebagai permission key registry.
  */
@@ -37,7 +40,7 @@ const PRESETS: Array<{ name: string; desc: string; keys: string[] }> = [
         name: "Finance", desc: "Keuangan / pembayaran", keys: [
             ...k("dashboard", ["view"]), ...k("payments", ["view", "export"]),
             ...k("sppd", ["view", "download"]),
-            ...k("finance", ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update"]),
+            ...k("finance", ["view", "approve", "transfer", "upload_proof", "post_accurate", "retry_post", "export", "update", "resolve_unknown", "override_duplicate", "repost_payment"]),
             ...k("off_program_control", ["view", "update", "finance_payment", "submit_refund"]),
             ...k("claim_workflow", ["view", "update", "export"]),
             ...k("principles", ["view"]),
@@ -123,6 +126,9 @@ for (const p of PRESETS) {
     }
 }
 
+if (process.env.RBAC_PRESET_SYNC !== "reset-preset-groups") {
+    throw new Error("Skrip ini MENGHAPUS & mengisi ulang izin semua grup preset. Set RBAC_PRESET_SYNC=reset-preset-groups bila memang itu maksudnya.");
+}
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl?.startsWith("postgres")) throw new Error("DATABASE_URL PostgreSQL wajib di-set.");
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 2 });
@@ -167,7 +173,7 @@ try {
     }
     await client.query("COMMIT");
     console.log(`Backfill user_group: ${assigned} assignment baru, ${skipped} tanpa preset.`);
-    console.log("Seed RBAC preset selesai (additive, idempotent).");
+    console.log("Seed RBAC preset selesai (izin grup preset DIGANTI sesuai definisi; user_group hanya ditambah).");
 } catch (error) {
     await client.query("ROLLBACK");
     throw error;
