@@ -59,6 +59,8 @@ export interface DashboardData {
     rows: ApiRow[];
     progressFeed: ProgressFeedStatus | null;
     konstanta: Konstanta;
+    /** "gagal_baca" = server menghitung dengan konstanta BAWAAN karena yang tersimpan tak terbaca: angka sementara, aksi tulis nominal dikunci. */
+    konstantaSumber: "tersimpan" | "gagal_baca";
     cakupan: Cakupan;
     opsiFilter: { principles: string[]; branches: string[]; sm: string[] };
 }
@@ -69,12 +71,13 @@ export function useDashboard({ month, year, principle, branch }: { month: number
         const p = new URLSearchParams({ month: String(month), year: String(year) });
         if (principle !== "ALL") p.set("principle", principle);
         if (branch !== "ALL") p.set("branch", branch);
-        const r = await ambil(`/api/insentif-sales/dashboard?${p}`, (j) => {
+        const r = await ambil(`/api/insentif-sales/dashboard?${p}`, (j): DashboardData => {
             const d = j as Partial<DashboardData> & { rows?: ApiRow[]; konstanta?: unknown };
             return {
                 rows: d.rows ?? [],
                 progressFeed: d.progressFeed ?? null,
                 konstanta: parseKonstanta(d.konstanta),
+                konstantaSumber: d.konstantaSumber === "gagal_baca" ? "gagal_baca" : "tersimpan",
                 cakupan: d.cakupan ?? { dibatasi: false },
                 opsiFilter: d.opsiFilter ?? { principles: [], branches: [], sm: [] },
             };

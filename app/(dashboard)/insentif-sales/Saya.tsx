@@ -93,6 +93,11 @@ export default function Saya({ permKeys }: { permKeys: string[] }) {
                     <button type="button" className="fi-btn fi-btn--tertiary" onClick={muatKini}>Coba lagi</button>
                 </MessageStrip>
             )}
+            {d?.konstantaSumber === "gagal_baca" && (
+                <MessageStrip tone="neg" title="Angka sementara.">
+                    Konstanta insentif tersimpan gagal dibaca; nominal di bawah dihitung dengan angka bawaan dan bisa berubah.
+                </MessageStrip>
+            )}
             {kiniBagian}
             {tampilLalu && <BulanLalu load={dulu} onRetry={muatDulu} label={labelLalu} />}
         </div>

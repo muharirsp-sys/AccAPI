@@ -23,7 +23,7 @@ import { getTargetsForPeriod, computeMtdByPrinciple } from "@/lib/insentif-sales
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser } from "@/lib/insentif-hierarchy-scope";
 import { calculateInsentifSPV, type SpvSalesRow } from "@/lib/insentif-spv-calc";
-import { getKonstanta, getDaftar, spvIkutKey, pasanganKey } from "@/lib/insentif-settings";
+import { getKonstantaBerlabel, getDaftar, spvIkutKey, pasanganKey } from "@/lib/insentif-settings";
 import { isOfficeRow } from "@/lib/insentif-sm-calc";
 import type { StatusInsentif } from "@/lib/insentif-sales-calc";
 
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     const month = parseInt(searchParams.get("month") ?? String(now.getMonth() + 1), 10);
     const year = parseInt(searchParams.get("year") ?? String(now.getFullYear()), 10);
 
-    const [rawTargets, realByPrinciple, assignments, supportRows, scope, konstanta, spvIkut] = await Promise.all([
+    const [rawTargets, realByPrinciple, assignments, supportRows, scope, { konstanta, konstantaSumber }, spvIkut] = await Promise.all([
         getTargetsForPeriod(month, year),
         computeMtdByPrinciple(month, year),
         db.select().from(spvSalesAssignment),
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
             .from(spvSupport)
             .where(and(eq(spvSupport.periodMonth, month), eq(spvSupport.periodYear, year))),
         getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
-        getKonstanta(),
+        getKonstantaBerlabel(),
         getDaftar(spvIkutKey(month, year), []),
     ]);
     const spvIkutSet = new Set(spvIkut);
@@ -88,5 +88,5 @@ export async function GET(req: NextRequest) {
             new Set(spvRows.map((r) => r.principle).filter((p) => spvIkutSet.has(pasanganKey(spvName, p))))),
     }));
 
-    return NextResponse.json({ month, year, rows, konstanta });
+    return NextResponse.json({ month, year, rows, konstanta, konstantaSumber });
 }

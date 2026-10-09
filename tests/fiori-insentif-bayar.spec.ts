@@ -11,6 +11,7 @@
  * Side Effects: Tangkapan di test-results/.
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
+import * as XLSX from "xlsx";
 
 const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 const path = (p: string) => (url: URL) => url.pathname === p;
@@ -69,16 +70,18 @@ const PAYMENTS = [
 ];
 
 /** Mock Pembayaran. `gagalPost(kode)` → respons gagal untuk POST kode itu. Mengembalikan daftar tulis yang terkirim. */
-async function mockBayar(page: Page, opsi: { rows?: unknown[]; spv?: () => ReturnType<typeof json>; payments?: () => ReturnType<typeof json>; gagalPost?: (kode: string) => ReturnType<typeof json> | null; gagalBacaSetelahTulis?: boolean } = {}) {
+async function mockBayar(page: Page, opsi: { rows?: unknown[]; spv?: () => ReturnType<typeof json>; payments?: () => ReturnType<typeof json>; gagalPost?: (kode: string) => ReturnType<typeof json> | null; gagalBacaSetelahTulis?: boolean; konstantaGagalBaca?: boolean } = {}) {
     const kirim: Kirim[] = [];
     let payments = PAYMENTS.map((p) => ({ ...p }));
     const lunaskan = (cocok: (p: { id: string; salesCode: string }) => boolean, baru?: ReturnType<typeof bayar>) => {
         payments = payments.map((p) => (cocok(p) ? { ...p, paymentStatus: "lunas", paymentDate: "2026-10-08T02:20:00.000Z", paidByName: "LOCAL Admin" } : p));
         if (baru) payments.push(baru);
     };
-    await page.route(path("/api/insentif-sales/dashboard"), (r) => r.fulfill(json(dashboard(opsi.rows ?? ROWS_BAYAR))));
-    await page.route(path("/api/insentif-sales/spv-dashboard"), (r) => r.fulfill(opsi.spv ? opsi.spv() : json({ rows: opsi.rows ? [] : SPV })));
-    await page.route(path("/api/insentif-sales/sm-dashboard"), (r) => r.fulfill(json({ rows: opsi.rows ? [] : SM })));
+    // konstantaGagalBaca: ketiga endpoint hitung menjawab 200 dengan angka dari konstanta BAWAAN (getKonstantaBerlabel).
+    const sumber = opsi.konstantaGagalBaca ? { konstantaSumber: "gagal_baca" } : { konstantaSumber: "tersimpan" };
+    await page.route(path("/api/insentif-sales/dashboard"), (r) => r.fulfill(json({ ...dashboard(opsi.rows ?? ROWS_BAYAR), ...sumber })));
+    await page.route(path("/api/insentif-sales/spv-dashboard"), (r) => r.fulfill(opsi.spv ? opsi.spv() : json({ rows: opsi.rows ? [] : SPV, ...sumber })));
+    await page.route(path("/api/insentif-sales/sm-dashboard"), (r) => r.fulfill(json({ rows: opsi.rows ? [] : SM, ...sumber })));
     await page.route(path("/api/insentif-sales/payments"), (r: Route) => {
         const req = r.request();
         if (req.method() === "GET") {
@@ -315,6 +318,21 @@ test("Pembayaran: muat ulang status gagal setelah Tandai lunas → tampilan diga
     expect(kirim).toHaveLength(1);
 });
 
+test("Pembayaran: konstanta gagal dibaca → nominal dari angka bawaan, Tandai lunas terkunci dengan alasan, tidak ada POST/PATCH", async ({ page }) => {
+    const kirim = await mockBayar(page, { konstantaGagalBaca: true });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/pembayaran?month=9&year=2026", NAV);
+    const main = page.locator("main");
+    await expect(main.getByRole("alert").filter({ hasText: "Konstanta insentif tersimpan gagal dibaca" }).first()).toBeVisible(NAV);
+    const tombol = main.locator(".fi-ftb").getByRole("button", { name: /^Tandai .*lunas…$/ });
+    await expect(tombol).toBeDisabled();
+    await expect(tombol).toHaveAttribute("title", /Konstanta insentif gagal dibaca/);
+    await expect(main.locator(".fi-ftb")).toContainText("Konstanta insentif gagal dibaca");
+    await expect(main.getByRole("checkbox", { name: "Pilih Andi Pratama KINO" })).toBeDisabled();
+    await page.screenshot({ path: "test-results/fiori-insentif-bayar-konstanta-gagal.png", fullPage: true });
+    expect(kirim).toHaveLength(0);
+});
+
 test("Pembayaran kosong: periode belum dihitung", async ({ page }) => {
     await mockBayar(page, { rows: [] });
     await page.setViewportSize({ width: 1366, height: 900 });
@@ -432,6 +450,65 @@ test("Support: galat 400 server tampil di dialog dan halaman, tidak ada yang ber
     await expect(dlg.getByRole("alert")).not.toContainText("Tidak ada yang diubah");
     await expect(dlg.getByRole("alert")).not.toContainText("Failed to fetch");
     expect(kirim.map((k) => k.url)).toEqual(["/api/insentif-sales/support", "/api/insentif-sales/support"]);
+});
+
+test("Support: isian bukan angka tidak diam-diam jadi Rp 0 — Simpan dikunci, tidak ada yang dikirim; kosong tetap 0", async ({ page }) => {
+    const kirim = await mockSup(page);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/support?month=9&year=2026", NAV);
+    const main = page.locator("main");
+    // MKS-21 tersimpan Rp 300.000. "1e"/"e" = isian number tak terbaca: peramban melaporkan value "" (badInput), dulu terkirim sebagai 0.
+    const isi = main.getByRole("spinbutton", { name: "Support MKS-21 GODREJ" });
+    const baris21 = main.getByRole("table", { name: "Support sales" }).locator("tbody tr").filter({ hasText: "MKS-21" });
+    const simpan = main.locator(".fi-ftb").getByRole("button", { name: "Simpan & hitung ulang…" });
+    await isi.fill("", NAV);
+    await isi.pressSequentially("1e");
+    await expect(simpan).toBeDisabled();
+    await expect(simpan).toHaveAttribute("title", /bukan angka/);
+    await expect(baris21).toContainText("bukan angka");
+    // Pembaca layar mendengar alasannya pada isian itu sendiri (7c).
+    await expect(isi).toHaveAttribute("aria-invalid", "true");
+    await expect(isi).toHaveAccessibleDescription(/bukan angka/);
+    await isi.press("Backspace"); // "1" sah lagi
+    await expect(baris21).not.toContainText("bukan angka");
+    // "" → "e": value DOM tetap "" sehingga React menahan onChange — tanpa onInput ini terkirim sebagai 0.
+    await isi.fill("");
+    await isi.pressSequentially("e");
+    await expect(simpan).toBeDisabled();
+    await expect(baris21).toContainText("bukan angka");
+    expect(kirim).toHaveLength(0);
+    // Dikosongkan = 0 (kebijakan kolom kosong) tetap boleh disimpan.
+    await isi.press("Backspace");
+    await expect(baris21).not.toContainText("bukan angka");
+    await expect(simpan).toBeEnabled();
+    await simpan.click();
+    await page.getByRole("dialog").getByRole("button", { name: "Simpan & hitung ulang" }).click();
+    await expect(page.getByRole("dialog")).toBeHidden();
+    expect((kirim[0].body as Array<{ salesCode: string; supportAmount: unknown }>).find((r) => r.salesCode === "MKS-21")?.supportAmount).toBe(0);
+});
+
+test("Support: Excel — baris di luar periode tidak membatalkan impor, \"-\" = Rp 0, teks lain di baris periode menolak", async ({ page }) => {
+    const kirim = await mockSup(page);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/support?month=9&year=2026", NAV);
+    const main = page.locator("main");
+    const berkas = (rows: unknown[][]) => {
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Kode Salesman", "Nama", "Principal", "Support (Rp)"], ...rows]), "Support Sales");
+        return { name: "support.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer };
+    };
+    const input = main.getByLabel("Berkas Excel support sales");
+    await expect(main.getByRole("table", { name: "Support sales" }).locator("tbody tr")).toHaveCount(5, NAV);
+    // S-LAIN tidak ada di periode ini → dilewati; teks tidak validnya tidak boleh membatalkan baris yang dipakai.
+    await input.setInputFiles(berkas([["MKS-07", "", "KINO", 250000], ["MKS-21", "", "GODREJ", "-"], ["S-LAIN", "", "KINO", "N/A"]]));
+    await expect(main.getByRole("status").filter({ hasText: "2 baris support sales terisi dari Excel" })).toContainText("1 baris dilewati");
+    await expect(main.getByRole("spinbutton", { name: "Support MKS-07 KINO" })).toHaveValue("250000");
+    await expect(main.getByRole("spinbutton", { name: "Support MKS-21 GODREJ" })).toHaveValue("0");
+    // Baris periode dengan teks bukan angka tetap menolak seluruh berkas.
+    await input.setInputFiles(berkas([["MKS-07", "", "KINO", 300000], ["MKS-12", "", "KINO", "N/A"]]));
+    await expect(main.getByRole("alert").filter({ hasText: "bernilai tidak valid (mis. MKS-12/KINO)" })).toBeVisible();
+    await expect(main.getByRole("spinbutton", { name: "Support MKS-07 KINO" })).toHaveValue("250000");
+    expect(kirim).toHaveLength(0);
 });
 
 test("Support: hitung untuk SPV dan penyebut AO lewat dialog yang menyebut akibatnya; kunci SPV dinormalisasi seperti server", async ({ page }) => {

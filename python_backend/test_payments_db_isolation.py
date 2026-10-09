@@ -214,7 +214,44 @@ def check_concurrent_writer_not_lost():
     assert len(saved["submissions"]) == 1
 
 
+def check_invalid_money_is_not_zero():
+    """AM-044 (H07): angka uang nonempty invalid dari pengguna/berkas -> 400/galat baris, ledger utuh."""
+    client = payments_client()
+    write_db({"lpb": {"A": lpb("A")}})
+    before = open(DB_PATH, encoding="utf-8").read()
+    r = client.post("/payments/update", json={"items": [{"record_id": "A", "nilai_invoice": "abc"}]})
+    assert r.status_code == 400 and "Nilai Invoice" in r.text, f"nilai_invoice 'abc' diterima: {r.status_code} {r.text[:200]}"
+    r = client.post("/payments/manual/add", json={"tipe_pengajuan": "LPB", "no_lpb": "M1", "principle": "PT UJI", "nilai_invoice": "12abc"})
+    assert r.status_code == 400, f"manual add '12abc' diterima: {r.status_code} {r.text[:200]}"
+    draft = client.post("/payments/cart/create", json={"method": "NON_PANIN", "record_ids": ["A"], "target_payment_date": "2026-10-01"}).json()["draft_id"]
+    before_submit = shared.load_payments_db()
+    r = client.post("/payments/cart/submit", json={"draft_id": draft,
+                                                    "items": [{"group_key": "PT UJI||LPB", "jenis_pembayaran": "TRF", "potongan": "abc"}]})
+    assert r.status_code == 400 and "Potongan" in r.text, f"potongan 'abc' jadi 0: {r.status_code} {r.text[:200]}"
+    assert shared.load_payments_db()["lpb"] == before_submit["lpb"], "record berubah oleh submit yang ditolak"
+    assert json.loads(before)["lpb"]["A"]["nilai_invoice"] == shared.load_payments_db()["lpb"]["A"]["nilai_invoice"]
+    # Sah tetap jalan: nol dan format rupiah.
+    r = client.post("/payments/update", json={"items": [{"record_id": "A", "nilai_invoice": "Rp 1.250.000,-"}]})
+    assert r.status_code == 200 and shared.load_payments_db()["lpb"]["A"]["nilai_invoice"] == 1250000.0, r.text[:200]
+
+    # Import LPB & restore: seluruh upload dibatalkan dengan nomor baris + nilai mentah.
+    buf = io.BytesIO()
+    pd.DataFrame([
+        {"TGL. SETOR": "01/09/2026", "NO. LPB": "X1", "TGL. WIN": "01/09/2026", "TGL. J. TEMPO WIN": "30/09/2026",
+         "PRINCIPLE": "PT UJI", "NILAI WIN": "1.000.000", "TGL TERIMA BARANG": "01/09/2026"},
+        {"TGL. SETOR": "01/09/2026", "NO. LPB": "X2", "TGL. WIN": "01/09/2026", "TGL. J. TEMPO WIN": "30/09/2026",
+         "PRINCIPLE": "PT UJI", "NILAI WIN": "NOT-A-NUMBER", "TGL TERIMA BARANG": "01/09/2026"},
+    ]).to_excel(buf, index=False)
+    try:
+        shared.parse_lpb_upload(buf.getvalue())
+    except ValueError as e:
+        assert "baris 3" in str(e) and "NOT-A-NUMBER" in str(e), e
+    else:
+        raise AssertionError("import LPB menerima NILAI WIN 'NOT-A-NUMBER' (dulu 0)")
+
+
 def main():
+    check_invalid_money_is_not_zero()
     check_isolation()
     check_corrupt_is_not_empty()
     check_sppd_sequence_survives_isolation()

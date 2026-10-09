@@ -14,6 +14,7 @@ import { incentivePayments, kontrolAuditLog } from "@/db/schema";
 import { requirePermission } from "@/lib/rbac/resolve";
 import { getScopeForUser, getUserHierarchyIdentity, payeeInScope } from "@/lib/insentif-hierarchy-scope";
 import { perubahanLunas, resolvePaidAt } from "@/lib/insentif-payment-date";
+import { tolakLunasTanpaKonstanta } from "@/lib/insentif-settings";
 
 export async function PATCH(
     req: NextRequest,
@@ -23,6 +24,30 @@ export async function PATCH(
     if (gate.response) return gate.response;
 
     const { id } = await params;
+
+    let body: {
+        paymentStatus?: "belum" | "lunas" | "tunggakan";
+        paymentProofUrl?: string;
+        paymentDate?: string; // "YYYY-MM-DD" tanggal WITA (lib/insentif-payment-date)
+    };
+    try {
+        body = await req.json();
+    } catch {
+        return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    }
+
+    // Nilai status asing ditolak, bukan disimpan apa adanya (audit 2026-08-28, M5).
+    const STATUS_SAH = ["belum", "lunas", "tunggakan"];
+    if (body.paymentStatus !== undefined && !STATUS_SAH.includes(body.paymentStatus)) {
+        return NextResponse.json(
+            { error: `paymentStatus harus salah satu dari: ${STATUS_SAH.join(", ")}` },
+            { status: 400 },
+        );
+    }
+    // Pembayaran memakai PATCH untuk baris yang SUDAH tercatat: pagar yang sama dengan POST (konstanta tak terbaca = nominal
+    // dashboard dari bawaan → tidak boleh ditandai lunas). Badan dibaca sebelum baris dicari supaya pagar ini jalan duluan.
+    const tolakKonstanta = body.paymentStatus === "lunas" ? await tolakLunasTanpaKonstanta() : null;
+    if (tolakKonstanta) return tolakKonstanta;
 
     const [existing] = await db
         .select({
@@ -46,26 +71,6 @@ export async function PATCH(
     ]);
     if (!payeeInScope(scope, identity, existing.salesCode)) {
         return NextResponse.json({ error: `${existing.salesCode}: di luar cakupan Anda.` }, { status: 403 });
-    }
-
-    let body: {
-        paymentStatus?: "belum" | "lunas" | "tunggakan";
-        paymentProofUrl?: string;
-        paymentDate?: string; // "YYYY-MM-DD" tanggal WITA (lib/insentif-payment-date)
-    };
-    try {
-        body = await req.json();
-    } catch {
-        return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-    }
-
-    // Nilai status asing ditolak, bukan disimpan apa adanya (audit 2026-08-28, M5).
-    const STATUS_SAH = ["belum", "lunas", "tunggakan"];
-    if (body.paymentStatus !== undefined && !STATUS_SAH.includes(body.paymentStatus)) {
-        return NextResponse.json(
-            { error: `paymentStatus harus salah satu dari: ${STATUS_SAH.join(", ")}` },
-            { status: 400 },
-        );
     }
 
     const now = new Date();

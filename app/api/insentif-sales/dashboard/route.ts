@@ -24,7 +24,7 @@ import {
     getTargetsForPeriod,
 } from "@/lib/insentif-sales";
 import { requirePermission } from "@/lib/rbac/resolve";
-import { getGtAoTargetMode, getKonstanta, getDaftar, aoFileKey, pasanganKey } from "@/lib/insentif-settings";
+import { getGtAoTargetMode, getKonstantaBerlabel, getDaftar, aoFileKey, pasanganKey } from "@/lib/insentif-settings";
 import { getScopeForUser, getUserHierarchyIdentity } from "@/lib/insentif-hierarchy-scope";
 import { isOfficeRow } from "@/lib/insentif-sm-calc";
 import {
@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
     const principle = searchParams.get("principle") ?? undefined;
     const branch = searchParams.get("branch") ?? undefined;
 
-    const [rawTargets, realByPrinciple, supportRows, paymentRows, scope, gtAoMode, konstanta, aoFileRows] = await Promise.all([
+    const [rawTargets, realByPrinciple, supportRows, paymentRows, scope, gtAoMode, { konstanta, konstantaSumber }, aoFileRows] = await Promise.all([
         getTargetsForPeriod(month, year),
         computeMtdByPrinciple(month, year),
         db
@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
             .where(and(eq(incentivePayments.periodMonth, month), eq(incentivePayments.periodYear, year))),
         getScopeForUser(gate.session.user.id, { month, year }, gate.perms),
         getGtAoTargetMode(),
-        getKonstanta(),
+        getKonstantaBerlabel(),
         getDaftar(aoFileKey(month, year), []),
     ]);
     const aoFileSet = new Set(aoFileRows);
@@ -302,5 +302,5 @@ export async function GET(req: NextRequest) {
 
     // konstanta ikut dikirim supaya rincian di layar (ambang AO, strata, PPh) memakai angka
     // yang SAMA dengan yang dipakai server saat menghitung — bukan salinan hardcode di UI.
-    return NextResponse.json({ month, year, timeGone, rows, progressFeed, gtAoMode, konstanta, cakupan, opsiFilter, izin });
+    return NextResponse.json({ month, year, timeGone, rows, progressFeed, gtAoMode, konstanta, konstantaSumber, cakupan, opsiFilter, izin });
 }

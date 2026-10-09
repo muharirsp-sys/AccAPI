@@ -42,8 +42,22 @@ const keySpv = (p: Pasangan) => `${p.spvName}|${p.principle}`;
  * (huruf s, bukan spasi), sehingga nama dengan spasi ganda tidak pernah cocok dengan daftar server.
  */
 const ikutKey = (p: Pasangan) => keySpv(p).trim().toUpperCase().replace(/\s+/g, " ");
-/** Sama dengan payload lama (`Number(x) || 0`): isian kosong = 0; negatif tetap dikirim dan ditolak server (AM-043). */
-const angka = (v: string) => Number(v) || 0;
+/**
+ * Isian kosong = 0 (kebijakan lama); negatif tetap dikirim dan ditolak server (AM-043). Isian bukan angka = NaN, BUKAN 0: dulu
+ * `Number(x) || 0` membuatnya terkirim sebagai support Rp 0 (bayar lebih). Simpan dikunci selama ada isian NaN.
+ */
+const angka = (v: string) => (v.trim() === "" ? 0 : Number(v));
+/**
+ * Draf untuk isian number yang tidak terbaca peramban (validity.badInput, mis. "e" atau "1e"): value-nya "" sehingga tak bisa
+ * dibedakan dari kosong. Disimpan sebagai penanda ini, dan input menampilkan "" lagi supaya React tidak menimpa teks yang diketik.
+ * Dibaca di onInput, bukan hanya onChange: React menahan onChange bila value DOM tetap "" ("" → "e" → ""), sehingga tanpa onInput
+ * "e" di isian kosong tetap terkirim sebagai 0 dan penanda tidak terhapus saat teksnya dihapus.
+ */
+const BUKAN_ANGKA = "bukan angka";
+const isiInput = (el: HTMLInputElement) => (el.validity.badInput ? BUKAN_ANGKA : el.value);
+const tampilIsi = (v: string) => (v === BUKAN_ANGKA ? "" : v);
+/** id keterangan "bukan angka" per isian (aria-describedby): kunci baris berisi spasi/|, jadi dirapikan jadi id yang sah. */
+const idSalah = (jenis: string, kunci: string) => `salah-${jenis}-${kunci.replace(/[^A-Za-z0-9_-]/g, "_")}`;
 const tanpa = (o: Record<string, string>, keys: string[]) => { const n = { ...o }; for (const x of keys) delete n[x]; return n; };
 const isiDraf = (d: Draf) => Object.keys(d.support).length + Object.keys(d.status).length + Object.keys(d.spv).length;
 const statusLama = (r: ApiRow) => r.statusInsentif ?? "distributor_principle";
@@ -109,9 +123,10 @@ function ExcelSupport({ kind, templateRows, fileName, knownKeys, disabledReason,
         try {
             const { parseSupportExcel } = await import("@/lib/insentif-sales-excel");
             const parsed = parseSupportExcel(await file.arrayBuffer(), kind);
-            // Nominal tidak masuk akal ditolak SEBELUM apa pun terisi. Nol itu sah (mencabut support), negatif tidak — dan diam-diam
-            // membulatkannya ke 0 akan membayar lebih.
-            const bad = parsed.filter((r) => !Number.isFinite(r.supportAmount) || r.supportAmount < 0);
+            // Nominal tidak masuk akal ditolak SEBELUM apa pun terisi. Nol itu sah (mencabut support; sel kosong atau "-"), negatif
+            // tidak — dan diam-diam membulatkannya ke 0 akan membayar lebih. Hanya baris periode ini yang diperiksa: baris yang memang
+            // dilewati (tidak ada di periode) tidak ditulis, jadi angkanya tidak boleh membatalkan impor (sama dengan progres).
+            const bad = parsed.filter((r) => knownKeys.has(`${r.key}|${r.principle}`) && (!Number.isFinite(r.supportAmount) || r.supportAmount < 0));
             if (bad.length) {
                 onPesan({ tone: "neg", teks: `${bad.length} baris di Excel support ${apa} bernilai tidak valid (mis. ${bad[0].key}/${bad[0].principle}). Tidak ada yang diisi.` });
                 return;
@@ -232,7 +247,10 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
     const kunciIkut = !izinTarget || !izinLihatSemua ? "Hanya admin/Finance dengan izin unggah target yang boleh mengubah hitungan principal SPV"
         : ikutLoad.status === "galat" && !ikutLoad.data ? "Status hitungan SPV belum berhasil dimuat"
             : memuat || ikutLoad.status === "memuat" ? tunggu : undefined;
-    const alasanSimpan = nPerubahan === 0 ? "Belum ada perubahan" : memuat || spvLoad.status === "memuat" ? tunggu : undefined;
+    const isianSalah = gtRows.filter((r) => Number.isNaN(angka(nilaiSupport(r)))).length + pairs.filter((p) => Number.isNaN(angka(nilaiSpv(p)))).length;
+    const alasanSimpan = nPerubahan === 0 ? "Belum ada perubahan"
+        : isianSalah ? `${isianSalah} isian support bukan angka — perbaiki atau kosongkan (= Rp 0) dulu`
+            : memuat || spvLoad.status === "memuat" ? tunggu : undefined;
 
     const [dlgSimpan, setDlgSimpan] = useState(false);
     const [dlgAo, setDlgAo] = useState<ApiRow | null>(null);
@@ -256,7 +274,7 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
                 const data = await kirim("/api/insentif-sales/support", "POST", gtRows.map((r) => ({
                     salesCode: r.salesCode, principle: r.principle,
                     periodMonth: month, periodYear: year,
-                    supportAmount: Number(nilaiSupport(r)) || 0,
+                    supportAmount: angka(nilaiSupport(r)),
                 })), "Gagal simpan support");
                 tersimpan.push(`support sales (${String(data.upserted ?? gtRows.length)} baris)`);
                 ubahDraf((x) => ({ ...x, support: tanpa(x.support, [...kunciSales]) }));
@@ -265,7 +283,7 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
                 const data = await kirim("/api/insentif-sales/spv-support", "POST", pairs.map((p) => ({
                     spvName: p.spvName, principle: p.principle,
                     periodMonth: month, periodYear: year,
-                    supportAmount: Number(nilaiSpv(p)) || 0,
+                    supportAmount: angka(nilaiSpv(p)),
                 })), "Gagal simpan support SPV");
                 tersimpan.push(`support SPV (${String(data.upserted ?? pairs.length)} baris)`);
                 ubahDraf((x) => ({ ...x, spv: tanpa(x.spv, [...kunciSpv]) }));
@@ -336,11 +354,14 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
             {statusBerubah(r) && sebelumnya(labelStatus(statusLama(r)))}
         </>
     );
+    const ketikSupport = (r: ApiRow, el: HTMLInputElement) => { const v = isiInput(el); ubahDraf((x) => ({ ...x, support: { ...x.support, [keySales(r)]: v } })); };
     const isiSupport = (r: ApiRow) => (
         <>
             <input type="number" min={0} inputMode="numeric" className="fi-input fi-cellin fi-tnum" aria-label={`Support ${r.salesCode} ${r.principle}`}
-                value={nilaiSupport(r)} disabled={Boolean(kunciIsiSupport)} title={kunciIsiSupport}
-                onChange={(e) => { const v = e.target.value; ubahDraf((x) => ({ ...x, support: { ...x.support, [keySales(r)]: v } })); }} />
+                value={tampilIsi(nilaiSupport(r))} disabled={Boolean(kunciIsiSupport)} title={kunciIsiSupport} aria-invalid={Number.isNaN(angka(nilaiSupport(r))) || undefined}
+                aria-describedby={Number.isNaN(angka(nilaiSupport(r))) ? idSalah("sup", keySales(r)) : undefined}
+                onChange={(e) => ketikSupport(r, e.currentTarget)} onInput={(e) => ketikSupport(r, e.currentTarget)} />
+            {Number.isNaN(angka(nilaiSupport(r))) && <span id={idSalah("sup", keySales(r))} className="fi-sub fi-why">bukan angka</span>}
             {supportBerubah(r) && sebelumnya(formatRp(r.support ?? 0))}
         </>
     );
@@ -359,11 +380,14 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
         </>
     );
     const insentif = (r: ApiRow) => { const s = sebabNol(r, k); return <><b>{formatRp(r.incentive.total)}</b>{s && <span className="fi-sub">{s}</span>}</>; };
+    const ketikSpv = (p: Pasangan, el: HTMLInputElement) => { const v = isiInput(el); ubahDraf((x) => ({ ...x, spv: { ...x.spv, [keySpv(p)]: v } })); };
     const isiSpv = (p: Pasangan) => (
         <>
             <input type="number" min={0} inputMode="numeric" className="fi-input fi-cellin fi-tnum" aria-label={`Support SPV ${p.spvName} ${p.principle}`}
-                value={nilaiSpv(p)} disabled={Boolean(kunciIsiSpv)} title={kunciIsiSpv}
-                onChange={(e) => { const v = e.target.value; ubahDraf((x) => ({ ...x, spv: { ...x.spv, [keySpv(p)]: v } })); }} />
+                value={tampilIsi(nilaiSpv(p))} disabled={Boolean(kunciIsiSpv)} title={kunciIsiSpv} aria-invalid={Number.isNaN(angka(nilaiSpv(p))) || undefined}
+                aria-describedby={Number.isNaN(angka(nilaiSpv(p))) ? idSalah("spv", keySpv(p)) : undefined}
+                onChange={(e) => ketikSpv(p, e.currentTarget)} onInput={(e) => ketikSpv(p, e.currentTarget)} />
+            {Number.isNaN(angka(nilaiSpv(p))) && <span id={idSalah("spv", keySpv(p))} className="fi-sub fi-why">bukan angka</span>}
             {spvBerubah(p) && sebelumnya(formatRp(savedSpv?.[keySpv(p)] ?? 0))}
         </>
     );

@@ -530,9 +530,14 @@ export function TabelRincian<T>(props: TabelRincianProps<T>) {
 
 // ── Pemuat insentif SPV/SM ──────────────────────────────────────────────────
 // Dulu galat endpoint ini tampil sebagai "Belum ada data SPV…" (res.ok ? rows : []) — sekarang galat tetap galat (#9).
+// Konstanta tersimpan tak terbaca (konstantaSumber "gagal_baca"): angka SPV/SM dihitung dari BAWAAN — diperlakukan galat, bukan
+// nominal yang tampil seperti biasa (galat ≠ angka), sehingga Taksiran menyebutnya dan Pembayaran mengunci penandaan.
 function muatBaris<T>(url: string, apa: string) {
     return async (): Promise<Load<T[]>> => {
-        const r = await ambil(url, (j) => ((j as { rows?: T[] }).rows ?? []));
+        const r = await ambil(url, (j) => {
+            if ((j as { konstantaSumber?: string }).konstantaSumber === "gagal_baca") throw new Error("konstanta insentif tersimpan gagal dibaca; angka bawaan tidak ditampilkan");
+            return (j as { rows?: T[] }).rows ?? [];
+        });
         return r.status === "galat" ? { ...r, error: `Insentif ${apa} belum berhasil dimuat${r.error && !/^HTTP \d+$/.test(r.error) ? ` (${r.error})` : ""}.` } : r;
     };
 }
