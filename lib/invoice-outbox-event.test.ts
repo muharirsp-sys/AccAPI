@@ -40,11 +40,11 @@ const payload = (orderId: string) => ({
         detailNotes: "order uji baris 1", charField1: orderId }],
 });
 
-async function seed(pool: Pool, orderId: string, state: string, extra: { lastError?: string; accurateId?: string; updatedAgoMin?: number } = {}) {
+async function seed(pool: Pool, orderId: string, state: string, extra: { lastError?: string; accurateId?: string; updatedAgoMin?: number; attempts?: number } = {}) {
     await pool.query(
-        `INSERT INTO invoice_outbox (order_id, customer_no, order_date, state, payload, queued_by, accurate_id, last_error, updated_at)
-         VALUES ($1, 'C-TEST-KN', '2026-10-08', $2, $3::jsonb, 'uji@contoh', $4, $5, now() - make_interval(mins => $6))`,
-        [orderId, state, JSON.stringify(payload(orderId)), extra.accurateId ?? "", extra.lastError ?? "", extra.updatedAgoMin ?? 0]);
+        `INSERT INTO invoice_outbox (order_id, customer_no, order_date, state, payload, queued_by, accurate_id, last_error, updated_at, attempts)
+         VALUES ($1, 'C-TEST-KN', '2026-10-08', $2, $3::jsonb, 'uji@contoh', $4, $5, now() - make_interval(mins => $6), $7)`,
+        [orderId, state, JSON.stringify(payload(orderId)), extra.accurateId ?? "", extra.lastError ?? "", extra.updatedAgoMin ?? 0, extra.attempts ?? 0]);
 }
 
 const events = async (pool: Pool, orderId: string) =>
@@ -197,6 +197,7 @@ test("PG: DDL manual (E5 + append-only) — dijalankan DUA kali: data lama dikun
     const kasus = {
         gateway: id("rejected-gateway"), amplop: id("rejected-amplop"), tanpaId: id("posted-tanpa-id"), denganId: id("posted-id"),
         macet: id("sending-20m"), hidup: id("sending-1m"), antre: id("queued"),
+        antreUlangLama: id("queued-attempts-tanpa-cari"), antreUlangDicari: id("queued-attempts-dicari"),
     };
     try {
         await pool.query((await entriMigrasi("invoice_outbox_event")).sql);
@@ -207,6 +208,12 @@ test("PG: DDL manual (E5 + append-only) — dijalankan DUA kali: data lama dikun
         await seed(pool, kasus.macet, "sending", { updatedAgoMin: 20 });
         await seed(pool, kasus.hidup, "sending", { updatedAgoMin: 1 });
         await seed(pool, kasus.antre, "queued");
+        // Antre ulang VERSI LAMA: rejected -> queued tanpa pencarian, attempts & last_error tertinggal.
+        await seed(pool, kasus.antreUlangLama, "queued", { attempts: 2, lastError: '["Pelanggan melebihi batas piutang"]' });
+        // Antre ulang VERSI BARU (sudah dicari, event antre_ulang membawa pencarian) -> tidak disentuh.
+        await seed(pool, kasus.antreUlangDicari, "queued", { attempts: 1, lastError: '["stok kurang"]' });
+        await pool.query(`INSERT INTO invoice_outbox_event (order_id, jenis, state_from, state_to, actor, detail)
+                          VALUES ($1, 'antre_ulang', 'rejected', 'queued', 'uji', '{"pencarian":{"hasil":"tidak_ketemu_dicek"}}'::jsonb)`, [kasus.antreUlangDicari]);
         const { readFile } = await import("node:fs/promises");
         const ddl = await readFile(new URL("../docs/handover/DDL_OUTBOX_EVENT.sql", import.meta.url), "utf8");
         const jalankan = async () => {
@@ -236,6 +243,14 @@ test("PG: DDL manual (E5 + append-only) — dijalankan DUA kali: data lama dikun
         assert.equal((await state(kasus.hidup)).state, "sending", "kiriman yang sedang berjalan tidak boleh disentuh E5");
         assert.equal((await state(kasus.antre)).state, "queued");
         for (const k of [kasus.amplop, kasus.denganId, kasus.hidup, kasus.antre]) assert.equal((await events(pool, k)).length, 0, k);
+        // A-SEDANG: antre ulang versi lama kembali ke Ditolak (antre ulang berikutnya lewat pencarian), SEKALI.
+        assert.equal((await state(kasus.antreUlangLama)).state, "rejected");
+        assert.match((await state(kasus.antreUlangLama)).last_error, /^\["E5: /, "amplop [..] agar E5 tidak menguncinya lagi");
+        const evLama = await events(pool, kasus.antreUlangLama);
+        assert.deepEqual(evLama.map((e) => [e.jenis, e.state_from, e.state_to, e.actor]), [["rejected", "queued", "rejected", "ddl:E5"]]);
+        assert.equal(evLama[0].detail.attempts, 2);
+        assert.equal((await state(kasus.antreUlangDicari)).state, "queued");
+        assert.equal((await events(pool, kasus.antreUlangDicari)).length, 1, "yang sudah dicari tidak mendapat event E5");
 
         // Append-only di tingkat DB.
         await assert.rejects(pool.query(`UPDATE invoice_outbox_event SET reason = 'ubah' WHERE order_id = $1`, [kasus.gateway]), /append-only/);

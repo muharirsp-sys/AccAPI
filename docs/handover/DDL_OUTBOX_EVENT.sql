@@ -4,6 +4,8 @@
 --
 -- SIAPA & KAPAN: IT Support, SAAT DEPLOY S6-0d, sebagai role PEMILIK tabel (bukan accapi_app), SESUDAH image baru hidup
 -- (migrate-pg membuat invoice_outbox_event). JANGAN dijalankan oleh loop/agen ke produksi.
+-- WAJIB dijalankan SEBELUM `ACCURATE_INVOICE_SEND=on` dan SEBELUM tombol Kirim dipakai setelah deploy: E5 (d) mengembalikan
+-- antrean hasil "antre ulang" versi lama (tanpa pencarian) ke Ditolak — tanpa itu Kirim/cron mengirimnya tanpa pencarian.
 --
 --   docker exec -i accapi-postgres psql -U accapi -d accapi -v ON_ERROR_STOP=1 < docs/handover/DDL_OUTBOX_EVENT.sql
 --
@@ -26,6 +28,9 @@
 --        - `posted` tanpa accurate_id (verifikasi balik tidak mungkin);
 --        - `sending` yang tidak berubah > 15 menit. `sending` yang lebih muda = sedang dikirim proses hidup; mengubahnya
 --          di sini akan membuang jawaban sah yang sedang datang — itu tugas penyapu (lib/invoice-sender.sapuSending).
+--      (d) `queued` dengan attempts > 0 = pernah dikirim lalu "antre ulang" versi lama TANPA pencarian faktur -> `rejected`
+--          + event `rejected` (aktor `ddl:E5`; last_error amplop ["E5: …"]). Antre ulang berikutnya (kode S6-0d) MENCARI
+--          dulu. Dikecualikan: baris yang event terakhirnya `antre_ulang`/`antre` membawa hasil pencarian (sudah dicari).
 --      Produksi 9 Okt (§G): 0 baris seperti ini — pagar, bukan perbaikan.
 --      Batas yang diketahui: penolakan 5xx beramplop `["…"]` (dulu rejected, kini unknown) tidak terbedakan dari
 --      last_error saja; status HTTP lama tidak pernah disimpan (§G: tidak ada pola 5xx di produksi).
@@ -118,6 +123,36 @@ BEGIN
     )
     SELECT count(*) INTO dikunci FROM kunci;
     RAISE NOTICE 'S6-0d E5: % baris antrean dikunci TIDAK PASTI.', dikunci;
+
+    -- (d) antre ulang versi lama -> Ditolak (bukan tidak pasti: Accurate memang menjawab dan menolak percobaan terakhirnya).
+    WITH sasaran AS (
+        SELECT o.order_id, o.attempts, o.last_error, o.updated_at
+        FROM invoice_outbox o
+        WHERE o.state = 'queued' AND o.attempts > 0
+          AND NOT EXISTS (
+              SELECT 1 FROM (
+                  SELECT e.jenis, e.detail FROM invoice_outbox_event e
+                  WHERE e.order_id = o.order_id ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+              ) terakhir
+              WHERE terakhir.jenis IN ('antre_ulang', 'antre') AND terakhir.detail ? 'pencarian')
+        FOR UPDATE OF o
+    ), catat AS (
+        INSERT INTO invoice_outbox_event (order_id, jenis, state_from, state_to, actor, reason, detail)
+        SELECT order_id, 'rejected', 'queued', 'rejected', 'ddl:E5',
+               'E5: antre ulang versi lama tanpa pencarian faktur — kembali ke Ditolak',
+               jsonb_build_object('last_error', last_error, 'attempts', attempts, 'updated_at', updated_at)
+        FROM sasaran
+    ), kembali AS (
+        UPDATE invoice_outbox o
+           SET state = 'rejected', updated_at = now(),
+               last_error = left(jsonb_build_array('E5: diantre ulang tanpa pencarian faktur (versi lama) — antre ulang lagi '
+                                 || 'agar faktur dicari dulu di Accurate. Sebelumnya: ' || o.last_error)::text, 1000)
+          FROM sasaran s
+         WHERE o.order_id = s.order_id
+        RETURNING o.order_id
+    )
+    SELECT count(*) INTO dikunci FROM kembali;
+    RAISE NOTICE 'S6-0d E5 (d): % baris antre ulang versi lama dikembalikan ke Ditolak.', dikunci;
 END $$;
 
 COMMIT;
@@ -142,5 +177,10 @@ SELECT cek, ok FROM (VALUES
         NOT EXISTS (SELECT 1 FROM invoice_outbox
                     WHERE (state = 'sending' AND updated_at < now() - interval '15 minutes')
                        OR (state = 'posted' AND btrim(accurate_id) = '')
-                       OR (state = 'rejected' AND btrim(last_error) !~ '^\["')) END)
+                       OR (state = 'rejected' AND btrim(last_error) !~ '^\["')) END),
+    ('E5 (d): tidak ada antre ulang lama tanpa pencarian', CASE WHEN to_regclass('public.invoice_outbox_event') IS NOT NULL THEN
+        NOT EXISTS (SELECT 1 FROM invoice_outbox o WHERE o.state = 'queued' AND o.attempts > 0
+                    AND NOT EXISTS (SELECT 1 FROM (SELECT e.jenis, e.detail FROM invoice_outbox_event e WHERE e.order_id = o.order_id
+                                                   ORDER BY e.created_at DESC, e.id DESC LIMIT 1) t
+                                    WHERE t.jenis IN ('antre_ulang', 'antre') AND t.detail ? 'pencarian')) END)
 ) AS v(cek, ok);
