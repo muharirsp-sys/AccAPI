@@ -123,7 +123,7 @@ export async function POST(request: Request, context: Context) {
             // Review AM-022/023 M2: status/approval bisa berubah (return/reject) antara cek di atas dan
             // transaksi ini — cek ulang di bawah lock, bukan dari data.batch yang basi.
             if (!freshBatch || !canProcessFinancePayment(freshBatch) || freshBatch.financeStatus !== data.batch.financeStatus
-                || (actor.role !== "admin" && await isOffPeriodClosedForBatch(freshBatch))) {
+                || (actor.role !== "admin" && await isOffPeriodClosedForBatch(freshBatch, tx))) {
                 throw new Error(OFF_PAYMENT_CONFLICT);
             }
             const freshItems = await tx.select({
@@ -210,7 +210,8 @@ export async function POST(request: Request, context: Context) {
     } catch (error) {
         const message = error instanceof Error ? error.message : "";
         if (message === OFF_PAYMENT_CONFLICT) {
-            return NextResponse.json({ ok: false, error: "Pembayaran lain untuk pengajuan ini baru saja tercatat. Muat ulang lalu pilih item lagi." }, { status: 409 });
+            // Review AM-022/023 LOW: konflik juga bisa dari status/periode yang berubah, bukan hanya pembayaran lain.
+            return NextResponse.json({ ok: false, error: "Pengajuan ini baru saja berubah: pembayaran lain tercatat, atau status/periode berubah. Muat ulang lalu pilih item lagi." }, { status: 409 });
         }
         if (message === "Jenis pembayaran hanya boleh Tunai atau Transfer.") {
             return NextResponse.json({ ok: false, error: message }, { status: 400 });

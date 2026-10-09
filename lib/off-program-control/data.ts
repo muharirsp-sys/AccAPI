@@ -183,8 +183,9 @@ export async function getBatchWithItems(batchId: string) {
 // Akibatnya DDL itu melempar "permission denied for schema public" pada SETIAP panggilan
 // dan mematikan fitur yang tabelnya sebenarnya sudah ada. Skema dikelola lewat db/schema.ts + DDL manual.
 
-export async function isOffPeriodClosedForBatch(batch: Pick<OffBatchRow, "principleCode" | "bulan" | "tahun">) {
-    const [period] = await db
+// executor = tx saat dipanggil di bawah lock: koneksi pool kedua selama transaksi = risiko pool habis.
+export async function isOffPeriodClosedForBatch(batch: Pick<OffBatchRow, "principleCode" | "bulan" | "tahun">, executor: Pick<typeof db, "select"> = db) {
+    const [period] = await executor
         .select({ status: offPeriodClosure.status })
         .from(offPeriodClosure)
         .where(and(
@@ -300,8 +301,8 @@ export async function writeOffAudit(input: {
     toStatus?: string | null;
     note?: string | null;
     metadata?: unknown;
-}) {
-    await db.insert(offAuditLog).values({
+}, executor: Pick<typeof db, "insert"> = db) { // executor = tx agar audit ikut transaksi (AM-021)
+    await executor.insert(offAuditLog).values({
         id: randomUUID(),
         batchId: input.batchId,
         itemId: input.itemId || null,
