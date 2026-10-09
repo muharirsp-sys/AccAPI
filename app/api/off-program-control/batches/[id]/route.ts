@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { offBatch, offBatchItem } from "@/db/schema";
+import { offBatch, offBatchItem, offPayment } from "@/db/schema";
 import { computeOffFinancePaymentSummary, computeOffPaymentSummary, findOffNoSuratConflicts, getNextOffBatchNumber, getPrincipleByCode, getPrincipleByName, getBatchWithItems, isOffPeriodClosedForBatch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, writeOffAudit } from "@/lib/off-program-control";
 import { requirePermissionH, resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
@@ -56,6 +56,13 @@ function isSupervisorEditableBatch(batch: typeof offBatch.$inferSelect) {
         batch.claimStatus === "Returned"
     );
 }
+
+function isPatchableStatus(batch: typeof offBatch.$inferSelect) {
+    return ["Draft", "Returned by SM", "Returned by Claim"].includes(batch.status) || batch.smStatus === "Returned" || batch.claimStatus === "Returned";
+}
+
+const OFF_BATCH_EDIT_CONFLICT = "OFF_BATCH_EDIT_CONFLICT";
+const OFF_BATCH_PAID_CONFLICT = "OFF_BATCH_PAID_CONFLICT";
 
 function maskItemRekening(
     items: Array<typeof offBatchItem.$inferSelect>,
@@ -137,7 +144,7 @@ export async function PATCH(request: Request, context: Context) {
             return NextResponse.json({ ok: false, error: "Periode ini sudah ditutup dan tidak dapat diubah." }, { status: 409 });
         }
         if (data.batch.locked) return NextResponse.json({ ok: false, error: "Batch sudah approved oleh SM dan terkunci untuk Supervisor." }, { status: 409 });
-        if (!["Draft", "Returned by SM", "Returned by Claim"].includes(data.batch.status) && !["Returned"].includes(data.batch.smStatus) && !["Returned"].includes(data.batch.claimStatus)) {
+        if (!isPatchableStatus(data.batch)) {
             return NextResponse.json({ ok: false, error: "Batch hanya bisa diedit saat Draft atau Returned/Rejected dan belum terkunci." }, { status: 409 });
         }
 
@@ -181,9 +188,13 @@ export async function PATCH(request: Request, context: Context) {
             noRekening: data.batch.noRekening || null,
             updatedAt: now,
         };
-        await db.update(offBatch).set(patch).where(eq(offBatch.id, id));
 
+        // AM-021 (H03): SEMUA validasi & normalisasi item terjadi sebelum menulis apa pun — dulu header
+        // sudah di-update dan item sudah DIHAPUS saat baris ke-n ternyata invalid (400 + item hilang).
+        let itemValues: Array<typeof offBatchItem.$inferInsert> | null = null;
+        const legacyMigrations: Array<{ rowNo: number; originalType: string; normalizedType: string; forced: boolean }> = [];
         if (Array.isArray(body.items)) {
+            if (body.items.length === 0) return NextResponse.json({ ok: false, error: "Minimal satu item." }, { status: 400 });
             // Validasi duplikat No Surat (per principle, kecuali batch yang sudah Cancelled by OM).
             const force = body.forceDuplicateNoSurat === true || body.forceDuplicateNoSurat === "true";
             const candidateNoSurats = (body.items as Array<Record<string, unknown>>)
@@ -213,9 +224,7 @@ export async function PATCH(request: Request, context: Context) {
                 }
             }
 
-            await db.delete(offBatchItem).where(eq(offBatchItem.batchId, id));
-            const legacyMigrations: Array<{ rowNo: number; originalType: string; normalizedType: string; forced: boolean }> = [];
-            const itemValues = (body.items as Array<Record<string, unknown>>).map((item, index) => {
+            itemValues = (body.items as Array<Record<string, unknown>>).map((item, index) => {
                 const resolvedType = resolveProgramTypeForSave(
                     item.type ?? item.normalizedType,
                     item.originalType,
@@ -262,21 +271,39 @@ export async function PATCH(request: Request, context: Context) {
                     updatedAt: now,
                 };
             });
-            await db.insert(offBatchItem).values(itemValues);
-            if (legacyMigrations.length > 0) {
-                await writeOffAudit({
-                    batchId: id,
-                    actor,
-                    action: "legacy_type_migrated",
-                    fromStatus: data.batch.status,
-                    toStatus: data.batch.status,
-                    note: `Migrasi tipe legacy otomatis untuk ${legacyMigrations.length} item.`,
-                    metadata: { migrations: legacyMigrations },
-                });
-            }
         }
 
-        await writeOffAudit({ batchId: id, actor, action: "update_batch", fromStatus: data.batch.status, toStatus: data.batch.status });
+        // Header + ganti item + audit = satu transaksi di bawah lock baris batch: tanpa lock, dua simpan
+        // bersamaan sama-sama DELETE lalu INSERT dan item berlipat (DELETE kedua tak melihat item baru).
+        await db.transaction(async (tx) => {
+            const [fresh] = await tx.select().from(offBatch).where(eq(offBatch.id, id)).for("no key update");
+            // Status bisa berubah (approve/lock SM, tutup periode) sejak cek di atas — cek ulang di bawah lock.
+            if (!fresh || fresh.locked || !isPatchableStatus(fresh)
+                || (actor.role !== "admin" && await isOffPeriodClosedForBatch(fresh, tx))) {
+                throw new Error(OFF_BATCH_EDIT_CONFLICT);
+            }
+            // S6-0b: DELETE+INSERT item membuang kolom finance_* (status/ID/nominal bayar per item) — batch yang
+            // sudah punya pembayaran Keuangan tidak boleh diedit lewat jalur ini (cek di bawah lock).
+            const [payment] = await tx.select({ id: offPayment.id }).from(offPayment).where(eq(offPayment.batchId, id)).limit(1);
+            if (payment || Number(fresh.paidAmount || 0) > 0) throw new Error(OFF_BATCH_PAID_CONFLICT);
+            await tx.update(offBatch).set(patch).where(eq(offBatch.id, id));
+            if (itemValues) {
+                await tx.delete(offBatchItem).where(eq(offBatchItem.batchId, id));
+                await tx.insert(offBatchItem).values(itemValues);
+                if (legacyMigrations.length > 0) {
+                    await writeOffAudit({
+                        batchId: id,
+                        actor,
+                        action: "legacy_type_migrated",
+                        fromStatus: fresh.status,
+                        toStatus: fresh.status,
+                        note: `Migrasi tipe legacy otomatis untuk ${legacyMigrations.length} item.`,
+                        metadata: { migrations: legacyMigrations },
+                    }, tx);
+                }
+            }
+            await writeOffAudit({ batchId: id, actor, action: "update_batch", fromStatus: fresh.status, toStatus: fresh.status }, tx);
+        });
         const updated = await getBatchWithItems(id);
         return NextResponse.json({
             ok: true,
@@ -289,6 +316,13 @@ export async function PATCH(request: Request, context: Context) {
     } catch (error) {
         console.error("[OFF BATCH PATCH ERROR]", error);
         const message = error instanceof Error ? error.message : "";
+        if (message === OFF_BATCH_PAID_CONFLICT) {
+            // "terkunci" dicocokkan KONFLIK_STATUS di SpvForm.tsx (dialog muat ulang).
+            return NextResponse.json({ ok: false, error: "Batch sudah memiliki pembayaran Keuangan dan terkunci: item tidak dapat diedit lagi. Muat ulang halaman." }, { status: 409 });
+        }
+        if (message === OFF_BATCH_EDIT_CONFLICT) {
+            return NextResponse.json({ ok: false, error: "Status batch baru saja berubah (terkunci/diproses/periode ditutup). Muat ulang sebelum mengedit." }, { status: 409 });
+        }
         if (message === "Jenis pembayaran hanya boleh Tunai atau Transfer." || message === "No Rekening wajib diisi untuk baris Transfer.") {
             return NextResponse.json({ ok: false, error: message }, { status: 400 });
         }

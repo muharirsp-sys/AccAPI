@@ -39,6 +39,7 @@ import {
     recalcPaymentTotals,
     requireClaimSession,
     writeClaimAudit,
+    lockClaimWorkflow,
 } from "@/lib/claim-workflow";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 
@@ -78,6 +79,7 @@ export async function POST(request: Request, context: Context) {
         const { id } = await context.params;
 
         const result = await db.transaction(async (tx) => {
+            await lockClaimWorkflow(tx, id); // AM-022: satu urutan lock (workflow dulu)
             const [workflow] = await tx
                 .select()
                 .from(claimWorkflow)

@@ -35,6 +35,7 @@ import {
     requireClaimSession,
     SCOPE_LABEL_MAX_LENGTH,
     writeClaimAudit,
+    lockClaimWorkflow,
 } from "@/lib/claim-workflow";
 import { requirePermissionH } from "@/lib/rbac/resolve";
 
@@ -176,6 +177,7 @@ export async function PATCH(request: Request, context: Context) {
         const { id, submissionId } = await context.params;
 
         const result = await db.transaction(async (tx) => {
+            await lockClaimWorkflow(tx, id); // AM-022: satu urutan lock (workflow dulu)
             const [workflow] = await tx
                 .select()
                 .from(claimWorkflow)

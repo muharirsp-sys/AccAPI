@@ -114,7 +114,7 @@ export const IzinFkCtx = createContext<ReadonlySet<string>>(new Set());
 /**
  * Alasan tombol nonaktif bila akun tidak punya izin `form_kontrol.<aksi>`; undefined = boleh.
  * Akun yang sampai ke layar ini lolos my-scope (butuh form_kontrol.view), jadi punya izin form_kontrol dari grup akses. Daftar izin
- * TANPA satu pun kunci form_kontrol (preset peran lama / LOCAL_AUTH_BYPASS, D-17) tidak bisa dipercaya → tombol tidak dikunci dan
+ * TANPA satu pun kunci form_kontrol (preset peran lama, D-17; admin LOCAL_AUTH_BYPASS kini memegang semua kunci registry) tidak bisa dipercaya → tombol tidak dikunci dan
  * server yang memutuskan (403 tampil di dialog). ponytail: tebakan ini hilang begitu preset lama diaudit (D-17).
  */
 export function alasanIzinFk(izin: ReadonlySet<string>, aksi: "view" | "submit" | "manage"): string | undefined {

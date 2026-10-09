@@ -40,8 +40,8 @@
  *    props.selesai("Disetujui … diteruskan ke Klaim."); }`. Galat yang dilempar tulisOpc tampil di dialog (isian tidak hilang);
  *    ConfirmDialog sudah menahan klik ganda. `selesai(pesan, keterangan?)` = strip sukses (keterangan bawaan "Batch pindah ke antrean tahap berikutnya.", null = tanpa) + muat ulang daftar & detail.
  *    Tombol mengikuti peran: `disabledReason={ctx.izin("sm_approve")}` + `disabled={Boolean(ctx.izin("sm_approve"))}`; izin granular
- *    grup akses (D-17) ditegakkan server → 403 tampil di dialog (catatan: LOCAL_AUTH_BYPASS admin tidak punya key granular OPC,
- *    jadi tanpa mock server lokal menolak tulis OPC; spec Playwright memock API). Lalu predikat
+ *    grup akses (D-17) ditegakkan server → 403 tampil di dialog (catatan: admin LOCAL_AUTH_BYPASS memegang semua key registry
+ *    termasuk granular OPC sejak e5a6044f; spec Playwright tetap memock API). Lalu predikat
  *    aksi kode lama dari PREDIKAT (smAntrean, klaimAntrean, finalAntrean, omAntrean, keuanganBisaBayar, spvBisaUbah). BL-06: aksi
  *    untuk batch terminal disembunyikan.
  * 5. Draf: `useEffect(() => { props.ctx.setDraf(dirty); return () => props.ctx.setDraf(false); }, [dirty])` — OpcApp memasang
