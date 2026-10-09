@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { db } from "./db.ts";
-import { jawabanCron, sendQueuedInvoices } from "./invoice-sender.ts";
+import { cekTanggalFaktur, jawabanCron, MAKS_PER_TEKAN, pratinjauKirim, sendQueuedInvoices } from "./invoice-sender.ts";
 import type { InvoicePayload } from "./accurate-invoice-write.ts";
 
 const SESI = { sessionHost: "https://contoh.invalid", sessionId: "sesi", accessToken: "token" };
@@ -144,6 +144,54 @@ test("S6-0d E7: antrean kosong tidak memanggil Accurate sama sekali", async (t) 
     const hasil = await sendQueuedInvoices(SESI, { targetDb: "1", limit: 20, actor: "petugas@contoh" });
     assert.equal(hasil.error, undefined);
     assert.equal(kirim.mock.callCount(), 0);
+});
+
+// ---------------------------------------------------------------- BL-39 pratinjau Kirim
+const baris = (orderId: string, detailItem: InvoicePayload["detailItem"]) => {
+    const a = antre("", 0, orderId);
+    return { ...a, payload: { ...a.payload, detailItem } };
+};
+const BARIS_TERLIPAT = [
+    // Bentuk #114: rupiah baris campuran SUDAH dilipat jadi persen di ujung rantai (posisi 5).
+    { itemNo: "ITM-1", quantity: 24, unitPrice: 14414.4144, itemUnitId: 100, itemDiscPercent: "2+0+0+0+1.5", itemCashDiscount: 0, detailNotes: "b1", charField1: "" },
+    // Rupiah murni (bentuk lama yang sah).
+    { itemNo: "ITM-2", quantity: 10, unitPrice: 5000, itemUnitId: 100, itemDiscPercent: "", itemCashDiscount: 2500, detailNotes: "b2", charField1: "" },
+];
+
+test("BL-39: pratinjau = daftar yang AKAN dikirim — fungsi kueri & urutan yang sama dengan Kirim", async (t) => {
+    const rows = [antre("", 0, "KINO:SO-1"), antre("", 0, "HEINZ:SO-2"), antre("", 0, "11111111-2222-3333-4444-555555555555")];
+    const { klaim } = tiruan(t, rows);
+    const lihat = await pratinjauKirim(db, { limit: MAKS_PER_TEKAN });
+    assert.equal(lihat.error, undefined);
+    const kirim = await sendQueuedInvoices(SESI, { targetDb: "1", limit: MAKS_PER_TEKAN, actor: "p" });
+    assert.deepEqual(lihat.orders.map((o) => o.orderId), kirim.results.map((r) => r.orderId));
+    assert.deepEqual(lihat.orders.map((o) => o.orderId), klaim().map((q) => q.params.find((v) => rows.some((r) => r.orderId === v))));
+    assert.deepEqual(lihat.perPrincipal.map((p) => [p.principal, p.jumlah]), [["HEINZ", 1], ["KINO", 1], ["ORDER INTERNAL", 1]]);
+});
+
+test("BL-39: DPP + PPN dihitung dari payload TERLIPAT (#114), sama dengan rumus verifikasi balik", async (t) => {
+    tiruan(t, [baris("KINO:SO-1", BARIS_TERLIPAT)]);
+    const lihat = await pratinjauKirim(db, { limit: MAKS_PER_TEKAN, invoiceDate: "2026-10-01" });
+    // 24 × 14.414,4144 = 345.945,95 −2% −1,5% = 333.941,62; 10 × 5.000 − 2.500 = 47.500.
+    assert.deepEqual(lihat.total, { dpp: 381441.62, ppn: 41958.58, total: 423400.2 });
+    assert.equal(lihat.orders[0].transDate, "01/10/2026", "tanggal faktur pilihan ikut, seperti di Kirim");
+    assert.equal(lihat.orders[0].dpp, 381441.62);
+});
+
+test("BL-39: baris campuran persen + rupiah -> pratinjau menolak dengan pesan yang SAMA dengan Kirim", async (t) => {
+    tiruan(t, [antre("2+0+0+0+0", 4933.33)]);
+    const lihat = await pratinjauKirim(db, { limit: MAKS_PER_TEKAN });
+    const kirim = await sendQueuedInvoices(SESI, { targetDb: "1", limit: MAKS_PER_TEKAN, actor: "p" });
+    assert.ok(lihat.error);
+    assert.equal(lihat.error, kirim.error);
+});
+
+test("tanggal faktur pilihan: format & batas hari ini (WITA) dicek satu fungsi untuk Kirim dan pratinjau", () => {
+    assert.equal(cekTanggalFaktur(undefined, "2026-10-09"), null);
+    assert.equal(cekTanggalFaktur("2026-10-09", "2026-10-09"), null);
+    assert.match(cekTanggalFaktur("2026-10-10", "2026-10-09") ?? "", /paling lambat hari ini 2026-10-09/);
+    assert.match(cekTanggalFaktur("2026-02-30", "2026-10-09") ?? "", /tidak sah/);
+    assert.match(cekTanggalFaktur("09/10/2026", "2026-10-09") ?? "", /tidak sah/);
 });
 
 test("cron meneruskan penolakan sebelum kirim, bukan melapor ok dengan sent 0", () => {

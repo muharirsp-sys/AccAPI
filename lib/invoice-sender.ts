@@ -4,7 +4,7 @@
  *         app/api/invoice-outbox/send (tombol Kirim, bergerbang izin + sesi penekannya).
  * Dependensi: db invoice_outbox + invoice_outbox_event, lib/accurate-invoice-write (status + identitas),
  *   lib/invoice-outbox-event (riwayat append-only).
- * Main Functions: sendQueuedInvoices, sapuSending, cekSesiBacaSaja.
+ * Main Functions: sendQueuedInvoices, sapuSending, cekSesiBacaSaja, rencanaKirim, pratinjauKirim, cekTanggalFaktur.
  * Side Effects: MENULIS FAKTUR DI ACCURATE dan mengubah status antrean. Tidak bisa dibatalkan.
  *   Tiap klaim dan tiap hasil tercatat di invoice_outbox_event DALAM pernyataan SQL yang sama
  *   (CTE) dengan perubahan statusnya: status HTTP + potongan jawaban + pengirim (BL-17 + R6).
@@ -33,6 +33,7 @@ import { invoiceOutbox } from "@/db/schema";
 import { barisPersenRupiah, classifySaveResponse, nextOutboxState, pakaiTanggalFaktur, type InvoicePayload, type SendOutcome } from "@/lib/accurate-invoice-write";
 import { refreshRealization } from "@/lib/program-realization-store";
 import { kodeGalat, potongJawaban } from "@/lib/invoice-outbox-event";
+import { nilaiPayload } from "@/lib/invoice-verify";
 
 export type SenderSession = {
     sessionHost: string;
@@ -104,6 +105,96 @@ export async function cekSesiBacaSaja(session: SenderSession): Promise<string | 
     }
 }
 
+/** Batas satu tekanan Kirim (tombol). Pratinjau BL-39 memakai batas yang sama. */
+export const MAKS_PER_TEKAN = 50;
+
+/**
+ * Tanggal faktur pilihan (yyyy-MM-dd): null = sah (atau kosong = tanggal SO). Lebih dari hari ini
+ * menurut WITA — zona toko-tokonya, bukan zona server — ditolak. Dipakai Kirim DAN pratinjau.
+ */
+export function cekTanggalFaktur(invoiceDate: string | undefined, hariIni = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date())): string | null {
+    if (!invoiceDate) return null;
+    const baku = /^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) && !Number.isNaN(Date.parse(`${invoiceDate}T00:00:00Z`))
+        && new Date(`${invoiceDate}T00:00:00Z`).toISOString().slice(0, 10) === invoiceDate;
+    return !baku || invoiceDate > hariIni
+        ? `Tanggal faktur ${invoiceDate} tidak sah (format yyyy-MM-dd, paling lambat hari ini ${hariIni}). Tidak ada faktur dikirim.`
+        : null;
+}
+
+type BarisAntrean = typeof invoiceOutbox.$inferSelect;
+
+/**
+ * Antrean yang akan dikirim — SATU kueri untuk Kirim dan pratinjau BL-39 (yang dilihat petugas =
+ * yang dikirim). `orderId` pemecah seri: satu batch diantrekan dengan created_at yang SAMA, dan
+ * tanpa itu urutan Postgres antar-pemanggilan tidak dijamin.
+ */
+async function ambilAntreanKirim(db: NodePgDatabase, options: { limit: number; orderIds?: string[] }): Promise<BarisAntrean[]> {
+    const picked = (options.orderIds ?? []).map((id) => id.trim()).filter(Boolean);
+    return db.select().from(invoiceOutbox)
+        .where(picked.length
+            ? and(eq(invoiceOutbox.state, "queued"), inArray(invoiceOutbox.orderId, picked))
+            : eq(invoiceOutbox.state, "queued"))
+        .orderBy(asc(invoiceOutbox.createdAt), asc(invoiceOutbox.orderId)).limit(options.limit);
+}
+
+/**
+ * Rencana kirim: baris + payload bertanggal pilihan. `error` = SELURUH tekanan ditolak sebelum satu
+ * pun terkirim (tanggal lebih awal dari SO, atau payload beku lama persen + rupiah).
+ */
+export async function rencanaKirim(db: NodePgDatabase, options: { limit: number; orderIds?: string[]; invoiceDate?: string }):
+    Promise<{ siap: { row: BarisAntrean; payload: InvoicePayload }[]; error?: string }> {
+    const rows = await ambilAntreanKirim(db, options);
+    const siap = rows.map((row) => {
+        const hasil = pakaiTanggalFaktur(row.payload as InvoicePayload, String(row.orderDate), options.invoiceDate);
+        // Antrean dari sebelum 5 Okt 2026 bisa membawa persen + rupiah pada satu baris; Accurate
+        // membuang rupiahnya (INV/2609/KN01376). Dibuang dari antrean lalu diantrekan ulang.
+        const campur = barisPersenRupiah(hasil.payload);
+        return campur.length && !hasil.error
+            ? { row, ...hasil, error: `${campur.length} baris persen + rupiah (Accurate membuang rupiahnya) — buang dari antrean lalu antrekan ulang` }
+            : { row, ...hasil };
+    });
+    const ditolak = siap.filter((entry) => entry.error);
+    return ditolak.length
+        ? { siap: [], error: `Tidak ada faktur dikirim: ${ditolak.map((entry) => `${entry.row.orderId} (${entry.error})`).join("; ")}` }
+        : { siap: siap.map(({ row, payload }) => ({ row, payload })) };
+}
+
+const principalDari = (orderId: string) => (orderId.includes(":") ? orderId.slice(0, orderId.indexOf(":")) : "ORDER INTERNAL");
+const sen = (value: number) => Math.round(value * 100) / 100;
+
+/**
+ * BL-39 — isi dialog Kirim, BACA SAJA: daftar order (rencanaKirim yang SAMA dengan Kirim), nilai
+ * DPP + PPN per order / principal / total dari payload yang akan dikirim (terlipat #114, bertanggal
+ * pilihan). Tidak menyapu, tidak mengklaim, tidak memanggil Accurate.
+ */
+export async function pratinjauKirim(db: NodePgDatabase, options: { limit: number; orderIds?: string[]; invoiceDate?: string }) {
+    const rencana = await rencanaKirim(db, options);
+    const orders = rencana.siap.map(({ row, payload }) => ({
+        orderId: row.orderId,
+        soNo: row.orderId.includes(":") ? row.orderId.slice(row.orderId.indexOf(":") + 1) : null,
+        principal: principalDari(row.orderId),
+        customerNo: row.customerNo,
+        orderDate: String(row.orderDate),
+        transDate: payload.transDate,
+        lines: payload.detailItem.length,
+        ...nilaiPayload(payload),
+    }));
+    const perPrincipal = new Map<string, { principal: string; jumlah: number; dpp: number; ppn: number; total: number }>();
+    for (const order of orders) {
+        const acc = perPrincipal.get(order.principal) ?? { principal: order.principal, jumlah: 0, dpp: 0, ppn: 0, total: 0 };
+        perPrincipal.set(order.principal, { principal: order.principal, jumlah: acc.jumlah + 1,
+            dpp: sen(acc.dpp + order.dpp), ppn: sen(acc.ppn + order.ppn), total: sen(acc.total + order.total) });
+    }
+    const total = orders.reduce((acc, order) => ({ dpp: sen(acc.dpp + order.dpp), ppn: sen(acc.ppn + order.ppn), total: sen(acc.total + order.total) }),
+        { dpp: 0, ppn: 0, total: 0 });
+    return {
+        ...(rencana.error ? { error: rencana.error } : {}),
+        orders,
+        perPrincipal: [...perPrincipal.values()].sort((a, b) => a.principal.localeCompare(b.principal)),
+        total,
+    };
+}
+
 /** Ketergantungan yang bisa diganti uji (Postgres evaluasi, simulator) — produksi memakai bawaan. */
 export type SenderDeps = { db?: NodePgDatabase; refresh?: typeof refreshRealization };
 
@@ -134,29 +225,10 @@ export async function sendQueuedInvoices(
     const db = deps.db ?? defaultDb;
     // Penyapu dulu: baris yang ditinggal proses mati terlihat TIDAK PASTI sebelum apa pun dikirim.
     await sapuSending(db, options.actor);
-    const picked = (options.orderIds ?? []).map((id) => id.trim()).filter(Boolean);
-    const rows = await db.select().from(invoiceOutbox)
-        .where(picked.length
-            ? and(eq(invoiceOutbox.state, "queued"), inArray(invoiceOutbox.orderId, picked))
-            : eq(invoiceOutbox.state, "queued"))
-        .orderBy(asc(invoiceOutbox.createdAt)).limit(options.limit);
-
-    const siap = rows.map((row) => {
-        const hasil = pakaiTanggalFaktur(row.payload as InvoicePayload, String(row.orderDate), options.invoiceDate);
-        // Antrean dari sebelum 5 Okt 2026 bisa membawa persen + rupiah pada satu baris; Accurate
-        // membuang rupiahnya (INV/2609/KN01376). Dibuang dari antrean lalu diantrekan ulang.
-        const campur = barisPersenRupiah(hasil.payload);
-        return campur.length && !hasil.error
-            ? { row, ...hasil, error: `${campur.length} baris persen + rupiah (Accurate membuang rupiahnya) — buang dari antrean lalu antrekan ulang` }
-            : { row, ...hasil };
-    });
-    const ditolak = siap.filter((entry) => entry.error);
-    if (ditolak.length) {
-        return {
-            results: [], sent: 0, unknown: 0, rejected: 0,
-            error: `Tidak ada faktur dikirim: ${ditolak.map((entry) => `${entry.row.orderId} (${entry.error})`).join("; ")}`,
-        };
-    }
+    // Kueri + persiapan yang SAMA dengan pratinjau BL-39 (rencanaKirim).
+    const rencana = await rencanaKirim(db, options);
+    if (rencana.error) return { results: [], sent: 0, unknown: 0, rejected: 0, error: rencana.error };
+    const siap = rencana.siap;
 
     if (siap.length === 0) return { results: [], sent: 0, unknown: 0, rejected: 0 };
     // E7: sesi pengirim dibuktikan hidup SEBELUM klaim pertama; gagal = batal tanpa satu klaim pun.

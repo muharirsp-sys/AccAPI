@@ -59,6 +59,7 @@ type FakturSim = { id: number; number: string; charField1: string; customerId: n
  */
 async function simulatorAccurate(delayMs = 100, faktur: FakturSim[] = []) {
     const perOrder = new Map<string, number>();
+    const urutan: string[] = [];
     let nextId = 900_000;
     const server: Server = createServer((req, res) => {
         let raw = "";
@@ -83,6 +84,7 @@ async function simulatorAccurate(delayMs = 100, faktur: FakturSim[] = []) {
             }
             const key = String(JSON.parse(raw || "{}").charField1 ?? "");
             perOrder.set(key, (perOrder.get(key) ?? 0) + 1);
+            urutan.push(key);
             const id = nextId++;
             setTimeout(() => res.end(JSON.stringify({ s: true, r: { id, number: `INV/UJI/${id}` } })), delayMs);
         });
@@ -91,6 +93,7 @@ async function simulatorAccurate(delayMs = 100, faktur: FakturSim[] = []) {
     return {
         host: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
         kiriman: (key: string) => perOrder.get(key) ?? 0,
+        urutan: () => [...urutan],
         close: () => new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()); }),
     };
 }
@@ -402,6 +405,36 @@ test("PG AM-047: Selesaikan tidak pasti — terposting (cache ketemu) & tidak te
         await pool.query(`DELETE FROM invoice_outbox WHERE order_id = ANY($1)`, [[ada, tiada]]);
         await pool.query(`DELETE FROM sales_invoice WHERE id = $1`, [invoiceId]);
         await pool.query(`DELETE FROM customer WHERE id = $1`, [customerId]);
+        await pool.end();
+    }
+});
+
+test("PG BL-39: pratinjau = urutan kirim nyata, termasuk baris ber-created_at SAMA (satu batch)", { skip: pgSkip }, async () => {
+    const pool = new Pool({ connectionString: PG_URL, max: 2 });
+    const sim = await simulatorAccurate(10);
+    const { pratinjauKirim } = await import("./invoice-sender.ts");
+    const prefix = `UJI-S6D-B39:${randomUUID().slice(0, 8)}`;
+    const ids = ["C", "A", "D", "B"].map((x) => `${prefix}:${x}`);
+    try {
+        await pool.query((await entriMigrasi("invoice_outbox_event")).sql);
+        // Satu INSERT = satu now() = created_at kembar, seperti antre satu batch principal.
+        await pool.query(
+            `INSERT INTO invoice_outbox (order_id, customer_no, order_date, state, payload, queued_by)
+             SELECT id, 'C-TEST-KN', '2026-10-08', 'queued', jsonb_build_object('customerNo', 'C-TEST-KN', 'transDate', '08/10/2026',
+                    'taxable', true, 'inclusiveTax', false, 'charField1', id, 'detailItem',
+                    jsonb_build_array(jsonb_build_object('itemNo', 'ITM-1', 'quantity', 2, 'unitPrice', 1000, 'itemUnitId', 100,
+                        'itemDiscPercent', '', 'itemCashDiscount', 0, 'detailNotes', 'b1', 'charField1', id))), 'uji@contoh'
+             FROM unnest($1::text[]) AS id`, [ids]);
+        const db = drizzle(pool);
+        const lihat = await pratinjauKirim(db, { limit: 50, orderIds: ids });
+        const sesi = { sessionHost: sim.host, sessionId: "sesi-uji", accessToken: "token-uji" };
+        await sendQueuedInvoices(sesi, { targetDb: "DB-UJI", limit: 50, orderIds: ids, actor: "p" }, { db, refresh: async () => undefined });
+        assert.deepEqual(lihat.orders.map((o) => o.orderId), sim.urutan(), "urutan pratinjau ≠ urutan kirim");
+        assert.deepEqual(sim.urutan(), [...ids].sort());
+        assert.deepEqual(lihat.total, { dpp: 8000, ppn: 880, total: 8880 });
+    } finally {
+        await sim.close();
+        await pool.query(`DELETE FROM invoice_outbox WHERE order_id = ANY($1)`, [ids]);
         await pool.end();
     }
 });
