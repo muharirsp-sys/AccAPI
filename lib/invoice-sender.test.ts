@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { db } from "./db.ts";
-import { cekTanggalFaktur, jawabanCron, MAKS_PER_TEKAN, pratinjauKirim, sendQueuedInvoices } from "./invoice-sender.ts";
+import { cekTanggalFaktur, jawabanCron, MAKS_PER_TEKAN, orderIdsDariQuery, pratinjauKirim, sendQueuedInvoices } from "./invoice-sender.ts";
 import type { InvoicePayload } from "./accurate-invoice-write.ts";
 
 const SESI = { sessionHost: "https://contoh.invalid", sessionId: "sesi", accessToken: "token" };
@@ -199,6 +199,19 @@ test("BL-39: baris campuran persen + rupiah -> pratinjau menolak dengan pesan ya
     const kirim = await sendQueuedInvoices(SESI, { targetDb: "1", limit: MAKS_PER_TEKAN, actor: "p" });
     assert.ok(lihat.error);
     assert.equal(lihat.error, kirim.error);
+});
+
+test("pratinjau: kunci SO berkoma tidak terpecah — parameter berulang `orderId` atau JSON `orderIds`; daftar berkoma ditolak", () => {
+    const berkoma = "KINO:1671-SOP-260014013,A";
+    const q1 = new URLSearchParams();
+    q1.append("orderId", berkoma);
+    q1.append("orderId", " HEINZ:SO-2 ");
+    assert.deepEqual(orderIdsDariQuery(q1), { ids: [berkoma, "HEINZ:SO-2"] });
+    assert.deepEqual(orderIdsDariQuery(new URLSearchParams({ orderIds: JSON.stringify([berkoma, "HEINZ:SO-2"]) })), { ids: [berkoma, "HEINZ:SO-2"] });
+    assert.deepEqual(orderIdsDariQuery(new URLSearchParams()), { ids: [] });
+    // Bentuk lama "a,b" tidak lagi ditebak: kunci berkoma akan salah terbaca.
+    assert.ok("error" in orderIdsDariQuery(new URLSearchParams({ orderIds: "KINO:SO-1,HEINZ:SO-2" })));
+    assert.ok("error" in orderIdsDariQuery(new URLSearchParams({ orderIds: JSON.stringify([1, 2]) })));
 });
 
 test("tanggal faktur pilihan: format & batas hari ini (WITA) dicek satu fungsi untuk Kirim dan pratinjau", () => {

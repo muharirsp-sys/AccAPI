@@ -4,7 +4,8 @@
  *         app/api/invoice-outbox/send (tombol Kirim, bergerbang izin + sesi penekannya).
  * Dependensi: db invoice_outbox + invoice_outbox_event, lib/accurate-invoice-write (status + identitas),
  *   lib/invoice-outbox-event (riwayat append-only).
- * Main Functions: sendQueuedInvoices, sapuSending, cekSesiBacaSaja, rencanaKirim, pratinjauKirim, cekTanggalFaktur.
+ * Main Functions: sendQueuedInvoices, sapuSending, cekSesiBacaSaja, rencanaKirim, pratinjauKirim, cekTanggalFaktur,
+ *   orderIdsDariQuery.
  * Side Effects: MENULIS FAKTUR DI ACCURATE dan mengubah status antrean. Tidak bisa dibatalkan.
  *   Tiap klaim dan tiap hasil tercatat di invoice_outbox_event DALAM pernyataan SQL yang sama
  *   (CTE) dengan perubahan statusnya: status HTTP + potongan jawaban + pengirim (BL-17 + R6).
@@ -119,6 +120,22 @@ export function cekTanggalFaktur(invoiceDate: string | undefined, hariIni = new 
     return !baku || invoiceDate > hariIni
         ? `Tanggal faktur ${invoiceDate} tidak sah (format yyyy-MM-dd, paling lambat hari ini ${hariIni}). Tidak ada faktur dikirim.`
         : null;
+}
+
+/**
+ * Daftar order dari query pratinjau (GET): parameter berulang `orderId=…&orderId=…`, atau `orderIds` berisi
+ * JSON array teks. Kunci SO bisa memuat koma, jadi daftar "a,b" TIDAK ditebak — ditolak dengan pesan.
+ */
+export function orderIdsDariQuery(params: URLSearchParams): { ids: string[] } | { error: string } {
+    const ulang = params.getAll("orderId").map((id) => id.trim()).filter(Boolean);
+    const json = params.get("orderIds");
+    if (json === null || json.trim() === "") return { ids: ulang };
+    let parsed: unknown;
+    try { parsed = JSON.parse(json); } catch { parsed = null; }
+    if (!Array.isArray(parsed) || !parsed.every((id) => typeof id === "string")) {
+        return { error: "orderIds wajib JSON array teks (mis. [\"KINO:SO-1\"]) atau pakai parameter berulang orderId=…; daftar berkoma tidak diterima" };
+    }
+    return { ids: [...ulang, ...parsed.map((id) => id.trim()).filter(Boolean)] };
 }
 
 type BarisAntrean = typeof invoiceOutbox.$inferSelect;

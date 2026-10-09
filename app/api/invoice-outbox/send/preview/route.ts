@@ -5,7 +5,7 @@
  * Caller: halaman Antrean Faktur (dialog `kirim`, S6c — belum ada UI).
  * Dependensi: lib/invoice-sender (pratinjauKirim = rencanaKirim yang dipakai Kirim, cekTanggalFaktur),
  *   lib/accurate-session (database sesi penekan), rbac.
- * Main Functions: GET ?orderIds=a,b&invoiceDate=yyyy-MM-dd.
+ * Main Functions: GET ?orderId=a&orderId=b (atau orderIds=["a","b"]) &invoiceDate=yyyy-MM-dd.
  * Side Effects: BACA SAJA. Tidak menyapu, tidak mengklaim, tidak memanggil Accurate.
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -14,7 +14,7 @@ import { db } from "@/lib/db";
 import { invoiceOutbox } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { getAccurateSession } from "@/lib/accurate-session";
-import { cekTanggalFaktur, MAKS_PER_TEKAN, pratinjauKirim } from "@/lib/invoice-sender";
+import { cekTanggalFaktur, MAKS_PER_TEKAN, orderIdsDariQuery, pratinjauKirim } from "@/lib/invoice-sender";
 
 export const runtime = "nodejs";
 
@@ -26,7 +26,10 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ ok: false, error: "Hanya petugas yang boleh mengirim faktur ke Accurate" }, { status: 403 });
     }
     const params = request.nextUrl.searchParams;
-    const orderIds = (params.get("orderIds") ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+    // Kunci SO bisa memuat koma: parameter berulang / JSON, bukan daftar berkoma.
+    const dipilih = orderIdsDariQuery(params);
+    if ("error" in dipilih) return NextResponse.json({ ok: false, error: dipilih.error }, { status: 400 });
+    const orderIds = dipilih.ids;
     const invoiceDate = (params.get("invoiceDate") ?? "").trim() || undefined;
     const tanggalSalah = cekTanggalFaktur(invoiceDate);
     if (tanggalSalah) return NextResponse.json({ ok: false, error: tanggalSalah }, { status: 400 });
