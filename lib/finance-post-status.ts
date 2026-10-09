@@ -54,7 +54,7 @@ export function purchasePaymentConflict(out: Conflict): "posted" | "in_flight" |
 }
 
 /** Command menolak SEBELUM klaim (validasi/izin/sesi, atau `claimed:false`) = pasti belum terkirim ke Accurate. */
-export function certainlyNotSent(status: number, out: { claimed?: unknown } | null | undefined): boolean {
+export function certainlyNotSent(status: number, out: { claimed?: unknown; error?: unknown; live?: unknown } | null | undefined): boolean {
     if (out?.claimed === false) return true;
     return status >= 400 && status < 500 && status !== 409;
 }
