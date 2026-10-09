@@ -147,3 +147,13 @@ test("list.do berhalaman: semua halaman dibaca sebelum menyimpulkan", async (t) 
     assert.equal(hasil.hasil, "ketemu");
     assert.equal(f.mock.callCount(), 4);
 });
+
+test("A-RENDAH: list.do tanpa sp.pageCount dan baris < rowCount -> gagal_cek (bukan tidak ketemu dari halaman pertama saja)", async (t) => {
+    const db = dbTiruan([[], PELANGGAN]);
+    accurateTiruan(t, [{ body: { s: true, d: [{ id: 51, customer: { id: 50123 } }], sp: { rowCount: 3 } } }], {
+        51: detailOk({ id: 51, number: "INV/51", charField1: "LAIN" }),
+    });
+    const hasil = await cariFaktur({ db, key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session: SESI });
+    assert.equal(hasil.hasil, "gagal_cek");
+    assert.match(hasil.hasil === "gagal_cek" ? hasil.alasan : "", /1 dari 3 faktur/);
+});

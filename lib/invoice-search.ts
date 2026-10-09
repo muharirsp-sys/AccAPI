@@ -179,6 +179,8 @@ export async function cariFaktur(input: {
         baris.push(...d.map(obj));
         if (page >= Number(sp.pageCount ?? 1) || d.length === 0) break;
     }
+    // sp.pageCount absen/salah = halaman berikutnya tidak pernah dibaca: kurang dari rowCount bukan "tidak ketemu".
+    if (baris.length < total) return { hasil: "gagal_cek", alasan: `list.do hanya memberi ${baris.length} dari ${total} faktur — halaman tidak lengkap` };
 
     // Saring ULANG di sini: id pelanggan beda = bukan faktur kita; lastUpdate yang terbaca dan lebih
     // tua dari jendela = dibuat sebelum antre. Yang tidak terbaca tetap jadi calon (gagal-tertutup).
