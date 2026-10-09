@@ -240,7 +240,10 @@ Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
      -> forwardAccurate purchase-payment/bulk-save.do (tanpa transaksi DB terbuka)
      -> classifyProviderReply -> posted / unknown / not_sent (C11: penolakan Accurate belum terbukti = unknown)
   -> UI melaporkan status ke FastAPI POST /payments/finance/update (payments.json) seperti semula
-  Penyelesaian TIDAK PASTI: POST /api/finance/purchase-payment/resolve (atestasi manual + sumber cek)
+  Penyelesaian TIDAK PASTI: POST /api/finance/purchase-payment/resolve (atestasi manual + sumber cek;
+    hanya finance.resolve_unknown). Gagal sebelum klaim = {claimed:false} (pasti tidak terkirim).
+  payments.json: "failed" lama bergalat ambigu (timeout/502/504/non-JSON/jaringan) = unknown
+    (shared.effective_post_status) -> terkunci sampai diselesaikan Finance.
 
 Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConfig.path, bukan URL halaman):
   -> POST /api/idempotency/lock — preview + kunci fingerprint (lib/sales-receipt-fingerprint.ts) di idempotency_log
@@ -925,6 +928,7 @@ item [cache Accurate items]
 customer [cache Accurate customers]
 idempotency_log [fingerprint bulk upload; lockId/lockedBy] ── idempotency_override [jejak override Finance]
 accurate_write_attempt [klaim tulis Accurate per subjek × generasi] ── accurate_write_attempt_reopen [repost D-15, rilis B]
+  (FK melingkar + trigger immutability + REVOKE = DDL manual docs/handover/DDL_ADR004.sql, dijalankan saat deploy)
 
 # Dynamic RBAC (additive — Fase 2/4; user.role & user.permissions TIDAK dihapus)
 access_group ──── group_permission (group_id)   [permission_key = "module.action"]
