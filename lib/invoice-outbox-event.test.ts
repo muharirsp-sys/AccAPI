@@ -323,6 +323,7 @@ test("PG: cariFaktur cache — per customer_no + jendela waktu, raw_data string,
     const key = `UJI-S6D:${randomUUID()}`;
     const base = 9_000_000_000 + Math.floor(Math.random() * 1_000_000) * 10;
     const antre = new Date(Date.now() - 2 * 3_600_000);
+    let sim: Awaited<ReturnType<typeof simulatorAccurate>> | null = null;
     try {
         const tambah = (id: number, raw: unknown, createdAgoJam: number | null, lastAgoJam: number, cust = pelanggan) => pool.query(
             `INSERT INTO sales_invoice (id, number, customer_no, raw_data, created_at, last_update_at)
@@ -336,10 +337,16 @@ test("PG: cariFaktur cache — per customer_no + jendela waktu, raw_data string,
         const kosong = await cariFaktur({ db, key, customerNo: pelanggan, queuedAt: antre, session: null });
         assert.equal(kosong.hasil, "gagal_cek", "cache tidak ketemu + tanpa sesi = gagal_cek, BUKAN tidak_ketemu");
         await tambah(base + 4, { charField1: "", detailItem: [{ charField1: key }] }, null, 1); // created_at NULL (list.do) -> last_update_at
-        const ketemu = await cariFaktur({ db, key, customerNo: pelanggan, queuedAt: antre, session: null });
-        assert.deepEqual(ketemu, { hasil: "ketemu", id: String(base + 4), number: `INV/UJI/${base + 4}`, sumber: "cache", cocok: "baris",
+        // Hit cache tanpa sesi = tidak bisa dikonfirmasi = gagal_cek (A-RENDAH butir 8).
+        assert.equal((await cariFaktur({ db, key, customerNo: pelanggan, queuedAt: antre, session: null })).hasil, "gagal_cek");
+        sim = await simulatorAccurate(10, [{ id: base + 4, number: `INV/UJI/${base + 4}`, charField1: key, customerId: 0, lastUpdate: "" }]);
+        const ketemu = await cariFaktur({ db, key, customerNo: pelanggan, queuedAt: antre,
+            session: { sessionHost: sim.host, sessionId: "sesi-uji", accessToken: "token-uji" } });
+        assert.deepEqual(ketemu, { hasil: "ketemu", id: String(base + 4), number: `INV/UJI/${base + 4}`, sumber: "cache", cocok: "charField1",
             semua: [{ id: String(base + 4), number: `INV/UJI/${base + 4}` }] });
+        assert.equal(sim.kiriman(key), 0);
     } finally {
+        await sim?.close();
         await pool.query(`DELETE FROM sales_invoice WHERE id BETWEEN $1 AND $2`, [base, base + 9]);
         await pool.end();
     }
@@ -347,10 +354,11 @@ test("PG: cariFaktur cache — per customer_no + jendela waktu, raw_data string,
 
 test("PG E2: Antre ulang didahului pencarian — ketemu di cache = terposting, Kirim TIDAK memanggil save.do", { skip: pgSkip }, async () => {
     const pool = new Pool({ connectionString: PG_URL, max: 2 });
-    const sim = await simulatorAccurate(50);
     const { pencariFaktur } = await import("./invoice-outbox-actions.ts");
     const orderId = `UJI-S6D:${randomUUID()}`;
     const invoiceId = 9_100_000_000 + Math.floor(Math.random() * 1_000_000);
+    // Hit cache dikonfirmasi lewat detail.do simulator (butir 8).
+    const sim = await simulatorAccurate(50, [{ id: invoiceId, number: "INV/UJI/CACHE", charField1: orderId, customerId: 0, lastUpdate: "" }]);
     try {
         await pool.query((await entriMigrasi("invoice_outbox_event")).sql);
         await seed(pool, orderId, "rejected", { lastError: '["Pelanggan melebihi batas piutang"]' });
@@ -435,7 +443,9 @@ test("PG AM-047: Selesaikan tidak pasti — terposting (cache ketemu) & tidak te
     const tiada = `UJI-S6D:${randomUUID()}`;
     const baru = `UJI-S6D:${randomUUID()}`;
     const invoiceId = customerId; // id faktur cache unik
-    const sim = await simulatorAccurate(20, []);
+    const nanti = new Date(Date.now() + 3_600_000 + 7 * 3_600_000).toISOString();
+    const sim = await simulatorAccurate(20, [{ id: invoiceId, number: "INV/UJI/AM047", charField1: ada, customerId,
+        lastUpdate: `${nanti.slice(8, 10)}/${nanti.slice(5, 7)}/${nanti.slice(0, 4)} ${nanti.slice(11, 19)}` }]);
     const alasan = "Diperiksa lewat pencarian charField1 di Accurate";
     try {
         await pool.query((await entriMigrasi("invoice_outbox_event")).sql);

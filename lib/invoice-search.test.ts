@@ -61,14 +61,39 @@ const listOk = (rows: unknown[], rowCount = rows.length, pageCount = 1) => ({ bo
 const detailOk = (d: unknown) => ({ body: { s: true, d } });
 const PELANGGAN = [{ id: 50123 }];
 
-test("cache: ketemu lewat kepala atau baris — TANPA panggilan Accurate", async (t) => {
-    const fetchMock = t.mock.method(globalThis, "fetch", async () => { throw new Error("tidak boleh ke Accurate"); });
+test("cache: ketemu lewat kepala atau baris, DIKONFIRMASI satu detail.do (tanpa list.do)", async (t) => {
     for (const raw of [{ charField1: KEY }, JSON.stringify({ charField1: "", detailItem: [{ charField1: KEY }] })]) {
-        const db = dbTiruan([[{ id: 9 }, { id: 7 }], [{ id: 9, number: "INV/9", raw: { charField1: "LAIN" } }, { id: 7, number: "INV/7", raw }]]);
-        const hasil = await cariFaktur({ db, key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session: SESI });
-        assert.deepEqual({ ...hasil, cocok: undefined }, { hasil: "ketemu", id: "7", number: "INV/7", sumber: "cache", cocok: undefined, semua: [{ id: "7", number: "INV/7" }] });
+        await t.test(typeof raw === "string" ? "baris" : "kepala", async (st) => {
+            const fetchMock = accurateTiruan(st, [], { 7: detailOk({ id: 7, number: "INV/7", charField1: KEY }) });
+            const db = dbTiruan([[{ id: 9 }, { id: 7 }], [{ id: 9, number: "INV/9", raw: { charField1: "LAIN" } }, { id: 7, number: "INV/7", raw }]]);
+            const hasil = await cariFaktur({ db, key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session: SESI });
+            assert.deepEqual(hasil, { hasil: "ketemu", id: "7", number: "INV/7", sumber: "cache", cocok: "charField1", semua: [{ id: "7", number: "INV/7" }] });
+            assert.equal(fetchMock.mock.callCount(), 1);
+            assert.match(String(fetchMock.mock.calls[0].arguments[0]), /\/sales-invoice\/detail\.do\?id=7$/);
+        });
     }
-    assert.equal(fetchMock.mock.callCount(), 0);
+});
+
+test("A-RENDAH: hit cache yang tidak terkonfirmasi di Accurate = gagal_cek (cache bisa menyimpan faktur yang sudah dihapus)", async (t) => {
+    const cache = () => dbTiruan([[{ id: 7 }], [{ id: 7, number: "INV/7", raw: { charField1: KEY } }]]);
+    const cek = async (session: typeof SESI | null, pola: RegExp) => {
+        const hasil = await cariFaktur({ db: cache(), key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session });
+        assert.equal(hasil.hasil, "gagal_cek");
+        assert.match(hasil.hasil === "gagal_cek" ? hasil.alasan : "", pola);
+    };
+    await t.test("tanpa sesi", async () => cek(null, /INV\/7.*tidak bisa dikonfirmasi tanpa sesi/));
+    await t.test("dihapus (s:true, d kosong)", async (st) => {
+        accurateTiruan(st, [], { 7: { body: { s: true, d: null } } });
+        await cek(SESI, /INV\/7 tidak ada lagi di Accurate/);
+    });
+    await t.test("kunci berubah", async (st) => {
+        accurateTiruan(st, [], { 7: detailOk({ id: 7, number: "INV/7", charField1: "KINO:LAIN" }) });
+        await cek(SESI, /INV\/7 di Accurate tidak lagi membawa kunci/);
+    });
+    await t.test("detail.do galat", async (st) => {
+        accurateTiruan(st, [], { 7: { status: 503, body: { message: "x" } } });
+        await cek(SESI, /konfirmasi faktur cache INV\/7.*HTTP 503/);
+    });
 });
 
 test("cache tidak ketemu -> list.do per pelanggan -> detail.do per calon -> ketemu (sumber accurate)", async (t) => {

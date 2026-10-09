@@ -19,6 +19,9 @@
  *   `KINO-NON-FOOD:1671-SOP-260013022`) -> baris yang charField1-nya terisi diputuskan LANGSUNG (EQUAL);
  *   detail.do (TERBUKTI membawa charField1 + baris) hanya cadangan untuk yang absen/kosong.
  *
+ * Hit cache WAJIB dikonfirmasi satu detail.do (cache bisa menyimpan faktur yang sudah dihapus di Accurate);
+ * tanpa sesi / gagal / faktur hilang / kunci berubah = gagal_cek.
+ *
  * "tidak_ketemu_dicek" BUKAN bukti tidak ada: hanya berarti list.do + detail.do berjalan penuh dalam
  * batasnya dan tidak satu pun calon membawa kunci ini. Ia membuka aksi manusia beralasan, tidak pernah
  * mengirim otomatis. Cache lokal saja tidak pernah menghasilkan "tidak ketemu" (cache bisa tertinggal).
@@ -139,6 +142,7 @@ export async function cariFaktur(input: {
     const { db, key, customerNo } = input;
     if (!key.trim() || !customerNo.trim()) return { hasil: "gagal_cek", alasan: "kunci antrean / pelanggan kosong" };
     const jendela = jendelaCari(input.queuedAt);
+    const deadline = Date.now() + batas.waktuMs;
 
     // (a) Cache lokal: calon lewat kolom terindeks (customer_no) + waktu, TANPA raw_data; raw_data
     //     dibuka per PK hanya untuk calon. Memindai raw_data massal tidak boleh (VPS 2 core).
@@ -156,7 +160,18 @@ export async function cariFaktur(input: {
             .filter((row): row is FakturKetemu & { cara: CaraCocok } => row.cara !== null)
             .sort((a, b) => Number(a.id) - Number(b.id));
         if (cocok.length) {
-            return { hasil: "ketemu", id: cocok[0].id, number: cocok[0].number, sumber: "cache", cocok: cocok[0].cara,
+            const nama = cocok[0].number || cocok[0].id;
+            if (!input.session) {
+                return { hasil: "gagal_cek", alasan: `faktur ${nama} ada di cache lokal tetapi tidak bisa dikonfirmasi tanpa sesi Accurate` };
+            }
+            const jawab = await bacaAccurate(input.session, "/sales-invoice/detail.do", { id: cocok[0].id }, deadline, batas.perPanggilanMs);
+            if (!jawab.ok) return { hasil: "gagal_cek", alasan: `konfirmasi faktur cache ${nama}: ${jawab.alasan}` };
+            const detail = obj(jawab.body.d);
+            // Accurate menjawab s:true dengan d kosong untuk faktur yang sudah dihapus (lib/sync.ts).
+            if (!detail.id && !detail.number) return { hasil: "gagal_cek", alasan: `faktur cache ${nama} tidak ada lagi di Accurate (dihapus?)` };
+            const cara = cocokFaktur(detail, key);
+            if (!cara) return { hasil: "gagal_cek", alasan: `faktur cache ${nama} di Accurate tidak lagi membawa kunci ${key}` };
+            return { hasil: "ketemu", id: cocok[0].id, number: String(detail.number ?? cocok[0].number), sumber: "cache", cocok: cara,
                 semua: cocok.map(({ id, number }) => ({ id, number })) };
         }
     }
@@ -168,7 +183,6 @@ export async function cariFaktur(input: {
         return { hasil: "gagal_cek", alasan: `pelanggan ${customerNo} ${pelanggan.length ? "tidak unik" : "tidak ada"} di master customer lokal` };
     }
     const customerId = Number(pelanggan[0].id);
-    const deadline = Date.now() + batas.waktuMs;
 
     const baris: Record<string, unknown>[] = [];
     let total = 0;
