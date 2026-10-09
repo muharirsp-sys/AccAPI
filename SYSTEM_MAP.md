@@ -228,8 +228,28 @@ Record pembayaran dari principal:
 UI: API Wrapper page (/api-wrapper)
   -> POST /api/proxy
      -> route.ts [POST] — forward ke Accurate API (sessionHost + Bearer apiKey) lewat lib/accurate-forward.ts
-        (menolak 403 tulis purchase-payment/(bulk-)save.do — hanya lewat command Finance di bawah)
+        (menolak 403 tulis purchase-payment/(bulk-)save.do — hanya lewat command Finance di bawah;
+         menolak 403 SALES_INVOICE_VIA_OUTBOX tulis sales-invoice/(bulk-)save.do — hanya lewat Antrean Faktur, S6-0d E4)
      <- JSON response
+
+Antrean Faktur / outbox sales-invoice (S6-0d, DRAFT — zona tulis Accurate):
+  antre: POST /api/principal-order/queue | /api/orders/{id}/invoice -> lib/invoice-outbox-actions antrekan()
+     -> invoice_outbox(queued) + invoice_outbox_event `antre` (satu transaksi); kunci PERNAH dibuang -> cariFaktur dulu
+  kirim: POST /api/invoice-outbox/send (order.edit) | GET /api/cron/post-invoices -> lib/invoice-sender sendQueuedInvoices
+     -> sapuSending (sending > 15 mnt -> unknown + event `sapu`) -> rencanaKirim (kueri created_at, order_id; tanggal pilihan;
+        tolak persen+rupiah) -> cekSesiBacaSaja (GET branch/list.do; gagal = batal tanpa klaim)
+     -> per baris: CTE klaim queued->sending + event `kirim` (aktor) -> save.do -> classifySaveResponse:
+        {s:true,r.id}=posted; {s:false,d} non-5xx (bukan 401/403/429) = rejected; lainnya = unknown
+     -> CTE hasil (WHERE state='sending') + event (status HTTP, potongan ≤ 500, kode galat)
+  pratinjau BL-39: GET /api/invoice-outbox/send/preview -> pratinjauKirim (rencanaKirim yang sama + nilaiPayload)
+  antre ulang/buang: POST /api/invoice-outbox -> aksiAntrean: resend = cariFaktur dulu (ketemu -> posted, tidak dikirim;
+     gagal -> 409); discard = DELETE baris + event `buang` (salinan baris)
+  tidak pasti: POST /api/invoice-outbox/resolve (order.resolve_unknown) -> selesaikanTidakPasti: pencarian langsung +
+     alasan ≥ 15 -> posted (wajib ketemu) | rejected (wajib tidak_ketemu_dicek) + event `selesaikan`
+  cariFaktur (lib/invoice-search, BACA SAJA): cache sales_invoice per customer_no + created_at ≥ antre −1 hari ->
+     list.do filter.customerId + lastUpdate ≥ antre −10 mnt (BELUM TERBUKTI menyempitkan; disaring ulang, batas
+     300 baris/25 calon/90 dtk) -> detail.do per calon, charField1 EQUAL. Tanpa filter.charField1 (diabaikan Accurate).
+  riwayat: invoice_outbox_event append-only (migrate-pg; trigger/REVOKE + E5 data lama = docs/handover/DDL_OUTBOX_EVENT.sql)
 
 Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
   UI Finance (/finance) approveTransfer
