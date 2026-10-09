@@ -1733,6 +1733,29 @@ def format_sppd_number_with_template(seq: int, dt: pd.Timestamp, template: str) 
     except Exception:
         return f"{num}/SPA/PDSB/{month}/{year}"
 
+# Tinjauan S6-0a: galat posting purchase-payment yang TIDAK membuktikan Accurate menolak. Record lama berstatus
+# "failed" (dicatat halaman Finance sebelum attempt server ada) dengan galat seperti ini mungkin SUDAH tersimpan di
+# Accurate, sedangkan tabel attempt server kosong setelah deploy -> diperlakukan unknown (wajib resolve). Pola =
+# pesan proxy/halaman lama: timeout 30 dtk (504), non-JSON (502), gerbang HTML, jaringan/fetch, soket putus,
+# galat proxy umum, fallback halaman. Galat kosong ikut (tidak bisa dibuktikan).
+AMBIGUOUS_POST_ERROR = re.compile(
+    r"time-?out|timed out|tidak merespons|non-JSON|not valid JSON|Unexpected (token|end)|JSON\.parse|<html"
+    r"|Bad Gateway|Gateway Time|Service Unavailable|\bHTTP 50\d\b|failed to fetch|fetch failed|NetworkError"
+    r"|Load failed|kesalahan jaringan|network|ECONNRESET|ETIMEDOUT|socket hang up|other side closed|terminated"
+    r"|aborted|Proxy request failed|^Gagal posting purchase-payment Accurate\.?$",
+    re.I,
+)
+
+
+def effective_post_status(rec: Dict[str, Any]) -> str:
+    """accurate_post_status yang BERLAKU: "failed" dengan galat ambigu = "unknown" (lihat AMBIGUOUS_POST_ERROR)."""
+    status = s(rec.get("accurate_post_status", ""))
+    error = s(rec.get("accurate_post_error", "")).strip()
+    if status == "failed" and (not error or AMBIGUOUS_POST_ERROR.search(error)):
+        return "unknown"
+    return status
+
+
 def wita_now() -> pd.Timestamp:
     """Waktu sekarang di WITA (naif). Server produksi berjalan UTC; tanggal terbit SPPD (nomor, bulan romawi,
     tahun urutan) mengikuti WITA. ponytail: offset tetap UTC+8 — Indonesia tanpa DST."""

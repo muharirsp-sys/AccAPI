@@ -20,6 +20,7 @@ from shared import (
     append_audit_log,
     append_error_log,
     build_proof_metadata,
+    effective_post_status,
     finance_mapping_key,
     format_idr,
     get_current_user,
@@ -139,7 +140,9 @@ def payments_finance_data(request: Request):
         if not g["transfer_proof"] and isinstance(r.get("transfer_proof"), dict):
             g["transfer_proof"] = r.get("transfer_proof", {})
         if not g["accurate_post_status"]:
-            g["accurate_post_status"] = s(r.get("accurate_post_status", ""))
+            # Tinjauan S6-0a: "failed" lama dengan galat ambigu tampil (dan terkunci) sebagai unknown.
+            g["accurate_post_status"] = effective_post_status(r)
+            g["accurate_post_status_raw"] = s(r.get("accurate_post_status", ""))
         if not g["accurate_post_error"]:
             g["accurate_post_error"] = s(r.get("accurate_post_error", ""))
         if not g["accurate_purchase_payment_number"]:
@@ -196,6 +199,7 @@ def payments_finance_data(request: Request):
             "transfer_date": g.get("transfer_date", ""),
             "transfer_proof": g.get("transfer_proof", {}),
             "accurate_post_status": g.get("accurate_post_status", ""),
+            "accurate_post_status_raw": g.get("accurate_post_status_raw", ""),
             "accurate_post_error": g.get("accurate_post_error", ""),
             "accurate_purchase_payment_number": g.get("accurate_purchase_payment_number", ""),
             "accurate_purchase_payment_id": g.get("accurate_purchase_payment_id", ""),
@@ -459,7 +463,7 @@ async def payments_finance_update(request: Request):
                 """posted final dari layar ini; unknown hanya keluar lewat catatan penyelesaian."""
                 if status != "Sudah Transfer":
                     return None
-                current = s(rec.get("accurate_post_status", ""))
+                current = effective_post_status(rec)  # "failed" lama bergalat ambigu = unknown (tinjauan S6-0a)
                 if current == "posted":
                     return f"LPB {s(rec.get('no_lpb', ''))} sudah posted ke Accurate ({s(rec.get('accurate_purchase_payment_number', '')) or s(rec.get('accurate_purchase_payment_id', ''))}); status tidak bisa diubah dari sini."
                 if current == "unknown" and accurate_post_status != "unknown":
@@ -476,7 +480,7 @@ async def payments_finance_update(request: Request):
 
             def apply_finance_update(rec: Dict[str, Any]) -> None:
                 nonlocal updated_count
-                previous_post_status = s(rec.get("accurate_post_status", ""))
+                previous_post_status = effective_post_status(rec)
                 rec["status_pembayaran"] = status
                 if status == "Sudah Transfer":
                     if previous_post_status == "unknown" and accurate_post_status != "unknown":

@@ -102,6 +102,39 @@ def main():
         assert rec()["accurate_post_status"] == "unknown"
     finally:
         finance.user_has_permission = lambda user, module, action: True
+
+    # 6) Tinjauan S6-0a: record LAMA "failed" dengan galat AMBIGU (dicatat halaman sebelum attempt server ada) mungkin
+    #    sudah tersimpan di Accurate -> diperlakukan unknown (terkunci, wajib resolve), tanpa mengedit data.
+    ambigu = ["Accurate tidak merespons dalam 30 detik (timeout). Coba lagi.",
+              "Accurate mengembalikan respons non-JSON (Gagal)\n\n[INFO TAMBAHAN]: <html>502 Bad Gateway</html>",
+              "Failed to fetch", "Unexpected token '<', \"<html>\" is not valid JSON", "fetch failed",
+              "Terjadi kesalahan jaringan.", "socket hang up", "HTTP 504", "Gagal posting purchase-payment Accurate.", ""]
+    for msg in ambigu:
+        assert shared.effective_post_status({"accurate_post_status": "failed", "accurate_post_error": msg}) == "unknown", msg
+    for msg in ['[\n  "Vendor tidak ditemukan"\n]', "Bank tidak valid", "dicek manual: tidak ada di Accurate"]:
+        assert shared.effective_post_status({"accurate_post_status": "failed", "accurate_post_error": msg}) == "failed", msg
+    assert shared.effective_post_status({"accurate_post_status": "posted", "accurate_post_error": "timeout"}) == "posted"
+
+    legacy = {"principle": "KINO", "no_lpb": "LPB-1", "status_pembayaran": "Sudah Transfer", "submitted_at": "2026-09-29 10:00:00",
+              "target_payment_date": "2026-09-29", "accurate_post_status": "failed",
+              "accurate_post_error": "Accurate tidak merespons dalam 30 detik (timeout). Coba lagi."}
+    with open(DB_PATH, "w", encoding="utf-8") as f:
+        json.dump({"lpb": {"LPB-1": legacy}, "proofs": PROOF}, f)
+    rows = client.get("/payments/finance/data?date=2026-09-29").json()["data"]
+    assert rows and rows[0]["accurate_post_status"] == "unknown" and rows[0]["accurate_post_status_raw"] == "failed", rows
+    # Posting ulang/menandai ulang tanpa penyelesaian ditolak seperti unknown; penyelesaian butuh resolve_unknown + catatan.
+    r = update(accurate_post_status="posted", accurate_purchase_payment_number="PP/0930/1")
+    assert r.status_code == 409, f"failed-ambigu dilewati tanpa penyelesaian: {r.status_code} {r.text[:200]}"
+    finance.user_has_permission = lambda user, module, action: not (module == "finance" and action == "resolve_unknown")
+    try:
+        r = update(accurate_post_status="failed", resolution_note="dicek manual di Accurate: tidak ditemukan")
+        assert r.status_code == 409 and "resolve_unknown" in r.text, f"non-Finance menyelesaikan failed-ambigu: {r.status_code}"
+    finally:
+        finance.user_has_permission = lambda user, module, action: True
+    r = update(accurate_post_status="failed", resolution_note="dicek manual di Accurate: tidak ditemukan")
+    assert r.status_code == 200, r.text[:200]
+    res = rec().get("accurate_post_resolution") or {}
+    assert res.get("from") == "unknown" and res.get("previous", {}).get("error", "").startswith("Accurate tidak merespons"), res
     print("OK test_finance_post_status")
 
 
