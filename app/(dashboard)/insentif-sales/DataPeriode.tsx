@@ -174,10 +174,10 @@ async function bacaProgres(file: File, month: number, year: number, branchNilaiJ
     // ponytail: dimuat saat dipakai. Import statis menyeret ~900 KB xlsx ke bundle route
     // ini untuk semua user, padahal cuma handler upload yang membutuhkannya.
     const XLSX = await import("xlsx");
-    const { angkaSel, tandaiGalat, GALAT_EXCEL } = await import("@/lib/insentif-sales-excel");
+    const { angkaSel, tandaiGalat } = await import("@/lib/insentif-sales-excel");
     const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
     // Sel galat rumus (#DIV/0!, #N/A) ditandai dulu: tanpa ini sheet_to_json menjadikannya kosong = 0.
-    const sheet = tandaiGalat(wb.Sheets[wb.SheetNames[0]]);
+    const sheet = tandaiGalat(wb.Sheets[wb.SheetNames[0]], ["DPP", "NILAI_JUAL", "EC", "AO", "IA", "ITEM AKTIF"]);
     const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
     // Nama kolom file closing tidak seragam antar export — terima alias, case-insensitive.
     const norm = (k: string) => k.trim().toUpperCase();
@@ -191,7 +191,7 @@ async function bacaProgres(file: File, month: number, year: number, branchNilaiJ
             }
             return "";
         };
-        const get = (...names: string[]) => { const v = mentah(...names); return v === GALAT_EXCEL ? "" : String(v).trim(); };
+        const get = (...names: string[]) => String(mentah(...names)).trim();
         // Satu aturan dengan target/support/Python (angkaSel): 1,234,567.89 dan 1.234.567,89 terbaca, minus retur dipertahankan;
         // kosong dan "-" = 0; terisi tapi bukan angka ("N/A", "(533.000.000)", galat rumus) = NaN, BUKAN 0 — realisasi adalah dasar
         // nominal insentif, jadi baris itu menahan seluruh impor di bawah (AM-017 / it07 #16).

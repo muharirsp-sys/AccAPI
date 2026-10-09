@@ -77,13 +77,27 @@ export function angkaSel(v: unknown): number {
     return typeof v === "string" ? parseLocaleNumber(v) : NaN;
 }
 
+/** Judul kolom dicocokkan seperti pembaca baris: spasi tepi dan huruf besar/kecil diabaikan. */
+const normKolom = (k: string) => k.trim().toUpperCase();
+
 /**
- * Ganti sel galat Excel (t === "e": #DIV/0!, #N/A, #REF!) dengan GALAT_EXCEL sebelum sheet_to_json — tanpa ini galat rumus
- * di kolom angka terbaca kosong = 0. Kolom teks membaca penanda ini sebagai kosong (perilaku lama).
+ * Ganti sel galat Excel (t === "e": #DIV/0!, #N/A, #REF!) di KOLOM ANGKA yang dibaca dengan GALAT_EXCEL sebelum sheet_to_json —
+ * tanpa ini galat rumus di kolom angka terbaca kosong = 0. Hanya kolom berjudul `kolomAngka` (baris pertama lembar) yang
+ * dipindai: berkas closing nyata ±4,9 juta sel, memindai seluruh lembar ±15 detik (peninjau A, S6-0c). Kolom teks tidak
+ * disentuh, jadi galat di sana tetap terbaca kosong (perilaku lama).
  */
-export function tandaiGalat(sheet: XLSX.WorkSheet): XLSX.WorkSheet {
-    for (const [alamat, sel] of Object.entries(sheet)) {
-        if (!alamat.startsWith("!") && (sel as XLSX.CellObject).t === "e") sheet[alamat] = { t: "s", v: GALAT_EXCEL };
+export function tandaiGalat(sheet: XLSX.WorkSheet, kolomAngka: readonly string[]): XLSX.WorkSheet {
+    if (!sheet["!ref"]) return sheet;
+    const r = XLSX.utils.decode_range(sheet["!ref"]);
+    const dicari = new Set(kolomAngka.map(normKolom));
+    for (let c = r.s.c; c <= r.e.c; c++) {
+        const judul = sheet[XLSX.utils.encode_cell({ r: r.s.r, c })] as XLSX.CellObject | undefined;
+        if (!judul || !dicari.has(normKolom(String(judul.v ?? "")))) continue;
+        const kolom = XLSX.utils.encode_col(c);
+        for (let b = r.s.r + 1; b <= r.e.r; b++) {
+            const alamat = kolom + XLSX.utils.encode_row(b);
+            if ((sheet[alamat] as XLSX.CellObject | undefined)?.t === "e") sheet[alamat] = { t: "s", v: GALAT_EXCEL };
+        }
     }
     return sheet;
 }
@@ -94,13 +108,12 @@ export function tandaiGalat(sheet: XLSX.WorkSheet): XLSX.WorkSheet {
  * yang terlihat, dan pencocokan persis membuat SELURUH file diam-diam terbaca 0 (H5).
  */
 function rowReader(row: Record<string, unknown>) {
-    const norm = (k: string) => k.trim().toUpperCase();
-    const byKey = new Map(Object.entries(row).map(([k, v]) => [norm(k), v]));
-    const raw = (name: string) => byKey.get(norm(name));
+    const byKey = new Map(Object.entries(row).map(([k, v]) => [normKolom(k), v]));
+    const raw = (name: string) => byKey.get(normKolom(name));
     return {
         str: (name: string, fallback = "") => {
             const v = raw(name);
-            return v === undefined || v === null || v === "" || v === GALAT_EXCEL ? fallback : String(v).trim();
+            return v === undefined || v === null || v === "" ? fallback : String(v).trim();
         },
         // Kosong dan "-" = 0; terisi tapi bukan angka (termasuk sel galat) = NaN, BUKAN 0 (AM-017): pemanggil wajib menolaknya —
         // 0 palsu pada support/target = bayar lebih. Aturannya = angkaSel (sama dengan progres dan Python).
@@ -154,7 +167,7 @@ export interface ParsedSupportRow {
  */
 export function parseSupportExcel(arrayBuffer: ArrayBuffer, kind: SupportKind): ParsedSupportRow[] {
     const workbook = XLSX.read(arrayBuffer, { type: "array" });
-    const sheet = tandaiGalat(workbook.Sheets[workbook.SheetNames[0]]);
+    const sheet = tandaiGalat(workbook.Sheets[workbook.SheetNames[0]], ["Support (Rp)"]);
     const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
     const keyHeader = SUPPORT_KEY_HEADER[kind];
     const out: ParsedSupportRow[] = [];
@@ -171,7 +184,7 @@ export function parseSupportExcel(arrayBuffer: ArrayBuffer, kind: SupportKind): 
 /** Parse Excel file untuk target input. */
 export function parseTargetExcel(arrayBuffer: ArrayBuffer): Array<Record<string, unknown>> {
     const workbook = XLSX.read(arrayBuffer, { type: "array" });
-    const sheet = tandaiGalat(workbook.Sheets[workbook.SheetNames[0]]);
+    const sheet = tandaiGalat(workbook.Sheets[workbook.SheetNames[0]], ["Target Value (Rp)", "Target EC", "Target AO", "Target IA", "SPLM Value"]);
     const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
 
     // Header dicocokkan case/whitespace-insensitive, BUKAN string persis. Excel bisa menyimpan
