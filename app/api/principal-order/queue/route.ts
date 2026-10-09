@@ -18,7 +18,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accurateEmployee, invoiceOutbox, principalOrderBatch, principalOrderLine } from "@/db/schema";
-import { catatEvent } from "@/lib/invoice-outbox-event";
+import { antrekan, pencariPenekan } from "@/lib/invoice-outbox-actions";
+import { pernahDibuang } from "@/lib/invoice-outbox-event";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { groupCandidates, type BatchLine, type SkippedSo } from "@/lib/principal-invoice";
 import { buildInvoicePayload, type InvoicePayload } from "@/lib/accurate-invoice-write";
@@ -154,32 +155,28 @@ export async function POST(request: NextRequest) {
     }
 
     if (!wantQueue) {
-        // Pratinjau: payload persis yang akan diantrekan, tanpa menyentuh DB maupun Accurate.
-        return NextResponse.json({ ok: true, dry_run: true, id, ready, skipped: blocked });
+        // Pratinjau: payload persis yang akan diantrekan, tanpa menulis DB dan tanpa Accurate. SO yang
+        // pernah dibuang ditandai: saat diantrekan, fakturnya dicari dulu di Accurate (E2).
+        const dibuang = await pernahDibuang(db, ready.map((entry) => entry.key));
+        return NextResponse.json({ ok: true, dry_run: true, id, ready: ready.map((entry) => ({ ...entry, pernahDibuang: dibuang.has(entry.key) })), skipped: blocked });
     }
     if (ready.length === 0) {
         return NextResponse.json({ ok: false, error: "Tidak ada SO yang bisa diantrekan", skipped: blocked }, { status: 422 });
     }
 
     const queuedBy = String(gate.session?.user?.email ?? gate.session?.user?.id ?? "");
-    // Baris antrean + event `antre` dalam SATU transaksi (BL-17): yang masuk antrean selalu berjejak.
-    const inserted = await db.transaction(async (tx) => {
-        const rows = await tx.insert(invoiceOutbox).values(ready.map((entry) => ({
-            orderId: entry.key,
-            customerNo: entry.payload.customerNo,
-            orderDate: entry.orderDate,
-            state: "queued",
-            payload: entry.payload,
-            queuedBy,
-        }))).onConflictDoNothing().returning({ orderId: invoiceOutbox.orderId });
-        await catatEvent(tx, ...rows.map((row) => ({
-            orderId: row.orderId, jenis: "antre" as const, stateTo: "queued", actor: queuedBy, detail: { batch_id: id },
-        })));
-        return rows;
+    // Baris antrean + event `antre` satu transaksi (BL-17). SO yang PERNAH dibuang dicari dulu di
+    // Accurate (E2) dengan sesi penekan: ketemu = terposting tanpa kirim; gagal = tidak diantrekan.
+    const pencari = await pencariPenekan(db, String(gate.session?.user?.id ?? ""));
+    const hasil = await antrekan(db, {
+        entries: ready.map((entry) => ({ orderId: entry.key, customerNo: entry.payload.customerNo, orderDate: entry.orderDate, payload: entry.payload })),
+        actor: queuedBy, targetDb: pencari.targetDb, cari: pencari.cari, detail: { batch_id: id },
     });
+    const soOf = new Map(ready.map((entry) => [entry.key, entry.soNo]));
+    blocked.push(...hasil.blocked.map((entry) => ({ soNo: soOf.get(entry.orderId) ?? entry.orderId, reason: entry.reason })));
 
     return NextResponse.json({
-        ok: true, id, queued: inserted.length,
-        keys: inserted.map((row) => row.orderId), skipped: blocked,
+        ok: true, id, queued: hasil.queued.length,
+        keys: hasil.queued, alreadyPosted: hasil.posted, skipped: blocked,
     });
 }

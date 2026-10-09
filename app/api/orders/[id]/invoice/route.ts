@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox } from "@/db/schema";
-import { catatEvent } from "@/lib/invoice-outbox-event";
+import { antrekan, pencariPenekan } from "@/lib/invoice-outbox-actions";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { buildInvoicePayload, type InvoiceOrder } from "@/lib/accurate-invoice-write";
 import { accurateUnits } from "@/lib/accurate-units";
@@ -94,19 +94,18 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     }
     const order = fetched.order;
     const queuedBy = String(gate.session?.user?.email ?? gate.session?.user?.id ?? "");
-    // Baris antrean + event `antre` dalam satu transaksi (BL-17).
-    await db.transaction(async (tx) => {
-        await tx.insert(invoiceOutbox).values({
-            orderId: id,
-            customerNo: payload.customerNo,
-            orderDate: order.order_date,
-            state: "queued",
-            payload,
-            programSnapshot: programSnapshot(order),
-            queuedBy,
-        });
-        await catatEvent(tx, { orderId: id, jenis: "antre", stateTo: "queued", actor: queuedBy });
+    // Baris antrean + event `antre` satu transaksi (BL-17); order yang pernah dibuang dicari dulu (E2).
+    const pencari = await pencariPenekan(db, String(gate.session?.user?.id ?? ""));
+    const hasil = await antrekan(db, {
+        entries: [{ orderId: id, customerNo: payload.customerNo, orderDate: order.order_date, payload, programSnapshot: programSnapshot(order) }],
+        actor: queuedBy, targetDb: pencari.targetDb, cari: pencari.cari,
     });
+    if (hasil.blocked.length) return NextResponse.json({ ok: false, error: hasil.blocked[0].reason }, { status: 409 });
+    if (hasil.posted.length) {
+        return NextResponse.json({ ok: true, queued: false, posted: hasil.posted[0],
+            pesan: `Faktur ${hasil.posted[0].number || hasil.posted[0].accurateId} sudah ada di Accurate — ditandai terposting, tidak dikirim.` });
+    }
+    if (!hasil.queued.length) return NextResponse.json({ ok: false, error: "Order ini sudah ada di antrean faktur" }, { status: 409 });
     return NextResponse.json({ ok: true, queued: true, payload });
 }
 

@@ -11,7 +11,9 @@
  * Aturan yang tidak boleh dilanggar:
  * - `unknown` TIDAK PERNAH boleh dikirim ulang maupun dihapus dari sini. Tidak ada jawaban
  *   dari Accurate berarti fakturnya MUNGKIN sudah terbentuk, dan faktur ganda di sana tidak
- *   bisa dibatalkan. Penyelesaiannya rekonsiliasi `charField1`, bukan tombol.
+ *   bisa dibatalkan. Penyelesaiannya /api/invoice-outbox/resolve (pencarian + alasan).
+ * - `resend` (Antre ulang) SELALU didahului pencarian faktur (owner E2): ketemu = terposting,
+ *   tidak dikirim; pencarian gagal = ditolak, tidak ada yang berubah.
  * - Batch yang barisnya masih perlu ditinjau IKUT dihitung eskalasinya. Masalah yang belum
  *   sampai ke antrean bukan berarti tidak ada masalah — justru itu masalah yang diabaikan,
  *   dan itulah yang paling sering menggantung sampai lewat hari (keputusan pengguna 2026-09-11).
@@ -24,7 +26,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, asc, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox, principalOrderBatch, principalOrderLine } from "@/db/schema";
-import { aksiAntrean } from "@/lib/invoice-outbox-actions";
+import { aksiAntrean, pencariPenekan } from "@/lib/invoice-outbox-actions";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
 export const runtime = "nodejs";
@@ -142,11 +144,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: false, error: "action harus `resend` atau `discard`" }, { status: 400 });
     }
 
+    // E2: antre ulang selalu didahului pencarian faktur dengan sesi Accurate PENEKAN (baca saja).
+    const pencari = action === "resend" ? await pencariPenekan(db, String(gate.session?.user?.id ?? "")) : null;
     const result = await aksiAntrean(db, {
         orderId, action,
         actor: String(gate.session?.user?.email ?? gate.session?.user?.id ?? ""),
         // Alasan dicatat bila dikirim (dialog Buang S6c mewajibkannya di layar).
         reason: String(body?.reason ?? "").trim().slice(0, 1000),
+        ...(pencari ? { cari: pencari.cari, targetDb: pencari.targetDb } : {}),
     });
     return NextResponse.json(result.body, { status: result.status });
 }
