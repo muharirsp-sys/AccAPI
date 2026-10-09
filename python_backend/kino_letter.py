@@ -229,9 +229,10 @@ ALIAS_KELOMPOK = {
     # Seluruh kelompok, termasuk nama lama yang masih tersisa di master.
     "ESKULIN COLOGNE GEL REJUVENATION": ("ESKULIN - COLOGNE",),
     "ESKULIN COLOGNE GEL REJUV": ("ESKULIN - COLOGNE",),
-    # 1 Okt 2026: shampo pewarna (surat NKA Sep menyebut barang ini "SASHA HAIR SHAMPOO"),
-    # bukan krim cat rambut SASHA HAIR COLORANT.
-    "SASHA HAIR HAIR SHAMPOO COLORANT": ("SASHA SHAMPOO - COLOR",),
+    # 9 Okt 2026 (keputusan pengguna, mengganti dugaan 1 Okt yang hanya shampo pewarna): SELURUH
+    # cat rambut SASHA HAIR COLORANT dan SELURUH SASHA SHAMPOO - COLOR. Terbukti dari IDS Kino yang
+    # memberi 3% surat MTI 8789 ke SASHA HC N.BLACK 25GR BOX (Wang Mart, SO 1671-SOP-260014460).
+    "SASHA HAIR HAIR SHAMPOO COLORANT": ("SASHA SHAMPOO - COLOR", "SASHA HAIR COLORANT"),
 }
 # Ketentuan program yang TIDAK tercetak di suratnya (surat hanya judul + periode), diputuskan
 # pengguna. Kunci = Kode Aju. Outletnya lewat daftar bernama nomor surat itu sendiri.
