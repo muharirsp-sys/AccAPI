@@ -5,7 +5,7 @@
  *   Dipisah dari route agar diuji dengan Postgres evaluasi (route memakai next/headers).
  * Dependensi: invoice_outbox + invoice_outbox_event, lib/accurate-invoice-write (aturan status),
  *   lib/invoice-outbox-event, lib/invoice-search (pencarian faktur AM-029, disuntikkan).
- * Main Functions: aksiAntrean, antrekan, pencariFaktur, pencariPenekan.
+ * Main Functions: aksiAntrean, antrekan, selesaikanTidakPasti, pencariFaktur, pencariPenekan.
  * Side Effects: UPDATE/DELETE/INSERT invoice_outbox + INSERT event dalam SATU transaksi per baris.
  *   Request ke Accurate HANYA lewat pencari yang disuntikkan (BACA SAJA, list.do/detail.do).
  *
@@ -22,6 +22,7 @@ import { discardable, resendable, type OutboxState } from "@/lib/accurate-invoic
 import { catatEvent, pernahDibuang, waktuAntrePertama } from "@/lib/invoice-outbox-event";
 import { cariFaktur, type HasilCari, type SesiCari } from "@/lib/invoice-search";
 import { getAccurateSession } from "@/lib/accurate-session";
+import { sapuSending } from "@/lib/invoice-sender";
 import { isAllowedAccurateHost } from "@/lib/api-security";
 
 export type AksiJawaban = { status: number; body: Record<string, unknown> };
@@ -246,4 +247,78 @@ export async function antrekan(
         hasil.queued.push(...inserted.map((row) => row.orderId));
     }
     return hasil;
+}
+
+/** Alasan minimal penyelesaian (sama dengan D-14 Finance): kalimat, bukan "ok". */
+export const ALASAN_MINIMAL = 15;
+
+/** Validasi murah SEBELUM pencarian ke Accurate; null = sah. */
+export function cekInputSelesaikan(input: { orderId: string; keputusan: string; alasan: string }): string | null {
+    if (!input.orderId.trim()) return "orderId wajib diisi";
+    if (input.keputusan !== "terposting" && input.keputusan !== "tidak_terposting") return "keputusan harus `terposting` atau `tidak_terposting`";
+    if (input.alasan.trim().length < ALASAN_MINIMAL) return `Alasan wajib, minimal ${ALASAN_MINIMAL} karakter (apa yang diperiksa dan di mana).`;
+    return null;
+}
+
+/**
+ * AM-047 / BL-16 — "Selesaikan tidak pasti" (izin `order.resolve_unknown`, dicek route). Dua keputusan,
+ * keduanya WAJIB alasan dan WAJIB hasil pencarian LANGSUNG (bukan ingatan petugas):
+ *   terposting       -> butuh `ketemu`: baris jadi `posted` dengan id + nomor Accurate (verifikasi balik bisa jalan);
+ *   tidak_terposting -> butuh `tidak_ketemu_dicek`: baris jadi `rejected` sehingga bisa diantre ulang — lewat
+ *                       jalur E2 yang MENCARI LAGI sebelum mengantrekan.
+ * Hasil pencarian yang bertentangan dengan keputusan, atau pencarian gagal = 409, tidak ada yang berubah.
+ * `sending` > 15 menit disapu dulu jadi `unknown`, jadi baris macet ikut bisa diselesaikan.
+ */
+export async function selesaikanTidakPasti(
+    database: NodePgDatabase,
+    input: { orderId: string; keputusan: string; alasan: string; actor: string; cari?: Pencari; targetDb?: string },
+): Promise<AksiJawaban> {
+    const { orderId, actor } = input;
+    const alasan = input.alasan.trim();
+    const salah = cekInputSelesaikan(input);
+    if (salah) return { status: 400, body: { ok: false, error: salah } };
+    if (!input.cari || !input.targetDb) {
+        return { status: 503, body: { ok: false, error: "Penyelesaian butuh pencarian faktur di Accurate (database tujuan + sesi); tidak ada yang diubah." } };
+    }
+    await sapuSending(database, actor);
+    const [row] = await database.select({ state: invoiceOutbox.state, customerNo: invoiceOutbox.customerNo, createdAt: invoiceOutbox.createdAt })
+        .from(invoiceOutbox).where(eq(invoiceOutbox.orderId, orderId)).limit(1);
+    if (!row) return { status: 404, body: { ok: false, error: "Baris antrean tidak ditemukan" } };
+    if (row.state !== "unknown") {
+        return { status: 409, body: { ok: false, error: `Hanya baris TIDAK PASTI yang diselesaikan di sini (status sekarang ${row.state}).` } };
+    }
+
+    const queuedAt = await waktuAntrePertama(database, orderId, row.createdAt) ?? row.createdAt;
+    const hasil = await input.cari({ orderId, customerNo: row.customerNo, queuedAt });
+    const pencarian = ringkasCari(hasil);
+    if (hasil.hasil === "gagal_cek") return { status: 409, body: { ok: false, error: pesanGagalCari(hasil.alasan), pencarian } };
+    if (input.keputusan === "terposting" && hasil.hasil !== "ketemu") {
+        return { status: 409, body: { ok: false, pencarian,
+            error: `Pencarian langsung tidak menemukan faktur ber-charField1 ${orderId} (${hasil.diperiksa} faktur calon diperiksa) — tidak bisa ditetapkan terposting.` } };
+    }
+    if (input.keputusan === "tidak_terposting" && hasil.hasil === "ketemu") {
+        return { status: 409, body: { ok: false, pencarian,
+            error: `Faktur ${hasil.number || hasil.id} DITEMUKAN di Accurate untuk SO ini — tetapkan terposting, bukan tidak terposting.` } };
+    }
+
+    const ketemu = hasil.hasil === "ketemu" ? hasil : null;
+    const stateTo = ketemu ? "posted" : "rejected";
+    const done = await database.transaction(async (tx) => {
+        const rows = await tx.update(invoiceOutbox).set(ketemu
+            ? { state: "posted", accurateDbId: input.targetDb, accurateId: ketemu.id, accurateNumber: ketemu.number, lastError: "", updatedAt: new Date() }
+            // Bentuk amplop ["…"] = penolakan yang dikenali (DDL E5 tidak menguncinya lagi).
+            : { state: "rejected", lastError: JSON.stringify([`Ditetapkan tidak terposting oleh ${actor}: ${alasan}`]).slice(0, 1000), updatedAt: new Date() })
+            .where(and(eq(invoiceOutbox.orderId, orderId), eq(invoiceOutbox.state, "unknown")))
+            .returning({ orderId: invoiceOutbox.orderId });
+        if (rows.length) {
+            await catatEvent(tx, {
+                orderId, jenis: "selesaikan", stateFrom: "unknown", stateTo, actor, reason: alasan,
+                detail: { keputusan: input.keputusan, pencarian, target_db: input.targetDb },
+            });
+        }
+        return rows.length;
+    });
+    if (!done) return BERUBAH;
+    return { status: 200, body: { ok: true, orderId, state: stateTo, pencarian,
+        ...(ketemu ? { accurateId: ketemu.id, number: ketemu.number } : {}) } };
 }

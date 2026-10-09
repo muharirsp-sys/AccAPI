@@ -153,7 +153,8 @@ export const actionLabels: Record<PermissionAction, string> = {
 
 export const moduleActions: Record<AppModule, readonly PermissionAction[]> = {
     dashboard: ["view"],
-    order: ["view", "create", "edit", "export"],
+    // resolve_unknown: kunci kapabilitas S6-0d (lib/rbac/registry.ts) — tidak ada di preset selain admin.
+    order: ["view", "create", "edit", "export", "resolve_unknown"],
     api_wrapper: ["view", "execute"],
     payments: ["view", "create", "edit", "update", "delete", "upload", "export", "submit"],
     sppd: ["view", "edit_settings", "upload_excel", "generate", "download"],

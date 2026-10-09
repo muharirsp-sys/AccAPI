@@ -34,7 +34,7 @@ for (const action of ["resolve_unknown", "override_duplicate", "repost_payment"]
 // AM-057: centang modul di UI grup TIDAK menyalakan kunci kapabilitas Finance (harus satu per satu);
 // mematikan modul mencabut semuanya, termasuk kapabilitas.
 // Kunci ditulis literal (re-review b955f836 #1): iterasi CAPABILITY_KEYS sendiri lulus walau satu kunci dibuang.
-assert.equal(CAPABILITY_KEYS.size, 3);
+assert.equal(CAPABILITY_KEYS.size, 4);
 const moduleOn = toggleModuleKeys(new Set(), "finance");
 assert.ok(moduleOn.has("finance.view") && moduleOn.has("finance.post_accurate"), "centang modul menyalakan kunci biasa");
 for (const k of ["finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment"]) {
@@ -46,6 +46,15 @@ assert.ok(moduleAllOn(moduleOn, "finance") && !moduleAllOn(new Set(["finance.vie
 const partial = toggleModuleKeys(new Set(["finance.view", "finance.override_duplicate"]), "finance");
 assert.ok(partial.has("finance.export") && partial.has("finance.override_duplicate") && !partial.has("finance.resolve_unknown"));
 assert.deepEqual([...toggleModuleKeys(new Set([...moduleOn, "finance.resolve_unknown", "dashboard.view"]), "finance")], ["dashboard.view"]);
+// S6-0d E6 (owner 9 Okt): order.resolve_unknown = kunci kapabilitas — terdaftar, tidak dinyalakan centang modul
+// order, tidak ada di preset manager/staff/viewer (IT Support menambahkannya ke grup, D-17).
+assert.ok(isValidPermissionKey("order.resolve_unknown") && CAPABILITY_KEYS.has("order.resolve_unknown"));
+const orderOn = toggleModuleKeys(new Set(), "order");
+assert.ok(orderOn.has("order.edit") && !orderOn.has("order.resolve_unknown"), "centang modul order menyalakan order.resolve_unknown");
+assert.ok(moduleAllOn(orderOn, "order"), "status centang modul order harus aktif walau kapabilitas mati");
+for (const role of ["manager", "staff", "viewer", "finance"] as const) {
+    assert.ok(!rolePermissionPresets[role].order?.includes("resolve_unknown"), `preset ${role} memuat order.resolve_unknown`);
+}
 assert.ok(isValidPermissionKey("reconciliation.view"));
 assert.ok(isValidPermissionKey("reconciliation.run"));
 assert.ok(isValidPermissionKey("reconciliation.manage"));

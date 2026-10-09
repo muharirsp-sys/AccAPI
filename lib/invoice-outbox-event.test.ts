@@ -353,6 +353,59 @@ test("PG E2: Buang -> antre ulang SO yang sama: pencarian list.do+detail.do (sim
     }
 });
 
+test("PG AM-047: Selesaikan tidak pasti — terposting (cache ketemu) & tidak terposting (list.do+detail.do tidak ketemu) -> antre ulang mencari lagi", { skip: pgSkip }, async () => {
+    const pool = new Pool({ connectionString: PG_URL, max: 2 });
+    const { pencariFaktur, selesaikanTidakPasti } = await import("./invoice-outbox-actions.ts");
+    const customerId = 9_300_000_000 + Math.floor(Math.random() * 1_000_000);
+    const customerNo = `C-UJI-${customerId}`;
+    const ada = `UJI-S6D:${randomUUID()}`;
+    const tiada = `UJI-S6D:${randomUUID()}`;
+    const invoiceId = customerId; // id faktur cache unik
+    const sim = await simulatorAccurate(20, []);
+    const alasan = "Diperiksa lewat pencarian charField1 di Accurate";
+    try {
+        await pool.query((await entriMigrasi("invoice_outbox_event")).sql);
+        await pool.query(`INSERT INTO customer (id, "customerNo", name) VALUES ($1, $2, 'UJI S6-0d')`, [customerId, customerNo]);
+        for (const id of [ada, tiada]) {
+            await pool.query(`INSERT INTO invoice_outbox (order_id, customer_no, order_date, state, payload, queued_by, last_error)
+                              VALUES ($1, $2, '2026-10-08', 'unknown', $3::jsonb, 'uji@contoh', 'timeout')`, [id, customerNo, JSON.stringify(payload(id))]);
+        }
+        await pool.query(`INSERT INTO sales_invoice (id, number, customer_no, raw_data, created_at, last_update_at)
+                          VALUES ($1, 'INV/UJI/AM047', $2, $3::jsonb, now(), now())`, [invoiceId, customerNo, JSON.stringify({ charField1: ada })]);
+        const db = drizzle(pool);
+        const cari = pencariFaktur(db, { sessionHost: sim.host, sessionId: "sesi-uji", accessToken: "token-uji" });
+
+        // Keputusan yang bertentangan dengan pencarian ditolak.
+        assert.equal((await selesaikanTidakPasti(db, { orderId: ada, keputusan: "tidak_terposting", alasan, actor: "admin@contoh", cari, targetDb: "DB-UJI" })).status, 409);
+        assert.equal((await selesaikanTidakPasti(db, { orderId: tiada, keputusan: "terposting", alasan, actor: "admin@contoh", cari, targetDb: "DB-UJI" })).status, 409);
+
+        const r1 = await selesaikanTidakPasti(db, { orderId: ada, keputusan: "terposting", alasan, actor: "admin@contoh", cari, targetDb: "DB-UJI" });
+        assert.equal(r1.status, 200);
+        const r2 = await selesaikanTidakPasti(db, { orderId: tiada, keputusan: "tidak_terposting", alasan, actor: "admin@contoh", cari, targetDb: "DB-UJI" });
+        assert.equal(r2.status, 200);
+        const baris = async (id: string) => (await pool.query(`SELECT state, accurate_id, last_error FROM invoice_outbox WHERE order_id = $1`, [id])).rows[0];
+        assert.deepEqual([(await baris(ada)).state, (await baris(ada)).accurate_id], ["posted", String(invoiceId)]);
+        assert.equal((await baris(tiada)).state, "rejected");
+        const evAda = await events(pool, ada);
+        assert.deepEqual(evAda.map((e) => [e.jenis, e.state_from, e.state_to, e.actor, e.reason]), [["selesaikan", "unknown", "posted", "admin@contoh", alasan]]);
+        assert.equal(evAda[0].detail.keputusan, "terposting");
+        // Diselesaikan dua kali = ditolak (bukan lagi tidak pasti).
+        assert.equal((await selesaikanTidakPasti(db, { orderId: ada, keputusan: "terposting", alasan, actor: "x", cari, targetDb: "DB-UJI" })).status, 409);
+
+        // "Tidak terposting" membuka jalur antre ulang, yang MENCARI LAGI sebelum mengantrekan.
+        const ulang = await aksiAntrean(db, { orderId: tiada, action: "resend", actor: "petugas@contoh", reason: "", cari, targetDb: "DB-UJI" });
+        assert.equal(ulang.status, 200);
+        assert.equal(ulang.body.state, "queued");
+        assert.deepEqual((await events(pool, tiada)).map((e) => e.jenis), ["selesaikan", "antre_ulang"]);
+    } finally {
+        await sim.close();
+        await pool.query(`DELETE FROM invoice_outbox WHERE order_id = ANY($1)`, [[ada, tiada]]);
+        await pool.query(`DELETE FROM sales_invoice WHERE id = $1`, [invoiceId]);
+        await pool.query(`DELETE FROM customer WHERE id = $1`, [customerId]);
+        await pool.end();
+    }
+});
+
 test("PG: dua Kirim bersamaan pada antrean yang sama -> SATU kiriman per order, satu event kirim + satu hasil", { skip: pgSkip }, async () => {
     const poolA = new Pool({ connectionString: PG_URL, max: 2 });
     const poolB = new Pool({ connectionString: PG_URL, max: 2 });

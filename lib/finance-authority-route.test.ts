@@ -11,6 +11,7 @@ import { POST as postPurchasePayment } from "../app/api/finance/purchase-payment
 import { POST as lockIdempotency } from "../app/api/idempotency/lock/route.ts";
 import { POST as completeIdempotency } from "../app/api/idempotency/complete/route.ts";
 import { POST as proxyPost } from "../app/api/proxy/route.ts";
+import { POST as resolveOutbox } from "../app/api/invoice-outbox/resolve/route.ts";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
 
@@ -92,6 +93,16 @@ test("D-18 override sales-receipt: hanya finance.override_duplicate -> lolos; al
 test("AM-050: complete tanpa lockId -> 400 (sesi lain tak bisa menutup PROCESSING orang lain)", async () => {
     const res = await asUserWith(["api_wrapper.view"], () => completeIdempotency(jsonPost("/api/idempotency/complete", { keys: ["K"], status: "FAILED" })));
     assert.equal(res.status, 400);
+});
+
+test("S6-0d E6: Selesaikan tidak pasti antrean faktur hanya dengan order.resolve_unknown (order.edit dsb. tidak cukup)", async () => {
+    const semuaOrder = ["order.view", "order.create", "order.edit", "order.export", "finance.resolve_unknown"];
+    const denied = await asUserWith(semuaOrder, () => resolveOutbox(jsonPost("/api/invoice-outbox/resolve", {
+        orderId: "KINO:SO-1", keputusan: "terposting", alasan: "Dicek di Accurate: faktur ada" })));
+    assert.equal(denied.status, 403, "tanpa order.resolve_unknown harus 403");
+    // Lolos gerbang; masukan tidak sah ditolak 400 SEBELUM DB/Accurate (asUserWith melempar bila disentuh).
+    const allowed = await asUserWith(["order.resolve_unknown"], () => resolveOutbox(jsonPost("/api/invoice-outbox/resolve", { orderId: "KINO:SO-1", keputusan: "terposting", alasan: "ok" })));
+    assert.equal(allowed.status, 400);
 });
 
 test("S6-0d E4: proxy menolak tulis sales-invoice (403) sebelum sesi Accurate & jaringan — hanya lewat Antrean Faktur", async () => {

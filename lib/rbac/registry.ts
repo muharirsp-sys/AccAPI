@@ -16,7 +16,10 @@ export const PERMISSION_REGISTRY = {
     // Order Masuk internal. Tanpa pendaftaran di sini, Access Group TIDAK BISA memberi
     // izin ini (registry adalah satu-satunya daftar key yang boleh disimpan) — jadi
     // modulnya hanya bisa dipakai admin. Ketinggalan saat modul order dibuat.
-    order: ["view", "create", "edit", "export"],
+    // resolve_unknown (S6-0d E6/D-17, owner 9 Okt 2026) = selesaikan faktur antrean TIDAK PASTI
+    //   (Tetapkan terposting / tidak terposting, wajib hasil pencarian + alasan). Kunci kapabilitas:
+    //   order.edit TIDAK memberinya dan centang modul tidak menyalakannya; IT Support menambahkan ke grup.
+    order: ["view", "create", "edit", "export", "resolve_unknown"],
     // Order Sales (Web Sales). SENGAJA terpisah dari `order`: `order.create` membuka
     // POST /orders internal yang menerima harga dari klien, sedangkan sales hanya boleh
     // mengirim kode/satuan/jumlah. Akun sales cukup `websales.view` + `websales.create`.
@@ -84,9 +87,12 @@ export function isValidPermissionKey(key: string): boolean {
     return allPermissionKeys().has(key);
 }
 
-/** Kunci kapabilitas yang membuka kiriman ulang ke Accurate (D-14/D-15/D-18). UI grup tidak menyalakannya
- * lewat centang modul — harus dicentang satu per satu (AM-057). UI bukan otoritas; backend tetap menegakkan. */
-export const CAPABILITY_KEYS: ReadonlySet<string> = new Set(["finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment"]);
+/** Kunci kapabilitas yang membuka kiriman ulang ke Accurate (D-14/D-15/D-18) atau menetapkan nasib faktur
+ * tidak pasti (order.resolve_unknown, S6-0d E6). UI grup tidak menyalakannya lewat centang modul — harus
+ * dicentang satu per satu (AM-057). UI bukan otoritas; backend tetap menegakkan. */
+export const CAPABILITY_KEYS: ReadonlySet<string> = new Set([
+    "finance.resolve_unknown", "finance.override_duplicate", "finance.repost_payment", "order.resolve_unknown",
+]);
 
 const moduleKeys = (mod: PermissionModule) => PERMISSION_REGISTRY[mod].map((a) => `${mod}.${a}`);
 

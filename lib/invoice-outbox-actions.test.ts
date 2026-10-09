@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { aksiAntrean, antrekan, type Pencari } from "./invoice-outbox-actions.ts";
+import { aksiAntrean, antrekan, selesaikanTidakPasti, type Pencari } from "./invoice-outbox-actions.ts";
 import type { HasilCari } from "./invoice-search.ts";
 
 const DIBUAT = new Date("2026-10-08T02:00:00Z");
@@ -26,6 +26,8 @@ function dbTiruan(pilih: unknown[][]) {
         delete: () => { tulis.push({ op: "delete" }); return chain([]); },
     };
     const db = {
+        // Penyapu (sapuSending) = execute; tiruan: tidak ada yang tersapu.
+        execute: async () => ({ rows: [] }),
         select: () => chain(pilih[i++] ?? []),
         selectDistinct: () => chain(pilih[i++] ?? []),
         transaction: async (cb: (t: typeof tx) => unknown) => cb(tx),
@@ -118,4 +120,65 @@ test("Antrekan: SO pernah dibuang tanpa pencari -> ditahan, tidak diantrekan", a
     const hasil = await antrekan(db, { entries: [{ orderId: "KINO:SO-BUANG", customerNo: "C", orderDate: "2026-10-08", payload: {} }], actor: "p", targetDb: "DB-1", cari: null });
     assert.equal(hasil.blocked.length, 1);
     assert.equal(tulis.length, 0);
+});
+
+// ---------------------------------------------------------------- AM-047 Selesaikan tidak pasti
+const BARIS_TIDAK_PASTI = [{ state: "unknown", customerNo: "C-1-KN", createdAt: DIBUAT }];
+const ALASAN = "Dicek di Accurate: faktur KN00001 ada, tanggal 08/10";
+
+test("Selesaikan: alasan < 15 / keputusan asing / tanpa pencari -> ditolak SEBELUM pencarian, tidak ada yang ditulis", async () => {
+    const { db, tulis } = dbTiruan([BARIS_TIDAK_PASTI]);
+    const { cari, calls } = pencari(KETEMU);
+    const base = { orderId: "KINO:SO-1", actor: "p", cari, targetDb: "DB-1" };
+    assert.equal((await selesaikanTidakPasti(db, { ...base, keputusan: "terposting", alasan: "sudah ada" })).status, 400);
+    assert.equal((await selesaikanTidakPasti(db, { ...base, keputusan: "kirim_ulang", alasan: ALASAN })).status, 400);
+    assert.equal((await selesaikanTidakPasti(db, { orderId: "K", actor: "p", keputusan: "terposting", alasan: ALASAN })).status, 503);
+    assert.equal(calls.length, 0);
+    assert.equal(tulis.length, 0);
+});
+
+test("Selesaikan terposting: WAJIB `ketemu` dari pencarian langsung -> posted + id/nomor + event selesaikan", async () => {
+    const { db, tulis } = dbTiruan([BARIS_TIDAK_PASTI, [{ first: null }]]);
+    const hasil = await selesaikanTidakPasti(db, { orderId: "KINO:SO-1", keputusan: "terposting", alasan: ALASAN, actor: "admin@contoh", cari: pencari(KETEMU).cari, targetDb: "DB-1" });
+    assert.equal(hasil.status, 200);
+    assert.equal(hasil.body.state, "posted");
+    const ubah = tulis.find((w) => w.op === "update")?.nilai as Record<string, unknown>;
+    assert.deepEqual([ubah.state, ubah.accurateId, ubah.accurateNumber, ubah.accurateDbId], ["posted", "331710", "INV/2610/KN00001", "DB-1"]);
+    const [ev] = tulis.find((w) => w.op === "insert")?.nilai as { jenis: string; stateFrom: string; stateTo: string; reason: string; actor: string }[];
+    assert.deepEqual([ev.jenis, ev.stateFrom, ev.stateTo, ev.reason, ev.actor], ["selesaikan", "unknown", "posted", ALASAN, "admin@contoh"]);
+});
+
+test("Selesaikan tidak terposting: WAJIB `tidak_ketemu_dicek` -> rejected (amplop [..]) agar bisa diantre ulang lewat jalur E2", async () => {
+    const { db, tulis } = dbTiruan([BARIS_TIDAK_PASTI, [{ first: null }]]);
+    const hasil = await selesaikanTidakPasti(db, { orderId: "KINO:SO-1", keputusan: "tidak_terposting", alasan: ALASAN, actor: "admin@contoh", cari: pencari(TIDAK).cari, targetDb: "DB-1" });
+    assert.equal(hasil.status, 200);
+    const ubah = tulis.find((w) => w.op === "update")?.nilai as { state: string; lastError: string };
+    assert.equal(ubah.state, "rejected");
+    assert.match(ubah.lastError, /^\["Ditetapkan tidak terposting oleh admin@contoh: /);
+});
+
+test("Selesaikan: hasil pencarian bertentangan / gagal -> 409, tidak ada yang ditulis", async () => {
+    for (const [keputusan, hasilCari, pola] of [
+        ["terposting", TIDAK, /tidak menemukan faktur/],
+        ["tidak_terposting", KETEMU, /DITEMUKAN di Accurate/],
+        ["terposting", GAGAL, /tidak bisa memastikan/],
+        ["tidak_terposting", GAGAL, /tidak bisa memastikan/],
+    ] as const) {
+        const { db, tulis } = dbTiruan([BARIS_TIDAK_PASTI, [{ first: null }]]);
+        const hasil = await selesaikanTidakPasti(db, { orderId: "KINO:SO-1", keputusan, alasan: ALASAN, actor: "p", cari: pencari(hasilCari).cari, targetDb: "DB-1" });
+        assert.equal(hasil.status, 409, `${keputusan} + ${hasilCari.hasil}`);
+        assert.match(String(hasil.body.error), pola);
+        assert.equal(tulis.length, 0);
+    }
+});
+
+test("Selesaikan: hanya baris TIDAK PASTI (rejected/posted/queued ditolak)", async () => {
+    for (const state of ["rejected", "posted", "queued"]) {
+        const { db, tulis } = dbTiruan([[{ state, customerNo: "C", createdAt: DIBUAT }]]);
+        const { cari, calls } = pencari(KETEMU);
+        const hasil = await selesaikanTidakPasti(db, { orderId: "K", keputusan: "terposting", alasan: ALASAN, actor: "p", cari, targetDb: "DB-1" });
+        assert.equal(hasil.status, 409, state);
+        assert.equal(calls.length, 0);
+        assert.equal(tulis.length, 0);
+    }
 });
