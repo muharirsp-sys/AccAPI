@@ -14,6 +14,8 @@ import { toast } from "sonner";
 import DatePickerField from "@/components/ui/DatePickerField";
 import { fuzzyMatch } from "@/lib/fuzzySearch";
 import { resolveApiBase } from "@/lib/apiBase";
+import { certainlyNotSent, postStatusNote, purchasePaymentConflict } from "@/lib/finance-post-status";
+import { usePermKeys } from "@/components/SidebarLayout";
 
 interface FinanceMapping {
     principle?: string;
@@ -60,6 +62,8 @@ interface FinanceRecord {
     transfer_proof?: ProofMeta;
     accurate_post_status?: string;
     accurate_post_error?: string;
+    // Status tersimpan apa adanya; accurate_post_status = status yang BERLAKU ("failed" lama bergalat ambigu = unknown).
+    accurate_post_status_raw?: string;
     accurate_purchase_payment_number?: string;
     mapping?: FinanceMapping;
 }
@@ -183,6 +187,8 @@ function getErrorMessage(err: unknown, fallback: string) {
 }
 
 export default function FinancePage() {
+    // D-14: hanya Finance (finance.resolve_unknown) yang menyelesaikan status tidak pasti — tombol mengikuti, server menegakkan.
+    const canResolve = usePermKeys().has("finance.resolve_unknown");
     const [loading, setLoading] = useState(true);
     const [records, setRecords] = useState<FinanceRecord[]>([]);
     const [totalAll, setTotalAll] = useState("");
@@ -429,8 +435,8 @@ export default function FinancePage() {
                 // keep the original Accurate error visible
             }
         };
-        const unknownMessage = (message: string) =>
-            `Status posting TIDAK PASTI (${message}). Cek purchase-payment di Accurate sebelum mencoba lagi.`;
+        // C11: "Accurate menolak: …" dibedakan dari tanpa jawaban — keduanya TIDAK PASTI.
+        const unknownMessage = (message: string) => postStatusNote("unknown", message);
         try {
             const saved = await handleSaveMapping(record);
             if (!saved) return;
@@ -446,12 +452,19 @@ export default function FinancePage() {
             });
             const out = await res.json().catch(() => null) as {
                 state?: string; accurateId?: string; accurateNumber?: string; message?: string; response?: unknown; error?: string;
-                generation?: number; currentGeneration?: number;
+                generation?: number; currentGeneration?: number; claimed?: boolean; code?: string;
                 live?: { attemptId: string; state: string; accurateId: string; accurateNumber: string; targetDbId: string; sameRecord: boolean; sameTarget: boolean } | null;
             } | null;
             let posted: { id: string; number: string; note?: string } | null = null;
-            if (res.status === 409 && out?.live?.state === "posted" && out.live.sameRecord && out.live.sameTarget
-                && out.generation === out.currentGeneration) {
+            const conflict = res.status === 409 ? purchasePaymentConflict(out) : null;
+            if (conflict === "in_flight") {
+                // Tinjauan S6-0a: record INI sedang diposting sesi/tab lain — hasilnya dicatat sesi itu. Menulis
+                // "unknown" di sini bisa mendahului "posted"-nya lalu membuatnya tertolak (post_status_conflict).
+                toast.info("Record ini sedang diposting dari sesi lain — memuat ulang status.", { duration: 10000 });
+                await fetchData(dateFilter);
+                return;
+            }
+            if (conflict === "posted" && out?.live) {
                 // Attempt record INI di database INI sudah posted (mis. browser ditutup sebelum mencatat).
                 // Record/draft/database lain dengan faktur yang sama TIDAK ditandai posted (review M3).
                 posted = { id: out.live.accurateId, number: out.live.accurateNumber, note: `attempt server ${out.live.attemptId} sudah posted ${out.live.accurateNumber}` };
@@ -463,7 +476,8 @@ export default function FinancePage() {
                 toast.error(unknownMessage(why), { duration: 15000 });
                 return;
             } else if (!res.ok || !out?.state) {
-                notSent = res.status >= 400 && res.status < 500;
+                // claimed:false (validasi/izin/sesi/DB sebelum klaim) = pasti belum terkirim -> tidak dikunci.
+                notSent = certainlyNotSent(res.status, out);
                 throw new Error(out?.error || `Command posting gagal (HTTP ${res.status})`);
             } else {
                 accurateRes = out.response;
@@ -678,8 +692,8 @@ export default function FinancePage() {
                                                     {record.status_pembayaran || "Belum Transfer"}
                                                 </span>
                                                 {posted && <div className="mt-2 text-[11px] text-emerald-400">Posted Accurate {record.accurate_purchase_payment_number || ""}</div>}
-                                                {failedPost && <div className="mt-2 max-w-[220px] text-[11px] text-red-300 truncate" title={record.accurate_post_error}>Post gagal: {record.accurate_post_error}</div>}
-                                                {unknownPost && <div className="mt-2 max-w-[220px] text-[11px] text-amber-300" title={record.accurate_post_error}>Status Accurate TIDAK PASTI — cek purchase-payment sebelum posting ulang</div>}
+                                                {failedPost && <div className="mt-2 max-w-[220px] text-[11px] text-red-300 truncate" title={record.accurate_post_error}>{postStatusNote("failed", record.accurate_post_error || "")}</div>}
+                                                {unknownPost && <div className="mt-2 max-w-[260px] text-[11px] text-amber-300 whitespace-pre-wrap break-words">{postStatusNote("unknown", record.accurate_post_error || "", record.accurate_post_status_raw || "unknown")}</div>}
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div className="flex flex-col gap-2 w-[190px]">
@@ -687,10 +701,11 @@ export default function FinancePage() {
                                                         <Send size={14} /> Sudah Transfer
                                                     </button>
                                                     {unknownPost && (
-                                                        <button disabled={isBusy} onClick={() => handleResolveUnknown(record)} className="inline-flex items-center justify-center gap-1 bg-amber-500/10 border border-amber-500/30 text-amber-300 px-2 py-1.5 rounded hover:bg-amber-500/20 disabled:opacity-50">
+                                                        <button disabled={isBusy || !canResolve} onClick={() => handleResolveUnknown(record)} title={canResolve ? undefined : "Hanya Finance (finance.resolve_unknown) yang boleh menyelesaikan status tidak pasti."} className="inline-flex items-center justify-center gap-1 bg-amber-500/10 border border-amber-500/30 text-amber-300 px-2 py-1.5 rounded hover:bg-amber-500/20 disabled:opacity-50">
                                                             <AlertTriangle size={13} /> Sudah dicek di Accurate
                                                         </button>
                                                     )}
+                                                    {unknownPost && !canResolve && <div className="text-[10px] text-slate-500">Penyelesaian hanya oleh Finance (finance.resolve_unknown).</div>}
                                                     <div className="grid grid-cols-2 gap-2">
                                                         <button disabled={isBusy} onClick={() => handleMarkStatus(record, "Belum Transfer")} className="inline-flex items-center justify-center gap-1 bg-white/5 border border-white/10 text-slate-300 px-2 py-1.5 rounded hover:bg-white/10 disabled:opacity-50">
                                                             <XCircle size={13} /> Belum

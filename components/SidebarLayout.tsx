@@ -21,6 +21,9 @@ import { OPEN_HELP_EVENT } from "@/components/ChatWidget";
 
 const LocalAuthRoleContext = createContext<string | null>(null);
 export function useLocalAuthRole() { return useContext(LocalAuthRoleContext); }
+// Kunci izin efektif user (sama dengan sidebar) untuk MENAMPILKAN tombol; backend tetap otoritas (tinjauan S6-0a).
+const PermKeysContext = createContext<ReadonlySet<string>>(new Set());
+export function usePermKeys() { return useContext(PermKeysContext); }
 
 type ShellProps = { children: React.ReactNode; localAuthRole?: string | null; permKeys: string[]; userName?: string; userId?: string };
 
@@ -93,7 +96,7 @@ export default function SidebarLayout({ children, localAuthRole, permKeys, userN
             {drawerOpen && nav("Menu mobile", () => setDrawerOpen(false))}
         </Dialog>
         <main id="workspace-content" tabIndex={-1} className="fi-shell-main">
-            <LocalAuthRoleContext.Provider value={localAuthRole ?? null}>{children}</LocalAuthRoleContext.Provider>
+            <LocalAuthRoleContext.Provider value={localAuthRole ?? null}><PermKeysContext.Provider value={keys}>{children}</PermKeysContext.Provider></LocalAuthRoleContext.Provider>
         </main>
         <nav className={`${fioriClass} fi-bnav`} aria-label="Navigasi utama">
             {[...home, ...roleShortcuts(keys, items)].map(item => {
