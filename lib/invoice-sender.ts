@@ -22,7 +22,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox } from "@/db/schema";
-import { nextOutboxState, pakaiTanggalFaktur, readInvoiceIdentity, type InvoicePayload, type SendOutcome } from "@/lib/accurate-invoice-write";
+import { barisPersenRupiah, nextOutboxState, pakaiTanggalFaktur, readInvoiceIdentity, type InvoicePayload, type SendOutcome } from "@/lib/accurate-invoice-write";
 import { refreshRealization } from "@/lib/program-realization-store";
 
 export type SenderSession = {
@@ -39,6 +39,18 @@ export type SendResult = {
     error?: string;
 };
 
+export type SendSummary = { results: SendResult[]; sent: number; unknown: number; rejected: number; error?: string };
+
+/**
+ * Jawaban cron atas hasil kirim. Penolakan SEBELUM kirim (`error`) wajib diteruskan: satu baris
+ * antrean lama yang ditolak (mis. persen + rupiah, INV/2609/KN01376) menahan seluruh putaran, dan
+ * tanpa ini cron melapor `{ok:true, sent:0}` tiap putaran — antrean macet tanpa satu pun tanda.
+ */
+export function jawabanCron(outcome: SendSummary): { status: number; body: Record<string, unknown> } {
+    if (outcome.error) return { status: 409, body: { ok: false, error: outcome.error, sent: 0, unknown: 0, results: [] } };
+    return { status: 200, body: { ok: outcome.unknown === 0, sent: outcome.sent, unknown: outcome.unknown, results: outcome.results } };
+}
+
 /**
  * Ambil yang `queued` lalu kirim satu per satu. `orderIds` mempersempit ke baris tertentu;
  * tanpa itu, seluruh antrean yang menunggu (sampai `limit`) ikut.
@@ -50,7 +62,7 @@ export type SendResult = {
 export async function sendQueuedInvoices(
     session: SenderSession,
     options: { targetDb: string; limit: number; orderIds?: string[]; invoiceDate?: string },
-): Promise<{ results: SendResult[]; sent: number; unknown: number; rejected: number; error?: string }> {
+): Promise<SendSummary> {
     const picked = (options.orderIds ?? []).map((id) => id.trim()).filter(Boolean);
     const rows = await db.select().from(invoiceOutbox)
         .where(picked.length
@@ -58,7 +70,15 @@ export async function sendQueuedInvoices(
             : eq(invoiceOutbox.state, "queued"))
         .orderBy(asc(invoiceOutbox.createdAt)).limit(options.limit);
 
-    const siap = rows.map((row) => ({ row, ...pakaiTanggalFaktur(row.payload as InvoicePayload, String(row.orderDate), options.invoiceDate) }));
+    const siap = rows.map((row) => {
+        const hasil = pakaiTanggalFaktur(row.payload as InvoicePayload, String(row.orderDate), options.invoiceDate);
+        // Antrean dari sebelum 5 Okt 2026 bisa membawa persen + rupiah pada satu baris; Accurate
+        // membuang rupiahnya (INV/2609/KN01376). Dibuang dari antrean lalu diantrekan ulang.
+        const campur = barisPersenRupiah(hasil.payload);
+        return campur.length && !hasil.error
+            ? { row, ...hasil, error: `${campur.length} baris persen + rupiah (Accurate membuang rupiahnya) — buang dari antrean lalu antrekan ulang` }
+            : { row, ...hasil };
+    });
     const ditolak = siap.filter((entry) => entry.error);
     if (ditolak.length) {
         return {

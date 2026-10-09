@@ -33,6 +33,11 @@ export type FrozenResultLine = {
     percents?: string[];
     /** Bagian diskon yang berupa RUPIAH, di luar rantai persen di atas. */
     cash?: string;
+    /**
+     * Rupiah baris ini SUDAH dilipat ke `percents` sebagai persen setara (jalur laporan principal).
+     * Hanya agar galat netto menyebut sebab yang benar: batas 4 desimal, bukan dasar yang salah.
+     */
+    rupiahDilipat?: boolean;
     /** Harga satuan bila baris hasil membawanya sendiri (jalur laporan principal). */
     price?: string;
 };
@@ -107,6 +112,35 @@ export function pakaiTanggalFaktur(payload: InvoicePayload, orderDate: string, i
     return { payload: { ...payload, transDate: toAccurateDate(invoiceDate) } };
 }
 
+const cents = (value: number) => Math.round(value * 100) / 100;
+
+/**
+ * Persen yang memotong `amount` rupiah dari `remaining`, sependek mungkin ("1.5", bukan
+ * "1.5000"), tanpa notasi eksponen yang tidak dibaca Accurate.
+ * ponytail: paling banyak 4 desimal — yang TERBUKTI disimpan dan dihitung persis oleh Accurate
+ * (INV/2606/SZ01003 "0.5380+0+2.5"; tidak ada satu pun faktur ≥ 5 desimal, dicek 5 Okt 2026).
+ * Meleset ≤ sisa × 0,0000005: baris bersisa > ± Rp 2 juta bisa lewat Rp 1 dan ditahan pemeriksa
+ * netto di buildInvoicePayload. Naikkan batasnya setelah satu faktur 6 desimal terbukti.
+ */
+export function persenSetara(amount: number, remaining: number): string {
+    let text = "";
+    for (let digits = 2; digits <= 4; digits += 1) {
+        text = (amount / remaining * 100).toFixed(digits);
+        if (Math.abs(remaining * Number(text) / 100 - amount) < 0.005) break;
+    }
+    return text.replace(/\.?0+$/, "");
+}
+
+/**
+ * Baris berbentuk persen + rupiah sekaligus (catatan barisnya). Payload DIBEKUKAN saat antre,
+ * jadi antrean dari sebelum perbaikan masih membawa bentuk yang rupiahnya dibuang Accurate.
+ */
+export function barisPersenRupiah(payload: InvoicePayload): string[] {
+    return payload.detailItem
+        .filter((item) => String(item.itemDiscPercent ?? "").trim() !== "" && Number(item.itemCashDiscount) > 0)
+        .map((item) => item.detailNotes);
+}
+
 function money(raw: string | undefined, label: string): number {
     const value = Number(raw);
     if (!Number.isFinite(value)) throw new Error(`${label} bukan angka: ${raw}`);
@@ -152,18 +186,37 @@ export function buildInvoicePayload(
         const net = money(line.net, `net baris ${key}`);
         const discount = Number((gross - net).toFixed(2));
         if (discount < 0) throw new Error(`Baris ${key} punya netto lebih besar dari bruto`);
-        // Faktur harus MENAMPILKAN persen dan rupiah, seperti nota Kino. Karena itu rantai
-        // persen dikirim apa adanya lewat `itemDiscPercent` ("10+5") dan HANYA sisa yang
-        // berupa rupiah lewat `itemCashDiscount`. Mengirim seluruh diskon di kedua field
-        // akan membuat Accurate memotong dua kali.
         const percents = (line.percents ?? []).map((p) => String(p).trim()).filter(Boolean);
-        const cash = line.cash === undefined ? discount : money(line.cash, `diskon rupiah baris ${key}`);
+        let cash = line.cash === undefined ? discount : money(line.cash, `diskon rupiah baris ${key}`);
         if (cash < 0 || cash > discount + 0.01) {
             throw new Error(`Baris ${key} punya diskon rupiah ${cash} di luar total diskon ${discount}`);
         }
-        // Accurate menghitung ulang bagian persennya sendiri, jadi totalnya bisa berbeda
-        // beberapa sen dari angka beku kita. Itu diterima; yang tidak boleh adalah selisih
-        // karena kita mengirim dasar yang salah.
+        // Accurate TIDAK menjumlahkan `itemDiscPercent` dan `itemCashDiscount`: begitu persen
+        // terisi, potongan baris dihitung dari persen saja dan rupiahnya dibuang. Terbukti pada
+        // INV/2609/KN01376 (30 Sep 2026): "2+0+0+0+0" + rupiah di 7 baris, DPP Accurate = bruto
+        // × 98% persis, Rp 18.019,82 hilang. Rupiahnya dilipat jadi persen setara di ujung rantai.
+        const sisa = percents.reduce((left, p) => left - cents(left * Number(p) / 100), gross);
+        // Netto persen + rupiah APA ADANYA, sebelum dilipat: pembeda sebab bila rantainya meleset.
+        const asli = { rantai: `${percents.join("+") || "-"}${cash > 0 ? ` + Rp ${cash}` : ""}`, netto: sisa - cash };
+        // Rupiah yang dilipat di sini, atau sudah dilipat pemanggil (jalur laporan principal).
+        let dilipat = line.rupiahDilipat === true;
+        if (percents.length > 0 && cash > 0) {
+            dilipat = Math.abs(asli.netto - net) <= 1;
+            percents.push(persenSetara(cash, sisa));
+            cash = 0;
+        }
+        // Accurate menghitung ulang persennya sendiri, jadi beberapa sen selisih diterima; rantai
+        // yang memberi netto lain = dasar yang salah, dan faktur tidak bisa ditarik setelah terbit.
+        // Galatnya menahan SO UTUH (pemanggil menolak seluruh faktur, tidak ada faktur separuh isi).
+        const hasil = percents.reduce((left, p) => left - cents(left * Number(p) / 100), gross) - cash;
+        if (!(Math.abs(hasil - net) <= 1)) {
+            const [rantai, netto] = dilipat ? [`persen ${percents.join("+")}`, hasil] : [`diskon ${asli.rantai}`, asli.netto];
+            const angka = `netto SO Rp ${net.toFixed(2)}, netto hasil ${rantai} Rp ${netto.toFixed(2)}, `
+                + `selisih Rp ${Math.abs(netto - net).toFixed(2)}`;
+            throw new Error(`Barang ${line.code} (${line.unit}): ${angka}. SO ditahan utuh: ${dilipat
+                ? "potongan rupiah baris terlalu besar untuk dipersenkan 4 desimal"
+                : "rantai diskon beku tidak menghasilkan netto SO"} — buat faktur ini manual di Accurate atau minta perbaikan.`);
+        }
         return {
             itemNo: line.code,
             quantity: money(line.quantity, `jumlah baris ${key}`),
