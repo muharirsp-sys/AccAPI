@@ -4,7 +4,7 @@
  *         app/api/invoice-outbox/send (tombol Kirim, bergerbang izin + sesi penekannya).
  * Dependensi: db invoice_outbox + invoice_outbox_event, lib/accurate-invoice-write (status + identitas),
  *   lib/invoice-outbox-event (riwayat append-only).
- * Main Functions: sendQueuedInvoices, sapuSending.
+ * Main Functions: sendQueuedInvoices, sapuSending, cekSesiBacaSaja.
  * Side Effects: MENULIS FAKTUR DI ACCURATE dan mengubah status antrean. Tidak bisa dibatalkan.
  *   Tiap klaim dan tiap hasil tercatat di invoice_outbox_event DALAM pernyataan SQL yang sama
  *   (CTE) dengan perubahan statusnya: status HTTP + potongan jawaban + pengirim (BL-17 + R6).
@@ -20,6 +20,8 @@
  *   otomatis: kunci unik lokal tidak menjamin tidak ada faktur ganda di Accurate.
  * - Satu `unknown` MENGHENTIKAN sisa batch. Satu jaringan bermasalah tidak boleh menghasilkan
  *   sepuluh faktur yang tidak jelas nasibnya.
+ * - Sebelum klaim PERTAMA: satu panggilan BACA-SAJA dengan sesi pengirim (E7). Token/sesi mati
+ *   = batal tanpa klaim. Tanpa ini 401 baru ketahuan di save.do, dan 401 di sana TIDAK PASTI.
  * - `sending` yang tertinggal (proses mati di tengah kirim) TIDAK PERNAH kembali ke antrean:
  *   penyapu menjadikannya `unknown` setelah 15 menit (BL-16), di awal setiap Kirim dan cron.
  * - Nomor faktur milik Accurate (`typeAutoNumber`); identitas = database + record id.
@@ -76,6 +78,32 @@ export async function sapuSending(database: NodePgDatabase, actor: string): Prom
     return swept.rows.map((row) => String((row as { order_id: unknown }).order_id));
 }
 
+/**
+ * Pra-cek sesi (S6-0d E7): SATU GET baca-saja dengan sesi pengirim sebelum klaim pertama.
+ * `branch/list.do` = endpoint ringan yang sudah dipakai sync master (lib/sync.ts). Selain HTTP 200
+ * beramplop `s:true` -> pesan galat; pemanggil membatalkan TANPA klaim, jadi tidak ada baris
+ * `sending`/`unknown` yang lahir dari token kedaluwarsa. Mengembalikan null bila sesi sah.
+ */
+export async function cekSesiBacaSaja(session: SenderSession): Promise<string | null> {
+    const gagal = (sebab: string) => `Sesi Accurate perlu login ulang (pemeriksaan baca-saja branch/list.do: ${sebab}). `
+        + "Tidak ada faktur dikirim; login Accurate lagi di /api-wrapper lalu ulangi.";
+    try {
+        const response = await fetch(`${session.sessionHost}/accurate/api/branch/list.do?fields=id&sp.pageSize=1`, {
+            method: "GET",
+            headers: { Accept: "application/json", Authorization: `Bearer ${session.accessToken}`, "X-Session-ID": session.sessionId },
+            redirect: "manual",
+            signal: AbortSignal.timeout(15_000),
+        });
+        const text = await response.text();
+        let body: unknown = null;
+        try { body = JSON.parse(text); } catch { /* bukan JSON */ }
+        if (response.status === 200 && (body as { s?: unknown } | null)?.s === true) return null;
+        return gagal(`HTTP ${response.status}${(body as { s?: unknown } | null)?.s === false ? " s:false" : ""} ${text.slice(0, 120)}`.trim());
+    } catch (error) {
+        return gagal(error instanceof Error ? `${error.name}: ${error.message}` : "tanpa jawaban");
+    }
+}
+
 /** Ketergantungan yang bisa diganti uji (Postgres evaluasi, simulator) — produksi memakai bawaan. */
 export type SenderDeps = { db?: NodePgDatabase; refresh?: typeof refreshRealization };
 
@@ -129,6 +157,11 @@ export async function sendQueuedInvoices(
             error: `Tidak ada faktur dikirim: ${ditolak.map((entry) => `${entry.row.orderId} (${entry.error})`).join("; ")}`,
         };
     }
+
+    if (siap.length === 0) return { results: [], sent: 0, unknown: 0, rejected: 0 };
+    // E7: sesi pengirim dibuktikan hidup SEBELUM klaim pertama; gagal = batal tanpa satu klaim pun.
+    const sesiMati = await cekSesiBacaSaja(session);
+    if (sesiMati) return { results: [], sent: 0, unknown: 0, rejected: 0, error: sesiMati };
 
     const results: SendResult[] = [];
     for (const { row, payload } of siap) {

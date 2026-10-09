@@ -31,7 +31,8 @@ type Jawab = { status: number; body: string } | Error;
  * sebagai SQL ter-render — klaim berhasil untuk setiap baris. `fetch` menjawab per URL:
  * pemeriksaan sesi baca-saja selalu sah, save.do menjawab `simpan`.
  */
-function tiruan(t: TestContext, rows: ReturnType<typeof antre>[], simpan: Jawab = { status: 200, body: JSON.stringify({ s: false, d: ["ditolak tiruan"] }) }) {
+function tiruan(t: TestContext, rows: ReturnType<typeof antre>[], simpan: Jawab = { status: 200, body: JSON.stringify({ s: false, d: ["ditolak tiruan"] }) },
+    cekSesi: Jawab = { status: 200, body: JSON.stringify({ s: true, d: [] }) }) {
     const pilih = { from: () => pilih, where: () => pilih, orderBy: () => pilih, limit: async () => rows };
     t.mock.method(db, "select", (() => pilih) as unknown as typeof db.select);
     const sqls: { sql: string; params: unknown[] }[] = [];
@@ -42,7 +43,10 @@ function tiruan(t: TestContext, rows: ReturnType<typeof antre>[], simpan: Jawab 
         return { rows: claim ? [{ order_id: rendered.params.find((p) => rows.some((r) => r.orderId === p)) }] : [] };
     }) as unknown as typeof db.execute);
     const kirim = t.mock.method(globalThis, "fetch", async (url: string | URL) => {
-        if (!String(url).includes("/sales-invoice/save.do")) return new Response(JSON.stringify({ s: true, d: [] }));
+        if (!String(url).includes("/sales-invoice/save.do")) {
+            if (cekSesi instanceof Error) throw cekSesi;
+            return new Response(cekSesi.body, { status: cekSesi.status });
+        }
         if (simpan instanceof Error) throw simpan;
         return new Response(simpan.body, { status: simpan.status });
     });
@@ -111,6 +115,35 @@ test("S6-0d BL-16: penyapu `sending` > 15 menit jalan PERTAMA, menjadikan unknow
     assert.match(pertama.sql, /'sapu', 'sending', 'unknown'/);
     assert.ok(pertama.params.includes(15), "ambang penyapu harus 15 menit");
     assert.ok(sqls.findIndex((q) => q.sql.includes("'kirim'")) > 0, "klaim terjadi SESUDAH penyapu");
+});
+
+test("S6-0d E7: sesi mati (401 / s:false / jaringan) -> batal TANPA klaim, pesan login ulang", async (t) => {
+    for (const cekSesi of [
+        { status: 401, body: '{"error":"invalid_token"}' },
+        { status: 200, body: JSON.stringify({ s: false, d: ["Sesi sudah berakhir"] }) },
+        { status: 302, body: "" },
+        Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } }),
+    ]) {
+        await t.test(cekSesi instanceof Error ? "jaringan" : `HTTP ${cekSesi.status}`, async (st) => {
+            const { saveCalls, klaim, kirim } = tiruan(st, [antre("", 0)], undefined, cekSesi);
+            const hasil = await sendQueuedInvoices(SESI, { targetDb: "1", limit: 20, actor: "petugas@contoh" });
+            assert.match(hasil.error ?? "", /Sesi Accurate perlu login ulang/);
+            assert.equal(klaim().length, 0, "tidak boleh ada klaim");
+            assert.equal(saveCalls(), 0, "tidak boleh ada save.do");
+            // Pemeriksaannya BACA-SAJA: GET branch/list.do, satu kali.
+            assert.equal(kirim.mock.callCount(), 1);
+            const [url, init] = kirim.mock.calls[0].arguments as [string, RequestInit];
+            assert.match(String(url), /\/accurate\/api\/branch\/list\.do\?/);
+            assert.equal(init.method, "GET");
+        });
+    }
+});
+
+test("S6-0d E7: antrean kosong tidak memanggil Accurate sama sekali", async (t) => {
+    const { kirim } = tiruan(t, []);
+    const hasil = await sendQueuedInvoices(SESI, { targetDb: "1", limit: 20, actor: "petugas@contoh" });
+    assert.equal(hasil.error, undefined);
+    assert.equal(kirim.mock.callCount(), 0);
 });
 
 test("cron meneruskan penolakan sebelum kirim, bukan melapor ok dengan sent 0", () => {
