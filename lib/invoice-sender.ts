@@ -4,7 +4,7 @@
  *         app/api/invoice-outbox/send (tombol Kirim, bergerbang izin + sesi penekannya).
  * Dependensi: db invoice_outbox + invoice_outbox_event, lib/accurate-invoice-write (status + identitas),
  *   lib/invoice-outbox-event (riwayat append-only).
- * Main Functions: sendQueuedInvoices.
+ * Main Functions: sendQueuedInvoices, sapuSending.
  * Side Effects: MENULIS FAKTUR DI ACCURATE dan mengubah status antrean. Tidak bisa dibatalkan.
  *   Tiap klaim dan tiap hasil tercatat di invoice_outbox_event DALAM pernyataan SQL yang sama
  *   (CTE) dengan perubahan statusnya: status HTTP + potongan jawaban + pengirim (BL-17 + R6).
@@ -20,6 +20,8 @@
  *   otomatis: kunci unik lokal tidak menjamin tidak ada faktur ganda di Accurate.
  * - Satu `unknown` MENGHENTIKAN sisa batch. Satu jaringan bermasalah tidak boleh menghasilkan
  *   sepuluh faktur yang tidak jelas nasibnya.
+ * - `sending` yang tertinggal (proses mati di tengah kirim) TIDAK PERNAH kembali ke antrean:
+ *   penyapu menjadikannya `unknown` setelah 15 menit (BL-16), di awal setiap Kirim dan cron.
  * - Nomor faktur milik Accurate (`typeAutoNumber`); identitas = database + record id.
  */
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
@@ -45,6 +47,34 @@ export type SendResult = {
 };
 
 export type SendSummary = { results: SendResult[]; sent: number; unknown: number; rejected: number; error?: string };
+
+/**
+ * Ambang penyapu (BL-16, S6-0d): baris `sending` yang tidak berubah selama ini dianggap ditinggal
+ * proses yang mati di tengah kirim. Jauh di atas umur sah sebuah klaim — satu klaim hidup paling
+ * lama selama satu fetch save.do (timeout 60 dtk), dan route-nya dibatasi maxDuration 600 dtk.
+ */
+export const SAPU_SETELAH_MENIT = 15;
+
+/**
+ * `sending` > 15 menit -> `unknown` + event `sapu`, SATU pernyataan (CTE): tidak ada baris tersapu
+ * tanpa jejak. Jam = `now()` DB, sama dengan jam klaim. Tidak pernah ke `queued`/`rejected`:
+ * request-nya MUNGKIN sudah sampai ke Accurate. Mengembalikan kunci yang tersapu.
+ */
+export async function sapuSending(database: NodePgDatabase, actor: string): Promise<string[]> {
+    const swept = await database.execute(sql`
+        WITH disapu AS (
+            UPDATE invoice_outbox SET state = 'unknown', updated_at = now(),
+                last_error = ${`Tertahan "mengirim" lebih dari ${SAPU_SETELAH_MENIT} menit (proses berhenti di tengah kirim). `
+                    + "Fakturnya MUNGKIN sudah terbentuk di Accurate — selesaikan lewat pencarian, jangan dikirim ulang."}
+            WHERE state = 'sending' AND updated_at < now() - make_interval(mins => ${SAPU_SETELAH_MENIT})
+            RETURNING order_id, attempts, updated_at)
+        INSERT INTO invoice_outbox_event (order_id, jenis, state_from, state_to, actor, reason, detail)
+        SELECT order_id, 'sapu', 'sending', 'unknown', ${actor},
+               ${`sending > ${SAPU_SETELAH_MENIT} menit`}, jsonb_build_object('attempts', attempts)
+        FROM disapu
+        RETURNING order_id`);
+    return swept.rows.map((row) => String((row as { order_id: unknown }).order_id));
+}
 
 /** Ketergantungan yang bisa diganti uji (Postgres evaluasi, simulator) — produksi memakai bawaan. */
 export type SenderDeps = { db?: NodePgDatabase; refresh?: typeof refreshRealization };
@@ -74,6 +104,8 @@ export async function sendQueuedInvoices(
     deps: SenderDeps = {},
 ): Promise<SendSummary> {
     const db = deps.db ?? defaultDb;
+    // Penyapu dulu: baris yang ditinggal proses mati terlihat TIDAK PASTI sebelum apa pun dikirim.
+    await sapuSending(db, options.actor);
     const picked = (options.orderIds ?? []).map((id) => id.trim()).filter(Boolean);
     const rows = await db.select().from(invoiceOutbox)
         .where(picked.length

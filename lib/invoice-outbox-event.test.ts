@@ -124,6 +124,52 @@ test("PG: Buang = DELETE baris + event `buang` berisi salinannya; kunci SO bebas
     }
 });
 
+test("PG: penyapu + klaim bersamaan — hanya `sending` > 15 mnt jadi unknown (+event), klaim baru tidak tersapu", { skip: pgSkip }, async () => {
+    const poolA = new Pool({ connectionString: PG_URL, max: 2 });
+    const poolB = new Pool({ connectionString: PG_URL, max: 2 });
+    const sim = await simulatorAccurate(300);
+    const lama = `UJI-S6D:${randomUUID()}`;
+    const baru = `UJI-S6D:${randomUUID()}`;
+    const antre = `UJI-S6D:${randomUUID()}`;
+    try {
+        await poolA.query((await entriMigrasi("invoice_outbox_event")).sql);
+        await seed(poolA, lama, "sending", { updatedAgoMin: 20 });
+        await seed(poolA, baru, "sending", { updatedAgoMin: 1 });
+        await seed(poolA, antre, "queued");
+        const sesi = { sessionHost: sim.host, sessionId: "sesi-uji", accessToken: "token-uji" };
+        // Kirim (klaim `antre`, fetch 300 ms) dan penyapu kedua berjalan bersamaan.
+        const [kirim, sapuB] = await Promise.all([
+            sendQueuedInvoices(sesi, { targetDb: "DB-UJI", limit: 50, orderIds: [antre], actor: "penekan@contoh" },
+                { db: drizzle(poolA), refresh: async () => undefined }),
+            (async () => {
+                await new Promise((r) => setTimeout(r, 100)); // saat `antre` sedang `sending`
+                const { sapuSending } = await import("./invoice-sender.ts");
+                return sapuSending(drizzle(poolB), "cron:penyapu");
+            })(),
+        ]);
+        assert.equal(kirim.sent, 1);
+        assert.equal(sim.kiriman(antre), 1);
+        assert.ok(!sapuB.includes(antre), "klaim yang sedang berjalan ikut tersapu");
+        assert.ok(!sapuB.includes(baru));
+        const state = async (id: string) => (await poolA.query(`SELECT state FROM invoice_outbox WHERE order_id = $1`, [id])).rows[0].state;
+        assert.equal(await state(lama), "unknown");
+        assert.equal(await state(baru), "sending");
+        assert.equal(await state(antre), "posted");
+        const ev = await events(poolA, lama);
+        assert.equal(ev.filter((e) => e.jenis === "sapu").length, 1, "satu baris tersapu = tepat satu event sapu");
+        assert.deepEqual([ev[0].state_from, ev[0].state_to], ["sending", "unknown"]);
+        // Penyapu idempoten: putaran berikutnya tidak menyapu ulang / tidak menambah event.
+        await (await import("./invoice-sender.ts")).sapuSending(drizzle(poolA), "cron:penyapu");
+        assert.equal((await events(poolA, lama)).length, 1);
+        assert.equal((await events(poolA, baru)).length, 0);
+    } finally {
+        await sim.close();
+        await poolA.query(`DELETE FROM invoice_outbox WHERE order_id = ANY($1)`, [[lama, baru, antre]]);
+        await poolA.end();
+        await poolB.end();
+    }
+});
+
 test("PG: dua Kirim bersamaan pada antrean yang sama -> SATU kiriman per order, satu event kirim + satu hasil", { skip: pgSkip }, async () => {
     const poolA = new Pool({ connectionString: PG_URL, max: 2 });
     const poolB = new Pool({ connectionString: PG_URL, max: 2 });

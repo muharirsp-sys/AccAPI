@@ -25,7 +25,7 @@ import { db } from "@/lib/db";
 import { invoiceOutbox } from "@/db/schema";
 import { isAllowedAccurateHost, requireCronSecret } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
-import { jawabanCron, sendQueuedInvoices } from "@/lib/invoice-sender";
+import { jawabanCron, sapuSending, sendQueuedInvoices } from "@/lib/invoice-sender";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -35,6 +35,11 @@ const BATCH = Math.max(1, Math.min(Number(process.env.ACCURATE_INVOICE_BATCH || 
 export async function GET(request: Request) {
     const gate = requireCronSecret(request);
     if (gate.response) return gate.response;
+
+    // Penyapu `sending` > 15 menit (BL-16) jalan di SETIAP putaran — juga saat pengiriman otomatis
+    // dimatikan: baris yang ditinggal tombol Kirim yang mati di tengah jalan tetap harus terlihat
+    // TIDAK PASTI. Hanya DB, tanpa request ke Accurate.
+    const swept = await sapuSending(db, "cron:penyapu");
 
     const targetDb = String(process.env.ACCURATE_INVOICE_DB_ID || "").trim();
     if (String(process.env.ACCURATE_INVOICE_SEND || "").trim().toLowerCase() !== "on" || !targetDb) {
@@ -46,6 +51,7 @@ export async function GET(request: Request) {
                 + "ACCURATE_INVOICE_DB_ID=<database Accurate tujuan> setelah satu faktur uji diperiksa.",
             waiting: queued.length,
             sent: 0,
+            swept,
         }, { status: 503 });
     }
 

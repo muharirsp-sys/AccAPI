@@ -102,6 +102,17 @@ test("S6-0d: koneksi putus tercatat dengan kode galatnya, status tidak pasti", a
     assert.ok(params.includes("cron:officer-1"));
 });
 
+test("S6-0d BL-16: penyapu `sending` > 15 menit jalan PERTAMA, menjadikan unknown + event `sapu`", async (t) => {
+    const { sqls } = tiruan(t, [antre("", 0)]);
+    await sendQueuedInvoices(SESI, { targetDb: "1", limit: 20, actor: "petugas@contoh" });
+    const [pertama] = sqls;
+    assert.match(pertama.sql, /UPDATE invoice_outbox SET state = 'unknown'/);
+    assert.match(pertama.sql, /WHERE state = 'sending' AND updated_at < now\(\) - make_interval\(mins => \$\d+\)/);
+    assert.match(pertama.sql, /'sapu', 'sending', 'unknown'/);
+    assert.ok(pertama.params.includes(15), "ambang penyapu harus 15 menit");
+    assert.ok(sqls.findIndex((q) => q.sql.includes("'kirim'")) > 0, "klaim terjadi SESUDAH penyapu");
+});
+
 test("cron meneruskan penolakan sebelum kirim, bukan melapor ok dengan sent 0", () => {
     // Satu baris campuran lama yang paling tua menahan seluruh putaran; tanpa ini cron melapor
     // `{ok:true, sent:0}` tiap putaran dan antrean macet tanpa tanda.
