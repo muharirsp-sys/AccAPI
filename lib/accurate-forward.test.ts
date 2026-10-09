@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as forward from "./accurate-forward.ts";
-import { buildAccurateRequest, isGuardedAccurateWrite, isSalesReceiptWrite } from "./accurate-forward.ts";
+import { buildAccurateRequest, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "./accurate-forward.ts";
 
 const target = { sessionHost: "https://zeus.accurate.id", sessionId: "SID", accessToken: "TOK" };
 
@@ -69,6 +69,28 @@ test("re-review d60433f2 LOW: %5C (backslash ter-encode) & encoding ganda tetap 
         assert.equal(p.includes("purchase") ? isGuardedAccurateWrite(p) : isSalesReceiptWrite(p), true, p);
     }
     for (const p of ["/api/sales-receipt/list.do", "/api/sales-receipt/detail.do"]) assert.equal(isSalesReceiptWrite(p), false, p);
+});
+
+// S6-0d E4 (owner 9 Okt): faktur penjualan hanya lewat antrean faktur (klaim + riwayat + pencarian);
+// proxy generik menolak tulisnya — termasuk bentuk path yang dinormalkan host seperti di purchase-payment.
+test("S6-0d E4: tulis sales-invoice (save/bulk-save) dikenali walau path disamarkan; baca tidak", () => {
+    for (const p of [
+        "/api/sales-invoice/save.do",
+        "/api/sales-invoice/bulk-save.do",
+        "/api/SALES-INVOICE/SAVE.DO",
+        "/api/./sales-invoice/%62ulk-save.do",
+        "/api/sales-invoice/../sales-invoice/save.do",
+        "//api//sales-invoice//save.do",
+        "/api/sales-invoice%5Csave.do",
+        "/api/sales-invoice/save%252Edo",
+        "/api/sales-invoice/save.do;jsessionid=x",
+        "/api/sales-invoice\\bulk-save.do",
+    ]) {
+        assert.equal(isSalesInvoiceWrite(p), true, p);
+    }
+    for (const p of ["/api/sales-invoice/list.do", "/api/sales-invoice/detail.do", "/api/sales-receipt/save.do", "/api/sales-order/save.do"]) {
+        assert.equal(isSalesInvoiceWrite(p), false, p);
+    }
 });
 
 // Tinjauan S6-0a LOW: timeout tulis Accurate = status TIDAK PASTI — pesan 504 proxy tidak boleh menyuruh mengulang.

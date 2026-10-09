@@ -94,6 +94,18 @@ test("AM-050: complete tanpa lockId -> 400 (sesi lain tak bisa menutup PROCESSIN
     assert.equal(res.status, 400);
 });
 
+test("S6-0d E4: proxy menolak tulis sales-invoice (403) sebelum sesi Accurate & jaringan — hanya lewat Antrean Faktur", async () => {
+    for (const endpointPath of ["/api/sales-invoice/save.do", "/api/sales-invoice/bulk-save.do", "/api/./sales-invoice/%62ulk-save.do"]) {
+        for (const method of ["POST", "GET"]) {
+            const res = await asUserWith(["api_wrapper.view", "api_wrapper.execute", "order.edit"], () => proxyPost(jsonPost("/api/proxy", { endpointPath, method, payload: { customerNo: "C1" } })));
+            assert.equal(res.status, 403, `${method} ${endpointPath}`);
+            const body = await res.json();
+            assert.equal(body.code, "SALES_INVOICE_VIA_OUTBOX");
+            assert.match(body.error, /Antrean Faktur/);
+        }
+    }
+});
+
 test("AM-024: proxy menolak tulis sales-receipt tanpa lock (409) sebelum sesi Accurate & jaringan", async () => {
     for (const endpointPath of ["/api/sales-receipt/bulk-save.do", "/api/sales-receipt/save.do", "/api/./sales-receipt/%62ulk-save.do"]) {
         const res = await asUserWith([], () => proxyPost(jsonPost("/api/proxy", { endpointPath, method: "POST", payload: [{ customerNo: "C1" }] })));
