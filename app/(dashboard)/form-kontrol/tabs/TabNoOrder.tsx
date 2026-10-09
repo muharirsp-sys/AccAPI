@@ -1,5 +1,5 @@
 /*
- * Tujuan: "Toko tidak order" (Fiori S5, it05, ponsel dulu): toko berstatus tidak order pada tanggal rute, alasan R01–R14 + catatan
+ * Tujuan: "Toko tidak order" (Fiori S5, it05, ponsel dulu): toko berstatus tidak order pada tanggal rute, alasan dari server (R01–R15) + catatan
  *   per toko, disimpan per baris; galat muat ≠ kosong.
  * Caller: form-kontrol/page.tsx (shell tab, default export `({ scope })`).
  * Dependensi: GET /api/form-kontrol/ao-control + /reasons, POST /api/form-kontrol/ao-control; ../shared (Scope, AoRow, Reason,
@@ -11,9 +11,10 @@
 
 import { useCallback, useId, useMemo, useState, type ReactNode } from "react";
 import { CalendarDays, RefreshCw, Save } from "lucide-react";
-import { Button, EmptyState, ErrorState, MessageStrip, Section, Skeleton, StatusBadge, VariantNote } from "@/components/fiori/core";
+import { Button, EmptyState, ErrorState, MessageStrip, Section, Skeleton, StatusBadge } from "@/components/fiori/core";
 import { FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
+import { TOKO_TUTUP_CODE } from "@/lib/form-kontrol/constants";
 import { type Scope, type AoRow, type Reason, PRINCIPLES, useIzinFk } from "../shared";
 import { bacaFk, keBarisRute, kirimFk, useHariBeku } from "../lapangan";
 
@@ -148,7 +149,12 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
                                         {(f) => (
                                             <select {...f} className="fi-input" value={a.reasonCode} onChange={(e) => ketik(r.custCode, { reasonCode: e.target.value }, r)}>
                                                 <option value="">Pilih alasan</option>
-                                                {data.reasons.map((x) => <option key={x.reasonCode} value={x.reasonCode}>{x.reasonCode} · {x.label}</option>)}
+                                                {/* Owner 9 Okt: Toko tutup hanya lewat Kunjungan (foto bukti wajib); baris yang sudah R15 tetap terbaca. */}
+                                                {data.reasons.map((x) => {
+                                                    const lewatKunjungan = x.reasonCode === TOKO_TUTUP_CODE && a.reasonCode !== TOKO_TUTUP_CODE;
+                                                    return <option key={x.reasonCode} value={x.reasonCode} disabled={lewatKunjungan}>
+                                                        {x.reasonCode} · {x.label}{lewatKunjungan ? " (lewat Kunjungan)" : ""}</option>;
+                                                })}
                                             </select>
                                         )}
                                     </FormField>
@@ -223,10 +229,8 @@ export default function TabNoOrder({ scope }: { scope: Scope }) {
             )}
             {nDraf > 0 && <p className="fi-draft" role="status">{nDraf} alasan belum disimpan.</p>}
             {isi}
-            <VariantNote bl="Toko tutup">
-                “Toko tutup” belum menjadi kode alasan sendiri (jawaban owner 7 Okt); sementara pilih R14 Lainnya dan tulis “toko tutup” di catatan.
-                Usulan: kode alasan baru di daftar alasan dan laporan.
-            </VariantNote>
+            {/* Owner 8 Okt (#132): "Toko tutup" kini kode R15 sendiri; foto buktinya diambil di wizard Kunjungan (check-out), bukan di daftar ini. */}
+            <p className="fi-small fi-subtle">Toko tutup (R15): selesaikan lewat Kunjungan tokonya — foto bukti toko tutup wajib, tanpa merchandising.</p>
         </section>
     );
 }

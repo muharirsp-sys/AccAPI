@@ -4,11 +4,12 @@
  *   terpilih di luar saringan disebut namanya, dan Tandai lunas lewat dialog. Pengganti FinanceView di page.tsx lama.
  * Caller: app/(dashboard)/insentif-sales/pembayaran/page.tsx (default export, prop permKeys).
  * Dependensi: ./Rangka (InsentifRangka, usePeriode, useDashboard, KonstantaCtx), ./Rincian (TabelRincian, rincian, PPh, StatusBayar,
- *   pemuat SPV/SM), ./data (format, MONTH_LABELS), components/fiori/*, lib/insentif-ui, lib/insentif-payee, lib/insentif-pph,
+ *   pemuat SPV/SM), ./data (format, MONTH_LABELS), components/fiori/*, lib/insentif-ui, lib/insentif-payee, lib/insentif-pph, lib/insentif-payment-date,
  *   lib/rekapan-nota/ui (ambil, jamWita), sonner.
  * Main Functions: Pembayaran (default), barisBulan, ringkasan12Bulan, UbinBulan.
  * Side Effects: GET dashboard (tanpa saringan), spv-dashboard, sm-dashboard, payments?year. Tandai lunas: per penerima terpilih,
- *   paralel, POST /api/insentif-sales/payments (belum tercatat) atau PATCH /payments/[id] (sudah tercatat) — MENCATAT UANG DIBAYAR.
+ *   paralel, POST /api/insentif-sales/payments (belum tercatat) atau PATCH /payments/[id] (sudah tercatat) — MENCATAT UANG DIBAYAR,
+ *   dengan `paymentDate` (tanggal bayar WITA pilihan di dialog; kontrak #134, divalidasi lib/insentif-payment-date seperti server).
  *   beforeunload selama ada pilihan.
  */
 "use client";
@@ -17,8 +18,9 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Check, Pencil, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button, ErrorState, FooterToolbar, ListItem, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Column, type Tone } from "@/components/fiori/core";
-import { ConfirmDialog, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
+import { ConfirmDialog, FormField, useLoad, useUnsavedGuard } from "@/components/fiori/interactive";
 import { DEFAULT_KONSTANTA } from "@/lib/insentif-konstanta";
+import { parsePaymentDate, todayWita } from "@/lib/insentif-payment-date";
 import { nettoInsentif } from "@/lib/insentif-pph";
 import { payeeCode, PAYEE_PRINCIPLE_ALL, type PayeeRole } from "@/lib/insentif-payee";
 import { paymentSelectionKey, readApi, sebabNol, type ApiRow, type PaymentRow } from "@/lib/insentif-ui";
@@ -42,6 +44,8 @@ const LABEL_PERAN: Record<PayeeRole, string> = { sales: "Sales", spv: "SPV", sm:
 const KOSONG: ReadonlySet<string> = new Set();
 const fmtTanggal = new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Asia/Makassar" });
 const tanggalWita = (v: string | number | Date) => { const d = new Date(v); return Number.isNaN(d.getTime()) ? "" : fmtTanggal.format(d); };
+/** "YYYY-MM-DD" (tanggal WITA dari isian) → dd/mm/yyyy tanpa melewati zona waktu. */
+const ymdTampil = (ymd: string) => ymd.split("-").reverse().join("/");
 const principal = (r: Baris) => (r.principle === PAYEE_PRINCIPLE_ALL ? "—" : r.principle);
 const namaBaris = (r: Baris) => (r.role === "sales" ? `${r.salesName} ${r.principle}` : `${LABEL_PERAN[r.role]} ${r.salesName}`);
 /** "HTTP 500" mentah tidak tampil (aturan 5 brief); pesan server tetap. */
@@ -203,6 +207,16 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
     const memuat = dash.status === "memuat" || spvLoad.status === "memuat" || smLoad.status === "memuat" || bayarLoad.status === "memuat";
     const [dialog, setDialog] = useState(false);
     const [pesan, setPesan] = useState<string | null>(null);
+    // Tanggal bayar (owner 8 Okt, S4c-2): tanggal WITA pilihan Finance, bawaan hari ini; dikirim sebagai `paymentDate` di POST dan PATCH.
+    // Sahnya dinilai dengan fungsi yang sama dengan server (lib/insentif-payment-date): bukan masa depan WITA, tidak sebelum tanggal 1 periode.
+    const [tanggalBayar, setTanggalBayar] = useState("");
+    const hariIni = todayWita(new Date());
+    const awalPeriode = `${year}-${String(month).padStart(2, "0")}-01`;
+    const galatTanggal = !tanggalBayar ? "Isi tanggal bayar dulu"
+        : "error" in parsePaymentDate(tanggalBayar, { periodMonth: month, periodYear: year }, new Date())
+            ? `Tanggal bayar harus ${ymdTampil(awalPeriode)} s.d. ${ymdTampil(hariIni)} (WITA)` : undefined;
+    // Dibaca saat diklik, bukan dari render terakhir: dialog yang dibuka lewat 00.00 WITA tidak membawa tanggal kemarin.
+    const bukaDialog = () => { setTanggalBayar(todayWita(new Date())); setDialog(true); };
     const muatSemua = () => { muatDash(); muatSpv(); muatSm(); muatBayar(); };
     // Sumber yang gagal dimuat (juga muat ulang yang gagal dengan data lama) MENGUNCI penandaan: status di layar bisa usang — baris yang
     // baru saja lunas tampil "Belum dibayar" dan POST kedua akan menimpa tanggal bayar/pencatatnya (risiko transfer ganda).
@@ -214,9 +228,13 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
         : terkunci ?? (dipilih.length === 0 ? "Pilih penerima yang belum dibayar dulu" : undefined);
     const bolehPilih = (r: Baris) => izinBayar && !terkunci && bisaDibayar(r);
 
-    /** Panggilan dan urutannya sama dengan handleMarkLunas lama: satu permintaan per penerima, paralel; gagal sebagian dipertahankan. */
+    /**
+     * Panggilan dan urutannya sama dengan handleMarkLunas lama: satu permintaan per penerima, paralel; gagal sebagian dipertahankan.
+     * Tambahan kontrak #134: `paymentDate` (YYYY-MM-DD WITA) di POST dan PATCH; 400 server (tanggal tidak sah) tampil di dialog per penerima.
+     */
     async function tandaiLunas() {
         const daftar = dipilih;
+        const paymentDate = tanggalBayar;
         const results = await Promise.allSettled(daftar.map(async (row) => {
             // Upsert payment record dulu jika belum ada. Galat jaringan: permintaan mungkin sudah sampai — disebut tidak pasti.
             const res = await (!row.paymentId
@@ -232,12 +250,13 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
                         periodYear: year,
                         totalIncentive: Math.round(row.total),
                         paymentStatus: "lunas",
+                        paymentDate,
                     }),
                 })
                 : fetch(`/api/insentif-sales/payments/${row.paymentId}`, {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ paymentStatus: "lunas" }),
+                    body: JSON.stringify({ paymentStatus: "lunas", paymentDate }),
                 })).catch(() => { throw new Error(PUTUS); });
             if (!res.ok) {
                 const data = await readApi(res).catch(() => ({} as Record<string, unknown>));
@@ -250,7 +269,7 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
         setPilihan((p) => ({ periode: p.periode, keys: new Set([...p.keys].filter((key) => !berhasil.has(key))) }));
         muatBayar();
         const nettoOk = daftar.filter((r) => berhasil.has(paymentSelectionKey(r))).reduce((a, r) => a + nettoInsentif(nominalLunas(r), k.pph.rate), 0);
-        if (berhasil.size > 0) setPesan(`${berhasil.size} pembayaran ${label} ditandai lunas ${jamWita(new Date())} · netto ${formatRp(nettoOk)} · tanggal bayar ${tanggalWita(new Date())}.`);
+        if (berhasil.size > 0) setPesan(`${berhasil.size} pembayaran ${label} ditandai lunas ${jamWita(new Date())} · netto ${formatRp(nettoOk)} · tanggal bayar ${ymdTampil(paymentDate)}.`);
         if (gagal.length === 0) {
             setDialog(false);
             toast.success(`${berhasil.size} pembayaran ditandai lunas.`);
@@ -379,7 +398,7 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
                     ? <span className="fi-sum"><b>{dipilih.length} dipilih</b> · Bruto {formatRp(bruto)} · {labelPph(k.pph.rate)} -{formatRp(bruto - netto)} · Netto <b>{formatRp(netto)}</b>{tersembunyi.length > 0 && ` · ${tersembunyi.length} di luar saringan`}{terkunci && <span className="fi-why"> · {terkunci}</span>}</span>
                     : alasanTandai}>
                     {dipilih.length > 0 && <Button variant="tertiary" onClick={() => pilih(KOSONG)}>Kosongkan pilihan</Button>}
-                    <Button variant="primary" icon={<Check className="fi-icon" aria-hidden />} disabled={Boolean(alasanTandai)} disabledReason={alasanTandai} onClick={() => setDialog(true)}>
+                    <Button variant="primary" icon={<Check className="fi-icon" aria-hidden />} disabled={Boolean(alasanTandai)} disabledReason={alasanTandai} onClick={bukaDialog}>
                         {dipilih.length > 0 ? `Tandai ${dipilih.length} lunas…` : "Tandai lunas…"}
                     </Button>
                 </FooterToolbar>
@@ -409,19 +428,23 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
                     title={`Tandai ${dipilih.length} penerima ${label} lunas?`}
                     tag="Pembayaran"
                     confirmLabel="Tandai lunas"
-                    confirmDisabled={dipilih.length === 0 ? "Tidak ada penerima terpilih" : terkunci}
+                    confirmDisabled={dipilih.length === 0 ? "Tidak ada penerima terpilih" : terkunci ?? galatTanggal}
                     facts={[
                         ["Penerima", perPeran || "—"],
                         ["Bruto", formatRp(bruto)],
                         [labelPph(k.pph.rate), `-${formatRp(bruto - netto)}`],
                         ["Netto dibayar", <b key="n">{formatRp(netto)}</b>],
-                        ["Tanggal bayar", `${tanggalWita(new Date())} · dicatat server saat disimpan, bersama nama Anda`],
+                        ["Tanggal bayar", galatTanggal ? "—" : `${ymdTampil(tanggalBayar)} (WITA) · dicatat bersama nama Anda`],
                         ...(tercatatBeda.length > 0 ? [["Nominal tercatat", `${tercatatBeda.length} penerima sudah punya catatan; yang lunas adalah nominal tercatat, bukan hitung ulang: `
                             + tercatatBeda.slice(0, 5).map((r) => `${r.salesName} tercatat ${formatRp(nominalLunas(r))}, hitung ulang ${formatRp(r.total)}`).join("; ")] as [string, string]] : []),
                         ...(tersembunyi.length > 0 ? [["Di luar saringan", `${tersembunyi.length} ikut ditandai: ${nama(tersembunyi)}`] as [string, string]] : []),
                     ]}
                     onConfirm={tandaiLunas}
                 >
+                    <FormField label="Tanggal bayar" required error={tanggalBayar && galatTanggal ? galatTanggal : undefined}
+                        help={`Tanggal transfer menurut WITA; bawaan hari ini. Boleh mundur sampai ${ymdTampil(awalPeriode)}, tidak boleh melewati hari ini.`}>
+                        {(a) => <input {...a} className="fi-input" type="date" min={awalPeriode} max={hariIni} value={tanggalBayar} onChange={(e) => setTanggalBayar(e.target.value)} />}
+                    </FormField>
                     <VariantNote bl="BL-27">
                         Penerima tanpa catatan pembayaran dicatat lunas dengan nominal hitung ulang yang dimuat di layar ini; penerima yang sudah
                         punya catatan hanya berubah status, dengan nominal tercatatnya. Bila BL-27 masuk, server menghitung ulang bruto, PPh, dan

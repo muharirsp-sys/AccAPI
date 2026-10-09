@@ -14,7 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Download, PencilLine } from "lucide-react";
 import { Button, EmptyState, KeyValues, ListItem, MessageStrip, ResponsiveTable, StatusBadge, VariantNote, type Column } from "@/components/fiori/core";
 import { ConfirmDialog, FilterBar, FormField, useLoad } from "@/components/fiori/interactive";
-import { labelAksiAudit, labelPeranAktor, labelStatus, waktuWita, type AuditOpc } from "@/lib/opc-ui";
+import { catatanSendiri, labelAksiAudit, labelPeranAktor, labelStatus, waktuWita, type AuditOpc } from "@/lib/opc-ui";
 import { ambilOpc, tulisOpc, type PeranProps } from "../Bersama";
 
 const BATAS_TAMPIL = 500;
@@ -84,7 +84,7 @@ export default function Audit({ ctx }: PeranProps) {
             aria-label={`Koreksi log ${labelAksiAudit(a.action)} ${a.noPengajuan || ""}`.trim()} onClick={() => bukaKoreksi(a)}>Koreksi…</Button>
     ));
     const teksCatatan = (a: BarisAudit) => {
-        if (!a.correctionReason) return a.note || "–";
+        if (!a.correctionReason) return [catatanSendiri(a), a.note].filter(Boolean).join(" · ") || "–"; // alasan setuju sendiri (BL-10, #132)
         const lama = a.previousValue?.note;
         return `Alasan koreksi: ${a.correctionReason}${a.note ? ` · ${a.note}` : ""}${lama && lama !== a.note ? ` (sebelumnya: ${lama})` : ""}`;
     };

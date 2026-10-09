@@ -69,8 +69,11 @@ export function kekuranganFinal(data: DetailBatch, isian: IsianFinal): string[] 
     return kurang;
 }
 
-/** Body POST /final-claim action=complete — SAMA dengan completeFinalClaim kode lama 5760–5797. */
-export function payloadSelesai(data: DetailBatch, isian: IsianFinal) {
+/**
+ * Body POST /final-claim action=complete — SAMA dengan completeFinalClaim kode lama 5760–5797, plus `alasanSendiri` (BL-10, #132):
+ * layar Fiori SELALU mengirimnya (kosong bila pelaku bukan pembuat batch) supaya server tidak memakai jalur transisi tanpa alasan.
+ */
+export function payloadSelesai(data: DetailBatch, isian: IsianFinal, alasanSendiri: string) {
     const claimRefs = data.items.filter((i) => i.noSurat).map((i) => {
         const cl: Partial<CeklisFinal> = isian.ceklis[i.id] || {};
         return {
@@ -83,6 +86,7 @@ export function payloadSelesai(data: DetailBatch, isian: IsianFinal) {
     return {
         action: "complete",
         note: isian.catatan,
+        alasanSendiri,
         claimRefs,
         // #17 Gap a: kirim nilai fix jika Claim mengubahnya dari default paidAmount.
         ...(isian.nilaiFix.trim() ? { verifiedAmount: Number(isian.nilaiFix.replace(/[^\d.]/g, "")) || undefined } : {}),

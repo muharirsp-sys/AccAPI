@@ -23,8 +23,8 @@ type ConfirmDialogProps = {
     description?: ReactNode;
     /** Daftar akibat: apa yang dikirim/diubah, jumlah, nilai, dasar. */
     facts?: Array<[string, ReactNode]>;
-    /** Alasan wajib (mis. setuju sendiri, maker-checker lunak). */
-    reason?: { label: string; placeholder?: string };
+    /** Alasan wajib (mis. setuju sendiri, maker-checker lunak). `min` = panjang minimal setelah dipangkas, sama dengan server (bawaan 1). */
+    reason?: { label: string; placeholder?: string; min?: number };
     /** Label aksi, bukan "OK"/"Ya". */
     confirmLabel: string;
     /** Label tombol tutup; bawaan "Batal". Pakai "Kembali" bila aksinya sendiri bernama Batalkan. */
@@ -60,8 +60,10 @@ function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmL
     const [failure, setFailure] = useState<string>();
     const inFlight = useRef(false); // disabled baru berlaku sesudah render; ref menahan klik ganda.
     const reasonId = useId();
-    const missingReason = Boolean(reason) && text.trim() === "";
-    const blocked = missingReason ? `Isi ${reason?.label.toLowerCase()} dulu` : confirmDisabled;
+    const min = reason?.min ?? 1;
+    const pendek = Boolean(reason) && text.trim().length < min;
+    const blocked = !pendek ? confirmDisabled
+        : text.trim() && min > 1 ? `${reason?.label} minimal ${min} karakter` : `Isi ${reason?.label.toLowerCase()} dulu`;
 
     const confirm = async () => {
         if (inFlight.current || blocked) return;
@@ -94,7 +96,9 @@ function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmL
                 {reason && (
                     <div className="fi-field">
                         <label className="fi-label" htmlFor={reasonId}>{reason.label}<span className="fi-req" aria-hidden>*</span></label>
-                        <textarea id={reasonId} className="fi-input" required value={text} placeholder={reason.placeholder} onChange={(e) => setText(e.target.value)} />
+                        <textarea id={reasonId} className="fi-input" required value={text} placeholder={reason.placeholder} onChange={(e) => setText(e.target.value)}
+                            aria-describedby={min > 1 ? `${reasonId}-min` : undefined} />
+                        {min > 1 && <p className="fi-help" id={`${reasonId}-min`}>Minimal {min} karakter; tersimpan bersama aksi ini.</p>}
                     </div>
                 )}
                 {(error || failure) && <p className="fi-msg" role="alert">{error || failure}</p>}

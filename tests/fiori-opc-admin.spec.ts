@@ -334,6 +334,19 @@ test("Log audit: koreksi lewat dialog (alasan wajib, payload, galat di dialog), 
     await expect(main.getByLabel("Usulan BL-33")).toBeVisible();
 });
 
+test("Log audit: alasan setuju sendiri (BL-10, #132) dan penanda tanpa alasan tampil di Catatan", async ({ page }) => {
+    const audit = [
+        { id: "s2", batchId: "b-a", actorName: "KLAIM A", actorRole: "claim", action: "complete", fromStatus: "Waiting Claim Final Verification", toStatus: "Completed", note: "Lengkap.", createdAt: lalu(1), metadata: { alasanSendiri: "Tim Klaim hanya satu orang", sendiriTanpaAlasan: false } },
+        { id: "s1", batchId: "b-a", actorName: "KLAIM A", actorRole: "claim", action: "claim_approve", fromStatus: "Not Started", toStatus: "Approved", note: "", createdAt: lalu(2), metadata: { alasanSendiri: null, sendiriTanpaAlasan: true } },
+    ].map((a) => ({ ...a, noPengajuan: "001/CLM/PRA/10/2026", principleName: "PRINCIPLE A" }));
+    await mockOpc(page, { audit: () => json({ ok: true, audit }) });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/off-program-control?tab=audit", NAV);
+    const log = page.locator("main").getByRole("table", { name: "Log audit OFF Program Control" });
+    await expect(log.getByRole("row", { name: /Menyelesaikan verifikasi final/ })).toContainText("Alasan setuju sendiri: Tim Klaim hanya satu orang · Lengkap.", NAV);
+    await expect(log.getByRole("row", { name: /Menyetujui klaim/ })).toContainText("Disetujui sendiri tanpa alasan (layar lama)");
+});
+
 test("Log audit: galat daftar tidak tampil sebagai kosong; kosong dan saringan berbeda", async ({ page }) => {
     let mode: "galat" | "kosong" = "galat";
     await mockOpc(page, { audit: () => (mode === "galat" ? json({ ok: false, error: "Gagal mengambil audit log." }, 500) : json({ ok: true, audit: [] })) });

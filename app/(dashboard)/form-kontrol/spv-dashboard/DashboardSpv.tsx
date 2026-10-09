@@ -1,13 +1,15 @@
 /*
  * Tujuan: Dashboard SPV (Fiori S5, it05 — Overview Page): total tim, laporan + tanda per salesman, detail kunjungan, bahan
- *   briefing sore, dan "Tandai sudah dibaca" (#17) lewat dialog. Admin/manager/admin_sales memilih SPV (#16): route spv-dashboard
+ *   briefing sore, "Tandai sudah dibaca" (#17) dan "Batalkan tanda dibaca" (S5-4a, kontrak #132) lewat dialog. Admin/manager/admin_sales
+ *   memilih SPV (#16): route spv-dashboard
  *   hanya menerima `spvName` untuk peran itu; daftar SPV dari GET sales-profiles (bila gagal: isian teks + VariantNote).
  *   Tanggal "hari ini" = WITA (hariIniWita, dikirim ke server); jam tampil WITA.
  * Caller: app/(dashboard)/form-kontrol/spv-dashboard/page.tsx.
  * Dependensi: ../shared (Scope, hariIniWita, jamWita, ambilFk, tulisFk), components/fiori/{core,interactive},
  *   lib/rekapan-nota/ui (tanggalPanjang, tanggalPendek).
  * Main Functions: DashboardSpv (default), KartuSalesman.
- * Side Effects: GET my-scope, GET sales-profiles (pemilih SPV), GET spv-dashboard; POST reports/ack (dialog); router.replace
+ * Side Effects: GET my-scope, GET sales-profiles (pemilih SPV), GET spv-dashboard; POST reports/ack (dialog; batal = `ack: false`,
+ *   siapa/kapan dicatat server di kontrol_audit_log); router.replace
  *   untuk `?date=` dan `?spv=`.
  */
 "use client";
@@ -15,7 +17,7 @@
 import { useCallback, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { CheckCheck, RefreshCw } from "lucide-react";
+import { CheckCheck, RefreshCw, Undo2 } from "lucide-react";
 import { Button, EmptyState, ErrorState, KeyValues, MessageStrip, Section, Skeleton, StatusBadge, VariantNote, type Tone } from "@/components/fiori/core";
 import { ConfirmDialog, FormField, useLoad, type Load } from "@/components/fiori/interactive";
 import { tanggalPanjang, tanggalPendek } from "@/lib/rekapan-nota/ui";
@@ -106,6 +108,7 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
     }, [peran, pemilih, spvDipilih, date]));
 
     const [ack, setAck] = useState<SalesmanRow | null>(null);
+    const [batal, setBatal] = useState<SalesmanRow | null>(null);
     const [sukses, setSukses] = useState("");
     const data = dash.data ?? null;
     const rows = data?.rows ?? [];
@@ -206,7 +209,7 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                     ? <MessageStrip tone="pos" title="Semua salesman sudah mengirim laporan.">Data siap untuk briefing sore.</MessageStrip>
                     : <MessageStrip tone="warn" title={`${belumKirim.length} salesman belum mengirim laporan:`}>{belumKirim.map((r) => r.salesName).join(", ")}</MessageStrip>}
                 <div className="grid gap-3 md:grid-cols-2">
-                    {rows.map((r) => <KartuSalesman key={r.salesCode} r={r} kunci={izinAck ?? usang} onTandai={() => setAck(r)} />)}
+                    {rows.map((r) => <KartuSalesman key={r.salesCode} r={r} kunci={izinAck ?? usang} onTandai={() => setAck(r)} onBatal={() => setBatal(r)} />)}
                 </div>
                 {rows.some((r) => r.notOrder > 0) && (
                     <Section title="Bahan briefing sore" subtitle="toko tidak order hari ini">
@@ -247,7 +250,7 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                 open={ack !== null}
                 onClose={() => setAck(null)}
                 title={`Tandai laporan ${ack?.salesName ?? ""} sudah dibaca?`}
-                description="Salesman dan SM melihat bahwa laporan ini sudah Anda baca. Tanda ini tidak bisa dibatalkan dari layar."
+                description="Salesman dan SM melihat bahwa laporan ini sudah Anda baca. Bila keliru, tanda ini bisa dibatalkan dari kartu salesman; keduanya tercatat atas nama Anda."
                 facts={ack ? [
                     ["Salesman", <span key="s">{ack.salesName} · <span className="fi-mono">{ack.salesCode}</span></span>],
                     ["Tanggal laporan", tanggalPendek(date)],
@@ -261,6 +264,30 @@ export default function DashboardSpv({ permKeys }: { permKeys: string[] }) {
                     await tulisFk("/api/form-kontrol/reports/ack", { body: { salesCode: r.salesCode, date }, gagal: "Laporan belum ditandai dibaca." });
                     setAck(null);
                     setSukses(`Laporan ${r.salesName} ditandai sudah dibaca.`);
+                    muatDash();
+                }}
+            />
+            <ConfirmDialog
+                open={batal !== null}
+                onClose={() => setBatal(null)}
+                tone="negative"
+                tag="Batalkan"
+                title={`Batalkan tanda dibaca laporan ${batal?.salesName ?? ""}?`}
+                description="Laporan kembali berstatus Menunggu dibaca untuk salesman dan SM. Pembatalan tercatat atas nama Anda, bersama tanda dibaca sebelumnya."
+                facts={batal ? [
+                    ["Salesman", <span key="s">{batal.salesName} · <span className="fi-mono">{batal.salesCode}</span></span>],
+                    ["Tanggal laporan", tanggalPendek(date)],
+                    ["Ditandai dibaca", batal.spvAckAt ? `${jamWita(batal.spvAckAt)} WITA` : "—"],
+                    ["Sesudahnya", "Menunggu dibaca; bisa ditandai lagi"],
+                ] : []}
+                confirmLabel="Batalkan tanda dibaca"
+                cancelLabel="Kembali"
+                confirmDisabled={izinAck ?? usang}
+                onConfirm={async () => {
+                    const r = batal!;
+                    await tulisFk("/api/form-kontrol/reports/ack", { body: { salesCode: r.salesCode, date, ack: false }, gagal: "Tanda dibaca belum dibatalkan." });
+                    setBatal(null);
+                    setSukses(`Tanda dibaca laporan ${r.salesName} dibatalkan.`);
                     muatDash();
                 }}
             />
@@ -280,7 +307,7 @@ function IsianSpv({ awal, onPilih }: { awal: string; onPilih: (v: string) => voi
     );
 }
 
-function KartuSalesman({ r, kunci, onTandai }: { r: SalesmanRow; kunci?: string; onTandai: () => void }) {
+function KartuSalesman({ r, kunci, onTandai, onBatal }: { r: SalesmanRow; kunci?: string; onTandai: () => void; onBatal: () => void }) {
     const st = statusLaporan(r);
     const ao = pct(r.ordered, r.totalRoute);
     const cakupan = pct(r.ordered + r.notOrder, r.totalRoute);
@@ -343,6 +370,14 @@ function KartuSalesman({ r, kunci, onTandai }: { r: SalesmanRow; kunci?: string;
                     <Button variant="primary" style={{ minHeight: 44 }} icon={<CheckCheck className="fi-icon" aria-hidden />}
                         disabled={Boolean(kunci)} disabledReason={kunci} onClick={onTandai}>
                         Tandai sudah dibaca
+                    </Button>
+                </div>
+            )}
+            {r.spvAck && (
+                <div>
+                    <Button variant="tertiary" style={{ minHeight: 44 }} icon={<Undo2 className="fi-icon" aria-hidden />}
+                        disabled={Boolean(kunci)} disabledReason={kunci} onClick={onBatal}>
+                        Batalkan tanda dibaca…
                     </Button>
                 </div>
             )}

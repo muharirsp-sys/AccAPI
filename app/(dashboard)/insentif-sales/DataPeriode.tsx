@@ -11,7 +11,7 @@
  *   lib/promo-ui (rupiah).
  * Main Functions: DataPeriode (default), bacaTarget, bacaProgres, ringkasProgres.
  * Side Effects: GET targets/progress/settings/targets/template; POST /targets atau /progress (Terapkan), DELETE /progress
- *   (hapus realisasi periode), DELETE /targets (satu baris). Semua tulis lewat ConfirmDialog.
+ *   (hapus realisasi periode, body `{ alasan }` wajib ≥ 5 karakter), DELETE /targets (satu baris). Semua tulis lewat ConfirmDialog.
  */
 "use client";
 
@@ -71,6 +71,7 @@ type Dlg = { kind: "terapkan" } | { kind: "hapusReal" } | { kind: "hapusTarget";
 
 const LABEL_TIPE: Record<string, string> = { exclusive: "Exclusive", mix: "Mix" };
 
+const PUTUS_HAPUS = "Server tidak menjawab dengan jelas; periksa Realisasi di Data tersimpan sebelum mengulang.";
 const kunciTarget = (r: { salesCode: string; principle: string }) => `${r.salesCode}|${r.principle}`;
 const n = (v: number) => v.toLocaleString("id-ID");
 
@@ -429,10 +430,16 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
      * tanggal barisnya bisa bergeser dari unggahan sebelumnya: POST hanya menimpa kombinasi
      * (kode, principal, periode, TANGGAL) yang ada di file baru, jadi baris lama bertanggal
      * lain tetap tinggal dan ikut terhitung. Dulu ini DELETE manual lewat psql di VPS.
+     * Owner 8 Okt (S4c-3): body `{ alasan }` wajib (≥ 5 karakter); server mencatatnya di kontrol_audit_log dalam transaksi DELETE.
      */
-    async function hapusRealisasi() {
-        const res = await fetch(`/api/insentif-sales/progress?month=${month}&year=${year}`, { method: "DELETE" });
-        const data = await readApi(res);
+    async function hapusRealisasi(alasan: string) {
+        // Koneksi putus / 502 / badan bukan JSON: penghapusan mungkin sudah terjadi → "belum pasti", bukan HTML mentah.
+        const belumPasti = () => { muatProgres(); return new Error(`Hasilnya belum pasti. ${PUTUS_HAPUS}`); };
+        const res = await fetch(`/api/insentif-sales/progress?month=${month}&year=${year}`, {
+            method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ alasan }),
+        }).catch(() => null);
+        const data = res && res.status < 502 ? await readApi(res).catch(() => null) : null;
+        if (!res || !data) throw belumPasti();
         if (!res.ok) throw new Error(String(data.error ?? "Gagal menghapus periode."));
         const jml = Number(data.deleted ?? 0);
         setPesan(jml === 0 ? { tone: "info", teks: `Tidak ada realisasi ${label} untuk dihapus.` } : { tone: "pos", teks: `${n(jml)} baris realisasi ${label} dihapus. Unggah ulang closing-nya sekarang.` });
@@ -714,10 +721,12 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
                 description="Kode mirip dan SPV tidak sinkron tidak memblokir; keduanya bisa diputuskan sesudahnya." />
             <ConfirmDialog open={dialog?.kind === "hapusReal"} onClose={() => setDialog(null)} tone="negative" tag="Hapus"
                 title={`Hapus realisasi ${label}?`} confirmLabel="Hapus realisasi" onConfirm={hapusRealisasi}
+                reason={{ label: "Alasan hapus realisasi", placeholder: "Mis. closing diunggah dengan aturan cabang lama; unggah ulang", min: 5 }}
                 facts={[
                     ["Dihapus", `Seluruh realisasi closing ${label}${progres.data?.length ? ` · ${n(progres.data.length)} kode sales · ${rupiah(Math.round(totalProgres))}` : ""}`],
                     ["Tidak ikut terhapus", "Target dan catatan pembayaran"],
                     ["Akibat", `Capaian ${label} kosong sampai closing-nya diunggah ulang`],
+                    ["Jejak", "Alasan, nama Anda, dan jumlah baris tercatat bersama penghapusan"],
                 ]} />
             <ConfirmDialog open={dialog?.kind === "hapusTarget"} onClose={() => setDialog(null)} tone="negative" tag="Hapus"
                 title={dialog?.kind === "hapusTarget" ? `Hapus target ${dialog.row.salesCode} / ${dialog.row.principle}?` : ""}

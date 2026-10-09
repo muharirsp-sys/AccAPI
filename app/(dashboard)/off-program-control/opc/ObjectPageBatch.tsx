@@ -1,7 +1,7 @@
 /*
  * Tujuan: Object Page batch OPC (kolom kedua FCL, Fiori S4d): header (nomor, principal, periode, total, badge tahap, Flow 7 tahap,
- *   tanda lewat SLA), AnchorBar, dan bagian BACA bersama — Item, Validasi klaim, Pembayaran dan refund, Riwayat (log aksi + enam
- *   sumbu status), Alur dokumen — plus SLOT untuk agen peran (bagian, gantiItem, strip, aksi, pesanFooter, draf).
+ *   tanda lewat SLA), AnchorBar, dan bagian BACA bersama — Item, Validasi klaim, Pembayaran dan refund, Riwayat (log aksi + alasan setuju
+ *   sendiri dari metadata audit + enam sumbu status), Alur dokumen — plus SLOT untuk agen peran (bagian, gantiItem, strip, aksi, pesanFooter, draf).
  * Caller: opc/Bersama.tsx (DetailBacaSaja) dan komponen Detail di opc/peran/*.tsx. Kontrak slot: header opc/Bersama.tsx.
  * Dependensi: components/fiori/core, lib/opc-ui, lib/promo-ui (rupiah), lib/claim-workflow-ui (statusKlaim), next/link.
  * Main Functions: ObjectPageBatch, BagianTambahan.
@@ -19,7 +19,7 @@ import {
 import { statusKlaim } from "@/lib/claim-workflow-ui";
 import { rupiah } from "@/lib/promo-ui";
 import {
-    alurBatch, infoTahap, jumlahItem, kelengkapanItem, labelAksiAudit, labelPeranAktor, labelStatus, pdfBoleh, periodeBatch, tahapBatch, tanggalOpc, totalBatch,
+    alurBatch, catatanSendiri, infoTahap, jumlahItem, kelengkapanItem, labelAksiAudit, labelPeranAktor, labelStatus, pdfBoleh, periodeBatch, tahapBatch, tanggalOpc, totalBatch,
     waktuWita, type AuditOpc, type BatchOpc, type ItemOpc, type PembayaranOpc, type RefundOpc,
 } from "@/lib/opc-ui";
 import type { DetailProps } from "./Bersama";
@@ -265,6 +265,7 @@ function BagianRiwayat({ audit, b, muatUlang }: { audit: NonNullable<DetailProps
     const kalimat = (a: AuditOpc) => [
         a.fromStatus || a.toStatus ? `${labelStatus(a.fromStatus)} → ${labelStatus(a.toStatus)}` : "",
         a.correctionReason ? `Alasan koreksi: ${a.correctionReason}` : "",
+        catatanSendiri(a), // BL-10 (#132)
         a.note || "",
     ].filter(Boolean).join(" · ");
     return (

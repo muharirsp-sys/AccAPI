@@ -1,14 +1,16 @@
 /*
  * Tujuan: Modul peran Klaim OFF Program Control (Fiori S4d, tab `claim`): tiga tampilan (claimView) — Validasi setelah SM, Verifikasi
  *   final (`claimView=after|after-finance|final`, tautan Claim Workflow), Batch Claim (CLM) — dan Object Page batch dengan aksi Klaim:
- *   isi validasi + Setujui klaim (`claimok`) / setuju batch buatan sendiri (`sendiri`, BL-10) / Kembalikan (`kembali`, alasan wajib),
- *   verifikasi final + Selesaikan / Ingatkan kelengkapan, Kirim CLM ke SM, buka/buat Claim Workflow. Form CLM baru di kolom kedua (`clm=baru`).
+ *   isi validasi + Setujui klaim (`claimok`) / setuju batch buatan sendiri (`sendiri`, BL-10: alasan wajib ≥ 5 karakter → `alasanSendiri`,
+ *   kontrak #132) / Kembalikan (`kembali`, alasan wajib), verifikasi final + Selesaikan (batch buatan sendiri: alasan yang sama) /
+ *   Ingatkan kelengkapan, Kirim CLM ke SM, buka/buat Claim Workflow. Form CLM baru di kolom kedua (`clm=baru`).
  * Caller: OpcApp.tsx (MODUL.claim).
  * Dependensi: opc/Bersama (KerjaPeran, tulisOpc, kontrak), opc/ObjectPageBatch (slot bagian/strip/aksi/draf), opc/peran/KlaimFinal,
  *   opc/peran/KlaimClm, lib/opc-ui (PREDIKAT, TAMPILAN, tahapBatch), components/fiori/{core,interactive}, lib/promo-ui, next/navigation.
  * Main Functions: Klaim, DetailKlaim, bisaValidasi, bisaFinal, bukaAtauBuatClaimWorkflow.
  * Side Effects: POST /api/off-program-control/batches/[id]/claim-review (approve/return; payload SAMA dengan approveByClaim/returnByClaim
- *   kode lama 5573–5664), POST /batches/[id]/final-claim (complete/remind_incomplete_documents, kode lama 5665–5818), POST /batches/[id]/submit
+ *   kode lama 5573–5664, approve + `alasanSendiri`), POST /batches/[id]/final-claim (complete + `alasanSendiri`/remind_incomplete_documents,
+ *   kode lama 5665–5818), POST /batches/[id]/submit
  *   (CLM, kode lama 7048–7063), POST /api/claim-workflow/from-off-batch/[id] (kode lama 5508–5545) lalu router.push ke Claim Workflow.
  */
 "use client";
@@ -105,7 +107,8 @@ function DetailKlaim(props: DetailProps) {
     const total = Number(data.summary?.totalNominal ?? totalBatch(b));
     const itemFakta = `${data.items.length || jumlahItem(b)} item · ${rupiah(total)}`;
     const tahap = tahapBatch(b);
-    // BL-10 mode lunak: pembuat batch (mis. CLM buatan Klaim) boleh menyetujui sendiri setelah konfirmasi khusus.
+    // BL-10 mode lunak: pembuat batch (mis. CLM buatan Klaim) boleh menyetujui sendiri dengan alasan ≥ 5 karakter (#132). Layar Fiori SELALU
+    // mengirim `alasanSendiri` (kosong bila bukan pembuat): field yang hilang = jalur transisi layar lama yang lolos tanpa alasan di server.
     const sendiri = Boolean(ctx.pengguna.id) && b.createdBy === ctx.pengguna.id;
     const izinReview = ctx.izin("claim_review");
     const izinFinal = ctx.izin("claim_final");
@@ -126,10 +129,10 @@ function DetailKlaim(props: DetailProps) {
         : !nilai.deadline ? "Isi deadline klaim dulu."
             : nilai.kelengkapan !== "Lengkap" ? "Kelengkapan harus Lengkap untuk menyetujui; bila kurang atau perlu revisi, kembalikan batch."
                 : !nilai.catatan.trim() ? "Keterangan kelengkapan wajib diisi sebelum Setujui klaim." : undefined);
-    const setujui = async () => {
+    const setujui = async (alasanSendiri: string) => {
         await tulisOpc(`${dasar}/claim-review`, {
             gagal: "Gagal menyetujui Claim.",
-            body: { action: "approve", claimSubmittedDate: nilai.tanggal, claimDeadline: nilai.deadline, completenessStatus: nilai.kelengkapan, note: nilai.catatan },
+            body: { action: "approve", claimSubmittedDate: nilai.tanggal, claimDeadline: nilai.deadline, completenessStatus: nilai.kelengkapan, note: nilai.catatan, alasanSendiri },
         });
         tutup();
         setIsian(null);
@@ -151,8 +154,8 @@ function DetailKlaim(props: DetailProps) {
     const syaratIngat = izinFinal ?? kunci ?? (!nilaiF?.catatan.trim() ? "Isi catatan verifikasi final dulu." : undefined);
     const uang = uangFinal(data);
     const lebih = nilaiF ? perkiraanSelisih(uang.dibayar, nilaiF.nilaiFix) : 0;
-    const selesaikan = async () => {
-        const hasil = await tulisOpc(`${dasar}/final-claim`, { gagal: "Gagal menyelesaikan final Claim.", body: payloadSelesai(data, nilaiF!) });
+    const selesaikan = async (alasanSendiri: string) => {
+        const hasil = await tulisOpc(`${dasar}/final-claim`, { gagal: "Gagal menyelesaikan final Claim.", body: payloadSelesai(data, nilaiF!, sendiri ? alasanSendiri : "") });
         tutup();
         setIsianF(null);
         const sisaSelisih = Number(hasil.overpaidAmount || 0);
@@ -289,21 +292,21 @@ function DetailKlaim(props: DetailProps) {
             peringatan berkas.</VariantNote>
     );
     const pembuat = b.createdByRole === "claim" ? "pembuat CLM-nya (divisi Klaim)" : "SPV pembuatnya";
+    const alasanSendiri = { label: "Alasan setuju sendiri", placeholder: "Mis. tim Klaim hanya satu orang minggu ini", min: 5 };
 
     return (
         <>
             <ObjectPageBatch {...props} bagian={bagian} strip={strip} aksi={aksi} pesanFooter={pesanFooter} draf={dirty} />
             <ConfirmDialog open={dialog === "claimok"} onClose={tutup} tag="Setujui" title={`Setujui klaim ${no}?`} confirmLabel="Setujui klaim"
-                description="Batch dikunci dan diteruskan ke Operational Manager." facts={faktaSetuju} confirmDisabled={kunci} onConfirm={setujui}>
+                description="Batch dikunci dan diteruskan ke Operational Manager." facts={faktaSetuju} confirmDisabled={kunci} onConfirm={() => setujui("")}>
                 {noteBl11}
             </ConfirmDialog>
             <ConfirmDialog open={dialog === "sendiri"} onClose={tutup} tag="Setuju sendiri" title="Setujui batch yang Anda buat sendiri?" confirmLabel="Setujui klaim"
                 description="Pembuat dan penyetuju batch ini orang yang sama."
                 facts={[["Batch", <span key="b" className="fi-mono">{no}</span>], ["Dibuat oleh", `Anda${ctx.pengguna.nama ? ` (${ctx.pengguna.nama})` : ""}`], ...faktaSetuju]}
-                confirmDisabled={kunci} onConfirm={setujui}>
-                <MessageStrip tone="info" title="Mode lunak:">tim belum cukup untuk memisahkan pembuat dan penyetuju. Anda boleh menyetujui sendiri; persetujuan tercatat di Riwayat atas nama Anda.</MessageStrip>
-                <VariantNote bl="BL-10">Endpoint validasi klaim belum punya isian alasan setuju sendiri yang disimpan, jadi dialog ini hanya konfirmasi. Usulan: alasan wajib,
-                    tersimpan, dan muncul di laporan audit.</VariantNote>
+                reason={alasanSendiri} confirmDisabled={kunci} onConfirm={setujui}>
+                <MessageStrip tone="info" title="Mode lunak:">tim belum cukup untuk memisahkan pembuat dan penyetuju. Anda boleh menyetujui sendiri dengan alasan;
+                    persetujuan dan alasannya tersimpan di Riwayat batch ini atas nama Anda.</MessageStrip>
                 {noteBl11}
             </ConfirmDialog>
             <ConfirmDialog open={dialog === "kembali"} onClose={tutup} tone="negative" tag="Alasan wajib" title={`Kembalikan ${no} untuk diperbaiki?`} confirmLabel="Kembalikan"
@@ -314,7 +317,7 @@ function DetailKlaim(props: DetailProps) {
                     <textarea {...a} className="fi-input" rows={3} value={alasan} onChange={(e) => setAlasan(e.target.value)} />
                 )}</FormField>
             </ConfirmDialog>
-            {/* Owner 8 Okt: verifikasi final batch buatan sendiri juga memakai konfirmasi "sendiri" (BL-10), sama seperti Setujui klaim. */}
+            {/* Owner 8 Okt: verifikasi final batch buatan sendiri juga wajib Alasan setuju sendiri (BL-10, #132), sama seperti Setujui klaim. */}
             <ConfirmDialog open={dialog === "selesai"} onClose={tutup} tag={sendiri ? "Setuju sendiri" : "Verifikasi final"}
                 title={sendiri ? `Selesaikan verifikasi final ${no} yang Anda buat sendiri?` : `Selesaikan verifikasi final ${no}?`} confirmLabel="Selesaikan"
                 description={sendiri ? "Pembuat batch dan pemeriksa final orang yang sama. No Claim dan checklist final per item disimpan bersama hasil verifikasi."
@@ -326,12 +329,11 @@ function DetailKlaim(props: DetailProps) {
                     ["No Claim", `${data.items.filter((i) => i.noSurat).length} No Surat terisi`],
                     ["Akibat", lebih > 0 ? `Selisih ${rupiah(lebih)} masuk Data Selisih; batch menunggu pengembalian selisih.` : "Batch selesai."],
                 ]}
-                confirmDisabled={kunci} onConfirm={selesaikan}>
-                {sendiri && <>
-                    <MessageStrip tone="info" title="Mode lunak:">Anda boleh menyelesaikan verifikasi final batch buatan sendiri; hasilnya tercatat di Riwayat atas nama Anda.</MessageStrip>
-                    <VariantNote bl="BL-10">Endpoint verifikasi final belum menyimpan alasan setuju sendiri, jadi dialog ini hanya konfirmasi. Owner 8 Okt: alasan
-                        wajib dan tersimpan — menunggu perubahan API lewat AM.</VariantNote>
-                </>}
+                reason={sendiri ? alasanSendiri : undefined} confirmDisabled={kunci} onConfirm={selesaikan}>
+                {sendiri && (
+                    <MessageStrip tone="info" title="Mode lunak:">Anda boleh menyelesaikan verifikasi final batch buatan sendiri dengan alasan; hasil dan alasannya
+                        tersimpan di Riwayat batch ini atas nama Anda.</MessageStrip>
+                )}
             </ConfirmDialog>
             <ConfirmDialog open={dialog === "ingatkan"} onClose={tutup} tag="Pengingat" title={`Kirim pengingat kelengkapan ${no}?`} confirmLabel="Kirim pengingat"
                 description="Pengingat tampil di web untuk Sales Manager dan Supervisor; batch tetap menunggu verifikasi final Klaim. No Claim dan checklist yang sudah diisi belum ikut tersimpan."

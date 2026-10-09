@@ -1,7 +1,8 @@
 /*
  * Tujuan: Fiori S4d OFF Program Control — peran Klaim: Validasi setelah SM (isian, draf, Setujui klaim lewat dialog `claimok` dengan payload
  *   claim-review diperiksa, batch pindah ke OM), Kembalikan (`kembali`, alasan wajib, galat server di dialog tanpa menghapus alasan, draf
- *   menahan pindah batch), setuju batch buatan sendiri (`sendiri`, BL-10), batch terminal tanpa aksi (BL-06), Verifikasi final
+ *   menahan pindah batch), setuju batch buatan sendiri (`sendiri`, BL-10: alasan wajib ≥ 5 → `alasanSendiri`, #132), Selesaikan verifikasi
+ *   final batch buatan sendiri + alasan di Riwayat, batch terminal tanpa aksi (BL-06), Verifikasi final
  *   (`claimView=after`: No Claim + checklist per item, nilai fix → selisih, Ingatkan + Selesaikan dengan payload final-claim diperiksa,
  *   lalu Claim Workflow 409 → dibuka), Batch CLM (form di kolom kedua, nomor otomatis, payload POST /batches, Kirim ke SM), ponsel 390 px.
  * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true; sesi peran Klaim dimock):
@@ -54,12 +55,15 @@ type Opsi = {
     daftarUbah?: Record<string, Over>;
     /** Batch yang GET detailnya sedang gagal (diubah test saat berjalan). */
     detailGagal?: Set<string>;
+    /** Batch tambahan (data contoh generik) dan isi GET /batches/[id]/audit per batch. */
+    tambahan?: Array<Over & { id: string }>;
+    audit?: Record<string, unknown[]>;
 };
 
 /** Mock OPC + sesi Klaim (u-1). Tulis mengubah status batch seperti route asli (garis besar) dan dicatat di `kirim`. */
 async function mockKlaim(page: Page, opsi: Opsi = {}) {
     const kirim: Kirim[] = [];
-    const batches = awalBatches() as Array<Over & { id: string }>;
+    const batches = [...awalBatches(), ...(opsi.tambahan ?? [])] as Array<Over & { id: string }>;
     const items = new Map<string, Array<Over & { id: string }>>(batches.map((b) => [b.id, awalItems(b.id, String(b.principleCode))]));
     const ubah = (id: string, over: Over) => { const b = batches.find((x) => x.id === id)!; Object.assign(b, over, { updatedAt: new Date().toISOString() }); };
     await page.route((u) => u.pathname === "/api/auth/get-session", (r) => r.fulfill(json({
@@ -116,7 +120,7 @@ async function mockKlaim(page: Page, opsi: Opsi = {}) {
         if (!m) return r.fulfill(json({ ok: false, error: "tidak dimock" }, 404));
         const id = decodeURIComponent(m[1]);
         if (m[2] === "refund") return r.fulfill(json({ ok: true, refunds: [], summary: { paidAmount: 0, verifiedAmount: 0, overpaidAmount: 0, totalRefunded: 0, pendingRefund: 0, remainingRefund: 0, isFullyRefunded: false } }));
-        if (m[2] === "audit") return r.fulfill(json({ ok: true, audit: [] }));
+        if (m[2] === "audit") return r.fulfill(json({ ok: true, audit: opsi.audit?.[id] ?? [] }));
         const b = batches.find((x) => x.id === id);
         if (opsi.detailGagal?.has(id)) return r.fulfill(json({ ok: false, error: "Gagal mengambil detail batch." }, 500));
         if (!b) return r.fulfill(json({ ok: false, error: "Pengajuan tidak ditemukan." }, 404));
@@ -197,7 +201,8 @@ test("Validasi setelah SM: isian + draf, Setujui klaim lewat dialog (payload cla
 
     expect(kirim).toEqual([{
         method: "POST", path: "/api/off-program-control/batches/b-klaim/claim-review",
-        body: { action: "approve", claimSubmittedDate: "2026-10-06", claimDeadline: "2026-11-06", completenessStatus: "Lengkap", note: "Berkas lengkap, faktur pajak menyusul." },
+        // Bukan pembuat batch: `alasanSendiri` tetap dikirim kosong (layar Fiori tidak pernah memakai jalur transisi server).
+        body: { action: "approve", claimSubmittedDate: "2026-10-06", claimDeadline: "2026-11-06", completenessStatus: "Lengkap", note: "Berkas lengkap, faktur pajak menyusul.", alasanSendiri: "" },
     }]);
     await expect(main.getByRole("status").filter({ hasText: "Klaim 005/GDI/10/2026 disetujui dan diteruskan ke OM." })).toBeVisible();
     await expect(detail.getByText("Menunggu OM").first()).toBeVisible(NAV);
@@ -260,8 +265,15 @@ test("Kembalikan: alasan wajib di dialog, galat server tampil di dialog tanpa me
     await expect(detail.getByRole("button", { name: "Kembalikan…" })).toHaveCount(0);
 });
 
-test("Setujui batch buatan sendiri (BL-10): dialog `sendiri` = konfirmasi + VariantNote, payload sama dengan Setujui klaim", async ({ page }) => {
-    const kirim = await mockKlaim(page);
+test("Setujui batch buatan sendiri (BL-10, #132): alasan wajib ≥ 5 karakter → alasanSendiri di payload; galat server di dialog", async ({ page }) => {
+    let tolak = true;
+    const kirim = await mockKlaim(page, {
+        gagal: (p) => {
+            if (!p.endsWith("/claim-review") || !tolak) return null;
+            tolak = false;
+            return json({ ok: false, error: "Anda pembuat pengajuan ini. Alasan menyetujui sendiri wajib diisi (minimal 5 karakter)." }, 400);
+        },
+    });
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/off-program-control?tab=claim&batch=b-sendiri", NAV);
     const detail = kolomBatch(page);
@@ -274,14 +286,70 @@ test("Setujui batch buatan sendiri (BL-10): dialog `sendiri` = konfirmasi + Vari
     await expect(dlg.getByRole("heading", { name: "Setujui batch yang Anda buat sendiri?" })).toBeVisible();
     await expect(dlg).toContainText("Anda (Rina Amalia)");
     await expect(dlg).toContainText("001/CLM/GDI/10/2026");
-    await expect(dlg.getByLabel("Usulan BL-10")).toBeVisible();
-    await expect(dlg.getByRole("textbox")).toHaveCount(0); // endpoint tidak menyimpan alasan setuju sendiri → konfirmasi saja
+    await expect(dlg).toContainText("persetujuan dan alasannya tersimpan di Riwayat batch ini");
+    await expect(dlg.getByLabel("Usulan BL-10")).toHaveCount(0);
+    const tombol = dlg.getByRole("button", { name: "Setujui klaim" });
+    const alasan = dlg.getByLabel("Alasan setuju sendiri");
+    await expect(tombol).toBeDisabled();
+    await alasan.fill(" abcd ");
+    await expect(tombol).toBeDisabled();
+    await expect(tombol).toHaveAttribute("title", "Alasan setuju sendiri minimal 5 karakter");
+    expect(kirim).toEqual([]);
+    await alasan.fill("Tim Klaim hanya satu orang minggu ini");
+    await tombol.click();
+    await expect(dlg.getByRole("alert")).toContainText("Anda pembuat pengajuan ini. Alasan menyetujui sendiri wajib diisi");
+    await expect(alasan).toHaveValue("Tim Klaim hanya satu orang minggu ini");
     await page.screenshot({ path: "test-results/fiori-opc-klaim-sendiri.png" });
-    await dlg.getByRole("button", { name: "Setujui klaim" }).click();
+    await tombol.click();
     await expect(dlg).toBeHidden();
-    expect(kirim).toEqual([{
+    const kiriman = {
         method: "POST", path: "/api/off-program-control/batches/b-sendiri/claim-review",
-        body: { action: "approve", claimSubmittedDate: "2026-10-07", claimDeadline: "2026-11-07", completenessStatus: "Lengkap", note: "Data direksi lengkap." },
+        body: { action: "approve", claimSubmittedDate: "2026-10-07", claimDeadline: "2026-11-07", completenessStatus: "Lengkap", note: "Data direksi lengkap.", alasanSendiri: "Tim Klaim hanya satu orang minggu ini" },
+    };
+    expect(kirim).toEqual([kiriman, kiriman]);
+});
+
+test("Selesaikan verifikasi final batch buatan sendiri (BL-10, #132): alasan wajib → alasanSendiri; Riwayat menampilkan alasan dan penanda tanpa alasan", async ({ page }) => {
+    const fs = batch("b-fs", "001/CLM/PRA/09/2026", "PRA", "PRINCIPLE A", {
+        status: "Paid", ...OMOK, financeStatus: "Paid", finalStatus: "Waiting Claim Final Verification", bulan: "09", paidAt: kini, paidAmount: 4_300_000,
+        paymentDate: "2026-10-06", financeNote: "Transfer BANK A", paymentSummary: LUNAS, createdBy: "u-1", createdByRole: "claim", supervisorName: "Divisi Klaim",
+    });
+    const audit = [
+        { id: "au1", batchId: "b-fs", actorName: "KLAIM A", actorRole: "claim", action: "claim_approve", fromStatus: "Waiting Review", toStatus: "Approved", note: "Lengkap.", createdAt: lalu(3), metadata: { alasanSendiri: null, sendiriTanpaAlasan: true } },
+        { id: "au2", batchId: "b-fs", actorName: "KLAIM A", actorRole: "claim", action: "complete", fromStatus: "Incomplete Documents", toStatus: "Completed", note: "", createdAt: lalu(1), metadata: { alasanSendiri: "Tim Klaim hanya satu orang", sendiriTanpaAlasan: false } },
+    ];
+    const kirim = await mockKlaim(page, { tambahan: [fs], audit: { "b-fs": audit } });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/off-program-control?tab=claim&claimView=after&batch=b-fs", NAV);
+    const detail = kolomBatch(page);
+    await expect(detail.getByRole("heading", { level: 1, name: "001/CLM/PRA/09/2026" })).toBeVisible(NAV);
+    const riwayat = detail.getByRole("list", { name: "Riwayat aksi" });
+    await expect(riwayat).toContainText("Alasan setuju sendiri: Tim Klaim hanya satu orang");
+    await expect(riwayat).toContainText("Disetujui sendiri tanpa alasan (layar lama)");
+
+    const final = detail.getByRole("region", { name: "Verifikasi final" });
+    for (const n of [1, 2]) {
+        const it = final.getByRole("group", { name: `Item ${n}` });
+        await it.getByLabel("No Claim").fill(`CLM-A-00${n}`);
+        await it.getByRole("checkbox", { name: "KWT" }).check();
+    }
+    await detail.locator(".fi-ftb").getByRole("button", { name: "Selesaikan…" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByRole("heading", { name: "Selesaikan verifikasi final 001/CLM/PRA/09/2026 yang Anda buat sendiri?" })).toBeVisible();
+    await expect(dlg).toContainText("hasil dan alasannya tersimpan di Riwayat batch ini");
+    await expect(dlg.getByLabel("Usulan BL-10")).toHaveCount(0);
+    const tombol = dlg.getByRole("button", { name: "Selesaikan" });
+    const alasan = dlg.getByLabel("Alasan setuju sendiri");
+    await expect(tombol).toBeDisabled();
+    await alasan.fill("abc");
+    await expect(tombol).toHaveAttribute("title", "Alasan setuju sendiri minimal 5 karakter");
+    await alasan.fill("  Pemeriksa final sedang cuti  ");
+    await tombol.click();
+    await expect(dlg).toBeHidden();
+    const ref = (n: number) => ({ itemId: `b-fs-i${n}`, noSurat: `PRA/PRG/093${n}`, noClaim: `CLM-A-00${n}`, finalKwt: true, finalSkp: false, finalFp: false, finalPc: false, finalFoto: false, finalRekap: false, finalOthers: false, finalOthersText: "", finalCompletenessNote: "" });
+    expect(kirim).toEqual([{
+        method: "POST", path: "/api/off-program-control/batches/b-fs/final-claim",
+        body: { action: "complete", note: "", alasanSendiri: "Pemeriksa final sedang cuti", claimRefs: [ref(1), ref(2)] },
     }]);
 });
 
@@ -411,7 +479,7 @@ test("Verifikasi final (claimView=after): No Claim + checklist per item, Ingatka
         {
             method: "POST", path: "/api/off-program-control/batches/b-final/final-claim",
             body: {
-                action: "complete", note: "Faktur pajak item 2 menyusul.", verifiedAmount: 4_000_000,
+                action: "complete", note: "Faktur pajak item 2 menyusul.", verifiedAmount: 4_000_000, alasanSendiri: "",
                 claimRefs: [
                     ref(1, { noClaim: "CLM-RB-001", finalKwt: true }),
                     ref(2, { noClaim: "CLM-RB-002", finalFoto: true, finalOthers: true, finalOthersText: "Surat jalan", finalCompletenessNote: "Asli menyusul" }),
