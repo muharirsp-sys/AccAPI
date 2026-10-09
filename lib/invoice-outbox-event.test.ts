@@ -261,6 +261,61 @@ test("PG: DDL manual (E5 + append-only) — dijalankan DUA kali: data lama dikun
     }
 });
 
+// B-SEDANG: tanpa role accapi_app di DB uji, baris VERIFIKASI hak bernilai NULL dan REVOKE/GRANT tidak pernah teruji.
+test("PG: DDL manual — hak accapi_app: INSERT event boleh, UPDATE/DELETE/TRUNCATE ditolak oleh HAK (REVOKE), bukan hanya trigger", { skip: pgSkip }, async (t) => {
+    const pool = new Pool({ connectionString: PG_URL, max: 2 });
+    let dibuat = false;
+    try {
+        await pool.query((await entriMigrasi("invoice_outbox_event")).sql);
+        if (!(await pool.query(`SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app'`)).rowCount) {
+            try {
+                await pool.query(`CREATE ROLE accapi_app NOLOGIN`);
+                dibuat = true;
+            } catch (error) {
+                t.skip(`role accapi_app tidak ada dan tidak bisa dibuat (${error instanceof Error ? error.message : error}) — REVOKE/GRANT TIDAK teruji`);
+                return;
+            }
+        }
+        // Tiru default privileges produksi (runbook L1g: role aplikasi mendapat hak penuh pada tabel baru) —
+        // tanpa ini role baru memang tak berhak apa pun dan REVOKE tidak pernah diuji.
+        await pool.query(`GRANT ALL ON invoice_outbox_event TO accapi_app`);
+        const { readFile } = await import("node:fs/promises");
+        const ddl = await readFile(new URL("../docs/handover/DDL_OUTBOX_EVENT.sql", import.meta.url), "utf8");
+        const client = await pool.connect();
+        try {
+            const hasil = await client.query(ddl) as unknown as { rows: { cek: string; ok: boolean | null }[] }[];
+            const verifikasi = new Map(hasil[hasil.length - 1].rows.map((r) => [r.cek, r.ok]));
+            // Dengan role ada, baris hak WAJIB true — NULL berarti tidak teruji.
+            assert.equal(verifikasi.get("accapi_app tanpa UPDATE/DELETE/TRUNCATE event"), true);
+            assert.equal(verifikasi.get("accapi_app boleh SELECT/INSERT event"), true);
+
+            const orderId = `UJI-S6D-ROLE:${randomUUID()}`;
+            await client.query("BEGIN");
+            await client.query("SET LOCAL ROLE accapi_app");
+            await client.query(`INSERT INTO invoice_outbox_event (order_id, jenis, actor) VALUES ($1, 'antre', 'uji-role')`, [orderId]);
+            for (const perintah of [
+                `UPDATE invoice_outbox_event SET reason = 'ubah' WHERE order_id = '${orderId}'`,
+                `DELETE FROM invoice_outbox_event WHERE order_id = '${orderId}'`,
+                `TRUNCATE invoice_outbox_event`,
+            ]) {
+                await client.query("SAVEPOINT coba");
+                // "permission denied" = REVOKE; pesan trigger "append-only" berarti hanya lapis kedua yang menahan.
+                await assert.rejects(client.query(perintah), /permission denied/, perintah);
+                await client.query("ROLLBACK TO SAVEPOINT coba");
+            }
+            await client.query("ROLLBACK");
+        } finally {
+            client.release();
+        }
+    } finally {
+        if (dibuat) {
+            await pool.query(`DROP OWNED BY accapi_app`);
+            await pool.query(`DROP ROLE accapi_app`);
+        }
+        await pool.end();
+    }
+});
+
 test("PG: cariFaktur cache — per customer_no + jendela waktu, raw_data string, EQUAL; kosong -> ke Accurate (tanpa sesi = gagal_cek)", { skip: pgSkip }, async () => {
     const pool = new Pool({ connectionString: PG_URL, max: 2 });
     const { cariFaktur } = await import("./invoice-search.ts");
