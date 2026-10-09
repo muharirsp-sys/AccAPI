@@ -266,6 +266,8 @@ def to_float_series(df: pd.DataFrame, cols: List[str]):
 
 def _parse_number_core(t: str) -> Optional[float]:
     """Inti parse_number_id atas teks non-kosong: float, atau None bila tak terbaca."""
+    # Prefix mata uang dibuang UTUH dulu: "Rp.5000" dulu menyisakan ".5000" -> 0.5 (review c4c11927).
+    t = re.sub(r"(?i)(rp|idr)\.?", "", t)
     t = re.sub(r"[^0-9\.\,\-]", "", t)
     t = re.sub(r"[,.]-+$", "", t)  # "1.250.000,-" = rupiah tanpa sen
     # Tanda dipisah DULU: "-1.000" dulu terbaca -1.0 (grup "-1" gagal isdigit -> float("-1.000")).
@@ -334,7 +336,8 @@ def parse_number_id(x) -> float:
 
 # Kontrak sumber (D.22): rupiah Indonesia. Hanya minus, prefix Rp/IDR, digit, pemisah . , spasi dan
 # sufiks ",-". Huruf lain, tanda kurung (negatif akuntansi yang dulu terbaca POSITIF) = invalid.
-_STRICT_NUMBER = re.compile(r"^-?\s*(?:rp\.?|idr)?\s*-?\s*\d[\d.,\s]*(?:,-)?$", re.I)
+# [0-9], bukan \d: \d Unicode menerima digit lebar-penuh ("1２3") yang lalu dibuang inti -> 13.
+_STRICT_NUMBER = re.compile(r"^-?\s*(?:rp\.?|idr)?\s*-?\s*[0-9][0-9.,\s]*(?:,-)?$", re.I)
 
 
 def parse_number_strict(x, field: str = "angka") -> float:
@@ -3040,6 +3043,10 @@ def normalize_sppd_excel_value(field: str, value: Any) -> Any:
     except Exception:
         pass
     if field in SPPD_EXCEL_NUMERIC_FIELDS:
+        # Upload SPPD: sel kosong = biarkan nilai lama (None). Spasi saja / "-" = kosong juga (D-19:
+        # "-" = kosong; field ini berkebijakan kosong=tidak diubah, bukan kosong=0) — dulu menimpa jadi 0.
+        if isinstance(value, str) and value.strip() in ("", "-"):
+            return None
         return parse_number_strict(value, field)  # AM-044: "NOT-A-NUMBER"/"#DIV/0!" dulu menimpa jadi 0
     if field in SPPD_EXCEL_DATE_FIELDS:
         return parse_sppd_date_ddmmyyyy(value)

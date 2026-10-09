@@ -22,6 +22,7 @@ CASES = [
     ("-1.250.000,50", -1250000.5),
     ("--5", 0.0),                   # review L1: dua tanda tak terbaca (sempat jadi +5)
     ("-" * 3000 + "5", 0.0),        # review L1: tanpa rekursi -> tidak RecursionError
+    ("Rp.5000", 5000.0),            # review c4c11927: dulu 0.5 ("Rp." menyisakan ".5000")
 ]
 
 # AM-044 (D.21-22): jalur UANG memakai parse_number_strict — nonempty invalid = galat, bukan 0.
@@ -31,8 +32,12 @@ STRICT_OK = [
     (0, 0.0), (0.0, 0.0), ("0", 0.0), ("", 0.0), (None, 0.0), (float("nan"), 0.0), ("-", 0.0),
     ("1.234", 1234.0), ("1,234", 1234.0), ("1,5", 1.5), ("1.5", 1.5),
     ("Rp 1.250.000,-", 1250000.0), ("IDR 250,000.00", 250000.0), ("1 250 000", 1250000.0), ("-1.000", -1000.0),
+    # review c4c11927 (MEDIUM): prefix "Rp." dulu menggeser skala -> 0.5 / 0.15 / 0.1
+    ("Rp.5000", 5000.0), ("Rp.150.000", 150000.0), ("Rp.1000,-", 1000.0), ("Rp-1.000", -1000.0),
 ]
-STRICT_BAD = ["abc", "NOT-A-NUMBER", "12abc", "1.2.3,4.5", "(1.000)", "-Rp-5", "--5", True, float("inf"), "1e5", "Rp"]
+# "1２3"/"１.000": digit lebar-penuh dulu lolos regex (\d Unicode) lalu dibuang inti -> 13 / 0.0.
+STRICT_BAD = ["abc", "NOT-A-NUMBER", "12abc", "1.2.3,4.5", "(1.000)", "-Rp-5", "--5", True, float("inf"), "1e5", "Rp",
+              "1２3", "１.000"]
 
 
 def main():
@@ -55,6 +60,9 @@ def main():
     else:
         raise AssertionError("SPPD Excel nilai_pembayaran 'NOT-A-NUMBER' diterima (dulu 0)")
     assert shared.normalize_sppd_excel_value("nilai_pembayaran", "Rp 1.000") == 1000.0
+    # Review c4c11927 (LOW): sel SPPD berisi spasi / "-" = kosong (tidak diubah), dulu menimpa jadi 0.
+    for blank in ("   ", "-", " - "):
+        assert shared.normalize_sppd_excel_value("nilai_pembayaran", blank) is None, blank
     # Longgar tetap longgar untuk read model (perilaku lama dipertahankan).
     assert shared.parse_number_id("abc") == 0.0
     print("OK test_parse_number_id")

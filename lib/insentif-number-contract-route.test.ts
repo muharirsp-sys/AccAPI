@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 import { POST as postTargets } from "../app/api/insentif-sales/targets/route.ts";
 import { POST as postSupport } from "../app/api/insentif-sales/support/route.ts";
+import { POST as postSpvSupport } from "../app/api/insentif-sales/spv-support/route.ts";
 import { db } from "./db.ts";
 
 async function withLocalAdminNoDb<T>(fn: () => Promise<T>): Promise<T> {
@@ -66,5 +67,18 @@ test("support: null / string kosong / string angka ditolak 400 tanpa menyentuh D
         }
         // Nol yang dikirim sebagai number = nol sah: lolos validasi lalu sampai ke tulis DB (di sini dimatikan).
         await assert.rejects(postSupport(req("/api/insentif-sales/support", row(0))), /DB disentuh/);
+    });
+});
+
+// Review c4c11927: spv-support tidak punya uji. Fixture memakai spvName — baris tanpa spvName dilewati
+// (`continue`) dan menghasilkan 200 upserted:0, jadi 400 di sini membuktikan cek angka, bukan fixture.
+test("spv-support: null / kosong / string angka / boolean / negatif ditolak 400 tanpa menyentuh DB", async () => {
+    await withLocalAdminNoDb(async () => {
+        const row = (supportAmount: unknown) => [{ spvName: "SPV A", principle: "GODREJ", periodMonth: 9, periodYear: 2026, supportAmount }];
+        for (const bad of [null, "", "12", true, -5]) {
+            const res = await postSpvSupport(req("/api/insentif-sales/spv-support", row(bad)));
+            assert.equal(res.status, 400, `supportAmount ${JSON.stringify(bad)}`);
+        }
+        await assert.rejects(postSpvSupport(req("/api/insentif-sales/spv-support", row(0))), /DB disentuh/);
     });
 });
