@@ -129,6 +129,13 @@ def yearly_numbering():
     db4 = legacy_db()
     db4["submissions"]["u"] = {"sppd_no": "001/SPA/PDSB/I/2027"}  # tahun terbit terbaru menang
     assert shared.get_sppd_settings(db4)["sequence_year"] == 2027
+    # Tinjauan: nomor tak standar ("045/SPA/0123") bukan tahun 123 — di luar 2000–9999 diabaikan (klem sama dengan
+    # normalize_sppd_settings), jadi tidak memicu reset 001 di tengah tahun.
+    odd = {"sppd_settings": {"last_sequence": 45}, "lpb": {"a": {"sppd_no": "045/SPA/0123"}}}
+    n, no, _ = shared.next_sppd_number(odd, pd.Timestamp("2026-10-09 08:00"))
+    assert (n, no) == (46, "046/SPA/PDSB/X/2026"), f"nomor tak standar memicu reset: {(n, no)}"
+    odd2 = {"sppd_settings": {"last_sequence": 45}, "lpb": {"a": {"sppd_no": "045/SPA/0123"}, "b": {"sppd_no": "044/SPA/PDSB/IX/2026"}}}
+    assert shared.get_sppd_settings(odd2)["sequence_year"] == 2026
 
     # Tanggal terbit = WITA (UTC+8), bukan jam server (produksi berjalan UTC): 00:30 WITA 1 Jan = 16:30 UTC 31 Des.
     utc = pd.Timestamp.now(tz="UTC").tz_localize(None)
@@ -150,6 +157,9 @@ def restore_backup_sequence():
     assert (db["sppd_settings"]["last_sequence"], db["sppd_settings"]["sequence_year"]) == (2, 2027), db["sppd_settings"]
     n, no, _ = shared.next_sppd_number(db, later)
     assert (n, no) == (3, "003/SPA/PDSB/I/2027"), (n, no)
+    # Nomor tak standar tanpa tahun yang sah ("050/SPA/0123") dihitung seperti nomor tanpa tahun (fail-closed: naik).
+    shared.raise_sppd_sequence_from_records(db, [{"sppd_no": "050/SPA/0123"}], later)
+    assert db["sppd_settings"]["last_sequence"] == 50, db["sppd_settings"]
 
 
 def main():

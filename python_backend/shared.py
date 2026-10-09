@@ -1593,6 +1593,14 @@ def parse_payments_backup_upload(content: bytes) -> List[Tuple[str, Dict[str, An
         )
     return rows
 
+def sppd_no_year(sppd_no: str) -> Optional[int]:
+    """Tahun nomor SPPD = 4 digit terakhir, hanya bila 2000–9999 (klem sama dengan normalize_sppd_settings).
+    Nomor tak standar ("045/SPA/0123") = tanpa tahun, bukan tahun 123."""
+    m = re.search(r"(\d{4})\s*$", s(sppd_no))
+    year = int(m.group(1)) if m else None
+    return year if year is not None and 2000 <= year <= 9999 else None
+
+
 def max_sppd_sequence_from_records(records: List[Dict[str, Any]], year: Optional[int] = None) -> int:
     """Nomor urut SPPD tertinggi di records. `year`: hanya nomor bertahun itu (tahun = 4 digit terakhir nomor);
     nomor tanpa tahun ikut dihitung (fail-closed: lebih baik urutan naik daripada nomor ganda)."""
@@ -1603,8 +1611,8 @@ def max_sppd_sequence_from_records(records: List[Dict[str, Any]], year: Optional
         if not m:
             continue
         if year is not None:
-            y = re.search(r"(\d{4})\s*$", sppd_no)
-            if y and int(y.group(1)) != int(year):
+            y = sppd_no_year(sppd_no)
+            if y is not None and y != int(year):
                 continue
         try:
             max_seq = max(max_seq, int(m.group(1)))
@@ -1830,9 +1838,10 @@ def infer_sppd_sequence_year(db: Dict[str, Any]) -> Optional[int]:
     for section in ("lpb", "submissions"):
         records = db.get(section) if isinstance(db.get(section), dict) else {}
         for rec in records.values():
-            m = re.search(r"^\s*\d+\s*/.*?(\d{4})\s*$", s(rec.get("sppd_no", ""))) if isinstance(rec, dict) else None
-            if m:
-                years.append(int(m.group(1)))
+            sppd_no = s(rec.get("sppd_no", "")) if isinstance(rec, dict) else ""
+            year = sppd_no_year(sppd_no) if re.match(r"^\s*\d+\s*/", sppd_no) else None
+            if year is not None:
+                years.append(year)
     return max(years) if years else None
 
 
