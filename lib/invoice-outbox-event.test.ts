@@ -225,6 +225,35 @@ test("PG: DDL manual (E5 + append-only) — dijalankan DUA kali: data lama dikun
     }
 });
 
+test("PG: cariFaktur cache — per customer_no + jendela waktu, raw_data string, EQUAL; kosong -> ke Accurate (tanpa sesi = gagal_cek)", { skip: pgSkip }, async () => {
+    const pool = new Pool({ connectionString: PG_URL, max: 2 });
+    const { cariFaktur } = await import("./invoice-search.ts");
+    const pelanggan = `C-UJI-${randomUUID().slice(0, 8)}`;
+    const key = `UJI-S6D:${randomUUID()}`;
+    const base = 9_000_000_000 + Math.floor(Math.random() * 1_000_000) * 10;
+    const antre = new Date(Date.now() - 2 * 3_600_000);
+    try {
+        const tambah = (id: number, raw: unknown, createdAgoJam: number | null, lastAgoJam: number, cust = pelanggan) => pool.query(
+            `INSERT INTO sales_invoice (id, number, customer_no, raw_data, created_at, last_update_at)
+             VALUES ($1, $2, $3, $4::jsonb, CASE WHEN $5::int IS NULL THEN NULL ELSE now() - make_interval(hours => $5::int) END,
+                     now() - make_interval(hours => $6::int))`,
+            [id, `INV/UJI/${id}`, cust, JSON.stringify(JSON.stringify(raw)), createdAgoJam, lastAgoJam]);
+        await tambah(base + 1, { charField1: key }, 72, 72);                 // terlalu lama (sebelum jendela −1 hari)
+        await tambah(base + 2, { charField1: `${key}X` }, 1, 1);              // bukan EQUAL
+        await tambah(base + 3, { charField1: key }, 1, 1, `${pelanggan}-LAIN`); // pelanggan lain
+        const db = drizzle(pool);
+        const kosong = await cariFaktur({ db, key, customerNo: pelanggan, queuedAt: antre, session: null });
+        assert.equal(kosong.hasil, "gagal_cek", "cache tidak ketemu + tanpa sesi = gagal_cek, BUKAN tidak_ketemu");
+        await tambah(base + 4, { charField1: "", detailItem: [{ charField1: key }] }, null, 1); // created_at NULL (list.do) -> last_update_at
+        const ketemu = await cariFaktur({ db, key, customerNo: pelanggan, queuedAt: antre, session: null });
+        assert.deepEqual(ketemu, { hasil: "ketemu", id: String(base + 4), number: `INV/UJI/${base + 4}`, sumber: "cache",
+            semua: [{ id: String(base + 4), number: `INV/UJI/${base + 4}` }] });
+    } finally {
+        await pool.query(`DELETE FROM sales_invoice WHERE id BETWEEN $1 AND $2`, [base, base + 9]);
+        await pool.end();
+    }
+});
+
 test("PG: dua Kirim bersamaan pada antrean yang sama -> SATU kiriman per order, satu event kirim + satu hasil", { skip: pgSkip }, async () => {
     const poolA = new Pool({ connectionString: PG_URL, max: 2 });
     const poolB = new Pool({ connectionString: PG_URL, max: 2 });
