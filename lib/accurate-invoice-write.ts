@@ -33,6 +33,11 @@ export type FrozenResultLine = {
     percents?: string[];
     /** Bagian diskon yang berupa RUPIAH, di luar rantai persen di atas. */
     cash?: string;
+    /**
+     * Rupiah baris ini SUDAH dilipat ke `percents` sebagai persen setara (jalur laporan principal).
+     * Hanya agar galat netto menyebut sebab yang benar: batas 4 desimal, bukan dasar yang salah.
+     */
+    rupiahDilipat?: boolean;
     /** Harga satuan bila baris hasil membawanya sendiri (jalur laporan principal). */
     price?: string;
 };
@@ -191,15 +196,26 @@ export function buildInvoicePayload(
         // INV/2609/KN01376 (30 Sep 2026): "2+0+0+0+0" + rupiah di 7 baris, DPP Accurate = bruto
         // × 98% persis, Rp 18.019,82 hilang. Rupiahnya dilipat jadi persen setara di ujung rantai.
         const sisa = percents.reduce((left, p) => left - cents(left * Number(p) / 100), gross);
+        // Netto persen + rupiah APA ADANYA, sebelum dilipat: pembeda sebab bila rantainya meleset.
+        const asli = { rantai: `${percents.join("+") || "-"}${cash > 0 ? ` + Rp ${cash}` : ""}`, netto: sisa - cash };
+        // Rupiah yang dilipat di sini, atau sudah dilipat pemanggil (jalur laporan principal).
+        let dilipat = line.rupiahDilipat === true;
         if (percents.length > 0 && cash > 0) {
+            dilipat = Math.abs(asli.netto - net) <= 1;
             percents.push(persenSetara(cash, sisa));
             cash = 0;
         }
         // Accurate menghitung ulang persennya sendiri, jadi beberapa sen selisih diterima; rantai
         // yang memberi netto lain = dasar yang salah, dan faktur tidak bisa ditarik setelah terbit.
+        // Galatnya menahan SO UTUH (pemanggil menolak seluruh faktur, tidak ada faktur separuh isi).
         const hasil = percents.reduce((left, p) => left - cents(left * Number(p) / 100), gross) - cash;
         if (!(Math.abs(hasil - net) <= 1)) {
-            throw new Error(`Diskon baris ${key} (${percents.join("+") || "-"} + Rp ${cash}) tidak menghasilkan netto ${net}`);
+            const [rantai, netto] = dilipat ? [`persen ${percents.join("+")}`, hasil] : [`diskon ${asli.rantai}`, asli.netto];
+            const angka = `netto SO Rp ${net.toFixed(2)}, netto hasil ${rantai} Rp ${netto.toFixed(2)}, `
+                + `selisih Rp ${Math.abs(netto - net).toFixed(2)}`;
+            throw new Error(`Barang ${line.code} (${line.unit}): ${angka}. SO ditahan utuh: ${dilipat
+                ? "potongan rupiah baris terlalu besar untuk dipersenkan 4 desimal"
+                : "rantai diskon beku tidak menghasilkan netto SO"} — buat faktur ini manual di Accurate atau minta perbaikan.`);
         }
         return {
             itemNo: line.code,

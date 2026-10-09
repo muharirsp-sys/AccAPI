@@ -51,12 +51,15 @@ const cents = (value: number) => Math.round(value * 100) / 100;
 /**
  * Rantai persen yang POSISINYA terjaga: SELALU lima slot d1+d2+d3+d4+d5, yang kosong jadi "0" —
  * "3.96+3.1+0+0+0", bukan "3.96+3.1" (permintaan pengguna 2026-09-24: semua posisi diskon
- * terlihat di Accurate). Diskon yang di laporan berupa RUPIAH masuk sebagai persen SETARA di
- * posisinya sendiri, dihitung atas sisa sebelum posisi itu: Accurate membuang `itemCashDiscount`
- * begitu `itemDiscPercent` terisi (INV/2609/KN01376), dan D5 harus tetap terbaca klaim principal.
+ * terlihat di Accurate). Pada baris CAMPURAN (persen dan rupiah), rupiahnya masuk sebagai persen
+ * SETARA di posisinya sendiri, dihitung atas sisa sebelum posisi itu: Accurate membuang
+ * `itemCashDiscount` begitu `itemDiscPercent` terisi (INV/2609/KN01376), dan D5 harus tetap
+ * terbaca klaim principal. Baris yang SEMUA potongannya rupiah tidak punya rantai sama sekali —
+ * rupiahnya dikirim apa adanya (bentuk lama yang diterima Accurate), karena Rekap Promo hanya
+ * mengenali potongan tingkat faktur (MSG) dari `itemCashDiscount` (RISKA INV/2609/KN00451).
  */
 export function percentChain(discounts: DiscountAt[], gross: number): string[] {
-    if (discounts.length === 0) return [];
+    if (!discounts.some((entry) => entry.amount === undefined)) return [];
     let remaining = gross;
     const byPosition = new Map<number, string>();
     for (const entry of [...discounts].sort((a, b) => a.position - b.position)) {
@@ -129,6 +132,7 @@ export function groupCandidates(
             gross = cents(gross + rowGross);
             net = cents(net + rowNet);
             const sorted = [...row.discounts].sort((a, b) => a.position - b.position);
+            const percents = percentChain(sorted, rowGross);
             return {
                 code: row.itemCode!,
                 unit: row.unit,
@@ -143,9 +147,11 @@ export function groupCandidates(
                 // membacanya kembali — Rekap Promo, laporan klaim, maupun pemeriksa. Terbukti
                 // pada INV/2609/KN00450 (12 Sep 2026): klaim Rp 28.921 tersimpan sebagai 3% di
                 // posisi 1. Uang yang bisa ditagihkan berubah jadi biaya sendiri, tanpa galat.
-                // Semua potongan sebagai persen, rupiah 0 — lihat percentChain.
-                percents: percentChain(sorted, rowGross),
-                cash: "0",
+                // Ada rantai = semua potongan (termasuk rupiah baris campuran) sudah persen, rupiah 0.
+                // Tanpa rantai = rupiah murni, dikirim sebagai rupiah — lihat percentChain.
+                percents,
+                cash: percents.length ? "0" : String(cents(sorted.reduce((total, entry) => total + (entry.amount ?? 0), 0))),
+                rupiahDilipat: percents.length > 0 && sorted.some((entry) => entry.amount !== undefined),
                 price: String(price),
             };
         });

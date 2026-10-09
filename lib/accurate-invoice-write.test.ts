@@ -60,7 +60,19 @@ test("payload memakai angka beku dan tidak pernah mengarang nomor faktur", () =>
     // Rantai yang tidak menghasilkan netto beku ditahan, bukan dikirim lalu ketahuan belakangan.
     const meleset = order();
     meleset.result.lines = [{ ...meleset.result.lines![0], percents: ["10", "5"], cash: "8960" }];
-    assert.throws(() => buildInvoicePayload(meleset, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }), /tidak menghasilkan netto/);
+    // Sebabnya dasar yang salah (10% + 5% + Rp 8.960 ≠ diskon 10%), bukan batas desimal.
+    assert.throws(() => buildInvoicePayload(meleset, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }), (error: Error) => {
+        assert.match(error.message, /Barang M5012001000740 \(KRT\): netto SO Rp 2060640\.00, netto hasil diskon 10\+5 \+ Rp 8960 Rp 1948648\.00, selisih Rp 111992\.00/);
+        assert.match(error.message, /SO ditahan utuh: rantai diskon beku tidak menghasilkan netto SO/);
+        assert.doesNotMatch(error.message, /4 desimal/);
+        return true;
+    });
+
+    // Sebabnya batas 4 desimal: persen + rupiah persis menghasilkan netto, persen setaranya tidak.
+    const besar = order({ lines: [{ code: "M5012001000740", unit: "KRT", quantity: "1", price: "50000000" }] });
+    besar.result.lines = [{ code: "M5012001000740", unit: "KRT", quantity: "1", gross: "50000000.00", net: "48287654.33", percents: ["2"], cash: "712345.67" }];
+    assert.throws(() => buildInvoicePayload(besar, { unitIds: UNITS, branchId: 150, typeAutoNumber: 1702 }),
+        /selisih Rp 16\.33\. SO ditahan utuh: potongan rupiah baris terlalu besar untuk dipersenkan 4 desimal/);
 
     // Bagian rupiah tidak boleh melebihi total diskon baris.
     const salah = order();

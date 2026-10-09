@@ -25,7 +25,7 @@ import { db } from "@/lib/db";
 import { invoiceOutbox } from "@/db/schema";
 import { isAllowedAccurateHost, requireCronSecret } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
-import { sendQueuedInvoices } from "@/lib/invoice-sender";
+import { jawabanCron, sendQueuedInvoices } from "@/lib/invoice-sender";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -78,7 +78,7 @@ export async function GET(request: Request) {
         { sessionHost: session.sessionHost, sessionId: session.sessionId, accessToken: session.accessToken },
         { targetDb, limit: BATCH },
     );
-    const results = outcome.results;
-    const unknown = results.filter((item) => item.state === "unknown").length;
-    return NextResponse.json({ ok: unknown === 0, sent: results.filter((i) => i.state === "posted").length, unknown, results });
+    // Penolakan sebelum kirim (antrean lama persen + rupiah) diteruskan sebagai 409, bukan ok.
+    const { status, body } = jawabanCron(outcome);
+    return NextResponse.json(body, { status });
 }
