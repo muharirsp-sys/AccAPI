@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox } from "@/db/schema";
+import { catatEvent } from "@/lib/invoice-outbox-event";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { buildInvoicePayload, type InvoiceOrder } from "@/lib/accurate-invoice-write";
 import { accurateUnits } from "@/lib/accurate-units";
@@ -91,14 +92,20 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
             ok: false, error: `Order ini sudah ada di antrean faktur (status ${existing[0].state})`,
         }, { status: 409 });
     }
-    await db.insert(invoiceOutbox).values({
-        orderId: id,
-        customerNo: payload.customerNo,
-        orderDate: fetched.order.order_date,
-        state: "queued",
-        payload,
-        programSnapshot: programSnapshot(fetched.order),
-        queuedBy: String(gate.session?.user?.email ?? gate.session?.user?.id ?? ""),
+    const order = fetched.order;
+    const queuedBy = String(gate.session?.user?.email ?? gate.session?.user?.id ?? "");
+    // Baris antrean + event `antre` dalam satu transaksi (BL-17).
+    await db.transaction(async (tx) => {
+        await tx.insert(invoiceOutbox).values({
+            orderId: id,
+            customerNo: payload.customerNo,
+            orderDate: order.order_date,
+            state: "queued",
+            payload,
+            programSnapshot: programSnapshot(order),
+            queuedBy,
+        });
+        await catatEvent(tx, { orderId: id, jenis: "antre", stateTo: "queued", actor: queuedBy });
     });
     return NextResponse.json({ ok: true, queued: true, payload });
 }

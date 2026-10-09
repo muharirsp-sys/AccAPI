@@ -86,7 +86,8 @@ export async function POST(request: NextRequest) {
 
     const outcome = await sendQueuedInvoices(
         { sessionHost: session.sessionHost, sessionId: session.sessionId, accessToken: session.accessToken },
-        { targetDb, limit: MAX_PER_PRESS, orderIds, invoiceDate },
+        // Pengirim tercatat di riwayat antrean (event `kirim`): penekan tombol, bukan "sistem".
+        { targetDb, limit: MAX_PER_PRESS, orderIds, invoiceDate, actor: String(gate.session?.user?.email ?? userId) },
     );
     if (outcome.error) return NextResponse.json({ ok: false, error: outcome.error }, { status: 400 });
 

@@ -16,19 +16,13 @@
 // Yang tidak boleh di sini tetap lewat DDL manual di docs/handover/ supaya ada yang menekan
 // tombolnya secara sadar dan bisa memeriksa hasilnya baris per baris.
 
+import { pathToFileURL } from "node:url";
 import { Pool } from "pg";
 
-// DATABASE_MIGRATION_URL: role ber-hak DDL, terpisah dari role aplikasi. Role aplikasi
-// (accapi_app) sengaja bukan owner tabel — runbook L1g — dan Postgres menolak ALTER TABLE
-// dari non-owner. Kalau tidak di-set, jatuh ke DATABASE_URL seperti semula.
-const url = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || "";
-if (!url.startsWith("postgres")) {
-  console.log("[migrate-pg] DATABASE_URL bukan Postgres — dilewati.");
-  process.exit(0);
-}
-
+// Diekspor agar uji Postgres (lib/invoice-outbox-event.test.ts) menjalankan SQL entri yang SAMA
+// persis; eksekusi hanya bila berkas ini dijalankan langsung (`node scripts/migrate-pg.mjs`).
 /** @type {{ nama: string, sudahAda: string, sql: string }[]} */
-const migrations = [
+export const migrations = [
   {
     // 2026-08-29. Deteksi kandidat "Gabung Kode Sales" hanya bisa membaca nama dari
     // sales_targets, jadi kode yang punya penjualan tapi belum punya target sampai ke sana
@@ -370,34 +364,78 @@ const migrations = [
     sudahAda: `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_idempotency_log_lock'`,
     sql: `CREATE INDEX IF NOT EXISTS idx_idempotency_log_lock ON idempotency_log ("lockId");`,
   },
+  {
+    // 2026-10-09 (S6-0d BL-17 + R6; DRAFT — zona Accurate write/idempotensi, butuh review manusia).
+    // Riwayat antrean faktur APPEND-ONLY: satu baris per aksi/percobaan (antre, kirim + status HTTP
+    // + potongan jawaban, buang, antre ulang, selesaikan, sapu). TANPA FK ke invoice_outbox —
+    // Buang = DELETE baris antrean dan riwayatnya harus bertahan. invoice_outbox sendiri dipasang
+    // manual (db/migrations/0004) dan tidak dibutuhkan untuk membuat tabel ini.
+    // Role aplikasi butuh SELECT/INSERT + USAGE sequence (runbook L1g). Trigger anti-ubah + REVOKE
+    // UPDATE/DELETE/TRUNCATE = docs/handover/DDL_OUTBOX_EVENT.sql (manual), BUKAN di sini.
+    nama: "invoice_outbox_event",
+    sudahAda: `SELECT 1 FROM information_schema.tables WHERE table_name = 'invoice_outbox_event'`,
+    sql: `
+      CREATE TABLE IF NOT EXISTS invoice_outbox_event (
+          id               bigserial PRIMARY KEY,
+          order_id         text NOT NULL,
+          jenis            text NOT NULL,
+          state_from       text,
+          state_to         text,
+          actor            text NOT NULL DEFAULT '',
+          http_status      integer,
+          response_excerpt text NOT NULL DEFAULT '',
+          error_code       text NOT NULL DEFAULT '',
+          reason           text NOT NULL DEFAULT '',
+          detail           jsonb,
+          created_at       timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT invoice_outbox_event_jenis CHECK (jenis IN
+              ('antre', 'kirim', 'posted', 'rejected', 'unknown', 'buang', 'antre_ulang', 'selesaikan', 'sapu')),
+          CONSTRAINT invoice_outbox_event_excerpt CHECK (length(response_excerpt) <= 500)
+      );
+      CREATE INDEX IF NOT EXISTS idx_invoice_outbox_event_order ON invoice_outbox_event (order_id, created_at);
+    `,
+  },
 ];
 
-const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 15_000 });
-
-try {
-  for (const m of migrations) {
-    // Cek dulu lewat information_schema (read-only, tidak butuh hak DDL). Postgres memeriksa
-    // kepemilikan tabel SEBELUM IF NOT EXISTS sempat berlaku, jadi tanpa cek ini ALTER tetap
-    // ditolak walau kolomnya sudah ada — dan karena kegagalan mematikan container, hasilnya
-    // crash loop permanen: "no available server" di proxy.
-    const { rowCount } = await pool.query(m.sudahAda);
-    if (rowCount) {
-      console.log(`[migrate-pg] SKIP ${m.nama} (sudah ada)`);
-      continue;
-    }
-    await pool.query(m.sql);
-    console.log(`[migrate-pg] OK ${m.nama}`);
+async function main() {
+  // DATABASE_MIGRATION_URL: role ber-hak DDL, terpisah dari role aplikasi. Role aplikasi
+  // (accapi_app) sengaja bukan owner tabel — runbook L1g — dan Postgres menolak ALTER TABLE
+  // dari non-owner. Kalau tidak di-set, jatuh ke DATABASE_URL seperti semula.
+  const url = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL || "";
+  if (!url.startsWith("postgres")) {
+    console.log("[migrate-pg] DATABASE_URL bukan Postgres — dilewati.");
+    process.exit(0);
   }
-  console.log(`[migrate-pg] ${migrations.length} migrasi selesai.`);
-} catch (error) {
-  // Sengaja MEMATIKAN container: kode yang butuh kolom ini sudah ikut di image yang sama.
-  // Start dengan skema setengah jadi berarti error muncul nanti, di tangan user, pada
-  // request acak — jauh lebih mahal daripada gagal start yang langsung terlihat di log.
-  console.error("[migrate-pg] GAGAL:", String(error?.message || error));
-  console.error("[migrate-pg] Kalau pesannya soal owner/permission: role aplikasi memang bukan owner tabel.");
-  console.error("[migrate-pg] Jalankan DDL-nya sekali sebagai role owner (lihat docs/handover/), atau set");
-  console.error("[migrate-pg] DATABASE_MIGRATION_URL ke role yang berhak DDL. Setelah kolomnya ada, migrasi ini di-skip.");
-  process.exit(1);
-} finally {
-  await pool.end();
+
+  const pool = new Pool({ connectionString: url, max: 1, connectionTimeoutMillis: 15_000 });
+
+  try {
+    for (const m of migrations) {
+      // Cek dulu lewat information_schema (read-only, tidak butuh hak DDL). Postgres memeriksa
+      // kepemilikan tabel SEBELUM IF NOT EXISTS sempat berlaku, jadi tanpa cek ini ALTER tetap
+      // ditolak walau kolomnya sudah ada — dan karena kegagalan mematikan container, hasilnya
+      // crash loop permanen: "no available server" di proxy.
+      const { rowCount } = await pool.query(m.sudahAda);
+      if (rowCount) {
+        console.log(`[migrate-pg] SKIP ${m.nama} (sudah ada)`);
+        continue;
+      }
+      await pool.query(m.sql);
+      console.log(`[migrate-pg] OK ${m.nama}`);
+    }
+    console.log(`[migrate-pg] ${migrations.length} migrasi selesai.`);
+  } catch (error) {
+    // Sengaja MEMATIKAN container: kode yang butuh kolom ini sudah ikut di image yang sama.
+    // Start dengan skema setengah jadi berarti error muncul nanti, di tangan user, pada
+    // request acak — jauh lebih mahal daripada gagal start yang langsung terlihat di log.
+    console.error("[migrate-pg] GAGAL:", String(error?.message || error));
+    console.error("[migrate-pg] Kalau pesannya soal owner/permission: role aplikasi memang bukan owner tabel.");
+    console.error("[migrate-pg] Jalankan DDL-nya sekali sebagai role owner (lihat docs/handover/), atau set");
+    console.error("[migrate-pg] DATABASE_MIGRATION_URL ke role yang berhak DDL. Setelah kolomnya ada, migrasi ini di-skip.");
+    process.exit(1);
+  } finally {
+    await pool.end();
+  }
 }
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

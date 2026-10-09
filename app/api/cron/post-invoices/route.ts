@@ -76,7 +76,8 @@ export async function GET(request: Request) {
     // gerbangnya: di sini env, di sana izin + sesi penekannya.
     const outcome = await sendQueuedInvoices(
         { sessionHost: session.sessionHost, sessionId: session.sessionId, accessToken: session.accessToken },
-        { targetDb, limit: BATCH },
+        // Pengirim tercatat = identitas cron + petugas pemilik sesinya (event `kirim`).
+        { targetDb, limit: BATCH, actor: `cron:${officer}` },
     );
     // Penolakan sebelum kirim (antrean lama persen + rupiah) diteruskan sebagai 409, bukan ok.
     const { status, body } = jawabanCron(outcome);

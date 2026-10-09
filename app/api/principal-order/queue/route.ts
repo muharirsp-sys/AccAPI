@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accurateEmployee, invoiceOutbox, principalOrderBatch, principalOrderLine } from "@/db/schema";
+import { catatEvent } from "@/lib/invoice-outbox-event";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { groupCandidates, type BatchLine, type SkippedSo } from "@/lib/principal-invoice";
 import { buildInvoicePayload, type InvoicePayload } from "@/lib/accurate-invoice-write";
@@ -161,14 +162,21 @@ export async function POST(request: NextRequest) {
     }
 
     const queuedBy = String(gate.session?.user?.email ?? gate.session?.user?.id ?? "");
-    const inserted = await db.insert(invoiceOutbox).values(ready.map((entry) => ({
-        orderId: entry.key,
-        customerNo: entry.payload.customerNo,
-        orderDate: entry.orderDate,
-        state: "queued",
-        payload: entry.payload,
-        queuedBy,
-    }))).onConflictDoNothing().returning({ orderId: invoiceOutbox.orderId });
+    // Baris antrean + event `antre` dalam SATU transaksi (BL-17): yang masuk antrean selalu berjejak.
+    const inserted = await db.transaction(async (tx) => {
+        const rows = await tx.insert(invoiceOutbox).values(ready.map((entry) => ({
+            orderId: entry.key,
+            customerNo: entry.payload.customerNo,
+            orderDate: entry.orderDate,
+            state: "queued",
+            payload: entry.payload,
+            queuedBy,
+        }))).onConflictDoNothing().returning({ orderId: invoiceOutbox.orderId });
+        await catatEvent(tx, ...rows.map((row) => ({
+            orderId: row.orderId, jenis: "antre" as const, stateTo: "queued", actor: queuedBy, detail: { batch_id: id },
+        })));
+        return rows;
+    });
 
     return NextResponse.json({
         ok: true, id, queued: inserted.length,

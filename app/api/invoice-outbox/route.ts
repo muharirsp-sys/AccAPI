@@ -2,9 +2,11 @@
  * Tujuan: Isi antrean faktur Accurate — yang menunggu, yang ditolak, dan yang TIDAK PASTI —
  *         beserta umur masalahnya, plus tindakan kirim ulang / batalkan antrean.
  * Caller: halaman Antrean Faktur (/antrean-faktur).
- * Dependensi: db invoice_outbox + principal_order_line (sales & outlet), lib/accurate-invoice-write.
+ * Dependensi: db invoice_outbox + principal_order_line (sales & outlet), lib/invoice-outbox-actions.
  * Main Functions: GET (ringkasan + daftar), POST (aksi `resend` atau `discard`).
- * Side Effects: POST mengubah/menghapus satu baris antrean. TIDAK ADA request ke Accurate.
+ * Side Effects: POST mengubah/menghapus satu baris antrean + SATU event riwayat dalam transaksi yang
+ *   sama (BL-17, lib/invoice-outbox-actions): Buang = DELETE baris + event `buang` berisi salinan
+ *   barisnya, jadi kunci SO bebas diantre ulang tetapi jejaknya tidak hilang.
  *
  * Aturan yang tidak boleh dilanggar:
  * - `unknown` TIDAK PERNAH boleh dikirim ulang maupun dihapus dari sini. Tidak ada jawaban
@@ -19,11 +21,11 @@
  *   baru semenit. Yang lewat 2 jam adalah bahan eskalasi ke OM (keputusan pengguna).
  */
 import { NextRequest, NextResponse } from "next/server";
-import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox, principalOrderBatch, principalOrderLine } from "@/db/schema";
+import { aksiAntrean } from "@/lib/invoice-outbox-actions";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { discardable, resendable, type OutboxState } from "@/lib/accurate-invoice-write";
 
 export const runtime = "nodejs";
 
@@ -140,41 +142,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: false, error: "action harus `resend` atau `discard`" }, { status: 400 });
     }
 
-    const [row] = await db.select({ state: invoiceOutbox.state }).from(invoiceOutbox)
-        .where(eq(invoiceOutbox.orderId, orderId)).limit(1);
-    if (!row) return NextResponse.json({ ok: false, error: "Baris antrean tidak ditemukan" }, { status: 404 });
-
-    const allowed = action === "discard" ? discardable(row.state as OutboxState) : resendable(row.state as OutboxState);
-    if (!allowed) {
-        const alasan = row.state === "unknown"
-            ? "Statusnya TIDAK PASTI: Accurate tidak menjawab, jadi fakturnya mungkin sudah terbentuk di sana. "
-              + "Cocokkan dulu lewat pencarian charField1 di Accurate; jangan pernah dikirim ulang dari sini."
-            : action === "discard"
-                ? `Status ${row.state} tidak boleh dibuang: fakturnya mungkin atau pasti sudah ada di Accurate.`
-                : `Status ${row.state} tidak boleh dilepas ulang.`;
-        return NextResponse.json({ ok: false, error: alasan }, { status: 409 });
-    }
-
-    if (action === "discard") {
-        // Yang DITOLAK (Accurate menjawab dan menolak) dan yang MASIH MENUNGGU (belum pernah
-        // satu request pun terkirim) — keduanya dipastikan tidak punya faktur di Accurate.
-        // `queued` ikut karena payload BEKU saat diantrekan: kalau aturan pembentuk payload
-        // berubah (mis. salesman mulai ikut dikirim), satu-satunya cara memperbaruinya adalah
-        // membuang barisnya lalu mengantrekan ulang dari batch.
-        await db.delete(invoiceOutbox)
-            .where(and(eq(invoiceOutbox.orderId, orderId), inArray(invoiceOutbox.state, ["rejected", "queued"])));
-        return NextResponse.json({ ok: true, orderId, action, state: null });
-    }
-
-    // Kirim ulang = kembalikan ke `queued` supaya pengirim terjadwal mengambilnya. Angkanya
-    // TIDAK dihitung ulang: payload dibekukan saat diantrekan. Kalau yang salah adalah
-    // angkanya, yang benar adalah `discard` lalu antrekan ulang dari batch yang diperbaiki.
-    const updated = await db.update(invoiceOutbox)
-        .set({ state: "queued", updatedAt: new Date() })
-        .where(and(eq(invoiceOutbox.orderId, orderId), eq(invoiceOutbox.state, "rejected")))
-        .returning({ orderId: invoiceOutbox.orderId, attempts: invoiceOutbox.attempts });
-    if (updated.length === 0) {
-        return NextResponse.json({ ok: false, error: "Status berubah sebelum tindakan dijalankan; muat ulang halaman" }, { status: 409 });
-    }
-    return NextResponse.json({ ok: true, orderId, action, state: "queued", attempts: updated[0].attempts });
+    const result = await aksiAntrean(db, {
+        orderId, action,
+        actor: String(gate.session?.user?.email ?? gate.session?.user?.id ?? ""),
+        // Alasan dicatat bila dikirim (dialog Buang S6c mewajibkannya di layar).
+        reason: String(body?.reason ?? "").trim().slice(0, 1000),
+    });
+    return NextResponse.json(result.body, { status: result.status });
 }
