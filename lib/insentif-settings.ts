@@ -7,7 +7,7 @@
  * Side Effects: DB read; setter menulis satu baris app_setting.
  */
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { appSetting } from "@/db/schema";
 import { DEFAULT_BRANCH_NILAI_JUAL } from "./insentif-value-source";
@@ -179,13 +179,30 @@ export async function getKonstanta(): Promise<Konstanta> {
  * disimpan = bawaan (itu memang nilai yang berlaku, bukan fallback).
  */
 export async function readKonstanta(): Promise<Konstanta> {
+    return (await readKonstantaVersi()).konstanta;
+}
+
+/** AM-045: versi = updatedAt (ISO) baris tersimpan, null = belum pernah disimpan. Token CAS editor. */
+export async function readKonstantaVersi(): Promise<{ konstanta: Konstanta; versi: string | null }> {
+    const row = await bacaBarisKonstanta();
+    if (!row) return { konstanta: DEFAULT_KONSTANTA, versi: null };
+    return { konstanta: parseKonstanta(JSON.parse(row.value)), versi: row.updatedAt.toISOString() };
+}
+
+async function bacaBarisKonstanta() {
     const [row] = await db
-        .select({ value: appSetting.value })
+        .select({ value: appSetting.value, updatedAt: appSetting.updatedAt })
         .from(appSetting)
         .where(eq(appSetting.key, KONSTANTA_KEY))
         .limit(1);
-    if (row?.value == null) return DEFAULT_KONSTANTA;
-    return parseKonstanta(JSON.parse(row.value));
+    return row ?? null;
+}
+
+/** Admin lain sudah menyimpan konstanta sejak editor ini memuatnya (AM-045) → 409, bukan timpa. */
+export class KonstantaBerubahError extends Error {
+    constructor() {
+        super("Konstanta sudah diubah admin lain sejak editor dimuat. Muat ulang, lalu ulangi perubahan.");
+    }
 }
 
 /**
@@ -193,9 +210,12 @@ export async function readKonstanta(): Promise<Konstanta> {
  * editor boleh mengirim satu field saja tanpa mengembalikan angka lain ke bawaan.
  * Yang disimpan selalu hasil parseKonstanta: kunci asing dan nilai di luar batas tidak masuk DB.
  * Dasar gabungan dibaca strict: bila tersimpan tak terbaca, JANGAN menulis bawaan + patch.
+ * AM-045: `versi` = versi yang dimuat editor; beda dari yang tersimpan → KonstantaBerubahError.
  */
-export async function setKonstanta(patch: unknown, actor: string | null): Promise<Konstanta> {
-    const sekarang = await readKonstanta();
+export async function setKonstanta(patch: unknown, actor: string | null, versi: string | null): Promise<{ konstanta: Konstanta; versi: string }> {
+    const row = await bacaBarisKonstanta();
+    if ((row ? row.updatedAt.toISOString() : null) !== versi) throw new KonstantaBerubahError();
+    const sekarang = row ? parseKonstanta(JSON.parse(row.value)) : DEFAULT_KONSTANTA;
     const gabung = {
         gt: { ...sekarang.gt, ...(objek(patch, "gt")) },
         mt: { ...sekarang.mt, ...(objek(patch, "mt")) },
@@ -206,11 +226,19 @@ export async function setKonstanta(patch: unknown, actor: string | null): Promis
     const baru = parseKonstanta(gabung);
     const now = new Date();
     const value = JSON.stringify(baru);
-    await db
-        .insert(appSetting)
-        .values({ key: KONSTANTA_KEY, value, updatedBy: actor, updatedAt: now })
-        .onConflictDoUpdate({ target: appSetting.key, set: { value, updatedBy: actor, updatedAt: now } });
-    return baru;
+    // Tulis BERSYARAT pada isi yang tadi dibaca: penyimpan lain di antara baca dan tulis → 0 baris.
+    // Syaratnya isi, bukan updatedAt — baris dari SQL now() bermikrodetik, Date JS hanya milidetik.
+    const ditulis = row
+        ? await db.update(appSetting)
+            .set({ value, updatedBy: actor, updatedAt: now })
+            .where(and(eq(appSetting.key, KONSTANTA_KEY), eq(appSetting.value, row.value)))
+            .returning({ key: appSetting.key })
+        : await db.insert(appSetting)
+            .values({ key: KONSTANTA_KEY, value, updatedBy: actor, updatedAt: now })
+            .onConflictDoNothing()
+            .returning({ key: appSetting.key });
+    if (ditulis.length === 0) throw new KonstantaBerubahError();
+    return { konstanta: baru, versi: now.toISOString() };
 }
 
 function objek(raw: unknown, nama: string): Record<string, unknown> {

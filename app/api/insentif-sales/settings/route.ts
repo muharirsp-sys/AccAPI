@@ -14,7 +14,7 @@ import { requirePermission } from "@/lib/rbac/resolve";
 import {
     getGtAoTargetMode, setGtAoTargetMode, type GtAoTargetMode,
     getBranchNilaiJual, getSmBerhak, setDaftar,
-    readKonstanta, setKonstanta,
+    readKonstantaVersi, setKonstanta, KonstantaBerubahError,
     BRANCH_NILAI_JUAL_KEY, SM_BERHAK_KEY,
 } from "@/lib/insentif-settings";
 import { validateKonstanta, DEFAULT_KONSTANTA } from "@/lib/insentif-konstanta";
@@ -24,11 +24,11 @@ export async function GET(req: NextRequest) {
     if (gate.response) return gate.response;
     // AM-020: tampilan boleh degraded (bawaan) bila setelan tak terbaca, tetapi DILABELI —
     // editor menolak menyimpan draf yang dasarnya fallback.
-    const [gtAoMode, branchNilaiJual, smBerhak, [konstanta, konstantaSumber]] = await Promise.all([
+    const [gtAoMode, branchNilaiJual, smBerhak, [konstanta, konstantaSumber, konstantaVersi]] = await Promise.all([
         getGtAoTargetMode(), getBranchNilaiJual(), getSmBerhak(),
-        readKonstanta().then((k) => [k, "tersimpan"] as const, () => [DEFAULT_KONSTANTA, "gagal_baca"] as const),
+        readKonstantaVersi().then((r) => [r.konstanta, "tersimpan", r.versi] as const, () => [DEFAULT_KONSTANTA, "gagal_baca", null] as const),
     ]);
-    return NextResponse.json({ gtAoMode, branchNilaiJual, smBerhak, konstanta, konstantaSumber, konstantaBawaan: DEFAULT_KONSTANTA });
+    return NextResponse.json({ gtAoMode, branchNilaiJual, smBerhak, konstanta, konstantaSumber, konstantaVersi, konstantaBawaan: DEFAULT_KONSTANTA });
 }
 
 export async function PATCH(req: NextRequest) {
@@ -70,12 +70,22 @@ export async function PATCH(req: NextRequest) {
     if ("konstanta" in body) {
         const pesan = validateKonstanta(body.konstanta);
         if (pesan.length) return NextResponse.json({ error: pesan.join(" ") }, { status: 400 });
-        await setKonstanta(body.konstanta, gate.session.user.id);
+        // AM-045: tanpa versi yang dimuat, dua admin saling menimpa diam-diam. null = belum pernah disimpan.
+        const versi = body.konstantaVersi;
+        if (versi !== null && typeof versi !== "string") {
+            return NextResponse.json({ error: "konstantaVersi wajib dikirim (muat ulang editor)." }, { status: 400 });
+        }
+        try {
+            await setKonstanta(body.konstanta, gate.session.user.id, versi);
+        } catch (e) {
+            if (e instanceof KonstantaBerubahError) return NextResponse.json({ error: e.message, code: "KONSTANTA_BERUBAH" }, { status: 409 });
+            throw e;
+        }
     }
 
     // Review #3: jawaban PATCH menjadi dasar draf editor berikutnya -> baca strict, bukan fallback.
-    const [gtAoMode, branchNilaiJual, smBerhak, konstanta] = await Promise.all([
-        getGtAoTargetMode(), getBranchNilaiJual(), getSmBerhak(), readKonstanta(),
+    const [gtAoMode, branchNilaiJual, smBerhak, { konstanta, versi: konstantaVersi }] = await Promise.all([
+        getGtAoTargetMode(), getBranchNilaiJual(), getSmBerhak(), readKonstantaVersi(),
     ]);
-    return NextResponse.json({ gtAoMode, branchNilaiJual, smBerhak, konstanta, konstantaSumber: "tersimpan", konstantaBawaan: DEFAULT_KONSTANTA });
+    return NextResponse.json({ gtAoMode, branchNilaiJual, smBerhak, konstanta, konstantaSumber: "tersimpan", konstantaVersi, konstantaBawaan: DEFAULT_KONSTANTA });
 }
