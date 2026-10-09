@@ -288,6 +288,34 @@ export function readInvoiceIdentity(response: unknown): { ok: boolean; id: strin
     };
 }
 
+/**
+ * Klasifikasi jawaban save.do (AM-015/016). Hanya dua jawaban yang PASTI:
+ * - amplop sukses `{s:true, r:{id}}` -> posted;
+ * - amplop penolakan `{s:false, d}` pada status non-5xx -> rejected (aman diperbaiki & dikirim ulang).
+ * Selain itu (non-JSON, null, array, JSON gateway tanpa amplop, 5xx, sukses tanpa id) Accurate
+ * MUNGKIN sudah menyimpan fakturnya -> no_answer (unknown), tidak pernah "rejected".
+ */
+export function classifySaveResponse(status: number, text: string): SendOutcome {
+    let body: unknown;
+    try {
+        body = JSON.parse(text);
+    } catch {
+        return { kind: "no_answer", message: `respons non-JSON (${status})` };
+    }
+    if (typeof body !== "object" || body === null || Array.isArray(body) || typeof (body as { s?: unknown }).s !== "boolean") {
+        return { kind: "no_answer", message: `respons tanpa amplop Accurate (${status}): ${text.slice(0, 200)}` };
+    }
+    const identity = readInvoiceIdentity(body);
+    if (identity.ok) {
+        return identity.id
+            ? { kind: "posted", id: identity.id, number: identity.number }
+            : { kind: "no_answer", message: `sukses tanpa id record (${status}) — cek di Accurate` };
+    }
+    return status >= 500
+        ? { kind: "no_answer", message: `HTTP ${status}: ${identity.message}` }
+        : { kind: "rejected", message: identity.message };
+}
+
 export type OutboxState = "queued" | "sending" | "posted" | "unknown" | "rejected";
 export type SendOutcome =
     | { kind: "posted"; id: string; number: string }

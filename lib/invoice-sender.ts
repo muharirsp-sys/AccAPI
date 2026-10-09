@@ -22,7 +22,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox } from "@/db/schema";
-import { barisPersenRupiah, nextOutboxState, pakaiTanggalFaktur, readInvoiceIdentity, type InvoicePayload, type SendOutcome } from "@/lib/accurate-invoice-write";
+import { barisPersenRupiah, classifySaveResponse, nextOutboxState, pakaiTanggalFaktur, type InvoicePayload, type SendOutcome } from "@/lib/accurate-invoice-write";
 import { refreshRealization } from "@/lib/program-realization-store";
 
 export type SenderSession = {
@@ -110,21 +110,8 @@ export async function sendQueuedInvoices(
                 body: JSON.stringify(payload),
                 signal: AbortSignal.timeout(60_000),
             });
-            const text = await response.text();
-            let body: unknown;
-            try {
-                body = JSON.parse(text);
-            } catch {
-                // Respons non-JSON: kita tidak tahu fakturnya terbentuk atau tidak.
-                outcome = { kind: "no_answer", message: `respons non-JSON (${response.status})` };
-                body = null;
-            }
-            if (body !== null) {
-                const identity = readInvoiceIdentity(body);
-                outcome = identity.ok
-                    ? { kind: "posted", id: identity.id, number: identity.number }
-                    : { kind: "rejected", message: identity.message };
-            }
+            // Non-JSON, null, JSON gateway, 5xx, sukses tanpa id -> tidak pasti (AM-015/016).
+            outcome = classifySaveResponse(response.status, await response.text());
         } catch (error) {
             // Timeout atau koneksi putus: fakturnya MUNGKIN sudah terbentuk di Accurate.
             outcome = { kind: "no_answer", message: error instanceof Error ? error.message : "tanpa jawaban" };

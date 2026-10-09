@@ -2,7 +2,7 @@
    dan timeout tidak boleh dianggap gagal (faktur ganda di Accurate tidak bisa dibatalkan). */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { barisPersenRupiah, discardable, buildInvoicePayload, nextOutboxState, pakaiTanggalFaktur, readInvoiceIdentity, resendable, sendable, toAccurateDate, type InvoiceOrder, type InvoicePayload } from "./accurate-invoice-write.ts";
+import { barisPersenRupiah, classifySaveResponse, discardable, buildInvoicePayload, nextOutboxState, pakaiTanggalFaktur, readInvoiceIdentity, resendable, sendable, toAccurateDate, type InvoiceOrder, type InvoicePayload } from "./accurate-invoice-write.ts";
 
 const UNITS = new Map([["KRT", 100], ["BAG", 350]]);
 
@@ -105,6 +105,27 @@ test("identitas dokumen dibaca dari amplop Accurate", () => {
     const failed = readInvoiceIdentity({ s: false, d: ["Customer tidak ditemukan"] });
     assert.equal(failed.ok, false);
     assert.match(failed.message, /Customer tidak ditemukan/);
+});
+
+test("klasifikasi respons save.do: hanya penolakan beramplop yang boleh dikirim ulang (AM-015/016)", () => {
+    const ok = JSON.stringify({ s: true, r: { id: 331710, number: "INV/1" } });
+    assert.deepEqual(classifySaveResponse(200, ok), { kind: "posted", id: "331710", number: "INV/1" });
+    assert.equal(classifySaveResponse(200, JSON.stringify({ s: false, d: ["Customer tidak ditemukan"] })).kind, "rejected");
+    assert.equal(classifySaveResponse(400, JSON.stringify({ s: false, d: ["field wajib"] })).kind, "rejected");
+    // Semua di bawah ini: Accurate MUNGKIN sudah menyimpan -> tidak pasti, bukan "rejected"
+    // (yang di UI berarti aman dikirim ulang = faktur ganda).
+    for (const [status, text] of [
+        [502, '{"message":"Bad Gateway"}'],  // JSON gateway, bukan amplop Accurate
+        [200, "{}"],
+        [200, "[]"],
+        [200, "null"],                       // dulu TypeError: baris macet `sending`, batch berhenti
+        [200, "<html>502</html>"],
+        [503, JSON.stringify({ s: false, d: ["overload"] })],  // 5xx: amplop pun tidak dipercaya
+        [200, JSON.stringify({ s: true })],  // sukses tanpa id: tidak bisa diverifikasi
+        [200, JSON.stringify({ s: true, r: { number: "INV/2" } })],
+    ] as const) {
+        assert.equal(classifySaveResponse(status, text).kind, "no_answer", `${status} ${text}`);
+    }
 });
 
 test("tanpa jawaban dari Accurate statusnya TIDAK PASTI, bukan gagal, dan tidak boleh dikirim lagi", () => {
