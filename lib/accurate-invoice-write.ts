@@ -296,6 +296,13 @@ export function readInvoiceIdentity(response: unknown): { ok: boolean; id: strin
  * MUNGKIN sudah menyimpan fakturnya -> no_answer (unknown), tidak pernah "rejected".
  */
 export function classifySaveResponse(status: number, text: string): SendOutcome {
+    // 401/403/429 (token/izin ditolak, rate limit): angka status saja BUKAN bukti tidak tersimpan —
+    // gateway di depan Accurate bisa menjawab begitu sesudah request diteruskan. Tidak pasti (D-07,
+    // S6-0d E7), bahkan berbadan amplop {s:false}; pencegahnya pra-cek sesi sebelum klaim pertama.
+    // (1835b724 menjadikannya "rejected belum diproses" = kirim ulang tanpa cek; dibalik di sini.)
+    if (status === 401 || status === 403 || status === 429) {
+        return { kind: "no_answer", message: `HTTP ${status} (belum terbukti tidak diproses): ${text.slice(0, 200)}` };
+    }
     let body: unknown;
     try {
         body = JSON.parse(text);

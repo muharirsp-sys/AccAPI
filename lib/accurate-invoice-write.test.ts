@@ -126,6 +126,16 @@ test("klasifikasi respons save.do: hanya penolakan beramplop yang boleh dikirim 
     ] as const) {
         assert.equal(classifySaveResponse(status, text).kind, "no_answer", `${status} ${text}`);
     }
+    // 1835b724 (review #3) menjadikan 401/403/429 "rejected belum diproses"; D-07 + S6-0d E7 MEMBALIKNYA:
+    // angka status saja bukan bukti tidak tersimpan (gateway/proxy bisa menjawab begitu sesudah
+    // Accurate menyimpan). Termasuk yang berbadan amplop {s:false} — tetap tidak pasti, bukan Ditolak.
+    for (const status of [401, 403, 429]) {
+        for (const text of ['{"error":"invalid_token"}', "<html>denied</html>", JSON.stringify({ s: false, d: ["Token kedaluwarsa"] }), ""]) {
+            const hasil = classifySaveResponse(status, text);
+            assert.equal(hasil.kind, "no_answer", `${status} ${text}`);
+            assert.match(hasil.kind === "no_answer" ? hasil.message : "", new RegExp(`HTTP ${status}`));
+        }
+    }
 });
 
 test("tanpa jawaban dari Accurate statusnya TIDAK PASTI, bukan gagal, dan tidak boleh dikirim lagi", () => {
