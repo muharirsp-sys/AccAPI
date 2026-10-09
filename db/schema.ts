@@ -214,7 +214,7 @@ export const accurateWriteAttempt = pgTable("accurate_write_attempt", {
     check("accurate_write_attempt_generation", sql`${t.generation} >= 0`),
     check("accurate_write_attempt_reopen_gen", sql`(${t.generation} = 0) = (${t.reopenId} IS NULL)`),
     // FK (reopen_id, operation, subject_key, generation, target_db_id) -> accurate_write_attempt_reopen (melingkar),
-    // fungsi/trigger immutability, dan REVOKE = DDL MANUAL ADR-004 (dijalankan manusia berwenang, O5) — sengaja
+    // fungsi/trigger immutability, dan REVOKE = DDL MANUAL docs/handover/DDL_ADR004.sql (IT Support saat deploy, O5) — sengaja
     // tidak di sini maupun di migrate-pg. JANGAN drizzle-kit push schema.ts lama ke produksi.
 ]);
 

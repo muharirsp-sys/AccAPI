@@ -264,7 +264,7 @@ const migrations = [
     // Role aplikasi butuh SELECT/INSERT/UPDATE (default privileges runbook L1g — cek sebelum deploy).
     // 2026-10-08 (C14, owner): langsung BENTUK FINAL ADR-004 rev 3.1 rilis A — produksi belum punya tabel ini,
     // jadi ini pembuatan pertama (generasi + reopen_id + CHECK, UNIQUE identitas, index hidup per generasi).
-    // DB evaluasi berdefinisi lama (index 2 kolom) TIDAK diubah di sini: DDL manual ADR-004 dulu (tukar index).
+    // DB evaluasi berdefinisi lama (index 2 kolom) TIDAK diubah di sini: docs/handover/DDL_ADR004.sql dulu (tukar index).
     nama: "accurate_write_attempt",
     // Cek INDEX, bukan tabel: tabel tanpa unique partial index = klaim ganda diam-diam.
     sudahAda: `SELECT 1 FROM pg_indexes WHERE indexname = 'uq_accurate_write_attempt_live'`,
@@ -300,7 +300,7 @@ const migrations = [
   {
     // 2026-10-08 (C14, ADR-004 rev 3.1 rilis A): catatan reopen immutable untuk repost D-15. Tabel saja — tidak ada
     // route yang menulisnya sampai rilis B. FK ke kunci identitas attempt INLINE (operasi yang diizinkan berkas ini).
-    // FK balik attempt->reopen (melingkar), trigger immutability & REVOKE = DDL manual ADR-004 (O5), BUKAN di sini.
+    // FK balik attempt->reopen (melingkar), trigger immutability & REVOKE = docs/handover/DDL_ADR004.sql (IT Support saat deploy, O5), BUKAN di sini.
     nama: "accurate_write_attempt_reopen",
     sudahAda: `SELECT 1 FROM information_schema.tables WHERE table_name = 'accurate_write_attempt_reopen'`,
     sql: `

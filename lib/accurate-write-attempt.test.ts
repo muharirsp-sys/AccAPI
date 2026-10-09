@@ -347,3 +347,58 @@ test("PG: C14 — subjek yang sudah dibuka ulang: kiriman biasa ditolak tanpa ki
         await pool.end();
     }
 });
+
+// DDL manual ADR-004 (docs/handover/DDL_ADR004.sql) — dijalankan IT Support saat deploy, bukan migrate-pg. Uji ini
+// melewat di DB yang belum menjalankannya; di DB yang sudah, membuktikan immutability & FK melingkar bekerja.
+test("PG: DDL manual ADR-004 — posted/reopen immutable, transisi daftar putih, FK melingkar", { skip: pgSkip }, async (t) => {
+    const pool = new Pool({ connectionString: PG_URL, max: 2 });
+    try {
+        const { rows } = await pool.query(`SELECT count(*)::int AS n FROM pg_trigger WHERE tgname IN ('trg_accurate_write_attempt_guard',
+            'trg_accurate_write_attempt_no_truncate', 'trg_accurate_write_attempt_reopen_guard', 'trg_accurate_write_attempt_reopen_no_truncate')`);
+        if (rows[0].n < 4) { t.skip("DDL manual ADR-004 belum dijalankan di DB ini (docs/handover/DDL_ADR004.sql)"); return; }
+        const subjectKey = `test|${randomUUID()}`;
+        const attemptId = await postedAttempt(pool, subjectKey);
+        const q = (text: string, values: unknown[] = []) => pgCode(pool.query(text, values));
+        assert.equal(await q("UPDATE accurate_write_attempt SET updated_at = now() WHERE id = $1", [attemptId]), "23001", "baris posted berubah");
+        assert.equal(await q("DELETE FROM accurate_write_attempt WHERE id = $1", [attemptId]), "23001", "attempt terhapus");
+        const row = async (state: string) => {
+            const id = randomUUID();
+            await pool.query(`INSERT INTO accurate_write_attempt (id, operation, subject_key, target_db_id, payload_hash, actor, state)
+                VALUES ($1, $2, $3, 'DB-1', 'h', 'u', $4)`, [id, OP, `test|${randomUUID()}`, state]);
+            return id;
+        };
+        const unk = await row("unknown");
+        assert.equal(await q("UPDATE accurate_write_attempt SET state = 'rejected' WHERE id = $1", [unk]), "23001", "unknown -> rejected");
+        assert.equal(await q("UPDATE accurate_write_attempt SET state = 'posted' WHERE id = $1", [unk]), "23001", "unknown -> posted tanpa resolution");
+        assert.equal(await q("UPDATE accurate_write_attempt SET updated_at = now() WHERE id = $1", [unk]), "ok", "state sama boleh");
+        assert.equal(await q(`UPDATE accurate_write_attempt SET state = 'posted', resolution = '{"by":"fin"}' WHERE id = $1`, [unk]), "ok");
+        const snd = await row("sending");
+        assert.equal(await q("UPDATE accurate_write_attempt SET actor = 'lain' WHERE id = $1", [snd]), "23001", "kolom identitas berubah");
+        assert.equal(await q("UPDATE accurate_write_attempt SET state = 'resolved_absent' WHERE id = $1", [snd]), "23514", "resolved_absent tanpa resolution");
+        assert.equal(await q("UPDATE accurate_write_attempt SET state = 'unknown' WHERE id = $1", [snd]), "ok", "sending -> apa pun");
+        // Reopen: nomor lama harus sama dengan attempt asal; sesudah tercatat tidak bisa diubah/dihapus.
+        assert.equal(await q(REOPEN_SQL.replace("'PP-001'", "'PP-LAIN'"), [randomUUID(), OP, subjectKey, attemptId, "DB-1", 0, 1,
+            "PP-001 dihapus di Accurate oleh Finance", '{"method":"manual_attestation"}']), "23514", "nomor lama beda");
+        const reopenId = randomUUID();
+        assert.equal(await pgCode(insertReopen(pool, subjectKey, attemptId, { id: reopenId })), "ok");
+        assert.equal(await q("UPDATE accurate_write_attempt_reopen SET reason = reason || '!' WHERE id = $1", [reopenId]), "23001");
+        assert.equal(await q("DELETE FROM accurate_write_attempt_reopen WHERE id = $1", [reopenId]), "23001");
+        // FK melingkar: generasi 1 hanya dengan reopen subjek/generasi/DB yang sama.
+        const gen1 = (rid: string, db = "DB-1") => q(`INSERT INTO accurate_write_attempt (id, operation, subject_key, target_db_id,
+            payload_hash, actor, state, generation, reopen_id) VALUES ($1, $2, $3, $4, 'h', 'u', 'sending', 1, $5)`, [randomUUID(), OP, subjectKey, db, rid]);
+        assert.equal(await gen1(randomUUID()), "23503", "reopen_id tak dikenal");
+        assert.equal(await gen1(reopenId, "DB-2"), "23503", "DB beda dari reopen");
+        assert.equal(await gen1(reopenId), "ok");
+        const c = await pool.connect();
+        try {
+            await c.query("BEGIN");
+            const code = await pgCode(c.query("TRUNCATE accurate_write_attempt_reopen"));
+            assert.ok(code === "23001" || code === "0A000", `TRUNCATE reopen lolos (${code})`);
+        } finally {
+            await c.query("ROLLBACK");
+            c.release();
+        }
+    } finally {
+        await pool.end();
+    }
+});
