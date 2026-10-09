@@ -3,10 +3,11 @@
  * Caller: app/api/insentif-sales/dashboard, app/api/insentif-sales/settings.
  * Dependensi: lib/db, db/schema (appSetting).
  * Main Functions: getGtAoTargetMode, setGtAoTargetMode, aoFileKey/spvIkutKey/pasanganKey, toggleDaftar, getDaftar, setDaftar,
- *   getBranchNilaiJual, getSmBerhak, getKonstantaBerlabel, readKonstanta, readKonstantaVersi, setKonstanta.
+ *   getBranchNilaiJual, getSmBerhak, getKonstantaBerlabel, readKonstanta, readKonstantaVersi, setKonstanta, tolakLunasTanpaKonstanta.
  * Side Effects: DB read; setter menulis satu baris app_setting.
  */
 
+import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { appSetting } from "@/db/schema";
@@ -172,6 +173,25 @@ export async function getKonstantaBerlabel(): Promise<{ konstanta: Konstanta; ko
         console.warn(`[insentif-settings] gagal baca ${KONSTANTA_KEY}, pakai bawaan (gagal_baca):`,
             e instanceof Error ? e.message : e);
         return { konstanta: DEFAULT_KONSTANTA, konstantaSumber: "gagal_baca" };
+    }
+}
+
+/**
+ * Pagar route payments (POST dan PATCH [id]) sebelum menandai LUNAS: nominal datang dari klien (BL-27 hitung ulang server belum
+ * ada) dan dihitung dashboard dengan konstanta. Selama konstanta tersimpan tak terbaca, dashboard menghitung dengan BAWAAN
+ * (getKonstantaBerlabel → "gagal_baca") — nominal itu tidak boleh ditandai lunas. Layar sudah mengunci tombolnya; ini pagar
+ * server bila layar lama/terbuka saat gangguan atau API langsung tetap mengirim. Jawaban 503 = tolak, null = boleh lanjut.
+ * ponytail: hanya memastikan konstanta TERBACA saat menulis, bukan bahwa nominal klien dihitung darinya — itu BL-27.
+ */
+export async function tolakLunasTanpaKonstanta(): Promise<NextResponse | null> {
+    try {
+        await readKonstanta();
+        return null;
+    } catch {
+        return NextResponse.json(
+            { error: "Konstanta insentif tersimpan gagal dibaca; nominal belum pasti sehingga belum bisa ditandai lunas. Coba lagi nanti.", code: "KONSTANTA_GAGAL_BACA" },
+            { status: 503 },
+        );
     }
 }
 

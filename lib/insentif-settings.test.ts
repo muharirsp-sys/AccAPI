@@ -8,6 +8,7 @@ import { db } from "./db.ts";
 import { KONSTANTA_KEY, KonstantaBerubahError, getKonstantaBerlabel, readKonstantaVersi, setKonstanta } from "./insentif-settings.ts";
 import { NextRequest } from "next/server";
 import { POST as postPayment } from "../app/api/insentif-sales/payments/route.ts";
+import { PATCH as patchPayment } from "../app/api/insentif-sales/payments/[id]/route.ts";
 import { PATCH as patchSettings } from "../app/api/insentif-sales/settings/route.ts";
 import { DEFAULT_KONSTANTA } from "./insentif-konstanta.ts";
 
@@ -86,7 +87,7 @@ test("getKonstantaBerlabel: baca gagal → bawaan DILABELI gagal_baca (tampilan 
     }
 });
 
-test("POST payments lunas saat konstanta tak terbaca → 503 KONSTANTA_GAGAL_BACA, tidak menulis; status lain lewat ke validasi biasa", async () => {
+test("POST & PATCH payments lunas saat konstanta tak terbaca → 503 KONSTANTA_GAGAL_BACA, tidak menulis; status lain lewat ke validasi biasa", async () => {
     const env = { NODE_ENV: process.env.NODE_ENV, LOCAL_AUTH_BYPASS: process.env.LOCAL_AUTH_BYPASS };
     Object.assign(process.env, { NODE_ENV: "development", LOCAL_AUTH_BYPASS: "true" });
     const select = mock.method(db, "select", () => { throw new Error("DB tak terbaca"); });
@@ -102,6 +103,24 @@ test("POST payments lunas saat konstanta tak terbaca → 503 KONSTANTA_GAGAL_BAC
         assert.equal(insert.mock.callCount(), 0);
         // Kontrol: status "belum" tidak memeriksa konstanta — sampai ke pencarian target (DB) seperti biasa.
         await assert.rejects(kirim("belum"), /DB tak terbaca/);
+
+        // Peninjau A (putaran 3): PATCH [id] dipakai Pembayaran untuk baris yang SUDAH tercatat (nominalnya bisa hasil bawaan).
+        // Lewat API langsung baris "belum" dulu bisa dilunasi saat konstanta tak terbaca. Kini pagar yang sama.
+        const ubah = (paymentStatus: string) => patchPayment(new NextRequest("http://localhost/api/insentif-sales/payments/pay-1", {
+            method: "PATCH", headers: { host: "localhost:3000", "content-type": "application/json" },
+            body: JSON.stringify({ paymentStatus, paymentDate: "2026-10-01" }),
+        }), { params: Promise.resolve({ id: "pay-1" }) });
+        const tx = mock.method(db, "transaction", () => { throw new Error("TIDAK BOLEH MENULIS"); });
+        try {
+            const resPatch = await ubah("lunas");
+            assert.equal(resPatch.status, 503);
+            assert.equal((await resPatch.json()).code, "KONSTANTA_GAGAL_BACA");
+            assert.equal(tx.mock.callCount(), 0);
+            // Kontrol: status lain tidak memeriksa konstanta — sampai ke pencarian baris pembayaran (DB) seperti biasa.
+            await assert.rejects(ubah("tunggakan"), /DB tak terbaca/);
+        } finally {
+            tx.mock.restore();
+        }
     } finally {
         select.mock.restore();
         insert.mock.restore();

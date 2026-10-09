@@ -19,7 +19,7 @@ import { getScopeForUser, getUserHierarchyIdentity, payeeInScope } from "@/lib/i
 import { parsePayee } from "@/lib/insentif-payee";
 import { isOfficeRow } from "@/lib/insentif-sm-calc";
 import { perubahanLunas, resolvePaidAt } from "@/lib/insentif-payment-date";
-import { readKonstanta } from "@/lib/insentif-settings";
+import { tolakLunasTanpaKonstanta } from "@/lib/insentif-settings";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
@@ -108,20 +108,9 @@ export async function POST(req: NextRequest) {
         );
     }
 
-    // Nominal datang dari klien (BL-27 hitung ulang server belum ada) dan dihitung dashboard dengan konstanta. Selama konstanta
-    // tersimpan tak terbaca, dashboard menghitung dengan BAWAAN (getKonstantaBerlabel → "gagal_baca") — nominal itu tidak boleh
-    // ditandai lunas. Layar sudah mengunci tombolnya; ini pagar server bila layar lama/terbuka saat gangguan tetap mengirim.
-    // ponytail: hanya memastikan konstanta TERBACA saat menulis, bukan bahwa nominal klien dihitung darinya — itu BL-27.
-    if (body.paymentStatus === "lunas") {
-        try {
-            await readKonstanta();
-        } catch {
-            return NextResponse.json(
-                { error: "Konstanta insentif tersimpan gagal dibaca; nominal belum pasti sehingga belum bisa ditandai lunas. Coba lagi nanti.", code: "KONSTANTA_GAGAL_BACA" },
-                { status: 503 },
-            );
-        }
-    }
+    // Konstanta tersimpan tak terbaca = nominal dashboard dari bawaan → tidak boleh ditandai lunas (lib/insentif-settings).
+    const tolakKonstanta = body.paymentStatus === "lunas" ? await tolakLunasTanpaKonstanta() : null;
+    if (tolakKonstanta) return tolakKonstanta;
 
     // Penerima harus SAH untuk periode itu. Sebelumnya `salesCode` adalah teks bebas: penerima
     // fiktif, baris _OFFICE (pos kantor, bukan orang), atau kode di luar cakupan bisa dicatat
