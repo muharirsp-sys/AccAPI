@@ -11,6 +11,7 @@
  * Side Effects: Tangkapan di test-results/.
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
+import * as XLSX from "xlsx";
 
 const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 const path = (p: string) => (url: URL) => url.pathname === p;
@@ -464,6 +465,30 @@ test("Support: isian bukan angka tidak diam-diam jadi Rp 0 — Simpan dikunci, t
     await page.getByRole("dialog").getByRole("button", { name: "Simpan & hitung ulang" }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
     expect((kirim[0].body as Array<{ salesCode: string; supportAmount: unknown }>).find((r) => r.salesCode === "MKS-21")?.supportAmount).toBe(0);
+});
+
+test("Support: Excel — baris di luar periode tidak membatalkan impor, \"-\" = Rp 0, teks lain di baris periode menolak", async ({ page }) => {
+    const kirim = await mockSup(page);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/support?month=9&year=2026", NAV);
+    const main = page.locator("main");
+    const berkas = (rows: unknown[][]) => {
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Kode Salesman", "Nama", "Principal", "Support (Rp)"], ...rows]), "Support Sales");
+        return { name: "support.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer };
+    };
+    const input = main.getByLabel("Berkas Excel support sales");
+    await expect(main.getByRole("table", { name: "Support sales" }).locator("tbody tr")).toHaveCount(5, NAV);
+    // S-LAIN tidak ada di periode ini → dilewati; teks tidak validnya tidak boleh membatalkan baris yang dipakai.
+    await input.setInputFiles(berkas([["MKS-07", "", "KINO", 250000], ["MKS-21", "", "GODREJ", "-"], ["S-LAIN", "", "KINO", "N/A"]]));
+    await expect(main.getByRole("status").filter({ hasText: "2 baris support sales terisi dari Excel" })).toContainText("1 baris dilewati");
+    await expect(main.getByRole("spinbutton", { name: "Support MKS-07 KINO" })).toHaveValue("250000");
+    await expect(main.getByRole("spinbutton", { name: "Support MKS-21 GODREJ" })).toHaveValue("0");
+    // Baris periode dengan teks bukan angka tetap menolak seluruh berkas.
+    await input.setInputFiles(berkas([["MKS-07", "", "KINO", 300000], ["MKS-12", "", "KINO", "N/A"]]));
+    await expect(main.getByRole("alert").filter({ hasText: "bernilai tidak valid (mis. MKS-12/KINO)" })).toBeVisible();
+    await expect(main.getByRole("spinbutton", { name: "Support MKS-07 KINO" })).toHaveValue("250000");
+    expect(kirim).toHaveLength(0);
 });
 
 test("Support: hitung untuk SPV dan penyebut AO lewat dialog yang menyebut akibatnya; kunci SPV dinormalisasi seperti server", async ({ page }) => {

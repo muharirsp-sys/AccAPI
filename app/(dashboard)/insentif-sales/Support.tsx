@@ -121,9 +121,10 @@ function ExcelSupport({ kind, templateRows, fileName, knownKeys, disabledReason,
         try {
             const { parseSupportExcel } = await import("@/lib/insentif-sales-excel");
             const parsed = parseSupportExcel(await file.arrayBuffer(), kind);
-            // Nominal tidak masuk akal ditolak SEBELUM apa pun terisi. Nol itu sah (mencabut support), negatif tidak — dan diam-diam
-            // membulatkannya ke 0 akan membayar lebih.
-            const bad = parsed.filter((r) => !Number.isFinite(r.supportAmount) || r.supportAmount < 0);
+            // Nominal tidak masuk akal ditolak SEBELUM apa pun terisi. Nol itu sah (mencabut support; sel kosong atau "-"), negatif
+            // tidak — dan diam-diam membulatkannya ke 0 akan membayar lebih. Hanya baris periode ini yang diperiksa: baris yang memang
+            // dilewati (tidak ada di periode) tidak ditulis, jadi angkanya tidak boleh membatalkan impor (sama dengan progres).
+            const bad = parsed.filter((r) => knownKeys.has(`${r.key}|${r.principle}`) && (!Number.isFinite(r.supportAmount) || r.supportAmount < 0));
             if (bad.length) {
                 onPesan({ tone: "neg", teks: `${bad.length} baris di Excel support ${apa} bernilai tidak valid (mis. ${bad[0].key}/${bad[0].principle}). Tidak ada yang diisi.` });
                 return;

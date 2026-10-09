@@ -57,11 +57,11 @@ function rowReader(row: Record<string, unknown>) {
             const v = raw(name);
             return v === undefined || v === null || v === "" ? fallback : String(v).trim();
         },
-        // Kosong = 0 (kebijakan blank kolom angka). Terisi tapi bukan angka = NaN, BUKAN 0
-        // (AM-017): pemanggil wajib menolaknya — 0 palsu pada support/target = bayar lebih.
+        // Kosong dan "-" (tanda nol akuntansi, owner 9 Okt — sama dengan parse_number_strict Python) = 0.
+        // Terisi tapi bukan angka = NaN, BUKAN 0 (AM-017): pemanggil wajib menolaknya — 0 palsu pada support/target = bayar lebih.
         num: (name: string) => {
             const v = raw(name);
-            if (v === undefined || v === null || (typeof v === "string" && v.trim() === "")) return 0;
+            if (v === undefined || v === null || (typeof v === "string" && (v.trim() === "" || v.trim() === "-"))) return 0;
             if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
             return parseLocaleNumber(String(v));
         },

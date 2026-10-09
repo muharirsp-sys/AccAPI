@@ -251,12 +251,12 @@ test("Data periode (d): satu sel angka target tidak valid → seluruh impor bata
     await page.goto("/insentif-sales/data-periode?month=10&year=2026", NAV);
     const main = page.locator("main");
     await main.getByRole("button", { name: "Target bulanan" }).click({ timeout: 60_000 });
-    await expect(main.getByText(/teks yang bukan angka.*membatalkan seluruh impor/)).toBeVisible();
-    // AM-017: sel terisi tapi bukan angka ("-" sebagai nol, "Rp 500.000,-") dulu terbaca 0 → target 0 → nominal salah.
+    await expect(main.getByText(/kosong atau "-" dibaca 0.*teks lain yang bukan angka membatalkan seluruh impor/)).toBeVisible();
+    // AM-017: sel terisi tapi bukan angka ("N/A") dulu terbaca 0 → target 0 → nominal salah. "-" = tanda nol akuntansi (owner 9 Okt).
     await main.locator('input[type="file"]').setInputFiles(xlsx("Target_Okt.xlsx", [
         ["Kode Salesman", "Nama Salesman", "Principal", "Cabang", "Channel", "SPV", "SM", "Target Value (Rp)", "Target EC", "Target AO", "Target IA", "SPLM Value", "Tipe Sales", "Status Insentif"],
-        ["S-A", "SALES A", "PRINCIPLE A", "CABANG A", "GT", "SPV A", "SM A", 412000000, 300, 240, 500, "", "Exclusive", "Distributor"],
-        ["S-B", "SALES B", "PRINCIPLE B", "CABANG A", "GT", "SPV A", "SM A", 250000000, "-", 240, 400, "", "Exclusive", "Distributor"],
+        ["S-A", "SALES A", "PRINCIPLE A", "CABANG A", "GT", "SPV A", "SM A", 412000000, "-", 240, 500, "", "Exclusive", "Distributor"],
+        ["S-B", "SALES B", "PRINCIPLE B", "CABANG A", "GT", "SPV A", "SM A", 250000000, "N/A", 240, 400, "", "Exclusive", "Distributor"],
     ]));
     await main.getByRole("button", { name: "Lanjut" }).click();
     await expect(main.getByRole("alert").filter({ hasText: "Berkas tidak bisa diterapkan." })).toContainText("1 baris berisi angka target tidak valid (mis. S-B)");
@@ -265,7 +265,7 @@ test("Data periode (d): satu sel angka target tidak valid → seluruh impor bata
     expect(tulis).toHaveLength(0);
 });
 
-test("Data periode (d): angka progres terisi tapi tidak valid → seluruh impor batal; kosong tetap 0", async ({ page }) => {
+test("Data periode (d): angka progres terisi tapi tidak valid → seluruh impor batal; kosong dan \"-\" tetap 0", async ({ page }) => {
     const tulis = await mockApi(page, { targets: [TARGET("S-A", "SALES A", "PRINCIPLE A", 100_000_000)] });
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/insentif-sales/data-periode?month=9&year=2026", NAV);
@@ -274,11 +274,11 @@ test("Data periode (d): angka progres terisi tapi tidak valid → seluruh impor 
     await main.locator('input[type="file"]').setInputFiles(xlsx("Laporan_Sep.xlsx", [
         ["KODE_SALESMAN", "SALESMAN", "PRINCIPAL", "JENISPRODUK", "TANGGAL", "DPP", "NILAI_JUAL", "EC", "AO", "IA"],
         ["S-A", "SALES A", "PRINCIPLE A", "CABANG A", 46270, 500000, 550000, "", 1, 1],
-        ["S-A", "SALES A", "PRINCIPLE A", "CABANG A", 46271, "-", 0, 0, 0, 0],
+        ["S-A", "SALES A", "PRINCIPLE A", "CABANG A", 46271, "-", 0, 0, 0, 0], // "-" = 0 (tanda nol akuntansi)
         ["S-B", "SALES B", "PRINCIPLE A", "CABANG A", 46271, 300000, 300000, "N/A", 1, 1],
     ]));
     await main.getByRole("button", { name: "Lanjut" }).click();
-    await expect(main.getByRole("alert").filter({ hasText: "Berkas tidak bisa diterapkan." })).toContainText("2 baris berisi angka tidak valid (mis. S-A, S-B)");
+    await expect(main.getByRole("alert").filter({ hasText: "Berkas tidak bisa diterapkan." })).toContainText("1 baris berisi angka tidak valid (mis. S-B)");
     await expect(main.getByRole("button", { name: "Terapkan progres…" })).toBeDisabled();
     expect(tulis).toHaveLength(0);
 });

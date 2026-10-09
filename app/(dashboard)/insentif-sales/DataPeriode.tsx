@@ -4,7 +4,8 @@
  *   bagian kualitas data (DataPeriodeKualitas.tsx). Periode = saringan URL (usePeriode), bukan pemilih sendiri (it07 #3).
  *   Berkas dibaca di peramban dan DIPRATINJAU dulu; tidak ada yang ditulis sebelum dialog Terapkan (it07 #16). Input manual
  *   target/progres tidak ada di jalur ini (it07 #17): koreksi = perbaiki berkas lalu unggah ulang periode.
- *   Angka ketat (AM-017): sel kosong = 0, sel terisi tapi bukan angka (target maupun progres) membatalkan seluruh impor di pratinjau.
+ *   Angka ketat (AM-017): sel kosong atau "-" = 0, sel terisi lain yang bukan angka (target maupun progres) membatalkan seluruh
+ *   impor di pratinjau.
  * Caller: app/(dashboard)/insentif-sales/data-periode/page.tsx.
  * Dependensi: ./Rangka (InsentifRangka, usePeriode), ./DataPeriodeKualitas, components/fiori/{core,interactive},
  *   lib/insentif-sales-excel (parseTargetExcel) dan xlsx — dimuat saat dipakai, lib/excel-date, lib/insentif-value-source,
@@ -193,10 +194,10 @@ async function bacaProgres(file: File, month: number, year: number, branchNilaiJ
         // Dua format ribuan beredar di file closing: Inggris (1,234,567.89) dan
         // Indonesia (1.234.567,89). Deteksi dari polanya — kalau dipaksa satu format,
         // "-533.000.000" terbaca -533 dan realisasi satu principal menguap.
-        // Kosong = 0 (kebijakan kolom kosong). Terisi tapi bukan angka ("-", "N/A") = NaN, BUKAN 0: realisasi adalah dasar
-        // nominal insentif, jadi baris itu menahan seluruh impor di bawah (sama dengan target, AM-017 / it07 #16).
+        // Kosong dan "-" (tanda nol akuntansi, owner 9 Okt) = 0. Terisi tapi bukan angka ("N/A", teks) = NaN, BUKAN 0: realisasi
+        // adalah dasar nominal insentif, jadi baris itu menahan seluruh impor di bawah (sama dengan target, AM-017 / it07 #16).
         const num = (val: string) => {
-            if (!val) return 0;
+            if (!val || val === "-") return 0;
             const cleaned = val.replace(/[^\d.,-]/g, "");
             // Format Indonesia: titik sebagai pemisah ribuan (selalu 3 digit), koma desimal.
             const idFormat = /^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(cleaned);
@@ -292,7 +293,7 @@ async function bacaProgres(file: File, month: number, year: number, branchNilaiJ
     }
     const payload = [...bucket.values()];
     const masalah = angkaSalah.length
-        ? `${angkaSalah.length} baris berisi angka tidak valid (mis. ${contohKode(angkaSalah)}). Sel kosong dibaca 0; teks seperti "-" tidak. Tidak ada yang diterapkan.`
+        ? `${angkaSalah.length} baris berisi angka tidak valid (mis. ${contohKode(angkaSalah)}). Sel kosong atau "-" dibaca 0; teks lain yang bukan angka tidak. Tidak ada yang diterapkan.`
         : payload.length === 0 ? "Tidak ada baris valid. Pastikan kolom KODE_SALESMAN dan PRINCIPAL terisi." : null;
     return { payload, barisBerkas: parsed.length, dibuang, nilaiDibuang, ambigu: [...ambigu], masalah };
 }
@@ -624,8 +625,8 @@ export default function DataPeriode({ permKeys }: { permKeys: string[] }) {
                         <KeyValues items={jenis === "target" ? KOLOM_TARGET : KOLOM_PROGRES} />
                         <p className="fi-small fi-subtle">
                             {jenis === "target"
-                                ? "Baris pertama = judul kolom; huruf besar/kecil dan spasi di judul diabaikan. Angka boleh 1.250.000; sel kosong dibaca 0, tetapi teks yang bukan angka (termasuk \"-\") membatalkan seluruh impor. Satu baris yang ditolak server (channel, tipe, atau status tak dikenal; angka negatif; salesman × principal ganda; tipe berbeda dalam satu kode) membatalkan seluruh impor."
-                                : `Judul kolom tidak peka huruf besar/kecil. Angka 1,234,567.89 maupun 1.234.567,89 terbaca; sel kosong dibaca 0, teks yang bukan angka (termasuk "-") membatalkan seluruh impor. Tanggal harus di ${label} (tanggal 1 bulan berikutnya juga diterima); satu baris yang ditolak server membatalkan seluruh impor.`}
+                                ? "Baris pertama = judul kolom; huruf besar/kecil dan spasi di judul diabaikan. Angka boleh 1.250.000; sel kosong atau \"-\" dibaca 0, tetapi teks lain yang bukan angka membatalkan seluruh impor. Satu baris yang ditolak server (channel, tipe, atau status tak dikenal; angka negatif; salesman × principal ganda; tipe berbeda dalam satu kode) membatalkan seluruh impor."
+                                : `Judul kolom tidak peka huruf besar/kecil. Angka 1,234,567.89 maupun 1.234.567,89 terbaca; sel kosong atau "-" dibaca 0, teks lain yang bukan angka membatalkan seluruh impor. Tanggal harus di ${label} (tanggal 1 bulan berikutnya juga diterima); satu baris yang ditolak server membatalkan seluruh impor.`}
                         </p>
                         {jenis === "target" && (
                             <>
