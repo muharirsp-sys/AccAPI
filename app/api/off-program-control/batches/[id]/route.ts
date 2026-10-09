@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { offBatch, offBatchItem } from "@/db/schema";
+import { offBatch, offBatchItem, offPayment } from "@/db/schema";
 import { computeOffFinancePaymentSummary, computeOffPaymentSummary, findOffNoSuratConflicts, getNextOffBatchNumber, getPrincipleByCode, getPrincipleByName, getBatchWithItems, isOffPeriodClosedForBatch, parseCurrency, publicBatch, publicPayment, requireOffSession, resolveProgramTypeForSave, writeOffAudit } from "@/lib/off-program-control";
 import { requirePermissionH, resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 
@@ -62,6 +62,7 @@ function isPatchableStatus(batch: typeof offBatch.$inferSelect) {
 }
 
 const OFF_BATCH_EDIT_CONFLICT = "OFF_BATCH_EDIT_CONFLICT";
+const OFF_BATCH_PAID_CONFLICT = "OFF_BATCH_PAID_CONFLICT";
 
 function maskItemRekening(
     items: Array<typeof offBatchItem.$inferSelect>,
@@ -281,6 +282,10 @@ export async function PATCH(request: Request, context: Context) {
                 || (actor.role !== "admin" && await isOffPeriodClosedForBatch(fresh, tx))) {
                 throw new Error(OFF_BATCH_EDIT_CONFLICT);
             }
+            // S6-0b: DELETE+INSERT item membuang kolom finance_* (status/ID/nominal bayar per item) — batch yang
+            // sudah punya pembayaran Keuangan tidak boleh diedit lewat jalur ini (cek di bawah lock).
+            const [payment] = await tx.select({ id: offPayment.id }).from(offPayment).where(eq(offPayment.batchId, id)).limit(1);
+            if (payment || Number(fresh.paidAmount || 0) > 0) throw new Error(OFF_BATCH_PAID_CONFLICT);
             await tx.update(offBatch).set(patch).where(eq(offBatch.id, id));
             if (itemValues) {
                 await tx.delete(offBatchItem).where(eq(offBatchItem.batchId, id));
@@ -311,6 +316,10 @@ export async function PATCH(request: Request, context: Context) {
     } catch (error) {
         console.error("[OFF BATCH PATCH ERROR]", error);
         const message = error instanceof Error ? error.message : "";
+        if (message === OFF_BATCH_PAID_CONFLICT) {
+            // "terkunci" dicocokkan KONFLIK_STATUS di SpvForm.tsx (dialog muat ulang).
+            return NextResponse.json({ ok: false, error: "Batch sudah memiliki pembayaran Keuangan dan terkunci: item tidak dapat diedit lagi. Muat ulang halaman." }, { status: 409 });
+        }
         if (message === OFF_BATCH_EDIT_CONFLICT) {
             return NextResponse.json({ ok: false, error: "Status batch baru saja berubah (terkunci/diproses/periode ditutup). Muat ulang sebelum mengedit." }, { status: 409 });
         }
