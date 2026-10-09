@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
-import { forwardAccurate, isGuardedAccurateWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
+import { accurateTimeoutMessage, forwardAccurate, isGuardedAccurateWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
 import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
 import { db } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
+    let requestMethod = "";
     try {
         const authCheck = await requireApiSession(req);
         if (authCheck.response) return authCheck.response;
 
         const body = await req.json();
         const { endpointPath, method, payload } = body;
+        requestMethod = typeof method === "string" ? method : "";
         if (typeof endpointPath !== "string" || typeof method !== "string") {
             return NextResponse.json({ error: "endpointPath dan method wajib teks" }, { status: 400 });
         }
@@ -74,7 +76,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(data);
     } catch (error: unknown) {
         if (error instanceof Error && error.name === "TimeoutError") {
-            return NextResponse.json({ error: "Accurate tidak merespons dalam 30 detik (timeout). Coba lagi." }, { status: 504 });
+            return NextResponse.json({ error: accurateTimeoutMessage(requestMethod) }, { status: 504 });
         }
         console.error("[PROXY SERVER INTERNAL ERROR]", error);
         return NextResponse.json({ error: error instanceof Error ? error.message : "Proxy request failed" }, { status: 500 });

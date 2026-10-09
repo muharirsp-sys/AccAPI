@@ -6,6 +6,7 @@
  * Main Functions: POST {clientRef, payload:[PurchasePaymentItem]} -> {state, attemptId, accurateId,
  *   accurateNumber, message, response, persisted}; 409 {live, generation, currentGeneration} bila attempt hidup
  *   sudah ada; 409 {code: reopened_use_repost} bila subjek sudah dibuka ulang (ADR-004 rilis B, belum ada di sini).
+ *   Gagal SEBELUM klaim (validasi, sesi, DB) = {claimed:false}: pasti tidak terkirim (UI tidak mengunci record).
  * Side Effects: INSERT/UPDATE accurate_write_attempt; POST purchase-payment/bulk-save.do ke Accurate.
  */
 import { NextResponse } from "next/server";
@@ -28,18 +29,26 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => null) as { clientRef?: unknown; payload?: unknown } | null;
     const normalized = normalizePurchasePaymentPayload(body?.payload);
-    if ("error" in normalized) return NextResponse.json({ error: normalized.error }, { status: 400 });
+    if ("error" in normalized) return NextResponse.json({ error: normalized.error, claimed: false }, { status: 400 });
     // Yang dikirim, di-hash dan dijadikan subjek = objek hasil allowlist, bukan kiriman browser.
     const payload = [normalized.item];
     const clientRef = String(body?.clientRef ?? "").slice(0, 300);
 
     // Semua pemeriksaan yang bisa gagal SEBELUM klaim: gagal di sini = pasti tidak terkirim.
-    const session = await getAccurateSession(String(gate.session.user.id));
+    // Tinjauan S6-0a: galat membaca sesi (DB putus, dekripsi) dulu lolos sebagai 500 -> UI mengunci record sebagai
+    // TIDAK PASTI padahal tidak ada yang dikirim.
+    let session: Awaited<ReturnType<typeof getAccurateSession>>;
+    try {
+        session = await getAccurateSession(String(gate.session.user.id));
+    } catch (err) {
+        console.error("[finance/purchase-payment] baca sesi Accurate gagal:", err);
+        return NextResponse.json({ error: "Gagal membaca sesi Accurate — tidak ada yang dikirim ke Accurate.", claimed: false }, { status: 503 });
+    }
     if (!session?.sessionHost || !session.sessionId || !session.accessToken || !session.databaseId) {
-        return NextResponse.json({ error: "Sesi Accurate belum lengkap. Login dan open database Accurate dulu." }, { status: 400 });
+        return NextResponse.json({ error: "Sesi Accurate belum lengkap. Login dan open database Accurate dulu.", claimed: false }, { status: 400 });
     }
     if (!isAllowedAccurateHost(session.sessionHost)) {
-        return NextResponse.json({ error: "Session host Accurate tidak diizinkan" }, { status: 400 });
+        return NextResponse.json({ error: "Session host Accurate tidak diizinkan", claimed: false }, { status: 400 });
     }
     const target = { sessionHost: session.sessionHost, sessionId: session.sessionId, accessToken: session.accessToken };
 
@@ -58,7 +67,7 @@ export async function POST(request: Request) {
     } catch (err) {
         // Klaim gagal (DB) = belum ada yang dikirim.
         console.error("[finance/purchase-payment] klaim attempt gagal:", err);
-        return NextResponse.json({ error: "Gagal mencatat attempt sebelum kirim — tidak ada yang dikirim ke Accurate." }, { status: 503 });
+        return NextResponse.json({ error: "Gagal mencatat attempt sebelum kirim — tidak ada yang dikirim ke Accurate.", claimed: false }, { status: 503 });
     }
 
     if (!result.claimed) {

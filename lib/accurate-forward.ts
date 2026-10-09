@@ -73,6 +73,13 @@ export async function forwardAccurate(target: AccurateTarget, endpointPath: stri
     return { status: response.status, text: await response.text() };
 }
 
+/** Pesan 504 proxy (tinjauan S6-0a): tulis Accurate yang timeout = status TIDAK PASTI — jangan menyuruh mengulang. */
+export function accurateTimeoutMessage(method: string) {
+    return String(method).toUpperCase() === "GET"
+        ? "Accurate tidak merespons dalam 30 detik (timeout). Coba lagi."
+        : "Accurate tidak merespons dalam 30 detik (timeout) — status tulis TIDAK PASTI: periksa di Accurate sebelum mengirim ulang.";
+}
+
 /**
  * Tulis Accurate yang hanya boleh lewat command server ber-klaim (AM-014 / C.14): proxy generik
  * menolaknya agar guard pengiriman ganda tidak bisa dilewati dari browser.

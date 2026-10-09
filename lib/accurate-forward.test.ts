@@ -2,6 +2,7 @@
  * bisa dilewati lewat variasi path. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as forward from "./accurate-forward.ts";
 import { buildAccurateRequest, isGuardedAccurateWrite, isSalesReceiptWrite } from "./accurate-forward.ts";
 
 const target = { sessionHost: "https://zeus.accurate.id", sessionId: "SID", accessToken: "TOK" };
@@ -68,4 +69,15 @@ test("re-review d60433f2 LOW: %5C (backslash ter-encode) & encoding ganda tetap 
         assert.equal(p.includes("purchase") ? isGuardedAccurateWrite(p) : isSalesReceiptWrite(p), true, p);
     }
     for (const p of ["/api/sales-receipt/list.do", "/api/sales-receipt/detail.do"]) assert.equal(isSalesReceiptWrite(p), false, p);
+});
+
+// Tinjauan S6-0a LOW: timeout tulis Accurate = status TIDAK PASTI — pesan 504 proxy tidak boleh menyuruh mengulang.
+test("pesan 504 proxy: tulis tidak menyuruh coba lagi, baca boleh", () => {
+    const msg = (forward as unknown as { accurateTimeoutMessage?: (m: string) => string }).accurateTimeoutMessage;
+    assert.equal(typeof msg, "function");
+    for (const m of ["POST", "post", "DELETE"]) {
+        assert.doesNotMatch(msg!(m), /coba lagi/i, m);
+        assert.match(msg!(m), /TIDAK PASTI/);
+    }
+    assert.match(msg!("GET"), /Coba lagi/);
 });

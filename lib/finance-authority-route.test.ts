@@ -7,6 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 import { POST as resolvePurchasePayment } from "../app/api/finance/purchase-payment/resolve/route.ts";
+import { POST as postPurchasePayment } from "../app/api/finance/purchase-payment/route.ts";
 import { POST as lockIdempotency } from "../app/api/idempotency/lock/route.ts";
 import { POST as completeIdempotency } from "../app/api/idempotency/complete/route.ts";
 import { POST as proxyPost } from "../app/api/proxy/route.ts";
@@ -49,6 +50,23 @@ export const jsonPost = (url: string, body: unknown) => new NextRequest(`http://
 /** Semua kunci finance KECUALI `except` — membuktikan kapabilitas tidak saling menggantikan. */
 const financeAllBut = (except: string) => ["finance.view", "finance.update", "finance.retry_post", "finance.resolve_unknown",
     "finance.override_duplicate", "finance.repost_payment", "api_wrapper.view", "api_wrapper.execute"].filter((k) => k !== except);
+
+const PP_PAYLOAD = [{ bankNo: "1101", vendorNo: "V-01", chequeAmount: 1000, transDate: "29/09/2026", chequeDate: "29/09/2026",
+    paymentMethod: "BANK_TRANSFER", description: "SPPD: 001", detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 1000 }] }];
+
+test("tinjauan S6-0a: POST /api/finance/purchase-payment tanpa finance.update -> 403 sebelum sesi/DB/jaringan", async () => {
+    const denied = await asUserWith(financeAllBut("finance.update"), () => postPurchasePayment(jsonPost("/api/finance/purchase-payment", { clientRef: "k", payload: PP_PAYLOAD })));
+    assert.equal(denied.status, 403);
+});
+
+test("tinjauan S6-0a: galat SEBELUM klaim (baca sesi Accurate melempar) -> 503 {claimed:false}, tidak dikirim", async () => {
+    // asUserWith: select().from().where() tanpa .limit -> getAccurateSession melempar (mis. DB putus saat baca sesi).
+    const res = await asUserWith(["finance.update"], () => postPurchasePayment(jsonPost("/api/finance/purchase-payment", { clientRef: "k", payload: PP_PAYLOAD })));
+    assert.equal(res.status, 503);
+    const body = await res.json() as { claimed?: boolean; error?: string };
+    assert.equal(body.claimed, false);
+    assert.match(String(body.error), /tidak ada yang dikirim/i);
+});
 
 test("D-14 resolve purchase-payment: hanya finance.resolve_unknown (retry_post/override/repost tidak cukup)", async () => {
     const denied = await asUserWith(financeAllBut("finance.resolve_unknown"), () => resolvePurchasePayment(jsonPost("/api/finance/purchase-payment/resolve", {})));
