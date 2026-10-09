@@ -227,7 +227,8 @@ END $$;
 COMMIT;
 
 -- ============================================================
--- VERIFIKASI (baca saja) — semua ok harus true; NULL = tidak berlaku (role accapi_app tidak ada)
+-- VERIFIKASI (baca saja) — semua ok harus true; NULL = tidak berlaku (role accapi_app atau tabel tidak ada).
+-- Cek hak akses dijaga to_regclass agar blok ini tidak melempar pada keadaan (a) tabel belum ada.
 -- ============================================================
 SELECT cek, ok FROM (VALUES
     ('index hidup per generasi', (SELECT bool_or(indexdef LIKE '%(operation, subject_key, generation)%') FROM pg_indexes
@@ -239,11 +240,13 @@ SELECT cek, ok FROM (VALUES
     ('trigger attempt TRUNCATE', EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_accurate_write_attempt_no_truncate')),
     ('trigger reopen INSERT/UPDATE/DELETE', EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_accurate_write_attempt_reopen_guard')),
     ('trigger reopen TRUNCATE', EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_accurate_write_attempt_reopen_no_truncate')),
-    ('accapi_app tanpa UPDATE/DELETE/TRUNCATE reopen', CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app') THEN
+    ('accapi_app tanpa UPDATE/DELETE/TRUNCATE reopen', CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app')
+        AND to_regclass('public.accurate_write_attempt_reopen') IS NOT NULL THEN
         NOT (has_table_privilege('accapi_app', 'public.accurate_write_attempt_reopen', 'UPDATE')
           OR has_table_privilege('accapi_app', 'public.accurate_write_attempt_reopen', 'DELETE')
           OR has_table_privilege('accapi_app', 'public.accurate_write_attempt_reopen', 'TRUNCATE')) END),
-    ('accapi_app boleh SELECT/INSERT/UPDATE attempt', CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app') THEN
+    ('accapi_app boleh SELECT/INSERT/UPDATE attempt', CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'accapi_app')
+        AND to_regclass('public.accurate_write_attempt') IS NOT NULL THEN
         has_table_privilege('accapi_app', 'public.accurate_write_attempt', 'SELECT')
         AND has_table_privilege('accapi_app', 'public.accurate_write_attempt', 'INSERT')
         AND has_table_privilege('accapi_app', 'public.accurate_write_attempt', 'UPDATE') END)
