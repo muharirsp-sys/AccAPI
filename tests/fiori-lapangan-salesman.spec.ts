@@ -96,9 +96,9 @@ async function mockFk(page: Page, opsi: Opsi) {
     return { tulis, baca, unggah: () => unggah };
 }
 /**
- * Akun yang punya izin form_kontrol.view TANPA form_kontrol.submit. Preset admin LOCAL_AUTH_BYPASS tidak punya kunci form_kontrol.* sama
- * sekali (D-17) sehingga tombol tidak dikunci dan server yang memutuskan (alasanIzinFk). Untuk menguji penguncian, kunci view disuntik
- * ke payload RSC halaman /form-kontrol (hanya di tes): `permKeys` shell (IzinFkCtx) dan `izinFk` Kunjungan.
+ * Akun yang punya izin form_kontrol.view TANPA form_kontrol.submit. Admin LOCAL_AUTH_BYPASS memegang SEMUA kunci registry termasuk
+ * form_kontrol.* (e5a6044f), jadi tombolnya tidak terkunci. Untuk menguji penguncian, array izin di payload RSC halaman /form-kontrol
+ * diganti UTUH (hanya di tes): `izinFk` Kunjungan = [view], `permKeys` shell (IzinFkCtx) = tanpa form_kontrol.* selain view.
  */
 async function izinTanpaSubmit(page: Page) {
     await page.route((u) => u.pathname.startsWith("/form-kontrol"), async (route) => {
@@ -106,9 +106,11 @@ async function izinTanpaSubmit(page: Page) {
         const headers = { ...res.headers() };
         delete headers["content-length"];
         delete headers["content-encoding"];
+        // e = "\\" pada payload RSC ber-escape, "" pada JSON biasa. Array string tanpa kurung bersarang.
+        const tanpaFk = (isi: string, q: string) => [`${q}form_kontrol.view${q}`, ...isi.split(",").filter((k) => k && !k.includes("form_kontrol."))].join(",");
         const body = (await res.text())
-            .replace(/izinFk\\":\[\]/g, 'izinFk\\":[\\"form_kontrol.view\\"]').replace(/izinFk":\[\]/g, 'izinFk":["form_kontrol.view"]')
-            .replace(/permKeys\\":\[/g, 'permKeys\\":[\\"form_kontrol.view\\",').replace(/permKeys":\[/g, 'permKeys":["form_kontrol.view",');
+            .replace(/izinFk(\\?)":\[[^\]]*\]/g, (_, e: string) => `izinFk${e}":[${e}"form_kontrol.view${e}"]`)
+            .replace(/permKeys(\\?)":\[([^\]]*)\]/g, (_, e: string, isi: string) => `permKeys${e}":[${tanpaFk(isi, `${e}"`)}]`);
         return route.fulfill({ status: res.status(), headers, body });
     });
 }

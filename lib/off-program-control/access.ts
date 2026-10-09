@@ -264,7 +264,7 @@ const AKSI_DASAR_OPC = new Set(["view", "create", "update", "approve", "export"]
 /**
  * Alasan Tutup periode nonaktif dari izin grup akses (owner 8 Okt 2026: bukan untuk OM); undefined = boleh. Server menuntut
  * `off_program_control.period_close` (periods/route.ts). Pola D-17 (lihat form-kontrol alasanIzinFk): daftar izin tanpa satu pun
- * aksi granular OPC (preset peran lama / LOCAL_AUTH_BYPASS) tidak bisa dipercaya → tidak dikunci, server yang memutuskan.
+ * aksi granular OPC (preset peran lama; admin LOCAL_AUTH_BYPASS kini memegang semua kunci registry) tidak bisa dipercaya → tidak dikunci, server yang memutuskan.
  * ponytail: tebakan ini hilang begitu preset lama diaudit (D-17).
  */
 export function alasanTutupPeriode(perms: ReadonlySet<string>): string | undefined {
