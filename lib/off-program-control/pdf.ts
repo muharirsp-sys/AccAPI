@@ -973,7 +973,9 @@ export async function generateOffPaymentProofPdf(input: PaymentProofInput) {
     filePath = filePath.replace(/\.pdf$/i, `-${input.paymentId.slice(0, 8)}.pdf`);
     await writeFile(filePath, pdf, { flag: "wx" });
   }
-  const stats = await stat(filePath);
+  // AM-048: path hasil .replace() tak bisa dianalisis statis → tanpa komentar ini Turbopack menelusuri
+  // SELURUH proyek (docs/, evidence/, Dockerfile …) ke output standalone.
+  const stats = await stat(/*turbopackIgnore: true*/ filePath);
   if (stats.size <= 0)
     throw new Error("Cannot generate payment proof PDF: saved file is empty");
   return {
