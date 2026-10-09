@@ -20,6 +20,8 @@ CASES = [
     (None, 0.0),
     ("-1.000", -1000.0),            # dulu -1.0: grup "-1" gagal isdigit
     ("-1.250.000,50", -1250000.5),
+    ("--5", 0.0),                   # review L1: dua tanda tak terbaca (sempat jadi +5)
+    ("-" * 3000 + "5", 0.0),        # review L1: tanpa rekursi -> tidak RecursionError
 ]
 
 # AM-044 (D.21-22): jalur UANG memakai parse_number_strict — nonempty invalid = galat, bukan 0.
@@ -45,6 +47,14 @@ def main():
             assert "Potongan" in str(e), e
         else:
             raise AssertionError(f"parse_number_strict({x!r}) = {got!r}, harus ValueError")
+    # Review M1: upload Excel SPPD memakai strict untuk kolom uang.
+    try:
+        shared.normalize_sppd_excel_value("nilai_pembayaran", "NOT-A-NUMBER")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("SPPD Excel nilai_pembayaran 'NOT-A-NUMBER' diterima (dulu 0)")
+    assert shared.normalize_sppd_excel_value("nilai_pembayaran", "Rp 1.000") == 1000.0
     # Longgar tetap longgar untuk read model (perilaku lama dipertahankan).
     assert shared.parse_number_id("abc") == 0.0
     print("OK test_parse_number_id")

@@ -269,9 +269,10 @@ def _parse_number_core(t: str) -> Optional[float]:
     t = re.sub(r"[^0-9\.\,\-]", "", t)
     t = re.sub(r"[,.]-+$", "", t)  # "1.250.000,-" = rupiah tanpa sen
     # Tanda dipisah DULU: "-1.000" dulu terbaca -1.0 (grup "-1" gagal isdigit -> float("-1.000")).
-    if t.startswith("-"):
-        v = _parse_number_core(t[1:])
-        return None if v is None else -v
+    sign = -1.0 if t.startswith("-") else 1.0
+    t = t[1:] if sign < 0 else t
+    if "-" in t:
+        return None  # "--5", "-Rp-5": dua tanda = tak terbaca, bukan +5
 
     # Both '.' and ',' => separator TERAKHIR adalah desimal (AM-018): "1.234,56" (ID) dan
     # "250,000.00" (EN). Dulu selalu dianggap ID, sehingga "250,000.00" terbaca 250.
@@ -279,7 +280,7 @@ def _parse_number_core(t: str) -> Optional[float]:
         dec, grp = (",", ".") if t.rfind(",") > t.rfind(".") else (".", ",")
         t2 = t.replace(grp, "").replace(dec, ".")
         try:
-            return float(t2)
+            return sign * float(t2)
         except:
             return None
 
@@ -291,7 +292,7 @@ def _parse_number_core(t: str) -> Optional[float]:
         else:
             t2 = t.replace(",", "")
         try:
-            return float(t2)
+            return sign * float(t2)
         except:
             return None
 
@@ -302,16 +303,16 @@ def _parse_number_core(t: str) -> Optional[float]:
             if len(groups[-1]) == 3:
                 t2 = "".join(groups)
                 try:
-                    return float(t2)
+                    return sign * float(t2)
                 except:
                     return None
         try:
-            return float(t)
+            return sign * float(t)
         except:
             return None
 
     try:
-        return float(t)
+        return sign * float(t)
     except:
         return None
 
@@ -3039,7 +3040,7 @@ def normalize_sppd_excel_value(field: str, value: Any) -> Any:
     except Exception:
         pass
     if field in SPPD_EXCEL_NUMERIC_FIELDS:
-        return parse_number_id(value)
+        return parse_number_strict(value, field)  # AM-044: "NOT-A-NUMBER"/"#DIV/0!" dulu menimpa jadi 0
     if field in SPPD_EXCEL_DATE_FIELDS:
         return parse_sppd_date_ddmmyyyy(value)
     if field == "tipe_pengajuan":
@@ -3084,7 +3085,7 @@ def parse_sppd_excel_rows(content: bytes) -> Tuple[List[Dict[str, Any]], List[st
         extra = len(date_errors) - 5
         suffix = f"; dan {extra} lainnya" if extra > 0 else ""
         raise ValueError(
-            f"Tanggal tidak valid (harus DD/MM/YYYY): {shown}{suffix}. Upload dibatalkan."
+            f"Nilai tidak valid (tanggal harus DD/MM/YYYY, angka harus rupiah): {shown}{suffix}. Upload dibatalkan."
         )
     return rows, ignored_columns, blocked_columns
 

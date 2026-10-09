@@ -51,6 +51,9 @@ test("targets: null / hilang / string / boolean / NaN->null ditolak 400 tanpa me
             const res = await postTargets(req("/api/insentif-sales/targets", [target(over)]));
             assert.equal(res.status, 400, label);
         }
+        // Kontrol positif: baris sah (termasuk nol sah & splmValue tidak dikirim) lolos validasi dan
+        // sampai ke DB — 400 di atas bukan akibat fixture rusak.
+        await assert.rejects(postTargets(req("/api/insentif-sales/targets", [target({ targetEc: 0 })])), /DB disentuh/);
     });
 });
 

@@ -72,8 +72,9 @@ export async function POST(req: NextRequest) {
         const principle = s.principle?.trim();
         if (!spvName || !principle || !s.periodMonth || !s.periodYear) continue;
 
-        const amount = Number(s.supportAmount);
-        if (!Number.isFinite(amount) || amount < 0) {
+        // AM-043: wajib number — Number(null) / Number("") = 0 dulu tersimpan sebagai support 0.
+        const amount = s.supportAmount as unknown;
+        if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) {
             return NextResponse.json(
                 { error: `${spvName}/${principle}: nilai support tidak valid` },
                 { status: 400 },
