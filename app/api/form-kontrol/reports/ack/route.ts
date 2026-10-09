@@ -1,5 +1,6 @@
 /*
- * Tujuan: SPV/SM acknowledge laporan harian salesman (tulis spvAck/spvAckBy/spvAckAt).
+ * Tujuan: SPV/SM acknowledge laporan harian salesman (tulis spvAck/spvAckBy/spvAckAt),
+ *   atau batalkan dengan body `ack: false` (S5-4a); keduanya tercatat di kontrol_audit_log.
  * Caller: tombol "Acknowledge" di app/(dashboard)/form-kontrol/spv-dashboard/page.tsx.
  * Dependensi: acknowledgeReport + resolveScope.
  * Akses: admin/manager bebas; SPV/SM hanya anak buahnya (dicek di acknowledgeReport).
@@ -14,9 +15,12 @@ export async function POST(req: Request) {
     const session = gate.session;
 
     try {
-        const { salesCode, date } = await req.json();
+        const { salesCode, date, ack } = await req.json();
         if (!salesCode || !date) {
             return NextResponse.json({ error: "Missing salesCode/date" }, { status: 400 });
+        }
+        if (ack !== undefined && typeof ack !== "boolean") {
+            return NextResponse.json({ error: "ack harus true/false" }, { status: 400 });
         }
         const scope = await resolveScope(session);
         const ok = await acknowledgeReport({
@@ -24,6 +28,8 @@ export async function POST(req: Request) {
             ackBy: session.user.name ?? session.user.id,
             supervisorName: scope.salesName ?? session.user.name ?? null,
             isAdmin: scope.allowedSalesCodes === null,
+            ack,
+            actorId: session.user.id, actorName: session.user.name ?? null,
         });
         if (!ok) return NextResponse.json({ error: "Tidak berhak atau laporan belum disubmit" }, { status: 403 });
         return NextResponse.json({ success: true });

@@ -1957,3 +1957,31 @@ export const masterBarangAudit = pgTable("master_barang_audit", {
 }, (t) => ({
     masterCreatedIdx: index("idx_master_barang_audit_master_created").on(t.masterId, t.createdAt),
 }));
+
+// Templat No Claim per principal (S4b, owner 8 Okt 2026). Hanya baris yang DIUBAH dari bawaan
+// lib/claim-workflow/no-claim-rules.ts; yang tak punya baris memakai bawaan kode.
+// variant_key '' = principal tanpa varian (Heinz punya HZ/BS). Lihat db/migrations/0026_no_claim_template.sql.
+export const noClaimTemplate = pgTable("no_claim_template", {
+    principleCode: text("principle_code").notNull(),
+    variantKey: text("variant_key").notNull().default(""),
+    label: text("label").notNull(),
+    pattern: text("pattern").notNull(),
+    padWidth: integer("pad_width"),
+    sequenceType: text("sequence_type").notNull().default("number"),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at").notNull(),
+}, (t) => ({
+    pk: primaryKey({ columns: [t.principleCode, t.variantKey] }),
+}));
+
+// Jejak ubah/kembalikan templat No Claim: nilai lama → baru + pelaku (format nomor dokumen klaim).
+export const noClaimTemplateLog = pgTable("no_claim_template_log", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    principleCode: text("principle_code").notNull(),
+    variantKey: text("variant_key").notNull().default(""),
+    action: text("action").notNull(), // 'set' | 'reset'
+    before: jsonb("before"),
+    after: jsonb("after"),
+    actor: text("actor"),
+    createdAt: timestamp("created_at").notNull(),
+});
