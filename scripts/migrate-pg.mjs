@@ -371,7 +371,8 @@ export const migrations = [
     // Buang = DELETE baris antrean dan riwayatnya harus bertahan. invoice_outbox sendiri dipasang
     // manual (db/migrations/0004) dan tidak dibutuhkan untuk membuat tabel ini.
     // Role aplikasi butuh SELECT/INSERT + USAGE sequence (runbook L1g). Trigger anti-ubah + REVOKE
-    // UPDATE/DELETE/TRUNCATE = docs/handover/DDL_OUTBOX_EVENT.sql (manual), BUKAN di sini.
+    // UPDATE/DELETE/TRUNCATE + E5 (data lama dikunci tidak pasti = UPDATE data, dilarang di berkas
+    // ini) = docs/handover/DDL_OUTBOX_EVENT.sql (manual, IT Support saat deploy), BUKAN di sini.
     nama: "invoice_outbox_event",
     sudahAda: `SELECT 1 FROM information_schema.tables WHERE table_name = 'invoice_outbox_event'`,
     sql: `

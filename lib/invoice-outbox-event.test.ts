@@ -170,6 +170,61 @@ test("PG: penyapu + klaim bersamaan — hanya `sending` > 15 mnt jadi unknown (+
     }
 });
 
+test("PG: DDL manual (E5 + append-only) — dijalankan DUA kali: data lama dikunci tidak pasti sekali, riwayat tak bisa diubah", { skip: pgSkip }, async () => {
+    const pool = new Pool({ connectionString: PG_URL, max: 2 });
+    const id = (nama: string) => `UJI-S6D-E5:${nama}:${randomUUID()}`;
+    const kasus = {
+        gateway: id("rejected-gateway"), amplop: id("rejected-amplop"), tanpaId: id("posted-tanpa-id"), denganId: id("posted-id"),
+        macet: id("sending-20m"), hidup: id("sending-1m"), antre: id("queued"),
+    };
+    try {
+        await pool.query((await entriMigrasi("invoice_outbox_event")).sql);
+        await seed(pool, kasus.gateway, "rejected", { lastError: '{"message":"Bad Gateway"}' });
+        await seed(pool, kasus.amplop, "rejected", { lastError: '["Pelanggan melebihi batas piutang"]' });
+        await seed(pool, kasus.tanpaId, "posted");
+        await seed(pool, kasus.denganId, "posted", { accurateId: "331710" });
+        await seed(pool, kasus.macet, "sending", { updatedAgoMin: 20 });
+        await seed(pool, kasus.hidup, "sending", { updatedAgoMin: 1 });
+        await seed(pool, kasus.antre, "queued");
+        const { readFile } = await import("node:fs/promises");
+        const ddl = await readFile(new URL("../docs/handover/DDL_OUTBOX_EVENT.sql", import.meta.url), "utf8");
+        const jalankan = async () => {
+            const client = await pool.connect();
+            try {
+                const hasil = await client.query(ddl) as unknown as { rows: { cek: string; ok: boolean | null }[] }[];
+                return hasil[hasil.length - 1].rows;
+            } finally {
+                client.release();
+            }
+        };
+        const verifikasi1 = await jalankan();
+        const verifikasi2 = await jalankan(); // kedua kalinya: tanpa perubahan
+        for (const v of [...verifikasi1, ...verifikasi2]) assert.notEqual(v.ok, false, `VERIFIKASI gagal: ${v.cek}`);
+
+        const state = async (orderId: string) => (await pool.query(`SELECT state, last_error FROM invoice_outbox WHERE order_id = $1`, [orderId])).rows[0];
+        for (const k of [kasus.gateway, kasus.tanpaId, kasus.macet]) {
+            assert.equal((await state(k)).state, "unknown", k);
+            const ev = await events(pool, k);
+            assert.equal(ev.length, 1, `${k}: dua kali jalan = tetap SATU event`);
+            assert.deepEqual([ev[0].jenis, ev[0].state_to, ev[0].actor], ["unknown", "unknown", "ddl:E5"]);
+        }
+        assert.match((await state(kasus.gateway)).last_error, /Bad Gateway/, "last_error lama dipertahankan di pesan");
+        assert.equal((await events(pool, kasus.gateway))[0].detail.last_error, '{"message":"Bad Gateway"}');
+        assert.equal((await state(kasus.amplop)).state, "rejected");
+        assert.equal((await state(kasus.denganId)).state, "posted");
+        assert.equal((await state(kasus.hidup)).state, "sending", "kiriman yang sedang berjalan tidak boleh disentuh E5");
+        assert.equal((await state(kasus.antre)).state, "queued");
+        for (const k of [kasus.amplop, kasus.denganId, kasus.hidup, kasus.antre]) assert.equal((await events(pool, k)).length, 0, k);
+
+        // Append-only di tingkat DB.
+        await assert.rejects(pool.query(`UPDATE invoice_outbox_event SET reason = 'ubah' WHERE order_id = $1`, [kasus.gateway]), /append-only/);
+        await assert.rejects(pool.query(`DELETE FROM invoice_outbox_event WHERE order_id = $1`, [kasus.gateway]), /append-only/);
+    } finally {
+        await pool.query(`DELETE FROM invoice_outbox WHERE order_id = ANY($1)`, [Object.values(kasus)]);
+        await pool.end();
+    }
+});
+
 test("PG: dua Kirim bersamaan pada antrean yang sama -> SATU kiriman per order, satu event kirim + satu hasil", { skip: pgSkip }, async () => {
     const poolA = new Pool({ connectionString: PG_URL, max: 2 });
     const poolB = new Pool({ connectionString: PG_URL, max: 2 });
