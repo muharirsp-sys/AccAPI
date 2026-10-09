@@ -22,7 +22,7 @@
  *    membawa charField1 lain, yang salah bukan angkanya — yang salah pasangannya.
  */
 import { PPN, TOLERANCE, splitDiscounts, type DiscountAt } from "@/lib/principal-validation";
-import type { InvoicePayload } from "@/lib/accurate-invoice-write";
+import { toAccurateDate, type InvoicePayload } from "@/lib/accurate-invoice-write";
 
 export type Finding = { line: number | null; field: string; expected: string; actual: string };
 
@@ -160,6 +160,27 @@ export function nilaiPayload(payload: InvoicePayload): { dpp: number; ppn: numbe
     const dpp = payload.inclusiveTax ? cents(netto / (1 + PPN)) : netto;
     const ppn = payload.taxable ? cents(payload.inclusiveTax ? netto - dpp : dpp * PPN) : 0;
     return { dpp, ppn, total: cents(dpp + ppn) };
+}
+
+/**
+ * Calon faktur di cache untuk verifikasi balik (S6-0d R4): record id yang dicatat + pasangan
+ * pelanggan × tanggal yang BENAR-BENAR dikirim (`payload.transDate` — tanggal faktur pilihan
+ * disimpan di klaim), bukan tanggal SO. Tanggal per pelanggan, bukan perkalian silang semua
+ * pelanggan × semua tanggal. Payload lama tanpa tanggal -> tanggal SO.
+ */
+export function kandidatCache(rows: { customerNo: string; orderDate: string; accurateId: string; payload: unknown }[]) {
+    const ids = [...new Set(rows.map((row) => Number(row.accurateId)).filter((id) => Number.isFinite(id) && id > 0))];
+    const perPelanggan = new Map<string, Set<string>>();
+    for (const row of rows) {
+        if (!row.customerNo) continue;
+        let tanggal = str(obj(row.payload).transDate).trim();
+        if (!/^\d{2}\/\d{2}\/\d{4}$/.test(tanggal)) {
+            try { tanggal = toAccurateDate(String(row.orderDate)); } catch { continue; }
+        }
+        if (!perPelanggan.has(row.customerNo)) perPelanggan.set(row.customerNo, new Set());
+        perPelanggan.get(row.customerNo)!.add(tanggal);
+    }
+    return { ids, perPelanggan: [...perPelanggan].map(([customerNo, dates]) => ({ customerNo, transDates: [...dates].sort() })) };
 }
 
 export type VerifyStatus = "cocok" | "selisih" | "tak-terperiksa";

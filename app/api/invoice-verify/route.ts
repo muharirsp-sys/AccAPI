@@ -25,13 +25,15 @@ import { and, desc, eq, inArray, or, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { invoiceOutbox, invoiceVerifyNote, salesInvoiceCache } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { toAccurateDate, type InvoicePayload } from "@/lib/accurate-invoice-write";
-import { readAccurateInvoice, terapkanPenjelasan, verifyInvoice, type JenisTemuan, type VerifyResult } from "@/lib/invoice-verify";
+import type { InvoicePayload } from "@/lib/accurate-invoice-write";
+import { kandidatCache, readAccurateInvoice, terapkanPenjelasan, verifyInvoice, type JenisTemuan, type VerifyResult } from "@/lib/invoice-verify";
 
 export const runtime = "nodejs";
 
 /** Yang berpotensi punya faktur di Accurate: `posted` pasti, `unknown` mungkin. */
 const VERIFIABLE = ["posted", "unknown"];
+/** Batas baris cache yang dibaca sekali periksa; melewatinya dilaporkan (`cacheTerpotong`), tidak diam. */
+const BATAS_CACHE = 2000;
 const JENIS: JenisTemuan[] = ["sales", "isi"];
 
 export async function GET(request: NextRequest) {
@@ -56,26 +58,26 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ ok: true, checked: 0, summary: { cocok: 0, selisih: 0, dijelaskan: 0, "tak-terperiksa": 0 }, rows: [] });
     }
 
-    const ids = [...new Set(rows.map((row) => Number(row.accurateId)).filter((id) => Number.isFinite(id) && id > 0))];
-    const customerNos = [...new Set(rows.map((row) => row.customerNo).filter(Boolean))];
-    const transDates = [...new Set(rows.map((row) => {
-        try { return toAccurateDate(String(row.orderDate)); } catch { return ""; }
-    }).filter(Boolean))];
+    // S6-0d R4: tanggal = yang BENAR-BENAR dikirim (payload.transDate, tanggal faktur pilihan), bukan
+    // tanggal SO; pasangan per pelanggan, bukan perkalian silang pelanggan × tanggal.
+    const { ids, perPelanggan } = kandidatCache(rows.map((row) => ({
+        customerNo: row.customerNo, orderDate: String(row.orderDate), accurateId: row.accurateId, payload: row.payload,
+    })));
 
     // Dua cabang, keduanya lewat kolom terindeks. Yang kedua menjaring faktur yang record id-nya
     // tidak pernah sampai ke kita (status TIDAK PASTI) — di situlah charField1 jadi satu-satunya kait.
     const reach: SQL[] = [];
     if (ids.length) reach.push(inArray(salesInvoiceCache.id, ids));
-    if (customerNos.length && transDates.length) {
-        reach.push(and(
-            inArray(salesInvoiceCache.customerNo, customerNos),
-            inArray(salesInvoiceCache.transDate, transDates),
-        )!);
+    for (const { customerNo, transDates } of perPelanggan) {
+        reach.push(and(eq(salesInvoiceCache.customerNo, customerNo), inArray(salesInvoiceCache.transDate, transDates))!);
     }
+    // Urut id menurun: bila batas tercapai, yang terpotong faktur TERTUA, dan itu dilaporkan.
     const candidates = reach.length
         ? await db.select({ id: salesInvoiceCache.id, raw: salesInvoiceCache.rawData })
-            .from(salesInvoiceCache).where(reach.length === 1 ? reach[0] : or(...reach)!).limit(2000)
+            .from(salesInvoiceCache).where(reach.length === 1 ? reach[0] : or(...reach)!)
+            .orderBy(desc(salesInvoiceCache.id)).limit(BATAS_CACHE)
         : [];
+    const cacheTerpotong = candidates.length >= BATAS_CACHE;
 
     // Dikumpulkan sebagai DAFTAR per charField1, bukan satu-satu: dua faktur dengan kunci yang
     // sama berarti SO ini terfakturkan dua kali di Accurate — bencana yang tidak bisa dibatalkan
@@ -148,6 +150,9 @@ export async function GET(request: NextRequest) {
         checked: results.length,
         summary,
         mismatched: summary.selisih,
+        // true = calon cache melewati batas; faktur tertua mungkin tidak terbaca (hasil "tak-terperiksa"
+        // untuknya bukan bukti apa pun).
+        cacheTerpotong,
         rows: results,
     });
 }
