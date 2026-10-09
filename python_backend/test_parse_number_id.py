@@ -25,6 +25,11 @@ CASES = [
     ("--5", 0.0),                   # review L1: dua tanda tak terbaca (sempat jadi +5)
     ("-" * 3000 + "5", 0.0),        # review L1: tanpa rekursi -> tidak RecursionError
     ("Rp.5000", 5000.0),            # review c4c11927: dulu 0.5 ("Rp." menyisakan ".5000")
+    # S6-0c 7d: pemisah ribuan hanya bila kepala kelompoknya 1-3 digit tanpa nol depan (cermin lib/insentif-sales-excel.ts).
+    ("1250000.000", 1250000.0),     # dulu 1.250.000.000 (1,25 miliar)
+    ("0.125", 0.125),               # dulu 125
+    ("0,125", 0.125),               # dulu 125
+    ("533000000,50", 533000000.5),
 ]
 
 # AM-044 (D.21-22): jalur UANG memakai parse_number_strict — nonempty invalid = galat, bukan 0.
@@ -36,10 +41,11 @@ STRICT_OK = [
     ("Rp 1.250.000,-", 1250000.0), ("IDR 250,000.00", 250000.0), ("1 250 000", 1250000.0), ("-1.000", -1000.0),
     # review c4c11927 (MEDIUM): prefix "Rp." dulu menggeser skala -> 0.5 / 0.15 / 0.1
     ("Rp.5000", 5000.0), ("Rp.150.000", 150000.0), ("Rp.1000,-", 1000.0), ("Rp-1.000", -1000.0),
+    ("1250000.000", 1250000.0), ("250000000.000", 250000000.0), ("0.125", 0.125), ("0,125", 0.125), ("1,250,000", 1250000.0),
 ]
 # "1２3"/"１.000": digit lebar-penuh dulu lolos regex (\d Unicode) lalu dibuang inti -> 13 / 0.0.
 STRICT_BAD = ["abc", "NOT-A-NUMBER", "12abc", "1.2.3,4.5", "(1.000)", "-Rp-5", "--5", True, float("inf"), "1e5", "Rp",
-              "1２3", "１.000"]
+              "1２3", "１.000", "12.34.567", "1234.567,89"]
 
 
 def main():

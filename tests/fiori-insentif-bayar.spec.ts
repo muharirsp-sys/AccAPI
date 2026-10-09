@@ -466,6 +466,9 @@ test("Support: isian bukan angka tidak diam-diam jadi Rp 0 — Simpan dikunci, t
     await expect(simpan).toBeDisabled();
     await expect(simpan).toHaveAttribute("title", /bukan angka/);
     await expect(baris21).toContainText("bukan angka");
+    // Pembaca layar mendengar alasannya pada isian itu sendiri (7c).
+    await expect(isi).toHaveAttribute("aria-invalid", "true");
+    await expect(isi).toHaveAccessibleDescription(/bukan angka/);
     await isi.press("Backspace"); // "1" sah lagi
     await expect(baris21).not.toContainText("bukan angka");
     // "" → "e": value DOM tetap "" sehingga React menahan onChange — tanpa onInput ini terkirim sebagai 0.

@@ -56,6 +56,8 @@ const angka = (v: string) => (v.trim() === "" ? 0 : Number(v));
 const BUKAN_ANGKA = "bukan angka";
 const isiInput = (el: HTMLInputElement) => (el.validity.badInput ? BUKAN_ANGKA : el.value);
 const tampilIsi = (v: string) => (v === BUKAN_ANGKA ? "" : v);
+/** id keterangan "bukan angka" per isian (aria-describedby): kunci baris berisi spasi/|, jadi dirapikan jadi id yang sah. */
+const idSalah = (jenis: string, kunci: string) => `salah-${jenis}-${kunci.replace(/[^A-Za-z0-9_-]/g, "_")}`;
 const tanpa = (o: Record<string, string>, keys: string[]) => { const n = { ...o }; for (const x of keys) delete n[x]; return n; };
 const isiDraf = (d: Draf) => Object.keys(d.support).length + Object.keys(d.status).length + Object.keys(d.spv).length;
 const statusLama = (r: ApiRow) => r.statusInsentif ?? "distributor_principle";
@@ -357,8 +359,9 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
         <>
             <input type="number" min={0} inputMode="numeric" className="fi-input fi-cellin fi-tnum" aria-label={`Support ${r.salesCode} ${r.principle}`}
                 value={tampilIsi(nilaiSupport(r))} disabled={Boolean(kunciIsiSupport)} title={kunciIsiSupport} aria-invalid={Number.isNaN(angka(nilaiSupport(r))) || undefined}
+                aria-describedby={Number.isNaN(angka(nilaiSupport(r))) ? idSalah("sup", keySales(r)) : undefined}
                 onChange={(e) => ketikSupport(r, e.currentTarget)} onInput={(e) => ketikSupport(r, e.currentTarget)} />
-            {Number.isNaN(angka(nilaiSupport(r))) && <span className="fi-sub fi-why">bukan angka</span>}
+            {Number.isNaN(angka(nilaiSupport(r))) && <span id={idSalah("sup", keySales(r))} className="fi-sub fi-why">bukan angka</span>}
             {supportBerubah(r) && sebelumnya(formatRp(r.support ?? 0))}
         </>
     );
@@ -382,8 +385,9 @@ export default function Support({ permKeys }: { permKeys: string[] }) {
         <>
             <input type="number" min={0} inputMode="numeric" className="fi-input fi-cellin fi-tnum" aria-label={`Support SPV ${p.spvName} ${p.principle}`}
                 value={tampilIsi(nilaiSpv(p))} disabled={Boolean(kunciIsiSpv)} title={kunciIsiSpv} aria-invalid={Number.isNaN(angka(nilaiSpv(p))) || undefined}
+                aria-describedby={Number.isNaN(angka(nilaiSpv(p))) ? idSalah("spv", keySpv(p)) : undefined}
                 onChange={(e) => ketikSpv(p, e.currentTarget)} onInput={(e) => ketikSpv(p, e.currentTarget)} />
-            {Number.isNaN(angka(nilaiSpv(p))) && <span className="fi-sub fi-why">bukan angka</span>}
+            {Number.isNaN(angka(nilaiSpv(p))) && <span id={idSalah("spv", keySpv(p))} className="fi-sub fi-why">bukan angka</span>}
             {spvBerubah(p) && sebelumnya(formatRp(savedSpv?.[keySpv(p)] ?? 0))}
         </>
     );

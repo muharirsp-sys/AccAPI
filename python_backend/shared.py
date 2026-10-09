@@ -276,47 +276,36 @@ def _parse_number_core(t: str) -> Optional[float]:
     if "-" in t:
         return None  # "--5", "-Rp-5": dua tanda = tak terbaca, bukan +5
 
-    # Both '.' and ',' => separator TERAKHIR adalah desimal (AM-018): "1.234,56" (ID) dan
-    # "250,000.00" (EN). Dulu selalu dianggap ID, sehingga "250,000.00" terbaca 250.
-    if "." in t and "," in t:
-        dec, grp = (",", ".") if t.rfind(",") > t.rfind(".") else (".", ",")
-        t2 = t.replace(grp, "").replace(dec, ".")
-        try:
-            return sign * float(t2)
-        except:
-            return None
+    v = _inti_angka(t)
+    return None if v is None else sign * v
 
-    # Only comma
-    if "," in t and "." not in t:
-        parts = t.split(",")
-        if len(parts) == 2 and len(parts[1]) in (1, 2):
-            t2 = t.replace(",", ".")
-        else:
-            t2 = t.replace(",", "")
-        try:
-            return sign * float(t2)
-        except:
-            return None
 
-    # Only dot
-    if "." in t and "," not in t:
-        groups = t.split(".")
-        if len(groups) >= 2 and all(g.isdigit() for g in groups if g != ""):
-            if len(groups[-1]) == 3:
-                t2 = "".join(groups)
-                try:
-                    return sign * float(t2)
-                except:
-                    return None
-        try:
-            return sign * float(t)
-        except:
-            return None
+# S6-0c 7d — satu aturan dengan lib/insentif-sales-excel.ts (intiAngka): pemisah ribuan HANYA bila kepala kelompoknya 1-3 digit
+# tanpa nol depan. Dulu "1250000.000" = 1,25 miliar dan "0.125"/"0,125" = 125 (satu pemisah + 3 digit selalu dianggap ribuan).
+_DIGIT = re.compile(r"[0-9]+")
+_RIBUAN = {".": re.compile(r"[1-9][0-9]{0,2}(?:\.[0-9]{3})+"), ",": re.compile(r"[1-9][0-9]{0,2}(?:,[0-9]{3})+")}
 
-    try:
-        return sign * float(t)
-    except:
-        return None
+
+def _inti_angka(b: str) -> Optional[float]:
+    """Badan angka tanpa tanda/prefix (hanya digit . ,) -> float, atau None bila pengelompokannya tidak sah."""
+    if _DIGIT.fullmatch(b):
+        return float(b)
+    if "." in b and "," in b:
+        # Dua jenis pemisah => separator TERAKHIR adalah desimal (AM-018): "1.234,56" (ID) dan "250,000.00" (EN).
+        dec = "," if b.rfind(",") > b.rfind(".") else "."
+        grp = "." if dec == "," else ","
+        i = b.rfind(dec)
+        bulat, pecahan = b[:i], b[i + 1:]
+        if not _DIGIT.fullmatch(pecahan) or not (_DIGIT.fullmatch(bulat) or _RIBUAN[grp].fullmatch(bulat)):
+            return None
+        return float(bulat.replace(grp, "") + "." + pecahan)
+    sep = "." if "." in b else ","
+    if _RIBUAN[sep].fullmatch(b):
+        return float(b.replace(sep, ""))
+    bagian = b.split(sep)
+    if len(bagian) == 2 and all(_DIGIT.fullmatch(x) for x in bagian):
+        return float(bagian[0] + "." + bagian[1])  # satu pemisah tanpa pola ribuan = desimal: "204,8", "0,125"
+    return None
 
 
 def parse_number_id(x) -> float:

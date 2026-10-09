@@ -8,6 +8,7 @@ import { db } from "./db.ts";
 import { KONSTANTA_KEY, KonstantaBerubahError, getKonstantaBerlabel, readKonstantaVersi, setKonstanta } from "./insentif-settings.ts";
 import { NextRequest } from "next/server";
 import { POST as postPayment } from "../app/api/insentif-sales/payments/route.ts";
+import { PATCH as patchSettings } from "../app/api/insentif-sales/settings/route.ts";
 import { DEFAULT_KONSTANTA } from "./insentif-konstanta.ts";
 
 test("baca konstanta gagal -> setKonstanta menolak dan TIDAK menulis bawaan + patch", async () => {
@@ -195,5 +196,70 @@ test("PG: dua penyimpan dari versi yang sama → satu 409 (UPDATE bersyarat isi)
         const ok = await setKonstanta({ gt: { pool1: 1_555_000 } }, "admin-c", tersimpan.versi);
         assert.equal(ok.konstanta.gt.pool1, 1_555_000);
         assert.equal((await readKonstantaVersi()).konstanta.gt.pool1, 1_555_000);
+    });
+});
+
+// ---------------------------------------------------------------- route PATCH settings (S6-0c perbaikan 7a/7b)
+async function denganAdminLokal<T>(fn: () => Promise<T>): Promise<T> {
+    const env = { NODE_ENV: process.env.NODE_ENV, LOCAL_AUTH_BYPASS: process.env.LOCAL_AUTH_BYPASS };
+    Object.assign(process.env, { NODE_ENV: "development", LOCAL_AUTH_BYPASS: "true" });
+    try {
+        return await fn();
+    } finally {
+        for (const [k, v] of Object.entries(env)) {
+            if (v === undefined) delete process.env[k];
+            else process.env[k] = v;
+        }
+    }
+}
+const patchReq = (body: unknown) => new NextRequest("http://localhost/api/insentif-sales/settings", {
+    method: "PATCH", headers: { host: "localhost:3000", "content-type": "application/json" }, body: JSON.stringify(body),
+});
+/** insert(appSetting).values().onConflictDoUpdate() — dicatat, tidak menulis. */
+const catatInsert = () => mock.method(db, "insert", () => ({ values: () => ({ onConflictDoUpdate: async () => undefined }) }));
+
+test("PATCH daftar saat konstanta tak terbaca → 200 berlabel gagal_baca, bukan 500 padahal daftar sudah tertulis (7a)", async () => {
+    await denganAdminLokal(async () => {
+        const select = mock.method(db, "select", () => { throw new Error("statement timeout"); });
+        const insert = catatInsert();
+        try {
+            const res = await patchSettings(patchReq({ smBerhak: ["SM A"] }));
+            assert.equal(res.status, 200);
+            const data = await res.json();
+            assert.equal(data.konstantaSumber, "gagal_baca");
+            assert.equal(data.konstantaVersi, null);
+            assert.equal(insert.mock.callCount(), 1, "daftar harus tertulis");
+            // Dengan konstanta di badan, jawaban tetap dibaca STRICT (dasar draf berikutnya): versi tak terbaca → 409 (cek versi).
+        } finally {
+            select.mock.restore();
+            insert.mock.restore();
+        }
+    });
+});
+
+test("PATCH gabungan tidak menulis sebagian: konstanta ditolak (400 atau 409) → penyebut AO/daftar TIDAK tertulis (7b)", async () => {
+    await denganAdminLokal(async () => {
+        const select = tersimpan();
+        const insert = catatInsert();
+        const update = updateMengembalikan([{ key: "x" }]);
+        try {
+            const tidakSah = await patchSettings(patchReq({ gtAoMode: "file", smBerhak: ["SM A"], konstanta: { gt: { pool1: -1 } }, konstantaVersi: T.toISOString() }));
+            assert.equal(tidakSah.status, 400);
+            const basi = await patchSettings(patchReq({ gtAoMode: "file", smBerhak: ["SM A"], konstanta: { gt: { pool1: 2_000_000 } }, konstantaVersi: "2026-09-29T00:00:00.000Z" }));
+            assert.equal(basi.status, 409);
+            const tanpaVersi = await patchSettings(patchReq({ branchNilaiJual: ["CABANG A"], konstanta: { gt: { pool1: 2_000_000 } } }));
+            assert.equal(tanpaVersi.status, 400);
+            assert.equal(insert.mock.callCount(), 0, "setelan lain tertulis walau konstanta ditolak");
+            assert.equal(update.mock.callCount(), 0);
+            // Kontrol: versi cocok → konstanta ditulis (update) DAN penyebut AO/daftar ditulis (insert).
+            const ok = await patchSettings(patchReq({ gtAoMode: "file", smBerhak: ["SM A"], konstanta: { gt: { pool1: 2_000_000 } }, konstantaVersi: T.toISOString() }));
+            assert.equal(ok.status, 200);
+            assert.equal(update.mock.callCount(), 1);
+            assert.equal(insert.mock.callCount(), 2);
+        } finally {
+            select.mock.restore();
+            insert.mock.restore();
+            update.mock.restore();
+        }
     });
 });
