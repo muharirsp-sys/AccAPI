@@ -222,8 +222,11 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
     // baru saja lunas tampil "Belum dibayar" dan POST kedua akan menimpa tanggal bayar/pencatatnya (risiko transfer ganda).
     const gagalMuat = ([["status pembayaran", bayarLoad], ["insentif sales", dash], ["insentif SPV", spvLoad], ["insentif SM", smLoad]] as const)
         .filter(([, l]) => l.status === "galat").map(([n]) => n);
+    // Konstanta tersimpan tak terbaca: nominal di layar dihitung server dengan BAWAAN — tidak boleh ditandai lunas (route juga menolak).
+    const konstantaSementara = dash.data?.konstantaSumber === "gagal_baca";
     const terkunci = memuat ? "Menunggu data selesai dimuat"
-        : gagalMuat.length ? `Data ${gagalMuat.join(", ")} gagal dimuat — muat ulang dulu sebelum menandai` : undefined;
+        : konstantaSementara ? "Konstanta insentif gagal dibaca — nominal belum pasti; muat ulang setelah Pengaturan terbaca"
+            : gagalMuat.length ? `Data ${gagalMuat.join(", ")} gagal dimuat — muat ulang dulu sebelum menandai` : undefined;
     const alasanTandai = !izinBayar ? "Butuh izin kelola pembayaran insentif"
         : terkunci ?? (dipilih.length === 0 ? "Pilih penerima yang belum dibayar dulu" : undefined);
     const bolehPilih = (r: Baris) => izinBayar && !terkunci && bisaDibayar(r);
@@ -344,6 +347,12 @@ export default function Pembayaran({ permKeys }: { permKeys: string[] }) {
                     <UbinBulan ringkas={ringkas} month={month} year={year} pilih={(m) => ubah({ month: String(m) })} tersaring={principle !== "ALL" || branch !== "ALL" || peran !== "semua"} />
                 </div>
                 {pesan && <MessageStrip tone="pos" title={pesan} onClose={() => setPesan(null)} />}
+                {konstantaSementara && (
+                    <MessageStrip tone="neg" title="Konstanta insentif tersimpan gagal dibaca.">
+                        Nominal di halaman ini dihitung dengan angka bawaan, jadi Tandai lunas dikunci.{" "}
+                        <button type="button" className="fi-btn fi-btn--tertiary" onClick={muatSemua}>Muat ulang</button>
+                    </MessageStrip>
+                )}
                 {sumberGagal.map((s) => (
                     <MessageStrip key={s.apa} tone="neg" title={s.error ?? `Insentif ${s.apa} belum berhasil dimuat.`}>
                         Baris {s.apa} tidak ada di daftar dan total bulan ini belum termasuk {s.apa}.{" "}

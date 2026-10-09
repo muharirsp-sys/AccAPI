@@ -70,16 +70,18 @@ const PAYMENTS = [
 ];
 
 /** Mock Pembayaran. `gagalPost(kode)` → respons gagal untuk POST kode itu. Mengembalikan daftar tulis yang terkirim. */
-async function mockBayar(page: Page, opsi: { rows?: unknown[]; spv?: () => ReturnType<typeof json>; payments?: () => ReturnType<typeof json>; gagalPost?: (kode: string) => ReturnType<typeof json> | null; gagalBacaSetelahTulis?: boolean } = {}) {
+async function mockBayar(page: Page, opsi: { rows?: unknown[]; spv?: () => ReturnType<typeof json>; payments?: () => ReturnType<typeof json>; gagalPost?: (kode: string) => ReturnType<typeof json> | null; gagalBacaSetelahTulis?: boolean; konstantaGagalBaca?: boolean } = {}) {
     const kirim: Kirim[] = [];
     let payments = PAYMENTS.map((p) => ({ ...p }));
     const lunaskan = (cocok: (p: { id: string; salesCode: string }) => boolean, baru?: ReturnType<typeof bayar>) => {
         payments = payments.map((p) => (cocok(p) ? { ...p, paymentStatus: "lunas", paymentDate: "2026-10-08T02:20:00.000Z", paidByName: "LOCAL Admin" } : p));
         if (baru) payments.push(baru);
     };
-    await page.route(path("/api/insentif-sales/dashboard"), (r) => r.fulfill(json(dashboard(opsi.rows ?? ROWS_BAYAR))));
-    await page.route(path("/api/insentif-sales/spv-dashboard"), (r) => r.fulfill(opsi.spv ? opsi.spv() : json({ rows: opsi.rows ? [] : SPV })));
-    await page.route(path("/api/insentif-sales/sm-dashboard"), (r) => r.fulfill(json({ rows: opsi.rows ? [] : SM })));
+    // konstantaGagalBaca: ketiga endpoint hitung menjawab 200 dengan angka dari konstanta BAWAAN (getKonstantaBerlabel).
+    const sumber = opsi.konstantaGagalBaca ? { konstantaSumber: "gagal_baca" } : { konstantaSumber: "tersimpan" };
+    await page.route(path("/api/insentif-sales/dashboard"), (r) => r.fulfill(json({ ...dashboard(opsi.rows ?? ROWS_BAYAR), ...sumber })));
+    await page.route(path("/api/insentif-sales/spv-dashboard"), (r) => r.fulfill(opsi.spv ? opsi.spv() : json({ rows: opsi.rows ? [] : SPV, ...sumber })));
+    await page.route(path("/api/insentif-sales/sm-dashboard"), (r) => r.fulfill(json({ rows: opsi.rows ? [] : SM, ...sumber })));
     await page.route(path("/api/insentif-sales/payments"), (r: Route) => {
         const req = r.request();
         if (req.method() === "GET") {
@@ -314,6 +316,21 @@ test("Pembayaran: muat ulang status gagal setelah Tandai lunas → tampilan diga
     await expect(main.getByRole("button", { name: /Tandai/ })).toHaveCount(0);
     await expect(main.getByText("Belum dibayar", { exact: true })).toHaveCount(0);
     expect(kirim).toHaveLength(1);
+});
+
+test("Pembayaran: konstanta gagal dibaca → nominal dari angka bawaan, Tandai lunas terkunci dengan alasan, tidak ada POST/PATCH", async ({ page }) => {
+    const kirim = await mockBayar(page, { konstantaGagalBaca: true });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales/pembayaran?month=9&year=2026", NAV);
+    const main = page.locator("main");
+    await expect(main.getByRole("alert").filter({ hasText: "Konstanta insentif tersimpan gagal dibaca" }).first()).toBeVisible(NAV);
+    const tombol = main.locator(".fi-ftb").getByRole("button", { name: /^Tandai .*lunas…$/ });
+    await expect(tombol).toBeDisabled();
+    await expect(tombol).toHaveAttribute("title", /Konstanta insentif gagal dibaca/);
+    await expect(main.locator(".fi-ftb")).toContainText("Konstanta insentif gagal dibaca");
+    await expect(main.getByRole("checkbox", { name: "Pilih Andi Pratama KINO" })).toBeDisabled();
+    await page.screenshot({ path: "test-results/fiori-insentif-bayar-konstanta-gagal.png", fullPage: true });
+    expect(kirim).toHaveLength(0);
 });
 
 test("Pembayaran kosong: periode belum dihitung", async ({ page }) => {

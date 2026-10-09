@@ -3,7 +3,9 @@
 import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { db } from "./db.ts";
-import { KonstantaBerubahError, setKonstanta } from "./insentif-settings.ts";
+import { KonstantaBerubahError, getKonstantaBerlabel, setKonstanta } from "./insentif-settings.ts";
+import { NextRequest } from "next/server";
+import { POST as postPayment } from "../app/api/insentif-sales/payments/route.ts";
 import { DEFAULT_KONSTANTA } from "./insentif-konstanta.ts";
 
 test("baca konstanta gagal -> setKonstanta menolak dan TIDAK menulis bawaan + patch", async () => {
@@ -65,5 +67,44 @@ test("AM-045: versi cocok -> tersimpan, versi baru dikembalikan (kontrol positif
     } finally {
         select.mock.restore();
         update.mock.restore();
+    }
+});
+
+/*
+ * S6-0c perbaikan 5 (peninjau B): dashboard/spv/sm dulu jatuh ke bawaan TANPA memberi tahu, lalu Pembayaran mengirim nominal
+ * hasil bawaan sebagai totalIncentive. Kini tampilan DILABELI dan server menolak menandai lunas selama konstanta tak terbaca.
+ */
+test("getKonstantaBerlabel: baca gagal → bawaan DILABELI gagal_baca (tampilan boleh degraded, tidak diam-diam)", async () => {
+    const select = mock.method(db, "select", () => { throw new Error("statement timeout"); });
+    try {
+        assert.deepEqual(await getKonstantaBerlabel(), { konstanta: DEFAULT_KONSTANTA, konstantaSumber: "gagal_baca" });
+    } finally {
+        select.mock.restore();
+    }
+});
+
+test("POST payments lunas saat konstanta tak terbaca → 503 KONSTANTA_GAGAL_BACA, tidak menulis; status lain lewat ke validasi biasa", async () => {
+    const env = { NODE_ENV: process.env.NODE_ENV, LOCAL_AUTH_BYPASS: process.env.LOCAL_AUTH_BYPASS };
+    Object.assign(process.env, { NODE_ENV: "development", LOCAL_AUTH_BYPASS: "true" });
+    const select = mock.method(db, "select", () => { throw new Error("DB tak terbaca"); });
+    const insert = mock.method(db, "insert", () => { throw new Error("TIDAK BOLEH MENULIS"); });
+    const kirim = (paymentStatus: string) => postPayment(new NextRequest("http://localhost/api/insentif-sales/payments", {
+        method: "POST", headers: { host: "localhost:3000", "content-type": "application/json" },
+        body: JSON.stringify({ salesCode: "S-A", salesName: "SALES A", principle: "PRINCIPLE A", branch: "CABANG A", periodMonth: 9, periodYear: 2026, totalIncentive: 1_000_000, paymentStatus }),
+    }));
+    try {
+        const res = await kirim("lunas");
+        assert.equal(res.status, 503);
+        assert.equal((await res.json()).code, "KONSTANTA_GAGAL_BACA");
+        assert.equal(insert.mock.callCount(), 0);
+        // Kontrol: status "belum" tidak memeriksa konstanta — sampai ke pencarian target (DB) seperti biasa.
+        await assert.rejects(kirim("belum"), /DB tak terbaca/);
+    } finally {
+        select.mock.restore();
+        insert.mock.restore();
+        for (const [k, v] of Object.entries(env)) {
+            if (v === undefined) delete process.env[k];
+            else process.env[k] = v;
+        }
     }
 });

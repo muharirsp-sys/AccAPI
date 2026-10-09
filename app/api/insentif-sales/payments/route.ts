@@ -19,6 +19,7 @@ import { getScopeForUser, getUserHierarchyIdentity, payeeInScope } from "@/lib/i
 import { parsePayee } from "@/lib/insentif-payee";
 import { isOfficeRow } from "@/lib/insentif-sm-calc";
 import { perubahanLunas, resolvePaidAt } from "@/lib/insentif-payment-date";
+import { readKonstanta } from "@/lib/insentif-settings";
 
 export async function GET(req: NextRequest) {
     const gate = await requirePermission(req, "insentif_sales.view");
@@ -105,6 +106,21 @@ export async function POST(req: NextRequest) {
             { error: `paymentStatus harus salah satu dari: ${STATUS_SAH.join(", ")}` },
             { status: 400 },
         );
+    }
+
+    // Nominal datang dari klien (BL-27 hitung ulang server belum ada) dan dihitung dashboard dengan konstanta. Selama konstanta
+    // tersimpan tak terbaca, dashboard menghitung dengan BAWAAN (getKonstantaBerlabel → "gagal_baca") — nominal itu tidak boleh
+    // ditandai lunas. Layar sudah mengunci tombolnya; ini pagar server bila layar lama/terbuka saat gangguan tetap mengirim.
+    // ponytail: hanya memastikan konstanta TERBACA saat menulis, bukan bahwa nominal klien dihitung darinya — itu BL-27.
+    if (body.paymentStatus === "lunas") {
+        try {
+            await readKonstanta();
+        } catch {
+            return NextResponse.json(
+                { error: "Konstanta insentif tersimpan gagal dibaca; nominal belum pasti sehingga belum bisa ditandai lunas. Coba lagi nanti.", code: "KONSTANTA_GAGAL_BACA" },
+                { status: 503 },
+            );
+        }
     }
 
     // Penerima harus SAH untuk periode itu. Sebelumnya `salesCode` adalah teks bebas: penerima

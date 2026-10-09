@@ -3,7 +3,7 @@
  * Caller: app/api/insentif-sales/dashboard, app/api/insentif-sales/settings.
  * Dependensi: lib/db, db/schema (appSetting).
  * Main Functions: getGtAoTargetMode, setGtAoTargetMode, aoFileKey/spvIkutKey/pasanganKey, toggleDaftar, getDaftar, setDaftar,
- *   getBranchNilaiJual, getSmBerhak, getKonstanta, setKonstanta.
+ *   getBranchNilaiJual, getSmBerhak, getKonstantaBerlabel, readKonstanta, readKonstantaVersi, setKonstanta.
  * Side Effects: DB read; setter menulis satu baris app_setting.
  */
 
@@ -160,17 +160,18 @@ export function getSmBerhak(): Promise<string[]> {
 export const KONSTANTA_KEY = "insentif_konstanta";
 
 /**
- * Konstanta efektif. Gagal baca / JSON rusak → BAWAAN, dengan alasan sama seperti setelan
- * lain: dashboard insentif memanggil ini di jalur utamanya, dan setelan yang tak terbaca
- * tidak boleh mematikan halaman atau menggeser seluruh nominal ke nol.
+ * Konstanta efektif untuk TAMPILAN (dashboard, spv-dashboard, sm-dashboard). Gagal baca / JSON rusak → BAWAAN, dengan alasan
+ * sama seperti setelan lain: setelan yang tak terbaca tidak boleh mematikan halaman. Tetapi DILABELI (S6-0c, peninjau B):
+ * dulu bawaan dikembalikan diam-diam lalu Pembayaran menandai lunas nominal hasil bawaan. `gagal_baca` = angka sementara;
+ * layar mengunci aksi tulis nominal dan route payments menolak menandai lunas.
  */
-export async function getKonstanta(): Promise<Konstanta> {
+export async function getKonstantaBerlabel(): Promise<{ konstanta: Konstanta; konstantaSumber: "tersimpan" | "gagal_baca" }> {
     try {
-        return await readKonstanta();
+        return { konstanta: await readKonstanta(), konstantaSumber: "tersimpan" };
     } catch (e) {
-        console.warn(`[insentif-settings] gagal baca ${KONSTANTA_KEY}, pakai bawaan:`,
+        console.warn(`[insentif-settings] gagal baca ${KONSTANTA_KEY}, pakai bawaan (gagal_baca):`,
             e instanceof Error ? e.message : e);
-        return DEFAULT_KONSTANTA;
+        return { konstanta: DEFAULT_KONSTANTA, konstantaSumber: "gagal_baca" };
     }
 }
 

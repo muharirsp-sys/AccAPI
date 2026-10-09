@@ -62,6 +62,13 @@ export default function Dashboard({ permKeys }: { permKeys: string[] }) {
             <button type="button" className="fi-btn fi-btn--tertiary" onClick={muatDash}>Coba lagi</button>
         </MessageStrip>
     );
+    // Konstanta tersimpan tak terbaca: server menghitung dengan BAWAAN (konstantaSumber "gagal_baca") — angka tampil, berlabel sementara.
+    const stripSementara = d?.konstantaSumber === "gagal_baca" && (
+        <MessageStrip tone="neg" title="Angka sementara.">
+            Konstanta insentif tersimpan gagal dibaca; nominal di halaman ini dihitung dengan angka bawaan dan bisa berubah setelah Pengaturan
+            terbaca. Jangan dipakai untuk membayar.
+        </MessageStrip>
+    );
     let isi: ReactNode;
     if (!d && dash.status === "galat") {
         isi = <ErrorState title={dash.error} message="Data kosong tidak ditampilkan karena server belum memberikan hasil yang valid." onRetry={muatDash} />;
@@ -76,6 +83,7 @@ export default function Dashboard({ permKeys }: { permKeys: string[] }) {
         isi = (
             <>
                 {stripGalat}
+                {stripSementara}
                 <Kosong d={d} label={label} saringanAktif={principle !== "ALL" || branch !== "ALL"} hrefData={hrefData} reset={() => ubah({ principle: "ALL", branch: "ALL", sm: "ALL" })} />
             </>
         );
@@ -83,6 +91,7 @@ export default function Dashboard({ permKeys }: { permKeys: string[] }) {
         isi = (
             <div className={dash.status === "memuat" ? "fi-busy grid gap-4" : "grid gap-4"} aria-busy={dash.status === "memuat" || undefined}>
                 {stripGalat}
+                {stripSementara}
                 <Ringkasan rows={rowsSm} tg={tg} label={label} spv={spv} sm={smLoad} month={month} year={year} saringanAktif={principle !== "ALL" || branch !== "ALL" || sm !== "ALL"} />
                 <CapaianSpv rows={rowsSm} tg={tg} />
                 <InsentifSales rows={rowsSm} total={rows.length} smAktif={sm} hapusSm={() => ubah({ sm: "ALL" })} />

@@ -114,6 +114,21 @@ test("Dashboard: Taksiran sales+SPV+SM, capaian per SPV berwarna laju, alasan Rp
     await page.screenshot({ path: "test-results/fiori-insentif-dashboard.png", fullPage: true });
 });
 
+test("Dashboard: konstanta gagal dibaca → peringatan angka sementara; SPV/SM tidak memajang nominal dari angka bawaan", async ({ page }) => {
+    await mock(page, {
+        dash: () => json({ ...dashboard(ROWS), konstantaSumber: "gagal_baca" }),
+        spv: () => json({ month: 9, year: 2026, rows: SPV, konstantaSumber: "gagal_baca" }),
+        sm: () => json({ month: 9, year: 2026, rows: SM, konstantaSumber: "gagal_baca" }),
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/insentif-sales?month=9&year=2026", NAV);
+    const main = page.locator("main");
+    await expect(main.getByRole("alert").filter({ hasText: "Angka sementara" })).toContainText("Konstanta insentif tersimpan gagal dibaca", NAV);
+    await expect(main.getByRole("region", { name: "Insentif SPV" }).getByRole("alert")).toContainText("konstanta");
+    await expect(main.locator(".fi-kc").filter({ hasText: "Taksiran insentif" })).toContainText("SPV/SM gagal dimuat");
+    await page.screenshot({ path: "test-results/fiori-insentif-dashboard-konstanta-gagal.png", fullPage: true });
+});
+
 test("Dashboard: galat tabel SPV tampil sebagai galat (bukan kosong) dan Taksiran menyebutnya; galat dashboard bukan kosong", async ({ page }) => {
     let dashGagal = false;
     await mock(page, {
