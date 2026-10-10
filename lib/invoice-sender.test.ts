@@ -32,14 +32,17 @@ type Jawab = { status: number; body: string } | Error;
  * pemeriksaan sesi baca-saja selalu sah, save.do menjawab `simpan`.
  */
 function tiruan(t: TestContext, rows: ReturnType<typeof antre>[], simpan: Jawab = { status: 200, body: JSON.stringify({ s: false, d: ["ditolak tiruan"] }) },
-    cekSesi: Jawab = { status: 200, body: JSON.stringify({ s: true, d: [] }) }) {
+    cekSesi: Jawab = { status: 200, body: JSON.stringify({ s: true, d: [] }) },
+    // Klaim GAGAL (0 baris) + jawaban kueri diagnosis: null = barisnya sudah tidak ada.
+    klaimGagal?: { state: string; sama: boolean } | null) {
     const pilih = { from: () => pilih, where: () => pilih, orderBy: () => pilih, limit: async () => rows };
     t.mock.method(db, "select", (() => pilih) as unknown as typeof db.select);
     const sqls: { sql: string; params: unknown[] }[] = [];
     t.mock.method(db, "execute", (async (query: SQL) => {
         const rendered = dialect.sqlToQuery(query);
         sqls.push(rendered);
-        const claim = rendered.sql.includes("'kirim'");
+        if (rendered.sql.includes("AS sama")) return { rows: klaimGagal ? [klaimGagal] : [] };
+        const claim = rendered.sql.includes("'kirim'") && klaimGagal === undefined;
         const orderId = rendered.params.find((p) => rows.some((r) => r.orderId === p));
         // Payload dari KLAIM (RETURNING) — ditandai supaya uji bisa membedakannya dari payload rencana.
         const payload = { ...rows.find((r) => r.orderId === orderId)?.payload, description: `dari-klaim ${orderId}` };
@@ -109,6 +112,24 @@ test("A-RENDAH: yang dikirim = payload HASIL KLAIM (RETURNING), dan klaim mensya
     const save = kirim.mock.calls.find((c) => String(c.arguments[0]).includes("/save.do"));
     const body = JSON.parse(String((save?.arguments[1] as RequestInit).body));
     assert.equal(body.description, "dari-klaim KINO:SO-A");
+});
+
+test("putaran 3: klaim yang dilewati TIDAK senyap — results menyebut sebabnya, tanpa save.do", async (t) => {
+    for (const [diag, pola] of [
+        [{ state: "queued", sama: false }, /payload berubah sejak diperiksa — muat ulang/],
+        [{ state: "sending", sama: true }, /sudah diambil proses lain \(status sending\)/],
+        [null, /dibuang dari antrean sejak diperiksa/],
+    ] as const) {
+        await t.test(String(diag?.state ?? "hilang"), async (st) => {
+            const { saveCalls } = tiruan(st, [antre("", 0)], undefined, undefined, diag);
+            const hasil = await sendQueuedInvoices(SESI, { targetDb: "1", limit: 20, actor: "p" });
+            assert.equal(saveCalls(), 0);
+            assert.equal(hasil.results.length, 1);
+            assert.equal(hasil.results[0].state, "dilewati");
+            assert.match(hasil.results[0].error ?? "", pola);
+            assert.equal(hasil.sent + hasil.unknown + hasil.rejected, 0);
+        });
+    }
 });
 
 test("S6-0d: koneksi putus tercatat dengan kode galatnya, status tidak pasti", async (t) => {

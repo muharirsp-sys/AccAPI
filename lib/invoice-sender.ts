@@ -212,6 +212,20 @@ export async function pratinjauKirim(db: NodePgDatabase, options: { limit: numbe
     };
 }
 
+/** Sebab klaim tidak mendapat baris: dibuang, diambil proses lain, atau payload berubah sejak diperiksa. */
+async function sebabDilewati(db: NodePgDatabase, row: BarisAntrean): Promise<string> {
+    try {
+        const [cek] = (await db.execute(sql`
+            SELECT state, payload = ${JSON.stringify(row.payload)}::jsonb AS sama FROM invoice_outbox WHERE order_id = ${row.orderId}`))
+            .rows as { state: string; sama: boolean }[];
+        if (!cek) return "dibuang dari antrean sejak diperiksa — muat ulang";
+        if (cek.state !== "queued") return `sudah diambil proses lain (status ${cek.state}) — muat ulang`;
+        return "payload berubah sejak diperiksa — muat ulang";
+    } catch {
+        return "berubah sejak diperiksa (diambil proses lain atau payload berubah) — muat ulang";
+    }
+}
+
 /** Ketergantungan yang bisa diganti uji (Postgres evaluasi, simulator) — produksi memakai bawaan. */
 export type SenderDeps = { db?: NodePgDatabase; refresh?: typeof refreshRealization };
 
@@ -273,7 +287,11 @@ export async function sendQueuedInvoices(
                        jsonb_build_object('attempt', attempts, 'target_db', ${options.targetDb}::text, 'trans_date', payload->>'transDate')
                 FROM c)
             SELECT order_id, payload FROM c`);
-        if (claimed.rows.length === 0) continue; // diklaim proses lain, atau barisnya berubah sejak diperiksa
+        if (claimed.rows.length === 0) {
+            // Tidak senyap: dialog Kirim (S6c) harus tahu kenapa baris yang dipratinjau tidak terkirim.
+            results.push({ orderId: row.orderId, state: "dilewati", error: await sebabDilewati(db, row) });
+            continue;
+        }
         const diklaim = (claimed.rows[0] as { payload: unknown }).payload;
         const kirimPayload = (typeof diklaim === "string" ? JSON.parse(diklaim) : diklaim) as InvoicePayload;
 
