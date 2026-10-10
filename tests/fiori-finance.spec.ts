@@ -152,6 +152,7 @@ async function siapkan(target: Page | BrowserContext, opsi: Opsi = {}) {
         // Tanpa klaim (claimed:false, subjek dibuka ulang): server tidak membuat attempt — yang terakhir tetap yang tampil.
         else if (isi?.claimed === false || isi?.code === "reopened_use_repost") { if (sebelum) attempts[sub] = sebelum; else delete attempts[sub]; }
         else if (isi?.live) attempts[sub] = attempt({ state: isi.live.state, status: isi.live.state === "sending" ? (isi.live.stale ? "stale" : "sending") : isi.live.state, stale: Boolean(isi.live.stale), accurateNumber: isi.live.accurateNumber ?? "", ...milik });
+        else if (isi?.state === "not_sent") attempts[sub] = attempt({ state: "not_sent", status: "failed", ageSeconds: 1, ...milik });
         else attempts[sub] = attempt({ ageSeconds: 1, ...milik });
         return jawab(r, j);
     });
@@ -311,6 +312,16 @@ test("A-3: attempt posted himpunan faktur sama dari record lain = TIDAK PASTI (b
     await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
     await expect(detail.getByRole("button", { name: "Catat hasil posting…" })).toHaveCount(0);
     await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled();
+});
+
+test("A-4: 200 not_sent (tak pernah terhubung) = 'tidak sampai ke Accurate', Posting gagal, boleh diposting ulang — bukan 'Accurate menolak'", async ({ page }) => {
+    const m = await siapkan(page, { command: [{ status: 200, body: { attemptId: "at-1", state: "not_sent", accurateId: "", accurateNumber: "", message: "tidak terhubung ke Accurate (ECONNREFUSED)", persisted: true } }] });
+    const { main, detail, dlg } = await bukaDialogPosting(page);
+    await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
+    await expect(main.getByRole("alert").filter({ hasText: "Posting DRAFT-0418 tidak sampai ke Accurate." })).toContainText("Tidak ada yang tersimpan di Accurate", NAV);
+    await expect(main).not.toContainText("Accurate menolak");
+    expect(m.update.at(-1)).toMatchObject({ accurate_post_status: "failed" });
+    await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeEnabled(NAV);
 });
 
 test("{claimed:false} = tidak terkirim & tidak dikunci; 409 in_flight = tanpa tulis catatan (tab lain yang mencatat)", async ({ page }) => {

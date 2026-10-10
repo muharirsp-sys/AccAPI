@@ -167,7 +167,8 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
             } else if (h.jenis === "tidak_pasti") {
                 setHasil({ tone: "warn", judul: `Hasilnya belum pasti — ${b.r.draft_label} dikunci.`, isi: `${h.pesan} Jangan posting ulang: Finance memeriksa Purchase Payment di Accurate lalu menyelesaikannya.` });
             } else if (h.jenis === "gagal") {
-                setHasil({ tone: "neg", judul: `Accurate menolak posting ${b.r.draft_label}.`, isi: `${h.pesan} Boleh diposting ulang setelah diperbaiki.` });
+                // C11: Accurate tidak pernah "menolak" di sini — `gagal` = koneksi ke Accurate tak pernah terbentuk (not_sent).
+                setHasil({ tone: "neg", judul: `Posting ${b.r.draft_label} tidak sampai ke Accurate.`, isi: `${h.pesan} Tidak ada yang tersimpan di Accurate; boleh diposting ulang setelah diperbaiki.` });
             } else {
                 setHasil({ tone: "neg", judul: `Tidak ada yang dikirim ke Accurate untuk ${b.r.draft_label}.`, isi: `${h.pesan} Status tercatat Posting gagal; boleh diposting ulang setelah diperbaiki.` });
             }

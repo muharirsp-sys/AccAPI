@@ -347,7 +347,7 @@ export type HasilPosting =
     /** Mungkin sudah tersimpan di Accurate: baris dikunci sampai Finance menyelesaikan. `nomor` = nomor PP yang SUDAH dijawab Accurate
      *  (posting terjadi, hanya catatan Finance yang gagal). */
     | { jenis: "tidak_pasti"; pesan: string; nomor?: string }
-    /** Accurate menjawab menolak jelas / tak pernah terhubung: boleh diposting ulang setelah diperbaiki. */
+    /** Koneksi ke Accurate tak pernah terbentuk (`not_sent`; penolakan Accurate = TIDAK PASTI, C11): boleh diposting ulang. */
     | { jenis: "gagal"; pesan: string }
     /** Pasti tidak terkirim ke Accurate. `tercatat` = catatan "gagal" sudah ditulis ke FastAPI (bukti sudah terunggah). */
     | { jenis: "tidak_terkirim"; pesan: string; tercatat: boolean };
