@@ -11,6 +11,7 @@
  *   (sppd.edit_settings) — semua dengan CSRF.
  *
  * Pemanggil MEMASANG dialog hanya saat dibuka (`{dialog === "x" && <DialogX open … />}`), jadi isian dan pratinjau selalu segar.
+ * Bendera pratinjau/eksekusi selalu dikirim sebagai 1/0 (kontrak S6-0e putaran 3: nilai lain = 400 tanpa tulis).
  * Pratinjau tidak pernah menulis. Jawaban tidak pasti saat TERAPKAN: "belum pasti", halaman memuat ulang, tombol dialog dikunci sampai
  * dialog ditutup. Pratinjau yang gagal terbaca cukup diulang (tidak ada yang ditulis).
  */
@@ -122,14 +123,14 @@ export function DialogGantiNama({ open, onClose, onSelesai, onTidakPasti, kunci,
     const lap = segar?.status === "siap" ? segar.data : null;
     async function pratinjau() {
         setP({ status: "memuat", kunci: kunciNama });
-        const res = await tulis("/api/bank-data/replace-principle-name", { old_name: lama.trim(), new_name: baru.trim(), dry_run: true });
+        const res = await tulis("/api/bank-data/replace-principle-name", { old_name: lama.trim(), new_name: baru.trim(), dry_run: 1 });
         setP({ ...keP<LaporanGanti>(res)!, kunci: kunciNama });
     }
     const alasan = kunci ?? (belumPasti ? KUNCI_PASTI : !lama.trim() || !baru.trim() ? "Isi nama lama dan nama baru dulu."
         : lama.trim() === baru.trim() ? "Nama baru sama dengan nama lama." : !lap ? "Buat pratinjau untuk pasangan nama ini dulu."
             : !lap.replaced ? "Tidak ada rekaman yang bisa diganti." : undefined);
     async function terapkan() {
-        const res = await tulis("/api/bank-data/replace-principle-name", { old_name: lama.trim(), new_name: baru.trim(), dry_run: false });
+        const res = await tulis("/api/bank-data/replace-principle-name", { old_name: lama.trim(), new_name: baru.trim(), dry_run: 0 });
         if (res.ok) {
             const remap = (res.data.finance_mapping as LaporanGanti["finance_mapping"])?.needs_remap;
             onSelesai({ judul: `${Number(res.data.replaced ?? 0)} rekaman diganti dari “${lama.trim()}” menjadi “${baru.trim()}”.`,
@@ -170,15 +171,15 @@ export function DialogAutoFix({ open, onClose, onSelesai, onTidakPasti, izinLiha
     useEffect(() => {
         if (izinLihat) return;
         let hidup = true;
-        // Pratinjau = confirm:false (tanpa tulis); tidak memakai dry_run (kontrak endpoint lama). Dipasang saat dialog dibuka.
-        void tulis("/api/bank-data/auto-fix-names", { confirm: false }).then((res) => { if (hidup) setP(keP<LaporanAutoFix>(res)); });
+        // Pratinjau = confirm 0 (tanpa tulis); tidak memakai dry_run (kontrak endpoint lama). Dipasang saat dialog dibuka.
+        void tulis("/api/bank-data/auto-fix-names", { confirm: 0 }).then((res) => { if (hidup) setP(keP<LaporanAutoFix>(res)); });
         return () => { hidup = false; };
     }, [izinLihat]);
     const lap = p?.status === "siap" ? p.data : null;
     const n = lap?.total_records_affected ?? 0;
     const alasan = izinLihat ?? izinTerapkan ?? (belumPasti ? KUNCI_PASTI : !lap ? (p?.status === "galat" ? "Pratinjau gagal." : "Pratinjau sedang dibuat.") : n === 0 ? "Tidak ada nama yang perlu diubah." : undefined);
     async function terapkan() {
-        const res = await tulis("/api/bank-data/auto-fix-names", { confirm: true });
+        const res = await tulis("/api/bank-data/auto-fix-names", { confirm: 1 });
         if (res.ok) {
             const ch = (res.data.changes as LaporanAutoFix["changes"]) ?? [];
             onSelesai({ judul: `${Number(res.data.total_records_affected ?? 0)} rekaman diganti namanya (${ch.length} nama principal).`, isi: ch.slice(0, 5).map((c) => `${c.old} → ${c.new}`).join(" · ") });

@@ -1,112 +1,42 @@
-import { expect, test } from "@playwright/test";
-import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import * as XLSX from "xlsx";
+/*
+ * Tujuan: Unggah LPB dengan tanggal tidak valid ditolak SEBELUM menulis (Fiori S6a): pratinjau server (`?dry_run=1`) menampilkan
+ *   galatnya di dialog Unggah, tombol Simpan nonaktif, dan tidak ada unggahan tanpa pratinjau yang terkirim.
+ *   Diperbarui dari versi lama (login QA nyata + backend nyata + payments.json lokal) ke layar Fiori dengan FastAPI di-mock:
+ *   UI lama (form unggah + toast) sudah diganti dialog pratinjau → simpan.
+ * Caller: `npm run test:payments-import` / Playwright lokal dengan LOCAL_AUTH_BYPASS=true (PLAYWRIGHT_BASE_URL = server dev).
+ * Dependensi: FastAPI (dev: http://localhost:8000) di-mock dengan page.route; header CORS memantulkan Origin halaman.
+ * Side Effects: Tidak ada (tidak menyentuh python_backend/data).
+ */
+import { expect, test, type Route } from "@playwright/test";
 
-const QA_EMAIL = "qa.admin@local.test";
-const QA_PASSWORD = "Admin123!";
-const RECORD_ID = `LPB-INVALID-DATE-${Date.now()}`;
-const PAYMENTS_PATH = resolve(process.cwd(), "python_backend", "data", "payments.json");
-
-function seedQaUsers() {
-  const result = spawnSync("node", ["scripts/seed-local-qa-users.mjs"], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      [
-        "Failed to seed local QA users.",
-        result.stdout,
-        result.stderr,
-      ].filter(Boolean).join("\n"),
-    );
-  }
-}
-
-function hasUploadedRecord() {
-  if (!existsSync(PAYMENTS_PATH)) return false;
-  const raw = JSON.parse(readFileSync(PAYMENTS_PATH, "utf8"));
-  return Boolean(raw?.lpb?.[RECORD_ID]);
-}
-
-function buildInvalidDateWorkbook() {
-  const workbook = XLSX.utils.book_new();
-  const sheet = XLSX.utils.json_to_sheet([
-    {
-      "TGL. SETOR": "31/02/2026",
-      "NO. LPB": RECORD_ID,
-      "TGL. WIN": "01/03/2026",
-      "TGL. J. TEMPO WIN": "30/03/2026",
-      PRINCIPLE: "TEST PRINCIPLE INVALID DATE",
-      "NILAI WIN": 1250000,
-      "TGL TERIMA BARANG": "02/03/2026",
-      "Tgl Invoice": "03/03/2026",
-      "No Invoice": "INV-INVALID-DATE",
-      "Nilai Invoice": 1250000,
-    },
-  ]);
-  XLSX.utils.book_append_sheet(workbook, sheet, "LPB_INVALID_DATE");
-  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
-}
-
-test.beforeAll(() => {
-  seedQaUsers();
+const cors = (r: Route) => ({
+    "access-control-allow-origin": r.request().headers()["origin"] ?? "*", "access-control-allow-credentials": "true",
+    "access-control-allow-headers": "content-type, x-csrf-token", "access-control-allow-methods": "GET, POST, OPTIONS",
 });
+const json = (r: Route, body: unknown, status = 200) => r.fulfill({ status, headers: { ...cors(r), "content-type": "application/json" }, body: JSON.stringify(body) });
+const GALAT = "Tanggal tidak valid: baris 2 TGL. SETOR '31/02/2026'. Upload dibatalkan.";
 
-test("Payments LPB upload shows a toast notification when a date is invalid", async ({ page }) => {
-  expect(hasUploadedRecord()).toBe(false);
-
-  await page.goto("/login");
-  await page.locator('input[type="email"]').fill(QA_EMAIL);
-  await page.locator('input[autocomplete="current-password"]').fill(QA_PASSWORD);
-  await page.getByRole("button", { name: "Masuk" }).click();
-  await expect(page.getByText("Login berhasil.")).toBeVisible();
-
-  await page.goto("/payments");
-  await expect(page.getByRole("heading", { name: "Manajemen Pembayaran & SPPD" })).toBeVisible();
-  await page.waitForLoadState("networkidle");
-
-  const uploadForm = page
-    .locator("form")
-    .filter({ has: page.locator('input[type="file"][accept=".xlsx,.xls"]') })
-    .first();
-  const uploadButton = uploadForm.locator('button[type="submit"]');
-  const fileInput = uploadForm.locator('input[type="file"][accept=".xlsx,.xls"]');
-
-  // Hidrasi React di `next dev` bisa selesai setelah heading tampil; bila file
-  // di-set sebelum onChange terpasang, event `change` hilang dan tombol tetap
-  // disabled selamanya. Ulangi set-file sampai React menangkapnya & tombol enable.
-  await expect(async () => {
-    await fileInput.setInputFiles({
-      name: "lpb-invalid-date.xlsx",
-      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      buffer: buildInvalidDateWorkbook(),
+test("Unggah LPB: tanggal tidak valid tampil di pratinjau, Simpan nonaktif, tidak ada tulis", async ({ page }) => {
+    const unggah: string[] = [];
+    await page.route((u) => u.host === "localhost:8000", (r) => {
+        if (r.request().method() === "OPTIONS") return r.fulfill({ status: 204, headers: cors(r) });
+        const url = new URL(r.request().url());
+        if (url.pathname === "/api/me") return json(r, { ok: true, csrf_token: "t" });
+        if (url.pathname === "/payments/data") return json(r, { ok: true, data: [] });
+        if (url.pathname === "/payments/upload") {
+            unggah.push(url.search);
+            return json(r, { ok: true, dry_run: true, can_apply: false, rows: 1, total_nilai_win: 1_250_000, total_nilai_invoice: 1_250_000, duplicates: [], duplicates_in_file: [], invalid: ["baris 2: TGL. SETOR '31/02/2026'"], error: GALAT });
+        }
+        return json(r, { ok: true });
     });
-    await expect(uploadButton).toBeEnabled({ timeout: 1000 });
-  }).toPass({ timeout: 15_000 });
-
-  const uploadFailure = new Promise<never>((_, reject) => {
-    page.on("requestfailed", (request) => {
-      if (request.url().includes("/payments/upload")) {
-        reject(new Error(`Upload request failed: ${request.failure()?.errorText || "unknown error"}`));
-      }
-    });
-  });
-  const uploadResponse = page.waitForResponse(
-    (res) => res.url().includes("/payments/upload") && res.request().method() === "POST",
-    { timeout: 15_000 },
-  );
-
-  await uploadButton.click();
-  const response = await Promise.race([uploadResponse, uploadFailure]);
-  expect(response.status()).toBe(400);
-  const payload = await response.json();
-  expect(payload.ok).toBe(false);
-  expect(String(payload.error)).toContain("Tanggal tidak valid");
-
-  await expect(page.getByText(/Tanggal tidak valid/)).toBeVisible();
-  await expect(page.getByText(/Upload dibatalkan/)).toBeVisible();
-  expect(hasUploadedRecord()).toBe(false);
+    await page.goto("/payments", { timeout: 60_000 });
+    const main = page.locator("main");
+    await expect(main.getByText("Belum ada rekaman pembayaran")).toBeVisible({ timeout: 60_000 });
+    await main.getByRole("button", { name: "Unggah LPB" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.getByLabel("Berkas LPB (.xlsx/.xls)").setInputFiles({ name: "lpb-invalid-date.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from("x") });
+    await expect(dlg.getByText(GALAT)).toBeVisible();
+    await expect(dlg.getByText("baris 2: TGL. SETOR '31/02/2026'")).toBeVisible();
+    await expect(dlg.getByRole("button", { name: "Simpan 1 LPB" })).toBeDisabled();
+    expect(unggah).toEqual(["?dry_run=1"]);
 });

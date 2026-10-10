@@ -142,11 +142,14 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
     );
 
     let rekening: ReactNode;
-    if (bank.status === "galat" && !bank.data) rekening = <ErrorState title="Data rekening gagal dimuat" message={bank.error} onRetry={muatBank} />;
+    // Galat memuat ulang di atas daftar kosong tetap galat — jangan jatuh ke "belum dipasang".
+    if (bank.status === "galat" && !bank.data?.length) rekening = <ErrorState title="Data rekening gagal dimuat" message={bank.error} onRetry={muatBank} />;
     else if (!bank.data) rekening = <Skeleton rows={3} label="Memuat data rekening" />;
     else if (bank.data.length === 0) rekening = <EmptyState title="Data rekening tidak ditemukan" message="Master rekening principal belum dipasang di server. Tanpa master, pengajuan rute Bank Panin selalu ditolak. Hubungi admin untuk memasang master rekening." />;
     else rekening = (
         <div className="fi-sect-in">
+            {bank.status === "galat" && <MessageStrip tone="neg" title="Data rekening gagal dimuat ulang.">{bank.error} Yang tampil hasil sebelumnya. <Button variant="tertiary" onClick={muatBank}>Coba lagi</Button></MessageStrip>}
+            {lap.status === "galat" && lap.data && <MessageStrip tone="neg" title="Laporan kecocokan gagal dimuat ulang.">{lap.error} Yang tampil hasil sebelumnya.</MessageStrip>}
             {lap.status === "galat" && !lap.data ? <MessageStrip tone="neg" title="Laporan kecocokan gagal dimuat.">{lap.error} <Button variant="tertiary" onClick={muatLap}>Coba lagi</Button></MessageStrip>
                 : !lap.data ? <Skeleton rows={2} label="Memuat laporan kecocokan" />
                     : (

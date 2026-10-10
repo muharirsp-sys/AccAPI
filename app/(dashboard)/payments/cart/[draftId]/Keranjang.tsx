@@ -179,7 +179,8 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
 
     // ── Memuat / Galat / Kosong ──
     let isi_: ReactNode;
-    if (cart.status === "galat" && cart.data === undefined) {
+    // Galat memuat ulang di atas keranjang kosong tetap galat — jangan tampil sebagai kosong.
+    if (cart.status === "galat" && (cart.data === undefined || (cart.data !== null && cart.data.items.length === 0))) {
         isi_ = <ErrorState title="Keranjang gagal dimuat" message={cart.error} onRetry={muatCart} />;
     } else if (cart.data === undefined) {
         isi_ = <><Skeleton rows={3} label="Memuat keranjang" /><Skeleton rows={5} /></>;
