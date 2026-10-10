@@ -393,6 +393,35 @@ test("BL-21 server: Hapus yang ditolak server (409) tampil di dialog apa adanya;
     expect(kirim.filter((k) => k.method === "DELETE")).toHaveLength(1);
 });
 
+test("Hapus: status antrean dibaca ULANG tepat sebelum DELETE (bacaan dialog usang tidak dipakai); removed 0 = sudah tidak ada", async ({ page }) => {
+    let bacaan = 0;
+    let removed = 1;
+    const kirim = await pasang(page, {
+        // Bacaan pertama (saat dialog dibuka) kosong; sesudahnya SO 1671-SOP-260013022 sudah diantrekan orang lain.
+        antrean: (id, r) => { bacaan += 1; return antreanServer(() => (bacaan > 1 ? ["1671-SOP-260013022"] : []))(id, r); },
+        hapus: (_id, r) => r.fulfill(json({ ok: true, removed })),
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/principal-order", NAV);
+    const main = page.locator("main");
+    const tabel = main.getByRole("table", { name: "Batch terakhir" });
+    await tabel.getByRole("button", { name: `Hapus ${FILE}…` }).click(NAV);
+    const dlg = page.getByRole("dialog");
+    const tombol = dlg.getByRole("button", { name: "Hapus batch", exact: true });
+    await expect(tombol).toBeEnabled();
+    await tombol.click();
+    await expect(dlg.getByRole("alert")).toContainText("1 SO batch ini sudah di Antrean Faktur; batch tidak bisa dihapus (BL-21)");
+    expect(kirim.filter((k) => k.method === "DELETE")).toHaveLength(0);
+    await dlg.getByRole("button", { name: "Batal" }).click();
+
+    bacaan = -100; // antrean kosong lagi; DELETE menjawab removed 0
+    removed = 0;
+    await tabel.getByRole("button", { name: `Hapus ${FILE}…` }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Hapus batch", exact: true }).click();
+    await expect(main.getByText(`Batch ${FILE} sudah tidak ada.`)).toBeVisible();
+    await expect(main.getByText(`Batch ${FILE} dihapus.`)).toHaveCount(0);
+});
+
 test("Batch tidak ditemukan = galat (bukan kosong); ponsel 390 px tanpa gulir menyamping di Unggah dan Validasi", async ({ page }) => {
     await pasang(page, { detail: (id, r) => (id === "hilang" ? r.fulfill(json({ ok: false, error: "Batch tidak ditemukan" }, 404)) : r.fulfill(json({ ok: true, batch: BATCH, lines: LINES }))) });
     await page.setViewportSize({ width: 1366, height: 900 });

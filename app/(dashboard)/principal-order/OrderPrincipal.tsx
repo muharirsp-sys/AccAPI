@@ -111,7 +111,21 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
         }
     }
 
+    /**
+     * Bacaan status antrean di dialog bisa usang (dibaca saat dialog dibuka). Dibaca ULANG tepat sebelum menulis; ada SO di antrean
+     * atau gagal dibaca = tidak menulis (pesan di dialog). Server tetap penjaga utama (BL-21: 409 di dalam transaksi hapus/ganti).
+     */
+    async function pastikanBebasAntrean(id: string, apa: "dihapus" | "diganti") {
+        const r = await baca(`/api/principal-order/queue?id=${encodeURIComponent(id)}`, (j) => ((j.queue ?? []) as BarisAntrean[]).length, "Status antrean batch belum terbaca.");
+        if (r.status === "galat") throw new Error(`${r.error} Batch tidak ${apa}.`);
+        if ((r.data ?? 0) > 0) {
+            muatCek();
+            throw new Error(`${r.data} SO batch ${apa === "diganti" ? "lama" : "ini"} sudah di Antrean Faktur; batch tidak bisa ${apa} (BL-21). Buang dulu di Antrean Faktur bila memang harus diulang.`);
+        }
+    }
+
     async function gantiBatch() {
+        if (pratinjau?.duplicateOf) await pastikanBebasAntrean(pratinjau.duplicateOf.id, "diganti");
         try {
             tersimpan(await kirimBerkas(true, true), true);
         } catch (e) {
@@ -121,15 +135,20 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
     }
 
     async function hapusBatch(batch: Batch) {
+        await pastikanBebasAntrean(batch.id, "dihapus");
+        let data: Record<string, unknown>;
         try {
-            await tulis(`/api/principal-order?id=${encodeURIComponent(batch.id)}`, { method: "DELETE", gagal: "Gagal menghapus" });
+            data = await tulis(`/api/principal-order?id=${encodeURIComponent(batch.id)}`, { method: "DELETE", gagal: "Gagal menghapus" });
         } catch (e) {
-            // Tidak pasti: status antrean batch itu dibaca ulang (404 = sudah terhapus) dan Hapus terkunci sampai terbaca lagi.
+            // Tidak pasti: daftar batch dan status antrean batch itu dibaca ulang; Hapus terkunci sampai terbaca lagi.
             if (e instanceof TidakPasti) { muatDaftar(); muatCek(); }
             throw e;
         }
         setDialog(null);
-        setPesan({ tone: "pos", title: `Batch ${batch.fileName} dihapus.` });
+        // removed 0 = batch sudah tidak ada (dihapus orang lain, atau kiriman sebelumnya yang jawabannya tidak pasti ternyata sampai).
+        setPesan(Number(data.removed) > 0
+            ? { tone: "pos", title: `Batch ${batch.fileName} dihapus.` }
+            : { tone: "info", title: `Batch ${batch.fileName} sudah tidak ada.`, body: "Tidak ada yang dihapus kali ini; mungkin sudah dihapus sebelumnya." });
         muatDaftar();
         if (batchId === batch.id) buka("");
     }
