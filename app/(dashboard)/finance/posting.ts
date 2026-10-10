@@ -4,7 +4,7 @@
  *   recordKey/clientRef SAMA dengan approveTransfer lama finance/page.tsx:385-516 — rekonsiliasi attempt lama), penyelesaian tidak
  *   pasti, ubah status transfer, simpan tujuan, master pemasok/rekening Accurate (baca-saja).
  * Caller: app/(dashboard)/finance/Finance.tsx.
- * Dependensi: lib/apiBase (FastAPI), lib/finance-post-status (certainlyNotSent, purchasePaymentConflict), lib/finance-ui.
+ * Dependensi: lib/apiBase (FastAPI), lib/finance-post-status (certainlyNotSent, conflictNotSent, purchasePaymentConflict), lib/finance-ui.
  * Main Functions: recordKey, bacaSesi, muatFinance, muatMaster, simpanTujuan, postingPurchasePayment, selesaikanTidakPasti, ubahStatusTransfer.
  * Side Effects: FastAPI /payments/finance/{data,mapping,proof,update} (payments.json); Next /api/finance/purchase-payment
  *   (klaim attempt lalu purchase-payment/bulk-save.do ke Accurate), /attempts, /resolve; /api/auth/accurate-session;
@@ -12,7 +12,7 @@
  */
 import type { Load } from "@/components/fiori/interactive";
 import { resolveApiBase } from "@/lib/apiBase";
-import { certainlyNotSent, purchasePaymentConflict } from "@/lib/finance-post-status";
+import { certainlyNotSent, conflictNotSent, purchasePaymentConflict } from "@/lib/finance-post-status";
 import { alasanFaktur, bedaPengajuan, potongKelompok, saringCatatan, type AttemptFinance } from "@/lib/finance-ui";
 
 export type FinanceMapping = { principle?: string; vendorNo?: string; vendorName?: string; bankNo?: string; bankName?: string };
@@ -436,8 +436,8 @@ export async function postingPurchasePayment(p: {
             body: JSON.stringify({ clientRef: key, expectedDatabaseId: p.expectedDatabaseId, payload }),
         });
         const out = (await bacaTeks(res)) as CommandOut;
-        if (res.status === 409 && out?.claimed === false) {
-            // 409 SEBELUM klaim (database sesi berganti, tinjauan A-1) = pasti belum terkirim; bukan konflik attempt.
+        if (conflictNotSent(res.status, out)) {
+            // 409 SEBELUM klaim dengan kode terdaftar (database sesi berganti, tinjauan A-1) = pasti belum terkirim; 409 lain = tidak pasti.
             notSent = true;
             throw new Error(out.error || "Command posting menolak sebelum kirim (HTTP 409).");
         }

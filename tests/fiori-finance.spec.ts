@@ -261,6 +261,8 @@ const TIDAK_PASTI: Array<[string, Jawab]> = [
     ["koneksi putus", "putus"],
     ["200 state unknown (timeout)", { status: 200, body: { attemptId: "at-1", state: "unknown", accurateId: "", accurateNumber: "", message: "tanpa jawaban (TimeoutError). Coba lagi.", persisted: true } }],
     ["409 unknown", { status: 409, body: { error: "Ada attempt posting yang belum pasti untuk faktur ini — periksa Accurate lalu selesaikan manual.", live: { attemptId: "at-0", state: "unknown", accurateId: "", accurateNumber: "", targetDbId: "DB-1", sameRecord: true, sameTarget: true, stale: true }, generation: 0, currentGeneration: 0 } }],
+    // Putaran 2 A: claimed:false dengan kode 409 yang TIDAK terdaftar (konflik attempt kelak) tetap tidak pasti — bukan "failed".
+    ["409 claimed:false kode lain", { status: 409, body: { code: "attempt_conflict", claimed: false, live: null, error: "Konflik attempt posting untuk faktur ini (uji)." } }],
     ["409 reopened_use_repost", { status: 409, body: { code: "reopened_use_repost", error: "Pembayaran untuk faktur ini sudah dibuka ulang untuk posting ulang (repost).", live: null, generation: 0, currentGeneration: 1 } }],
 ];
 for (const [nama, j] of TIDAK_PASTI) {
