@@ -11,7 +11,8 @@ import { POST as postPurchasePayment } from "../app/api/finance/purchase-payment
 import { POST as lockIdempotency } from "../app/api/idempotency/lock/route.ts";
 import { POST as completeIdempotency } from "../app/api/idempotency/complete/route.ts";
 import { POST as proxyPost } from "../app/api/proxy/route.ts";
-import { POST as resolveOutbox } from "../app/api/invoice-outbox/resolve/route.ts";
+import { GET as cariOutbox, POST as resolveOutbox } from "../app/api/invoice-outbox/resolve/route.ts";
+import { GET as riwayatOutbox } from "../app/api/invoice-outbox/riwayat/route.ts";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
 
@@ -103,6 +104,15 @@ test("S6-0d E6: Selesaikan tidak pasti antrean faktur hanya dengan order.resolve
     // Lolos gerbang; masukan tidak sah ditolak 400 SEBELUM DB/Accurate (asUserWith melempar bila disentuh).
     const allowed = await asUserWith(["order.resolve_unknown"], () => resolveOutbox(jsonPost("/api/invoice-outbox/resolve", { orderId: "KINO:SO-1", keputusan: "terposting", alasan: "ok" })));
     assert.equal(allowed.status, 400);
+});
+
+test("S6c: hasil pencarian Selesaikan (GET) juga hanya order.resolve_unknown; riwayat (GET) butuh order.view — sebelum DB/Accurate", async () => {
+    const get = (url: string) => new NextRequest(`http://app.test${url}`);
+    const semuaOrder = ["order.view", "order.create", "order.edit", "order.export", "finance.resolve_unknown"];
+    assert.equal((await asUserWith(semuaOrder, () => cariOutbox(get("/api/invoice-outbox/resolve?orderId=KINO:SO-1")))).status, 403);
+    assert.equal((await asUserWith(["order.resolve_unknown"], () => cariOutbox(get("/api/invoice-outbox/resolve")))).status, 400);
+    assert.equal((await asUserWith(["order.edit", "order.resolve_unknown"], () => riwayatOutbox(get("/api/invoice-outbox/riwayat?orderId=KINO:SO-1")))).status, 403);
+    assert.equal((await asUserWith(["order.view"], () => riwayatOutbox(get("/api/invoice-outbox/riwayat")))).status, 400);
 });
 
 test("S6-0d E4: proxy menolak tulis sales-invoice (403) sebelum sesi Accurate & jaringan — hanya lewat Antrean Faktur", async () => {
