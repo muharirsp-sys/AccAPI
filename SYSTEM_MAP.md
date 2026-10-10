@@ -254,7 +254,8 @@ Antrean Faktur / outbox sales-invoice (S6-0d, DRAFT — zona tulis Accurate):
   riwayat: invoice_outbox_event append-only (migrate-pg; trigger/REVOKE + E5 data lama = docs/handover/DDL_OUTBOX_EVENT.sql)
 
 Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
-  UI Finance (/finance) approveTransfer
+  UI Finance (/finance, Fiori S6b: finance/posting.ts postingPurchasePayment — urutan & clientRef = recordKey lama; dialog pp)
+  -> GET /api/auth/accurate-session (database terbuka) -> FastAPI /payments/finance/mapping -> /payments/finance/proof
   -> POST /api/finance/purchase-payment (finance.update)
      -> lib/accurate-write-attempt.ts runGuardedWrite: INSERT ... SELECT accurate_write_attempt state=sending
         generasi 0 (ADR-004 rilis A; subjek ber-reopen -> 409 reopened_use_repost) — unique partial index per
@@ -269,6 +270,7 @@ Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
   Ledger: pemegang finance.resolve_unknown tanpa finance.update menuntaskan /payments/finance/update HANYA untuk
     unknown -> posted/failed + catatan (S6-0e). Belum Transfer/Ajukan Ulang ditolak 409 bila posted/unknown (BL-49).
   Baca status: GET /api/finance/purchase-payment/attempts?invoices=… (finance.view, latestAttemptsBySubject; S6-0e).
+  Pemilih tujuan (S6b): /api/proxy method GET vendor/list.do & glaccount/list.do (Kas/Bank) — baca-saja, master Accurate sesi.
 
 Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConfig.path, bukan URL halaman):
   -> POST /api/idempotency/lock — preview + kunci fingerprint (lib/sales-receipt-fingerprint.ts) di idempotency_log
@@ -587,7 +589,7 @@ AccAPI/_github_clean/
 │   │   ├── api-wrapper/
 │   │   │   ├── page.tsx                # UI proxy Accurate ERP
 │   │   │   └── parsers/                # Parser bulk sales receipt
-│   │   ├── finance/page.tsx
+│   │   ├── finance/                # page.tsx (izin + tanggal WITA) · Finance.tsx (worklist + detail + dialog) · posting.ts (HTTP + orkestrasi)
 │   │   ├── summary/page.tsx
 │   │   ├── validator/page.tsx
 │   │   ├── principles/page.tsx
