@@ -20,8 +20,8 @@ import { db } from "@/lib/db";
 import { accurateEmployee, invoiceOutbox, principalOrderBatch, principalOrderLine } from "@/db/schema";
 import { antrekan, pencariPenekan } from "@/lib/invoice-outbox-actions";
 import { pernahDibuang } from "@/lib/invoice-outbox-event";
-import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
-import { groupCandidates, type BatchLine, type SkippedSo } from "@/lib/principal-invoice";
+import { resolveRequestPermissions } from "@/lib/rbac/resolve";
+import { groupCandidates, invoiceKey, type BatchLine, type SkippedSo } from "@/lib/principal-invoice";
 import { buildInvoicePayload, type InvoicePayload } from "@/lib/accurate-invoice-write";
 import { accurateUnits } from "@/lib/accurate-units";
 import { resolveOrderBranch } from "@/lib/order-branch";
@@ -36,9 +36,13 @@ async function loadBatch(id: string) {
     return { batch, rows };
 }
 
-/** Status antrean untuk satu batch: dilihat dari kunci SO-nya, bukan dari kolom baru. */
+/**
+ * Status antrean untuk satu batch: dilihat dari kunci SO-nya, bukan dari kolom baru. Kuncinya dari SEMUA nomor SO batch (BL-21):
+ * SO yang sudah antre/terposting lalu ditinjau lagi (Cabut, Segarkan harga, validasi ulang) bukan kandidat lagi, tetapi barisnya
+ * di Antrean Faktur tetap ada — tanpa itu layar menganggap batch bebas dihapus/diganti.
+ */
 export async function GET(request: NextRequest) {
-    const gate = await resolveRequestPermissionsH();
+    const gate = await resolveRequestPermissions(request);
     if (gate.response) return gate.response;
     if (!gate.perms?.has("order.view")) {
         return NextResponse.json({ ok: false, error: "Akses antrean faktur tidak diizinkan" }, { status: 403 });
@@ -51,7 +55,7 @@ export async function GET(request: NextRequest) {
     const { candidates } = groupCandidates(loaded.batch.principal, loaded.rows as unknown as BatchLine[], {
         fallbackDate: String(loaded.batch.period).slice(0, 10),
     });
-    const keys = candidates.map((candidate) => candidate.key);
+    const keys = [...new Set(loaded.rows.map((row) => invoiceKey(loaded.batch.principal, row.soNo)))];
     const queued = keys.length
         ? await db.select({
             orderId: invoiceOutbox.orderId, state: invoiceOutbox.state,
@@ -62,7 +66,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-    const gate = await resolveRequestPermissionsH();
+    const gate = await resolveRequestPermissions(request);
     if (gate.response) return gate.response;
     if (!gate.perms?.has("order.edit")) {
         return NextResponse.json({ ok: false, error: "Hanya petugas yang boleh menyiapkan faktur" }, { status: 403 });
