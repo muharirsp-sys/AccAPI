@@ -266,6 +266,9 @@ Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
     hanya finance.resolve_unknown). Gagal sebelum klaim = {claimed:false} (pasti tidak terkirim).
   payments.json: "failed" lama bergalat ambigu (timeout/502/504/non-JSON/jaringan) = unknown
     (shared.effective_post_status) -> terkunci sampai diselesaikan Finance.
+  Ledger: pemegang finance.resolve_unknown tanpa finance.update menuntaskan /payments/finance/update HANYA untuk
+    unknown -> posted/failed + catatan (S6-0e). Belum Transfer/Ajukan Ulang ditolak 409 bila posted/unknown (BL-49).
+  Baca status: GET /api/finance/purchase-payment/attempts?invoices=… (finance.view, latestAttemptsBySubject; S6-0e).
 
 Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConfig.path, bukan URL halaman):
   -> POST /api/idempotency/lock — preview + kunci fingerprint (lib/sales-receipt-fingerprint.ts) di idempotency_log
@@ -286,7 +289,11 @@ Data Sync (item/customer):
 ```
 Browser -> NEXT_PUBLIC_FASTAPI_BASE_URL (port 8000)
   -> python_backend/main.py [FastAPI app]
-     -> /payments/upload — parse Excel LPB, simpan ke payments.json
+     -> /payments/upload — parse Excel LPB, simpan ke payments.json (?dry_run=1 = pratinjau; berkas backup DITOLAK)
+     -> /payments/sppd/restore-backup — restore backup PAYMENTS (sppd.edit_settings + CSRF + ?dry_run=1)
+     -> BL-05 shared.payment_lock_reason: Sudah Transfer / posted / unknown TERKUNCI di update, delete, clear,
+        Excel SPPD (apply_sppd_excel_rows, ?dry_run=1), replace-principle-name (?dry_run=1) & auto-fix (dilewati)
+     -> /payments/submissions (+/{id}) — baca Pengajuan & SPPD, berkas yang benar-benar ada (BL-50)
      -> /payments/finance/data — data finance approval
      -> /payments/finance/proof — upload bukti transfer
      -> /validator/upload — upload data penjualan/channel
@@ -838,6 +845,7 @@ AccAPI/_github_clean/
 | `app/api/proxy/route.ts` | `POST` | Forward request ke Accurate API (autentikasi + payload flattening via `lib/accurate-forward.ts`); tolak tulis purchase-payment |
 | `app/api/finance/purchase-payment/route.ts` | `POST` | Command posting purchase-payment Finance: klaim `accurate_write_attempt` sebelum kirim, 409 bila attempt hidup |
 | `app/api/finance/purchase-payment/resolve/route.ts` | `POST` | Atestasi manual attempt purchase-payment tidak pasti (alasan + sumber pemeriksaan) |
+| `app/api/finance/purchase-payment/attempts/route.ts` | `GET` | Baca-saja status attempt terbaru per kelompok faktur (S6-0e; kontrak `docs/handover/S6-0e-KONTRAK-API.md`) |
 | `app/api/auth/callback/route.ts` | `GET` | OAuth2 callback dari Accurate (tukar code ke token) |
 | `app/api/faktur/route.ts` | `GET` | Daftar faktur dari cache `sales_invoice` (cari nomor/pelanggan, default hanya nomor mengandung INV, `?all=1` untuk semua) |
 | `app/api/faktur/[id]/route.ts` | `GET` | Detail 1 faktur + baris item (qty/harga) live dari `sales-invoice/detail.do`; `?raw=1` menampilkan respons Accurate mentah |
