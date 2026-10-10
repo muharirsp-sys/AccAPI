@@ -14,7 +14,7 @@
  */
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Lock, Trash2, X } from "lucide-react";
 import { Button, KeyValues, MessageStrip, StatusBadge, VariantNote } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
@@ -31,7 +31,8 @@ const nama = (r: Baris) => r.no_lpb || r.record_id;
 const KUNCI_PASTI = "Hasil sebelumnya belum pasti — tutup dialog dan periksa daftar dulu sebelum mengulang.";
 
 type LaporanLpb = { rows?: number; total_nilai_win?: number; total_nilai_invoice?: number; duplicates?: string[]; duplicates_in_file?: string[]; invalid?: string[]; error?: string; can_apply?: boolean; added?: number };
-type Pratinjau = { status: "memuat" } | { status: "siap"; data: LaporanLpb } | { status: "galat"; error: string };
+/** Pratinjau selalu terikat ke berkasnya (`untuk`): laporan berkas lain tidak pernah dipasangkan dengan Simpan. */
+type Pratinjau = { untuk: File } & ({ status: "memuat" } | { status: "siap"; data: LaporanLpb } | { status: "galat"; error: string });
 
 const daftar = (xs: string[] | undefined, n = 5) => (xs?.length ? `${xs.slice(0, n).join(", ")}${xs.length > n ? ` dan ${xs.length - n} lainnya` : ""}` : "0");
 
@@ -43,23 +44,28 @@ export function DialogUnggah({ open, onClose, izin, kunci, onSelesai, onTidakPas
     const [pratinjau, setPratinjau] = useState<Pratinjau | null>(null);
     const [belumPasti, setBelumPasti] = useState(false);
     const [kunciInput, setKunciInput] = useState(0);
-    const tutup = () => { setBerkas(null); setPratinjau(null); setBelumPasti(false); setKunciInput((k) => k + 1); onClose(); };
+    // Urutan permintaan pratinjau: jawaban untuk berkas yang sudah diganti/dialog yang sudah ditutup diabaikan (pilih A lalu B).
+    const urut = useRef(0);
+    const tutup = () => { urut.current += 1; setBerkas(null); setPratinjau(null); setBelumPasti(false); setKunciInput((k) => k + 1); onClose(); };
 
     async function pilih(file: File | null) {
+        const ke = ++urut.current;
         setBerkas(file);
-        setPratinjau(null);
+        setPratinjau(file ? { status: "memuat", untuk: file } : null);
         if (!file) return;
-        setPratinjau({ status: "memuat" });
         const fd = new FormData();
         fd.append("file", file);
         const res = await tulis("/payments/upload?dry_run=1", fd);
-        if (res.ok) setPratinjau({ status: "siap", data: res.data as LaporanLpb });
-        else setPratinjau({ status: "galat", error: res.tidakPasti ? "Pratinjau tidak terbaca (koneksi atau server). Pilih berkasnya lagi untuk mencoba; belum ada yang ditulis." : res.error });
+        if (ke !== urut.current) return;
+        if (res.ok) setPratinjau({ status: "siap", data: res.data as LaporanLpb, untuk: file });
+        else setPratinjau({ status: "galat", untuk: file, error: res.tidakPasti ? "Pratinjau tidak terbaca (koneksi atau server). Pilih berkasnya lagi untuk mencoba; belum ada yang ditulis." : res.error });
     }
 
-    const lap = pratinjau?.status === "siap" ? pratinjau.data : null;
+    // Hanya pratinjau milik berkas yang sedang dipilih yang berlaku.
+    const segar = pratinjau && pratinjau.untuk === berkas ? pratinjau : null;
+    const lap = segar?.status === "siap" ? segar.data : null;
     const alasan = izin ?? kunci ?? (belumPasti ? KUNCI_PASTI : !berkas ? "Pilih berkas LPB dulu."
-        : pratinjau?.status === "memuat" ? "Pratinjau sedang dibuat."
+        : !segar || segar.status === "memuat" ? "Pratinjau sedang dibuat."
             : !lap ? "Pratinjau gagal; berkas ini belum bisa disimpan."
                 : !lap.can_apply ? "Perbaiki masalah di pratinjau dulu — satu masalah membatalkan seluruh berkas." : undefined);
 
@@ -76,7 +82,7 @@ export function DialogUnggah({ open, onClose, izin, kunci, onSelesai, onTidakPas
             return;
         }
         if (res.tidakPasti) { setBelumPasti(true); onTidakPasti(); }
-        else if (res.data) setPratinjau({ status: "siap", data: { ...(res.data as LaporanLpb), can_apply: false } });
+        else if (res.data) setPratinjau({ status: "siap", data: { ...(res.data as LaporanLpb), can_apply: false }, untuk: berkas });
         throw new Error(res.tidakPasti ? res.error : `${res.error} Tidak ada yang disimpan.`);
     }
 
@@ -96,8 +102,8 @@ export function DialogUnggah({ open, onClose, izin, kunci, onSelesai, onTidakPas
                 {(a) => <input key={kunciInput} {...a} className="fi-input" type="file" accept=".xlsx,.xls" onChange={(e) => void pilih(e.target.files?.[0] ?? null)} />}
             </FormField>
             <p className="fi-small"><a href={unduhUrl("/payments/template")} target="_blank" rel="noopener noreferrer">Unduh templat LPB</a></p>
-            {pratinjau?.status === "memuat" && <MessageStrip tone="info" title="Membuat pratinjau…" />}
-            {pratinjau?.status === "galat" && <MessageStrip tone="neg" title="Pratinjau gagal.">{pratinjau.error}</MessageStrip>}
+            {segar?.status === "memuat" && <MessageStrip tone="info" title="Membuat pratinjau…" />}
+            {segar?.status === "galat" && <MessageStrip tone="neg" title="Pratinjau gagal.">{segar.error}</MessageStrip>}
             {lap?.error && <MessageStrip tone="neg" title="Berkas ini belum bisa disimpan.">{lap.error}</MessageStrip>}
             {lap && lap.can_apply && <MessageStrip tone="pos" title="Pratinjau bersih.">Semua baris akan disimpan sebagai rekaman baru; belum ada yang ditulis.</MessageStrip>}
         </ConfirmDialog>

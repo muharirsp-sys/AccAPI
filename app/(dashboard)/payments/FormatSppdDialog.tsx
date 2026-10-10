@@ -17,7 +17,7 @@
  */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { KeyValues, MessageStrip } from "@/components/fiori/core";
 import { ConfirmDialog, FormField } from "@/components/fiori/interactive";
 import { rupiah } from "@/lib/promo-ui";
@@ -34,26 +34,35 @@ const keP = <T,>(res: HasilTulis): Pratinjau<T> => (res.ok ? { status: "siap", d
 /** Nilai lama/baru Excel SPPD: uang rupiah, selain itu teks. */
 const nilaiTampil = (field: string, v: unknown) => (typeof v === "number" && /nilai|potongan|gap/.test(field) ? rupiah(v) : String(v ?? "") || "(kosong)");
 
-/** Pola bersama dialog berkas: pilih → pratinjau `?dry_run=1` → terapkan `?dry_run=0`. */
+/**
+ * Pola bersama dialog berkas: pilih → pratinjau `?dry_run=1` → terapkan `?dry_run=0`. Pratinjau TERIKAT ke berkasnya (`untuk`) dan
+ * jawaban usang (berkas sudah diganti / dialog direset) diabaikan lewat urutan permintaan — pilih A lalu B tidak pernah memasangkan
+ * laporan A dengan unggahan B.
+ */
 function useBerkas<T>(path: string) {
     const [berkas, setBerkas] = useState<File | null>(null);
-    const [p, setP] = useState<Pratinjau<T>>(null);
+    const [p, setPAsli] = useState<{ untuk: File; isi: Pratinjau<T> } | null>(null);
     const [kunciInput, setKunciInput] = useState(0);
-    const reset = () => { setBerkas(null); setP(null); setKunciInput((k) => k + 1); };
+    const urut = useRef(0);
+    const reset = () => { urut.current += 1; setBerkas(null); setPAsli(null); setKunciInput((k) => k + 1); };
     async function pilih(file: File | null) {
+        const ke = ++urut.current;
         setBerkas(file);
-        setP(file ? { status: "memuat" } : null);
+        setPAsli(file ? { untuk: file, isi: { status: "memuat" } } : null);
         if (!file) return;
         const fd = new FormData();
         fd.append("file", file);
-        setP(keP<T>(await tulis(`${path}?dry_run=1`, fd)));
+        const res = await tulis(`${path}?dry_run=1`, fd);
+        if (ke === urut.current) setPAsli({ untuk: file, isi: keP<T>(res) });
     }
     async function terapkan(): Promise<HasilTulis> {
         const fd = new FormData();
         fd.append("file", berkas!);
         return tulis(`${path}?dry_run=0`, fd);
     }
-    return { berkas, p, setP, kunciInput, reset, pilih, terapkan };
+    /** Laporan dari jawaban terapkan yang ditolak (untuk berkas yang sama). */
+    const setP = (isi: Pratinjau<T>) => { if (berkas) setPAsli({ untuk: berkas, isi }); };
+    return { berkas, p: p && p.untuk === berkas ? p.isi : null, setP, kunciInput, reset, pilih, terapkan };
 }
 
 type LaporanExcel = {
