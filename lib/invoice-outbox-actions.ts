@@ -5,7 +5,7 @@
  *   Dipisah dari route agar diuji dengan Postgres evaluasi (route memakai next/headers).
  * Dependensi: invoice_outbox + invoice_outbox_event, lib/accurate-invoice-write (aturan status),
  *   lib/invoice-outbox-event, lib/invoice-search (pencarian faktur AM-029, disuntikkan).
- * Main Functions: aksiAntrean, antrekan, selesaikanTidakPasti, pencariFaktur, pencariPenekan.
+ * Main Functions: aksiAntrean, antrekan, selesaikanTidakPasti, cariTidakPasti, pencariFaktur, pencariPenekan.
  * Side Effects: UPDATE/DELETE/INSERT invoice_outbox + INSERT event dalam SATU transaksi per baris.
  *   Request ke Accurate HANYA lewat pencari yang disuntikkan (BACA SAJA, list.do/detail.do).
  *
@@ -17,13 +17,14 @@
  */
 import { and, eq, inArray } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { invoiceOutbox } from "@/db/schema";
-import { discardable, resendable, type OutboxState } from "@/lib/accurate-invoice-write";
+import { invoiceOutbox, salesInvoiceCache } from "@/db/schema";
+import { discardable, resendable, type InvoicePayload, type OutboxState } from "@/lib/accurate-invoice-write";
 import { catatEvent, menitSejakKirimTerakhir, pernahDibuang, waktuAntrePertama } from "@/lib/invoice-outbox-event";
 import { cariFaktur, type HasilCari, type SesiCari } from "@/lib/invoice-search";
 import { getAccurateSession } from "@/lib/accurate-session";
 import { SAPU_SETELAH_MENIT, sapuSending } from "@/lib/invoice-sender";
 import { isAllowedAccurateHost } from "@/lib/api-security";
+import { nilaiPayload } from "@/lib/invoice-verify";
 
 export type AksiJawaban = { status: number; body: Record<string, unknown> };
 
@@ -333,4 +334,35 @@ export async function selesaikanTidakPasti(
     if (!done) return BERUBAH;
     return { status: 200, body: { ok: true, orderId, state: stateTo, pencarian,
         ...(ketemu ? { accurateId: ketemu.id, number: ketemu.number } : {}) } };
+}
+
+/**
+ * Dialog `selesai` (S6c, BL-16): HASIL pencarian tampil SEBELUM petugas memilih keputusan. BACA SAJA — tanpa penyapu,
+ * tanpa mengubah baris/event (Accurate hanya list.do/detail.do lewat `cari`). Hasil di layar bukan dasar penulisan:
+ * POST /resolve (selesaikanTidakPasti) mencari ULANG saat memutuskan. `faktur` = tanggal + total dari salinan lokal
+ * (pencarian hanya membawa id + nomor); `dikirim` = DPP + PPN payload yang dikirim; `sisaMenit` = masa tunggu
+ * "tidak terposting" yang sama dengan selesaikanTidakPasti (0 = boleh).
+ */
+export async function cariTidakPasti(database: NodePgDatabase, input: { orderId: string; cari: Pencari }): Promise<AksiJawaban> {
+    const { orderId } = input;
+    const [row] = await database.select({ state: invoiceOutbox.state, customerNo: invoiceOutbox.customerNo, createdAt: invoiceOutbox.createdAt, payload: invoiceOutbox.payload })
+        .from(invoiceOutbox).where(eq(invoiceOutbox.orderId, orderId)).limit(1);
+    if (!row) return { status: 404, body: { ok: false, error: "Baris antrean tidak ditemukan" } };
+    if (row.state !== "unknown") {
+        return { status: 409, body: { ok: false, error: `Hanya baris TIDAK PASTI yang diselesaikan di sini (status sekarang ${row.state}); muat ulang halaman.` } };
+    }
+    const menit = await menitSejakKirimTerakhir(database, orderId);
+    const queuedAt = await waktuAntrePertama(database, orderId, row.createdAt) ?? row.createdAt;
+    const hasil = await input.cari({ orderId, customerNo: row.customerNo, queuedAt });
+    const [salinan] = hasil.hasil === "ketemu"
+        ? await database.select({ transDate: salesInvoiceCache.transDate, totalAmount: salesInvoiceCache.totalAmount })
+            .from(salesInvoiceCache).where(eq(salesInvoiceCache.id, Number(hasil.id))).limit(1)
+        : [];
+    const payload = row.payload as InvoicePayload | null;
+    return { status: 200, body: {
+        ok: true, orderId, pencarian: ringkasCari(hasil),
+        faktur: salinan ? { tanggal: salinan.transDate ?? "", total: salinan.totalAmount ?? null } : null,
+        dikirim: payload && Array.isArray(payload.detailItem) ? nilaiPayload(payload) : null,
+        sisaMenit: menit !== null && menit < SAPU_SETELAH_MENIT ? Math.max(1, Math.ceil(SAPU_SETELAH_MENIT - menit)) : 0,
+    } };
 }
