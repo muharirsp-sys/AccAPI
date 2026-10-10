@@ -559,11 +559,14 @@ function DialogPosting(p: {
     }, [p.open]));
     const db = segar.status === "siap" ? segar.data : undefined;
     const namaDb = db ? db.alias || `ID ${db.id}` : segar.status === "galat" ? "tidak terbaca" : "memeriksa…";
-    const blokir = p.blokir
-        ?? (segar.status === "memuat" ? "Memeriksa database Accurate yang terbuka…" : undefined)
-        ?? (!db ? `${segar.error || "Sesi Accurate tidak terbaca."} Tutup lalu buka lagi dialog ini.` : undefined)
-        ?? (!db.tersambung ? "Login dan buka database Accurate dulu." : undefined)
-        ?? (db.id !== p.dbDimuat ? `Database Accurate berganti sejak daftar dimuat (sekarang ${namaDb}); pemasok dan rekening belum diperiksa di database ini. Tutup lalu muat ulang.` : undefined);
+    const alasanDb = (): string | undefined => {
+        if (segar.status === "memuat") return "Memeriksa database Accurate yang terbuka…";
+        if (!db) return `${segar.error || "Sesi Accurate tidak terbaca."} Tutup lalu buka lagi dialog ini.`;
+        if (!db.tersambung) return "Login dan buka database Accurate dulu.";
+        if (db.id !== p.dbDimuat) return `Database Accurate berganti sejak daftar dimuat (sekarang ${namaDb}); pemasok dan rekening belum diperiksa di database ini. Tutup lalu muat ulang.`;
+        return undefined;
+    };
+    const blokir = p.blokir ?? alasanDb();
     return (
         <ConfirmDialog open={p.open} onClose={p.onClose} tag="Tulis ke Accurate" confirmDisabled={blokir} onConfirm={() => p.onConfirm(db!)}
             title={catatHasil ? "Catat hasil posting yang sudah ada?" : "Posting Purchase Payment ke Accurate?"}

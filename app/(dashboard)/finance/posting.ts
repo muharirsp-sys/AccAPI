@@ -378,10 +378,11 @@ export async function postingPurchasePayment(p: {
     if (!transferDate) throw new Error("Tanggal transfer wajib diisi.");
     if (!mapping.vendorNo || !mapping.bankNo) throw new Error("Pemasok dan rekening bank Accurate wajib lengkap.");
     if (!p.expectedDatabaseId) throw new Error("Database Accurate tujuan belum terbaca; tutup lalu buka lagi dialog ini. Tidak ada yang dikirim.");
-    let sessionData: { databaseConnected?: boolean; databaseId?: string | number | null; databaseAlias?: string | null } | null = null;
+    type JawabanSesi = { databaseConnected?: boolean; databaseId?: string | number | null; databaseAlias?: string | null };
+    let sessionData: JawabanSesi | null = null;
     try {
         const sessionRes = await fetch("/api/auth/accurate-session", { cache: "no-store" });
-        sessionData = sessionRes.ok ? (await bacaTeks(sessionRes)) as typeof sessionData : null;
+        sessionData = sessionRes.ok ? (await bacaTeks(sessionRes)) as JawabanSesi | null : null;
     } catch { /* sessionData tetap null */ }
     if (!sessionData?.databaseConnected) throw new Error("Login dan buka database Accurate dulu sebelum posting. Tidak ada yang dikirim.");
     // Tinjauan A-1: sesi bisa berganti database di tab lain sejak dialog dibuka — berhenti SEBELUM simpan tujuan (belum ada yang ditulis).
