@@ -68,23 +68,26 @@ Cek ulang di lock tulis: **409** `{ok:false, error, locked:[…]}` bila rekaman 
 ### GET `/payments/cart-info?draft=` — BERUBAH
 404 generik `{ok:false, error:"Draft tidak ditemukan."}` untuk semua peran (dulu admin menerima PATH + id draf). Tanggal bawaan besok WITA.
 
-### GET `/payments/submissions` — BARU (BL-50)
-Izin `payments.view`. Baca-saja. Terbaru dulu. Pengajuan yang hanya ada di rekaman (data lama) ikut.
+### GET `/payments/submissions?limit=100&offset=0` — BARU (BL-50)
+Izin `payments.view`. Baca-saja. Terbaru dulu. Pengajuan yang hanya ada di rekaman (data lama) ikut. `limit` 1–500 (bawaan 100),
+`offset` ≥ 0, selain itu 400. Jawaban menambah `total`, `limit`, `offset`. Daftar TIDAK memuat `files` — hanya `file_count`
+(jumlah berkas TERCATAT, tanpa cek disk; entri SPPD tidak dihitung bila tanpa `sppd.download`).
 ```json
 {"ok": true, "data": [{
   "id": "1f2e3d4c", "sppd_no": "031/SPA/PDSB/X/2026", "created_at": "2026-10-09 02:00:00", "created_at_wita": "2026-10-09 10:00:00",
   "created_by": "betterauth|staff|a@x", "target_payment_date": "2026-10-10", "method": "BANK_PANIN", "route_label": "Bank Panin (SPPD)",
   "record_count": 2, "principles": ["PT ABC"], "total_invoice": 1700.0, "total_potongan": 200.0, "total_pembayaran": 1500.0,
   "transfer": {"Sudah Transfer": 1, "Belum Transfer": 1}, "posting": {"posted": 1, "belum": 1},
-  "status": "sebagian", "status_label": "Sebagian ditransfer",
-  "files": [{"label": "Invoice PT ABC (LPB)", "name": "invoice_1f2e3d4c_pt-abc_lpb.xlsx", "url": "/payments/files/invoice_1f2e3d4c_pt-abc_lpb.xlsx"}]}]}
+  "status": "sebagian", "status_label": "Sebagian ditransfer", "file_count": 2}], "total": 1, "limit": 100, "offset": 0}
 ```
 - `method`: `BANK_PANIN` (rute SPPD) | `NON_PANIN`. `posting` kunci: `posted|unknown|failed|skipped|belum`.
 - `status`: `kosong | tidak_pasti | terposting | dikembalikan | ditransfer | sebagian | menunggu_transfer` (urutan prioritas ini).
-- `files` = HANYA berkas yang ada di disk; hasil restore backup (`files=[]`) → `[]`. Unduh: GET `/payments/files/{name}` (`payments.view`).
+- Unduh: GET `/payments/files/{name}` — `payments.view`; dokumen SPPD (`sppd_*.docx`) juga butuh **`sppd.download`** (403
+  `{ok:false, error}`); nama yang bukan berkas (direktori/tidak ada) = 404 `{ok:false, error:"Berkas tidak ditemukan."}`.
 
 ### GET `/payments/submissions/{id}` — BARU
-Sama + `records:[{record_id, no_lpb, tipe_pengajuan, principle, invoice_no, nilai_invoice, potongan, nilai_pembayaran,
+Sama + `files:[{label, name, url}]` = HANYA berkas yang ada di disk (restore backup `files=[]` → `[]`; SPPD hanya bila
+`sppd.download`), `records:[{record_id, no_lpb, tipe_pengajuan, principle, invoice_no, nilai_invoice, potongan, nilai_pembayaran,
 jenis_pembayaran, status_pembayaran, transfer_date, accurate_post_status, accurate_purchase_payment_number, locked_reason}]`,
 `cart_items` (per `principle||tipe`: jenis_pembayaran, keterangan, potongan, …). 404 `{ok:false, error:"Pengajuan tidak ditemukan."}`.
 

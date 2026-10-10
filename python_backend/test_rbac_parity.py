@@ -17,6 +17,7 @@ os.environ["BANK_DATA_PATH"] = os.path.join(TMP, "rekening.xlsx")
 os.environ["AUDIT_LOG_PATH"] = os.path.join(TMP, "audit.jsonl")
 os.environ["ERROR_LOG_PATH"] = os.path.join(TMP, "error.jsonl")
 os.environ["PAYMENTS_DB_PATH"] = os.path.join(TMP, "payments.json")
+os.environ["PAYMENTS_FILES_DIR"] = os.path.join(TMP, "files")
 os.environ["AUTH_VERIFY_URL"] = "http://verify.invalid/api/auth/verify"
 
 VERIFY = {}  # token -> payload /api/auth/verify palsu
@@ -268,6 +269,22 @@ def check_resolve_parity():
     assert upd(no_lpb="UNK", status_pembayaran="Belum Transfer").status_code == 403
 
 
+def check_sppd_download():
+    """Tinjauan B (a): dokumen SPPD (sppd_*.docx) butuh sppd.download lewat izin efektif NYATA; invoice cukup payments.view."""
+    import main
+    from routers import payments
+
+    client = TestClient(main.app)
+    os.makedirs(shared.PAYMENTS_FILES_DIR, exist_ok=True)
+    for name in ("sppd_P1.docx", "invoice_P1_x.xlsx"):
+        open(os.path.join(shared.PAYMENTS_FILES_DIR, name), "wb").write(b"x")
+    payments.get_current_user = lambda request: identity("pv", role="viewer", permissions="{}", effectivePermissions=["payments.view", "sppd.view"])
+    assert client.get("/payments/files/sppd_P1.docx").status_code == 403, "SPPD terunduh tanpa sppd.download"
+    assert client.get("/payments/files/invoice_P1_x.xlsx").status_code == 200
+    payments.get_current_user = lambda request: identity("pd", role="viewer", permissions="{}", effectivePermissions=["payments.view", "sppd.download"])
+    assert client.get("/payments/files/sppd_P1.docx").status_code == 200, "pemegang sppd.download ditolak"
+
+
 def main_check():
     check_policy()
     check_fail_closed()
@@ -275,6 +292,7 @@ def main_check():
     check_mutation_routes()
     check_csrf_bank_data()
     check_resolve_parity()
+    check_sppd_download()
     print("OK test_rbac_parity")
 
 

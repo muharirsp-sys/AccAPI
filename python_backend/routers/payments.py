@@ -1151,9 +1151,12 @@ def payments_files(request: Request, file_name: str):
     if not user_has_permission(user, "payments", "view"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
     safe_name = os.path.basename(file_name)
+    if _is_sppd_file(safe_name) and not user_has_permission(user, "sppd", "download"):
+        # Tinjauan B (a): sppd.download terdaftar di registry tetapi dulu tidak pernah ditegakkan di Python.
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.download"})
     path = os.path.join(PAYMENTS_FILES_DIR, safe_name)
-    if not os.path.exists(path):
-        return JSONResponse(status_code=404, content={"detail": "File not found"})
+    if not os.path.isfile(path):  # tinjauan B (c): direktori ("..", subfolder) dulu lolos exists() lalu 500
+        return JSONResponse(status_code=404, content={"ok": False, "error": "Berkas tidak ditemukan."})
     return FileResponse(path, filename=safe_name)
 
 
@@ -1171,23 +1174,35 @@ _SUBMISSION_STATUS_LABEL = {
 }
 
 
-def _submission_files(sub: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Berkas yang BENAR-BENAR ada di PAYMENTS_FILES_DIR (restore backup membuat files=[] -> kosong, bukan tebakan)."""
-    out: List[Dict[str, str]] = []
+def _is_sppd_file(name: str) -> bool:
+    """Dokumen SPPD (sppd_<id>.docx, cart/submit & submit lama) — butuh sppd.download (tinjauan B (a))."""
+    return s(name).lower().startswith("sppd_")
+
+
+def _recorded_files(sub: Dict[str, Any], can_sppd: bool) -> List[Tuple[str, str]]:
+    """(label, nama) yang TERCATAT di pengajuan, tanpa cek disk; SPPD disaring bila tanpa sppd.download."""
+    out: List[Tuple[str, str]] = []
     seen = set()
     listed = [(s(f.get("label", "")), s(f.get("url", ""))) for f in (sub.get("files") or []) if isinstance(f, dict)]
     if s(sub.get("sppd_file", "")):
         listed.append(("SPPD Bank Panin", s(sub.get("sppd_file", ""))))
     for label, ref in listed:
         name = os.path.basename(ref)
-        if not name or name in seen or not os.path.isfile(os.path.join(PAYMENTS_FILES_DIR, name)):
+        if not name or name in seen or (_is_sppd_file(name) and not can_sppd):
             continue
         seen.add(name)
-        out.append({"label": label or name, "name": name, "url": f"/payments/files/{name}"})
+        out.append((label or name, name))
     return out
 
 
-def _submission_summary(sid: str, sub: Dict[str, Any], recs: List[Tuple[str, Dict[str, Any]]]) -> Dict[str, Any]:
+def _submission_files(sub: Dict[str, Any], can_sppd: bool) -> List[Dict[str, str]]:
+    """Berkas yang BENAR-BENAR ada di PAYMENTS_FILES_DIR (restore backup membuat files=[] -> kosong, bukan tebakan).
+    Hanya di endpoint DETAIL — daftar cukup jumlah tercatat (tinjauan B (b): tanpa isfile per pengajuan per panggilan)."""
+    return [{"label": label, "name": name, "url": f"/payments/files/{name}"} for label, name in _recorded_files(sub, can_sppd)
+            if os.path.isfile(os.path.join(PAYMENTS_FILES_DIR, name))]
+
+
+def _submission_summary(sid: str, sub: Dict[str, Any], recs: List[Tuple[str, Dict[str, Any]]], can_sppd: bool) -> Dict[str, Any]:
     method = s(sub.get("method", ""))
     transfer: Dict[str, int] = {}
     posting: Dict[str, int] = {}
@@ -1231,7 +1246,7 @@ def _submission_summary(sid: str, sub: Dict[str, Any], recs: List[Tuple[str, Dic
         "posting": posting,
         "status": status,
         "status_label": _SUBMISSION_STATUS_LABEL[status],
-        "files": _submission_files(sub),
+        "file_count": len(_recorded_files(sub, can_sppd)),
     }
 
 
@@ -1263,10 +1278,20 @@ def payments_submissions(request: Request):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "payments", "view"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
+    # Tinjauan B (b): paginasi. ponytail: tetap membaca seluruh ledger lalu memotong (payments.json satu berkas);
+    # yang dihemat = ukuran jawaban & kerja render. Ceiling: O(rekaman) per panggilan — indeks bila ledger membesar.
+    try:
+        limit = int(request.query_params.get("limit", "100"))
+        offset = int(request.query_params.get("offset", "0"))
+    except ValueError:
+        limit, offset = -1, -1
+    if not (1 <= limit <= 500) or offset < 0:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "limit harus 1–500 dan offset >= 0."})
+    can_sppd = user_has_permission(user, "sppd", "download")
     db = load_payments_db()
-    rows = [_submission_summary(sid, sub, recs) for sid, (sub, recs) in _submissions_index(db).items()]
+    rows = [_submission_summary(sid, sub, recs, can_sppd) for sid, (sub, recs) in _submissions_index(db).items()]
     rows.sort(key=lambda x: (x["created_at"], x["id"]), reverse=True)
-    return JSONResponse({"ok": True, "data": rows})
+    return JSONResponse({"ok": True, "data": rows[offset:offset + limit], "total": len(rows), "limit": limit, "offset": offset})
 
 
 @router.get("/payments/submissions/{submission_id}")
@@ -1298,4 +1323,6 @@ def payments_submission_detail(request: Request, submission_id: str):
         "locked_reason": payment_lock_reason(r),
     } for key, r in sorted(recs, key=lambda kv: kv[0])]
     cart_items = sub.get("cart_items") if isinstance(sub.get("cart_items"), dict) else {}
-    return JSONResponse({"ok": True, "data": {**_submission_summary(s(submission_id), sub, recs), "records": records, "cart_items": cart_items}})
+    can_sppd = user_has_permission(user, "sppd", "download")
+    return JSONResponse({"ok": True, "data": {**_submission_summary(s(submission_id), sub, recs, can_sppd), "files": _submission_files(sub, can_sppd),
+                                             "records": records, "cart_items": cart_items}})

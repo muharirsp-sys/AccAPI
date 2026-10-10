@@ -29,7 +29,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from routers import payments  # noqa: E402
 
-ALLOW = {"payments.view"}
+ALLOW = {"payments.view", "sppd.download"}
 payments.get_current_user = lambda request: "betterauth|staff|stf@x.test"
 payments.user_has_permission = lambda user, module, action: f"{module}.{action}" in ALLOW
 app = FastAPI()
@@ -81,12 +81,20 @@ def main_check():
     assert s1["record_count"] == 2 and s1["total_pembayaran"] == 1500.0 and s1["total_invoice"] == 1700.0, s1
     assert s1["transfer"] == {"Sudah Transfer": 1, "Belum Transfer": 1}, s1["transfer"]
     assert s1["posting"] == {"posted": 1, "belum": 1}, s1["posting"]
-    assert [f["name"] for f in s1["files"]] == ["invoice_S1_pt-abc_lpb.xlsx", "sppd_S1.docx"], s1["files"]
-    assert all(f["url"] == f"/payments/files/{f['name']}" for f in s1["files"]), s1["files"]
+    # Daftar: hanya JUMLAH berkas tercatat (tanpa cek disk per pengajuan — tinjauan B (b)); cek keberadaan di detail.
+    assert "files" not in s1 and s1["file_count"] == 3, s1
     assert s1["status"] == "sebagian", s1["status"]
 
-    assert data["S2"]["files"] == [] and data["S2"]["route_label"] == "Non Panin", data["S2"]
-    assert data["S3"]["files"] == [] and data["S3"]["record_count"] == 1 and data["S3"]["status"] == "dikembalikan", data["S3"]
+    assert data["S2"]["file_count"] == 0 and data["S2"]["route_label"] == "Non Panin", data["S2"]
+    assert data["S3"]["file_count"] == 0 and data["S3"]["record_count"] == 1 and data["S3"]["status"] == "dikembalikan", data["S3"]
+
+    # Paginasi (tinjauan B (b)): limit bawaan wajar, nilai tak sah 400.
+    r = client.get("/payments/submissions?limit=1")
+    assert r.status_code == 200 and [x["id"] for x in r.json()["data"]] == ["S1"] and r.json()["total"] == 3, r.text[:200]
+    r = client.get("/payments/submissions?limit=1&offset=1")
+    assert [x["id"] for x in r.json()["data"]] == ["S2"], r.text[:200]
+    for bad in ("limit=0", "limit=abc", "limit=100000", "offset=-1"):
+        assert client.get(f"/payments/submissions?{bad}").status_code == 400, bad
 
     # Jejak waktu ledger ditulis jam server; tampil WITA = UTC+8 dari jam server itu.
     expected = "2026-10-09 18:00:00"  # jam server UTC 10:00 = 18:00 WITA
@@ -99,6 +107,24 @@ def main_check():
     assert set(rows) == {"A", "B"} and rows["A"]["accurate_post_status"] == "posted" and rows["A"]["locked_reason"], rows
     assert "diajukan" in rows["B"]["locked_reason"] and rows["A"]["accurate_purchase_payment_number"] == "PP/1010/1", rows
     assert detail["cart_items"]["PT ABC||LPB"]["jenis_pembayaran"] == "TRF", detail["cart_items"]
+    # Detail: berkas yang BENAR-BENAR ada (invoice yang hilang tidak tampil).
+    assert [f["name"] for f in detail["files"]] == ["invoice_S1_pt-abc_lpb.xlsx", "sppd_S1.docx"], detail["files"]
+    assert all(f["url"] == f"/payments/files/{f['name']}" for f in detail["files"]), detail["files"]
+    assert client.get("/payments/submissions/S2").json()["data"]["files"] == []
+
+    # Tinjauan B (a): dokumen SPPD butuh sppd.download — tanpa kunci itu tidak tercantum dan tidak bisa diunduh.
+    assert client.get("/payments/files/sppd_S1.docx").status_code == 200
+    ALLOW.discard("sppd.download")
+    assert [f["name"] for f in client.get("/payments/submissions/S1").json()["data"]["files"]] == ["invoice_S1_pt-abc_lpb.xlsx"]
+    assert client.get("/payments/submissions").json()["data"][0]["file_count"] == 2
+    r = client.get("/payments/files/sppd_S1.docx")
+    assert r.status_code == 403 and r.json()["ok"] is False, f"SPPD terunduh tanpa sppd.download: {r.status_code}"
+    assert client.get("/payments/files/invoice_S1_pt-abc_lpb.xlsx").status_code == 200
+    # Tinjauan B (c): nama yang menunjuk DIREKTORI = 404 berpesan, bukan 500.
+    os.makedirs(os.path.join(FILES, "subdir"), exist_ok=True)
+    r = client.get("/payments/files/subdir")
+    assert r.status_code == 404 and r.json() == {"ok": False, "error": "Berkas tidak ditemukan."}, r.text[:200]
+    ALLOW.add("sppd.download")
 
     r = client.get("/payments/submissions/TIDAK-ADA")
     assert r.status_code == 404 and r.json() == {"ok": False, "error": "Pengajuan tidak ditemukan."}, r.text
