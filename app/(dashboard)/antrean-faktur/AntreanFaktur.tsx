@@ -219,6 +219,11 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
             </header>
 
             {!bolehUbah && <MessageStrip tone="info" title="Anda hanya bisa melihat antrean.">Mengirim, antre ulang, dan buang butuh izin ubah order.</MessageStrip>}
+            {!bolehSelesai && (ringkas.unknown ?? 0) > 0 && (
+                <MessageStrip tone="warn" title={`${ringkas.unknown} faktur Tidak pasti menunggu penyelesaian.`}>
+                    Menyelesaikannya butuh izin Selesaikan posting tidak pasti — minta IT Support menambahkannya ke grup yang berwenang.
+                </MessageStrip>
+            )}
             {tidakPasti && <MessageStrip tone="warn" title="Hasil tindakan terakhir belum pasti." onClose={() => setTidakPasti(null)}>{tidakPasti}</MessageStrip>}
             {aksi && (
                 <MessageStrip tone={aksi.tone} title={aksi.judul} onClose={() => setAksi(null)}>

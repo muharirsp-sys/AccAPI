@@ -397,6 +397,8 @@ test("Tanpa izin: Selesaikan/Kirim/Buang nonaktif dengan alasan berkalimat (buka
     await expect(selesai).toBeDisabled(NAV);
     await expect(selesai).toHaveAttribute("title", /izin Selesaikan posting tidak pasti/);
     await expect(selesai).not.toHaveAttribute("title", /order\./);
+    // Alasan juga TERLIHAT (bukan hanya title): ponsel/layar sentuh tidak punya hover.
+    await expect(main.getByRole("status").filter({ hasText: "1 faktur Tidak pasti menunggu penyelesaian." })).toContainText("izin Selesaikan posting tidak pasti");
     await expect(main.getByRole("button", { name: /^Kirim .*faktur…$/ })).toHaveAttribute("title", "Hanya petugas berizin ubah order yang boleh mengirim faktur ke Accurate");
     await expect(main.getByRole("button", { name: "Buang SO SO-B-002" })).toBeDisabled();
     await expect(main.getByText("Anda hanya bisa melihat antrean.")).toBeVisible();
