@@ -17,7 +17,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ArrowRight, ChevronLeft, ChevronRight, Send } from "lucide-react";
 import {
-    AnchorBar, Button, EmptyState, ErrorState, FlexibleColumnLayout, KeyValues, ListItem, MessageStrip, ObjectPageHeader, ResponsiveTable,
+    AnchorBar, Button, EmptyState, ErrorState, FlexibleColumnLayout, KeyValues, ListItem, MessageStrip, ResponsiveTable,
     Section, Skeleton, StatusBadge, VariantNote, type Column,
 } from "@/components/fiori/core";
 import { FormField, useLoad, type Load } from "@/components/fiori/interactive";
@@ -241,8 +241,17 @@ function ObjekFaktur({ pilihan, baris, bolehAntrean }: { pilihan: Pilihan; baris
 
     return (
         <div className="grid gap-3 pb-4">
-            <ObjectPageHeader title={nomor ? <span className="fi-mono">{nomor}</span> : databaseId ? "Faktur dari laporan realisasi" : "Faktur"}
-                status={baris || d ? <Status value={status} /> : undefined} attributes={atribut} />
+            {/* Kepala Object Page dengan h2: halaman ini sudah punya h1 "Faktur Penjualan" (satu h1 per halaman). Kelas sama dengan
+                ObjectPageHeader; ukuran judul mengikuti token judul 1. */}
+            <header className="fi-oph">
+                <div className="fi-oph-title">
+                    <h2 style={{ font: "var(--fs-title-1)", letterSpacing: "var(--ls-title)", overflowWrap: "anywhere" }}>
+                        {nomor ? <span className="fi-mono">{nomor}</span> : databaseId ? "Faktur dari laporan realisasi" : "Faktur"}
+                    </h2>
+                    {baris || d ? <Status value={status} /> : null}
+                </div>
+                {atribut.length ? <dl className="fi-attrs">{atribut.map((a) => <div key={a.label}><dt>{a.label}</dt><dd>{a.value}</dd></div>)}</dl> : null}
+            </header>
             {!baris && memuat && <Skeleton rows={2} label="Memuat kepala faktur" />}
             <AnchorBar anchors={[{ id: "fk-barang", label: "Barang" }, { id: "fk-ringkasan", label: "Ringkasan" }, { id: "fk-alur", label: "Alur dokumen" }, { id: "fk-info", label: "Info" }]} />
             <div className="grid gap-3 px-3">

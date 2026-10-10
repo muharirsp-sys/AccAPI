@@ -30,12 +30,14 @@ async function pratinjau(id: string, salesman: string): Promise<Load<Pratinjau>>
     return { status: "siap", data: { payload: (j.data.payload ?? {}) as Record<string, unknown>, branch: (j.data.branch ?? null) as Pratinjau["branch"], salesman: (j.data.salesman ?? null) as Pratinjau["salesman"] } };
 }
 
-export function AntreFaktur({ order, hargaBeda, onClose, onSelesai }: {
+export function AntreFaktur({ order, hargaBeda, onClose, onSelesai, onMuatUlang }: {
     order: OrderFull;
     /** Jumlah barang yang harganya beda dari master; null = harga master tidak terbaca. */
     hargaBeda: number | null;
     onClose: () => void;
     onSelesai: (hasil: HasilAntre) => void;
+    /** Dipanggil saat server menolak dengan 409 (mis. "sudah ada di antrean"): status antrean halaman dibaca ulang. */
+    onMuatUlang?: () => void;
 }) {
     const [daftar, setDaftar] = useState<Load<Salesman[]>>({ status: "memuat" });
     const [salesman, setSalesman] = useState("");
@@ -69,7 +71,11 @@ export function AntreFaktur({ order, hargaBeda, onClose, onSelesai }: {
         const j = await nextApi(`/api/orders/${encodeURIComponent(order.id)}/invoice`, { queue: true, salesman });
         // Putus / ≥ 502 / bukan JSON: baris antrean MUNGKIN sudah tertulis → halaman memuat ulang status antrean dan mengunci.
         if (tidakPasti(j)) { onSelesai({ jenis: "ragu" }); return; }
-        if (!sukses(j)) throw new Error(pesanJawaban(j, "Order tidak diantrekan."));
+        if (!sukses(j)) {
+            // 409 = keadaan di server berbeda dari yang dilihat layar (mis. order sudah diantrekan dari tab lain): baca ulang status.
+            if (j.status === 409) onMuatUlang?.();
+            throw new Error(pesanJawaban(j, "Order tidak diantrekan."));
+        }
         if (j.data.queued === false && j.data.posted) { onSelesai({ jenis: "terposting", pesan: String(j.data.pesan ?? "Faktur order ini sudah ada di Accurate.") }); return; }
         onSelesai({ jenis: "antre" });
     }

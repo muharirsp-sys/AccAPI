@@ -262,7 +262,7 @@ export default function OrderDetail({ id, baru, permKeys }: { id: string; baru: 
                 {outbox && <Link className="fi-btn fi-btn--secondary" href="/antrean-faktur">Buka Antrean Faktur</Link>}
                 <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} disabled={Boolean(kunciAntre)} disabledReason={kunciAntre} onClick={() => { setHasil(null); setDialog(true); }}>Antrekan faktur…</Button>
             </FooterToolbar>
-            {dialog && <AntreFaktur order={o} hargaBeda={beda} onClose={() => setDialog(false)} onSelesai={selesai} />}
+            {dialog && <AntreFaktur order={o} hargaBeda={beda} onClose={() => setDialog(false)} onSelesai={selesai} onMuatUlang={muatAntrean} />}
         </div>
     );
 }

@@ -4,7 +4,7 @@
  *   lalu lanjut ke halaman order. Aturan promo dihitung dan dibekukan server saat disimpan.
  * Caller: ./baru/page.tsx (/orders/baru). Simpan butuh `order.create` (FastAPI POST /orders).
  * Dependensi: /api/customers/lookup, /api/outlet-channel, /api/items/units, /api/orders/preview, FastAPI POST /orders; ./order-ui;
- *   ../form-kontrol/shared (hariIniWita); components/fiori/*; lib/promo-ui (rupiah); lib/rekapan-nota/ui (tanggalPendek).
+ *   ../form-kontrol/lapangan (useHariBeku); components/fiori/*; lib/promo-ui (rupiah); lib/rekapan-nota/ui (tanggalPendek).
  * Main Functions: OrderBaru, hitungPratinjau.
  * Side Effects: HTTP; menyimpan order internal (FastAPI). Tidak ada tulis ke Accurate.
  *
@@ -13,7 +13,7 @@
  */
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Lightbulb, Plus, Save, Trash2 } from "lucide-react";
@@ -21,7 +21,7 @@ import { Button, FooterToolbar, KeyValues, MessageStrip, Section, StatusBadge, V
 import { ConfirmDialog, FormField, useUnsavedGuard } from "@/components/fiori/interactive";
 import { rupiah } from "@/lib/promo-ui";
 import { tanggalPendek } from "@/lib/rekapan-nota/ui";
-import { hariIniWita } from "../form-kontrol/shared";
+import { useHariBeku } from "../form-kontrol/lapangan";
 import { BELUM_PASTI, fastapi, nextApi, pesanJawaban, sukses, tidakPasti, type PriceInfo, type Result } from "./order-ui";
 
 /** `price` null = ikut harga master dari pratinjau; teks = diketik petugas. */
@@ -37,8 +37,6 @@ type Pratinjau =
     | { status: "satuan"; wrong: WrongUnit[] }
     | { status: "galat"; error: string };
 
-const tanpaLangganan = () => () => {};
-const hariIniKlien = () => hariIniWita();
 const emptyLine = (): Line => ({ code: "", unit: "", quantity: "1", price: null });
 const PPN = 0.11;
 
@@ -76,7 +74,8 @@ function sumberHarga(p: PriceInfo): string {
 export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
     const router = useRouter();
     const bolehBuat = permKeys.includes("order.create");
-    const hariIni = useSyncExternalStore(tanpaLangganan, hariIniKlien, () => "");
+    // Hari ini WITA DIBEKUKAN saat form dibuka: lewat 00.00 tanggal order tidak berganti diam-diam (petugas yang memilih).
+    const { hari: hariIni, berganti, hariBaru, pakaiHariBaru } = useHariBeku();
     const [customerNo, setCustomerNo] = useState("");
     const [customer, setCustomer] = useState<CustomerMaster | null>(null);
     const [outlet, setOutlet] = useState("");
@@ -172,6 +171,8 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
             if (hidup) setHasil({ key: previewKey, p });
         }, 600);
         return () => { hidup = false; clearTimeout(timer); };
+        // previewKey SUDAH memuat channel, tanggal, pelanggan, dan kode/satuan/jumlah tiap baris; `lines` sengaja tidak masuk deps
+        // karena harga ketikan ikut di dalamnya dan tidak boleh memicu pratinjau ulang (server memakai harga master).
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [previewKey, siapPratinjau]);
 
@@ -201,7 +202,9 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                             : tidakLengkap >= 0 ? `Lengkapi satuan dan jumlah barang ${tidakLengkap + 1}`
                                 : salahSatuan >= 0 ? `Perbaiki satuan barang ${salahSatuan + 1}`
                                     : pratinjau?.status === "memuat" ? "Menunggu harga dihitung"
-                                        : tanpaHargaIdx >= 0 ? `Isi harga barang ${tanpaHargaIdx + 1} (lebih dari 0; harga master belum ada)` : undefined;
+                                        : tanpaHargaIdx >= 0 ? (lines[tanpaHargaIdx].price === null && !hargaMaster(lines[tanpaHargaIdx])
+                                            ? `Isi harga barang ${tanpaHargaIdx + 1} (harga master belum ada)`
+                                            : `Harga barang ${tanpaHargaIdx + 1} harus lebih dari 0`) : undefined;
     // Sesudah tersimpan halaman masih tampil sampai halaman order terbuka: Simpan terkunci supaya order tidak tersimpan dua kali.
     const sudahTersimpan = tersimpan ? "Order sudah tersimpan; membuka halaman order…" : undefined;
     const terkunci = sudahTersimpan ?? (ragu ? "Periksa Order Masuk dulu — order terakhir mungkin sudah tersimpan" : terkunciIsian);
@@ -241,6 +244,12 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                     <MessageStrip tone="warn" title="Hasil simpan belum pasti.">
                         {BELUM_PASTI} Order mungkin sudah tersimpan — periksa <Link href="/orders">Order Masuk</Link>; isian tidak dihapus.{" "}
                         <Button variant="tertiary" disabled={Boolean(terkunciIsian)} disabledReason={terkunciIsian} onClick={() => setDialog("ulang")}>Simpan lagi…</Button>
+                    </MessageStrip>
+                )}
+                {berganti && tanggalIsi === null && (
+                    <MessageStrip tone="info" title="Hari sudah berganti.">
+                        Tanggal order tetap {tanggalPendek(hariIni)} (hari form ini dibuka).{" "}
+                        <Button variant="tertiary" onClick={pakaiHariBaru}>Pakai {tanggalPendek(hariBaru)}</Button>
                     </MessageStrip>
                 )}
                 {draf && nDiubah > 0 && <MessageStrip tone="info" title="Belum disimpan.">{nDiubah} harga diubah dari harga master.</MessageStrip>}

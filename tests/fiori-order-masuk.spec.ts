@@ -65,6 +65,7 @@ type Opsi = {
     tundaKoneksi?: () => Promise<void>;
     lookup?: (no: string) => Promise<{ body: unknown; status?: number }>;
     units?: (code: string) => { body: unknown; status?: number } | undefined;
+    preview?: (lines: { code: string; unit: string; quantity: string }[]) => { body: unknown; status?: number } | undefined;
     pull?: { body?: unknown; status?: number; html?: string };
     detail?: Record<string, { body?: unknown; status?: number; html?: string }>;
     simpan?: Array<{ body?: unknown; status?: number; html?: string }>;
@@ -133,6 +134,8 @@ async function pasang(page: Page, opsi: Opsi = {}): Promise<Log> {
     await page.route((u) => u.pathname === "/api/orders/salesmen", (r) => r.fulfill(json({ ok: true, salesmen: SALESMEN })));
     await page.route((u) => u.pathname === "/api/orders/preview", (r) => {
         const b = r.request().postDataJSON() as { lines: { code: string; unit: string; quantity: string }[] };
+        const x = opsi.preview?.(b.lines);
+        if (x) return r.fulfill(json(x.body, x.status));
         const prices = b.lines.map((l) => harga(l.code, l.unit));
         const net = b.lines.reduce((t, l) => t + (MASTER[`${l.code}|${l.unit}`] ?? 0) * Number(l.quantity), 0);
         return r.fulfill(json({ ok: true, prices, lines: b.lines, result: { gross: String(net), discount: "0", net: String(net), lines: [], bonuses: [] }, suggestions: [] }));
@@ -407,6 +410,86 @@ test("Order baru: galat server tampil di dialog apa adanya; simpan tidak pasti m
     await expect(simpanBtn).toHaveAttribute("title", /Periksa Order Masuk dulu/);
 });
 
+test("Order baru: harga ≤ 0 ditolak; 409 missing → isi harga manual; 409 wrong_unit → satuan diperbaiki dulu", async ({ page }) => {
+    let mode: "missing" | "wrong" = "missing";
+    await pasang(page, {
+        preview: (ls) => (ls.some((l) => l.code === "BRG-A9")
+            ? mode === "missing"
+                ? { status: 409, body: { ok: false, error: "Harga belum tersedia dari Accurate untuk: BRG-A9", missing: ["BRG-A9"] } }
+                : { status: 409, body: { ok: false, error: "Satuan KRT tidak ada di master untuk BRG-A9 (tersedia: PCS)", wrong_unit: [{ code: "BRG-A9", unit: "KRT", known_units: ["PCS"] }] } }
+            : undefined),
+    });
+    await page.goto("/orders/baru");
+    const m = main(page);
+    await m.getByLabel("Kode pelanggan Accurate").fill("C-A001-KN", NAV);
+    const b1 = m.getByRole("listitem", { name: "Barang 1" });
+    await b1.getByLabel("Kode barang").fill("BRG-A1");
+    await expect(b1.getByLabel("Harga")).toHaveValue("456000");
+    const simpan = page.getByRole("button", { name: "Simpan order…" });
+    await b1.getByLabel("Harga").fill("0");
+    await expect(simpan).toBeDisabled();
+    await expect(simpan).toHaveAttribute("title", "Harga barang 1 harus lebih dari 0");
+    await b1.getByLabel("Harga").fill("-5");
+    await expect(simpan).toHaveAttribute("title", "Harga barang 1 harus lebih dari 0");
+    await b1.getByRole("button", { name: "Pakai harga master" }).click();
+    await expect(simpan).toBeEnabled();
+
+    await m.getByRole("button", { name: "Tambah barang" }).click();
+    const b2 = m.getByRole("listitem", { name: "Barang 2" });
+    await b2.getByLabel("Kode barang").fill("BRG-A9");
+    await expect(b2).toContainText("Harga master belum ada");
+    await expect(simpan).toHaveAttribute("title", "Isi harga barang 2 (harga master belum ada)");
+    await b2.getByLabel("Harga").fill("15000");
+    await expect(simpan).toBeEnabled();
+
+    mode = "wrong";
+    await b2.getByLabel("Jumlah").fill("2"); // memicu pratinjau ulang
+    await expect(b2).toContainText("Satuan KRT tidak ada untuk BRG-A9. Pilih PCS.");
+    await expect(simpan).toBeDisabled();
+    await expect(simpan).toHaveAttribute("title", "Perbaiki satuan barang 2");
+});
+
+test("Jawaban putus (tanpa sinyal) pada Simpan dan Antrekan = hasilnya belum pasti, bukan galat biasa", async ({ page }) => {
+    const log = await pasang(page);
+    await page.route((u) => u.host === "localhost:8000" && u.pathname === "/orders", (r) => (r.request().method() === "POST" ? r.abort("connectionreset") : r.fallback()));
+    await page.goto("/orders/baru");
+    const m = main(page);
+    await m.getByLabel("Kode pelanggan Accurate").fill("C-A001-KN", NAV);
+    const b1 = m.getByRole("listitem", { name: "Barang 1" });
+    await b1.getByLabel("Kode barang").fill("BRG-A1");
+    await expect(b1.getByLabel("Harga")).toHaveValue("456000");
+    await page.getByRole("button", { name: "Simpan order…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Simpan order", exact: true }).click();
+    await expect(m.getByText("Hasil simpan belum pasti.")).toBeVisible();
+    expect(log.simpan).toHaveLength(0); // diputus sebelum mock FastAPI mencatat
+
+    await page.route((u) => /^\/api\/orders\/[^/]+\/invoice$/.test(u.pathname), (r) => {
+        const b = r.request().method() === "POST" ? r.request().postDataJSON() as Record<string, unknown> | null : null;
+        return b?.queue === true ? r.abort("connectionreset") : r.fallback();
+    });
+    await page.goto(`/orders/${ID_A}`);
+    await page.getByRole("button", { name: "Antrekan faktur…" }).click(NAV);
+    const dlg = page.getByRole("dialog");
+    await dlg.getByLabel("Salesman").selectOption("M-SLA");
+    await dlg.getByRole("button", { name: "Antrekan", exact: true }).click();
+    await expect(dlg).toBeHidden();
+    await expect(main(page).getByText("Hasil antre belum pasti.")).toBeVisible();
+});
+
+test("Order baru: tanggal order dibekukan lewat tengah malam WITA — petugas yang memilih tanggal baru", async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-10-06T15:59:30Z") }); // 23.59.30 WITA
+    await pasang(page);
+    await page.goto("/orders/baru");
+    const m = main(page);
+    const tanggal = m.getByLabel("Tanggal order");
+    await expect(tanggal).toHaveValue("2026-10-06", NAV);
+    await page.clock.runFor(61_000); // lewat 00.00 WITA; pemeriksa hari tiap 30 dtk
+    await expect(m.getByText("Hari sudah berganti.")).toBeVisible();
+    await expect(tanggal).toHaveValue("2026-10-06");
+    await m.getByRole("button", { name: "Pakai 07/10/2026" }).click();
+    await expect(tanggal).toHaveValue("2026-10-07");
+});
+
 test("Object Page: harga order vs master; Antrekan WAJIB salesman dan payload membawa salesman di setiap baris (C7)", async ({ page }) => {
     let antre = false;
     const log = await pasang(page, {
@@ -457,8 +540,11 @@ test("Object Page: ditolak tampil di dialog; antre tidak pasti → belum pasti +
     await dlg.getByLabel("Salesman").selectOption("M-SLB");
     const antre = dlg.getByRole("button", { name: "Antrekan", exact: true });
     await expect(antre).toBeEnabled();
+    const getSebelumTolak = log.invoiceGets;
     await antre.click();
     await expect(dlg.getByRole("alert")).toHaveText("Satuan LSN tidak ada di master satuan Accurate");
+    // 409 = keadaan server berbeda dari layar → status antrean halaman dibaca ulang.
+    await expect.poll(() => log.invoiceGets).toBeGreaterThan(getSebelumTolak);
     jawab = "ragu";
     galatBaca = true;
     const getSebelum = log.invoiceGets;

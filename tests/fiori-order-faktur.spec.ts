@@ -72,7 +72,8 @@ test("Default + Memuat: kepala dari cache tampil segera, barang dan ringkasan me
     await expect(item).toHaveAttribute("aria-current", "true");
     const det = main.getByRole("region", { name: "Detail faktur" });
     // Accurate belum menjawab: kepala sudah dari cache, Barang/Ringkasan kerangka, info detail "menunggu".
-    await expect(det.getByRole("heading", { level: 1, name: "INV/2610/KN01412" })).toBeVisible();
+    await expect(det.getByRole("heading", { level: 2, name: "INV/2610/KN01412" })).toBeVisible();
+    await expect(page.locator("h1")).toHaveCount(1); // satu h1 per halaman: "Faktur Penjualan"
     await expect(det.locator(".fi-attrs")).toContainText("TOKO B · C-A0002");
     await expect(det.locator(".fi-attrs > div").filter({ hasText: "Sisa tagihan" })).toHaveText("Sisa tagihan—"); // null cache ≠ Rp 0
     await expect(det.getByRole("region", { name: "Barang" })).toContainText("Mengambil detail dari Accurate…");
@@ -181,7 +182,7 @@ test("Galat detail: pesan Accurate apa adanya + Coba lagi, kepala dari cache tet
     const det = page.locator("main").getByRole("region", { name: "Detail faktur" });
     const barang = det.getByRole("region", { name: "Barang" });
     await expect(barang.getByRole("alert")).toContainText("Accurate menolak detail faktur: Data tidak ditemukan", NAV);
-    await expect(det.getByRole("heading", { level: 1, name: "INV/2610/KN01412" })).toBeVisible();
+    await expect(det.getByRole("heading", { level: 2, name: "INV/2610/KN01412" })).toBeVisible();
     await expect(det.locator(".fi-attrs")).toContainText("TOKO B · C-A0002");
     await expect(det.getByText("usulan BL-22")).toBeVisible();
     await expect(det.getByRole("region", { name: "Ringkasan" })).toContainText("Belum terbaca");
@@ -211,7 +212,7 @@ test("Tautan realisasi lama ?invoiceId=&databaseId=: detail langsung dengan data
     await page.setViewportSize({ width: 1366, height: 900 });
     await page.goto("/faktur?invoiceId=304470&databaseId=DB-A", NAV);
     const det = page.locator("main").getByRole("region", { name: "Detail faktur" });
-    await expect(det.getByRole("heading", { level: 1, name: "INV/2609/KN01301" })).toBeVisible(NAV);
+    await expect(det.getByRole("heading", { level: 2, name: "INV/2609/KN01301" })).toBeVisible(NAV);
     expect(detailUrl[0]).toBe("?databaseId=DB-A");
     await expect(det.locator(".fi-oph")).toContainText("Lunas");
     await expect(det.locator(".fi-attrs")).toContainText("TOKO C · C-A0003");
@@ -223,7 +224,7 @@ test("Tautan realisasi lama ?invoiceId=&databaseId=: detail langsung dengan data
 
     await page.goto("/faktur?invoiceId=304470&databaseId=DB-B", NAV);
     await expect(det.getByRole("alert")).toContainText("Database sesi Accurate berbeda dari faktur pada laporan realisasi.", NAV);
-    await expect(det.getByRole("heading", { level: 1, name: "Faktur dari laporan realisasi" })).toBeVisible();
+    await expect(det.getByRole("heading", { level: 2, name: "Faktur dari laporan realisasi" })).toBeVisible();
     expect(detailUrl.at(-1)).toBe("?databaseId=DB-B");
 });
 
@@ -290,7 +291,7 @@ test("Ponsel 390 px: satu kolom daftar ↔ detail dengan Kembali, barang sebagai
 
     await list.getByRole("button", { name: /INV\/2610\/KN01412/ }).click();
     const det = main.getByRole("region", { name: "Detail faktur" });
-    await expect(det.getByRole("heading", { level: 1, name: "INV/2610/KN01412" })).toBeVisible();
+    await expect(det.getByRole("heading", { level: 2, name: "INV/2610/KN01412" })).toBeVisible();
     await expect(main.getByRole("region", { name: "Daftar faktur" })).toBeHidden();
     await expect(det.getByRole("list", { name: "Barang faktur" })).toContainText("2 KRT × Rp 576.000 · diskon Rp 57.600");
     await noOverflow(page);
