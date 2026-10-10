@@ -76,7 +76,8 @@ export const LABEL_POSTING: Record<KodePosting, { label: string; tone: Tone }> =
     tak_terbaca: { label: "Status posting tidak terbaca", tone: "warn" },
 };
 
-export type StatusPosting = { kode: KodePosting; nomor: string; catatanTertinggal: boolean };
+/** `catatanTidakPasti` = catatan tertinggal sementara catatan Finance `unknown`: mencatatnya = menyelesaikan (hanya Finance, D-14). */
+export type StatusPosting = { kode: KodePosting; nomor: string; catatanTertinggal: boolean; catatanTidakPasti?: true };
 
 /**
  * Status POSTING gabungan catatan FastAPI (`accurate_post_status` efektif: "failed" lama bergalat ambigu sudah = unknown di server)
@@ -98,7 +99,8 @@ export function statusPosting(
     if (ledger === "posted") return { kode: "terposting", nomor: row.accurate_purchase_payment_number || attempt?.accurateNumber || "", catatanTertinggal: false };
     if (a === "posted") {
         const milikSendiri = attempt!.clientRef === milik.key && Boolean(milik.dbId) && attempt!.targetDbId === milik.dbId;
-        return milikSendiri ? { kode: "terposting", nomor: attempt!.accurateNumber || "", catatanTertinggal: true } : { kode: "tidak_pasti", nomor: "", catatanTertinggal: false };
+        if (!milikSendiri) return { kode: "tidak_pasti", nomor: "", catatanTertinggal: false };
+        return { kode: "terposting", nomor: attempt!.accurateNumber || "", catatanTertinggal: true, ...(ledger === "unknown" ? { catatanTidakPasti: true as const } : {}) };
     }
     if (ledger === "unknown" || a === "unknown" || a === "stale") return { kode: "tidak_pasti", nomor: "", catatanTertinggal: false };
     if (ledger === "failed" || a === "failed") return { kode: "gagal", nomor: "", catatanTertinggal: false };
@@ -127,8 +129,13 @@ export function kunciBaris(p: { posting: StatusPosting; izin: IzinFinance; sumbe
     const tidakPasti = kodeTampil(kode, Boolean(p.kunciLokal)) === "tidak_pasti";
     const terposting = kode === "terposting";
     const takTerbaca = kode === "tak_terbaca" && !tidakPasti ? "Status posting dari server tidak terbaca; muat ulang dulu." : undefined;
+    // Putaran 2 B-1: unknown → posted di FastAPI hanya untuk pemegang izin selesaikan (finance.py post_status_conflict) — tanpa
+    // itu tombolnya ditolak server lalu menulis catatan unknown lagi.
+    const catatHanyaFinance = catatanTertinggal && p.posting.catatanTidakPasti && p.izin.selesaikan
+        ? "Catatan Finance pengajuan ini masih Tidak pasti; hanya Finance yang berwenang mencatat hasil posting ini. Minta Finance membuka pengajuan ini; tidak ada yang perlu dikirim ulang."
+        : undefined;
     return {
-        posting: takTerbaca ?? sedang
+        posting: takTerbaca ?? sedang ?? catatHanyaFinance
             ?? (terposting && !catatanTertinggal ? "Sudah terposting di Accurate. Pembatalan lewat dokumen pembalik di Accurate." : undefined)
             ?? (tidakPasti ? "Posting tidak pasti: Finance memeriksa Accurate lalu menyelesaikannya sebelum posting lagi." : undefined)
             ?? p.sumber ?? p.izin.posting,
@@ -160,6 +167,8 @@ export function alasanTidakAda(attempt: AttemptFinance | null | undefined, detik
  */
 export function saringCatatan(teks: string | null | undefined): string {
     return String(teks ?? "")
+        // Nama kunci izin mentah dari galat server (mis. "(finance.resolve_unknown)") tidak ditampilkan.
+        .replace(/\s*\(finance\.[a-z_]+\)/gi, "")
         // Seluruh KALIMAT yang mengajak mengulang dibuang (bukan hanya frasanya — kalimat terpotong tidak terbaca).
         .replace(/[^.!?]*\bcoba lagi\b[^.!?]*[.!?]?/gi, "")
         .replace(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*/gi, "server")

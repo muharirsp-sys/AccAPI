@@ -559,6 +559,40 @@ test("B-6: tanpa izin ubah Finance (finance.update) — posting, tujuan, dan sta
     await expect(detail).not.toContainText("finance.update");
 });
 
+test("Putaran 2 B-1: tanpa izin selesaikan (finance.resolve_unknown) — catatan Finance Tidak pasti + attempt posted: Catat hasil posting nonaktif berkalimat", async ({ page }) => {
+    const sub = subjek(FAKTUR_A.map(([f]) => f));
+    const m = await siapkan(page, {
+        rows: () => [pengajuan("DRAFT-0418", "PRINCIPLE A", FAKTUR_A, { status_pembayaran: "Sudah Transfer", transfer_date: HARI_INI, accurate_post_status: "unknown",
+            transfer_proof: { proof_id: "pf-0", original_filename: "b.pdf" } })],
+        attempts: { [sub]: attempt({ state: "posted", status: "posted", accurateNumber: "PP/2610/0031", ageSeconds: 200 }) },
+    });
+    await tanpaIzin(page, ["finance.resolve_unknown"]);
+    const { main, detail } = await bukaPengajuan(page);
+    const catat = detail.getByRole("button", { name: "Catat hasil posting…" });
+    await expect(catat).toBeDisabled(NAV);
+    await expect(detail.getByText(/^Catatan Finance pengajuan ini masih Tidak pasti/).first()).toBeVisible();
+    await expect(main).not.toContainText("resolve_unknown");
+    await expect(main).not.toContainText(/tekan Catat hasil posting/i);
+    expect(m.command).toHaveLength(0);
+    expect(m.update).toHaveLength(0);
+});
+
+test("Putaran 2 B-1: tanpa izin selesaikan — terposting lalu catatan Finance gagal: pesan hasil tidak menyuruh menekan tombol yang akan ditolak", async ({ page }) => {
+    test.setTimeout(90_000);
+    const m = await siapkan(page, { update: [{ status: 500, body: { ok: false, error: "Gagal menulis data pembayaran." } }] });
+    await tanpaIzin(page, ["finance.resolve_unknown"]);
+    const { main, detail, dlg } = await bukaDialogPosting(page);
+    await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
+    const strip = main.getByRole("status").filter({ hasText: "Hasilnya belum pasti — DRAFT-0418 dikunci." });
+    await expect(strip).toContainText("hanya Finance yang berwenang mencatatnya", NAV);
+    await expect(strip).not.toContainText(/tekan Catat hasil posting/i);
+    expect(m.update.map((u) => u.accurate_post_status)).toEqual(["posted", "unknown"]);
+    // Setelah muat ulang: catatan Finance unknown + attempt posted → tombol terkunci dengan alasan berkalimat.
+    await expect(detail.getByRole("button", { name: "Catat hasil posting…" })).toBeDisabled(NAV);
+    await expect(main).not.toContainText("resolve_unknown");
+    expect(m.command).toHaveLength(1);
+});
+
 test("Galat ≠ kosong (tanpa localhost/HTML), Kosong, status posting tak terbaca = posting terkunci", async ({ page }) => {
     const m = await siapkan(page, { dataGagal: { status: 500, html: "<html>Internal Server Error</html>" } });
     const main = page.locator("main");

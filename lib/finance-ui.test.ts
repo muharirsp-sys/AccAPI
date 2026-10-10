@@ -104,6 +104,25 @@ test("A-2/B-2: kunci lokal hanya untuk belum/gagal — hasil terposting (catatan
     assert.match(kunciBaris({ posting: { kode: "gagal", nomor: "", catatanTertinggal: false }, izin, kunciLokal: true }).posting!, /tidak pasti/);
 });
 
+test("Putaran 2 B-1: catatan Finance unknown + attempt posted milik sendiri — Catat hasil posting hanya bagi pemegang izin selesaikan", () => {
+    const posted = attempt({ status: "posted", state: "posted", accurateNumber: "PP/2" });
+    const tidakPasti = statusPosting({ accurate_post_status: "unknown" }, posted, MILIK);
+    assert.equal(tidakPasti.kode, "terposting");
+    assert.equal(tidakPasti.catatanTertinggal, true);
+    const tanpaSelesai = kunciBaris({ posting: tidakPasti, izin: izinFinance(new Set(["finance.view", "finance.update"])) });
+    assert.match(tanpaSelesai.posting!, /^Catatan Finance pengajuan ini masih Tidak pasti/);
+    assert.doesNotMatch(tanpaSelesai.posting!, /finance\.|resolve_unknown/, "tanpa kunci mentah");
+    assert.doesNotMatch(tanpaSelesai.posting!, /tekan/i, "tidak menyuruh menekan tombol yang ditolak");
+    const finance = izinFinance(new Set(["finance.view", "finance.update", "finance.resolve_unknown"]));
+    assert.equal(kunciBaris({ posting: tidakPasti, izin: finance }).posting, undefined, "Finance boleh mencatat");
+    // Catatan Finance kosong (bukan unknown): pencatatan posted tidak butuh izin selesaikan.
+    const kosong = statusPosting({ accurate_post_status: "" }, posted, MILIK);
+    assert.equal(kunciBaris({ posting: kosong, izin: izinFinance(new Set(["finance.view", "finance.update"])) }).posting, undefined);
+    // Galat server yang memuat nama kunci izin tidak menampilkannya.
+    assert.equal(saringCatatan("Penyelesaian status posting TIDAK PASTI hanya untuk kewenangan Finance (finance.resolve_unknown)."),
+        "Penyelesaian status posting TIDAK PASTI hanya untuk kewenangan Finance.");
+});
+
 test("'Tidak ada di Accurate' hanya setelah percobaan basi ≥ 2 menit; tanpa attempt server boleh", () => {
     assert.equal(alasanTidakAda(null, 0), undefined);
     assert.equal(alasanTidakAda(attempt({ stale: true, ageSeconds: 10 }), 0), undefined);

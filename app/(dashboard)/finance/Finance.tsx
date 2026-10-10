@@ -167,7 +167,12 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
                 setHasil({ tone: "info", judul: `${b.r.draft_label} sedang diposting dari sesi atau tab lain.`, isi: `${h.pesan} Status dimuat ulang; jangan posting lagi dari sini.` });
             } else if (h.jenis === "tidak_pasti" && h.nomor) {
                 // Accurate sudah menjawab nomor PP, tetapi catatan Finance tidak tersimpan: setelah muat ulang, "Catat hasil posting".
-                setHasil({ tone: "warn", judul: `Hasilnya belum pasti — ${b.r.draft_label} dikunci.`, isi: `Accurate menjawab Purchase Payment ${h.nomor}, tetapi catatan Finance belum tersimpan (${h.pesan}). Jangan posting ulang: setelah dimuat ulang, tekan Catat hasil posting.` });
+                // Putaran 2 B-1: tanpa izin selesaikan, catatan Finance yang sudah Tidak pasti hanya bisa dicatat Finance — jangan suruh
+                // menekan tombol yang akan ditolak server.
+                const catat = izin.selesaikan
+                    ? "setelah dimuat ulang, hasil ini dicatat lewat Catat hasil posting tanpa kiriman baru; bila catatan Finance sudah Tidak pasti, hanya Finance yang berwenang mencatatnya."
+                    : "setelah dimuat ulang, tekan Catat hasil posting.";
+                setHasil({ tone: "warn", judul: `Hasilnya belum pasti — ${b.r.draft_label} dikunci.`, isi: `Accurate menjawab Purchase Payment ${h.nomor}, tetapi catatan Finance belum tersimpan (${h.pesan}). Jangan posting ulang: ${catat}` });
             } else if (h.jenis === "tidak_pasti") {
                 setHasil({ tone: "warn", judul: `Hasilnya belum pasti — ${b.r.draft_label} dikunci.`, isi: `${h.pesan} Jangan posting ulang: Finance memeriksa Purchase Payment di Accurate lalu menyelesaikannya.` });
             } else if (h.jenis === "gagal") {
@@ -519,7 +524,9 @@ function Detail(p: DetailProps) {
                                 ["Kapan", b.posting.catatanTertinggal ? `${a?.updatedAtWita ?? ""} WITA` : r.accurate_posted_at ? `${r.accurate_posted_at} WITA` : "–"],
                             ] as Array<[string, ReactNode]> : []),
                             ...(a ? [["Percobaan terakhir", `${a.createdAtWita} WITA · ${a.actorName || "–"} · database ${db(a.targetDbId)}`] as [string, ReactNode]] : []),
-                            ...(b.posting.catatanTertinggal ? [["Catatan Finance", "Belum mencatat hasil ini; tekan Catat hasil posting (tidak mengirim ulang)."] as [string, ReactNode]] : []),
+                            ...(b.posting.catatanTertinggal ? [["Catatan Finance", p.alasanPosting
+                                ? `Belum mencatat hasil ini. ${p.alasanPosting}`
+                                : "Belum mencatat hasil ini; tekan Catat hasil posting (tidak mengirim ulang)."] as [string, ReactNode]] : []),
                             ...(r.accurate_post_resolution ? [["Diselesaikan", `${orang(r.accurate_post_resolution.by)} · ${r.accurate_post_resolution.at ?? ""} WITA · ${r.accurate_post_resolution.note ?? ""}`] as [string, ReactNode]] : []),
                         ]} />
                     </div>
