@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
-import { accurateTimeoutMessage, forwardAccurate, isGuardedAccurateWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
+import { accurateTimeoutMessage, forwardAccurate, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
 import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
 import { db } from "@/lib/db";
 
@@ -22,6 +22,15 @@ export async function POST(req: NextRequest) {
         if (endpointPath && isGuardedAccurateWrite(String(endpointPath))) {
             return NextResponse.json({
                 error: "Posting purchase-payment hanya lewat halaman Finance (pencegahan posting ganda). Proxy generik menolak operasi ini.",
+            }, { status: 403 });
+        }
+        // S6-0d E4 (owner 9 Okt): faktur penjualan hanya lewat Antrean Faktur (klaim + riwayat + pencarian
+        // sebelum kirim ulang). Lewat proxy generik, faktur bisa tertulis tanpa jejak dan tanpa cek ganda.
+        if (isSalesInvoiceWrite(String(endpointPath))) {
+            return NextResponse.json({
+                error: "Faktur penjualan hanya dikirim lewat Antrean Faktur (pencegahan faktur ganda dan riwayat kirim). "
+                    + "Proxy generik menolak sales-invoice/save.do dan bulk-save.do.",
+                code: "SALES_INVOICE_VIA_OUTBOX",
             }, { status: 403 });
         }
         // AM-024 (owner D-18): tulis sales-receipt tidak boleh melewati idempotency — wajib lock milik user

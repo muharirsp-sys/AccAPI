@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as forward from "./accurate-forward.ts";
-import { buildAccurateRequest, isGuardedAccurateWrite, isSalesReceiptWrite } from "./accurate-forward.ts";
+import { buildAccurateRequest, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "./accurate-forward.ts";
 
 const target = { sessionHost: "https://zeus.accurate.id", sessionId: "SID", accessToken: "TOK" };
 
@@ -69,6 +69,41 @@ test("re-review d60433f2 LOW: %5C (backslash ter-encode) & encoding ganda tetap 
         assert.equal(p.includes("purchase") ? isGuardedAccurateWrite(p) : isSalesReceiptWrite(p), true, p);
     }
     for (const p of ["/api/sales-receipt/list.do", "/api/sales-receipt/detail.do"]) assert.equal(isSalesReceiptWrite(p), false, p);
+});
+
+// S6-0d E4 (owner 9 Okt): faktur penjualan hanya lewat antrean faktur (klaim + riwayat + pencarian);
+// proxy generik menolak tulisnya — termasuk bentuk path yang dinormalkan host seperti di purchase-payment.
+test("S6-0d E4: tulis sales-invoice (save/bulk-save) dikenali walau path disamarkan; baca tidak", () => {
+    for (const p of [
+        "/api/sales-invoice/save.do",
+        "/api/sales-invoice/bulk-save.do",
+        "/api/SALES-INVOICE/SAVE.DO",
+        "/api/./sales-invoice/%62ulk-save.do",
+        "/api/sales-invoice/../sales-invoice/save.do",
+        "//api//sales-invoice//save.do",
+        "/api/sales-invoice%5Csave.do",
+        "/api/sales-invoice/save%252Edo",
+        "/api/sales-invoice/save.do;jsessionid=x",
+        "/api/sales-invoice\\bulk-save.do",
+    ]) {
+        assert.equal(isSalesInvoiceWrite(p), true, p);
+    }
+    for (const p of ["/api/sales-invoice/list.do", "/api/sales-invoice/detail.do", "/api/sales-receipt/save.do", "/api/sales-order/save.do"]) {
+        assert.equal(isSalesInvoiceWrite(p), false, p);
+    }
+});
+
+// S6-0d putaran 2: FAQ chatbot tidak boleh menyuruh memakai rute yang ditolak proxy di konsol AOL.
+test("FAQ: tidak ada jawaban yang menyuruh memakai rute tulis yang ditolak proxy (sales-invoice, purchase-payment)", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const faq = JSON.parse(await readFile(new URL("./chatbot/faq.json", import.meta.url), "utf8")) as unknown;
+    const teks = JSON.stringify(faq);
+    const rute = [...teks.matchAll(/([a-z-]+\/(?:bulk-)?save(?:\.do)?)/gi)].map((m) => m[1]);
+    for (const r of rute) {
+        const path = `/api/${r.endsWith(".do") ? r : `${r}.do`}`;
+        assert.equal(isSalesInvoiceWrite(path) || isGuardedAccurateWrite(path), false, `FAQ menyebut rute yang ditolak proxy: ${r}`);
+    }
+    assert.match(teks, /Antrean Faktur/, "FAQ AOL wajib menunjuk Antrean Faktur untuk faktur penjualan");
 });
 
 // Tinjauan S6-0a LOW: timeout tulis Accurate = status TIDAK PASTI — pesan 504 proxy tidak boleh menyuruh mengulang.

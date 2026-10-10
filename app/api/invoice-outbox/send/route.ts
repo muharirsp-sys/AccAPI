@@ -27,7 +27,7 @@ import { invoiceOutbox, salesInvoiceCache } from "@/db/schema";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
 import { getAccurateSession } from "@/lib/accurate-session";
 import { isAllowedAccurateHost } from "@/lib/api-security";
-import { sendQueuedInvoices } from "@/lib/invoice-sender";
+import { cekTanggalFaktur, MAKS_PER_TEKAN, sendQueuedInvoices } from "@/lib/invoice-sender";
 import { upsertSalesInvoiceById } from "@/lib/sync";
 import { verifyInvoice } from "@/lib/invoice-verify";
 import type { InvoicePayload } from "@/lib/accurate-invoice-write";
@@ -35,7 +35,6 @@ import type { InvoicePayload } from "@/lib/accurate-invoice-write";
 export const runtime = "nodejs";
 export const maxDuration = 600;
 
-const MAX_PER_PRESS = 50;
 
 export async function POST(request: NextRequest) {
     const gate = await resolveRequestPermissionsH();
@@ -75,18 +74,13 @@ export async function POST(request: NextRequest) {
     // Tanggal faktur pilihan (yyyy-MM-dd); kosong = tanggal SO. Tanggal di masa depan ditolak —
     // "hari ini" menurut WITA, zona toko-tokonya, bukan zona server.
     const invoiceDate = String(body?.invoiceDate ?? "").trim() || undefined;
-    if (invoiceDate) {
-        const hariIni = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date());
-        const baku = /^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) && !Number.isNaN(Date.parse(`${invoiceDate}T00:00:00Z`))
-            && new Date(`${invoiceDate}T00:00:00Z`).toISOString().slice(0, 10) === invoiceDate;
-        if (!baku || invoiceDate > hariIni) {
-            return NextResponse.json({ ok: false, error: `Tanggal faktur ${invoiceDate} tidak sah (format yyyy-MM-dd, paling lambat hari ini ${hariIni}). Tidak ada faktur dikirim.` }, { status: 400 });
-        }
-    }
+    const tanggalSalah = cekTanggalFaktur(invoiceDate);
+    if (tanggalSalah) return NextResponse.json({ ok: false, error: tanggalSalah }, { status: 400 });
 
     const outcome = await sendQueuedInvoices(
         { sessionHost: session.sessionHost, sessionId: session.sessionId, accessToken: session.accessToken },
-        { targetDb, limit: MAX_PER_PRESS, orderIds, invoiceDate },
+        // Pengirim tercatat di riwayat antrean (event `kirim`): penekan tombol, bukan "sistem".
+        { targetDb, limit: MAKS_PER_TEKAN, orderIds, invoiceDate, actor: String(gate.session?.user?.email ?? userId) },
     );
     if (outcome.error) return NextResponse.json({ ok: false, error: outcome.error }, { status: 400 });
 

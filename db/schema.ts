@@ -167,6 +167,32 @@ export const invoiceOutbox = pgTable("invoice_outbox", {
     index("idx_invoice_outbox_identity").on(t.accurateDbId, t.accurateId).where(sql`${t.state} = 'posted'`),
 ]);
 
+// Riwayat antrean faktur APPEND-ONLY (BL-17 + R6, S6-0d; scripts/migrate-pg.mjs). Satu baris per
+// aksi/percobaan: status HTTP + potongan jawaban tidak pernah ditimpa, pelaku tercatat. Sengaja
+// TANPA FK ke invoice_outbox: Buang = DELETE baris antrean, riwayatnya harus tetap ada. Trigger
+// anti-ubah + REVOKE = docs/handover/DDL_OUTBOX_EVENT.sql (manual, IT Support).
+export const INVOICE_OUTBOX_EVENT_KINDS = [
+    "antre", "kirim", "posted", "rejected", "unknown", "buang", "antre_ulang", "selesaikan", "sapu",
+] as const;
+export const invoiceOutboxEvent = pgTable("invoice_outbox_event", {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orderId: text("order_id").notNull(),
+    jenis: text("jenis").notNull(),
+    stateFrom: text("state_from"),
+    stateTo: text("state_to"),
+    actor: text("actor").notNull().default(""),
+    httpStatus: integer("http_status"),
+    responseExcerpt: text("response_excerpt").notNull().default(""),
+    errorCode: text("error_code").notNull().default(""),
+    reason: text("reason").notNull().default(""),
+    detail: jsonb("detail"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_invoice_outbox_event_order").on(t.orderId, t.createdAt),
+    check("invoice_outbox_event_jenis", sql`${t.jenis} IN ('antre', 'kirim', 'posted', 'rejected', 'unknown', 'buang', 'antre_ulang', 'selesaikan', 'sapu')`),
+    check("invoice_outbox_event_excerpt", sql`length(${t.responseExcerpt}) <= 500`),
+]);
+
 // Penjelasan manusia atas selisih verifikasi balik (db/migrations/0024). Satu baris per SO ×
 // jenis ("sales" | "isi"). `sidik` = temuan persis yang dijelaskan; berubah = tidak berlaku.
 export const invoiceVerifyNote = pgTable("invoice_verify_note", {

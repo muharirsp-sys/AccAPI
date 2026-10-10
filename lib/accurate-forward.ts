@@ -3,7 +3,8 @@
  *   server (purchase-payment) agar keduanya tidak bisa berbeda diam-diam.
  * Caller: app/api/proxy/route.ts, app/api/finance/purchase-payment/route.ts.
  * Dependensi: fetch global.
- * Main Functions: flattenPayload, buildAccurateRequest, forwardAccurate, isGuardedAccurateWrite.
+ * Main Functions: flattenPayload, buildAccurateRequest, forwardAccurate, isGuardedAccurateWrite,
+ *   isSalesReceiptWrite, isSalesInvoiceWrite.
  * Side Effects: forwardAccurate = HTTP ke host Accurate (timeout 30 s, redirect manual).
  */
 
@@ -95,6 +96,15 @@ export function isGuardedAccurateWrite(endpointPath: string) {
  */
 export function isSalesReceiptWrite(endpointPath: string) {
     return matchesWritePath(endpointPath, /\/sales-receipt\/(bulk-)?save\.do/i, "sales-receipt");
+}
+
+/**
+ * S6-0d E4 (owner 9 Okt 2026): faktur penjualan hanya lewat Antrean Faktur — klaim atomik, riwayat
+ * per percobaan, pencarian sebelum kirim ulang (lib/invoice-sender). Proxy generik menolak tulisnya
+ * (pola D-06 purchase-payment); normalisasi path sama, path rusak/";" = dianggap tulis.
+ */
+export function isSalesInvoiceWrite(endpointPath: string) {
+    return matchesWritePath(endpointPath, /\/sales-invoice\/(bulk-)?save\.do/i, "sales-invoice");
 }
 
 function matchesWritePath(endpointPath: string, guarded: RegExp, resource: string) {
