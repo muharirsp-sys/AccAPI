@@ -174,6 +174,29 @@ def check_rename():
     assert names["OPEN-1"] == "PT. ABC" and names["TRF-1"] == "PT ABC" and names["UNK-1"] == "PT ABC" and names["SUB-1"] == "PT ABC", names
 
 
+def check_non_scalar_fields():
+    """Putaran 2 butir 4: rekaman terkunci NYATA membawa nilai non-skalar (jawaban Accurate berupa list, bukti = dict).
+    Dulu payment_field_changed -> s(list) -> ValueError -> 500 teks pada simpan `ajukan` biasa."""
+    seed()
+    db = shared.load_payments_db()
+    db["lpb"]["TRF-1"].update({"accurate_post_response": [{"s": True, "r": {"id": 1}}, {"s": True}],
+                               "transfer_proof": {"proof_id": "p1", "sha256": "ab"}, "tags": ["a", "b"]})
+    shared.save_payments_db(db)
+    before = raw()
+    r = client.post("/payments/update", json={"items": [{"record_id": "TRF-1", "ajukan": True}]})
+    assert r.status_code == 200, f"non-skalar membuat simpan ajukan gagal: {r.status_code} {r.text[:200]}"
+    assert ledger()["TRF-1"]["accurate_post_response"] == [{"s": True, "r": {"id": 1}}, {"s": True}]
+    assert shared.payment_field_changed("x", ["a", "b"], ["a", "b"]) is False
+    assert shared.payment_field_changed("x", {"b": 1, "a": 2}, {"a": 2, "b": 1}) is False
+    assert shared.payment_field_changed("x", ["a", "b"], ["a", "c"]) is True
+    assert shared.payment_field_changed("x", ["a", "b"], "a, b") is True
+    # Excel SPPD membandingkan isian rekaman terkunci tanpa 500.
+    files = xlsx([{"Record ID": "TRF-1", "Keterangan": ""}])
+    r = client.post("/payments/sppd/upload?dry_run=1", files=files)
+    assert r.status_code == 200, f"Excel SPPD 500 pada non-skalar: {r.status_code} {r.text[:200]}"
+    assert before != raw()  # ajukan tersimpan; pratinjau tidak menulis apa pun di atasnya
+
+
 def check_returned_and_data():
     """BL-49 berakhir saat Finance mengembalikan (Ajukan Ulang, submission_id tetap ada); /payments/data mengirim
     locked_reason dari server (termasuk failed ambigu = unknown) agar UI tidak menebak."""
@@ -196,6 +219,7 @@ def main_check():
     check_delete_and_clear()
     check_sppd_excel()
     check_rename()
+    check_non_scalar_fields()
     check_returned_and_data()
     print("OK test_payments_lock")
 

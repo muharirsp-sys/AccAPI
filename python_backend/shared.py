@@ -1924,6 +1924,10 @@ def payment_lock_reason(rec: Dict[str, Any]) -> str:
 
 def payment_field_changed(field: str, old: Any, new: Any) -> bool:
     """Perubahan NYATA satu isian (angka/tanggal/tipe dinormalisasi) — dipakai kunci BL-05 dan pratinjau Excel SPPD."""
+    if isinstance(old, (dict, list, tuple)) or isinstance(new, (dict, list, tuple)):
+        # Nilai non-skalar (jawaban Accurate, bukti transfer): s() memanggil pd.isna -> array -> ValueError (putaran 2 butir 4).
+        canon = lambda v: json.dumps(v, sort_keys=True, default=str, ensure_ascii=False)  # noqa: E731
+        return canon(old) != canon(new)
     if field in PAYMENT_MONEY_FIELDS:
         return abs(parse_number_id(old) - parse_number_id(new)) > 0.005
     if field in SPPD_EXCEL_DATE_FIELDS:
