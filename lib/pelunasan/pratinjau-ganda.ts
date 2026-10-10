@@ -11,7 +11,8 @@ import { buildSalesReceiptIdempotencyPayload } from "../sales-receipt-fingerprin
 import type { Bebas } from "./sel.ts";
 import type { AccurateFetch } from "./retur.ts";
 
-export type DuplicateConflictReason = "DUPLICATE_IN_UPLOAD" | "ALREADY_SUCCESS" | "STILL_PROCESSING" | "UNKNOWN_OUTCOME" | "ACCURATE_HISTORY";
+export type DuplicateConflictReason = "DUPLICATE_IN_UPLOAD" | "ALREADY_SUCCESS" | "STILL_PROCESSING" | "UNKNOWN_OUTCOME" | "ACCURATE_HISTORY"
+    | "ACCURATE_HISTORY_UNREADABLE";
 
 export type DuplicateReviewEntry = {
     reviewId: string;
@@ -49,11 +50,43 @@ function kelompokkan(targets: TargetRiwayat[]) {
 }
 
 /**
+ * Bentuk ASLI `sales-receipt/detail.do` (bukti baca-saja 10 Okt 2026, scratch/fiori-intake/S6e2-BUKTI-DETAIL-DO-2026-10-10.md):
+ * tanpa `customerNo` tingkat atas (ada `customer.customerNo`), nomor faktur di `detailInvoice[].invoice.number` (tanpa
+ * `invoiceNo`); item diskon diduga `account.no` (belum terlihat). Dinormalkan ke bentuk payload sebelum sidik jari — SATU tempat
+ * untuk pratinjau klien dan penahanan server. null = bentuk tidak dikenali (baris tanpa nomor faktur, item diskon tanpa nomor
+ * akun, detailInvoice bukan daftar) = TIDAK TERBACA, bukan "tidak mirip".
+ */
+export function normalisasiDetailAccurate(detail: Bebas, group: { customerNo: string; transDate: string }): Bebas | null {
+    if (!Array.isArray(detail?.detailInvoice)) return null;
+    const teks = (v: unknown) => (typeof v === "string" || typeof v === "number" ? String(v).trim() : "");
+    const detailInvoice: Bebas[] = [];
+    for (const x of detail.detailInvoice as Bebas[]) {
+        const invoiceNo = teks(x?.invoiceNo ?? x?.invoice?.number);
+        if (!invoiceNo) return null;
+        if (x.detailDiscount !== undefined && x.detailDiscount !== null && !Array.isArray(x.detailDiscount)) return null;
+        const detailDiscount: Bebas[] = [];
+        for (const d of (x.detailDiscount ?? []) as Bebas[]) {
+            const accountNo = teks(d?.accountNo ?? d?.account?.no);
+            if (!accountNo) return null;
+            detailDiscount.push({ accountNo, discountNotes: d.discountNotes, amount: d.amount });
+        }
+        detailInvoice.push({ invoiceNo, paymentAmount: x.paymentAmount, detailDiscount });
+    }
+    return {
+        customerNo: detail.customerNo || detail.customer?.customerNo || group.customerNo,
+        transDate: detail.transDate || group.transDate,
+        paymentMethod: detail.paymentMethod || "",
+        chequeAmount: detail.chequeAmount || 0,
+        detailInvoice,
+    };
+}
+
+/**
  * W:1903-1977 (satu kelompok pelanggan+tanggal): list.do (≤ 5 halaman, ≤ 300 kandidat) → detail.do per kandidat → sidik
  * jari identik dengan kunci kelompok dicatat ke `hasil`. `ketat` (server, S6e-2 owner #6, fail-closed): jawaban yang tidak
  * terbaca (bukan `s:true`, detail kosong, daftar terpotong) MELEMPAR — klien (pratinjau) tetap menelan galat detail seperti dulu.
  */
-async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, hasil: Map<string, string[]>, ketat: boolean) {
+async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, hasil: Map<string, string[]>, ketat: boolean, tidakTerbaca?: Set<string>) {
     let currentPage = 1;
     let pageCount = 1;
     const candidateReceipts: Bebas[] = [];
@@ -85,13 +118,8 @@ async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ha
             const detail = detailRes?.d || detailRes;
             if (!detail) continue;
 
-            const detailPayload = {
-                customerNo: detail.customerNo || detail.customer?.customerNo || group.customerNo,
-                transDate: detail.transDate || group.transDate,
-                paymentMethod: detail.paymentMethod || "",
-                chequeAmount: detail.chequeAmount || 0,
-                detailInvoice: Array.isArray(detail.detailInvoice) ? detail.detailInvoice : []
-            };
+            const detailPayload = normalisasiDetailAccurate(detail, group);
+            if (!detailPayload) throw new Error(`bentuk detail sales-receipt ${candidate?.number ?? candidate?.id ?? "?"} tidak dikenali`);
 
             const detailKey = buildSalesReceiptIdempotencyPayload(detailPayload).key;
             if (!group.keys.has(detailKey)) continue;
@@ -104,23 +132,30 @@ async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, ha
             }
         } catch (detailErr) {
             if (ketat) throw detailErr;
+            // S6e-2: kandidat yang tidak terbaca = kelompok TIDAK TERBACA (bukan "aman") — pratinjau menandainya.
+            group.keys.forEach((k) => tidakTerbaca?.add(k));
             console.error("Accurate history preview detail error:", detailErr);
         }
     }
 }
 
 /** W:1903-1977: kunci fingerprint → nomor sales-receipt Accurate yang identik (per pelanggan + tanggal). Pratinjau klien:
- * kelompok berurutan, galat menghentikan pencarian (hasil sebagian) — perilaku lama, dikunci golden. */
+ * kelompok berurutan, galat menghentikan pencarian (hasil sebagian) — perilaku lama, dikunci golden. S6e-2: `tidakTerbaca` =
+ * kunci yang kelompoknya gagal dibaca / bentuk detailnya tak dikenali / tidak sempat dibaca setelah galat (bukan "aman"). */
 export const pratinjauRiwayatAccurate = async (rows: Bebas[], accurateFetch: AccurateFetch) => {
     const matchedReceiptsByKey = new Map<string, string[]>();
+    const tidakTerbaca = new Set<string>();
+    const groups = kelompokkan(rows.map((row: Bebas) => buildSalesReceiptIdempotencyPayload(row)));
+    let i = 0;
     try {
-        for (const group of kelompokkan(rows.map((row: Bebas) => buildSalesReceiptIdempotencyPayload(row)))) {
-            await riwayatKelompok(group, accurateFetch, matchedReceiptsByKey, false);
+        for (; i < groups.length; i++) {
+            await riwayatKelompok(groups[i], accurateFetch, matchedReceiptsByKey, false, tidakTerbaca);
         }
     } catch (historyErr) {
+        groups.slice(i).forEach((g) => g.keys.forEach((k) => tidakTerbaca.add(k)));
         console.error("Accurate history preview skipped:", historyErr);
     }
-    return matchedReceiptsByKey;
+    return Object.assign(matchedReceiptsByKey, { tidakTerbaca });
 };
 
 /**
@@ -214,6 +249,8 @@ export const pratinjauDuplikat = async <K extends string>(rows: Bebas[], routeKe
         if (matchedReceiptNumbers.length > 0 && !reasons.includes("ACCURATE_HISTORY")) {
             reasons.push("ACCURATE_HISTORY");
         }
+        // S6e-2: riwayat tak terbaca = ditinjau (server juga menahannya), bukan lolos sebagai "aman".
+        if (accurateHistoryMap.tidakTerbaca.has(keyMeta.key)) reasons.push("ACCURATE_HISTORY_UNREADABLE");
 
         if (reasons.length === 0) {
             passthroughRows.push({ originalIndex: index, row });

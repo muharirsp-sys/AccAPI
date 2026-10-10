@@ -313,10 +313,12 @@ export const fixturePratinjau = () => {
     const data: DataAccurate = {
         salesInvoice: [], salesReturn: [],
         salesReceipt: [
-            { id: 9001, number: "RCP/2610/0001", customer: { customerNo: "PLG-A-003" }, customerNo: "PLG-A-003", transDate: "09/10/2026",
-                paymentMethod: "CASH_OTHER", chequeAmount: 300000, detailInvoice: [{ invoiceNo: "INV/2610/XX00003", paymentAmount: 300000 }] },
-            { id: 9002, number: "RCP/2610/0002", customer: { customerNo: "PLG-A-003" }, customerNo: "PLG-A-003", transDate: "09/10/2026",
-                paymentMethod: "CASH_OTHER", chequeAmount: 5000, detailInvoice: [{ invoiceNo: "INV/2610/XX00009", paymentAmount: 5000 }] },
+            // Bentuk ASLI detail.do (bukti baca-saja 10 Okt, S6e2-BUKTI-DETAIL-DO): tanpa customerNo tingkat atas, nomor faktur di
+            // detailInvoice[].invoice.number (tanpa invoiceNo).
+            { id: 9001, number: "RCP/2610/0001", customer: { customerNo: "PLG-A-003" }, transDate: "09/10/2026",
+                paymentMethod: "CASH_OTHER", chequeAmount: 300000, detailInvoice: [{ invoice: { number: "INV/2610/XX00003" }, invoiceId: 31, paymentAmount: 300000, detailDiscount: [] }] },
+            { id: 9002, number: "RCP/2610/0002", customer: { customerNo: "PLG-A-003" }, transDate: "09/10/2026",
+                paymentMethod: "CASH_OTHER", chequeAmount: 5000, detailInvoice: [{ invoice: { number: "INV/2610/XX00009" }, invoiceId: 39, paymentAmount: 5000, detailDiscount: [] }] },
         ],
     };
     const kunci = buildSalesReceiptIdempotencyPayload(rows[2]).key;

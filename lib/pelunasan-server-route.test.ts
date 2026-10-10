@@ -151,7 +151,7 @@ test("butir 5 (GET): pratinjau Selesaikan — hanya finance.resolve_unknown; car
     assert.equal((await tanpaSesi.json()).code, "ACCURATE_SESSION_INCOMPLETE");
 
     const data = { salesInvoice: [], salesReturn: [], salesReceipt: [
-        { id: 7, number: "PR.7", customer: { customerNo: "C1" }, customerNo: "C1", transDate: "09/10/2026", detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 1000 }] }] };
+        { id: 7, number: "PR.7", customer: { customerNo: "C1" }, transDate: "09/10/2026", detailInvoice: [{ invoice: { number: "INV-1" }, paymentAmount: 1000, detailDiscount: [] }] }] };
     const log: string[] = [];
     const res = await sebagai(["finance.resolve_unknown"], get, { idem, sesi: sesiAccurate(), fetch: fetchEmulator(data, log) });
     assert.equal(res.status, 200);

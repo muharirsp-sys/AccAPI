@@ -549,6 +549,7 @@ export default function Home() {
     if (reason === "DUPLICATE_IN_UPLOAD") return "Duplikat dalam upload ini";
     if (reason === "ALREADY_SUCCESS") return "Sudah pernah sukses diupload";
     if (reason === "ACCURATE_HISTORY") return "Mirip histori Accurate";
+    if (reason === "ACCURATE_HISTORY_UNREADABLE") return "Histori Accurate tidak terbaca — belum tentu aman";
     // AM-025: kiriman sebelumnya macet >15 menit atau tak diketahui hasilnya — mungkin SUDAH masuk Accurate.
     if (reason === "UNKNOWN_OUTCOME") return "Hasil kiriman sebelumnya tidak diketahui — cek Accurate dulu";
     return "Masih diproses dalam 15 menit terakhir";
@@ -1011,7 +1012,7 @@ export default function Home() {
         .filter((item) => item.reasons.includes("ALREADY_SUCCESS") || item.reasons.includes("STILL_PROCESSING") || item.reasons.includes("UNKNOWN_OUTCOME"))
         .map((item) => item.key),
       // S6e-2 (owner #6): baris MIRIP riwayat Accurate kini ditahan server — butuh override Finance per baris terpilih.
-      selectedReviewRows.filter((item) => item.reasons.includes("ACCURATE_HISTORY")).map((item) => item.key));
+      selectedReviewRows.filter((item) => item.reasons.includes("ACCURATE_HISTORY") || item.reasons.includes("ACCURATE_HISTORY_UNREADABLE")).map((item) => item.key));
 
     // D-18 (owner): override = membuka kiriman ulang ke Accurate — hanya Finance (server menolak 403 tanpa
     // finance.override_duplicate) dan alasan wajib tercatat di jejak override.

@@ -85,7 +85,7 @@ const post = (url: string, body: unknown) => new NextRequest(`http://app.test${u
 const baris = (cust: string, inv: string, amt: number) => ({ customerNo: cust, transDate: "09/10/2026", detailInvoice: [{ invoiceNo: inv, paymentAmount: amt }] });
 const kunci = (r: Record<string, unknown>) => buildSalesReceiptIdempotencyPayload(r);
 const riwayat = (cust: string, inv: string, amt: number, number: string) =>
-    ({ id: number, number, customer: { customerNo: cust }, customerNo: cust, transDate: "09/10/2026", detailInvoice: [{ invoiceNo: inv, paymentAmount: amt }] });
+    ({ id: number, number, customer: { customerNo: cust }, transDate: "09/10/2026", detailInvoice: [{ invoice: { number: inv }, paymentAmount: amt, detailDiscount: [] }] });
 
 async function kunciLock(m: Awaited<ReturnType<typeof modul>>, rows: Record<string, unknown>[], extra: Record<string, unknown> = {}) {
     const res = await m.lock(post("/api/idempotency/lock", { keys: rows.map(kunci), expectedDatabaseId: "DB-1", ...extra }));

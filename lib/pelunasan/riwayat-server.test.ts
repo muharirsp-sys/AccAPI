@@ -58,3 +58,34 @@ test("server: melewati batas waktu -> kelompok yang belum selesai GAGAL; paling 
     assert.match(r.gagal.get(target(rows[7]).key)!, /batas waktu/);
     assert.ok(maks <= 4 && maks >= 2, `serentak ${maks}`);
 });
+
+// S6e-2 (bukti baca-saja detail.do 10 Okt): bentuk ASLI = invoice.number + customer.customerNo; item diskon account.no.
+const asli = (cust: string, inv: string, amt: number, diskon: unknown[] = []) => ({ s: true, d: {
+    number: "PR.1", customer: { customerNo: cust }, transDate: "01/10/2026", detailInvoice: [{ invoice: { number: inv }, invoiceId: 5, paymentAmount: amt, detailDiscount: diskon }] } });
+const satuKandidat = (detail: unknown): AccurateFetch => async (path) => path.endsWith("list.do") ? { s: true, d: [{ id: 1, number: "PR.1" }], sp: { pageCount: 1 } } : detail;
+
+test("normalisasi: bentuk asli Accurate (invoice.number, account.no) cocok dengan baris payload; bentuk lama (invoiceNo) tetap", async () => {
+    const row = { customerNo: "C1", transDate: "01/10/2026", detailInvoice: [{ invoiceNo: "I1", paymentAmount: 900, detailDiscount: [{ accountNo: "600123", amount: 100 }] }] };
+    const cocok = async (f: AccurateFetch) => (await periksaRiwayatAccurate([target(row)], f)).cocok.get(target(row).key);
+    assert.deepEqual(await cocok(satuKandidat(asli("C1", "I1", 900, [{ account: { no: "600123" }, amount: 100 }]))), ["PR.1"]);
+    assert.deepEqual(await cocok(satuKandidat({ s: true, d: { number: "PR.1", customerNo: "C1", transDate: "01/10/2026",
+        detailInvoice: [{ invoiceNo: "I1", paymentAmount: 900, detailDiscount: [{ accountNo: "600123", amount: 100 }] }] } })), ["PR.1"]);
+    // Nominal beda = tidak mirip (dan bukan gagal).
+    const beda = await periksaRiwayatAccurate([target(row)], satuKandidat(asli("C1", "I1", 800, [{ account: { no: "600123" }, amount: 100 }])));
+    assert.equal(beda.cocok.size + beda.gagal.size, 0);
+});
+
+test("normalisasi: bentuk tak dikenali (tanpa nomor faktur / item diskon tanpa nomor akun / detailInvoice bukan daftar) = GAGAL BACA di server, TIDAK TERBACA di pratinjau", async () => {
+    const row = { customerNo: "C1", transDate: "01/10/2026", detailInvoice: [{ invoiceNo: "I1", paymentAmount: 900 }] };
+    const rusak = [
+        { s: true, d: { number: "PR.1", customer: { customerNo: "C1" }, detailInvoice: [{ invoiceId: 5, paymentAmount: 900 }] } },
+        asli("C1", "I1", 900, [{ amount: 100, discountNotes: "x" }]),
+        { s: true, d: { number: "PR.1", customer: { customerNo: "C1" } } },
+    ];
+    for (const d of rusak) {
+        const server = await periksaRiwayatAccurate([target(row)], satuKandidat(d));
+        assert.match(server.gagal.get(target(row).key) ?? "", /tidak dikenali/, JSON.stringify(d));
+        const klien = await pratinjauRiwayatAccurate([row], satuKandidat(d));
+        assert.ok(klien.tidakTerbaca.has(target(row).key), "pratinjau: tidak terbaca, bukan aman");
+    }
+});

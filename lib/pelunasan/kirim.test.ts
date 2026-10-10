@@ -89,7 +89,7 @@ test("C11: s:false per baris = TIDAK PASTI (tanpa 'menolak'); kemiripan riwayat 
     const rows = banyak(2);
     const s = server(() => ({ status: 200, data: [{ s: true, r: { number: "PR-0" } }, { s: false, d: ["Nilai pelunasan melebihi nilai piutang"] }] }));
     const emu = buatEmulator({ salesInvoice: [], salesReturn: [], salesReceipt: [
-        { id: 1, number: "PR.LAMA", customer: { customerNo: "C1" }, customerNo: "C1", transDate: "09/10/2026", detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 1001 }] }] });
+        { id: 1, number: "PR.LAMA", customer: { customerNo: "C1" }, transDate: "09/10/2026", detailInvoice: [{ invoice: { number: "INV-1" }, paymentAmount: 1001, detailDiscount: [] }] }] });
     const r = await kirimPelunasan(rows, { postJson: s.postJson, expectedDatabaseId: "DB-1",
         cariRiwayat: (x) => pratinjauRiwayatAccurate(x, emu.accurateFetch as AccurateFetch) });
     assert.deepEqual(r.rows.map((x) => x.outcome), ["terposting", "tidak_pasti"]);
