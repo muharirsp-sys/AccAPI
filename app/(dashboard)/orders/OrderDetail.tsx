@@ -118,11 +118,14 @@ export default function OrderDetail({ id, baru, permKeys }: { id: string; baru: 
     }
 
     const outbox = antrean.status === "siap" ? antrean.data ?? null : undefined;
-    const status = statusOrder(o, outbox);
-    const idx = { butuh: 0, siap: 1, antre: 2, masalah: 2, faktur: 4, lain: 1 }[status.key];
+    const status = statusOrder(o, outbox, antrean.status === "memuat");
+    // Status antrean belum terbaca (memuat/gagal) atau status order tak dikenal: tidak ada langkah yang disorot sebagai posisi order —
+    // order bisa saja sudah di antrean atau sudah difakturkan. Hanya "Butuh harga" yang pasti terlewati (order berharga).
+    const idx = { butuh: 0, siap: 1, antre: 2, masalah: 2, faktur: 4, belum: -1, lain: -1 }[status.key];
     const steps: FlowStep[] = TAHAP.map((label, i) => ({
         label,
-        state: i < idx ? "done" : i > idx ? "todo" : status.key === "masalah" ? (outbox?.state === "rejected" ? "stop" : "late") : "current",
+        state: idx < 0 ? (i === 0 && status.key === "belum" ? "done" : "todo")
+            : i < idx ? "done" : i > idx ? "todo" : status.key === "masalah" ? (outbox?.state === "rejected" ? "stop" : "late") : "current",
     }));
     const kunciAntre = !bolehAntre ? "Hanya petugas pemegang izin ubah order yang boleh mengantrekan faktur"
         : order.status === "memuat" ? "Order sedang dimuat ulang"

@@ -27,14 +27,15 @@ type Koneksi = {
     pending: number;
     connection: { enabled: boolean; owner: string; updated_by: string; updated_at: string; last_run_at: string; last_result: { imported: number; already_imported: number; failed: number } | null };
 };
-type Saring = "semua" | Exclude<StatusKey, "lain">;
+type Saring = "semua" | Exclude<StatusKey, "lain" | "belum">;
 type HasilTarik = { imported: number; already: number; failed: { request_id: string; error: string }[] };
 
 const KARTU: Array<{ key: Saring; label: string; waspada?: boolean }> = [
     { key: "semua", label: "Semua order" }, { key: "butuh", label: "Butuh harga", waspada: true }, { key: "siap", label: "Siap diantrekan" },
     { key: "antre", label: "Di antrean" }, { key: "faktur", label: "Difakturkan" }, { key: "masalah", label: "Tidak pasti / ditolak", waspada: true },
 ];
-const BUTUH_ANTREAN: ReadonlySet<Saring> = new Set(["antre", "faktur", "masalah"]);
+// Kartu yang angkanya bergantung pada status Antrean Faktur: tanpa bacaan antrean angkanya "–", bukan 0 (termasuk Siap diantrekan).
+const BUTUH_ANTREAN: ReadonlySet<Saring> = new Set(["siap", "antre", "faktur", "masalah"]);
 const MAKS_FASTAPI = 100;
 
 export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
@@ -72,7 +73,8 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
 
     // Status antrean dipakai hanya bila terbaca untuk daftar INI (galat/memuat pertama = undefined → "belum terbaca").
     const peta = antrean.status === "galat" && !antrean.data ? undefined : antrean.data;
-    const statusDari = useCallback((o: OrderRow) => statusOrder(o, peta ? peta.get(o.id) ?? null : undefined), [peta]);
+    const antreanMemuat = antrean.status === "memuat" && !antrean.data;
+    const statusDari = useCallback((o: OrderRow) => statusOrder(o, peta ? peta.get(o.id) ?? null : undefined, antreanMemuat), [peta, antreanMemuat]);
 
     const jumlah = useMemo(() => {
         const n: Record<string, number> = { semua: rows.length };
@@ -184,7 +186,7 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
 
             {antreanGalat && (
                 <MessageStrip tone="neg" title="Status Antrean Faktur gagal dimuat.">
-                    {antrean.error} Angka Di antrean, Difakturkan, dan Tidak pasti tidak tampil — ini bukan nol; order tersimpan ditandai “status antrean belum terbaca”.{" "}
+                    {antrean.error} Angka Siap diantrekan, Di antrean, Difakturkan, dan Tidak pasti tidak tampil — ini bukan nol; order tersimpan ditandai “status antrean belum terbaca”.{" "}
                     <button type="button" className="fi-btn fi-btn--tertiary" onClick={muatAntrean}>Coba lagi</button>
                 </MessageStrip>
             )}
@@ -192,13 +194,13 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
             {daftar.status === "memuat" && !daftar.data ? <div className="fi-panel"><Skeleton rows={2} label="Memuat ringkasan order" /></div> : (
                 <div className="fi-kcards" role="group" aria-label="Saring menurut status">
                     {KARTU.map((k) => {
-                        const tanpaAngka = !daftar.data || (BUTUH_ANTREAN.has(k.key) && antreanGalat);
+                        const tanpaAngka = !daftar.data || (BUTUH_ANTREAN.has(k.key) && !peta);
                         const angka = tanpaAngka ? null : jumlah[k.key] ?? 0;
                         return (
                             <button key={k.key} type="button" className="fi-kc" aria-pressed={saring === k.key} data-tone={k.waspada && (angka ?? 0) > 0 ? "warn" : undefined} onClick={() => setSaring(k.key)}>
                                 <span>{k.label}</span>
                                 <b>{angka ?? "–"}</b>
-                                {BUTUH_ANTREAN.has(k.key) && antreanGalat && <small>gagal dimuat</small>}
+                                {BUTUH_ANTREAN.has(k.key) && !peta && daftar.data && <small>{antreanGalat ? "gagal dimuat" : "memuat…"}</small>}
                             </button>
                         );
                     })}

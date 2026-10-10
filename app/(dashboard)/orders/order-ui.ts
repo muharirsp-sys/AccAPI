@@ -95,15 +95,16 @@ export const STATUS_ANTREAN: Record<OutboxState, { label: string; tone: Tone; bu
     rejected: { label: "Ditolak Accurate", tone: "neg" },
 };
 
-export type StatusKey = "butuh" | "siap" | "antre" | "faktur" | "masalah" | "lain";
+export type StatusKey = "butuh" | "siap" | "belum" | "antre" | "faktur" | "masalah" | "lain";
 export type StatusOrder = { key: StatusKey; label: string; tone: Tone; busy?: boolean };
 
 /**
  * Status "sampai faktur": begitu order punya baris Antrean Faktur, status antrean yang berlaku (Di antrean → Difakturkan / Tidak pasti /
  * Ditolak). Tanpa baris antrean: status FastAPI (needs_price = Butuh harga, draft = Siap diantrekan). `outbox` undefined = status antrean
- * BELUM TERBACA — dipisahkan dari null (memang belum antre) supaya order yang sudah difakturkan tidak tampil "Siap diantrekan".
+ * BELUM TERBACA (memuat / gagal) — kunci "belum", dipisahkan dari null (memang belum antre) dan TIDAK dihitung "Siap diantrekan",
+ * supaya order yang sudah difakturkan tidak pernah tampil siap diantrekan.
  */
-export function statusOrder(o: Pick<OrderRow, "status" | "result">, outbox: OutboxRow | null | undefined): StatusOrder {
+export function statusOrder(o: Pick<OrderRow, "status" | "result">, outbox: OutboxRow | null | undefined, memuat = false): StatusOrder {
     if (outbox) {
         const s = STATUS_ANTREAN[outbox.state];
         const key: StatusKey = outbox.state === "posted" ? "faktur" : outbox.state === "queued" || outbox.state === "sending" ? "antre" : "masalah";
@@ -111,7 +112,8 @@ export function statusOrder(o: Pick<OrderRow, "status" | "result">, outbox: Outb
     }
     if (o.status === "needs_price" || o.result?.pending_price) return { key: "butuh", label: "Butuh harga", tone: "warn" };
     if (o.status === "draft") {
-        return outbox === null ? { key: "siap", label: "Siap diantrekan", tone: "info" } : { key: "siap", label: "Tersimpan · status antrean belum terbaca", tone: "neu" };
+        if (outbox === null) return { key: "siap", label: "Siap diantrekan", tone: "info" };
+        return memuat ? { key: "belum", label: "Memeriksa Antrean Faktur…", tone: "neu", busy: true } : { key: "belum", label: "Tersimpan · status antrean belum terbaca", tone: "neu" };
     }
     return { key: "lain", label: "Status tidak dikenal", tone: "neu" };
 }

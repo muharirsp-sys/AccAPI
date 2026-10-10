@@ -57,6 +57,8 @@ const harga = (code: string, unit: string) => ({ code, unit, price: MASTER[`${co
 type Opsi = {
     list?: (scope: string) => { body?: unknown; status?: number; html?: string };
     status?: { body?: unknown; status?: number };
+    /** Ditunggu sebelum status antrean daftar dijawab (keadaan "memuat"). */
+    tundaStatus?: () => Promise<void>;
     koneksi?: unknown;
     pull?: { body?: unknown; status?: number; html?: string };
     detail?: Record<string, { body?: unknown; status?: number; html?: string }>;
@@ -100,8 +102,9 @@ async function pasang(page: Page, opsi: Opsi = {}): Promise<Log> {
         const x = opsi.detail?.[id] ?? (id === ID_A ? { body: { ok: true, order: DETAIL_A } } : { body: { detail: "Order tidak ditemukan" }, status: 404 });
         return fa(r, x.body, x.status, x.html);
     });
-    await page.route((u) => u.pathname === "/api/orders/invoice-status", (r) => {
+    await page.route((u) => u.pathname === "/api/orders/invoice-status", async (r) => {
         log.statusUrls.push(r.request().url());
+        await opsi.tundaStatus?.();
         const x = opsi.status ?? { body: { ok: true, outbox: OUTBOX } };
         return r.fulfill(json(x.body, x.status));
     });
@@ -202,7 +205,25 @@ test("List Report: galat ≠ kosong; kosong; status antrean gagal ≠ belum antr
     await expect(m.getByText("Status Antrean Faktur gagal dimuat.")).toBeVisible(NAV);
     await expect(m.locator("table tr", { hasText: "TOKO A" })).toContainText("status antrean belum terbaca");
     await expect(m.locator("table tr", { hasText: "TOKO A" })).not.toContainText("Siap diantrekan");
-    await expect(m.getByRole("group", { name: "Saring menurut status" }).getByRole("button", { name: /Difakturkan\s*–\s*gagal dimuat/ })).toBeVisible();
+    const kartuGalat = m.getByRole("group", { name: "Saring menurut status" });
+    await expect(kartuGalat.getByRole("button", { name: /Difakturkan\s*–\s*gagal dimuat/ })).toBeVisible();
+    // Order tersimpan yang status antreannya tidak terbaca TIDAK dihitung Siap diantrekan.
+    await expect(kartuGalat.getByRole("button", { name: /Siap diantrekan\s*–\s*gagal dimuat/ })).toBeVisible();
+});
+
+test("List Report: selama status antrean dimuat kartu antrean bertanda “–” (bukan 0) dan order tidak tampil Siap diantrekan", async ({ page }) => {
+    let lepas: () => void = () => {};
+    const tahan = new Promise<void>((ok) => { lepas = ok; });
+    await pasang(page, { tundaStatus: () => tahan });
+    await page.goto("/orders");
+    const m = main(page);
+    const kartu = m.getByRole("group", { name: "Saring menurut status" });
+    await expect(kartu.getByRole("button", { name: /Siap diantrekan\s*–\s*memuat…/ })).toBeVisible(NAV);
+    await expect(kartu.getByRole("button", { name: /Di antrean\s*–\s*memuat…/ })).toBeVisible();
+    await expect(m.locator("table tr", { hasText: "TOKO A" })).toContainText("Memeriksa Antrean Faktur…");
+    lepas();
+    await expect(kartu.getByRole("button", { name: /Siap diantrekan\s*1$/ })).toBeVisible();
+    await expect(m.locator("table tr", { hasText: "TOKO A" })).toContainText("Siap diantrekan");
 });
 
 test("Tarik Order Sales: hasil tarikan tampil; jawaban tidak pasti = belum pasti; koneksi lewat dialog", async ({ page }) => {
@@ -373,6 +394,16 @@ test("Object Page: tidak ditemukan ≠ galat; Butuh harga terkunci beralasan", a
     const tombol = page.getByRole("button", { name: "Antrekan faktur…" });
     await expect(tombol).toBeDisabled();
     await expect(tombol).toHaveAttribute("title", /Butuh harga/);
+});
+
+test("Object Page: status antrean belum terbaca → tidak ada langkah tahap yang disorot sebagai posisi order", async ({ page }) => {
+    await pasang(page, { invoiceGet: () => ({ body: { ok: false, error: "Gagal membaca antrean" }, status: 500 }) });
+    await page.goto(`/orders/${ID_A}`);
+    const m = main(page);
+    await expect(m.getByText("Status Antrean Faktur belum terbaca.")).toBeVisible(NAV);
+    const tahap = m.getByRole("list", { name: "Tahap order" });
+    await expect(tahap.locator('[aria-current="step"]')).toHaveCount(0);
+    await expect(m.locator(".fi-oph")).toContainText("status antrean belum terbaca");
 });
 
 test("Ponsel 390 px: daftar, Order baru, dan halaman order tanpa gulir menyamping", async ({ page }) => {
