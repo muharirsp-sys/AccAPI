@@ -91,6 +91,14 @@ async function pasang(page: Page, m: Mock = {}) {
     });
     return kirim;
 }
+/**
+ * Tiruan GET status antrean batch = perilaku server sesudah BL-21: kunci dari SEMUA nomor SO batch (LINES), bukan hanya kandidat yang
+ * lolos validasi — SO yang sudah antre lalu kini ditinjau tetap terhitung. `outbox` = nomor SO yang punya baris Antrean Faktur.
+ */
+const antreanServer = (outbox: () => string[]) => (id: string, r: Route) => r.fulfill(json({
+    ok: true, id, candidates: 2,
+    queue: [...new Set(LINES.map((l) => l.soNo))].filter((so) => outbox().includes(so)).map((so) => ({ orderId: `KINO-NON-FOOD:${so}`, state: "posted", number: "INV/2610/KN01412", error: "" })),
+}));
 const field = (form: string, name: string) => new RegExp(`name="${name}"\\r\\n\\r\\n([^\\r]*)`).exec(form)?.[1];
 const berkas = (name = FILE) => ({ name, mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from("PK-isi-contoh") });
 
@@ -334,7 +342,8 @@ test("Hapus dari Batch terakhir: dialog membaca antrean dulu; ada SO / gagal →
     let antrean: "ada" | "kosong" = "ada";
     let putus = true;
     const kirim = await pasang(page, {
-        antrean: (id, r) => r.fulfill(json({ ok: true, id, candidates: 2, queue: antrean === "ada" ? [{ orderId: READY[0].key, state: "queued", number: "", error: "" }] : [] })),
+        // SO 1671-SOP-260013024 kini DITINJAU (bukan kandidat) tetapi fakturnya sudah terposting: tetap mengunci Hapus.
+        antrean: antreanServer(() => (antrean === "ada" ? ["1671-SOP-260013024"] : [])),
         hapus: (id, r) => (putus ? r.abort("connectionreset") : r.fulfill(json({ ok: true, removed: 1 }))),
     });
     await page.setViewportSize({ width: 1366, height: 900 });
@@ -362,6 +371,26 @@ test("Hapus dari Batch terakhir: dialog membaca antrean dulu; ada SO / gagal →
     await expect(dlg).toBeHidden();
     await expect(main.getByRole("status").filter({ hasText: `Batch ${FILE} dihapus.` })).toBeVisible();
     expect(kirim.filter((k) => k.method === "DELETE").map((k) => k.query)).toEqual(["?id=b1", "?id=b1"]);
+});
+
+test("BL-21 server: Hapus yang ditolak server (409) tampil di dialog apa adanya; batch tidak tampil terhapus", async ({ page }) => {
+    const TOLAK = "1 SO batch ini sudah di Antrean Faktur (1671-SOP-260013024); batch tidak bisa dihapus. Buang dulu di Antrean Faktur bila memang harus diulang.";
+    const kirim = await pasang(page, {
+        // Layar membaca antrean kosong (mis. bacaan usang), server tetap penjaga utama di dalam transaksi.
+        antrean: antreanServer(() => []),
+        hapus: (_id, r) => r.fulfill(json({ ok: false, error: TOLAK }, 409)),
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/principal-order", NAV);
+    const main = page.locator("main");
+    const tabel = main.getByRole("table", { name: "Batch terakhir" });
+    await tabel.getByRole("button", { name: `Hapus ${FILE}…` }).click(NAV);
+    const dlg = page.getByRole("dialog");
+    await dlg.getByRole("button", { name: "Hapus batch", exact: true }).click();
+    await expect(dlg.getByRole("alert")).toHaveText(TOLAK);
+    await expect(dlg).toBeVisible();
+    await expect(main.getByText(`Batch ${FILE} dihapus.`)).toHaveCount(0);
+    expect(kirim.filter((k) => k.method === "DELETE")).toHaveLength(1);
 });
 
 test("Batch tidak ditemukan = galat (bukan kosong); ponsel 390 px tanpa gulir menyamping di Unggah dan Validasi", async ({ page }) => {

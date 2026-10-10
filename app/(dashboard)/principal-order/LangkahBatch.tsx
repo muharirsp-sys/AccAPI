@@ -195,8 +195,10 @@ export default function LangkahBatch({ batchId, bolehBuat, bolehUbah, pesan, tut
     }
 
     /**
-     * Mencabut konfirmasi: SO-nya kembali ditahan gerbang pada validasi berikutnya. Sengaja TANPA dialog "yakin?". Mencabut adalah arah
-     * yang AMAN — ia mengembalikan penahanan, bukan melepaskannya — dan salah tekan diperbaiki dengan satu tombol di sebelahnya.
+     * Mencabut konfirmasi: SO-nya kembali ditahan gerbang order ganda pada validasi ulang yang langsung dijalankan. Sengaja TANPA dialog
+     * "yakin?": terhadap gerbang order ganda ia mengembalikan penahanan, bukan melepaskannya, dan salah tekan diperbaiki dengan satu
+     * tombol di sebelahnya. TETAPI bukan tanpa akibat: SO yang sudah antre/terposting lalu ditahan lagi berhenti jadi calon faktur —
+     * karena itu status antrean batch (penjaga Hapus/Ganti, BL-21) dihitung server dari SEMUA nomor SO batch, bukan dari kandidat.
      */
     async function cabut(soNo: string) {
         setSibuk("cabut");
