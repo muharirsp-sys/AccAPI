@@ -5,7 +5,7 @@
  *   Dipisah dari route agar diuji dengan Postgres evaluasi (route memakai next/headers).
  * Dependensi: invoice_outbox + invoice_outbox_event, lib/accurate-invoice-write (aturan status),
  *   lib/invoice-outbox-event, lib/invoice-search (pencarian faktur AM-029, disuntikkan).
- * Main Functions: aksiAntrean, antrekan, selesaikanTidakPasti, pencariFaktur, pencariPenekan.
+ * Main Functions: aksiAntrean, antrekan, selesaikanTidakPasti, cariTidakPasti, sekaliJalan, pencariFaktur, pencariPenekan, sesiCariSah.
  * Side Effects: UPDATE/DELETE/INSERT invoice_outbox + INSERT event dalam SATU transaksi per baris.
  *   Request ke Accurate HANYA lewat pencari yang disuntikkan (BACA SAJA, list.do/detail.do).
  *
@@ -17,13 +17,14 @@
  */
 import { and, eq, inArray } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { invoiceOutbox } from "@/db/schema";
-import { discardable, resendable, type OutboxState } from "@/lib/accurate-invoice-write";
+import { invoiceOutbox, salesInvoiceCache } from "@/db/schema";
+import { discardable, resendable, type InvoicePayload, type OutboxState } from "@/lib/accurate-invoice-write";
 import { catatEvent, menitSejakKirimTerakhir, pernahDibuang, waktuAntrePertama } from "@/lib/invoice-outbox-event";
 import { cariFaktur, type HasilCari, type SesiCari } from "@/lib/invoice-search";
 import { getAccurateSession } from "@/lib/accurate-session";
 import { SAPU_SETELAH_MENIT, sapuSending } from "@/lib/invoice-sender";
 import { isAllowedAccurateHost } from "@/lib/api-security";
+import { nilaiPayload } from "@/lib/invoice-verify";
 
 export type AksiJawaban = { status: number; body: Record<string, unknown> };
 
@@ -34,6 +35,19 @@ export function pencariFaktur(database: NodePgDatabase, session: SesiCari | null
     return (q) => cariFaktur({ db: database, key: q.orderId, customerNo: q.customerNo, queuedAt: q.queuedAt, session });
 }
 
+type SesiPenekan = { accessToken?: string | null; sessionHost?: string | null; sessionId?: string | null; databaseId?: string | number | null } | null;
+
+/** Sesi penekan dipakai mencari hanya bila lengkap, host-nya Accurate, dan terbuka pada database faktur. */
+export function sesiCariSah(sesi: SesiPenekan, targetDb: string): { session: SesiCari | null; catatan: string } {
+    if (!sesi?.accessToken || !sesi.sessionHost || !sesi.sessionId || !isAllowedAccurateHost(sesi.sessionHost)) {
+        return { session: null, catatan: "sesi Accurate Anda tidak lengkap — login Accurate di /api-wrapper" };
+    }
+    if (!targetDb || String(sesi.databaseId ?? "") !== targetDb) {
+        return { session: null, catatan: `sesi Accurate Anda terbuka pada database ${sesi.databaseId ?? "?"}, bukan database faktur ${targetDb || "(ACCURATE_INVOICE_DB_ID kosong)"}` };
+    }
+    return { session: { sessionHost: sesi.sessionHost, sessionId: sesi.sessionId, accessToken: sesi.accessToken }, catatan: "" };
+}
+
 /**
  * Pencari dengan sesi Accurate PENEKAN — hanya bila sesi itu terbuka pada database tujuan faktur
  * (`ACCURATE_INVOICE_DB_ID`); database lain = list.do akan mencari di pembukuan yang salah. Tanpa
@@ -42,15 +56,7 @@ export function pencariFaktur(database: NodePgDatabase, session: SesiCari | null
 export async function pencariPenekan(database: NodePgDatabase, userId: string): Promise<{ targetDb: string; cari: Pencari }> {
     const targetDb = String(process.env.ACCURATE_INVOICE_DB_ID || "").trim();
     const sesi = userId ? await getAccurateSession(userId).catch(() => null) : null;
-    let session: SesiCari | null = null;
-    let catatan = "";
-    if (!sesi?.accessToken || !sesi.sessionHost || !sesi.sessionId || !isAllowedAccurateHost(sesi.sessionHost)) {
-        catatan = "sesi Accurate Anda tidak lengkap — login Accurate di /api-wrapper";
-    } else if (String(sesi.databaseId ?? "") !== targetDb) {
-        catatan = `sesi Accurate Anda terbuka pada database ${sesi.databaseId ?? "?"}, bukan database faktur ${targetDb || "(ACCURATE_INVOICE_DB_ID kosong)"}`;
-    } else {
-        session = { sessionHost: sesi.sessionHost, sessionId: sesi.sessionId, accessToken: sesi.accessToken };
-    }
+    const { session, catatan } = sesiCariSah(sesi, targetDb);
     const dasar = pencariFaktur(database, session);
     return {
         targetDb,
@@ -333,4 +339,50 @@ export async function selesaikanTidakPasti(
     if (!done) return BERUBAH;
     return { status: 200, body: { ok: true, orderId, state: stateTo, pencarian,
         ...(ketemu ? { accurateId: ketemu.id, number: ketemu.number } : {}) } };
+}
+
+/**
+ * Dialog `selesai` (S6c, BL-16): HASIL pencarian tampil SEBELUM petugas memilih keputusan. BACA SAJA — tanpa penyapu,
+ * tanpa mengubah baris/event (Accurate hanya list.do/detail.do lewat `cari`). Hasil di layar bukan dasar penulisan:
+ * POST /resolve (selesaikanTidakPasti) mencari ULANG saat memutuskan. `faktur` = tanggal + total dari salinan lokal
+ * (pencarian hanya membawa id + nomor); `dikirim` = DPP + PPN payload yang dikirim; `sisaMenit` = masa tunggu
+ * "tidak terposting" yang sama dengan selesaikanTidakPasti (0 = boleh).
+ */
+export async function cariTidakPasti(database: NodePgDatabase, input: { orderId: string; cari: Pencari }): Promise<AksiJawaban> {
+    const { orderId } = input;
+    const [row] = await database.select({ state: invoiceOutbox.state, customerNo: invoiceOutbox.customerNo, createdAt: invoiceOutbox.createdAt, payload: invoiceOutbox.payload })
+        .from(invoiceOutbox).where(eq(invoiceOutbox.orderId, orderId)).limit(1);
+    if (!row) return { status: 404, body: { ok: false, error: "Baris antrean tidak ditemukan" } };
+    if (row.state !== "unknown") {
+        return { status: 409, body: { ok: false, error: `Hanya baris TIDAK PASTI yang diselesaikan di sini (status sekarang ${row.state}); muat ulang halaman.` } };
+    }
+    const menit = await menitSejakKirimTerakhir(database, orderId);
+    const queuedAt = await waktuAntrePertama(database, orderId, row.createdAt) ?? row.createdAt;
+    const hasil = await input.cari({ orderId, customerNo: row.customerNo, queuedAt });
+    const [salinan] = hasil.hasil === "ketemu"
+        ? await database.select({ transDate: salesInvoiceCache.transDate, totalAmount: salesInvoiceCache.totalAmount })
+            .from(salesInvoiceCache).where(eq(salesInvoiceCache.id, Number(hasil.id))).limit(1)
+        : [];
+    const payload = row.payload as InvoicePayload | null;
+    return { status: 200, body: {
+        ok: true, orderId, pencarian: ringkasCari(hasil),
+        faktur: salinan ? { tanggal: salinan.transDate ?? "", total: salinan.totalAmount ?? null } : null,
+        dikirim: payload && Array.isArray(payload.detailItem) ? nilaiPayload(payload) : null,
+        sisaMenit: menit !== null && menit < SAPU_SETELAH_MENIT ? Math.max(1, Math.ceil(SAPU_SETELAH_MENIT - menit)) : 0,
+    } };
+}
+
+const berjalan = new Map<string, Promise<AksiJawaban>>();
+
+/**
+ * Satu pencarian per `kunci` (penekan × order) pada satu waktu: buka-tutup dialog / klik ganda / efek ganda mode dev tidak
+ * menggandakan list.do + detail.do ke Accurate — pemanggil kedua menunggu jawaban yang sama.
+ * ponytail: per proses Next (satu instance di VPS); multi-instance = tiap instance mencari sendiri.
+ */
+export function sekaliJalan(kunci: string, fn: () => Promise<AksiJawaban>): Promise<AksiJawaban> {
+    const ada = berjalan.get(kunci);
+    if (ada) return ada;
+    const janji = fn().finally(() => berjalan.delete(kunci));
+    berjalan.set(kunci, janji);
+    return janji;
 }
