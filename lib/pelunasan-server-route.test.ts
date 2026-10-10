@@ -90,3 +90,15 @@ test("butir 1: lock non-pratinjau tanpa pelunasan.kirim -> 403; pratinjau tetap 
     const preview = await sebagai([], () => lockPost(jsonPost("/api/idempotency/lock", { keys, preview: true })));
     assert.equal(preview.status, 200);
 });
+
+test("butir 8: payload memuat ISI_KODE_AKUN_ -> 400 PLACEHOLDER_AKUN sebelum izin/sesi/jaringan; lock juga 400", async () => {
+    const payload = [{ ...BARIS[0], detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 900, detailDiscount: [{ amount: 100, accountNo: "ISI_KODE_AKUN_POT1_DI_UI" }] }] }];
+    const res = await sebagai(["pelunasan.kirim"], () => proxyPost(kirim({ payload })), { sesi: sesiAccurate() });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.code, "PLACEHOLDER_AKUN");
+    assert.equal(body.sent, false);
+    const lock = await sebagai(["pelunasan.kirim"], () => lockPost(jsonPost("/api/idempotency/lock", { keys: [{ key: "PAY_C1_01/10/2026_INV-1|900|ISI_KODE_AKUN_POT1_DI_UI::100" }] })));
+    assert.equal(lock.status, 400);
+    assert.equal((await lock.json()).code, "PLACEHOLDER_AKUN");
+});

@@ -12,6 +12,7 @@ import { idempotencyLog, idempotencyOverride } from '@/db/schema';
 import { and, eq, inArray, sql, TransactionRollbackError } from 'drizzle-orm';
 import { resolveRequestPermissions } from '@/lib/rbac/resolve';
 import { decideLock, type LockEntry } from '@/lib/idempotency-lock';
+import { memuatPlaceholderAkun } from '@/lib/sales-receipt-upload';
 
 export async function POST(req: Request) {
     try {
@@ -32,6 +33,11 @@ export async function POST(req: Request) {
         // S6e-2 (owner #5): mengunci = langkah pertama kirim pelunasan -> kunci `pelunasan.kirim`. Pratinjau baca-saja tetap terbuka.
         if (!preview && !access.perms!.has('pelunasan.kirim')) {
             return NextResponse.json({ error: 'Kirim pelunasan ke Accurate butuh izin pelunasan.kirim.', code: 'PERMISSION_REQUIRED' }, { status: 403 });
+        }
+
+        // S6e-2 butir 8: kunci = sidik jari payload; penanda akun belum dipilih = payload tak boleh dikirim -> jangan dikunci.
+        if (!preview && memuatPlaceholderAkun(keys.map((k: LockEntry) => k.key))) {
+            return NextResponse.json({ error: 'Akun potongan belum dipilih (ISI_KODE_AKUN_…) — pilih akun di langkah Akun. Tidak ada yang dikunci.', code: 'PLACEHOLDER_AKUN' }, { status: 400 });
         }
 
         const entries = keys as LockEntry[];

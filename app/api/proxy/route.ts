@@ -4,6 +4,7 @@ import { getAccurateSession } from "@/lib/accurate-session";
 import { accurateTimeoutMessage, forwardAccurate, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
 import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
 import { db } from "@/lib/db";
+import { memuatPlaceholderAkun } from "@/lib/sales-receipt-upload";
 import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 
 export async function POST(req: NextRequest) {
@@ -41,6 +42,10 @@ export async function POST(req: NextRequest) {
         if (salesReceipt) {
             const bad = checkSalesReceiptWrite(write);
             if (bad) return NextResponse.json({ error: bad, code: "SALES_RECEIPT_LOCK_REQUIRED" }, { status: 409 });
+            // S6e-2 butir 8: akun potongan belum dipilih (penanda alokasi.ts) tidak boleh sampai ke Accurate.
+            if (memuatPlaceholderAkun(payload)) {
+                return NextResponse.json({ error: "Akun potongan belum dipilih (ISI_KODE_AKUN_…) — pilih akun di langkah Akun. Tidak ada yang dikirim.", code: "PLACEHOLDER_AKUN", sent: false }, { status: 400 });
+            }
             // S6e-2 (owner #5): kirim pelunasan = kunci `pelunasan.kirim`, ditegakkan di sini (bukan hanya UI).
             // Hanya cabang tulis sales-receipt — GET & tulis endpoint lain tidak berubah.
             const access = await resolveRequestPermissions(req);

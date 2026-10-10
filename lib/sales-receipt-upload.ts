@@ -33,6 +33,11 @@ export function salesReceiptRowReports(n: number, data: unknown, noAnswer = ""):
     });
 }
 
+/** S6e-2 butir 8: penanda akun potongan yang belum dipilih di langkah Akun (lib/pelunasan/alokasi.ts). Server menolak 400
+ * payload/kunci yang masih memuatnya — akun palsu tidak boleh sampai ke Accurate. */
+export const PLACEHOLDER_AKUN = "ISI_KODE_AKUN_";
+export const memuatPlaceholderAkun = (v: unknown) => JSON.stringify(v ?? null).includes(PLACEHOLDER_AKUN);
+
 /** Proxy menolak tulis sales-receipt SEBELUM dikirim (lock/override tidak mencakup baris) — 409 berkode. */
 export const isLockRequired = (err: unknown) =>
     (err as { rawErrorObject?: { code?: unknown } } | null)?.rawErrorObject?.code === "SALES_RECEIPT_LOCK_REQUIRED";
