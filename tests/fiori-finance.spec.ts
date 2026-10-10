@@ -51,6 +51,8 @@ type Opsi = {
     tahanCommand?: Promise<void>;
     resolve?: Jawab[];
     update?: Jawab[];
+    /** Kiriman command hilang SEBELUM sampai server (tidak ada klaim attempt); jawabannya tetap "putus" bagi peramban. */
+    commandTakSampai?: boolean;
 };
 
 /** Semua jawaban dimock; keadaan berubah setelah tulis (catatan FastAPI dan attempt server) supaya muat ulang memperlihatkannya. */
@@ -68,6 +70,19 @@ async function siapkan(target: Page | BrowserContext, opsi: Opsi = {}) {
         sesiDb: { id: "DB-1", alias: "PT CONTOH A" } };
     const jawab = (r: Route, j: Jawab, cors = false) => j === "putus" ? r.abort("connectionreset")
         : r.fulfill({ status: j.status, headers: { ...(cors ? CORS : {}), "content-type": j.html ? "text/html" : "application/json" }, body: j.html ?? JSON.stringify(j.body) });
+    /**
+     * Meniru penjaga server /payments/finance/update (finance.py post_status_conflict, BL-49): posted tidak berubah; unknown hanya keluar
+     * ke posted/failed dengan catatan >= 15; Belum Transfer/Ajukan Ulang ditolak bila posted/unknown. Ditolak = 409 (tidak diubah).
+     */
+    const tolakServer = (it: Record<string, unknown>): string | undefined => {
+        const row = rows.find((x) => x.draft_id === it.draft_id && x.principle === it.principle);
+        const kini = String(row?.accurate_post_status || "");
+        const baru = String(it.accurate_post_status || "");
+        if (it.status_pembayaran !== "Sudah Transfer") return kini === "posted" || kini === "unknown" ? `LPB ${kini}: status tidak bisa dikembalikan.` : undefined;
+        if (kini === "posted") return "LPB sudah posted ke Accurate; status tidak bisa diubah dari sini.";
+        if (kini === "unknown" && baru !== "unknown" && (!["posted", "failed"].includes(baru) || String(it.resolution_note || "").length < 15)) return "Status posting TIDAK PASTI: selesaikan dengan catatan.";
+        return undefined;
+    };
     const terapkan = (it: Record<string, unknown>) => {
         const row = rows.find((x) => x.draft_id === it.draft_id && x.principle === it.principle);
         if (!row) return;
@@ -108,6 +123,8 @@ async function siapkan(target: Page | BrowserContext, opsi: Opsi = {}) {
             m.update.push(b.items[0]);
             const j = antri.update.shift();
             if (j) return jawab(r, j, true);
+            const tolak = tolakServer(b.items[0]);
+            if (tolak) return jawab(r, { status: 409, body: { ok: false, error: tolak } }, true);
             terapkan(b.items[0]);
             return jawab(r, { status: 200, body: { ok: true, updated: 1 } }, true);
         }
@@ -125,12 +142,15 @@ async function siapkan(target: Page | BrowserContext, opsi: Opsi = {}) {
         m.command.push(body);
         const sub = subjek((body.payload[0].detailInvoice as Array<{ invoiceNo: string }>).map((d) => d.invoiceNo));
         const milik = { clientRef: body.clientRef, targetDbId: m.sesiDb.id };
+        if (opsi.commandTakSampai) return r.abort("connectionreset");
+        const sebelum = attempts[sub];
         attempts[sub] = attempt({ state: "sending", status: "sending", ageSeconds: 0, ...milik });
         if (opsi.tahanCommand) await opsi.tahanCommand;
         const j = antri.command.shift() ?? { status: 200, body: { attemptId: "at-1", state: "posted", accurateId: "9001", accurateNumber: "PP/2610/0031", message: "", response: { s: true }, persisted: true } };
-        const isi = j === "putus" ? null : (j.body as { state?: string; claimed?: boolean; live?: { state: string; stale?: boolean; accurateNumber?: string } | null } | undefined);
+        const isi = j === "putus" ? null : (j.body as { state?: string; claimed?: boolean; code?: string; live?: { state: string; stale?: boolean; accurateNumber?: string } | null } | undefined);
         if (j !== "putus" && j.status === 200 && isi?.state === "posted") attempts[sub] = attempt({ state: "posted", status: "posted", accurateNumber: "PP/2610/0031", ageSeconds: 1, ...milik });
-        else if (isi?.claimed === false) delete attempts[sub];
+        // Tanpa klaim (claimed:false, subjek dibuka ulang): server tidak membuat attempt — yang terakhir tetap yang tampil.
+        else if (isi?.claimed === false || isi?.code === "reopened_use_repost") { if (sebelum) attempts[sub] = sebelum; else delete attempts[sub]; }
         else if (isi?.live) attempts[sub] = attempt({ state: isi.live.state, status: isi.live.state === "sending" ? (isi.live.stale ? "stale" : "sending") : isi.live.state, stale: Boolean(isi.live.stale), accurateNumber: isi.live.accurateNumber ?? "", ...milik });
         else attempts[sub] = attempt({ ageSeconds: 1, ...milik });
         return jawab(r, j);
@@ -168,6 +188,24 @@ async function bukaDialogPosting(page: Page) {
     await detail.getByRole("button", { name: "Transfer & posting…" }).click();
     return { main, detail, dlg: page.getByRole("dialog", { name: "Posting Purchase Payment ke Accurate?" }) };
 }
+
+/** Akun tanpa kunci `kunci` (admin LOCAL_AUTH_BYPASS memegang semua): array permKeys di payload RSC halaman diganti — pola fiori-antrean-faktur. */
+async function tanpaIzin(page: Page, kunci: string[]) {
+    await page.route((u) => u.pathname === "/finance", async (route) => {
+        const res = await route.fetch();
+        const headers = { ...res.headers() };
+        delete headers["content-length"];
+        delete headers["content-encoding"];
+        const body = (await res.text()).replace(/permKeys(\\?)":\[([^\]]*)\]/g, (_, e: string, isi: string) =>
+            `permKeys${e}":[${isi.split(",").filter((k) => !kunci.some((x) => k.includes(`"${x}`))).join(",")}]`);
+        return route.fulfill({ status: res.status(), headers, body });
+    });
+}
+
+test.use({
+    // Dokumen dari route.fulfill (tanpaIzin) dianggap bukan jaringan lokal oleh Edge → skrip localhost diblokir. Hanya di peramban tes ini.
+    launchOptions: { args: ["--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights"] },
+});
 
 test.beforeEach(async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "light" });
@@ -427,6 +465,56 @@ test("B-4: Selesaikan separuh jalan (resolve tercatat, catatan Finance 400) → 
     await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
 });
 
+test("B-6: gagal muat ulang dengan data masih tampil = tulis terkunci berlasan; galat JSON FastAPI tanpa 'localhost'", async ({ page }) => {
+    const m = await siapkan(page);
+    const { main, detail } = await bukaPengajuan(page);
+    await detail.getByLabel("Bukti transfer").setInputFiles(PDF);
+    await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeEnabled(NAV);
+    m.dataGagal = { status: 500, body: { ok: false, error: "Gagal membaca http://localhost:8000/payments/finance/data (localhost:8000 tidak menjawab)" } };
+    await main.getByRole("button", { name: "Muat ulang", exact: true }).click();
+    const strip = main.getByRole("alert").filter({ hasText: "Gagal memuat ulang pengajuan." });
+    await expect(strip).toBeVisible(NAV);
+    await expect(strip).toContainText("Gagal membaca server");
+    await expect(main).not.toContainText("localhost");
+    // Data sebelumnya tetap tampil, tetapi semua tulis terkunci dengan alasan TERLIHAT.
+    await expect(main.getByRole("list", { name: "Daftar pengajuan" }).getByRole("button", { name: /DRAFT-0418/ })).toBeVisible();
+    await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled();
+    await expect(detail.getByText("Data gagal dimuat ulang; yang tampil hasil sebelumnya. Muat ulang dulu.", { exact: true })).toBeVisible();
+    await expect(detail.getByRole("button", { name: "Kembalikan ke Pembayaran" })).toBeDisabled();
+    expect(m.urutan).toEqual([]);
+});
+
+test("B-6: kunci lokal — kiriman putus sebelum server mencatat apa pun & catatan unknown gagal: tab ini tetap mengunci, tab baru tidak", async ({ context }) => {
+    test.setTimeout(60_000);
+    const m = await siapkan(context, { commandTakSampai: true, update: [{ status: 500, body: { ok: false, error: "Gagal menulis data pembayaran." } }] });
+    const a = await context.newPage();
+    const { main, detail, dlg } = await bukaDialogPosting(a);
+    await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
+    await expect(main.getByRole("status").filter({ hasText: "Hasilnya belum pasti — DRAFT-0418 dikunci." })).toBeVisible(NAV);
+    expect(m.update.map((u) => u.accurate_post_status)).toEqual(["unknown"]); // catatan ditolak server: tidak ada yang tersimpan
+    // Setelah muat ulang server tidak tahu apa-apa (tanpa attempt, tanpa catatan) — hanya kunci lokal tab ini yang menahan.
+    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
+    await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled();
+    await expect(detail.getByRole("button", { name: "Selesaikan…" })).toBeEnabled();
+    const b = await context.newPage();
+    const { detail: detailB } = await bukaPengajuan(b);
+    await expect(b.locator("main").getByRole("list", { name: "Daftar pengajuan" }).getByRole("button", { name: /DRAFT-0418/ })).toContainText("Belum diposting", NAV);
+    await expect(detailB.getByText("Posting tidak pasti — pengajuan dikunci.")).toHaveCount(0);
+});
+
+test("B-6: tanpa izin ubah Finance (finance.update) — posting, tujuan, dan status nonaktif dengan alasan berkalimat yang TERLIHAT", async ({ page }) => {
+    await siapkan(page);
+    await tanpaIzin(page, ["finance.update"]);
+    const { detail } = await bukaPengajuan(page);
+    await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled(NAV);
+    await expect(detail.getByText(/^Akun Anda belum berwenang mencatat transfer dan memposting ke Accurate/)).toBeVisible();
+    await expect(detail.getByLabel("Pemasok")).toHaveCount(0); // tujuan baca-saja
+    await expect(detail.getByText(/^Akun Anda belum berwenang mengubah data Finance/).first()).toBeVisible();
+    await expect(detail.getByRole("button", { name: "Kembalikan ke Pembayaran" })).toBeDisabled();
+    await expect(detail.getByRole("list", { name: "Alasan aksi nonaktif" })).toContainText("belum berwenang mengubah data Finance");
+    await expect(detail).not.toContainText("finance.update");
+});
+
 test("Galat ≠ kosong (tanpa localhost/HTML), Kosong, status posting tak terbaca = posting terkunci", async ({ page }) => {
     const m = await siapkan(page, { dataGagal: { status: 500, html: "<html>Internal Server Error</html>" } });
     const main = page.locator("main");
@@ -461,7 +549,11 @@ test("Klik ganda konfirmasi = satu POST; dua tab: tab kedua melihat 'Sedang dipo
     const m = await siapkan(context, { tahanCommand: new Promise<void>((ok) => { lepas = ok; }) });
     const a = await context.newPage();
     const { main, dlg } = await bukaDialogPosting(a);
-    await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).dblclick();
+    // Dua klik dalam SATU tugas JS: React belum merender ulang (atribut disabled belum terpasang), jadi yang menahan kiriman kedua
+    // adalah penjaga ref (ConfirmDialog inFlight / postingRef) — bukan disabled.
+    const konfirmasi = dlg.getByRole("button", { name: "Posting Rp 48.200.000" });
+    await expect(konfirmasi).toBeEnabled(NAV);
+    await konfirmasi.evaluate((el: HTMLElement) => { el.click(); el.click(); });
     await expect.poll(() => m.command.length, NAV).toBe(1); // klaim server sudah ada (attempt 'sending') sebelum tab kedua dibuka
     const b = await context.newPage();
     const { detail: detailB } = await bukaPengajuan(b);
