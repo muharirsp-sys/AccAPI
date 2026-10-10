@@ -1,42 +1,20 @@
-/* S6e-1 uji karakterisasi Pelunasan: keluaran (payload sales-receipt, baris manual, toast, multiset panggilan Accurate)
- * atas fixture generik HARUS identik dengan golden yang direkam dari kode LAMA W (app/(dashboard)/api-wrapper/page.tsx). */
+/* S6e-1 uji karakterisasi Pelunasan: keluaran lib/pelunasan (payload sales-receipt, baris manual, toast, multiset
+ * panggilan Accurate) atas fixture generik HARUS identik dengan uji/golden.json — direkam dari kode LAMA W
+ * (salinan verbatim app/(dashboard)/api-wrapper/page.tsx basis 5d6cc936, uji/lama.ts) dan dibekukan. Perekam & salinan
+ * lama dihapus; untuk merekam ulang/menambah fixture: checkout ec4e3d94 (lama.ts + rekam-golden.ts masih ada di sana).
+ * Golden TIDAK boleh disunting tangan: perubahan perilaku disengaja = commit terpisah yang menjelaskan selisihnya. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buatEmulator } from "./uji/emulator-accurate.ts";
 import { FIXTURES, fixturePratinjau } from "./uji/fixture.ts";
-import { jalankanPelunasanLama, jalankanPratinjauLama } from "./uji/lama.ts";
+import { jalankanLib } from "./uji/jalankan.ts";
+import { pratinjauDuplikat } from "./pratinjau-ganda.ts";
+import type { AccurateFetch } from "./retur.ts";
 
 type Golden = Record<string, { payload?: unknown; manualRows?: unknown; toasts?: unknown; panggilan: string[]; hasil?: unknown }>;
 const golden = JSON.parse(readFileSync("lib/pelunasan/uji/golden.json", "utf8")) as Golden;
 const json = (v: unknown) => JSON.stringify(v, null, 2);
-
-for (const buat of FIXTURES) {
-    const fx = buat();
-    test(`golden kode lama: ${fx.nama}`, async () => {
-        const g = golden[fx.nama];
-        assert.ok(g, `golden ${fx.nama} belum direkam`);
-        const emu = buatEmulator(fx.data);
-        const k = await jalankanPelunasanLama(fx.rows, { ...fx.opsi, accurateFetch: emu.accurateFetch });
-        assert.equal(k.payloadStr === null ? "null" : json(JSON.parse(k.payloadStr)), json(g.payload ?? null), "payload");
-        assert.equal(json(k.manualRows), json(g.manualRows), "baris manual");
-        assert.equal(json(k.toasts), json(g.toasts), "toast");
-        assert.deepEqual(emu.panggilanKanonik(), g.panggilan, "panggilan Accurate");
-    });
-}
-
-test("golden kode lama: p01-pratinjau-duplikat", async () => {
-    const p = fixturePratinjau();
-    const emu = buatEmulator(p.data);
-    const hasil = await jalankanPratinjauLama(p.rows, p.routeKey, { blockedEntries: p.blockedEntries, accurateFetch: emu.accurateFetch });
-    assert.equal(json(hasil), json(golden["p01-pratinjau-duplikat"].hasil));
-    assert.deepEqual(emu.panggilanKanonik(), golden["p01-pratinjau-duplikat"].panggilan);
-});
-
-// ---- lib/pelunasan (S6e-1 tahap 2): HARUS identik dengan golden yang sama.
-import { jalankanLib } from "./uji/jalankan.ts";
-import { pratinjauDuplikat } from "./pratinjau-ganda.ts";
-import type { AccurateFetch } from "./retur.ts";
 
 for (const buat of FIXTURES) {
     const fx = buat();

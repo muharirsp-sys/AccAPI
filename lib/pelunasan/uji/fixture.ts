@@ -1,7 +1,7 @@
 /**
  * Tujuan: fixture GENERIK uji karakterisasi Pelunasan (S6e-1) — baris Excel (bentuk keluaran `sheet_to_json` setelah
  *   header `(*wajib)` dibersihkan, W:261-273) + isi Accurate tiruan untuk `emulator-accurate.ts`.
- * Caller: lib/pelunasan/pelunasan.test.ts (dan perekam golden sekali-pakai).
+ * Caller: lib/pelunasan/*.test.ts (golden direkam dari kode lama — lihat kepala pelunasan.test.ts).
  * Side Effects: tidak ada. Tiap fixture adalah FUNGSI → objek segar tiap panggilan (kode pelunasan memutasi baris).
  * Data contoh generik (PELANGGAN A, CABANG A, INV/2610/XX…) — bukan data principal/pelanggan nyata.
  */
