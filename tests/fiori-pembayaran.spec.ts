@@ -62,7 +62,7 @@ test("Rekaman: galat bukan kosong, tile menyaring, baris terkunci tidak bisa diu
     await page.goto("/payments", NAV);
     const main = page.locator("main");
     await expect(main.getByRole("heading", { level: 1, name: "Rekaman pembayaran" })).toBeVisible(NAV);
-    await expect(main.getByText("Data gagal dimuat")).toBeVisible(NAV);
+    await expect(main.getByRole("heading", { name: "Data gagal dimuat" })).toBeVisible(NAV);
     await expect(main.getByText("Belum ada rekaman pembayaran")).toHaveCount(0);
     await expect(main.getByText("jawaban rusak")).toBeVisible();
     await expect(main.getByRole("button", { name: "Buat keranjang…" })).toBeDisabled();
@@ -88,7 +88,7 @@ test("Rekaman: galat bukan kosong, tile menyaring, baris terkunci tidak bisa diu
 
     await tabel.getByRole("button", { name: "Buka rincian LPB-B-007" }).click();
     const dlg = page.getByRole("dialog");
-    await expect(dlg.getByText("Terkunci: sudah ditransfer.")).toBeVisible();
+    await expect(dlg.getByText("Terkunci: sudah ditransfer.", { exact: true })).toBeVisible();
     await expect(dlg.getByLabel("Nilai invoice")).toHaveAttribute("readonly", "");
     await expect(dlg.getByRole("button", { name: "Hapus rekaman…" })).toBeDisabled();
     await expect(dlg.getByText("Hapus nonaktif: Terkunci: sudah ditransfer.")).toBeVisible();
@@ -107,11 +107,12 @@ test("Rekaman: galat bukan kosong, tile menyaring, baris terkunci tidak bisa diu
     await page.screenshot({ path: "test-results/s6a-rekaman-ponsel.png", fullPage: true });
 });
 
-test("Rekaman: simpan PER REKAMAN — satu angka ditolak server, rekaman lain tersimpan; angka rusak diblok di layar; pilihan tidak dikirim", async ({ page }) => {
+test("Rekaman: simpan PER REKAMAN — satu rekaman ditolak server (409 terkunci), rekaman lain tersimpan; angka rusak diblok di layar; pilihan tidak dikirim", async ({ page }) => {
     const kirim = await mockFastapi(page, (p, r) => {
         if (p !== "/payments/update") return "lewat";
         const item = (r.request().postDataJSON() as { items: Array<{ record_id: string }> }).items[0];
-        if (item.record_id === "CBD_1A2B3C4D") return json(r, { ok: false, error: "Nilai Invoice CBD_1A2B3C4D tidak valid: '1.2.3'" }, 400);
+        // Rekaman terkunci sejak halaman dimuat (diajukan di tab lain) → 409 untuk rekaman ini saja.
+        if (item.record_id === "CBD_1A2B3C4D") return json(r, { ok: false, error: "Simpan ditolak — rekaman terkunci: CBD_1A2B3C4D (sudah diajukan). Tidak ada yang diubah.", locked: [{ record_id: "CBD_1A2B3C4D", no_lpb: "", principle: "PRINCIPLE B", reason: "sudah diajukan", fields: ["nilai_invoice"] }] }, 409);
         return json(r, { ok: true, updated: 1, updated_ids: [item.record_id], skipped: 0 });
     });
     await page.setViewportSize({ width: 1366, height: 900 });
@@ -139,7 +140,7 @@ test("Rekaman: simpan PER REKAMAN — satu angka ditolak server, rekaman lain te
     dlg = await ubah("LPB-A-001", "Nilai invoice", "12.450.000");
     await expect(dlg.getByText("Sebelumnya: 12.400.000")).toBeVisible();
     await dlg.getByRole("button", { name: "Selesai" }).click();
-    dlg = await ubah("CBD_1A2B3C4D", "Nilai invoice", "1.2.3");
+    dlg = await ubah("CBD_1A2B3C4D", "Nilai invoice", "12.600.000");
     await dlg.getByRole("button", { name: "Selesai" }).click();
     await expect(main.getByText("3 isian di 3 rekaman belum disimpan.", { exact: false })).toBeVisible();
     await expect(main.getByText("Simpan atau batalkan perubahan isian dulu.")).toHaveCount(0); // footer simpan menggantikan footer keranjang
@@ -156,9 +157,9 @@ test("Rekaman: simpan PER REKAMAN — satu angka ditolak server, rekaman lain te
     expect(upd.map((k) => (k.body as { items: Array<Record<string, unknown>> }).items[0])).toEqual(expect.arrayContaining([
         { record_id: "LPB-A-003", source_updated_at: "", invoice_no: "INV-A-3" },
         { record_id: "LPB-A-001", source_updated_at: "u1", nilai_invoice: "12.450.000" },
-        { record_id: "CBD_1A2B3C4D", source_updated_at: "", nilai_invoice: "1.2.3" },
+        { record_id: "CBD_1A2B3C4D", source_updated_at: "", nilai_invoice: "12.600.000" },
     ]));
-    await expect(tabel.getByText("Ditolak: Nilai Invoice CBD_1A2B3C4D tidak valid: '1.2.3'")).toBeVisible();
+    await expect(tabel.getByText("Ditolak: Simpan ditolak — rekaman terkunci: CBD_1A2B3C4D (sudah diajukan). Tidak ada yang diubah.")).toBeVisible();
     // Isian yang ditolak tetap di layar; yang tersimpan hilang dari draf.
     await expect(main.getByRole("button", { name: "Simpan 1 perubahan" })).toBeEnabled();
     await page.screenshot({ path: "test-results/s6a-rekaman-simpan-sebagian.png", fullPage: true });
@@ -181,7 +182,7 @@ test("Rekaman: unggah LPB = pratinjau dulu (tanpa tulis), lalu simpan; baris bar
     const dlg = page.getByRole("dialog");
     await dlg.getByLabel("Berkas LPB (.xlsx/.xls)").setInputFiles({ name: "LPB_OKT.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from("x") });
     await expect(dlg.getByText("Pratinjau bersih.")).toBeVisible();
-    await expect(dlg.getByText("1 LPB")).toBeVisible();
+    await expect(dlg.getByText("1 LPB", { exact: true })).toBeVisible();
     expect(kirim.filter((k) => k.path === "/payments/upload").map((k) => k.search)).toEqual(["?dry_run=1"]);
     await dlg.getByRole("button", { name: "Simpan 1 LPB" }).click();
     await expect(main.getByText("1 LPB dari LPB_OKT.xlsx tersimpan.", { exact: false })).toBeVisible();
@@ -191,6 +192,7 @@ test("Rekaman: unggah LPB = pratinjau dulu (tanpa tulis), lalu simpan; baris bar
 });
 
 test("Keranjang: pilih → rute + tanggal bayar besok WITA → rekening tidak ditemukan memblok Ajukan sebelum klik", async ({ page }) => {
+    test.setTimeout(300_000); // navigasi klien pertama ke rute keranjang = kompilasi dev (bisa > 60 dtk)
     const kirim = await mockFastapi(page, (p, r) => {
         const u = new URL(r.request().url());
         if (p === "/payments/cart/create") return json(r, { ok: true, draft_id: "7f3c91ab" });
@@ -225,7 +227,7 @@ test("Keranjang: pilih → rute + tanggal bayar besok WITA → rekening tidak di
     await expect(dlg.getByLabel("Tanggal bayar Finance")).toHaveValue(besokWita());
     await dlg.getByRole("radio", { name: /Bank Panin/ }).check();
     await dlg.getByRole("button", { name: "Buat keranjang" }).click();
-    await expect(page).toHaveURL(/\/payments\/cart\/7f3c91ab$/, NAV);
+    await expect(page).toHaveURL(/\/payments\/cart\/7f3c91ab$/, { timeout: 240_000 });
     expect(kirim.find((k) => k.path === "/payments/cart/create")?.body).toEqual({ method: "BANK_PANIN", record_ids: ["LPB-A-001", "CBD_1A2B3C4D"], target_payment_date: besokWita() });
 
     await expect(main.getByText("032/SPA/PDSB/X/2026").first()).toBeVisible(NAV);
@@ -313,20 +315,21 @@ test("Pengajuan & SPPD: galat bukan kosong, daftar → detail dengan status per 
     });
     await page.goto("/payments/pengajuan", NAV);
     const main = page.locator("main");
-    await expect(main.getByText("Data gagal dimuat")).toBeVisible(NAV);
+    await expect(main.getByRole("heading", { name: "Data gagal dimuat" })).toBeVisible(NAV);
     await expect(main.getByText("Belum ada pengajuan")).toHaveCount(0);
     rusak = false;
     await main.getByRole("button", { name: "Coba lagi" }).click();
-    await expect(main.getByRole("link", { name: "031/SPA/PDSB/X/2026" })).toBeVisible();
-    await expect(main.getByText("Sebagian ditransfer")).toBeVisible();
-    await expect(main.getByText("09/10/2026 10.00")).toBeVisible();
-    await main.getByRole("link", { name: "031/SPA/PDSB/X/2026" }).click();
+    const daftar = main.getByRole("table", { name: "Pengajuan" });
+    await expect(daftar.getByRole("link", { name: "031/SPA/PDSB/X/2026" })).toBeVisible();
+    await expect(daftar.getByText("Sebagian ditransfer")).toBeVisible();
+    await expect(daftar.getByText("09/10/2026 10.00")).toBeVisible();
+    await daftar.getByRole("link", { name: "031/SPA/PDSB/X/2026" }).click();
     await expect(page).toHaveURL(/\/payments\/pengajuan\/1f2e3d4c$/, NAV);
     await expect(main.getByRole("heading", { level: 1, name: "031/SPA/PDSB/X/2026" })).toBeVisible(NAV);
     const baris = main.getByRole("table", { name: "Baris Finance" });
-    await expect(baris.getByRole("row", { name: /LPB-A-002/ }).getByText("Terposting")).toBeVisible();
-    await expect(baris.getByRole("row", { name: /LPB-B-010/ }).getByText("Belum transfer")).toBeVisible();
-    await expect(baris.getByText("PP/2610/0031")).toBeVisible();
+    await expect(baris.getByRole("row", { name: /LPB-A-002/ }).getByText("Terposting", { exact: true })).toBeVisible();
+    await expect(baris.getByRole("row", { name: /LPB-B-010/ }).getByText("Belum transfer", { exact: true })).toBeVisible();
+    await expect(baris.getByText("PP/2610/0031", { exact: true })).toBeVisible();
     await expect(main.getByRole("list", { name: "Berkas pengajuan" }).getByRole("link", { name: "Unduh" })).toHaveAttribute("href", "http://localhost:8000/payments/files/sppd_1f2e3d4c.docx");
     await page.screenshot({ path: "test-results/s6a-pengajuan-detail.png", fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });

@@ -160,15 +160,17 @@ export function DialogKeranjang({ open, onClose, dipilih, total, alasan, onSeles
     const [rute, setRute] = useState<"" | "BANK_PANIN" | "NON_PANIN">("");
     const [tanggal, setTanggal] = useState(() => besokWita());
     const [belumPasti, setBelumPasti] = useState(false);
+    // Setelah draf dibuat, halaman berpindah ke keranjang (bisa lama saat kompilasi/jaringan lambat): tombol dikunci, tanpa draf kedua.
+    const [dibuat, setDibuat] = useState(false);
     const idRute = useId();
-    const tutup = () => { setRute(""); setTanggal(besokWita()); setBelumPasti(false); onClose(); };
+    const tutup = () => { if (dibuat) return; setRute(""); setTanggal(besokWita()); setBelumPasti(false); onClose(); };
     const principals = new Set(dipilih.map((r) => r.principle));
     const galatTanggal = !/^\d{4}-\d{2}-\d{2}$/.test(tanggal) ? "Isi tanggal bayar Finance." : undefined;
-    const blok = alasan ?? (belumPasti ? KUNCI_PASTI : !rute ? "Pilih rute pembayaran dulu." : galatTanggal);
+    const blok = dibuat ? "Keranjang dibuat; membuka langkah Tinjau…" : alasan ?? (belumPasti ? KUNCI_PASTI : !rute ? "Pilih rute pembayaran dulu." : galatTanggal);
 
     async function buat() {
         const res = await tulis("/payments/cart/create", { method: rute, record_ids: dipilih.map((r) => r.record_id), target_payment_date: tanggal });
-        if (res.ok && res.data.draft_id) { onSelesai(String(res.data.draft_id)); return; }
+        if (res.ok && res.data.draft_id) { setDibuat(true); onSelesai(String(res.data.draft_id)); return; }
         if (!res.ok && res.tidakPasti) { setBelumPasti(true); onTidakPasti(); }
         throw new Error(res.ok ? "Server tidak mengirim nomor draf." : res.error);
     }

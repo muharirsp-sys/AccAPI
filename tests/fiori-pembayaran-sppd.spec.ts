@@ -85,7 +85,7 @@ test("Format SPPD: gagal muat = Simpan terkunci; nomor tidak boleh turun; Simpan
     expect(pertama).toEqual({ number_template: SETELAN.number_template, fixed_jaminan_date: "2026-02-19", maturity_months: 9, items_per_page: 7 });
 
     await nomor.fill("35");
-    await expect(main.locator(".fi-attrs")).toContainText("036/SPA/PDSB/X/");
+    await expect(main.locator(".fi-attrs")).toContainText(/036\/SPA\/PDSB\/[IVX]+\//); // pratinjau lokal dari templat
     await main.getByRole("button", { name: "Simpan…" }).click();
     dlg = page.getByRole("dialog");
     await expect(dlg.getByText("Nomor 032–035 tidak akan terbit.")).toBeVisible();
