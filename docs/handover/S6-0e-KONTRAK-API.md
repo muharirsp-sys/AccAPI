@@ -11,7 +11,7 @@ FastAPI = `NEXT_PUBLIC_FASTAPI_BASE_URL` (port 8000, cookie sesi + `X-CSRF-Token
   = `YYYY-MM-DD HH:MM:SS` UTC+8. Field mentah tanpa akhiran = jam server (produksi UTC) — jangan ditampilkan langsung.
 - **Pratinjau**: `?dry_run=1|true` (atau badan JSON `"dry_run": true|1|"1"|"true"`); `0|false` = terapkan; **nilai lain
   (mis. `on`, `yes`, `null`) = 400 `{ok:false, error:"Nilai dry_run tidak dikenal: …"}` tanpa tulis** (gagal-tertutup);
-  query dan badan bertentangan = 400. Pratinjau **tidak pernah menulis**,
+  query dan badan bertentangan, atau `dry_run` berulang di query (`?dry_run=1&dry_run=0`) = 400. Pratinjau **tidak pernah menulis**,
   memakai kode yang sama dengan eksekusi, dan menjawab `200 {ok:true, dry_run:true, can_apply, ...laporan}` walau ada
   masalah (masalah = `can_apply:false` + `error`). Eksekusi pada data yang sama menghasilkan laporan yang sama.
 - **Kunci BL-05/BL-49** (`shared.payment_lock_reason`): rekaman **terkunci** bila `status_pembayaran = "Sudah Transfer"` ATAU
@@ -33,7 +33,7 @@ Izin `payments.update`, CSRF. Badan `{items:[{record_id, <isian>…}]}` (sama se
 - 200 `{ok:true, updated, updated_ids, skipped}`.
 - **409 (BARU)** bila satu item mengubah rekaman terkunci → **tidak ada yang disimpan** (semua-atau-tidak):
 ```json
-{"ok": false, "error": "Simpan ditolak: rekaman yang sudah ditransfer/terposting terkunci — LPB-7 (sudah ditransfer). Tidak ada yang disimpan.",
+{"ok": false, "error": "Simpan ditolak — rekaman terkunci: LPB-7 (sudah ditransfer). Tidak ada yang diubah.",
  "locked": [{"record_id": "LPB-7", "no_lpb": "LPB-7", "principle": "PT ABC", "reason": "sudah ditransfer", "fields": ["nilai_invoice"]}]}
 ```
 - 400 validasi lama (No. LPB, NON_LPB, angka AM-044).
@@ -129,7 +129,8 @@ Izin `payments.edit`, **CSRF (BARU)**. `{old_name, new_name, dry_run?}`. Rekaman
 `needs_remap` = mapping vendor/bank Finance berkunci nama lama; rekaman yang diganti perlu mapping baru (it08 #15).
 
 ### POST `/api/bank-data/auto-fix-names` — BERUBAH
-Eksekusi (`confirm:true`) kini butuh **CSRF**. `changes[]` mendapat `locked` (jumlah terkunci, tidak di-rename); `count` = yang diubah.
+Eksekusi (`confirm:true`) kini butuh **CSRF**. `confirm` hanya `true|1|"true"|"1"` (eksekusi) atau
+`false|0|"false"|"0"` (pratinjau); nilai lain = 400 tanpa tulis (dulu `"false"` = eksekusi). `changes[]` mendapat `locked` (jumlah terkunci, tidak di-rename); `count` = yang diubah.
 
 ### POST `/api/bank-data/upload` — BERUBAH
 **CSRF (BARU)**. Tetap menimpa master rekening tanpa cadangan (S6a membuang tombolnya; lihat pertanyaan terbuka).

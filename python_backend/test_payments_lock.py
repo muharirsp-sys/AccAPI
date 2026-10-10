@@ -120,6 +120,9 @@ def check_delete_and_clear():
     r = client.post("/payments/delete", json={"record_ids": ["OPEN-1", "PST-1", "SUB-1"]})
     assert r.status_code == 409, f"hapus rekaman terposting/diajukan diterima: {r.status_code} {r.text[:200]}"
     assert [x["record_id"] for x in r.json()["locked"]] == ["PST-1", "SUB-1"], r.json()
+    # Judul netral + alasan per rekaman ("sudah diajukan" bukan "ditransfer/terposting").
+    assert r.json()["error"] == ("Hapus ditolak — rekaman terkunci: PST-1 (sudah terposting di Accurate), "
+                                 "SUB-1 (sudah diajukan; minta Finance mengembalikan (Ajukan Ulang)). Tidak ada yang diubah."), r.json()["error"]
     assert raw() == before, "hapus ditolak tetapi rekaman lain ikut terhapus"
     r = client.post("/payments/delete", json={"record_ids": ["OPEN-1"]})
     assert r.status_code == 200 and r.json()["deleted"] == 1, r.text[:200]
@@ -168,6 +171,13 @@ def check_rename():
     preview = client.post("/api/bank-data/auto-fix-names", json={"confirm": False}).json()
     change = next((c for c in preview["changes"] if c["old"] == "PT ABC"), None)
     assert change and change["count"] == 2 and change["locked"] == 4, preview
+    # Putaran 3 butir 2: confirm string "false" dulu = bool("false") = True -> rename massal. Kini hanya 1/true & 0/false.
+    before = raw()
+    r = client.post("/api/bank-data/auto-fix-names", json={"confirm": "false"})
+    assert r.status_code == 200 and r.json()["executed"] is False and raw() == before, f"confirm 'false' mengeksekusi: {r.text[:160]}"
+    for bad in ("ya", "on", 2, None, [True]):
+        r = client.post("/api/bank-data/auto-fix-names", json={"confirm": bad})
+        assert r.status_code == 400 and raw() == before, f"confirm {bad!r}: {r.status_code} {r.text[:160]}"
     r = client.post("/api/bank-data/auto-fix-names", json={"confirm": True})
     assert r.status_code == 200 and r.json()["executed"], r.text[:200]
     names = {k: v["principle"] for k, v in ledger().items()}
