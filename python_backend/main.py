@@ -67,6 +67,7 @@ from shared import (
     generate_import_report,
     get_current_user,
     get_or_create_csrf_token,
+    is_dry_run,
     io,
     load_bank_map,
     load_bank_map_with_normalized_keys,
@@ -329,6 +330,11 @@ async def replace_principle_name(request: Request):
         db = load_payments_db()
         # BL-05 (S6-0e): rekaman yang sudah ditransfer/terposting DILEWATI dan dihitung (it08: "tidak diubah: N").
         report, to_change = plan_principle_rename(db, old_name, new_name)
+        dry_run = is_dry_run(request, payload)
+        if dry_run:
+            # Pratinjau (S6-0e butir 4): laporan yang sama dengan eksekusi, tanpa simpan.
+            return {"ok": True, "dry_run": True, **report, "old_name": old_name, "new_name": new_name,
+                    "message": f"Pratinjau: {len(to_change)} rekaman akan diganti; {report['locked_skipped']} terkunci dilewati."}
         for rec_key in to_change:
             db["lpb"][rec_key]["principle"] = new_name
         if to_change:
@@ -343,6 +349,7 @@ async def replace_principle_name(request: Request):
         skipped = f" Tidak diubah: {report['locked_skipped']} rekaman sudah ditransfer/terposting." if report["locked_skipped"] else ""
         return {
             "ok": True,
+            "dry_run": False,
             **report,
             "old_name": old_name,
             "new_name": new_name,

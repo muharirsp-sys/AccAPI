@@ -1451,7 +1451,53 @@ def parse_sppd_date_ddmmyyyy(value) -> str:
         raise ValueError(f"'{raw}'")
     return parsed.strftime("%Y-%m-%d")
 
+def lpb_upload_error_message(number_errors: List[str], date_errors: List[str]) -> str:
+    """Pesan galat unggah LPB (urutan & kalimat sama dengan sebelum S6-0e: angka dulu, lalu tanggal)."""
+    if number_errors:
+        extra = len(number_errors) - 5
+        return ("Angka tidak valid: " + "; ".join(number_errors[:5]) + (f"; dan {extra} lainnya" if extra > 0 else "")
+                + ". Upload dibatalkan.")
+    if date_errors:
+        extra = len(date_errors) - 5
+        suffix = f"; dan {extra} lainnya" if extra > 0 else ""
+        return f"Tanggal tidak valid (harus DD/MM/YYYY): {'; '.join(date_errors[:5])}{suffix}. Upload dibatalkan."
+    return ""
+
+
 def parse_lpb_upload(content: bytes) -> List[Dict[str, Any]]:
+    rows, number_errors, date_errors = parse_lpb_upload_collect(content)
+    message = lpb_upload_error_message(number_errors, date_errors)
+    if message:
+        raise ValueError(message)
+    return rows
+
+
+def plan_lpb_upload(db: Dict[str, Any], rows: List[Dict[str, Any]], invalid: List[str]) -> Dict[str, Any]:
+    """Unggah LPB — SATU ringkasan untuk pratinjau dan eksekusi (S6-0e butir 4): jumlah baris, total, duplikat di
+    sistem dan DI BERKAS (dulu baris kedua diam-diam menimpa yang pertama), angka/tanggal invalid."""
+    duplicates: List[str] = []
+    in_file: List[str] = []
+    seen: Set[str] = set()
+    for r in rows:
+        no_lpb = s(r.get("no_lpb", ""))
+        if find_lpb_duplicate_key(db, no_lpb):
+            duplicates.append(no_lpb)
+        key = normalize_lpb_no(no_lpb)
+        if key in seen:
+            in_file.append(no_lpb)
+        seen.add(key)
+    return {
+        "rows": len(rows),
+        "total_nilai_win": sum(parse_number_id(r.get("nilai_win", 0)) for r in rows),
+        "total_nilai_invoice": sum(parse_number_id(r.get("nilai_invoice", 0)) for r in rows),
+        "duplicates": duplicates,
+        "duplicates_in_file": in_file,
+        "invalid": invalid,
+    }
+
+
+def parse_lpb_upload_collect(content: bytes) -> Tuple[List[Dict[str, Any]], List[str], List[str]]:
+    """Baca Excel LPB tanpa melempar galat per sel: (baris, galat angka, galat tanggal). Kolom wajib hilang tetap ValueError."""
     df = pd.read_excel(io.BytesIO(content))
     cols = {c.strip().upper(): c for c in df.columns}
     required = ["TGL. SETOR", "NO. LPB", "TGL. WIN", "TGL. J. TEMPO WIN", "PRINCIPLE", "NILAI WIN", "TGL TERIMA BARANG"]
@@ -1515,20 +1561,7 @@ def parse_lpb_upload(content: bytes) -> List[Dict[str, Any]]:
             "nomor_dokumen": s(_row_value(r, cols, "Nomor Dokumen", "NOMOR DOKUMEN")),
             "keterangan": s(_row_value(r, cols, "Keterangan", "KETERANGAN")),
         })
-    if number_errors:
-        extra = len(number_errors) - 5
-        raise ValueError(
-            "Angka tidak valid: " + "; ".join(number_errors[:5]) + (f"; dan {extra} lainnya" if extra > 0 else "")
-            + ". Upload dibatalkan."
-        )
-    if date_errors:
-        shown = "; ".join(date_errors[:5])
-        extra = len(date_errors) - 5
-        suffix = f"; dan {extra} lainnya" if extra > 0 else ""
-        raise ValueError(
-            f"Tanggal tidak valid (harus DD/MM/YYYY): {shown}{suffix}. Upload dibatalkan."
-        )
-    return out
+    return out, number_errors, date_errors
 
 def _col_lookup(cols: Dict[str, Any], *names: str) -> Optional[Any]:
     for name in names:
@@ -1967,6 +2000,13 @@ def wita_now() -> pd.Timestamp:
     """Waktu sekarang di WITA (naif). Server produksi berjalan UTC; tanggal terbit SPPD (nomor, bulan romawi,
     tahun urutan) mengikuti WITA. ponytail: offset tetap UTC+8 — Indonesia tanpa DST."""
     return (pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=8)).tz_localize(None)
+
+
+def is_dry_run(request: Request, payload: Optional[Dict[str, Any]] = None) -> bool:
+    """Pratinjau tanpa tulis (S6-0e): `?dry_run=1|true` atau badan JSON `"dry_run": true`."""
+    if s(request.query_params.get("dry_run", "")).lower() in ("1", "true", "yes"):
+        return True
+    return isinstance(payload, dict) and payload.get("dry_run") is True
 
 
 def server_time_to_wita(value: Any) -> str:

@@ -45,7 +45,10 @@ from shared import (
     normalize_lpb_no,
     normalize_pengajuan_type,
     os,
-    parse_lpb_upload,
+    is_dry_run,
+    lpb_upload_error_message,
+    parse_lpb_upload_collect,
+    plan_lpb_upload,
     parse_number_id,
     parse_number_strict,
     parse_payments_backup_upload,
@@ -225,8 +228,12 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
             allowed_exts=(".xlsx", ".xls"),
             label="File LPB",
         )
+        dry_run = is_dry_run(request)
         preview_df = await asyncio.to_thread(pd.read_excel, io.BytesIO(content), nrows=1)
         preview_cols = {str(c).strip().upper(): c for c in preview_df.columns}
+        if looks_like_payments_backup(preview_cols) and dry_run:
+            # Pratinjau TIDAK PERNAH menulis; cabang restore di bawah menulis.
+            return JSONResponse(status_code=400, content={"ok": False, "error": "Berkas ini backup PAYMENTS, bukan berkas LPB."})
         if looks_like_payments_backup(preview_cols):
             restore_rows = parse_payments_backup_upload(content)
             if not restore_rows:
@@ -245,19 +252,22 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
             append_audit_log(user, "payments_restore_backup", "lpb", {"added": len(restore_rows), "max_sppd_seq": max_seq})
             return JSONResponse({"ok": True, "added": len(restore_rows), "mode": "restore_backup", "message": f"Restore backup berhasil: {len(restore_rows)} record."})
 
-        rows = parse_lpb_upload(content)
-        if not rows:
+        rows, number_errors, date_errors = await asyncio.to_thread(parse_lpb_upload_collect, content)
+        invalid_message = lpb_upload_error_message(number_errors, date_errors)
+        if not rows and not invalid_message:
             return JSONResponse(status_code=400, content={"ok": False, "error": "Data LPB kosong."})
         now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
         async with _PAYMENTS_DB_LOCK:
             db = await asyncio.to_thread(load_payments_db)
-            dups = []
-            for r in rows:
-                no_lpb = s(r.get("no_lpb", ""))
-                if find_lpb_duplicate_key(db, no_lpb):
-                    dups.append(no_lpb)
-            if dups:
-                return JSONResponse(status_code=400, content={"ok": False, "error": f"No. LPB {dups[0]} sudah ada di sistem, gagal upload"})
+            # S6-0e butir 4: pratinjau dan eksekusi memakai ringkasan yang SAMA; satu masalah = tidak ada yang ditulis.
+            report = plan_lpb_upload(db, rows, number_errors + date_errors)
+            error = (invalid_message
+                     or (f"No. LPB {report['duplicates'][0]} sudah ada di sistem, gagal upload" if report["duplicates"] else "")
+                     or (f"No. LPB {report['duplicates_in_file'][0]} ganda di berkas, gagal upload" if report["duplicates_in_file"] else ""))
+            if dry_run:
+                return JSONResponse({"ok": True, "dry_run": True, "can_apply": not error, **report, **({"error": error} if error else {})})
+            if error:
+                return JSONResponse(status_code=400, content={"ok": False, "error": error, **report})
             for r in rows:
                 key = normalize_lpb_no(r["no_lpb"])
                 nilai_invoice = parse_number_id(r.get("nilai_invoice", 0))
@@ -290,7 +300,7 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
                 }
             await asyncio.to_thread(save_payments_db, db)
         append_audit_log(user, "payments_upload", "lpb", {"added": len(rows)})
-        return JSONResponse({"ok": True, "added": len(rows)})
+        return JSONResponse({"ok": True, "dry_run": False, "added": len(rows), **report})
     except ValueError as e:
         return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
     except Exception as e:

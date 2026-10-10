@@ -18,6 +18,7 @@ from shared import (
     format_sppd_number_with_template,
     get_current_user,
     get_sppd_settings,
+    is_dry_run,
     load_payments_db,
     normalize_sppd_settings,
     parse_sppd_excel_rows,
@@ -60,13 +61,19 @@ async def payments_sppd_upload(request: Request, file: UploadFile = File(None)):
             db = load_payments_db()
             # S6-0e: satu jalur untuk pratinjau dan eksekusi; BL-05 baris rekaman terkunci = seluruh unggahan ditolak.
             report = apply_sppd_excel_rows(db, rows)
+            dry_run = is_dry_run(request)
             body = {
                 "ok": True,
+                "dry_run": dry_run,
+                "can_apply": not report["errors"] and not report["locked"] and bool(report["updated"] or report["unchanged"]),
                 **report,
                 "not_found": report["not_found"][:20],
                 "ignored_columns": ignored_columns[:30],
                 "blocked_columns": blocked_columns[:30],
             }
+            if dry_run:
+                # Pratinjau = laporan yang sama dengan eksekusi, tanpa simpan (S6-0e butir 4).
+                return JSONResponse(body)
             if report["errors"]:
                 return JSONResponse(status_code=400, content={**body, "ok": False, "error": report["errors"][0]})
             if report["locked"]:
