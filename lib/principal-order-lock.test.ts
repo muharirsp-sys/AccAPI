@@ -9,12 +9,15 @@
  *   V1. hapus memegang kunci batch duluan -> Validasi menunggu SEBELUM menyentuh baris line; hapus (CASCADE) lolos, Validasi 409.
  *       Kode lama (line dulu, batch belakangan) = siklus: 40P01.
  *   V2. Validasi memegang kunci batch duluan -> DELETE route menunggu, lalu menghapus sesudah Validasi commit; keduanya 200.
+ *   G.  dua Ganti bersamaan untuk berkas sama -> yang kedua menunggu kunci batch lama, lalu INSERT-nya bentrok indeks unik:
+ *       409 `BERKAS_SUDAH_DISIMPAN` (kode lama: 23505 tak tertangani = 500).
  * Penjaga statik urutannya: lib/route-lock-order.test.ts. */
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool, type PoolClient } from "pg";
+import * as XLSX from "xlsx";
 import { invoiceKey } from "./principal-invoice.ts";
 
 const PG_URL = process.env.AM040_DATABASE_URL ?? "";
@@ -48,6 +51,7 @@ after(async () => {
     if (PG_URL) {
         await pool.query("DELETE FROM invoice_outbox_event WHERE order_id = ANY($1)", [kunciDibuat]).catch(() => undefined);
         await pool.query("DELETE FROM invoice_outbox WHERE order_id = ANY($1)", [kunciDibuat]).catch(() => undefined);
+        await pool.query("DELETE FROM principal_mapping WHERE principal = $1", [principal]).catch(() => undefined);
         await pool.query(`DROP SCHEMA IF EXISTS ${SKEMA} CASCADE`);
         const { pool: poolRoute } = await import("./db.ts");
         await poolRoute.end();
@@ -93,9 +97,20 @@ async function penahanBaru() {
     return { client, pid };
 }
 
+/** Berkas Order Detail minimal: satu baris SO, produk P-UJI (mapping dibuat di uji G). */
+function berkasOrderDetail(soNo: string) {
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
+        ["REPORT ORDER DETAIL"],
+        ["SLSMAN_ID", "CUST_ID1", "CUSTOMER", "SO_NO", "SO_DATE", "PRD_ID", "PRD_DESC", "QTY", "PRICE", "GROSS", "NET", "FLAG_BONUS"],
+        ["S-UJI", "C-UJI", "OUTLET UJI", soNo, "2026-10-10", "P-UJI", "BARANG UJI", 2, 1000, 2000, 2000, "N"],
+    ]), "Sheet1");
+    return new Uint8Array(XLSX.write(book, { type: "array", bookType: "xlsx" }));
+}
+
 async function route() {
     const { antrekan } = await import("./invoice-outbox-actions.ts");
-    const { DELETE: hapus } = await import("../app/api/principal-order/route.ts");
+    const { DELETE: hapus, POST: unggah } = await import("../app/api/principal-order/route.ts");
     const { POST: validasi } = await import("../app/api/principal-order/validate/route.ts");
     const { NextRequest } = await import("next/server");
     const req = (path: string, method: string) => new NextRequest(`http://localhost${path}`, { method, headers: { host: "localhost" } });
@@ -103,6 +118,14 @@ async function route() {
         antrekan,
         hapus: (id: string) => hapus(req(`/api/principal-order?id=${id}`, "DELETE")),
         validasi: (id: string) => validasi(req(`/api/principal-order/validate?id=${id}`, "POST")),
+        gantiBerkas: (bytes: Uint8Array) => {
+            const form = new FormData();
+            form.set("file", new File([bytes], "uji.xlsx"));
+            form.set("principal", principal);
+            form.set("apply", "true");
+            form.set("replace", "true");
+            return unggah(new NextRequest("http://localhost/api/principal-order", { method: "POST", body: form, headers: { host: "localhost" } }));
+        },
     };
 }
 
@@ -190,6 +213,40 @@ test("PG BL-21: Validasi vs Hapus bersamaan — tanpa deadlock 40P01 (FK CASCADE
         assert.deepEqual(await jawabHapus.json(), { ok: true, removed: 1 });
         assert.ok(hapusMenunggu, "V2: DELETE tidak menunggu Validasi yang sedang menulis");
         assert.equal(await ada("SELECT 1 FROM principal_order_line WHERE batch_id = $1", batchV2), 0, "V2: baris line tersisa");
+    } finally {
+        await penahan.query("ROLLBACK").catch(() => undefined);
+        penahan.release();
+    }
+});
+
+test("PG BL-21: dua Ganti bersamaan untuk berkas yang sama — yang kedua 409 berkode, bukan 500", { skip: pgSkip }, async () => {
+    const { gantiBerkas } = await route();
+    await pool.query(`INSERT INTO principal_mapping (principal, kind, source_code, target_code, unit, pack_size)
+        VALUES ($1, 'item', 'P-UJI', 'I-UJI', 'PCS', 1)`, [principal]);
+    const bytes = berkasOrderDetail(`SO-G-${tag}`);
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const lama = `bl21-g-lama-${tag}`, baruA = `bl21-g-a-${tag}`;
+    const sisip = (q: { query: PoolClient["query"] } | Pool, id: string) =>
+        q.query(`INSERT INTO principal_order_batch (id, principal, file_name, file_hash) VALUES ($1, $2, 'uji.xlsx', $3)`, [id, principal, hash]);
+    await sisip(pool, lama);
+    const { client: penahan, pid: pidPenahan } = await penahanBaru();
+    try {
+        // Ganti A (penahan) sudah mengunci batch lama, menghapusnya, dan menyisipkan batch baru berkas yang sama — belum commit.
+        await penahan.query("BEGIN");
+        await penahan.query("SELECT id FROM principal_order_batch WHERE id = $1 FOR UPDATE", [lama]);
+        await penahan.query("DELETE FROM principal_order_batch WHERE id = $1", [lama]);
+        await sisip(penahan, baruA);
+        const gantiB = tanpaLempar(gantiBerkas(bytes));
+        const menunggu = await tertahanOleh(pidPenahan, gantiB, 1);
+        await penahan.query("COMMIT");
+        const jawab = await gantiB;
+        assert.ok(!(jawab instanceof Error), `G: Ganti kedua gagal (500): ${kodePg(jawab)}`);
+        const body = await jawab.json();
+        assert.equal(jawab.status, 409, `G: Ganti kedua menjawab ${jawab.status} ${JSON.stringify(body)}`);
+        assert.equal(body.code, "BERKAS_SUDAH_DISIMPAN");
+        assert.ok(menunggu, "G: Ganti kedua tidak menunggu kunci batch lama");
+        const tersisa = await pool.query("SELECT id FROM principal_order_batch WHERE principal = $1 AND file_hash = $2", [principal, hash]);
+        assert.deepEqual(tersisa.rows.map((row) => row.id), [baruA], "G: batch berkas ini bukan satu-satunya milik Ganti pertama");
     } finally {
         await penahan.query("ROLLBACK").catch(() => undefined);
         penahan.release();
