@@ -613,3 +613,23 @@ test("PG (tinjauan S6c c): riwayat = N catatan TERBARU urut lama → baru + terp
         await pool.end();
     }
 });
+
+test("PG (tinjauan S6c b): riwayat event `buang` tanpa salinan payload, isi lain tetap", { skip: pgSkip }, async () => {
+    const pool = new Pool({ connectionString: PG_URL, max: 2 });
+    try {
+        const orderId = `UJI-BUANG-RIWAYAT:${randomUUID()}`;
+        await pool.query((await entriMigrasi("invoice_outbox_event")).sql);
+        await seed(pool, orderId, "rejected", { lastError: '["Stok gudang kurang"]', attempts: 1 });
+        assert.equal((await aksiAntrean(drizzle(pool), { orderId, action: "discard", actor: "petugas@contoh", reason: "angka batch salah" })).status, 200);
+        const [mentah] = await events(pool, orderId);
+        assert.ok((mentah.detail as Record<string, unknown>).payload, "event buang di DB memang menyimpan salinan payload");
+        const { events: riwayat } = await bacaRiwayat(drizzle(pool), orderId);
+        assert.equal(riwayat.length, 1);
+        assert.equal(riwayat[0].jenis, "buang");
+        assert.equal(riwayat[0].reason, "angka batch salah");
+        assert.ok(riwayat[0].detail && !("payload" in riwayat[0].detail), "payload tidak boleh ikut ke layar");
+        assert.equal(riwayat[0].detail?.attempts, 1);
+    } finally {
+        await pool.end();
+    }
+});
