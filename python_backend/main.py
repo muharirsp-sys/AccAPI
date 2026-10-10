@@ -67,7 +67,8 @@ from shared import (
     generate_import_report,
     get_current_user,
     get_or_create_csrf_token,
-    is_dry_run,
+    DRY_RUN_INVALID,
+    dry_run_flag,
     io,
     load_bank_map,
     load_bank_map_with_normalized_keys,
@@ -333,13 +334,15 @@ async def replace_principle_name(request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "error": "new_name wajib diisi."})
     if old_name == new_name:
         return JSONResponse(status_code=400, content={"ok": False, "error": "old_name dan new_name tidak boleh sama."})
+    dry_run = dry_run_flag(request, payload)
+    if dry_run is None:
+        return JSONResponse(status_code=400, content={"ok": False, "error": DRY_RUN_INVALID})
 
     # AM-012: satu lock untuk semua penulis ledger (salinan per request -> tanpa lock = lost update).
     async with _PAYMENTS_DB_LOCK:
         db = load_payments_db()
         # BL-05 (S6-0e): rekaman yang sudah ditransfer/terposting DILEWATI dan dihitung (it08: "tidak diubah: N").
         report, to_change = plan_principle_rename(db, old_name, new_name)
-        dry_run = is_dry_run(request, payload)
         if dry_run:
             # Pratinjau (S6-0e butir 4): laporan yang sama dengan eksekusi, tanpa simpan.
             return {"ok": True, "dry_run": True, **report, "old_name": old_name, "new_name": new_name,

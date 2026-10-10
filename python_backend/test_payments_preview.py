@@ -153,11 +153,35 @@ def check_rename():
     assert json.loads(raw())["lpb"]["LPB-OLD"]["principle"] == "PT ABC BARU"
 
 
+def check_dry_run_values():
+    """Putaran 2 butir 5: nilai dry_run tak dikenal dulu dibaca "bukan pratinjau" lalu MENULIS (gagal-terbuka).
+    Kini hanya 1/true (pratinjau) dan 0/false (eksekusi) yang diterima; lainnya 400 tanpa tulis."""
+    good = [lpb_row("LPB-V1", 10)]
+    for qs in ("?dry_run=on", "?dry_run=yes", "?dry_run=2"):
+        before = seed()
+        r = client.post(f"/payments/upload{qs}", files=xlsx(good))
+        assert r.status_code == 400 and raw() == before, f"upload {qs}: {r.status_code} {r.text[:160]}"
+        r = client.post(f"/payments/sppd/upload{qs}", files=xlsx([{"Record ID": "LPB-OLD", "Keterangan": "x"}]))
+        assert r.status_code == 400 and raw() == before, f"sppd/upload {qs}: {r.status_code} {r.text[:160]}"
+    for body_flag in ("on", "ya", 2, None):
+        before = seed()
+        r = client.post("/api/bank-data/replace-principle-name", json={"old_name": "PT ABC", "new_name": "PT X", "dry_run": body_flag})
+        assert r.status_code == 400 and raw() == before, f"replace dry_run={body_flag!r}: {r.status_code} {r.text[:160]}"
+    before = seed()
+    for qs, flag in (("?dry_run=1", None), ("?dry_run=TRUE", None), ("", True), ("", 1), ("", "true"), ("", "1")):
+        body = {"old_name": "PT ABC", "new_name": "PT X", **({"dry_run": flag} if flag is not None else {})}
+        r = client.post(f"/api/bank-data/replace-principle-name{qs}", json=body)
+        assert r.status_code == 200 and r.json()["dry_run"] is True and raw() == before, (qs, flag, r.text[:160])
+    r = client.post("/api/bank-data/replace-principle-name?dry_run=0", json={"old_name": "PT ABC", "new_name": "PT X"})
+    assert r.status_code == 200 and r.json()["dry_run"] is False, r.text[:160]
+
+
 def main_check():
     check_lpb()
     check_lpb_key_collision()
     check_sppd_excel()
     check_rename()
+    check_dry_run_values()
     print("OK test_payments_preview")
 
 

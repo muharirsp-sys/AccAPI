@@ -2036,11 +2036,29 @@ def wita_now() -> pd.Timestamp:
     return (pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=8)).tz_localize(None)
 
 
-def is_dry_run(request: Request, payload: Optional[Dict[str, Any]] = None) -> bool:
-    """Pratinjau tanpa tulis (S6-0e): `?dry_run=1|true` atau badan JSON `"dry_run": true`."""
-    if s(request.query_params.get("dry_run", "")).lower() in ("1", "true", "yes"):
-        return True
-    return isinstance(payload, dict) and payload.get("dry_run") is True
+DRY_RUN_INVALID = "Nilai dry_run tidak dikenal: pakai 1/true (pratinjau) atau 0/false (terapkan). Tidak ada yang diubah."
+_DRY_RUN_VALUES = {"1": True, "true": True, "0": False, "false": False}
+
+
+def dry_run_flag(request: Request, payload: Optional[Dict[str, Any]] = None) -> Optional[bool]:
+    """Pratinjau tanpa tulis (S6-0e): `?dry_run=` dan/atau badan JSON `"dry_run"`. GAGAL-TERTUTUP (putaran 2 butir 5):
+    hanya 1/true (pratinjau) dan 0/false (terapkan) dikenal — nilai lain = None -> pemanggil menjawab 400, BUKAN
+    dianggap "bukan pratinjau" lalu menulis. Tidak ada keduanya = False (terapkan, perilaku lama)."""
+    found: List[bool] = []
+    if "dry_run" in request.query_params:
+        flag = _DRY_RUN_VALUES.get(s(request.query_params.get("dry_run", "")).lower())
+        if flag is None:
+            return None
+        found.append(flag)
+    if isinstance(payload, dict) and "dry_run" in payload:
+        raw = payload.get("dry_run")
+        flag = raw if isinstance(raw, bool) else (_DRY_RUN_VALUES.get(str(raw).strip().lower()) if isinstance(raw, (int, str)) else None)
+        if flag is None:
+            return None
+        found.append(flag)
+    if len(set(found)) > 1:
+        return None  # query dan badan bertentangan
+    return found[0] if found else False
 
 
 def server_time_to_wita(value: Any) -> str:

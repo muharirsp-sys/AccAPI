@@ -86,6 +86,10 @@ def main_check():
     assert r.status_code == 403 and raw() == before, f"restore tanpa CSRF: {r.status_code}"
     CSRF_OK[0] = True
 
+    # Putaran 2 butir 5: nilai dry_run tak dikenal = 400 tanpa tulis (dulu dianggap eksekusi).
+    r = client.post("/payments/sppd/restore-backup?dry_run=on", files=files)
+    assert r.status_code == 400 and raw() == before, f"restore dry_run=on: {r.status_code} {r.text[:160]}"
+
     # 3) Pratinjau ringkas tanpa tulis = hasil eksekusi.
     pre = client.post("/payments/sppd/restore-backup?dry_run=1", files=files)
     assert pre.status_code == 200 and raw() == before, pre.text[:300]

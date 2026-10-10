@@ -45,7 +45,8 @@ from shared import (
     normalize_lpb_no,
     normalize_pengajuan_type,
     os,
-    is_dry_run,
+    DRY_RUN_INVALID,
+    dry_run_flag,
     lpb_upload_error_message,
     parse_lpb_upload_collect,
     plan_lpb_upload,
@@ -219,6 +220,9 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
     if file is None:
         return JSONResponse(status_code=400, content={"ok": False, "error": "File belum diupload."})
+    dry_run = dry_run_flag(request)
+    if dry_run is None:
+        return JSONResponse(status_code=400, content={"ok": False, "error": DRY_RUN_INVALID})
     try:
         content = await read_upload_file_limited(
             file,
@@ -226,7 +230,6 @@ async def payments_upload(request: Request, file: UploadFile = File(None)):
             allowed_exts=(".xlsx", ".xls"),
             label="File LPB",
         )
-        dry_run = is_dry_run(request)
         preview_df = await asyncio.to_thread(pd.read_excel, io.BytesIO(content), nrows=1)
         preview_cols = {str(c).strip().upper(): c for c in preview_df.columns}
         if looks_like_payments_backup(preview_cols):

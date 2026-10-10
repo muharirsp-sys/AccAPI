@@ -9,7 +9,9 @@ FastAPI = `NEXT_PUBLIC_FASTAPI_BASE_URL` (port 8000, cookie sesi + `X-CSRF-Token
   backend: 401 `"Unauthorized"`, 403 `"Forbidden"` / `"CSRF token invalid"` — UI memetakan **menurut kode status**, bukan teks.
 - **Tanggal**: tanggal bisnis `YYYY-MM-DD`; jejak waktu yang ditampilkan berakhiran `_wita`/`Wita` atau ditandai "(WITA)"
   = `YYYY-MM-DD HH:MM:SS` UTC+8. Field mentah tanpa akhiran = jam server (produksi UTC) — jangan ditampilkan langsung.
-- **Pratinjau**: `?dry_run=1` (atau badan JSON `"dry_run": true` untuk endpoint JSON). Pratinjau **tidak pernah menulis**,
+- **Pratinjau**: `?dry_run=1|true` (atau badan JSON `"dry_run": true|1|"1"|"true"`); `0|false` = terapkan; **nilai lain
+  (mis. `on`, `yes`, `null`) = 400 `{ok:false, error:"Nilai dry_run tidak dikenal: …"}` tanpa tulis** (gagal-tertutup);
+  query dan badan bertentangan = 400. Pratinjau **tidak pernah menulis**,
   memakai kode yang sama dengan eksekusi, dan menjawab `200 {ok:true, dry_run:true, can_apply, ...laporan}` walau ada
   masalah (masalah = `can_apply:false` + `error`). Eksekusi pada data yang sama menghasilkan laporan yang sama.
 - **Kunci BL-05/BL-49** (`shared.payment_lock_reason`): rekaman **terkunci** bila `status_pembayaran = "Sudah Transfer"` ATAU

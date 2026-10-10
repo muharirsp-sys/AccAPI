@@ -24,7 +24,8 @@ from shared import (
     plan_backup_restore,
     raise_sppd_sequence_from_records,
     rebuild_payment_submissions,
-    is_dry_run,
+    DRY_RUN_INVALID,
+    dry_run_flag,
     load_payments_db,
     normalize_sppd_settings,
     parse_sppd_excel_rows,
@@ -52,6 +53,9 @@ async def payments_sppd_upload(request: Request, file: UploadFile = File(None)):
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
     if file is None:
         return JSONResponse(status_code=400, content={"ok": False, "error": "File Excel belum diupload."})
+    dry_run = dry_run_flag(request)
+    if dry_run is None:
+        return JSONResponse(status_code=400, content={"ok": False, "error": DRY_RUN_INVALID})
     try:
         content = await read_upload_file_limited(
             file,
@@ -67,7 +71,6 @@ async def payments_sppd_upload(request: Request, file: UploadFile = File(None)):
             db = load_payments_db()
             # S6-0e: satu jalur untuk pratinjau dan eksekusi; BL-05 baris rekaman terkunci = seluruh unggahan ditolak.
             report = apply_sppd_excel_rows(db, rows)
-            dry_run = is_dry_run(request)
             body = {
                 "ok": True,
                 "dry_run": dry_run,
@@ -218,6 +221,9 @@ async def payments_sppd_restore_backup(request: Request, file: UploadFile = File
         return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
     if file is None:
         return JSONResponse(status_code=400, content={"ok": False, "error": "File backup belum diupload."})
+    dry_run = dry_run_flag(request)
+    if dry_run is None:
+        return JSONResponse(status_code=400, content={"ok": False, "error": DRY_RUN_INVALID})
     try:
         content = await read_upload_file_limited(file, max_bytes=MAX_EXCEL_UPLOAD_BYTES, allowed_exts=(".xlsx", ".xls"), label="File backup")
         head = pd.read_excel(io.BytesIO(content), nrows=1)
@@ -226,7 +232,6 @@ async def payments_sppd_restore_backup(request: Request, file: UploadFile = File
         rows = parse_payments_backup_upload(content)
         if not rows:
             return JSONResponse(status_code=400, content={"ok": False, "error": "Data backup PAYMENTS kosong."})
-        dry_run = is_dry_run(request)
         now = wita_now()
         async with _PAYMENTS_DB_LOCK:
             db = load_payments_db()
