@@ -257,6 +257,11 @@ def check_resolve_parity():
         r = upd(**bad)
         assert r.status_code == 403, f"resolve-only melakukan update umum: {bad} -> {r.status_code} {r.text[:200]}"
     assert open(shared.PAYMENTS_DB_PATH, encoding="utf-8").read() == before
+    # Tinjauan B (d): guard AWAL (bentuk permintaan) menolak status selain "Sudah Transfer" sebagai 403 izin — tanpa
+    # guard itu permintaan ini jatuh ke BL-49 (409): tetap tidak menulis, tetapi kodenya bukan penolakan izin.
+    r = upd(no_lpb="UNK", status_pembayaran="Ajukan Ulang", accurate_post_status="failed", resolution_note=note)
+    assert r.status_code == 403 and "finance.update" in r.text, f"guard status resolve-only: {r.status_code} {r.text[:160]}"
+    assert open(shared.PAYMENTS_DB_PATH, encoding="utf-8").read() == before
     # Penyelesaian sah: posted + nomor + catatan; tanggal/bukti transfer dari permintaan TIDAK dipakai.
     r = upd(no_lpb="UNK", status_pembayaran="Sudah Transfer", transfer_date="2030-01-01", proof_id="p2",
             accurate_post_status="posted", accurate_purchase_payment_number="PP/1009/3", resolution_note=note)
