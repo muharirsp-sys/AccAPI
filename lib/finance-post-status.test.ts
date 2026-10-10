@@ -2,7 +2,7 @@
  * dan "pasti belum terkirim" (gagal sebelum klaim). */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { certainlyNotSent, postStatusNote, purchasePaymentConflict } from "./finance-post-status.ts";
+import { certainlyNotSent, conflictNotSent, postStatusNote, purchasePaymentConflict } from "./finance-post-status.ts";
 
 test("C11 tampilan: 'Accurate menolak' dibedakan dari tanpa jawaban & status lama 'gagal' yang ambigu", () => {
     assert.equal(postStatusNote("unknown", 'Accurate menolak (HTTP 200), belum terbukti tidak tersimpan: ["Vendor tidak ditemukan","Bank kosong"]'),
@@ -36,4 +36,15 @@ test("gagal sebelum klaim = pasti belum terkirim (record tidak dikunci); 5xx tan
     assert.equal(certainlyNotSent(500, { error: "x" }), false);
     assert.equal(certainlyNotSent(502, null), false);
     assert.equal(certainlyNotSent(409, { live: null }), false);
+});
+
+test("Putaran 2 A: 409 pasti tidak terkirim HANYA bila claimed:false + kode yang terdaftar; 409 lain = tidak pasti (bukan failed)", () => {
+    assert.equal(conflictNotSent(409, { code: "database_changed", claimed: false, live: null }), true);
+    assert.equal(conflictNotSent(409, { code: "reopened_use_repost", claimed: false, live: null }), true, "subjek dibuka ulang: tanpa klaim/kiriman");
+    assert.equal(conflictNotSent(409, { code: "reopened_use_repost", live: null }), false, "server lama tanpa claimed:false");
+    assert.equal(conflictNotSent(409, { code: "attempt_conflict", claimed: false, live: null }), false, "kode 409 lain kelak");
+    assert.equal(conflictNotSent(409, { claimed: false, live: null }), false, "tanpa kode");
+    assert.equal(conflictNotSent(409, { code: "database_changed", live: null }), false, "tanpa claimed:false");
+    assert.equal(conflictNotSent(400, { code: "database_changed", claimed: false }), false, "bukan 409");
+    assert.equal(conflictNotSent(409, null), false);
 });

@@ -1,7 +1,7 @@
 /**
  * Tujuan: keputusan murni layar Finance untuk posting purchase-payment (tinjauan S6-0a): teks status C11, tab yang
  *   kalah klaim, dan "pasti belum terkirim". Aman untuk klien (tanpa DB/crypto).
- * Caller: app/(dashboard)/finance/page.tsx.
+ * Caller: app/(dashboard)/finance/posting.ts, lib/finance-ui.ts.
  * Side Effects: tidak ada.
  */
 
@@ -57,4 +57,15 @@ export function purchasePaymentConflict(out: Conflict): "posted" | "in_flight" |
 export function certainlyNotSent(status: number, out: { claimed?: unknown; error?: unknown; live?: unknown } | null | undefined): boolean {
     if (out?.claimed === false) return true;
     return status >= 400 && status < 500 && status !== 409;
+}
+
+/**
+ * Kode 409 command yang DIJAMIN ditolak sebelum klaim attempt (tidak ada yang dikirim ke Accurate). Daftar eksplisit: 409 lain
+ * (konflik attempt, kode baru kelak) = tidak pasti — meski membawa claimed:false (tinjauan putaran 2 A).
+ */
+const KODE_409_TIDAK_TERKIRIM = new Set(["database_changed", "reopened_use_repost"]);
+
+/** 409 yang pasti belum terkirim: claimed:false DAN kode terdaftar di KODE_409_TIDAK_TERKIRIM. */
+export function conflictNotSent(status: number, out: { claimed?: unknown; code?: unknown } | null | undefined): boolean {
+    return status === 409 && out?.claimed === false && KODE_409_TIDAK_TERKIRIM.has(String(out.code ?? ""));
 }
