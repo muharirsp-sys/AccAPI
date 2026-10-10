@@ -3,7 +3,7 @@
  * dikirim ulang. Prompt alasan override hanya bila override benar-benar dipakai. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isLockRequired, isNotSent, overrideKeysNeeded, salesReceiptRowReports } from "./sales-receipt-upload.ts";
+import { overrideKeysNeeded, salesReceiptRowReports } from "./sales-receipt-upload.ts";
 
 test("jawaban array: s:false per baris dilaporkan 'Jawaban Accurate … tidak pasti' (C11: bukan ditolak), bukan berhasil", () => {
     const r = salesReceiptRowReports(2, [{ s: true, r: { number: "PR-1" } }, { s: false, d: ["Nilai pelunasan melebihi nilai piutang \"INV-2\""] }]);
@@ -27,21 +27,11 @@ test("amplop s:true dengan baris s:false, amplop s:false menyeluruh, tanpa jawab
     assert.match(proxyErr[0].message, /^Tanpa jawaban Accurate \(Accurate tidak merespons dalam 30 detik\)/, "galat proxy bukan jawaban Accurate");
 });
 
-test("409 SALES_RECEIPT_LOCK_REQUIRED dari proxy dikenali", () => {
-    assert.equal(isLockRequired({ rawErrorObject: { error: "x", code: "SALES_RECEIPT_LOCK_REQUIRED" } }), true);
-    assert.equal(isLockRequired({ rawErrorObject: { s: false, d: ["x"] } }), false);
-    assert.equal(isLockRequired(new Error("x")), false);
-});
-
 test("override hanya bila dipakai: baris pertama duplikat-dalam-unggahan (pilihan bawaan) tidak butuh alasan", () => {
-    assert.deepEqual(overrideKeysNeeded(["A", "B"], ["A"], []), { allowDuplicateKeys: [], allowLockedKeys: [] });
-    assert.deepEqual(overrideKeysNeeded(["A", "B", "A"], ["A"], []), { allowDuplicateKeys: ["A"], allowLockedKeys: [] });
-    assert.deepEqual(overrideKeysNeeded(["S"], [], ["S"]), { allowDuplicateKeys: [], allowLockedKeys: ["S"] }, "blok server selalu butuh override");
+    assert.deepEqual(overrideKeysNeeded(["A", "B"], ["A"], []), { allowDuplicateKeys: [], allowLockedKeys: [], allowHistoryKeys: [] });
+    assert.deepEqual(overrideKeysNeeded(["A", "B", "A"], ["A"], []), { allowDuplicateKeys: ["A"], allowLockedKeys: [], allowHistoryKeys: [] });
+    assert.deepEqual(overrideKeysNeeded(["S"], [], ["S"]), { allowDuplicateKeys: [], allowLockedKeys: ["S"], allowHistoryKeys: [] }, "blok server selalu butuh override");
+    // S6e-2: baris mirip riwayat yang dipilih -> satu override riwayat per baris final (dua salinan = dua).
+    assert.deepEqual(overrideKeysNeeded(["H", "B", "H"], ["H"], [], ["H"]).allowHistoryKeys, ["H", "H"]);
 });
 
-test("S6e-2 butir 4: jawaban proxy sent:false (sesi belum lengkap dsb.) = tidak terkirim; galat lain bukan", () => {
-    assert.equal(isNotSent({ rawErrorObject: { error: "Sesi Accurate belum lengkap", code: "ACCURATE_SESSION_INCOMPLETE", sent: false } }), true);
-    assert.equal(isNotSent({ rawErrorObject: { error: "timeout" } }), false);
-    assert.equal(isNotSent({ rawErrorObject: { s: false, d: ["x"] } }), false);
-    assert.equal(isNotSent(new Error("x")), false);
-});

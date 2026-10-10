@@ -3,7 +3,8 @@
  *   SERVER dari jawaban Accurate (lib/sales-receipt-guard.ts, classifySalesReceiptReply); halaman hanya melaporkan.
  *   Penolakan Accurate = status TIDAK PASTI (C11, owner 8 Okt 2026) — bukan "berhasil terposting", bukan gagal yang
  *   boleh dikirim ulang otomatis.
- * Caller: app/(dashboard)/api-wrapper/page.tsx (executeBulkPayload, handleConfirmDuplicateReview).
+ * Caller: lib/pelunasan/kirim.ts (kirimPelunasan), app/(dashboard)/api-wrapper/page.tsx (handleConfirmDuplicateReview),
+ *   app/api/proxy & app/api/idempotency/lock (memuatPlaceholderAkun).
  * Side Effects: tidak ada (murni).
  */
 import { classifySalesReceiptReply } from "@/lib/idempotency-lock";
@@ -39,24 +40,18 @@ export function salesReceiptRowReports(n: number, data: unknown, noAnswer = ""):
 export const PLACEHOLDER_AKUN = "ISI_KODE_AKUN_";
 export const memuatPlaceholderAkun = (v: unknown) => JSON.stringify(v ?? null).includes(PLACEHOLDER_AKUN);
 
-/** S6e-2 butir 4: proxy menjamin TIDAK ADA yang diteruskan ke Accurate (`sent:false`: sesi belum lengkap, database berubah,
- * tanpa izin, riwayat mirip ditahan, placeholder akun) — baris boleh dilaporkan FAILED, bukan tidak pasti. */
-export const isNotSent = (err: unknown) => (err as { rawErrorObject?: { sent?: unknown } } | null)?.rawErrorObject?.sent === false;
-
-/** Proxy menolak tulis sales-receipt SEBELUM dikirim (lock/override tidak mencakup baris) — 409 berkode. */
-export const isLockRequired = (err: unknown) =>
-    (err as { rawErrorObject?: { code?: unknown } } | null)?.rawErrorObject?.code === "SALES_RECEIPT_LOCK_REQUIRED";
-
 /**
  * Override yang BENAR-BENAR dipakai server (decideLock): duplikat-dalam-unggahan hanya bila key itu muncul ≥ 2 kali
  * di baris final; blok server (SUCCESS/PROCESSING/UNKNOWN) selalu. Pilihan bawaan (baris pertama duplikat) tidak
  * butuh alasan override.
  */
-export function overrideKeysNeeded(finalKeys: string[], duplicateCandidates: string[], lockedKeys: string[]) {
+export function overrideKeysNeeded(finalKeys: string[], duplicateCandidates: string[], lockedKeys: string[], historyKeys: string[] = []) {
     const count = new Map<string, number>();
     for (const k of finalKeys) count.set(k, (count.get(k) ?? 0) + 1);
     return {
         allowDuplicateKeys: [...new Set(duplicateCandidates)].filter((k) => (count.get(k) ?? 0) > 1),
         allowLockedKeys: [...new Set(lockedKeys)],
+        // S6e-2 (owner #6): satu override riwayat per baris FINAL yang memakai kunci itu (proxy menahan tiap baris paket).
+        allowHistoryKeys: finalKeys.filter((k) => historyKeys.includes(k)),
     };
 }
