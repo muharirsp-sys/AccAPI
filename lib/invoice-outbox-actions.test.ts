@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { aksiAntrean, antrekan, selesaikanTidakPasti, type Pencari } from "./invoice-outbox-actions.ts";
+import { aksiAntrean, antrekan, cariTidakPasti, sekaliJalan, selesaikanTidakPasti, sesiCariSah, type Pencari } from "./invoice-outbox-actions.ts";
 import type { HasilCari } from "./invoice-search.ts";
 
 const DIBUAT = new Date("2026-10-08T02:00:00Z");
@@ -199,4 +199,61 @@ test("A-SEDANG: Tetapkan tidak terposting ditolak < 15 menit sejak kirim terakhi
     // Terposting tidak menunggu: faktur yang DITEMUKAN menutup kirim ulang, tidak membukanya.
     const { db } = dbTiruan([BARIS_TIDAK_PASTI, [{ first: null }]]);
     assert.equal((await selesaikanTidakPasti(db, { orderId: "KINO:SO-1", keputusan: "terposting", alasan: ALASAN, actor: "p", cari: pencari(KETEMU).cari, targetDb: "DB-1" })).status, 200);
+});
+
+// ---------------------------------------------------------------- S6c dialog Selesaikan: hasil pencarian SEBELUM keputusan
+const PAYLOAD = { taxable: true, inclusiveTax: false, detailItem: [{ quantity: 2, unitPrice: 50000, itemDiscPercent: "", itemCashDiscount: 0 }] };
+
+test("cariTidakPasti (S6c): hasil pencarian + salinan lokal + nilai dikirim + masa tunggu; BACA SAJA (tanpa penyapu/tulis)", async () => {
+    const { db, tulis } = dbTiruan([[{ ...BARIS_TIDAK_PASTI[0], payload: PAYLOAD }], [{ menit: 3.2 }], [{ first: null }], [{ transDate: "08/10/2026", totalAmount: 111000 }]]);
+    (db as unknown as { execute: () => never }).execute = () => { throw new Error("penyapu tidak boleh jalan di GET"); };
+    const { cari, calls } = pencari(KETEMU);
+    const hasil = await cariTidakPasti(db, { orderId: "KINO:SO-1", cari });
+    assert.equal(hasil.status, 200);
+    assert.deepEqual(calls, [{ orderId: "KINO:SO-1", customerNo: "C-1-KN", queuedAt: DIBUAT }]);
+    assert.deepEqual(hasil.body.pencarian, { hasil: "ketemu", sumber: "accurate", cocok: "charField1", id: "331710", number: "INV/2610/KN00001", semua: KETEMU.hasil === "ketemu" ? KETEMU.semua : [] });
+    assert.deepEqual(hasil.body.faktur, { tanggal: "08/10/2026", total: 111000 });
+    assert.deepEqual(hasil.body.dikirim, { dpp: 100000, ppn: 11000, total: 111000 });
+    assert.equal(hasil.body.sisaMenit, 12);
+    assert.equal(tulis.length, 0);
+
+    const tidak = dbTiruan([[{ ...BARIS_TIDAK_PASTI[0], payload: {} }], [{ menit: null }], [{ first: null }]]);
+    const b = await cariTidakPasti(tidak.db, { orderId: "KINO:SO-1", cari: pencari(TIDAK).cari });
+    assert.deepEqual([b.status, b.body.sisaMenit, b.body.faktur, b.body.dikirim], [200, 0, null, null]);
+    assert.equal((b.body.pencarian as { hasil: string }).hasil, "tidak_ketemu_dicek");
+});
+
+test("cariTidakPasti (S6c): hanya baris TIDAK PASTI — status lain 409 tanpa pencarian", async () => {
+    for (const state of ["rejected", "posted", "queued", "sending"]) {
+        const { db, tulis } = dbTiruan([[{ state, customerNo: "C", createdAt: DIBUAT, payload: PAYLOAD }]]);
+        const { cari, calls } = pencari(KETEMU);
+        const hasil = await cariTidakPasti(db, { orderId: "K", cari });
+        assert.equal(hasil.status, 409, state);
+        assert.equal(calls.length, 0);
+        assert.equal(tulis.length, 0);
+    }
+});
+
+test("sesiCariSah (tinjauan S6c a): sesi dipakai hanya pada database faktur yang TERISI — env kosong tidak lolos", () => {
+    const sesi = { accessToken: "t", sessionHost: "https://zeus.accurate.id", sessionId: "s", databaseId: "" };
+    assert.equal(sesiCariSah(sesi, "").session, null, "ACCURATE_INVOICE_DB_ID kosong + sesi tanpa database = jangan cari di pembukuan sembarang");
+    assert.match(sesiCariSah(sesi, "").catatan, /kosong/);
+    assert.equal(sesiCariSah({ ...sesi, databaseId: "1001" }, "2002").session, null);
+    assert.equal(sesiCariSah({ ...sesi, databaseId: "1001", sessionHost: "https://contoh.example" }, "1001").session, null);
+    assert.deepEqual(sesiCariSah({ ...sesi, databaseId: 1001 }, "1001"), { session: { sessionHost: "https://zeus.accurate.id", sessionId: "s", accessToken: "t" }, catatan: "" });
+});
+
+test("sekaliJalan (tinjauan S6c d): pencarian yang sedang berjalan untuk kunci sama dipakai bersama; selesai = boleh lagi", async () => {
+    let n = 0;
+    let lepas: () => void = () => {};
+    const fn = () => { n += 1; return new Promise<{ status: number; body: Record<string, unknown> }>((ok) => { lepas = () => ok({ status: 200, body: { n } }); }); };
+    const a = sekaliJalan("u1:K", fn);
+    const b = sekaliJalan("u1:K", fn);
+    assert.equal(n, 1, "panggilan kedua menunggu yang pertama");
+    lepas();
+    assert.deepEqual(await a, await b);
+    await sekaliJalan("u1:K", async () => { n += 1; return { status: 200, body: {} }; });
+    assert.equal(n, 2, "setelah selesai, pencarian berikutnya berjalan lagi");
+    await sekaliJalan("u2:K", async () => { n += 1; return { status: 200, body: {} }; });
+    assert.equal(n, 3, "penekan lain = pencarian sendiri");
 });

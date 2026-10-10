@@ -1,0 +1,644 @@
+/*
+ * Tujuan: Fiori S6c Antrean Faktur (it02) — worklist (kartu = saringan, jawaban Accurate terbaca, galat ≠ kosong, kosong, ponsel 390 px),
+ *   dialog Kirim BL-39 (pratinjau server; yang dikirim = orderIds HASIL PRATINJAU; hasil per baris termasuk dilewati; sesi tidak cocok =
+ *   nonaktif berlasan; 502 HTML = "belum pasti" + muat ulang + kunci), Selesaikan tidak pasti (hasil pencarian DULU, ketemu/tidak ketemu/
+ *   gagal, 409 masa tunggu = sisa menit, tanpa izin = nonaktif berlasan), Antre ulang (hasil pencarian server), Buang (alasan wajib),
+ *   Riwayat (BL-17), dan Verifikasi balik (selisih terbuka terlihat, Terima sales/Cabut, draf, galat terpisah). Tanpa dialog native.
+ * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin):
+ *   `npx playwright test tests/fiori-antrean-faktur.spec.ts --config playwright.fiori-local.config.ts --workers=1`.
+ * Dependensi: /api/invoice-outbox/**, /api/invoice-verify di-mock dengan page.route (tidak menyentuh DB/Accurate).
+ * Side Effects: Tangkapan di test-results/.
+ */
+import { expect, test, type Page, type Route } from "@playwright/test";
+
+const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
+const NAV = { timeout: 60_000 } as const;
+const menitLalu = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
+const HARI_INI = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date());
+
+type Over = Record<string, unknown>;
+const row = (orderId: string, state: string, over: Over = {}) => ({
+    orderId, soNo: orderId.includes(":") ? orderId.split(":")[1] : null, source: "laporan principal", customerNo: "C-A-001", outlet: "TOKO A",
+    salesman: "SALES A", orderDate: "2026-10-09", state, attempts: 0, lastError: "", accurateNumber: "", queuedBy: "admin@contoh",
+    createdAt: menitLalu(30), updatedAt: menitLalu(30), ageMinutes: 30, overdue: false, ...over,
+});
+const ROWS = [
+    row("PRINCIPLE-A:SO-A-001", "queued", { ageMinutes: 134, overdue: true }),
+    row("PRINCIPLE-A:SO-A-002", "queued", { outlet: "TOKO B", customerNo: "C-A-002", ageMinutes: 25 }),
+    row("PRINCIPLE-B:SO-B-001", "sending", { attempts: 1, updatedAt: menitLalu(20) }),
+    row("PRINCIPLE-A:SO-A-003", "unknown", { attempts: 1, updatedAt: menitLalu(40), lastError: "HTTP 401 (belum terbukti tidak diproses): {\"s\":false}" }),
+    row("PRINCIPLE-B:SO-B-002", "rejected", { attempts: 2, overdue: true, ageMinutes: 151, customerNo: "C-B-009", outlet: "TOKO C", lastError: "[\"Pelanggan C-B-009 tidak ditemukan\"]" }),
+];
+const BATCH = { id: "b1", fileName: "ORDER_PRINCIPLE_A_PAGI.xlsx", principal: "PRINCIPLE A", uploadedAt: menitLalu(150), uploadedBy: "admin@contoh", reviewCount: 6, lineCount: 214, ageMinutes: 150, overdue: true };
+const antrean = (rows: unknown[], over: Over = {}) => ({
+    ok: true, escalateAfterMinutes: 120, summary: { queued: 2, sending: 1, unknown: 1, rejected: 1, posted: 591 },
+    overdue: 3, overdueQueue: 2, overdueBatches: 1, reviewLinesOverdue: 6, pendingBatches: [BATCH], rows, ...over,
+});
+const order = (orderId: string, total: number) => ({ orderId, soNo: orderId.split(":")[1], principal: orderId.split(":")[0], customerNo: "C-A-001",
+    orderDate: "2026-10-09", transDate: "09/10/2026", lines: 2, dpp: total / 1.11, ppn: total - total / 1.11, total });
+const PRATINJAU = (over: Over = {}) => ({
+    ok: true, database: { tujuan: "1001", label: "x", sesiPenekan: { id: "1001", alias: "DB CABANG A" }, cocok: true },
+    maksPerTekan: 50, jumlah: 2, antreanMenunggu: 2, tanggalFaktur: null, nilaiPerkiraan: "x",
+    perPrincipal: [{ principal: "PRINCIPLE-A", jumlah: 2, dpp: 200000, ppn: 22000, total: 222000 }],
+    total: { dpp: 200000, ppn: 22000, total: 222000 },
+    orders: [order("PRINCIPLE-A:SO-A-001", 111000), order("PRINCIPLE-A:SO-A-002", 111000)], ...over,
+});
+const temuan = (jenis: "sales" | "isi" | null, field: string, expected: string, actual: string) => ({ line: jenis === "isi" ? 3 : null, field, expected, actual, jenis, dijelaskan: false });
+const VERIF = {
+    ok: true, checked: 2, summary: { cocok: 1, selisih: 1, dijelaskan: 0, "tak-terperiksa": 0 }, rows: [
+        { orderId: "PRINCIPLE-A:SO-A-009", soNo: "SO-A-009", state: "posted", customerNo: "C-A-001", matchedBy: "charField1", foundWhileUnknown: false,
+            status: "selisih", reason: "", invoiceNumber: "INV/A/0009", linesChecked: 4, salesman: "SALES B", invoiceDate: "09/10/2026", terbuka: 2,
+            findings: [temuan("sales", "sales", "SALES A", "SALES B"), temuan("isi", "qty", "24", "20")], sidik: { sales: "[\"s\"]", isi: "[\"i\"]" }, penjelasan: {} },
+        { orderId: "PRINCIPLE-A:SO-A-008", soNo: "SO-A-008", state: "posted", customerNo: "C-A-001", matchedBy: "charField1", foundWhileUnknown: false,
+            status: "cocok", reason: "", invoiceNumber: "INV/A/0008", linesChecked: 3, salesman: "SALES A", invoiceDate: "09/10/2026", terbuka: 0,
+            findings: [], sidik: { sales: "[]", isi: "[]" }, penjelasan: {} },
+    ],
+};
+
+type Tulis = { method: string; path: string; query: string; body: Record<string, unknown> | null };
+type Jawab = (route: Route, body: Record<string, unknown> | null) => unknown;
+type Opsi = {
+    list?: Jawab; preview?: Jawab; send?: Jawab; aksi?: Jawab; cari?: Jawab; selesai?: Jawab; riwayat?: Jawab; verif?: Jawab;
+};
+
+/** Semua /api/invoice-outbox/** dan /api/invoice-verify dimock; `opsi` dibaca tiap permintaan (bisa diganti di tengah tes). */
+async function mock(page: Page, opsi: Opsi) {
+    const log: Tulis[] = [];
+    await page.route((u) => u.pathname.startsWith("/api/invoice-outbox") || u.pathname === "/api/invoice-verify", async (route) => {
+        const req = route.request();
+        const url = new URL(req.url());
+        const body = req.postData() ? (req.postDataJSON() as Record<string, unknown>) : null;
+        log.push({ method: req.method(), path: url.pathname, query: url.search, body });
+        const p = url.pathname;
+        const m = req.method();
+        const pakai = (f: Jawab | undefined, bawaan: () => unknown) => (f ? f(route, body) : bawaan());
+        if (p === "/api/invoice-outbox" && m === "GET") return pakai(opsi.list, () => route.fulfill(json(antrean(ROWS))));
+        if (p === "/api/invoice-outbox" && m === "POST") return pakai(opsi.aksi, () => route.fulfill(json({ ok: true })));
+        if (p === "/api/invoice-outbox/send/preview") return pakai(opsi.preview, () => {
+            const ids = url.searchParams.getAll("orderId");
+            const orders = ids.map((id) => order(id, 111000));
+            return route.fulfill(json(ids.length ? PRATINJAU({ jumlah: ids.length, orders, perPrincipal: [{ principal: "PRINCIPLE-A", jumlah: ids.length, dpp: 100000 * ids.length, ppn: 11000 * ids.length, total: 111000 * ids.length }],
+                total: { dpp: 100000 * ids.length, ppn: 11000 * ids.length, total: 111000 * ids.length } }) : PRATINJAU()));
+        });
+        if (p === "/api/invoice-outbox/send") return pakai(opsi.send, () => route.fulfill(json({ ok: false, error: "tidak diharapkan" }, 500)));
+        if (p === "/api/invoice-outbox/resolve" && m === "GET") return pakai(opsi.cari, () => route.fulfill(json({ ok: false, error: "tidak diharapkan" }, 500)));
+        if (p === "/api/invoice-outbox/resolve" && m === "POST") return pakai(opsi.selesai, () => route.fulfill(json({ ok: false, error: "tidak diharapkan" }, 500)));
+        if (p === "/api/invoice-outbox/riwayat") return pakai(opsi.riwayat, () => route.fulfill(json({ ok: true, events: [] })));
+        if (p === "/api/invoice-verify") return pakai(opsi.verif, () => route.fulfill(json(m === "GET" ? VERIF : { ok: true })));
+        return route.fulfill(json({ ok: false, error: `rute tak dimock ${p}` }, 500));
+    });
+    return log;
+}
+const tulisKe = (log: Tulis[], p: string, method = "POST") => log.filter((t) => t.path === p && t.method === method);
+const getKe = (log: Tulis[], p: string) => log.filter((t) => t.path === p && t.method === "GET");
+
+async function noOverflow(page: Page) {
+    expect(await page.evaluate(() => { const m = document.querySelector("main"); return document.documentElement.scrollWidth <= innerWidth && (!m || m.scrollWidth <= m.clientWidth + 1); })).toBe(true);
+}
+
+/**
+ * Akun tanpa `order.resolve_unknown` (dan opsional tanpa `order.edit`). Admin LOCAL_AUTH_BYPASS memegang semua kunci, jadi array
+ * `permKeys` di payload RSC halaman diganti (hanya di tes) — pola tests/fiori-lapangan-salesman.spec.ts.
+ */
+async function tanpaIzin(page: Page, kunci: string[]) {
+    await page.route((u) => u.pathname === "/antrean-faktur", async (route) => {
+        const res = await route.fetch();
+        const headers = { ...res.headers() };
+        delete headers["content-length"];
+        delete headers["content-encoding"];
+        const body = (await res.text()).replace(/permKeys(\\?)":\[([^\]]*)\]/g, (_, e: string, isi: string) =>
+            `permKeys${e}":[${isi.split(",").filter((k) => !kunci.some((x) => k.includes(`"${x}`))).join(",")}]`);
+        return route.fulfill({ status: res.status(), headers, body });
+    });
+}
+
+test.use({
+    // Dokumen dari route.fulfill (tanpaIzin) dianggap bukan jaringan lokal oleh Edge → skrip localhost diblokir. Hanya di peramban tes ini.
+    launchOptions: { args: ["--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights"] },
+});
+test.beforeEach(async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce", colorScheme: "light" });
+    page.on("dialog", (d) => { throw new Error(`window.${d.type()} masih dipakai: ${d.message()}`); });
+});
+
+test("Daftar: kartu = saringan, jawaban Accurate terbaca, mengirim > 15 mnt, galat ≠ kosong, kosong + Kirim nonaktif berlasan, ponsel 390", async ({ page }) => {
+    const opsi: Opsi = {};
+    const log = await mock(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    const tabel = main.getByRole("table", { name: "Antrean" });
+    await expect(tabel.getByRole("columnheader", { name: "Jawaban Accurate" })).toBeVisible(NAV);
+    // Kalimat, bukan JSON mentah / catatan teknis.
+    // Kolom Jawaban Accurate (salinan pop-in tersembunyi di kolom pertama tidak dihitung).
+    await expect(tabel.getByRole("cell", { name: "Pelanggan C-B-009 tidak ditemukan", exact: true })).toBeVisible();
+    await expect(tabel.getByRole("cell", { name: /^Accurate menolak sesi atau izin \(HTTP 401\)/ })).toBeVisible();
+    await expect(tabel).not.toContainText("[\"");
+    await expect(tabel.getByText(/lebih dari 15 menit — menjadi Tidak pasti otomatis/)).toBeVisible();
+    await expect(tabel.getByRole("cell", { name: /2 jam 14 mnt/ })).toBeVisible();
+    // Hanya baris Antre yang bisa dipilih.
+    await expect(tabel.getByRole("checkbox", { name: "Pilih SO SO-A-003" })).toBeDisabled();
+    await expect(tabel.getByRole("checkbox", { name: "Pilih SO SO-A-002" })).toBeEnabled();
+    await expect(main.getByRole("status").filter({ hasText: "3 masalah lewat 2 jam" })).toBeVisible();
+    await expect(main.getByRole("table", { name: "Batch belum diantrekan" })).toContainText("ORDER_PRINCIPLE_A_PAGI.xlsx");
+
+    const kartu = main.getByRole("group", { name: "Saring menurut status" });
+    await kartu.getByRole("button", { name: /Ditolak/ }).click();
+    await expect(kartu.getByRole("button", { name: /Ditolak/ })).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(() => getKe(log, "/api/invoice-outbox").at(-1)?.query).toBe("?state=rejected");
+    await kartu.getByRole("button", { name: /Lewat 2 jam/ }).click();
+    await expect.poll(() => getKe(log, "/api/invoice-outbox").at(-1)?.query).toBe("?overdue=1");
+
+    // Muat ulang gagal: data lama + strip, Kirim terkunci berlasan (bukan aksi atas data usang).
+    opsi.list = (r) => r.fulfill(json({ ok: false, error: "Server antrean tidak menjawab" }, 500));
+    await main.getByRole("button", { name: "Muat ulang" }).first().click();
+    await expect(main.getByText("Gagal memuat ulang.")).toBeVisible();
+    await expect(main.getByText("Kirim nonaktif: Muat ulang dulu: antrean belum terbaru.")).toBeVisible();
+    await expect(main.getByRole("button", { name: /^Kirim .*faktur…$/ })).toBeDisabled();
+
+    // Pemuatan pertama gagal: ErrorState, BUKAN "tidak ada faktur".
+    await page.goto("/antrean-faktur", NAV);
+    await expect(main.getByRole("alert").filter({ hasText: "Antrean gagal dimuat: Server antrean tidak menjawab." })).toBeVisible(NAV);
+    await expect(main.getByText("Tidak ada faktur yang menggantung")).toHaveCount(0);
+    await expect(main.getByRole("button", { name: /Menggantung/ })).toContainText("gagal dimuat");
+
+    // Kosong: kalimat kosong + Kirim nonaktif dengan alasan.
+    opsi.list = (r) => r.fulfill(json(antrean([], { summary: {}, overdue: 0, overdueQueue: 0, overdueBatches: 0, pendingBatches: [] })));
+    await page.goto("/antrean-faktur", NAV);
+    await expect(main.getByText("Tidak ada faktur yang menggantung")).toBeVisible(NAV);
+    await expect(main.getByRole("button", { name: /^Kirim faktur…$/ })).toHaveAttribute("title", "Tidak ada faktur antre");
+
+    opsi.list = undefined;
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/antrean-faktur", NAV);
+    await expect(main.getByRole("list", { name: "Antrean" })).toContainText("SO-B-002", NAV);
+    await expect(main.getByRole("button", { name: "Selesaikan SO SO-A-003" }).last()).toBeVisible();
+    await noOverflow(page);
+    await page.screenshot({ path: "test-results/antrean-faktur/ponsel.png", fullPage: true });
+});
+
+test("Kirim: dialog dari pratinjau server; yang dikirim = orderIds HASIL PRATINJAU (bukan semua antre); klik ganda = satu kiriman; hasil per baris termasuk dilewati", async ({ page }) => {
+    const hasilSatu = { ok: true, sent: 1, verifiedOk: 1, mismatched: 0, unchecked: 0, rejected: 0, unknown: 0, remaining: 1, sentBy: "admin@contoh",
+        results: [{ orderId: "PRINCIPLE-A:SO-A-002", state: "posted", accurateId: "502", number: "INV/A/0002" }], verified: [{ orderId: "PRINCIPLE-A:SO-A-002", status: "cocok" }] };
+    const opsi: Opsi = { send: (r) => r.fulfill(json(hasilSatu)) };
+    const log = await mock(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    await expect(main.getByRole("table", { name: "Antrean" })).toBeVisible(NAV);
+
+    // Pilihan satu baris → pratinjau menerima orderId itu + tanggal faktur.
+    await main.getByRole("checkbox", { name: "Pilih SO SO-A-002" }).check();
+    await main.getByLabel("Tanggal faktur").fill(HARI_INI);
+    await main.getByRole("button", { name: "Kirim 1 terpilih…" }).click();
+    await expect.poll(() => getKe(log, "/api/invoice-outbox/send/preview").at(-1)?.query).toBe(`?orderId=PRINCIPLE-A%3ASO-A-002&invoiceDate=${HARI_INI}`);
+    let dlg = page.getByRole("dialog", { name: "Kirim 1 faktur ke Accurate?" });
+    const tglTampil = HARI_INI.split("-").reverse().join("/");
+    await expect(dlg).toContainText(`${tglTampil} untuk semua faktur`);
+    await dlg.getByRole("button", { name: "Kirim 1 faktur" }).click();
+    await expect(dlg).toBeHidden();
+    expect(tulisKe(log, "/api/invoice-outbox/send")[0].body).toEqual({ orderIds: ["PRINCIPLE-A:SO-A-002"], invoiceDate: HARI_INI });
+    await expect(main.getByRole("region", { name: /Hasil kiriman/ })).toContainText(`tanggal faktur ${tglTampil}`);
+    await main.getByRole("button", { name: "Pakai tanggal SO" }).click();
+
+    // Tanpa pilihan: pratinjau server = SO-A-001 + SO-A-010 (beda dari baris Antre tabel: SO-A-001, SO-A-002). Yang dikirim = pratinjau.
+    opsi.preview = (r) => r.fulfill(json(PRATINJAU({ orders: [order("PRINCIPLE-A:SO-A-001", 111000), order("PRINCIPLE-A:SO-A-010", 111000)] })));
+    opsi.send = async (r) => { await new Promise((ok) => setTimeout(ok, 800)); return r.fulfill(json({
+        ok: true, sent: 1, verifiedOk: 1, mismatched: 0, unchecked: 0, rejected: 0, unknown: 0, remaining: 2, sentBy: "admin@contoh",
+        results: [{ orderId: "PRINCIPLE-A:SO-A-001", state: "posted", accurateId: "501", number: "INV/A/0001" },
+            { orderId: "PRINCIPLE-A:SO-A-010", state: "dilewati", error: "sudah diambil proses lain (status sending) — muat ulang" }],
+        verified: [{ orderId: "PRINCIPLE-A:SO-A-001", status: "cocok" }],
+    })); };
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click();
+    dlg = page.getByRole("dialog", { name: "Kirim 2 faktur ke Accurate?" });
+    await expect(dlg).toBeVisible();
+    await expect(getKe(log, "/api/invoice-outbox/send/preview").at(-1)?.query).toBe("");
+    await expect(dlg).toContainText("DB CABANG A (1001)");
+    await expect(dlg).toContainText("Sama dengan tujuan");
+    await expect(dlg).toContainText("2 (maks. 50 per tekan)");
+    await expect(dlg).toContainText("PRINCIPLE-A · 2 · Rp 222.000");
+    await expect(dlg).toContainText("Rp 222.000");
+    await expect(dlg).toContainText("tanggal SO masing-masing (09/10/2026)");
+    await expect(dlg).toContainText("tidak bisa ditarik");
+    await dlg.getByRole("button", { name: "Kirim 2 faktur" }).dblclick(); // klik ganda: satu kiriman
+    await expect(dlg).toBeHidden();
+    const kirim = tulisKe(log, "/api/invoice-outbox/send");
+    expect(kirim).toHaveLength(2);
+    expect(kirim[1].body).toEqual({ orderIds: ["PRINCIPLE-A:SO-A-001", "PRINCIPLE-A:SO-A-010"] });
+
+    const hasil = main.getByRole("region", { name: /Hasil kiriman/ });
+    await expect(hasil).toContainText("oleh admin@contoh");
+    await expect(hasil).toContainText("1 terposting (1 cocok per baris) · 0 ditolak · 0 tidak pasti · 1 dilewati · 2 masih antre.");
+    const perFaktur = hasil.getByRole("list", { name: "Hasil per faktur" });
+    await expect(perFaktur.getByRole("listitem").filter({ hasText: "SO-A-001" })).toContainText("INV/A/0001 · cocok per baris");
+    await expect(perFaktur.getByRole("listitem").filter({ hasText: "SO-A-010" })).toContainText("Dilewatisudah diambil proses lain");
+    await page.screenshot({ path: "test-results/antrean-faktur/hasil-kirim.png", fullPage: true });
+});
+
+test("Kirim: pilihan hanya dari baris yang tampil — Cari/principal mengosongkan pilihan; tanpa pilihan dialog menyebut saringan tidak membatasi", async ({ page }) => {
+    const log = await mock(page, {});
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    await main.getByRole("checkbox", { name: "Pilih SO SO-A-002" }).check(NAV);
+    await expect(main.getByRole("button", { name: "Kirim 1 terpilih…" })).toBeVisible();
+    // SO-A-002 (TOKO B) tersembunyi oleh Cari: tidak boleh tetap terpilih lalu terkirim tanpa terlihat.
+    await main.getByLabel("Cari").first().fill("TOKO A");
+    await expect(main.getByRole("button", { name: "Kirim 2 faktur…" })).toBeVisible();
+    await main.getByLabel("Cari").first().fill("");
+    await expect(main.getByRole("checkbox", { name: "Pilih SO SO-A-002" })).not.toBeChecked();
+    await main.getByLabel("Cari").first().fill("TOKO");
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Kirim 2 faktur ke Accurate?" });
+    await expect(dlg).toContainText("Saringan di layar tidak membatasi Kirim");
+    expect(getKe(log, "/api/invoice-outbox/send/preview").at(-1)?.query).toBe("");
+});
+
+test("Kirim: pratinjau diperiksa ulang tepat sebelum mengirim — berubah = dialog diperbarui, tidak ada yang dikirim", async ({ page }) => {
+    let berubah = false;
+    const tiga = PRATINJAU({ jumlah: 3, antreanMenunggu: 3, total: { dpp: 300000, ppn: 33000, total: 333000 },
+        orders: [order("PRINCIPLE-A:SO-A-001", 111000), order("PRINCIPLE-A:SO-A-002", 111000), order("PRINCIPLE-A:SO-A-010", 111000)] });
+    const opsi: Opsi = {
+        preview: (r) => r.fulfill(json(berubah ? tiga : PRATINJAU())),
+        send: (r) => r.fulfill(json({ ok: true, sent: 0, verifiedOk: 0, mismatched: 0, unchecked: 0, rejected: 0, unknown: 0, remaining: 3, sentBy: "admin@contoh", results: [], verified: [] })),
+    };
+    const log = await mock(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click(NAV);
+    const dlg = page.getByRole("dialog", { name: "Kirim 2 faktur ke Accurate?" });
+    await expect(dlg).toContainText("Rp 222.000");
+    berubah = true; // antrean berubah selagi dialog terbuka (mis. SO baru diantrekan)
+    await dlg.getByRole("button", { name: "Kirim 2 faktur" }).click();
+    const baru = page.getByRole("dialog", { name: "Kirim 3 faktur ke Accurate?" });
+    await expect(baru.getByRole("alert").filter({ hasText: "Pratinjau berubah" })).toBeVisible();
+    await expect(baru).toContainText("Rp 333.000");
+    expect(tulisKe(log, "/api/invoice-outbox/send")).toHaveLength(0);
+    await baru.getByRole("button", { name: "Kirim 3 faktur" }).click();
+    await expect(baru).toBeHidden();
+    expect(tulisKe(log, "/api/invoice-outbox/send")[0].body).toEqual({ orderIds: ["PRINCIPLE-A:SO-A-001", "PRINCIPLE-A:SO-A-002", "PRINCIPLE-A:SO-A-010"] });
+});
+
+test("Hasil Kirim: 503 JSON server = pasti (galat di dialog); ditolak, berhenti setelah tidak pasti, dan tidak lagi Antre per baris", async ({ page }) => {
+    const tiga = PRATINJAU({ jumlah: 3, orders: [order("PRINCIPLE-A:SO-A-001", 111000), order("PRINCIPLE-A:SO-A-002", 111000), order("PRINCIPLE-A:SO-A-010", 111000)] });
+    const hasil = (results: unknown[], over: Over = {}) => ({ ok: false, sent: 0, verifiedOk: 0, mismatched: 0, unchecked: 0, rejected: 0, unknown: 0, remaining: 1,
+        sentBy: "admin@contoh", results, verified: [], ...over });
+    const opsi: Opsi = {
+        preview: (r) => r.fulfill(json(tiga)),
+        send: (r) => r.fulfill(json({ ok: false, error: "Sesi Accurate Anda tidak lengkap. Login Accurate dulu di /api-wrapper, lalu coba lagi." }, 503)),
+    };
+    const log = await mock(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click(NAV);
+    let dlg = page.getByRole("dialog", { name: "Kirim 3 faktur ke Accurate?" });
+    await dlg.getByRole("button", { name: "Kirim 3 faktur" }).click();
+    await expect(dlg.getByRole("alert").filter({ hasText: "Sesi Accurate Anda tidak lengkap" })).toBeVisible();
+    await expect(main.getByText("Hasil tindakan terakhir belum pasti.")).toHaveCount(0);
+    // 409 karena database sesi berubah sesudah pratinjau: pasti, pesan server di dialog.
+    opsi.send = (r) => r.fulfill(json({ ok: false, error: "Sesi Accurate Anda terbuka pada database 2002, bukan 1001. Tidak ada faktur dikirim." }, 409));
+    await dlg.getByRole("button", { name: "Kirim 3 faktur" }).click();
+    await expect(dlg.getByRole("alert").filter({ hasText: "bukan 1001. Tidak ada faktur dikirim." })).toBeVisible();
+    // Putus koneksi: belum pasti + dialog ditutup + muat ulang.
+    opsi.send = (r) => r.abort("connectionreset");
+    await dlg.getByRole("button", { name: "Kirim 3 faktur" }).click();
+    await expect(dlg).toBeHidden();
+    await expect(main.getByRole("status").filter({ hasText: "Hasil tindakan terakhir belum pasti." })).toContainText("koneksi putus");
+
+    opsi.send = (r) => r.fulfill(json(hasil([
+        { orderId: "PRINCIPLE-A:SO-A-001", state: "rejected", error: "[\"Batas piutang pelanggan terlampaui\"]" },
+        { orderId: "PRINCIPLE-A:SO-A-002", state: "unknown", error: "The operation was aborted due to timeout" },
+    ], { rejected: 1, unknown: 1, remaining: 1 })));
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click();
+    dlg = page.getByRole("dialog", { name: "Kirim 3 faktur ke Accurate?" });
+    await dlg.getByRole("button", { name: "Kirim 3 faktur" }).click();
+    await expect(dlg).toBeHidden();
+    let panel = main.getByRole("region", { name: /Hasil kiriman/ });
+    await expect(panel.getByRole("status")).toContainText("Pengiriman berhenti: ada faktur yang hasilnya tidak pasti.");
+    let per = panel.getByRole("list", { name: "Hasil per faktur" });
+    await expect(per.getByRole("listitem").filter({ hasText: "SO-A-001" })).toContainText("DitolakBatas piutang pelanggan terlampaui");
+    await expect(per.getByRole("listitem").filter({ hasText: "SO-A-002" })).toContainText("Accurate tidak menjawab dalam 60 detik");
+    await expect(per.getByRole("listitem").filter({ hasText: "SO-A-010" })).toContainText("Pengiriman berhenti setelah hasil tidak pasti; tetap antre.");
+
+    // Tanpa tidak pasti: order pratinjau yang tidak ada di hasil = sudah tidak Antre saat Kirim; ditolak = strip peringatan.
+    opsi.send = (r) => r.fulfill(json(hasil([{ orderId: "PRINCIPLE-A:SO-A-001", state: "rejected", error: "[\"Stok gudang kurang\"]" }], { rejected: 1 })));
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click();
+    await page.getByRole("dialog", { name: "Kirim 3 faktur ke Accurate?" }).getByRole("button", { name: "Kirim 3 faktur" }).click();
+    panel = main.getByRole("region", { name: /Hasil kiriman/ });
+    await expect(panel.getByRole("status")).toContainText("Sebagian ditolak Accurate");
+    per = panel.getByRole("list", { name: "Hasil per faktur" });
+    await expect(per.getByRole("listitem").filter({ hasText: "SO-A-002" })).toContainText("tidak lagi Antre saat Kirim — muat ulang");
+    expect(tulisKe(log, "/api/invoice-outbox/send")).toHaveLength(5);
+});
+
+test("Kirim: lebih dari 50 pilihan = disebut sisanya tidak ikut (bukan 'tidak lagi Antre')", async ({ page }) => {
+    const banyak = Array.from({ length: 52 }, (_, i) => row(`PRINCIPLE-A:SO-X-${String(i).padStart(3, "0")}`, "queued"));
+    await mock(page, {
+        list: (r) => r.fulfill(json(antrean(banyak, { summary: { queued: 52 }, overdue: 0, pendingBatches: [] }))),
+        preview: (r) => r.fulfill(json(PRATINJAU({ jumlah: 50, antreanMenunggu: 52, orders: banyak.slice(0, 50).map((b) => order(b.orderId, 1000)) }))),
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    await main.getByRole("checkbox", { name: "Pilih semua baris" }).check(NAV);
+    await main.getByRole("button", { name: "Kirim 52 terpilih…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Kirim 50 faktur ke Accurate?" });
+    await expect(dlg).toContainText("Anda memilih 52 baris; maks. 50 per tekan — 2 sisanya tidak ikut kali ini.");
+    await expect(dlg).not.toContainText("tidak lagi berstatus Antre");
+});
+
+test("Kirim: sesi tidak cocok = nonaktif berlasan; 502 HTML = 'belum pasti' + muat ulang + kunci sampai antrean terbaru", async ({ page }) => {
+    const opsi: Opsi = { preview: (r) => r.fulfill(json(PRATINJAU({ ok: false, database: { tujuan: "1001", label: "x", sesiPenekan: { id: "2002", alias: "DB LAIN" }, cocok: false } }))) };
+    const log = await mock(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click(NAV);
+    let dlg = page.getByRole("dialog");
+    await expect(dlg).toContainText("bukan database faktur 1001 — ganti database di API Wrapper");
+    await expect(dlg).not.toContainText("ACCURATE_INVOICE_DB_ID");
+    await expect(dlg.getByRole("button", { name: "Kirim 2 faktur" })).toBeDisabled();
+    await expect(dlg.getByRole("button", { name: "Kirim 2 faktur" })).toHaveAttribute("title", "Sesi Accurate Anda tidak cocok dengan database tujuan");
+    await dlg.getByRole("button", { name: "Batal" }).click();
+
+    opsi.preview = undefined;
+    opsi.send = (r) => r.fulfill({ status: 502, contentType: "text/html", body: "<html><body><h1>502 Bad Gateway</h1></body></html>" });
+    let lepas: () => void = () => {};
+    const tahan = new Promise<void>((ok) => { lepas = ok; });
+    opsi.list = async (r) => { await tahan; return r.fulfill(json(antrean(ROWS))); };
+    const sebelum = getKe(log, "/api/invoice-outbox").length;
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click();
+    dlg = page.getByRole("dialog", { name: "Kirim 2 faktur ke Accurate?" });
+    await dlg.getByRole("button", { name: "Kirim 2 faktur" }).click();
+    await expect(dlg).toBeHidden();
+    const strip = main.getByRole("status").filter({ hasText: "Hasil tindakan terakhir belum pasti." });
+    await expect(strip).toContainText("Hasilnya belum pasti");
+    await expect(strip).not.toContainText("<html");
+    await expect.poll(() => getKe(log, "/api/invoice-outbox").length).toBeGreaterThan(sebelum);
+    // Kunci: selama antrean terbaru belum terbaca, Kirim dan tindakan tulis nonaktif.
+    await expect(main.getByRole("button", { name: /^Kirim .*faktur…$/ })).toBeDisabled();
+    await expect(main.getByText(/Kirim nonaktif: Hasil tindakan terakhir belum pasti/)).toBeVisible();
+    lepas();
+    await expect(main.getByRole("button", { name: "Kirim 2 faktur…" })).toBeEnabled();
+    expect(tulisKe(log, "/api/invoice-outbox/send")).toHaveLength(1);
+});
+
+const KETEMU = { ok: true, orderId: "PRINCIPLE-A:SO-A-003", sisaMenit: 0, faktur: { tanggal: "09/10/2026", total: 111000 }, dikirim: { dpp: 100000, ppn: 11000, total: 111000 },
+    pencarian: { hasil: "ketemu", sumber: "accurate", cocok: "charField1", id: "9001", number: "INV/A/0009", semua: [{ id: "9001", number: "INV/A/0009" }] } };
+const TIDAK = { ok: true, orderId: "PRINCIPLE-A:SO-A-003", sisaMenit: 0, faktur: null, dikirim: { dpp: 100000, ppn: 11000, total: 111000 },
+    pencarian: { hasil: "tidak_ketemu_dicek", sumber: "accurate", diperiksa: 4, baris_list_do: 4, calon_tanpa_kunci: [{ id: "9100", number: "INV/A/0100", totalAmount: 50000, transDate: "09/10/2026" }] } };
+const ALASAN = "Dicek di Accurate › Faktur Penjualan, pelanggan C-A-001";
+
+test("Selesaikan: hasil pencarian tampil DULU; ketemu → terposting; tidak ketemu + 409 masa tunggu → sisa menit; gagal → tanpa keputusan", async ({ page }) => {
+    const opsi: Opsi = { cari: (r) => r.fulfill(json(KETEMU)), selesai: (r) => r.fulfill(json({ ok: true, orderId: "PRINCIPLE-A:SO-A-003", state: "posted", accurateId: "9001", number: "INV/A/0009" })) };
+    const log = await mock(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    await main.getByRole("button", { name: "Selesaikan SO SO-A-003" }).click(NAV);
+    let dlg = page.getByRole("dialog", { name: "Selesaikan faktur tidak pasti" });
+    await expect(dlg).toContainText("Ditemukan langsung di Accurate");
+    await expect(dlg).toContainText("INV/A/0009");
+    await expect(dlg).toContainText("09/10/2026");
+    await expect(dlg).toContainText("Total di AccurateRp 111.000");
+    expect(getKe(log, "/api/invoice-outbox/resolve").at(-1)?.query).toBe("?orderId=PRINCIPLE-A%3ASO-A-003");
+    await expect(dlg.getByRole("radio", { name: /Tetapkan tidak terposting/ })).toBeDisabled();
+    await expect(dlg.getByRole("radiogroup")).toContainText("faktur ditemukan — mengirim ulang akan membuat faktur ganda");
+    await expect(dlg.getByRole("radio", { name: /Tetapkan terposting sebagai INV\/A\/0009/ })).not.toBeChecked(); // tidak dipilih otomatis
+    await dlg.getByRole("radio", { name: /Tetapkan terposting sebagai INV\/A\/0009/ }).check();
+    await dlg.getByLabel("Alasan").fill("sudah ada");
+    await expect(dlg.getByRole("button", { name: "Tetapkan terposting" })).toBeDisabled();
+    await dlg.getByLabel("Alasan").fill(ALASAN);
+    await dlg.getByRole("button", { name: "Tetapkan terposting" }).click();
+    await expect(dlg).toBeHidden();
+    expect(tulisKe(log, "/api/invoice-outbox/resolve")[0].body).toEqual({ orderId: "PRINCIPLE-A:SO-A-003", keputusan: "terposting", alasan: ALASAN });
+    await expect(main.getByRole("status").filter({ hasText: "ditetapkan terposting sebagai INV/A/0009" })).toBeVisible();
+
+    // Tidak ketemu: calon tanpa kunci tampil; tidak terposting dipilih → server 409 masa tunggu → sisa menit tampil, pilihan terkunci.
+    opsi.cari = (r) => r.fulfill(json(TIDAK));
+    opsi.selesai = (r) => r.fulfill(json({ ok: false, sisaMenit: 12, error: "Kiriman terakhir baru 3 menit lalu — Accurate mungkin masih menyimpannya; tunggu 12 menit lagi sebelum menetapkan tidak terposting." }, 409));
+    await main.getByRole("button", { name: "Selesaikan SO SO-A-003" }).click();
+    dlg = page.getByRole("dialog", { name: "Selesaikan faktur tidak pasti" });
+    await expect(dlg).toContainText("Tidak ditemukan di Accurate");
+    await expect(dlg).toContainText("1 faktur pelanggan ini tanpa kunci antrean.");
+    await expect(dlg).toContainText("INV/A/0100");
+    await expect(dlg.getByRole("radio", { name: /Tetapkan terposting/ })).toBeDisabled();
+    await dlg.getByLabel("Alasan").fill(ALASAN);
+    await expect(dlg.getByRole("button", { name: "Simpan penyelesaian" })).toHaveAttribute("title", "Pilih hasil dulu"); // belum memilih
+    await dlg.getByRole("radio", { name: /Tetapkan tidak terposting/ }).check();
+    await dlg.getByRole("button", { name: "Tetapkan tidak terposting" }).click();
+    await expect(dlg.getByRole("alert").filter({ hasText: "tunggu 12 menit lagi" })).toBeVisible();
+    await expect(dlg.getByRole("radio", { name: /Tetapkan tidak terposting/ })).toBeDisabled();
+    await expect(dlg.getByRole("radiogroup")).toContainText("Tersedia 12 menit lagi");
+    await expect(dlg.getByLabel("Alasan")).toHaveValue(ALASAN); // isian tidak dikosongkan
+    expect(tulisKe(log, "/api/invoice-outbox/resolve").at(-1)?.body).toMatchObject({ keputusan: "tidak_terposting" });
+    await page.screenshot({ path: "test-results/antrean-faktur/selesaikan-tunggu.png" });
+    await dlg.getByRole("button", { name: "Batal" }).click();
+
+    // Pencarian gagal: alasan tampil, tidak ada keputusan yang bisa disimpan.
+    opsi.cari = (r) => r.fulfill(json({ ...TIDAK, pencarian: { hasil: "gagal_cek", alasan: "list.do HTTP 401: sesi habis" } }));
+    await main.getByRole("button", { name: "Selesaikan SO SO-A-003" }).click();
+    dlg = page.getByRole("dialog", { name: "Selesaikan faktur tidak pasti" });
+    await expect(dlg).toContainText("Pencarian tidak bisa memastikan. list.do HTTP 401: sesi habis");
+    await expect(dlg.getByRole("radio", { name: /Tetapkan terposting/ })).toBeDisabled();
+    await expect(dlg.getByRole("radio", { name: /Tetapkan tidak terposting/ })).toBeDisabled();
+    await expect(dlg.getByRole("radiogroup")).not.toContainText("tidak ditemukan oleh pencarian");
+    await expect(dlg.getByRole("radiogroup")).toContainText("pencarian tidak bisa memastikan");
+});
+
+test("Selesaikan: 409 yang membalik hasil pencarian TIDAK membalik keputusan diam-diam — pilihan eksplisit + peringatan", async ({ page }) => {
+    const opsi: Opsi = {
+        cari: (r) => r.fulfill(json({ ...TIDAK, pencarian: { ...TIDAK.pencarian, calon_tanpa_kunci: [] } })),
+        selesai: (r) => r.fulfill(json({ ok: false, pencarian: KETEMU.pencarian,
+            error: "Faktur INV/A/0009 DITEMUKAN di Accurate untuk SO ini — tetapkan terposting, bukan tidak terposting." }, 409)),
+    };
+    const log = await mock(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    await page.locator("main").getByRole("button", { name: /^Selesaikan/ }).click(NAV);
+    const dlg = page.getByRole("dialog", { name: "Selesaikan faktur tidak pasti" });
+    await dlg.getByRole("radio", { name: /Tetapkan tidak terposting/ }).check();
+    await dlg.getByLabel("Alasan").fill(ALASAN);
+    await dlg.getByRole("button", { name: "Tetapkan tidak terposting" }).click();
+    await expect(dlg.getByRole("alert").filter({ hasText: "DITEMUKAN di Accurate" })).toBeVisible();
+    await expect(dlg.getByRole("status").filter({ hasText: "Hasil pencarian berubah" })).toBeVisible();
+    await expect(dlg.getByRole("radio", { name: /Tetapkan terposting sebagai INV\/A\/0009/ })).not.toBeChecked();
+    await expect(dlg.getByRole("button", { name: "Simpan penyelesaian" })).toHaveAttribute("title", "Pilih hasil dulu");
+    expect(tulisKe(log, "/api/invoice-outbox/resolve")).toHaveLength(1);
+});
+
+test("Dialog: pratinjau galat & pencarian galat/DITAHAN = keputusan nonaktif; Selesaikan putus koneksi = belum pasti", async ({ page }) => {
+    let lepas: () => void = () => {};
+    const opsi: Opsi = { preview: (r) => r.fulfill(json({ ok: false, error: "Pratinjau tidak terbaca" }, 500)) };
+    const log = await mock(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click(NAV);
+    let dlg = page.getByRole("dialog", { name: "Kirim faktur ke Accurate?" });
+    await expect(dlg.getByRole("alert")).toContainText("Pratinjau tidak terbaca");
+    await expect(dlg.getByRole("button", { name: "Kirim", exact: true })).toBeDisabled();
+    await dlg.getByRole("button", { name: "Batal" }).click();
+
+    opsi.cari = (r) => r.fulfill(json({ ok: false, error: "Status berubah sebelum tindakan dijalankan; muat ulang halaman" }, 409));
+    await main.getByRole("button", { name: "Selesaikan SO SO-A-003" }).click();
+    dlg = page.getByRole("dialog", { name: "Selesaikan faktur tidak pasti" });
+    await expect(dlg.getByRole("alert")).toContainText("Status berubah sebelum tindakan dijalankan");
+    await expect(dlg.getByRole("radio")).toHaveCount(0);
+    await dlg.getByRole("button", { name: "Batal" }).click();
+
+    // Pencarian DITAHAN: selama belum ada hasil, tidak ada pilihan dan simpan nonaktif.
+    const tahan = new Promise<void>((ok) => { lepas = ok; });
+    opsi.cari = async (r) => { await tahan; return r.fulfill(json(TIDAK)); };
+    await main.getByRole("button", { name: "Selesaikan SO SO-A-003" }).click();
+    dlg = page.getByRole("dialog", { name: "Selesaikan faktur tidak pasti" });
+    await dlg.getByLabel("Alasan").fill(ALASAN);
+    await expect(dlg.getByRole("button", { name: "Simpan penyelesaian" })).toHaveAttribute("title", "Menunggu hasil pencarian");
+    await expect(dlg.getByRole("radio")).toHaveCount(0);
+    lepas();
+    await expect(dlg).toContainText("Tidak ditemukan di Accurate");
+    await dlg.getByRole("radio", { name: /Tetapkan tidak terposting/ }).check();
+    opsi.selesai = (r) => r.abort("connectionreset");
+    await dlg.getByRole("button", { name: "Tetapkan tidak terposting" }).click();
+    await expect(dlg).toBeHidden();
+    await expect(main.getByRole("status").filter({ hasText: "Hasil tindakan terakhir belum pasti." })).toBeVisible();
+    expect(tulisKe(log, "/api/invoice-outbox/resolve")).toHaveLength(1);
+});
+
+test("Tanpa izin: Selesaikan/Kirim/Buang nonaktif dengan alasan berkalimat (bukan nama kunci mentah)", async ({ page }) => {
+    await tanpaIzin(page, ["order.resolve_unknown", "order.edit"]);
+    await mock(page, {});
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    const selesai = main.getByRole("button", { name: "Selesaikan SO SO-A-003" });
+    await expect(selesai).toBeDisabled(NAV);
+    await expect(selesai).toHaveAttribute("title", /izin Selesaikan posting tidak pasti/);
+    await expect(selesai).not.toHaveAttribute("title", /order\./);
+    // Alasan juga TERLIHAT (bukan hanya title): ponsel/layar sentuh tidak punya hover.
+    await expect(main.getByRole("status").filter({ hasText: "1 faktur Tidak pasti menunggu penyelesaian." })).toContainText("izin Selesaikan posting tidak pasti");
+    await expect(main.getByRole("button", { name: /^Kirim .*faktur…$/ })).toHaveAttribute("title", "Hanya petugas berizin ubah order yang boleh mengirim faktur ke Accurate");
+    await expect(main.getByRole("button", { name: "Buang SO SO-B-002" })).toBeDisabled();
+    await expect(main.getByText("Anda hanya bisa melihat antrean.")).toBeVisible();
+});
+
+test("Antre ulang menampilkan hasil pencarian server; Buang wajib alasan (502 = belum pasti, strip lama dibersihkan); Riwayat per order (galat ≠ kosong)", async ({ page }) => {
+    let resend = 0;
+    const opsi: Opsi = {
+        aksi: (r, b) => b?.orderId === "PRINCIPLE-A:SO-A-002"
+            ? r.fulfill({ status: 502, contentType: "text/html", body: "<html><body>502 Bad Gateway</body></html>" })
+            : b?.action === "resend" && ++resend === 1
+                ? r.fulfill(json({ ok: false, pencarian: { hasil: "gagal_cek", alasan: "list.do HTTP 401: token habis" },
+                    error: "Pencarian faktur di Accurate tidak bisa memastikan (list.do HTTP 401: token habis). Tidak ada yang diubah — periksa manual di Accurate atau ulangi setelah sesi Accurate Anda aktif." }, 409))
+            : r.fulfill(json(b?.action === "resend"
+                ? { ok: true, orderId: b.orderId, action: "resend", state: "posted", accurateId: "9005", number: "INV/B/0005",
+                    pencarian: { hasil: "ketemu", sumber: "accurate", cocok: "charField1", id: "9005", number: "INV/B/0005", semua: [] } }
+                : { ok: true, orderId: b?.orderId, action: "discard", state: null })),
+        riwayat: (r) => r.fulfill(json({ ok: true, events: [
+            { id: 1, jenis: "antre", stateFrom: null, stateTo: "queued", actor: "admin@contoh", httpStatus: null, errorCode: "", reason: "", createdAt: menitLalu(140), detail: {} },
+            { id: 2, jenis: "kirim", stateFrom: "queued", stateTo: "sending", actor: "fakturist@contoh", httpStatus: null, errorCode: "", reason: "", createdAt: menitLalu(60), detail: { attempt: 1, target_db: "1001", trans_date: "09/10/2026" } },
+            { id: 3, jenis: "rejected", stateFrom: "sending", stateTo: "rejected", actor: "fakturist@contoh", httpStatus: 200, errorCode: "", reason: "[\"Harga barang belum ada untuk kategori GROSIR\"]", createdAt: menitLalu(59), detail: {} },
+            { id: 4, jenis: "buang", stateFrom: "rejected", stateTo: null, actor: "admin@contoh", httpStatus: null, errorCode: "", reason: "Harga kategori di batch salah", createdAt: menitLalu(1), detail: { attempts: 1 } },
+        ] })),
+    };
+    const log = await mock(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+
+    // Buang menjawab 502 HTML (jalur selain Kirim): "belum pasti" + muat ulang, bukan HTML mentah.
+    await main.getByRole("button", { name: "Buang SO SO-A-002" }).click(NAV);
+    let dlg = page.getByRole("dialog", { name: "Buang 1 baris dari antrean?" });
+    await dlg.getByLabel("Alasan buang").fill("SO dobel di batch");
+    await dlg.getByRole("button", { name: "Buang baris" }).click();
+    await expect(dlg).toBeHidden();
+    const belumPasti = main.getByRole("status").filter({ hasText: "Hasil tindakan terakhir belum pasti." });
+    await expect(belumPasti).toBeVisible();
+    await expect(belumPasti).not.toContainText("<html");
+
+    await main.getByRole("button", { name: "Antre ulang SO SO-B-002" }).click();
+    dlg = page.getByRole("dialog", { name: "Antre ulang SO SO-B-002?" });
+    await expect(dlg).toContainText("server mencari faktur SO ini di Accurate");
+    await expect(dlg).toContainText("Pelanggan C-B-009 tidak ditemukan");
+    await dlg.getByRole("button", { name: "Cari lalu antre ulang" }).click();
+    // 409 gagal_cek: tidak ada yang berubah, pesan server di dialog, dialog tetap terbuka.
+    await expect(dlg.getByRole("alert").filter({ hasText: "tidak bisa memastikan (list.do HTTP 401: token habis)" })).toBeVisible();
+    await expect(main.getByText("sudah ada di Accurate")).toHaveCount(0);
+    await dlg.getByRole("button", { name: "Cari lalu antre ulang" }).click();
+    await expect(dlg).toBeHidden();
+    expect(tulisKe(log, "/api/invoice-outbox")[2].body).toEqual({ orderId: "PRINCIPLE-B:SO-B-002", action: "resend" });
+    const ketemu = main.getByRole("status").filter({ hasText: "Faktur INV/B/0005 sudah ada di Accurate." });
+    await expect(ketemu).toContainText("tidak dikirim ulang");
+    await expect(belumPasti).toHaveCount(0); // strip lama dibersihkan oleh hasil yang lebih baru
+
+    await main.getByRole("button", { name: "Buang SO SO-A-001" }).click();
+    dlg = page.getByRole("dialog", { name: "Buang 1 baris dari antrean?" });
+    const buang = dlg.getByRole("button", { name: "Buang baris" });
+    await expect(buang).toBeDisabled();
+    await expect(buang).toHaveAttribute("title", "Isi alasan buang dulu");
+    await dlg.getByLabel("Alasan buang").fill("Harga kategori di batch salah");
+    await buang.click();
+    await expect(dlg).toBeHidden();
+    expect(tulisKe(log, "/api/invoice-outbox")[3].body).toEqual({ orderId: "PRINCIPLE-A:SO-A-001", action: "discard", reason: "Harga kategori di batch salah" });
+    await expect(ketemu).toHaveCount(0);
+    const strip = main.getByRole("status").filter({ hasText: "SO SO-A-001 dibuang dari antrean." });
+    await strip.getByRole("button", { name: "Lihat riwayat" }).click();
+    dlg = page.getByRole("dialog", { name: "Riwayat SO SO-A-001" });
+    const daftar = dlg.getByRole("list", { name: "Riwayat SO SO-A-001" });
+    await expect(daftar).toContainText("Dikirim ke Accurate (percobaan ke-1)");
+    await expect(daftar).toContainText("database 1001 · tanggal faktur 09/10/2026");
+    await expect(daftar).toContainText("Harga barang belum ada untuk kategori GROSIR");
+    await expect(daftar).toContainText("Dibuang dari antrean");
+    await expect(daftar).toContainText("Alasan: Harga kategori di batch salah");
+    expect(getKe(log, "/api/invoice-outbox/riwayat").at(-1)?.query).toBe("?orderId=PRINCIPLE-A%3ASO-A-001");
+    await page.screenshot({ path: "test-results/antrean-faktur/riwayat.png" });
+    await dlg.getByRole("button", { name: "Tutup" }).last().click();
+
+    opsi.riwayat = (r) => r.fulfill(json({ ok: false, error: "Riwayat tidak terbaca" }, 500));
+    await main.getByRole("button", { name: "Riwayat SO SO-A-003" }).click();
+    dlg = page.getByRole("dialog", { name: "Riwayat SO SO-A-003" });
+    await expect(dlg.getByRole("alert")).toContainText("Riwayat tidak terbaca");
+    await expect(dlg).not.toContainText("Belum ada riwayat");
+});
+
+test("Verifikasi balik: selisih terbuka terlihat; Terima sales/Cabut tetap; draf penjelasan; galat terpisah dari antrean", async ({ page }) => {
+    const opsi: Opsi = {};
+    const log = await mock(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    const sek = main.getByRole("region", { name: "Verifikasi balik" });
+    await expect(sek).toContainText("salinan faktur Accurate", NAV);
+    const r9 = sek.getByRole("article", { name: "Verifikasi SO SO-A-009" });
+    await expect(r9).toContainText("2 selisih belum dijelaskan");
+    await expect(r9).toContainText("baris 3 · qty: dikirim 24, di Accurate 20");
+    await expect(sek.getByRole("article", { name: "Verifikasi SO SO-A-008" })).toHaveCount(0); // cocok hanya bila diminta
+    await r9.getByRole("button", { name: "Terima sales di Accurate" }).click();
+    await expect.poll(() => tulisKe(log, "/api/invoice-verify").length).toBe(1);
+    expect(tulisKe(log, "/api/invoice-verify")[0].body).toEqual({ orderId: "PRINCIPLE-A:SO-A-009", jenis: "sales", sidik: "[\"s\"]", note: "" });
+    await r9.getByLabel("Penjelasan selisih isi SO SO-A-009").fill("Koreksi qty saat bongkar: 4 karton rusak");
+    await expect(r9).toContainText("Belum disimpan");
+    await expect(sek).toContainText("Penjelasan belum disimpan");
+    await r9.getByRole("button", { name: "Jelaskan selisih isi" }).click();
+    await expect.poll(() => tulisKe(log, "/api/invoice-verify").length).toBe(2);
+    expect(tulisKe(log, "/api/invoice-verify")[1].body).toMatchObject({ jenis: "isi", note: "Koreksi qty saat bongkar: 4 karton rusak" });
+    await sek.getByLabel("Tampilkan semua").check();
+    await expect(sek.getByRole("article", { name: "Verifikasi SO SO-A-008" })).toContainText("Cocok (3 baris)");
+
+    // Penjelasan yang sudah ada bisa dicabut (DELETE).
+    opsi.verif = (r) => r.request().method() === "GET"
+        ? r.fulfill(json({ ...VERIF, rows: [{ ...VERIF.rows[0], terbuka: 1, penjelasan: { sales: { note: "Sales diganti", by: "admin@contoh", at: menitLalu(5) } } }] }))
+        : r.fulfill(json({ ok: true }));
+    await sek.getByRole("button", { name: "Muat ulang" }).click();
+    await sek.getByRole("button", { name: "Cabut" }).click();
+    await expect.poll(() => tulisKe(log, "/api/invoice-verify", "DELETE").length).toBe(1);
+
+    // Galat verifikasi terpisah: antrean tetap tampil, verifikasi menampilkan galat (bukan kosong).
+    opsi.verif = (r) => r.fulfill(json({ ok: false, error: "Salinan faktur tidak terbaca" }, 500));
+    await page.goto("/antrean-faktur", NAV);
+    await expect(sek.getByRole("alert")).toContainText("Salinan faktur tidak terbaca", NAV);
+    await expect(sek).not.toContainText("Tidak ada selisih");
+    await expect(main.getByRole("table", { name: "Antrean" })).toContainText("SO-A-001");
+});
