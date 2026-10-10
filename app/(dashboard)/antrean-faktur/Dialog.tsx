@@ -252,7 +252,7 @@ export function SelesaikanDialog({ row, onClose, onSelesai, onTidakPasti }: {
             description={<>SO <span className="fi-mono">{nomorSo(row)}</span> · {row.outlet || row.customerNo} · dicoba {row.attempts}×, terakhir {jamWita(row.updatedAt)} WITA.
                 {row.lastError ? ` ${kalimatAccurate(row.lastError)}` : ""}</>}
             reason={{ label: "Alasan", min: 15, placeholder: "Apa yang diperiksa dan di mana, mis. dicek di Accurate › Faktur Penjualan, pelanggan dan tanggal yang sama" }}
-            confirmLabel={keputusan === "tidak_terposting" ? "Tetapkan tidak terposting" : "Tetapkan terposting"}
+            confirmLabel={keputusan === "tidak_terposting" ? "Tetapkan tidak terposting" : keputusan === "terposting" ? "Tetapkan terposting" : "Simpan penyelesaian"}
             confirmDisabled={blok} onConfirm={simpan}>
             {load.status === "memuat" && <Skeleton rows={3} label="Mencari faktur di Accurate dengan sesi Anda (bisa sampai 1–2 menit)" />}
             {load.status === "galat" && <ErrorState title="Pencarian faktur gagal" message={load.error} onRetry={cariLagi} />}
@@ -267,7 +267,7 @@ export function SelesaikanDialog({ row, onClose, onSelesai, onTidakPasti }: {
                             </label>
                         ))}
                     </div>
-                    <Button variant="tertiary" onClick={() => { setTimpa(null); setPilih(""); cariLagi(); }}>Cari lagi</Button>
+                    <div className="fi-btnrow"><Button variant="tertiary" onClick={() => { setTimpa(null); setPilih(""); cariLagi(); }}>Cari lagi</Button></div>
                 </>
             )}
         </ConfirmDialog>

@@ -66,7 +66,8 @@ function PanelKiriman({ k, onClose }: { k: Kiriman; onClose: () => void }) {
     const [tone, judul]: [Exclude<Tone, "neu">, string] = h.unknown > 0 ? ["warn", "Pengiriman berhenti: ada faktur yang hasilnya tidak pasti."]
         : h.mismatched > 0 ? ["neg", "Ada faktur terkirim yang isinya berselisih dengan yang dikirim."]
             : h.results.length === 0 ? ["warn", "Tidak ada faktur yang terkirim."]
-                : h.sent > 0 && h.sent === h.verifiedOk ? ["pos", "Faktur terkirim dan terverifikasi cocok per baris."] : ["info", "Kiriman selesai — periksa hasil per baris."];
+                : h.sent > 0 && h.sent === h.verifiedOk && h.rejected === 0 && dilewati === 0 ? ["pos", "Faktur terkirim dan terverifikasi cocok per baris."]
+                    : ["info", "Kiriman selesai — tidak semua terposting dan cocok; periksa hasil per baris."];
     return (
         <Section id="hasil-kiriman" title={`Hasil kiriman ${jamWita(k.jam)} WITA`}
             subtitle={`oleh ${h.sentBy || "Anda"} · tanggal faktur ${k.tanggal ? tanggalPendek(k.tanggal) : "= tanggal SO"}`}
@@ -169,7 +170,7 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
         { key: "tgl", header: "Tgl SO", secondary: true, cell: (r) => <span className="fi-tnum">{tanggalPendek(r.orderDate)}</span> },
         { key: "status", header: "Status", cell: (r) => <>{badge(r)}{macet(r) && <span className="fi-sub fi-why">lebih dari {SAPU_MENIT} menit — menjadi Tidak pasti otomatis</span>}</> },
         { key: "umur", header: "Umur", cell: (r) => r.state === "posted" ? "–" : <>
-            <span className={`fi-tnum${r.overdue ? " fi-why" : ""}`}>{usia(r.ageMinutes)}</span>
+            <span className={`fi-tnum${r.overdue ? " fi-why" : ""}`} style={{ whiteSpace: "nowrap" }}>{usia(r.ageMinutes)}</span>
             {r.overdue && <span className="fi-sub fi-why">lewat 2 jam</span>}
             {r.attempts > 0 && <span className="fi-sub">dicoba {r.attempts}×</span>}
         </> },
@@ -229,7 +230,8 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
             {kiriman && <PanelKiriman k={kiriman} onClose={() => setKiriman(null)} />}
 
             {!data && list.status === "memuat" ? <div className="fi-panel"><Skeleton rows={2} label="Memuat ringkasan antrean" /></div> : (
-                <div className="fi-kcards" role="group" aria-label="Saring menurut status">
+                // Tujuh kartu: dua kolom di ponsel supaya daftar tidak terdorong jauh ke bawah.
+                <div className="fi-kcards" role="group" aria-label="Saring menurut status" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 9.5rem), 1fr))" }}>
                     {KARTU.map((k) => (
                         <button key={k.key} type="button" className="fi-kc" aria-pressed={saring === k.key} data-tone={k.tone} onClick={() => ganti(k.key)}>
                             <span>{k.label}</span>
@@ -263,7 +265,7 @@ export default function AntreanFaktur({ permKeys }: { permKeys: string[] }) {
                         {tanggal && <Button variant="tertiary" onClick={() => setTanggal("")}>Pakai tanggal SO</Button>}
                         <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} disabled={Boolean(alasanKirim)} disabledReason={alasanKirim}
                             onClick={() => setDialog({ jenis: "kirim" })}>
-                            {dipilihSah.length ? `Kirim ${nKirim} terpilih…` : `Kirim ${nKirim} faktur…`}
+                            {dipilihSah.length ? `Kirim ${nKirim} terpilih…` : nKirim ? `Kirim ${nKirim} faktur…` : "Kirim faktur…"}
                         </Button>
                         {alasanKirim && <p className="fi-small fi-subtle" style={{ flexBasis: "100%" }}>Kirim nonaktif: {alasanKirim}.</p>}
                     </div>
