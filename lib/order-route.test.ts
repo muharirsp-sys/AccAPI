@@ -18,16 +18,16 @@ import { db } from "./db.ts";
 import { accurateEmployee, accurateUnit, customer, invoiceOutbox, principalMapping, principalOrderBatch, principalOrderLine, userGroup } from "../db/schema.ts";
 
 type Tabel = object;
-type Catatan = { where: { tabel: Tabel; params: unknown[] }[]; delete: Tabel[]; insert: { tabel: Tabel; values: unknown }[]; fetch: string[] };
+type Catatan = { where: { tabel: Tabel; params: unknown[]; sql: string }[]; delete: Tabel[]; insert: { tabel: Tabel; values: unknown }[]; fetch: string[] };
 
 const dialek = new PgDialect();
-const paramsOf = (cond: unknown) => (cond ? dialek.sqlToQuery(cond as SQL).params : []);
+const kueri = (cond: unknown) => (cond ? dialek.sqlToQuery(cond as SQL) : { sql: "", params: [] as unknown[] });
 
 /** Rantai kueri drizzle tiruan: setiap pemanggil `await` mendapat `rows`; kondisi `where` dicatat (param SQL-nya). */
 function rantai(tabel: Tabel, rows: unknown[], catat: Catatan) {
     const c: Record<string, unknown> = {};
     for (const m of ["leftJoin", "innerJoin", "limit", "orderBy", "for"]) c[m] = () => c;
-    c.where = (cond: unknown) => { catat.where.push({ tabel, params: paramsOf(cond) }); return c; };
+    c.where = (cond: unknown) => { const q = kueri(cond); catat.where.push({ tabel, params: q.params, sql: q.sql }); return c; };
     c.then = (ok: (v: unknown) => unknown, gagal?: (e: unknown) => unknown) => Promise.resolve(rows).then(ok, gagal);
     return c;
 }
@@ -41,7 +41,8 @@ export async function denganDb<T>(keys: string[], tabel: Map<Tabel, unknown[]>, 
         select: pilih, selectDistinct: pilih,
         delete: (t: Tabel) => ({
             where: (cond: unknown) => {
-                catat.where.push({ tabel: t, params: paramsOf(cond) });
+                const q = kueri(cond);
+                catat.where.push({ tabel: t, params: q.params, sql: q.sql });
                 catat.delete.push(t);
                 const p = Promise.resolve([] as unknown[]);
                 return Object.assign(p, { returning: async () => (tabel.get(t) ?? []).slice(0, 1) });
@@ -238,6 +239,9 @@ test("C7 route: pratinjau POST /api/orders/[id]/invoice dengan salesman → payl
     const res = await denganDb(["order.view", "order.edit"], tabelOrder(), async (catat) => {
         const r = await postInvoice({ queue: false, salesman: " m-sla " });
         assert.deepEqual(catat.insert, [], "pratinjau tidak menulis");
+        // Nomor dinormalkan trim+upper di kedua sisi: kolom master juga di-trim/upper di SQL, isian " m-sla " jadi "M-SLA".
+        const cari = catat.where.find((w) => w.tabel === accurateEmployee);
+        assert.ok(cari && /upper\(trim\(/.test(cari.sql) && cari.params.includes("M-SLA"), `kueri salesman: ${cari?.sql} ${cari?.params}`);
         return r;
     }, fastapiOrder);
     assert.equal(res.status, 200);

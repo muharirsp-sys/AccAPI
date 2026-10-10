@@ -3,8 +3,8 @@
  *   yang sama dengan jalur Order Principal (`masterSalesmanId` di kepala + `salesmanListNumber` di setiap baris, lewat
  *   buildInvoicePayload). Menetapkan apakah salesman yang dipilih sah sebelum payload dibekukan ke antrean.
  * Caller: app/api/orders/[id]/invoice (pratinjau + antre).
- * Dependensi: TIDAK ADA (murni) — baris pegawai dibaca pemanggil dari `accurate_employee` (sync employee/list.do).
- * Main Functions: salesmanOrder.
+ * Dependensi: drizzle-orm `sql` (ekspresi saja); baris pegawai dibaca pemanggil dari `accurate_employee` (sync employee/list.do).
+ * Main Functions: salesmanOrder, salesmanDariPayload.
  * Side Effects: Tidak ada.
  *
  * Beda dengan jalur principal: di sana salesman datang dari laporan principal dan yang tidak ketemu membuat faktur terbit TANPA sales
@@ -12,6 +12,7 @@
  * tidak sah (tidak ada, bukan sales, nonaktif, nomor ganda) DITOLAK — memasang sales lain atau tanpa sales diam-diam hanya
  * memindahkan kesalahan ke Accurate, tempat faktur tidak bisa ditarik.
  */
+import { sql, type SQLWrapper } from "drizzle-orm";
 
 /** Satu baris `accurate_employee`; `number` = kode salesman internal (dibuktikan live 2026-09-12). */
 export type PegawaiAccurate = { id: number; number: string; name: string; salesman: boolean; suspended: boolean };
@@ -41,3 +42,9 @@ export function salesmanOrder({ queue, kode, pegawai }: { queue: boolean; kode: 
     const [sales] = aktif;
     return { ok: true, opsi: { masterSalesmanId: sales.id, salesmanNumber: nomor }, nama: sales.name };
 }
+
+/**
+ * Sales order INTERNAL untuk daftar Antrean Faktur: nomor salesman baris pertama payload beku (`detailItem[0].salesmanListNumber[0]`).
+ * Satu salesman per order disalin ke SETIAP baris (C7), jadi baris pertama mewakili order. Payload lama tanpa sales → NULL (kosong).
+ */
+export const salesmanDariPayload = (payload: SQLWrapper) => sql<string | null>`(${payload})->'detailItem'->0->'salesmanListNumber'->>0`;

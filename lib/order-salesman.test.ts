@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildInvoicePayload, type InvoiceOrder } from "./accurate-invoice-write.ts";
-import { salesmanOrder, type PegawaiAccurate } from "./order-salesman.ts";
+import { salesmanDariPayload, salesmanOrder, type PegawaiAccurate } from "./order-salesman.ts";
 
 const UNITS = new Map([["KRT", 100], ["LSN", 200]]);
 const OPSI = { unitIds: UNITS, branchId: 50, typeAutoNumber: 7 };
@@ -70,4 +70,23 @@ test("C7: salesman tak dikenal, bukan sales, nonaktif, atau ganda DITOLAK (409),
     // Pegawai yang nomornya lain tidak pernah dipakai, walau satu-satunya baris.
     const lain = salesmanOrder({ queue: true, kode: "M-SLA", pegawai: [{ ...SALES_A, number: "M-SLB" }] });
     assert.equal(lain.ok, false);
+});
+
+// Daftar Antrean Faktur menyebut sales order INTERNAL dari payload beku (tinjauan S6d A): baris pertama `salesmanListNumber[0]`.
+const PG_URL = process.env.AM040_DATABASE_URL ?? "";
+test("C7: sales order internal di daftar Antrean Faktur dibaca dari payload beku (PG)", { skip: PG_URL ? false : "AM040_DATABASE_URL tidak di-set" }, async () => {
+    const { Pool } = await import("pg");
+    const { drizzle } = await import("drizzle-orm/node-postgres");
+    const { sql } = await import("drizzle-orm");
+    const pool = new Pool({ connectionString: PG_URL });
+    try {
+        const pg = drizzle(pool);
+        const baca = async (payload: unknown) => (await pg.execute(sql`select ${salesmanDariPayload(sql`${JSON.stringify(payload)}::jsonb`)} as s`)).rows[0]?.s ?? null;
+        const dengan = buildInvoicePayload(ORDER, { ...OPSI, masterSalesmanId: 4652, salesmanNumber: "M-SLA" });
+        assert.equal(await baca(dengan), "M-SLA");
+        assert.equal(await baca(buildInvoicePayload(ORDER, OPSI)), null, "payload lama tanpa sales = kosong, bukan galat");
+        assert.equal(await baca({ detailItem: [] }), null);
+    } finally {
+        await pool.end();
+    }
 });

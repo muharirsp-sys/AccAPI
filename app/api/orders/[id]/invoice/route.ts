@@ -12,7 +12,7 @@
  * tidak pernah ditebak; kalau satuan order tidak ada di master, payload GAGAL dibuat.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accurateEmployee, invoiceOutbox } from "@/db/schema";
 import { antrekan, pencariPenekan } from "@/lib/invoice-outbox-actions";
@@ -54,12 +54,13 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const wantQueue = body?.queue === true;
     // C7 (owner 8 Okt 2026): SATU salesman per order, disalin ke tiap baris — bentuk sama dengan jalur Order Principal.
     // Dipilih petugas saat antre (Order Masuk dulu tidak mengirim sales sama sekali); diperiksa ke master SEBELUM order dibaca,
-    // supaya antre tanpa salesman tidak pernah sampai membekukan payload.
+    // supaya antre tanpa salesman tidak pernah sampai membekukan payload. Nomor dinormalkan trim+upper di KEDUA sisi (SQL di sini,
+    // salesmanOrder di lib) — sync menyimpan upper, tetapi baris lama/manual tidak boleh lolos atau tertolak karena spasi/huruf.
     const kodeSalesman = typeof body?.salesman === "string" ? body.salesman.trim().toUpperCase() : "";
     const pegawai = kodeSalesman
         ? await db.select({ id: accurateEmployee.id, number: accurateEmployee.number, name: accurateEmployee.name,
             salesman: accurateEmployee.salesman, suspended: accurateEmployee.suspended })
-            .from(accurateEmployee).where(eq(accurateEmployee.number, kodeSalesman))
+            .from(accurateEmployee).where(sql`upper(trim(${accurateEmployee.number})) = ${kodeSalesman}`)
         : [];
     const salesman = salesmanOrder({ queue: wantQueue, kode: kodeSalesman, pegawai });
     if (!salesman.ok) return NextResponse.json({ ok: false, error: salesman.error }, { status: salesman.status });
