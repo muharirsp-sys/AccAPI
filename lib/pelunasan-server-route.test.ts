@@ -7,6 +7,9 @@ import { NextRequest } from "next/server";
 import { POST as proxyPost } from "../app/api/proxy/route.ts";
 import { POST as lockPost } from "../app/api/idempotency/lock/route.ts";
 import { GET as summaryGet } from "../app/api/idempotency/summary/route.ts";
+import { GET as resolveGet } from "../app/api/idempotency/resolve/route.ts";
+import { buatEmulator, type DataAccurate } from "./pelunasan/uji/emulator-accurate.ts";
+import { buildSalesReceiptIdempotencyPayload } from "./sales-receipt-fingerprint.ts";
 import { accurateOAuthSession } from "../db/schema.ts";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
@@ -120,4 +123,47 @@ test("butir 6: ringkasan BL-41 — izin pelunasan.kirim ATAU finance.resolve_unk
         assert.equal(b.processingStale, 6);
         assert.equal(b.perDatabase, null);
     }
+});
+
+/** fetch tiruan: GET host Accurate dijawab emulator (baca-saja); tulis apa pun = galat uji. */
+const fetchEmulator = (data: DataAccurate, log: string[] = []) => (async (input: string | URL | Request, init?: RequestInit) => {
+    if ((init?.method ?? "GET") !== "GET") throw new Error("TIDAK BOLEH menulis ke Accurate");
+    const url = new URL(String(input));
+    log.push(url.pathname);
+    return new Response(JSON.stringify(await buatEmulator(data).accurateFetch(url.pathname.replace("/accurate/api", "/api"), "GET", Object.fromEntries(url.searchParams))), { status: 200 });
+}) as typeof fetch;
+
+test("butir 5 (GET): pratinjau Selesaikan — hanya finance.resolve_unknown; cari baca-saja di Accurate; eligible menurut status & umur", async () => {
+    const r1 = { customerNo: "C1", transDate: "09/10/2026", detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 1000 }] };
+    const r2 = { customerNo: "C2", transDate: "09/10/2026", detailInvoice: [{ invoiceNo: "INV-2", paymentAmount: 2000 }] };
+    const k1 = buildSalesReceiptIdempotencyPayload(r1).key;
+    const k2 = buildSalesReceiptIdempotencyPayload(r2).key;
+    const mnt = (m: number) => new Date(Date.now() - m * 60_000);
+    const idem = [
+        { key: k1, status: "UNKNOWN", customerNo: "C1", transDate: "09/10/2026", invoiceNo: "INV-1", amount: 1000, updatedAt: mnt(1), createdAt: mnt(1) },
+        { key: k2, status: "SENDING", customerNo: "C2", transDate: "09/10/2026", invoiceNo: "INV-2", amount: 2000, updatedAt: mnt(1), createdAt: mnt(1) },
+    ];
+    const url = `http://app.test/api/idempotency/resolve?key=${encodeURIComponent(k1)}&key=${encodeURIComponent(k2)}`;
+    const get = () => resolveGet(new NextRequest(url));
+    assert.equal((await sebagai(["pelunasan.kirim", "finance.override_duplicate", "order.resolve_unknown"], get)).status, 403);
+    assert.equal((await sebagai(["finance.resolve_unknown"], () => resolveGet(new NextRequest("http://app.test/api/idempotency/resolve")))).status, 400);
+    const tanpaSesi = await sebagai(["finance.resolve_unknown"], get, { idem });
+    assert.equal((await tanpaSesi.json()).code, "ACCURATE_SESSION_INCOMPLETE");
+
+    const data = { salesInvoice: [], salesReturn: [], salesReceipt: [
+        { id: 7, number: "PR.7", customer: { customerNo: "C1" }, customerNo: "C1", transDate: "09/10/2026", detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 1000 }] }] };
+    const log: string[] = [];
+    const res = await sebagai(["finance.resolve_unknown"], get, { idem, sesi: sesiAccurate(), fetch: fetchEmulator(data, log) });
+    assert.equal(res.status, 200);
+    const b = await res.json();
+    assert.equal(b.databaseId, "DB-1");
+    const [a, c] = b.rows;
+    assert.deepEqual([a.found, a.receiptNumbers, a.eligible], [true, ["PR.7"], true]);
+    assert.deepEqual([c.found, c.receiptNumbers, c.eligible], [false, [], false], "SENDING < 2 mnt belum boleh diselesaikan");
+    assert.ok(log.length > 0 && log.every((p) => p.endsWith("list.do") || p.endsWith("detail.do")));
+    // Riwayat gagal dibaca: found = null + readError (bukan "tidak ada").
+    const gagal = await sebagai(["finance.resolve_unknown"], get, { idem, sesi: sesiAccurate(), fetch: (async () => new Response("<html>", { status: 502 })) as typeof fetch });
+    const g = await gagal.json();
+    assert.equal(g.rows[0].found, null);
+    assert.match(g.rows[0].readError, /HTTP 502/);
 });
