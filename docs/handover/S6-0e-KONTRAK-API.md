@@ -33,7 +33,7 @@ Izin `payments.update`, CSRF. Badan `{items:[{record_id, <isian>…}]}` (sama se
 - 200 `{ok:true, updated, updated_ids, skipped}`.
 - **409 (BARU)** bila satu item mengubah rekaman terkunci → **tidak ada yang disimpan** (semua-atau-tidak):
 ```json
-{"ok": false, "error": "Simpan ditolak: rekaman yang sudah ditransfer/terposting terkunci — LPB-7 (sudah ditransfer). Tidak ada yang disimpan.",
+{"ok": false, "error": "Simpan ditolak — rekaman terkunci: LPB-7 (sudah ditransfer). Tidak ada yang diubah.",
  "locked": [{"record_id": "LPB-7", "no_lpb": "LPB-7", "principle": "PT ABC", "reason": "sudah ditransfer", "fields": ["nilai_invoice"]}]}
 ```
 - 400 validasi lama (No. LPB, NON_LPB, angka AM-044).

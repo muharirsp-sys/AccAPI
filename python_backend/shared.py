@@ -1950,7 +1950,8 @@ def payment_lock_entry(key: str, rec: Dict[str, Any], reason: str, **extra: Any)
 def payment_lock_message(action: str, locked: List[Dict[str, Any]]) -> str:
     shown = ", ".join(f"{x['no_lpb'] or x['record_id']} ({x['reason']})" for x in locked[:5])
     extra = f" dan {len(locked) - 5} lainnya" if len(locked) > 5 else ""
-    return f"{action} ditolak: rekaman yang sudah ditransfer/terposting terkunci — {shown}{extra}. Tidak ada yang disimpan."
+    # Judul netral: alasan (diajukan / ditransfer / terposting / tidak pasti) ada per rekaman.
+    return f"{action} ditolak — rekaman terkunci: {shown}{extra}. Tidak ada yang diubah."
 
 
 def apply_sppd_excel_rows(db: Dict[str, Any], rows: List[Dict[str, Any]]) -> Dict[str, Any]:

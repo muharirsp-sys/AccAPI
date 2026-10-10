@@ -120,6 +120,9 @@ def check_delete_and_clear():
     r = client.post("/payments/delete", json={"record_ids": ["OPEN-1", "PST-1", "SUB-1"]})
     assert r.status_code == 409, f"hapus rekaman terposting/diajukan diterima: {r.status_code} {r.text[:200]}"
     assert [x["record_id"] for x in r.json()["locked"]] == ["PST-1", "SUB-1"], r.json()
+    # Judul netral + alasan per rekaman ("sudah diajukan" bukan "ditransfer/terposting").
+    assert r.json()["error"] == ("Hapus ditolak — rekaman terkunci: PST-1 (sudah terposting di Accurate), "
+                                 "SUB-1 (sudah diajukan; minta Finance mengembalikan (Ajukan Ulang)). Tidak ada yang diubah."), r.json()["error"]
     assert raw() == before, "hapus ditolak tetapi rekaman lain ikut terhapus"
     r = client.post("/payments/delete", json={"record_ids": ["OPEN-1"]})
     assert r.status_code == 200 and r.json()["deleted"] == 1, r.text[:200]
