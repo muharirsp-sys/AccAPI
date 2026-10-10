@@ -39,11 +39,11 @@ const LOMPAT_KETIK_ULANG = 50;
 
 export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
     const izin = izinPembayaran(permKeys);
-    const [set, muatSet] = useLoad(useCallback(() => baca("/payments/sppd/settings", (d): DataSetelan => ({
+    const [set, muatSet] = useLoad(useCallback(() => baca("/payments/sppd/settings", (d): DataSetelan | undefined => (!d.settings || typeof d.settings !== "object" ? undefined : {
         settings: d.settings as Setelan, efektif: Number(d.effective_last_sequence ?? (d.settings as Setelan | undefined)?.last_sequence ?? 0), preview: String(d.preview_number ?? ""),
     })), []));
-    const [bank, muatBank] = useLoad(useCallback(() => baca("/api/bank-data", (d) => (Array.isArray(d.items) ? (d.items as BarisRekening[]) : [])), []));
-    const [lap, muatLap] = useLoad(useCallback(() => baca("/api/bank-data/match-report", (d) => d.report as Laporan), []));
+    const [bank, muatBank] = useLoad(useCallback(() => baca("/api/bank-data", (d) => (Array.isArray(d.items) ? (d.items as BarisRekening[]) : undefined)), []));
+    const [lap, muatLap] = useLoad(useCallback(() => baca("/api/bank-data/match-report", (d) => (d.report && typeof d.report === "object" ? d.report as Laporan : undefined)), []));
     const s = set.data ?? undefined;
     const tahun = hariIniWita().slice(0, 4);
 

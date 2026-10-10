@@ -38,7 +38,7 @@ const dokumen = (r: Baris) => (tipeRekaman(r) === "NON_LPB" ? [r.nomor_dokumen, 
 export default function Rekaman({ permKeys }: { permKeys: string[] }) {
     const router = useRouter();
     const izin = izinPembayaran(permKeys);
-    const [load, muat] = useLoad(useCallback(() => baca("/payments/data", (d) => (Array.isArray(d.data) ? (d.data as Baris[]) : [])), []));
+    const [load, muat] = useLoad(useCallback(() => baca("/payments/data", (d) => (Array.isArray(d.data) ? (d.data as Baris[]) : undefined)), []));
     const rows = useMemo(() => load.data ?? [], [load.data]);
     const byId = useMemo(() => new Map(rows.map((r) => [r.record_id, r])), [rows]);
 

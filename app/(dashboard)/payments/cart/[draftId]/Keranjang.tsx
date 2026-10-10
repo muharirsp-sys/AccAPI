@@ -47,10 +47,10 @@ function galatPotongan(v: string, total: number): string | undefined {
 
 export default function Keranjang({ draftId, permKeys }: { draftId: string; permKeys: string[] }) {
     const izin = izinPembayaran(permKeys);
-    const [cart, muatCart] = useLoad(useCallback(() => baca(`/payments/cart-info?draft=${encodeURIComponent(draftId)}`, (d) => ({
-        items: Array.isArray(d.items) ? (d.items as Item[]) : [], method: String(d.method ?? ""), method_label: String(d.method_label ?? ""),
+    const [cart, muatCart] = useLoad(useCallback(() => baca(`/payments/cart-info?draft=${encodeURIComponent(draftId)}`, (d) => (Array.isArray(d.items) ? {
+        items: d.items as Item[], method: String(d.method ?? ""), method_label: String(d.method_label ?? ""),
         target_payment_date: String(d.target_payment_date ?? ""),
-    }) as Cart, { nihil404: true }), [draftId]));
+    } as Cart : undefined), { nihil404: true }), [draftId]));
     const c = cart.data ?? undefined;
     const panin = c?.method === "BANK_PANIN";
     const principals = useMemo(() => [...new Set((c?.items ?? []).map((i) => i.principle))].sort(), [c]);
@@ -60,7 +60,7 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
     const [rek, muatRek] = useLoad(useCallback(async (): Promise<Load<Record<string, Rekening>>> => {
         const daftar = kunciPrincipal ? kunciPrincipal.split("\u0000") : [];
         if (!panin || izin.lihatSppd || daftar.length === 0) return { status: "siap", data: {} };
-        const hasil = await Promise.all(daftar.map((p) => baca(`/api/bank-data/lookup?principle=${encodeURIComponent(p)}`, (d) => d as unknown as Rekening)));
+        const hasil = await Promise.all(daftar.map((p) => baca(`/api/bank-data/lookup?principle=${encodeURIComponent(p)}`, (d) => (typeof d.status === "string" ? d as unknown as Rekening : undefined))));
         const gagal = hasil.find((h) => h.status === "galat");
         if (gagal) return { status: "galat", error: gagal.error };
         return { status: "siap", data: Object.fromEntries(daftar.map((p, i) => [p, hasil[i].data as Rekening])) };
@@ -83,7 +83,10 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
     // = perubahan server, lintas slice.
     const idHasil = hasil?.id ?? "";
     const [tercatat, muatTercatat] = useLoad(useCallback(async (): Promise<Load<number | null>> => (idHasil
-        ? baca(`/payments/submissions/${encodeURIComponent(idHasil)}`, (d) => Number((d.data as { total_pembayaran?: unknown } | undefined)?.total_pembayaran))
+        ? baca(`/payments/submissions/${encodeURIComponent(idHasil)}`, (d) => {
+            const t = Number((d.data as { total_pembayaran?: unknown } | undefined)?.total_pembayaran);
+            return Number.isFinite(t) ? t : undefined;
+        })
         : { status: "siap", data: null }), [idHasil]));
     // Jawaban tidak pasti: kunci sampai draf terbaca ulang (referensi data berganti).
     const [kunciPada, setKunciPada] = useState<Cart | null | undefined>(undefined);

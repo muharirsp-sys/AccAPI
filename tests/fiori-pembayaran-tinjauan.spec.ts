@@ -147,3 +147,44 @@ test("Format SPPD: lompatan kecil (≤ 50) tidak meminta ketik ulang", async ({ 
     await expect(dlg.getByLabel("Ketik ulang nomor surat terakhir")).toHaveCount(0);
     await expect(dlg.getByRole("button", { name: "Simpan", exact: true })).toBeEnabled();
 });
+
+// ── Butir 4: perilaku tahan-galat ──
+test("Rekaman: jawaban 500 (JSON) saat simpan = belum pasti, tulis dikunci sampai data terbaca ulang", async ({ page }) => {
+    let gagalMuatUlang = false;
+    const { kirim } = await mock(page, (p, r) => {
+        if (p === "/payments/update") { gagalMuatUlang = true; return json(r, { ok: false, error: "Gagal menyimpan." }, 500); }
+        if (p === "/payments/data" && gagalMuatUlang) return r.fulfill({ status: 502, headers: { ...cors(r), "content-type": "text/html" }, body: "<html>Bad Gateway</html>" });
+        return "lewat";
+    });
+    await page.goto("/payments", NAV);
+    const main = page.locator("main");
+    const tabel = main.getByRole("table", { name: "Rekaman" });
+    await tabel.getByRole("button", { name: "Buka rincian LPB-A-001" }).click(NAV);
+    await page.getByRole("dialog").getByLabel("No. invoice", { exact: true }).fill("INV-A-1B");
+    await page.getByRole("dialog").getByRole("button", { name: "Selesai" }).click();
+    await main.getByRole("button", { name: "Simpan 1 perubahan" }).click();
+    await expect(main.getByText("hasil sisanya belum pasti", { exact: false })).toBeVisible();
+    await expect(main.getByText("Tidak ada yang disimpan")).toHaveCount(0);
+    await expect(main.getByRole("button", { name: "Simpan 1 perubahan" })).toBeDisabled();
+    await expect(main.locator(".fi-ftb")).toContainText("Data gagal dimuat ulang");
+    expect(kirim.filter((k) => k.path === "/payments/update")).toHaveLength(1);
+});
+
+test("Baca: 200 tanpa daftar data = galat (bukan kosong); 404 tanpa penolakan server = galat (bukan draf terpakai)", async ({ page }) => {
+    await mock(page, (p, r) => {
+        if (p === "/payments/data") return json(r, { ok: true });
+        if (p === "/payments/submissions") return json(r, { ok: true, total: 0 });
+        if (p === "/payments/cart-info") return json(r, { detail: "Not Found" }, 404);
+        return "lewat";
+    });
+    await page.goto("/payments", NAV);
+    const main = page.locator("main");
+    await expect(main.getByText("Jawaban server tidak terbaca.")).toBeVisible(NAV);
+    await expect(main.getByText("Belum ada rekaman pembayaran")).toHaveCount(0);
+    await page.goto("/payments/pengajuan", NAV);
+    await expect(main.getByText("Jawaban server tidak terbaca.")).toBeVisible(NAV);
+    await expect(main.getByText("Belum ada pengajuan")).toHaveCount(0);
+    await page.goto("/payments/cart/7f3c91ab", NAV);
+    await expect(main.getByText("Keranjang gagal dimuat")).toBeVisible(NAV);
+    await expect(main.getByText("Keranjang tidak ditemukan atau sudah diajukan")).toHaveCount(0);
+});

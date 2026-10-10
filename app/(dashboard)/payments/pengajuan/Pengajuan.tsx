@@ -39,9 +39,9 @@ const judul = (r: RingkasPengajuan) => r.sppd_no || `Pengajuan ${r.id}`;
 
 export default function Pengajuan({ permKeys }: { permKeys: string[] }) {
     const [offset, setOffset] = useState(0);
-    const [load, muat] = useLoad(useCallback(() => baca(`/payments/submissions?limit=${PAGE}&offset=${offset}`, (d) => ({
-        rows: Array.isArray(d.data) ? (d.data as RingkasPengajuan[]) : [], total: Number(d.total ?? 0),
-    })), [offset]), { pertahankan: true });
+    const [load, muat] = useLoad(useCallback(() => baca(`/payments/submissions?limit=${PAGE}&offset=${offset}`, (d) => (Array.isArray(d.data) ? {
+        rows: d.data as RingkasPengajuan[], total: Number(d.total ?? d.data.length),
+    } : undefined)), [offset]), { pertahankan: true });
     const rows = load.data?.rows ?? [];
     const total = load.data?.total ?? 0;
 

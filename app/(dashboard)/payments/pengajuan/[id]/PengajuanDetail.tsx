@@ -34,7 +34,7 @@ const nama = (r: BarisFinance) => r.no_lpb || r.record_id;
 
 export default function PengajuanDetail({ id, permKeys }: { id: string; permKeys: string[] }) {
     const izin = izinPembayaran(permKeys);
-    const [load, muat] = useLoad(useCallback(() => baca(`/payments/submissions/${encodeURIComponent(id)}`, (d) => d.data as Detail, { nihil404: true }), [id]));
+    const [load, muat] = useLoad(useCallback(() => baca(`/payments/submissions/${encodeURIComponent(id)}`, (d) => (d.data && typeof d.data === "object" && Array.isArray((d.data as Detail).records) ? d.data as Detail : undefined), { nihil404: true }), [id]));
     const kembali = <Link className="fi-btn fi-btn--secondary" href="/payments/pengajuan"><ArrowLeft className="fi-icon" aria-hidden />Pengajuan & SPPD</Link>;
     const jejak = [{ label: "Pengajuan & SPPD", href: "/payments/pengajuan" }, { label: "Pengajuan" }];
 

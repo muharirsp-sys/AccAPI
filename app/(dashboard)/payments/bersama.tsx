@@ -9,8 +9,9 @@
  *
  * Kode status, bukan teks: sebagian pesan lama FastAPI berbahasa Inggris ("Forbidden", "CSRF token invalid"), jadi 401/403 selalu
  * memakai kalimat sendiri. 400/404/409 membawa `error` berbahasa Indonesia dari server — ditampilkan apa adanya.
- * Tidak pasti (tulis) = koneksi putus/timeout, status ≥ 502, atau badan bukan JSON (mis. 500 HTML saat payments.json rusak): mungkin
- * sudah tertulis, mungkin belum — pemanggil memuat ulang dan mengunci tulis, bukan menampilkan HTML mentah.
+ * Tidak pasti (tulis) = koneksi putus/timeout, status ≥ 500 (juga 500 JSON dari `except Exception` — bisa terjadi SESUDAH tulis), atau
+ * badan bukan JSON: mungkin sudah tertulis, mungkin belum — pemanggil memuat ulang dan mengunci tulis, bukan menampilkan HTML mentah.
+ * Baca: jawaban 2xx yang bentuknya tidak dikenali (`pick` mengembalikan undefined, mis. tanpa array `data`) = galat, bukan kosong.
  */
 "use client";
 
@@ -62,11 +63,16 @@ export function sebab(j: Jawab, umum: string): string {
     return err || umum;
 }
 
-/** GET → Load. Galat TIDAK PERNAH menjadi data kosong. `nihil404`: 404 = "tidak ada" (data null), bukan galat — mis. draf terpakai. */
-export async function baca<T>(path: string, pick: (data: Record<string, unknown>) => T, opsi: { nihil404?: boolean } = {}): Promise<Load<T | null>> {
+/**
+ * GET → Load. Galat TIDAK PERNAH menjadi data kosong: `pick` mengembalikan undefined bila bentuk jawaban tidak dikenali → galat.
+ * `nihil404`: 404 penolakan server (`{ok:false, error}`) = "tidak ada" (data null) — mis. draf terpakai. 404 lain (rute tidak ada,
+ * proxy) tetap galat.
+ */
+export async function baca<T>(path: string, pick: (data: Record<string, unknown>) => T | undefined, opsi: { nihil404?: boolean } = {}): Promise<Load<T | null>> {
     const j = await panggil(`${API_BASE}${path}`, { method: "GET" }, BACA_MS);
-    if (opsi.nihil404 && j.status === 404 && j.data) return { status: "siap", data: null };
-    if (j.status >= 200 && j.status < 300 && j.data && j.data.ok !== false) return { status: "siap", data: pick(j.data) };
+    if (opsi.nihil404 && j.status === 404 && j.data?.ok === false && typeof j.data.error === "string") return { status: "siap", data: null };
+    const isi = j.status >= 200 && j.status < 300 && j.data && j.data.ok !== false ? pick(j.data) : undefined;
+    if (isi !== undefined) return { status: "siap", data: isi };
     if (j.status >= 200 && j.status < 300) return { status: "galat", error: "Jawaban server tidak terbaca." };
     return { status: "galat", error: sebab(j, j.data ? "Server pembayaran gagal memuat data." : "Server pembayaran gagal memuat data (jawaban rusak).") };
 }
@@ -86,7 +92,7 @@ export async function tulis(path: string, body: unknown): Promise<HasilTulis> {
     let j = await kirim(await csrf());
     if (j.status === 403) j = await kirim(await csrf(true));
     if (j.status >= 200 && j.status < 300 && j.data && j.data.ok !== false) return { ok: true, status: j.status, data: j.data };
-    const tidakPasti = j.status === 0 || j.status >= 502 || j.data === null;
+    const tidakPasti = j.status === 0 || j.status >= 500 || j.data === null;
     return { ok: false, tidakPasti, status: j.status, data: j.data, error: tidakPasti ? BELUM_PASTI : sebab(j, "Server pembayaran gagal memproses permintaan.") };
 }
 
