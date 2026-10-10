@@ -43,13 +43,15 @@ const retur = (id: number, number: string, primeOwing: number, customerNo: strin
 
 const f1 = (): Fixture => ({
     nama: "f01-tunai-total-trx",
-    catatan: "Tunai + Total.Trx: lunas pas, snap Total.Trx ≤ Rp 100 (bump kas), Total.Trx > piutang (dibatasi piutang); Total.Trx = 0 eksplisit (tidak ada yang dibayar).",
+    catatan: "Tunai + Total.Trx: lunas pas, snap Total.Trx ≤ Rp 100 (bump kas), Total.Trx > piutang (dibatasi piutang); Total.Trx = 0 eksplisit (tidak ada yang dibayar); batas toleransi tepat Rp 100 (snap) vs Rp 101 (tidak).",
     opsi: { ...OPSI_DASAR, mapTunaiAutoNum: "300", mapTunaiBank: "110102" },
     rows: [
         { "Code Outlet": "PLG-A-001", "No. Nota": "INV/2610/XX00001", "Tunai": 1500000, "Total.Trx": 1500000, "Ket. All Trx": "Setoran harian 1" },
         { "Code Outlet": "PLG-A-001", "No. Nota": "INV/2610/XX00002", "Tunai": 999950, "Total.Trx": 999950, "Ket. All Trx": "Setoran harian 1" },
         { "Code Outlet": "PLG-A-002", "No. Nota": "INV/2610/XX00003", "Tunai": 600000, "Total.Trx": 600000 },
         { "Code Outlet": "PLG-A-002", "No. Nota": "INV/2610/XX00004", "Tunai": 50000, "Total.Trx": 0 },
+        { "Code Outlet": "PLG-A-002", "No. Nota": "INV/2610/XX00005", "Tunai": 999900, "Total.Trx": 999900 },
+        { "Code Outlet": "PLG-A-002", "No. Nota": "INV/2610/XX00006", "Tunai": 999899, "Total.Trx": 999899 },
     ],
     data: {
         salesInvoice: [
@@ -57,6 +59,8 @@ const f1 = (): Fixture => ({
             faktur("INV/2610/XX00002", 1000000, "PLG-A-001"),
             faktur("INV/2610/XX00003", 500000, "PLG-A-002"),
             faktur("INV/2610/XX00004", 50000, "PLG-A-002"),
+            faktur("INV/2610/XX00005", 1000000, "PLG-A-002"),
+            faktur("INV/2610/XX00006", 1000000, "PLG-A-002"),
         ],
         salesReturn: [],
     },
@@ -76,6 +80,7 @@ const f2 = (): Fixture => ({
         { "Code Outlet": "PLG-A-003", "No. Nota": "FJ/2610/XX00016", "Trf": 250000 },
         { "Code Outlet": "PLG-A-003", "No. Nota": "INV/2610/XX00017", "Trf": 125000.5 },
         { "Code Outlet": "PLG-A-003", "No. Nota": "INV/2610/XX00018", "Trf": 50000 },
+        { "Code Outlet": "PLG-A-003", "No. Nota": "INV/2610/XX00019", "Trf": 400100 },
     ],
     data: {
         salesInvoice: [
@@ -86,6 +91,7 @@ const f2 = (): Fixture => ({
             faktur("INV/2610/XX00016", 300000, "PLG-A-003"),
             faktur("INV/2610/XX00017-R", 125000.5, "PLG-A-003"),
             faktur("INV/2610/XX00018", 50000, "PLG-A-003"),
+            faktur("INV/2610/XX00019", 400000, "PLG-A-003"),
         ],
         salesReturn: [],
         galat: ['"filter.number.val":"INV/2610/XX00018"'],
@@ -121,12 +127,14 @@ const f4 = (): Fixture => ({
         { "Code Outlet": "PLG-C-001", "No. Nota": "INV/2610/XX00031", "Tunai": 900000, "Pot.1 Kwtnsi": 50000, "Pot.2 Kwtnsi": 30000, "Pot.3 Kwtnsi": 20000, "Total.Trx": 950000 },
         { "Code Outlet": "PLG-C-001", "No. Nota": "INV/2610/XX00032", "Pot.1 Kwtnsi": 80000, "Pot.2 Kwtnsi": 40000, "Total.Trx": 100000 },
         { "Code Outlet": "PLG-C-002", "No. Nota": "INV/2610/XX00033", "Pot.3 Kwtnsi": 299950 },
+        { "Code Outlet": "PLG-C-002", "No. Nota": "INV/2610/XX00034", "Pot.1 Kwtnsi": 199900 },
     ],
     data: {
         salesInvoice: [
             faktur("INV/2610/XX00031", 950000, "PLG-C-001"),
             faktur("INV/2610/XX00032", 100000, "PLG-C-001"),
             faktur("INV/2610/XX00033", 300000, "PLG-C-002"),
+            faktur("INV/2610/XX00034", 200000, "PLG-C-002"),
         ],
         salesReturn: [],
     },
@@ -142,6 +150,7 @@ const f5 = (): Fixture => ({
         { "Code Outlet": "PLG-D-001", "No. Nota": "INV/2610/XX00042", "No.RJS RT Gt": "SRT/2610/XX0002", "Pot. RT Gt": 150000 },
         { "Code Outlet": "PLG-D-002", "No. Nota": "INV/2610/XX00043", "Tunai": 100000, "No.SRB Rt Ktr": "SRB 2610.0003", "Pot.RT Ktr": 50000, "Ket. All Trx": "Setoran D2" },
         { "Code Outlet": "PLG-D-002", "No. Nota": "INV/2610/XX00044", "Tunai": 70000, "No.RJS RT Gt": "SRT/2610/XX0004", "Pot. RT Gt": 30000 },
+        { "Code Outlet": "PLG-D-003", "No. Nota": "INV/2610/XX00045", "Tunai": 150000, "No.SRB Rt Ktr": "SRB 2610.0005", "Pot.RT Ktr": 49900 },
     ],
     data: {
         salesInvoice: [
@@ -149,12 +158,14 @@ const f5 = (): Fixture => ({
             faktur("INV/2610/XX00042", 150000, "PLG-D-001"),
             faktur("INV/2610/XX00043", 150000, "PLG-D-002"),
             faktur("INV/2610/XX00044", 100000, "PLG-D-002"),
+            faktur("INV/2610/XX00045", 300000, "PLG-D-003"),
         ],
         salesReturn: [
             retur(201, "SRT/2610/XX0001", 200000, "PLG-D-001", { keywords: "SRB 2610.0001", description: "Retur SRB 2610.0001" }),
             retur(202, "SRT/2610/XX0002", 150000, "PLG-D-001"),
             retur(203, "SRT/2610/XX0003", 50000, "PLG-D-002", { keywords: "SRB2610.0003" }),
             retur(204, "SRT/2610/XX0004.R", 30000, "PLG-D-002"),
+            retur(205, "SRT/2610/XX0005", 50000, "PLG-D-003", { keywords: "SRB 2610.0005" }),
         ],
     },
 });
