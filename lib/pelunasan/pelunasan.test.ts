@@ -34,21 +34,9 @@ test("golden kode lama: p01-pratinjau-duplikat", async () => {
 });
 
 // ---- lib/pelunasan (S6e-1 tahap 2): HARUS identik dengan golden yang sama.
-import { deteksiFormatPelunasan, parsePelunasan, type JenisLapor } from "./parser.ts";
+import { jalankanLib } from "./uji/jalankan.ts";
 import { pratinjauDuplikat } from "./pratinjau-ganda.ts";
 import type { AccurateFetch } from "./retur.ts";
-
-/** Jalankan lib persis seperti halaman: deteksi dulu; toast direkam dalam bentuk panggilan `toast[jenis](pesan, opsi?)`. */
-export async function jalankanLib(fx: ReturnType<(typeof FIXTURES)[number]>, emu: ReturnType<typeof buatEmulator>) {
-    const toasts: unknown[][] = [];
-    if (!deteksiFormatPelunasan(fx.rows)) return { payload: null, manualRows: null, toasts };
-    const { trxDate, isKeySaved, ...peta } = fx.opsi;
-    const hasil = await parsePelunasan(fx.rows, {
-        trxDate, isKeySaved, peta, accurateFetch: emu.accurateFetch as AccurateFetch,
-        lapor: (jenis: JenisLapor, pesan: string, opsi?: { id: string }) => { toasts.push(opsi ? [jenis, pesan, opsi] : [jenis, pesan]); },
-    });
-    return { payload: hasil.payload, manualRows: hasil.manualRows, toasts };
-}
 
 for (const buat of FIXTURES) {
     const fx = buat();
