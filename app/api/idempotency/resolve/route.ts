@@ -3,10 +3,11 @@
  *   memutuskan (pola invoice-outbox/resolve). Sidik jari sama dengan penahanan riwayat di proxy (periksaRiwayatAccurate).
  * Caller: dialog Selesaikan wizard Pelunasan / Beranda (S6e-2b).
  * Dependensi: idempotency_log, lib/accurate-session, lib/accurate-forward (bacaAccurate), lib/pelunasan/pratinjau-ganda.
- * Main Functions: GET ?key=…(&key=…, 1–50) -> {ok, databaseId, databaseAlias, rows:[{key, status, …, eligible, found, receiptNumbers, readError}]}.
- * Side Effects: SELECT idempotency_log; GET Accurate list.do/detail.do dengan sesi PEMANGGIL. Tidak menulis apa pun.
- * Izin: finance.resolve_unknown. POST (keputusan terposting/tidak_ada, tercatat) BELUM ADA — menunggu DDL (kolom database di
- *   idempotency_log + tabel jejak penyelesaian), lihat docs/handover/S6e2-KONTRAK-API.md §5/§8.
+ * Main Functions: GET ?key=…(&key=…, 1–50) -> {ok, databaseId, databaseAlias, rows:[{key, status, …, eligible, found, receiptNumbers, readError}]};
+ *   POST {key, decision, accurateNumber?, reason, checkedSource, expectedDatabaseId} -> lib/idempotency-resolve (cari dulu, lalu tetapkan).
+ * Side Effects: GET = SELECT + GET Accurate list.do/detail.do dengan sesi PEMANGGIL, tanpa tulis. POST = pencarian yang sama lalu
+ *   satu transaksi UPDATE idempotency_log + INSERT idempotency_resolution. TIDAK ADA tulis ke Accurate.
+ * Izin: finance.resolve_unknown (GET & POST). Kontrak: docs/handover/S6e2-KONTRAK-API.md §4–§5.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { inArray } from "drizzle-orm";
@@ -17,13 +18,10 @@ import { getAccurateSession } from "@/lib/accurate-session";
 import { isAllowedAccurateHost } from "@/lib/api-security";
 import { bacaAccurate } from "@/lib/accurate-forward";
 import { periksaRiwayatAccurate } from "@/lib/pelunasan/pratinjau-ganda";
-import { STALE_PROCESSING_MS } from "@/lib/idempotency-lock";
+import { bolehDiselesaikan, cekInputSelesaikan, selesaikanPelunasan } from "@/lib/idempotency-resolve";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
-
-/** Umur minimum SENDING sebelum boleh diselesaikan (pola Finance purchase-payment: 2 mnt). PROCESSING = basi lock (15 mnt). */
-const SENDING_BASI_MS = 2 * 60 * 1000;
 
 export async function GET(request: NextRequest) {
     const gate = await requirePermission(request, "finance.resolve_unknown");
@@ -56,13 +54,36 @@ export async function GET(request: NextRequest) {
             return {
                 key: r.key, status: r.status, customerNo: r.customerNo, transDate: r.transDate, invoiceNo: r.invoiceNo, amount: r.amount,
                 updatedAt: r.updatedAt, ageSeconds: umur === null ? null : Math.floor(umur / 1000),
-                eligible: r.status === "UNKNOWN"
-                    || (r.status === "SENDING" && umur !== null && umur >= SENDING_BASI_MS)
-                    || (r.status === "PROCESSING" && umur !== null && umur > STALE_PROCESSING_MS),
+                eligible: bolehDiselesaikan(r, new Date(now)),
                 found: readError ? null : receiptNumbers.length > 0,
                 receiptNumbers,
                 readError,
             };
         }),
     });
+}
+
+export async function POST(request: NextRequest) {
+    const gate = await requirePermission(request, "finance.resolve_unknown");
+    if (gate.response) return gate.response;
+    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    // Validasi murah dulu: tanpa keputusan/alasan yang sah tidak ada pencarian ke Accurate.
+    const inp = cekInputSelesaikan(body);
+    if (typeof inp === "string") return NextResponse.json({ ok: false, error: inp }, { status: 400 });
+    const expected = typeof body?.expectedDatabaseId === "string" || typeof body?.expectedDatabaseId === "number" ? String(body.expectedDatabaseId).trim() : "";
+    if (!expected) return NextResponse.json({ ok: false, code: "DATABASE_REQUIRED", error: "expectedDatabaseId wajib (database yang diperiksa)." }, { status: 400 });
+
+    const sesi = await getAccurateSession(String(gate.session.user.id));
+    if (!sesi?.sessionHost || !sesi.sessionId || !sesi.accessToken || !sesi.databaseId || !isAllowedAccurateHost(sesi.sessionHost)) {
+        return NextResponse.json({ ok: false, code: "ACCURATE_SESSION_INCOMPLETE", error: "Sesi Accurate belum lengkap. Login dan buka database yang diperiksa dulu." }, { status: 400 });
+    }
+    if (String(sesi.databaseId) !== expected) {
+        return NextResponse.json({ ok: false, code: "database_changed", databaseId: sesi.databaseId, databaseAlias: sesi.databaseAlias ?? null,
+            error: `Database Accurate sesi berubah (kini ${sesi.databaseAlias || sesi.databaseId}) — muat ulang lalu cari lagi. Tidak ada yang diubah.` }, { status: 409 });
+    }
+    const baca = bacaAccurate({ sessionHost: sesi.sessionHost, sessionId: sesi.sessionId, accessToken: sesi.accessToken });
+    const hasil = await selesaikanPelunasan(db, {
+        ...inp, actor: String(gate.session.user.email ?? gate.session.user.id), sessionDatabaseId: String(sesi.databaseId),
+    }, (t) => periksaRiwayatAccurate([t], baca));
+    return NextResponse.json(hasil.body, { status: hasil.status });
 }

@@ -7,7 +7,7 @@ import { NextRequest } from "next/server";
 import { POST as proxyPost } from "../app/api/proxy/route.ts";
 import { POST as lockPost } from "../app/api/idempotency/lock/route.ts";
 import { GET as summaryGet } from "../app/api/idempotency/summary/route.ts";
-import { GET as resolveGet } from "../app/api/idempotency/resolve/route.ts";
+import { GET as resolveGet, POST as resolvePost } from "../app/api/idempotency/resolve/route.ts";
 import { buatEmulator, type DataAccurate } from "./pelunasan/uji/emulator-accurate.ts";
 import { buildSalesReceiptIdempotencyPayload } from "./sales-receipt-fingerprint.ts";
 import { accurateOAuthSession } from "../db/schema.ts";
@@ -166,4 +166,17 @@ test("butir 5 (GET): pratinjau Selesaikan — hanya finance.resolve_unknown; car
     const g = await gagal.json();
     assert.equal(g.rows[0].found, null);
     assert.match(g.rows[0].readError, /HTTP 502/);
+});
+
+test("butir 5 (POST): hanya finance.resolve_unknown; masukan tak sah 400 SEBELUM DB/Accurate", async () => {
+    const body = { key: "K", decision: "tidak_ada", reason: "Dicek langsung di Accurate oleh Finance", checkedSource: "Accurate", expectedDatabaseId: "DB-1" };
+    assert.equal((await sebagai(["pelunasan.kirim", "finance.override_duplicate", "order.resolve_unknown"], () => resolvePost(jsonPost("/api/idempotency/resolve", body)))).status, 403);
+    for (const salah of [{ reason: "pendek" }, { decision: "hapus" }, { decision: "terposting", accurateNumber: "" }, { checkedSource: " " }, { expectedDatabaseId: "" }]) {
+        const r = await sebagai(["finance.resolve_unknown"], () => resolvePost(jsonPost("/api/idempotency/resolve", { ...body, ...salah })));
+        assert.equal(r.status, 400, JSON.stringify(salah));
+    }
+    // Database sesi beda dari yang ditampilkan = 409 sebelum membaca baris/Accurate.
+    const beda = await sebagai(["finance.resolve_unknown"], () => resolvePost(jsonPost("/api/idempotency/resolve", { ...body, expectedDatabaseId: "DB-2" })), { sesi: sesiAccurate() });
+    assert.equal(beda.status, 409);
+    assert.equal((await beda.json()).code, "database_changed");
 });

@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { like } from "drizzle-orm";
 import { NextRequest } from "next/server";
-import { accurateOAuthSession, idempotencyLog, idempotencyOverride, userGroup } from "../db/schema.ts";
+import { accurateOAuthSession, idempotencyLog, idempotencyOverride, idempotencyResolution, userGroup } from "../db/schema.ts";
 import { buildSalesReceiptIdempotencyPayload } from "./sales-receipt-fingerprint.ts";
 import { buatEmulator, type DataAccurate } from "./pelunasan/uji/emulator-accurate.ts";
 
@@ -26,7 +26,8 @@ async function modul() {
     const proxy = (await import("../app/api/proxy/route.ts")).POST as Route;
     const lock = (await import("../app/api/idempotency/lock/route.ts")).POST as Route;
     const { sesiAccurate } = await import("./pelunasan/uji/sesi-accurate.ts");
-    return { db, auth, proxy, lock, sesiAccurate };
+    const resolve = (await import("../app/api/idempotency/resolve/route.ts")).POST as Route;
+    return { db, auth, proxy, lock, resolve, sesiAccurate };
 }
 after(async () => { if (PG_URL) await (await import("./db.ts")).pool.end(); });
 
@@ -238,4 +239,106 @@ test("PG butir 2: lock mencatat database sesi; lock di DB-1 lalu kirim dengan se
         assert.equal(catat.post.length + catat.baca, 0);
         assert.equal(await statusDb(m.db, kunci(a).key), "PROCESSING");
     });
+});
+
+// ------------------------------------------------------------------ butir 5: POST Selesaikan
+// Catatan: jejak idempotency_resolution tidak bisa dihapus (trigger DDL_S6E2) — baris uji berkunci tag unik tertinggal di DB evaluasi.
+const RESOLVE = ["finance.resolve_unknown"];
+const ALASAN = "Dicek langsung di Accurate oleh Finance";
+async function tanam(db: Db, r: Record<string, unknown>, status: string, umurMnt: number, databaseId: string | null) {
+    const p = kunci(r);
+    const t = new Date(Date.now() - umurMnt * 60_000);
+    await db.insert(idempotencyLog).values({ key: p.key, status, customerNo: p.customerNo, transDate: p.transDate, invoiceNo: p.invoiceNo,
+        amount: p.amount, createdAt: t, updatedAt: t, lockId: "L-lama", lockedBy: "orang-lain", databaseId });
+    return p.key;
+}
+const selesaikan = (m: Awaited<ReturnType<typeof modul>>, body: Record<string, unknown>) =>
+    m.resolve(post("/api/idempotency/resolve", { reason: ALASAN, checkedSource: "Accurate: daftar pelunasan", expectedDatabaseId: "DB-1", ...body }));
+async function jejak(db: Db, k: string) {
+    const { eq } = await import("drizzle-orm");
+    return db.select().from(idempotencyResolution).where(eq(idempotencyResolution.key, k));
+}
+
+test("PG butir 5: terposting — nomor harus ditemukan pencarian; tercatat (siapa/database/sumber/alasan); ulang = already_resolved", { skip: pgSkip }, () =>
+    dalamDunia((tag, m) => ({ izin: RESOLVE, sesi: m.sesiAccurate(), data: { ...KOSONG, salesReceipt: [riwayat(`${tag}-A`, "INV-1", 1000, "PR.5")] } }), async (m, tag) => {
+        const k = await tanam(m.db, baris(`${tag}-A`, "INV-1", 1000), "UNKNOWN", 1, "DB-1");
+        const salah = await selesaikan(m, { key: k, decision: "terposting", accurateNumber: "PR.6" });
+        assert.equal(salah.status, 409);
+        assert.equal((await salah.json()).code, "number_mismatch");
+        assert.equal(await statusDb(m.db, k), "UNKNOWN");
+        const ok = await selesaikan(m, { key: k, decision: "terposting", accurateNumber: "PR.5" });
+        assert.equal(ok.status, 200);
+        assert.equal(await statusDb(m.db, k), "SUCCESS");
+        const j = await jejak(m.db, k);
+        assert.equal(j.length, 1);
+        assert.deepEqual([j[0].decision, j[0].accurateNumber, j[0].databaseId, j[0].actor, j[0].previousStatus, j[0].reason],
+            ["terposting", "PR.5", "DB-1", ME, "UNKNOWN", ALASAN]);
+        const lagi = await selesaikan(m, { key: k, decision: "terposting", accurateNumber: "PR.5" });
+        assert.equal(lagi.status, 200);
+        assert.equal((await lagi.json()).alreadyResolved, true);
+        assert.equal((await jejak(m.db, k)).length, 1, "ulang tidak menambah jejak");
+    }));
+
+test("PG butir 5: tidak_ada — ditolak bila ditemukan / < 2 mnt / database lain / database tak tercatat; sah -> FAILED (boleh dikirim ulang)", { skip: pgSkip }, () =>
+    dalamDunia((tag, m) => ({ izin: RESOLVE, sesi: m.sesiAccurate(), data: { ...KOSONG, salesReceipt: [riwayat(`${tag}-F`, "INV-F", 1, "PR.F")] } }), async (m, tag) => {
+        const kode = async (body: Record<string, unknown>) => { const r = await selesaikan(m, body); return [r.status, (await r.json()).code]; };
+        const ditemukan = await tanam(m.db, baris(`${tag}-F`, "INV-F", 1), "UNKNOWN", 5, "DB-1");
+        assert.deepEqual(await kode({ key: ditemukan, decision: "tidak_ada" }), [409, "found_in_accurate"]);
+        const muda = await tanam(m.db, baris(`${tag}-M`, "INV-M", 1), "UNKNOWN", 1, "DB-1");
+        assert.deepEqual(await kode({ key: muda, decision: "tidak_ada" }), [409, "not_eligible"]);
+        const sending = await tanam(m.db, baris(`${tag}-S`, "INV-S", 1), "SENDING", 1, "DB-1");
+        assert.deepEqual(await kode({ key: sending, decision: "terposting", accurateNumber: "X" }), [409, "not_eligible"]);
+        const lain = await tanam(m.db, baris(`${tag}-L`, "INV-L", 1), "UNKNOWN", 5, "DB-2");
+        assert.deepEqual(await kode({ key: lain, decision: "tidak_ada" }), [409, "wrong_database"]);
+        const lama = await tanam(m.db, baris(`${tag}-N`, "INV-N", 1), "UNKNOWN", 5, null);
+        const r = await selesaikan(m, { key: lama, decision: "tidak_ada" });
+        assert.equal(r.status, 409);
+        const b = await r.json();
+        assert.equal(b.code, "database_unknown");
+        assert.match(b.error, /database lain/);
+        const sukses = await tanam(m.db, baris(`${tag}-T`, "INV-T", 1), "SENDING", 5, "DB-1");
+        assert.deepEqual(await kode({ key: sukses, decision: "tidak_ada" }), [200, undefined]);
+        assert.equal(await statusDb(m.db, sukses), "FAILED");
+        for (const k of [ditemukan, muda, sending, lain, lama]) assert.equal((await jejak(m.db, k)).length, 0, "ditolak = tanpa jejak");
+    }));
+
+test("PG butir 5: pencarian Accurate gagal -> 409 search_failed, tidak ada yang diubah", { skip: pgSkip }, () =>
+    dalamDunia((_t, m) => ({ izin: RESOLVE, sesi: m.sesiAccurate(), data: KOSONG, galatBaca: true }), async (m, tag) => {
+        const k = await tanam(m.db, baris(`${tag}-G`, "INV-G", 1), "UNKNOWN", 5, "DB-1");
+        for (const decision of ["tidak_ada", "terposting"]) {
+            const r = await selesaikan(m, { key: k, decision, accurateNumber: "PR.1" });
+            assert.equal(r.status, 409);
+            assert.equal((await r.json()).code, "search_failed");
+        }
+        assert.equal(await statusDb(m.db, k), "UNKNOWN");
+    }));
+
+test("PG butir 5: baris lama (database tak tercatat) -> terposting BOLEH dengan nomor yang ditemukan di database sesi", { skip: pgSkip }, () =>
+    dalamDunia((tag, m) => ({ izin: RESOLVE, sesi: m.sesiAccurate(), data: { ...KOSONG, salesReceipt: [riwayat(`${tag}-A`, "INV-1", 7, "PR.L")] } }), async (m, tag) => {
+        const k = await tanam(m.db, baris(`${tag}-A`, "INV-1", 7), "UNKNOWN", 30, null);
+        const r = await selesaikan(m, { key: k, decision: "terposting", accurateNumber: "PR.L" });
+        assert.equal(r.status, 200);
+        assert.equal(await statusDb(m.db, k), "SUCCESS");
+        assert.equal((await jejak(m.db, k))[0].databaseId, "DB-1");
+    }));
+
+test("PG butir 5: status berubah selama pencarian (keputusan/kiriman lain) -> 409 changed, tanpa jejak (CAS)", { skip: pgSkip }, async () => {
+    const { db } = await modul();
+    const { selesaikanPelunasan } = await import("./idempotency-resolve.ts");
+    const { eq } = await import("drizzle-orm");
+    const tag = `s6e2-${randomUUID().slice(0, 8)}`;
+    const k = await tanam(db, baris(`${tag}-C`, "INV-C", 1), "UNKNOWN", 5, "DB-1");
+    try {
+        const r = await selesaikanPelunasan(db, { key: k, decision: "tidak_ada", accurateNumber: "", reason: ALASAN, checkedSource: "uji", actor: "uji", sessionDatabaseId: "DB-1" },
+            async () => {
+                await db.update(idempotencyLog).set({ status: "SUCCESS", updatedAt: new Date() }).where(eq(idempotencyLog.key, k));
+                return { cocok: new Map(), gagal: new Map() };
+            });
+        assert.equal(r.status, 409);
+        assert.equal(r.body.code, "changed");
+        assert.equal(await statusDb(db, k), "SUCCESS");
+        assert.equal((await jejak(db, k)).length, 0);
+    } finally {
+        await db.delete(idempotencyLog).where(like(idempotencyLog.key, `PAY_${tag}%`));
+    }
 });
