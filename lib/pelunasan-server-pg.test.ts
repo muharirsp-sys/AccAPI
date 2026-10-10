@@ -197,3 +197,22 @@ test("PG butir 4: sesi Accurate belum lengkap -> 400 ACCURATE_SESSION_INCOMPLETE
         assert.equal(catat.post.length + catat.baca, 0);
         assert.equal(await statusDb(m.db, kunci(a).key), "PROCESSING");
     }));
+
+test("PG butir 6: ringkasanIdempotensi — basi 15 mnt menurut updatedAt (jam UTC), status dihitung benar", { skip: pgSkip }, async () => {
+    const { db } = await modul();
+    const { ringkasanIdempotensi } = await import("./idempotency-summary.ts");
+    const tag = `s6e2-${randomUUID().slice(0, 8)}`;
+    const now = new Date();
+    const lalu = (mnt: number) => new Date(now.getTime() - mnt * 60_000);
+    const baru = (k: string, status: string, umur: number) => ({ key: `PAY_${tag}_${k}`, status, createdAt: lalu(umur), updatedAt: lalu(umur) });
+    try {
+        await db.insert(idempotencyLog).values([baru("u", "UNKNOWN", 1), baru("s1", "SENDING", 20), baru("s3", "SENDING", 16), baru("s2", "SENDING", 5),
+            baru("f", "FAILED", 60), baru("p1", "PROCESSING", 16), baru("p2", "PROCESSING", 14), baru("p3", "PROCESSING", 1), baru("ok", "SUCCESS", 99)]);
+        const r = await ringkasanIdempotensi(db, now, like(idempotencyLog.key, `PAY_${tag}%`));
+        assert.deepEqual(r.uncertain, { unknown: 1, sendingStale: 2, total: 3 });
+        assert.equal(r.retryable, 1);
+        assert.equal(r.processingStale, 1);
+    } finally {
+        await db.delete(idempotencyLog).where(like(idempotencyLog.key, `PAY_${tag}%`));
+    }
+});

@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 import { POST as proxyPost } from "../app/api/proxy/route.ts";
 import { POST as lockPost } from "../app/api/idempotency/lock/route.ts";
+import { GET as summaryGet } from "../app/api/idempotency/summary/route.ts";
 import { accurateOAuthSession } from "../db/schema.ts";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
@@ -23,7 +24,7 @@ export async function sebagai<T>(keys: string[], fn: () => Promise<T>, opsi: Ops
     const env = process.env.LOCAL_AUTH_BYPASS;
     delete process.env.LOCAL_AUTH_BYPASS;
     const grup = keys.map((key) => ({ groupId: "g1", key }));
-    const rows = (r: unknown[]) => Object.assign(Promise.resolve(r), { limit: async () => r });
+    const rows = (r: unknown[]) => Object.assign(Promise.resolve(r), { limit: async () => r, groupBy: async () => r });
     Object.defineProperty(auth.api, "getSession", { configurable: true, value: async () => ({ user: { id: "u-p", role: "staff" }, session: { id: "s1" } }) });
     Object.defineProperty(db, "select", { configurable: true, value: () => ({ from: (t: unknown) => ({
         leftJoin: () => ({ where: async () => grup }),
@@ -103,4 +104,20 @@ test("butir 2: database sesi != expectedDatabaseId -> 409 database_changed sebel
     // Kontrol positif: database sama -> lolos ke guard (transaksi tiruan melempar = 500), bukan 409 database.
     const sama = await sebagai(["pelunasan.kirim"], () => proxyPost(kirim({ expectedDatabaseId: "DB-1" })), { sesi: sesiAccurate() });
     assert.equal(sama.status, 500);
+});
+
+test("butir 6: ringkasan BL-41 — izin pelunasan.kirim ATAU finance.resolve_unknown; hitungan dari status & basi", async () => {
+    const get = () => summaryGet(new NextRequest("http://app.test/api/idempotency/summary"));
+    assert.equal((await sebagai(["api_wrapper.execute", "finance.override_duplicate"], get)).status, 403);
+    const idem = [{ status: "UNKNOWN", basi: false, n: 2 }, { status: "UNKNOWN", basi: true, n: 1 }, { status: "SENDING", basi: true, n: 4 },
+        { status: "SENDING", basi: false, n: 7 }, { status: "FAILED", basi: true, n: 5 }, { status: "PROCESSING", basi: true, n: 6 }, { status: "PROCESSING", basi: false, n: 9 }];
+    for (const izin of [["pelunasan.kirim"], ["finance.resolve_unknown"]]) {
+        const res = await sebagai(izin, get, { idem });
+        assert.equal(res.status, 200);
+        const b = await res.json();
+        assert.deepEqual(b.uncertain, { unknown: 3, sendingStale: 4, total: 7 });
+        assert.equal(b.retryable, 5);
+        assert.equal(b.processingStale, 6);
+        assert.equal(b.perDatabase, null);
+    }
 });
