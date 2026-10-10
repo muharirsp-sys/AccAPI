@@ -9,6 +9,8 @@
  *   V1. hapus memegang kunci batch duluan -> Validasi menunggu SEBELUM menyentuh baris line; hapus (CASCADE) lolos, Validasi 409.
  *       Kode lama (line dulu, batch belakangan) = siklus: 40P01.
  *   V2. Validasi memegang kunci batch duluan -> DELETE route menunggu, lalu menghapus sesudah Validasi commit; keduanya 200.
+ *   E.  jalur E2 `posted` antrekan (SO pernah dibuang, faktur ketemu) di bawah kunci batch yang sama: hapus duluan -> tidak ada
+ *       baris terposting; antre duluan -> DELETE menunggu lalu 409, baris terposting + event tercatat.
  *   G.  dua Ganti bersamaan untuk berkas sama -> yang kedua menunggu kunci batch lama, lalu INSERT-nya bentrok indeks unik:
  *       409 `BERKAS_SUDAH_DISIMPAN` (kode lama: 23505 tak tertangani = 500).
  * Penjaga statik urutannya: lib/route-lock-order.test.ts. */
@@ -247,6 +249,58 @@ test("PG BL-21: dua Ganti bersamaan untuk berkas yang sama — yang kedua 409 be
         assert.ok(menunggu, "G: Ganti kedua tidak menunggu kunci batch lama");
         const tersisa = await pool.query("SELECT id FROM principal_order_batch WHERE principal = $1 AND file_hash = $2", [principal, hash]);
         assert.deepEqual(tersisa.rows.map((row) => row.id), [baruA], "G: batch berkas ini bukan satu-satunya milik Ganti pertama");
+    } finally {
+        await penahan.query("ROLLBACK").catch(() => undefined);
+        penahan.release();
+    }
+});
+
+test("PG BL-21: jalur E2 `posted` antrekan juga di bawah kunci batch (hapus duluan / antre duluan)", { skip: pgSkip }, async () => {
+    const { antrekan, hapus } = await route();
+    const batchE1 = `bl21-e1-${tag}`, batchE2 = `bl21-e2-${tag}`;
+    const keyE1 = invoiceKey(principal, `SO-E1-${tag}`), keyE2 = invoiceKey(principal, `SO-E2-${tag}`);
+    // Pencari stub (tanpa Accurate): faktur SUDAH ada -> jalur `posted`, bukan kirim.
+    const cari = async () => ({ hasil: "ketemu" as const, id: "9001", number: "UJI/E2", sumber: "cache" as const, cocok: "charField1" as const, semua: [] });
+    const masukan = (key: string, batchId: string) => ({ entries: [calon(key)], actor: "uji-lock", targetDb: "DB-UJI", cari, batchId });
+    const { client: penahan, pid: pidPenahan } = await penahanBaru();
+    try {
+        await seed(batchE1, `SO-E1-${tag}`);
+        await seed(batchE2, `SO-E2-${tag}`);
+        for (const key of [keyE1, keyE2]) {
+            await pool.query(`INSERT INTO invoice_outbox_event (order_id, jenis, state_from, actor, reason) VALUES ($1, 'buang', 'rejected', 'uji-lock', 'uji')`, [key]);
+        }
+
+        // E1. Hapus duluan: transaksi `posted` menunggu kunci batch, lalu melihat batch hilang -> tidak menulis apa pun.
+        await penahan.query("BEGIN");
+        await penahan.query("SELECT id FROM principal_order_batch WHERE id = $1 FOR UPDATE", [batchE1]);
+        const antreE1 = antrekan(pg, masukan(keyE1, batchE1));
+        const e1Menunggu = await tertahanOleh(pidPenahan, antreE1, 1);
+        await penahan.query("DELETE FROM principal_order_batch WHERE id = $1", [batchE1]);
+        await penahan.query("COMMIT");
+        const hasilE1 = await antreE1;
+        assert.deepEqual(hasilE1.posted, [], "E1: SO batch terhapus tetap ditandai terposting");
+        assert.match(hasilE1.blocked[0]?.reason ?? "", /sudah dihapus atau diganti/);
+        assert.equal(await ada("SELECT 1 FROM invoice_outbox WHERE order_id = $1", keyE1), 0, "E1: baris antrean tertulis untuk batch terhapus");
+        assert.equal(await ada("SELECT 1 FROM invoice_outbox_event WHERE order_id = $1 AND jenis = 'posted'", keyE1), 0, "E1: event posted tertulis");
+        assert.ok(e1Menunggu, "E1: jalur posted tidak menunggu kunci batch hapus");
+
+        // E2. Antre duluan: penahan menyisipkan kunci yang sama (belum commit) -> transaksi `posted` berhenti sesudah mengunci batch;
+        //     DELETE route menunggu (lapis 2), lalu melihat baris terpostingnya: 409, batch utuh.
+        await penahan.query("BEGIN");
+        await penahan.query(`INSERT INTO invoice_outbox (order_id, customer_no, order_date, payload) VALUES ($1, 'C-UJI-LOCK', '2026-10-10', '{}'::jsonb)`, [keyE2]);
+        const antreE2 = antrekan(pg, masukan(keyE2, batchE2));
+        assert.ok(await tertahanOleh(pidPenahan, antreE2, 1), "E2: jalur posted tidak tertahan penahan");
+        const hapusE2 = hapus(batchE2);
+        const hapusMenunggu = await tertahanOleh(pidPenahan, hapusE2, 2);
+        await penahan.query("ROLLBACK");
+        const [hasilE2, jawabE2] = await Promise.all([antreE2, hapusE2]);
+        assert.deepEqual(hasilE2.posted, [{ orderId: keyE2, accurateId: "9001", number: "UJI/E2" }]);
+        const [baris] = (await pool.query("SELECT state, accurate_id FROM invoice_outbox WHERE order_id = $1", [keyE2])).rows;
+        assert.deepEqual(baris, { state: "posted", accurate_id: "9001" });
+        assert.equal(await ada("SELECT 1 FROM invoice_outbox_event WHERE order_id = $1 AND jenis = 'posted'", keyE2), 1, "E2: event posted tidak tercatat");
+        assert.equal(jawabE2.status, 409, `E2: DELETE menjawab ${jawabE2.status}`);
+        assert.equal(await ada("SELECT 1 FROM principal_order_batch WHERE id = $1", batchE2), 1, "E2: batch terhapus padahal SO-nya terposting");
+        assert.ok(hapusMenunggu, "E2: DELETE tidak menunggu jalur posted yang sedang berjalan");
     } finally {
         await penahan.query("ROLLBACK").catch(() => undefined);
         penahan.release();
