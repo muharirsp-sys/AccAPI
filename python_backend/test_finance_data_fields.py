@@ -61,6 +61,11 @@ def main_check():
                    "at": wita("2026-10-10 02:15:00"), "note": "dicek manual di Accurate: PP/1010/1 ada"}, res
     b = rows["PT XYZ"]
     assert b["accurate_posted_by"] == "" and b["accurate_posted_at"] == "" and b["accurate_post_resolution"] is None, b
+    # Putaran 2 butir 6: tanggal bawaan tanpa ?date= = HARI INI WITA (dulu pd.Timestamp.today() = jam server UTC:
+    # 00:00-07:59 WITA membuka antrean kemarin). 01:00 WITA 6 Mar 2027 = 17:00 UTC 5 Mar.
+    finance.wita_now = lambda: finance.pd.Timestamp("2027-03-06 01:00:00")
+    r = client.get("/payments/finance/data")
+    assert r.status_code == 200 and r.json()["date"] == "2027-03-06", r.text[:200]
     print("OK test_finance_data_fields")
 
 

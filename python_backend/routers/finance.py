@@ -39,6 +39,7 @@ from shared import (
     user_has_permission,
     uuid,
     validate_csrf_request,
+    wita_now,
 )
 
 router = APIRouter()
@@ -52,7 +53,8 @@ def payments_finance_data(request: Request):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden"})
     date_filter = s(request.query_params.get("date", ""))
     if not date_filter:
-        date_filter = pd.Timestamp.today().strftime("%Y-%m-%d")
+        # Putaran 2 butir 6: hari ini menurut WITA, bukan jam server (produksi UTC: 00:00-07:59 WITA = kemarin).
+        date_filter = wita_now().strftime("%Y-%m-%d")
     db = load_payments_db()
     groups: Dict[str, Dict[str, Any]] = {}
     total_all = 0.0
