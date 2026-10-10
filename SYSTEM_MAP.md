@@ -252,6 +252,12 @@ Antrean Faktur / outbox sales-invoice (S6-0d, DRAFT — zona tulis Accurate):
      disaring ulang, batas 300 baris) -> charField1 di baris list.do diputuskan langsung (EQUAL); absen/kosong -> detail.do
      (≤ 25 calon): kepala, baris, lalu description "Order <kunci> |". Tanpa filter.charField1 (diabaikan Accurate).
   riwayat: invoice_outbox_event append-only (migrate-pg; trigger/REVOKE + E5 data lama = docs/handover/DDL_OUTBOX_EVENT.sql)
+     baca: GET /api/invoice-outbox/riwayat?orderId= (order.view; tanpa salinan payload event `buang`)
+  UI (S6c Fiori): /antrean-faktur -> AntreanFaktur.tsx (kartu status = GET /api/invoice-outbox ?state= | ?overdue=1)
+     Kirim = Dialog.KirimDialog: GET send/preview -> POST send { orderIds HASIL PRATINJAU, invoiceDate } -> hasil per order
+     Selesaikan = GET /api/invoice-outbox/resolve?orderId= (cariTidakPasti, BACA SAJA: pencarian + salinan lokal + sisa
+       masa tunggu, tanpa penyapu) -> POST resolve (mencari ulang); Antre ulang/Buang (alasan wajib di layar) = POST /api/invoice-outbox;
+     jawaban tidak pasti (putus, >= 502, bukan JSON) = "belum pasti" + muat ulang + tulis terkunci; Verifikasi balik = /api/invoice-verify
 
 Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
   UI Finance (/finance) approveTransfer
