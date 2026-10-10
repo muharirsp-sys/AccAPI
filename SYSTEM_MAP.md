@@ -281,12 +281,20 @@ Posting purchase-payment Finance (AM-014 / C.12, DRAFT):
   Baca status: GET /api/finance/purchase-payment/attempts?invoices=… (finance.view, latestAttemptsBySubject; S6-0e).
 
 Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConfig.path, bukan URL halaman):
+  Orkestrasi klien = lib/pelunasan/kirim.ts kirimPelunasan (S6e-2): lock -> paket 100 -> hasil per baris
+     {terposting | gagal (sent:false) | tidak_pasti | ditahan} -> complete. Kontrak: docs/handover/S6e2-KONTRAK-API.md.
   -> POST /api/idempotency/lock — preview + kunci fingerprint (lib/sales-receipt-fingerprint.ts) di idempotency_log
-     (pemilik lockId/lockedBy; override hanya finance.override_duplicate + alasan -> idempotency_override)
-  -> POST /api/proxy sales-receipt/bulk-save.do WAJIB idempotencyLockId (lib/sales-receipt-guard.ts):
+     (pemilik lockId/lockedBy; non-preview butuh pelunasan.kirim; override hanya finance.override_duplicate + alasan ->
+     idempotency_override, termasuk allowHistoryKeys = blockReason ACCURATE_HISTORY; kunci ISI_KODE_AKUN_ = 400)
+  -> POST /api/proxy sales-receipt/bulk-save.do WAJIB idempotencyLockId + expectedDatabaseId (lib/sales-receipt-guard.ts):
+     placeholder akun 400 -> pelunasan.kirim 403 -> database sesi ≠ expected 409 database_changed -> lock dinilai
+     (dry-run) -> riwayat Accurate dibaca server (lib/pelunasan/pratinjau-ganda.ts periksaRiwayatAccurate, fail-closed,
+     4 serentak, 60 dtk) -> baris mirip/tak terbaca tanpa override 409 ACCURATE_HISTORY ->
      baris milik lock ditandai SENDING -> kirim -> hasil per baris dicatat SERVER (classifySalesReceiptReply:
      s:true = SUCCESS, selain itu UNKNOWN — C11; server tidak pernah menyimpulkan FAILED)
   -> POST /api/idempotency/complete — klien hanya menaikkan; FAILED hanya untuk baris PROCESSING (belum dikirim)
+  -> GET /api/idempotency/resolve?key= — pratinjau pencarian Selesaikan (finance.resolve_unknown, baca-saja; POST menunggu DDL)
+  -> GET /api/idempotency/summary — Tidak pasti / Gagal boleh diulang (BL-41; pelunasan.kirim ATAU finance.resolve_unknown)
 
 Data Sync (item/customer):
   -> lib/sync.ts [syncModule(moduleName, endpoint, creds)]
@@ -886,6 +894,8 @@ AccAPI/_github_clean/
 |---|---|---|
 | `app/api/idempotency/lock/route.ts` | `POST` | Kunci fingerprint bulk upload sales receipt (cegah submit ganda) |
 | `app/api/idempotency/complete/route.ts` | `POST` | Tandai idempotency key selesai diproses |
+| `app/api/idempotency/resolve/route.ts` | `GET` | Pratinjau pencarian Selesaikan pelunasan tidak pasti (baca-saja) |
+| `app/api/idempotency/summary/route.ts` | `GET` | Ringkasan pelunasan Tidak pasti / Gagal boleh diulang (Beranda BL-41) |
 | `lib/fuzzySearch.ts` | `fuzzySearch` | Pencarian fuzzy in-memory fallback |
 | `lib/pdf-text.ts` | `uppercasePageText` | Uppercase teks untuk header PDF |
 | `lib/off-program-control/holidays.ts` | `isHoliday`, `getNextWorkday` | Kalender hari libur untuk kalkulasi deadline |

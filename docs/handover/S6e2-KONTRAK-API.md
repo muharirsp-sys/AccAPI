@@ -83,7 +83,7 @@ yang sama dengan penahanan riwayat. Tidak menulis apa pun.
            "amount": 1000, "updatedAt": "…", "ageSeconds": 900, "eligible": true,
            "found": true, "receiptNumbers": ["PR.2026.10.00012"], "readError": null}]}
 ```
-`eligible` = `UNKNOWN`, atau `SENDING`/`PROCESSING` ≥ 2 mnt. `found:null` + `readError` = riwayat gagal dibaca. 400 tanpa key /
+`eligible` = `UNKNOWN`, `SENDING` ≥ 2 mnt, atau `PROCESSING` > 15 mnt (basi lock). `found:null` + `readError` = riwayat gagal dibaca. 400 tanpa key /
 > 50; 400 `ACCURATE_SESSION_INCOMPLETE`; 404 key tidak ada.
 
 ## 5. `POST /api/idempotency/resolve` — **BELUM ADA (menunggu DDL, lihat §8)**
@@ -111,7 +111,7 @@ Izin `pelunasan.kirim` ATAU `finance.resolve_unknown`.
   baris data mulai 1; `reason` ∈ `"KODE_OUTLET_KOSONG"`, `"TANPA_NOMINAL"`).
 - `kirimPelunasan(rows, deps)` (`lib/pelunasan/kirim.ts`, BARU): lock → paket 100 → laporan per baris → complete.
   `deps = {postJson(url, body) → {status, data}, expectedDatabaseId, override?, cariRiwayat?, lapor?, chunkSize?}`.
-  Hasil `{lockId, rows: [{index, outcome:"terposting"|"gagal"|"tidak_pasti"|"ditahan", message, code?, receiptNumbers?, item?}]}`.
+  Hasil `{lockId, rows: [{index, paket, outcome:"terposting"|"gagal"|"tidak_pasti"|"ditahan", message, code?, receiptNumbers?, item?}]}`.
   Pra-cek klien: placeholder akun → semua baris `gagal` tanpa lock.
 
 ## 8. Prasyarat deploy & DDL tertunda
@@ -120,3 +120,9 @@ Izin `pelunasan.kirim` ATAU `finance.resolve_unknown`.
   tanpanya semua kirim sales-receipt non-admin 403. `seed-rbac-presets` tidak dijalankan ke produksi.
 - **DDL tertunda (keputusan orkestrator)**: kolom `idempotency_log."databaseId"` (lock mencatat database; Selesaikan & ringkasan
   per database) + tabel jejak penyelesaian. Sampai itu, pengikatan database = `expectedDatabaseId` vs sesi pada SETIAP paket.
+
+## Catatan perubahan sesudah commit kontrak (86ec53b7)
+
+- §1: semua 409 `SALES_RECEIPT_LOCK_REQUIRED` kini juga membawa `sent:false`.
+- §4: `eligible` untuk `PROCESSING` = > 15 mnt (basi lock), bukan 2 mnt — PROCESSING bisa sah lama selama unggah banyak paket.
+- §7: hasil `kirimPelunasan` per baris membawa `paket` (nomor paket, mulai 1).
