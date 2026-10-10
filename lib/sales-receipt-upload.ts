@@ -28,7 +28,8 @@ export function salesReceiptRowReports(n: number, data: unknown, noAnswer = ""):
         const item = items && items.length === n ? items[i] : undefined;
         if (o === "SUCCESS") return { ok: true, message: "", item: item ?? data };
         return answered
-            ? { ok: false, item, message: `Accurate menolak: ${text(item ?? data) || "tanpa pesan"} — status tidak pasti, butuh pemeriksaan/override Finance` }
+            // C11 (S6e-2 butir 4): jawaban Accurate selain s:true BELUM TERBUKTI berarti tidak tersimpan — bukan "ditolak".
+            ? { ok: false, item, message: `Jawaban Accurate: ${text(item ?? data) || "tanpa pesan"} — belum terbukti tersimpan atau tidak: status tidak pasti, butuh pemeriksaan Finance` }
             : { ok: false, item, message: `Tanpa jawaban Accurate${cause ? ` (${cause})` : ""} — status tidak pasti, cek Accurate sebelum kirim ulang` };
     });
 }
@@ -37,6 +38,10 @@ export function salesReceiptRowReports(n: number, data: unknown, noAnswer = ""):
  * payload/kunci yang masih memuatnya — akun palsu tidak boleh sampai ke Accurate. */
 export const PLACEHOLDER_AKUN = "ISI_KODE_AKUN_";
 export const memuatPlaceholderAkun = (v: unknown) => JSON.stringify(v ?? null).includes(PLACEHOLDER_AKUN);
+
+/** S6e-2 butir 4: proxy menjamin TIDAK ADA yang diteruskan ke Accurate (`sent:false`: sesi belum lengkap, database berubah,
+ * tanpa izin, riwayat mirip ditahan, placeholder akun) — baris boleh dilaporkan FAILED, bukan tidak pasti. */
+export const isNotSent = (err: unknown) => (err as { rawErrorObject?: { sent?: unknown } } | null)?.rawErrorObject?.sent === false;
 
 /** Proxy menolak tulis sales-receipt SEBELUM dikirim (lock/override tidak mencakup baris) — 409 berkode. */
 export const isLockRequired = (err: unknown) =>

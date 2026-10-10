@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { accurateRoutes } from "@/config/accurateRoutes";
 import { accurateFetch, classifyWriteError } from "@/lib/apiFetcher";
 import { buildSalesReceiptIdempotencyPayload } from "@/lib/sales-receipt-fingerprint";
-import { isLockRequired, overrideKeysNeeded, salesReceiptRowReports } from "@/lib/sales-receipt-upload";
+import { isLockRequired, isNotSent, overrideKeysNeeded, salesReceiptRowReports } from "@/lib/sales-receipt-upload";
 import DatePickerField from "@/components/ui/DatePickerField";
 import Dialog from "@/components/ui/Dialog";
 import { deteksiFormatPelunasan, parsePelunasan } from "@/lib/pelunasan/parser";
@@ -676,23 +676,19 @@ export default function Home() {
             markIdempotency(row, true);
             continue;
           }
+          // S6e-2 butir 4 (C11, D-22): kemiripan riwayat TIDAK menaikkan baris ke berhasil (cicilan bernominal sama bisa
+          // sah) — hanya petunjuk untuk pemeriksa; baris tetap tidak pasti.
           const matchedReceiptNumbers = await getConfirmedReceiptNumbers(row);
-          if (matchedReceiptNumbers.length > 0) {
-            markIdempotency(row, true);
-            combinedResults.push({ s: true, _confirmedFromHistory: true, _matchedReceiptNumbers: matchedReceiptNumbers, _originalError: reports[idx].message });
-            errorLogForExcel.push({
-              "Paket/Batch": `Tahap ${i+1}`, "Baris Ke": start + idx + 1, "Ref / Invoice No": mainId,
-              "Status": "BERHASIL (TERKONFIRMASI HISTORI ACCURATE)",
-              "Pesan Error Accurate": `${reports[idx].message} | Receipt ditemukan: ${matchedReceiptNumbers.join(", ")}`
-            });
-            continue;
-          }
           unresolved++;
           markIdempotency(row, "UNKNOWN");
           errorLogForExcel.push({
             "Paket/Batch": `Tahap ${i+1}`, "Baris Ke": start + idx + 1, "Ref / Invoice No": mainId,
-            "Status": "TIDAK PASTI (butuh pemeriksaan/override Finance)",
-            "Pesan Error Accurate": reports[idx].message
+            "Status": matchedReceiptNumbers.length > 0
+              ? "TIDAK PASTI (ditemukan mirip di riwayat Accurate)"
+              : "TIDAK PASTI (butuh pemeriksaan Finance)",
+            "Pesan Error Accurate": matchedReceiptNumbers.length > 0
+              ? `${reports[idx].message} | Mirip di riwayat: ${matchedReceiptNumbers.join(", ")}`
+              : reports[idx].message
           });
         }
         if (unresolved > 0) errorCount++;
@@ -724,7 +720,7 @@ export default function Home() {
         console.error(`Chunk ${i+1} Failed:`, chunkErr);
         let chunkHadUnresolvedFailure = false;
 
-        if (isSalesReceipt && isLockRequired(chunkErr)) {
+        if (isSalesReceipt && (isLockRequired(chunkErr) || isNotSent(chunkErr))) {
           // Proxy menolak SEBELUM kirim (baris di luar lock / butuh override): pasti tidak terkirim -> FAILED
           // (server hanya menerimanya untuk baris PROCESSING milik lock ini).
           chunkPayload.forEach((row, idx) => {
@@ -732,8 +728,10 @@ export default function Home() {
             errorLogForExcel.push({
               "Paket/Batch": `Tahap ${i+1}`, "Baris Ke": start + idx + 1,
               "Ref / Invoice No": row.invoiceNo || row.customerNo || `Baris Eksekusi ${start + idx + 1}`,
-              "Status": "DITOLAK PENJAGA DUPLIKAT (tidak dikirim)",
-              "Pesan Error Accurate": `${chunkErr.message} — tidak ada yang dikirim ke Accurate; kirim ulang butuh override Finance (finance.override_duplicate) lewat dialog review.`
+              "Status": isLockRequired(chunkErr) ? "DITOLAK PENJAGA DUPLIKAT (tidak dikirim)" : "GAGAL — TIDAK TERKIRIM (boleh diulang)",
+              "Pesan Error Accurate": isLockRequired(chunkErr)
+                ? `${chunkErr.message} — tidak ada yang dikirim ke Accurate; kirim ulang butuh override Finance (finance.override_duplicate) lewat dialog review.`
+                : `${chunkErr.message} — tidak ada yang dikirim ke Accurate.`
             });
           });
           errorCount++;

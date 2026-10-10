@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
         const write = { lockId: body.idempotencyLockId, userId: String(authCheck.session.user.id), payload, endpointPath, method };
         if (salesReceipt) {
             const bad = checkSalesReceiptWrite(write);
-            if (bad) return NextResponse.json({ error: bad, code: "SALES_RECEIPT_LOCK_REQUIRED" }, { status: 409 });
+            if (bad) return NextResponse.json({ error: bad, code: "SALES_RECEIPT_LOCK_REQUIRED", sent: false }, { status: 409 });
             // S6e-2 butir 8: akun potongan belum dipilih (penanda alokasi.ts) tidak boleh sampai ke Accurate.
             if (memuatPlaceholderAkun(payload)) {
                 return NextResponse.json({ error: "Akun potongan belum dipilih (ISI_KODE_AKUN_…) — pilih akun di langkah Akun. Tidak ada yang dikirim.", code: "PLACEHOLDER_AKUN", sent: false }, { status: 400 });
@@ -72,11 +72,13 @@ export async function POST(req: NextRequest) {
             // Tanpa sesi tidak ada yang dikirim: guard dinilai TANPA menulis (override & lock tidak hangus).
             if (salesReceipt) {
                 const denied = await authorizeSalesReceiptWrite(db, write, { dryRun: true });
-                if (typeof denied === "string") return NextResponse.json({ error: denied, code: "SALES_RECEIPT_LOCK_REQUIRED" }, { status: 409 });
+                if (typeof denied === "string") return NextResponse.json({ error: denied, code: "SALES_RECEIPT_LOCK_REQUIRED", sent: false }, { status: 409 });
             }
+            // S6e-2 butir 4 (C11): ditolak SEBELUM diteruskan = tidak terkirim (boleh diulang), bukan tidak pasti.
             return NextResponse.json({ error: sessionHost && !isAllowedAccurateHost(sessionHost)
                 ? "Session host Accurate tidak diizinkan"
-                : "Sesi Accurate belum lengkap. Login dan pilih database terlebih dahulu." }, { status: 400 });
+                : "Sesi Accurate belum lengkap. Login dan pilih database terlebih dahulu.",
+            ...(salesReceipt ? { code: "ACCURATE_SESSION_INCOMPLETE", sent: false } : {}) }, { status: 400 });
         }
         if (salesReceipt && String(accurateSession?.databaseId ?? "") !== expectedDatabaseId) {
             return NextResponse.json({
@@ -91,14 +93,14 @@ export async function POST(req: NextRequest) {
         if (salesReceipt) {
             // Lock dinilai DULU tanpa menulis: kiriman yang tak tercakup lock tidak memicu pembacaan riwayat ke Accurate.
             const pre = await authorizeSalesReceiptWrite(db, write, { dryRun: true });
-            if (typeof pre === "string") return NextResponse.json({ error: pre, code: "SALES_RECEIPT_LOCK_REQUIRED" }, { status: 409 });
+            if (typeof pre === "string") return NextResponse.json({ error: pre, code: "SALES_RECEIPT_LOCK_REQUIRED", sent: false }, { status: 409 });
             // S6e-2 (owner #6): baris MIRIP riwayat Accurate ditahan di SERVER tiap paket, tepat sebelum kirim; riwayat yang
             // gagal dibaca = ditahan (fail-closed). Override Finance `ACCURATE_HISTORY` (lock allowHistoryKeys) membukanya.
             const rows = (Array.isArray(payload) ? payload : [payload]) as Record<string, unknown>[];
             const riwayat = await periksaRiwayatAccurate(rows.map((r) => buildSalesReceiptIdempotencyPayload(r)),
                 bacaAccurate({ sessionHost, sessionId, accessToken: apiKey }));
             const r = await authorizeSalesReceiptWrite(db, write, { riwayat });
-            if (typeof r === "string") return NextResponse.json({ error: r, code: "SALES_RECEIPT_LOCK_REQUIRED" }, { status: 409 });
+            if (typeof r === "string") return NextResponse.json({ error: r, code: "SALES_RECEIPT_LOCK_REQUIRED", sent: false }, { status: 409 });
             if ("held" in r) {
                 const tidakTerbaca = r.held.filter((h) => h.reason === "ACCURATE_HISTORY_UNREADABLE").length;
                 return NextResponse.json({

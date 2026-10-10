@@ -184,3 +184,16 @@ test("PG butir 3: override ACCURATE_HISTORY hanya untuk penahanan riwayat (pengh
         const o = await overrideDb(m.db, kunci(a).key);
         assert.ok(o.every((x) => !x.consumedAt), "ditahan = tidak ada override yang dihabiskan");
     }));
+
+test("PG butir 4: sesi Accurate belum lengkap -> 400 ACCURATE_SESSION_INCOMPLETE {sent:false}; baris tetap PROCESSING (boleh FAILED, bukan tidak pasti)", { skip: pgSkip }, () =>
+    dalamDunia((_t, m) => ({ izin: KIRIM, sesi: m.sesiAccurate({ sessionId: null }), data: KOSONG }), async (m, tag, catat) => {
+        const a = baris(`${tag}-A`, "INV-1", 1000);
+        const lockId = await kunciLock(m, [a]);
+        const res = await kirim(m, lockId, [a]);
+        assert.equal(res.status, 400);
+        const body = await res.json();
+        assert.equal(body.code, "ACCURATE_SESSION_INCOMPLETE");
+        assert.equal(body.sent, false);
+        assert.equal(catat.post.length + catat.baca, 0);
+        assert.equal(await statusDb(m.db, kunci(a).key), "PROCESSING");
+    }));
