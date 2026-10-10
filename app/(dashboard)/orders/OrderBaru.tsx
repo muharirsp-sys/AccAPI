@@ -77,10 +77,17 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
     // Hari ini WITA DIBEKUKAN saat form dibuka: lewat 00.00 tanggal order tidak berganti diam-diam (petugas yang memilih).
     const { hari: hariIni, berganti, hariBaru, pakaiHariBaru } = useHariBeku();
     const [customerNo, setCustomerNo] = useState("");
-    const [customer, setCustomer] = useState<CustomerMaster | null>(null);
+    // Jawaban master DIBERI KODE: sesudah kode pelanggan diganti, pelanggan/channel kode lama tidak tampil (dan tidak dipakai untuk
+    // pratinjau/simpan) sampai jawaban untuk kode yang baru tiba.
+    const [customerDibaca, setCustomer] = useState<(CustomerMaster & { kode: string }) | null>(null);
+    const [channelDibaca, setChannelDibaca] = useState<{ kode: string; channel: string; masalah: string; galat?: boolean } | null>(null);
+    const [ulangPelanggan, setUlangPelanggan] = useState(0);
+    const kodeIni = customerNo.trim();
+    const customer = customerDibaca?.kode === kodeIni ? customerDibaca : null;
+    const channel = channelDibaca?.kode === kodeIni ? channelDibaca.channel : "";
+    const channelMasalah = channelDibaca?.kode === kodeIni ? channelDibaca.masalah : "";
+    const pelangganGalat = Boolean(customer?.galat || (channelDibaca?.kode === kodeIni && channelDibaca.galat));
     const [outlet, setOutlet] = useState("");
-    const [channel, setChannel] = useState("");
-    const [channelMasalah, setChannelMasalah] = useState("");
     const [tanggalIsi, setTanggalIsi] = useState<string | null>(null);
     const orderDate = tanggalIsi ?? hariIni;
     const [note, setNote] = useState("");
@@ -97,7 +104,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
     // channelnya berbeda dari master (`outlet_channel.verify`), jadi isian bebas hanya menyediakan satu cara untuk salah.
     useEffect(() => {
         const code = customerNo.trim();
-        if (!code) { setCustomer(null); setChannel(""); setChannelMasalah(""); return; }
+        if (!code) return;
         // Jawaban untuk kode SEBELUMNYA yang datang terlambat tidak boleh menimpa pelanggan/channel kode yang sedang diketik.
         let hidup = true;
         const timer = setTimeout(async () => {
@@ -105,28 +112,26 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
             if (!hidup) return;
             if (sukses(c)) {
                 const d = c.data;
-                setCustomer({ found: Boolean(d.found), name: String(d.name ?? ""), area: String(d.area ?? ""), priceCategoryName: String(d.priceCategoryName ?? "") });
+                setCustomer({ kode: code, found: Boolean(d.found), name: String(d.name ?? ""), area: String(d.area ?? ""), priceCategoryName: String(d.priceCategoryName ?? "") });
                 if (d.found && !outlet.trim()) setOutlet(String(d.name ?? ""));
-            } else setCustomer({ found: false, name: "", area: "", priceCategoryName: "", galat: true });
+            } else setCustomer({ kode: code, found: false, name: "", area: "", priceCategoryName: "", galat: true });
             const k = await nextApi(`/api/outlet-channel?no=${encodeURIComponent(code)}`);
             if (!hidup) return;
             if (!sukses(k)) {
-                setChannel("");
-                setChannelMasalah("Channel outlet tidak bisa ditanyakan ke master sekarang; coba lagi sebentar lagi.");
+                setChannelDibaca({ kode: code, channel: "", masalah: "Channel outlet tidak bisa ditanyakan ke master sekarang.", galat: true });
                 return;
             }
             const channels = (k.data.channels ?? {}) as Record<string, string>;
             const dariMaster = String(channels[code] ?? "");
-            setChannel(dariMaster);
             // Tiga keadaan, tiga perbaikan berbeda — tiga kalimat (pesan server apa adanya untuk kategori TT/MT).
-            setChannelMasalah(!(code in channels)
+            setChannelDibaca({ kode: code, channel: dariMaster, masalah: !(code in channels)
                 ? `Outlet ${code} tidak ada di master pelanggan Accurate; sinkronkan master atau betulkan kodenya.`
-                : dariMaster ? "" : `Outlet ${code} belum punya kategori (TT/MT) di Accurate. Isi kategorinya di Accurate lebih dulu.`);
+                : dariMaster ? "" : `Outlet ${code} belum punya kategori (TT/MT) di Accurate. Isi kategorinya di Accurate lebih dulu.` });
         }, 400);
         return () => { hidup = false; clearTimeout(timer); };
-        // outlet sengaja tidak masuk deps: prefill hanya saat outlet masih kosong.
+        // outlet sengaja tidak masuk deps: prefill hanya saat outlet masih kosong. `ulangPelanggan` = tombol "Coba lagi".
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [customerNo]);
+    }, [customerNo, ulangPelanggan]);
 
     // Satuan dan nama barang dari master, satu permintaan per kode baru. Satuan sengaja tidak ditebak (selisih satuan bisa 72x).
     const codesKey = [...new Set(lines.map((line) => line.code.trim()).filter(Boolean))].join(",");
@@ -194,7 +199,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
     const nDiubah = lengkap.filter(diubah).length;
     const terkunciIsian = !bolehBuat ? "Akun Anda tidak berhak membuat order"
         : !customerNo.trim() ? "Pilih pelanggan dan isi minimal satu barang"
-            : customer?.galat ? "Data pelanggan belum terbaca dari master; coba lagi"
+            : pelangganGalat ? "Data pelanggan belum terbaca dari master; coba lagi"
             : customer && !customer.found ? `Kode ${customerNo.trim()} tidak ada di master Accurate`
                 : !outlet.trim() ? "Isi nama outlet"
                     : !channel.trim() ? (channelMasalah || "Channel outlet belum dipastikan dari master")
@@ -258,7 +263,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                     <div className="fi-sect-in">
                         <div className="fi-formgrid">
                             <FormField label="Kode pelanggan Accurate" required
-                                error={customer?.galat ? "Data pelanggan tidak terbaca dari master; ketik ulang kodenya untuk mencoba lagi." : customer && !customer.found ? `Kode ${customerNo.trim()} tidak ada di master Accurate` : channelMasalah || undefined}
+                                error={customer?.galat ? "Data pelanggan tidak terbaca dari master; ini bukan berarti kodenya tidak ada." : customer && !customer.found ? `Kode ${customerNo.trim()} tidak ada di master Accurate` : channelMasalah || undefined}
                                 help={customer?.found ? `${customer.name}${customer.area ? ` · ${customer.area}` : ""} · harga ${customer.priceCategoryName || "standar (kategori belum tersedia)"}` : "Harga dan seri faktur mengikuti pelanggan."}>
                                 {(a) => <input {...a} className="fi-input fi-mono" value={customerNo} placeholder="C.00000" autoComplete="off" onChange={(e) => { setRagu(false); setCustomerNo(e.target.value); }} />}
                             </FormField>
@@ -275,6 +280,7 @@ export default function OrderBaru({ permKeys }: { permKeys: string[] }) {
                                 {(a) => <input {...a} className="fi-input" value={note} placeholder="opsional" onChange={(e) => { setRagu(false); setNote(e.target.value); }} />}
                             </FormField>
                         </div>
+                        {pelangganGalat && <div><Button variant="tertiary" onClick={() => { setCustomer(null); setChannelDibaca(null); setUlangPelanggan((n) => n + 1); }}>Coba lagi baca master pelanggan</Button></div>}
                         <p className="fi-small fi-muted">Salesman faktur dipilih saat order diantrekan, satu per order (disalin ke setiap baris faktur).</p>
                     </div>
                 </Section>

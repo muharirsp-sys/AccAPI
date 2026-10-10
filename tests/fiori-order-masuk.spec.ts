@@ -387,6 +387,39 @@ test("Order baru: jawaban pelanggan lama yang telat tidak menimpa; master barang
     await expect(b1.getByText("BARANG BRG-A9")).toBeVisible();
 });
 
+test("Order baru: pelanggan gagal dibaca → Coba lagi; pelanggan/channel kode lama tidak tampil sesudah kode diganti", async ({ page }) => {
+    let gagal = true;
+    let lepas: () => void = () => {};
+    const tahan = new Promise<void>((ok) => { lepas = ok; });
+    await pasang(page, {
+        lookup: async (no) => {
+            if (no === "C-A001-KN" && gagal) return { body: { ok: false, error: "Gagal membaca master" }, status: 500 };
+            if (no === "C-B002-KN") await tahan;
+            return { body: { ok: true, found: true, name: no === "C-B002-KN" ? "TOKO B" : "TOKO A", area: "CABANG A", priceCategoryName: "Grosir" } };
+        },
+    });
+    await page.goto("/orders/baru");
+    const m = main(page);
+    const kode = m.getByLabel("Kode pelanggan Accurate");
+    const channel = m.getByLabel("Channel", { exact: true });
+    await kode.fill("C-A001-KN", NAV);
+    await expect(m.getByText("Data pelanggan tidak terbaca dari master; ini bukan berarti kodenya tidak ada.")).toBeVisible();
+    await expect(m.getByText(/tidak ada di master Accurate/)).toHaveCount(0);
+    gagal = false;
+    await m.getByRole("button", { name: "Coba lagi baca master pelanggan" }).click();
+    await expect(m.getByText(/TOKO A · CABANG A/)).toBeVisible();
+    await expect(m.getByRole("button", { name: "Coba lagi baca master pelanggan" })).toHaveCount(0);
+    await expect(channel).toHaveValue("GT");
+
+    // Kode diganti: jawaban C-B002-KN ditahan — pelanggan & channel C-A001-KN TIDAK boleh tetap tampil seolah milik kode baru.
+    await kode.fill("C-B002-KN");
+    await expect(m.getByText(/TOKO A · CABANG A/)).toHaveCount(0);
+    await expect(channel).toHaveValue("belum dipastikan");
+    lepas();
+    await expect(m.getByText(/TOKO B · CABANG A/)).toBeVisible();
+    await expect(channel).toHaveValue("GT");
+});
+
 test("Order baru: galat server tampil di dialog apa adanya; simpan tidak pasti mengunci Simpan", async ({ page }) => {
     await pasang(page, { simpan: [
         { status: 422, body: { detail: "Channel outlet C-A001-KN menurut master MT, bukan GT" } },
