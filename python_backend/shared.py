@@ -2045,8 +2045,11 @@ def dry_run_flag(request: Request, payload: Optional[Dict[str, Any]] = None) -> 
     hanya 1/true (pratinjau) dan 0/false (terapkan) dikenal — nilai lain = None -> pemanggil menjawab 400, BUKAN
     dianggap "bukan pratinjau" lalu menulis. Tidak ada keduanya = False (terapkan, perilaku lama)."""
     found: List[bool] = []
-    if "dry_run" in request.query_params:
-        flag = _DRY_RUN_VALUES.get(s(request.query_params.get("dry_run", "")).lower())
+    values = request.query_params.getlist("dry_run")
+    if len(values) > 1:
+        return None  # putaran 3: ?dry_run=1&dry_run=0 — Starlette memakai nilai TERAKHIR -> dulu menulis
+    if values:
+        flag = _DRY_RUN_VALUES.get(s(values[0]).lower())
         if flag is None:
             return None
         found.append(flag)
