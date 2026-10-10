@@ -55,6 +55,7 @@ export const PRINCIPAL_DIDUKUNG = "KINO NON FOOD";
 export const ALASAN_IZIN = {
     buat: "Akun Anda belum berhak mengunggah, memvalidasi, atau mengonfirmasi order principal (izin buat Order Masuk); minta admin menambahkannya.",
     ubah: "Akun Anda belum berhak menyiapkan, mengantrekan, atau menghapus batch (izin ubah Order Masuk); minta admin menambahkannya.",
+    ganti: "Mengganti batch lama menghapusnya, jadi butuh izin ubah Order Masuk (sama dengan Hapus); minta admin menambahkannya.",
 };
 
 const sebab = (status: number, data: Record<string, unknown> | null, umum: string) => {

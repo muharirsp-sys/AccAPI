@@ -150,6 +150,7 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
                         : <Button variant="primary" icon={<Plus className="fi-icon" aria-hidden />} disabled disabledReason="Akun Anda tidak berhak membuat order">Buat order</Button>}
                 </div>
                 <p>Order internal dari petugas dan dari Order Sales lapangan. Order principal ada di Order Principal; faktur dibuat saat Kirim di Antrean Faktur.</p>
+                {!bolehBuat && <p className="fi-small fi-why">Buat order nonaktif: akun Anda tidak berhak membuat order.</p>}
             </header>
 
             {tarik.hasil && (
@@ -184,6 +185,8 @@ export default function OrderMasuk({ permKeys }: { permKeys: string[] }) {
                             {kon.connection.enabled ? "Matikan tarik otomatis…" : "Nyalakan tarik otomatis…"}
                         </Button>
                         <Button icon={<Download className="fi-icon" aria-hidden />} busy={tarik.busy} disabled={Boolean(tanpaIzinTarik)} disabledReason={tanpaIzinTarik} onClick={() => void tarikSekarang()}>Tarik sekarang</Button>
+                        {/* Alasan nonaktif sebagai teks, bukan hanya title (tidak terbaca di sentuh/pembaca layar). */}
+                        {kunciKoneksi && <p className="fi-small fi-why" style={{ flexBasis: "100%" }}>{tanpaIzinTarik ? `Tarik dan koneksi nonaktif: ${tanpaIzinTarik.toLowerCase()}.` : `Ubah koneksi nonaktif: ${kunciKoneksi.toLowerCase()}.`}</p>}
                     </div>
                 )}
             </section>

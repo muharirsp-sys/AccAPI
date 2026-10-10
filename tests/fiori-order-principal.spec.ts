@@ -355,6 +355,8 @@ test("Hapus dari Batch terakhir: dialog membaca antrean dulu; ada SO / gagal →
     let dlg = page.getByRole("dialog");
     const hapus = dlg.getByRole("button", { name: "Hapus batch", exact: true });
     await expect(hapus).toHaveAttribute("title", /1 SO batch ini sudah di Antrean Faktur; batch tidak bisa dihapus \(BL-21\)/);
+    // Alasan nonaktif juga TEKS di dialog, bukan hanya title.
+    await expect(dlg.locator("p.fi-why")).toContainText("1 SO batch ini sudah di Antrean Faktur; batch tidak bisa dihapus (BL-21)");
     await expect(dlg.getByText("usulan BL-21")).toBeVisible();
     await expect(dlg.getByRole("textbox")).toHaveCount(0); // server DELETE tidak menerima alasan
     await dlg.getByRole("button", { name: "Batal" }).click();

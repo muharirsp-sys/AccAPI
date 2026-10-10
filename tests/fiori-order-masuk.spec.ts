@@ -61,6 +61,8 @@ type Opsi = {
     tundaStatus?: () => Promise<void>;
     koneksi?: unknown;
     koneksiPost?: () => { body?: unknown; status?: number; html?: string };
+    /** Ditunggu sebelum GET status koneksi dijawab. */
+    tundaKoneksi?: () => Promise<void>;
     lookup?: (no: string) => Promise<{ body: unknown; status?: number }>;
     units?: (code: string) => { body: unknown; status?: number } | undefined;
     pull?: { body?: unknown; status?: number; html?: string };
@@ -75,7 +77,7 @@ type Log = { listCalls: number; statusUrls: string[]; pullCalls: number; koneksi
 async function pasang(page: Page, opsi: Opsi = {}): Promise<Log> {
     const log: Log = { listCalls: 0, statusUrls: [], pullCalls: 0, koneksi: [], simpan: [], invoiceGets: 0, invoicePosts: [] };
     const simpan = [...(opsi.simpan ?? [])];
-    await page.route((u) => u.host === "localhost:8000", (r) => {
+    await page.route((u) => u.host === "localhost:8000", async (r) => {
         const req = r.request();
         const u = new URL(req.url());
         const m = req.method();
@@ -98,6 +100,7 @@ async function pasang(page: Page, opsi: Opsi = {}): Promise<Log> {
                 const x = opsi.koneksiPost?.() ?? { body: { ok: true, connection: { enabled: true, owner: "PETUGAS A" }, pending: 0 } };
                 return fa(r, x.body, x.status, x.html);
             }
+            await opsi.tundaKoneksi?.();
             return fa(r, opsi.koneksi ?? { ok: true, pending: 3, connection: { enabled: false, owner: "", updated_by: "", updated_at: "", last_run_at: "", last_result: null } });
         }
         if (u.pathname === "/orders/pull") {
@@ -267,18 +270,27 @@ test("Tarik Order Sales: hasil tarikan tampil; jawaban tidak pasti = belum pasti
 
 test("Koneksi Order Sales: jawaban tidak pasti → dialog tertutup, pesan belum pasti tetap di halaman, status dibaca ulang", async ({ page }) => {
     let bacaKoneksi = 0;
-    const log = await pasang(page, { koneksiPost: () => ({ status: 504, html: HTML_502 }) });
+    let tunda = false;
+    let lepas: () => void = () => {};
+    const tahan = new Promise<void>((ok) => { lepas = ok; });
+    const log = await pasang(page, { koneksiPost: () => ({ status: 504, html: HTML_502 }), tundaKoneksi: () => (tunda ? tahan : Promise.resolve()) });
     page.on("request", (q) => { if (q.method() === "GET" && new URL(q.url()).pathname === "/orders/connection") bacaKoneksi += 1; });
     await page.goto("/orders");
     const m = main(page);
     await m.getByRole("button", { name: "Nyalakan tarik otomatis…" }).click(NAV);
     const dlg = page.getByRole("dialog", { name: "Nyalakan tarik otomatis Order Sales?" });
     const sebelum = bacaKoneksi;
+    tunda = true;
     await dlg.getByRole("button", { name: "Nyalakan" }).click();
     await expect(dlg).toBeHidden();
     await expect(m.getByText("Hasil ubah koneksi Order Sales belum pasti.")).toBeVisible();
     await expect(m.getByText(/Bad Gateway|504/)).toHaveCount(0);
     await expect.poll(() => bacaKoneksi).toBeGreaterThan(sebelum);
+    // Selama status koneksi dibaca ulang: tombol terkunci dan alasannya tampil sebagai TEKS.
+    await expect(m.getByRole("button", { name: "Nyalakan tarik otomatis…" })).toBeDisabled();
+    await expect(m.getByText("Ubah koneksi nonaktif: status koneksi sedang dimuat atau gagal dibaca.")).toBeVisible();
+    lepas();
+    await expect(m.getByRole("button", { name: "Nyalakan tarik otomatis…" })).toBeEnabled();
     expect(log.koneksi).toEqual([{ enabled: true }]);
 });
 

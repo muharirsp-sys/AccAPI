@@ -6,7 +6,8 @@
  *   components/fiori/{core,interactive}; ./LangkahBatch; ./bersama.
  * Main Functions: OrderPrincipal.
  * Side Effects: router.replace (`?batch=`); HTTP unggah (pratinjau tidak menulis; simpan/ganti menulis batch), hapus batch.
- *   Logic BL-21 (tolak hapus/ganti di server, alasan tercatat) dan BL-44 belum ada di server → VariantNote; pemeriksaan antrean hanya di layar.
+ *   BL-21: server menolak hapus/ganti (409) bila ada SO batch di Antrean Faktur dan Ganti butuh izin ubah order; layar memeriksa juga
+ *   (saat dialog dibuka dan lagi tepat sebelum menulis). Alasan hapus yang tercatat dan BL-44 belum ada di server → VariantNote.
  */
 "use client";
 
@@ -56,7 +57,7 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
     const [dialog, setDialog] = useState<Dialog>(null);
     useUnsavedGuard(Boolean(berkas) && !batchId);
 
-    // Dialog hapus/ganti membaca status antrean batch yang bersangkutan lebih dulu (BL-21 di layar; server belum menolak).
+    // Dialog hapus/ganti membaca status antrean batch yang bersangkutan lebih dulu (BL-21; server tetap menolak 409 di transaksinya).
     const idCek = dialog?.jenis === "hapus" ? dialog.batch.id : dialog?.jenis === "ganti" ? pratinjau?.duplicateOf?.id ?? "" : "";
     const [cek, muatCek] = useLoad(useCallback((): Promise<Load<number>> => idCek
         ? baca(`/api/principal-order/queue?id=${encodeURIComponent(idCek)}`, (j) => ((j.queue ?? []) as BarisAntrean[]).length, "Status antrean batch belum terbaca.")
@@ -158,7 +159,7 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
         : cek.status === "galat" ? `Status antrean batch ${apa} belum terbaca; aksi dinonaktifkan.`
             : nCek > 0 ? `${nCek} SO batch ${apa} sudah di Antrean Faktur; batch tidak bisa ${apa === "lama" ? "diganti" : "dihapus"} (BL-21). Buang dulu di Antrean Faktur bila memang harus diulang.` : undefined;
     const kunciHapus = !bolehUbah ? ALASAN_IZIN.ubah : kunciCek("ini");
-    const kunciGanti = !bolehBuat ? ALASAN_IZIN.buat : basi ? "Hasil sebelumnya belum pasti; tutup, periksa Batch terakhir, lalu Pratinjau ulang." : kunciCek("lama");
+    const kunciGanti = !bolehUbah ? ALASAN_IZIN.ganti : basi ? "Hasil sebelumnya belum pasti; tutup, periksa Batch terakhir, lalu Pratinjau ulang." : kunciCek("lama");
     const kunciDaftar = daftar.status === "memuat" ? "Daftar batch sedang dimuat ulang." : daftar.status === "galat" ? "Daftar batch belum terbaca." : undefined;
 
     const dialogHapus = dialog?.jenis === "hapus" ? dialog.batch : null;
@@ -181,7 +182,8 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                 ] : []}
                 onConfirm={() => (dialogHapus ? hapusBatch(dialogHapus) : undefined)}>
                 {galatCek}
-                <VariantNote bl="BL-21">Server hari ini menghapus tanpa memeriksa antrean dan tanpa jejak; pemeriksaan antrean di dialog ini hanya di layar, dan alasan belum bisa dikirim. Usulan: penghapusan beralasan dan tercatat, ditolak server bila SO-nya sudah di Antrean Faktur.</VariantNote>
+                {kunciHapus && cek.status !== "galat" && <p className="fi-small fi-why">{kunciHapus}</p>}
+                <VariantNote bl="BL-21">Server menolak penghapusan bila ada SO batch ini di Antrean Faktur, tetapi alasan penghapusan belum bisa dikirim dan belum tercatat. Usulan: penghapusan beralasan dan tercatat di riwayat.</VariantNote>
             </ConfirmDialog>
             <ConfirmDialog open={dialog?.jenis === "ganti"} onClose={() => setDialog(null)} title={`Ganti batch ${dup?.fileName ?? ""} dengan berkas ini?`} tag="Ganti batch"
                 confirmLabel="Ganti batch" confirmDisabled={kunciGanti}
@@ -194,7 +196,8 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                 ] : []}
                 onConfirm={gantiBatch}>
                 {galatCek}
-                <VariantNote bl="BL-21">Server hari ini masih menerima penggantian walau SO batch lama sudah antre; pemeriksaan antrean baru ada di dialog ini. Usulan: server menolak penggantian bila ada SO batch lama di Antrean Faktur.</VariantNote>
+                {kunciGanti && cek.status !== "galat" && <p className="fi-small fi-why">{kunciGanti}</p>}
+                <VariantNote bl="BL-21">Server menolak penggantian bila ada SO batch lama di Antrean Faktur, tetapi penggantian belum tercatat beralasan. Usulan: penggantian beralasan dan tercatat di riwayat.</VariantNote>
             </ConfirmDialog>
         </>
     );
@@ -318,6 +321,7 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                     empty={{ title: "Belum ada batch", message: "Unggah berkas Order Detail di atas." }}
                     mobileItem={(b) => <ListItem doc={b.fileName} amount={`${angka(b.lineCount)} baris`} title={`${b.principal} · periode ${tanggalSo(b.period) || "—"}`}
                         meta={aksiBatch(b)} badge={<BadgeValidasi batch={b} />} />} />
+                {!bolehUbah && <p className="fi-small fi-why" style={{ padding: "8px 16px" }}>Hapus batch nonaktif: {ALASAN_IZIN.ubah}</p>}
             </Section>
 
             <FooterToolbar message={kunciPratinjau ?? (pratinjau ? (dup ? "Berkas sama dengan batch yang sudah ada" : kunciSimpan ?? `${angka(pratinjau.lineCount)} baris akan disimpan`) : "Pratinjau berkas dulu")}>
@@ -328,8 +332,8 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                         onClick={() => void simpanBatch()}>Simpan batch</Button>
                 )}
                 {pratinjau && dup && (
-                    <Button variant="primary" icon={<Replace className="fi-icon" aria-hidden />} disabled={!bolehBuat || basi}
-                        disabledReason={!bolehBuat ? ALASAN_IZIN.buat : "Hasil sebelumnya belum pasti; periksa Batch terakhir, lalu Pratinjau ulang."}
+                    <Button variant="primary" icon={<Replace className="fi-icon" aria-hidden />} disabled={!bolehUbah || basi}
+                        disabledReason={!bolehUbah ? ALASAN_IZIN.ganti : "Hasil sebelumnya belum pasti; periksa Batch terakhir, lalu Pratinjau ulang."}
                         onClick={() => setDialog({ jenis: "ganti" })}>Ganti batch lama…</Button>
                 )}
             </FooterToolbar>

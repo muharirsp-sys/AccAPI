@@ -8,7 +8,7 @@
  *   ./bersama.
  * Main Functions: LangkahBatch, Kepala.
  * Side Effects: HTTP baca/tulis DB lokal (validasi, konfirmasi order ganda, baris invoice_outbox). TIDAK ada tulis ke Accurate di sini:
- *   faktur dibuat saat Kirim di Antrean Faktur. Logic BL-21/23/35/44/45 tidak ditulis (VariantNote).
+ *   faktur dibuat saat Kirim di Antrean Faktur. BL-21 ditegakkan server (route principal-order); logic BL-23/35/44/45 tidak ditulis (VariantNote).
  */
 "use client";
 
