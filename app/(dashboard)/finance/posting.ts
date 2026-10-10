@@ -5,7 +5,7 @@
  *   pasti, ubah status transfer, simpan tujuan, master pemasok/rekening Accurate (baca-saja).
  * Caller: app/(dashboard)/finance/Finance.tsx.
  * Dependensi: lib/apiBase (FastAPI), lib/finance-post-status (certainlyNotSent, purchasePaymentConflict), lib/finance-ui.
- * Main Functions: recordKey, muatFinance, muatMaster, simpanTujuan, postingPurchasePayment, selesaikanTidakPasti, ubahStatusTransfer.
+ * Main Functions: recordKey, bacaSesi, muatFinance, muatMaster, simpanTujuan, postingPurchasePayment, selesaikanTidakPasti, ubahStatusTransfer.
  * Side Effects: FastAPI /payments/finance/{data,mapping,proof,update} (payments.json); Next /api/finance/purchase-payment
  *   (klaim attempt lalu purchase-payment/bulk-save.do ke Accurate), /attempts, /resolve; /api/auth/accurate-session;
  *   /api/proxy GET vendor/list.do & glaccount/list.do (baca-saja).
@@ -75,6 +75,9 @@ export const urlBerkas = (path: string) => `${API_BASE}${path}`;
 
 /** Jawaban tulis TIDAK PASTI (koneksi putus, status ≥ 502, badan bukan JSON): tulisannya mungkin sudah terjadi. */
 export class TidakPasti extends Error {}
+
+/** Penyelesaian tercatat di server posting, tetapi catatan Finance ditolak: JANGAN diulang buta — muat ulang lalu periksa status. */
+export class SeparuhJalan extends Error {}
 
 /** Kunci baris = clientRef command. FORMAT TIDAK BOLEH BERUBAH: attempt lama dicocokkan dengan string ini (sameRecord). */
 export function recordKey(record: FinanceRecord) {
@@ -538,8 +541,9 @@ export async function selesaikanTidakPasti(p: { record: FinanceRecord; date: str
         });
     } catch (e) {
         if (e instanceof TidakPasti) throw e;
-        // Attempt server sudah selesai, catatan Finance belum: mengulang aman (server menjawab 404/already_posted → hanya catatan).
-        throw new Error(`Penyelesaian tercatat di server posting, tetapi catatan Finance gagal disimpan: ${e instanceof Error ? e.message : ""} Ulangi “Simpan penyelesaian”.`);
+        // Tinjauan B-4: attempt server sudah selesai, catatan Finance ditolak (mis. 400 tanggal transfer/bukti belum ada di rekaman lama).
+        // Mengulang dari dialog yang sama akan ditolak lagi — penanggung jawab memeriksa status setelah dimuat ulang.
+        throw new SeparuhJalan(`Penyelesaian tercatat di server posting, tetapi catatan Finance gagal disimpan: ${e instanceof Error ? e.message : ""}`);
     }
     return number;
 }

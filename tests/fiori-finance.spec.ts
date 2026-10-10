@@ -388,6 +388,32 @@ test("Selesaikan 'Tidak ada' setelah basi; already_posted untuk 'Tidak ada' dito
     expect(m.update.at(-1)).toMatchObject({ accurate_post_status: "failed", accurate_post_error: "dicek manual: tidak ada di Accurate" });
 });
 
+test("B-4: Selesaikan separuh jalan (resolve tercatat, catatan Finance 400) → dialog ditutup, muat ulang, 'periksa status' — bukan 'Ulangi'", async ({ page }) => {
+    const sub = subjek(FAKTUR_A.map(([f]) => f));
+    const m = await siapkan(page, {
+        rows: () => [pengajuan("DRAFT-0418", "PRINCIPLE A", FAKTUR_A, { accurate_post_status: "unknown" })],
+        attempts: { [sub]: attempt({ ageSeconds: 30 }) },
+        update: [{ status: 400, body: { ok: false, error: "Tanggal transfer wajib diisi untuk status Sudah Transfer." } }],
+    });
+    const { main, detail } = await bukaPengajuan(page);
+    await detail.getByRole("button", { name: "Selesaikan…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Selesaikan posting tidak pasti" });
+    await dlg.getByRole("radio", { name: "Ada di Accurate", exact: true }).check();
+    await dlg.getByLabel("Nomor Purchase Payment").fill("PP/2610/0030");
+    await dlg.getByLabel("Diperiksa di").fill("Accurate › Pembayaran Pembelian");
+    await dlg.getByLabel("Alasan").fill("Pembayaran ada dengan nilai dan faktur yang sama.");
+    const muat = m.dataDates.length;
+    await dlg.getByRole("button", { name: "Simpan penyelesaian" }).click();
+    const strip = main.getByRole("status").filter({ hasText: "Penyelesaian baru tercatat sebagian." });
+    await expect(strip).toContainText("periksa status pengajuan setelah dimuat ulang", NAV);
+    await expect(strip).toContainText("Tanggal transfer wajib diisi");
+    await expect(dlg).toBeHidden();
+    await expect(main.getByText(/Ulangi/)).toHaveCount(0);
+    await expect.poll(() => m.dataDates.length, NAV).toBeGreaterThan(muat);
+    expect(m.resolve).toHaveLength(1);
+    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
+});
+
 test("Galat ≠ kosong (tanpa localhost/HTML), Kosong, status posting tak terbaca = posting terkunci", async ({ page }) => {
     const m = await siapkan(page, { dataGagal: { status: 500, html: "<html>Internal Server Error</html>" } });
     const main = page.locator("main");

@@ -26,7 +26,7 @@ import {
 import { rupiah, tgl } from "@/lib/promo-ui";
 import { tanggalPanjang } from "@/lib/rekapan-nota/ui";
 import {
-    TidakPasti, bacaSesi, muatFinance, muatMaster, postingPurchasePayment, recordKey, selesaikanTidakPasti, simpanTujuan, ubahStatusTransfer, urlBerkas,
+    SeparuhJalan, TidakPasti, bacaSesi, muatFinance, muatMaster, postingPurchasePayment, recordKey, selesaikanTidakPasti, simpanTujuan, ubahStatusTransfer, urlBerkas,
     type DataFinance, type FinanceMapping, type FinanceRecord, type MasterAccurate, type SesiAccurate,
 } from "./posting";
 
@@ -201,6 +201,12 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
         try {
             nomor = await selesaikanTidakPasti({ record: b.r, date: data.date, ...p });
         } catch (e) {
+            if (e instanceof SeparuhJalan) {
+                setDialog(null);
+                setHasil({ tone: "warn", judul: "Penyelesaian baru tercatat sebagian.", isi: `${e.message} Tutup pesan ini lalu periksa status pengajuan setelah dimuat ulang; pengajuan tetap dikunci.` });
+                muatUlang();
+                return;
+            }
             if (!(e instanceof TidakPasti)) throw e;
             setDialog(null);
             setHasil({ tone: "warn", judul: "Hasil penyelesaian belum pasti.", isi: `${e.message} Data dimuat ulang — periksa statusnya sebelum mengulang.` });
