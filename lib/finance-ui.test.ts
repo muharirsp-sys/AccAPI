@@ -120,6 +120,10 @@ test("catatan lama disaring: tanpa 'Coba lagi' dan tanpa alamat server lokal", (
     assert.equal(saringCatatan("Accurate tidak merespons dalam 30 detik (timeout). Coba lagi."), "Accurate tidak merespons dalam 30 detik (timeout).");
     assert.equal(saringCatatan("Koneksi ke backend Python gagal. Pastikan localhost:8000 aktif."), "Koneksi ke backend Python gagal. Pastikan server aktif.");
     assert.equal(saringCatatan("gagal http://localhost:8000/payments/x"), "gagal server");
+    // Ajakan di tengah kalimat: seluruh kalimat itu dibuang (dulu tersisa potongan "Gagal menyimpan; nanti setelah …").
+    assert.equal(saringCatatan("Gagal menyimpan; coba lagi nanti setelah server pulih. Data lain aman."), "Data lain aman.");
+    assert.equal(saringCatatan("Status posting tidak bisa dibaca dari database. Coba lagi."), "Status posting tidak bisa dibaca dari database.");
+    assert.equal(saringCatatan("Percobaan yang dicoba lagi tetap tercatat."), "Percobaan yang dicoba lagi tetap tercatat.", "'dicoba lagi' bukan ajakan");
     const n = catatanPosting("tidak_pasti", "Accurate tidak merespons (timeout). Coba lagi.", "failed");
     assert.match(n, /^TIDAK PASTI/);
     assert.doesNotMatch(n, /Coba lagi/);

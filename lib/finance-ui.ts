@@ -155,12 +155,13 @@ export function alasanTidakAda(attempt: AttemptFinance | null | undefined, detik
 }
 
 /**
- * Catatan/galat lama untuk layar: tanpa ajakan "Coba lagi" (mengulang posting yang tidak pasti = membayar dua kali) dan tanpa
+ * Catatan/galat lama untuk layar: tanpa kalimat ajakan "Coba lagi" (mengulang posting yang tidak pasti = membayar dua kali) dan tanpa
  * alamat server lokal (mis. "localhost:8000").
  */
 export function saringCatatan(teks: string | null | undefined): string {
     return String(teks ?? "")
-        .replace(/\s*Coba lagi\b\.?/gi, "")
+        // Seluruh KALIMAT yang mengajak mengulang dibuang (bukan hanya frasanya — kalimat terpotong tidak terbaca).
+        .replace(/[^.!?]*\bcoba lagi\b[^.!?]*[.!?]?/gi, "")
         .replace(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*/gi, "server")
         .replace(/\b(?:localhost|127\.0\.0\.1)(?::\d+)?/gi, "server")
         .replace(/\s{2,}/g, " ")
