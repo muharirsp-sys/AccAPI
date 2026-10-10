@@ -277,6 +277,9 @@ for (const [nama, j] of TIDAK_PASTI) {
         await expect(main).not.toContainText("localhost");
         await expect(main.getByText(/Coba lagi\./)).toHaveCount(0);
         expect(m.command).toHaveLength(1);
+        // Bukti sudah terunggah: draf berkas dibersihkan (tidak tampil "draf", tidak ada peringatan perubahan belum disimpan).
+        await expect(detail.getByText("Bukti tersimpan")).toBeVisible(NAV);
+        await expect(main.getByRole("list", { name: "Daftar pengajuan" }).getByRole("button", { name: /DRAFT-0418/ })).not.toContainText("draf");
     });
 }
 

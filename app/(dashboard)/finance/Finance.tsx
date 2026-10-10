@@ -156,6 +156,10 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
             // Belum ada yang ditulis ke mana pun: dialog tetap terbuka dengan pesannya.
             if (h.jenis === "tidak_terkirim" && !h.tercatat) throw new Error(`${h.pesan} Tidak ada yang dikirim ke Accurate.`);
             setDialog(null);
+            // Semua hasil yang sampai di sini sudah menyimpan tujuan (langkah 1) dan mengunggah bukti (langkah 2): draf berkas & tujuan
+            // tidak berlaku lagi (bukti tersimpan dipakai bila posting ulang). Tanggal transfer dibiarkan kecuali terposting.
+            setBukti((s) => tanpa(s, b.key));
+            setDrafTujuan((s) => tanpa(s, b.key));
             if (h.jenis === "terposting") {
                 bersihkanDraf(b.key);
                 setHasil({ tone: "pos", judul: `Terposting ${h.nomor} · ${total} · ${tujuanDb.alias || `ID ${tujuanDb.id}`}`, isi: h.catatan ? "Hasil posting sebelumnya dicatat; tidak ada kiriman baru ke Accurate." : `${b.r.draft_label} · ${b.r.principle}. Status transfer dan posting dimuat ulang.` });
