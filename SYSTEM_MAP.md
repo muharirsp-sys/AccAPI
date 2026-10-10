@@ -293,7 +293,8 @@ Idempotency guard (bulk sales receipt, API Wrapper; gerbang = endpoint routeConf
      baris milik lock ditandai SENDING -> kirim -> hasil per baris dicatat SERVER (classifySalesReceiptReply:
      s:true = SUCCESS, selain itu UNKNOWN — C11; server tidak pernah menyimpulkan FAILED)
   -> POST /api/idempotency/complete — klien hanya menaikkan; FAILED hanya untuk baris PROCESSING (belum dikirim)
-  -> GET /api/idempotency/resolve?key= — pratinjau pencarian Selesaikan (finance.resolve_unknown, baca-saja; POST menunggu DDL)
+  -> GET/POST /api/idempotency/resolve — Selesaikan tidak pasti (finance.resolve_unknown; cari dulu, lalu CAS status +
+     jejak idempotency_resolution, lib/idempotency-resolve.ts). Lock mencatat idempotency_log."databaseId" (DDL_S6E2.sql)
   -> GET /api/idempotency/summary — Tidak pasti / Gagal boleh diulang (BL-41; pelunasan.kirim ATAU finance.resolve_unknown)
 
 Data Sync (item/customer):

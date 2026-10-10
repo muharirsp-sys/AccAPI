@@ -42,6 +42,7 @@ Urutan pemeriksaan (yang pertama gagal menjawab; semua sebelum `SENDING` = `sent
 | 5 | 409 | `SALES_RECEIPT_LOCK_REQUIRED` | sesi belum lengkap DAN lock tidak mencakup baris (lama) |
 | 6 | 400 | `ACCURATE_SESSION_INCOMPLETE` | sesi Accurate belum lengkap / host tak diizinkan — `sent:false` (dulu tanpa kode → klien menganggap Tidak pasti) |
 | 7 | 409 | `database_changed` | database sesi ≠ `expectedDatabaseId` — `{sent:false, databaseId, databaseAlias}` (database sesi kini) |
+| 7b | 409 | `database_changed` | database yang DICATAT lock ≠ database sesi (atau lock lama tanpa database) — `{sent:false, lockDatabaseId}` |
 | 8 | 409 | `SALES_RECEIPT_LOCK_REQUIRED` | baris tidak tercakup lock/override (dinilai SEBELUM membaca riwayat) |
 | 9 | 409 | `ACCURATE_HISTORY` | ada baris MIRIP riwayat Accurate (atau riwayat GAGAL dibaca) tanpa override `ACCURATE_HISTORY` |
 | — | 200 | — | jawaban Accurate apa adanya (lama); hasil per baris dicatat server (`SUCCESS` hanya untuk `s:true` per baris, selain itu `UNKNOWN`) |
@@ -59,6 +60,16 @@ Jawaban 409 `ACCURATE_HISTORY` (seluruh paket TIDAK dikirim, override & lock TID
 
 Biaya: tiap paket membaca riwayat per kelompok pelanggan+tanggal = `list.do` (≤ 5 halaman) + `detail.do` per kandidat,
 paling banyak 4 serentak, batas 60 dtk per paket (melewati batas = kelompok sisanya `UNREADABLE`).
+Tindak lanjut (DITUNDA, orkestrator 10 Okt): satu `list.do` per tanggal (bukan per pelanggan) menekan biaya, tetapi mengubah
+logika pratinjau bersama — belum dikerjakan.
+
+**Sidik jari riwayat (bukti baca-saja produksi 10 Okt, `S6e2-BUKTI-DETAIL-DO-2026-10-10.md`)**: `detail.do` tidak membawa
+`invoiceNo` (nomor faktur di `detailInvoice[].invoice.number`) dan tidak membawa `customerNo` tingkat atas. Detail dinormalkan di
+SATU tempat (`normalisasiDetailAccurate`, pratinjau & server): `invoiceNo = invoiceNo ?? invoice.number`, item diskon
+`accountNo = accountNo ?? account.no`. Bentuk tak dikenali (baris tanpa nomor faktur, item diskon tanpa nomor akun,
+`detailInvoice` bukan daftar) = `ACCURATE_HISTORY_UNREADABLE` (ditahan). Sebelum perbaikan ini pemeriksaan mirip-riwayat tidak
+pernah memicu (juga di pratinjau lama). Pratinjau (`pratinjauDuplikat`) kini punya alasan `ACCURATE_HISTORY_UNREADABLE`
+("tidak terbaca", bukan aman) — baris itu butuh override Finance seperti `ACCURATE_HISTORY`.
 
 ## 2. `POST /api/idempotency/lock` (BERUBAH)
 
@@ -69,6 +80,10 @@ bisa dipakai untuk blok lock, dan sebaliknya).
 - Non-pratinjau tanpa `pelunasan.kirim` → **403** `{code:"PERMISSION_REQUIRED"}`. Pratinjau (`preview:true`) tetap untuk semua
   pengguna bersesi (baca-saja).
 - Non-pratinjau dengan key memuat `ISI_KODE_AKUN_` → **400** `{code:"PLACEHOLDER_AKUN"}` (sebelum menulis).
+- Gerbang override kini berkode: 403 `OVERRIDE_PERMISSION_REQUIRED`, 400 `OVERRIDE_REASON_REQUIRED`.
+- **Non-pratinjau wajib `expectedDatabaseId`** (BARU): 400 `DATABASE_REQUIRED`; sesi tanpa database 400
+  `ACCURATE_SESSION_INCOMPLETE`; database sesi berbeda 409 `database_changed` — semua sebelum menulis. Lock mencatat database itu
+  di `idempotency_log."databaseId"`.
 - Jawaban sukses tidak berubah: `{ok, lockId, blockedKeys, blockedEntries}`.
 
 ## 3. `POST /api/idempotency/complete` — TIDAK berubah
@@ -86,24 +101,44 @@ yang sama dengan penahanan riwayat. Tidak menulis apa pun.
 `eligible` = `UNKNOWN`, `SENDING` ≥ 2 mnt, atau `PROCESSING` > 15 mnt (basi lock). `found:null` + `readError` = riwayat gagal dibaca. 400 tanpa key /
 > 50; 400 `ACCURATE_SESSION_INCOMPLETE`; 404 key tidak ada.
 
-## 5. `POST /api/idempotency/resolve` — **BELUM ADA (menunggu DDL, lihat §8)**
+## 5. `POST /api/idempotency/resolve` (BARU) — Selesaikan
 
-Rencana: `{key, decision:"terposting"|"tidak_ada", accurateNumber?, reason (≥15), checkedSource, expectedDatabaseId}`; server
-mencari ulang dulu; `terposting` wajib nomor yang ada di hasil cari; `tidak_ada` ditolak bila pencarian menemukan/ gagal baca,
-atau umur < 2 mnt; database sesi = database lock; tercatat (siapa/kapan/sumber/alasan/nomor); `already_resolved` = 200.
-Tertahan karena butuh kolom database di `idempotency_log` + tabel jejak penyelesaian (CHECK `idempotency_override.action`
-tidak memuat aksi penyelesaian).
+Izin `finance.resolve_unknown`. Badan `{key, decision:"terposting"|"tidak_ada", accurateNumber (wajib untuk terposting), reason
+(≥ 15), checkedSource, expectedDatabaseId}`. Server MENCARI dulu (sesi pemanggil, sidik jari sama dengan penahanan riwayat), lalu
+satu transaksi: status `SUCCESS` (terposting) / `FAILED` (tidak_ada = boleh dikirim ulang; proxy tetap menahan riwayat) + jejak
+`idempotency_resolution` (siapa, kapan, database, sumber, alasan, nomor; tidak bisa diubah/dihapus).
+
+| Status | `code` | Kapan |
+|---|---|---|
+| 200 | — | `{ok, status, resolutionId, receiptNumbers}` |
+| 200 | — | `{ok, alreadyResolved:true, status}` — keputusan sama sudah berlaku (klik ganda) |
+| 400 | — / `DATABASE_REQUIRED` / `ACCURATE_SESSION_INCOMPLETE` | masukan tak sah (sebelum DB/Accurate) / sesi |
+| 403 | — | tanpa `finance.resolve_unknown` |
+| 404 | `not_found` | key tidak ada |
+| 409 | `database_changed` | database sesi ≠ `expectedDatabaseId` |
+| 409 | `not_eligible` | bukan UNKNOWN / SENDING ≥ 2 mnt / PROCESSING > 15 mnt; atau `tidak_ada` < 2 mnt |
+| 409 | `wrong_database` | database lock ≠ database sesi — `{lockDatabaseId}` (buka database itu) |
+| 409 | `database_unknown` | `tidak_ada` untuk baris lama tanpa database tercatat (bisa terposting di database lain); `terposting` BOLEH |
+| 409 | `search_failed` | pencarian Accurate gagal / bentuk tak dikenali — tidak ada yang diubah |
+| 409 | `number_mismatch` | `terposting` dengan nomor yang tidak ditemukan — `{receiptNumbers}` |
+| 409 | `found_in_accurate` | `tidak_ada` padahal ditemukan — `{receiptNumbers}` |
+| 409 | `changed` | status berubah selama pencarian (CAS) |
 
 ## 6. `GET /api/idempotency/summary` (BARU, baca-saja) — Beranda Admin Incaso (BL-41)
 
 Izin `pelunasan.kirim` ATAU `finance.resolve_unknown`.
 ```json
 {"ok": true, "uncertain": {"unknown": 2, "sendingStale": 1, "total": 3}, "retryable": 4, "processingStale": 0,
- "perDatabase": null, "staleMinutes": 15, "asOf": "2026-10-10T08:00:00.000Z"}
+ "perDatabase": [{"databaseId": "123", "label": "123", "uncertain": {"unknown": 2, "sendingStale": 0, "total": 2}, "retryable": 1, "processingStale": 0},
+                 {"databaseId": null, "label": "tidak tercatat", "uncertain": {"unknown": 0, "sendingStale": 1, "total": 1}, "retryable": 3, "processingStale": 0}],
+ "staleMinutes": 15, "asOf": "2026-10-10T08:00:00.000Z"}
 ```
+`?rows=1` menambah `rows: [{key, status, customerNo, transDate, invoiceNo, amount, databaseId, updatedAt, category:"uncertain"|"retryable"}]`
+(UNKNOWN + SENDING basi + FAILED, terbaru dulu, ≤ 200, tanpa payload) dan `rowsTruncated`. Alias database tidak disimpan
+(UI memetakan id → alias dari daftar database).
 `uncertain` = Tidak pasti (tile 1; `SENDING` basi = > 15 mnt, sama dengan lock). `retryable` = `FAILED` (tidak terkirim, tile 2).
 `processingStale` = lock > 15 mnt yang tak pernah diteruskan (diblokir lock sebagai tidak pasti; tampilkan bila > 0).
-`perDatabase` = `null` sampai kolom database ada (§8).
+`perDatabase` hanya database yang punya angka > 0; `databaseId:null` = lock sebelum S6e-2 ("tidak tercatat").
 
 ## 7. Lib untuk wizard (bukan HTTP)
 
@@ -113,16 +148,24 @@ Izin `pelunasan.kirim` ATAU `finance.resolve_unknown`.
   `deps = {postJson(url, body) → {status, data}, expectedDatabaseId, override?, cariRiwayat?, lapor?, chunkSize?}`.
   Hasil `{lockId, rows: [{index, paket, outcome:"terposting"|"gagal"|"tidak_pasti"|"ditahan", message, code?, receiptNumbers?, item?}]}`.
   Pra-cek klien: placeholder akun → semua baris `gagal` tanpa lock.
+  Lock mengirim `expectedDatabaseId`. Galat SEBELUM kirim (lock ditolak/terblokir/tak terbit/jaringan) melempar
+  **`GalatKirim {code, status, sent:false}`** — `code` = kode server lock (`PERMISSION_REQUIRED`, `OVERRIDE_PERMISSION_REQUIRED`,
+  `OVERRIDE_REASON_REQUIRED`, `PLACEHOLDER_AKUN`, `DATABASE_REQUIRED`, `ACCURATE_SESSION_INCOMPLETE`, `database_changed`) atau
+  `HTTP_<status>`, `BLOCKED_KEYS`, `LOCK_NOT_ISSUED`, `NETWORK`. UI memetakan menurut `code`, bukan teks.
 
-## 8. Prasyarat deploy & DDL tertunda
+## 8. Prasyarat deploy
 
 - **Kunci izin**: IT Support menambah `pelunasan.kirim` ke grup yang MENGIRIM pelunasan (Admin Incaso, Finance) SEBELUM deploy —
   tanpanya semua kirim sales-receipt non-admin 403. `seed-rbac-presets` tidak dijalankan ke produksi.
-- **DDL tertunda (keputusan orkestrator)**: kolom `idempotency_log."databaseId"` (lock mencatat database; Selesaikan & ringkasan
-  per database) + tabel jejak penyelesaian. Sampai itu, pengikatan database = `expectedDatabaseId` vs sesi pada SETIAP paket.
+- **DDL**: `docs/handover/DDL_S6E2.sql` (IT Support, role pemilik, saat deploy; idempoten) — kolom `idempotency_log."databaseId"`
+  + tabel `idempotency_resolution` (juga dibuat migrate-pg entri `idempotency_s6e2` bila `DATABASE_MIGRATION_URL` terpasang) +
+  trigger append-only + REVOKE UPDATE/DELETE/TRUNCATE, GRANT SELECT/INSERT ke `accapi_app`.
+- Lock yang dibuat sebelum deploy tidak bisa dikirim lagi (database tidak tercatat) — muat ulang `/api-wrapper`, ulangi dari Tinjau.
 
 ## Catatan perubahan sesudah commit kontrak (86ec53b7)
 
 - §1: semua 409 `SALES_RECEIPT_LOCK_REQUIRED` kini juga membawa `sent:false`.
 - §4: `eligible` untuk `PROCESSING` = > 15 mnt (basi lock), bukan 2 mnt — PROCESSING bisa sah lama selama unggah banyak paket.
 - §7: hasil `kirimPelunasan` per baris membawa `paket` (nomor paket, mulai 1).
+- (10 Okt, sesudah keputusan orkestrator) §1 7b, §2 `expectedDatabaseId` + kode gerbang override, §5 POST ADA, §6 `perDatabase` +
+  `?rows=1`, §7 `GalatKirim`, §8 DDL_S6E2; sidik jari riwayat memakai bentuk ASLI `detail.do` (§1).
