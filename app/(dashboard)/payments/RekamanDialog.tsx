@@ -87,7 +87,7 @@ export function DialogUnggah({ open, onClose, izin, kunci, onSelesai, onTidakPas
     }
 
     return (
-        <ConfirmDialog open={open} onClose={tutup} title={berkas ? `Unggah ${berkas.name}?` : "Unggah LPB"} tag="Pratinjau"
+        <ConfirmDialog alasanTerlihat open={open} onClose={tutup} title={berkas ? `Unggah ${berkas.name}?` : "Unggah LPB"} tag="Pratinjau"
             confirmLabel={lap?.rows ? `Simpan ${lap.rows} LPB` : "Simpan"} confirmDisabled={alasan} onConfirm={simpan}
             facts={lap ? [
                 ["Baris", `${lap.rows ?? 0} LPB`],
@@ -141,7 +141,7 @@ export function DialogManual({ open, onClose, izin, kunci, onSelesai, onTidakPas
     }
 
     return (
-        <ConfirmDialog open={open} onClose={tutup} title="Tambah pengajuan manual" tag="CBD / NON_LPB" confirmLabel="Simpan" confirmDisabled={alasan} onConfirm={simpan}>
+        <ConfirmDialog alasanTerlihat open={open} onClose={tutup} title="Tambah pengajuan manual" tag="CBD / NON_LPB" confirmLabel="Simpan" confirmDisabled={alasan} onConfirm={simpan}>
             <div className="fi-segs" role="group" aria-label="Tipe">
                 {(["CBD", "NON_LPB"] as const).map((x) => <button key={x} type="button" aria-pressed={f.tipe === x} onClick={() => set("tipe")(x)}>{x}</button>)}
             </div>
@@ -182,7 +182,7 @@ export function DialogKeranjang({ open, onClose, dipilih, total, alasan, onSeles
     }
 
     return (
-        <ConfirmDialog open={open} onClose={tutup} title={`Buat keranjang ${dipilih.length} rekaman?`} tag="Langkah 1 dari 3" confirmLabel="Buat keranjang" confirmDisabled={blok} onConfirm={buat}
+        <ConfirmDialog alasanTerlihat open={open} onClose={tutup} title={`Buat keranjang ${dipilih.length} rekaman?`} tag="Langkah 1 dari 3" confirmLabel="Buat keranjang" confirmDisabled={blok} onConfirm={buat}
             facts={[["Rekaman", `${dipilih.length} rekaman · ${principals.size} principal`], ["Nilai invoice", rupiah(total)], ["Berikutnya", "Tinjau potongan, jenis pembayaran, dan rekening; belum ada yang diajukan."]]}>
             <div className="fi-field" role="radiogroup" aria-labelledby={idRute} aria-required>
                 <span id={idRute} className="fi-label">Rute pembayaran<span className="fi-req" aria-hidden>*</span></span>
@@ -282,7 +282,7 @@ export function DialogHapus({ baris, onClose, kunci, onSelesai, onTidakPasti }: 
         throw new Error(res.error);
     }
     return (
-        <ConfirmDialog open={Boolean(r)} onClose={tutup} title="Hapus 1 rekaman draf?" tag="BL-05" tone="negative" confirmLabel="Hapus"
+        <ConfirmDialog alasanTerlihat open={Boolean(r)} onClose={tutup} title="Hapus 1 rekaman draf?" tag="BL-05" tone="negative" confirmLabel="Hapus"
             confirmDisabled={kunci ?? (belumPasti ? KUNCI_PASTI : r?.locked_reason ? `Terkunci: ${r.locked_reason}` : undefined)} onConfirm={hapus}
             facts={r ? [
                 ["Dihapus", `${nama(r)} · ${r.principle || "—"} · ${Number.isNaN(angka(r.nilai_invoice)) ? String(r.nilai_invoice) : rupiah(angka(r.nilai_invoice))} · ${STATUS_REKAMAN[statusRekaman(r)].label}`],

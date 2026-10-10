@@ -302,7 +302,7 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
                     <Button variant="primary" icon={<Send className="fi-icon" aria-hidden />} disabled={Boolean(alasan)} disabledReason={alasan} onClick={() => setDialog(true)}>Ajukan ke Finance…</Button>
                 </FooterToolbar>
             )}
-            <ConfirmDialog open={dialog} onClose={() => setDialog(false)} title={`Ajukan ${items.length} principal ke Finance?`} tag={panin ? "SPPD" : "Non Panin"}
+            <ConfirmDialog alasanTerlihat open={dialog} onClose={() => setDialog(false)} title={`Ajukan ${items.length} principal ke Finance?`} tag={panin ? "SPPD" : "Non Panin"}
                 confirmLabel="Ajukan ke Finance" confirmDisabled={alasan} onConfirm={ajukan}
                 facts={[
                     ["Rute", panin ? `Bank Panin · 1 SPPD untuk ${items.length} principal` : "Non Panin · tanpa SPPD"],

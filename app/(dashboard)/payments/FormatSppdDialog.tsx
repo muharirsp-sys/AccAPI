@@ -97,7 +97,7 @@ export function DialogExcel({ open, onClose, onSelesai, onTidakPasti, kunci }: P
     }
     const contoh = (lap?.changes ?? []).slice(0, 4).map((c) => `${c.no_lpb || c.record_id}: ${c.fields.map((f) => `${f.field} ${nilaiTampil(f.field, f.old)} → ${nilaiTampil(f.field, f.new)}`).join(", ")}`);
     return (
-        <ConfirmDialog open={open} onClose={tutup} title={b.berkas ? `Terapkan ${b.berkas.name}?` : "Unggah Excel data SPPD"} tag="Pratinjau"
+        <ConfirmDialog alasanTerlihat open={open} onClose={tutup} title={b.berkas ? `Terapkan ${b.berkas.name}?` : "Unggah Excel data SPPD"} tag="Pratinjau"
             confirmLabel={lap?.updated ? `Terapkan ${lap.updated} perubahan` : "Terapkan"} confirmDisabled={alasan} onConfirm={terapkan}
             facts={lap ? [
                 ["Cocok", `${(lap.updated ?? 0) + (lap.unchanged ?? 0)} rekaman · ${lap.updated ?? 0} berubah`],
@@ -151,7 +151,7 @@ export function DialogGantiNama({ open, onClose, onSelesai, onTidakPasti, kunci,
     }
     const fm = lap?.finance_mapping;
     return (
-        <ConfirmDialog open={open} onClose={onClose} title={lama.trim() && baru.trim() ? `Ganti “${lama.trim()}” menjadi “${baru.trim()}”?` : "Ganti nama principal"} tag="Pratinjau"
+        <ConfirmDialog alasanTerlihat open={open} onClose={onClose} title={lama.trim() && baru.trim() ? `Ganti “${lama.trim()}” menjadi “${baru.trim()}”?` : "Ganti nama principal"} tag="Pratinjau"
             confirmLabel={lap?.replaced ? `Terapkan ke ${lap.replaced} rekaman` : "Terapkan"} confirmDisabled={alasan} onConfirm={terapkan}
             facts={lap ? [
                 ["Diubah", `${lap.replaced ?? 0} rekaman${lap.per_status ? ` (${Object.entries(lap.per_status).map(([k, v]) => `${k} ${v}`).join(", ")} sebelum dikurangi yang terkunci)` : ""}`],
@@ -198,7 +198,7 @@ export function DialogAutoFix({ open, onClose, onSelesai, onTidakPasti, izinLiha
         throw new Error(res.error);
     }
     return (
-        <ConfirmDialog open={open} onClose={onClose} title={n ? `Samakan ${lap?.changes?.length ?? 0} nama principal dengan master rekening?` : "Auto-Fix nama principal"} tag="Pratinjau"
+        <ConfirmDialog alasanTerlihat open={open} onClose={onClose} title={n ? `Samakan ${lap?.changes?.length ?? 0} nama principal dengan master rekening?` : "Auto-Fix nama principal"} tag="Pratinjau"
             confirmLabel={n ? `Terapkan ke ${n} rekaman` : "Terapkan"} confirmDisabled={alasan} onConfirm={terapkan}>
             {!p && !izinLihat ? <MessageStrip tone="info" title="Membuat pratinjau…" /> : null}
             {p?.status === "galat" && <MessageStrip tone="neg" title="Pratinjau gagal.">{p.error}</MessageStrip>}
@@ -237,7 +237,7 @@ export function DialogRestore({ open, onClose, onSelesai, onTidakPasti, kunci }:
     }
     const sp = lap?.sppd;
     return (
-        <ConfirmDialog open={open} onClose={tutup} title={b.berkas ? `Pulihkan ${b.berkas.name}?` : "Restore backup"} tag="Pratinjau"
+        <ConfirmDialog alasanTerlihat open={open} onClose={tutup} title={b.berkas ? `Pulihkan ${b.berkas.name}?` : "Restore backup"} tag="Pratinjau"
             confirmLabel={lap?.records ? `Pulihkan ${lap.records} rekaman` : "Pulihkan"} confirmDisabled={alasan} onConfirm={terapkan}
             facts={lap ? [
                 ["Rekaman", `${lap.records ?? 0} ditambahkan · ${lap.draft_records ?? 0} rekaman draf (belum diajukan)`],

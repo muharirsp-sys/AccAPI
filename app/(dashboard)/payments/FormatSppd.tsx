@@ -251,7 +251,7 @@ export default function FormatSppd({ permKeys }: { permKeys: string[] }) {
                 <Button variant="primary" disabled={Boolean(alasanSimpan)} disabledReason={alasanSimpan} onClick={() => { setKetikUlang(""); setDialog("simpan"); }}>Simpan…</Button>
             </FooterToolbar>
 
-            <ConfirmDialog open={dialog === "simpan"} onClose={() => setDialog(null)} title="Simpan format SPPD?" tag="Setelan" confirmLabel="Simpan" confirmDisabled={alasanSimpan ?? alasanKetik} onConfirm={simpan}
+            <ConfirmDialog alasanTerlihat open={dialog === "simpan"} onClose={() => setDialog(null)} title="Simpan format SPPD?" tag="Setelan" confirmLabel="Simpan" confirmDisabled={alasanSimpan ?? alasanKetik} onConfirm={simpan}
                 facts={[
                     ...berubah.map((k): [string, ReactNode] => [LABEL[k], `${k === "jaminan" ? tanggalTampil(awal?.[k]) : awal?.[k]} → ${k === "jaminan" ? tanggalTampil(nilai(k)) : nilai(k)}`]),
                     ["Nomor berikutnya", <span key="n" className="fi-mono">{pratinjau || "—"}</span>],

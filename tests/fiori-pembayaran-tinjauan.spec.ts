@@ -128,7 +128,7 @@ test("Format SPPD: lompatan nomor > 50 wajib diketik ulang di dialog sebelum Sim
     const dlg = page.getByRole("dialog");
     await expect(dlg.getByText("Nomor naik 279 sekaligus", { exact: false })).toBeVisible();
     await expect(dlg.getByRole("button", { name: "Simpan", exact: true })).toBeDisabled();
-    await expect(dlg.getByText("Ketik ulang nomor 310 untuk melanjutkan.")).toBeVisible(); // alasan nonaktif terlihat (butir 4f)
+    await expect(dlg.getByText("Nomor ketikan ulang belum sama dengan 310.")).toBeVisible(); // alasan nonaktif terlihat (butir 4f)
     await dlg.getByLabel("Ketik ulang nomor surat terakhir").fill("301");
     await expect(dlg.getByRole("button", { name: "Simpan", exact: true })).toBeDisabled();
     await dlg.getByLabel("Ketik ulang nomor surat terakhir").fill("310");
@@ -269,4 +269,18 @@ test("Tanggal bayar yang sudah lewat diperingatkan di Keranjang dan di dialog Bu
     await expect(dlg.getByText("Tanggal bayar sudah lewat", { exact: false })).toHaveCount(0); // bawaan besok WITA
     await dlg.getByLabel("Tanggal bayar Finance").fill("2026-01-05");
     await expect(dlg.getByText("Tanggal bayar sudah lewat", { exact: false })).toBeVisible();
+});
+
+test("Dialog: alasan tombol konfirmasi nonaktif TERLIHAT (bukan hanya title) dan hilang saat syaratnya terpenuhi", async ({ page }) => {
+    await mock(page);
+    await page.goto("/payments", NAV);
+    const main = page.locator("main");
+    await main.getByRole("table", { name: "Rekaman" }).getByRole("checkbox", { name: "Pilih LPB-A-001" }).check(NAV);
+    await main.getByRole("button", { name: "Buat keranjang…" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByRole("button", { name: "Buat keranjang" })).toBeDisabled();
+    await expect(dlg.getByText("Pilih rute pembayaran dulu.")).toBeVisible();
+    await dlg.getByText("Bank Panin (SPPD)").click();
+    await expect(dlg.getByRole("button", { name: "Buat keranjang" })).toBeEnabled();
+    await expect(dlg.getByText("Pilih rute pembayaran dulu.")).toHaveCount(0);
 });
