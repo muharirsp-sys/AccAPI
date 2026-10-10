@@ -7,6 +7,14 @@
  * Side Effects: DB read-only ke sales-history-inv.db.
  * Catatan: semua query membatasi referensi INV dan memakai range tanggal agar index tetap efektif.
  *   Pencarian produk: SQLite fuzzy (kamus + IN-clause berindeks), toleran typo.
+ * Gate publish: SETIAP query di file ini memfilter published = 1 (invoice_map DAN sales_history_item)
+ *   -- hanya batch yang sudah lolos validate -> reconcile -> publish (lihat scripts/publish-sales-history-batch.mjs)
+ *   yang terlihat. Data yang diimpor SEBELUM pipeline batch ini ada (batch_id = 0, dari migrasi
+ *   scripts/migrate-sales-history-pipeline.mjs) juga default published = 0 -- artinya begitu perubahan
+ *   ini deploy, dashboard bisa tampak kosong/hampir kosong sampai seseorang menjalankan UPDATE
+ *   grandfathering satu-kali secara manual (TIDAK otomatis oleh script manapun, sengaja):
+ *   UPDATE invoice_map SET published = 1 WHERE batch_id = 0;
+ *   UPDATE sales_history_item SET published = 1 WHERE batch_id = 0;
  */
 import { ensureSalesHistorySchema, salesClient } from "@/lib/sales-history/db";
 import { resolveFuzzyProduct } from "@/lib/sales-history/fuzzy";
@@ -43,7 +51,7 @@ function clean(value: unknown) {
 
 function buildInvoiceWhere(filters: { year?: string; principal?: string; kodeCust?: string }, alias = "im"): InvoiceWhere {
     const prefix = alias ? `${alias}.` : "";
-    const cond: string[] = [`${prefix}referensi LIKE 'INV/%'`];
+    const cond: string[] = [`${prefix}referensi LIKE 'INV/%'`, `${prefix}published = 1`];
     const args: Args = [];
     if (filters.year) {
         cond.push(`${prefix}tanggal >= ? AND ${prefix}tanggal < ?`);
@@ -88,7 +96,7 @@ function invoiceSelectSql(where: string) {
                    COALESCE(SUM(shi.dpp), 0)         AS totalDpp,
                    COALESCE(SUM(shi.ppn), 0)         AS totalPpn
             FROM filtered f
-            LEFT JOIN sales_history_item shi ON shi.referensi = f.referensi
+            LEFT JOIN sales_history_item shi ON shi.referensi = f.referensi AND shi.published = 1
             GROUP BY f.referensi, f.tanggal, f.principal, f.kodeCust, f.customerNama, f.alamat, f.kota
             ORDER BY f.tanggal DESC, f.referensi DESC`;
 }
@@ -97,13 +105,13 @@ export async function getSalesHistoryDatabaseStatus() {
     await ensureSalesHistorySchema();
     const res = await salesClient.execute(`SELECT
         (SELECT COUNT(*) FROM customer_map) AS customers,
-        (SELECT COUNT(*) FROM invoice_map WHERE referensi LIKE 'INV/%') AS invoices,
-        (SELECT COUNT(*) FROM sales_history_item WHERE referensi LIKE 'INV/%') AS items,
-        (SELECT COUNT(*) FROM sales_history_item WHERE referensi NOT LIKE 'INV/%') AS nonInvItems,
-        (SELECT COUNT(*) FROM sales_history_item WHERE satuan <> '') AS itemsWithSatuan,
-        (SELECT MIN(tanggal) FROM invoice_map WHERE referensi LIKE 'INV/%') AS firstDate,
-        (SELECT MAX(tanggal) FROM invoice_map WHERE referensi LIKE 'INV/%') AS lastDate,
-        (SELECT MAX(id) FROM sales_history_item WHERE referensi LIKE 'INV/%') AS maxItemId`);
+        (SELECT COUNT(*) FROM invoice_map WHERE referensi LIKE 'INV/%' AND published = 1) AS invoices,
+        (SELECT COUNT(*) FROM sales_history_item WHERE referensi LIKE 'INV/%' AND published = 1) AS items,
+        (SELECT COUNT(*) FROM sales_history_item WHERE referensi NOT LIKE 'INV/%' AND published = 1) AS nonInvItems,
+        (SELECT COUNT(*) FROM sales_history_item WHERE satuan <> '' AND published = 1) AS itemsWithSatuan,
+        (SELECT MIN(tanggal) FROM invoice_map WHERE referensi LIKE 'INV/%' AND published = 1) AS firstDate,
+        (SELECT MAX(tanggal) FROM invoice_map WHERE referensi LIKE 'INV/%' AND published = 1) AS lastDate,
+        (SELECT MAX(id) FROM sales_history_item WHERE referensi LIKE 'INV/%' AND published = 1) AS maxItemId`);
     const row = res.rows[0] || {};
     return {
         customers: Number(row.customers || 0),
@@ -123,7 +131,7 @@ export async function listSalesHistoryYears() {
     const res = await salesClient.execute(
         `SELECT substr(tanggal, 1, 4) AS year, COUNT(*) AS invoices
          FROM invoice_map
-         WHERE tanggal >= '1900-01-01' AND referensi LIKE 'INV/%'
+         WHERE tanggal >= '1900-01-01' AND referensi LIKE 'INV/%' AND published = 1
          GROUP BY year
          ORDER BY year DESC`,
     );
@@ -155,7 +163,7 @@ export async function listSalesHistoryCustomers(input: { year?: string; principa
     const limit = normalizePositiveInt(input.limit, 50, 200);
     const hasFilter = !!(year || principal);
 
-    const joinConds = [`im.kode_cust = cm.kode`, `im.referensi LIKE 'INV/%'`];
+    const joinConds = [`im.kode_cust = cm.kode`, `im.referensi LIKE 'INV/%'`, `im.published = 1`];
     const joinArgs: Args = [];
     if (year) {
         joinConds.push(`im.tanggal >= ? AND im.tanggal < ?`);
@@ -209,8 +217,8 @@ async function rowsForRefs(refs: string[]) {
                      COALESCE(SUM(shi.ppn), 0)       AS totalPpn
               FROM invoice_map im
               LEFT JOIN customer_map cm ON cm.kode = im.kode_cust
-              LEFT JOIN sales_history_item shi ON shi.referensi = im.referensi
-              WHERE im.referensi LIKE 'INV/%' AND im.referensi IN (${placeholders})
+              LEFT JOIN sales_history_item shi ON shi.referensi = im.referensi AND shi.published = 1
+              WHERE im.referensi LIKE 'INV/%' AND im.published = 1 AND im.referensi IN (${placeholders})
               GROUP BY im.referensi, im.tanggal, im.principal, im.kode_cust, cm.nama, cm.alamat, cm.kota`,
         args: refs,
     });
@@ -247,6 +255,7 @@ async function sqliteProductRefs(where: string, args: Args, product: string, lim
                   SELECT 1
                   FROM sales_history_item shi
                   WHERE shi.referensi = im.referensi
+                    AND shi.published = 1
                     AND ${pc.cond}
               )
               ORDER BY im.tanggal DESC, im.referensi DESC
@@ -351,6 +360,7 @@ export async function searchSalesHistoryItems(input: SalesHistoryInvoiceFilters)
               JOIN invoice_map im ON im.referensi = shi.referensi
               LEFT JOIN customer_map cm ON cm.kode = im.kode_cust
               ${where}
+                AND shi.published = 1
                 AND ${pc.cond}
               ORDER BY shi.tanggal DESC, shi.id DESC
               LIMIT ? OFFSET ?`,
@@ -392,7 +402,7 @@ export async function listSalesHistoryItems(ref: string) {
                      source_file AS sourceFile,
                      keterangan
               FROM sales_history_item
-              WHERE referensi = ?
+              WHERE referensi = ? AND published = 1
               ORDER BY id`,
         args: [referensi],
     });
