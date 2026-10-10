@@ -439,7 +439,7 @@ export async function postingPurchasePayment(p: {
         if (conflictNotSent(res.status, out)) {
             // 409 SEBELUM klaim dengan kode terdaftar (database sesi berganti, tinjauan A-1) = pasti belum terkirim; 409 lain = tidak pasti.
             notSent = true;
-            throw new Error(out.error || "Command posting menolak sebelum kirim (HTTP 409).");
+            throw new Error(out?.error || "Command posting menolak sebelum kirim (HTTP 409).");
         }
         const conflict = res.status === 409 ? purchasePaymentConflict(out) : null;
         if (conflict === "in_flight") {
