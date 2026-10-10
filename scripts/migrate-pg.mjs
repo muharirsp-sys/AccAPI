@@ -365,6 +365,37 @@ export const migrations = [
     sql: `CREATE INDEX IF NOT EXISTS idx_idempotency_log_lock ON idempotency_log ("lockId");`,
   },
   {
+    // 2026-10-10 (S6e-2 butir 2 & 5, keputusan orkestrator; DRAFT — zona idempotensi, butuh review manusia).
+    // EXPAND saja: kolom nullable database Accurate di lock (baris lama NULL = "tidak tercatat") + tabel jejak Selesaikan.
+    // Trigger anti-ubah + REVOKE UPDATE/DELETE/TRUNCATE = docs/handover/DDL_S6E2.sql (IT Support saat deploy), BUKAN di sini.
+    // Role aplikasi butuh SELECT/INSERT pada idempotency_resolution (runbook L1g).
+    nama: "idempotency_s6e2",
+    sudahAda: `SELECT 1 FROM information_schema.columns c
+               JOIN information_schema.tables t ON t.table_name = 'idempotency_resolution' AND t.table_schema = 'public'
+               WHERE c.table_name = 'idempotency_log' AND c.column_name = 'databaseId'`,
+    sql: `
+      ALTER TABLE idempotency_log ADD COLUMN IF NOT EXISTS "databaseId" text;
+      CREATE TABLE IF NOT EXISTS idempotency_resolution (
+          id              text PRIMARY KEY,
+          key             text NOT NULL,
+          lock_id         text,
+          previous_status text NOT NULL,
+          decision        text NOT NULL,
+          accurate_number text,
+          database_id     text NOT NULL,
+          checked_source  text NOT NULL,
+          reason          text NOT NULL,
+          actor           text NOT NULL,
+          created_at      timestamptz NOT NULL DEFAULT now(),
+          CONSTRAINT idempotency_resolution_decision CHECK (decision IN ('terposting', 'tidak_ada')),
+          CONSTRAINT idempotency_resolution_reason CHECK (char_length(btrim(reason)) >= 15),
+          CONSTRAINT idempotency_resolution_number CHECK (decision <> 'terposting' OR coalesce(btrim(accurate_number), '') <> ''),
+          CONSTRAINT idempotency_resolution_source CHECK (btrim(checked_source) <> '')
+      );
+      CREATE INDEX IF NOT EXISTS idx_idempotency_resolution_key ON idempotency_resolution (key);
+    `,
+  },
+  {
     // 2026-10-09 (S6-0d BL-17 + R6; DRAFT — zona Accurate write/idempotensi, butuh review manusia).
     // Riwayat antrean faktur APPEND-ONLY: satu baris per aksi/percobaan (antre, kirim + status HTTP
     // + potongan jawaban, buang, antre ulang, selesaikan, sapu). TANPA FK ke invoice_outbox —

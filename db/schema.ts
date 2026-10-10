@@ -703,6 +703,8 @@ export const idempotencyLog = pgTable("idempotency_log", {
     // menutup baris PROCESSING dan mengirimnya lewat /api/proxy. NULL = baris sebelum migrasi.
     lockId: text("lockId"),
     lockedBy: text("lockedBy"),
+    // S6e-2 butir 2: database Accurate sesi saat lock (kiriman & Selesaikan harus database yang sama). NULL = baris lama.
+    databaseId: text("databaseId"),
 }, (t) => [
     // Guard /api/proxy mencari baris per lockId pada setiap kirim sales-receipt (review e641e571 LOW).
     index("idx_idempotency_log_lock").on(t.lockId),
@@ -724,6 +726,28 @@ export const idempotencyOverride = pgTable("idempotency_override", {
 }, (t) => [
     index("idx_idempotency_override_lock_key").on(t.lockId, t.key),
     check("idempotency_override_action", sql`${t.action} IN ('takeover', 'resend_success', 'allow_duplicate')`),
+]);
+
+// S6e-2 butir 5 (owner #7): jejak "Selesaikan" pelunasan tidak pasti — hanya INSERT (trigger + REVOKE di
+// docs/handover/DDL_S6E2.sql). Pembuatan tabel: scripts/migrate-pg.mjs entri idempotency_s6e2.
+export const idempotencyResolution = pgTable("idempotency_resolution", {
+    id: text("id").primaryKey(),
+    key: text("key").notNull(),
+    lockId: text("lock_id"),
+    previousStatus: text("previous_status").notNull(),
+    decision: text("decision").notNull(),
+    accurateNumber: text("accurate_number"),
+    databaseId: text("database_id").notNull(),
+    checkedSource: text("checked_source").notNull(),
+    reason: text("reason").notNull(),
+    actor: text("actor").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+    index("idx_idempotency_resolution_key").on(t.key),
+    check("idempotency_resolution_decision", sql`${t.decision} IN ('terposting', 'tidak_ada')`),
+    check("idempotency_resolution_reason", sql`char_length(btrim(${t.reason})) >= 15`),
+    check("idempotency_resolution_number", sql`${t.decision} <> 'terposting' OR coalesce(btrim(${t.accurateNumber}), '') <> ''`),
+    check("idempotency_resolution_source", sql`btrim(${t.checkedSource}) <> ''`),
 ]);
 
 export const accurateOAuthSession = pgTable("accurate_oauth_session", {
