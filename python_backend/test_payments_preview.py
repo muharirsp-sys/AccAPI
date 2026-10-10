@@ -172,6 +172,16 @@ def check_dry_run_values():
         body = {"old_name": "PT ABC", "new_name": "PT X", **({"dry_run": flag} if flag is not None else {})}
         r = client.post(f"/api/bank-data/replace-principle-name{qs}", json=body)
         assert r.status_code == 200 and r.json()["dry_run"] is True and raw() == before, (qs, flag, r.text[:160])
+    # Putaran 3 butir 1: parameter BERULANG (Starlette memakai nilai terakhir) = 400 tanpa tulis, bukan "0 menang".
+    before = seed()
+    r = client.post("/api/bank-data/replace-principle-name?dry_run=1&dry_run=0", json={"old_name": "PT ABC", "new_name": "PT X"})
+    assert r.status_code == 400 and raw() == before, f"replace dry_run berulang: {r.status_code} {r.text[:160]}"
+    r = client.post("/payments/upload?dry_run=1&dry_run=0", files=xlsx(good))
+    assert r.status_code == 400 and raw() == before, f"upload dry_run berulang: {r.status_code} {r.text[:160]}"
+    # Putaran 3 butir 3: query dan badan BERTENTANGAN = 400 tanpa tulis (dua arah).
+    for qs, flag in (("?dry_run=1", False), ("?dry_run=0", True)):
+        r = client.post(f"/api/bank-data/replace-principle-name{qs}", json={"old_name": "PT ABC", "new_name": "PT X", "dry_run": flag})
+        assert r.status_code == 400 and raw() == before, f"konflik query/badan {qs} vs {flag}: {r.status_code} {r.text[:160]}"
     r = client.post("/api/bank-data/replace-principle-name?dry_run=0", json={"old_name": "PT ABC", "new_name": "PT X"})
     assert r.status_code == 200 and r.json()["dry_run"] is False, r.text[:160]
 

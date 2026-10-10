@@ -69,6 +69,7 @@ from shared import (
     get_or_create_csrf_token,
     DRY_RUN_INVALID,
     dry_run_flag,
+    parse_flag,
     io,
     load_bank_map,
     load_bank_map_with_normalized_keys,
@@ -384,7 +385,10 @@ async def auto_fix_principle_names(request: Request):
         payload = await request.json()
     except Exception:
         payload = {}
-    confirm = bool(payload.get("confirm", False))
+    # Putaran 3 butir 2: bool("false") = True dulu mengeksekusi rename massal. Hanya 1/true & 0/false; lainnya 400.
+    confirm = parse_flag(payload.get("confirm", False)) if isinstance(payload, dict) else False
+    if confirm is None:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "Nilai confirm tidak dikenal: pakai true/1 (eksekusi) atau false/0 (pratinjau). Tidak ada yang diubah."})
     # Preview (dry-run) cukup izin lihat; eksekusi mengubah payments.json massal -> izin edit.
     need = "edit" if confirm else "view"
     if not user_has_permission(user, "payments", need):

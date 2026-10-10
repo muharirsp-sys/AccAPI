@@ -1950,7 +1950,8 @@ def payment_lock_entry(key: str, rec: Dict[str, Any], reason: str, **extra: Any)
 def payment_lock_message(action: str, locked: List[Dict[str, Any]]) -> str:
     shown = ", ".join(f"{x['no_lpb'] or x['record_id']} ({x['reason']})" for x in locked[:5])
     extra = f" dan {len(locked) - 5} lainnya" if len(locked) > 5 else ""
-    return f"{action} ditolak: rekaman yang sudah ditransfer/terposting terkunci — {shown}{extra}. Tidak ada yang disimpan."
+    # Judul netral: alasan (diajukan / ditransfer / terposting / tidak pasti) ada per rekaman.
+    return f"{action} ditolak — rekaman terkunci: {shown}{extra}. Tidak ada yang diubah."
 
 
 def apply_sppd_excel_rows(db: Dict[str, Any], rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -2040,19 +2041,29 @@ DRY_RUN_INVALID = "Nilai dry_run tidak dikenal: pakai 1/true (pratinjau) atau 0/
 _DRY_RUN_VALUES = {"1": True, "true": True, "0": False, "false": False}
 
 
+def parse_flag(raw: Any) -> Optional[bool]:
+    """Bendera tulis/pratinjau dari JSON: boolean, atau 1/0/"1"/"0"/"true"/"false" (tanpa beda huruf). Lainnya None
+    -> pemanggil 400 (gagal-tertutup; dulu bool("false") = True)."""
+    if isinstance(raw, bool):
+        return raw
+    return _DRY_RUN_VALUES.get(str(raw).strip().lower()) if isinstance(raw, (int, str)) else None
+
+
 def dry_run_flag(request: Request, payload: Optional[Dict[str, Any]] = None) -> Optional[bool]:
     """Pratinjau tanpa tulis (S6-0e): `?dry_run=` dan/atau badan JSON `"dry_run"`. GAGAL-TERTUTUP (putaran 2 butir 5):
     hanya 1/true (pratinjau) dan 0/false (terapkan) dikenal — nilai lain = None -> pemanggil menjawab 400, BUKAN
     dianggap "bukan pratinjau" lalu menulis. Tidak ada keduanya = False (terapkan, perilaku lama)."""
     found: List[bool] = []
-    if "dry_run" in request.query_params:
-        flag = _DRY_RUN_VALUES.get(s(request.query_params.get("dry_run", "")).lower())
+    values = request.query_params.getlist("dry_run")
+    if len(values) > 1:
+        return None  # putaran 3: ?dry_run=1&dry_run=0 — Starlette memakai nilai TERAKHIR -> dulu menulis
+    if values:
+        flag = _DRY_RUN_VALUES.get(s(values[0]).lower())
         if flag is None:
             return None
         found.append(flag)
     if isinstance(payload, dict) and "dry_run" in payload:
-        raw = payload.get("dry_run")
-        flag = raw if isinstance(raw, bool) else (_DRY_RUN_VALUES.get(str(raw).strip().lower()) if isinstance(raw, (int, str)) else None)
+        flag = parse_flag(payload.get("dry_run"))
         if flag is None:
             return None
         found.append(flag)
