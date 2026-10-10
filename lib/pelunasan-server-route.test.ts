@@ -102,3 +102,18 @@ test("butir 8: payload memuat ISI_KODE_AKUN_ -> 400 PLACEHOLDER_AKUN sebelum izi
     assert.equal(lock.status, 400);
     assert.equal((await lock.json()).code, "PLACEHOLDER_AKUN");
 });
+
+test("butir 2: database sesi != expectedDatabaseId -> 409 database_changed sebelum SENDING (tanpa transaksi/jaringan); tanpa = 400", async () => {
+    const beda = await sebagai(["pelunasan.kirim"], () => proxyPost(kirim({ expectedDatabaseId: "DB-2" })), { sesi: sesiAccurate() });
+    assert.equal(beda.status, 409);
+    const body = await beda.json();
+    assert.equal(body.code, "database_changed");
+    assert.equal(body.sent, false);
+    assert.equal(body.databaseId, "DB-1");
+    const tanpa = await sebagai(["pelunasan.kirim"], () => proxyPost(kirim({ expectedDatabaseId: "" })), { sesi: sesiAccurate() });
+    assert.equal(tanpa.status, 400);
+    assert.equal((await tanpa.json()).code, "DATABASE_REQUIRED");
+    // Kontrol positif: database sama -> lolos ke guard (transaksi tiruan melempar = 500), bukan 409 database.
+    const sama = await sebagai(["pelunasan.kirim"], () => proxyPost(kirim({ expectedDatabaseId: "DB-1" })), { sesi: sesiAccurate() });
+    assert.equal(sama.status, 500);
+});

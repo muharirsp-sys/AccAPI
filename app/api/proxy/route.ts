@@ -38,6 +38,8 @@ export async function POST(req: NextRequest) {
         // AM-024 (owner D-18): tulis sales-receipt tidak boleh melewati idempotency — wajib lock milik user
         // ini yang mencakup setiap baris (atau override Finance tercatat). Pemeriksaan murni SEBELUM sesi & DB.
         const salesReceipt = isSalesReceiptWrite(endpointPath);
+        const expectedDatabaseId = typeof body.expectedDatabaseId === "string" || typeof body.expectedDatabaseId === "number"
+            ? String(body.expectedDatabaseId).trim() : "";
         const write = { lockId: body.idempotencyLockId, userId: String(authCheck.session.user.id), payload, endpointPath, method };
         if (salesReceipt) {
             const bad = checkSalesReceiptWrite(write);
@@ -52,6 +54,11 @@ export async function POST(req: NextRequest) {
             if (access.response) return access.response;
             if (!access.perms!.has("pelunasan.kirim")) {
                 return NextResponse.json({ error: "Kirim pelunasan ke Accurate butuh izin pelunasan.kirim.", code: "PERMISSION_REQUIRED", sent: false }, { status: 403 });
+            }
+            // S6e-2 butir 2 (pola S6b A-1): kiriman membawa database yang DITAMPILKAN ke pengguna; dibandingkan
+            // dengan database sesi di bawah, sebelum SENDING (sesi bisa berganti di tab lain).
+            if (!expectedDatabaseId) {
+                return NextResponse.json({ error: "expectedDatabaseId wajib (database Accurate tujuan yang ditampilkan). Tidak ada yang dikirim.", code: "DATABASE_REQUIRED", sent: false }, { status: 400 });
             }
         }
         const accurateSession = await getAccurateSession(String(authCheck.session.user.id));
@@ -68,6 +75,13 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: sessionHost && !isAllowedAccurateHost(sessionHost)
                 ? "Session host Accurate tidak diizinkan"
                 : "Sesi Accurate belum lengkap. Login dan pilih database terlebih dahulu." }, { status: 400 });
+        }
+        if (salesReceipt && String(accurateSession?.databaseId ?? "") !== expectedDatabaseId) {
+            return NextResponse.json({
+                error: `Database Accurate sesi berubah (kini ${accurateSession?.databaseAlias || accurateSession?.databaseId || "tidak diketahui"}) — muat ulang lalu periksa tujuan. Tidak ada yang dikirim.`,
+                code: "database_changed", sent: false,
+                databaseId: accurateSession?.databaseId ?? null, databaseAlias: accurateSession?.databaseAlias ?? null,
+            }, { status: 409 });
         }
         // Re-review d60433f2 MEDIUM: baris ditandai SENDING (dan override dihabiskan) sebelum kirim; hasilnya
         // dicatat server di bawah — kirim ulang dengan lock yang sama / laporan FAILED palsu tidak lolos lagi.
