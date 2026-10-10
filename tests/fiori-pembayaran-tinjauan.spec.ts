@@ -1,0 +1,339 @@
+/*
+ * Tujuan: Fiori S6a putaran tinjauan — pratinjau basi tidak dipasangkan dengan berkas lain, total pengajuan dibaca ulang dari server,
+ *   lompatan besar nomor SPPD wajib diketik ulang, dan perilaku tahan-galat (≥ 500 = belum pasti, 200 tanpa data = galat, 404 tanpa
+ *   penolakan server = galat, kunci operasi Format SPPD di tingkat halaman, tanggal bayar lampau, alasan nonaktif dialog terlihat,
+ *   403 diulang sekali dengan token baru).
+ * Caller: Playwright lokal (LOCAL_AUTH_BYPASS=true = izin admin):
+ *   `npx playwright test tests/fiori-pembayaran-tinjauan.spec.ts --config <config lokal> --workers=1`.
+ * Dependensi: FastAPI (dev: http://localhost:8000) di-mock dengan page.route; header CORS memantulkan Origin halaman (port bebas).
+ * Side Effects: Tidak ada.
+ */
+import { expect, test, type Page, type Route } from "@playwright/test";
+
+const NAV = { timeout: 60_000 } as const;
+const cors = (r: Route) => ({
+    "access-control-allow-origin": r.request().headers()["origin"] ?? "*", "access-control-allow-credentials": "true",
+    "access-control-allow-headers": "content-type, x-csrf-token", "access-control-allow-methods": "GET, POST, OPTIONS",
+});
+const json = (r: Route, body: unknown, status = 200) => r.fulfill({ status, headers: { ...cors(r), "content-type": "application/json" }, body: JSON.stringify(body) });
+const tunda = (ms: number) => new Promise((res) => setTimeout(res, ms));
+const berkas = (name: string) => ({ name, mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(name) });
+const namaBerkas = (r: Route) => r.request().postDataBuffer()?.toString("latin1").match(/filename="([^"]+)"/)?.[1] ?? "";
+const hariIni = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date());
+const tahun = hariIni().slice(0, 4);
+
+const LENGKAP = { tipe_pengajuan: "LPB", tgl_invoice: "2026-10-06", jt_invoice: "2026-11-05", status_pembayaran: "", locked_reason: "" };
+const REKAMAN = [{ ...LENGKAP, record_id: "LPB-A-001", no_lpb: "LPB-A-001", principle: "PRINCIPLE A", invoice_no: "INV-A-1", nilai_invoice: "12.400.000", nilai_win: 12_400_000, updated_at: "u1" }];
+const SETELAN = { last_sequence: 31, sequence_year: Number(tahun), number_template: "{seq:03d}/SPA/PDSB/{roman_month}/{year}", fixed_jaminan_date: "2026-02-19", maturity_months: 6, items_per_page: 7 };
+const CART = { ok: true, method: "NON_PANIN", method_label: "Non Panin", target_payment_date: "2026-10-12", items: [
+    { no: 1, group_key: "PRINCIPLE A||LPB", principle: "PRINCIPLE A", tipe_pengajuan: "LPB", total: 31_350_000, invoice_concat: "INV-A-1, INV-A-2", potongan: 0, nilai_pembayaran: 31_350_000, jenis_pembayaran: "", keterangan: "" },
+] };
+type Kirim = { path: string; search: string; body: unknown };
+
+/** Mock FastAPI; `ganti` mengembalikan "lewat" untuk jawaban bawaan. */
+async function mock(page: Page, ganti: (p: string, r: Route) => Promise<unknown> | unknown = () => "lewat") {
+    const kirim: Kirim[] = [];
+    let me = 0;
+    await page.route((u) => u.host === "localhost:8000", async (r) => {
+        if (r.request().method() === "OPTIONS") return r.fulfill({ status: 204, headers: cors(r) });
+        const url = new URL(r.request().url());
+        if (r.request().method() === "POST") {
+            const ct = r.request().headers()["content-type"] ?? "";
+            kirim.push({ path: url.pathname, search: url.search, body: ct.includes("json") ? r.request().postDataJSON() : namaBerkas(r) });
+        }
+        if (url.pathname === "/api/me") { me += 1; return json(r, { ok: true, csrf_token: `t${me}` }); }
+        if ((await ganti(url.pathname, r)) !== "lewat") return;
+        if (url.pathname === "/payments/data") return json(r, { ok: true, data: REKAMAN });
+        if (url.pathname === "/payments/sppd/settings") return json(r, { ok: true, settings: SETELAN, effective_last_sequence: 31, preview_number: "032/SPA/PDSB/X/2026" });
+        if (url.pathname === "/api/bank-data") return json(r, { ok: true, items: [{ principle: "PT PRINCIPLE A", bank: "BANK A", rekening: "0213", penerima: "PT PRINCIPLE A", has_rekening: true }] });
+        if (url.pathname === "/api/bank-data/match-report") return json(r, { ok: true, report: { matched: [], unmatched: [], ambiguous: [], empty_rekening: [] } });
+        return json(r, { ok: true });
+    });
+    return { kirim, me: () => me };
+}
+
+// ── Butir 1: pratinjau basi ──
+test("Unggah LPB: pratinjau berkas LAMA yang datang terlambat tidak dipasangkan dengan berkas BARU", async ({ page }) => {
+    const { kirim } = await mock(page, async (p, r) => {
+        if (p !== "/payments/upload") return "lewat";
+        if (namaBerkas(r) === "LAMA.xlsx") { await tunda(4_000); return json(r, { ok: true, dry_run: true, can_apply: true, rows: 5, total_nilai_win: 5, total_nilai_invoice: 5, duplicates: [], duplicates_in_file: [], invalid: [] }); }
+        return json(r, { ok: true, dry_run: true, can_apply: false, rows: 2, total_nilai_win: 2, total_nilai_invoice: 2, duplicates: [], duplicates_in_file: ["LPB-X"], invalid: [], error: "No. LPB LPB-X ganda di berkas, gagal upload" });
+    });
+    await page.goto("/payments", NAV);
+    const main = page.locator("main");
+    await expect(main.getByRole("table", { name: "Rekaman" }).getByText("LPB-A-001")).toBeVisible(NAV);
+    await main.getByRole("button", { name: "Unggah LPB" }).click();
+    const dlg = page.getByRole("dialog");
+    const input = dlg.getByLabel("Berkas LPB (.xlsx/.xls)");
+    await input.setInputFiles(berkas("LAMA.xlsx"));
+    await input.setInputFiles(berkas("BARU.xlsx"));
+    await expect(dlg.getByText("No. LPB LPB-X ganda di berkas, gagal upload")).toBeVisible();
+    await tunda(5_000); // jawaban pratinjau LAMA tiba sesudahnya
+    await expect(dlg.getByText("No. LPB LPB-X ganda di berkas, gagal upload")).toBeVisible();
+    await expect(dlg.getByRole("button", { name: "Simpan 5 LPB" })).toHaveCount(0);
+    await expect(dlg.getByRole("button", { name: /^Simpan/ })).toBeDisabled();
+    expect(kirim.filter((k) => k.path === "/payments/upload").map((k) => k.search)).toEqual(["?dry_run=1", "?dry_run=1"]);
+});
+
+test("Excel SPPD: pratinjau berkas LAMA yang terlambat tidak mengaktifkan Terapkan untuk berkas BARU", async ({ page }) => {
+    const { kirim } = await mock(page, async (p, r) => {
+        if (p !== "/payments/sppd/upload") return "lewat";
+        if (namaBerkas(r) === "LAMA.xlsx") { await tunda(4_000); return json(r, { ok: true, dry_run: true, can_apply: true, updated: 3, unchanged: 0, changes: [], locked: [], not_found: [], errors: [], blocked_columns: [] }); }
+        return json(r, { ok: true, dry_run: true, can_apply: false, updated: 1, unchanged: 0, changes: [], locked: [{ record_id: "LPB-B-7", no_lpb: "LPB-B-7", reason: "sudah ditransfer" }], not_found: [], errors: [], blocked_columns: [] });
+    });
+    await page.goto("/payments/sppd", NAV);
+    const main = page.locator("main");
+    await expect(main.getByLabel("Nomor surat terakhir")).toHaveValue("31", NAV);
+    await main.getByRole("button", { name: "Unggah Excel data SPPD…" }).click();
+    const dlg = page.getByRole("dialog");
+    const input = dlg.getByLabel("Berkas Excel data SPPD (.xlsx/.xls)");
+    await input.setInputFiles(berkas("LAMA.xlsx"));
+    await input.setInputFiles(berkas("BARU.xlsx"));
+    await expect(dlg.getByText("LPB-B-7 (sudah ditransfer)")).toBeVisible();
+    await tunda(5_000);
+    await expect(dlg.getByText("LPB-B-7 (sudah ditransfer)")).toBeVisible();
+    await expect(dlg.getByRole("button", { name: "Terapkan 3 perubahan" })).toHaveCount(0);
+    expect(kirim.filter((k) => k.path === "/payments/sppd/upload").map((k) => k.search)).toEqual(["?dry_run=1", "?dry_run=1"]);
+});
+
+// ── Butir 2: total sesudah Ajukan dibaca ulang dari server ──
+test("Keranjang: sesudah Ajukan, nilai bayar dibaca ulang dari server dan beda dengan tampilan diperingatkan", async ({ page }) => {
+    await mock(page, (p, r) => {
+        if (p === "/payments/cart-info") return json(r, CART);
+        if (p === "/payments/cart/submit") return json(r, { ok: true, submission_id: "c41e0d27", files: [] });
+        if (p === "/payments/submissions/c41e0d27") return json(r, { ok: true, data: { id: "c41e0d27", total_pembayaran: 30_000_000, records: [], files: [], cart_items: {} } });
+        return "lewat";
+    });
+    await page.goto("/payments/cart/7f3c91ab", NAV);
+    const main = page.locator("main");
+    await main.getByLabel("Jenis pembayaran PRINCIPLE A").selectOption("TRF", NAV);
+    await main.getByLabel("Potongan PRINCIPLE A").fill("900.000");
+    await main.getByRole("button", { name: "Ajukan ke Finance…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Ajukan ke Finance" }).click();
+    await expect(main.getByText("Pengajuan c41e0d27 dibuat.")).toBeVisible();
+    await expect(main.getByText("Nilai bayar tercatat di server: Rp 30.000.000")).toBeVisible();
+    await expect(main.getByText("berbeda dari Rp 30.450.000 yang tampil sebelum Ajukan", { exact: false })).toBeVisible();
+});
+
+// ── Butir 3: lompatan besar nomor SPPD wajib diketik ulang ──
+test("Format SPPD: lompatan nomor > 50 wajib diketik ulang di dialog sebelum Simpan", async ({ page }) => {
+    const { kirim } = await mock(page, (p, r) => {
+        if (p === "/payments/sppd/settings" && r.request().method() === "POST") return json(r, { ok: true, settings: { ...SETELAN, last_sequence: 310 }, effective_last_sequence: 310, preview_number: "311/SPA/PDSB/X/2026" });
+        return "lewat";
+    });
+    await page.goto("/payments/sppd", NAV);
+    const main = page.locator("main");
+    await main.getByLabel("Nomor surat terakhir").fill("310", NAV);
+    await main.getByRole("button", { name: "Simpan…" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByText("Nomor naik 279 sekaligus", { exact: false })).toBeVisible();
+    await expect(dlg.getByRole("button", { name: "Simpan", exact: true })).toBeDisabled();
+    await expect(dlg.getByText("Nomor ketikan ulang belum sama dengan 310.")).toBeVisible(); // alasan nonaktif terlihat (butir 4f)
+    await dlg.getByLabel("Ketik ulang nomor surat terakhir").fill("301");
+    await expect(dlg.getByRole("button", { name: "Simpan", exact: true })).toBeDisabled();
+    await dlg.getByLabel("Ketik ulang nomor surat terakhir").fill("310");
+    await dlg.getByRole("button", { name: "Simpan", exact: true }).click();
+    await expect(main.getByText("Format SPPD tersimpan.")).toBeVisible();
+    expect(kirim.filter((k) => k.path === "/payments/sppd/settings")[0].body).toMatchObject({ last_sequence: 310, expected_last_sequence: 31 });
+});
+
+test("Format SPPD: lompatan kecil (≤ 50) tidak meminta ketik ulang", async ({ page }) => {
+    await mock(page);
+    await page.goto("/payments/sppd", NAV);
+    const main = page.locator("main");
+    await main.getByLabel("Nomor surat terakhir").fill("40", NAV);
+    await main.getByRole("button", { name: "Simpan…" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByLabel("Ketik ulang nomor surat terakhir")).toHaveCount(0);
+    await expect(dlg.getByRole("button", { name: "Simpan", exact: true })).toBeEnabled();
+});
+
+// ── Butir 4: perilaku tahan-galat ──
+test("Rekaman: jawaban 500 (JSON) saat simpan = belum pasti, tulis dikunci sampai data terbaca ulang", async ({ page }) => {
+    let gagalMuatUlang = false;
+    const { kirim } = await mock(page, (p, r) => {
+        if (p === "/payments/update") { gagalMuatUlang = true; return json(r, { ok: false, error: "Gagal menyimpan." }, 500); }
+        if (p === "/payments/data" && gagalMuatUlang) return r.fulfill({ status: 502, headers: { ...cors(r), "content-type": "text/html" }, body: "<html>Bad Gateway</html>" });
+        return "lewat";
+    });
+    await page.goto("/payments", NAV);
+    const main = page.locator("main");
+    const tabel = main.getByRole("table", { name: "Rekaman" });
+    await tabel.getByRole("button", { name: "Buka rincian LPB-A-001" }).click(NAV);
+    await page.getByRole("dialog").getByLabel("No. invoice", { exact: true }).fill("INV-A-1B");
+    await page.getByRole("dialog").getByRole("button", { name: "Selesai" }).click();
+    await main.getByRole("button", { name: "Simpan 1 perubahan" }).click();
+    await expect(main.getByText("hasil sisanya belum pasti", { exact: false })).toBeVisible();
+    await expect(main.getByText("Tidak ada yang disimpan")).toHaveCount(0);
+    await expect(main.getByRole("button", { name: "Simpan 1 perubahan" })).toBeDisabled();
+    await expect(main.locator(".fi-ftb")).toContainText("Data gagal dimuat ulang");
+    expect(kirim.filter((k) => k.path === "/payments/update")).toHaveLength(1);
+});
+
+test("Baca: 200 tanpa daftar data = galat (bukan kosong); 404 tanpa penolakan server = galat (bukan draf terpakai)", async ({ page }) => {
+    await mock(page, (p, r) => {
+        if (p === "/payments/data") return json(r, { ok: true });
+        if (p === "/payments/submissions") return json(r, { ok: true, total: 0 });
+        if (p === "/payments/cart-info") return json(r, { detail: "Not Found" }, 404);
+        return "lewat";
+    });
+    await page.goto("/payments", NAV);
+    const main = page.locator("main");
+    await expect(main.getByText("Jawaban server tidak terbaca.")).toBeVisible(NAV);
+    await expect(main.getByText("Belum ada rekaman pembayaran")).toHaveCount(0);
+    await page.goto("/payments/pengajuan", NAV);
+    await expect(main.getByText("Jawaban server tidak terbaca.")).toBeVisible(NAV);
+    await expect(main.getByText("Belum ada pengajuan")).toHaveCount(0);
+    await page.goto("/payments/cart/7f3c91ab", NAV);
+    await expect(main.getByText("Keranjang gagal dimuat")).toBeVisible(NAV);
+    await expect(main.getByText("Keranjang tidak ditemukan atau sudah diajukan")).toHaveCount(0);
+});
+
+test("Format SPPD tahun baru: nomor sesudah simpan dari jawaban server (urutan berlaku), expected = urutan tersimpan tahun lalu", async ({ page }) => {
+    const lalu = Number(tahun) - 1;
+    const { kirim } = await mock(page, (p, r) => {
+        if (p !== "/payments/sppd/settings") return "lewat";
+        if (r.request().method() === "POST") return json(r, { ok: true, settings: { ...SETELAN, last_sequence: 5, sequence_year: Number(tahun) }, effective_last_sequence: 5, preview_number: `006/SPA/PDSB/I/${tahun}` });
+        return json(r, { ok: true, settings: { ...SETELAN, last_sequence: 46, sequence_year: lalu }, effective_last_sequence: 0, preview_number: `001/SPA/PDSB/I/${tahun}` });
+    });
+    await page.goto("/payments/sppd", NAV);
+    const main = page.locator("main");
+    await expect(main.getByLabel("Nomor surat terakhir")).toHaveValue("0", NAV);
+    await expect(main.getByText(`Urutan ${lalu} berakhir di 46; tahun ini mulai 001.`, { exact: false })).toBeVisible();
+    await main.getByLabel("Nomor surat terakhir").fill("5");
+    await main.getByRole("button", { name: "Simpan…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Simpan", exact: true }).click();
+    await expect(main.getByText("Nomor surat terakhir 0 → 5", { exact: false })).toBeVisible();
+    expect(kirim.filter((k) => k.path === "/payments/sppd/settings")[0].body).toMatchObject({ last_sequence: 5, expected_last_sequence: 46 });
+});
+
+test("Format SPPD tahun baru: server tidak mengubah nomor (isian = urutan tahun lalu) → layar sukses memperingatkan, bukan '0 → 46'", async ({ page }) => {
+    const lalu = Number(tahun) - 1;
+    const tersimpan = { ok: true, settings: { ...SETELAN, last_sequence: 46, sequence_year: lalu }, effective_last_sequence: 0, preview_number: `001/SPA/PDSB/I/${tahun}` };
+    await mock(page, (p, r) => (p === "/payments/sppd/settings" ? json(r, tersimpan) : "lewat"));
+    await page.goto("/payments/sppd", NAV);
+    const main = page.locator("main");
+    await expect(main.getByLabel("Nomor surat terakhir")).toHaveValue("0", NAV);
+    await main.getByLabel("Nomor surat terakhir").fill("46");
+    await main.getByRole("button", { name: "Simpan…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Simpan", exact: true }).click();
+    await expect(main.getByText("nomor surat terakhir tidak seperti yang diisi", { exact: false })).toBeVisible();
+    await expect(main.getByText(`Server mencatat nomor terakhir ${tahun} = 000, bukan 046`, { exact: false })).toBeVisible();
+    await expect(main.getByText("Nomor surat terakhir 0 → 46", { exact: false })).toHaveCount(0);
+});
+
+test("Format SPPD: operasi data tidak pasti mengunci semua operasi di halaman sampai data terbaca ulang", async ({ page }) => {
+    let putus = false;
+    await mock(page, (p, r) => {
+        const dry = new URL(r.request().url()).searchParams.get("dry_run");
+        if (p === "/payments/sppd/restore-backup") {
+            if (dry === "1") return json(r, { ok: true, dry_run: true, can_apply: true, records: 3, submissions: 1, new_submissions: 1, draft_records: 1, sppd: { last_sequence_before: 30, max_restored: 45, last_sequence_after: 45, next_number: "046/SPA/PDSB/X/2026" }, conflicts: [] });
+            putus = true;
+            return r.abort("connectionreset");
+        }
+        if (p === "/api/bank-data/match-report" && putus) return r.fulfill({ status: 502, headers: { ...cors(r), "content-type": "text/html" }, body: "<html>Bad Gateway</html>" });
+        return "lewat";
+    });
+    await page.goto("/payments/sppd", NAV);
+    const main = page.locator("main");
+    await expect(main.getByLabel("Nomor surat terakhir")).toHaveValue("31", NAV);
+    await main.getByRole("button", { name: "Restore backup…" }).click();
+    const dlg = page.getByRole("dialog");
+    await dlg.getByLabel("Berkas backup PAYMENTS (.xlsx)").setInputFiles(berkas("backup.xlsx"));
+    await dlg.getByRole("button", { name: "Pulihkan 3 rekaman" }).click();
+    await expect(dlg.getByText(/Hasilnya belum pasti/)).toBeVisible();
+    await dlg.getByRole("button", { name: "Batal" }).click();
+    for (const nama of ["Unggah Excel data SPPD…", "Ganti nama principal…", "Auto-Fix nama principal…", "Restore backup…"]) {
+        await expect(main.getByRole("button", { name: nama })).toBeDisabled();
+    }
+    await expect(main.getByText("Hasil operasi terakhir belum pasti", { exact: false }).first()).toBeVisible();
+    // Data terbaca ulang (referensi baru) = kunci dibuka.
+    putus = false;
+    await main.getByRole("button", { name: "Muat ulang" }).click();
+    for (const nama of ["Unggah Excel data SPPD…", "Restore backup…"]) await expect(main.getByRole("button", { name: nama })).toBeEnabled();
+});
+
+
+test("Tanggal bayar yang sudah lewat diperingatkan di Keranjang dan di dialog Buat keranjang (Finance membuka tanggal hari ini)", async ({ page }) => {
+    await mock(page, (p, r) => (p === "/payments/cart-info" ? json(r, { ...CART, target_payment_date: "2026-01-05" }) : "lewat"));
+    await page.goto("/payments/cart/7f3c91ab", NAV);
+    const main = page.locator("main");
+    await expect(main.getByText("Tanggal bayar sudah lewat", { exact: false })).toBeVisible(NAV);
+    await main.getByLabel("Tanggal bayar Finance").fill(hariIni());
+    await expect(main.getByText("Tanggal bayar sudah lewat", { exact: false })).toHaveCount(0);
+
+    await page.goto("/payments", NAV);
+    await main.getByRole("table", { name: "Rekaman" }).getByRole("checkbox", { name: "Pilih LPB-A-001" }).check(NAV);
+    await main.getByRole("button", { name: "Buat keranjang…" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByText("Tanggal bayar sudah lewat", { exact: false })).toHaveCount(0); // bawaan besok WITA
+    await dlg.getByLabel("Tanggal bayar Finance").fill("2026-01-05");
+    await expect(dlg.getByText("Tanggal bayar sudah lewat", { exact: false })).toBeVisible();
+});
+
+test("Dialog: alasan tombol konfirmasi nonaktif TERLIHAT (bukan hanya title) dan hilang saat syaratnya terpenuhi", async ({ page }) => {
+    await mock(page);
+    await page.goto("/payments", NAV);
+    const main = page.locator("main");
+    await main.getByRole("table", { name: "Rekaman" }).getByRole("checkbox", { name: "Pilih LPB-A-001" }).check(NAV);
+    await main.getByRole("button", { name: "Buat keranjang…" }).click();
+    const dlg = page.getByRole("dialog");
+    await expect(dlg.getByRole("button", { name: "Buat keranjang" })).toBeDisabled();
+    await expect(dlg.getByText("Pilih rute pembayaran dulu.")).toBeVisible();
+    await dlg.getByText("Bank Panin (SPPD)").click();
+    await expect(dlg.getByRole("button", { name: "Buat keranjang" })).toBeEnabled();
+    await expect(dlg.getByText("Pilih rute pembayaran dulu.")).toHaveCount(0);
+});
+
+// ── Butir 5: 403 diulang sekali dengan token CSRF baru ──
+test("Tulis: 403 (token kedaluwarsa) diulang SEKALI dengan token baru dari /api/me; 403 kedua = ditolak tanpa ulang ketiga", async ({ page }) => {
+    let ke = 0;
+    const m = await mock(page, (p, r) => {
+        if (p !== "/payments/update") return "lewat";
+        ke += 1;
+        if (ke === 1) return json(r, { ok: false, error: "CSRF token invalid" }, 403);
+        if (ke === 2) return json(r, { ok: true, updated: 1, updated_ids: ["LPB-A-001"], skipped: 0 });
+        return json(r, { ok: false, error: "Forbidden" }, 403);
+    });
+    await page.goto("/payments", NAV);
+    const main = page.locator("main");
+    const tabel = main.getByRole("table", { name: "Rekaman" });
+    const ubah = async (nilai: string) => {
+        await tabel.getByRole("button", { name: "Buka rincian LPB-A-001" }).click(NAV);
+        await page.getByRole("dialog").getByLabel("No. invoice", { exact: true }).fill(nilai);
+        await page.getByRole("dialog").getByRole("button", { name: "Selesai" }).click();
+        await main.getByRole("button", { name: "Simpan 1 perubahan" }).click();
+    };
+    await ubah("INV-A-1B");
+    await expect(main.getByText("1 rekaman tersimpan.")).toBeVisible();
+    expect(m.kirim.filter((k) => k.path === "/payments/update")).toHaveLength(2);
+    expect(m.me()).toBeGreaterThanOrEqual(2); // token disegarkan untuk ulangan
+    await ubah("INV-A-1C");
+    await expect(main.getByText("Server menolak: akun Anda tidak berhak", { exact: false }).first()).toBeVisible();
+    await expect(main.getByText("Forbidden")).toHaveCount(0); // teks mentah server tidak tampil
+    expect(m.kirim.filter((k) => k.path === "/payments/update")).toHaveLength(4); // 403 + ulang sekali, bukan lebih
+});
+
+test("Rekaman: koneksi putus saat simpan rekaman ke-2 dari 3 — berhenti (ke-3 tidak dikirim), belum pasti, tulis dikunci selama data gagal dimuat ulang", async ({ page }) => {
+    const TIGA = ["LPB-A-001", "LPB-A-002", "LPB-A-003"].map((id, i) => ({ ...REKAMAN[0], record_id: id, no_lpb: id, invoice_no: `INV-A-${i + 1}` }));
+    let ke = 0;
+    const { kirim } = await mock(page, (p, r) => {
+        if (p === "/payments/data") return ke >= 2 ? r.fulfill({ status: 502, headers: { ...cors(r), "content-type": "text/html" }, body: "<html>Bad Gateway</html>" }) : json(r, { ok: true, data: TIGA });
+        if (p !== "/payments/update") return "lewat";
+        ke += 1;
+        return ke === 1 ? json(r, { ok: true, updated: 1, updated_ids: ["LPB-A-001"], skipped: 0 }) : r.abort("connectionreset");
+    });
+    await page.goto("/payments", NAV);
+    const main = page.locator("main");
+    const tabel = main.getByRole("table", { name: "Rekaman" });
+    for (const id of ["LPB-A-001", "LPB-A-002", "LPB-A-003"]) {
+        await tabel.getByRole("button", { name: `Buka rincian ${id}` }).click(NAV);
+        await page.getByRole("dialog").getByLabel("No. invoice", { exact: true }).fill(`${id}-B`);
+        await page.getByRole("dialog").getByRole("button", { name: "Selesai" }).click();
+    }
+    await main.getByRole("button", { name: "Simpan 3 perubahan" }).click();
+    await expect(main.getByText("1 dari 3 rekaman tersimpan; hasil sisanya belum pasti.", { exact: false })).toBeVisible();
+    expect(kirim.filter((k) => k.path === "/payments/update")).toHaveLength(2);
+    await expect(main.getByRole("button", { name: /^Simpan \d+ perubahan$/ })).toBeDisabled();
+    await expect(main.locator(".fi-ftb")).toContainText("Data gagal dimuat ulang");
+});

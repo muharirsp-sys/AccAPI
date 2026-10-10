@@ -28,6 +28,7 @@ import { db } from "@/lib/db";
 import { invoiceOutbox, principalOrderBatch, principalOrderLine } from "@/db/schema";
 import { aksiAntrean, pencariPenekan } from "@/lib/invoice-outbox-actions";
 import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
+import { salesmanDariPayload } from "@/lib/order-salesman";
 
 export const runtime = "nodejs";
 
@@ -60,7 +61,7 @@ export async function GET(request: NextRequest) {
     const rows = await db.select({
         orderId: invoiceOutbox.orderId, customerNo: invoiceOutbox.customerNo, orderDate: invoiceOutbox.orderDate,
         state: invoiceOutbox.state, attempts: invoiceOutbox.attempts, lastError: invoiceOutbox.lastError,
-        accurateNumber: invoiceOutbox.accurateNumber, queuedBy: invoiceOutbox.queuedBy,
+        accurateNumber: invoiceOutbox.accurateNumber, queuedBy: invoiceOutbox.queuedBy, salesmanPayload: salesmanDariPayload(invoiceOutbox.payload),
         createdAt: invoiceOutbox.createdAt, updatedAt: invoiceOutbox.updatedAt,
         ageMinutes: sql<number>`floor(extract(epoch from (now() - ${invoiceOutbox.createdAt})) / 60)::int`,
     }).from(invoiceOutbox)
@@ -122,7 +123,7 @@ export async function GET(request: NextRequest) {
                 ...row,
                 soNo,
                 source: soNo ? "laporan principal" : "order internal",
-                salesman: soNo ? context.get(soNo)?.salesman ?? "" : "",
+                salesman: soNo ? context.get(soNo)?.salesman ?? "" : row.salesmanPayload ?? "",
                 outlet: soNo ? context.get(soNo)?.outlet ?? "" : "",
                 overdue: row.state !== "posted" && row.ageMinutes >= ESCALATE_AFTER_MINUTES,
             };

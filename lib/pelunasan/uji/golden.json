@@ -1,0 +1,2631 @@
+{
+  "f01-tunai-total-trx": {
+    "catatan": "Tunai + Total.Trx: lunas pas, snap Total.Trx ≤ Rp 100 (bump kas), Total.Trx > piutang (dibatasi piutang); Total.Trx = 0 eksplisit (tidak ada yang dibayar); batas toleransi tepat Rp 100 (snap) vs Rp 101 (tidak).",
+    "payload": [
+      {
+        "bankNo": "110102",
+        "chequeAmount": 2500000,
+        "customerNo": "PLG-A-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Setoran harian 1",
+        "paymentMethod": "CASH_OTHER",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00001",
+            "paymentAmount": 1500000
+          },
+          {
+            "invoiceNo": "INV/2610/XX00002",
+            "paymentAmount": 1000000
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 1000000,
+          "maxPayable": 1000000,
+          "intendedRowPayable": 999950,
+          "accuratePrimeOwing": 1000000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00002",
+            "branchName": "CABANG A",
+            "primeOwing": 1000000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 999950,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "110102",
+        "chequeAmount": 2499899,
+        "customerNo": "PLG-A-002",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "CASH_OTHER",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00003",
+            "paymentAmount": 500000
+          },
+          {
+            "invoiceNo": "INV/2610/XX00005",
+            "paymentAmount": 1000000
+          },
+          {
+            "invoiceNo": "INV/2610/XX00006",
+            "paymentAmount": 999899
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 999899,
+          "maxPayable": 999899,
+          "intendedRowPayable": 999899,
+          "accuratePrimeOwing": 1000000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00006",
+            "branchName": "CABANG A",
+            "primeOwing": 1000000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 999899,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      }
+    ],
+    "manualRows": null,
+    "toasts": [
+      [
+        "loading",
+        "Membedah Format Pelunasan Internal...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Menarik data Cabang dari 6 tagihan Invoice...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "success",
+        "Format Pelunasan dikonversi menjadi 2 Sales Receipt.",
+        {
+          "id": "parse"
+        }
+      ]
+    ],
+    "panggilan": [
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00001\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00002\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00003\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00004\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00005\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00006\"}"
+    ]
+  },
+  "f02-transfer-tanpa-total-trx": {
+    "catatan": "Format terdeteksi tanpa Total.Trx; Trf MAYBANK/PRMT/Ket.TF; snap ≤ 100 tanpa Total.Trx; overpay dibatasi piutang; pencarian faktur EQUAL / KEYWORD_FULL / NUMBER_CONTAIN_FULL / NUMBER_CONTAIN_TAIL / tidak ketemu (anti-ghosting) / galat jaringan (ERROR).",
+    "payload": [
+      {
+        "bankNo": "110105",
+        "chequeAmount": 2000000,
+        "customerNo": "PLG-A-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "TRF MAYBANK 01",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "BANK_TRANSFER",
+        "typeAutoNumber": "350",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00011",
+            "paymentAmount": 2000000
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 2000000,
+          "maxPayable": 2000000,
+          "intendedRowPayable": 2000040,
+          "accuratePrimeOwing": 2000000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00011",
+            "branchName": "CABANG A",
+            "primeOwing": 2000000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "110107",
+        "chequeAmount": 750000,
+        "customerNo": "PLG-A-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "PRMT",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "BANK_TRANSFER",
+        "typeAutoNumber": "950",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00012",
+            "paymentAmount": 750000
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 750000,
+          "maxPayable": 750000,
+          "intendedRowPayable": 750000,
+          "accuratePrimeOwing": 1000000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00012",
+            "branchName": "CABANG A",
+            "primeOwing": 1000000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "110103",
+        "chequeAmount": 2600000,
+        "customerNo": "PLG-A-002",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "BCA 22",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "BANK_TRANSFER",
+        "typeAutoNumber": "450",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00013",
+            "paymentAmount": 2500000
+          },
+          {
+            "invoiceNo": "INV/2610/XX00099",
+            "paymentAmount": 100000
+          }
+        ],
+        "branchId": 2,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 100000,
+          "maxPayable": 100000,
+          "intendedRowPayable": 100000,
+          "invoiceLookupDebug": {
+            "found": false,
+            "lookupSource": "NONE",
+            "matchedInvoiceNo": "",
+            "branchName": "",
+            "primeOwing": null
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "110103",
+        "chequeAmount": 1225000.5,
+        "customerNo": "PLG-A-003",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "BANK_TRANSFER",
+        "typeAutoNumber": "450",
+        "detailInvoice": [
+          {
+            "invoiceNo": "XX00015",
+            "paymentAmount": 400000
+          },
+          {
+            "invoiceNo": "FJ/2610/XX00016",
+            "paymentAmount": 250000
+          },
+          {
+            "invoiceNo": "INV/2610/XX00017",
+            "paymentAmount": 125000.5
+          },
+          {
+            "invoiceNo": "INV/2610/XX00018",
+            "paymentAmount": 50000
+          },
+          {
+            "invoiceNo": "INV/2610/XX00019",
+            "paymentAmount": 400000
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 400000,
+          "maxPayable": 400000,
+          "intendedRowPayable": 400100,
+          "accuratePrimeOwing": 400000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00019",
+            "branchName": "CABANG A",
+            "primeOwing": 400000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      }
+    ],
+    "manualRows": null,
+    "toasts": [
+      [
+        "loading",
+        "Membedah Format Pelunasan Internal...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Menarik data Cabang dari 9 tagihan Invoice...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "success",
+        "Format Pelunasan dikonversi menjadi 4 Sales Receipt.",
+        {
+          "id": "parse"
+        }
+      ]
+    ],
+    "panggilan": [
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"FJ/2610/XX00016\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"INV/2610/XX00017\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"INV/2610/XX00099\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"XX00016\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"XX00099\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"FJ/2610/XX00016\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00011\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00012\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00013\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00017\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00018\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00019\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00099\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"XX00015\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"keyword\":\"FJ/2610/XX00016\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"keyword\":\"INV/2610/XX00017\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"keyword\":\"INV/2610/XX00099\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"keyword\":\"XX00015\"}"
+    ]
+  },
+  "f03-bg-biaya-disctb-multi-bayar": {
+    "catatan": "BG + Ket.BG + BiayaTrf/BG (akun 600123) + Pot.DiscTB; Trf + biaya (600126); satu baris Tunai+Trf (diskon ke bayar terbesar); typeAutoNumber kosong dibuang; akun Pot.1 terpetakan, Pot.2 placeholder.",
+    "payload": [
+      {
+        "bankNo": "110104",
+        "chequeAmount": 5000000,
+        "customerNo": "PLG-B-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "BG-778899",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "BANK_CHEQUE",
+        "typeAutoNumber": "550",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00021",
+            "paymentAmount": 5031500,
+            "detailDiscount": [
+              {
+                "amount": 25000,
+                "discountNotes": "Pot.DiscTB"
+              },
+              {
+                "amount": 6500,
+                "accountNo": "600123"
+              }
+            ]
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 5000000,
+          "maxPayable": 5031500,
+          "intendedRowPayable": 5031500,
+          "accuratePrimeOwing": 5031500,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00021",
+            "branchName": "CABANG A",
+            "primeOwing": 5031500
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 5031500,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "110103",
+        "chequeAmount": 1000000,
+        "customerNo": "PLG-B-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "BCA",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "BANK_TRANSFER",
+        "typeAutoNumber": "450",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00022",
+            "paymentAmount": 1005000,
+            "detailDiscount": [
+              {
+                "amount": 5000,
+                "accountNo": "600126"
+              }
+            ]
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 1000000,
+          "maxPayable": 1005000,
+          "intendedRowPayable": 1005000,
+          "accuratePrimeOwing": 1005000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00022",
+            "branchName": "CABANG A",
+            "primeOwing": 1005000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "110102",
+        "chequeAmount": 200000,
+        "customerNo": "PLG-B-002",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "CASH_OTHER",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00023",
+            "paymentAmount": 200000
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 300000,
+          "remainingBeforeCash": 500000,
+          "maxPayable": 500000,
+          "intendedRowPayable": 500000,
+          "accuratePrimeOwing": 525000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00023",
+            "branchName": "CABANG A",
+            "primeOwing": 525000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "110103",
+        "chequeAmount": 100000,
+        "customerNo": "PLG-B-002",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "BCA",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "BANK_TRANSFER",
+        "typeAutoNumber": "450",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00023",
+            "paymentAmount": 125000,
+            "detailDiscount": [
+              {
+                "amount": 20000,
+                "accountNo": "610101"
+              },
+              {
+                "amount": 5000,
+                "accountNo": "ISI_KODE_AKUN_POT2_DI_UI"
+              }
+            ]
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 200000,
+          "remainingBeforeCash": 300000,
+          "maxPayable": 325000,
+          "intendedRowPayable": 525000,
+          "accuratePrimeOwing": 325000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00023",
+            "branchName": "CABANG A",
+            "primeOwing": 525000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      }
+    ],
+    "manualRows": null,
+    "toasts": [
+      [
+        "loading",
+        "Membedah Format Pelunasan Internal...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Menarik data Cabang dari 3 tagihan Invoice...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "success",
+        "Format Pelunasan dikonversi menjadi 4 Sales Receipt.",
+        {
+          "id": "parse"
+        }
+      ]
+    ],
+    "panggilan": [
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00021\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00022\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00023\"}"
+    ]
+  },
+  "f04-potongan-kwitansi": {
+    "catatan": "Pot.1/2/3 + Tunai dengan Total.Trx; diskon diskalakan turun (Total.Trx < diskon); healing potongan ke piutang ≤ 100; pembayaran RETUR_ONLY (OTHERS) untuk baris potongan saja; placeholder akun Pot.2/Pot.3.",
+    "payload": [
+      {
+        "bankNo": "110102",
+        "chequeAmount": 850000,
+        "customerNo": "PLG-C-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "CASH_OTHER",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00031",
+            "paymentAmount": 950000,
+            "detailDiscount": [
+              {
+                "amount": 50000,
+                "accountNo": "610101"
+              },
+              {
+                "amount": 30000,
+                "accountNo": "ISI_KODE_AKUN_POT2_DI_UI"
+              },
+              {
+                "amount": 20000,
+                "accountNo": "ISI_KODE_AKUN_POT3_DI_UI"
+              }
+            ]
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 850000,
+          "maxPayable": 950000,
+          "intendedRowPayable": 1000000,
+          "accuratePrimeOwing": 950000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00031",
+            "branchName": "CABANG A",
+            "primeOwing": 950000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 950000,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "110102",
+        "chequeAmount": 0,
+        "customerNo": "PLG-C-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "OTHERS",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00032",
+            "paymentAmount": 100000,
+            "detailDiscount": [
+              {
+                "amount": 80000,
+                "accountNo": "610101"
+              },
+              {
+                "amount": 20000,
+                "accountNo": "ISI_KODE_AKUN_POT2_DI_UI"
+              }
+            ]
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 0,
+          "maxPayable": 100000,
+          "intendedRowPayable": 120000,
+          "accuratePrimeOwing": 100000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00032",
+            "branchName": "CABANG A",
+            "primeOwing": 100000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 100000,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "110102",
+        "chequeAmount": 0,
+        "customerNo": "PLG-C-002",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "OTHERS",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00033",
+            "paymentAmount": 300000,
+            "detailDiscount": [
+              {
+                "amount": 300000,
+                "accountNo": "ISI_KODE_AKUN_POT3_DI_UI"
+              }
+            ]
+          },
+          {
+            "invoiceNo": "INV/2610/XX00034",
+            "paymentAmount": 200000,
+            "detailDiscount": [
+              {
+                "amount": 200000,
+                "accountNo": "610101"
+              }
+            ]
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 0,
+          "maxPayable": 200000,
+          "intendedRowPayable": 200000,
+          "accuratePrimeOwing": 200000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00034",
+            "branchName": "CABANG A",
+            "primeOwing": 200000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      }
+    ],
+    "manualRows": null,
+    "toasts": [
+      [
+        "loading",
+        "Membedah Format Pelunasan Internal...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Menarik data Cabang dari 4 tagihan Invoice...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "success",
+        "Format Pelunasan dikonversi menjadi 3 Sales Receipt.",
+        {
+          "id": "parse"
+        }
+      ]
+    ],
+    "panggilan": [
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00031\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00032\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00033\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00034\"}"
+    ]
+  },
+  "f05-retur-srb-rjs": {
+    "catatan": "SRB ketemu lewat keywords (snap retur ≤ 100); RJS nomor penuh SRT/… lewat EQUAL (retur saja → OTHERS) dan lewat CONTAIN (nomor bersufiks); SRB yang di Accurate tersimpan TANPA spasi (variannya ketemu, skornya 0) → NOT_FOUND → baris manual.",
+    "payload": [
+      {
+        "bankNo": "110102",
+        "chequeAmount": 800000,
+        "customerNo": "PLG-D-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "CASH_OTHER",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00041",
+            "paymentAmount": 1000000
+          }
+        ],
+        "branchId": 2,
+        "DEBUG_INFO": {
+          "availSrb": 200000,
+          "usedSrb": 200000,
+          "owed": 0,
+          "remainingBeforeCash": 800000,
+          "maxPayable": 1000000,
+          "intendedRowPayable": 1000000,
+          "accuratePrimeOwing": 1000000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00041",
+            "branchName": "CABANG A",
+            "primeOwing": 1000000
+          },
+          "accurateSrbNumber": "SRT/2610/XX0001",
+          "accurateSrbOutstanding": 200000,
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 200000,
+          "trxAmt": 0,
+          "returLookupKey": "PLG-D-001|SRB 2610.0001",
+          "returMapHit": true,
+          "returData": {
+            "isArray": true,
+            "returns": [
+              {
+                "number": "SRT/2610/XX0001",
+                "customer": {
+                  "id": 1,
+                  "customerNo": "PLG-D-001",
+                  "name": "PELANGGAN PLG-D-001"
+                },
+                "branch": {
+                  "id": 2,
+                  "name": "CABANG B"
+                },
+                "description": "Retur SRB 2610.0001",
+                "primeOwing": 0,
+                "keywords": "SRB 2610.0001",
+                "returnDocumentNumber": "",
+                "documentCode": "",
+                "charField1": ""
+              }
+            ],
+            "outstanding": 200000,
+            "number": "SRT/2610/XX0001",
+            "customerNo": "PLG-D-001",
+            "branchName": "CABANG B",
+            "branchId": 2,
+            "DEBUG_RAW": "FOUND 1 RETURNS [SRT/2610/XX0001] - OUT: 200000 | Logs: Parsed_SRT:[-];Parsed_FULLDOC:[-];Parsed_CODE:[SRB 2610.0001];AcceptScore:90;Step3_CODE_SRB 2610.0001_Variants:[SRB 2610.0001|SRB2610.0001];Step3_CODE_SRB 2610.0001_Len:1_Best:260;Step3_CODE_SRB 2610.0001_Top:[SRT/2610/XX0001:260:PLG-D-001]"
+          }
+        }
+      },
+      {
+        "bankNo": "110102",
+        "chequeAmount": 0,
+        "customerNo": "PLG-D-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "OTHERS",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00042",
+            "paymentAmount": 150000
+          }
+        ],
+        "branchId": 2,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 0,
+          "maxPayable": 150000,
+          "intendedRowPayable": 150000,
+          "accuratePrimeOwing": 150000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00042",
+            "branchName": "CABANG A",
+            "primeOwing": 150000
+          },
+          "accurateRjsNumber": "SRT/2610/XX0002",
+          "accurateRjsOutstanding": 150000,
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "110102",
+        "chequeAmount": 170000,
+        "customerNo": "PLG-D-002",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Setoran D2",
+        "paymentMethod": "CASH_OTHER",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00043",
+            "paymentAmount": 100000
+          },
+          {
+            "invoiceNo": "INV/2610/XX00044",
+            "paymentAmount": 100000
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 70000,
+          "maxPayable": 100000,
+          "intendedRowPayable": 100000,
+          "accuratePrimeOwing": 100000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00044",
+            "branchName": "CABANG A",
+            "primeOwing": 100000
+          },
+          "accurateRjsNumber": "SRT/2610/XX0004.R",
+          "accurateRjsOutstanding": 30000,
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "110102",
+        "chequeAmount": 150000,
+        "customerNo": "PLG-D-003",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "CASH_OTHER",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00045",
+            "paymentAmount": 200000
+          }
+        ],
+        "branchId": 2,
+        "DEBUG_INFO": {
+          "availSrb": 50000,
+          "usedSrb": 50000,
+          "owed": 0,
+          "remainingBeforeCash": 150000,
+          "maxPayable": 200000,
+          "intendedRowPayable": 200000,
+          "accuratePrimeOwing": 300000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00045",
+            "branchName": "CABANG A",
+            "primeOwing": 300000
+          },
+          "accurateSrbNumber": "SRT/2610/XX0005",
+          "accurateSrbOutstanding": 50000,
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 50000,
+          "trxAmt": 0,
+          "returLookupKey": "PLG-D-003|SRB 2610.0005",
+          "returMapHit": true,
+          "returData": {
+            "isArray": true,
+            "returns": [
+              {
+                "number": "SRT/2610/XX0005",
+                "customer": {
+                  "id": 3,
+                  "customerNo": "PLG-D-003",
+                  "name": "PELANGGAN PLG-D-003"
+                },
+                "branch": {
+                  "id": 2,
+                  "name": "CABANG B"
+                },
+                "description": "",
+                "primeOwing": 0,
+                "keywords": "SRB 2610.0005",
+                "returnDocumentNumber": "",
+                "documentCode": "",
+                "charField1": ""
+              }
+            ],
+            "outstanding": 50000,
+            "number": "SRT/2610/XX0005",
+            "customerNo": "PLG-D-003",
+            "branchName": "CABANG B",
+            "branchId": 2,
+            "DEBUG_RAW": "FOUND 1 RETURNS [SRT/2610/XX0005] - OUT: 50000 | Logs: Parsed_SRT:[-];Parsed_FULLDOC:[-];Parsed_CODE:[SRB 2610.0005];AcceptScore:90;Step3_CODE_SRB 2610.0005_Variants:[SRB 2610.0005|SRB2610.0005];Step3_CODE_SRB 2610.0005_Len:1_Best:260;Step3_CODE_SRB 2610.0005_Top:[SRT/2610/XX0005:260:PLG-D-003]"
+          }
+        }
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": 200000,
+        "customerNo": "PLG-D-001",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Faktur INV/2610/XX00041 - SRB 2610.0001",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00041",
+            "paymentAmount": 200000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": -200000,
+        "customerNo": "PLG-D-001",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Retur SRB 2610.0001",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "SRT/2610/XX0001",
+            "paymentAmount": -200000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": 150000,
+        "customerNo": "PLG-D-001",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Faktur INV/2610/XX00042 - SRT/2610/XX0002",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00042",
+            "paymentAmount": 150000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": -150000,
+        "customerNo": "PLG-D-001",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Retur SRT/2610/XX0002",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "SRT/2610/XX0002",
+            "paymentAmount": -150000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": 30000,
+        "customerNo": "PLG-D-002",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Faktur INV/2610/XX00044 - SRT/2610/XX0004",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00044",
+            "paymentAmount": 30000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": -30000,
+        "customerNo": "PLG-D-002",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Retur SRT/2610/XX0004",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "SRT/2610/XX0004.R",
+            "paymentAmount": -30000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": 50000,
+        "customerNo": "PLG-D-003",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Faktur INV/2610/XX00045 - SRB 2610.0005",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00045",
+            "paymentAmount": 50000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": -50000,
+        "customerNo": "PLG-D-003",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Retur SRB 2610.0005",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "SRT/2610/XX0005",
+            "paymentAmount": -50000
+          }
+        ]
+      }
+    ],
+    "manualRows": [
+      {
+        "Invoice No": "INV/2610/XX00043",
+        "Code Outlet": "PLG-D-002",
+        "Referensi Retur/Pot.Lain": "SRB 2610.0003",
+        "Nominal SRB Belum Diproses": 50000,
+        "Nominal RJS Belum Diproses": 0,
+        "Tunai Tetap Diproses": 100000,
+        "Transfer Tetap Diproses": 0,
+        "BG Tetap Diproses": 0,
+        "Biaya Tetap Diproses": 0,
+        "Ket. All Trx": "Setoran D2",
+        "Aksi Manual": "Retur/Pot.Lain perlu diproses manual di Accurate"
+      }
+    ],
+    "toasts": [
+      [
+        "loading",
+        "Membedah Format Pelunasan Internal...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Mencari 5 referensi Retur Penjualan...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Menarik data Cabang dari 5 tagihan Invoice...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "warning",
+        "1 baris retur yang belum ditemukan di Accurate dilewati sementara. Contoh: INV/2610/XX00043 [SRB 2610.0003]"
+      ],
+      [
+        "success",
+        "Format Pelunasan dikonversi menjadi 12 Sales Receipt.",
+        {
+          "id": "parse"
+        }
+      ]
+    ],
+    "panggilan": [
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00041\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00042\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00043\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00044\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00045\"}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"SRB 2610.0001\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"SRB 2610.0003\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"SRB 2610.0005\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"SRB2610.0003\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"SRB 2610.0003\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"SRT/2610/XX0004\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"SRT/2610/XX0002\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"SRT/2610/XX0004\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"XX0004\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.returnDocumentNumber.op\":\"CONTAIN\",\"filter.returnDocumentNumber.val\":\"SRB 2610.0003\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"PLG-D\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"XX00043\",\"sp.pageSize\":100}"
+    ]
+  },
+  "f06-ayat-silang-waterfall": {
+    "catatan": "Ket. Pot RJN/…,… + Pot. Lain disuntik jadi SRB; ayat silang dicari di sales-invoice (keyword kode), detail.do memperkaya primeOwing; waterfall dua dokumen RJN; baris ke-2 memakai sisa primeOwing di memori; SRT.… ayat silang (detail.do galat → primeOwing list); faktur lain berawalan sama (XX00010) tidak ikut.",
+    "payload": [
+      {
+        "bankNo": "110102",
+        "chequeAmount": 1100000,
+        "customerNo": "PLG-E-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "CASH_OTHER",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00051",
+            "paymentAmount": 1000000
+          },
+          {
+            "invoiceNo": "INV/2610/XX00053",
+            "paymentAmount": 500000
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 100000,
+          "usedSrb": 100000,
+          "owed": 0,
+          "remainingBeforeCash": 400000,
+          "maxPayable": 500000,
+          "intendedRowPayable": 500000,
+          "accuratePrimeOwing": 500000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00053",
+            "branchName": "CABANG A",
+            "primeOwing": 500000
+          },
+          "accurateSrbNumber": "SRT.2610.0009",
+          "accurateSrbOutstanding": 100000,
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 100000,
+          "trxAmt": 0,
+          "returLookupKey": "DOC|SRT.2610.0009",
+          "returMapHit": true,
+          "returData": {
+            "isArray": true,
+            "returns": [
+              {
+                "number": "SRT.2610.0009",
+                "customer": {
+                  "id": 1,
+                  "customerNo": "PLG-E-001",
+                  "name": "PELANGGAN E1"
+                },
+                "branch": {
+                  "id": 1,
+                  "name": "CABANG A"
+                },
+                "description": "",
+                "primeOwing": 0
+              }
+            ],
+            "outstanding": 100000,
+            "number": "SRT.2610.0009",
+            "customerNo": "PLG-E-001",
+            "branchName": "CABANG A",
+            "branchId": 1,
+            "DEBUG_RAW": "FOUND 1 RETURNS [SRT.2610.0009] - OUT: 100000 | Logs: Parsed_SRT:[SRT.2610.0009];Parsed_FULLDOC:[-];Parsed_CODE:[-];AcceptScore:90;Step1_SRT_SRT.2610.0009_KeywordPool:1_Scanned:1;Step1_SRT_SRT.2610.0009_Exact:[SRT.2610.0009];Detail_SRT.2610.0009_ERR:emulator: galat buatan ({\"number\":\"SRT.2610.0009\"})"
+          }
+        }
+      },
+      {
+        "bankNo": "110102",
+        "chequeAmount": 0,
+        "customerNo": "PLG-E-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "OTHERS",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00052",
+            "paymentAmount": 50000
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 50000,
+          "usedSrb": 50000,
+          "owed": 0,
+          "remainingBeforeCash": 0,
+          "maxPayable": 50000,
+          "intendedRowPayable": 50000,
+          "accuratePrimeOwing": 50000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00052",
+            "branchName": "CABANG A",
+            "primeOwing": 50000
+          },
+          "accurateSrbNumber": "RJN/2610/XX0001",
+          "accurateSrbOutstanding": 330000,
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 50000,
+          "trxAmt": 0,
+          "returLookupKey": "DOC|RJN/2610/XX0001,XX0002",
+          "returMapHit": true,
+          "returData": {
+            "isArray": true,
+            "returns": [
+              {
+                "number": "RJN/2610/XX0001",
+                "customer": {
+                  "id": 5,
+                  "customerNo": "PLG-E-005",
+                  "name": "PELANGGAN E5"
+                },
+                "branch": {
+                  "id": 2,
+                  "name": "CABANG B"
+                },
+                "description": "",
+                "primeOwing": 0,
+                "id": 501
+              },
+              {
+                "number": "RJN/2610/XX0002",
+                "customer": {
+                  "id": 5,
+                  "customerNo": "PLG-E-005",
+                  "name": "PELANGGAN E5"
+                },
+                "branch": {
+                  "id": 2,
+                  "name": "CABANG B"
+                },
+                "description": "",
+                "primeOwing": 0,
+                "id": 502
+              }
+            ],
+            "outstanding": 330000,
+            "number": "RJN/2610/XX0001",
+            "customerNo": "PLG-E-005",
+            "branchName": "CABANG B",
+            "branchId": 2,
+            "DEBUG_RAW": "FOUND 2 RETURNS [RJN/2610/XX0001|RJN/2610/XX0002] - OUT: 330000 | Logs: Parsed_SRT:[-];Parsed_FULLDOC:[RJN/2610/XX0001|RJN/2610/XX0002];Parsed_CODE:[XX0001|XX0002];AcceptScore:90;Step2_FULLDOC_RJN/2610/XX0001_KeywordPool:0_Scanned:0;Step2_FULLDOC_XX0001_KeywordPool:2_Scanned:2;Step2_FULLDOC_RJN/2610/XX0001_Exact:[RJN/2610/XX0001];Step2_FULLDOC_RJN/2610/XX0002_KeywordPool:0_Scanned:0;Step2_FULLDOC_XX0002_KeywordPool:1_Scanned:1;Step2_FULLDOC_RJN/2610/XX0002_Exact:[RJN/2610/XX0002];Detail_RJN/2610/XX0001_Prime:180000;Detail_RJN/2610/XX0002_Prime:150000"
+          }
+        }
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": 300000,
+        "customerNo": "PLG-E-001",
+        "transDate": "09/10/2026",
+        "branchId": 1,
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Faktur INV/2610/XX00051 - RJN/2610/XX0001,XX0002",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00051",
+            "paymentAmount": 300000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": -300000,
+        "customerNo": "PLG-E-005",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Retur RJN/2610/XX0001,XX0002",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "RJN/2610/XX0001",
+            "paymentAmount": -180000
+          },
+          {
+            "invoiceNo": "RJN/2610/XX0002",
+            "paymentAmount": -120000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": 30000,
+        "customerNo": "PLG-E-001",
+        "transDate": "09/10/2026",
+        "branchId": 1,
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Faktur INV/2610/XX00052 - RJN/2610/XX0001,XX0002",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00052",
+            "paymentAmount": 30000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": -30000,
+        "customerNo": "PLG-E-005",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Retur RJN/2610/XX0001,XX0002",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "RJN/2610/XX0002",
+            "paymentAmount": -30000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": 100000,
+        "customerNo": "PLG-E-001",
+        "transDate": "09/10/2026",
+        "branchId": 1,
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Faktur INV/2610/XX00053 - SRT.2610.0009",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00053",
+            "paymentAmount": 100000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": -100000,
+        "customerNo": "PLG-E-001",
+        "transDate": "09/10/2026",
+        "branchId": 1,
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Retur SRT.2610.0009",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "SRT.2610.0009",
+            "paymentAmount": -100000
+          }
+        ]
+      }
+    ],
+    "manualRows": null,
+    "toasts": [
+      [
+        "loading",
+        "Membedah Format Pelunasan Internal...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Mencari 2 referensi Retur Penjualan...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Menarik data Cabang dari 3 tagihan Invoice...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "success",
+        "Format Pelunasan dikonversi menjadi 8 Sales Receipt.",
+        {
+          "id": "parse"
+        }
+      ]
+    ],
+    "panggilan": [
+      "GET /api/sales-invoice/detail.do {\"number\":\"RJN/2610/XX0001\"}",
+      "GET /api/sales-invoice/detail.do {\"number\":\"RJN/2610/XX0002\"}",
+      "GET /api/sales-invoice/detail.do {\"number\":\"SRT.2610.0009\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00051\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00052\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00053\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,charField1\",\"keyword\":\"RJN/2610/XX0001\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,charField1\",\"keyword\":\"RJN/2610/XX0002\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,charField1\",\"keyword\":\"SRT.2610.0009\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,charField1\",\"keyword\":\"XX0001\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,charField1\",\"keyword\":\"XX0002\",\"sp.pageSize\":100,\"sp.page\":1}"
+    ]
+  },
+  "f07-retur-step4-step5-galat": {
+    "catatan": "Pencarian kode retur galat jaringan (_ERR) → Step4 (keyword ekor faktur) menemukan; Step5 omni pelanggan dengan paginasi; Step4 melempar → ERROR → NOT_FOUND; baris retur-saja yang NOT_FOUND dilewati; peringatan kembar dideduplikasi.",
+    "payload": [
+      {
+        "bankNo": "110102",
+        "chequeAmount": 300000,
+        "customerNo": "PLG-F-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "CASH_OTHER",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00061",
+            "paymentAmount": 360000
+          }
+        ],
+        "branchId": 2,
+        "DEBUG_INFO": {
+          "availSrb": 60000,
+          "usedSrb": 60000,
+          "owed": 0,
+          "remainingBeforeCash": 300000,
+          "maxPayable": 360000,
+          "intendedRowPayable": 360000,
+          "accuratePrimeOwing": 360000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00061",
+            "branchName": "CABANG A",
+            "primeOwing": 360000
+          },
+          "accurateSrbNumber": "SRT/2610/XF0005",
+          "accurateSrbOutstanding": 60000,
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 60000,
+          "trxAmt": 0,
+          "returLookupKey": "PLG-F-001|RB-0005",
+          "returMapHit": true,
+          "returData": {
+            "isArray": true,
+            "returns": [
+              {
+                "number": "SRT/2610/XF0005",
+                "customer": {
+                  "id": 1,
+                  "customerNo": "PLG-F-001",
+                  "name": "PELANGGAN PLG-F-001"
+                },
+                "branch": {
+                  "id": 2,
+                  "name": "CABANG B"
+                },
+                "description": "Retur INV/2610/XX00061 RB-0005",
+                "primeOwing": 0,
+                "keywords": "",
+                "returnDocumentNumber": "",
+                "documentCode": "",
+                "charField1": ""
+              }
+            ],
+            "outstanding": 60000,
+            "number": "SRT/2610/XF0005",
+            "customerNo": "PLG-F-001",
+            "branchName": "CABANG B",
+            "branchId": 2,
+            "DEBUG_RAW": "FOUND 1 RETURNS [SRT/2610/XF0005] - OUT: 60000 | Logs: Parsed_SRT:[-];Parsed_FULLDOC:[-];Parsed_CODE:[RB-0005];AcceptScore:90;Step3_CODE_RB-0005_Variants:[RB-0005];Step3_CODE_RB-0005_KEYWORDS_RB-0005_ERR:emulator: galat buatan (\"RB-0005\");Step3_CODE_RB-0005_RETURDOC_RB-0005_ERR:emulator: galat buatan (\"RB-0005\");Step3_CODE_RB-0005_NUM_RB-0005_ERR:emulator: galat buatan (\"RB-0005\");Step3_CODE_RB-0005_KW_RB-0005_ERR:emulator: galat buatan (\"RB-0005\");Step3_CODE_RB-0005_NoRes;Step4_InvKey_XX00061_Len:1 | FirstDsc:[Retur INV/2610/XX00061 RB-0005]"
+          }
+        }
+      },
+      {
+        "bankNo": "110102",
+        "chequeAmount": 90000,
+        "customerNo": "PLG-F-003",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "CASH_OTHER",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00063",
+            "paymentAmount": 100000
+          }
+        ],
+        "branchId": 2,
+        "DEBUG_INFO": {
+          "availSrb": 10000,
+          "usedSrb": 10000,
+          "owed": 0,
+          "remainingBeforeCash": 90000,
+          "maxPayable": 100000,
+          "intendedRowPayable": 100000,
+          "accuratePrimeOwing": 100000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00063",
+            "branchName": "CABANG A",
+            "primeOwing": 100000
+          },
+          "accurateSrbNumber": "SRT/2610/XF0110",
+          "accurateSrbOutstanding": 10000,
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 10000,
+          "trxAmt": 0,
+          "returLookupKey": "PLG-F-003|RB-0006",
+          "returMapHit": true,
+          "returData": {
+            "isArray": true,
+            "returns": [
+              {
+                "number": "SRT/2610/XF0110",
+                "customer": {
+                  "id": 3,
+                  "customerNo": "PLG-F-003",
+                  "name": "PELANGGAN PLG-F-003"
+                },
+                "branch": {
+                  "id": 2,
+                  "name": "CABANG B"
+                },
+                "description": "RB-0006 retur rusak",
+                "primeOwing": 0,
+                "keywords": "",
+                "returnDocumentNumber": "",
+                "documentCode": "",
+                "charField1": ""
+              }
+            ],
+            "outstanding": 10000,
+            "number": "SRT/2610/XF0110",
+            "customerNo": "PLG-F-003",
+            "branchName": "CABANG B",
+            "branchId": 2,
+            "DEBUG_RAW": "FOUND 1 RETURNS [SRT/2610/XF0110] - OUT: 10000 | Logs: Parsed_SRT:[-];Parsed_FULLDOC:[-];Parsed_CODE:[RB-0006];AcceptScore:90;Step3_CODE_RB-0006_Variants:[RB-0006];Step3_CODE_RB-0006_KEYWORDS_RB-0006_ERR:emulator: galat buatan (\"RB-0006\");Step3_CODE_RB-0006_RETURDOC_RB-0006_ERR:emulator: galat buatan (\"RB-0006\");Step3_CODE_RB-0006_NUM_RB-0006_ERR:emulator: galat buatan (\"RB-0006\");Step3_CODE_RB-0006_KW_RB-0006_ERR:emulator: galat buatan (\"RB-0006\");Step3_CODE_RB-0006_NoRes;Step4_InvKey_XX00063_NoRes;Step5_Omni_Total:121"
+          }
+        }
+      },
+      {
+        "bankNo": "110102",
+        "chequeAmount": 100000,
+        "customerNo": "PLG-F-004",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "CASH_OTHER",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00064",
+            "paymentAmount": 100000
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 5000,
+          "remainingBeforeCash": 55000,
+          "maxPayable": 55000,
+          "intendedRowPayable": 55000,
+          "accuratePrimeOwing": 150000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00064",
+            "branchName": "CABANG A",
+            "primeOwing": 200000
+          },
+          "accurateSrbNumber": "NOT_FOUND",
+          "unresolvedSrbAmt": 5000,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 5000,
+          "trxAmt": 0,
+          "returLookupKey": "PLG-F-004|RB-0007",
+          "returMapHit": true,
+          "returData": {
+            "number": "NOT_FOUND",
+            "customerNo": "PLG-F-004",
+            "outstanding": 0,
+            "DEBUG_RAW": "ERROR: emulator: galat buatan (\"keyword\":\"XX00064\")"
+          }
+        }
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": 60000,
+        "customerNo": "PLG-F-001",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Faktur INV/2610/XX00061 - RB-0005",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00061",
+            "paymentAmount": 60000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": -60000,
+        "customerNo": "PLG-F-001",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Retur RB-0005",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "SRT/2610/XF0005",
+            "paymentAmount": -60000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": 10000,
+        "customerNo": "PLG-F-003",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Faktur INV/2610/XX00063 - RB-0006",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00063",
+            "paymentAmount": 10000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": -10000,
+        "customerNo": "PLG-F-003",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Retur RB-0006",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "SRT/2610/XF0110",
+            "paymentAmount": -10000
+          }
+        ]
+      }
+    ],
+    "manualRows": [
+      {
+        "Invoice No": "INV/2610/XX00064",
+        "Code Outlet": "PLG-F-004",
+        "Referensi Retur/Pot.Lain": "RB-0007",
+        "Nominal SRB Belum Diproses": 5000,
+        "Nominal RJS Belum Diproses": 0,
+        "Tunai Tetap Diproses": 50000,
+        "Transfer Tetap Diproses": 0,
+        "BG Tetap Diproses": 0,
+        "Biaya Tetap Diproses": 0,
+        "Ket. All Trx": "",
+        "Aksi Manual": "Retur/Pot.Lain perlu diproses manual di Accurate"
+      },
+      {
+        "Invoice No": "INV/2610/XX00065",
+        "Code Outlet": "PLG-F-005",
+        "Referensi Retur/Pot.Lain": "RB-0008",
+        "Nominal SRB Belum Diproses": 70000,
+        "Nominal RJS Belum Diproses": 0,
+        "Tunai Tetap Diproses": 0,
+        "Transfer Tetap Diproses": 0,
+        "BG Tetap Diproses": 0,
+        "Biaya Tetap Diproses": 0,
+        "Ket. All Trx": "",
+        "Aksi Manual": "Retur/Pot.Lain perlu diproses manual di Accurate"
+      }
+    ],
+    "toasts": [
+      [
+        "loading",
+        "Membedah Format Pelunasan Internal...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Mencari 4 referensi Retur Penjualan...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Menarik data Cabang dari 4 tagihan Invoice...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "warning",
+        "2 baris retur yang belum ditemukan di Accurate dilewati sementara. Contoh: INV/2610/XX00064 [RB-0007], INV/2610/XX00065 [RB-0008]"
+      ],
+      [
+        "success",
+        "Format Pelunasan dikonversi menjadi 7 Sales Receipt.",
+        {
+          "id": "parse"
+        }
+      ]
+    ],
+    "panggilan": [
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00061\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00063\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00064\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00065\"}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"RB-0005\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"RB-0006\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"RB-0007\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"RB-0008\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"RB-0005\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"RB-0006\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"RB-0007\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"RB-0008\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.returnDocumentNumber.op\":\"CONTAIN\",\"filter.returnDocumentNumber.val\":\"RB-0005\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.returnDocumentNumber.op\":\"CONTAIN\",\"filter.returnDocumentNumber.val\":\"RB-0006\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.returnDocumentNumber.op\":\"CONTAIN\",\"filter.returnDocumentNumber.val\":\"RB-0007\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.returnDocumentNumber.op\":\"CONTAIN\",\"filter.returnDocumentNumber.val\":\"RB-0008\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"PLG-F\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"PLG-F\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"PLG-F\",\"sp.pageSize\":100,\"sp.page\":2}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"PLG-F\",\"sp.pageSize\":100,\"sp.page\":2}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"RB-0005\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"RB-0006\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"RB-0007\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"RB-0008\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"XX00061\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"XX00063\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"XX00064\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"XX00065\",\"sp.pageSize\":100}"
+    ]
+  },
+  "f08-multi-faktur-waterfall": {
+    "catatan": "Satu faktur dibayar beberapa baris (sisa piutang di memori, overpay dipotong, anti-ghosting saat sisa 0); dua faktur satu pelanggan satu kelompok; faktur sama dua kali dalam kelompok (paymentAmount & diskon digabung); noise float dirapikan; baris tanpa Code Outlet / tanpa nominal dilewati; baris tanpa No. Nota.",
+    "payload": [
+      {
+        "bankNo": "110102",
+        "chequeAmount": 600000,
+        "customerNo": "PLG-G-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "CASH_OTHER",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00071",
+            "paymentAmount": 600000
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 100000,
+          "remainingBeforeCash": 100000,
+          "maxPayable": 100000,
+          "intendedRowPayable": 100000,
+          "accuratePrimeOwing": 0,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00071",
+            "branchName": "CABANG A",
+            "primeOwing": 1000000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "",
+        "chequeAmount": 400000,
+        "customerNo": "PLG-G-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "BANK_TRANSFER",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00071",
+            "paymentAmount": 400000
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 400000,
+          "maxPayable": 400000,
+          "intendedRowPayable": 500000,
+          "accuratePrimeOwing": 400000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00071",
+            "branchName": "CABANG A",
+            "primeOwing": 1000000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "110102",
+        "chequeAmount": 350000.3,
+        "customerNo": "PLG-G-002",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG A",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "CASH_OTHER",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00072",
+            "paymentAmount": 200000.1
+          },
+          {
+            "invoiceNo": "INV/2610/XX00073",
+            "paymentAmount": 160000.2,
+            "detailDiscount": [
+              {
+                "amount": 10000,
+                "accountNo": "610101"
+              }
+            ]
+          }
+        ],
+        "branchId": 1,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 50000,
+          "maxPayable": 60000,
+          "intendedRowPayable": 60000,
+          "accuratePrimeOwing": 299999.8,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00073",
+            "branchName": "CABANG A",
+            "primeOwing": 400000
+          },
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      }
+    ],
+    "manualRows": null,
+    "toasts": [
+      [
+        "loading",
+        "Membedah Format Pelunasan Internal...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Menarik data Cabang dari 4 tagihan Invoice...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "success",
+        "Format Pelunasan dikonversi menjadi 3 Sales Receipt.",
+        {
+          "id": "parse"
+        }
+      ]
+    ],
+    "panggilan": [
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"INV/2610/XX00075\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"XX00075\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00071\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00072\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00073\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00075\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"keyword\":\"INV/2610/XX00075\"}"
+    ]
+  },
+  "f09-tanpa-sesi-accurate": {
+    "catatan": "isKeySaved=false: tidak ada pencarian sama sekali; retur jadi baris manual; kas tetap dibentuk tanpa cabang.",
+    "payload": [
+      {
+        "bankNo": "110102",
+        "chequeAmount": 250000,
+        "customerNo": "PLG-H-001",
+        "transDate": "09/10/2026",
+        "branchName": "",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Setoran H",
+        "paymentMethod": "CASH_OTHER",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00081",
+            "paymentAmount": 250000
+          }
+        ],
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 25000,
+          "remainingBeforeCash": 275000,
+          "maxPayable": 275000,
+          "intendedRowPayable": 275000,
+          "unresolvedSrbAmt": 25000,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 25000,
+          "trxAmt": 0,
+          "returLookupKey": "PLG-H-001|SRB 2610.0081",
+          "returMapHit": false
+        }
+      },
+      {
+        "bankNo": "110104",
+        "chequeAmount": 100000,
+        "customerNo": "PLG-H-001",
+        "transDate": "09/10/2026",
+        "branchName": "",
+        "chequeDate": "09/10/2026",
+        "chequeNo": 445566,
+        "description": "Pelunasan Batch",
+        "paymentMethod": "BANK_CHEQUE",
+        "typeAutoNumber": "550",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00082",
+            "paymentAmount": 100000
+          }
+        ],
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 0,
+          "remainingBeforeCash": 100000,
+          "maxPayable": 100000,
+          "intendedRowPayable": 100000,
+          "unresolvedSrbAmt": 0,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 0,
+          "trxAmt": 0,
+          "returLookupKey": "NO_SRB",
+          "returMapHit": false
+        }
+      }
+    ],
+    "manualRows": [
+      {
+        "Invoice No": "INV/2610/XX00081",
+        "Code Outlet": "PLG-H-001",
+        "Referensi Retur/Pot.Lain": "",
+        "Nominal SRB Belum Diproses": 25000,
+        "Nominal RJS Belum Diproses": 0,
+        "Tunai Tetap Diproses": 250000,
+        "Transfer Tetap Diproses": 0,
+        "BG Tetap Diproses": 0,
+        "Biaya Tetap Diproses": 0,
+        "Ket. All Trx": "Setoran H",
+        "Aksi Manual": "Retur/Pot.Lain perlu diproses manual di Accurate"
+      }
+    ],
+    "toasts": [
+      [
+        "loading",
+        "Membedah Format Pelunasan Internal...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "warning",
+        "1 baris retur yang belum ditemukan di Accurate dilewati sementara. Contoh: INV/2610/XX00081 []"
+      ],
+      [
+        "success",
+        "Format Pelunasan dikonversi menjadi 2 Sales Receipt.",
+        {
+          "id": "parse"
+        }
+      ]
+    ],
+    "panggilan": []
+  },
+  "f10-faktur-antrean-charfield1": {
+    "catatan": "Faktur Antrean (charField1 kepala = kunci PRINCIPAL:SO) + SRB biasa dan SRB tanpa-spasi: hasil HARUS sama dengan kembarannya yang charField1 kosong (bukti: charField1 faktur tidak memengaruhi pencarian retur).",
+    "payload": [
+      {
+        "bankNo": "110102",
+        "chequeAmount": 1300000,
+        "customerNo": "PLG-J-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "CASH_OTHER",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00091",
+            "paymentAmount": 1000000
+          },
+          {
+            "invoiceNo": "INV/2610/XX00092",
+            "paymentAmount": 400000
+          }
+        ],
+        "branchId": 2,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 100000,
+          "remainingBeforeCash": 500000,
+          "maxPayable": 500000,
+          "intendedRowPayable": 500000,
+          "accuratePrimeOwing": 500000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00092",
+            "branchName": "CABANG A",
+            "primeOwing": 500000
+          },
+          "accurateSrbNumber": "NOT_FOUND",
+          "unresolvedSrbAmt": 100000,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 100000,
+          "trxAmt": 0,
+          "returLookupKey": "PLG-J-001|SRB 2610.0092",
+          "returMapHit": true,
+          "returData": {
+            "number": "NOT_FOUND",
+            "customerNo": "PLG-J-001",
+            "outstanding": 0,
+            "DEBUG_RAW": "NOT_FOUND | Logs: Parsed_SRT:[-];Parsed_FULLDOC:[-];Parsed_CODE:[SRB 2610.0092];AcceptScore:90;Step3_CODE_SRB 2610.0092_Variants:[SRB 2610.0092|SRB2610.0092];Step3_CODE_SRB 2610.0092_Len:1_Best:0;Step3_CODE_SRB 2610.0092_Top:[SRT/2610/XJ0092:0:PLG-J-001];Step4_InvKey_XX00092_NoRes;Step5_Omni_Total:2"
+          }
+        }
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": 100000,
+        "customerNo": "PLG-J-001",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Faktur INV/2610/XX00091 - SRB 2610.0091",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00091",
+            "paymentAmount": 100000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": -100000,
+        "customerNo": "PLG-J-001",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Retur SRB 2610.0091",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "SRT/2610/XJ0091",
+            "paymentAmount": -100000
+          }
+        ]
+      }
+    ],
+    "manualRows": [
+      {
+        "Invoice No": "INV/2610/XX00092",
+        "Code Outlet": "PLG-J-001",
+        "Referensi Retur/Pot.Lain": "SRB 2610.0092",
+        "Nominal SRB Belum Diproses": 100000,
+        "Nominal RJS Belum Diproses": 0,
+        "Tunai Tetap Diproses": 400000,
+        "Transfer Tetap Diproses": 0,
+        "BG Tetap Diproses": 0,
+        "Biaya Tetap Diproses": 0,
+        "Ket. All Trx": "",
+        "Aksi Manual": "Retur/Pot.Lain perlu diproses manual di Accurate"
+      }
+    ],
+    "toasts": [
+      [
+        "loading",
+        "Membedah Format Pelunasan Internal...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Mencari 2 referensi Retur Penjualan...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Menarik data Cabang dari 2 tagihan Invoice...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "warning",
+        "1 baris retur yang belum ditemukan di Accurate dilewati sementara. Contoh: INV/2610/XX00092 [SRB 2610.0092]"
+      ],
+      [
+        "success",
+        "Format Pelunasan dikonversi menjadi 3 Sales Receipt.",
+        {
+          "id": "parse"
+        }
+      ]
+    ],
+    "panggilan": [
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00091\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00092\"}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"SRB 2610.0091\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"SRB 2610.0092\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"SRB2610.0092\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"SRB 2610.0092\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.returnDocumentNumber.op\":\"CONTAIN\",\"filter.returnDocumentNumber.val\":\"SRB 2610.0092\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"PLG-J\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"XX00092\",\"sp.pageSize\":100}"
+    ]
+  },
+  "f10b-faktur-antrean-tanpa-charfield1": {
+    "catatan": "Faktur Antrean (charField1 kepala = kunci PRINCIPAL:SO) + SRB biasa dan SRB tanpa-spasi: hasil HARUS sama dengan kembarannya yang charField1 kosong (bukti: charField1 faktur tidak memengaruhi pencarian retur).",
+    "payload": [
+      {
+        "bankNo": "110102",
+        "chequeAmount": 1300000,
+        "customerNo": "PLG-J-001",
+        "transDate": "09/10/2026",
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "chequeNo": "",
+        "description": "Pelunasan Batch",
+        "paymentMethod": "CASH_OTHER",
+        "typeAutoNumber": "300",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00091",
+            "paymentAmount": 1000000
+          },
+          {
+            "invoiceNo": "INV/2610/XX00092",
+            "paymentAmount": 400000
+          }
+        ],
+        "branchId": 2,
+        "DEBUG_INFO": {
+          "availSrb": 0,
+          "usedSrb": 0,
+          "owed": 100000,
+          "remainingBeforeCash": 500000,
+          "maxPayable": 500000,
+          "intendedRowPayable": 500000,
+          "accuratePrimeOwing": 500000,
+          "invoiceLookupDebug": {
+            "found": true,
+            "lookupSource": "NUMBER_EQUAL",
+            "matchedInvoiceNo": "INV/2610/XX00092",
+            "branchName": "CABANG A",
+            "primeOwing": 500000
+          },
+          "accurateSrbNumber": "NOT_FOUND",
+          "unresolvedSrbAmt": 100000,
+          "unresolvedRjsAmt": 0,
+          "srbAmt": 100000,
+          "trxAmt": 0,
+          "returLookupKey": "PLG-J-001|SRB 2610.0092",
+          "returMapHit": true,
+          "returData": {
+            "number": "NOT_FOUND",
+            "customerNo": "PLG-J-001",
+            "outstanding": 0,
+            "DEBUG_RAW": "NOT_FOUND | Logs: Parsed_SRT:[-];Parsed_FULLDOC:[-];Parsed_CODE:[SRB 2610.0092];AcceptScore:90;Step3_CODE_SRB 2610.0092_Variants:[SRB 2610.0092|SRB2610.0092];Step3_CODE_SRB 2610.0092_Len:1_Best:0;Step3_CODE_SRB 2610.0092_Top:[SRT/2610/XJ0092:0:PLG-J-001];Step4_InvKey_XX00092_NoRes;Step5_Omni_Total:2"
+          }
+        }
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": 100000,
+        "customerNo": "PLG-J-001",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Faktur INV/2610/XX00091 - SRB 2610.0091",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "INV/2610/XX00091",
+            "paymentAmount": 100000
+          }
+        ]
+      },
+      {
+        "bankNo": "110120",
+        "chequeAmount": -100000,
+        "customerNo": "PLG-J-001",
+        "transDate": "09/10/2026",
+        "branchId": 2,
+        "branchName": "CABANG B",
+        "chequeDate": "09/10/2026",
+        "description": "Ayat Silang Retur SRB 2610.0091",
+        "paymentMethod": "OTHERS",
+        "detailInvoice": [
+          {
+            "invoiceNo": "SRT/2610/XJ0091",
+            "paymentAmount": -100000
+          }
+        ]
+      }
+    ],
+    "manualRows": [
+      {
+        "Invoice No": "INV/2610/XX00092",
+        "Code Outlet": "PLG-J-001",
+        "Referensi Retur/Pot.Lain": "SRB 2610.0092",
+        "Nominal SRB Belum Diproses": 100000,
+        "Nominal RJS Belum Diproses": 0,
+        "Tunai Tetap Diproses": 400000,
+        "Transfer Tetap Diproses": 0,
+        "BG Tetap Diproses": 0,
+        "Biaya Tetap Diproses": 0,
+        "Ket. All Trx": "",
+        "Aksi Manual": "Retur/Pot.Lain perlu diproses manual di Accurate"
+      }
+    ],
+    "toasts": [
+      [
+        "loading",
+        "Membedah Format Pelunasan Internal...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Mencari 2 referensi Retur Penjualan...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "loading",
+        "Menarik data Cabang dari 2 tagihan Invoice...",
+        {
+          "id": "parse"
+        }
+      ],
+      [
+        "warning",
+        "1 baris retur yang belum ditemukan di Accurate dilewati sementara. Contoh: INV/2610/XX00092 [SRB 2610.0092]"
+      ],
+      [
+        "success",
+        "Format Pelunasan dikonversi menjadi 3 Sales Receipt.",
+        {
+          "id": "parse"
+        }
+      ]
+    ],
+    "panggilan": [
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00091\"}",
+      "GET /api/sales-invoice/list.do {\"fields\":\"number,branch,primeOwing,customer,charField1\",\"filter.number.op\":\"EQUAL\",\"filter.number.val\":\"INV/2610/XX00092\"}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"SRB 2610.0091\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"SRB 2610.0092\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.keywords.op\":\"CONTAIN\",\"filter.keywords.val\":\"SRB2610.0092\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.number.op\":\"CONTAIN\",\"filter.number.val\":\"SRB 2610.0092\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"filter.returnDocumentNumber.op\":\"CONTAIN\",\"filter.returnDocumentNumber.val\":\"SRB 2610.0092\",\"sp.pageSize\":100}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"PLG-J\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-return/list.do {\"fields\":\"number,customer,branch,description,primeOwing,keywords,returnDocumentNumber,documentCode,charField1\",\"keyword\":\"XX00092\",\"sp.pageSize\":100}"
+    ]
+  },
+  "f11-bukan-format-pelunasan": {
+    "catatan": "Tanpa sinyal kolom Pelunasan → deteksi false → parser Pelunasan tidak jalan (jatuh ke grouping generik halaman).",
+    "payload": null,
+    "manualRows": null,
+    "toasts": [],
+    "panggilan": []
+  },
+  "p01-pratinjau-duplikat": {
+    "hasil": {
+      "routeKey": "salesReceiptBulk",
+      "passthroughRows": [
+        {
+          "originalIndex": 4,
+          "row": {
+            "bankNo": "110102",
+            "chequeAmount": 400000,
+            "customerNo": "PLG-A-004",
+            "transDate": "09/10/2026",
+            "paymentMethod": "CASH_OTHER",
+            "detailInvoice": [
+              {
+                "invoiceNo": "INV/2610/XX00004",
+                "paymentAmount": 400000
+              }
+            ]
+          }
+        }
+      ],
+      "reviewRows": [
+        {
+          "reviewId": "PAY_PLG-A-001_09/10/2026_INV/2610/XX00001|100000|__0",
+          "key": "PAY_PLG-A-001_09/10/2026_INV/2610/XX00001|100000|",
+          "row": {
+            "bankNo": "110102",
+            "chequeAmount": 100000,
+            "customerNo": "PLG-A-001",
+            "transDate": "09/10/2026",
+            "paymentMethod": "CASH_OTHER",
+            "detailInvoice": [
+              {
+                "invoiceNo": "INV/2610/XX00001",
+                "paymentAmount": 100000
+              }
+            ]
+          },
+          "originalIndex": 0,
+          "invoiceNo": "INV/2610/XX00001",
+          "customerNo": "PLG-A-001",
+          "amount": 100000,
+          "transDate": "09/10/2026",
+          "paymentMethod": "CASH_OTHER",
+          "reasons": [
+            "DUPLICATE_IN_UPLOAD"
+          ],
+          "recommended": true,
+          "matchedReceiptNumbers": []
+        },
+        {
+          "reviewId": "PAY_PLG-A-001_09/10/2026_INV/2610/XX00001|100000|__1",
+          "key": "PAY_PLG-A-001_09/10/2026_INV/2610/XX00001|100000|",
+          "row": {
+            "bankNo": "110102",
+            "chequeAmount": 100000,
+            "customerNo": "PLG-A-001",
+            "transDate": "09/10/2026",
+            "paymentMethod": "CASH_OTHER",
+            "detailInvoice": [
+              {
+                "invoiceNo": "INV/2610/XX00001",
+                "paymentAmount": 100000
+              }
+            ],
+            "description": "kembar"
+          },
+          "originalIndex": 1,
+          "invoiceNo": "INV/2610/XX00001",
+          "customerNo": "PLG-A-001",
+          "amount": 100000,
+          "transDate": "09/10/2026",
+          "paymentMethod": "CASH_OTHER",
+          "reasons": [
+            "DUPLICATE_IN_UPLOAD"
+          ],
+          "recommended": false,
+          "matchedReceiptNumbers": []
+        },
+        {
+          "reviewId": "PAY_PLG-A-002_09/10/2026_INV/2610/XX00002|200000|__2",
+          "key": "PAY_PLG-A-002_09/10/2026_INV/2610/XX00002|200000|",
+          "row": {
+            "bankNo": "110102",
+            "chequeAmount": 200000,
+            "customerNo": "PLG-A-002",
+            "transDate": "09/10/2026",
+            "paymentMethod": "CASH_OTHER",
+            "detailInvoice": [
+              {
+                "invoiceNo": "INV/2610/XX00002",
+                "paymentAmount": 200000
+              }
+            ]
+          },
+          "originalIndex": 2,
+          "invoiceNo": "INV/2610/XX00002",
+          "customerNo": "PLG-A-002",
+          "amount": 200000,
+          "transDate": "09/10/2026",
+          "paymentMethod": "CASH_OTHER",
+          "reasons": [
+            "ALREADY_SUCCESS",
+            "UNKNOWN_OUTCOME"
+          ],
+          "recommended": false,
+          "matchedReceiptNumbers": []
+        },
+        {
+          "reviewId": "PAY_PLG-A-003_09/10/2026_INV/2610/XX00003|300000|__3",
+          "key": "PAY_PLG-A-003_09/10/2026_INV/2610/XX00003|300000|",
+          "row": {
+            "bankNo": "110102",
+            "chequeAmount": 300000,
+            "customerNo": "PLG-A-003",
+            "transDate": "09/10/2026",
+            "paymentMethod": "CASH_OTHER",
+            "detailInvoice": [
+              {
+                "invoiceNo": "INV/2610/XX00003",
+                "paymentAmount": 300000
+              }
+            ]
+          },
+          "originalIndex": 3,
+          "invoiceNo": "INV/2610/XX00003",
+          "customerNo": "PLG-A-003",
+          "amount": 300000,
+          "transDate": "09/10/2026",
+          "paymentMethod": "CASH_OTHER",
+          "reasons": [
+            "ACCURATE_HISTORY"
+          ],
+          "recommended": false,
+          "matchedReceiptNumbers": [
+            "RCP/2610/0001"
+          ]
+        }
+      ],
+      "selections": {
+        "PAY_PLG-A-001_09/10/2026_INV/2610/XX00001|100000|__0": true,
+        "PAY_PLG-A-001_09/10/2026_INV/2610/XX00001|100000|__1": false,
+        "PAY_PLG-A-002_09/10/2026_INV/2610/XX00002|200000|__2": false,
+        "PAY_PLG-A-003_09/10/2026_INV/2610/XX00003|300000|__3": false
+      }
+    },
+    "panggilan": [
+      "GET /api/sales-receipt/detail.do {\"id\":9001}",
+      "GET /api/sales-receipt/detail.do {\"id\":9002}",
+      "GET /api/sales-receipt/list.do {\"fields\":\"id,number,customer,branch,transDate,chequeAmount,paymentMethod,description\",\"filter.customerNo\":\"PLG-A-001\",\"filter.transDate.op\":\"EQUAL\",\"filter.transDate.val\":\"09/10/2026\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-receipt/list.do {\"fields\":\"id,number,customer,branch,transDate,chequeAmount,paymentMethod,description\",\"filter.customerNo\":\"PLG-A-002\",\"filter.transDate.op\":\"EQUAL\",\"filter.transDate.val\":\"09/10/2026\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-receipt/list.do {\"fields\":\"id,number,customer,branch,transDate,chequeAmount,paymentMethod,description\",\"filter.customerNo\":\"PLG-A-003\",\"filter.transDate.op\":\"EQUAL\",\"filter.transDate.val\":\"09/10/2026\",\"sp.pageSize\":100,\"sp.page\":1}",
+      "GET /api/sales-receipt/list.do {\"fields\":\"id,number,customer,branch,transDate,chequeAmount,paymentMethod,description\",\"filter.customerNo\":\"PLG-A-004\",\"filter.transDate.op\":\"EQUAL\",\"filter.transDate.val\":\"09/10/2026\",\"sp.pageSize\":100,\"sp.page\":1}"
+    ]
+  }
+}

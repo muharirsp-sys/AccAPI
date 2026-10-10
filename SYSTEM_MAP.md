@@ -57,7 +57,7 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 - `python_backend/test_summary_review.py`: runnable check impor/koreksi/auth/CAS dengan SQLite sementara; dapat diberi path paket OCR asli.
 - Efisiensi: list mengambil metadata saja memakai indeks owner/tanggal; detail mengambil satu primary key. Satu perubahan menulis satu paket dalam transaksi singkat dengan pemeriksaan revisi; maksimum 8 MB per paket, tanpa HTTP di dalam transaksi.
 
-`summary_draft published` -> `routers/orders.py: published_rules/store_order` -> order menyimpan aturan, sumber, hasil -> `GET /orders/{id}` menyertakan aturan beku -> `POST /api/orders/{id}/invoice` -> PostgreSQL `invoice_outbox` menyimpan payload dan snapshot program dalam satu insert.
+`summary_draft published` -> `routers/orders.py: published_rules/store_order` -> order menyimpan aturan, sumber, hasil -> `GET /orders/{id}` menyertakan aturan beku -> `POST /api/orders/{id}/invoice` (`salesman` WAJIB saat antre, C7: `lib/order-salesman` cek `accurate_employee` aktif -> `masterSalesmanId` + `salesmanListNumber` di setiap baris, bentuk sama dengan Order Principal; daftar pilihan `GET /api/orders/salesmen`) -> PostgreSQL `invoice_outbox` menyimpan payload dan snapshot program dalam satu insert. Status per order di daftar Order Masuk: `GET /api/orders/invoice-status?ids=` (baca saja).
 
 - `lib/accurate-invoice-write.ts`: membawa bonus SKU pasti sebagai baris gratis; bonus yang SKU-nya belum dipilih menahan pembuatan payload.
 - `lib/program-realization.ts`: cocokkan database (caller), record ID, pelanggan, tanggal, cabang, SKU, unit, harga, jumlah, dan diskon. Mismatch tidak menjadi realisasi; biaya bonus kosong, bukan nol.
@@ -595,10 +595,12 @@ AccAPI/_github_clean/
 │   │   │   ├── page.tsx                # Daftar claim workflow
 │   │   │   ├── [id]/page.tsx           # Detail + aksi per workflow
 │   │   │   └── reports/page.tsx        # Laporan outstanding/paid
-│   │   ├── payments/
-│   │   │   ├── page.tsx
-│   │   │   ├── cart/[draftId]/page.tsx
-│   │   │   └── sppd/page.tsx
+│   │   ├── payments/                   # Fiori S6a (it08): server tipis (izin + FioriScope) → klien
+│   │   │   ├── page.tsx                # → Rekaman.tsx (+ RekamanDialog.tsx): List Report, simpan per rekaman, dialog unggah/manual/keranjang/hapus
+│   │   │   ├── bersama.tsx             # HTTP FastAPI (CSRF /api/me, kode status, "belum pasti"), RangkaPembayaran + subnavigasi
+│   │   │   ├── cart/[draftId]/         # page.tsx → Keranjang.tsx: Tinjau (rekening, nomor SPPD, tanggal WITA) → Diajukan
+│   │   │   ├── pengajuan/              # BL-50: page.tsx → Pengajuan.tsx (daftar); [id]/ → PengajuanDetail.tsx (Object Page)
+│   │   │   └── sppd/page.tsx           # → ../FormatSppd.tsx (+ FormatSppdDialog.tsx): setelan, rekening, operasi Pratinjau → Terapkan
 │   │   ├── api-wrapper/
 │   │   │   ├── page.tsx                # UI proxy Accurate ERP
 │   │   │   └── parsers/                # Parser bulk sales receipt
@@ -829,7 +831,11 @@ AccAPI/_github_clean/
 
 | File | Fungsi Utama | Peran |
 |---|---|---|
-| `app/(dashboard)/payments/page.tsx` | `fetchData`, `handleSaveBulk`, `handleSubmitCart` | Refresh focus/visibility ditahan saat ada edit lokal; perubahan wajib tersimpan sebelum draft cart dibuat |
+| `app/(dashboard)/payments/Rekaman.tsx` | `simpanDraf`, tile/saringan, pilihan layar | Kunci baris dari `locked_reason` server; draf isian disimpan SATU `/payments/update` per rekaman (hasil per baris); pilihan tidak dikirim sebagai `ajukan`; keranjang butuh draf kosong; jawaban tidak pasti = muat ulang + kunci tulis |
+| `app/(dashboard)/payments/bersama.tsx` | `baca`, `tulis`, `sebab` | 401/403 diterjemahkan menurut kode status; 403 diulang sekali dengan token CSRF baru; putus/≥502/bukan JSON = "belum pasti" |
+| `app/(dashboard)/payments/cart/[draftId]/Keranjang.tsx` | `ajukan` | Rekening (lookup) + nomor SPPD sebelum Ajukan; potongan angka ketat; submit tidak pasti → muat ulang; 404 = draf terpakai, terkunci |
+| `app/(dashboard)/payments/FormatSppd.tsx` | `simpan` | Simpan terkunci saat setelan gagal/sedang dimuat (AM-019); nomor terakhir hanya dikirim bila diubah + `expected_last_sequence`; nomor tidak boleh turun dalam setahun (D-05) |
+| `lib/payments-ui.ts` | `statusRekaman`, `kurangLengkap`, `izinPembayaran`, `pratinjauNomor` | Helper murni (cermin validasi cart/create, izin → alasan nonaktif, templat nomor SPPD); diuji `payments-ui.test.ts` |
 
 ### Claim Workflow
 

@@ -2,8 +2,13 @@
  * Tujuan: Unggah laporan integrasi principal jadi batch baris ternormalisasi, dan daftarnya.
  * Caller: halaman Order Principal.
  * Dependensi: lib/order-detail, db/schema (principalOrderBatch/Line, principalMapping), rbac.
- * Main Functions: GET (daftar batch / isi satu batch), POST (pratinjau atau simpan), DELETE.
+ * Main Functions: GET (daftar batch / isi satu batch), POST (pratinjau atau simpan), DELETE, soBatchDiAntrean.
  * Side Effects: DB write HANYA bila `apply=true`; tanpa itu murni pratinjau.
+ *
+ * BL-21 (owner 6 Okt 2026, ditegakkan SERVER sejak S6d): batch yang SO-nya sudah punya baris Antrean Faktur tidak boleh dihapus
+ * atau diganti — antrean kehilangan sales & outlet (dibaca dari baris batch lewat nomor SO) dan gerbang order ganda kehilangan
+ * pembandingnya. Diperiksa DI DALAM transaksi hapus/ganti, dari SEMUA nomor SO batch (bukan hanya yang lolos validasi saat ini).
+ * Mengganti (`replace=true`) menghapus batch lama, jadi butuh izin yang sama dengan Hapus (`order.edit`).
  *
  * Anti-ganda ada di PINTU MASUK: `file_hash` unik per principal. Faktur ganda di Accurate
  * tidak bisa dibatalkan, jadi berkas yang sama tidak boleh masuk dua kali tanpa disadari.
@@ -12,9 +17,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { principalMapping, principalOrderBatch, principalOrderLine } from "@/db/schema";
-import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
+import { invoiceOutbox, principalMapping, principalOrderBatch, principalOrderLine } from "@/db/schema";
+import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 import { belumTermapping, readOrderDetail, type PackInfo } from "@/lib/order-detail";
+import { invoiceKey } from "@/lib/principal-invoice";
 
 export const runtime = "nodejs";
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -37,8 +43,26 @@ async function knownCodesOf(principal: string) {
     return { customer: of("customer"), salesman: of("salesman") };
 }
 
+type Kueri = Pick<typeof db, "select">;
+
+/** BL-21: SO batch ini yang sudah punya baris Antrean Faktur (kunci = principal + nomor SO, dari SEMUA baris batch). */
+async function soBatchDiAntrean(q: Kueri, batchId: string, principal: string) {
+    const rows = await q.select({ soNo: principalOrderLine.soNo }).from(principalOrderLine).where(eq(principalOrderLine.batchId, batchId));
+    const keys = [...new Set(rows.map((row) => invoiceKey(principal, row.soNo)))];
+    if (!keys.length) return [];
+    return q.select({ orderId: invoiceOutbox.orderId, state: invoiceOutbox.state }).from(invoiceOutbox).where(inArray(invoiceOutbox.orderId, keys));
+}
+
+/** Dilempar di dalam transaksi hapus/ganti agar tidak ada yang terhapus (rollback); dijawab 409. */
+class BatchTerkunci extends Error {}
+const pesanTerkunci = (antre: { orderId: string }[], batch: "ini" | "lama") => {
+    const contoh = antre.slice(0, 3).map((row) => row.orderId.slice(row.orderId.indexOf(":") + 1)).join(", ");
+    return `${antre.length} SO batch ${batch} sudah di Antrean Faktur (${contoh}${antre.length > 3 ? ", …" : ""}); batch tidak bisa `
+        + `${batch === "ini" ? "dihapus" : "diganti"}. Buang dulu di Antrean Faktur bila memang harus diulang.`;
+};
+
 export async function GET(request: NextRequest) {
-    const gate = await resolveRequestPermissionsH();
+    const gate = await resolveRequestPermissions(request);
     if (gate.response) return gate.response;
     if (!gate.perms?.has("order.view")) {
         return NextResponse.json({ ok: false, error: "Akses order principal tidak diizinkan" }, { status: 403 });
@@ -55,7 +79,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-    const gate = await resolveRequestPermissionsH();
+    const gate = await resolveRequestPermissions(request);
     if (gate.response) return gate.response;
     if (!gate.perms?.has("order.create")) {
         return NextResponse.json({ ok: false, error: "Akses unggah laporan principal tidak diizinkan" }, { status: 403 });
@@ -68,6 +92,10 @@ export async function POST(request: NextRequest) {
     if (!principal) return NextResponse.json({ ok: false, error: "Nama principal wajib diisi" }, { status: 400 });
     const apply = String(form?.get("apply") ?? "") === "true";
     const replace = String(form?.get("replace") ?? "") === "true";
+    if (replace && !gate.perms?.has("order.edit")) {
+        // Mengganti = menghapus batch lama beserta hasil validasinya: izinnya sama dengan Hapus (BL-21).
+        return NextResponse.json({ ok: false, error: "Mengganti batch lama butuh izin ubah order (sama dengan menghapus batch)" }, { status: 403 });
+    }
 
     const bytes = new Uint8Array(await file.arrayBuffer());
     const fileHash = createHash("sha256").update(bytes).digest("hex");
@@ -109,37 +137,59 @@ export async function POST(request: NextRequest) {
     }
 
     const id = randomUUID();
-    await db.transaction(async (tx) => {
-        if (existing) await tx.delete(principalOrderBatch).where(eq(principalOrderBatch.id, existing.id));
-        await tx.insert(principalOrderBatch).values({
-            id, principal, fileName: file.name, fileHash, branch: parsed.branch, period: parsed.period,
-            lineCount: parsed.lines.length, skipped: parsed.issues.length, issues: parsed.issues.slice(0, 500),
-            status: "parsed", uploadedBy: gate.session?.user?.email ?? "",
+    try {
+        await db.transaction(async (tx) => {
+            if (existing) {
+                const antre = await soBatchDiAntrean(tx, existing.id, principal);
+                if (antre.length) throw new BatchTerkunci(pesanTerkunci(antre, "lama"));
+                await tx.delete(principalOrderBatch).where(eq(principalOrderBatch.id, existing.id));
+            }
+            await tx.insert(principalOrderBatch).values({
+                id, principal, fileName: file.name, fileHash, branch: parsed.branch, period: parsed.period,
+                lineCount: parsed.lines.length, skipped: parsed.issues.length, issues: parsed.issues.slice(0, 500),
+                status: "parsed", uploadedBy: gate.session?.user?.email ?? "",
+            });
+            for (let start = 0; start < parsed.lines.length; start += 500) {
+                await tx.insert(principalOrderLine).values(parsed.lines.slice(start, start + 500).map((line) => ({
+                    batchId: id, rowNumber: line.rowNumber, soNo: line.soNo,
+                    soDate: line.soDate || null, soStatus: line.soStatus,
+                    customerCode: line.customerCode, customerName: line.customerName, customerType: line.customerType,
+                    salesmanCode: line.salesmanCode, productCode: line.productCode, productName: line.productName,
+                    reportQty: String(line.reportQty), reportPrice: String(line.reportPrice), reportGross: String(line.reportGross),
+                    reportDiscount: String(line.reportTotalDiscount), reportPromo: String(line.reportTotalPromo), reportNet: String(line.reportNet),
+                    qty: String(line.qty), unit: line.unit, price: String(line.price),
+                    discounts: line.discounts, bonus: line.bonus,
+                })));
+            }
         });
-        for (let start = 0; start < parsed.lines.length; start += 500) {
-            await tx.insert(principalOrderLine).values(parsed.lines.slice(start, start + 500).map((line) => ({
-                batchId: id, rowNumber: line.rowNumber, soNo: line.soNo,
-                soDate: line.soDate || null, soStatus: line.soStatus,
-                customerCode: line.customerCode, customerName: line.customerName, customerType: line.customerType,
-                salesmanCode: line.salesmanCode, productCode: line.productCode, productName: line.productName,
-                reportQty: String(line.reportQty), reportPrice: String(line.reportPrice), reportGross: String(line.reportGross),
-                reportDiscount: String(line.reportTotalDiscount), reportPromo: String(line.reportTotalPromo), reportNet: String(line.reportNet),
-                qty: String(line.qty), unit: line.unit, price: String(line.price),
-                discounts: line.discounts, bonus: line.bonus,
-            })));
-        }
-    });
+    } catch (error) {
+        if (error instanceof BatchTerkunci) return NextResponse.json({ ok: false, error: error.message, duplicateOf: existing?.id }, { status: 409 });
+        throw error;
+    }
     return NextResponse.json({ ok: true, applied: true, id, ...summary });
 }
 
 export async function DELETE(request: NextRequest) {
-    const gate = await resolveRequestPermissionsH();
+    const gate = await resolveRequestPermissions(request);
     if (gate.response) return gate.response;
     if (!gate.perms?.has("order.edit")) {
         return NextResponse.json({ ok: false, error: "Akses hapus batch tidak diizinkan" }, { status: 403 });
     }
     const id = (request.nextUrl.searchParams.get("id") ?? "").trim();
     if (!id) return NextResponse.json({ ok: false, error: "Parameter id wajib diisi" }, { status: 400 });
-    const removed = await db.delete(principalOrderBatch).where(eq(principalOrderBatch.id, id)).returning({ id: principalOrderBatch.id });
-    return NextResponse.json({ ok: true, removed: removed.length });
+    const [batch] = await db.select({ id: principalOrderBatch.id, principal: principalOrderBatch.principal })
+        .from(principalOrderBatch).where(eq(principalOrderBatch.id, id));
+    // Sudah tidak ada (mis. dihapus orang lain / kiriman sebelumnya yang jawabannya tidak pasti): removed 0, layar menyebutnya.
+    if (!batch) return NextResponse.json({ ok: true, removed: 0 });
+    try {
+        const removed = await db.transaction(async (tx) => {
+            const antre = await soBatchDiAntrean(tx, batch.id, batch.principal);
+            if (antre.length) throw new BatchTerkunci(pesanTerkunci(antre, "ini"));
+            return tx.delete(principalOrderBatch).where(eq(principalOrderBatch.id, id)).returning({ id: principalOrderBatch.id });
+        });
+        return NextResponse.json({ ok: true, removed: removed.length });
+    } catch (error) {
+        if (error instanceof BatchTerkunci) return NextResponse.json({ ok: false, error: error.message }, { status: 409 });
+        throw error;
+    }
 }

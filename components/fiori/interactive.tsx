@@ -36,6 +36,8 @@ type ConfirmDialogProps = {
     children?: ReactNode;
     /** Alasan tombol konfirmasi nonaktif (mis. "Pilih berkas dulu"); tampil sebagai title. */
     confirmDisabled?: string;
+    /** Opsional: alasan nonaktif juga TERLIHAT sebagai teks di kaki dialog (dan aria-describedby tombol). Bawaan: hanya title. */
+    alasanTerlihat?: boolean;
     onConfirm: (reason: string) => Promise<void> | void;
 };
 
@@ -55,11 +57,12 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
 
 type BodyProps = ConfirmDialogProps & { titleId: string; busy: boolean; setBusy: (busy: boolean) => void };
 
-function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmLabel, cancelLabel = "Batal", tone = "primary", error, children, confirmDisabled, onConfirm, titleId, busy, setBusy }: BodyProps) {
+function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmLabel, cancelLabel = "Batal", tone = "primary", error, children, confirmDisabled, alasanTerlihat, onConfirm, titleId, busy, setBusy }: BodyProps) {
     const [text, setText] = useState("");
     const [failure, setFailure] = useState<string>();
     const inFlight = useRef(false); // disabled baru berlaku sesudah render; ref menahan klik ganda.
     const reasonId = useId();
+    const whyId = useId();
     const min = reason?.min ?? 1;
     const pendek = Boolean(reason) && text.trim().length < min;
     const blocked = !pendek ? confirmDisabled
@@ -104,8 +107,10 @@ function ConfirmBody({ onClose, title, tag, description, facts, reason, confirmL
                 {(error || failure) && <p className="fi-msg" role="alert">{error || failure}</p>}
             </div>
             <footer>
+                {alasanTerlihat && blocked && !busy && <span id={whyId} className="fi-small fi-why" style={{ marginRight: "auto", alignSelf: "center" }}>{blocked}</span>}
                 <Button onClick={onClose} disabled={busy}>{cancelLabel}</Button>
-                <Button variant={tone} busy={busy} disabled={Boolean(blocked)} disabledReason={blocked} onClick={confirm}>
+                <Button variant={tone} busy={busy} disabled={Boolean(blocked)} disabledReason={blocked} onClick={confirm}
+                    aria-describedby={alasanTerlihat && blocked && !busy ? whyId : undefined}>
                     {confirmLabel}
                 </Button>
             </footer>
