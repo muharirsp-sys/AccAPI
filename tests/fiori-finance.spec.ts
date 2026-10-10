@@ -415,6 +415,31 @@ test("Selesaikan: 'Tidak ada' nonaktif < 2 menit; 'Ada' + nomor → resolve + ca
     expect(m.command).toHaveLength(0);
 });
 
+test("A-5: already_posted dengan nomor berbeda dari attempt server ditolak di dialog; nomor sama → catatan posted", async ({ page }) => {
+    const sub = subjek(FAKTUR_A.map(([f]) => f));
+    const m = await siapkan(page, {
+        rows: () => [pengajuan("DRAFT-0418", "PRINCIPLE A", FAKTUR_A, { status_pembayaran: "Sudah Transfer", transfer_date: HARI_INI, accurate_post_status: "unknown", transfer_proof: { proof_id: "pf-0", original_filename: "b.pdf" } })],
+        attempts: { [sub]: attempt({ ageSeconds: 30 }) },
+        resolve: [{ status: 409, body: { ok: false, code: "already_posted", error: "sudah posted PP/2610/0031" } }, { status: 409, body: { ok: false, code: "already_posted", error: "sudah posted PP/2610/0031" } }],
+    });
+    const { main, detail } = await bukaPengajuan(page);
+    await detail.getByRole("button", { name: "Selesaikan…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Selesaikan posting tidak pasti" });
+    // Sementara itu tab lain mencatat attempt ini TERPOSTING PP/2610/0031.
+    m.attempts[sub] = attempt({ state: "posted", status: "posted", accurateNumber: "PP/2610/0031", ageSeconds: 200 });
+    await dlg.getByRole("radio", { name: "Ada di Accurate", exact: true }).check();
+    await dlg.getByLabel("Nomor Purchase Payment").fill("PP/2610/0099");
+    await dlg.getByLabel("Diperiksa di").fill("Accurate › Pembayaran Pembelian");
+    await dlg.getByLabel("Alasan").fill("Pembayaran ada dengan nilai dan faktur yang sama.");
+    await dlg.getByRole("button", { name: "Simpan penyelesaian" }).click();
+    await expect(dlg.getByRole("alert")).toContainText("TERPOSTING sebagai PP/2610/0031, berbeda dengan nomor yang Anda isi (PP/2610/0099)", NAV);
+    expect(m.update).toHaveLength(0);
+    await dlg.getByLabel("Nomor Purchase Payment").fill("pp/2610/0031");
+    await dlg.getByRole("button", { name: "Simpan penyelesaian" }).click();
+    await expect(main.getByRole("status").filter({ hasText: "ditandai terposting PP/2610/0031" })).toBeVisible(NAV);
+    expect(m.update.at(-1)).toMatchObject({ accurate_post_status: "posted", accurate_purchase_payment_number: "PP/2610/0031" });
+});
+
 test("Selesaikan 'Tidak ada' setelah basi; already_posted untuk 'Tidak ada' ditolak di dialog (catatan tidak berubah)", async ({ page }) => {
     const sub = subjek(FAKTUR_A.map(([f]) => f));
     const m = await siapkan(page, {

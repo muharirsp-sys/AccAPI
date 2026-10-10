@@ -507,7 +507,9 @@ const PESAN_RESOLVE: Record<string, string> = {
  */
 export async function selesaikanTidakPasti(p: { record: FinanceRecord; date: string; ada: boolean; nomor: string; sumber: string; alasan: string }) {
     const { record } = p;
-    const number = p.ada ? p.nomor.trim() : "";
+    let number = p.ada ? p.nomor.trim() : "";
+    // Tinjauan A-5: "Ada" tanpa nomor dulu terkirim sebagai "absent" — membuka posting ulang untuk pembayaran yang ADA.
+    if (p.ada && !number) throw new Error("Isi nomor Purchase Payment yang Anda lihat di Accurate.");
     let r: Response;
     try {
         r = await fetch("/api/finance/purchase-payment/resolve", {
@@ -526,8 +528,17 @@ export async function selesaikanTidakPasti(p: { record: FinanceRecord; date: str
     }
     const out = (await bacaTeks(r)) as { code?: string; error?: string } | null;
     if (r.status >= 502 || out === null) throw new TidakPasti(`Server tidak memberi jawaban yang pasti (HTTP ${r.status}); penyelesaian mungkin sudah tercatat.`);
-    const serverOk = r.ok || (r.status === 404 && out.code === "no_open_attempt") || (out.code === "already_posted" && Boolean(number));
-    if (!serverOk) {
+    const serverOk = r.ok || (r.status === 404 && out.code === "no_open_attempt");
+    if (out.code === "already_posted" && number) {
+        // Server sudah mencatat TERPOSTING: catatan Finance hanya boleh memakai nomor yang sama dengan attempt server (tinjauan A-5).
+        const { map, galat } = await bacaAttempts([record]);
+        const nomorServer = map.get(recordKey(record))?.accurateNumber ?? "";
+        if (galat) throw new Error(`Server sudah mencatat percobaan ini TERPOSTING, tetapi nomornya tidak terbaca (${galat}). Muat ulang lalu periksa lagi.`);
+        if (nomorServer.trim().toUpperCase() !== number.toUpperCase()) {
+            throw new Error(`Server mencatat percobaan ini TERPOSTING sebagai ${nomorServer || "(tanpa nomor)"}, berbeda dengan nomor yang Anda isi (${number}). Periksa lagi di Accurate.`);
+        }
+        number = nomorServer.trim(); // ejaan server yang dicatat
+    } else if (!serverOk) {
         const pesan = r.status === 401 ? "Sesi berakhir. Masuk ulang lalu ulangi."
             : r.status === 403 ? "Hanya Finance yang berwenang menyelesaikan posting tidak pasti."
             : (out.code && PESAN_RESOLVE[out.code]) || saringCatatan(out.error) || `Penyelesaian ditolak server (HTTP ${r.status}).`;
