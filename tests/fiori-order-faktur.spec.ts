@@ -31,8 +31,9 @@ const DETAIL = {
     branchName: "CABANG A", salesName: "", description: "", status: "Belum Lunas", subTotal: 1524000, totalDiscount: 57600, tax: 161304,
     totalAmount: 1627704, paid: 0, owing: 1627704, paymentTerm: "Net 14", lastPaymentDate: "",
     items: [
-        { itemNo: "BRG-A1", itemName: "BARANG A1 100 ML", quantity: 2, unit: "KRT", unitPrice: 576000, discount: 57600, total: 1094400 },
-        { itemNo: "BRG-A2", itemName: "BARANG A2 200 ML", quantity: 2, unit: "LSN", unitPrice: 186000, discount: 0, total: 372000 },
+        // Faktur dari Antrean Faktur: sales hanya di BARIS (kepala salesName kosong).
+        { itemNo: "BRG-A1", itemName: "BARANG A1 100 ML", quantity: 2, unit: "KRT", unitPrice: 576000, discount: 57600, total: 1094400, salesmen: ["SALES A"] },
+        { itemNo: "BRG-A2", itemName: "BARANG A2 200 ML", quantity: 2, unit: "LSN", unitPrice: 186000, discount: 0, total: 372000, salesmen: ["SALES A"] },
     ],
 };
 const LUNAS = {
@@ -91,7 +92,7 @@ test("Default + Memuat: kepala dari cache tampil segera, barang dan ringkasan me
     await expect(ringkas).toContainText("Sisa tagihanRp 1.627.704");
     const info = det.getByRole("region", { name: "Info" });
     await expect(info).toContainText("CabangCABANG A");
-    await expect(info).toContainText("Sales—");
+    await expect(info).toContainText("SalesSALES A (per baris; tidak tercatat di kepala faktur)");
     await expect(info).toContainText("TerminNet 14");
     await expect(info).toContainText("Dibuat di Accurate—"); // createdAt hanya dari webhook
     await expect(info).toContainText("Perubahan terakhir06/10/2026, 10.10 WITA");

@@ -21,7 +21,7 @@ import {
     Section, Skeleton, StatusBadge, VariantNote, type Column,
 } from "@/components/fiori/core";
 import { FormField, useLoad, type Load } from "@/components/fiori/interactive";
-import type { FakturDetail, FakturItem } from "@/lib/accurate-invoice";
+import { salesFaktur, type FakturDetail, type FakturItem } from "@/lib/accurate-invoice";
 import { rupiah } from "@/lib/promo-ui";
 import { ambilJson, type Jawaban } from "../form-kontrol/lapangan";
 
@@ -44,6 +44,12 @@ const waktuWita = (iso: string | null) => {
 /** Sama dengan validasi tautan realisasi lama: bilangan bulat positif yang aman. */
 const idSah = (v: string | null) => (v && /^[1-9]\d*$/.test(v) && Number.isSafeInteger(Number(v)) ? Number(v) : null);
 const PESAN_ANTREAN = "Akun Anda tidak berhak membuka Antrean Faktur.";
+
+/** Sales faktur: kepala, atau dari baris bila kepala kosong (faktur Antrean Faktur menyimpan sales per baris). */
+function teksSales(d: FakturDetail): string {
+    const s = salesFaktur(d);
+    return s.sumber === "kepala" ? s.teks : s.sumber === "baris" ? `${s.teks} (per baris; tidak tercatat di kepala faktur)` : "— (tidak tercatat di kepala maupun baris faktur)";
+}
 
 /** Kalimat galat baca — tanpa kode status mentah dan tanpa HTML halaman galat proxy. Pesan server (mis. penolakan Accurate) tampil apa adanya. */
 function sebab(j: Jawaban, umum: string): string {
@@ -289,7 +295,7 @@ function ObjekFaktur({ pilihan, baris, bolehAntrean }: { pilihan: Pilihan; baris
                     <div className="fi-sect-in">
                         <KeyValues items={[
                             ["Cabang", dariDetail(d?.branchName)],
-                            ["Sales", dariDetail(d?.salesName)],
+                            ["Sales", d ? teksSales(d) : dariDetail(undefined)],
                             ["Jatuh tempo", dash(baris?.dueDate ?? d?.dueDate)],
                             ["Termin", dariDetail(d?.paymentTerm)],
                             ["Bayar terakhir", dariDetail(d?.lastPaymentDate)],

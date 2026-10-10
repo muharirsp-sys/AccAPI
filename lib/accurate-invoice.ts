@@ -1,6 +1,6 @@
 /*
  * Tujuan: Petakan respons sales-invoice/detail.do Accurate jadi bentuk siap-tampil (header + baris item).
- * Caller: app/api/faktur/[id]/route.ts, tests/faktur-detail-map.spec.ts.
+ * Caller: app/api/faktur/[id]/route.ts, app/(dashboard)/faktur (salesFaktur), tests/faktur-detail-map.spec.ts, lib/accurate-invoice.test.ts.
  * Catatan: nama field DIVERIFIKASI LIVE 2026-08-19 (faktur 304428 + INV/2608/HZ01521 di production,
  *          lihat ?raw=1 di route detail). Alias tebakan sudah dibuang — kalau suatu saat ada kolom
  *          kosong, cek ulang dengan ?raw=1 dulu sebelum menambah alias baru.
@@ -43,6 +43,8 @@ export type FakturItem = {
     unitPrice: number;
     discount: number;
     total: number;
+    /** Sales baris ini (`salesmanList[]`: nama, atau nomor pegawai bila nama kosong). Accurate menyimpan sales PER BARIS. */
+    salesmen: string[];
 };
 
 export type FakturDetail = {
@@ -81,6 +83,8 @@ export function mapFakturDetail(row: unknown): FakturDetail {
             unitPrice: num(d.unitPrice),
             discount: num(d.itemCashDiscount),
             total: num(d.totalPrice),
+            salesmen: (Array.isArray(d.salesmanList) ? d.salesmanList : [])
+                .map((entry) => str(obj(entry).name) || str(obj(entry).number)).filter(Boolean),
         };
     });
 
@@ -112,4 +116,14 @@ export function mapFakturDetail(row: unknown): FakturDetail {
         lastPaymentDate: str(r.lastPaymentDate),
         items,
     };
+}
+
+/**
+ * Sales yang ditampilkan untuk satu faktur: kepala (`salesName`) bila ada; bila kosong, sales dari BARIS (faktur Antrean Faktur
+ * membawa sales per baris — `salesmanListNumber` — dan kepala bisa kosong). Tidak ada di keduanya = kosong, bukan tebakan.
+ */
+export function salesFaktur(d: Pick<FakturDetail, "salesName" | "items">): { teks: string; sumber: "kepala" | "baris" | "tidak ada" } {
+    if (d.salesName.trim()) return { teks: d.salesName.trim(), sumber: "kepala" };
+    const baris = [...new Set(d.items.flatMap((item) => item.salesmen ?? []))];
+    return baris.length ? { teks: baris.join(", "), sumber: "baris" } : { teks: "", sumber: "tidak ada" };
 }
