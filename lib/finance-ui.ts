@@ -4,7 +4,7 @@
  *   kapan "Tidak ada di Accurate" boleh dipilih, dan penyaring catatan lama. Tanpa HTTP.
  * Caller: app/(dashboard)/finance/{Finance,posting}.tsx/ts, finance-ui.test.ts.
  * Dependensi: lib/finance-post-status (postStatusNote, teks C11), lib/promo-ui (tgl), tipe Tone.
- * Main Functions: izinFinance, statusTransfer, statusPosting, kodeTampil, kunciBaris, bedaPengajuan, alasanTidakAda, saringCatatan, catatanPosting, alasanFaktur.
+ * Main Functions: izinFinance, statusTransfer, statusPosting, kodeTampil, kunciBaris, bedaPengajuan, potongKelompok, alasanTidakAda, saringCatatan, catatanPosting, alasanFaktur.
  * Side Effects: Tidak ada.
  */
 import type { Tone } from "@/components/fiori/core";
@@ -165,6 +165,24 @@ export function catatanPosting(kode: KodePosting, error: string, raw: string): s
     if (kode === "tidak_pasti") return saringCatatan(postStatusNote("unknown", saringCatatan(error), raw || "unknown"));
     if (kode === "gagal") return `Posting gagal${error ? `: ${saringCatatan(error)}` : ""}. Boleh diposting ulang setelah diperbaiki.`;
     return "";
+}
+
+/**
+ * Tinjauan A-6: GET /attempts dipotong per 100 kelompok (batas server) DAN per panjang query (batas baris permintaan/header
+ * server/proxy — 414). `params` = potongan query yang sudah di-encode, satu per kelompok; hasil = indeks per permintaan, urutan
+ * tetap. Satu kelompok yang sendirian melebihi batas tetap dikirim sendiri (server yang memutuskan).
+ */
+export function potongKelompok(params: string[], maks = 100, maksKarakter = 6000): number[][] {
+    const out: number[][] = [];
+    let kini: number[] = [];
+    let panjang = 0;
+    params.forEach((q, i) => {
+        if (kini.length && (kini.length >= maks || panjang + 1 + q.length > maksKarakter)) { out.push(kini); kini = []; panjang = 0; }
+        kini.push(i);
+        panjang += (panjang ? 1 : 0) + q.length;
+    });
+    if (kini.length) out.push(kini);
+    return out;
 }
 
 type PengajuanBanding = {

@@ -13,7 +13,7 @@
 import type { Load } from "@/components/fiori/interactive";
 import { resolveApiBase } from "@/lib/apiBase";
 import { certainlyNotSent, purchasePaymentConflict } from "@/lib/finance-post-status";
-import { alasanFaktur, bedaPengajuan, saringCatatan, type AttemptFinance } from "@/lib/finance-ui";
+import { alasanFaktur, bedaPengajuan, potongKelompok, saringCatatan, type AttemptFinance } from "@/lib/finance-ui";
 
 export type FinanceMapping = { principle?: string; vendorNo?: string; vendorName?: string; bankNo?: string; bankName?: string };
 export type ProofMeta = { proof_id?: string; original_filename?: string; stored_filename?: string; sha256?: string; url?: string };
@@ -182,7 +182,8 @@ export async function bacaSesi(): Promise<{ sesi: SesiAccurate | null; galat?: s
 }
 
 /**
- * Status attempt server per baris (maks. 100 kelompok per permintaan); baris tanpa faktur sah tidak ditanyakan (= null).
+ * Status attempt server per baris (maks. 100 kelompok dan ±6.000 karakter query per permintaan — potongKelompok); baris tanpa faktur
+ * sah tidak ditanyakan (= null).
  * ponytail: nomor faktur yang memuat koma terpecah di parameter GET (subjek beda dari POST) → tampil "belum"; server tetap
  * memblokir posting kedua lewat klaim 409. Kirim kelompok sebagai JSON bila nomor berkoma pernah muncul.
  */
@@ -190,9 +191,10 @@ async function bacaAttempts(rows: FinanceRecord[]): Promise<{ map: Map<string, A
     const map = new Map<string, AttemptFinance | null>();
     const ditanya = rows.filter((r) => !alasanFaktur(r.detail_invoices));
     for (const r of rows) map.set(recordKey(r), null);
-    for (let i = 0; i < ditanya.length; i += 100) {
-        const bagian = ditanya.slice(i, i + 100);
-        const q = bagian.map((r) => `invoices=${encodeURIComponent(r.detail_invoices.map((d) => d.invoiceNo.trim()).join(","))}`).join("&");
+    const params = ditanya.map((r) => `invoices=${encodeURIComponent(r.detail_invoices.map((d) => d.invoiceNo.trim()).join(","))}`);
+    for (const indeks of potongKelompok(params)) {
+        const bagian = indeks.map((i) => ditanya[i]);
+        const q = indeks.map((i) => params[i]).join("&");
         try {
             const res = await fetch(`/api/finance/purchase-payment/attempts?${q}`, { cache: "no-store" });
             const d = await bacaTeks(res);

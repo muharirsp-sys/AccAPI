@@ -2,7 +2,7 @@
  * penyaring catatan lama. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LABEL_POSTING, alasanFaktur, bedaPengajuan, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, saringCatatan, statusPosting, statusTransfer, type AttemptFinance } from "./finance-ui.ts";
+import { LABEL_POSTING, alasanFaktur, bedaPengajuan, potongKelompok, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, saringCatatan, statusPosting, statusTransfer, type AttemptFinance } from "./finance-ui.ts";
 
 const attempt = (over: Partial<AttemptFinance>): AttemptFinance => ({
     attemptId: "a1", state: "unknown", status: "unknown", stale: false, accurateNumber: "", actorName: "Finance A", clientRef: "K1", targetDbId: "DB-1",
@@ -126,6 +126,18 @@ test("B-5: baris dibaca ulang sebelum tulis — nilai/faktur/status berubah atau
     assert.equal(bedaPengajuan(p, { ...p, detail_invoices: [{ invoiceNo: "A", paymentAmount: 900 }, { invoiceNo: "B", paymentAmount: 600 }] }), "faktur atau nilainya");
     assert.equal(bedaPengajuan(p, { ...p, status_pembayaran: "Ajukan Ulang" }), "status transfer");
     assert.equal(bedaPengajuan(p, { ...p, accurate_post_status: "unknown" }), "status posting");
+});
+
+test("A-6: query /attempts dipotong per 100 kelompok DAN per panjang karakter; urutan tetap", () => {
+    assert.deepEqual(potongKelompok([]), []);
+    const kecil = Array.from({ length: 250 }, (_, i) => `invoices=I${i}`);
+    assert.deepEqual(potongKelompok(kecil).map((x) => x.length), [100, 100, 50]);
+    const panjang = Array.from({ length: 10 }, () => `invoices=${"X".repeat(2500)}`); // 2509 karakter per kelompok
+    const bagian = potongKelompok(panjang);
+    assert.deepEqual(bagian.map((x) => x.length), [2, 2, 2, 2, 2]);
+    for (const b of bagian) assert.ok(b.map((i) => panjang[i]).join("&").length <= 6000);
+    assert.deepEqual(bagian.flat(), panjang.map((_, i) => i), "urutan & kelengkapan");
+    assert.deepEqual(potongKelompok([`invoices=${"Y".repeat(7000)}`, "invoices=A"]), [[0], [1]], "kelompok raksasa dikirim sendiri");
 });
 
 test("faktur kosong/BELUM ADA menahan posting", () => {
