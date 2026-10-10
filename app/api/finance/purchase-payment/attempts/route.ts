@@ -4,7 +4,7 @@
  * Caller: app/(dashboard)/finance (S6b).
  * Dependensi: lib/accurate-write-attempt (latestAttemptsBySubject, purchasePaymentSubject), lib/rbac/resolve.
  * Main Functions: GET ?invoices=INV-1,INV-2&invoices=INV-3 (satu parameter = satu kelompok, maks. 100) ->
- *   {ok, data:[{invoices, subjectKey, attempt|null}]}. Subjek = himpunan faktur yang sama dengan POST (format kunci tidak berubah).
+ *   {ok, data:[{invoices, subjectKey, attempt|null}]}; attempt memuat clientRef (record pengirim) dan targetDbId. Subjek = himpunan faktur yang sama dengan POST (format kunci tidak berubah).
  * Side Effects: SELECT accurate_write_attempt (+ nama user). Tidak menulis apa pun, tidak memanggil Accurate.
  */
 import { NextResponse } from "next/server";
@@ -30,6 +30,8 @@ function view(a: AttemptView) {
         accurateId: a.accurateId,
         actor: a.actor,
         actorName: a.actorName,
+        // Tinjauan S6b A-3: record pengirim (format recordKey lama) — layar hanya menganggap "posted" milik record & database yang sama.
+        clientRef: a.clientRef,
         targetDbId: a.targetDbId,
         generation: a.generation,
         ageSeconds: a.ageSeconds,

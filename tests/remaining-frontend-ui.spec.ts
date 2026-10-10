@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
 
-test("Date picker exposes its popup as a combobox", async ({ page }) => {
+// Fiori S6b: Finance memakai input tanggal native berlabel (bawaan = hari ini WITA), bukan DatePickerField combobox.
+test("Finance date filter is a labelled native date input defaulting to today in WITA", async ({ page }) => {
     await page.goto("/finance");
-    const picker = page.getByRole("combobox", { name: "Filter tanggal finance" });
-    await expect(picker).toHaveAttribute("aria-haspopup", "dialog");
-    await expect(picker).toHaveAttribute("aria-expanded", "false");
+    const tanggal = page.getByLabel("Tanggal bayar (WITA)");
+    await expect(tanggal).toHaveAttribute("type", "date");
+    await expect(tanggal).toHaveValue(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Makassar" }).format(new Date()));
 });
 
 test("Claim Workflow replaces empty API responses with user-facing errors", async ({ page }) => {

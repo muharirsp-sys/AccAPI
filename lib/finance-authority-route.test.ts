@@ -57,13 +57,13 @@ const PP_PAYLOAD = [{ bankNo: "1101", vendorNo: "V-01", chequeAmount: 1000, tran
     paymentMethod: "BANK_TRANSFER", description: "SPPD: 001", detailInvoice: [{ invoiceNo: "INV-1", paymentAmount: 1000 }] }];
 
 test("tinjauan S6-0a: POST /api/finance/purchase-payment tanpa finance.update -> 403 sebelum sesi/DB/jaringan", async () => {
-    const denied = await asUserWith(financeAllBut("finance.update"), () => postPurchasePayment(jsonPost("/api/finance/purchase-payment", { clientRef: "k", payload: PP_PAYLOAD })));
+    const denied = await asUserWith(financeAllBut("finance.update"), () => postPurchasePayment(jsonPost("/api/finance/purchase-payment", { clientRef: "k", expectedDatabaseId: "DB-1", payload: PP_PAYLOAD })));
     assert.equal(denied.status, 403);
 });
 
 test("tinjauan S6-0a: galat SEBELUM klaim (baca sesi Accurate melempar) -> 503 {claimed:false}, tidak dikirim", async () => {
     // asUserWith: select().from().where() tanpa .limit -> getAccurateSession melempar (mis. DB putus saat baca sesi).
-    const res = await asUserWith(["finance.update"], () => postPurchasePayment(jsonPost("/api/finance/purchase-payment", { clientRef: "k", payload: PP_PAYLOAD })));
+    const res = await asUserWith(["finance.update"], () => postPurchasePayment(jsonPost("/api/finance/purchase-payment", { clientRef: "k", expectedDatabaseId: "DB-1", payload: PP_PAYLOAD })));
     assert.equal(res.status, 503);
     const body = await res.json() as { claimed?: boolean; error?: string };
     assert.equal(body.claimed, false);

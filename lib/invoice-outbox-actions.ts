@@ -5,7 +5,7 @@
  *   Dipisah dari route agar diuji dengan Postgres evaluasi (route memakai next/headers).
  * Dependensi: invoice_outbox + invoice_outbox_event, lib/accurate-invoice-write (aturan status),
  *   lib/invoice-outbox-event, lib/invoice-search (pencarian faktur AM-029, disuntikkan).
- * Main Functions: aksiAntrean, antrekan, selesaikanTidakPasti, cariTidakPasti, sekaliJalan, pencariFaktur, pencariPenekan, sesiCariSah.
+ * Main Functions: aksiAntrean, antrekan, kunciBatch, selesaikanTidakPasti, cariTidakPasti, sekaliJalan, pencariFaktur, pencariPenekan, sesiCariSah.
  * Side Effects: UPDATE/DELETE/INSERT invoice_outbox + INSERT event dalam SATU transaksi per baris.
  *   Request ke Accurate HANYA lewat pencari yang disuntikkan (BACA SAJA, list.do/detail.do).
  *
@@ -17,7 +17,7 @@
  */
 import { and, eq, inArray } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { invoiceOutbox, salesInvoiceCache } from "@/db/schema";
+import { invoiceOutbox, principalOrderBatch, salesInvoiceCache } from "@/db/schema";
 import { discardable, resendable, type InvoicePayload, type OutboxState } from "@/lib/accurate-invoice-write";
 import { catatEvent, menitSejakKirimTerakhir, pernahDibuang, waktuAntrePertama } from "@/lib/invoice-outbox-event";
 import { cariFaktur, type HasilCari, type SesiCari } from "@/lib/invoice-search";
@@ -177,6 +177,29 @@ export async function aksiAntrean(
         : BERUBAH;
 }
 
+/**
+ * BL-21: kunci baris `principal_order_batch` — WAJIB pernyataan PERTAMA transaksi (penjaga statik lib/route-lock-order.test.ts).
+ * Hapus/Ganti batch = `update` (lalu periksa antrean, lalu hapus); antre dari batch = `key share` (lalu tulis antrean). Keduanya
+ * bentrok, jadi yang kedua menunggu: hapus duluan -> antre melihat batch sudah tidak ada dan tidak menulis; antre duluan -> hapus
+ * (READ COMMITTED, snapshot baru per pernyataan) melihat baris antreannya dan menjawab 409. `key share` sengaja paling lemah:
+ * antre dan Validasi tidak saling menahan. Validasi juga `key share`, SEBELUM baris line: Hapus memegang batch lalu CASCADE ke
+ * line, jadi Validasi yang mengubah line dulu = siklus 40P01. undefined = batch sudah tidak ada.
+ */
+export async function kunciBatch(tx: Pick<NodePgDatabase, "select">, batchId: string, mode: "update" | "key share") {
+    const [batch] = await tx.select({ id: principalOrderBatch.id, principal: principalOrderBatch.principal, validatedAt: principalOrderBatch.validatedAt })
+        .from(principalOrderBatch).where(eq(principalOrderBatch.id, batchId)).for(mode);
+    return batch;
+}
+
+const BATCH_HILANG = "batch laporan principal sudah dihapus atau diganti (atau divalidasi ulang) saat diantrekan; muat ulang lalu ulangi dari batch yang ada";
+
+/**
+ * BL-21: batch masih ada DAN `validated_at`-nya masih yang dipakai membentuk payload. Hanya Validasi yang menulis baris
+ * batch, dan setiap Validasi memperbarui validated_at — jadi ia versi isi baris. undefined = pemanggil tidak membawa versi.
+ */
+const batchSah = (batch: Awaited<ReturnType<typeof kunciBatch>>, versi: Date | null | undefined) =>
+    !!batch && (versi === undefined || batch.validatedAt?.getTime() === versi?.getTime());
+
 export type CalonAntre = {
     orderId: string;
     customerNo: string;
@@ -196,10 +219,14 @@ export type HasilAntre = {
  * Masukkan calon ke antrean. Kunci yang PERNAH dibuang (event `buang`) wajib lolos pencarian faktur
  * dulu (E2): ketemu -> baris dibuat langsung TERPOSTING; gagal -> tidak diantrekan, sebabnya dikembalikan.
  * Kunci yang sudah ada di antrean dilewati (ON CONFLICT) — pemanggil sudah menyaringnya.
+ * `batchId` (jalur Order Principal, BL-21): setiap transaksi tulis mengunci batch dulu; batch yang sudah dihapus/diganti, atau
+ * `validated_at`-nya bukan lagi `batchVersi` (payload dibentuk dari baris SEBELUM Validasi ulang) =
+ * tidak ada yang diantrekan.
  */
 export async function antrekan(
     database: NodePgDatabase,
-    input: { entries: CalonAntre[]; actor: string; targetDb: string; cari: Pencari | null; detail?: Record<string, unknown> },
+    input: { entries: CalonAntre[]; actor: string; targetDb: string; cari: Pencari | null; detail?: Record<string, unknown>; batchId?: string;
+        batchVersi?: Date | null },
 ): Promise<HasilAntre> {
     const hasil: HasilAntre = { queued: [], posted: [], blocked: [] };
     const dibuang = await pernahDibuang(database, input.entries.map((entry) => entry.orderId));
@@ -220,6 +247,7 @@ export async function antrekan(
         }
         if (cari.hasil === "tidak_ketemu_dicek") { biasa.push({ entry, pencarian }); continue; }
         const masuk = await database.transaction(async (tx) => {
+            if (input.batchId && !batchSah(await kunciBatch(tx, input.batchId, "key share"), input.batchVersi)) return null;
             const rows = await tx.insert(invoiceOutbox).values({
                 orderId: entry.orderId, customerNo: entry.customerNo, orderDate: entry.orderDate, state: "posted",
                 payload: entry.payload, programSnapshot: entry.programSnapshot ?? null, queuedBy: input.actor,
@@ -234,12 +262,14 @@ export async function antrekan(
             }
             return rows.length;
         });
-        if (masuk) hasil.posted.push({ orderId: entry.orderId, accurateId: cari.id, number: cari.number });
+        if (masuk === null) hasil.blocked.push({ orderId: entry.orderId, reason: BATCH_HILANG });
+        else if (masuk) hasil.posted.push({ orderId: entry.orderId, accurateId: cari.id, number: cari.number });
     }
 
     if (biasa.length) {
         // Baris antrean + event `antre` dalam SATU transaksi (BL-17): yang masuk antrean selalu berjejak.
         const inserted = await database.transaction(async (tx) => {
+            if (input.batchId && !batchSah(await kunciBatch(tx, input.batchId, "key share"), input.batchVersi)) return null;
             const rows = await tx.insert(invoiceOutbox).values(biasa.map(({ entry }) => ({
                 orderId: entry.orderId, customerNo: entry.customerNo, orderDate: entry.orderDate, state: "queued",
                 payload: entry.payload, programSnapshot: entry.programSnapshot ?? null, queuedBy: input.actor,
@@ -251,7 +281,8 @@ export async function antrekan(
             })));
             return rows;
         });
-        hasil.queued.push(...inserted.map((row) => row.orderId));
+        if (inserted === null) hasil.blocked.push(...biasa.map(({ entry }) => ({ orderId: entry.orderId, reason: BATCH_HILANG })));
+        else hasil.queued.push(...inserted.map((row) => row.orderId));
     }
     return hasil;
 }

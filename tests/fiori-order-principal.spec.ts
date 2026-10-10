@@ -202,6 +202,50 @@ test("Berkas sama: dialog Ganti membaca antrean batch lama — ada SO antre / ga
     expect(field(simpan.at(-1)!.body as string, "apply")).toBe("true");
 });
 
+test("Ganti: status antrean batch lama dibaca ULANG tepat sebelum replace; putus → belum pasti, footer menulis alasan nonaktif (M5/M6)", async ({ page }) => {
+    let bacaan = 0;
+    let putus = false;
+    const kirim = await pasang(page, {
+        // Bacaan pertama (dialog dibuka) kosong; bacaan kedua (tepat sebelum replace) sudah ada SO antre — dialognya usang.
+        antrean: (id, r) => { bacaan += 1; return antreanServer(() => (bacaan === 2 ? ["1671-SOP-260013022"] : []))(id, r); },
+        unggah: (form, r) => (field(form, "apply") === "true"
+            ? (putus ? r.abort("connectionreset") : r.fulfill(json({ ok: true, applied: true, id: "b2", lineCount: 64 })))
+            : r.fulfill(json({ ok: true, applied: false, fileName: BATCH_LAMA.fileName, branch: "CABANG A", period: "2026-10-02", lineCount: 64, skipped: 0, issues: [],
+                unmappedProducts: [], unmappedCustomers: [], unmappedSalesmen: [], duplicateOf: { id: "b0", fileName: BATCH_LAMA.fileName, uploadedAt: BATCH_LAMA.uploadedAt } }))),
+    });
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/principal-order", NAV);
+    const main = page.locator("main");
+    const ftb = page.locator(".fi-ftb");
+    await main.getByLabel(/Berkas Order Detail/).setInputFiles(berkas(BATCH_LAMA.fileName));
+    await ftb.getByRole("button", { name: "Pratinjau" }).click();
+    await expect(ftb).toContainText("Berkas sama dengan batch yang sudah ada", NAV);
+    const gantiLama = ftb.getByRole("button", { name: "Ganti batch lama…" });
+    await expect(gantiLama).toBeEnabled();
+    await expect(ftb).not.toContainText("belum pasti");
+
+    await gantiLama.click();
+    let dlg = page.getByRole("dialog");
+    await expect(dlg.getByRole("button", { name: "Ganti batch", exact: true })).toBeEnabled();
+    await dlg.getByRole("button", { name: "Ganti batch", exact: true }).click();
+    await expect(dlg.getByRole("alert")).toContainText("1 SO batch lama sudah di Antrean Faktur; batch tidak bisa diganti (BL-21)");
+    const tulisGanti = () => kirim.filter((k) => k.method === "POST" && k.path === "/api/principal-order" && field(k.body as string, "apply") === "true");
+    expect(tulisGanti()).toHaveLength(0);
+    await dlg.getByRole("button", { name: "Batal" }).click();
+
+    putus = true; // bacaan ke-3 dst. kosong; replace putus → hasil belum pasti
+    await gantiLama.click();
+    dlg = page.getByRole("dialog");
+    await dlg.getByRole("button", { name: "Ganti batch", exact: true }).click();
+    await expect(dlg.getByRole("alert")).toContainText("hasilnya belum pasti");
+    expect(tulisGanti().map((k) => field(k.body as string, "replace"))).toEqual(["true"]);
+    await dlg.getByRole("button", { name: "Batal" }).click();
+    await expect(dlg).toBeHidden();
+    // M6: alasan nonaktif tampil sebagai TEKS footer, bukan hanya `title` tombol.
+    await expect(gantiLama).toBeDisabled();
+    await expect(ftb).toContainText("Berkas sama dengan batch yang sudah ada. Hasil simpan sebelumnya belum pasti; periksa Batch terakhir, lalu Pratinjau ulang.");
+});
+
 test("Validasi: Ditahan utuh paling atas, harga Accurate & selisih, peringatan strip, Bukan order ganda lewat dialog, Cabut langsung, Segarkan harga", async ({ page }) => {
     let lambat = false;
     const kirim = await pasang(page, {

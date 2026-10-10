@@ -14,7 +14,7 @@ import { auth } from "./auth.ts";
 import { db } from "./db.ts";
 
 /** Sesi & grup dipalsukan (tanpa bypass lokal); DB lain dan jaringan DILARANG. */
-async function asUserWith<T>(keys: string[], fn: () => Promise<T>): Promise<T> {
+async function asUserWith<T>(keys: string[], fn: () => Promise<T>, attemptRows?: unknown[]): Promise<T> {
     const saved = [
         [auth.api, "getSession", Object.getOwnPropertyDescriptor(auth.api, "getSession")],
         [db, "select", Object.getOwnPropertyDescriptor(db, "select")],
@@ -25,7 +25,7 @@ async function asUserWith<T>(keys: string[], fn: () => Promise<T>): Promise<T> {
     Object.defineProperty(auth.api, "getSession", { configurable: true, value: async () => ({ user: { id: "u-fin", role: "staff" }, session: { id: "s1" } }) });
     const rows = keys.map((key) => ({ groupId: "g1", key }));
     // getUserPermissions = select().from().leftJoin().where(); query attempt (select().from().leftJoin().where().orderBy()) melempar.
-    Object.defineProperty(db, "select", { configurable: true, value: () => ({ from: () => ({ leftJoin: () => ({ where: () => Object.assign(Promise.resolve(rows), { orderBy: () => { throw new Error("DB attempt tidak tersedia di uji ini"); } }) }) }) }) });
+    Object.defineProperty(db, "select", { configurable: true, value: () => ({ from: () => ({ leftJoin: () => ({ where: () => Object.assign(Promise.resolve(rows), { orderBy: async () => { if (!attemptRows) throw new Error("DB attempt tidak tersedia di uji ini"); return attemptRows; } }) }) }) }) });
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: () => { throw new Error("TIDAK BOLEH ke jaringan"); } });
     try {
         return await fn();
@@ -56,6 +56,21 @@ test("attempts: tanpa finance.view -> 403 {ok:false} berpesan Indonesia; paramet
     const down = await asUserWith(["finance.view"], () => getAttempts(get("?invoices=INV-1")));
     assert.equal(down.status, 503);
     assert.equal((await down.json() as { ok: boolean }).ok, false);
+});
+
+test("A-3: jawaban memuat clientRef attempt (record pengirim) — layar hanya menganggap 'posted' milik record & database yang sama", async () => {
+    const subject = purchasePaymentSubject({ detailInvoice: [{ invoiceNo: "LPB-A/0918", paymentAmount: 0 }] });
+    const t = new Date("2026-10-10T01:00:00.000Z");
+    const row = { id: "at-1", operation: PURCHASE_PAYMENT_OPERATION, subjectKey: subject, clientRef: "DRAFT-0418|-|PRINCIPLE A|LPB", targetDbId: "1001",
+        payloadHash: "h", actor: "u-1", state: "posted", accurateId: "9001", accurateNumber: "PP/2610/0031", generation: 0, outcome: null, resolution: null,
+        createdAt: t, updatedAt: new Date(t.getTime() + 5000), stale: true, ageSeconds: 600, actorName: "Finance A" };
+    const res = await asUserWith(["finance.view"], () => getAttempts(get("?invoices=LPB-A/0918")), [row]);
+    assert.equal(res.status, 200);
+    const a = (await res.json() as { data: Array<{ attempt: Record<string, unknown> }> }).data[0].attempt;
+    assert.equal(a.clientRef, "DRAFT-0418|-|PRINCIPLE A|LPB");
+    assert.equal(a.targetDbId, "1001");
+    assert.equal(a.status, "posted");
+    assert.equal(a.updatedAtWita, "2026-10-10 09:00:05");
 });
 
 test("attemptStatus: sending basi -> stale; ditolak/tak terhubung/diatestasi tidak ada -> failed", () => {

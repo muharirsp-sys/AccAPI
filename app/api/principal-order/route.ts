@@ -7,7 +7,9 @@
  *
  * BL-21 (owner 6 Okt 2026, ditegakkan SERVER sejak S6d): batch yang SO-nya sudah punya baris Antrean Faktur tidak boleh dihapus
  * atau diganti — antrean kehilangan sales & outlet (dibaca dari baris batch lewat nomor SO) dan gerbang order ganda kehilangan
- * pembandingnya. Diperiksa DI DALAM transaksi hapus/ganti, dari SEMUA nomor SO batch (bukan hanya yang lolos validasi saat ini).
+ * pembandingnya. Diperiksa DI DALAM transaksi hapus/ganti, dari SEMUA nomor SO batch (bukan hanya yang lolos validasi saat ini),
+ * SESUDAH baris batch dikunci `FOR UPDATE` (kunciBatch, pernyataan pertama transaksi) — Antrekan mengunci baris yang sama
+ * (`FOR KEY SHARE`), jadi hapus/ganti dan antre yang bersamaan saling menunggu, bukan saling lolos.
  * Mengganti (`replace=true`) menghapus batch lama, jadi butuh izin yang sama dengan Hapus (`order.edit`).
  *
  * Anti-ganda ada di PINTU MASUK: `file_hash` unik per principal. Faktur ganda di Accurate
@@ -21,6 +23,7 @@ import { invoiceOutbox, principalMapping, principalOrderBatch, principalOrderLin
 import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 import { belumTermapping, readOrderDetail, type PackInfo } from "@/lib/order-detail";
 import { invoiceKey } from "@/lib/principal-invoice";
+import { kunciBatch } from "@/lib/invoice-outbox-actions";
 
 export const runtime = "nodejs";
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -52,6 +55,15 @@ async function soBatchDiAntrean(q: Kueri, batchId: string, principal: string) {
     if (!keys.length) return [];
     return q.select({ orderId: invoiceOutbox.orderId, state: invoiceOutbox.state }).from(invoiceOutbox).where(inArray(invoiceOutbox.orderId, keys));
 }
+
+/**
+ * 23505 pada principal_order_batch = unggahan lain untuk berkas yang SAMA (indeks unik principal + file_hash) tersimpan lebih dulu,
+ * mis. dua Ganti bersamaan: yang kedua menunggu kunci batch lama, melihatnya sudah terhapus, lalu INSERT-nya bentrok. Dijawab 409.
+ */
+const berkasBentrok = (error: unknown) => [error, (error as { cause?: unknown } | null)?.cause].some((e) => {
+    const { code, table } = (e ?? {}) as { code?: string; table?: string };
+    return code === "23505" && table === "principal_order_batch";
+});
 
 /** Dilempar di dalam transaksi hapus/ganti agar tidak ada yang terhapus (rollback); dijawab 409. */
 class BatchTerkunci extends Error {}
@@ -139,10 +151,11 @@ export async function POST(request: NextRequest) {
     const id = randomUUID();
     try {
         await db.transaction(async (tx) => {
-            if (existing) {
-                const antre = await soBatchDiAntrean(tx, existing.id, principal);
+            const lama = existing ? await kunciBatch(tx, existing.id, "update") : undefined;
+            if (lama) {
+                const antre = await soBatchDiAntrean(tx, lama.id, principal);
                 if (antre.length) throw new BatchTerkunci(pesanTerkunci(antre, "lama"));
-                await tx.delete(principalOrderBatch).where(eq(principalOrderBatch.id, existing.id));
+                await tx.delete(principalOrderBatch).where(eq(principalOrderBatch.id, lama.id));
             }
             await tx.insert(principalOrderBatch).values({
                 id, principal, fileName: file.name, fileHash, branch: parsed.branch, period: parsed.period,
@@ -164,6 +177,12 @@ export async function POST(request: NextRequest) {
         });
     } catch (error) {
         if (error instanceof BatchTerkunci) return NextResponse.json({ ok: false, error: error.message, duplicateOf: existing?.id }, { status: 409 });
+        if (berkasBentrok(error)) {
+            return NextResponse.json({
+                ok: false, code: "BERKAS_SUDAH_DISIMPAN",
+                error: "Berkas yang sama baru saja disimpan oleh unggahan lain (mis. dua Ganti bersamaan); muat ulang daftar batch — batch terbarunya sudah ada.",
+            }, { status: 409 });
+        }
         throw error;
     }
     return NextResponse.json({ ok: true, applied: true, id, ...summary });
@@ -177,12 +196,11 @@ export async function DELETE(request: NextRequest) {
     }
     const id = (request.nextUrl.searchParams.get("id") ?? "").trim();
     if (!id) return NextResponse.json({ ok: false, error: "Parameter id wajib diisi" }, { status: 400 });
-    const [batch] = await db.select({ id: principalOrderBatch.id, principal: principalOrderBatch.principal })
-        .from(principalOrderBatch).where(eq(principalOrderBatch.id, id));
-    // Sudah tidak ada (mis. dihapus orang lain / kiriman sebelumnya yang jawabannya tidak pasti): removed 0, layar menyebutnya.
-    if (!batch) return NextResponse.json({ ok: true, removed: 0 });
     try {
         const removed = await db.transaction(async (tx) => {
+            const batch = await kunciBatch(tx, id, "update");
+            // Sudah tidak ada (mis. dihapus orang lain / kiriman sebelumnya yang jawabannya tidak pasti): removed 0, layar menyebutnya.
+            if (!batch) return [];
             const antre = await soBatchDiAntrean(tx, batch.id, batch.principal);
             if (antre.length) throw new BatchTerkunci(pesanTerkunci(antre, "ini"));
             return tx.delete(principalOrderBatch).where(eq(principalOrderBatch.id, id)).returning({ id: principalOrderBatch.id });

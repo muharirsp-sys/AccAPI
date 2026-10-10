@@ -157,13 +157,15 @@ Izin `finance.view`. Baca-saja. `?invoices=INV-1,INV-2&invoices=INV-3` — satu 
 ```json
 {"ok": true, "data": [{"invoices": ["INV-1", "INV-2"], "subjectKey": "INV-1,INV-2", "attempt": {
   "attemptId": "…", "state": "sending", "status": "stale", "stale": true, "accurateNumber": "", "accurateId": "",
-  "actor": "<user id>", "actorName": "Finance A", "targetDbId": "1234567", "generation": 0, "ageSeconds": 412,
+  "actor": "<user id>", "actorName": "Finance A", "clientRef": "DRAFT-1|-|PT ABC|LPB", "targetDbId": "1234567", "generation": 0, "ageSeconds": 412,
   "createdAt": "2026-10-10T01:00:00.000Z", "createdAtWita": "2026-10-10 09:00:00", "updatedAt": "…", "updatedAtWita": "…",
   "message": "", "resolution": null}},
   {"invoices": ["INV-3"], "subjectKey": "INV-3", "attempt": null}]}
 ```
 - `status`: `sending` (segar) | `stale` (sending ≥ 2 menit menurut jam DB — tidak pasti, bukan "sedang") | `posted` | `unknown` |
   `failed` (rejected / not_sent / resolved_absent = boleh dikirim ulang). `attempt:null` = belum pernah diposting lewat server.
+- `clientRef` = record pengirim (format `recordKey` layar Finance). Subjek = himpunan faktur, jadi `posted` hanya milik record
+  ber-`clientRef` sama di database yang sama (S6b A-3); record lain dengan faktur sama = tidak pasti.
 - `targetDbId` = id database Accurate; nama database dari `/api/auth/accurate-session` (`databaseAlias`) bila sama.
 - 400 `{ok:false, error:"Parameter invoices wajib: …"}` / `"Maksimal 100 kelompok per permintaan."`; 401/403 `{ok:false, error}`;
   503 `{ok:false, error:"Status posting tidak bisa dibaca dari database. Coba lagi."}`.

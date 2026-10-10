@@ -219,6 +219,8 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
     const kunciSimpan = !bolehBuat ? ALASAN_IZIN.buat : proses ? "Berkas sedang diproses."
         : basi ? "Hasil simpan sebelumnya belum pasti; periksa Batch terakhir, lalu Pratinjau ulang."
             : pratinjau && pratinjau.lineCount === 0 ? "Tidak ada satu pun baris yang bisa disimpan dari berkas ini." : undefined;
+    // Tombol "Ganti batch lama…" di footer (berkas sama); alasannya tampil sebagai pesan footer, bukan hanya `title`.
+    const kunciGantiTombol = !bolehUbah ? ALASAN_IZIN.ganti : basi ? "Hasil simpan sebelumnya belum pasti; periksa Batch terakhir, lalu Pratinjau ulang." : undefined;
 
     const kolomBatch: Column<Batch>[] = [
         { key: "berkas", header: "Berkas", cell: (b) => <><b className="fi-mono">{b.fileName}</b><span className="fi-codes">{b.principal}</span></> },
@@ -324,7 +326,7 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                 {!bolehUbah && <p className="fi-small fi-why" style={{ padding: "8px 16px" }}>Hapus batch nonaktif: {ALASAN_IZIN.ubah}</p>}
             </Section>
 
-            <FooterToolbar message={kunciPratinjau ?? (pratinjau ? (dup ? "Berkas sama dengan batch yang sudah ada" : kunciSimpan ?? `${angka(pratinjau.lineCount)} baris akan disimpan`) : "Pratinjau berkas dulu")}>
+            <FooterToolbar message={kunciPratinjau ?? (pratinjau ? (dup ? (kunciGantiTombol ? `Berkas sama dengan batch yang sudah ada. ${kunciGantiTombol}` : "Berkas sama dengan batch yang sudah ada") : kunciSimpan ?? `${angka(pratinjau.lineCount)} baris akan disimpan`) : "Pratinjau berkas dulu")}>
                 <Button variant={pratinjau ? "secondary" : "primary"} icon={<Search className="fi-icon" aria-hidden />} busy={proses === "pratinjau"}
                     disabled={Boolean(kunciPratinjau)} disabledReason={kunciPratinjau} onClick={() => void pratinjauBerkas()}>{pratinjau ? "Pratinjau ulang" : "Pratinjau"}</Button>
                 {pratinjau && !dup && (
@@ -332,8 +334,8 @@ export default function OrderPrincipal({ permKeys }: { permKeys: string[] }) {
                         onClick={() => void simpanBatch()}>Simpan batch</Button>
                 )}
                 {pratinjau && dup && (
-                    <Button variant="primary" icon={<Replace className="fi-icon" aria-hidden />} disabled={!bolehUbah || basi}
-                        disabledReason={!bolehUbah ? ALASAN_IZIN.ganti : "Hasil sebelumnya belum pasti; periksa Batch terakhir, lalu Pratinjau ulang."}
+                    <Button variant="primary" icon={<Replace className="fi-icon" aria-hidden />} disabled={Boolean(kunciGantiTombol)}
+                        disabledReason={kunciGantiTombol}
                         onClick={() => setDialog({ jenis: "ganti" })}>Ganti batch lama…</Button>
                 )}
             </FooterToolbar>
