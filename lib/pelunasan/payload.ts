@@ -1,6 +1,6 @@
 /**
  * Tujuan: finalisasi payload sales-receipt Pelunasan & laporan baris manual — dipindah UTUH dari W:80-87
- *   (normalizePayloadMoney), W:100-104 (tanggal bawaan), W:1575-1613 `app/(dashboard)/api-wrapper/page.tsx`
+ *   (normalizePayloadMoney), W:100-104 (tanggal bawaan; kini WITA), W:1575-1613 `app/(dashboard)/api-wrapper/page.tsx`
  *   basis 5d6cc936 (S6e-1). Perilaku dikunci golden lib/pelunasan/uji/golden.json.
  * Caller: lib/pelunasan/parser.ts, app/(dashboard)/api-wrapper/page.tsx (normalizePayloadMoney untuk self-heal, tanggal bawaan).
  * Main Functions: normalizePayloadMoney, finalisasiPayload, susunBarisManual, pesanPeringatanRetur, tanggalKemarin.
@@ -18,12 +18,14 @@ export const normalizePayloadMoney = (value: unknown) => {
     return Math.abs(normalized) < 0.000001 ? 0 : normalized;
 };
 
-/** Tanggal transaksi bawaan (YYYY-MM-DD) = kemarin. */
-export const tanggalKemarin = (now: Date = new Date()) => {
-    const d = new Date(now.getTime());
-    d.setDate(d.getDate() - 1);
-    return d.toISOString().split('T')[0];
-};
+const WITA_MS = 8 * 60 * 60 * 1000; // WITA = UTC+8 tetap (tanpa DST)
+const HARI_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Tanggal transaksi bawaan (YYYY-MM-DD) = KEMARIN menurut WITA, tak bergantung zona peramban. S6e-1: dulu
+ * `setDate(-1)` waktu lokal lalu `toISOString()` (UTC) → pukul 00.00–07.59 WITA mundur dua hari.
+ */
+export const tanggalKemarin = (now: Date = new Date()) => new Date(now.getTime() + WITA_MS - HARI_MS).toISOString().slice(0, 10);
 
 /** W:1575-1591: gabung kelompok bayar + dokumen Ayat Silang, buang yang tanpa faktur, rapikan angka. */
 export function finalisasiPayload(kelompok: Bebas[], ayatSilangDocs: Bebas[]) {
