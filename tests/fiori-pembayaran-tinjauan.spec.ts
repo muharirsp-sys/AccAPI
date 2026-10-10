@@ -95,3 +95,22 @@ test("Excel SPPD: pratinjau berkas LAMA yang terlambat tidak mengaktifkan Terapk
     await expect(dlg.getByRole("button", { name: "Terapkan 3 perubahan" })).toHaveCount(0);
     expect(kirim.filter((k) => k.path === "/payments/sppd/upload").map((k) => k.search)).toEqual(["?dry_run=1", "?dry_run=1"]);
 });
+
+// ── Butir 2: total sesudah Ajukan dibaca ulang dari server ──
+test("Keranjang: sesudah Ajukan, nilai bayar dibaca ulang dari server dan beda dengan tampilan diperingatkan", async ({ page }) => {
+    await mock(page, (p, r) => {
+        if (p === "/payments/cart-info") return json(r, CART);
+        if (p === "/payments/cart/submit") return json(r, { ok: true, submission_id: "c41e0d27", files: [] });
+        if (p === "/payments/submissions/c41e0d27") return json(r, { ok: true, data: { id: "c41e0d27", total_pembayaran: 30_000_000, records: [], files: [], cart_items: {} } });
+        return "lewat";
+    });
+    await page.goto("/payments/cart/7f3c91ab", NAV);
+    const main = page.locator("main");
+    await main.getByLabel("Jenis pembayaran PRINCIPLE A").selectOption("TRF", NAV);
+    await main.getByLabel("Potongan PRINCIPLE A").fill("900.000");
+    await main.getByRole("button", { name: "Ajukan ke Finance…" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Ajukan ke Finance" }).click();
+    await expect(main.getByText("Pengajuan c41e0d27 dibuat.")).toBeVisible();
+    await expect(main.getByText("Nilai bayar tercatat di server: Rp 30.000.000")).toBeVisible();
+    await expect(main.getByText("berbeda dari Rp 30.450.000 yang tampil sebelum Ajukan", { exact: false })).toBeVisible();
+});

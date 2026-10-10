@@ -6,7 +6,7 @@
  * Dependensi: ../../bersama (baca, tulis, unduhUrl), components/fiori/*, lib/payments-ui, lib/promo-ui, next/link.
  * Main Functions: Keranjang (default), ajukan.
  * Side Effects: GET /payments/cart-info, /api/bank-data/lookup per principal (rute Bank Panin, izin sppd.view), /payments/sppd/settings
- *   (nomor berikutnya); POST /payments/cart/submit (payments.edit) — menerbitkan nomor SPPD, berkas invoice/SPPD, status Belum Transfer.
+ *   (nomor berikutnya), /payments/submissions/{id} sesudah Ajukan (nilai bayar tercatat); POST /payments/cart/submit (payments.edit) — menerbitkan nomor SPPD, berkas invoice/SPPD, status Belum Transfer.
  *
  * Kenapa dikunci setelah jawaban tidak pasti: cart/submit bisa >180 dtk (membuat Excel + DOCX). Putus/timeout/≥502 = mungkin sudah
  * diajukan. Halaman memuat ulang draf: 404 = draf sudah terpakai (pengajuan dibuat; JANGAN ajukan lagi); masih ada = server menolak
@@ -77,7 +77,14 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
     const berubah = Object.keys(isi).length > 0 || tanggal !== null;
 
     const [dialog, setDialog] = useState(false);
-    const [hasil, setHasil] = useState<{ id: string; files: Berkas[]; tanggal: string } | null>(null);
+    const [hasil, setHasil] = useState<{ id: string; files: Berkas[]; tanggal: string; tampil: number } | null>(null);
+    // Server menghitung ulang nilai bayar dari rekaman TERKINI saat Ajukan (payments.py cart/submit), bukan dari angka layar:
+    // langkah 3 membaca pengajuan yang tercatat dan memperingatkan bila berbeda. ponytail: pencegahan tuntas (`expected_total` + 409)
+    // = perubahan server, lintas slice.
+    const idHasil = hasil?.id ?? "";
+    const [tercatat, muatTercatat] = useLoad(useCallback(async (): Promise<Load<number | null>> => (idHasil
+        ? baca(`/payments/submissions/${encodeURIComponent(idHasil)}`, (d) => Number((d.data as { total_pembayaran?: unknown } | undefined)?.total_pembayaran))
+        : { status: "siap", data: null }), [idHasil]));
     // Jawaban tidak pasti: kunci sampai draf terbaca ulang (referensi data berganti).
     const [kunciPada, setKunciPada] = useState<Cart | null | undefined>(undefined);
     const tidakPasti = kunciPada !== undefined;
@@ -116,7 +123,7 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
         }));
         const res = await tulis("/payments/cart/submit", { draft_id: draftId, target_payment_date: tgl, items: rows });
         if (res.ok) {
-            setHasil({ id: String(res.data.submission_id ?? ""), files: Array.isArray(res.data.files) ? (res.data.files as Berkas[]) : [], tanggal: tgl });
+            setHasil({ id: String(res.data.submission_id ?? ""), files: Array.isArray(res.data.files) ? (res.data.files as Berkas[]) : [], tanggal: tgl, tampil: totalBayar });
             setDialog(false);
             return;
         }
@@ -139,6 +146,21 @@ export default function Keranjang({ draftId, permKeys }: { draftId: string; perm
                 <MessageStrip tone="pos" title={`Pengajuan ${hasil.id} dibuat.`}>
                     {items.length} principal berstatus Belum Transfer. Finance melihatnya di halaman Finance tanggal {tanggalTampil(hasil.tanggal)}.
                 </MessageStrip>
+                {tercatat.status === "siap" && typeof tercatat.data === "number" && Number.isFinite(tercatat.data) ? (
+                    <>
+                        <p className="fi-small">Nilai bayar tercatat di server: <b className="fi-tnum">{rupiah(tercatat.data)}</b></p>
+                        {Math.abs(tercatat.data - hasil.tampil) >= 1 && (
+                            <MessageStrip tone="warn" title={`Nilai bayar tercatat ${rupiah(tercatat.data)} berbeda dari ${rupiah(hasil.tampil)} yang tampil sebelum Ajukan.`}>
+                                Server menghitung dari rekaman terkini; rekaman berubah sejak keranjang dibuat. Periksa pengajuan sebelum Finance mentransfer.
+                            </MessageStrip>
+                        )}
+                    </>
+                ) : tercatat.status === "memuat" ? <p className="fi-small fi-subtle">Membaca nilai bayar tercatat…</p> : (
+                    <MessageStrip tone="warn" title="Nilai bayar tercatat belum terbaca.">
+                        {tercatat.status === "galat" ? tercatat.error : "Jawaban server tidak terbaca."} Buka pengajuan untuk memeriksa nilainya.{" "}
+                        <Button variant="tertiary" onClick={muatTercatat}>Coba lagi</Button>
+                    </MessageStrip>
+                )}
                 <Section title="Berkas" subtitle="tersimpan dan bisa dibuka lagi dari Pengajuan & SPPD">
                     <div className="fi-sect-in">
                         <ul className="fi-docs" aria-label="Berkas pengajuan">
