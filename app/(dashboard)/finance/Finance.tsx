@@ -20,7 +20,7 @@ import {
 import { ConfirmDialog, FormField, useLoad, useUnsavedGuard, type Load } from "@/components/fiori/interactive";
 import { fuzzyMatch } from "@/lib/fuzzySearch";
 import {
-    LABEL_POSTING, alasanFaktur, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, statusPosting, statusTransfer,
+    LABEL_POSTING, alasanFaktur, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, lepasKunciLokal, statusPosting, statusTransfer, tandaSelesai,
     type AttemptFinance, type StatusPosting,
 } from "@/lib/finance-ui";
 import { rupiah, tgl } from "@/lib/promo-ui";
@@ -55,7 +55,8 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
     const [drafTujuan, setDrafTujuan] = useState<Record<string, FinanceMapping>>({});
     const [drafTanggal, setDrafTanggal] = useState<Record<string, string>>({});
     const [bukti, setBukti] = useState<Record<string, File | null>>({});
-    const [kunciLokal, setKunciLokal] = useState<ReadonlySet<string>>(new Set());
+    // Kunci lokal per baris → tanda penyelesaian saat dipasang (lepas bila muat ulang menunjukkan status final baru, lepasKunciLokal).
+    const [kunciLokal, setKunciLokal] = useState<ReadonlyMap<string, string>>(new Map());
     const [hasil, setHasil] = useState<Hasil | null>(null);
     const [dialog, setDialog] = useState<Dialog>(null);
     const [menyimpan, setMenyimpan] = useState<string | null>(null);
@@ -75,6 +76,10 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
         const attempt = data?.attempts.get(key) ?? null;
         return { r, key, attempt, posting: statusPosting(r, attempt, { key, dbId: data?.sesi?.id ?? "", terbaca: !data?.attemptsGalat }) };
     }), [data]);
+    const terkunci = useCallback((b: Baris) => {
+        const tanda = kunciLokal.get(b.key);
+        return tanda !== undefined && !lepasKunciLokal(b.r, b.posting, tanda);
+    }, [kunciLokal]);
 
     // Tulis terkunci saat sumber memuat ulang, gagal dimuat ulang, atau status posting server tidak terbaca.
     const sumber = load.status === "memuat" && data ? "Data sedang dimuat ulang; tunggu sebentar."
@@ -95,11 +100,11 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
 
     const hitung = useMemo(() => {
         const belum = baris.filter((b) => statusTransfer(b.r.status_pembayaran).label === "Belum transfer");
-        const tp = baris.filter((b) => kodeTampil(b.posting.kode, kunciLokal.has(b.key)) === "tidak_pasti");
+        const tp = baris.filter((b) => kodeTampil(b.posting.kode, terkunci(b)) === "tidak_pasti");
         const ok = baris.filter((b) => b.posting.kode === "terposting");
         const jumlah = (xs: Baris[]) => xs.reduce((t, b) => t + Number(b.r.total_nilai || 0), 0);
         return { belum, tp, ok, nBelum: jumlah(belum), nOk: jumlah(ok) };
-    }, [baris, kunciLokal]);
+    }, [baris, terkunci]);
 
     const tampil = useMemo(() => {
         const q = cari.trim();
@@ -111,7 +116,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
     const dialogBaris = dialog ? baris.find((b) => b.key === dialog.key) ?? null : null;
 
     const pilih = (key: string | null) => { setPilihKey(key); if (key) setPernahPilih(true); };
-    const kunciBarisIni = (b: Baris) => kunciBaris({ posting: b.posting, izin, sumber, kunciLokal: kunciLokal.has(b.key) });
+    const kunciBarisIni = (b: Baris) => kunciBaris({ posting: b.posting, izin, sumber, kunciLokal: terkunci(b) });
 
     /** Alasan Transfer & posting nonaktif (keadaan baris dulu, lalu kelengkapan isian). */
     const alasanPosting = (b: Baris): string | undefined => {
@@ -134,7 +139,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
         return undefined;
     };
 
-    const kunciLepas = (key: string) => setKunciLokal((s) => { const n = new Set(s); n.delete(key); return n; });
+    const kunciLepas = (key: string) => setKunciLokal((s) => { const n = new Map(s); n.delete(key); return n; });
     const bersihkanDraf = (key: string) => {
         setDrafTujuan((s) => tanpa(s, key));
         setDrafTanggal((s) => tanpa(s, key));
@@ -151,7 +156,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
             const total = rupiah(b.r.total_nilai);
             const h = await postingPurchasePayment({
                 record: b.r, mapping: tujuanDari(b), transferDate: tanggalTransfer(b), proofFile: bukti[b.key] ?? null, date: data.date,
-                kunciLokal: () => setKunciLokal((s) => new Set(s).add(b.key)), expectedDatabaseId: tujuanDb.id,
+                kunciLokal: () => setKunciLokal((s) => new Map(s).set(b.key, tandaSelesai(b.r))), expectedDatabaseId: tujuanDb.id,
             });
             // Belum ada yang ditulis ke mana pun: dialog tetap terbuka dengan pesannya.
             if (h.jenis === "tidak_terkirim" && !h.tercatat) throw new Error(`${h.pesan} Tidak ada yang dikirim ke Accurate.`);
@@ -267,7 +272,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
                 : (
                     <ul className="fi-list" style={{ display: "block" }} aria-label="Daftar pengajuan">
                         {tampil.map((b) => {
-                            const pt = LABEL_POSTING[kodeTampil(b.posting.kode, kunciLokal.has(b.key))];
+                            const pt = LABEL_POSTING[kodeTampil(b.posting.kode, terkunci(b))];
                             const t = tujuanDari(b);
                             return (
                                 <li key={b.key} className="fi-wl-row">
@@ -288,7 +293,7 @@ export default function Finance({ permKeys, hariIni }: { permKeys: string[]; har
     const detail = !terpilih || !data ? (
         <EmptyState title="Pilih pengajuan di daftar" message="Ringkasan, tujuan di Accurate, transfer, dan posting tampil di sini." />
     ) : (
-        <Detail key={terpilih.key} b={terpilih} data={data} kunci={kunciBarisIni(terpilih)} alasanPosting={alasanPosting(terpilih)} kunciLokal={kunciLokal.has(terpilih.key)}
+        <Detail key={terpilih.key} b={terpilih} data={data} kunci={kunciBarisIni(terpilih)} alasanPosting={alasanPosting(terpilih)} kunciLokal={terkunci(terpilih)}
             tujuan={tujuanDari(terpilih)} tujuanBerubah={tujuanBerubah(terpilih)} tanggalTransfer={tanggalTransfer(terpilih)} bukti={bukti[terpilih.key] ?? null}
             master={master} masterAktif={masterAktif} izin={izin} menyimpan={menyimpan === terpilih.key} galatTujuan={galatTujuan?.key === terpilih.key ? galatTujuan.pesan : undefined}
             onTujuan={(t) => setDrafTujuan((s) => ({ ...s, [terpilih.key]: { ...tujuanDari(terpilih), ...t } }))}
@@ -612,11 +617,19 @@ function DialogSelesai(p: {
     }
     const r = p.b.r;
     const a = p.b.attempt;
-    const sesi = p.data.sesi;
+    // Tinjauan putaran 2 B-3: sesi Accurate dibaca SEGAR saat dialog dibuka (pola DialogPosting), bukan sesi saat daftar dimuat.
+    const [segar] = useLoad(useCallback(async (): Promise<Load<SesiAccurate>> => {
+        if (!p.open) return { status: "memuat" };
+        const s = await bacaSesi();
+        return s.sesi ? { status: "siap", data: s.sesi } : { status: "galat", error: s.galat };
+    }, [p.open]));
+    const sesi = segar.status === "siap" ? segar.data : null;
     // Umur attempt saat dialog dibuka (server menegakkan ambang yang sama dengan jam DB); buka ulang dialog untuk menghitung lagi.
     const detik = (p.dibuka - p.data.dimuat) / 1000;
     const tidakAda = alasanTidakAda(a, detik);
-    const dbCocok = !sesi?.id ? "Buka database Accurate yang diperiksa dulu."
+    const dbCocok = segar.status === "memuat" ? "Memeriksa database Accurate yang terbuka…"
+        : !sesi ? `${segar.error || "Sesi Accurate tidak terbaca."} Tutup lalu buka lagi dialog ini.`
+        : !sesi.id || !sesi.tersambung ? "Buka database Accurate yang diperiksa dulu."
         : a && a.targetDbId && a.targetDbId !== sesi.id ? `Percobaan dikirim ke database lain (ID ${a.targetDbId}); sesi Anda ${sesi.alias || `ID ${sesi.id}`}. Buka database itu dulu.`
         : undefined;
     const blokir = p.blokir ?? dbCocok
@@ -647,7 +660,7 @@ function DialogSelesai(p: {
                 {(a11y) => <input {...a11y} className="fi-input" value={sumber} onChange={(e) => setSumber(e.target.value)} />}
             </FormField>
             {dbCocok
-                ? <MessageStrip tone="neg" title={dbCocok} />
+                ? <MessageStrip tone={segar.status === "memuat" ? "info" : "neg"} title={dbCocok} />
                 : <MessageStrip tone="pos" title={a ? `Sesi Accurate Anda (${sesi?.alias || `ID ${sesi?.id}`}) sama dengan database percobaan.` : `Sesi Accurate Anda: ${sesi?.alias || `ID ${sesi?.id}`}.`} />}
             {blokirTampil && <p className="fi-small fi-why">{blokirTampil}.</p>}
         </ConfirmDialog>

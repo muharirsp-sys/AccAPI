@@ -2,7 +2,7 @@
  * penyaring catatan lama. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LABEL_POSTING, alasanFaktur, bedaPengajuan, potongKelompok, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, saringCatatan, statusPosting, statusTransfer, type AttemptFinance } from "./finance-ui.ts";
+import { LABEL_POSTING, alasanFaktur, bedaPengajuan, potongKelompok, alasanTidakAda, catatanPosting, izinFinance, kodeTampil, kunciBaris, lepasKunciLokal, saringCatatan, statusPosting, statusTransfer, tandaSelesai, type AttemptFinance } from "./finance-ui.ts";
 
 const attempt = (over: Partial<AttemptFinance>): AttemptFinance => ({
     attemptId: "a1", state: "unknown", status: "unknown", stale: false, accurateNumber: "", actorName: "Finance A", clientRef: "K1", targetDbId: "DB-1",
@@ -142,6 +142,9 @@ test("catatan lama disaring: tanpa 'Coba lagi' dan tanpa alamat server lokal", (
     // Ajakan di tengah kalimat: seluruh kalimat itu dibuang (dulu tersisa potongan "Gagal menyimpan; nanti setelah …").
     assert.equal(saringCatatan("Gagal menyimpan; coba lagi nanti setelah server pulih. Data lain aman."), "Data lain aman.");
     assert.equal(saringCatatan("Status posting tidak bisa dibaca dari database. Coba lagi."), "Status posting tidak bisa dibaca dari database.");
+    // Putaran 2 B-5: alamat lokal disaring DULU — kalau tidak, titik di "127.0.0.1" memotong kalimat dan tersisa "127.0.0.".
+    assert.equal(saringCatatan("127.0.0.1:8000, coba lagi"), "");
+    assert.equal(saringCatatan("Server diam. Gagal menghubungi 127.0.0.1:8000, coba lagi."), "Server diam.");
     assert.equal(saringCatatan("Percobaan yang dicoba lagi tetap tercatat."), "Percobaan yang dicoba lagi tetap tercatat.", "'dicoba lagi' bukan ajakan");
     const n = catatanPosting("tidak_pasti", "Accurate tidak merespons (timeout). Coba lagi.", "failed");
     assert.match(n, /^TIDAK PASTI/);
@@ -176,4 +179,17 @@ test("faktur kosong/BELUM ADA menahan posting", () => {
     assert.equal(alasanFaktur([{ invoiceNo: "INV-1" }]), undefined);
     assert.match(alasanFaktur([{ invoiceNo: "INV-1" }, { invoiceNo: "belum ada" }, { invoiceNo: " " }])!, /^2 faktur/);
     assert.ok(alasanFaktur([]));
+});
+
+test("Putaran 2 B-4: kunci lokal lepas hanya bila muat ulang menunjukkan status FINAL baru (terposting / diselesaikan sesudah dikunci)", () => {
+    const tanpa = { accurate_post_resolution: null };
+    const tanda = tandaSelesai(tanpa);
+    const st = (kode: Parameters<typeof kodeTampil>[0], catatanTertinggal = false) => ({ kode, nomor: "", catatanTertinggal });
+    assert.equal(lepasKunciLokal(tanpa, st("terposting"), tanda), true, "catatan Finance terposting");
+    assert.equal(lepasKunciLokal(tanpa, st("terposting", true), tanda), false, "catatan tertinggal belum final");
+    for (const kode of ["belum", "gagal", "tidak_pasti", "sedang", "tak_terbaca"] as const) assert.equal(lepasKunciLokal(tanpa, st(kode), tanda), false, kode);
+    const selesai = { accurate_post_resolution: { to: "failed", by: "u|finance|b", at: "2026-10-10 09:00:00", note: "dicek manual: tidak ditemukan" } };
+    assert.equal(lepasKunciLokal(selesai, st("gagal"), tanda), true, "diselesaikan orang lain sebagai tidak ada");
+    assert.equal(lepasKunciLokal(selesai, st("gagal"), tandaSelesai(selesai)), false, "penyelesaian LAMA (sudah ada saat dikunci) bukan bukti");
+    assert.equal(lepasKunciLokal(selesai, st("tidak_pasti"), tanda), false, "masih tidak pasti");
 });

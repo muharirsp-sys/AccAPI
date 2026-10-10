@@ -4,7 +4,7 @@
  *   kapan "Tidak ada di Accurate" boleh dipilih, dan penyaring catatan lama. Tanpa HTTP.
  * Caller: app/(dashboard)/finance/{Finance,posting}.tsx/ts, finance-ui.test.ts.
  * Dependensi: lib/finance-post-status (postStatusNote, teks C11), lib/promo-ui (tgl), tipe Tone.
- * Main Functions: izinFinance, statusTransfer, statusPosting, kodeTampil, kunciBaris, bedaPengajuan, potongKelompok, alasanTidakAda, saringCatatan, catatanPosting, alasanFaktur.
+ * Main Functions: izinFinance, statusTransfer, statusPosting, kodeTampil, tandaSelesai, lepasKunciLokal, kunciBaris, bedaPengajuan, potongKelompok, alasanTidakAda, saringCatatan, catatanPosting, alasanFaktur.
  * Side Effects: Tidak ada.
  */
 import type { Tone } from "@/components/fiori/core";
@@ -116,6 +116,19 @@ export function kodeTampil(kode: KodePosting, kunciLokal: boolean): KodePosting 
     return kunciLokal && (kode === "belum" || kode === "gagal" || kode === "tak_terbaca") ? "tidak_pasti" : kode;
 }
 
+/** Tanda penyelesaian Finance sebuah baris (disimpan saat kunci lokal dipasang; berubah = ada penyelesaian baru). */
+export const tandaSelesai = (r: { accurate_post_resolution?: unknown }) => JSON.stringify(r.accurate_post_resolution ?? null);
+
+/**
+ * Tinjauan putaran 2 B-4: kunci lokal (hasil tidak pasti di tab ini) lepas saat muat ulang menunjukkan status FINAL yang terjadi
+ * sesudah kunci dipasang — catatan Finance terposting, atau diselesaikan (penyelesaian BARU, mis. oleh Finance lain) sebagai tidak
+ * ada. Belum/gagal tanpa penyelesaian baru/tidak pasti/sedang/tak terbaca = tetap terkunci (kiriman tab ini belum terjelaskan).
+ */
+export function lepasKunciLokal(row: { accurate_post_resolution?: unknown }, posting: StatusPosting, tandaSaatKunci: string): boolean {
+    if (posting.kode === "terposting") return !posting.catatanTertinggal;
+    return posting.kode === "gagal" && Boolean(row.accurate_post_resolution) && tandaSelesai(row) !== tandaSaatKunci;
+}
+
 export type KunciBaris = { posting?: string; status?: string; selesaikan?: string; tujuan?: string };
 
 /**
@@ -169,10 +182,11 @@ export function saringCatatan(teks: string | null | undefined): string {
     return String(teks ?? "")
         // Nama kunci izin mentah dari galat server (mis. "(finance.resolve_unknown)") tidak ditampilkan.
         .replace(/\s*\(finance\.[a-z_]+\)/gi, "")
-        // Seluruh KALIMAT yang mengajak mengulang dibuang (bukan hanya frasanya — kalimat terpotong tidak terbaca).
-        .replace(/[^.!?]*\bcoba lagi\b[^.!?]*[.!?]?/gi, "")
+        // Alamat lokal DULU: titik di "127.0.0.1" memotong kalimat di langkah berikut (tinjauan putaran 2 B-5).
         .replace(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*/gi, "server")
         .replace(/\b(?:localhost|127\.0\.0\.1)(?::\d+)?/gi, "server")
+        // Seluruh KALIMAT yang mengajak mengulang dibuang (bukan hanya frasanya — kalimat terpotong tidak terbaca).
+        .replace(/[^.!?]*\bcoba lagi\b[^.!?]*[.!?]?/gi, "")
         .replace(/\s{2,}/g, " ")
         .trim();
 }

@@ -286,6 +286,7 @@ for (const [nama, j] of TIDAK_PASTI) {
 }
 
 test("A-2/B-2: terposting lalu catatan Finance gagal → belum pasti + nomor PP; tab yang sama bisa 'Catat hasil posting' tanpa kiriman baru", async ({ page }) => {
+    test.setTimeout(90_000); // dua kiriman + dua muat ulang: 30 dtk bawaan habis pada jalankan penuh (tinjauan putaran 2)
     const m = await siapkan(page, {
         command: [
             { status: 200, body: { attemptId: "at-1", state: "posted", accurateId: "9001", accurateNumber: "PP/2610/0031", message: "", response: { s: true }, persisted: true } },
@@ -425,6 +426,31 @@ test("Selesaikan: 'Tidak ada' nonaktif < 2 menit; 'Ada' + nomor → resolve + ca
     expect(m.command).toHaveLength(0);
 });
 
+test("Putaran 2 B-3: dialog Selesaikan membaca sesi Accurate SEGAR — berganti database sesudah daftar dimuat = terkunci dengan alasan", async ({ page }) => {
+    const sub = subjek(FAKTUR_A.map(([f]) => f));
+    const m = await siapkan(page, {
+        rows: () => [pengajuan("DRAFT-0418", "PRINCIPLE A", FAKTUR_A, { status_pembayaran: "Sudah Transfer", transfer_date: HARI_INI, accurate_post_status: "unknown", transfer_proof: { proof_id: "pf-0", original_filename: "b.pdf" } })],
+        attempts: { [sub]: attempt({ state: "sending", status: "stale", stale: true, ageSeconds: 600 }) },
+    });
+    const { detail } = await bukaPengajuan(page);
+    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
+    m.sesiDb = { id: "DB-2", alias: "PT CONTOH B" }; // tab lain membuka database B setelah daftar dimuat
+    await detail.getByRole("button", { name: "Selesaikan…" }).click();
+    const dlg = page.getByRole("dialog", { name: "Selesaikan posting tidak pasti" });
+    await expect(dlg.getByText("Percobaan dikirim ke database lain (ID DB-1); sesi Anda PT CONTOH B. Buka database itu dulu.")).toBeVisible(NAV);
+    await expect(dlg).not.toContainText("sama dengan database percobaan");
+    await dlg.getByRole("radio", { name: "Tidak ada di Accurate" }).check();
+    await dlg.getByLabel("Diperiksa di").fill("Accurate › Pembayaran Pembelian");
+    await dlg.getByLabel("Alasan").fill("Tidak ada pembayaran dengan faktur ini di Accurate.");
+    await expect(dlg.getByRole("button", { name: "Simpan penyelesaian" })).toBeDisabled();
+    // Kembali ke database A: buka ulang dialog = bacaan segar lagi.
+    m.sesiDb = { id: "DB-1", alias: "PT CONTOH A" };
+    await dlg.getByRole("button", { name: "Batal" }).click();
+    await detail.getByRole("button", { name: "Selesaikan…" }).click();
+    await expect(dlg.getByText("Sesi Accurate Anda (PT CONTOH A) sama dengan database percobaan.")).toBeVisible(NAV);
+    expect(m.resolve).toHaveLength(0);
+});
+
 test("A-5: already_posted dengan nomor berbeda dari attempt server ditolak di dialog; nomor sama → catatan posted", async ({ page }) => {
     const sub = subjek(FAKTUR_A.map(([f]) => f));
     const m = await siapkan(page, {
@@ -546,6 +572,33 @@ test("B-6: kunci lokal — kiriman putus sebelum server mencatat apa pun & catat
     const { detail: detailB } = await bukaPengajuan(b);
     await expect(b.locator("main").getByRole("list", { name: "Daftar pengajuan" }).getByRole("button", { name: /DRAFT-0418/ })).toContainText("Belum diposting", NAV);
     await expect(detailB.getByText("Posting tidak pasti — pengajuan dikunci.")).toHaveCount(0);
+});
+
+test("Putaran 2 B-4: kunci lokal lepas saat muat ulang menunjukkan status final dari orang lain; catatan gagal tanpa penyelesaian baru tetap dikunci", async ({ page }) => {
+    test.setTimeout(90_000);
+    const m = await siapkan(page, { commandTakSampai: true, update: [{ status: 500, body: { ok: false, error: "Gagal menulis data pembayaran." } }] });
+    const { main, detail, dlg } = await bukaDialogPosting(page);
+    await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).click();
+    await expect(main.getByRole("status").filter({ hasText: "Hasilnya belum pasti — DRAFT-0418 dikunci." })).toBeVisible(NAV);
+    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
+    const muatUlang = async () => {
+        const n = m.dataDates.length;
+        await main.getByRole("button", { name: "Muat ulang", exact: true }).click();
+        await expect.poll(() => m.dataDates.length, NAV).toBeGreaterThan(n);
+        await expect(main.getByText("memperbarui…")).toHaveCount(0, NAV);
+    };
+    const bukti = { proof_id: "pf-1", original_filename: "bukti_0418.pdf", stored_filename: "proof_x.pdf" };
+    // Catatan "gagal" tanpa penyelesaian baru (mis. tab lain): belum bukti apa pun tentang kiriman tab ini — tetap dikunci.
+    Object.assign(m.rows[0], { status_pembayaran: "Sudah Transfer", transfer_date: HARI_INI, transfer_proof: bukti, accurate_post_status: "failed", accurate_post_error: "Accurate menolak: vendor" });
+    await muatUlang();
+    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toBeVisible(NAV);
+    await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled();
+    // Finance lain menyelesaikannya "Tidak ada di Accurate" (penyelesaian baru): status final → kunci lokal lepas.
+    m.rows[0].accurate_post_resolution = { from: "unknown", to: "failed", source: "manual_attestation", by: "betterauth|finance|finance.b@example.invalid", at: `${HARI_INI} 09:10:00`, note: "dicek manual di Accurate: tidak ditemukan — Pembayaran Pembelian" };
+    m.rows[0].accurate_post_error = "dicek manual: tidak ada di Accurate";
+    await muatUlang();
+    await expect(detail.getByText("Posting tidak pasti — pengajuan dikunci.")).toHaveCount(0, NAV);
+    await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeEnabled(NAV);
 });
 
 test("B-6: tanpa izin ubah Finance (finance.update) — posting, tujuan, dan status nonaktif dengan alasan berkalimat yang TERLIHAT", async ({ page }) => {
