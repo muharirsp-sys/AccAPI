@@ -47,7 +47,8 @@ type Opsi = {
     attempts?: Record<string, unknown>;
     attemptsGagal?: Jawab;
     command?: Jawab[];
-    tundaCommand?: number;
+    /** Jawaban command ditahan sampai janji ini selesai (klaim server sudah tercatat 'sending'). */
+    tahanCommand?: Promise<void>;
     resolve?: Jawab[];
     update?: Jawab[];
 };
@@ -88,7 +89,13 @@ async function siapkan(target: Page | BrowserContext, opsi: Opsi = {}) {
             if (m.dataGagal) return jawab(r, m.dataGagal, true);
             return jawab(r, { status: 200, body: { ok: true, data: rows, total_all: rows.reduce((t, x) => t + Number(x.total_nilai), 0), date: u.searchParams.get("date") } }, true);
         }
-        if (u.pathname === "/payments/finance/mapping") { m.urutan.push("mapping"); m.mapping.push(req.postDataJSON()); return jawab(r, { status: 200, body: { ok: true } }, true); }
+        if (u.pathname === "/payments/finance/mapping") {
+            const b = req.postDataJSON() as Record<string, unknown>;
+            m.urutan.push("mapping");
+            m.mapping.push(b);
+            for (const row of rows) if (row.principle === b.principle) row.mapping = { ...b };
+            return jawab(r, { status: 200, body: { ok: true } }, true);
+        }
         if (u.pathname === "/payments/finance/proof") {
             m.urutan.push("proof");
             return jawab(r, { status: 200, body: { ok: true, proof: { proof_id: "pf-1", original_filename: "bukti_0418.pdf", stored_filename: "proof_20261010_pf-1.pdf", sha256: "3f9a00112233445566778899c21e" } } }, true);
@@ -116,7 +123,7 @@ async function siapkan(target: Page | BrowserContext, opsi: Opsi = {}) {
         m.command.push(body);
         const sub = subjek((body.payload[0].detailInvoice as Array<{ invoiceNo: string }>).map((d) => d.invoiceNo));
         attempts[sub] = attempt({ state: "sending", status: "sending", ageSeconds: 0 });
-        if (opsi.tundaCommand) await new Promise((ok) => setTimeout(ok, opsi.tundaCommand));
+        if (opsi.tahanCommand) await opsi.tahanCommand;
         const j = antri.command.shift() ?? { status: 200, body: { attemptId: "at-1", state: "posted", accurateId: "9001", accurateNumber: "PP/2610/0031", message: "", response: { s: true }, persisted: true } };
         const isi = j === "putus" ? null : (j.body as { state?: string; claimed?: boolean; live?: { state: string; stale?: boolean } | null } | undefined);
         if (j !== "putus" && j.status === 200 && isi?.state === "posted") attempts[sub] = attempt({ state: "posted", status: "posted", accurateNumber: "PP/2610/0031", ageSeconds: 1 });
@@ -265,7 +272,7 @@ test("Selesaikan: 'Tidak ada' nonaktif < 2 menit; 'Ada' + nomor → resolve + ca
     await expect(dlg.getByText(/Tersedia 2 menit setelah percobaan/)).toBeVisible();
     await expect(dlg.getByText("Sesi Accurate Anda (PT CONTOH A) sama dengan database percobaan.")).toBeVisible();
     const simpan = dlg.getByRole("button", { name: "Simpan penyelesaian" });
-    await dlg.getByRole("radio", { name: "Ada di Accurate" }).check();
+    await dlg.getByRole("radio", { name: "Ada di Accurate", exact: true }).check();
     await dlg.getByLabel("Nomor Purchase Payment").fill("PP/2610/0030");
     await dlg.getByLabel("Diperiksa di").fill("Accurate › Pembayaran Pembelian, pemasok V-0012");
     await dlg.getByLabel("Alasan").fill("pendek");
@@ -315,17 +322,18 @@ test("Galat ≠ kosong (tanpa localhost/HTML), Kosong, status posting tak terbac
     await expect(main.getByText(/^Tidak ada pengajuan untuk /)).toBeVisible(NAV);
     m.rows.push(pengajuan("DRAFT-0418", "PRINCIPLE A", FAKTUR_A));
     m.attemptsGagal = { status: 503, body: { ok: false, error: "Status posting tidak bisa dibaca dari database. Coba lagi." } };
-    await main.getByRole("button", { name: "Muat ulang" }).click();
+    await main.getByRole("button", { name: "Muat ulang", exact: true }).click();
     await expect(main.getByRole("status").filter({ hasText: "Status posting dari server tidak terbaca." })).toBeVisible(NAV);
     await main.getByRole("list", { name: "Daftar pengajuan" }).getByRole("button", { name: /DRAFT-0418/ }).click();
     const detail = main.getByRole("region", { name: "Detail pengajuan" });
     await detail.getByLabel("Bukti transfer").setInputFiles(PDF);
     await expect(detail.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled();
-    await expect(detail.getByText("Status posting dari server tidak terbaca; muat ulang dulu.")).toBeVisible();
+    await expect(detail.getByText("Status posting dari server tidak terbaca; muat ulang dulu.", { exact: true })).toBeVisible();
 });
 
 test("Klik ganda konfirmasi = satu POST; dua tab: tab kedua melihat 'Sedang diposting' dan tidak bisa memposting", async ({ context }) => {
-    const m = await siapkan(context, { tundaCommand: 2500 });
+    let lepas!: () => void;
+    const m = await siapkan(context, { tahanCommand: new Promise<void>((ok) => { lepas = ok; }) });
     const a = await context.newPage();
     const { main, dlg } = await bukaDialogPosting(a);
     await dlg.getByRole("button", { name: "Posting Rp 48.200.000" }).dblclick();
@@ -334,14 +342,16 @@ test("Klik ganda konfirmasi = satu POST; dua tab: tab kedua melihat 'Sedang dipo
     const { detail: detailB } = await bukaPengajuan(b);
     await expect(detailB.getByText("Sedang diposting dari sesi atau tab lain.")).toBeVisible(NAV);
     await expect(detailB.getByRole("button", { name: "Transfer & posting…" })).toBeDisabled();
+    lepas();
+    await a.bringToFront(); // tab latar bisa ditahan peramban; hasil dibaca di tab yang mengirim
     await expect(main.getByRole("status").filter({ hasText: "Terposting PP/2610/0031" })).toBeVisible(NAV);
     expect(m.command).toHaveLength(1);
-    await b.locator("main").getByRole("button", { name: "Muat ulang" }).click();
+    await b.locator("main").getByRole("button", { name: "Muat ulang", exact: true }).click();
     await expect(detailB.getByText("Terposting PP/2610/0031").first()).toBeVisible(NAV);
 });
 
 test("Ponsel 390 px: daftar ↔ detail tanpa gulir menyamping; draf tujuan ditandai", async ({ page }) => {
-    await siapkan(page);
+    const m = await siapkan(page);
     await page.setViewportSize({ width: 390, height: 844 });
     const { main, detail } = await bukaPengajuan(page, "DRAFT-0411");
     await expect(detail.getByLabel("Rekening bank")).toBeVisible(NAV);
@@ -350,7 +360,30 @@ test("Ponsel 390 px: daftar ↔ detail tanpa gulir menyamping; draf tujuan ditan
     await expect(detail.getByText("Draf belum disimpan")).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: "test-results/fiori-finance-ponsel.png", fullPage: true });
+    await detail.getByRole("button", { name: "Simpan tujuan" }).click();
+    await expect(main.getByRole("status").filter({ hasText: "Tujuan PRINCIPLE B tersimpan." })).toBeVisible(NAV);
+    expect(m.mapping).toEqual([{ principle: "PRINCIPLE B", vendorNo: "V-0031", vendorName: "PRINCIPLE B", bankNo: "1101-01", bankName: "KAS BESAR" }]);
+    await expect(detail.getByText("Draf belum disimpan")).toHaveCount(0, NAV);
     await main.getByRole("button", { name: "Kembali ke daftar" }).click();
     await expect(main.getByRole("list", { name: "Daftar pengajuan" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("Kembalikan ke Pembayaran lewat dialog: tolakan 409 (BL-49) tampil di dialog, lalu berhasil; payload hanya status", async ({ page }) => {
+    const m = await siapkan(page, {
+        rows: () => [pengajuan("DRAFT-0418", "PRINCIPLE A", FAKTUR_A, { status_pembayaran: "Sudah Transfer", transfer_date: HARI_INI, accurate_post_status: "failed", accurate_post_error: "Accurate menolak: vendor tidak ditemukan" })],
+        update: [{ status: 409, body: { ok: false, error: "LPB A sudah terposting di Accurate (PP/1010/1); status tidak bisa dikembalikan ke Ajukan Ulang." } }],
+    });
+    const { main, detail } = await bukaPengajuan(page);
+    await expect(detail.getByText(/^Posting gagal: Accurate menolak: vendor tidak ditemukan\. Boleh diposting ulang/)).toBeVisible(NAV);
+    await detail.getByRole("button", { name: "Kembalikan ke Pembayaran" }).click();
+    const dlg = page.getByRole("dialog", { name: "Kembalikan DRAFT-0418 ke Pembayaran?" });
+    await expect(dlg).toContainText("Tidak ada yang dikirim ke Accurate");
+    await dlg.getByRole("button", { name: "Kembalikan ke Pembayaran" }).click();
+    await expect(dlg.getByRole("alert")).toContainText("sudah terposting di Accurate (PP/1010/1)");
+    await dlg.getByRole("button", { name: "Kembalikan ke Pembayaran" }).click();
+    await expect(main.getByRole("status").filter({ hasText: "DRAFT-0418 dikembalikan ke Pembayaran." })).toBeVisible(NAV);
+    expect(m.update).toHaveLength(2);
+    expect(m.update[1]).toEqual({ principle: "PRINCIPLE A", tipe_pengajuan: "LPB", submission_id: "", draft_id: "DRAFT-0418", date: HARI_INI, status_pembayaran: "Ajukan Ulang" });
+    expect(m.command).toHaveLength(0);
 });
