@@ -16,7 +16,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { accurateEmployee, invoiceOutbox } from "@/db/schema";
 import { antrekan, pencariPenekan } from "@/lib/invoice-outbox-actions";
-import { resolveRequestPermissionsH } from "@/lib/rbac/resolve";
+import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 import { buildInvoicePayload, type InvoiceOrder } from "@/lib/accurate-invoice-write";
 import { accurateUnits } from "@/lib/accurate-units";
 import { salesmanOrder } from "@/lib/order-salesman";
@@ -44,7 +44,7 @@ async function fetchOrder(request: NextRequest, id: string): Promise<{ order?: I
 }
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-    const gate = await resolveRequestPermissionsH();
+    const gate = await resolveRequestPermissions(request);
     if (gate.response) return gate.response;
     if (!gate.perms?.has("order.edit")) {
         return NextResponse.json({ ok: false, error: "Hanya petugas yang boleh menyiapkan faktur" }, { status: 403 });
@@ -126,8 +126,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     return NextResponse.json({ ok: true, queued: true, payload, salesman: salesmanInfo });
 }
 
-export async function GET(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
-    const gate = await resolveRequestPermissionsH();
+export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+    const gate = await resolveRequestPermissions(request);
     if (gate.response) return gate.response;
     if (!gate.perms?.has("order.view")) {
         return NextResponse.json({ ok: false, error: "Akses order tidak diizinkan" }, { status: 403 });

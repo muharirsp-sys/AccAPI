@@ -1,7 +1,9 @@
 /* Uji route order (tanpa Postgres, tanpa jaringan): sesi & grup dipalsukan, `db` diganti tiruan per tabel yang MENCATAT kueri.
  * - BL-21 (owner 6 Okt, tinjauan S6d B-H1/A-M2): batch Order Principal yang SO-nya sudah punya baris Antrean Faktur TIDAK boleh
  *   dihapus atau diganti — ditegakkan server di dalam transaksi (409), `replace=true` butuh `order.edit` (ia menghapus batch lama);
- *   status antrean batch dibaca dari SEMUA nomor SO batch, bukan hanya kandidat yang lolos validasi saat ini. */
+ *   status antrean batch dibaca dari SEMUA nomor SO batch, bukan hanya kandidat yang lolos validasi saat ini.
+ * - C7 (owner 8 Okt, tinjauan S6d A-M1): payload faktur Order Masuk yang DIBEKUKAN ke antrean membawa salesman yang dipilih —
+ *   `masterSalesmanId` + `salesmanListNumber` di setiap baris termasuk bonus, bentuk sama dengan jalur Order Principal. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
@@ -10,9 +12,10 @@ import type { SQL } from "drizzle-orm";
 import * as XLSX from "xlsx";
 import { DELETE as hapusBatch, POST as unggahBatch } from "../app/api/principal-order/route.ts";
 import { GET as statusAntrean } from "../app/api/principal-order/queue/route.ts";
+import { POST as antreOrder } from "../app/api/orders/[id]/invoice/route.ts";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
-import { invoiceOutbox, principalMapping, principalOrderBatch, principalOrderLine, userGroup } from "../db/schema.ts";
+import { accurateEmployee, accurateUnit, customer, invoiceOutbox, principalMapping, principalOrderBatch, principalOrderLine, userGroup } from "../db/schema.ts";
 
 type Tabel = object;
 type Catatan = { where: { tabel: Tabel; params: unknown[] }[]; delete: Tabel[]; insert: { tabel: Tabel; values: unknown }[]; fetch: string[] };
@@ -192,4 +195,77 @@ test("BL-21: status antrean batch dibaca dari SEMUA nomor SO batch, termasuk SO 
     });
     assert.equal(res.status, 200);
     assert.equal((await res.json()).queue.length, 1);
+});
+
+// ── C7 Order Masuk: salesman di payload faktur yang DIBEKUKAN ke antrean ──────────────────────────────────
+
+const ID_ORDER = "8f1c0000-aaaa-4bbb-8ccc-000000000001";
+const ORDER = {
+    id: ID_ORDER, customer_no: "C-A001-KN", outlet: "TOKO A", channel: "GT", order_date: "2026-10-06", status: "draft", note: "",
+    lines: [{ code: "BRG-A1", unit: "KRT", quantity: "5", price: "456000" }, { code: "BRG-A2", unit: "LSN", quantity: "10", price: "120000" }],
+    sources: [{ draft_id: "d1d1d1d1-0000", revision: 3 }], rules: [],
+    result: {
+        gross: "3480000.00", discount: "68400.00", net: "3411600.00",
+        lines: [
+            { code: "BRG-A1", unit: "KRT", quantity: "5", gross: "2280000.00", net: "2211600.00", percents: ["3"], cash: "0" },
+            { code: "BRG-A2", unit: "LSN", quantity: "10", gross: "1200000.00", net: "1200000.00" },
+        ],
+        bonuses: [{ program_id: "P-A", code: "BRG-A1", unit: "KRT", quantity: "1" }],
+    },
+};
+const tabelOrder = () => new Map<Tabel, unknown[]>([
+    [accurateEmployee, [{ id: 4652, number: "M-SLA", name: "SALES A", salesman: true, suspended: false }]],
+    [accurateUnit, [{ id: 100, name: "KRT" }, { id: 200, name: "LSN" }]],
+    [customer, [{ branchId: 50, branchName: "CABANG A", autoNumberId: 7, autoNumberName: "SERI A" }]],
+]);
+const fastapiOrder = (url: string) => {
+    assert.match(url, new RegExp(`/orders/${ID_ORDER}$`));
+    return new Response(JSON.stringify({ ok: true, order: ORDER }), { status: 200, headers: { "content-type": "application/json" } });
+};
+const postInvoice = (body: unknown) => antreOrder(new NextRequest(`http://app.test/api/orders/${ID_ORDER}/invoice`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+}), { params: Promise.resolve({ id: ID_ORDER }) });
+type PayloadFaktur = { masterSalesmanId?: number; detailItem: { itemNo: string; unitPrice: number; salesmanListNumber?: string[] }[] };
+
+/** Salesman SATU per order: kepala `masterSalesmanId` + `salesmanListNumber` di SETIAP baris (2 barang + 1 bonus). */
+function salesmanDiSetiapBaris(payload: PayloadFaktur) {
+    assert.equal(payload.masterSalesmanId, 4652);
+    assert.equal(payload.detailItem.length, 3, "2 barang + 1 bonus");
+    assert.deepEqual(payload.detailItem.map((line) => line.salesmanListNumber), [["M-SLA"], ["M-SLA"], ["M-SLA"]]);
+}
+
+test("C7 route: pratinjau POST /api/orders/[id]/invoice dengan salesman → payload membawa salesman di kepala dan setiap baris", async () => {
+    const res = await denganDb(["order.view", "order.edit"], tabelOrder(), async (catat) => {
+        const r = await postInvoice({ queue: false, salesman: " m-sla " });
+        assert.deepEqual(catat.insert, [], "pratinjau tidak menulis");
+        return r;
+    }, fastapiOrder);
+    assert.equal(res.status, 200);
+    const data = await res.json() as { payload: PayloadFaktur; salesman: { number: string; id: number; name: string } };
+    salesmanDiSetiapBaris(data.payload);
+    assert.deepEqual(data.salesman, { number: "M-SLA", id: 4652, name: "SALES A" });
+});
+
+test("C7 route: antre (queue:true) MEMBEKUKAN payload bersalesman ke invoice_outbox; tanpa salesman 400 sebelum order dibaca", async () => {
+    const tanpa = await denganDb(["order.view", "order.edit"], tabelOrder(), async (catat) => {
+        const r = await postInvoice({ queue: true });
+        assert.deepEqual(catat.fetch, [], "order FastAPI tidak dibaca");
+        assert.deepEqual(catat.insert, [], "tidak ada baris antrean");
+        return r;
+    }, fastapiOrder);
+    assert.equal(tanpa.status, 400);
+    assert.match(String((await tanpa.json()).error), /Pilih salesman/);
+
+    const res = await denganDb(["order.view", "order.edit"], tabelOrder(), async (catat) => {
+        const r = await postInvoice({ queue: true, salesman: "M-SLA" });
+        const antre = catat.insert.find((i) => i.tabel === invoiceOutbox);
+        assert.ok(antre, "baris invoice_outbox ditulis");
+        const [baris] = antre.values as { orderId: string; state: string; payload: PayloadFaktur }[];
+        assert.equal(baris.orderId, ID_ORDER);
+        assert.equal(baris.state, "queued");
+        salesmanDiSetiapBaris(baris.payload);
+        return r;
+    }, fastapiOrder);
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).queued, true);
 });
