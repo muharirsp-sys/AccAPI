@@ -2,6 +2,7 @@
 # Dipindahkan mekanis dari main.py tanpa perubahan logic; hanya @app.* diganti @router.*.
 from fastapi import APIRouter
 import asyncio
+import copy
 
 from shared import (
     Any,
@@ -46,6 +47,11 @@ from shared import (
     parse_number_id,
     parse_number_strict,
     parse_payments_backup_upload,
+    payment_lock_entry,
+    payment_lock_message,
+    payment_lock_reason,
+    payment_locked_field_changes,
+    PAYMENT_LOCK_EXEMPT_FIELDS,
     pd,
     raise_sppd_sequence_from_records,
     read_upload_file_limited,
@@ -391,6 +397,7 @@ async def payments_update(request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "error": "Format data tidak valid."})
     updated = []
     skipped = []
+    locked: List[Dict[str, Any]] = []
     async with _PAYMENTS_DB_LOCK:
         db = await asyncio.to_thread(load_payments_db)
         for item in items:
@@ -403,6 +410,7 @@ async def payments_update(request: Request):
                 skipped.append(row_id)
                 continue
             rec = db["lpb"][key]
+            before = copy.deepcopy(rec)
             tipe = normalize_pengajuan_type(item.get("tipe_pengajuan", rec.get("tipe_pengajuan", "LPB")))
             no_lpb = s(item.get("no_lpb", rec.get("no_lpb", "")))
             jenis_dokumen = s(item.get("jenis_dokumen", rec.get("jenis_dokumen", "")))
@@ -462,8 +470,21 @@ async def payments_update(request: Request):
                 rec["gap_nilai"] = float(rec.get("nilai_win", 0) or 0.0) - float(rec.get("nilai_invoice", 0) or 0.0)
             except Exception:
                 rec["gap_nilai"] = 0.0
+            reason = payment_lock_reason(before)
+            if reason:
+                # BL-05: rekaman terkunci hanya boleh berubah di `ajukan`; nilai yang sama bukan perubahan.
+                fields = payment_locked_field_changes(before, rec)
+                if fields:
+                    locked.append(payment_lock_entry(key, before, reason, fields=fields))
+                    continue
+                kept = {f: rec[f] for f in PAYMENT_LOCK_EXEMPT_FIELDS if f in rec}
+                rec.clear()
+                rec.update(before, **kept)
             if changed:
                 updated.append(key)
+        if locked:
+            # Semua-atau-tidak (kontrak yang ada): satu rekaman terkunci = tidak ada yang disimpan.
+            return JSONResponse(status_code=409, content={"ok": False, "error": payment_lock_message("Simpan", locked), "locked": locked})
         await asyncio.to_thread(save_payments_db, db)
     append_audit_log(user, "payments_update", "lpb", {"count": len(updated), "samples": updated[:10], "skipped": skipped[:10]})
     return JSONResponse({"ok": True, "updated": len(updated), "updated_ids": updated, "skipped": len(skipped)})
@@ -491,10 +512,14 @@ async def payments_delete(request: Request):
     await _PAYMENTS_DB_LOCK.acquire()
     try:
         db = await asyncio.to_thread(load_payments_db)
+        keys = [k for k in (resolve_payment_record_key(db, s(row_id)) for row_id in record_ids) if k in db.get("lpb", {})]
+        # BL-05: rekaman Sudah Transfer/terposting tidak dihapus; satu saja = tidak ada yang dihapus.
+        locked = [payment_lock_entry(k, db["lpb"][k], r) for k in dict.fromkeys(keys) if (r := payment_lock_reason(db["lpb"][k]))]
+        if locked:
+            return JSONResponse(status_code=409, content={"ok": False, "error": payment_lock_message("Hapus", locked), "locked": locked})
         deleted = 0
-        for row_id in record_ids:
-            key = resolve_payment_record_key(db, s(row_id))
-            if key in db.get("lpb", {}):
+        for key in keys:
+            if key in db["lpb"]:
                 del db["lpb"][key]
                 deleted += 1
         await asyncio.to_thread(save_payments_db, db)
@@ -527,6 +552,13 @@ async def payments_clear(request: Request):
     try:
         async with _PAYMENTS_DB_LOCK:
             db = await asyncio.to_thread(load_payments_db)
+            # BL-05: clear tidak boleh menghapus rekaman yang sudah ditransfer/terposting.
+            locked = [payment_lock_entry(k, r, why) for k, r in db.get("lpb", {}).items() if (why := payment_lock_reason(r))]
+            if locked:
+                return JSONResponse(status_code=409, content={
+                    "ok": False, "locked_count": len(locked), "locked": locked[:20],
+                    "error": f"Clear ditolak: {len(locked)} rekaman sudah ditransfer/terposting dan terkunci. Tidak ada yang dihapus.",
+                })
             before_counts = {
                 "lpb": len(db.get("lpb", {}) or {}),
                 "submissions": len(db.get("submissions", {}) or {}),

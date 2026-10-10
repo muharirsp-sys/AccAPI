@@ -4,29 +4,25 @@ from fastapi import APIRouter
 
 from shared import (
     _PAYMENTS_DB_LOCK,
-    Dict,
     File,
     JSONResponse,
-    List,
     MAX_EXCEL_UPLOAD_BYTES,
     Request,
-    SPPD_EXCEL_FORBIDDEN_FIELDS,
     SPPD_TEMPLATE_PATH,
     UploadFile,
     _normalize_yyyy_mm_dd,
     append_audit_log,
+    apply_sppd_excel_rows,
+    payment_lock_message,
     append_error_log,
-    find_lpb_duplicate_key,
     format_sppd_number_with_template,
     get_current_user,
     get_sppd_settings,
     load_payments_db,
     normalize_sppd_settings,
-    parse_number_id,
     parse_sppd_excel_rows,
     pd,
     read_upload_file_limited,
-    resolve_payment_record_key,
     s,
     save_payments_db,
     sppd_last_sequence_for_year,
@@ -62,49 +58,31 @@ async def payments_sppd_upload(request: Request, file: UploadFile = File(None)):
         # AM-012: satu lock untuk semua penulis ledger (salinan per request -> tanpa lock = lost update).
         async with _PAYMENTS_DB_LOCK:
             db = load_payments_db()
-            updated: List[str] = []
-            not_found: List[str] = []
-            changed_fields: Dict[str, int] = {}
-            for item in rows:
-                row_id = s(item.get("record_id", "")) or s(item.get("no_lpb", ""))
-                key = resolve_payment_record_key(db, row_id)
-                if not key or key not in db.get("lpb", {}):
-                    not_found.append(row_id or "-")
-                    continue
-                rec = db["lpb"][key]
-                next_no_lpb = s(item.get("no_lpb", rec.get("no_lpb", "")))
-                if next_no_lpb:
-                    dup_key = find_lpb_duplicate_key(db, next_no_lpb, exclude_key=key)
-                    if dup_key:
-                        return JSONResponse(status_code=400, content={"ok": False, "error": f"No. LPB {next_no_lpb} sudah dipakai record lain."})
-                for field, value in item.items():
-                    if field == "record_id" or field in SPPD_EXCEL_FORBIDDEN_FIELDS:
-                        continue
-                    rec[field] = value
-                    changed_fields[field] = changed_fields.get(field, 0) + 1
-                if "nilai_invoice" in item or "nilai_win" in item:
-                    try:
-                        rec["gap_nilai"] = float(parse_number_id(rec.get("nilai_win", 0))) - float(parse_number_id(rec.get("nilai_invoice", 0)))
-                    except Exception:
-                        rec["gap_nilai"] = 0.0
-                updated.append(key)
-            if not updated:
-                return JSONResponse(status_code=400, content={"ok": False, "error": "Tidak ada record yang cocok untuk diupdate.", "not_found": not_found[:20]})
-            save_payments_db(db)
-            append_audit_log(user, "payments_sppd_excel_upload", "lpb", {
-                "updated": len(updated),
-                "not_found": len(not_found),
-                "changed_fields": changed_fields,
-                "blocked_columns": blocked_columns,
-            })
-            return JSONResponse({
+            # S6-0e: satu jalur untuk pratinjau dan eksekusi; BL-05 baris rekaman terkunci = seluruh unggahan ditolak.
+            report = apply_sppd_excel_rows(db, rows)
+            body = {
                 "ok": True,
-                "updated": len(updated),
-                "not_found": not_found[:20],
+                **report,
+                "not_found": report["not_found"][:20],
                 "ignored_columns": ignored_columns[:30],
                 "blocked_columns": blocked_columns[:30],
-                "changed_fields": changed_fields,
+            }
+            if report["errors"]:
+                return JSONResponse(status_code=400, content={**body, "ok": False, "error": report["errors"][0]})
+            if report["locked"]:
+                return JSONResponse(status_code=409, content={**body, "ok": False, "error": payment_lock_message("Unggahan Excel SPPD", report["locked"])})
+            if not report["updated"] and not report["unchanged"]:
+                return JSONResponse(status_code=400, content={"ok": False, "error": "Tidak ada record yang cocok untuk diupdate.", "not_found": report["not_found"][:20]})
+            if report["updated"]:
+                save_payments_db(db)
+            append_audit_log(user, "payments_sppd_excel_upload", "lpb", {
+                "updated": report["updated"],
+                "unchanged": report["unchanged"],
+                "not_found": len(report["not_found"]),
+                "changed_fields": report["changed_fields"],
+                "blocked_columns": blocked_columns,
             })
+            return JSONResponse(body)
     except ValueError as e:
         return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
     except Exception as e:

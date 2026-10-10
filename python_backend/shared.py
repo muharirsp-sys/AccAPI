@@ -1834,6 +1834,135 @@ def effective_post_status(rec: Dict[str, Any]) -> str:
     return status
 
 
+# BL-05 (S6-0e): rekaman yang sudah ditransfer, terposting, atau berposting TIDAK PASTI terkunci di semua jalur tulis
+# Pembayaran (update, delete, clear, Excel SPPD, ganti nama/auto-fix principal). Satu-satunya isian yang tetap boleh:
+# `ajukan` — centang pilihan layar, bukan data (it08 "Pilihan bukan data"). Status/bukti/tanggal transfer milik Finance
+# (/payments/finance/update), bukan jalur ini. Nilai yang dikirim sama dengan yang tersimpan = bukan perubahan.
+PAYMENT_LOCK_EXEMPT_FIELDS = {"ajukan"}
+# Turunan / identitas internal: tidak dibandingkan (gap_nilai ikut nilai_invoice/nilai_win yang dibandingkan).
+_PAYMENT_LOCK_DERIVED_FIELDS = {"record_id", "gap_nilai"}
+PAYMENT_MONEY_FIELDS = {"nilai_invoice", "nilai_win", "potongan", "nilai_pembayaran", "gap_nilai"}
+
+
+def payment_lock_reason(rec: Dict[str, Any]) -> str:
+    """'' bila rekaman boleh diubah/dihapus dari jalur Pembayaran; selain itu alasannya (Indonesia)."""
+    if not isinstance(rec, dict):
+        return ""
+    post = effective_post_status(rec)  # "failed" bergalat ambigu = unknown (tinjauan S6-0a)
+    if post == "posted":
+        no = s(rec.get("accurate_purchase_payment_number", "")) or s(rec.get("accurate_purchase_payment_id", ""))
+        return f"sudah terposting di Accurate ({no})" if no else "sudah terposting di Accurate"
+    if post == "unknown":
+        return "posting Accurate tidak pasti (menunggu penyelesaian Finance)"
+    if s(rec.get("status_pembayaran", "")).lower() == "sudah transfer":
+        return "sudah ditransfer"
+    return ""
+
+
+def payment_field_changed(field: str, old: Any, new: Any) -> bool:
+    """Perubahan NYATA satu isian (angka/tanggal/tipe dinormalisasi) — dipakai kunci BL-05 dan pratinjau Excel SPPD."""
+    if field in PAYMENT_MONEY_FIELDS:
+        return abs(parse_number_id(old) - parse_number_id(new)) > 0.005
+    if field in SPPD_EXCEL_DATE_FIELDS:
+        return (_normalize_yyyy_mm_dd(s(old)) or s(old)) != (_normalize_yyyy_mm_dd(s(new)) or s(new))
+    if field == "tipe_pengajuan":
+        return normalize_pengajuan_type(old) != normalize_pengajuan_type(new)
+    return s(old) != s(new)
+
+
+def payment_locked_field_changes(before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
+    """Isian yang BERUBAH dari `before` ke `after` dan tidak dikecualikan kunci (urut nama)."""
+    skip = PAYMENT_LOCK_EXEMPT_FIELDS | _PAYMENT_LOCK_DERIVED_FIELDS
+    return sorted(f for f in set(before) | set(after) if f not in skip and payment_field_changed(f, before.get(f), after.get(f)))
+
+
+def payment_lock_entry(key: str, rec: Dict[str, Any], reason: str, **extra: Any) -> Dict[str, Any]:
+    return {"record_id": s(key), "no_lpb": s(rec.get("no_lpb", "")), "principle": s(rec.get("principle", "")), "reason": reason, **extra}
+
+
+def payment_lock_message(action: str, locked: List[Dict[str, Any]]) -> str:
+    shown = ", ".join(f"{x['no_lpb'] or x['record_id']} ({x['reason']})" for x in locked[:5])
+    extra = f" dan {len(locked) - 5} lainnya" if len(locked) > 5 else ""
+    return f"{action} ditolak: rekaman yang sudah ditransfer/terposting terkunci — {shown}{extra}. Tidak ada yang disimpan."
+
+
+def apply_sppd_excel_rows(db: Dict[str, Any], rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Unggah Excel data SPPD — SATU jalur untuk pratinjau dan eksekusi (S6-0e butir 1+4). Mengubah `db` (salinan per
+    request, AM-012) berurutan per baris; pemanggil menyimpan HANYA bila tidak ada `errors`/`locked`.
+    Baris rekaman terkunci yang mengubah sesuatu -> `locked` (seluruh unggahan ditolak); yang tidak mengubah apa pun
+    -> `unchanged`."""
+    changes: List[Dict[str, Any]] = []
+    unchanged: List[Dict[str, Any]] = []
+    locked: List[Dict[str, Any]] = []
+    not_found: List[str] = []
+    errors: List[str] = []
+    changed_fields: Dict[str, int] = {}
+    for item in rows:
+        row_id = s(item.get("record_id", "")) or s(item.get("no_lpb", ""))
+        key = resolve_payment_record_key(db, row_id)
+        if not key or key not in db.get("lpb", {}):
+            not_found.append(row_id or "-")
+            continue
+        rec = db["lpb"][key]
+        next_no_lpb = s(item.get("no_lpb", rec.get("no_lpb", "")))
+        if next_no_lpb and find_lpb_duplicate_key(db, next_no_lpb, exclude_key=key):
+            errors.append(f"No. LPB {next_no_lpb} sudah dipakai record lain.")
+            continue
+        diffs = [{"field": f, "old": rec.get(f, ""), "new": v} for f, v in item.items()
+                 if f != "record_id" and f not in SPPD_EXCEL_FORBIDDEN_FIELDS and payment_field_changed(f, rec.get(f, ""), v)]
+        reason = payment_lock_reason(rec)
+        if reason and any(d["field"] not in PAYMENT_LOCK_EXEMPT_FIELDS for d in diffs):
+            locked.append(payment_lock_entry(key, rec, reason, fields=diffs))
+            continue
+        entry = {"record_id": key, "no_lpb": s(rec.get("no_lpb", "")), "principle": s(rec.get("principle", "")), "fields": diffs}
+        if not diffs:
+            unchanged.append(entry)
+            continue
+        for d in diffs:
+            rec[d["field"]] = d["new"]
+            changed_fields[d["field"]] = changed_fields.get(d["field"], 0) + 1
+        if any(d["field"] in ("nilai_invoice", "nilai_win") for d in diffs):
+            try:
+                rec["gap_nilai"] = float(parse_number_id(rec.get("nilai_win", 0))) - float(parse_number_id(rec.get("nilai_invoice", 0)))
+            except Exception:
+                rec["gap_nilai"] = 0.0
+        changes.append(entry)
+    return {"updated": len(changes), "unchanged": len(unchanged), "changes": changes, "unchanged_records": unchanged,
+            "locked": locked, "not_found": not_found, "errors": errors, "changed_fields": changed_fields}
+
+
+def plan_principle_rename(db: Dict[str, Any], old_name: str, new_name: str) -> Tuple[Dict[str, Any], List[str]]:
+    """Ganti nama principal (Replace All) — SATU jalur untuk pratinjau dan eksekusi. Rekaman terkunci DILEWATI dan
+    dihitung (it08: "tidak diubah: N ditransfer"); mapping Finance yang berkunci nama ikut dilaporkan (it08 #15)."""
+    to_change: List[str] = []
+    locked: List[Dict[str, Any]] = []
+    per_status: Dict[str, int] = {}
+    for key, rec in db.get("lpb", {}).items():
+        if s(rec.get("principle", "")).upper() != s(old_name).upper():
+            continue
+        status = s(rec.get("status_pembayaran", "")) or "Draf"
+        per_status[status] = per_status.get(status, 0) + 1
+        reason = payment_lock_reason(rec)
+        if reason:
+            locked.append(payment_lock_entry(key, rec, reason))
+        else:
+            to_change.append(s(key))
+    mappings = db.get("finance_mappings", {}) if isinstance(db.get("finance_mappings"), dict) else {}
+    has_old = finance_mapping_key(old_name) in mappings
+    has_new = finance_mapping_key(new_name) in mappings
+    report = {
+        "matched": len(to_change) + len(locked),
+        "replaced": len(to_change),
+        "locked_skipped": len(locked),
+        "locked": locked[:50],
+        "per_status": per_status,
+        "finance_mapping": {"old_name_has_mapping": has_old, "new_name_has_mapping": has_new,
+                            "needs_remap": bool(to_change) and has_old and not has_new},
+        "samples": to_change[:20],
+    }
+    return report, to_change
+
+
 def wita_now() -> pd.Timestamp:
     """Waktu sekarang di WITA (naif). Server produksi berjalan UTC; tanggal terbit SPPD (nomor, bulan romawi,
     tahun urutan) mengikuti WITA. ponytail: offset tetap UTC+8 — Indonesia tanpa DST."""

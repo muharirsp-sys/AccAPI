@@ -72,7 +72,9 @@ from shared import (
     load_bank_map_with_normalized_keys,
     load_payments_db,
     os,
+    payment_lock_reason,
     pd,
+    plan_principle_rename,
     read_upload_file_limited,
     s,
     save_payments_db,
@@ -325,29 +327,27 @@ async def replace_principle_name(request: Request):
     # AM-012: satu lock untuk semua penulis ledger (salinan per request -> tanpa lock = lost update).
     async with _PAYMENTS_DB_LOCK:
         db = load_payments_db()
-        replaced_count = 0
-        replaced_keys: List[str] = []
-        for rec_key, rec in db.get("lpb", {}).items():
-            current = s(rec.get("principle", ""))
-            # Case-insensitive comparison for matching
-            if current.upper() == old_name.upper():
-                rec["principle"] = new_name
-                replaced_count += 1
-                replaced_keys.append(rec_key)
-        if replaced_count > 0:
+        # BL-05 (S6-0e): rekaman yang sudah ditransfer/terposting DILEWATI dan dihitung (it08: "tidak diubah: N").
+        report, to_change = plan_principle_rename(db, old_name, new_name)
+        for rec_key in to_change:
+            db["lpb"][rec_key]["principle"] = new_name
+        if to_change:
             save_payments_db(db)
             append_audit_log(user, "replace_principle_name", "lpb", {
                 "old_name": old_name,
                 "new_name": new_name,
-                "count": replaced_count,
-                "samples": replaced_keys[:20],
+                "count": len(to_change),
+                "locked_skipped": report["locked_skipped"],
+                "samples": to_change[:20],
             })
+        skipped = f" Tidak diubah: {report['locked_skipped']} rekaman sudah ditransfer/terposting." if report["locked_skipped"] else ""
         return {
             "ok": True,
-            "replaced": replaced_count,
+            **report,
             "old_name": old_name,
             "new_name": new_name,
-            "message": f"Berhasil mengganti {replaced_count} record dari '{old_name}' menjadi '{new_name}'." if replaced_count > 0 else f"Tidak ada record dengan principle '{old_name}'.",
+            "message": (f"Berhasil mengganti {len(to_change)} record dari '{old_name}' menjadi '{new_name}'." if to_change
+                        else f"Tidak ada record yang diganti untuk principle '{old_name}'.") + skipped,
         }
 
 
@@ -376,12 +376,16 @@ async def auto_fix_principle_names(request: Request):
     async with _PAYMENTS_DB_LOCK:
         db = load_payments_db()
 
-        # Collect unique principle names from payments
+        # Collect unique principle names from payments. BL-05 (S6-0e): rekaman terkunci dihitung terpisah dan
+        # tidak di-rename (kunci yang sama dengan Replace All).
         name_counts: Dict[str, int] = {}
+        locked_counts: Dict[str, int] = {}
         for rec_key, rec in db.get("lpb", {}).items():
             p = s(rec.get("principle", ""))
             if p:
                 name_counts[p] = name_counts.get(p, 0) + 1
+                if payment_lock_reason(rec):
+                    locked_counts[p] = locked_counts.get(p, 0) + 1
 
         changes: List[Dict[str, Any]] = []
         skipped: List[Dict[str, str]] = []
@@ -392,7 +396,8 @@ async def auto_fix_principle_names(request: Request):
             if status == "matched" and info:
                 excel_name = info["principle"]
                 if web_name != excel_name:
-                    changes.append({"old": web_name, "new": excel_name, "count": count})
+                    locked_n = locked_counts.get(web_name, 0)
+                    changes.append({"old": web_name, "new": excel_name, "count": count - locked_n, "locked": locked_n})
                 else:
                     already_correct.append(web_name)
             elif status == "ambiguous":
@@ -408,7 +413,7 @@ async def auto_fix_principle_names(request: Request):
                 old = change["old"]
                 new = change["new"]
                 for rec_key, rec in db.get("lpb", {}).items():
-                    if s(rec.get("principle", "")) == old:
+                    if s(rec.get("principle", "")) == old and not payment_lock_reason(rec):
                         rec["principle"] = new
             save_payments_db(db)
             append_audit_log(user, "auto_fix_principle_names", "lpb", {
