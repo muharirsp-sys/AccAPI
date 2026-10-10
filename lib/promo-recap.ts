@@ -562,7 +562,7 @@ export function recap(
     };
 
     // Potongan tingkat faktur tidak bisa dinilai per baris — nominalnya milik seluruh faktur.
-    const perInvoice = new Map<string, { gross: number; leftover: number; lines: InvoiceLine[] }>();
+    const perInvoice = new Map<string, { gross: number; leftover: number; lines: InvoiceLine[]; dilipat: DetailRow[] }>();
 
     // KUOTA BONUS, dihitung per FAKTUR sebelum baris mana pun digolongkan.
     //
@@ -598,7 +598,7 @@ export function recap(
 
     for (const [urutan, line] of lines.entries()) {
         const invoiceKey = line.invoiceId || line.invoiceNo;
-        const bucketOf = perInvoice.get(invoiceKey) ?? { gross: 0, leftover: 0, lines: [] };
+        const bucketOf = perInvoice.get(invoiceKey) ?? { gross: 0, leftover: 0, lines: [], dilipat: [] };
         bucketOf.gross = cents(bucketOf.gross + line.gross);
         bucketOf.lines.push(line);
         out.gross = cents(out.gross + line.gross);
@@ -757,6 +757,9 @@ export function recap(
                     + (serupa ? ` — ${entry.percent}% ada di ${serupa.customerCode ? `tarif outlet posisi ${serupa.tierNo}` : `surat ${serupa.suratProgram}`} `
                         + `(${serupa.benefitBeban.toLowerCase()})` : ""),
             });
+            // Baris CAMPURAN (persen + rupiah) membawa rupiah D5-nya sebagai persen setara di posisi 5
+            // (`percentChain`, INV/2609/KN01376): calon potongan tingkat faktur, dinilai per faktur di bawah.
+            if (entry.position === 5 && line.discounts.length > 1) bucketOf.dilipat.push(out.rows.at(-1)!);
         }
 
         // Posisi di luar 1-5: tidak ada yang mengaku menanggung, jadi selalu tak bertuan.
@@ -773,29 +776,46 @@ export function recap(
         perInvoice.set(invoiceKey, bucketOf);
     }
 
+    // Baris posisi 5 terlipat yang ternyata klaim tingkat faktur; dibuang dari rincian sekali di akhir.
+    const dilepas = new Set<DetailRow>();
     for (const invoice of perInvoice.values()) {
-        if (invoice.leftover <= 0) continue;
+        if (invoice.leftover <= 0 && !invoice.dilipat.length) continue;
         const first = invoice.lines[0];
-        const matched = fakturRuleFor(rules.filter((rule) => outletAllowed(rule, first.customerNo, listsOn(first.transDate))),
-            "PRINCIPAL", first.transDate, invoice.gross, invoice.leftover, invoice.lines.length);
+        const aturanNota = rules.filter((rule) => outletAllowed(rule, first.customerNo, listsOn(first.transDate)));
+        const cocok = (claim: number, lineCount: number) =>
+            fakturRuleFor(aturanNota, "PRINCIPAL", first.transDate, invoice.gross, claim, lineCount);
+        // D5 terlipat kembali jadi rupiah (`perPosisi`: netto sebelum D5 x persen) dan dinilai BERSAMA
+        // rupiah tingkat faktur. Pelipatan meleset paling banyak Rp 1 per baris, jadi toleransinya ikut
+        // bertambah Rp 1 per baris terlipat. Tidak cocok = tidak ada yang dipindahkan: posisi 5 tetap tak
+        // bertuan per baris, dan rupiah murninya dinilai sendiri persis seperti sebelum pelipatan.
+        const dilipat = cents(invoice.dilipat.reduce((total, row) => total + row.amount, 0));
+        const gabungan = dilipat > 0
+            ? cocok(cents(invoice.leftover + dilipat), invoice.lines.length + invoice.dilipat.length) : null;
+        if (gabungan) {
+            for (const row of invoice.dilipat) dilepas.add(row);
+            out.unowned = cents(out.unowned - dilipat);
+        } else if (invoice.leftover <= 0) continue;
+        const amount = gabungan ? cents(invoice.leftover + dilipat) : invoice.leftover;
+        const matched = gabungan ?? cocok(invoice.leftover, invoice.lines.length);
         const base = {
             invoiceNo: first.invoiceNo, invoiceId: first.invoiceId, lineKey: `${first.invoiceId || first.invoiceNo}#faktur`,
             transDate: first.transDate, branchName: first.branchName,
             customerNo: first.customerNo, customerName: first.customerName,
             itemCode: "", itemName: "(potongan tingkat faktur)", positions: "faktur", percent: 0,
-            amount: invoice.leftover,
+            amount,
         };
         if (matched) {
-            out.principal = cents(out.principal + invoice.leftover);
-            add(matched, invoice.leftover, first.invoiceNo);
+            out.principal = cents(out.principal + amount);
+            add(matched, amount, first.invoiceNo);
             out.rows.push({ ...base, bucket: "principal", suratProgram: matched.suratProgram,
                 promoGroup: matched.promoGroup, reason: "" });
             continue;
         }
-        out.unowned = cents(out.unowned + invoice.leftover);
+        out.unowned = cents(out.unowned + amount);
         out.rows.push({ ...base, bucket: "unowned", suratProgram: "", promoGroup: "",
             reason: "potongan rupiah tanpa aturan tingkat faktur yang cocok" });
     }
+    if (dilepas.size) out.rows = out.rows.filter((row) => !dilepas.has(row));
 
     // NORMALISASI MANUAL: potongan tak bertuan pada faktur yang dibuat DI LUAR web, yang sudah
     // diputuskan manusia sebagai klaim principal atau tanggungan distributor (menu Normalisasi
