@@ -141,7 +141,8 @@ interface ReplaceResult {
     message: string;
 }
 
-function BankDataSection() {
+// S6-0e: replace/auto-fix kini butuh CSRF di server — token halaman diteruskan (bila belum ada, diambil dari /api/me).
+function BankDataSection({ csrfToken }: { csrfToken: string }) {
     const [bankItems, setBankItems] = useState<BankDataItem[]>([]);
     const [matchReport, setMatchReport] = useState<MatchReportData | null>(null);
     const [autoFixResult, setAutoFixResult] = useState<AutoFixResult | null>(null);
@@ -193,10 +194,11 @@ function BankDataSection() {
         setReplacing(true);
         setReplaceResult(null);
         try {
+            const token = csrfToken || (await getJson<SettingsResponse>("/api/me")).csrf_token || "";
             const res = await fetch(`${API_BASE}/api/bank-data/replace-principle-name`, {
                 method: "POST",
                 credentials: "include",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
                 body: JSON.stringify({ old_name: replaceOld, new_name: replaceNew }),
             });
             const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
@@ -216,10 +218,11 @@ function BankDataSection() {
     const handleAutoFix = async (confirm: boolean) => {
         setAutoFixing(true);
         try {
+            const token = csrfToken || (await getJson<SettingsResponse>("/api/me")).csrf_token || "";
             const res = await fetch(`${API_BASE}/api/bank-data/auto-fix-names`, {
                 method: "POST",
                 credentials: "include",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
                 body: JSON.stringify({ confirm }),
             });
             const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
@@ -671,7 +674,7 @@ export default function PaymentsSppdSettingsPage() {
                 )}
             </section>
 
-            <BankDataSection />
+            <BankDataSection csrfToken={csrfToken} />
 
         </div>
     );

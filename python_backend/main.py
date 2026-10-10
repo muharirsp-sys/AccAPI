@@ -67,18 +67,24 @@ from shared import (
     generate_import_report,
     get_current_user,
     get_or_create_csrf_token,
+    DRY_RUN_INVALID,
+    dry_run_flag,
+    parse_flag,
     io,
     load_bank_map,
     load_bank_map_with_normalized_keys,
     load_payments_db,
     os,
+    payment_lock_reason,
     pd,
+    plan_principle_rename,
     read_upload_file_limited,
     s,
     save_payments_db,
     time,
     user_has_permission,
     uuid,
+    validate_csrf_request,
 )
 
 app = FastAPI(title="Discount Validator API", version=f"PATCH-{PATCH_VERSION}")
@@ -205,6 +211,10 @@ async def upload_bank_data(request: Request, file: UploadFile = File(None)):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "sppd", "edit_settings"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission sppd.edit_settings"})
+    # S6-0e butir 7: menimpa master rekening seluruh principal = mutasi -> CSRF (dulu tanpa).
+    csrf_token = request.headers.get("X-CSRF-Token", "")
+    if not validate_csrf_request(request, csrf_token):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
     if file is None:
         return JSONResponse(status_code=400, content={"ok": False, "error": "File Excel belum diupload."})
     try:
@@ -309,6 +319,10 @@ async def replace_principle_name(request: Request):
         return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
     if not user_has_permission(user, "payments", "edit"):
         return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden: butuh permission payments.edit"})
+    # S6-0e butir 7: CSRF (dulu tanpa). Pratinjau ikut dicek — satu kontrak untuk halaman.
+    csrf_token = request.headers.get("X-CSRF-Token", "")
+    if not validate_csrf_request(request, csrf_token):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
     try:
         payload = await request.json()
     except Exception:
@@ -321,33 +335,39 @@ async def replace_principle_name(request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "error": "new_name wajib diisi."})
     if old_name == new_name:
         return JSONResponse(status_code=400, content={"ok": False, "error": "old_name dan new_name tidak boleh sama."})
+    dry_run = dry_run_flag(request, payload)
+    if dry_run is None:
+        return JSONResponse(status_code=400, content={"ok": False, "error": DRY_RUN_INVALID})
 
     # AM-012: satu lock untuk semua penulis ledger (salinan per request -> tanpa lock = lost update).
     async with _PAYMENTS_DB_LOCK:
         db = load_payments_db()
-        replaced_count = 0
-        replaced_keys: List[str] = []
-        for rec_key, rec in db.get("lpb", {}).items():
-            current = s(rec.get("principle", ""))
-            # Case-insensitive comparison for matching
-            if current.upper() == old_name.upper():
-                rec["principle"] = new_name
-                replaced_count += 1
-                replaced_keys.append(rec_key)
-        if replaced_count > 0:
+        # BL-05 (S6-0e): rekaman yang sudah ditransfer/terposting DILEWATI dan dihitung (it08: "tidak diubah: N").
+        report, to_change = plan_principle_rename(db, old_name, new_name)
+        if dry_run:
+            # Pratinjau (S6-0e butir 4): laporan yang sama dengan eksekusi, tanpa simpan.
+            return {"ok": True, "dry_run": True, **report, "old_name": old_name, "new_name": new_name,
+                    "message": f"Pratinjau: {len(to_change)} rekaman akan diganti; {report['locked_skipped']} terkunci dilewati."}
+        for rec_key in to_change:
+            db["lpb"][rec_key]["principle"] = new_name
+        if to_change:
             save_payments_db(db)
             append_audit_log(user, "replace_principle_name", "lpb", {
                 "old_name": old_name,
                 "new_name": new_name,
-                "count": replaced_count,
-                "samples": replaced_keys[:20],
+                "count": len(to_change),
+                "locked_skipped": report["locked_skipped"],
+                "samples": to_change[:20],
             })
+        skipped = f" Tidak diubah: {report['locked_skipped']} rekaman sudah ditransfer/terposting." if report["locked_skipped"] else ""
         return {
             "ok": True,
-            "replaced": replaced_count,
+            "dry_run": False,
+            **report,
             "old_name": old_name,
             "new_name": new_name,
-            "message": f"Berhasil mengganti {replaced_count} record dari '{old_name}' menjadi '{new_name}'." if replaced_count > 0 else f"Tidak ada record dengan principle '{old_name}'.",
+            "message": (f"Berhasil mengganti {len(to_change)} record dari '{old_name}' menjadi '{new_name}'." if to_change
+                        else f"Tidak ada record yang diganti untuk principle '{old_name}'.") + skipped,
         }
 
 
@@ -365,23 +385,35 @@ async def auto_fix_principle_names(request: Request):
         payload = await request.json()
     except Exception:
         payload = {}
-    confirm = bool(payload.get("confirm", False))
+    # Putaran 3 butir 2: bool("false") = True dulu mengeksekusi rename massal. Hanya 1/true & 0/false; lainnya 400.
+    confirm = parse_flag(payload.get("confirm", False)) if isinstance(payload, dict) else False
+    if confirm is None:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "Nilai confirm tidak dikenal: pakai true/1 (eksekusi) atau false/0 (pratinjau). Tidak ada yang diubah."})
     # Preview (dry-run) cukup izin lihat; eksekusi mengubah payments.json massal -> izin edit.
     need = "edit" if confirm else "view"
     if not user_has_permission(user, "payments", need):
         return JSONResponse(status_code=403, content={"ok": False, "error": f"Forbidden: butuh permission payments.{need}"})
+    if confirm:
+        # S6-0e butir 7: eksekusi rename massal = mutasi -> CSRF (pratinjau tetap tanpa, perilaku lama).
+        csrf_token = request.headers.get("X-CSRF-Token", "")
+        if not validate_csrf_request(request, csrf_token):
+            return JSONResponse(status_code=403, content={"ok": False, "error": "CSRF token invalid"})
 
     bank_map, norm_keys = load_bank_map_with_normalized_keys()
     # AM-012: satu lock untuk semua penulis ledger (salinan per request -> tanpa lock = lost update).
     async with _PAYMENTS_DB_LOCK:
         db = load_payments_db()
 
-        # Collect unique principle names from payments
+        # Collect unique principle names from payments. BL-05 (S6-0e): rekaman terkunci dihitung terpisah dan
+        # tidak di-rename (kunci yang sama dengan Replace All).
         name_counts: Dict[str, int] = {}
+        locked_counts: Dict[str, int] = {}
         for rec_key, rec in db.get("lpb", {}).items():
             p = s(rec.get("principle", ""))
             if p:
                 name_counts[p] = name_counts.get(p, 0) + 1
+                if payment_lock_reason(rec):
+                    locked_counts[p] = locked_counts.get(p, 0) + 1
 
         changes: List[Dict[str, Any]] = []
         skipped: List[Dict[str, str]] = []
@@ -392,7 +424,8 @@ async def auto_fix_principle_names(request: Request):
             if status == "matched" and info:
                 excel_name = info["principle"]
                 if web_name != excel_name:
-                    changes.append({"old": web_name, "new": excel_name, "count": count})
+                    locked_n = locked_counts.get(web_name, 0)
+                    changes.append({"old": web_name, "new": excel_name, "count": count - locked_n, "locked": locked_n})
                 else:
                     already_correct.append(web_name)
             elif status == "ambiguous":
@@ -408,7 +441,7 @@ async def auto_fix_principle_names(request: Request):
                 old = change["old"]
                 new = change["new"]
                 for rec_key, rec in db.get("lpb", {}).items():
-                    if s(rec.get("principle", "")) == old:
+                    if s(rec.get("principle", "")) == old and not payment_lock_reason(rec):
                         rec["principle"] = new
             save_payments_db(db)
             append_audit_log(user, "auto_fix_principle_names", "lpb", {
