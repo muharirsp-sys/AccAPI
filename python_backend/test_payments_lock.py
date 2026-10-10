@@ -168,6 +168,13 @@ def check_rename():
     preview = client.post("/api/bank-data/auto-fix-names", json={"confirm": False}).json()
     change = next((c for c in preview["changes"] if c["old"] == "PT ABC"), None)
     assert change and change["count"] == 2 and change["locked"] == 4, preview
+    # Putaran 3 butir 2: confirm string "false" dulu = bool("false") = True -> rename massal. Kini hanya 1/true & 0/false.
+    before = raw()
+    r = client.post("/api/bank-data/auto-fix-names", json={"confirm": "false"})
+    assert r.status_code == 200 and r.json()["executed"] is False and raw() == before, f"confirm 'false' mengeksekusi: {r.text[:160]}"
+    for bad in ("ya", "on", 2, None, [True]):
+        r = client.post("/api/bank-data/auto-fix-names", json={"confirm": bad})
+        assert r.status_code == 400 and raw() == before, f"confirm {bad!r}: {r.status_code} {r.text[:160]}"
     r = client.post("/api/bank-data/auto-fix-names", json={"confirm": True})
     assert r.status_code == 200 and r.json()["executed"], r.text[:200]
     names = {k: v["principle"] for k, v in ledger().items()}
