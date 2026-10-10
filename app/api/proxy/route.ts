@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
 import { accurateTimeoutMessage, bacaAccurate, forwardAccurate, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
-import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
+import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, databaseLockBerbeda, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
 import { db } from "@/lib/db";
 import { memuatPlaceholderAkun } from "@/lib/sales-receipt-upload";
 import { buildSalesReceiptIdempotencyPayload } from "@/lib/sales-receipt-fingerprint";
@@ -86,6 +86,17 @@ export async function POST(req: NextRequest) {
                 code: "database_changed", sent: false,
                 databaseId: accurateSession?.databaseId ?? null, databaseAlias: accurateSession?.databaseAlias ?? null,
             }, { status: 409 });
+        }
+        if (salesReceipt) {
+            // S6e-2 butir 2: lock dibuat untuk database lain (atau sebelum database dicatat) = jangan kirim.
+            const lockDb = await databaseLockBerbeda(db, String(write.lockId), write.userId, expectedDatabaseId);
+            if (lockDb !== null) {
+                return NextResponse.json({
+                    error: `Lock dibuat untuk database Accurate ${lockDb}, bukan database sesi kini — ulangi dari Tinjau. Tidak ada yang dikirim.`,
+                    code: "database_changed", sent: false, lockDatabaseId: lockDb,
+                    databaseId: accurateSession?.databaseId ?? null, databaseAlias: accurateSession?.databaseAlias ?? null,
+                }, { status: 409 });
+            }
         }
         // Re-review d60433f2 MEDIUM: baris ditandai SENDING (dan override dihabiskan) sebelum kirim; hasilnya
         // dicatat server di bawah — kirim ulang dengan lock yang sama / laporan FAILED palsu tidak lolos lagi.

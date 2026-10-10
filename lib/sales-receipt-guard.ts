@@ -44,6 +44,17 @@ export type SalesReceiptHeld = { held: BarisDitahan[] };
 /** Hasil periksaRiwayatAccurate (lib/pelunasan/pratinjau-ganda.ts) untuk baris paket. */
 export type RiwayatPaket = { cocok: Map<string, string[]>; gagal: Map<string, string> };
 
+/**
+ * S6e-2 butir 2: database yang DICATAT lock (idempotency_log."databaseId") harus sama dengan database sesi saat kirim.
+ * null = cocok; teks = database lock yang berbeda ("tidak tercatat" untuk baris lama tanpa database = ditolak juga).
+ */
+export async function databaseLockBerbeda(db: NodePgDatabase, lockId: string, userId: string, databaseId: string): Promise<string | null> {
+    const [r] = await db.select({ d: idempotencyLog.databaseId }).from(idempotencyLog)
+        .where(and(eq(idempotencyLog.lockId, lockId), eq(idempotencyLog.lockedBy, userId), sql`${idempotencyLog.databaseId} IS DISTINCT FROM ${databaseId}`))
+        .limit(1);
+    return r ? (r.d ?? "tidak tercatat") : null;
+}
+
 /** Pemeriksaan murni (tanpa DB/sesi/jaringan). null = lanjut; teks = alasan penolakan (409). */
 export function checkSalesReceiptWrite(input: Omit<SalesReceiptWrite, "userId">): string | null {
     if (typeof input.lockId !== "string" || !input.lockId) {

@@ -73,6 +73,7 @@ export async function kirimPelunasan(rows: Bebas[], deps: DepsKirim): Promise<{ 
         allowLockedKeys: o.allowLockedKeys ?? [],
         allowHistoryKeys: o.allowHistoryKeys ?? [],
         overrideReason: o.overrideReason ?? "",
+        expectedDatabaseId: deps.expectedDatabaseId,
     });
     const ld = lock.data as Data;
     if (lock.status < 200 || lock.status >= 300) throw new Error(teks(ld?.error) || "Gagal mengunci idempotency.");

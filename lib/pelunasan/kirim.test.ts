@@ -31,6 +31,7 @@ test("paket 100: 250 baris = 3 kiriman (100/100/50) membawa lockId + expectedDat
     const s = server(sukses);
     const r = await kirimPelunasan(banyak(250), { postJson: s.postJson, expectedDatabaseId: "DB-1" });
     assert.equal(r.lockId, "L1");
+    assert.equal((s.log.lock[0] as { expectedDatabaseId?: string }).expectedDatabaseId, "DB-1", "lock mencatat database tujuan");
     assert.deepEqual(s.log.proxy.map((b) => b.payload.length), [100, 100, 50]);
     assert.ok(s.log.proxy.every((b) => b.idempotencyLockId === "L1" && b.expectedDatabaseId === "DB-1"));
     assert.deepEqual(hitung(r.rows), { terposting: 250 });

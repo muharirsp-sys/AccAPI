@@ -88,7 +88,7 @@ const riwayat = (cust: string, inv: string, amt: number, number: string) =>
     ({ id: number, number, customer: { customerNo: cust }, customerNo: cust, transDate: "09/10/2026", detailInvoice: [{ invoiceNo: inv, paymentAmount: amt }] });
 
 async function kunciLock(m: Awaited<ReturnType<typeof modul>>, rows: Record<string, unknown>[], extra: Record<string, unknown> = {}) {
-    const res = await m.lock(post("/api/idempotency/lock", { keys: rows.map(kunci), ...extra }));
+    const res = await m.lock(post("/api/idempotency/lock", { keys: rows.map(kunci), expectedDatabaseId: "DB-1", ...extra }));
     const body = await res.json() as { lockId?: string; error?: string };
     assert.equal(res.status, 200, body.error);
     assert.ok(body.lockId, JSON.stringify(body));
@@ -150,7 +150,7 @@ test("PG butir 3: lock tak mencakup baris -> 409 LOCK_REQUIRED SEBELUM membaca r
 test("PG butir 3: override Finance allowHistoryKeys (alasan >= 15) dihabiskan sekali; baris dikirim & SUCCESS", { skip: pgSkip }, () =>
     dalamDunia((tag, m) => ({ izin: FINANCE, sesi: m.sesiAccurate(), data: { ...KOSONG, salesReceipt: [riwayat(`${tag}-A`, "INV-1", 1000, "PR.7")] } }), async (m, tag, catat) => {
         const a = baris(`${tag}-A`, "INV-1", 1000);
-        const pendek = await m.lock(post("/api/idempotency/lock", { keys: [kunci(a)], allowHistoryKeys: [kunci(a).key], overrideReason: "pendek" }));
+        const pendek = await m.lock(post("/api/idempotency/lock", { keys: [kunci(a)], allowHistoryKeys: [kunci(a).key], overrideReason: "pendek", expectedDatabaseId: "DB-1" }));
         assert.equal(pendek.status, 400, "alasan < 15 ditolak");
         const lockId = await kunciLock(m, [a], { allowHistoryKeys: [kunci(a).key], overrideReason: "Cicilan kedua bernominal sama, sudah dicek" });
         const res = await kirim(m, lockId, [a]);
@@ -215,4 +215,27 @@ test("PG butir 6: ringkasanIdempotensi — basi 15 mnt menurut updatedAt (jam UT
     } finally {
         await db.delete(idempotencyLog).where(like(idempotencyLog.key, `PAY_${tag}%`));
     }
+});
+
+test("PG butir 2: lock mencatat database sesi; lock di DB-1 lalu kirim dengan sesi DB-2 (expected DB-2) -> 409 database_changed, tidak dikirim", { skip: pgSkip }, async () => {
+    let sesiKini: Record<string, unknown> | null = null;
+    await dalamDunia((_t, m) => { sesiKini = m.sesiAccurate(); return { izin: KIRIM, get sesi() { return sesiKini; }, data: KOSONG }; }, async (m, tag, catat) => {
+        const a = baris(`${tag}-A`, "INV-1", 1000);
+        // Lock ke database berbeda dari sesi = 409, tidak ada yang dikunci.
+        const salah = await m.lock(post("/api/idempotency/lock", { keys: [kunci(a)], expectedDatabaseId: "DB-9" }));
+        assert.equal(salah.status, 409);
+        assert.equal((await salah.json()).code, "database_changed");
+        assert.equal(await statusDb(m.db, kunci(a).key), undefined);
+        const lockId = await kunciLock(m, [a]);
+        const { eq } = await import("drizzle-orm");
+        assert.equal((await m.db.select({ d: idempotencyLog.databaseId }).from(idempotencyLog).where(eq(idempotencyLog.key, kunci(a).key)))[0].d, "DB-1");
+        sesiKini = m.sesiAccurate({ databaseId: "DB-2", databaseAlias: "PT B" }); // pindah database di tab lain
+        const res = await m.proxy(post("/api/proxy", { endpointPath: PATH, method: "POST", payload: [a], idempotencyLockId: lockId, expectedDatabaseId: "DB-2" }));
+        assert.equal(res.status, 409);
+        const body = await res.json();
+        assert.equal(body.code, "database_changed");
+        assert.equal(body.lockDatabaseId, "DB-1");
+        assert.equal(catat.post.length + catat.baca, 0);
+        assert.equal(await statusDb(m.db, kunci(a).key), "PROCESSING");
+    });
 });

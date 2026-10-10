@@ -13,6 +13,7 @@ import { and, eq, inArray, sql, TransactionRollbackError } from 'drizzle-orm';
 import { resolveRequestPermissions } from '@/lib/rbac/resolve';
 import { decideLock, type LockEntry } from '@/lib/idempotency-lock';
 import { memuatPlaceholderAkun } from '@/lib/sales-receipt-upload';
+import { getAccurateSession } from '@/lib/accurate-session';
 
 export async function POST(req: Request) {
     try {
@@ -21,7 +22,7 @@ export async function POST(req: Request) {
         const actor = String(access.session!.user.id);
 
         const body = await req.json();
-        const { keys, preview, allowDuplicateKeys, allowLockedKeys, allowHistoryKeys, overrideReason } = body; // Array of objects { key, invoiceNo, customerNo, amount, transDate, paymentMethod, source }
+        const { keys, preview, allowDuplicateKeys, allowLockedKeys, allowHistoryKeys, overrideReason, expectedDatabaseId } = body; // Array of objects { key, invoiceNo, customerNo, amount, transDate, paymentMethod, source }
 
         if (!keys || !Array.isArray(keys) || keys.length === 0) {
             return NextResponse.json({ ok: true, blockedKeys: [], blockedEntries: [] });
@@ -69,7 +70,27 @@ export async function POST(req: Request) {
         // AM-050: pemilik lock. Hanya pemegang lockId ini (user yang sama) yang boleh menutup barisnya
         // lewat /complete dan mengirimnya lewat /api/proxy.
         const lockId = preview ? null : randomUUID();
-        const owner = { lockId, lockedBy: actor };
+        // S6e-2 butir 2: lock MENCATAT database Accurate sesi = database yang ditampilkan (expectedDatabaseId); proxy
+        // menolak kiriman ke database lain, Selesaikan mencari di database ini.
+        let databaseId: string | null = null;
+        if (!preview && blocked.length === 0) {
+            const expected = typeof expectedDatabaseId === 'string' || typeof expectedDatabaseId === 'number' ? String(expectedDatabaseId).trim() : '';
+            if (!expected) {
+                return NextResponse.json({ error: 'expectedDatabaseId wajib (database Accurate tujuan yang ditampilkan). Tidak ada yang dikunci.', code: 'DATABASE_REQUIRED' }, { status: 400 });
+            }
+            const sesi = await getAccurateSession(actor);
+            if (!sesi?.databaseId) {
+                return NextResponse.json({ error: 'Sesi Accurate belum lengkap. Login dan pilih database terlebih dahulu.', code: 'ACCURATE_SESSION_INCOMPLETE' }, { status: 400 });
+            }
+            if (String(sesi.databaseId) !== expected) {
+                return NextResponse.json({
+                    error: `Database Accurate sesi berubah (kini ${sesi.databaseAlias || sesi.databaseId}) — muat ulang lalu periksa tujuan. Tidak ada yang dikunci.`,
+                    code: 'database_changed', databaseId: sesi.databaseId, databaseAlias: sesi.databaseAlias ?? null,
+                }, { status: 409 });
+            }
+            databaseId = expected;
+        }
+        const owner = { lockId, lockedBy: actor, databaseId };
 
         // Semua-atau-tidak-sama-sekali (review AM-025 F2): halaman membatalkan kiriman bila ada yang
         // terblokir, jadi mengunci sebagian hanya meninggalkan PROCESSING yatim.
