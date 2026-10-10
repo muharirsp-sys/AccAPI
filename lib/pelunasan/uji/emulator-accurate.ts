@@ -54,8 +54,11 @@ function saring(data: Rekaman[], q: Rekaman): Rekaman[] {
     return hasil;
 }
 
+/** `_detail` = isi tambahan yang HANYA dibawa detail.do (mis. primeOwing terbaru); tidak pernah tampak di list.do. */
+const tanpaDetail = (r: Rekaman): Rekaman => { const { _detail, ...sisa } = r; void _detail; return sisa; };
+
 function proyeksi(r: Rekaman, fields: unknown): Rekaman {
-    if (typeof fields !== "string" || !fields) return salin(r);
+    if (typeof fields !== "string" || !fields) return salin(tanpaDetail(r));
     const out: Rekaman = {};
     for (const f of fields.split(",")) if (f in r) out[f] = salin(r[f]);
     return out;
@@ -99,7 +102,7 @@ export function buatEmulator(data: DataAccurate) {
             if (path.endsWith("/list.do")) return halaman(saring(sumber, q), q);
             if (path.endsWith("/detail.do")) {
                 const r = sumber.find((x) => (q.id !== undefined ? teks(x.id) === teks(q.id) : teks(x.number) === teks(q.number)));
-                return r ? { s: true, d: salin(r) } : { s: false, d: ["Data tidak ditemukan"] };
+                return r ? { s: true, d: salin({ ...tanpaDetail(r), ...((r._detail as Rekaman | undefined) ?? {}) }) } : { s: false, d: ["Data tidak ditemukan"] };
             }
             throw new Error(`emulator: jalur tak dikenal ${path}`);
         } finally {
