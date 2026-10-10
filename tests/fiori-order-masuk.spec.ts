@@ -15,10 +15,13 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 const NAV = { timeout: 60_000 } as const;
 const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
 const HTML_502 = "<html><body><h1>502 Bad Gateway</h1></body></html>";
-const CORS = { "access-control-allow-origin": "http://localhost:3011", "access-control-allow-credentials": "true", "access-control-allow-headers": "content-type, x-csrf-token", "access-control-allow-methods": "GET, POST, OPTIONS" };
+/** Asal halaman Next = baseURL config (port TIDAK ditulis keras); diisi beforeEach. */
+let ASAL = "";
+test.beforeEach(({ baseURL }) => { ASAL = new URL(String(baseURL)).origin; });
+const cors = () => ({ "access-control-allow-origin": ASAL, "access-control-allow-credentials": "true", "access-control-allow-headers": "content-type, x-csrf-token", "access-control-allow-methods": "GET, POST, OPTIONS" });
 const fa = (r: Route, body: unknown, status = 200, html?: string) => r.request().method() === "OPTIONS"
-    ? r.fulfill({ status: 204, headers: CORS })
-    : r.fulfill({ status, headers: { ...CORS, "content-type": html ? "text/html" : "application/json" }, body: html ?? JSON.stringify(body) });
+    ? r.fulfill({ status: 204, headers: cors() })
+    : r.fulfill({ status, headers: { ...cors(), "content-type": html ? "text/html" : "application/json" }, body: html ?? JSON.stringify(body) });
 
 const ID_A = "8f1c0000-aaaa-4bbb-8ccc-000000000001";
 const ID_B = "8f310000-aaaa-4bbb-8ccc-000000000002";
@@ -339,7 +342,7 @@ test("Order baru: sesudah tersimpan Simpan terkunci sampai halaman order terbuka
     let lepas: () => void = () => {};
     const tahan = new Promise<void>((ok) => { lepas = ok; });
     // Tahan navigasi ke halaman order (host Next saja, bukan FastAPI) supaya keadaan "sudah tersimpan, belum pindah" bisa diuji.
-    await page.route((u) => u.host === "localhost:3011" && u.pathname === `/orders/${ID_A}`, async (r) => { await tahan; await r.continue(); });
+    await page.route((u) => u.origin === ASAL && u.pathname === `/orders/${ID_A}`, async (r) => { await tahan; await r.continue(); });
     await page.goto("/orders/baru");
     const m = main(page);
     await m.getByLabel("Kode pelanggan Accurate").fill("C-A001-KN", NAV);
