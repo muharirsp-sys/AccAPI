@@ -20,7 +20,8 @@
  *   detail.do (TERBUKTI membawa charField1 + baris) hanya cadangan untuk yang absen/kosong.
  *
  * Hit cache WAJIB dikonfirmasi satu detail.do (cache bisa menyimpan faktur yang sudah dihapus di Accurate);
- * tanpa sesi / gagal / faktur hilang / kunci berubah = gagal_cek.
+ * tanpa sesi / galat / kunci berubah = gagal_cek. `d` kosong = faktur TERBUKTI dihapus (lib/sync.ts) -> cache
+ * basi, pencarian lanjut langsung ke list.do (bukan jalan buntu: SO-nya harus bisa difakturkan ulang).
  *
  * "tidak_ketemu_dicek" BUKAN bukti tidak ada: hanya berarti list.do + detail.do berjalan penuh dalam
  * batasnya dan tidak satu pun calon membawa kunci ini. Ia membuka aksi manusia beralasan, tidak pernah
@@ -176,12 +177,14 @@ export async function cariFaktur(input: {
             const jawab = await bacaAccurate(input.session, "/sales-invoice/detail.do", { id: cocok[0].id }, deadline, batas.perPanggilanMs);
             if (!jawab.ok) return { hasil: "gagal_cek", alasan: `konfirmasi faktur cache ${nama}: ${jawab.alasan}` };
             const detail = obj(jawab.body.d);
-            // Accurate menjawab s:true dengan d kosong untuk faktur yang sudah dihapus (lib/sync.ts).
-            if (!detail.id && !detail.number) return { hasil: "gagal_cek", alasan: `faktur cache ${nama} tidak ada lagi di Accurate (dihapus?)` };
-            const cara = cocokFaktur(detail, key);
-            if (!cara) return { hasil: "gagal_cek", alasan: `faktur cache ${nama} di Accurate tidak lagi membawa kunci ${key}` };
-            return { hasil: "ketemu", id: cocok[0].id, number: String(detail.number ?? cocok[0].number), sumber: "cache", cocok: cara,
-                semua: cocok.map(({ id, number }) => ({ id, number })) };
+            // Accurate menjawab s:true dengan d kosong untuk faktur yang sudah DIHAPUS (lib/sync.ts): cache basi,
+            // bukan bukti apa pun -> jatuh ke pencarian langsung (b) di bawah.
+            if (detail.id || detail.number) {
+                const cara = cocokFaktur(detail, key);
+                if (!cara) return { hasil: "gagal_cek", alasan: `faktur cache ${nama} di Accurate tidak lagi membawa kunci ${key}` };
+                return { hasil: "ketemu", id: cocok[0].id, number: String(detail.number ?? cocok[0].number), sumber: "cache", cocok: cara,
+                    semua: cocok.map(({ id, number }) => ({ id, number })) };
+            }
         }
     }
 

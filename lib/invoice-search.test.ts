@@ -82,9 +82,19 @@ test("A-RENDAH: hit cache yang tidak terkonfirmasi di Accurate = gagal_cek (cach
         assert.match(hasil.hasil === "gagal_cek" ? hasil.alasan : "", pola);
     };
     await t.test("tanpa sesi", async () => cek(null, /INV\/7.*tidak bisa dikonfirmasi tanpa sesi/));
-    await t.test("dihapus (s:true, d kosong)", async (st) => {
-        accurateTiruan(st, [], { 7: { body: { s: true, d: null } } });
-        await cek(SESI, /INV\/7 tidak ada lagi di Accurate/);
+    // Putaran 3: d kosong = faktur TERBUKTI dihapus (lib/sync.ts) -> cache basi, lanjut list.do (bukan jalan buntu).
+    await t.test("dihapus (s:true, d kosong) -> cari langsung di Accurate", async (st) => {
+        const f = accurateTiruan(st, [listOk([])], { 7: { body: { s: true, d: null } } });
+        const db = dbTiruan([[{ id: 7 }], [{ id: 7, number: "INV/7", raw: { charField1: KEY } }], PELANGGAN]);
+        const hasil = await cariFaktur({ db, key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session: SESI });
+        assert.equal(hasil.hasil, "tidak_ketemu_dicek", "SO yang fakturnya dihapus harus bisa difakturkan ulang");
+        assert.deepEqual(f.mock.calls.map((c) => new URL(String(c.arguments[0])).pathname.split("/").pop()), ["detail.do", "list.do"]);
+    });
+    await t.test("dihapus, faktur pengganti ada di list.do -> ketemu yang hidup", async (st) => {
+        accurateTiruan(st, [listOk([{ id: 8, number: "INV/8", customer: { id: 50123 }, charField1: KEY }])], { 7: { body: { s: true, d: null } } });
+        const db = dbTiruan([[{ id: 7 }], [{ id: 7, number: "INV/7", raw: { charField1: KEY } }], PELANGGAN]);
+        const hasil = await cariFaktur({ db, key: KEY, customerNo: "C-1-KN", queuedAt: ANTRE, session: SESI });
+        assert.equal(hasil.hasil === "ketemu" && `${hasil.sumber}:${hasil.id}`, "accurate:8");
     });
     await t.test("kunci berubah", async (st) => {
         accurateTiruan(st, [], { 7: detailOk({ id: 7, number: "INV/7", charField1: "KINO:LAIN" }) });
