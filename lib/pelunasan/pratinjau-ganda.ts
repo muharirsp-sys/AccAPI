@@ -28,82 +28,141 @@ export type DuplicateReviewEntry = {
     matchedReceiptNumbers: string[];
 };
 
-/** W:1903-1977: kunci fingerprint → nomor sales-receipt Accurate yang identik (per pelanggan + tanggal). */
-export const pratinjauRiwayatAccurate = async (rows: Bebas[], accurateFetch: AccurateFetch) => {
-    const rowKeys = rows.map((row: Bebas) => buildSalesReceiptIdempotencyPayload(row));
-    const targetKeys = new Set(rowKeys.map((item) => item.key));
-    const groupedTargets = new Map<string, { customerNo: string; transDate: string; keys: Set<string> }>();
+/** Target pencocokan riwayat: sidik jari baris (key) + kelompok pelanggan|tanggal pencarian list.do. */
+export type TargetRiwayat = { key: string; customerNo: unknown; transDate: string };
+type Kelompok = { customerNo: string; transDate: string; keys: Set<string> };
 
-    rowKeys.forEach((item) => {
+function kelompokkan(targets: TargetRiwayat[]) {
+    const groupedTargets = new Map<string, Kelompok>();
+    targets.forEach((item) => {
         const groupKey = `${item.customerNo}|${item.transDate}`;
         if (!groupedTargets.has(groupKey)) {
             groupedTargets.set(groupKey, {
-                customerNo: item.customerNo,
+                customerNo: item.customerNo as string,
                 transDate: item.transDate,
                 keys: new Set<string>()
             });
         }
         groupedTargets.get(groupKey)!.keys.add(item.key);
     });
+    return [...groupedTargets.values()];
+}
 
-    const matchedReceiptsByKey = new Map<string, string[]>();
+/**
+ * W:1903-1977 (satu kelompok pelanggan+tanggal): list.do (≤ 5 halaman, ≤ 300 kandidat) → detail.do per kandidat → sidik
+ * jari identik dengan kunci kelompok dicatat ke `hasil`. `ketat` (server, S6e-2 owner #6, fail-closed): jawaban yang tidak
+ * terbaca (bukan `s:true`, detail kosong, daftar terpotong) MELEMPAR — klien (pratinjau) tetap menelan galat detail seperti dulu.
+ */
+async function riwayatKelompok(group: Kelompok, accurateFetch: AccurateFetch, hasil: Map<string, string[]>, ketat: boolean) {
+    let currentPage = 1;
+    let pageCount = 1;
+    const candidateReceipts: Bebas[] = [];
 
-    try {
-        for (const group of groupedTargets.values()) {
-            let currentPage = 1;
-            let pageCount = 1;
-            const candidateReceipts: Bebas[] = [];
+    do {
+        const listRes = await accurateFetch('/api/sales-receipt/list.do', 'GET', {
+            fields: "id,number,customer,branch,transDate,chequeAmount,paymentMethod,description",
+            "filter.customerNo": group.customerNo,
+            "filter.transDate.op": "EQUAL",
+            "filter.transDate.val": group.transDate,
+            "sp.pageSize": 100,
+            "sp.page": currentPage
+        });
+        if (ketat && !(listRes?.s === true && Array.isArray(listRes.d))) throw new Error("daftar riwayat sales-receipt tidak terbaca");
 
-            do {
-                const listRes = await accurateFetch('/api/sales-receipt/list.do', 'GET', {
-                    fields: "id,number,customer,branch,transDate,chequeAmount,paymentMethod,description",
-                    "filter.customerNo": group.customerNo,
-                    "filter.transDate.op": "EQUAL",
-                    "filter.transDate.val": group.transDate,
-                    "sp.pageSize": 100,
-                    "sp.page": currentPage
-                });
+        const pageRows = Array.isArray(listRes?.d) ? listRes.d : [];
+        candidateReceipts.push(...pageRows);
+        pageCount = Number(listRes?.sp?.pageCount || currentPage || 1);
+        currentPage += 1;
+    } while (currentPage <= pageCount && currentPage <= 5 && candidateReceipts.length < 300);
+    if (ketat && currentPage <= pageCount) throw new Error("riwayat sales-receipt terpotong (> 5 halaman / 300 kandidat)");
 
-                const pageRows = Array.isArray(listRes?.d) ? listRes.d : [];
-                candidateReceipts.push(...pageRows);
-                pageCount = Number(listRes?.sp?.pageCount || currentPage || 1);
-                currentPage += 1;
-            } while (currentPage <= pageCount && currentPage <= 5 && candidateReceipts.length < 300);
-
-            for (const candidate of candidateReceipts) {
-                try {
-                    const detailRes = await accurateFetch('/api/sales-receipt/detail.do', 'GET', candidate?.id ? { id: candidate.id } : { number: candidate.number });
-                    const detail = detailRes?.d || detailRes;
-                    if (!detail) continue;
-
-                    const detailPayload = {
-                        customerNo: detail.customerNo || detail.customer?.customerNo || group.customerNo,
-                        transDate: detail.transDate || group.transDate,
-                        paymentMethod: detail.paymentMethod || "",
-                        chequeAmount: detail.chequeAmount || 0,
-                        detailInvoice: Array.isArray(detail.detailInvoice) ? detail.detailInvoice : []
-                    };
-
-                    const detailKey = buildSalesReceiptIdempotencyPayload(detailPayload).key;
-                    if (!targetKeys.has(detailKey) || !group.keys.has(detailKey)) continue;
-
-                    if (!matchedReceiptsByKey.has(detailKey)) matchedReceiptsByKey.set(detailKey, []);
-                    const targetList = matchedReceiptsByKey.get(detailKey)!;
-                    const receiptNumber = String(detail.number || candidate.number || "").trim();
-                    if (receiptNumber && !targetList.includes(receiptNumber)) {
-                        targetList.push(receiptNumber);
-                    }
-                } catch (detailErr) {
-                    console.error("Accurate history preview detail error:", detailErr);
-                }
+    for (const candidate of candidateReceipts) {
+        try {
+            const detailRes = await accurateFetch('/api/sales-receipt/detail.do', 'GET', candidate?.id ? { id: candidate.id } : { number: candidate.number });
+            if (ketat && !(detailRes?.s === true && detailRes.d && typeof detailRes.d === "object" && !Array.isArray(detailRes.d))) {
+                throw new Error(`detail sales-receipt ${candidate?.number ?? candidate?.id ?? "?"} tidak terbaca`);
             }
+            const detail = detailRes?.d || detailRes;
+            if (!detail) continue;
+
+            const detailPayload = {
+                customerNo: detail.customerNo || detail.customer?.customerNo || group.customerNo,
+                transDate: detail.transDate || group.transDate,
+                paymentMethod: detail.paymentMethod || "",
+                chequeAmount: detail.chequeAmount || 0,
+                detailInvoice: Array.isArray(detail.detailInvoice) ? detail.detailInvoice : []
+            };
+
+            const detailKey = buildSalesReceiptIdempotencyPayload(detailPayload).key;
+            if (!group.keys.has(detailKey)) continue;
+
+            if (!hasil.has(detailKey)) hasil.set(detailKey, []);
+            const targetList = hasil.get(detailKey)!;
+            const receiptNumber = String(detail.number || candidate.number || "").trim();
+            if (receiptNumber && !targetList.includes(receiptNumber)) {
+                targetList.push(receiptNumber);
+            }
+        } catch (detailErr) {
+            if (ketat) throw detailErr;
+            console.error("Accurate history preview detail error:", detailErr);
+        }
+    }
+}
+
+/** W:1903-1977: kunci fingerprint → nomor sales-receipt Accurate yang identik (per pelanggan + tanggal). Pratinjau klien:
+ * kelompok berurutan, galat menghentikan pencarian (hasil sebagian) — perilaku lama, dikunci golden. */
+export const pratinjauRiwayatAccurate = async (rows: Bebas[], accurateFetch: AccurateFetch) => {
+    const matchedReceiptsByKey = new Map<string, string[]>();
+    try {
+        for (const group of kelompokkan(rows.map((row: Bebas) => buildSalesReceiptIdempotencyPayload(row)))) {
+            await riwayatKelompok(group, accurateFetch, matchedReceiptsByKey, false);
         }
     } catch (historyErr) {
         console.error("Accurate history preview skipped:", historyErr);
     }
-
     return matchedReceiptsByKey;
 };
+
+/**
+ * S6e-2 (owner #6): pemeriksaan riwayat di SERVER untuk satu paket, fail-closed. Logika pencocokan = pratinjau
+ * (riwayatKelompok, mode ketat). `cocok` = kunci → nomor identik; `gagal` = kunci yang kelompoknya tidak terbaca (galat,
+ * jawaban bukan `s:true`, terpotong, atau melewati `batasMs`) → ditahan pemanggil. Paling banyak `konkurensi` kelompok serentak.
+ * Biaya per paket: per kelompok pelanggan+tanggal 1–5 list.do + 1 detail.do per kandidat.
+ */
+export async function periksaRiwayatAccurate(targets: TargetRiwayat[], accurateFetch: AccurateFetch, opsi: { konkurensi?: number; batasMs?: number } = {}) {
+    const kelompok = kelompokkan(targets);
+    const selesai = new Map<Kelompok, Map<string, string[]>>();
+    const galat = new Map<Kelompok, string>();
+    let berikut = 0;
+    let habis = false;
+    const pekerja = async () => {
+        while (!habis && berikut < kelompok.length) {
+            const g = kelompok[berikut++];
+            const hasil = new Map<string, string[]>();
+            try {
+                await riwayatKelompok(g, accurateFetch, hasil, true);
+                selesai.set(g, hasil);
+            } catch (e) {
+                galat.set(g, e instanceof Error ? e.message : String(e));
+            }
+        }
+    };
+    let tunda: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+        Promise.all(Array.from({ length: Math.min(opsi.konkurensi ?? 4, kelompok.length) }, pekerja)),
+        new Promise<void>((r) => { tunda = setTimeout(r, opsi.batasMs ?? 60_000); }),
+    ]);
+    clearTimeout(tunda);
+    habis = true; // kelompok yang belum selesai saat batas waktu = tidak terbaca (jawaban terlambat diabaikan)
+    const cocok = new Map<string, string[]>();
+    const gagal = new Map<string, string>();
+    for (const g of kelompok) {
+        const h = selesai.get(g);
+        if (h) h.forEach((v, k) => cocok.set(k, [...v]));
+        else g.keys.forEach((k) => gagal.set(k, galat.get(g) ?? "batas waktu pembacaan riwayat terlampaui"));
+    }
+    return { cocok, gagal };
+}
 
 type KunciFingerprint = ReturnType<typeof buildSalesReceiptIdempotencyPayload>;
 

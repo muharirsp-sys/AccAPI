@@ -157,3 +157,13 @@ test("re-review 597a4b82 + C11: 3xx/4xx/5xx beramplop = UNKNOWN; tidak ada jawab
     }
     assert.deepEqual(c(1, [{ s: true }], 503), ["UNKNOWN"], "5xx walau per baris sukses = tidak pasti");
 });
+
+test("S6e-2 (owner #6): allowHistoryKeys -> satu override ACCURATE_HISTORY (allow_duplicate) per kemunculan; kunci asing diabaikan", () => {
+    const now = new Date();
+    const r = decideLock([{ key: "A" }, { key: "A" }, { key: "B" }], new Map(), now, new Set(["A"]), new Set(), new Set(["A", "Z"]));
+    const hist = r.overrides.filter((o) => o.blockReason === "ACCURATE_HISTORY");
+    assert.deepEqual(hist.map((o) => [o.key, o.action]), [["A", "allow_duplicate"], ["A", "allow_duplicate"]]);
+    assert.equal(r.blocked.length, 0);
+    // Tanpa allowHistory: tidak ada override riwayat (perilaku lama).
+    assert.equal(decideLock([{ key: "A" }], new Map(), now, new Set(), new Set()).overrides.length, 0);
+});

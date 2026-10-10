@@ -3,26 +3,13 @@
  * transaksi guard (tandai SENDING, habiskan override) diuji dengan Postgres di lib/pelunasan-server-pg.test.ts. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { NextRequest } from "next/server";
 import { POST as proxyPost } from "../app/api/proxy/route.ts";
 import { POST as lockPost } from "../app/api/idempotency/lock/route.ts";
 import { accurateOAuthSession } from "../db/schema.ts";
 import { auth } from "./auth.ts";
 import { db } from "./db.ts";
-
-process.env.ACCURATE_TOKEN_ENCRYPTION_KEY = "kunci-uji-s6e2a";
-const enc = (v: string) => {
-    const iv = randomBytes(12);
-    const c = createCipheriv("aes-256-gcm", createHash("sha256").update(process.env.ACCURATE_TOKEN_ENCRYPTION_KEY!).digest(), iv);
-    const e = Buffer.concat([c.update(v, "utf8"), c.final()]);
-    return `${iv.toString("base64")}.${c.getAuthTag().toString("base64")}.${e.toString("base64")}`;
-};
-/** Baris accurate_oauth_session tiruan (host diizinkan, database DB-1). */
-export const sesiAccurate = (over: Record<string, unknown> = {}) => ({
-    userId: "u-p", accessToken: enc("tok"), sessionHost: "https://public.accurate.id", sessionId: enc("sid"),
-    databaseId: "DB-1", databaseAlias: "PT A", createdAt: new Date(), updatedAt: new Date(), ...over,
-});
+import { sesiAccurate } from "./pelunasan/uji/sesi-accurate.ts";
 
 type Opsi = { sesi?: Record<string, unknown> | null; idem?: unknown[]; fetch?: typeof fetch };
 /** Jalankan `fn` sebagai user bergrup dengan izin `keys`. */

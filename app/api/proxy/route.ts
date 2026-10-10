@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAllowedAccurateHost, requireApiSession } from "@/lib/api-security";
 import { getAccurateSession } from "@/lib/accurate-session";
-import { accurateTimeoutMessage, forwardAccurate, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
+import { accurateTimeoutMessage, bacaAccurate, forwardAccurate, isGuardedAccurateWrite, isSalesInvoiceWrite, isSalesReceiptWrite } from "@/lib/accurate-forward";
 import { authorizeSalesReceiptWrite, checkSalesReceiptWrite, sendSalesReceipt, type SalesReceiptDispatch } from "@/lib/sales-receipt-guard";
 import { db } from "@/lib/db";
 import { memuatPlaceholderAkun } from "@/lib/sales-receipt-upload";
+import { buildSalesReceiptIdempotencyPayload } from "@/lib/sales-receipt-fingerprint";
+import { periksaRiwayatAccurate } from "@/lib/pelunasan/pratinjau-ganda";
 import { resolveRequestPermissions } from "@/lib/rbac/resolve";
 
 export async function POST(req: NextRequest) {
@@ -87,8 +89,25 @@ export async function POST(req: NextRequest) {
         // dicatat server di bawah — kirim ulang dengan lock yang sama / laporan FAILED palsu tidak lolos lagi.
         let dispatch: SalesReceiptDispatch | null = null;
         if (salesReceipt) {
-            const r = await authorizeSalesReceiptWrite(db, write);
+            // Lock dinilai DULU tanpa menulis: kiriman yang tak tercakup lock tidak memicu pembacaan riwayat ke Accurate.
+            const pre = await authorizeSalesReceiptWrite(db, write, { dryRun: true });
+            if (typeof pre === "string") return NextResponse.json({ error: pre, code: "SALES_RECEIPT_LOCK_REQUIRED" }, { status: 409 });
+            // S6e-2 (owner #6): baris MIRIP riwayat Accurate ditahan di SERVER tiap paket, tepat sebelum kirim; riwayat yang
+            // gagal dibaca = ditahan (fail-closed). Override Finance `ACCURATE_HISTORY` (lock allowHistoryKeys) membukanya.
+            const rows = (Array.isArray(payload) ? payload : [payload]) as Record<string, unknown>[];
+            const riwayat = await periksaRiwayatAccurate(rows.map((r) => buildSalesReceiptIdempotencyPayload(r)),
+                bacaAccurate({ sessionHost, sessionId, accessToken: apiKey }));
+            const r = await authorizeSalesReceiptWrite(db, write, { riwayat });
             if (typeof r === "string") return NextResponse.json({ error: r, code: "SALES_RECEIPT_LOCK_REQUIRED" }, { status: 409 });
+            if ("held" in r) {
+                const tidakTerbaca = r.held.filter((h) => h.reason === "ACCURATE_HISTORY_UNREADABLE").length;
+                return NextResponse.json({
+                    error: `${r.held.length} baris ditahan: mirip pelunasan yang sudah ada di Accurate`
+                        + (tidakTerbaca ? ` (${tidakTerbaca} karena riwayat Accurate gagal dibaca)` : "")
+                        + " — butuh izin Finance (finance.override_duplicate) dengan alasan. Tidak ada yang dikirim.",
+                    code: "ACCURATE_HISTORY", sent: false, rows: r.held,
+                }, { status: 409 });
+            }
             dispatch = r;
         }
 

@@ -74,6 +74,23 @@ export async function forwardAccurate(target: AccurateTarget, endpointPath: stri
     return { status: response.status, text: await response.text() };
 }
 
+/**
+ * Pembaca Accurate BACA-SAJA di server dengan sesi `target` (S6e-2: riwayat sales-receipt, Selesaikan). Hanya GET;
+ * status non-2xx / bukan JSON / timeout 30 dtk = melempar (pemanggil memperlakukannya sebagai TIDAK TERBACA).
+ */
+export function bacaAccurate(target: AccurateTarget) {
+    return async (endpointPath: string, method: string, payload?: unknown) => {
+        if (String(method).toUpperCase() !== "GET") throw new Error("bacaAccurate hanya GET");
+        const r = await forwardAccurate(target, endpointPath, "GET", payload);
+        if (r.status < 200 || r.status >= 300) throw new Error(`Accurate HTTP ${r.status}`);
+        try {
+            return JSON.parse(r.text) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any -- JSON Accurate bebas bentuk (AccurateFetch)
+        } catch {
+            throw new Error("jawaban Accurate bukan JSON");
+        }
+    };
+}
+
 /** Pesan 504 proxy (tinjauan S6-0a): tulis Accurate yang timeout = status TIDAK PASTI — jangan menyuruh mengulang. */
 export function accurateTimeoutMessage(method: string) {
     return String(method).toUpperCase() === "GET"

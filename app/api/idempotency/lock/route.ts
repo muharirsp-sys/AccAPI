@@ -21,7 +21,7 @@ export async function POST(req: Request) {
         const actor = String(access.session!.user.id);
 
         const body = await req.json();
-        const { keys, preview, allowDuplicateKeys, allowLockedKeys, overrideReason } = body; // Array of objects { key, invoiceNo, customerNo, amount, transDate, paymentMethod, source }
+        const { keys, preview, allowDuplicateKeys, allowLockedKeys, allowHistoryKeys, overrideReason } = body; // Array of objects { key, invoiceNo, customerNo, amount, transDate, paymentMethod, source }
 
         if (!keys || !Array.isArray(keys) || keys.length === 0) {
             return NextResponse.json({ ok: true, blockedKeys: [], blockedEntries: [] });
@@ -50,6 +50,8 @@ export async function POST(req: Request) {
             now,
             new Set(Array.isArray(allowDuplicateKeys) ? allowDuplicateKeys : []),
             new Set(Array.isArray(allowLockedKeys) ? allowLockedKeys : []),
+            // S6e-2 (owner #6): izinkan baris MIRIP riwayat Accurate — gerbang Finance + alasan yang sama di bawah.
+            new Set(Array.isArray(allowHistoryKeys) ? allowHistoryKeys.filter((k: unknown) => typeof k === 'string') : []),
         );
 
         // D-18 (owner 2026-09-30): override blok duplikat = membuka kiriman ulang ke Accurate -> hanya
