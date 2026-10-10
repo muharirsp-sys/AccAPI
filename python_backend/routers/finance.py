@@ -546,7 +546,14 @@ async def payments_finance_update(request: Request):
                 updated_count += 1
 
             def resolve_only_denied(rec: Dict[str, Any]) -> bool:
-                return resolve_only and effective_post_status(rec) != "unknown"
+                # Penyelesai tanpa finance.update hanya menuntaskan posting rekaman yang SUDAH bertanda transfer dengan
+                # tanggal & bukti (putaran 2 butir 3) — tidak bisa menjadikan rekaman "Sudah Transfer" tanpa bukti.
+                return resolve_only and (
+                    effective_post_status(rec) != "unknown"
+                    or s(rec.get("status_pembayaran", "")).lower() != "sudah transfer"
+                    or not s(rec.get("transfer_date", ""))
+                    or not s(rec.get("proof_id", ""))
+                )
 
             if no and no in db.get("lpb", {}):
                 if resolve_only_denied(db["lpb"][no]):

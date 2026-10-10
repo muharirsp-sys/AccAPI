@@ -229,6 +229,12 @@ def check_resolve_parity():
     ledger = {"lpb": {"UNK": {**base, "no_lpb": "UNK", "accurate_post_status": "unknown", "accurate_post_error": "timeout"},
                       "OK": {**base, "no_lpb": "OK", "accurate_post_status": "failed", "accurate_post_error": "Vendor tidak ditemukan"}},
               "proofs": {"p1": {"proof_id": "p1"}, "p2": {"proof_id": "p2"}}}
+    # Putaran 2 butir 3: unknown yang BELUM bertanda transfer / tanpa bukti tidak boleh menjadi "Sudah Transfer" lewat
+    # jalur resolve tanpa finance.update (dulu 200: Sudah Transfer tanpa tanggal & bukti, lalu terkunci).
+    # Tiap syarat diuji sendiri: status Belum Transfer (tanggal & bukti ada), tanpa bukti, tanpa tanggal.
+    ledger["lpb"]["UNKB"] = {**base, "no_lpb": "UNKB", "status_pembayaran": "Belum Transfer", "accurate_post_status": "unknown"}
+    ledger["lpb"]["UNKP"] = {**base, "no_lpb": "UNKP", "proof_id": "", "transfer_proof": {}, "accurate_post_status": "unknown"}
+    ledger["lpb"]["UNKD"] = {**base, "no_lpb": "UNKD", "transfer_date": "", "accurate_post_status": "unknown"}
     with open(shared.PAYMENTS_DB_PATH, "w", encoding="utf-8") as f:
         json.dump(ledger, f)
     before = open(shared.PAYMENTS_DB_PATH, encoding="utf-8").read()
@@ -238,7 +244,13 @@ def check_resolve_parity():
         return client.post("/payments/finance/update", json={"items": [item]})
 
     # Bukan penyelesaian -> 403 tanpa tulis (hak update umum tidak ikut).
-    for bad in [dict(no_lpb="UNK", status_pembayaran="Belum Transfer"),
+    for bad in [dict(no_lpb="UNKB", status_pembayaran="Sudah Transfer", transfer_date="2026-10-09", proof_id="p1",
+                     accurate_post_status="posted", accurate_purchase_payment_number="PP/1", resolution_note=note),
+                dict(no_lpb="UNKP", status_pembayaran="Sudah Transfer", transfer_date="2026-10-09", proof_id="p1",
+                     accurate_post_status="failed", resolution_note=note),
+                dict(no_lpb="UNKD", status_pembayaran="Sudah Transfer", transfer_date="2026-10-09", proof_id="p1",
+                     accurate_post_status="failed", resolution_note=note),
+                dict(no_lpb="UNK", status_pembayaran="Belum Transfer"),
                 dict(no_lpb="OK", status_pembayaran="Sudah Transfer", accurate_post_status="posted", resolution_note=note),
                 dict(no_lpb="UNK", status_pembayaran="Sudah Transfer", accurate_post_status="posted", resolution_note="pendek")]:
         r = upd(**bad)

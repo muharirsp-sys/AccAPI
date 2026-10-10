@@ -137,7 +137,8 @@ Eksekusi (`confirm:true`) kini butuh **CSRF**. `changes[]` mendapat `locked` (ju
   `"Posting Accurate LPB A TIDAK PASTI; selesaikan dulu (periksa Accurate) sebelum mengembalikan ke Belum Transfer."`
   Grup per principal = semua-atau-tidak.
 - **Izin**: `finance.update` (seperti dulu) ATAU **`finance.resolve_unknown` saja** untuk penyelesaian: setiap item
-  `status_pembayaran:"Sudah Transfer"`, `accurate_post_status` `posted|failed`, `resolution_note` ≥ 15, dan rekaman `unknown`.
+  `status_pembayaran:"Sudah Transfer"`, `accurate_post_status` `posted|failed`, `resolution_note` ≥ 15, dan rekaman `unknown` yang
+  SUDAH berstatus "Sudah Transfer" dengan `transfer_date` dan `proof_id` tersimpan.
   Data transfer/bukti dari permintaan diabaikan. Selain itu 403 `{ok:false, error:"Tanpa finance.update hanya boleh menyelesaikan posting TIDAK PASTI: …"}`.
 
 ### GET `/payments/finance/data` (FastAPI) — BERUBAH
