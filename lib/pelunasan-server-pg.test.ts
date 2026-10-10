@@ -205,14 +205,23 @@ test("PG butir 6: ringkasanIdempotensi — basi 15 mnt menurut updatedAt (jam UT
     const tag = `s6e2-${randomUUID().slice(0, 8)}`;
     const now = new Date();
     const lalu = (mnt: number) => new Date(now.getTime() - mnt * 60_000);
-    const baru = (k: string, status: string, umur: number) => ({ key: `PAY_${tag}_${k}`, status, createdAt: lalu(umur), updatedAt: lalu(umur) });
+    const baru = (k: string, status: string, umur: number, databaseId: string | null = "DB-1") => ({ key: `PAY_${tag}_${k}`, status, createdAt: lalu(umur), updatedAt: lalu(umur), databaseId });
     try {
-        await db.insert(idempotencyLog).values([baru("u", "UNKNOWN", 1), baru("s1", "SENDING", 20), baru("s3", "SENDING", 16), baru("s2", "SENDING", 5),
-            baru("f", "FAILED", 60), baru("p1", "PROCESSING", 16), baru("p2", "PROCESSING", 14), baru("p3", "PROCESSING", 1), baru("ok", "SUCCESS", 99)]);
-        const r = await ringkasanIdempotensi(db, now, like(idempotencyLog.key, `PAY_${tag}%`));
+        await db.insert(idempotencyLog).values([baru("u", "UNKNOWN", 1), baru("s1", "SENDING", 20), baru("s3", "SENDING", 16, "DB-2"), baru("s2", "SENDING", 5),
+            baru("f", "FAILED", 60, null), baru("p1", "PROCESSING", 16), baru("p2", "PROCESSING", 14), baru("p3", "PROCESSING", 1), baru("ok", "SUCCESS", 99)]);
+        const saring = like(idempotencyLog.key, `PAY_${tag}%`);
+        const r = await ringkasanIdempotensi(db, now, saring);
         assert.deepEqual(r.uncertain, { unknown: 1, sendingStale: 2, total: 3 });
         assert.equal(r.retryable, 1);
         assert.equal(r.processingStale, 1);
+        const per = Object.fromEntries(r.perDatabase.map((d) => [d.label, [d.uncertain.total, d.retryable, d.processingStale]]));
+        assert.deepEqual(per, { "DB-1": [2, 0, 1], "DB-2": [1, 0, 0], "tidak tercatat": [0, 1, 0] });
+        const { daftarBarisRingkasan } = await import("./idempotency-summary.ts");
+        const d = await daftarBarisRingkasan(db, now, saring);
+        assert.deepEqual(d.rows.map((x) => [x.key.slice(-2), x.category]).sort(),
+            [["_f", "retryable"], ["_u", "uncertain"], ["s1", "uncertain"], ["s3", "uncertain"]].sort(), "SENDING muda & PROCESSING tidak masuk daftar");
+        assert.equal(d.rowsTruncated, false);
+        assert.ok(d.rows.every((x) => !("payload" in x)));
     } finally {
         await db.delete(idempotencyLog).where(like(idempotencyLog.key, `PAY_${tag}%`));
     }

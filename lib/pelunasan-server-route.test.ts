@@ -121,7 +121,8 @@ test("butir 6: ringkasan BL-41 — izin pelunasan.kirim ATAU finance.resolve_unk
         assert.deepEqual(b.uncertain, { unknown: 3, sendingStale: 4, total: 7 });
         assert.equal(b.retryable, 5);
         assert.equal(b.processingStale, 6);
-        assert.equal(b.perDatabase, null);
+        assert.deepEqual(b.perDatabase.map((d: { label: string }) => d.label), ["tidak tercatat"]);
+        assert.equal(b.rows, undefined, "daftar baris hanya dengan ?rows=1");
     }
 });
 
