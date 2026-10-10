@@ -58,6 +58,15 @@ function rentangTanggal(orders: OrderPratinjau[]): string {
     return unik.length <= 3 ? `tanggal SO masing-masing (${unik.join(", ")})` : `tanggal SO masing-masing (${unik.length} tanggal berbeda)`;
 }
 
+function urlPratinjau(dipilih: string[], tanggal: string) {
+    const q = new URLSearchParams();
+    for (const id of dipilih) q.append("orderId", id);
+    if (tanggal) q.set("invoiceDate", tanggal);
+    return `/api/invoice-outbox/send/preview?${q}`;
+}
+/** Yang menentukan isi kiriman: database, penolakan, dan per order kunci + nilai + tanggal. */
+const sidikPratinjau = (p: Pratinjau) => JSON.stringify([p.database.cocok, p.database.tujuan, p.ditolak ?? "", p.orders.map((o) => [o.orderId, o.total, o.transDate])]);
+
 /**
  * Dialog Kirim. Isinya dari pratinjau server (kueri & urutan yang sama dengan Kirim). Yang dikirim = `orderIds` HASIL PRATINJAU,
  * bukan "semua yang antre": antrean bisa bertambah sesudah pratinjau, dan yang terkirim harus sama dengan yang dibaca petugas.
@@ -66,17 +75,14 @@ export function KirimDialog({ dipilih, tanggal, saringanAktif, onClose, onTerkir
     dipilih: string[]; tanggal: string; saringanAktif?: boolean; onClose: () => void;
     onTerkirim: (hasil: HasilKirim, urutan: OrderPratinjau[]) => void; onTidakPasti: (pesan: string) => void;
 }) {
-    const kunci = JSON.stringify(dipilih);
-    const [pratinjau, muatUlang] = useLoad(useCallback((): Promise<Load<Pratinjau>> => {
-        const q = new URLSearchParams();
-        for (const id of JSON.parse(kunci) as string[]) q.append("orderId", id);
-        if (tanggal) q.set("invoiceDate", tanggal);
-        return ambil<Pratinjau>(`/api/invoice-outbox/send/preview?${q}`, (j) => j as Pratinjau);
-    }, [kunci, tanggal]));
-    const p = pratinjau.status === "siap" ? pratinjau.data : undefined;
+    const url = urlPratinjau(dipilih, tanggal);
+    const [pratinjau, muatUlang] = useLoad(useCallback((): Promise<Load<Pratinjau>> => ambil<Pratinjau>(url, (j) => j as Pratinjau), [url]));
+    // Pratinjau yang diperiksa ulang saat Kirim dan ternyata berubah: menggantikan yang tampil sampai dimuat ulang.
+    const [baru, setBaru] = useState<Pratinjau | null>(null);
+    const p = baru ?? (pratinjau.status === "siap" ? pratinjau.data : undefined);
     const keluar = p && dipilih.length ? dipilih.length - p.orders.length : 0;
 
-    const blok = pratinjau.status === "memuat" ? "Menyiapkan ringkasan kiriman…"
+    const blok = !p && pratinjau.status === "memuat" ? "Menyiapkan ringkasan kiriman…"
         : !p ? "Ringkasan kiriman gagal dimuat — coba lagi"
             : !p.database.cocok ? "Sesi Accurate Anda tidak cocok dengan database tujuan"
                 : p.ditolak ? "Ada faktur yang tidak bisa dikirim — lihat pesan"
@@ -84,8 +90,15 @@ export function KirimDialog({ dipilih, tanggal, saringanAktif, onClose, onTerkir
 
     const kirim = async () => {
         if (!p) return;
+        // Pratinjau bisa basi (antrean bertambah/berubah selagi dialog terbuka): periksa ulang TEPAT sebelum mengirim.
+        const cek = await ambil<Pratinjau>(url, (j) => j as Pratinjau);
+        if (cek.status !== "siap" || !cek.data) throw new Error(`Pratinjau tidak bisa diperiksa ulang (${cek.error ?? "tanpa jawaban"}); tidak ada faktur dikirim.`);
+        if (sidikPratinjau(cek.data) !== sidikPratinjau(p)) {
+            setBaru(cek.data);
+            throw new Error("Pratinjau berubah sejak dialog dibuka — periksa lagi isi di atas, lalu tekan Kirim. Tidak ada faktur dikirim.");
+        }
         try {
-            const { status, data } = await tulis("/api/invoice-outbox/send", { orderIds: p.orders.map((o) => o.orderId), invoiceDate: tanggal || undefined });
+            const { status, data } = await tulis("/api/invoice-outbox/send", { orderIds: cek.data.orders.map((o) => o.orderId), invoiceDate: tanggal || undefined });
             // 200 = hasil per order (ok=false bila ada tidak pasti/selisih — tetap hasil, bukan galat). 4xx = tidak ada yang dikirim.
             if (status !== 200 || !Array.isArray(data.results)) throw new Error(pesanGagal(status, data, "Pengiriman ditolak server; tidak ada faktur dikirim."));
             onTerkirim(data as unknown as HasilKirim, p.orders);
@@ -98,8 +111,8 @@ export function KirimDialog({ dipilih, tanggal, saringanAktif, onClose, onTerkir
     return (
         <ConfirmDialog open onClose={onClose} tag="BL-39" title={p ? `Kirim ${p.jumlah} faktur ke Accurate?` : "Kirim faktur ke Accurate?"}
             confirmLabel={p ? `Kirim ${p.jumlah} faktur` : "Kirim"} confirmDisabled={blok} onConfirm={kirim}>
-            {pratinjau.status === "memuat" && <Skeleton rows={5} label="Menyiapkan ringkasan kiriman" />}
-            {pratinjau.status === "galat" && <ErrorState title="Ringkasan kiriman gagal dimuat" message={pratinjau.error} onRetry={muatUlang} />}
+            {!p && pratinjau.status === "memuat" && <Skeleton rows={5} label="Menyiapkan ringkasan kiriman" />}
+            {!p && pratinjau.status === "galat" && <ErrorState title="Ringkasan kiriman gagal dimuat" message={pratinjau.error} onRetry={() => { setBaru(null); muatUlang(); }} />}
             {p && (
                 <>
                     <KeyValues items={[

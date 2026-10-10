@@ -243,6 +243,32 @@ test("Kirim: pilihan hanya dari baris yang tampil — Cari/principal mengosongka
     expect(getKe(log, "/api/invoice-outbox/send/preview").at(-1)?.query).toBe("");
 });
 
+test("Kirim: pratinjau diperiksa ulang tepat sebelum mengirim — berubah = dialog diperbarui, tidak ada yang dikirim", async ({ page }) => {
+    let berubah = false;
+    const tiga = PRATINJAU({ jumlah: 3, antreanMenunggu: 3, total: { dpp: 300000, ppn: 33000, total: 333000 },
+        orders: [order("PRINCIPLE-A:SO-A-001", 111000), order("PRINCIPLE-A:SO-A-002", 111000), order("PRINCIPLE-A:SO-A-010", 111000)] });
+    const opsi: Opsi = {
+        preview: (r) => r.fulfill(json(berubah ? tiga : PRATINJAU())),
+        send: (r) => r.fulfill(json({ ok: true, sent: 0, verifiedOk: 0, mismatched: 0, unchecked: 0, rejected: 0, unknown: 0, remaining: 3, sentBy: "admin@contoh", results: [], verified: [] })),
+    };
+    const log = await mock(page, opsi);
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await page.goto("/antrean-faktur", NAV);
+    const main = page.locator("main");
+    await main.getByRole("button", { name: "Kirim 2 faktur…" }).click(NAV);
+    const dlg = page.getByRole("dialog", { name: "Kirim 2 faktur ke Accurate?" });
+    await expect(dlg).toContainText("Rp 222.000");
+    berubah = true; // antrean berubah selagi dialog terbuka (mis. SO baru diantrekan)
+    await dlg.getByRole("button", { name: "Kirim 2 faktur" }).click();
+    const baru = page.getByRole("dialog", { name: "Kirim 3 faktur ke Accurate?" });
+    await expect(baru.getByRole("alert").filter({ hasText: "Pratinjau berubah" })).toBeVisible();
+    await expect(baru).toContainText("Rp 333.000");
+    expect(tulisKe(log, "/api/invoice-outbox/send")).toHaveLength(0);
+    await baru.getByRole("button", { name: "Kirim 3 faktur" }).click();
+    await expect(baru).toBeHidden();
+    expect(tulisKe(log, "/api/invoice-outbox/send")[0].body).toEqual({ orderIds: ["PRINCIPLE-A:SO-A-001", "PRINCIPLE-A:SO-A-002", "PRINCIPLE-A:SO-A-010"] });
+});
+
 test("Kirim: sesi tidak cocok = nonaktif berlasan; 502 HTML = 'belum pasti' + muat ulang + kunci sampai antrean terbaru", async ({ page }) => {
     const opsi: Opsi = { preview: (r) => r.fulfill(json(PRATINJAU({ ok: false, database: { tujuan: "1001", label: "x", sesiPenekan: { id: "2002", alias: "DB LAIN" }, cocok: false } }))) };
     const log = await mock(page, opsi);
