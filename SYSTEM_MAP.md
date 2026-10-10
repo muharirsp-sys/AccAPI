@@ -57,7 +57,7 @@ Side Effects: Tidak ada; dokumen ini hanya menjadi kompas dan wajib disinkronkan
 - `python_backend/test_summary_review.py`: runnable check impor/koreksi/auth/CAS dengan SQLite sementara; dapat diberi path paket OCR asli.
 - Efisiensi: list mengambil metadata saja memakai indeks owner/tanggal; detail mengambil satu primary key. Satu perubahan menulis satu paket dalam transaksi singkat dengan pemeriksaan revisi; maksimum 8 MB per paket, tanpa HTTP di dalam transaksi.
 
-`summary_draft published` -> `routers/orders.py: published_rules/store_order` -> order menyimpan aturan, sumber, hasil -> `GET /orders/{id}` menyertakan aturan beku -> `POST /api/orders/{id}/invoice` -> PostgreSQL `invoice_outbox` menyimpan payload dan snapshot program dalam satu insert.
+`summary_draft published` -> `routers/orders.py: published_rules/store_order` -> order menyimpan aturan, sumber, hasil -> `GET /orders/{id}` menyertakan aturan beku -> `POST /api/orders/{id}/invoice` (`salesman` WAJIB saat antre, C7: `lib/order-salesman` cek `accurate_employee` aktif -> `masterSalesmanId` + `salesmanListNumber` di setiap baris, bentuk sama dengan Order Principal; daftar pilihan `GET /api/orders/salesmen`) -> PostgreSQL `invoice_outbox` menyimpan payload dan snapshot program dalam satu insert. Status per order di daftar Order Masuk: `GET /api/orders/invoice-status?ids=` (baca saja).
 
 - `lib/accurate-invoice-write.ts`: membawa bonus SKU pasti sebagai baris gratis; bonus yang SKU-nya belum dipilih menahan pembuatan payload.
 - `lib/program-realization.ts`: cocokkan database (caller), record ID, pelanggan, tanggal, cabang, SKU, unit, harga, jumlah, dan diskon. Mismatch tidak menjadi realisasi; biaya bonus kosong, bukan nol.

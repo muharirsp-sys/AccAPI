@@ -75,6 +75,7 @@ test("maps the live Accurate payload", () => {
         unitPrice: 17278,
         discount: 0,
         total: 86390,
+        salesmen: [], // sampel live ini tanpa salesmanList per baris
     });
 });
 
